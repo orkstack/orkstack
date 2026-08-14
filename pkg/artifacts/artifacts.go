@@ -31,9 +31,9 @@ type PutOptions struct {
 }
 
 // Store persists artifacts and hands back references. Implementations are
-// content-addressed: each physical key ends in the lowercase sha256 of its
-// bytes. Logical names remain opaque strings; providers encode them into safe,
-// reversible physical key segments without changing ArtifactRef.Name.
+// content-addressed: each physical object key ends in the lowercase sha256 of
+// its bytes. Logical names remain opaque strings; providers map them to safe
+// physical keys and recover them without changing ArtifactRef.Name.
 //
 // A new backend implements Store and calls Register at init time; nothing else
 // in the codebase needs to change.

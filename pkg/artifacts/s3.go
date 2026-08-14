@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,9 +28,9 @@ import (
 // server (MinIO in this repo's dev stack) through a custom endpoint plus
 // path-style addressing.
 //
-// Physical keys use "objects/<encoded-name>/<sha256>". The reversible name
-// encoding preserves ArtifactRef.Name exactly and keeps URL-sensitive logical
-// text out of the canonical s3://<bucket>/<key> URI.
+// Physical object keys use "objects/<name-sha256>/<content-sha256>" and stay
+// fixed in size. A versioned binary companion under `manifests/` preserves the
+// exact logical name, including arbitrary bytes, without S3 key-length growth.
 type S3Store struct {
 	client  *s3.Client
 	presign *s3.PresignClient
@@ -114,9 +115,14 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 	}
 
 	sum := hex.EncodeToString(hasher.Sum(nil))
-	key := objectKey(name, sum)
+	nameSum := s3NameDigest(name)
+	key := s3ObjectKeyFromDigests(nameSum, sum)
 	contentType := resolveContentType(opts.ContentType, sniff.head)
 	metadata := copyMetadata(opts.Metadata)
+
+	if err := s.writeNameManifest(ctx, nameSum, sum, name); err != nil {
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: %w", name, err)
+	}
 
 	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
@@ -158,19 +164,23 @@ func (s *S3Store) Get(ctx context.Context, uri string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
-// Stat heads the object and returns its reference.
+// Stat heads the object and restores its exact logical name from the binary
+// companion manifest.
 func (s *S3Store) Stat(ctx context.Context, uri string) (ArtifactRef, error) {
-	key, name, sum, err := s.parseURI(uri)
+	key, nameSum, sum, err := s.parseURI(uri)
 	if err != nil {
 		return ArtifactRef{}, err
+	}
+	name, err := s.readNameManifest(ctx, nameSum, sum)
+	if err != nil {
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 stat %q: %w", uri, err)
 	}
 	return s.statKey(ctx, key, name, sum)
 }
 
-// List returns every object whose decoded logical name starts with prefix,
-// ordered by URI. The physical encoding does not preserve logical prefixes, so
-// the paginator scans the internal object namespace and filters decoded names.
-// Each entry is completed with HeadObject to match local-provider fields.
+// List scans bounded physical object keys, restores each exact logical name
+// from its binary manifest, filters by the caller's logical prefix, and orders
+// results by URI. Each object is also headed to match local-provider fields.
 func (s *S3Store) List(ctx context.Context, prefix string) ([]ArtifactRef, error) {
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(s.bucket),
@@ -185,8 +195,18 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]ArtifactRef, error
 		}
 		for _, obj := range page.Contents {
 			key := aws.ToString(obj.Key)
-			name, sum, ok := splitKey(key)
-			if !ok || !strings.HasPrefix(name, prefix) {
+			nameSum, sum, ok := splitS3ObjectKey(key)
+			if !ok {
+				continue
+			}
+			name, err := s.readNameManifest(ctx, nameSum, sum)
+			if err != nil {
+				if errors.Is(err, ErrNotFound) {
+					continue // deleted between list and manifest read
+				}
+				return nil, fmt.Errorf("artifacts: s3 list %q: %w", prefix, err)
+			}
+			if !strings.HasPrefix(name, prefix) {
 				continue
 			}
 			ref, err := s.statKey(ctx, key, name, sum)
@@ -222,22 +242,66 @@ func (s *S3Store) Presign(ctx context.Context, uri string, ttl time.Duration) (s
 	return req.URL, nil
 }
 
-// Delete removes the object. Like S3 itself, it is idempotent.
+// Delete removes the object and its binary name manifest. Like S3 itself, it
+// is idempotent.
 func (s *S3Store) Delete(ctx context.Context, uri string) error {
-	key, _, _, err := s.parseURI(uri)
+	key, nameSum, sum, err := s.parseURI(uri)
 	if err != nil {
 		return err
 	}
 	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
-	}); err != nil {
-		if isNotFound(err) {
-			return nil
-		}
+	}); err != nil && !isNotFound(err) {
 		return fmt.Errorf("artifacts: s3 delete %q: %w", uri, err)
 	}
+	manifestKey := s3ManifestKey(nameSum, sum)
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(manifestKey),
+	}); err != nil && !isNotFound(err) {
+		return fmt.Errorf("artifacts: s3 delete %q: remove name manifest: %w", uri, err)
+	}
 	return nil
+}
+
+func (s *S3Store) writeNameManifest(ctx context.Context, nameSum, contentSum, name string) error {
+	manifest := marshalS3NameManifest(name)
+	key := s3ManifestKey(nameSum, contentSum)
+	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(manifest),
+		ContentLength: aws.Int64(int64(len(manifest))),
+		ContentType:   aws.String("application/octet-stream"),
+	}); err != nil {
+		return fmt.Errorf("write binary name manifest %q: %w", key, err)
+	}
+	return nil
+}
+
+func (s *S3Store) readNameManifest(ctx context.Context, nameSum, contentSum string) (string, error) {
+	key := s3ManifestKey(nameSum, contentSum)
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return "", fmt.Errorf("read binary name manifest %q: %w", key, ErrNotFound)
+		}
+		return "", fmt.Errorf("read binary name manifest %q: %w", key, err)
+	}
+	defer out.Body.Close()
+	manifest, err := io.ReadAll(out.Body)
+	if err != nil {
+		return "", fmt.Errorf("read binary name manifest %q body: %w", key, err)
+	}
+	name, err := unmarshalS3NameManifest(manifest, nameSum)
+	if err != nil {
+		return "", fmt.Errorf("decode binary name manifest %q: %w", key, err)
+	}
+	return name, nil
 }
 
 func (s *S3Store) statKey(ctx context.Context, key, name, sum string) (ArtifactRef, error) {
@@ -268,8 +332,9 @@ func (s *S3Store) uri(key string) string {
 	return (&url.URL{Scheme: "s3", Host: s.bucket, Path: "/" + key}).String()
 }
 
-// parseURI validates an s3:// URI against this store's bucket.
-func (s *S3Store) parseURI(uri string) (key, name, sum string, err error) {
+// parseURI validates an s3:// URI against this store's bucket and returns the
+// bounded physical key, logical-name digest, and content digest.
+func (s *S3Store) parseURI(uri string) (key, nameSum, contentSum string, err error) {
 	u, perr := url.Parse(uri)
 	if perr != nil {
 		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: %v", uri, ErrInvalidURI, perr)
@@ -287,11 +352,11 @@ func (s *S3Store) parseURI(uri string) (key, name, sum string, err error) {
 	if key == "" {
 		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: empty key", uri, ErrInvalidURI)
 	}
-	name, sum, ok := splitKey(key)
+	nameSum, contentSum, ok := splitS3ObjectKey(key)
 	if !ok {
-		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: key must end with /<sha256>", uri, ErrInvalidURI)
+		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: malformed bounded object key", uri, ErrInvalidURI)
 	}
-	return key, name, sum, nil
+	return key, nameSum, contentSum, nil
 }
 
 // isNotFound reports whether err means "the object is not there". A 403 is

@@ -4,8 +4,9 @@
 // returns files, the Orker stores them here, and downstream tasks receive
 // references (never inline bytes). Every physical object key ends in the
 // lowercase sha256 of its bytes. Logical names remain opaque and appear
-// unchanged in ArtifactRef.Name; providers encode them into reversible,
-// path-safe key segments. URIs use file:// for local objects and s3:// for S3.
+// unchanged in ArtifactRef.Name. Local storage uses reversible path-safe name
+// tokens; S3 uses bounded name digests plus binary name manifests. URIs use
+// file:// for local objects and s3:// for S3.
 //
 // Selecting a backend:
 //

@@ -381,6 +381,101 @@ func TestS3Store_PreservesOpaqueNames(t *testing.T) {
 	}
 }
 
+func TestS3Store_PreservesVeryLongNameWithBoundedKey(t *testing.T) {
+	st, _ := newS3Store(t)
+	ctx := context.Background()
+	name := strings.Repeat("long-name/", 410)
+	data := []byte("bounded S3 key with binary name manifest")
+	opts := artifacts.PutOptions{
+		ContentType: "text/plain",
+		Metadata:    map[string]string{"case": "very-long-name"},
+	}
+
+	ref, err := st.Put(ctx, name, nonSeekableReader{bytes.NewReader(data)}, opts)
+	if err != nil {
+		t.Fatalf("Put(%d-byte name): %v", len(name), err)
+	}
+	t.Cleanup(func() {
+		if err := st.Delete(context.Background(), ref.URI); err != nil {
+			t.Logf("cleanup Delete(%s): %v", ref.URI, err)
+		}
+	})
+	if ref.Name != name {
+		t.Errorf("Put Name length/content changed: got %d bytes exact=%t", len(ref.Name), ref.Name == name)
+	}
+	parsed, err := url.Parse(ref.URI)
+	if err != nil {
+		t.Fatalf("parse URI: %v", err)
+	}
+	keyLen := len(strings.TrimPrefix(parsed.EscapedPath(), "/"))
+	if keyLen > 256 {
+		t.Errorf("physical S3 key length = %d, want bounded at 256 bytes", keyLen)
+	}
+	t.Logf("very long logical name bytes=%d physical key bytes=%d exact_name=%t", len(name), keyLen, ref.Name == name)
+
+	rc, err := st.Get(ctx, ref.URI)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if err := rc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("Get returned %q, want %q", got, data)
+	}
+
+	stat, err := st.Stat(ctx, ref.URI)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if stat.Name != name || stat.Metadata["case"] != "very-long-name" || stat.SHA256 != hexSHA(data) {
+		t.Errorf("Stat did not restore exact long name and attributes: name bytes=%d exact=%t ref=%+v", len(stat.Name), stat.Name == name, stat)
+	}
+	refs, err := st.List(ctx, name[:128])
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if !containsArtifactURI(refs, ref.URI) {
+		t.Errorf("List(long prefix) missing %s", ref.URI)
+	}
+
+	signed, err := st.Presign(ctx, ref.URI, time.Minute)
+	if err != nil {
+		t.Fatalf("Presign: %v", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, signed, nil)
+	if err != nil {
+		t.Fatalf("new presigned request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("fetch presigned URL: %v", err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read presigned body: %v", readErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close presigned body: %v", closeErr)
+	}
+	if resp.StatusCode != http.StatusOK || !bytes.Equal(body, data) {
+		t.Fatalf("presigned GET status=%d body=%q, want 200 and %q", resp.StatusCode, body, data)
+	}
+	t.Logf("very long name presigned GET status=%d bytes=%d identical=%t", resp.StatusCode, len(body), bytes.Equal(body, data))
+
+	if err := st.Delete(ctx, ref.URI); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := st.Get(ctx, ref.URI); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("Get after Delete err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestS3Store_NamesDoNotCollideWithPriorDigestPaths(t *testing.T) {
 	st, _ := newS3Store(t)
 	ctx := context.Background()
