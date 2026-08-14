@@ -2,9 +2,10 @@
 //
 // Artifacts are the only way bytes travel between OrkStack tasks: a plugin
 // returns files, the Orker stores them here, and downstream tasks receive
-// references (never inline bytes). Every object is content-addressed by
-// sha256, so its canonical key is "<logical name>/<sha256>" and its URI is
-// file://<path> for the local provider or s3://<bucket>/<key> for the S3 one.
+// references (never inline bytes). Every physical object key ends in the
+// lowercase sha256 of its bytes. Logical names remain opaque and appear
+// unchanged in ArtifactRef.Name; providers encode them into reversible,
+// path-safe key segments. URIs use file:// for local objects and s3:// for S3.
 //
 // Selecting a backend:
 //

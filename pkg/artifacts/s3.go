@@ -27,8 +27,9 @@ import (
 // server (MinIO in this repo's dev stack) through a custom endpoint plus
 // path-style addressing.
 //
-// Objects use the same content-addressed key as the local store,
-// "<name>/<sha256>", and the canonical URI is s3://<bucket>/<key>.
+// Physical keys use "objects/<encoded-name>/<sha256>". The reversible name
+// encoding preserves ArtifactRef.Name exactly and keeps URL-sensitive logical
+// text out of the canonical s3://<bucket>/<key> URI.
 type S3Store struct {
 	client  *s3.Client
 	presign *s3.PresignClient
@@ -86,12 +87,8 @@ func (s *S3Store) Bucket() string { return s.bucket }
 // body seekable, so an unknown-length, non-seekable reader is supported without
 // buffering it all in memory.
 func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOptions) (ArtifactRef, error) {
-	cleaned, err := cleanName(name)
-	if err != nil {
-		return ArtifactRef{}, err
-	}
 	if r == nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: nil reader", cleaned)
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: nil reader", name)
 	}
 	if err := ctx.Err(); err != nil {
 		return ArtifactRef{}, err
@@ -99,7 +96,7 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 
 	tmp, err := os.CreateTemp("", "ork-artifact-*")
 	if err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: create spool file: %w", cleaned, err)
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: create spool file: %w", name, err)
 	}
 	defer func() {
 		tmp.Close()
@@ -110,14 +107,14 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 	sniff := &sniffWriter{}
 	size, err := io.Copy(io.MultiWriter(tmp, hasher, sniff), &ctxReader{ctx: ctx, r: r})
 	if err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: spool: %w", cleaned, err)
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: spool: %w", name, err)
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: rewind spool: %w", cleaned, err)
+		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: rewind spool: %w", name, err)
 	}
 
 	sum := hex.EncodeToString(hasher.Sum(nil))
-	key := objectKey(cleaned, sum)
+	key := objectKey(name, sum)
 	contentType := resolveContentType(opts.ContentType, sniff.head)
 	metadata := copyMetadata(opts.Metadata)
 
@@ -133,7 +130,7 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 	}
 
 	return ArtifactRef{
-		Name:        cleaned,
+		Name:        name,
 		URI:         s.uri(key),
 		ContentType: contentType,
 		SizeBytes:   size,
@@ -170,13 +167,14 @@ func (s *S3Store) Stat(ctx context.Context, uri string) (ArtifactRef, error) {
 	return s.statKey(ctx, key, name, sum)
 }
 
-// List returns every object whose logical name starts with prefix, ordered by
-// URI. Each entry is completed with a HeadObject so listings carry the same
-// fields the local store returns.
+// List returns every object whose decoded logical name starts with prefix,
+// ordered by URI. The physical encoding does not preserve logical prefixes, so
+// the paginator scans the internal object namespace and filters decoded names.
+// Each entry is completed with HeadObject to match local-provider fields.
 func (s *S3Store) List(ctx context.Context, prefix string) ([]ArtifactRef, error) {
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(s.bucket),
-		Prefix: aws.String(prefix),
+		Prefix: aws.String(objectNamespace + "/"),
 	})
 
 	var refs []ArtifactRef
@@ -265,8 +263,7 @@ func (s *S3Store) statKey(ctx context.Context, key, name, sum string) (ArtifactR
 	}, nil
 }
 
-// uri renders the canonical s3:// URI for an object key, percent-encoding
-// characters such as '#', '?', and '%' while preserving key separators.
+// uri renders the canonical s3:// URI for a generated physical object key.
 func (s *S3Store) uri(key string) string {
 	return (&url.URL{Scheme: "s3", Host: s.bucket, Path: "/" + key}).String()
 }

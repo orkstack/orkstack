@@ -111,7 +111,7 @@ func TestS3Store_PutGetRoundTripIsByteIdentical(t *testing.T) {
 		Metadata:    map[string]string{"milestone": "m1"},
 	})
 
-	wantURI := "s3://" + cfg.S3Bucket + "/" + prefix + "/roundtrip.txt/" + hexSHA(data)
+	wantURI := s3URIForTest(cfg.S3Bucket, prefix+"/roundtrip.txt", hexSHA(data))
 	if ref.URI != wantURI {
 		t.Errorf("URI = %q, want %q", ref.URI, wantURI)
 	}
@@ -170,8 +170,8 @@ func TestS3Store_ListByPrefix(t *testing.T) {
 	if len(refs) != 2 {
 		t.Fatalf("List(dir-a) = %+v, want 2 entries", refs)
 	}
-	if refs[0].URI != a.URI || refs[1].URI != b.URI {
-		t.Errorf("List(dir-a) = [%s %s], want [%s %s]", refs[0].URI, refs[1].URI, a.URI, b.URI)
+	if !containsArtifactURI(refs, a.URI) || !containsArtifactURI(refs, b.URI) {
+		t.Errorf("List(dir-a) = %+v, want refs %s and %s", refs, a.URI, b.URI)
 	}
 	for _, r := range refs {
 		if r.SHA256 == "" || r.SizeBytes == 0 || r.Name == "" {
@@ -273,35 +273,47 @@ func TestS3Store_PresignedGetURLReturnsBytes(t *testing.T) {
 		resp.StatusCode, len(body), hexSHA(body), bytes.Equal(body, data))
 }
 
-func TestS3Store_PreservesSpecialAndDigestLookingNames(t *testing.T) {
+func TestS3Store_PreservesOpaqueNames(t *testing.T) {
 	cases := []struct {
-		name       string
-		wantEscape string
+		label string
+		name  string
 	}{
-		{name: "hash#tag.txt", wantEscape: "hash%23tag.txt"},
-		{name: "query?a=1.txt", wantEscape: "query%3Fa=1.txt"},
-		{name: "pct%41.txt", wantEscape: "pct%2541.txt"},
-		{name: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", wantEscape: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+		{label: "empty", name: ""},
+		{label: "backslash", name: `\`},
+		{label: "repeated separators", name: "a//b"},
+		{label: "dot segment", name: "a/./b"},
+		{label: "parent segment", name: "a/../b"},
+		{label: "dot", name: "."},
+		{label: "trailing slash", name: "a/"},
+		{label: "absolute looking", name: "/abs"},
+		{label: "reserved physical prefix", name: ".tmp/report.txt"},
+		{label: "hash", name: "hash#tag.txt"},
+		{label: "query", name: "query?a=1.txt"},
+		{label: "percent", name: "pct%41.txt"},
+		{label: "digest looking", name: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+		{label: "NUL", name: "nul\x00name"},
+		{label: "invalid UTF-8", name: string([]byte{0xff, 0xfe, 'x'})},
+		{label: "long", name: strings.Repeat("x", 400)},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc.label, func(t *testing.T) {
 			st, cfg := newS3Store(t)
 			ctx := context.Background()
-			name := uniquePrefix(t) + "/" + tc.name
-			data := []byte("special s3 name: " + tc.name)
+			data := []byte(uniquePrefix(t) + ": opaque s3 name: " + tc.name)
+			opts := artifacts.PutOptions{Metadata: map[string]string{"case": tc.label}}
 
-			ref := putS3(t, st, name, data, artifacts.PutOptions{})
-			wantURI := (&url.URL{
-				Scheme: "s3",
-				Host:   cfg.S3Bucket,
-				Path:   "/" + name + "/" + ref.SHA256,
-			}).String()
+			ref := putS3(t, st, tc.name, data, opts)
+			if ref.Name != tc.name {
+				t.Errorf("Put Name = %q, want exact %q", ref.Name, tc.name)
+			}
+			wantURI := s3URIForTest(cfg.S3Bucket, tc.name, ref.SHA256)
 			if ref.URI != wantURI {
 				t.Fatalf("Put URI = %q, want canonical %q", ref.URI, wantURI)
 			}
-			if !strings.Contains(ref.URI, tc.wantEscape) {
-				t.Errorf("Put URI = %q, want escaped name %q", ref.URI, tc.wantEscape)
+			parsed, err := url.Parse(ref.URI)
+			if err != nil || parsed.String() != ref.URI || parsed.RawQuery != "" || parsed.Fragment != "" {
+				t.Fatalf("URI %q is not canonical and reversible: parsed=%+v err=%v", ref.URI, parsed, err)
 			}
 
 			rc, err := st.Get(ctx, ref.URI)
@@ -323,16 +335,16 @@ func TestS3Store_PreservesSpecialAndDigestLookingNames(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Stat: %v", err)
 			}
-			if stat.Name != name || stat.SHA256 != hexSHA(data) {
-				t.Errorf("Stat = %+v, want name %q sha256 %s", stat, name, hexSHA(data))
+			if stat.Name != tc.name || stat.SHA256 != hexSHA(data) || stat.Metadata["case"] != tc.label {
+				t.Errorf("Stat = %+v, want exact name %q, sha %s, metadata case=%q", stat, tc.name, hexSHA(data), tc.label)
 			}
 
-			refs, err := st.List(ctx, name)
+			refs, err := st.List(ctx, tc.name)
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
-			if len(refs) != 1 || refs[0].URI != ref.URI {
-				t.Errorf("List(%q) = %+v, want only %s", name, refs, ref.URI)
+			if !containsArtifactURI(refs, ref.URI) {
+				t.Errorf("List(%q) = %+v, want ref %s", tc.name, refs, ref.URI)
 			}
 
 			signed, err := st.Presign(ctx, ref.URI, time.Minute)
@@ -369,6 +381,34 @@ func TestS3Store_PreservesSpecialAndDigestLookingNames(t *testing.T) {
 	}
 }
 
+func TestS3Store_NamesDoNotCollideWithPriorDigestPaths(t *testing.T) {
+	st, _ := newS3Store(t)
+	ctx := context.Background()
+	seed := uniquePrefix(t)
+	first := putS3(t, st, "foo", []byte(seed+": first"), artifacts.PutOptions{})
+	secondName := "foo/" + first.SHA256 + "/child"
+	second := putS3(t, st, secondName, []byte(seed+": second"), artifacts.PutOptions{})
+
+	refs, err := st.List(ctx, "foo")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, ref := range []artifacts.ArtifactRef{first, second} {
+		if !containsArtifactURI(refs, ref.URI) {
+			t.Errorf("List(foo) missing %+v from %+v", ref, refs)
+		}
+	}
+}
+
+func containsArtifactURI(refs []artifacts.ArtifactRef, uri string) bool {
+	for _, ref := range refs {
+		if ref.URI == uri {
+			return true
+		}
+	}
+	return false
+}
+
 func TestS3Store_RejectsRawQueryAndFragmentInURI(t *testing.T) {
 	st, _ := newS3Store(t)
 	ctx := context.Background()
@@ -383,7 +423,7 @@ func TestS3Store_RejectsRawQueryAndFragmentInURI(t *testing.T) {
 
 func TestS3Store_StatMissingReturnsErrNotFound(t *testing.T) {
 	st, cfg := newS3Store(t)
-	uri := "s3://" + cfg.S3Bucket + "/" + uniquePrefix(t) + "/absent.txt/" + strings.Repeat("a", 64)
+	uri := s3URIForTest(cfg.S3Bucket, uniquePrefix(t)+"/absent.txt", strings.Repeat("a", 64))
 
 	if _, err := st.Stat(context.Background(), uri); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Stat missing err = %v, want ErrNotFound", err)

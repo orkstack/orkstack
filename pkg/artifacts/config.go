@@ -73,7 +73,7 @@ func ConfigFromEnv() Config {
 }
 
 func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback

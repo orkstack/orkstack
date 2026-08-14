@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -52,8 +53,7 @@ func TestNew_SelectsBackend(t *testing.T) {
 }
 
 func TestRegister_AddsCustomBackend(t *testing.T) {
-	const name = "test-registry-backend"
-
+	name := "test-registry-backend-" + t.TempDir()
 	if err := artifacts.Register(name, func(cfg artifacts.Config) (artifacts.Store, error) {
 		return fakeStore{cfg: cfg}, nil
 	}); err != nil {
@@ -114,6 +114,69 @@ func TestConfigFromEnv_DefaultsAndOverrides(t *testing.T) {
 	if got.S3PathStyle {
 		t.Error("S3PathStyle = true, want false from env")
 	}
+}
+
+func TestConfigFromEnv_PreservesValuesVerbatim(t *testing.T) {
+	keys := []string{
+		"ORK_ARTIFACT_BACKEND", "ORK_ARTIFACT_DIR", "ORK_S3_ENDPOINT", "ORK_S3_REGION",
+		"ORK_S3_BUCKET", "ORK_S3_ACCESS_KEY", "ORK_S3_SECRET_KEY", "ORK_S3_SESSION_TOKEN",
+		"ORK_S3_PATH_STYLE",
+	}
+
+	t.Run("unset uses defaults", func(t *testing.T) {
+		for _, key := range keys {
+			t.Setenv(key, "temporary")
+			if err := os.Unsetenv(key); err != nil {
+				t.Fatalf("Unsetenv(%s): %v", key, err)
+			}
+		}
+		got := artifacts.ConfigFromEnv()
+		if got.Backend != artifacts.DefaultBackend || got.LocalDir != artifacts.DefaultLocalDir || got.S3Endpoint != artifacts.DefaultS3Endpoint {
+			t.Errorf("ConfigFromEnv(unset) = %+v, want defaults", got)
+		}
+	})
+
+	t.Run("nonempty strings remain exact", func(t *testing.T) {
+		values := map[string]string{
+			"ORK_ARTIFACT_BACKEND": "  s3  ",
+			"ORK_ARTIFACT_DIR":     " /tmp/dir ",
+			"ORK_S3_ENDPOINT":      " http://localhost:9000/ ",
+			"ORK_S3_REGION":        " us-east-1 ",
+			"ORK_S3_BUCKET":        " bucket ",
+			"ORK_S3_ACCESS_KEY":    " key ",
+			"ORK_S3_SECRET_KEY":    " secret ",
+			"ORK_S3_SESSION_TOKEN": " token ",
+			"ORK_S3_PATH_STYLE":    " false ",
+		}
+		for key, value := range values {
+			t.Setenv(key, value)
+		}
+
+		got := artifacts.ConfigFromEnv()
+		if got.Backend != values["ORK_ARTIFACT_BACKEND"] ||
+			got.LocalDir != values["ORK_ARTIFACT_DIR"] ||
+			got.S3Endpoint != values["ORK_S3_ENDPOINT"] ||
+			got.S3Region != values["ORK_S3_REGION"] ||
+			got.S3Bucket != values["ORK_S3_BUCKET"] ||
+			got.S3AccessKey != values["ORK_S3_ACCESS_KEY"] ||
+			got.S3SecretKey != values["ORK_S3_SECRET_KEY"] ||
+			got.S3SessionToken != values["ORK_S3_SESSION_TOKEN"] {
+			t.Errorf("ConfigFromEnv(spaces) = %+v, want every nonempty string preserved verbatim", got)
+		}
+		if got.S3PathStyle {
+			t.Error("S3PathStyle = true, want trimmed boolean false")
+		}
+	})
+
+	t.Run("whitespace-only string remains exact", func(t *testing.T) {
+		for _, key := range keys {
+			t.Setenv(key, "")
+		}
+		t.Setenv("ORK_ARTIFACT_DIR", "   ")
+		if got := artifacts.ConfigFromEnv().LocalDir; got != "   " {
+			t.Errorf("LocalDir = %q, want three spaces", got)
+		}
+	})
 }
 
 func TestNewFromEnv_BuildsLocalStore(t *testing.T) {

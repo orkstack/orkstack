@@ -21,16 +21,20 @@ import (
 
 // Local store layout, rooted at the configured directory:
 //
-//	<root>/<name>/<sha256>            the artifact bytes
-//	<root>/<name>/<sha256>.meta.json  content type + metadata sidecar
-//	<root>/.tmp/<random>              in-flight uploads (renamed into place)
+//	<root>/objects/<encoded-name>/<sha256>            artifact bytes
+//	<root>/.metadata/<encoded-name>/<sha256>.meta.json attributes
+//	<root>/.tmp/<random>                              in-flight writes
 //
-// The canonical URI is file://<absolute path of the object>.
+// Logical names never become paths directly. A reversible, chunked base64url
+// encoding preserves every name while keeping provider bookkeeping outside the
+// object namespace. The canonical URI addresses the generated object path.
 const (
-	localTempDir    = ".tmp"
-	localMetaSuffix = ".meta.json"
-	localDirPerm    = 0o755
-	localFilePerm   = 0o644
+	localTempDir     = ".tmp"
+	localObjectsDir  = objectNamespace
+	localMetadataDir = ".metadata"
+	localMetaSuffix  = ".meta.json"
+	localDirPerm     = 0o755
+	localFilePerm    = 0o644
 )
 
 // LocalStore is the filesystem-backed Store used for development and
@@ -49,7 +53,7 @@ var _ Store = (*LocalStore)(nil)
 
 // NewLocalStore opens (creating if needed) the artifact root at dir.
 func NewLocalStore(dir string) (*LocalStore, error) {
-	if strings.TrimSpace(dir) == "" {
+	if dir == "" {
 		return nil, fmt.Errorf("artifacts: local store: empty directory")
 	}
 	abs, err := filepath.Abs(dir)
@@ -63,6 +67,12 @@ func NewLocalStore(dir string) (*LocalStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: local store: open %q: %w", abs, err)
 	}
+	for _, subdir := range []string{localTempDir, localObjectsDir, localMetadataDir} {
+		if err := root.MkdirAll(subdir, localDirPerm); err != nil {
+			_ = root.Close()
+			return nil, fmt.Errorf("artifacts: local store: create %q: %w", subdir, err)
+		}
+	}
 	return &LocalStore{dir: filepath.Clean(abs), root: root}, nil
 }
 
@@ -72,31 +82,24 @@ func (s *LocalStore) Dir() string { return s.dir }
 // Close releases the directory handle held by the store.
 func (s *LocalStore) Close() error { return s.root.Close() }
 
-// Put streams r to a temporary file inside the root, hashing as it goes, then
-// atomically renames it onto its content-addressed key.
+// Put streams r to a temporary file inside the root, hashes it, then atomically
+// renames it onto the physical content-addressed key for the opaque name.
 func (s *LocalStore) Put(ctx context.Context, name string, r io.Reader, opts PutOptions) (ArtifactRef, error) {
-	cleaned, err := cleanName(name)
-	if err != nil {
-		return ArtifactRef{}, err
-	}
 	if r == nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: nil reader", cleaned)
+		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: nil reader", name)
 	}
 	if err := ctx.Err(); err != nil {
 		return ArtifactRef{}, err
 	}
 
-	if err := s.root.MkdirAll(localTempDir, localDirPerm); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: create temp dir: %w", cleaned, err)
-	}
 	tmpKey := path.Join(localTempDir, "put-"+randomToken())
 	tmp, err := s.root.OpenFile(tmpKey, os.O_CREATE|os.O_EXCL|os.O_RDWR, localFilePerm)
 	if err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: create temp file: %w", cleaned, err)
+		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: create temp file: %w", name, err)
 	}
 	committed := false
 	defer func() {
-		tmp.Close()
+		_ = tmp.Close()
 		if !committed {
 			_ = s.root.Remove(tmpKey)
 		}
@@ -106,27 +109,27 @@ func (s *LocalStore) Put(ctx context.Context, name string, r io.Reader, opts Put
 	sniff := &sniffWriter{}
 	size, err := io.Copy(io.MultiWriter(tmp, hasher, sniff), &ctxReader{ctx: ctx, r: r})
 	if err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: write: %w", cleaned, err)
+		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: write: %w", name, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: sync: %w", cleaned, err)
+		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: sync: %w", name, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: close: %w", cleaned, err)
+		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: close: %w", name, err)
 	}
 
 	sum := hex.EncodeToString(hasher.Sum(nil))
-	key := objectKey(cleaned, sum)
-	if err := s.root.MkdirAll(cleaned, localDirPerm); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: create dir: %w", cleaned, err)
+	key := objectKey(name, sum)
+	if err := s.root.MkdirAll(path.Dir(key), localDirPerm); err != nil {
+		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: create object dir: %w", name, err)
 	}
 	if err := s.root.Rename(tmpKey, key); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: commit: %w", cleaned, err)
+		return ArtifactRef{}, fmt.Errorf("artifacts: local put %q: commit: %w", name, err)
 	}
 	committed = true
 
 	ref := ArtifactRef{
-		Name:        cleaned,
+		Name:        name,
 		URI:         s.uri(key),
 		ContentType: resolveContentType(opts.ContentType, sniff.head),
 		SizeBytes:   size,
@@ -167,18 +170,14 @@ func (s *LocalStore) Stat(ctx context.Context, uri string) (ArtifactRef, error) 
 	if err := ctx.Err(); err != nil {
 		return ArtifactRef{}, err
 	}
-	ref, err := s.statKey(key, name, sum)
-	if err != nil {
-		return ArtifactRef{}, err
-	}
-	return ref, nil
+	return s.statKey(key, name, sum)
 }
 
-// List returns every artifact whose logical name starts with prefix, ordered
-// by URI.
+// List returns every artifact whose decoded logical name starts with prefix,
+// ordered by URI.
 func (s *LocalStore) List(ctx context.Context, prefix string) ([]ArtifactRef, error) {
 	var refs []ArtifactRef
-	err := fs.WalkDir(s.root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(s.root.FS(), localObjectsDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -186,9 +185,6 @@ func (s *LocalStore) List(ctx context.Context, prefix string) ([]ArtifactRef, er
 			return cerr
 		}
 		if d.IsDir() {
-			if p == localTempDir {
-				return fs.SkipDir
-			}
 			return nil
 		}
 		name, sum, ok := splitKey(p)
@@ -221,7 +217,7 @@ func (s *LocalStore) Presign(ctx context.Context, uri string, ttl time.Duration)
 	return "", fmt.Errorf("artifacts: local presign %q: %w", uri, ErrUnsupported)
 }
 
-// Delete removes the artifact and its sidecar. It is idempotent.
+// Delete removes the artifact and its metadata sidecar. It is idempotent.
 func (s *LocalStore) Delete(ctx context.Context, uri string) error {
 	key, _, _, err := s.parseURI(uri)
 	if err != nil {
@@ -233,14 +229,16 @@ func (s *LocalStore) Delete(ctx context.Context, uri string) error {
 	if err := s.root.Remove(key); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("artifacts: local delete %q: %w", uri, err)
 	}
-	if err := s.root.Remove(key + localMetaSuffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	metaKey := metadataKey(key)
+	if err := s.root.Remove(metaKey); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("artifacts: local delete %q: remove sidecar: %w", uri, err)
 	}
-	s.pruneEmptyDirs(path.Dir(key))
+	s.pruneEmptyDirs(path.Dir(key), localObjectsDir)
+	s.pruneEmptyDirs(path.Dir(metaKey), localMetadataDir)
 	return nil
 }
 
-// statKey builds a reference for an existing object key.
+// statKey builds a reference for an existing physical object key.
 func (s *LocalStore) statKey(key, name, sum string) (ArtifactRef, error) {
 	info, err := s.root.Stat(key)
 	if err != nil {
@@ -279,16 +277,24 @@ type sidecar struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
+func metadataKey(key string) string {
+	return path.Join(localMetadataDir, strings.TrimPrefix(key, localObjectsDir+"/")) + localMetaSuffix
+}
+
 func (s *LocalStore) writeSidecar(key string, ref ArtifactRef) error {
 	data, err := json.Marshal(sidecar{ContentType: ref.ContentType, Metadata: ref.Metadata})
 	if err != nil {
 		return fmt.Errorf("artifacts: local put %q: encode sidecar: %w", ref.Name, err)
 	}
+	metaKey := metadataKey(key)
+	if err := s.root.MkdirAll(path.Dir(metaKey), localDirPerm); err != nil {
+		return fmt.Errorf("artifacts: local put %q: create metadata dir: %w", ref.Name, err)
+	}
 	tmpKey := path.Join(localTempDir, "meta-"+randomToken())
 	if err := s.root.WriteFile(tmpKey, data, localFilePerm); err != nil {
 		return fmt.Errorf("artifacts: local put %q: write sidecar: %w", ref.Name, err)
 	}
-	if err := s.root.Rename(tmpKey, key+localMetaSuffix); err != nil {
+	if err := s.root.Rename(tmpKey, metaKey); err != nil {
 		_ = s.root.Remove(tmpKey)
 		return fmt.Errorf("artifacts: local put %q: commit sidecar: %w", ref.Name, err)
 	}
@@ -296,7 +302,7 @@ func (s *LocalStore) writeSidecar(key string, ref ArtifactRef) error {
 }
 
 func (s *LocalStore) readSidecar(key string) (*sidecar, error) {
-	data, err := s.root.ReadFile(key + localMetaSuffix)
+	data, err := s.root.ReadFile(metadataKey(key))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
@@ -311,7 +317,7 @@ func (s *LocalStore) readSidecar(key string) (*sidecar, error) {
 }
 
 // sniffContentType is the fallback when a sidecar is missing (an artifact
-// copied into the tree by hand, for example).
+// copied into the physical object tree by hand, for example).
 func (s *LocalStore) sniffContentType(key string) string {
 	f, err := s.root.Open(key)
 	if err != nil {
@@ -326,10 +332,9 @@ func (s *LocalStore) sniffContentType(key string) string {
 	return resolveContentType("", head[:n])
 }
 
-// pruneEmptyDirs removes now-empty directories left by a Delete, stopping at
-// the store root.
-func (s *LocalStore) pruneEmptyDirs(dir string) {
-	for dir != "." && dir != "/" && dir != "" {
+// pruneEmptyDirs removes now-empty generated directories, retaining stop.
+func (s *LocalStore) pruneEmptyDirs(dir, stop string) {
+	for dir != stop && dir != "." && dir != "/" && dir != "" {
 		entries, err := fs.ReadDir(s.root.FS(), dir)
 		if err != nil || len(entries) != 0 {
 			return
@@ -341,15 +346,15 @@ func (s *LocalStore) pruneEmptyDirs(dir string) {
 	}
 }
 
-// uri renders the canonical file:// URI for an object key.
+// uri renders the canonical file:// URI for a generated object key.
 func (s *LocalStore) uri(key string) string {
 	abs := filepath.Join(s.dir, filepath.FromSlash(key))
 	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
 	return u.String()
 }
 
-// parseURI validates a file:// URI against this store and returns the object
-// key, logical name, and digest.
+// parseURI validates a file:// URI against this store and returns the physical
+// object key, exact logical name, and digest.
 func (s *LocalStore) parseURI(uri string) (key, name, sum string, err error) {
 	u, perr := url.Parse(uri)
 	if perr != nil {
@@ -376,7 +381,7 @@ func (s *LocalStore) parseURI(uri string) (key, name, sum string, err error) {
 	}
 	name, sum, ok := splitKey(rel)
 	if !ok {
-		return "", "", "", fmt.Errorf("artifacts: local %q: %w: key must end with /<sha256>", uri, ErrInvalidURI)
+		return "", "", "", fmt.Errorf("artifacts: local %q: %w: malformed physical object key", uri, ErrInvalidURI)
 	}
 	return rel, name, sum, nil
 }

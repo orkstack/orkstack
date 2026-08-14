@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -45,6 +47,45 @@ func mustPut(t *testing.T, st artifacts.Store, name string, data []byte, opts ar
 func hexSHA(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+const encodedNameChunkSizeForTest = 200
+
+func encodedNamePathForTest(name string) string {
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(name))
+	if encoded == "" {
+		return path.Join("objects", "n-")
+	}
+
+	parts := []string{"objects"}
+	for first := true; encoded != ""; first = false {
+		n := encodedNameChunkSizeForTest
+		if n > len(encoded) {
+			n = len(encoded)
+		}
+		marker := "c-"
+		if first {
+			marker = "n-"
+		}
+		parts = append(parts, marker+encoded[:n])
+		encoded = encoded[n:]
+	}
+	return path.Join(parts...)
+}
+
+func objectKeyForTest(name, sha string) string {
+	return path.Join(encodedNamePathForTest(name), sha)
+}
+
+func localURIForTest(root, name, sha string) string {
+	return (&url.URL{
+		Scheme: "file",
+		Path:   filepath.ToSlash(filepath.Join(root, filepath.FromSlash(objectKeyForTest(name, sha)))),
+	}).String()
+}
+
+func s3URIForTest(bucket, name, sha string) string {
+	return (&url.URL{Scheme: "s3", Host: bucket, Path: "/" + objectKeyForTest(name, sha)}).String()
 }
 
 func TestLocalStore_PutGetRoundTripIsByteIdentical(t *testing.T) {
@@ -112,7 +153,7 @@ func TestLocalStore_PutGetRoundTripIsByteIdentical(t *testing.T) {
 				t.Errorf("ContentType = %q, want prefix %q", ref.ContentType, tc.wantTypePfx)
 			}
 
-			wantURI := "file://" + filepath.ToSlash(filepath.Join(root, filepath.FromSlash(tc.name), ref.SHA256))
+			wantURI := localURIForTest(root, tc.name, ref.SHA256)
 			if ref.URI != wantURI {
 				t.Errorf("URI = %q, want %q", ref.URI, wantURI)
 			}
@@ -168,7 +209,7 @@ func TestLocalStore_StatReturnsStoredMetadata(t *testing.T) {
 
 func TestLocalStore_StatMissingReturnsErrNotFound(t *testing.T) {
 	st, root := newLocalStore(t)
-	uri := "file://" + filepath.ToSlash(filepath.Join(root, "outputs/none", strings.Repeat("a", 64)))
+	uri := localURIForTest(root, "outputs/none", strings.Repeat("a", 64))
 
 	if _, err := st.Stat(context.Background(), uri); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("Stat missing err = %v, want ErrNotFound", err)
@@ -223,7 +264,7 @@ func TestLocalStore_ListByPrefix(t *testing.T) {
 }
 
 func TestLocalStore_DeleteRemovesObject(t *testing.T) {
-	st, _ := newLocalStore(t)
+	st, root := newLocalStore(t)
 	ctx := context.Background()
 
 	ref := mustPut(t, st, "outputs/gone.txt", []byte("bye"), artifacts.PutOptions{Metadata: map[string]string{"k": "v"}})
@@ -248,24 +289,24 @@ func TestLocalStore_DeleteRemovesObject(t *testing.T) {
 	if err := st.Delete(ctx, ref.URI); err != nil {
 		t.Errorf("second Delete: %v", err)
 	}
-	// No sidecar or object file may survive under the store root.
-	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(strings.TrimPrefix(ref.URI, "file://")), "*"))
-	if len(matches) != 0 {
-		t.Errorf("files remain after Delete: %v", matches)
-	}
-}
-
-func TestLocalStore_RejectsUnsafeNames(t *testing.T) {
-	st, _ := newLocalStore(t)
-	ctx := context.Background()
-
-	names := []string{"", "/abs/path", "../escape", "outputs/../../escape", ".", "outputs/"}
-	for _, name := range names {
-		t.Run("name="+name, func(t *testing.T) {
-			if _, err := st.Put(ctx, name, strings.NewReader("x"), artifacts.PutOptions{}); err == nil {
-				t.Fatalf("Put(%q) succeeded, want error", name)
+	// No object or metadata file may survive under their physical namespaces.
+	var remaining []string
+	for _, subtree := range []string{"objects", ".metadata"} {
+		err := filepath.WalkDir(filepath.Join(root, subtree), func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
+			if !d.IsDir() {
+				remaining = append(remaining, p)
+			}
+			return nil
 		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", subtree, err)
+		}
+	}
+	if len(remaining) != 0 {
+		t.Errorf("files remain after Delete: %v", remaining)
 	}
 }
 
@@ -300,33 +341,46 @@ func TestLocalStore_PresignIsUnsupported(t *testing.T) {
 	}
 }
 
-func TestLocalStore_PreservesSpecialAndDigestLookingNames(t *testing.T) {
+func TestLocalStore_PreservesOpaqueNames(t *testing.T) {
 	cases := []struct {
-		name       string
-		wantEscape string
+		label string
+		name  string
 	}{
-		{name: "hash#tag.txt", wantEscape: "hash%23tag.txt"},
-		{name: "query?a=1.txt", wantEscape: "query%3Fa=1.txt"},
-		{name: "pct%41.txt", wantEscape: "pct%2541.txt"},
-		{name: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", wantEscape: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+		{label: "empty", name: ""},
+		{label: "backslash", name: `\`},
+		{label: "repeated separators", name: "a//b"},
+		{label: "dot segment", name: "a/./b"},
+		{label: "parent segment", name: "a/../b"},
+		{label: "dot", name: "."},
+		{label: "trailing slash", name: "a/"},
+		{label: "absolute looking", name: "/abs"},
+		{label: "reserved physical prefix", name: ".tmp/report.txt"},
+		{label: "hash", name: "hash#tag.txt"},
+		{label: "query", name: "query?a=1.txt"},
+		{label: "percent", name: "pct%41.txt"},
+		{label: "digest looking", name: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+		{label: "NUL", name: "nul\x00name"},
+		{label: "invalid UTF-8", name: string([]byte{0xff, 0xfe, 'x'})},
+		{label: "long", name: strings.Repeat("x", 400)},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc.label, func(t *testing.T) {
 			st, root := newLocalStore(t)
 			ctx := context.Background()
-			data := []byte("special local name: " + tc.name)
+			data := []byte("opaque local name: " + tc.name)
+			opts := artifacts.PutOptions{Metadata: map[string]string{"case": tc.label}}
 
-			ref := mustPut(t, st, tc.name, data, artifacts.PutOptions{})
-			wantURI := (&url.URL{
-				Scheme: "file",
-				Path:   filepath.ToSlash(filepath.Join(root, filepath.FromSlash(tc.name), ref.SHA256)),
-			}).String()
+			ref := mustPut(t, st, tc.name, data, opts)
+			if ref.Name != tc.name {
+				t.Errorf("Put Name = %q, want exact %q", ref.Name, tc.name)
+			}
+			if ref.SHA256 != hexSHA(data) || ref.SizeBytes != int64(len(data)) {
+				t.Errorf("Put sha/size = %s/%d, want %s/%d", ref.SHA256, ref.SizeBytes, hexSHA(data), len(data))
+			}
+			wantURI := localURIForTest(root, tc.name, ref.SHA256)
 			if ref.URI != wantURI {
 				t.Fatalf("Put URI = %q, want canonical %q", ref.URI, wantURI)
-			}
-			if !strings.Contains(ref.URI, tc.wantEscape) {
-				t.Errorf("Put URI = %q, want escaped name %q", ref.URI, tc.wantEscape)
 			}
 
 			rc, err := st.Get(ctx, ref.URI)
@@ -348,16 +402,16 @@ func TestLocalStore_PreservesSpecialAndDigestLookingNames(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Stat: %v", err)
 			}
-			if stat.Name != tc.name || stat.SHA256 != hexSHA(data) {
-				t.Errorf("Stat = %+v, want name %q sha256 %s", stat, tc.name, hexSHA(data))
+			if stat.Name != tc.name || stat.SHA256 != hexSHA(data) || stat.Metadata["case"] != tc.label {
+				t.Errorf("Stat = %+v, want exact name %q, sha %s, metadata case=%q", stat, tc.name, hexSHA(data), tc.label)
 			}
 
 			refs, err := st.List(ctx, tc.name)
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
-			if len(refs) != 1 || refs[0].URI != ref.URI {
-				t.Errorf("List(%q) = %+v, want only %s", tc.name, refs, ref.URI)
+			if len(refs) != 1 || refs[0].URI != ref.URI || refs[0].Name != tc.name {
+				t.Errorf("List(%q) = %+v, want only %+v", tc.name, refs, ref)
 			}
 
 			if _, err := st.Presign(ctx, ref.URI, time.Minute); !errors.Is(err, artifacts.ErrUnsupported) {
@@ -370,6 +424,48 @@ func TestLocalStore_PreservesSpecialAndDigestLookingNames(t *testing.T) {
 				t.Errorf("Get after Delete err = %v, want ErrNotFound", err)
 			}
 		})
+	}
+}
+
+func TestLocalStore_NamesDoNotCollideWithPriorDigestPaths(t *testing.T) {
+	st, _ := newLocalStore(t)
+	ctx := context.Background()
+	first := mustPut(t, st, "foo", []byte("first"), artifacts.PutOptions{})
+	secondName := "foo/" + first.SHA256 + "/child"
+	second := mustPut(t, st, secondName, []byte("second"), artifacts.PutOptions{})
+
+	for _, ref := range []artifacts.ArtifactRef{first, second} {
+		rc, err := st.Get(ctx, ref.URI)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", ref.Name, err)
+		}
+		if err := rc.Close(); err != nil {
+			t.Fatalf("Close(%q): %v", ref.Name, err)
+		}
+	}
+	refs, err := st.List(ctx, "foo")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("List(foo) = %+v, want both collision-sequence refs", refs)
+	}
+}
+
+func TestNewLocalStore_PreservesWhitespaceDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	st, err := artifacts.NewLocalStore("   ")
+	if err != nil {
+		t.Fatalf("NewLocalStore(whitespace): %v", err)
+	}
+	if filepath.Base(st.Dir()) != "   " {
+		t.Errorf("Dir base = %q, want three spaces", filepath.Base(st.Dir()))
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := artifacts.NewLocalStore(""); err == nil {
+		t.Fatal("NewLocalStore(empty) succeeded, want error")
 	}
 }
 
