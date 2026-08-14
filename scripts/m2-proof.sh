@@ -24,8 +24,16 @@ mkdir -p "$PROOF_DIR"
 } | tee -a "$PROOF_DIR/test.log"
 
 echo "== make lint ==" | tee -a "$PROOF_DIR/test.log"
+set +e
 make lint 2>&1 | tee -a "$PROOF_DIR/test.log"
-echo "lint: OK" | tee -a "$PROOF_DIR/test.log"
+LINT_STATUS=${PIPESTATUS[0]}
+set -e
+if ((LINT_STATUS == 0)); then
+  echo "lint: OK" | tee -a "$PROOF_DIR/test.log"
+else
+  echo "lint: BLOCKED by baseline pkg/plugin/plugin_test.go gofmt conflict (exit $LINT_STATUS)" \
+    | tee -a "$PROOF_DIR/test.log"
+fi
 
 echo "== unit + workflow tests: go test ./... ==" | tee -a "$PROOF_DIR/test.log"
 go test ./... -count=1 -v 2>&1 | tee -a "$PROOF_DIR/test.log"
@@ -82,3 +90,7 @@ trap - EXIT
 sleep 1
 echo "--- engine log tail (graceful shutdown) ---" >>"$PROOF_DIR/engine-smoke.log"
 echo "proof written to $PROOF_DIR"
+if ((LINT_STATUS != 0)); then
+  echo "proof completed, but M2 remains blocked because make lint failed" >&2
+  exit "$LINT_STATUS"
+fi
