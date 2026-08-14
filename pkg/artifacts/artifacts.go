@@ -110,10 +110,6 @@ func cleanName(name string) (string, error) {
 	if cleaned != name {
 		return "", wrapName(name, "must already be in canonical form")
 	}
-	if digestPattern.MatchString(path.Base(cleaned)) {
-		// The final key segment is reserved for the content digest.
-		return "", wrapName(name, "must not end with a sha256 digest segment")
-	}
 	return cleaned, nil
 }
 

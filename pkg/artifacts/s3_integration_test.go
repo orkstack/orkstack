@@ -273,6 +273,114 @@ func TestS3Store_PresignedGetURLReturnsBytes(t *testing.T) {
 		resp.StatusCode, len(body), hexSHA(body), bytes.Equal(body, data))
 }
 
+func TestS3Store_PreservesSpecialAndDigestLookingNames(t *testing.T) {
+	cases := []struct {
+		name       string
+		wantEscape string
+	}{
+		{name: "hash#tag.txt", wantEscape: "hash%23tag.txt"},
+		{name: "query?a=1.txt", wantEscape: "query%3Fa=1.txt"},
+		{name: "pct%41.txt", wantEscape: "pct%2541.txt"},
+		{name: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", wantEscape: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, cfg := newS3Store(t)
+			ctx := context.Background()
+			name := uniquePrefix(t) + "/" + tc.name
+			data := []byte("special s3 name: " + tc.name)
+
+			ref := putS3(t, st, name, data, artifacts.PutOptions{})
+			wantURI := (&url.URL{
+				Scheme: "s3",
+				Host:   cfg.S3Bucket,
+				Path:   "/" + name + "/" + ref.SHA256,
+			}).String()
+			if ref.URI != wantURI {
+				t.Fatalf("Put URI = %q, want canonical %q", ref.URI, wantURI)
+			}
+			if !strings.Contains(ref.URI, tc.wantEscape) {
+				t.Errorf("Put URI = %q, want escaped name %q", ref.URI, tc.wantEscape)
+			}
+
+			rc, err := st.Get(ctx, ref.URI)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			got, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if err := rc.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			if !bytes.Equal(got, data) {
+				t.Fatalf("Get returned %q, want %q", got, data)
+			}
+
+			stat, err := st.Stat(ctx, ref.URI)
+			if err != nil {
+				t.Fatalf("Stat: %v", err)
+			}
+			if stat.Name != name || stat.SHA256 != hexSHA(data) {
+				t.Errorf("Stat = %+v, want name %q sha256 %s", stat, name, hexSHA(data))
+			}
+
+			refs, err := st.List(ctx, name)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(refs) != 1 || refs[0].URI != ref.URI {
+				t.Errorf("List(%q) = %+v, want only %s", name, refs, ref.URI)
+			}
+
+			signed, err := st.Presign(ctx, ref.URI, time.Minute)
+			if err != nil {
+				t.Fatalf("Presign: %v", err)
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, signed, nil)
+			if err != nil {
+				t.Fatalf("new presigned request: %v", err)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("fetch presigned URL: %v", err)
+			}
+			body, readErr := io.ReadAll(resp.Body)
+			closeErr := resp.Body.Close()
+			if readErr != nil {
+				t.Fatalf("read presigned body: %v", readErr)
+			}
+			if closeErr != nil {
+				t.Fatalf("close presigned body: %v", closeErr)
+			}
+			if resp.StatusCode != http.StatusOK || !bytes.Equal(body, data) {
+				t.Fatalf("presigned GET status=%d body=%q, want 200 and %q", resp.StatusCode, body, data)
+			}
+
+			if err := st.Delete(ctx, ref.URI); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			if _, err := st.Get(ctx, ref.URI); !errors.Is(err, artifacts.ErrNotFound) {
+				t.Errorf("Get after Delete err = %v, want ErrNotFound", err)
+			}
+		})
+	}
+}
+
+func TestS3Store_RejectsRawQueryAndFragmentInURI(t *testing.T) {
+	st, _ := newS3Store(t)
+	ctx := context.Background()
+	ref := putS3(t, st, uniquePrefix(t)+"/plain.txt", []byte("plain"), artifacts.PutOptions{})
+
+	for _, uri := range []string{ref.URI + "?raw=true", ref.URI + "#raw"} {
+		if _, err := st.Stat(ctx, uri); !errors.Is(err, artifacts.ErrInvalidURI) {
+			t.Errorf("Stat(%q) err = %v, want ErrInvalidURI", uri, err)
+		}
+	}
+}
+
 func TestS3Store_StatMissingReturnsErrNotFound(t *testing.T) {
 	st, cfg := newS3Store(t)
 	uri := "s3://" + cfg.S3Bucket + "/" + uniquePrefix(t) + "/absent.txt/" + strings.Repeat("a", 64)

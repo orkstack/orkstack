@@ -265,8 +265,11 @@ func (s *S3Store) statKey(ctx context.Context, key, name, sum string) (ArtifactR
 	}, nil
 }
 
-// uri renders the canonical s3:// URI for an object key.
-func (s *S3Store) uri(key string) string { return "s3://" + s.bucket + "/" + key }
+// uri renders the canonical s3:// URI for an object key, percent-encoding
+// characters such as '#', '?', and '%' while preserving key separators.
+func (s *S3Store) uri(key string) string {
+	return (&url.URL{Scheme: "s3", Host: s.bucket, Path: "/" + key}).String()
+}
 
 // parseURI validates an s3:// URI against this store's bucket.
 func (s *S3Store) parseURI(uri string) (key, name, sum string, err error) {
@@ -279,6 +282,9 @@ func (s *S3Store) parseURI(uri string) (key, name, sum string, err error) {
 	}
 	if u.Host != s.bucket {
 		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: bucket must be %q", uri, ErrInvalidURI, s.bucket)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: query and fragment are not allowed", uri, ErrInvalidURI)
 	}
 	key = strings.TrimPrefix(u.Path, "/")
 	if key == "" {

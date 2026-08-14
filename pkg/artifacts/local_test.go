@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -296,6 +297,79 @@ func TestLocalStore_PresignIsUnsupported(t *testing.T) {
 	}
 	if url != "" {
 		t.Errorf("Presign url = %q, want empty", url)
+	}
+}
+
+func TestLocalStore_PreservesSpecialAndDigestLookingNames(t *testing.T) {
+	cases := []struct {
+		name       string
+		wantEscape string
+	}{
+		{name: "hash#tag.txt", wantEscape: "hash%23tag.txt"},
+		{name: "query?a=1.txt", wantEscape: "query%3Fa=1.txt"},
+		{name: "pct%41.txt", wantEscape: "pct%2541.txt"},
+		{name: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", wantEscape: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, root := newLocalStore(t)
+			ctx := context.Background()
+			data := []byte("special local name: " + tc.name)
+
+			ref := mustPut(t, st, tc.name, data, artifacts.PutOptions{})
+			wantURI := (&url.URL{
+				Scheme: "file",
+				Path:   filepath.ToSlash(filepath.Join(root, filepath.FromSlash(tc.name), ref.SHA256)),
+			}).String()
+			if ref.URI != wantURI {
+				t.Fatalf("Put URI = %q, want canonical %q", ref.URI, wantURI)
+			}
+			if !strings.Contains(ref.URI, tc.wantEscape) {
+				t.Errorf("Put URI = %q, want escaped name %q", ref.URI, tc.wantEscape)
+			}
+
+			rc, err := st.Get(ctx, ref.URI)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			got, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if err := rc.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			if !bytes.Equal(got, data) {
+				t.Fatalf("Get returned %q, want %q", got, data)
+			}
+
+			stat, err := st.Stat(ctx, ref.URI)
+			if err != nil {
+				t.Fatalf("Stat: %v", err)
+			}
+			if stat.Name != tc.name || stat.SHA256 != hexSHA(data) {
+				t.Errorf("Stat = %+v, want name %q sha256 %s", stat, tc.name, hexSHA(data))
+			}
+
+			refs, err := st.List(ctx, tc.name)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(refs) != 1 || refs[0].URI != ref.URI {
+				t.Errorf("List(%q) = %+v, want only %s", tc.name, refs, ref.URI)
+			}
+
+			if _, err := st.Presign(ctx, ref.URI, time.Minute); !errors.Is(err, artifacts.ErrUnsupported) {
+				t.Errorf("Presign err = %v, want ErrUnsupported", err)
+			}
+			if err := st.Delete(ctx, ref.URI); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			if _, err := st.Get(ctx, ref.URI); !errors.Is(err, artifacts.ErrNotFound) {
+				t.Errorf("Get after Delete err = %v, want ErrNotFound", err)
+			}
+		})
 	}
 }
 
