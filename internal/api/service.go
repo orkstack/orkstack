@@ -223,10 +223,18 @@ func (s *Service) startPreparedRun(
 	}, runID+"#created")
 
 	if err := s.starter.StartRun(ctx, runID, wf, input); err != nil {
+		failedAt := timestamppb.New(s.now().UTC())
 		run.Status = orkstackv1.Status_STATUS_FAILED
 		run.Error = &orkstackv1.Error{Code: "RUN_START_FAILED", Message: err.Error()}
-		run.FinishedAt = timestamppb.New(s.now().UTC())
+		run.FinishedAt = failedAt
 		s.runs.Save(run)
+		s.bus.Publish(&orkstackv1.Event{
+			RunId:     runID,
+			Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+			Status:    orkstackv1.Status_STATUS_FAILED,
+			Message:   err.Error(),
+			Timestamp: failedAt,
+		}, runID+"#failed")
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 

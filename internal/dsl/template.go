@@ -67,10 +67,19 @@ func (c *templateChecker) checkString(path, text string) error {
 	if err != nil {
 		return fmt.Errorf("task %q: %s: template parse error: %w", c.taskID, path, err)
 	}
-	if tmpl.Tree == nil || tmpl.Tree.Root == nil {
-		return nil
+	associated := tmpl.Templates()
+	sort.Slice(associated, func(i, j int) bool {
+		return associated[i].Name() < associated[j].Name()
+	})
+	for _, candidate := range associated {
+		if candidate.Tree == nil || candidate.Tree.Root == nil {
+			continue
+		}
+		if err := c.walk(path, candidate.Tree.Root, false); err != nil {
+			return err
+		}
 	}
-	return c.walk(path, tmpl.Tree.Root, false)
+	return nil
 }
 
 // walk inspects the parse tree. rebound is true inside `with`/`range` bodies,
@@ -118,28 +127,42 @@ func (c *templateChecker) walk(path string, node parse.Node, rebound bool) error
 			return nil
 		}
 		return c.checkField(path, typed.Ident)
+	case *parse.VariableNode:
+		// `$` is the immutable root context even when dot is rebound by with
+		// or range. Ordinary named locals stay permissive until declaration
+		// tracking is part of the DSL contract.
+		if len(typed.Ident) > 1 && typed.Ident[0] == "$" {
+			return c.checkField(path, typed.Ident[1:])
+		}
+		return nil
 	case *parse.ChainNode:
 		return c.walk(path, typed.Node, rebound)
 	case *parse.IfNode:
-		return c.walkBranch(path, &typed.BranchNode, rebound, rebound)
+		return c.walkBranch(path, &typed.BranchNode, rebound, rebound, rebound)
 	case *parse.WithNode:
-		return c.walkBranch(path, &typed.BranchNode, rebound, true)
+		return c.walkBranch(path, &typed.BranchNode, rebound, true, rebound)
 	case *parse.RangeNode:
-		return c.walkBranch(path, &typed.BranchNode, rebound, true)
+		return c.walkBranch(path, &typed.BranchNode, rebound, true, rebound)
 	case *parse.TemplateNode:
 		return c.walk(path, typed.Pipe, rebound)
 	}
 	return nil
 }
 
-func (c *templateChecker) walkBranch(path string, branch *parse.BranchNode, rebound, bodyRebound bool) error {
-	if err := c.walk(path, branch.Pipe, rebound); err != nil {
+func (c *templateChecker) walkBranch(
+	path string,
+	branch *parse.BranchNode,
+	pipeRebound bool,
+	listRebound bool,
+	elseRebound bool,
+) error {
+	if err := c.walk(path, branch.Pipe, pipeRebound); err != nil {
 		return err
 	}
-	if err := c.walk(path, branch.List, bodyRebound); err != nil {
+	if err := c.walk(path, branch.List, listRebound); err != nil {
 		return err
 	}
-	return c.walk(path, branch.ElseList, bodyRebound)
+	return c.walk(path, branch.ElseList, elseRebound)
 }
 
 func (c *templateChecker) checkField(path string, ident []string) error {
@@ -222,9 +245,19 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 	if len(cmd.Args) < 2 {
 		return nil
 	}
-	base, isField := cmd.Args[1].(*parse.FieldNode)
-	if rebound || !isField || len(base.Ident) != 1 ||
-		(base.Ident[0] != "inputs" && base.Ident[0] != "tasks") {
+
+	root := ""
+	switch base := cmd.Args[1].(type) {
+	case *parse.FieldNode:
+		if !rebound && len(base.Ident) == 1 {
+			root = base.Ident[0]
+		}
+	case *parse.VariableNode:
+		if len(base.Ident) == 2 && base.Ident[0] == "$" {
+			root = base.Ident[1]
+		}
+	}
+	if root != "inputs" && root != "tasks" {
 		for _, arg := range cmd.Args[1:] {
 			if err := c.walk(path, arg, rebound); err != nil {
 				return err
@@ -233,12 +266,11 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 		return nil
 	}
 
-	root := base.Ident[0]
 	if len(cmd.Args) < 3 {
 		if root == "inputs" {
-			return fmt.Errorf("task %q: %s: index .inputs must name a declared input", c.taskID, path)
+			return fmt.Errorf("task %q: %s: index inputs must name a declared input", c.taskID, path)
 		}
-		return fmt.Errorf("task %q: %s: index .tasks must name an upstream task", c.taskID, path)
+		return fmt.Errorf("task %q: %s: index tasks must name an upstream task", c.taskID, path)
 	}
 	if key, literal := cmd.Args[2].(*parse.StringNode); literal {
 		if root == "inputs" {

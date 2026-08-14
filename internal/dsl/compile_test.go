@@ -473,3 +473,73 @@ tasks:
 		t.Fatalf("Compile() rejected valid indexed/relative references: %v", err)
 	}
 }
+
+func TestCompile_RejectsRootVariablesNamedTreesAndUnreboundElseReferences(t *testing.T) {
+	tests := []struct {
+		name        string
+		expression  string
+		wantMessage string
+	}{
+		{name: "root variable undeclared input", expression: `{{ $.inputs.missing }}`, wantMessage: "undeclared input"},
+		{name: "root variable unknown task", expression: `{{ $.tasks.ghost.output.x }}`, wantMessage: "unknown task"},
+		{name: "root variable non-upstream task", expression: `{{ $.tasks.producer.output.x }}`, wantMessage: "not in its needs closure"},
+		{name: "named define", expression: `{{ define "bad" }}{{ $.inputs.missing }}{{ end }}{{ template "bad" . }}`, wantMessage: "undeclared input"},
+		{name: "with else", expression: `{{ with .inputs.url }}ok{{ else }}{{ .inputs.missing }}{{ end }}`, wantMessage: "undeclared input"},
+		{name: "range else", expression: `{{ range .inputs.items }}{{ .value }}{{ else }}{{ .inputs.missing }}{{ end }}`, wantMessage: "undeclared input"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			document := fmt.Sprintf(`
+name: complete-template-validation
+inputs:
+  url:
+    type: string
+  items:
+    type: array
+tasks:
+  - id: producer
+    plugin: shell
+    with: {command: "echo producer"}
+  - id: consumer
+    plugin: shell
+    with:
+      command: %q
+`, tc.expression)
+			_, err := dsl.Compile([]byte(document))
+			if err == nil {
+				t.Fatalf("Compile() accepted invalid template %q", tc.expression)
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Fatalf("Compile() error = %q, want it to contain %q", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestCompile_AcceptsValidRootVariableReferences(t *testing.T) {
+	const document = `
+name: root-variable-references
+inputs:
+  url:
+    type: string
+tasks:
+  - id: producer
+    plugin: shell
+    with: {command: "echo producer"}
+  - id: consumer
+    plugin: shell
+    needs: [producer]
+    with:
+      input: '{{ $.inputs.url }}'
+      indexed_input: '{{ index $.inputs "url" }}'
+      indexed_task: '{{ (index $.tasks "producer").output.stdout }}'
+      task: '{{ $.tasks.producer.output.stdout }}'
+      rebound_root: '{{ with .inputs.url }}{{ $.inputs.url }}{{ end }}'
+      local: '{{ $name := .inputs.url }}{{ $name }}'
+      named: '{{ define "ok" }}{{ $.inputs.url }}{{ end }}{{ template "ok" . }}'
+`
+	if _, err := dsl.Compile([]byte(document)); err != nil {
+		t.Fatalf("Compile() rejected valid root variable references: %v", err)
+	}
+}

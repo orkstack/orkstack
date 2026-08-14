@@ -296,6 +296,91 @@ func TestSubmitRunReportsStarterFailure(t *testing.T) {
 	}
 }
 
+func TestSubmitRun_StarterFailureTerminatesConnectAndWebSocketStreams(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.workflowClient().Apply(ctx,
+		connect.NewRequest(&orkstackv1.ApplyWorkflowRequest{Yaml: helloYAML(t)})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	f.starter.mu.Lock()
+	f.starter.err = errors.New("temporal is down")
+	f.starter.mu.Unlock()
+
+	_, err := f.runClient().SubmitRun(ctx,
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{WorkflowName: "hello-ork"}))
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("SubmitRun code = %v, want Internal", connect.CodeOf(err))
+	}
+	run, ok := f.runs.Get("run-001")
+	if !ok || run.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		t.Fatalf("stored run = %v, want STATUS_FAILED", run)
+	}
+
+	streamCtx, cancelStream := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelStream()
+	stream, err := f.runClient().StreamEvents(streamCtx,
+		connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: "run-001"}))
+	if err != nil {
+		t.Fatalf("StreamEvents: %v", err)
+	}
+	defer stream.Close()
+	var streamed []*orkstackv1.Event
+	for stream.Receive() {
+		streamed = append(streamed, stream.Msg())
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("StreamEvents error = %v, want clean completion", err)
+	}
+	assertStartFailureEvents(t, streamed)
+
+	wsCtx, cancelWS := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelWS()
+	wsURL := "ws" + strings.TrimPrefix(f.baseURL, "http") + "/ws/runs/run-001"
+	conn, _, err := websocket.Dial(wsCtx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial: %v", err)
+	}
+	defer conn.CloseNow()
+	var websocketEvents []*orkstackv1.Event
+	for range 2 {
+		_, payload, err := conn.Read(wsCtx)
+		if err != nil {
+			t.Fatalf("websocket read: %v", err)
+		}
+		event := &orkstackv1.Event{}
+		if err := protojson.Unmarshal(payload, event); err != nil {
+			t.Fatalf("decode websocket event: %v", err)
+		}
+		websocketEvents = append(websocketEvents, event)
+	}
+	assertStartFailureEvents(t, websocketEvents)
+	_, _, err = conn.Read(wsCtx)
+	if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+		t.Fatalf("websocket close = %v (status %v), want normal closure",
+			err, websocket.CloseStatus(err))
+	}
+}
+
+func assertStartFailureEvents(t *testing.T, events []*orkstackv1.Event) {
+	t.Helper()
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want RUN_CREATED then RUN_FAILED: %v", len(events), events)
+	}
+	if events[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CREATED {
+		t.Errorf("events[0] = %v, want RUN_CREATED", events[0].GetType())
+	}
+	if events[1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED ||
+		events[1].GetStatus() != orkstackv1.Status_STATUS_FAILED ||
+		events[1].GetMessage() != "temporal is down" {
+		t.Errorf("events[1] = %v, want RUN_FAILED/FAILED with starter error", events[1])
+	}
+	if events[0].GetSequence() != 1 || events[1].GetSequence() != 2 {
+		t.Errorf("event sequences = [%d %d], want [1 2]",
+			events[0].GetSequence(), events[1].GetSequence())
+	}
+}
+
 func TestSubmitRunIsIdempotentPerKey(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
