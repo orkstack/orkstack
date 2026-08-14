@@ -151,6 +151,13 @@ func (a *Activities) ExecuteTask(ctx context.Context, in task.ExecuteTaskInput) 
 	}, nil
 }
 
+// ListPlugins returns descriptors for every plugin in the registry. It backs
+// the engine's PluginService via ActivityListPlugins so discovery reflects
+// what Orkers can actually run, not a static engine-side list.
+func (a *Activities) ListPlugins(_ context.Context) ([]plugin.Descriptor, error) {
+	return a.registry.List(), nil
+}
+
 // upload persists every produced artifact and returns the stored references in
 // the order the plugin produced them.
 func (a *Activities) upload(

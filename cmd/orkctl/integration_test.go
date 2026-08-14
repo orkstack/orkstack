@@ -80,7 +80,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	orkerPath := buildBinary(t, repoRoot, binDir, "orker")
 
 	startOrker(ctx, t, orkerPath, address, taskQueue)
-	engineAddr := startEngine(ctx, t, enginePath, address)
+	engineAddr := startEngine(ctx, t, enginePath, address, taskQueue)
 
 	session := &sessionRecorder{}
 	cli := func(args ...string) (string, string, int) {
@@ -254,13 +254,16 @@ func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, queu
 	)
 }
 
-// startEngine runs the real orkengine binary on a free loopback port.
-func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr string) string {
+// startEngine runs the real orkengine binary on a free loopback port. The
+// orkerQueue is passed through so plugin discovery targets the same private
+// queue the test's Orker polls.
+func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, orkerQueue string) string {
 	t.Helper()
 	addr := freeAddress(t)
 	startProcess(ctx, t, "orkengine", enginePath,
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
+		"ORK_ORKER_QUEUE="+orkerQueue,
 	)
 	return addr
 }

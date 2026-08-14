@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
-
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/plugin"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // RunStarter is the seam between the API and Temporal. Tests substitute a fake
@@ -22,14 +22,23 @@ type RunStarter interface {
 	CancelRun(ctx context.Context, runID, reason string) error
 }
 
-// Config wires a Service to its stores and Temporal seam.
+// PluginLister is the seam between the API and a live Orker: ListPlugins
+// returns descriptors for every plugin a connected Orker can run. Tests
+// substitute a fake; production uses engine.TemporalStarter.
+type PluginLister interface {
+	ListPlugins(ctx context.Context) ([]plugin.Descriptor, error)
+}
+
+// Config wires a Service to its stores and Temporal seams.
 type Config struct {
 	Workflows *engine.WorkflowStore
 	Runs      *engine.RunStore
 	Bus       *engine.EventBus
 	Starter   RunStarter
+	Lister    PluginLister
 
-	// Plugins is the discovery set returned by PluginService.ListPlugins.
+	// Plugins is the fallback discovery set for PluginService.ListPlugins
+	// when no live Orker lister is configured.
 	Plugins []*orkstackv1.PluginInfo
 
 	// Now and NewRunID are injectable for deterministic tests.
@@ -43,6 +52,7 @@ type Service struct {
 	runs      *engine.RunStore
 	bus       *engine.EventBus
 	starter   RunStarter
+	lister    PluginLister
 	plugins   []*orkstackv1.PluginInfo
 	now       func() time.Time
 	newRunID  func() string
@@ -60,6 +70,7 @@ func NewService(cfg Config) *Service {
 		runs:           cfg.Runs,
 		bus:            cfg.Bus,
 		starter:        cfg.Starter,
+		lister:         cfg.Lister,
 		plugins:        cfg.Plugins,
 		now:            cfg.Now,
 		newRunID:       cfg.NewRunID,
@@ -344,13 +355,29 @@ func IsTerminalEvent(event *orkstackv1.Event) bool {
 	}
 }
 
-// ListPlugins returns the plugins the engine knows about. M2 has no live Orker
-// registry, so this is the configured (possibly empty) set.
+// ListPlugins returns the plugins a live Orker can run, discovered through the
+// PluginLister seam (an ExecuteTask-queue activity). When no lister is wired
+// (tests, or no Orker), it falls back to the configured static set.
 func (s *Service) ListPlugins(
-	_ context.Context,
+	ctx context.Context,
 	_ *connect.Request[orkstackv1.ListPluginsRequest],
 ) (*connect.Response[orkstackv1.ListPluginsResponse], error) {
 	plugins := append([]*orkstackv1.PluginInfo(nil), s.plugins...)
+	if s.lister != nil {
+		descriptors, err := s.lister.ListPlugins(ctx)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("discover plugins: %w", err))
+		}
+		plugins = plugins[:0]
+		for _, d := range descriptors {
+			plugins = append(plugins, &orkstackv1.PluginInfo{
+				Name:        d.Name,
+				Version:     d.Version,
+				Description: d.Description,
+			})
+		}
+	}
 	sort.Slice(plugins, func(i, j int) bool { return plugins[i].GetName() < plugins[j].GetName() })
 	return connect.NewResponse(&orkstackv1.ListPluginsResponse{Plugins: plugins}), nil
 }

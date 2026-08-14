@@ -80,10 +80,15 @@ func run(logger *slog.Logger, cfg config) error {
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
 
 	registry := orker.BuiltinRegistry()
+	activities := orker.NewActivities(registry, store)
 	taskWorker := worker.New(temporalClient, cfg.queue, workerOptions())
 	taskWorker.RegisterActivityWithOptions(
-		orker.NewActivities(registry, store).ExecuteTask,
+		activities.ExecuteTask,
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
+	)
+	taskWorker.RegisterActivityWithOptions(
+		activities.ListPlugins,
+		activity.RegisterOptions{Name: task.ActivityListPlugins},
 	)
 
 	if err := taskWorker.Start(); err != nil {

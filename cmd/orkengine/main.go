@@ -32,6 +32,7 @@ type config struct {
 	temporalNamespace string
 	httpAddr          string
 	allowedOrigins    []string
+	orkerQueue        string
 }
 
 func loadConfig() config {
@@ -39,6 +40,7 @@ func loadConfig() config {
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", client.DefaultNamespace),
 		httpAddr:          env("ORK_HTTP_ADDR", api.DefaultHTTPAddr),
+		orkerQueue:        env("ORK_ORKER_QUEUE", task.DefaultQueue),
 	}
 	if origins := env("ORK_WS_ALLOWED_ORIGINS", ""); origins != "" {
 		cfg.allowedOrigins = strings.Split(origins, ",")
@@ -129,12 +131,13 @@ func run(logger *slog.Logger, cfg config) error {
 	defer eventWorker.Stop()
 	logger.Info("temporal workers started",
 		"task_queue", task.DefaultQueue, "event_queue", engine.EventQueue)
-
+	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, cfg.orkerQueue)
 	svc := api.NewService(api.Config{
 		Workflows: engine.NewWorkflowStore(),
 		Runs:      runs,
 		Bus:       bus,
-		Starter:   engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
+		Starter:   starter,
+		Lister:    starter,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,

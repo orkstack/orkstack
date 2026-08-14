@@ -21,6 +21,10 @@ const (
 
 	// ActivityExecuteTask is the registered activity name for task execution.
 	ActivityExecuteTask = "ExecuteTask"
+
+	// ActivityListPlugins is the registered activity name for plugin
+	// discovery: the engine asks an Orker which plugins it can run.
+	ActivityListPlugins = "ListPlugins"
 )
 
 // UpstreamResult is a completed upstream task's contribution to a downstream
