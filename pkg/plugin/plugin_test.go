@@ -8,8 +8,8 @@ import (
 
 type fakePlugin struct{ name string }
 
-func (f fakePlugin) Name() string          { return f.name }
-func (f fakePlugin) Describe() Descriptor   { return Descriptor{Name: f.name, Version: "0"} }
+func (f fakePlugin) Name() string         { return f.name }
+func (f fakePlugin) Describe() Descriptor { return Descriptor{Name: f.name, Version: "0"} }
 func (f fakePlugin) Execute(context.Context, *ExecContext) (*Result, error) {
 	return &Result{Output: Payload{"ok": true}}, nil
 }

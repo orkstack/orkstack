@@ -2,9 +2,9 @@
 /bin/
 /dist/
 *.exe
-orkengine
-orker
-orkctl
+/orkengine
+/orker
+/orkctl
 
 # Go
 *.test
@@ -32,3 +32,5 @@ ui/dist/
 
 # Proof artifacts are committed intentionally; local scratch is not
 /proof/scratch/
+!/proof/**/*.log
+!/proof/**/*.out
