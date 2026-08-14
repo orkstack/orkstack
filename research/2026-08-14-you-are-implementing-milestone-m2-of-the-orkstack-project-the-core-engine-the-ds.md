@@ -1,313 +1,235 @@
-# M2 follow-up research — `aa63feb`
+# M2 follow-up research — HEAD `4a61814`
 
-## Conclusion
+## Conclusions
 
-Seven review findings still apply. The existing DSL, deterministic workflow, Connect API, WebSocket bridge, mocked tests, and proof structure are otherwise sound.
+Three findings still apply:
 
-The minimal fixes are:
+1. **DSL template validation is incomplete.** It misses named `define` trees, `$`-rooted `parse.VariableNode` paths, and `with`/`range` `else` branches.
+2. **Failed Temporal starts emit no terminal event.** `StartRun` failure marks the run failed but leaves Connect and WebSocket streams open.
+3. **`make lint` conflicts with the immutable scope.** It fails on pre-existing `pkg/plugin/plugin_test.go`; fixing it requires an owner-approved scope amendment or a foundation-branch fix.
 
-1. Set `LocalActivityWorkerOnly: true` on the shared-queue engine worker.
-2. Keep the EventBus mutex held through subscriber enqueue.
-3. Reserve idempotency keys before starting Temporal.
-4. Make subscriptions report when the requested cursor already passed a terminal event.
-5. Merge declared input defaults in both API submission and workflow state.
-6. Extend template validation to unknown roots, `index`, and `ChainNode` references.
-7. Resolve the `pkg/plugin/plugin_test.go` scope conflict before claiming DONE.
+No new dependency, proto, generated-code, task-contract, Orker, or plugin change is needed.
 
-No proto, generated code, `internal/task/contract.go`, Orker, plugin, or artifact changes are needed.
+## Current evidence
 
-## Contract amendments received
+Verified at the current checkout:
 
-None. The inherited objective and acceptance criteria remain unchanged.
-
-## Findings that still apply
-
-### 1. Shared worker can steal Orker activities — P1
-
-`cmd/orkengine/main.go:84-89` creates a default worker on `task.DefaultQueue`. Temporal task queues do not route by registered type. The worker therefore polls both workflow and regular activity tasks, despite registering no `ExecuteTask` activity.
-
-The review recorded a real failure where the engine consumed `ExecuteTask` and returned `ActivityNotRegisteredError`.
-
-**Fix:**
-
-```go
-worker.Options{
-    DisableRegistrationAliasing: true,
-    LocalActivityWorkerOnly:     true,
-}
-```
-
-Temporal v1.47 documents `LocalActivityWorkerOnly` as allowing workflow and local-activity handling while disabling regular activity execution. The dedicated event worker should also use `DisableWorkflowWorker: true`.
-
-Add a production-shaped integration setup:
-
-- workflow-only engine worker on `task.DefaultQueue`;
-- activity-only stub/Orker worker on `task.DefaultQueue`;
-- activity-only projection worker on `engine.EventQueue`.
-
-### 2. EventBus delivery can reorder sequences — P2
-
-`internal/engine/bus.go:62-70` assigns and stores a sequence under `b.mu`, unlocks, then enqueues to subscribers. Concurrent publishers can enqueue sequence 2 before sequence 1.
-
-The review reproduced inversions among thousands of events.
-
-**Fix:**
-
-Keep `b.mu` held while calling each subscriber’s non-blocking `enqueue`. `enqueue` only appends to an internal queue; it does not block on the client-facing channel. This serializes sequence assignment and per-subscriber enqueue order.
-
-Add a concurrent regression test with one subscriber and many publishers asserting delivery is exactly `1..N`.
-
-### 3. Idempotency keys are not reserved atomically — P2
-
-`internal/api/service.go:162-171` checks the map, unlocks, starts the run, and records the key only afterward. Concurrent requests all pass the check.
-
-The review observed 32 starts and 32 run IDs for one key.
-
-**Fix:**
-
-Add a dedicated idempotency mutex. For a keyed request:
-
-1. lock;
-2. return the existing stored run if present;
-3. allocate the run ID;
-4. save the pending run;
-5. reserve `idempotencyMap[key]`;
-6. unlock;
-7. publish `RUN_CREATED`;
-8. call `StartRun`.
-
-Do not remove the reservation if Temporal start fails; the key must still deduplicate to the recorded failed run unless the contract later defines retry semantics.
-
-Add a barrier test with many simultaneous submissions and assert one starter call, one run ID, and one stored run.
-
-### 4. Resumed streams hang after the terminal cursor — P2
-
-`internal/api/service.go:275-291` and `internal/api/ws.go:47-71` only stop after receiving a terminal event. If `from_sequence` already includes the terminal event, the backlog is empty and no future event arrives.
-
-The review reproduced Connect and WebSocket timeouts against a completed run.
-
-**Fix:**
-
-Have `EventBus.Subscribe` return a third value such as `terminalAlreadyReached`, computed under the same bus lock as backlog capture and subscription registration.
-
-- If the terminal event’s sequence is greater than `from_sequence`, stream backlog/live events normally.
-- If its sequence is less than or equal to `from_sequence`, return cleanly from Connect.
-- For WebSocket, send a normal WebSocket close frame and return.
-
-Add both terminal-cursor tests:
-
-- Connect receives zero messages and ends with no stream error.
-- WebSocket read ends with `StatusNormalClosure`.
-
-### 5. Declared input defaults are not passed to tasks — P2
-
-`internal/api/service.go:173-191` and `internal/engine/workflow.go:295-304` pass only the submitted payload. `examples/hello.ork.yaml` declares a default for `inputs.url`, but an omitted input produces an empty `RunInput`.
-
-The fixed activity seam has no workflow schema, so the Orker cannot recover this default.
-
-**Fix:**
-
-Add an internal helper, preferably in `internal/engine`, that:
-
-- clones the caller payload;
-- reads `Workflow.Inputs`;
-- adds each declaration’s `default` only when the caller did not provide that field;
-- preserves caller values, including explicit `null`;
-- leaves undeclared fields unchanged.
-
-Use it:
-
-- in `SubmitRun` before saving the run and calling `StartRun`;
-- in `newRunState` before building `RunInput`, covering direct workflow starts and preventing double-merge problems.
-
-Keep `Task.With` raw and continue passing upstream output/artifact references unchanged.
-
-Add tests for:
-
-- omitted `url` receives the default;
-- caller-provided `url` wins;
-- the integration stub observes the default in `ExecuteTaskInput.RunInput`.
-
-### 6. Template validation misses indirect references — P2
-
-`internal/dsl/template.go:112-158` checks direct `FieldNode`s but does not validate:
-
-- unknown roots such as `.notAContextValue`;
-- bare `.inputs` and `.tasks`;
-- `index .inputs "missing"`;
-- `index .tasks "non-upstream"`;
-- `(index .tasks "a").output`.
-
-Go’s parser represents these as:
-
-- `FieldNode`;
-- `CommandNode` with an `IdentifierNode` named `index`;
-- `ChainNode` containing a nested `PipeNode`.
-
-**Fix:**
-
-Extend the AST walker:
-
-- reject roots other than `inputs`, `tasks`, or permitted relative `.` values;
-- require a named input after `.inputs`;
-- validate direct `.tasks.<id>` references against the transitive `needs` closure;
-- recurse through `ChainNode.Node`;
-- special-case `index` and validate literal string keys against declared inputs or upstream task IDs;
-- retain the existing `artifact` and `env` helper stubs before `template.Parse`;
-- preserve relative-field behavior inside `with` and `range`.
-
-Add compile tests for the invalid cases above and valid indexed references. For dynamic index keys, validate the base root but do not invent a new rejection rule when no concrete key exists.
-
-### 7. `pkg/plugin/plugin_test.go` violates the immutable scope — P3
-
-`git diff main...HEAD` shows a two-line gofmt-only edit in `pkg/plugin/plugin_test.go`.
-
-The scope contract says `pkg/*` must remain unchanged. However, the baseline file is not gofmt-compliant, and `Makefile:78` checks it. The current branch passes lint only because the file was reformatted.
-
-This is a real contract conflict:
-
-- reverting the file honors scope but makes `make lint` fail;
-- keeping it makes lint pass but violates the scope lock;
-- changing `Makefile` to exclude it is also outside the stated M2 scope.
-
-This cannot be silently resolved by implementation. Obtain an explicit user/owner amendment, or fix the baseline in a separate foundation change. Do not claim all criteria pass while hiding this conflict.
-
-## Proven design to preserve
-
-### DSL
-
-The current implementation already matches the fixed DSL contract:
-
-- `yaml.v3 v3.0.1`;
-- exact `source_yaml` preservation;
-- semantic SHA-256 content hash for unpinned versions;
-- JSON encoding gives stable map-key ordering;
-- pinned versions remain verbatim;
-- `inputs` and `with` become `structpb.Struct`;
-- retry, timeout, queue, DAG, plugin, slug, and template checks are present.
-
-Do not enable strict unknown-field rejection: the six documented rules do not require it, and current behavior accepts unspecified YAML fields.
-
-### Temporal workflow
-
-`internal/engine/workflow.go` is already replay-safe:
-
-- `workflow.Now`;
-- activities for event/read-model side effects;
-- raw `With`;
-- upstream output/artifact references;
-- `StartToCloseTimeout`;
-- mapped Temporal retry policy;
-- queue override/default;
-- all ready activities scheduled before fixed-order future collection.
-
-The current fixed-order future collection is deterministic and already proves fan-out. No selector redesign is required.
-
-### Event projection
-
-The existing `PublishEvent` activity on `engine.EventQueue` is the correct boundary:
-
-- workflow code stays free of direct I/O;
-- the activity updates `RunStore` and publishes to `EventBus`;
-- dedupe keys protect activity retries;
-- the API and WebSocket share the same bus.
-
-Do not replace this with workflow-side channels, queries, or direct store access.
-
-### Connect, h2c, WebSocket
-
-The current choices are correct:
-
-- generated `NewServerStreamHandler`;
-- `connect.ServerStream[Event]`;
-- Go 1.25 `http.Server.Protocols`;
-- `SetHTTP1(true)` and `SetUnencryptedHTTP2(true)`;
-- `coder/websocket`;
-- `protojson` for WebSocket text frames;
-- empty `ListPlugins` response is valid for M2.
-
-`golang.org/x/net/http2/h2c` is not needed directly. The current `x/net v0.55.0` entry is indirect through Temporal; the h2c package is deprecated in newer x/net releases.
-
-## Dependency state
-
-Observed with `go list -m`:
+- `go test ./... -count=1` passes.
+- `go test -tags=integration ./... -count=1` passes against Temporal.
+- The unreachable-Temporal integration test skips cleanly.
+- `go build -o /tmp/orkengine-m2-current ./cmd/orkengine` passes.
+- `make lint` fails:
 
 ```text
-connectrpc.com/connect       v1.20.0
-github.com/coder/websocket   v1.8.15
-go.temporal.io/sdk           v1.47.0
-google.golang.org/protobuf   v1.36.12
-gopkg.in/yaml.v3             v3.0.1
-github.com/stretchr/testify  v1.11.1
+go vet ./...
+gofmt needed:
+./pkg/plugin/plugin_test.go
+make: *** [lint] Error 1
 ```
 
-The integration test directly imports `go.temporal.io/api`; `go mod tidy -diff` currently recommends moving `go.temporal.io/api v1.63.4` from indirect to direct. Run `go mod tidy` after implementation and review that shared `go.mod` change.
+- `git diff --exit-code main -- proto gen internal/task pkg internal/orker cmd/orker` passes; those paths remain unchanged.
+- The current DSL probe accepted all of these invalid cases:
+  - `{{ $.inputs.missing }}`
+  - `{{ $.tasks.ghost.output.x }}`
+  - an invalid reference inside `{{define "bad"}}...{{end}}`
+  - invalid references in `with` and `range` `else` branches
 
-## Validation and proof
+Evidence: `internal/dsl/template.go:62-143`, `internal/api/service.go:210-234`, `Makefile:75-78`, `pkg/plugin/plugin_test.go:9-14`, and the current command results above.
 
-Add focused tests for:
+## Finding 1: validate every template tree and path
+
+### Cause
+
+`checkString` parses the template but walks only `tmpl.Tree.Root`:
 
 ```text
-internal/dsl:
-  unknown root, bare roots, index input/task, chained index
-
-internal/engine:
-  concurrent EventBus ordering
-  input-default propagation into ExecuteTaskInput.RunInput
-
-internal/api:
-  concurrent idempotency
-  Connect terminal-cursor completion
-  WebSocket terminal-cursor completion
-
-cmd/orkengine:
-  workflow worker uses LocalActivityWorkerOnly
+internal/dsl/template.go:62-73
 ```
 
-Use the real Temporal test with split workers and no stale pre-fix `orkengine` process:
+Named definitions are associated templates with their own parse trees. The Go source documents that `Template.Templates()` returns all associated templates, and its implementation iterates a map, so validation should sort by `Template.Name()` before walking.
 
-```bash
-make lint
-go test ./... -count=1 -v
-go test -race ./internal/dsl ./internal/engine ./internal/api
-go test -tags=integration ./... -count=1 -v
-go build -o /tmp/orkengine ./cmd/orkengine
+The Go 1.25.6 parse tree confirms:
+
+- `parse.VariableNode.Ident` contains the variable path, with `$` as the first element for `$.inputs.x`.
+- `parse.BranchNode` has separate `Pipe`, `List`, and `ElseList` fields.
+
+Sources:
+
+- `/usr/local/Cellar/go/1.25.6/libexec/src/text/template/template.go:142-154`
+- `/usr/local/Cellar/go/1.25.6/libexec/src/text/template/parse/node.go:390-424`
+- `/usr/local/Cellar/go/1.25.6/libexec/src/text/template/parse/node.go:843-852`
+- Official docs: <https://pkg.go.dev/text/template/parse>
+
+The official `text/template` docs state that `with` and `range` leave dot unchanged in their `else` branch. Current code incorrectly marks both branches as rebound:
+
+```text
+internal/dsl/template.go:135-143
 ```
 
-For proof regeneration:
+Sources:
+
+- `/usr/local/Cellar/go/1.25.6/libexec/src/text/template/doc.go:105-119`
+- `/usr/local/Cellar/go/1.25.6/libexec/src/text/template/doc.go:144-152`
+- Official docs: <https://pkg.go.dev/text/template>
+
+### Minimal fix
+
+Limit changes to `internal/dsl/template.go` and its tests:
+
+1. Iterate every `tmpl.Templates()` result, including named definitions.
+2. Sort templates by name for stable diagnostics.
+3. Add a `parse.VariableNode` case:
+   - For `Ident[0] == "$"`, validate `Ident[1:]` through the existing input/task checks.
+   - `$` remains the root even inside a rebound `with`/`range` body.
+   - Do not reject ordinary `$name` locals unless declaration tracking is added; that would introduce a new restriction.
+4. Split branch context:
+   - `if`: list and else retain the incoming rebound state.
+   - `with`/`range`: list is rebound; else retains the incoming state.
+5. Extend `checkIndex` to recognize `$`-rooted variables. Otherwise valid expressions such as `index $.inputs "url"` will be mistaken for a bare `.inputs` reference.
+
+Add focused regressions in `internal/dsl/compile_test.go` for:
+
+- `$` undeclared input.
+- `$` unknown task.
+- `$` non-upstream task.
+- Invalid reference inside a named `define`.
+- Invalid reference in `with` `else`.
+- Invalid reference in `range` `else`.
+- Valid `$` input/task references.
+- Valid `index $.inputs "name"` control case.
+
+These changes preserve the existing YAML parser, helper stubs, raw `with`, and content-hash behavior. The current dependency set is sufficient: `gopkg.in/yaml.v3 v3.0.1`; no new module is needed.
+
+## Finding 2: failed Temporal start must terminate streams
+
+### Cause
+
+`startPreparedRun` currently:
+
+1. Publishes `RUN_CREATED`.
+2. Calls `Starter.StartRun`.
+3. Saves `STATUS_FAILED` on error.
+4. Returns without publishing `RUN_FAILED`.
+
+Location:
+
+```text
+internal/api/service.go:210-234
+```
+
+The existing stream implementations already terminate correctly when they receive a terminal event:
+
+- Connect returns after `IsTerminalEvent`.
+- WebSocket writes the terminal event, then closes normally.
+- `EventBus.Subscribe` supports backlog and terminal-cursor handling.
+
+Sources:
+
+- `internal/api/service.go:288-335`
+- `internal/api/ws.go:47-75`
+- `internal/engine/bus.go:94-129`
+
+### Minimal fix
+
+After saving the failed run, synchronously publish:
+
+- `RunId: runID`
+- `Type: EVENT_TYPE_RUN_FAILED`
+- `Status: STATUS_FAILED`
+- `Message: err.Error()`
+- timestamp from `s.now().UTC()`
+- dedupe key such as `runID + "#failed"`
+
+The distinct dedupe key matters because `runID + "#created"` already identifies the creation event.
+
+No bus, Connect, WebSocket, proto, or Temporal workflow change is required. The event becomes sequence 2 after `RUN_CREATED`; later Connect and WebSocket subscribers receive both events and close cleanly.
+
+Add API regressions that:
+
+- Force `StartRun` to fail.
+- Assert the stored run is `STATUS_FAILED`.
+- Read `StreamEvents` from sequence 0 and assert `RUN_CREATED`, then `RUN_FAILED`, followed by clean stream completion.
+- Read `/ws/runs/{id}` and assert the same JSON events, then a normal WebSocket close.
+
+## Finding 3: lint and immutable scope conflict
+
+`Makefile:78` runs `gofmt -l` over every Go file except `gen`, including `pkg/plugin/plugin_test.go`.
+
+The only required formatting change is:
+
+```diff
+-func (f fakePlugin) Name() string          { return f.name }
+-func (f fakePlugin) Describe() Descriptor   { return Descriptor{Name: f.name, Version: "0"} }
++func (f fakePlugin) Name() string         { return f.name }
++func (f fakePlugin) Describe() Descriptor { return Descriptor{Name: f.name, Version: "0"} }
+```
+
+But M2 explicitly requires `pkg/*` to remain unchanged. Excluding the file in `Makefile` would weaken the lint gate and violate scope.
+
+This is an immutable contract conflict. It requires one of:
+
+1. An explicit user amendment allowing the format-only `pkg/plugin/plugin_test.go` change.
+2. A separate foundation-branch commit formatting that file, followed by rebasing or merging M2.
+3. No M2 completion claim until one of the above occurs.
+
+The current request authorizes formal identification of this conflict but does not authorize a `pkg/*` change. Therefore it remains a blocker.
+
+## Existing implementation and dependencies
+
+The rest of M2 is in place and aligned with the fixed seams:
+
+- DSL compiler: `internal/dsl`, YAML v3, `structpb`, SHA-256 semantic canonical JSON hash.
+- Temporal orchestration: `internal/engine/workflow.go`, deterministic iteration and `workflow.Now`.
+- Event projection: dedicated `PublishEvent` activity and `EventQueue`.
+- API: Connect handlers, standard-library HTTP/2 cleartext via `http.Protocols`, coder WebSocket, `protojson`.
+- Binary: `cmd/orkengine`.
+- Dependencies already present in `go.mod` include:
+  - `connectrpc.com/connect v1.20.0`
+  - `github.com/coder/websocket v1.8.15`
+  - `go.temporal.io/sdk v1.47.0`
+  - `gopkg.in/yaml.v3 v3.0.1`
+  - `google.golang.org/protobuf v1.36.12`
+  - `golang.org/x/net v0.55.0` indirect
+
+The remaining fixes need only the standard library and existing packages.
+
+## Validation and proof refresh
+
+After implementing the two code fixes:
 
 ```bash
-make infra-up
+gofmt -w internal/dsl internal/api
+go test ./... -count=1
+go test -tags=integration ./... -count=1
+go test -race ./cmd/orkengine ./internal/dsl ./internal/engine ./internal/api -count=1
+go build -o /tmp/orkengine-m2 ./cmd/orkengine
+```
+
+Verify the skip path:
+
+```bash
+ORK_TEMPORAL_ADDRESS=127.0.0.1:7999 \
+  go test -tags=integration ./internal/engine \
+  -run '^TestIntegration_HelloOrkRunSucceedsOnRealTemporal$' -count=1 -v
+```
+
+Then regenerate:
+
+```bash
 ./scripts/m2-proof.sh
 ```
 
-The integration test must retain its clean skip path when `localhost:7233` is unreachable. Refresh:
+With the lint conflict unresolved, the script should continue recording evidence but exit nonzero and state the blocker. After a foundation fix or approved scope amendment, it should exit 0.
 
-- `proof/M2/test.log`;
-- `proof/M2/event-stream.json`;
-- `proof/M2/README.md`.
+Refresh:
 
-The current proof contains a valid earlier 12-event successful run, but its log does not prove the current checkout because the review reproduced the worker collision afterward.
+- `proof/M2/test.log`
+- `proof/M2/README.md`
+- `proof/M2/event-stream.json` if a new real run is captured
+- coverage and smoke logs as needed
 
-## Evidence audited
+Commit only the allowed changes with a Conventional Commit. Do not open a pull request.
 
-- Current HEAD: `aa63feb`.
-- Current default `go test ./... -count=1`: passed.
-- Review artifact: integration failure from `ActivityNotRegisteredError`, concurrent event inversions, concurrent idempotency failure, terminal stream hangs, missing defaults, and template gaps.
-- Current source confirms all seven defect locations.
-- Current `go.mod` and module versions were checked with `go list -m`.
-- Baseline `pkg/plugin/plugin_test.go` was checked with `gofmt -d`; reverting it causes the existing lint rule to fail.
-- Current h2c test proves negotiated HTTP/2 over plaintext.
-- Current proof event JSON contains ordered sequences 1–12 and a successful three-task run.
+## Contract amendments received
 
-## Official upstream references
-
-- Temporal Go SDK worker options: <https://pkg.go.dev/go.temporal.io/sdk/worker#Options>
-- Temporal activity execution: <https://docs.temporal.io/develop/go/activities/execution>
-- Temporal activity timeouts/retries: <https://docs.temporal.io/develop/go/activities/timeouts>
-- Connect Go server streaming: <https://pkg.go.dev/connectrpc.com/connect#NewServerStreamHandler>
-- Connect deployment and h2c: <https://connectrpc.com/docs/go/deployment/>
-- Go `text/template`: <https://pkg.go.dev/text/template>
-- Protobuf JSON: <https://pkg.go.dev/google.golang.org/protobuf/encoding/protojson>
-- coder WebSocket API: <https://pkg.go.dev/github.com/coder/websocket>
-- Deprecated x/net h2c package: <https://pkg.go.dev/golang.org/x/net/http2/h2c>
+None. The latest instruction says the inherited objective and acceptance criteria remain unchanged and confirms that this stage is research-only.
