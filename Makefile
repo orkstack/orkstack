@@ -15,6 +15,12 @@ proto: ## Regenerate Go/TS from proto
 	buf lint
 	buf generate
 
+.PHONY: tsgen
+tsgen: ## Install UI codegen deps and regenerate Go+TS clients from proto
+	cd ui && bun install
+	ui/node_modules/.bin/buf lint
+	ui/node_modules/.bin/buf generate
+
 .PHONY: tools
 tools: ## Install codegen + lint tooling
 	go install github.com/bufbuild/buf/cmd/buf@latest

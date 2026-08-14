@@ -12,3 +12,11 @@ plugins:
   - local: protoc-gen-connect-go
     out: gen/go
     opt: paths=source_relative
+  # TypeScript for the UI (ui/src/lib/gen). protoc-gen-es v2 generates both the
+  # protobuf-es messages and the connect-es v2 service descriptors; the
+  # separate protoc-gen-connect-es plugin was removed upstream in connect-es
+  # v2. The binary is installed locally via `cd ui && bun install`
+  # (devDependency @bufbuild/protoc-gen-es), never a remote/cloud plugin.
+  - local: ui/node_modules/.bin/protoc-gen-es
+    out: ui/src/lib/gen
+    opt: target=ts
