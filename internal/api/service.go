@@ -47,7 +47,8 @@ type Service struct {
 	now       func() time.Time
 	newRunID  func() string
 
-	mu             sync.Mutex
+	counterMu      sync.Mutex
+	idempotencyMu  sync.Mutex
 	idempotencyMap map[string]string
 	runCounter     int64
 }
@@ -85,10 +86,10 @@ func NewService(cfg Config) *Service {
 // defaultRunID derives a run id from the wall clock and a process counter. It
 // runs in the API process, never inside workflow code.
 func (s *Service) defaultRunID() string {
-	s.mu.Lock()
+	s.counterMu.Lock()
 	s.runCounter++
 	counter := s.runCounter
-	s.mu.Unlock()
+	s.counterMu.Unlock()
 	return fmt.Sprintf("run-%d-%d", s.now().UTC().UnixNano(), counter)
 }
 
@@ -159,27 +160,60 @@ func (s *Service) SubmitRun(
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
 	}
 
-	if key := req.Msg.GetIdempotencyKey(); key != "" {
-		s.mu.Lock()
-		existingID, seen := s.idempotencyMap[key]
-		s.mu.Unlock()
-		if seen {
-			if existing, ok := s.runs.Get(existingID); ok {
+	mergedInput := engine.ApplyInputDefaults(wf, req.Msg.GetInput())
+	key := req.Msg.GetIdempotencyKey()
+
+	// A keyed submission reserves its key together with the pending run before
+	// any event publication or Temporal call. This makes concurrent requests
+	// converge on one run and keeps a failed start deduplicated to its recorded
+	// failed run.
+	if key != "" {
+		s.idempotencyMu.Lock()
+		if existingID, seen := s.idempotencyMap[key]; seen {
+			existing, ok := s.runs.Get(existingID)
+			s.idempotencyMu.Unlock()
+			if ok {
 				return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: existing}), nil
 			}
+			return nil, connect.NewError(connect.CodeInternal,
+				fmt.Errorf("idempotency key %q refers to missing run %q", key, existingID))
 		}
+		runID := s.newRunID()
+		run := s.newPendingRun(runID, wf, mergedInput)
+		s.runs.Save(run)
+		s.idempotencyMap[key] = runID
+		s.idempotencyMu.Unlock()
+		return s.startPreparedRun(ctx, run, wf, mergedInput)
 	}
 
 	runID := s.newRunID()
-	run := &orkstackv1.Run{
+	run := s.newPendingRun(runID, wf, mergedInput)
+	s.runs.Save(run)
+	return s.startPreparedRun(ctx, run, wf, mergedInput)
+}
+
+func (s *Service) newPendingRun(
+	runID string,
+	wf *orkstackv1.Workflow,
+	input *orkstackv1.Payload,
+) *orkstackv1.Run {
+	return &orkstackv1.Run{
 		Id:              runID,
 		WorkflowName:    wf.GetName(),
 		WorkflowVersion: wf.GetVersion(),
 		Status:          orkstackv1.Status_STATUS_PENDING,
-		Input:           req.Msg.GetInput(),
+		Input:           input,
 		CreatedAt:       timestamppb.New(s.now().UTC()),
 	}
-	s.runs.Save(run)
+}
+
+func (s *Service) startPreparedRun(
+	ctx context.Context,
+	run *orkstackv1.Run,
+	wf *orkstackv1.Workflow,
+	input *orkstackv1.Payload,
+) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	runID := run.GetId()
 	s.bus.Publish(&orkstackv1.Event{
 		RunId:     runID,
 		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
@@ -188,18 +222,12 @@ func (s *Service) SubmitRun(
 		Timestamp: timestamppb.New(s.now().UTC()),
 	}, runID+"#created")
 
-	if err := s.starter.StartRun(ctx, runID, wf, req.Msg.GetInput()); err != nil {
+	if err := s.starter.StartRun(ctx, runID, wf, input); err != nil {
 		run.Status = orkstackv1.Status_STATUS_FAILED
 		run.Error = &orkstackv1.Error{Code: "RUN_START_FAILED", Message: err.Error()}
 		run.FinishedAt = timestamppb.New(s.now().UTC())
 		s.runs.Save(run)
 		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-
-	if key := req.Msg.GetIdempotencyKey(); key != "" {
-		s.mu.Lock()
-		s.idempotencyMap[key] = runID
-		s.mu.Unlock()
 	}
 
 	stored, _ := s.runs.Get(runID)
@@ -272,8 +300,11 @@ func (s *Service) StreamEvents(
 		return connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
 	}
 
-	events, cancel := s.bus.Subscribe(runID, req.Msg.GetFromSequence())
+	events, cancel, terminalAlreadyReached := s.bus.Subscribe(runID, req.Msg.GetFromSequence())
 	defer cancel()
+	if terminalAlreadyReached {
+		return nil
+	}
 
 	for {
 		select {

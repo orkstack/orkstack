@@ -44,9 +44,12 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 		defer conn.CloseNow()
 
 		ctx := conn.CloseRead(r.Context())
-		events, cancel := svc.Bus().Subscribe(runID, fromSequence)
+		events, cancel, terminalAlreadyReached := svc.Bus().Subscribe(runID, fromSequence)
 		defer cancel()
-
+		if terminalAlreadyReached {
+			_ = conn.Close(websocket.StatusNormalClosure, "terminal event already received")
+			return
+		}
 		for {
 			select {
 			case <-ctx.Done():

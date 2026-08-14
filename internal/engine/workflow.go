@@ -131,11 +131,12 @@ type runState struct {
 }
 
 func newRunState(ctx workflow.Context, runID string, wf *orkstackv1.Workflow, input *orkstackv1.Payload) *runState {
+	mergedInput := ApplyInputDefaults(wf, input)
 	state := &runState{
 		runID:     runID,
 		wf:        wf,
-		input:     input,
-		inputs:    map[string]any(payloadToPlugin(input)),
+		input:     mergedInput,
+		inputs:    map[string]any(payloadToPlugin(mergedInput)),
 		tasks:     map[string]*orkstackv1.Task{},
 		taskRuns:  map[string]*orkstackv1.TaskRun{},
 		results:   map[string]task.UpstreamResult{},

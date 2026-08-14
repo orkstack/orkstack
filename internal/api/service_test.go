@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -28,17 +29,19 @@ import (
 type fakeStarter struct {
 	mu       sync.Mutex
 	started  []string
+	inputs   []map[string]any
 	canceled []string
 	err      error
 }
 
-func (f *fakeStarter) StartRun(_ context.Context, runID string, _ *orkstackv1.Workflow, _ *orkstackv1.Payload) error {
+func (f *fakeStarter) StartRun(_ context.Context, runID string, _ *orkstackv1.Workflow, input *orkstackv1.Payload) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
 	f.started = append(f.started, runID)
+	f.inputs = append(f.inputs, input.GetData().AsMap())
 	return nil
 }
 
@@ -53,6 +56,12 @@ func (f *fakeStarter) startedRuns() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.started...)
+}
+
+func (f *fakeStarter) startedInputs() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any(nil), f.inputs...)
 }
 
 type fixture struct {
@@ -638,5 +647,187 @@ func TestServerSpeaksH2CToConnectClients(t *testing.T) {
 	}
 	if resp.ProtoMajor != 2 {
 		t.Fatalf("negotiated HTTP/%d.%d, want HTTP/2 (h2c)", resp.ProtoMajor, resp.ProtoMinor)
+	}
+}
+
+func TestSubmitRun_MergesDeclaredInputDefaultsBeforeSavingAndStarting(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.workflowClient().Apply(ctx,
+		connect.NewRequest(&orkstackv1.ApplyWorkflowRequest{Yaml: helloYAML(t)})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	omitted, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+		WorkflowName: "hello-ork",
+	}))
+	if err != nil {
+		t.Fatalf("SubmitRun omitted input: %v", err)
+	}
+	wantDefault := "https://httpbin.org/json"
+	if got := omitted.Msg.GetRun().GetInput().GetData().AsMap()["url"]; got != wantDefault {
+		t.Errorf("stored run input url = %v, want default %q", got, wantDefault)
+	}
+	if got := f.starter.startedInputs()[0]["url"]; got != wantDefault {
+		t.Errorf("starter input url = %v, want default %q", got, wantDefault)
+	}
+
+	providedData, err := structpb.NewStruct(map[string]any{"url": "https://caller.test"})
+	if err != nil {
+		t.Fatalf("provided input: %v", err)
+	}
+	provided, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+		WorkflowName: "hello-ork",
+		Input:        &orkstackv1.Payload{Data: providedData},
+	}))
+	if err != nil {
+		t.Fatalf("SubmitRun provided input: %v", err)
+	}
+	if got := provided.Msg.GetRun().GetInput().GetData().AsMap()["url"]; got != "https://caller.test" {
+		t.Errorf("caller-provided url = %v, want preserved value", got)
+	}
+}
+
+func TestSubmitRun_ConcurrentIdempotencyKeyStartsExactlyOneRun(t *testing.T) {
+	const requests = 32
+
+	workflows := engine.NewWorkflowStore()
+	runs := engine.NewRunStore()
+	starter := &fakeStarter{}
+	allocations := make(chan int, requests)
+	releaseFirst := make(chan struct{})
+	var allocationMu sync.Mutex
+	allocationCount := 0
+	svc := api.NewService(api.Config{
+		Workflows: workflows,
+		Runs:      runs,
+		Bus:       engine.NewEventBus(),
+		Starter:   starter,
+		NewRunID: func() string {
+			allocationMu.Lock()
+			allocationCount++
+			n := allocationCount
+			allocationMu.Unlock()
+			allocations <- n
+			if n == 1 {
+				<-releaseFirst
+			}
+			return fmt.Sprintf("concurrent-%d", n)
+		},
+	})
+	if _, err := svc.Apply(context.Background(), connect.NewRequest(&orkstackv1.ApplyWorkflowRequest{
+		Yaml: helloYAML(t),
+	})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan *orkstackv1.Run, requests)
+	errors := make(chan error, requests)
+	var wg sync.WaitGroup
+	wg.Add(requests)
+	for i := 0; i < requests; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			response, err := svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
+				WorkflowName:   "hello-ork",
+				IdempotencyKey: "shared-key",
+			}))
+			if err != nil {
+				errors <- err
+				return
+			}
+			results <- response.Msg.GetRun()
+		}()
+	}
+	close(start)
+	if got := <-allocations; got != 1 {
+		t.Fatalf("first allocation = %d, want 1", got)
+	}
+
+	var racedAllocation int
+	select {
+	case racedAllocation = <-allocations:
+		// Before the fix, another request reaches ID allocation while the first
+		// request is blocked before it can reserve the key.
+	case <-time.After(250 * time.Millisecond):
+	}
+	close(releaseFirst)
+	wg.Wait()
+	close(results)
+	close(errors)
+
+	if racedAllocation != 0 {
+		t.Fatalf("concurrent request allocated run %d before the key was reserved", racedAllocation)
+	}
+	for err := range errors {
+		t.Errorf("SubmitRun: %v", err)
+	}
+	var runID string
+	count := 0
+	for run := range results {
+		count++
+		if runID == "" {
+			runID = run.GetId()
+		}
+		if run.GetId() != runID {
+			t.Errorf("received run id %q, want one shared id %q", run.GetId(), runID)
+		}
+	}
+	if count != requests {
+		t.Errorf("responses = %d, want %d", count, requests)
+	}
+	if started := starter.startedRuns(); len(started) != 1 {
+		t.Errorf("starter calls = %v, want one", started)
+	}
+	if stored := runs.List(engine.ListFilter{}); len(stored) != 1 {
+		t.Errorf("stored runs = %d, want one", len(stored))
+	}
+}
+
+func TestStreamEvents_TerminalCursorEndsWithoutMessages(t *testing.T) {
+	f := newFixture(t)
+	f.seedRun(t, "run-terminal-cursor")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stream, err := f.runClient().StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
+		RunId:        "run-terminal-cursor",
+		FromSequence: 4,
+	}))
+	if err != nil {
+		t.Fatalf("StreamEvents at terminal cursor: %v", err)
+	}
+	defer stream.Close()
+	var received int
+	for stream.Receive() {
+		received++
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream error = %v, want clean completion", err)
+	}
+	if received != 0 {
+		t.Errorf("received %d events, want zero after terminal cursor", received)
+	}
+}
+
+func TestWebSocketBridge_TerminalCursorClosesNormally(t *testing.T) {
+	f := newFixture(t)
+	f.seedRun(t, "run-ws-terminal-cursor")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(f.baseURL, "http") +
+		"/ws/runs/run-ws-terminal-cursor?from_sequence=4"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial: %v", err)
+	}
+	defer conn.CloseNow()
+	_, _, err = conn.Read(ctx)
+	if websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+		t.Fatalf("websocket read error = %v (status %v), want normal closure",
+			err, websocket.CloseStatus(err))
 	}
 }

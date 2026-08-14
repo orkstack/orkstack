@@ -536,3 +536,34 @@ tasks:
 		t.Errorf("attempts = %d, want 1 when the DSL declares no retry policy", attempts)
 	}
 }
+
+func TestRunWorkflow_PassesDeclaredInputDefaultsToExecuteTask(t *testing.T) {
+	const document = `
+name: default-input
+inputs:
+  url:
+    type: string
+    default: "https://default.test"
+tasks:
+  - id: fetch
+    plugin: http
+    with:
+      url: "{{ .inputs.url }}"
+`
+	var suite testsuite.WorkflowTestSuite
+	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+	})
+
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil))
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+	input, ok := h.inputFor("fetch")
+	if !ok {
+		t.Fatal("fetch task was not executed")
+	}
+	if input.RunInput["url"] != "https://default.test" {
+		t.Errorf("ExecuteTaskInput.RunInput.url = %v, want declared default", input.RunInput["url"])
+	}
+}

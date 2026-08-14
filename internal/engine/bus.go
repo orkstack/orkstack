@@ -59,15 +59,13 @@ func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstack
 		}
 		b.seen[runID][dedupeKey] = stored.GetSequence()
 	}
-	targets := make([]*subscription, 0, len(b.subs[runID]))
+	// enqueue only appends to each subscriber's private queue. Holding b.mu
+	// through enqueue preserves the same order for sequence assignment, the
+	// stored log, and every live subscriber under concurrent publication.
 	for _, sub := range b.subs[runID] {
-		targets = append(targets, sub)
-	}
-	b.mu.Unlock()
-
-	for _, sub := range targets {
 		sub.enqueue(stored)
 	}
+	b.mu.Unlock()
 	return proto.Clone(stored).(*orkstackv1.Event), true
 }
 
@@ -90,12 +88,19 @@ func (b *EventBus) snapshotLocked(runID string, fromSequence int64) []*orkstackv
 }
 
 // Subscribe returns a channel delivering the backlog after fromSequence
-// followed by live events, plus a cancel function that releases the
-// subscription. Registration and backlog capture happen under one lock so no
-// event can slip between them.
-func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstackv1.Event, func()) {
+// followed by live events, a cancel function, and whether fromSequence has
+// already reached a terminal run event. Registration, terminal detection, and
+// backlog capture happen under one lock so no event can slip between them.
+func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstackv1.Event, func(), bool) {
 	b.mu.Lock()
 	backlog := b.snapshotLocked(runID, fromSequence)
+	terminalAlreadyReached := false
+	for _, event := range b.log[runID] {
+		if isTerminalRunEvent(event) && event.GetSequence() <= fromSequence {
+			terminalAlreadyReached = true
+			break
+		}
+	}
 	sub := newSubscription(backlog)
 	id := b.nextID
 	b.nextID++
@@ -111,7 +116,18 @@ func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstack
 		b.mu.Unlock()
 		sub.close()
 	}
-	return sub.out, cancel
+	return sub.out, cancel, terminalAlreadyReached
+}
+
+func isTerminalRunEvent(event *orkstackv1.Event) bool {
+	switch event.GetType() {
+	case orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED:
+		return true
+	default:
+		return false
+	}
 }
 
 // subscription buffers events for one subscriber without blocking publishers.

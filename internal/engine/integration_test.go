@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,13 +67,28 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
+	var observedMu sync.Mutex
+	observedRunInputs := map[string]plugin.Payload{}
 
-	// Worker 1: the real RunWorkflow plus a stub ExecuteTask activity that
-	// echoes its input, standing in for an Orker.
-	runWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{})
+	// Worker 1 matches production: it handles workflow and local-activity tasks
+	// only, so it cannot steal ExecuteTask activities from an Orker sharing the
+	// queue.
+	runWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		LocalActivityWorkerOnly:     true,
+	})
 	runWorker.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.WorkflowName})
-	runWorker.RegisterActivityWithOptions(
+
+	// Worker 2 is the activity-only Orker stub on the same shared queue.
+	taskWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	})
+	taskWorker.RegisterActivityWithOptions(
 		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+			observedMu.Lock()
+			observedRunInputs[in.TaskID] = in.RunInput
+			observedMu.Unlock()
 			upstream := make([]string, 0, len(in.Upstream))
 			for id := range in.Upstream {
 				upstream = append(upstream, id)
@@ -95,8 +111,11 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 
-	// Worker 2: the engine's event projection activity.
-	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{})
+	// Worker 3 is activity-only for engine projections.
+	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	})
 	eventWorker.RegisterActivityWithOptions(
 		engine.NewEventActivities(bus, runs).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
@@ -106,6 +125,10 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		t.Fatalf("start run worker: %v", err)
 	}
 	defer runWorker.Stop()
+	if err := taskWorker.Start(); err != nil {
+		t.Fatalf("start task worker: %v", err)
+	}
+	defer taskWorker.Stop()
 	if err := eventWorker.Start(); err != nil {
 		t.Fatalf("start event worker: %v", err)
 	}
@@ -213,6 +236,16 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		if len(taskRun.GetArtifacts()) != 1 {
 			t.Errorf("task %q artifacts = %v, want the stub's single ref", taskRun.GetTaskId(), taskRun.GetArtifacts())
 		}
+	}
+	observedMu.Lock()
+	observedCount := len(observedRunInputs)
+	observedURL := observedRunInputs["fetch"]["url"]
+	observedMu.Unlock()
+	if observedCount != 3 {
+		t.Errorf("stub ExecuteTask observed %d task inputs, want 3", observedCount)
+	}
+	if observedURL != "https://httpbin.org/json" {
+		t.Errorf("stub ExecuteTask RunInput.url = %v, want declared hello-ork default", observedURL)
 	}
 
 	assertDeterministicReplay(t, ctx, temporalClient, runID)

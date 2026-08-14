@@ -60,6 +60,20 @@ func main() {
 	}
 }
 
+func runWorkerOptions() worker.Options {
+	return worker.Options{
+		DisableRegistrationAliasing: true,
+		LocalActivityWorkerOnly:     true,
+	}
+}
+
+func eventWorkerOptions() worker.Options {
+	return worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	}
+}
+
 func run(logger *slog.Logger, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -81,18 +95,14 @@ func run(logger *slog.Logger, cfg config) error {
 
 	// Workflow worker: hosts RunWorkflow on the same queue Orkers poll for
 	// task activities.
-	runWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{
-		DisableRegistrationAliasing: true,
-	})
+	runWorker := worker.New(temporalClient, task.DefaultQueue, runWorkerOptions())
 	runWorker.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
 		Name: engine.WorkflowName,
 	})
 
 	// Projection worker: engine-internal activities on a dedicated queue so
 	// Orkers never receive them.
-	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
-		DisableRegistrationAliasing: true,
-	})
+	eventWorker := worker.New(temporalClient, engine.EventQueue, eventWorkerOptions())
 	eventWorker.RegisterActivityWithOptions(
 		engine.NewEventActivities(bus, runs).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},

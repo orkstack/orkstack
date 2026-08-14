@@ -1,6 +1,7 @@
 package dsl_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -403,5 +404,72 @@ func TestCompileFile_ReportsMissingFile(t *testing.T) {
 	_, err := dsl.CompileFile(filepath.Join(t.TempDir(), "nope.ork.yaml"))
 	if err == nil {
 		t.Fatal("CompileFile(missing) = nil error, want failure")
+	}
+}
+
+func TestCompile_RejectsIndirectInvalidTemplateReferences(t *testing.T) {
+	tests := []struct {
+		name        string
+		expression  string
+		wantMessage string
+	}{
+		{name: "unknown root", expression: `{{ .notAContextValue }}`, wantMessage: "unknown template root"},
+		{name: "bare inputs root", expression: `{{ .inputs }}`, wantMessage: "must name a declared input"},
+		{name: "bare tasks root", expression: `{{ .tasks }}`, wantMessage: "must name an upstream task"},
+		{name: "indexed missing input", expression: `{{ index .inputs "missing" }}`, wantMessage: "undeclared input"},
+		{name: "indexed non-upstream task", expression: `{{ index .tasks "producer" }}`, wantMessage: "not in its needs closure"},
+		{name: "chained indexed non-upstream task", expression: `{{ (index .tasks "producer").output }}`, wantMessage: "not in its needs closure"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			document := fmt.Sprintf(`
+name: indirect-reference
+inputs:
+  url:
+    type: string
+tasks:
+  - id: producer
+    plugin: shell
+    with: {command: "echo producer"}
+  - id: consumer
+    plugin: shell
+    with:
+      command: %q
+`, tc.expression)
+			_, err := dsl.Compile([]byte(document))
+			if err == nil {
+				t.Fatalf("Compile() accepted invalid template %q", tc.expression)
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Fatalf("Compile() error = %q, want it to contain %q", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestCompile_AcceptsValidIndexedAndRelativeTemplateReferences(t *testing.T) {
+	const document = `
+name: indexed-references
+inputs:
+  url:
+    type: string
+  items:
+    type: array
+tasks:
+  - id: producer
+    plugin: shell
+    with: {command: "echo producer"}
+  - id: consumer
+    plugin: shell
+    needs: [producer]
+    with:
+      direct_input: '{{ index .inputs "url" }}'
+      dynamic_input: '{{ $key := "url" }}{{ index .inputs $key }}'
+      task_output: '{{ (index .tasks "producer").output.stdout }}'
+      relative: '{{ range .inputs.items }}{{ .value }}{{ end }}'
+`
+	if _, err := dsl.Compile([]byte(document)); err != nil {
+		t.Fatalf("Compile() rejected valid indexed/relative references: %v", err)
 	}
 }

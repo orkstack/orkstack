@@ -101,8 +101,12 @@ func (c *templateChecker) walk(path string, node parse.Node, rebound bool) error
 			}
 		}
 	case *parse.CommandNode:
-		if err := c.checkCommand(path, typed); err != nil {
+		handled, err := c.checkCommand(path, typed, rebound)
+		if err != nil {
 			return err
+		}
+		if handled {
+			return nil
 		}
 		for _, arg := range typed.Args {
 			if err := c.walk(path, arg, rebound); err != nil {
@@ -114,6 +118,8 @@ func (c *templateChecker) walk(path string, node parse.Node, rebound bool) error
 			return nil
 		}
 		return c.checkField(path, typed.Ident)
+	case *parse.ChainNode:
+		return c.walk(path, typed.Node, rebound)
 	case *parse.IfNode:
 		return c.walkBranch(path, &typed.BranchNode, rebound, rebound)
 	case *parse.WithNode:
@@ -143,17 +149,23 @@ func (c *templateChecker) checkField(path string, ident []string) error {
 	switch ident[0] {
 	case "inputs":
 		if len(ident) < 2 {
-			return nil
+			return fmt.Errorf("task %q: %s: .inputs must name a declared input", c.taskID, path)
 		}
-		if _, ok := c.inputs[ident[1]]; !ok {
-			return fmt.Errorf("task %q: %s: template references undeclared input %q",
-				c.taskID, path, ident[1])
-		}
+		return c.checkInput(path, ident[1])
 	case "tasks":
 		if len(ident) < 2 {
-			return nil
+			return fmt.Errorf("task %q: %s: .tasks must name an upstream task", c.taskID, path)
 		}
 		return c.checkUpstream(path, ident[1])
+	default:
+		return fmt.Errorf("task %q: %s: unknown template root %q", c.taskID, path, ident[0])
+	}
+}
+
+func (c *templateChecker) checkInput(path, name string) error {
+	if _, ok := c.inputs[name]; !ok {
+		return fmt.Errorf("task %q: %s: template references undeclared input %q",
+			c.taskID, path, name)
 	}
 	return nil
 }
@@ -169,33 +181,83 @@ func (c *templateChecker) checkUpstream(path, taskID string) error {
 	return nil
 }
 
-// checkCommand validates the `artifact` and `env` helpers.
-func (c *templateChecker) checkCommand(path string, cmd *parse.CommandNode) error {
+// checkCommand validates helper calls and references made through index. The
+// handled result tells the walker that checkCommand already traversed the
+// command's arguments (needed to avoid rejecting the bare `.inputs`/`.tasks`
+// base of a valid index expression).
+func (c *templateChecker) checkCommand(path string, cmd *parse.CommandNode, rebound bool) (bool, error) {
 	if len(cmd.Args) == 0 {
-		return nil
+		return false, nil
 	}
 	ident, ok := cmd.Args[0].(*parse.IdentifierNode)
 	if !ok {
-		return nil
+		return false, nil
 	}
 	switch ident.Ident {
+	case "index":
+		return true, c.checkIndex(path, cmd, rebound)
 	case "artifact":
 		if len(cmd.Args) < 2 {
-			return fmt.Errorf("task %q: %s: artifact helper requires a \"<task>/<name>\" argument", c.taskID, path)
+			return false, fmt.Errorf("task %q: %s: artifact helper requires a \"<task>/<name>\" argument", c.taskID, path)
 		}
 		str, ok := cmd.Args[1].(*parse.StringNode)
 		if !ok {
-			return nil // dynamic reference: the Orker resolves it at render time
+			return false, nil // dynamic reference: the Orker resolves it at render time
 		}
 		producer, name, found := strings.Cut(str.Text, "/")
 		if !found || producer == "" || name == "" {
-			return fmt.Errorf("task %q: %s: artifact reference %q must be \"<task>/<name>\"",
+			return false, fmt.Errorf("task %q: %s: artifact reference %q must be \"<task>/<name>\"",
 				c.taskID, path, str.Text)
 		}
-		return c.checkUpstream(path, producer)
+		return false, c.checkUpstream(path, producer)
 	case "env":
 		if len(cmd.Args) < 2 {
-			return fmt.Errorf("task %q: %s: env helper requires a variable name", c.taskID, path)
+			return false, fmt.Errorf("task %q: %s: env helper requires a variable name", c.taskID, path)
+		}
+	}
+	return false, nil
+}
+
+func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, rebound bool) error {
+	if len(cmd.Args) < 2 {
+		return nil
+	}
+	base, isField := cmd.Args[1].(*parse.FieldNode)
+	if rebound || !isField || len(base.Ident) != 1 ||
+		(base.Ident[0] != "inputs" && base.Ident[0] != "tasks") {
+		for _, arg := range cmd.Args[1:] {
+			if err := c.walk(path, arg, rebound); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	root := base.Ident[0]
+	if len(cmd.Args) < 3 {
+		if root == "inputs" {
+			return fmt.Errorf("task %q: %s: index .inputs must name a declared input", c.taskID, path)
+		}
+		return fmt.Errorf("task %q: %s: index .tasks must name an upstream task", c.taskID, path)
+	}
+	if key, literal := cmd.Args[2].(*parse.StringNode); literal {
+		if root == "inputs" {
+			if err := c.checkInput(path, key.Text); err != nil {
+				return err
+			}
+		} else if err := c.checkUpstream(path, key.Text); err != nil {
+			return err
+		}
+	}
+	// Dynamic keys cannot be validated without inventing a rejection rule. Walk
+	// them and any later index arguments so concrete context references inside
+	// those expressions are still checked.
+	for _, arg := range cmd.Args[2:] {
+		if _, literal := arg.(*parse.StringNode); literal {
+			continue
+		}
+		if err := c.walk(path, arg, rebound); err != nil {
+			return err
 		}
 	}
 	return nil
