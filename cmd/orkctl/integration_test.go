@@ -1,0 +1,373 @@
+//go:build integration
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/worker"
+
+	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/plugin"
+)
+
+// TestIntegration_CLIDrivesARealEngineToTerminalRuns builds the real orkctl and
+// orkengine binaries, runs the engine against a real Temporal cluster, and
+// drives apply -> submit --watch -> run get through the CLI process, asserting
+// both the terminal run status and the matching CLI exit code.
+//
+// M3's Orker does not exist yet, so this test registers its own stub
+// ExecuteTask activity worker (permitted by the M4 contract). The stub polls a
+// private task queue and the submitted workflows pin their tasks to it, so no
+// other worker on the shared queue can execute or steal them.
+func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
+	address := temporalAddress()
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		t.Skipf("temporal is not reachable at %s: %v", address, err)
+	}
+	_ = conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	temporalClient, err := client.DialContext(ctx, client.Options{
+		HostPort:  address,
+		Namespace: client.DefaultNamespace,
+	})
+	if err != nil {
+		t.Skipf("cannot dial temporal at %s: %v", address, err)
+	}
+	defer temporalClient.Close()
+
+	taskQueue := privateTaskQueue()
+	startStubTaskWorker(t, temporalClient, taskQueue)
+
+	repoRoot := repoRoot(t)
+	binDir := t.TempDir()
+	orkctlPath := buildBinary(t, repoRoot, binDir, "orkctl")
+	enginePath := buildBinary(t, repoRoot, binDir, "orkengine")
+
+	engineAddr := startEngine(ctx, t, enginePath, address)
+	session := &sessionRecorder{}
+	cli := func(args ...string) (string, string, int) {
+		full := append(args, "--server", "http://"+engineAddr)
+		stdout, stderr, code := runBinary(ctx, t, orkctlPath, repoRoot, full...)
+		session.record(full, stdout, stderr, code)
+		return stdout, stderr, code
+	}
+	waitForEngine(t, func(args ...string) (string, string, int) {
+		return runBinary(ctx, t, orkctlPath, repoRoot,
+			append(args, "--server", "http://"+engineAddr)...)
+	})
+	t.Cleanup(func() { session.writeProof(t) })
+
+	if _, stderr, code := cli("version"); code != 0 {
+		t.Fatalf("version exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+
+	// apply the repository's example workflow exactly as a user would
+	stdout, stderr, code := cli("apply", filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
+	if code != 0 {
+		t.Fatalf("apply exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Applied workflow hello-ork") {
+		t.Fatalf("apply stdout:\n%s", stdout)
+	}
+
+	// Runs use copies of the example pinned to this test's private task queue,
+	// so the stub worker below is the only executor that can pick them up.
+	successPath := writeQueuePinnedWorkflow(t, repoRoot, successWorkflowName, taskQueue)
+	if _, stderr, code = cli("apply", successPath); code != 0 {
+		t.Fatalf("apply of the pinned workflow exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+
+	// submit --watch on a workflow the stub completes successfully
+	stdout, stderr, code = cli("run", "submit", successWorkflowName, "--watch")
+	if code != 0 {
+		t.Fatalf("submit --watch exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	for _, want := range []string{"RUN_CREATED", "RUN_STARTED", "TASK_SUCCEEDED", "RUN_SUCCEEDED",
+		"finished with status SUCCEEDED"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("submit --watch stdout is missing %q:\n%s", want, stdout)
+		}
+	}
+	runID := parseRunID(t, stdout)
+
+	// run get agrees with the watched outcome
+	stdout, stderr, code = cli("run", "get", runID)
+	if code != 0 {
+		t.Fatalf("run get exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Status:    SUCCEEDED") {
+		t.Fatalf("run get stdout does not report SUCCEEDED:\n%s", stdout)
+	}
+
+	// The same path for a run the stub fails: the CLI must exit non-zero.
+	failingPath := writeQueuePinnedWorkflow(t, repoRoot, failingWorkflowName, taskQueue)
+	if _, stderr, code = cli("apply", failingPath); code != 0 {
+		t.Fatalf("apply of the failing workflow exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	stdout, stderr, code = cli("run", "submit", failingWorkflowName, "--watch")
+	if code != exitRunFailed {
+		t.Fatalf("submit --watch of a failing run exit = %d, want %d\nstdout:\n%s\nstderr:\n%s",
+			code, exitRunFailed, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "RUN_FAILED") || !strings.Contains(stdout, "finished with status FAILED") {
+		t.Fatalf("failing submit --watch stdout:\n%s", stdout)
+	}
+	failedRunID := parseRunID(t, stdout)
+
+	stdout, stderr, code = cli("run", "get", failedRunID)
+	if code != 0 {
+		t.Fatalf("run get exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Status:    FAILED") {
+		t.Fatalf("run get stdout does not report FAILED:\n%s", stdout)
+	}
+
+	// run list and plugin list work against the same live engine.
+	stdout, stderr, code = cli("run", "list")
+	if code != 0 {
+		t.Fatalf("run list exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, runID) || !strings.Contains(stdout, failedRunID) {
+		t.Fatalf("run list is missing a run:\n%s", stdout)
+	}
+	if _, stderr, code = cli("plugin", "list"); code != 0 {
+		t.Fatalf("plugin list exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+
+	// A machine-readable sample of the same successful run.
+	stdout, stderr, code = cli("run", "get", runID, "--json")
+	if code != 0 {
+		t.Fatalf("run get --json exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("run get --json is not valid JSON: %v\nstdout:\n%s", err, stdout)
+	}
+	session.jsonSample = stdout
+}
+
+// sessionRecorder captures the real CLI session for proof/M4. Set
+// ORK_PROOF_SESSION_FILE and ORK_PROOF_JSON_FILE to write the artifacts.
+type sessionRecorder struct {
+	transcript strings.Builder
+	jsonSample string
+}
+
+func (s *sessionRecorder) record(args []string, stdout, stderr string, code int) {
+	fmt.Fprintf(&s.transcript, "$ orkctl %s\n", strings.Join(args, " "))
+	if stdout != "" {
+		s.transcript.WriteString(stdout)
+	}
+	if stderr != "" {
+		for _, line := range strings.Split(strings.TrimRight(stderr, "\n"), "\n") {
+			fmt.Fprintf(&s.transcript, "(stderr) %s\n", line)
+		}
+	}
+	fmt.Fprintf(&s.transcript, "(exit %d)\n\n", code)
+}
+
+func (s *sessionRecorder) writeProof(t *testing.T) {
+	t.Helper()
+	if path := os.Getenv("ORK_PROOF_SESSION_FILE"); path != "" {
+		header := fmt.Sprintf(
+			"# orkctl session against a real orkengine + real Temporal (%s)\n"+
+				"# M3's Orker does not exist yet, so a stub ExecuteTask activity worker\n"+
+				"# registered by this test executes the tasks.\n"+
+				"# generated by: go test -tags=integration ./cmd/orkctl/ -run Integration\n\n",
+			time.Now().UTC().Format(time.RFC3339))
+		if err := os.WriteFile(path, []byte(header+s.transcript.String()), 0o644); err != nil {
+			t.Errorf("write session proof: %v", err)
+		}
+	}
+	if path := os.Getenv("ORK_PROOF_JSON_FILE"); path != "" && s.jsonSample != "" {
+		if err := os.WriteFile(path, []byte(s.jsonSample), 0o644); err != nil {
+			t.Errorf("write json proof: %v", err)
+		}
+	}
+}
+
+const failingWorkflowName = "hello-ork-failing"
+
+// temporalAddress is where the integration test expects a real Temporal
+// frontend. Override with ORK_TEMPORAL_ADDRESS.
+func temporalAddress() string {
+	if addr := os.Getenv("ORK_TEMPORAL_ADDRESS"); addr != "" {
+		return addr
+	}
+	return client.DefaultHostPort
+}
+
+// startStubTaskWorker registers the activity-only ExecuteTask stub that stands
+// in for the absent Orker. Tasks of failingWorkflowName fail; everything else
+// succeeds.
+func startStubTaskWorker(t *testing.T, temporalClient client.Client) {
+	t.Helper()
+	stub := worker.New(temporalClient, task.DefaultQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	})
+	stub.RegisterActivityWithOptions(
+		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+			if in.WorkflowName == failingWorkflowName {
+				return task.ExecuteTaskResult{}, fmt.Errorf("stub orker failed task %s", in.TaskID)
+			}
+			return task.ExecuteTaskResult{
+				TaskID: in.TaskID,
+				Output: plugin.Payload{"stub": true, "task": in.TaskID},
+			}, nil
+		},
+		activity.RegisterOptions{Name: task.ActivityExecuteTask},
+	)
+	if err := stub.Start(); err != nil {
+		t.Fatalf("start stub task worker: %v", err)
+	}
+	t.Cleanup(stub.Stop)
+}
+
+// startEngine runs the real orkengine binary on a free loopback port.
+func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr string) string {
+	t.Helper()
+	addr := freeAddress(t)
+
+	cmd := exec.CommandContext(ctx, enginePath)
+	cmd.Env = append(os.Environ(),
+		"ORK_HTTP_ADDR="+addr,
+		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
+	)
+	var log strings.Builder
+	cmd.Stdout = &log
+	cmd.Stderr = &log
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start orkengine: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(os.Interrupt)
+		done := make(chan struct{})
+		go func() { _ = cmd.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
+		t.Logf("orkengine log:\n%s", log.String())
+	})
+	return addr
+}
+
+// waitForEngine polls the engine through the CLI until it answers.
+func waitForEngine(t *testing.T, cli func(args ...string) (string, string, int)) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, _, code := cli("workflow", "list"); code == 0 {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatal("orkengine did not become ready within 60s")
+}
+
+// buildBinary compiles one command into dir and returns its path.
+func buildBinary(t *testing.T, repoRoot, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	cmd := exec.Command("go", "build", "-o", path, "./cmd/"+name)
+	cmd.Dir = repoRoot
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build ./cmd/%s: %v\n%s", name, err, output)
+	}
+	return path
+}
+
+// runBinary executes a built binary and returns stdout, stderr, and its exit
+// code.
+func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...string) (string, string, int) {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Dir = dir
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return stdout.String(), stderr.String(), 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return stdout.String(), stderr.String(), exitErr.ExitCode()
+	}
+	t.Fatalf("run %s %v: %v", path, args, err)
+	return "", "", -1
+}
+
+// writeFailingWorkflow copies the example under a name the stub always fails.
+func writeFailingWorkflow(t *testing.T, repoRoot string) string {
+	t.Helper()
+	source, err := os.ReadFile(filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
+	if err != nil {
+		t.Fatalf("read example: %v", err)
+	}
+	renamed := strings.Replace(string(source), "name: hello-ork", "name: "+failingWorkflowName, 1)
+	if renamed == string(source) {
+		t.Fatal("could not rename the example workflow")
+	}
+	path := filepath.Join(t.TempDir(), failingWorkflowName+".ork.yaml")
+	if err := os.WriteFile(path, []byte(renamed), 0o644); err != nil {
+		t.Fatalf("write failing workflow: %v", err)
+	}
+	return path
+}
+
+var runIDPattern = regexp.MustCompile(`Submitted run (\S+)`)
+
+func parseRunID(t *testing.T, stdout string) string {
+	t.Helper()
+	match := runIDPattern.FindStringSubmatch(stdout)
+	if match == nil {
+		t.Fatalf("no run id in CLI output:\n%s", stdout)
+	}
+	return match[1]
+}
+
+// repoRoot resolves the module root from cmd/orkctl.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	path, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	return path
+}
+
+// freeAddress returns a loopback address that is free right now.
+func freeAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	return address
+}
