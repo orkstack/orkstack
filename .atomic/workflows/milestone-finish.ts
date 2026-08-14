@@ -28,27 +28,57 @@ import { Type, type Static } from "typebox";
 
 // ---------------------------------------------------------------------------
 // Model chains. Each entry is "provider/id:thinking".
-// Every chain spans BOTH providers so no single quota can block a stage.
+// Every chain spans ALL THREE providers (openai-codex, opencode-go, anthropic)
+// so no single subscription's rate/usage limit can block a stage. The worker
+// primary ALTERNATES per round to rotate credit consumption, not just to
+// fall back. Capability policy (docs/models/model-selection.md):
+//   - gpt-5.6-luna: frontier best-value workhorse (coding)
+//   - kimi-k3:      frontier, near-top accuracy at low cost (coding/worker)
+//   - gpt-5.6-sol:  accuracy ceiling -> judgment gate
+//   - glm-5.2:      third family -> decorrelated review errors
+//   - claude-opus-5: top anthropic fallback
+//   - grok-4.5:     cheap capable budget tail
 // ---------------------------------------------------------------------------
-const WORKER_MODEL = "openai-codex/gpt-5.6-luna:max";
-const WORKER_FALLBACKS = [
-  "openai-codex/gpt-5.6-terra:max",
-  "anthropic/claude-opus-5:high",
-  "openai-codex/gpt-5.5:high",
-];
+const WORKER_CHAIN_OPENAI = {
+  model: "openai-codex/gpt-5.6-luna:max",
+  fallbacks: [
+    "opencode-go/kimi-k3:max",
+    "opencode-go/gpt-5.6-luna:max",
+    "anthropic/claude-opus-5:high",
+    "opencode-go/grok-4.5:high",
+  ],
+};
+
+const WORKER_CHAIN_OPENCODE = {
+  model: "opencode-go/kimi-k3:max",
+  fallbacks: [
+    "opencode-go/gpt-5.6-luna:max",
+    "openai-codex/gpt-5.6-luna:max",
+    "openai-codex/gpt-5.6-terra:max",
+    "anthropic/claude-opus-5:high",
+  ],
+};
+
+// Round 1, 3, ... lead with OpenAI; round 2, 4, ... lead with OpenCode Go.
+function workerChain(round: number): { model: string; fallbacks: readonly string[] } {
+  return round % 2 === 1 ? WORKER_CHAIN_OPENAI : WORKER_CHAIN_OPENCODE;
+}
 
 const JUDGE_MODEL = "openai-codex/gpt-5.6-sol:max";
 const JUDGE_FALLBACKS = [
-  "openai-codex/gpt-5.6-terra:max",
+  "opencode-go/kimi-k3:max",
   "anthropic/claude-opus-5:max",
+  "opencode-go/gpt-5.6-luna:max",
 ];
 
-// Second reviewer intentionally leads with Anthropic: a different model family
-// decorrelates review errors, and it splits load off the OpenAI subscription.
+// Second reviewer intentionally leads with a different family (claude) and
+// includes glm (a THIRD family) so review errors decorrelate; it splits load
+// off the OpenAI subscription.
 const JUDGE_B_MODEL = "anthropic/claude-opus-5:max";
 const JUDGE_B_FALLBACKS = [
+  "opencode-go/glm-5.2:max",
   "openai-codex/gpt-5.6-terra:max",
-  "openai-codex/gpt-5.6-sol:max",
+  "opencode-go/kimi-k3:max",
 ];
 
 const reviewDecision = Type.Object(
@@ -238,8 +268,8 @@ export default workflow({
         if (round === maxRounds) break;
         await ctx.task(`repair-gates-${round}`, {
           context: "fork",
-          model: WORKER_MODEL,
-          fallbackModels: WORKER_FALLBACKS,
+          model: workerChain(round).model,
+          fallbackModels: workerChain(round).fallbacks,
           prompt: [
             contract,
             "",
@@ -310,8 +340,8 @@ export default workflow({
 
       await ctx.task(`repair-review-${round}`, {
         context: "fork",
-        model: WORKER_MODEL,
-        fallbackModels: WORKER_FALLBACKS,
+        model: workerChain(round).model,
+        fallbackModels: workerChain(round).fallbacks,
         prompt: [
           contract,
           "",
