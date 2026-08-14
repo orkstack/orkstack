@@ -32,3 +32,6 @@ ui/dist/
 
 # Proof artifacts are committed intentionally; local scratch is not
 /proof/scratch/
+
+# Agent scratch (todos, research notes)
+.atomic/
