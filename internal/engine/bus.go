@@ -101,7 +101,7 @@ func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstack
 			break
 		}
 	}
-	sub := newSubscription(backlog)
+	sub := newSubscription(backlog, fromSequence)
 	id := b.nextID
 	b.nextID++
 	if b.subs[runID] == nil {
@@ -132,20 +132,22 @@ func isTerminalRunEvent(event *orkstackv1.Event) bool {
 
 // subscription buffers events for one subscriber without blocking publishers.
 type subscription struct {
-	out    chan *orkstackv1.Event
-	mu     sync.Mutex
-	queue  []*orkstackv1.Event
-	wake   chan struct{}
-	done   chan struct{}
-	closed bool
+	out          chan *orkstackv1.Event
+	mu           sync.Mutex
+	queue        []*orkstackv1.Event
+	wake         chan struct{}
+	done         chan struct{}
+	closed       bool
+	fromSequence int64
 }
 
-func newSubscription(backlog []*orkstackv1.Event) *subscription {
+func newSubscription(backlog []*orkstackv1.Event, fromSequence int64) *subscription {
 	sub := &subscription{
-		out:   make(chan *orkstackv1.Event),
-		queue: backlog,
-		wake:  make(chan struct{}, 1),
-		done:  make(chan struct{}),
+		out:          make(chan *orkstackv1.Event),
+		queue:        backlog,
+		wake:         make(chan struct{}, 1),
+		done:         make(chan struct{}),
+		fromSequence: fromSequence,
 	}
 	go sub.pump()
 	if len(backlog) > 0 {
@@ -158,6 +160,14 @@ func (s *subscription) enqueue(event *orkstackv1.Event) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
+		return
+	}
+	if event.GetSequence() <= s.fromSequence {
+		terminal := isTerminalRunEvent(event)
+		s.mu.Unlock()
+		if terminal {
+			s.close()
+		}
 		return
 	}
 	s.queue = append(s.queue, proto.Clone(event).(*orkstackv1.Event))

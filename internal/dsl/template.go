@@ -75,7 +75,11 @@ func (c *templateChecker) checkString(path, text string) error {
 		if candidate.Tree == nil || candidate.Tree.Root == nil {
 			continue
 		}
-		if err := c.walk(path, candidate.Tree.Root, false); err != nil {
+		// A named template receives caller-selected dot. Its relative fields
+		// cannot be treated as root DSL context without inventing a type rule;
+		// `$` references remain root and are checked regardless of rebound.
+		rebound := candidate.Name() != tmpl.Name()
+		if err := c.walk(path, candidate.Tree.Root, rebound); err != nil {
 			return err
 		}
 	}
@@ -140,7 +144,8 @@ func (c *templateChecker) walk(path string, node parse.Node, rebound bool) error
 	case *parse.IfNode:
 		return c.walkBranch(path, &typed.BranchNode, rebound, rebound, rebound)
 	case *parse.WithNode:
-		return c.walkBranch(path, &typed.BranchNode, rebound, true, rebound)
+		return c.walkBranch(path, &typed.BranchNode, rebound,
+			withBodyRebound(typed.Pipe, rebound), rebound)
 	case *parse.RangeNode:
 		return c.walkBranch(path, &typed.BranchNode, rebound, true, rebound)
 	case *parse.TemplateNode:
@@ -163,6 +168,24 @@ func (c *templateChecker) walkBranch(
 		return err
 	}
 	return c.walk(path, branch.ElseList, elseRebound)
+}
+
+// withBodyRebound reports whether a with body changes dot away from the root
+// context. `with .` preserves the incoming dot and `with $` restores root;
+// other pipelines produce a caller-selected relative value.
+func withBodyRebound(pipe *parse.PipeNode, rebound bool) bool {
+	if pipe == nil || len(pipe.Cmds) != 1 || len(pipe.Cmds[0].Args) != 1 {
+		return true
+	}
+	switch arg := pipe.Cmds[0].Args[0].(type) {
+	case *parse.DotNode:
+		return rebound
+	case *parse.VariableNode:
+		if len(arg.Ident) == 1 && arg.Ident[0] == "$" {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *templateChecker) checkField(path string, ident []string) error {
@@ -247,32 +270,49 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 	}
 
 	root := ""
+	keyArg := 2
+	rootContainer := false
 	switch base := cmd.Args[1].(type) {
 	case *parse.FieldNode:
 		if !rebound && len(base.Ident) == 1 {
 			root = base.Ident[0]
 		}
 	case *parse.VariableNode:
-		if len(base.Ident) == 2 && base.Ident[0] == "$" {
+		switch {
+		case len(base.Ident) == 2 && base.Ident[0] == "$":
 			root = base.Ident[1]
+		case len(base.Ident) == 1 && base.Ident[0] == "$":
+			rootContainer = true
 		}
-	}
-	if root != "inputs" && root != "tasks" {
-		for _, arg := range cmd.Args[1:] {
-			if err := c.walk(path, arg, rebound); err != nil {
-				return err
-			}
-		}
-		return nil
+	case *parse.DotNode:
+		rootContainer = !rebound
 	}
 
-	if len(cmd.Args) < 3 {
+	if rootContainer {
+		if len(cmd.Args) < 3 {
+			return nil
+		}
+		rootKey, literal := cmd.Args[2].(*parse.StringNode)
+		if !literal {
+			return c.walkIndexArgs(path, cmd.Args[2:], rebound)
+		}
+		root = rootKey.Text
+		keyArg = 3
+		if root != "inputs" && root != "tasks" {
+			return fmt.Errorf("task %q: %s: unknown template root %q", c.taskID, path, root)
+		}
+	}
+
+	if root != "inputs" && root != "tasks" {
+		return c.walkIndexArgs(path, cmd.Args[1:], rebound)
+	}
+	if len(cmd.Args) <= keyArg {
 		if root == "inputs" {
 			return fmt.Errorf("task %q: %s: index inputs must name a declared input", c.taskID, path)
 		}
 		return fmt.Errorf("task %q: %s: index tasks must name an upstream task", c.taskID, path)
 	}
-	if key, literal := cmd.Args[2].(*parse.StringNode); literal {
+	if key, literal := cmd.Args[keyArg].(*parse.StringNode); literal {
 		if root == "inputs" {
 			if err := c.checkInput(path, key.Text); err != nil {
 				return err
@@ -281,10 +321,13 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 			return err
 		}
 	}
-	// Dynamic keys cannot be validated without inventing a rejection rule. Walk
-	// them and any later index arguments so concrete context references inside
-	// those expressions are still checked.
-	for _, arg := range cmd.Args[2:] {
+	return c.walkIndexArgs(path, cmd.Args[keyArg:], rebound)
+}
+
+// walkIndexArgs preserves permissive dynamic indexes while still checking any
+// concrete root references nested inside their key expressions.
+func (c *templateChecker) walkIndexArgs(path string, args []parse.Node, rebound bool) error {
+	for _, arg := range args {
 		if _, literal := arg.(*parse.StringNode); literal {
 			continue
 		}

@@ -72,3 +72,55 @@ func TestEventBus_SubscribeReportsTerminalCursorAlreadyReached(t *testing.T) {
 	default:
 	}
 }
+
+func TestEventBus_SubscribeFiltersFutureEventsAtOrBelowCursor(t *testing.T) {
+	bus := engine.NewEventBus()
+	events, cancel, terminalReached := bus.Subscribe("future-cursor", 3)
+	defer cancel()
+	if terminalReached {
+		t.Fatal("new run unexpectedly reported a terminal event")
+	}
+
+	for i := 1; i <= 4; i++ {
+		bus.Publish(&orkstackv1.Event{
+			RunId: "future-cursor",
+			Type:  orkstackv1.EventType_EVENT_TYPE_TASK_LOG,
+		}, fmt.Sprintf("event-%d", i))
+	}
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	select {
+	case event := <-events:
+		if event == nil || event.GetSequence() != 4 {
+			t.Fatalf("received event %v, want only sequence 4", event)
+		}
+	case <-deadline.C:
+		t.Fatal("timed out waiting for sequence 4")
+	}
+}
+
+func TestEventBus_FutureCursorClosesWhenFilteredTerminalArrives(t *testing.T) {
+	bus := engine.NewEventBus()
+	events, cancel, terminalReached := bus.Subscribe("future-terminal", 3)
+	defer cancel()
+	if terminalReached {
+		t.Fatal("new run unexpectedly reported a terminal event")
+	}
+
+	bus.Publish(&orkstackv1.Event{
+		RunId: "future-terminal",
+		Type:  orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+	}, "done")
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	select {
+	case event, open := <-events:
+		if open {
+			t.Fatalf("received filtered terminal event: %v", event)
+		}
+	case <-deadline.C:
+		t.Fatal("subscription stayed open after a terminal event at or below its cursor")
+	}
+}

@@ -61,48 +61,55 @@ func RunWorkflow(
 		return nil, err
 	}
 
+	inFlight := map[string]workflow.Future{}
 	for {
-		ready := state.readyTasks()
-		if len(ready) == 0 {
-			break
-		}
-
-		scheduled := make([]string, 0, len(ready))
-		for _, id := range ready {
+		// Schedule every task whose own dependencies are terminal. Re-scan after
+		// each completion so a fast branch can advance without waiting for an
+		// unrelated slow branch.
+		for _, id := range state.readyTasks() {
 			run, err := state.classify(ctx, id)
 			if err != nil {
 				return state.fail(ctx, id, err)
 			}
-			if run {
-				scheduled = append(scheduled, id)
+			if !run {
+				continue
 			}
-		}
-		if len(scheduled) == 0 {
-			continue
-		}
-
-		// Start every ready activity before waiting on any of them: this is
-		// what makes independent tasks fan out in parallel.
-		futures := make([]workflow.Future, 0, len(scheduled))
-		for _, id := range scheduled {
 			future, err := state.schedule(ctx, id)
 			if err != nil {
 				return state.fail(ctx, id, err)
 			}
-			futures = append(futures, future)
+			inFlight[id] = future
 		}
 
-		// Consume results in a fixed order so event sequences are stable
-		// across replays regardless of completion order.
-		var failedID string
-		var failure error
-		for i, id := range scheduled {
-			if err := state.collect(ctx, id, futures[i]); err != nil && failure == nil {
-				failedID, failure = id, err
+		if len(inFlight) == 0 {
+			if len(state.readyTasks()) == 0 {
+				break
 			}
+			// The prior scan only propagated skips; scan again for their newly
+			// ready dependants without waiting for an activity.
+			continue
 		}
-		if failure != nil {
-			return state.fail(ctx, failedID, failure)
+
+		// Register futures in declaration order. Future readiness comes from
+		// recorded Temporal history, while fixed registration order stabilizes
+		// the case where several futures are ready in one workflow task.
+		selector := workflow.NewSelector(ctx)
+		selectedID := ""
+		for _, id := range state.order {
+			future, ok := inFlight[id]
+			if !ok {
+				continue
+			}
+			taskID := id
+			selector.AddFuture(future, func(workflow.Future) {
+				selectedID = taskID
+			})
+		}
+		selector.Select(ctx)
+		future := inFlight[selectedID]
+		delete(inFlight, selectedID)
+		if err := state.collect(ctx, selectedID, future); err != nil {
+			return state.fail(ctx, selectedID, err)
 		}
 	}
 

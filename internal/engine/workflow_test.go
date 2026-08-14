@@ -567,3 +567,56 @@ tasks:
 		t.Errorf("ExecuteTaskInput.RunInput.url = %v, want declared default", input.RunInput["url"])
 	}
 }
+
+func TestRunWorkflow_SchedulesChildWhenItsOwnNeedCompletes(t *testing.T) {
+	const document = `
+name: readiness-driven
+tasks:
+  - id: slow
+    plugin: shell
+    timeout_seconds: 5
+  - id: fast
+    plugin: shell
+  - id: child
+    plugin: shell
+    needs: [fast]
+`
+	var suite testsuite.WorkflowTestSuite
+	releaseSlow := make(chan struct{})
+	var releaseOnce sync.Once
+	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		switch in.TaskID {
+		case "slow":
+			select {
+			case <-releaseSlow:
+				return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+			case <-time.After(2 * time.Second):
+				return task.ExecuteTaskResult{}, errors.New("child was not scheduled before unrelated slow task")
+			}
+		case "child":
+			releaseOnce.Do(func() { close(releaseSlow) })
+		}
+		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+	})
+
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil))
+
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+	if _, ok := h.inputFor("child"); !ok {
+		t.Fatal("child was not scheduled after fast completed")
+	}
+	if got := statusOf(mustWorkflowResult(t, h.env), "slow"); got != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Errorf("slow status = %v, want SUCCEEDED", got)
+	}
+}
+
+func mustWorkflowResult(t *testing.T, env *testsuite.TestWorkflowEnvironment) *orkstackv1.Run {
+	t.Helper()
+	var run orkstackv1.Run
+	if err := env.GetWorkflowResult(&run); err != nil {
+		t.Fatalf("workflow result: %v", err)
+	}
+	return &run
+}

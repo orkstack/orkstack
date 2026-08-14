@@ -543,3 +543,143 @@ tasks:
 		t.Fatalf("Compile() rejected valid root variable references: %v", err)
 	}
 }
+
+func TestCompile_AcceptsNamedTemplateWithReboundRelativeContext(t *testing.T) {
+	const document = `
+name: named-rebound
+inputs:
+  obj:
+    type: object
+tasks:
+  - id: render
+    plugin: shell
+    with:
+      command: '{{ define "value" }}{{ .value }}{{ end }}{{ with .inputs.obj }}{{ template "value" . }}{{ end }}'
+`
+	if _, err := dsl.Compile([]byte(document)); err != nil {
+		t.Fatalf("Compile() rejected named template relative to its rebound argument: %v", err)
+	}
+}
+
+func TestCompile_RejectsRootPreservingWithAndIndexBypasses(t *testing.T) {
+	tests := []struct {
+		name        string
+		expression  string
+		wantMessage string
+	}{
+		{name: "with dot", expression: `{{ with . }}{{ .inputs.missing }}{{ end }}`, wantMessage: "undeclared input"},
+		{name: "with dollar", expression: `{{ with $ }}{{ .inputs.missing }}{{ end }}`, wantMessage: "undeclared input"},
+		{name: "index root dot", expression: `{{ index . "inputs" "missing" }}`, wantMessage: "undeclared input"},
+		{name: "index root dollar", expression: `{{ index $ "tasks" "ghost" "output" }}`, wantMessage: "unknown task"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			document := fmt.Sprintf(`
+name: root-bypass
+inputs:
+  present:
+    type: string
+tasks:
+  - id: only
+    plugin: shell
+    with:
+      command: %q
+`, tc.expression)
+			_, err := dsl.Compile([]byte(document))
+			if err == nil {
+				t.Fatalf("Compile() accepted invalid root reference %q", tc.expression)
+			}
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Fatalf("Compile() error = %q, want it to contain %q", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestCompile_AcceptsValidRootPreservingWithAndIndexPaths(t *testing.T) {
+	const document = `
+name: root-paths
+inputs:
+  present:
+    type: string
+tasks:
+  - id: producer
+    plugin: shell
+  - id: consumer
+    plugin: shell
+    needs: [producer]
+    with:
+      with_dot: '{{ with . }}{{ .inputs.present }}{{ end }}'
+      with_dollar: '{{ with $ }}{{ .inputs.present }}{{ end }}'
+      input_dot: '{{ index . "inputs" "present" }}'
+      input_dollar: '{{ index $ "inputs" "present" }}'
+      task_dot: '{{ index . "tasks" "producer" "output" }}'
+      task_dollar: '{{ index $ "tasks" "producer" "output" }}'
+`
+	if _, err := dsl.Compile([]byte(document)); err != nil {
+		t.Fatalf("Compile() rejected valid root-preserving paths: %v", err)
+	}
+}
+
+func TestCompile_UnpinnedHashIsStableWhenNormalizedKeysCollide(t *testing.T) {
+	const document = `
+name: colliding-keys
+tasks:
+  - id: only
+    plugin: shell
+    with:
+      nested:
+        null: one
+        "<nil>": two
+`
+	var first string
+	for i := 0; i < 5_000; i++ {
+		wf, err := dsl.Compile([]byte(document))
+		if err != nil {
+			t.Fatalf("Compile() iteration %d: %v", i, err)
+		}
+		if i == 0 {
+			first = wf.GetVersion()
+			continue
+		}
+		if wf.GetVersion() != first {
+			t.Fatalf("version changed at iteration %d: %q vs %q", i, wf.GetVersion(), first)
+		}
+	}
+}
+
+func TestCompile_PreservesExplicitEmptyStructPresence(t *testing.T) {
+	const explicit = `
+name: explicit-empty
+inputs: {}
+tasks:
+  - id: only
+    plugin: shell
+    with: {}
+`
+	wf, err := dsl.Compile([]byte(explicit))
+	if err != nil {
+		t.Fatalf("Compile(explicit empty): %v", err)
+	}
+	if wf.Inputs == nil || len(wf.Inputs.GetFields()) != 0 {
+		t.Errorf("inputs = %v, want a present empty Struct", wf.Inputs)
+	}
+	if wf.GetTasks()[0].With == nil || len(wf.GetTasks()[0].With.GetFields()) != 0 {
+		t.Errorf("with = %v, want a present empty Struct", wf.GetTasks()[0].With)
+	}
+
+	const omitted = `
+name: omitted-empty
+tasks:
+  - id: only
+    plugin: shell
+`
+	wf, err = dsl.Compile([]byte(omitted))
+	if err != nil {
+		t.Fatalf("Compile(omitted): %v", err)
+	}
+	if wf.Inputs != nil || wf.GetTasks()[0].With != nil {
+		t.Errorf("omitted fields became present: inputs=%v with=%v", wf.Inputs, wf.GetTasks()[0].With)
+	}
+}

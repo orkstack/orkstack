@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -74,6 +75,16 @@ func eventWorkerOptions() worker.Options {
 	}
 }
 
+// installServerShutdownContext gives all HTTP handlers a shared lifetime and
+// cancels it when Shutdown begins. Long-lived Connect and WebSocket streams
+// then return before http.Server waits for active connections to drain.
+func installServerShutdownContext(server *http.Server) context.CancelFunc {
+	handlerCtx, cancel := context.WithCancel(context.Background())
+	server.BaseContext = func(net.Listener) context.Context { return handlerCtx }
+	server.RegisterOnShutdown(cancel)
+	return cancel
+}
+
 func run(logger *slog.Logger, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -128,6 +139,8 @@ func run(logger *slog.Logger, cfg config) error {
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,
 	}))
+	cancelServerHandlers := installServerShutdownContext(server)
+	defer cancelServerHandlers()
 
 	serverErr := make(chan error, 1)
 	go func() {

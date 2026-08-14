@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
@@ -93,7 +94,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Workflow, erro
 		SourceYaml:  string(source),
 	}
 
-	if len(doc.Inputs) > 0 {
+	if doc.Inputs != nil {
 		inputs, err := structpb.NewStruct(normalizeMap(doc.Inputs))
 		if err != nil {
 			return nil, fmt.Errorf("inputs: %w", err)
@@ -121,7 +122,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Workflow, erro
 				MaximumIntervalSeconds: td.Retry.MaximumIntervalSeconds,
 			}
 		}
-		if len(td.With) > 0 {
+		if td.With != nil {
 			with, err := structpb.NewStruct(normalizeMap(td.With))
 			if err != nil {
 				return nil, fmt.Errorf("task %q: with: %w", td.ID, err)
@@ -160,9 +161,33 @@ func normalizeValue(v any) any {
 	case map[string]any:
 		return normalizeMap(typed)
 	case map[any]any:
-		out := make(map[string]any, len(typed))
-		for k, val := range typed {
-			out[fmt.Sprint(k)] = normalizeValue(val)
+		// YAML permits non-string keys, while JSON/Struct do not. Distinct YAML
+		// keys can stringify to the same value (for example null and "<nil>").
+		// Sort by both the normalized key and a typed identity before applying
+		// the unavoidable last-value-wins conversion so the result, and thus an
+		// unpinned content hash, is stable across map iteration order.
+		type entry struct {
+			key      string
+			identity string
+			value    any
+		}
+		entries := make([]entry, 0, len(typed))
+		for key, value := range typed {
+			entries = append(entries, entry{
+				key:      fmt.Sprint(key),
+				identity: fmt.Sprintf("%T:%#v", key, key),
+				value:    value,
+			})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].key != entries[j].key {
+				return entries[i].key < entries[j].key
+			}
+			return entries[i].identity < entries[j].identity
+		})
+		out := make(map[string]any, len(entries))
+		for _, item := range entries {
+			out[item.key] = normalizeValue(item.value)
 		}
 		return out
 	case []any:
