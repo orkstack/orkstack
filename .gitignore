@@ -2,9 +2,9 @@
 /bin/
 /dist/
 *.exe
-orkengine
-orker
-orkctl
+/orkengine
+/orker
+/orkctl
 
 # Go
 *.test
@@ -35,3 +35,5 @@ ui/dist/
 
 # Agent scratch (todos, research notes)
 .atomic/
+!/proof/**/*.log
+!/proof/**/*.out
