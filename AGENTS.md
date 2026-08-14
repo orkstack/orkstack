@@ -116,6 +116,28 @@ Every milestone writes evidence under `proof/<milestone>/`:
 - A behavior trace: e.g. a run's event stream JSON, an artifact roundtrip
   transcript, a CLI session recording, or UI screenshots/video.
 - A short `README.md` stating what was proven and how to reproduce.
+
+### Integration tests share one Temporal task queue — clean up workers
+
+Integration tests and the real binaries all poll the SAME queue
+(`orkstack-tasks`). Any leftover `orkengine`/`orker` process — or a second test
+binary registering a different `ExecuteTask` — will **steal activities** from the
+run under test. The failure looks like a code bug but is not: you get missing
+lifecycle events, `observed 1 task inputs, want 3`, or a run that hangs until the
+stream deadline.
+
+Before trusting an integration failure:
+
+```bash
+ps aux | grep -E 'bin/ork|orkengine|orker' | grep -v grep   # must be empty
+temporal task-queue describe --task-queue orkstack-tasks --address 127.0.0.1:7233
+```
+
+Kill strays with `pkill -f 'bin/orker'; pkill -f 'bin/orkengine'` (match the full
+path — `pkill -f './orker'` does NOT match `./bin/orker`). Never leave a
+backgrounded engine/orker running after a manual e2e; always kill what you start.
+Run integration suites with `-p 1` to stop packages from polling concurrently.
+
 Proof must be reproducible via a single documented command.
 
 ## 7. Commits & branches
