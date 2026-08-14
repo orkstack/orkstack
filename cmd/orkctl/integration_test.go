@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,23 +19,32 @@ import (
 	"testing"
 	"time"
 
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
-	"go.temporal.io/sdk/worker"
-
-	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
+	"gopkg.in/yaml.v3"
 )
 
-// TestIntegration_CLIDrivesARealEngineToTerminalRuns builds the real orkctl and
-// orkengine binaries, runs the engine against a real Temporal cluster, and
+const (
+	// successWorkflowName is the example workflow, pinned to this test's
+	// private task queue so only this test's Orker can execute it.
+	successWorkflowName = "hello-ork-m4"
+
+	// failingWorkflowName is the same workflow with its tasks replaced by one
+	// shell command that exits non-zero, proving the failure exit code.
+	failingWorkflowName = "hello-ork-m4-failing"
+)
+
+// servedBody is what the hermetic stand-in for the example's public fetch URL
+// returns. The trailing newline makes the shell task's `tr -d` step observable.
+const servedBody = "{\"slideshow\": {\"title\": \"Sample Slide Show\", \"slides\": 2}}\n"
+
+// TestIntegration_CLIDrivesARealEngineToTerminalRuns builds the real orkctl,
+// orkengine and orker binaries, runs them against a real Temporal cluster, and
 // drives apply -> submit --watch -> run get through the CLI process, asserting
 // both the terminal run status and the matching CLI exit code.
 //
-// M3's Orker does not exist yet, so this test registers its own stub
-// ExecuteTask activity worker (permitted by the M4 contract). The stub polls a
-// private task queue and the submitted workflows pin their tasks to it, so no
-// other worker on the shared queue can execute or steal them.
+// Isolation: the engine's workflow worker must poll the shared queue, but every
+// task the runs schedule is pinned to a private task queue that only this
+// test's Orker polls, so a stray Orker elsewhere can never steal a task.
 func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
@@ -51,17 +63,25 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot dial temporal at %s: %v", address, err)
 	}
-	defer temporalClient.Close()
+	temporalClient.Close()
+
+	// The example's fetch step targets a local server so the run is hermetic.
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, servedBody)
+	}))
+	defer origin.Close()
 
 	taskQueue := privateTaskQueue()
-	startStubTaskWorker(t, temporalClient, taskQueue)
-
 	repoRoot := repoRoot(t)
 	binDir := t.TempDir()
 	orkctlPath := buildBinary(t, repoRoot, binDir, "orkctl")
 	enginePath := buildBinary(t, repoRoot, binDir, "orkengine")
+	orkerPath := buildBinary(t, repoRoot, binDir, "orker")
 
+	startOrker(ctx, t, orkerPath, address, taskQueue)
 	engineAddr := startEngine(ctx, t, enginePath, address)
+
 	session := &sessionRecorder{}
 	cli := func(args ...string) (string, string, int) {
 		full := append(args, "--server", "http://"+engineAddr)
@@ -88,15 +108,15 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		t.Fatalf("apply stdout:\n%s", stdout)
 	}
 
-	// Runs use copies of the example pinned to this test's private task queue,
-	// so the stub worker below is the only executor that can pick them up.
+	// Runs use a copy of that example pinned to this test's private task queue.
 	successPath := writeQueuePinnedWorkflow(t, repoRoot, successWorkflowName, taskQueue)
 	if _, stderr, code = cli("apply", successPath); code != 0 {
 		t.Fatalf("apply of the pinned workflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
 
-	// submit --watch on a workflow the stub completes successfully
-	stdout, stderr, code = cli("run", "submit", successWorkflowName, "--watch")
+	// submit --watch: the real Orker runs http -> shell -> file for real.
+	stdout, stderr, code = cli("run", "submit", successWorkflowName,
+		"--input", "url="+origin.URL+"/json", "--watch")
 	if code != 0 {
 		t.Fatalf("submit --watch exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
@@ -117,7 +137,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		t.Fatalf("run get stdout does not report SUCCEEDED:\n%s", stdout)
 	}
 
-	// The same path for a run the stub fails: the CLI must exit non-zero.
+	// The same path for a run whose task exits non-zero: the CLI must too.
 	failingPath := writeQueuePinnedWorkflow(t, repoRoot, failingWorkflowName, taskQueue)
 	if _, stderr, code = cli("apply", failingPath); code != 0 {
 		t.Fatalf("apply of the failing workflow exit = %d, want 0\nstderr:\n%s", code, stderr)
@@ -188,10 +208,11 @@ func (s *sessionRecorder) writeProof(t *testing.T) {
 	t.Helper()
 	if path := os.Getenv("ORK_PROOF_SESSION_FILE"); path != "" {
 		header := fmt.Sprintf(
-			"# orkctl session against a real orkengine + real Temporal (%s)\n"+
-				"# M3's Orker does not exist yet, so a stub ExecuteTask activity worker\n"+
-				"# registered by this test executes the tasks.\n"+
-				"# generated by: go test -tags=integration ./cmd/orkctl/ -run Integration\n\n",
+			"# orkctl against a real orkengine + real orker + real Temporal (%s)\n"+
+				"# The runs execute the example workflow's http -> shell -> file tasks\n"+
+				"# for real; tasks are pinned to a private task queue this test's Orker\n"+
+				"# alone polls, and the fetch URL is a local hermetic server.\n"+
+				"# generated by: go test -tags=integration -p 1 ./cmd/orkctl/ -run Integration\n\n",
 			time.Now().UTC().Format(time.RFC3339))
 		if err := os.WriteFile(path, []byte(header+s.transcript.String()), 0o644); err != nil {
 			t.Errorf("write session proof: %v", err)
@@ -204,8 +225,6 @@ func (s *sessionRecorder) writeProof(t *testing.T) {
 	}
 }
 
-const failingWorkflowName = "hello-ork-failing"
-
 // temporalAddress is where the integration test expects a real Temporal
 // frontend. Override with ORK_TEMPORAL_ADDRESS.
 func temporalAddress() string {
@@ -215,48 +234,48 @@ func temporalAddress() string {
 	return client.DefaultHostPort
 }
 
-// startStubTaskWorker registers the activity-only ExecuteTask stub that stands
-// in for the absent Orker. Tasks of failingWorkflowName fail; everything else
-// succeeds.
-func startStubTaskWorker(t *testing.T, temporalClient client.Client) {
+// privateTaskQueue names a task queue unique to this test process, so the
+// Orker started here is the only worker that can execute its tasks.
+func privateTaskQueue() string {
+	return fmt.Sprintf("orkctl-m4-%d-%d", os.Getpid(), time.Now().UnixNano())
+}
+
+// startOrker runs the real orker binary against the private task queue, with a
+// local-filesystem artifact store so the test needs no object storage.
+func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, queue string) {
 	t.Helper()
-	stub := worker.New(temporalClient, task.DefaultQueue, worker.Options{
-		DisableRegistrationAliasing: true,
-		DisableWorkflowWorker:       true,
-	})
-	stub.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-			if in.WorkflowName == failingWorkflowName {
-				return task.ExecuteTaskResult{}, fmt.Errorf("stub orker failed task %s", in.TaskID)
-			}
-			return task.ExecuteTaskResult{
-				TaskID: in.TaskID,
-				Output: plugin.Payload{"stub": true, "task": in.TaskID},
-			}, nil
-		},
-		activity.RegisterOptions{Name: task.ActivityExecuteTask},
+	root := t.TempDir()
+	startProcess(ctx, t, "orker", orkerPath,
+		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
+		"ORK_ORKER_QUEUE="+queue,
+		"ORK_ORKER_WORKDIR="+filepath.Join(root, "work"),
+		"ORK_ARTIFACT_BACKEND=local",
+		"ORK_ARTIFACT_DIR="+filepath.Join(root, "artifacts"),
 	)
-	if err := stub.Start(); err != nil {
-		t.Fatalf("start stub task worker: %v", err)
-	}
-	t.Cleanup(stub.Stop)
 }
 
 // startEngine runs the real orkengine binary on a free loopback port.
 func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr string) string {
 	t.Helper()
 	addr := freeAddress(t)
-
-	cmd := exec.CommandContext(ctx, enginePath)
-	cmd.Env = append(os.Environ(),
+	startProcess(ctx, t, "orkengine", enginePath,
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 	)
+	return addr
+}
+
+// startProcess starts a built binary with extra environment and guarantees it
+// is stopped when the test ends, so no worker outlives the test.
+func startProcess(ctx context.Context, t *testing.T, name, path string, env ...string) {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, path)
+	cmd.Env = append(os.Environ(), env...)
 	var log strings.Builder
 	cmd.Stdout = &log
 	cmd.Stderr = &log
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start orkengine: %v", err)
+		t.Fatalf("start %s: %v", name, err)
 	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Signal(os.Interrupt)
@@ -264,13 +283,12 @@ func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr str
 		go func() { _ = cmd.Wait(); close(done) }()
 		select {
 		case <-done:
-		case <-time.After(10 * time.Second):
+		case <-time.After(15 * time.Second):
 			_ = cmd.Process.Kill()
 			<-done
 		}
-		t.Logf("orkengine log:\n%s", log.String())
+		t.Logf("%s log:\n%s", name, log.String())
 	})
-	return addr
 }
 
 // waitForEngine polls the engine through the CLI until it answers.
@@ -319,20 +337,47 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 	return "", "", -1
 }
 
-// writeFailingWorkflow copies the example under a name the stub always fails.
-func writeFailingWorkflow(t *testing.T, repoRoot string) string {
+// writeQueuePinnedWorkflow rewrites examples/hello.ork.yaml under a new name
+// with every task pinned to queue, and returns the file's path. The failing
+// variant keeps the same shape but runs one command that exits non-zero.
+func writeQueuePinnedWorkflow(t *testing.T, repoRoot, name, queue string) string {
 	t.Helper()
 	source, err := os.ReadFile(filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}
-	renamed := strings.Replace(string(source), "name: hello-ork", "name: "+failingWorkflowName, 1)
-	if renamed == string(source) {
-		t.Fatal("could not rename the example workflow")
+	var doc map[string]any
+	if err := yaml.Unmarshal(source, &doc); err != nil {
+		t.Fatalf("parse example: %v", err)
 	}
-	path := filepath.Join(t.TempDir(), failingWorkflowName+".ork.yaml")
-	if err := os.WriteFile(path, []byte(renamed), 0o644); err != nil {
-		t.Fatalf("write failing workflow: %v", err)
+	doc["name"] = name
+
+	if name == failingWorkflowName {
+		doc["tasks"] = []any{map[string]any{
+			"id":     "fail",
+			"plugin": "shell",
+			"with":   map[string]any{"command": "echo boom >&2; exit 7"},
+		}}
+	}
+	tasks, ok := doc["tasks"].([]any)
+	if !ok || len(tasks) == 0 {
+		t.Fatalf("example has no tasks: %#v", doc["tasks"])
+	}
+	for _, raw := range tasks {
+		task, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected task shape: %#v", raw)
+		}
+		task["queue"] = queue
+	}
+
+	encoded, err := yaml.Marshal(doc)
+	if err != nil {
+		t.Fatalf("encode workflow: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), name+".ork.yaml")
+	if err := os.WriteFile(path, encoded, 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
 	}
 	return path
 }
