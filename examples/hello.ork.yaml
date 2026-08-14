@@ -1,0 +1,43 @@
+# OrkStack workflow DSL — v0
+# A minimal end-to-end demo: fetch JSON over HTTP, transform it in a shell
+# task, then persist the result as an artifact via the file plugin.
+name: hello-ork
+version: "0.1.0"
+description: Fetch JSON, extract a field, and persist it as an artifact.
+
+# Declared inputs. Values are provided at submit time and referenced via
+# {{ .inputs.<name> }} in task configuration.
+inputs:
+  url:
+    type: string
+    default: "https://httpbin.org/json"
+
+tasks:
+  # 1. HTTP GET. Exports the response body as an artifact named "body"
+  #    and the parsed JSON on output.json.
+  - id: fetch
+    plugin: http
+    with:
+      method: GET
+      url: "{{ .inputs.url }}"
+      capture_body_as: body        # artifact name
+
+  # 2. Shell task consuming the upstream artifact. Downstream tasks resolve
+  #    artifacts through the {{ artifact "<task>/<name>" }} helper, which the
+  #    Orker materializes to a local path before execution.
+  - id: transform
+    plugin: shell
+    needs: [fetch]
+    with:
+      command: |
+        cat "{{ artifact "fetch/body" }}" | tr -d '\n' | head -c 512
+      capture_stdout_as: title
+
+  # 3. Persist the shell stdout as a new artifact.
+  - id: save
+    plugin: file
+    needs: [transform]
+    with:
+      op: write
+      path: result.txt
+      content: "{{ .tasks.transform.output.stdout }}"

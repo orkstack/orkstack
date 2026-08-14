@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/struct.proto";
+import "orkstack/v1/common.proto";
+import "orkstack/v1/run.proto";
+import "orkstack/v1/workflow.proto";
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// WorkflowService manages workflow definitions (the compiled DSL).
+service WorkflowService {
+  // Apply validates and upserts a workflow from raw DSL YAML.
+  rpc Apply(ApplyWorkflowRequest) returns (ApplyWorkflowResponse);
+  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+}
+
+message ApplyWorkflowRequest {
+  string yaml = 1;                       // raw DSL document
+}
+message ApplyWorkflowResponse {
+  Workflow workflow = 1;
+  repeated string warnings = 2;
+}
+message GetWorkflowRequest {
+  string name = 1;
+  string version = 2;                    // empty = latest
+}
+message GetWorkflowResponse { Workflow workflow = 1; }
+message ListWorkflowsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+message ListWorkflowsResponse {
+  repeated Workflow workflows = 1;
+  string next_page_token = 2;
+}
+
+// RunService submits and observes workflow executions.
+service RunService {
+  rpc SubmitRun(SubmitRunRequest) returns (SubmitRunResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
+  // StreamEvents server-streams realtime events for a run. from_sequence
+  // allows resuming after a disconnect (0 = from start).
+  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+}
+
+message SubmitRunRequest {
+  string workflow_name = 1;
+  string workflow_version = 2;           // empty = latest
+  Payload input = 3;
+  string idempotency_key = 4;            // optional dedupe
+}
+message SubmitRunResponse { Run run = 1; }
+message GetRunRequest { string run_id = 1; }
+message GetRunResponse { Run run = 1; }
+message ListRunsRequest {
+  string workflow_name = 1;              // optional filter
+  Status status = 2;                     // optional filter
+  int32 page_size = 3;
+  string page_token = 4;
+}
+message ListRunsResponse {
+  repeated Run runs = 1;
+  string next_page_token = 2;
+}
+message CancelRunRequest { string run_id = 1; string reason = 2; }
+message CancelRunResponse { Run run = 1; }
+message StreamEventsRequest {
+  string run_id = 1;
+  int64 from_sequence = 2;
+}
+
+// PluginService exposes the plugins registered across connected Orkers.
+service PluginService {
+  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
+}
+message ListPluginsRequest {}
+message PluginInfo {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  google.protobuf.Struct input_schema = 4;
+  google.protobuf.Struct output_schema = 5;
+}
+message ListPluginsResponse { repeated PluginInfo plugins = 1; }

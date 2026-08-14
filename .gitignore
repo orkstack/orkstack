@@ -1,0 +1,34 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+orkengine
+orker
+orkctl
+
+# Go
+*.test
+*.out
+/coverage/
+
+# Node / UI
+node_modules/
+ui/.svelte-kit/
+ui/build/
+ui/dist/
+.env
+.env.*
+!.env.example
+
+# Local data / artifacts
+/.data/
+/tmp/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Proof artifacts are committed intentionally; local scratch is not
+/proof/scratch/

@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// Status is the lifecycle state shared by runs and task runs.
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_PENDING = 1;
+  STATUS_RUNNING = 2;
+  STATUS_SUCCEEDED = 3;
+  STATUS_FAILED = 4;
+  STATUS_CANCELED = 5;
+  STATUS_SKIPPED = 6;
+}
+
+// ArtifactRef is a pointer to a stored artifact in the object store.
+// It never carries bytes inline; downstream tasks resolve it via the
+// artifact storage provider using uri.
+message ArtifactRef {
+  string name = 1;                       // logical name within the producing task
+  string uri = 2;                        // provider uri, e.g. s3://bucket/key or file://...
+  string content_type = 3;               // MIME type
+  int64 size_bytes = 4;
+  string sha256 = 5;                     // integrity checksum, hex-encoded
+  map<string, string> metadata = 6;
+}
+
+// Payload is the structured JSON-compatible data passed between tasks.
+message Payload {
+  google.protobuf.Struct data = 1;
+}
+
+// Error captures a structured failure for a run or task run.
+message Error {
+  string code = 1;      // stable machine code, e.g. "PLUGIN_TIMEOUT"
+  string message = 2;   // human readable
+  string details = 3;   // optional stack/context
+  bool retryable = 4;
+}

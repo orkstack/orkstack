@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/common.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// TaskRun is the execution record of a single Task within a Run.
+message TaskRun {
+  string task_id = 1;
+  string plugin = 2;
+  Status status = 3;
+  int32 attempt = 4;
+  Payload output = 5;
+  repeated ArtifactRef artifacts = 6;
+  Error error = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp finished_at = 9;
+}
+
+// Run is one execution of a Workflow.
+message Run {
+  string id = 1;                         // orkstack run id (also Temporal workflow id)
+  string workflow_name = 2;
+  string workflow_version = 3;
+  Status status = 4;
+  Payload input = 5;
+  Payload output = 6;                    // aggregated terminal outputs
+  Error error = 7;
+  repeated TaskRun task_runs = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp finished_at = 11;
+}
+
+// EventType classifies a run event on the realtime stream.
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_RUN_CREATED = 1;
+  EVENT_TYPE_RUN_STARTED = 2;
+  EVENT_TYPE_TASK_SCHEDULED = 3;
+  EVENT_TYPE_TASK_STARTED = 4;
+  EVENT_TYPE_TASK_LOG = 5;
+  EVENT_TYPE_TASK_SUCCEEDED = 6;
+  EVENT_TYPE_TASK_FAILED = 7;
+  EVENT_TYPE_RUN_SUCCEEDED = 8;
+  EVENT_TYPE_RUN_FAILED = 9;
+  EVENT_TYPE_RUN_CANCELED = 10;
+}
+
+// Event is a single realtime update for a run, delivered over the
+// server-streaming RPC and the WebSocket bridge.
+message Event {
+  string run_id = 1;
+  int64 sequence = 2;                    // monotonic per run
+  EventType type = 3;
+  string task_id = 4;                    // set for task events
+  Status status = 5;
+  string message = 6;                    // human readable / log line
+  Payload data = 7;                      // optional structured detail
+  google.protobuf.Timestamp timestamp = 8;
+}
