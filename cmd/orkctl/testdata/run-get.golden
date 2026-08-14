@@ -1,0 +1,14 @@
+Run:       run-001
+Workflow:  hello-ork
+Version:   0.1.0
+Status:    SUCCEEDED
+Created:   2026-01-02T03:04:05Z
+Started:   2026-01-02T03:04:05Z
+Finished:  2026-01-02T03:04:05Z
+Input:     {"url":"https://httpbin.org/json"}
+Output:    {"saved":"result.txt"}
+
+TASK       PLUGIN  STATUS     ATTEMPT  STARTED               FINISHED              ERROR
+fetch      http    SUCCEEDED  1        2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
+transform  shell   SUCCEEDED  1        2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
+save       file    SUCCEEDED  1        2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
