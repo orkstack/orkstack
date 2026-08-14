@@ -21,6 +21,8 @@
 // ctx.tool(...) node and the REAL exit status feeds review/repair. Models
 // never self-report whether the build or tests passed.
 
+import { spawnSync } from "node:child_process";
+
 import { workflow } from "@bastani/workflows";
 import { Type, type Static } from "typebox";
 
@@ -72,22 +74,38 @@ interface CheckOutcome {
   readonly output: string;
 }
 
+// Portable command runner. The workflow runtime does not expose the Bun
+// global, so use node:child_process (works under both Node and Bun).
+function exec(
+  argv: readonly string[],
+  cwd: string,
+): { status: number; stdout: string; stderr: string } {
+  const result = spawnSync(argv[0]!, [...argv.slice(1)], {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return {
+    status: result.status ?? -1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? (result.error ? String(result.error) : ""),
+  };
+}
+
 // Runs a command and REPORTS the outcome instead of throwing, so a failing
 // gate becomes evidence for the repair stage rather than crashing the run.
 // Output is tail-capped to keep prompts small.
 function probe(argv: readonly string[], cwd: string, label: string): CheckOutcome {
   try {
-    const result = Bun.spawnSync([...argv], { cwd, stdout: "pipe", stderr: "pipe" });
-    const stdout = result.stdout.toString();
-    const stderr = result.stderr.toString();
-    const merged = `${stdout}${stderr}`.trim();
+    const result = exec(argv, cwd);
+    const merged = `${result.stdout}${result.stderr}`.trim();
     const lines = merged.split("\n");
     const tail = lines.length > 60 ? lines.slice(-60).join("\n") : merged;
     return {
       label,
       argv,
-      ok: result.exitCode === 0,
-      exitCode: result.exitCode ?? -1,
+      ok: result.status === 0,
+      exitCode: result.status,
       output: tail,
     };
   } catch (error) {
@@ -176,24 +194,20 @@ export default workflow({
 
     // Ensure the worktree is on the expected branch before any agent touches it.
     await ctx.tool("ensure-branch", { branch, cwd }, async () => {
-      const current = Bun.spawnSync(["git", "branch", "--show-current"], {
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const name = current.stdout.toString().trim();
+      const current = exec(["git", "branch", "--show-current"], cwd);
+      const name = current.stdout.trim();
       if (name === branch) return { branch: name, action: "already-on-branch" };
-      const probeRef = Bun.spawnSync(
+      const probeRef = exec(
         ["git", "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
-        { cwd, stdout: "pipe", stderr: "pipe" },
+        cwd,
       );
       const argv =
-        probeRef.exitCode === 0
+        probeRef.status === 0
           ? ["git", "switch", branch]
           : ["git", "switch", "-c", branch];
-      const sw = Bun.spawnSync(argv, { cwd, stdout: "pipe", stderr: "pipe" });
-      if (sw.exitCode !== 0) {
-        throw new Error(`could not switch to ${branch}: ${sw.stderr.toString()}`);
+      const sw = exec(argv, cwd);
+      if (sw.status !== 0) {
+        throw new Error(`could not switch to ${branch}: ${sw.stderr}`);
       }
       return { branch, action: argv.join(" ") };
     });
@@ -313,24 +327,15 @@ export default workflow({
 
     // Work must be committed to count as done.
     const head = await ctx.tool("require-committed", { branch }, async () => {
-      const pending = Bun.spawnSync(["git", "status", "--porcelain"], {
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      const pending = exec(["git", "status", "--porcelain"], cwd);
       const dirty = pending.stdout
-        .toString()
         .split("\n")
         .filter((line) => line.trim() !== "")
         // Agent scratch is not part of the deliverable.
         .filter((line) => !/\.atomic|research\//.test(line));
-      const rev = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      const rev = exec(["git", "rev-parse", "HEAD"], cwd);
       return {
-        commit: rev.stdout.toString().trim(),
+        commit: rev.stdout.trim(),
         uncommitted: dirty,
       };
     });
