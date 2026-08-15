@@ -100,6 +100,21 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 
+INVALID_DIR="$(mktemp -d)"
+cat >"$INVALID_DIR/bad-name.ork.yaml" <<'YAML'
+name: Bad_Name
+version: "0.1.0"
+tasks:
+  - id: a
+    plugin: shell
+    with: {command: "echo 1"}
+YAML
+cat >"$INVALID_DIR/no-tasks.ork.yaml" <<'YAML'
+name: ok-name
+version: "0.1.0"
+tasks: []
+YAML
+
 {
   echo "# M7.1 behavior trace — ork- run ids on the ork-main namespace / ork-tasks queue"
   echo
@@ -117,7 +132,16 @@ done
   echo
   echo "\$ ./bin/orkctl --server $TRACE_SERVER run submit hello-ork --watch"
   ./bin/orkctl --server "$TRACE_SERVER" run submit hello-ork --watch 2>&1 | head -40 || true
+  echo
+  echo "# rejection surface: the validator names the entity an orkflow"
+  echo
+  echo "\$ ./bin/orkctl --server $TRACE_SERVER apply bad-name.ork.yaml   # name: Bad_Name"
+  ./bin/orkctl --server "$TRACE_SERVER" apply "$INVALID_DIR/bad-name.ork.yaml" 2>&1 || true
+  echo
+  echo "\$ ./bin/orkctl --server $TRACE_SERVER apply no-tasks.ork.yaml   # tasks: []"
+  ./bin/orkctl --server "$TRACE_SERVER" apply "$INVALID_DIR/no-tasks.ork.yaml" 2>&1 || true
 } >"$PROOF_DIR/behavior-trace.txt" 2>&1
+rm -rf "$INVALID_DIR"
 
 cleanup
 trap - EXIT

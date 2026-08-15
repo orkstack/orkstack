@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -127,6 +128,30 @@ tasks:
     needs: [beta]
     with: {command: "echo gamma"}
 `
+
+// The engine rejects an empty orkflow, and the run error names the entity the
+// user authored — an orkflow, not a "workflow".
+func TestRunWorkflow_RejectsAnOrkflowWithNoTasks(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		t.Fatalf("ExecuteTask called for %q, want no dispatch", in.TaskID)
+		return task.ExecuteTaskResult{}, nil
+	})
+
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-1-1",
+		&orkstackv1.Orkflow{Name: "empty", Version: "0.1.0"}, payload(t, nil))
+
+	if !h.env.IsWorkflowCompleted() {
+		t.Fatal("workflow did not complete")
+	}
+	err := h.env.GetWorkflowError()
+	if err == nil {
+		t.Fatal("error = nil, want the empty orkflow to be rejected")
+	}
+	if !strings.Contains(err.Error(), "orkflow has no tasks") {
+		t.Fatalf("error = %q, want it to contain %q", err.Error(), "orkflow has no tasks")
+	}
+}
 
 func TestRunWorkflow_ExecutesLinearNeedsInOrder(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite

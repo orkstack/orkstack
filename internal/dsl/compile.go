@@ -15,7 +15,7 @@ import (
 // DefaultTimeoutSeconds is applied when a task omits timeout_seconds.
 const DefaultTimeoutSeconds = 300
 
-// slugPattern is the identifier rule for workflow names and task ids
+// slugPattern is the identifier rule for orkflow names and task ids
 // (docs/DSL.md validation rules 1 and 2).
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 

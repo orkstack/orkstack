@@ -19,15 +19,15 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		knownSet[name] = struct{}{}
 	}
 
-	// Rule 1: workflow name present and slug-formatted.
+	// Rule 1: orkflow name present and slug-formatted.
 	if wf.GetName() == "" {
-		return fmt.Errorf("workflow name is required")
+		return fmt.Errorf("orkflow name is required")
 	}
 	if !slugPattern.MatchString(wf.GetName()) {
-		return fmt.Errorf("workflow name %q is not a slug (%s)", wf.GetName(), slugPattern.String())
+		return fmt.Errorf("orkflow name %q is not a slug (%s)", wf.GetName(), slugPattern.String())
 	}
 	if len(wf.GetTasks()) == 0 {
-		return fmt.Errorf("workflow %q declares no tasks", wf.GetName())
+		return fmt.Errorf("orkflow %q declares no tasks", wf.GetName())
 	}
 
 	// Rule 2: task ids unique and slug-formatted.

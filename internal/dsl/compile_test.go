@@ -259,7 +259,7 @@ tasks:
     plugin: shell
     with: {command: "echo 1"}
 `,
-			wantMessage: "workflow name is required",
+			wantMessage: "orkflow name is required",
 		},
 		{
 			name:        "unparseable yaml",

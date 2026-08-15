@@ -53,7 +53,7 @@ func RunWorkflow(
 		return nil, temporal.NewNonRetryableApplicationError("run id is required", "INVALID_RUN", nil)
 	}
 	if wf == nil || len(wf.GetTasks()) == 0 {
-		return nil, temporal.NewNonRetryableApplicationError("workflow has no tasks", "INVALID_WORKFLOW", nil)
+		return nil, temporal.NewNonRetryableApplicationError("orkflow has no tasks", "INVALID_ORKFLOW", nil)
 	}
 
 	state := newRunState(ctx, runID, wf, input)
