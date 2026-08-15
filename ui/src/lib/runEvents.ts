@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/public';
-import { fromJson } from '@bufbuild/protobuf';
+import { fromJson, type JsonObject, type JsonValue } from '@bufbuild/protobuf';
 import { EventSchema, type Event } from './gen/orkstack/v1/run_pb';
 import { isTerminalEventType } from './status';
 
@@ -9,6 +9,21 @@ function wsBaseUrl(): string {
 	if (env.PUBLIC_ENGINE_WS_URL) return env.PUBLIC_ENGINE_WS_URL.replace(/\/$/, '');
 	const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
 	return `${scheme}://${location.hostname}:8080`;
+}
+
+// The bridge writes enum values without their proto prefix ("RUNNING"), while
+// the generated decoder only knows the declared names. Restore the prefix on
+// the way in; frames that still use the long form pass through untouched.
+function withProtoEnumNames(frame: JsonValue): JsonValue {
+	if (typeof frame !== 'object' || frame === null || Array.isArray(frame)) return frame;
+	const restored: JsonObject = { ...frame };
+	if (typeof restored.type === 'string' && !restored.type.startsWith('EVENT_TYPE_')) {
+		restored.type = `EVENT_TYPE_${restored.type}`;
+	}
+	if (typeof restored.status === 'string' && !restored.status.startsWith('STATUS_')) {
+		restored.status = `STATUS_${restored.status}`;
+	}
+	return restored;
 }
 
 // watchRunEvents subscribes to the engine's WebSocket bridge for a run. It
@@ -41,7 +56,7 @@ export function watchRunEvents(
 		socket.onmessage = (msg) => {
 			let event: Event;
 			try {
-				event = fromJson(EventSchema, JSON.parse(String(msg.data)));
+				event = fromJson(EventSchema, withProtoEnumNames(JSON.parse(String(msg.data))));
 			} catch {
 				return; // ignore malformed frames
 			}

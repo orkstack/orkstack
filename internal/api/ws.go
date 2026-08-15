@@ -9,7 +9,8 @@ import (
 )
 
 // NewWebSocketBridge returns the /ws/runs/{id} handler. It forwards the same
-// events as RunService.StreamEvents, encoded as protobuf JSON text frames, so
+// events as RunService.StreamEvents, encoded as JSON text frames in OrkStack's
+// dialect (enum values without their type prefix: "status":"RUNNING"), so
 // browsers get realtime updates without a streaming RPC client.
 func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 	marshaler := protojson.MarshalOptions{EmitUnpopulated: false}
@@ -59,7 +60,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 					_ = conn.Close(websocket.StatusNormalClosure, "event stream closed")
 					return
 				}
-				payload, err := marshaler.Marshal(event)
+				payload, err := MarshalJSONOptions(marshaler, event)
 				if err != nil {
 					_ = conn.Close(websocket.StatusInternalError, "encode event")
 					return

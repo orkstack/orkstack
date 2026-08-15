@@ -523,6 +523,12 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 			if err := json.Unmarshal([]byte(outcome.stdout), &decoded); err != nil {
 				t.Fatalf("stdout is not valid JSON: %v\nstdout:\n%s", err, outcome.stdout)
 			}
+			// Machine output names enum values without their type prefix.
+			for _, prefix := range []string{"STATUS_", "EVENT_TYPE_"} {
+				if strings.Contains(outcome.stdout, prefix) {
+					t.Errorf("stdout carries the %s enum prefix:\n%s", prefix, outcome.stdout)
+				}
+			}
 		})
 	}
 }
@@ -556,11 +562,65 @@ func TestJSONFlag_WatchDocumentCarriesEventsAndFinalRun(t *testing.T) {
 	if len(document.Events) != 2 {
 		t.Fatalf("events = %d, want 2\nstdout:\n%s", len(document.Events), outcome.stdout)
 	}
-	if document.Events[1].Type != "EVENT_TYPE_RUN_FAILED" {
-		t.Fatalf("last event type = %s, want EVENT_TYPE_RUN_FAILED", document.Events[1].Type)
+	if document.Events[1].Type != "RUN_FAILED" {
+		t.Fatalf("last event type = %s, want RUN_FAILED", document.Events[1].Type)
 	}
-	if document.Run.ID != "run-001" || document.Run.Status != "STATUS_FAILED" {
-		t.Fatalf("final run = %+v, want run-001 / STATUS_FAILED", document.Run)
+	if document.Run.ID != "run-001" || document.Run.Status != "FAILED" {
+		t.Fatalf("final run = %+v, want run-001 / FAILED", document.Run)
+	}
+	if strings.Contains(outcome.stdout, "STATUS_") || strings.Contains(outcome.stdout, "EVENT_TYPE_") {
+		t.Fatalf("watch --json still carries an enum prefix:\n%s", outcome.stdout)
+	}
+}
+
+// The headline of M7.2: what a machine reads from `run get` / `run list` is
+// the bare enum value, at every depth of the document.
+func TestJSONFlag_RunGetAndListNameStatusesWithoutTheEnumPrefix(t *testing.T) {
+	f := newFixture(t)
+	f.applyExample().requireExit(t, exitOK)
+	f.run("run", "submit", "hello-ork").requireExit(t, exitOK)
+	f.completeRunSnapshot("run-001")
+
+	got := f.run("run", "get", "run-001", "--json").requireExit(t, exitOK)
+	var single struct {
+		Run struct {
+			Status   string `json:"status"`
+			TaskRuns []struct {
+				TaskID string `json:"taskId"`
+				Status string `json:"status"`
+			} `json:"taskRuns"`
+		} `json:"run"`
+	}
+	if err := json.Unmarshal([]byte(got.stdout), &single); err != nil {
+		t.Fatalf("run get --json is not valid JSON: %v\nstdout:\n%s", err, got.stdout)
+	}
+	if single.Run.Status != "SUCCEEDED" {
+		t.Errorf("run get status = %q, want SUCCEEDED\nstdout:\n%s", single.Run.Status, got.stdout)
+	}
+	if len(single.Run.TaskRuns) != 3 {
+		t.Fatalf("task runs = %d, want 3\nstdout:\n%s", len(single.Run.TaskRuns), got.stdout)
+	}
+	for _, taskRun := range single.Run.TaskRuns {
+		if taskRun.Status != "SUCCEEDED" {
+			t.Errorf("task %s status = %q, want SUCCEEDED", taskRun.TaskID, taskRun.Status)
+		}
+	}
+	if !strings.Contains(got.stdout, `"status": "SUCCEEDED"`) {
+		t.Errorf("run get --json lacks a literal \"status\": \"SUCCEEDED\"\nstdout:\n%s", got.stdout)
+	}
+
+	listed := f.run("run", "list", "--json").requireExit(t, exitOK)
+	var many struct {
+		Runs []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(listed.stdout), &many); err != nil {
+		t.Fatalf("run list --json is not valid JSON: %v\nstdout:\n%s", err, listed.stdout)
+	}
+	if len(many.Runs) != 1 || many.Runs[0].Status != "SUCCEEDED" {
+		t.Fatalf("run list runs = %+v, want one SUCCEEDED run\nstdout:\n%s", many.Runs, listed.stdout)
 	}
 }
 

@@ -16,7 +16,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/coder/websocket"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -387,8 +386,10 @@ func TestSubmitRun_StarterFailureTerminatesConnectAndWebSocketStreams(t *testing
 			t.Fatalf("websocket read: %v", err)
 		}
 		event := &orkstackv1.Event{}
-		if err := protojson.Unmarshal(payload, event); err != nil {
-			t.Fatalf("decode websocket event: %v", err)
+		// The bridge speaks OrkStack's JSON dialect (short enum names), so
+		// api.UnmarshalJSON is the matching decoder.
+		if err := api.UnmarshalJSON(payload, event); err != nil {
+			t.Fatalf("decode websocket event %q: %v", string(payload), err)
 		}
 		websocketEvents = append(websocketEvents, event)
 	}
@@ -677,7 +678,7 @@ func TestWebSocketBridgeDeliversSameEventsAsStreamEvents(t *testing.T) {
 			t.Fatalf("frame type = %v, want text", typ)
 		}
 		var event orkstackv1.Event
-		if err := protojson.Unmarshal(data, &event); err != nil {
+		if err := api.UnmarshalJSON(data, &event); err != nil {
 			t.Fatalf("decode event %q: %v", string(data), err)
 		}
 		got = append(got, &event)

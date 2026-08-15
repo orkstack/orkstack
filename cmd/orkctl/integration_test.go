@@ -172,14 +172,34 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		t.Fatalf("plugin list exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
 
-	// A machine-readable sample of the same successful run.
+	// A machine-readable sample of the same successful run: statuses are named
+	// without their enum prefix, against the real engine.
 	stdout, stderr, code = cli("run", "get", runID, "--json")
 	if code != 0 {
 		t.Fatalf("run get --json exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
-	var decoded any
+	var decoded struct {
+		Run struct {
+			Status   string `json:"status"`
+			TaskRuns []struct {
+				TaskID string `json:"taskId"`
+				Status string `json:"status"`
+			} `json:"taskRuns"`
+		} `json:"run"`
+	}
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("run get --json is not valid JSON: %v\nstdout:\n%s", err, stdout)
+	}
+	if decoded.Run.Status != "SUCCEEDED" {
+		t.Fatalf("run get --json status = %q, want SUCCEEDED\nstdout:\n%s", decoded.Run.Status, stdout)
+	}
+	for _, taskRun := range decoded.Run.TaskRuns {
+		if taskRun.Status != "SUCCEEDED" {
+			t.Fatalf("task %s status = %q, want SUCCEEDED", taskRun.TaskID, taskRun.Status)
+		}
+	}
+	if strings.Contains(stdout, "STATUS_") || strings.Contains(stdout, "EVENT_TYPE_") {
+		t.Fatalf("run get --json still carries an enum prefix:\n%s", stdout)
 	}
 	session.jsonSample = stdout
 }

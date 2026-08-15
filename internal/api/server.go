@@ -19,14 +19,15 @@ type MuxOptions struct {
 // NewMux mounts the Connect handlers and the WebSocket bridge.
 func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	mux := http.NewServeMux()
+	handlerOptions := HandlerOptions()
 
-	orkflowPath, orkflowHandler := orkstackv1connect.NewOrkflowServiceHandler(svc)
+	orkflowPath, orkflowHandler := orkstackv1connect.NewOrkflowServiceHandler(svc, handlerOptions...)
 	mux.Handle(orkflowPath, orkflowHandler)
 
-	runPath, runHandler := orkstackv1connect.NewRunServiceHandler(svc)
+	runPath, runHandler := orkstackv1connect.NewRunServiceHandler(svc, handlerOptions...)
 	mux.Handle(runPath, runHandler)
 
-	pluginPath, pluginHandler := orkstackv1connect.NewPluginServiceHandler(svc)
+	pluginPath, pluginHandler := orkstackv1connect.NewPluginServiceHandler(svc, handlerOptions...)
 	mux.Handle(pluginPath, pluginHandler)
 
 	mux.Handle("/ws/runs/{id}", NewWebSocketBridge(svc, opts.AllowedOrigins))

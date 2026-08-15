@@ -62,6 +62,7 @@ a reproducible proof artifact under `proof/`.
 
 - [DSL reference](./docs/DSL.md)
 - [Plugin reference](./docs/PLUGINS.md)
+- [JSON reference](./docs/JSON.md) — enum spelling on every JSON surface
 - [Architecture](./ARCHITECTURE.md)
 
 ## Milestones

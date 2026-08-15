@@ -10,25 +10,26 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
 )
 
 // dash is what an empty cell renders as, so tables never have holes.
 const dash = "-"
 
-// marshalJSON encodes a protobuf message as canonical JSON. protojson is the
-// only correct encoder for these messages (encoding/json cannot round-trip
-// google.protobuf.Struct), and re-indenting through encoding/json removes
-// protojson's deliberately unstable whitespace.
+// marshalJSON encodes a protobuf message as JSON in OrkStack's dialect: enum
+// values lose their type prefix ("status": "SUCCEEDED"), which is what the API
+// and the WebSocket bridge emit too. api.MarshalJSON is the one encoder for
+// that dialect — encoding/json cannot round-trip google.protobuf.Struct, and
+// re-indenting removes protojson's deliberately unstable whitespace.
 func marshalJSON(message proto.Message) ([]byte, error) {
-	compact, err := protojson.Marshal(message)
+	compact, err := api.MarshalJSON(message)
 	if err != nil {
-		return nil, fmt.Errorf("encode json: %w", err)
+		return nil, err
 	}
 	var indented bytes.Buffer
 	if err := json.Indent(&indented, compact, "", "  "); err != nil {
