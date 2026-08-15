@@ -20,8 +20,8 @@ type MuxOptions struct {
 func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	workflowPath, workflowHandler := orkstackv1connect.NewWorkflowServiceHandler(svc)
-	mux.Handle(workflowPath, workflowHandler)
+	orkflowPath, orkflowHandler := orkstackv1connect.NewOrkflowServiceHandler(svc)
+	mux.Handle(orkflowPath, orkflowHandler)
 
 	runPath, runHandler := orkstackv1connect.NewRunServiceHandler(svc)
 	mux.Handle(runPath, runHandler)

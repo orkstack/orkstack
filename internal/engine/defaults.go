@@ -9,13 +9,13 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// ApplyInputDefaults clones input and fills omitted fields from the workflow's
+// ApplyInputDefaults clones input and fills omitted fields from the orkflow's
 // declared input defaults. Caller fields always win, including explicit null;
 // undeclared fields are preserved unchanged.
 //
 // This helper is safe in workflow code: it has no side effects and sorts map
 // keys before traversing them.
-func ApplyInputDefaults(wf *orkstackv1.Workflow, input *orkstackv1.Payload) *orkstackv1.Payload {
+func ApplyInputDefaults(wf *orkstackv1.Orkflow, input *orkstackv1.Payload) *orkstackv1.Payload {
 	var out *orkstackv1.Payload
 	if input == nil {
 		out = &orkstackv1.Payload{}

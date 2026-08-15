@@ -18,7 +18,7 @@ func TestApplyInputDefaults_MergesDefaultsWithoutChangingCallerValues(t *testing
 	if err != nil {
 		t.Fatalf("declarations: %v", err)
 	}
-	wf := &orkstackv1.Workflow{Inputs: declarations}
+	wf := &orkstackv1.Orkflow{Inputs: declarations}
 
 	t.Run("omitted values receive defaults", func(t *testing.T) {
 		got := engine.ApplyInputDefaults(wf, &orkstackv1.Payload{})

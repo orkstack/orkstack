@@ -148,14 +148,14 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	workflowClient := orkstackv1connect.NewWorkflowServiceClient(httpClient, baseURL)
+	workflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
 	source, err := os.ReadFile("../../examples/hello.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example workflow: %v", err)
 	}
-	if _, err := workflowClient.Apply(ctx, connect.NewRequest(&orkstackv1.ApplyWorkflowRequest{
+	if _, err := workflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: string(source),
 	})); err != nil {
 		t.Fatalf("Apply: %v", err)

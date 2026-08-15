@@ -22,27 +22,27 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type ApplyWorkflowRequest struct {
+type ApplyOrkflowRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Yaml          string                 `protobuf:"bytes,1,opt,name=yaml,proto3" json:"yaml,omitempty"` // raw DSL document
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ApplyWorkflowRequest) Reset() {
-	*x = ApplyWorkflowRequest{}
+func (x *ApplyOrkflowRequest) Reset() {
+	*x = ApplyOrkflowRequest{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ApplyWorkflowRequest) String() string {
+func (x *ApplyOrkflowRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ApplyWorkflowRequest) ProtoMessage() {}
+func (*ApplyOrkflowRequest) ProtoMessage() {}
 
-func (x *ApplyWorkflowRequest) ProtoReflect() protoreflect.Message {
+func (x *ApplyOrkflowRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -54,40 +54,40 @@ func (x *ApplyWorkflowRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ApplyWorkflowRequest.ProtoReflect.Descriptor instead.
-func (*ApplyWorkflowRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ApplyOrkflowRequest.ProtoReflect.Descriptor instead.
+func (*ApplyOrkflowRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *ApplyWorkflowRequest) GetYaml() string {
+func (x *ApplyOrkflowRequest) GetYaml() string {
 	if x != nil {
 		return x.Yaml
 	}
 	return ""
 }
 
-type ApplyWorkflowResponse struct {
+type ApplyOrkflowResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Workflow      *Workflow              `protobuf:"bytes,1,opt,name=workflow,proto3" json:"workflow,omitempty"`
+	Orkflow       *Orkflow               `protobuf:"bytes,1,opt,name=orkflow,proto3" json:"orkflow,omitempty"`
 	Warnings      []string               `protobuf:"bytes,2,rep,name=warnings,proto3" json:"warnings,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ApplyWorkflowResponse) Reset() {
-	*x = ApplyWorkflowResponse{}
+func (x *ApplyOrkflowResponse) Reset() {
+	*x = ApplyOrkflowResponse{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ApplyWorkflowResponse) String() string {
+func (x *ApplyOrkflowResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ApplyWorkflowResponse) ProtoMessage() {}
+func (*ApplyOrkflowResponse) ProtoMessage() {}
 
-func (x *ApplyWorkflowResponse) ProtoReflect() protoreflect.Message {
+func (x *ApplyOrkflowResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -99,26 +99,26 @@ func (x *ApplyWorkflowResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ApplyWorkflowResponse.ProtoReflect.Descriptor instead.
-func (*ApplyWorkflowResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ApplyOrkflowResponse.ProtoReflect.Descriptor instead.
+func (*ApplyOrkflowResponse) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *ApplyWorkflowResponse) GetWorkflow() *Workflow {
+func (x *ApplyOrkflowResponse) GetOrkflow() *Orkflow {
 	if x != nil {
-		return x.Workflow
+		return x.Orkflow
 	}
 	return nil
 }
 
-func (x *ApplyWorkflowResponse) GetWarnings() []string {
+func (x *ApplyOrkflowResponse) GetWarnings() []string {
 	if x != nil {
 		return x.Warnings
 	}
 	return nil
 }
 
-type GetWorkflowRequest struct {
+type GetOrkflowRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"` // empty = latest
@@ -126,20 +126,20 @@ type GetWorkflowRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetWorkflowRequest) Reset() {
-	*x = GetWorkflowRequest{}
+func (x *GetOrkflowRequest) Reset() {
+	*x = GetOrkflowRequest{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetWorkflowRequest) String() string {
+func (x *GetOrkflowRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetWorkflowRequest) ProtoMessage() {}
+func (*GetOrkflowRequest) ProtoMessage() {}
 
-func (x *GetWorkflowRequest) ProtoReflect() protoreflect.Message {
+func (x *GetOrkflowRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -151,46 +151,46 @@ func (x *GetWorkflowRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetWorkflowRequest.ProtoReflect.Descriptor instead.
-func (*GetWorkflowRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetOrkflowRequest.ProtoReflect.Descriptor instead.
+func (*GetOrkflowRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *GetWorkflowRequest) GetName() string {
+func (x *GetOrkflowRequest) GetName() string {
 	if x != nil {
 		return x.Name
 	}
 	return ""
 }
 
-func (x *GetWorkflowRequest) GetVersion() string {
+func (x *GetOrkflowRequest) GetVersion() string {
 	if x != nil {
 		return x.Version
 	}
 	return ""
 }
 
-type GetWorkflowResponse struct {
+type GetOrkflowResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Workflow      *Workflow              `protobuf:"bytes,1,opt,name=workflow,proto3" json:"workflow,omitempty"`
+	Orkflow       *Orkflow               `protobuf:"bytes,1,opt,name=orkflow,proto3" json:"orkflow,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetWorkflowResponse) Reset() {
-	*x = GetWorkflowResponse{}
+func (x *GetOrkflowResponse) Reset() {
+	*x = GetOrkflowResponse{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetWorkflowResponse) String() string {
+func (x *GetOrkflowResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetWorkflowResponse) ProtoMessage() {}
+func (*GetOrkflowResponse) ProtoMessage() {}
 
-func (x *GetWorkflowResponse) ProtoReflect() protoreflect.Message {
+func (x *GetOrkflowResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -202,19 +202,19 @@ func (x *GetWorkflowResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetWorkflowResponse.ProtoReflect.Descriptor instead.
-func (*GetWorkflowResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetOrkflowResponse.ProtoReflect.Descriptor instead.
+func (*GetOrkflowResponse) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *GetWorkflowResponse) GetWorkflow() *Workflow {
+func (x *GetOrkflowResponse) GetOrkflow() *Orkflow {
 	if x != nil {
-		return x.Workflow
+		return x.Orkflow
 	}
 	return nil
 }
 
-type ListWorkflowsRequest struct {
+type ListOrkflowsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PageSize      int32                  `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	PageToken     string                 `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
@@ -222,20 +222,20 @@ type ListWorkflowsRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListWorkflowsRequest) Reset() {
-	*x = ListWorkflowsRequest{}
+func (x *ListOrkflowsRequest) Reset() {
+	*x = ListOrkflowsRequest{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListWorkflowsRequest) String() string {
+func (x *ListOrkflowsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListWorkflowsRequest) ProtoMessage() {}
+func (*ListOrkflowsRequest) ProtoMessage() {}
 
-func (x *ListWorkflowsRequest) ProtoReflect() protoreflect.Message {
+func (x *ListOrkflowsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -247,47 +247,47 @@ func (x *ListWorkflowsRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListWorkflowsRequest.ProtoReflect.Descriptor instead.
-func (*ListWorkflowsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ListOrkflowsRequest.ProtoReflect.Descriptor instead.
+func (*ListOrkflowsRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *ListWorkflowsRequest) GetPageSize() int32 {
+func (x *ListOrkflowsRequest) GetPageSize() int32 {
 	if x != nil {
 		return x.PageSize
 	}
 	return 0
 }
 
-func (x *ListWorkflowsRequest) GetPageToken() string {
+func (x *ListOrkflowsRequest) GetPageToken() string {
 	if x != nil {
 		return x.PageToken
 	}
 	return ""
 }
 
-type ListWorkflowsResponse struct {
+type ListOrkflowsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Workflows     []*Workflow            `protobuf:"bytes,1,rep,name=workflows,proto3" json:"workflows,omitempty"`
+	Orkflows      []*Orkflow             `protobuf:"bytes,1,rep,name=orkflows,proto3" json:"orkflows,omitempty"`
 	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListWorkflowsResponse) Reset() {
-	*x = ListWorkflowsResponse{}
+func (x *ListOrkflowsResponse) Reset() {
+	*x = ListOrkflowsResponse{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListWorkflowsResponse) String() string {
+func (x *ListOrkflowsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListWorkflowsResponse) ProtoMessage() {}
+func (*ListOrkflowsResponse) ProtoMessage() {}
 
-func (x *ListWorkflowsResponse) ProtoReflect() protoreflect.Message {
+func (x *ListOrkflowsResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -299,19 +299,19 @@ func (x *ListWorkflowsResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListWorkflowsResponse.ProtoReflect.Descriptor instead.
-func (*ListWorkflowsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ListOrkflowsResponse.ProtoReflect.Descriptor instead.
+func (*ListOrkflowsResponse) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *ListWorkflowsResponse) GetWorkflows() []*Workflow {
+func (x *ListOrkflowsResponse) GetOrkflows() []*Orkflow {
 	if x != nil {
-		return x.Workflows
+		return x.Orkflows
 	}
 	return nil
 }
 
-func (x *ListWorkflowsResponse) GetNextPageToken() string {
+func (x *ListOrkflowsResponse) GetNextPageToken() string {
 	if x != nil {
 		return x.NextPageToken
 	}
@@ -320,8 +320,8 @@ func (x *ListWorkflowsResponse) GetNextPageToken() string {
 
 type SubmitRunRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	WorkflowName    string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
-	WorkflowVersion string                 `protobuf:"bytes,2,opt,name=workflow_version,json=workflowVersion,proto3" json:"workflow_version,omitempty"` // empty = latest
+	WorkflowName    string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`          // orkflow name
+	WorkflowVersion string                 `protobuf:"bytes,2,opt,name=workflow_version,json=workflowVersion,proto3" json:"workflow_version,omitempty"` // orkflow version; empty = latest
 	Input           *Payload               `protobuf:"bytes,3,opt,name=input,proto3" json:"input,omitempty"`
 	IdempotencyKey  string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // optional dedupe
 	unknownFields   protoimpl.UnknownFields
@@ -520,7 +520,7 @@ func (x *GetRunResponse) GetRun() *Run {
 
 type ListRunsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkflowName  string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"` // optional filter
+	WorkflowName  string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"` // optional orkflow name filter
 	Status        Status                 `protobuf:"varint,2,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`        // optional filter
 	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	PageToken     string                 `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
@@ -946,23 +946,23 @@ var File_orkstack_v1_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x19orkstack/v1/service.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\x1a\x1aorkstack/v1/workflow.proto\"*\n" +
-	"\x14ApplyWorkflowRequest\x12\x12\n" +
-	"\x04yaml\x18\x01 \x01(\tR\x04yaml\"f\n" +
-	"\x15ApplyWorkflowResponse\x121\n" +
-	"\bworkflow\x18\x01 \x01(\v2\x15.orkstack.v1.WorkflowR\bworkflow\x12\x1a\n" +
-	"\bwarnings\x18\x02 \x03(\tR\bwarnings\"B\n" +
-	"\x12GetWorkflowRequest\x12\x12\n" +
+	"\x19orkstack/v1/service.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\x1a\x19orkstack/v1/orkflow.proto\")\n" +
+	"\x13ApplyOrkflowRequest\x12\x12\n" +
+	"\x04yaml\x18\x01 \x01(\tR\x04yaml\"b\n" +
+	"\x14ApplyOrkflowResponse\x12.\n" +
+	"\aorkflow\x18\x01 \x01(\v2\x14.orkstack.v1.OrkflowR\aorkflow\x12\x1a\n" +
+	"\bwarnings\x18\x02 \x03(\tR\bwarnings\"A\n" +
+	"\x11GetOrkflowRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion\"H\n" +
-	"\x13GetWorkflowResponse\x121\n" +
-	"\bworkflow\x18\x01 \x01(\v2\x15.orkstack.v1.WorkflowR\bworkflow\"R\n" +
-	"\x14ListWorkflowsRequest\x12\x1b\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\"D\n" +
+	"\x12GetOrkflowResponse\x12.\n" +
+	"\aorkflow\x18\x01 \x01(\v2\x14.orkstack.v1.OrkflowR\aorkflow\"Q\n" +
+	"\x13ListOrkflowsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x02 \x01(\tR\tpageToken\"t\n" +
-	"\x15ListWorkflowsResponse\x123\n" +
-	"\tworkflows\x18\x01 \x03(\v2\x15.orkstack.v1.WorkflowR\tworkflows\x12&\n" +
+	"page_token\x18\x02 \x01(\tR\tpageToken\"p\n" +
+	"\x14ListOrkflowsResponse\x120\n" +
+	"\borkflows\x18\x01 \x03(\v2\x14.orkstack.v1.OrkflowR\borkflows\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xb7\x01\n" +
 	"\x10SubmitRunRequest\x12#\n" +
 	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12)\n" +
@@ -1001,11 +1001,12 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\finput_schema\x18\x04 \x01(\v2\x17.google.protobuf.StructR\vinputSchema\x12<\n" +
 	"\routput_schema\x18\x05 \x01(\v2\x17.google.protobuf.StructR\foutputSchema\"H\n" +
 	"\x13ListPluginsResponse\x121\n" +
-	"\aplugins\x18\x01 \x03(\v2\x17.orkstack.v1.PluginInfoR\aplugins2\x8b\x02\n" +
-	"\x0fWorkflowService\x12N\n" +
-	"\x05Apply\x12!.orkstack.v1.ApplyWorkflowRequest\x1a\".orkstack.v1.ApplyWorkflowResponse\x12P\n" +
-	"\vGetWorkflow\x12\x1f.orkstack.v1.GetWorkflowRequest\x1a .orkstack.v1.GetWorkflowResponse\x12V\n" +
-	"\rListWorkflows\x12!.orkstack.v1.ListWorkflowsRequest\x1a\".orkstack.v1.ListWorkflowsResponse2\xf8\x02\n" +
+	"\aplugins\x18\x01 \x03(\v2\x17.orkstack.v1.PluginInfoR\aplugins2\x89\x02\n" +
+	"\x0eOrkflowService\x12S\n" +
+	"\fApplyOrkflow\x12 .orkstack.v1.ApplyOrkflowRequest\x1a!.orkstack.v1.ApplyOrkflowResponse\x12M\n" +
+	"\n" +
+	"GetOrkflow\x12\x1e.orkstack.v1.GetOrkflowRequest\x1a\x1f.orkstack.v1.GetOrkflowResponse\x12S\n" +
+	"\fListOrkflows\x12 .orkstack.v1.ListOrkflowsRequest\x1a!.orkstack.v1.ListOrkflowsResponse2\xf8\x02\n" +
 	"\n" +
 	"RunService\x12J\n" +
 	"\tSubmitRun\x12\x1d.orkstack.v1.SubmitRunRequest\x1a\x1e.orkstack.v1.SubmitRunResponse\x12A\n" +
@@ -1031,35 +1032,35 @@ func file_orkstack_v1_service_proto_rawDescGZIP() []byte {
 
 var file_orkstack_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_orkstack_v1_service_proto_goTypes = []any{
-	(*ApplyWorkflowRequest)(nil),  // 0: orkstack.v1.ApplyWorkflowRequest
-	(*ApplyWorkflowResponse)(nil), // 1: orkstack.v1.ApplyWorkflowResponse
-	(*GetWorkflowRequest)(nil),    // 2: orkstack.v1.GetWorkflowRequest
-	(*GetWorkflowResponse)(nil),   // 3: orkstack.v1.GetWorkflowResponse
-	(*ListWorkflowsRequest)(nil),  // 4: orkstack.v1.ListWorkflowsRequest
-	(*ListWorkflowsResponse)(nil), // 5: orkstack.v1.ListWorkflowsResponse
-	(*SubmitRunRequest)(nil),      // 6: orkstack.v1.SubmitRunRequest
-	(*SubmitRunResponse)(nil),     // 7: orkstack.v1.SubmitRunResponse
-	(*GetRunRequest)(nil),         // 8: orkstack.v1.GetRunRequest
-	(*GetRunResponse)(nil),        // 9: orkstack.v1.GetRunResponse
-	(*ListRunsRequest)(nil),       // 10: orkstack.v1.ListRunsRequest
-	(*ListRunsResponse)(nil),      // 11: orkstack.v1.ListRunsResponse
-	(*CancelRunRequest)(nil),      // 12: orkstack.v1.CancelRunRequest
-	(*CancelRunResponse)(nil),     // 13: orkstack.v1.CancelRunResponse
-	(*StreamEventsRequest)(nil),   // 14: orkstack.v1.StreamEventsRequest
-	(*ListPluginsRequest)(nil),    // 15: orkstack.v1.ListPluginsRequest
-	(*PluginInfo)(nil),            // 16: orkstack.v1.PluginInfo
-	(*ListPluginsResponse)(nil),   // 17: orkstack.v1.ListPluginsResponse
-	(*Workflow)(nil),              // 18: orkstack.v1.Workflow
-	(*Payload)(nil),               // 19: orkstack.v1.Payload
-	(*Run)(nil),                   // 20: orkstack.v1.Run
-	(Status)(0),                   // 21: orkstack.v1.Status
-	(*structpb.Struct)(nil),       // 22: google.protobuf.Struct
-	(*Event)(nil),                 // 23: orkstack.v1.Event
+	(*ApplyOrkflowRequest)(nil),  // 0: orkstack.v1.ApplyOrkflowRequest
+	(*ApplyOrkflowResponse)(nil), // 1: orkstack.v1.ApplyOrkflowResponse
+	(*GetOrkflowRequest)(nil),    // 2: orkstack.v1.GetOrkflowRequest
+	(*GetOrkflowResponse)(nil),   // 3: orkstack.v1.GetOrkflowResponse
+	(*ListOrkflowsRequest)(nil),  // 4: orkstack.v1.ListOrkflowsRequest
+	(*ListOrkflowsResponse)(nil), // 5: orkstack.v1.ListOrkflowsResponse
+	(*SubmitRunRequest)(nil),     // 6: orkstack.v1.SubmitRunRequest
+	(*SubmitRunResponse)(nil),    // 7: orkstack.v1.SubmitRunResponse
+	(*GetRunRequest)(nil),        // 8: orkstack.v1.GetRunRequest
+	(*GetRunResponse)(nil),       // 9: orkstack.v1.GetRunResponse
+	(*ListRunsRequest)(nil),      // 10: orkstack.v1.ListRunsRequest
+	(*ListRunsResponse)(nil),     // 11: orkstack.v1.ListRunsResponse
+	(*CancelRunRequest)(nil),     // 12: orkstack.v1.CancelRunRequest
+	(*CancelRunResponse)(nil),    // 13: orkstack.v1.CancelRunResponse
+	(*StreamEventsRequest)(nil),  // 14: orkstack.v1.StreamEventsRequest
+	(*ListPluginsRequest)(nil),   // 15: orkstack.v1.ListPluginsRequest
+	(*PluginInfo)(nil),           // 16: orkstack.v1.PluginInfo
+	(*ListPluginsResponse)(nil),  // 17: orkstack.v1.ListPluginsResponse
+	(*Orkflow)(nil),              // 18: orkstack.v1.Orkflow
+	(*Payload)(nil),              // 19: orkstack.v1.Payload
+	(*Run)(nil),                  // 20: orkstack.v1.Run
+	(Status)(0),                  // 21: orkstack.v1.Status
+	(*structpb.Struct)(nil),      // 22: google.protobuf.Struct
+	(*Event)(nil),                // 23: orkstack.v1.Event
 }
 var file_orkstack_v1_service_proto_depIdxs = []int32{
-	18, // 0: orkstack.v1.ApplyWorkflowResponse.workflow:type_name -> orkstack.v1.Workflow
-	18, // 1: orkstack.v1.GetWorkflowResponse.workflow:type_name -> orkstack.v1.Workflow
-	18, // 2: orkstack.v1.ListWorkflowsResponse.workflows:type_name -> orkstack.v1.Workflow
+	18, // 0: orkstack.v1.ApplyOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	18, // 1: orkstack.v1.GetOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	18, // 2: orkstack.v1.ListOrkflowsResponse.orkflows:type_name -> orkstack.v1.Orkflow
 	19, // 3: orkstack.v1.SubmitRunRequest.input:type_name -> orkstack.v1.Payload
 	20, // 4: orkstack.v1.SubmitRunResponse.run:type_name -> orkstack.v1.Run
 	20, // 5: orkstack.v1.GetRunResponse.run:type_name -> orkstack.v1.Run
@@ -1069,18 +1070,18 @@ var file_orkstack_v1_service_proto_depIdxs = []int32{
 	22, // 9: orkstack.v1.PluginInfo.input_schema:type_name -> google.protobuf.Struct
 	22, // 10: orkstack.v1.PluginInfo.output_schema:type_name -> google.protobuf.Struct
 	16, // 11: orkstack.v1.ListPluginsResponse.plugins:type_name -> orkstack.v1.PluginInfo
-	0,  // 12: orkstack.v1.WorkflowService.Apply:input_type -> orkstack.v1.ApplyWorkflowRequest
-	2,  // 13: orkstack.v1.WorkflowService.GetWorkflow:input_type -> orkstack.v1.GetWorkflowRequest
-	4,  // 14: orkstack.v1.WorkflowService.ListWorkflows:input_type -> orkstack.v1.ListWorkflowsRequest
+	0,  // 12: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
+	2,  // 13: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
+	4,  // 14: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
 	6,  // 15: orkstack.v1.RunService.SubmitRun:input_type -> orkstack.v1.SubmitRunRequest
 	8,  // 16: orkstack.v1.RunService.GetRun:input_type -> orkstack.v1.GetRunRequest
 	10, // 17: orkstack.v1.RunService.ListRuns:input_type -> orkstack.v1.ListRunsRequest
 	12, // 18: orkstack.v1.RunService.CancelRun:input_type -> orkstack.v1.CancelRunRequest
 	14, // 19: orkstack.v1.RunService.StreamEvents:input_type -> orkstack.v1.StreamEventsRequest
 	15, // 20: orkstack.v1.PluginService.ListPlugins:input_type -> orkstack.v1.ListPluginsRequest
-	1,  // 21: orkstack.v1.WorkflowService.Apply:output_type -> orkstack.v1.ApplyWorkflowResponse
-	3,  // 22: orkstack.v1.WorkflowService.GetWorkflow:output_type -> orkstack.v1.GetWorkflowResponse
-	5,  // 23: orkstack.v1.WorkflowService.ListWorkflows:output_type -> orkstack.v1.ListWorkflowsResponse
+	1,  // 21: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
+	3,  // 22: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
+	5,  // 23: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
 	7,  // 24: orkstack.v1.RunService.SubmitRun:output_type -> orkstack.v1.SubmitRunResponse
 	9,  // 25: orkstack.v1.RunService.GetRun:output_type -> orkstack.v1.GetRunResponse
 	11, // 26: orkstack.v1.RunService.ListRuns:output_type -> orkstack.v1.ListRunsResponse
@@ -1101,7 +1102,7 @@ func file_orkstack_v1_service_proto_init() {
 	}
 	file_orkstack_v1_common_proto_init()
 	file_orkstack_v1_run_proto_init()
-	file_orkstack_v1_workflow_proto_init()
+	file_orkstack_v1_orkflow_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

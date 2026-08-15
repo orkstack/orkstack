@@ -9,7 +9,7 @@ import (
 )
 
 // validate enforces the six documented DSL rules (docs/DSL.md).
-func validate(wf *orkstackv1.Workflow, opts Options) error {
+func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	known := opts.KnownPlugins
 	if len(known) == 0 {
 		known = KnownPlugins

@@ -1,6 +1,7 @@
-# OrkStack Workflow DSL (v0)
+# OrkStack Orkflow DSL (v0)
 
-A workflow is a YAML document compiled into the `orkstack.v1.Workflow` proto.
+An orkflow is a YAML document compiled into the `orkstack.v1.Orkflow` proto and
+applied to the `ork` engine with `orkctl apply`.
 
 ## Top-level fields
 
@@ -29,7 +30,7 @@ Provided at submit time and referenced as `{{ .inputs.<name> }}`.
 
 ```yaml
 tasks:
-  - id: fetch            # unique within the workflow
+  - id: fetch            # unique within the orkflow
     plugin: http         # registered plugin name
     needs: [other_id]    # DAG edges; must reference existing task ids; no cycles
     condition: ""        # optional gate expression (v0: truthy string / template)

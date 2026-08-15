@@ -2,7 +2,7 @@
 
 ## Overview
 
-OrkStack turns a declarative YAML workflow into a durable, observable execution
+OrkStack turns a declarative YAML orkflow into a durable, observable execution
 on Temporal. It separates **orchestration** (deciding what runs when — the
 engine, on Temporal) from **execution** (doing the work — Orkers running
 plugins). This mirrors the split that makes systems like Temporal, Argo, and
@@ -12,17 +12,17 @@ plane is where side effects live.
 ## Components
 
 ### 1. DSL (`internal/dsl`)
-Parses `*.ork.yaml` into the `orkstack.v1.Workflow` proto. Responsibilities:
+Parses `*.ork.yaml` into the `orkstack.v1.Orkflow` proto. Responsibilities:
 - Schema validation (required fields, unique task ids, known plugins).
 - DAG validation (`needs` references exist; no cycles; topological soundness).
 - Template pre-flight (references to `.inputs`, `.tasks.<id>.output`, and the
   `artifact` helper are well-formed).
-Output is a compiled, versioned `Workflow` (version = content hash unless the
+Output is a compiled, versioned `Orkflow` (version = content hash unless the
 author pins one).
 
-### 2. Engine (`internal/engine`, `cmd/orkengine`)
+### 2. Engine (`internal/engine`, `cmd/ork`)
 - **Temporal client + worker** hosting the orchestration workflow.
-- **`RunWorkflow`** (deterministic): interprets the task DAG. For each ready
+- **`RunWorkflow`** (deterministic): interprets the orkflow's task DAG. For each
   task it schedules an **activity** (`ExecuteTask`) on the task queue, honoring
   `needs`, `condition`, `retry`, and `timeout`. It threads outputs/artifacts
   from completed tasks into the templating context of downstream tasks.
@@ -40,7 +40,7 @@ author pins one).
   resume/backfill (`from_sequence`).
 
 ### 3. API (`internal/api`)
-- Connect handlers implementing `WorkflowService`, `RunService`, `PluginService`.
+- Connect handlers implementing `OrkflowService`, `RunService`, `PluginService`.
 - WebSocket bridge at `/ws/runs/{id}` that subscribes to the event bus and
   forwards JSON-encoded events to browsers (the UI's realtime channel).
 - Served over h2c so `connect-go` (CLI) and `connect-web` (UI) share one port.
@@ -81,11 +81,13 @@ author pins one).
 
 ## Data flow of a run
 
-1. `orkctl apply hello.ork.yaml` → engine compiles + stores the `Workflow`.
-2. `orkctl run submit hello-ork --input url=...` → engine starts a Temporal
-   workflow (`RunWorkflow`) with the compiled DAG and input.
+1. `orkctl apply hello.ork.yaml` → the `ork` engine compiles + stores the `Orkflow`.
+2. `orkctl run submit hello-ork --input url=...` → the engine starts a Temporal
+   workflow (`RunWorkflow`) with the compiled DAG and input, in the
+   `ORK_TEMPORAL_NAMESPACE` namespace (default `ork-main`). Runs are named
+   `ork-{timestamp}-{sequence}`.
 3. `RunWorkflow` schedules ready tasks as `ExecuteTask` activities on
-   `orkstack-tasks`.
+   `ORK_ORKER_QUEUE` (default `ork-tasks`).
 4. An Orker picks up the activity, resolves artifacts, runs the plugin, uploads
    outputs, returns refs.
 5. The engine records the `TaskRun`, publishes events, and schedules newly-ready

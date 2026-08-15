@@ -82,7 +82,7 @@ func (h *harness) inputFor(taskID string) (task.ExecuteTaskInput, bool) {
 	return task.ExecuteTaskInput{}, false
 }
 
-func compile(t *testing.T, document string) *orkstackv1.Workflow {
+func compile(t *testing.T, document string) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.Compile([]byte(document))
 	if err != nil {

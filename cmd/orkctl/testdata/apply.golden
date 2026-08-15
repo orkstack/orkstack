@@ -1,4 +1,4 @@
-Applied workflow hello-ork (version 0.1.0)
+Applied orkflow hello-ork (version 0.1.0)
 Fetch JSON, extract a field, and persist it as an artifact.
 
 TASK       PLUGIN  NEEDS      TIMEOUT

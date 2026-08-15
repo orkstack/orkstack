@@ -38,7 +38,7 @@ const (
 const servedBody = "{\"slideshow\": {\"title\": \"Sample Slide Show\", \"slides\": 2}}\n"
 
 // TestIntegration_CLIDrivesARealEngineToTerminalRuns builds the real orkctl,
-// orkengine and orker binaries, runs them against a real Temporal cluster, and
+// ork and orker binaries, runs them against a real Temporal cluster, and
 // drives apply -> submit --watch -> run get through the CLI process, asserting
 // both the terminal run status and the matching CLI exit code.
 //
@@ -76,7 +76,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	repoRoot := repoRoot(t)
 	binDir := t.TempDir()
 	orkctlPath := buildBinary(t, repoRoot, binDir, "orkctl")
-	enginePath := buildBinary(t, repoRoot, binDir, "orkengine")
+	enginePath := buildBinary(t, repoRoot, binDir, "ork")
 	orkerPath := buildBinary(t, repoRoot, binDir, "orker")
 
 	startOrker(ctx, t, orkerPath, address, taskQueue)
@@ -104,7 +104,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("apply exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Applied workflow hello-ork") {
+	if !strings.Contains(stdout, "Applied orkflow hello-ork") {
 		t.Fatalf("apply stdout:\n%s", stdout)
 	}
 
@@ -208,7 +208,7 @@ func (s *sessionRecorder) writeProof(t *testing.T) {
 	t.Helper()
 	if path := os.Getenv("ORK_PROOF_SESSION_FILE"); path != "" {
 		header := fmt.Sprintf(
-			"# orkctl against a real orkengine + real orker + real Temporal (%s)\n"+
+			"# orkctl against a real ork + real orker + real Temporal (%s)\n"+
 				"# The runs execute the example workflow's http -> shell -> file tasks\n"+
 				"# for real; tasks are pinned to a private task queue this test's Orker\n"+
 				"# alone polls, and the fetch URL is a local hermetic server.\n"+
@@ -254,13 +254,13 @@ func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, queu
 	)
 }
 
-// startEngine runs the real orkengine binary on a free loopback port. The
+// startEngine runs the real ork binary on a free loopback port. The
 // orkerQueue is passed through so plugin discovery targets the same private
 // queue the test's Orker polls.
 func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, orkerQueue string) string {
 	t.Helper()
 	addr := freeAddress(t)
-	startProcess(ctx, t, "orkengine", enginePath,
+	startProcess(ctx, t, "ork", enginePath,
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_ORKER_QUEUE="+orkerQueue,
@@ -299,12 +299,12 @@ func waitForEngine(t *testing.T, cli func(args ...string) (string, string, int))
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, _, code := cli("workflow", "list"); code == 0 {
+		if _, _, code := cli("orkflow", "list"); code == 0 {
 			return
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatal("orkengine did not become ready within 60s")
+	t.Fatal("ork did not become ready within 60s")
 }
 
 // buildBinary compiles one command into dir and returns its path.

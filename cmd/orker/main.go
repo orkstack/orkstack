@@ -29,7 +29,7 @@ type config struct {
 func loadConfig() config {
 	return config{
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
-		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", client.DefaultNamespace),
+		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		queue:             env("ORK_ORKER_QUEUE", task.DefaultQueue),
 	}
 }
@@ -76,6 +76,9 @@ func run(logger *slog.Logger, cfg config) error {
 		return err
 	}
 	defer temporalClient.Close()
+	if err := task.EnsureNamespace(ctx, temporalClient, cfg.temporalNamespace); err != nil {
+		return err
+	}
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
 

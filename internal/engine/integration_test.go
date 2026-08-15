@@ -161,21 +161,21 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	workflowClient := orkstackv1connect.NewWorkflowServiceClient(httpClient, baseURL)
+	workflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
 	source, err := os.ReadFile("../../examples/hello.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}
-	applied, err := workflowClient.Apply(ctx, connect.NewRequest(&orkstackv1.ApplyWorkflowRequest{
+	applied, err := workflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: string(source),
 	}))
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if applied.Msg.GetWorkflow().GetName() != "hello-ork" {
-		t.Fatalf("applied workflow = %q, want hello-ork", applied.Msg.GetWorkflow().GetName())
+	if applied.Msg.GetOrkflow().GetName() != "hello-ork" {
+		t.Fatalf("applied workflow = %q, want hello-ork", applied.Msg.GetOrkflow().GetName())
 	}
 
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{

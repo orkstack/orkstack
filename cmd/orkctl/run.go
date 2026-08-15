@@ -13,7 +13,7 @@ import (
 func newRunCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Submit and observe workflow runs",
+		Short: "Submit and observe orkflow runs",
 	}
 	cmd.AddCommand(
 		newRunSubmitCommand(g),
@@ -34,9 +34,9 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 		watch          bool
 	)
 	cmd := &cobra.Command{
-		Use:   "submit <workflow>",
-		Short: "Submit a run of a registered workflow",
-		Long: "submit starts a run of a registered workflow.\n\n" +
+		Use:   "submit <orkflow>",
+		Short: "Submit a run of a registered orkflow",
+		Long: "submit starts a run of a registered orkflow.\n\n" +
 			"Each --input value is parsed as JSON when it is valid JSON (so 3, true,\n" +
 			"[1,2] and {\"a\":1} keep their types) and kept as a plain string otherwise.",
 		Args: cobra.ExactArgs(1),
@@ -80,7 +80,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 		"run input as key=value (repeatable); values that parse as JSON keep their JSON type")
 	cmd.Flags().StringVar(&inputJSON, "input-json", "",
 		"run input as a JSON object; merged under --input values")
-	cmd.Flags().StringVar(&version, "version", "", "workflow version (default: latest applied)")
+	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: latest applied)")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "dedupe key for repeated submissions")
 	cmd.Flags().BoolVar(&watch, "watch", false, "stream events until the run reaches a terminal state")
 	return cmd
@@ -141,7 +141,7 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			return renderRunList(cmd.OutOrStdout(), resp.Msg.GetRuns())
 		},
 	}
-	cmd.Flags().StringVar(&workflowName, "workflow", "", "only runs of this workflow")
+	cmd.Flags().StringVar(&workflowName, "orkflow", "", "only runs of this orkflow")
 	cmd.Flags().StringVar(&statusFilter, "status", "",
 		"only runs with this status (pending, running, succeeded, failed, canceled, skipped)")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of runs to return (0 = server default)")
@@ -179,7 +179,7 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 func renderSubmitted(out io.Writer, run *orkstackv1.Run) error {
 	fmt.Fprintf(out, "Submitted run %s\n", run.GetId())
 	table := newTable(out)
-	fmt.Fprintf(table, "Workflow:\t%s\n", run.GetWorkflowName())
+	fmt.Fprintf(table, "Orkflow:\t%s\n", run.GetWorkflowName())
 	fmt.Fprintf(table, "Version:\t%s\n", run.GetWorkflowVersion())
 	fmt.Fprintf(table, "Status:\t%s\n", statusLabel(run.GetStatus()))
 	if err := table.Flush(); err != nil {
@@ -192,7 +192,7 @@ func renderSubmitted(out io.Writer, run *orkstackv1.Run) error {
 func renderRun(out io.Writer, run *orkstackv1.Run) error {
 	header := newTable(out)
 	fmt.Fprintf(header, "Run:\t%s\n", run.GetId())
-	fmt.Fprintf(header, "Workflow:\t%s\n", run.GetWorkflowName())
+	fmt.Fprintf(header, "Orkflow:\t%s\n", run.GetWorkflowName())
 	fmt.Fprintf(header, "Version:\t%s\n", run.GetWorkflowVersion())
 	fmt.Fprintf(header, "Status:\t%s\n", statusLabel(run.GetStatus()))
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(run.GetCreatedAt()))
@@ -232,7 +232,7 @@ func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "ID\tWORKFLOW\tVERSION\tSTATUS\tCREATED\tFINISHED")
+	fmt.Fprintln(table, "ID\tORKFLOW\tVERSION\tSTATUS\tCREATED\tFINISHED")
 	for _, run := range runs {
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			run.GetId(), run.GetWorkflowName(), run.GetWorkflowVersion(),

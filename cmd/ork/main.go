@@ -1,6 +1,6 @@
-// Command orkengine runs the OrkStack control plane: the Temporal worker
-// hosting RunWorkflow, the engine's event projection worker, and the Connect
-// API plus WebSocket event bridge.
+// Command ork runs the OrkStack control plane: the Temporal worker hosting
+// RunWorkflow, the engine's event projection worker, and the Connect API plus
+// WebSocket event bridge.
 package main
 
 import (
@@ -38,7 +38,7 @@ type config struct {
 func loadConfig() config {
 	cfg := config{
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
-		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", client.DefaultNamespace),
+		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		httpAddr:          env("ORK_HTTP_ADDR", api.DefaultHTTPAddr),
 		orkerQueue:        env("ORK_ORKER_QUEUE", task.DefaultQueue),
 	}
@@ -58,7 +58,7 @@ func env(key, fallback string) string {
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(logger, loadConfig()); err != nil {
-		logger.Error("orkengine stopped", "error", err)
+		logger.Error("ork stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -100,6 +100,9 @@ func run(logger *slog.Logger, cfg config) error {
 		return err
 	}
 	defer temporalClient.Close()
+	if err := task.EnsureNamespace(ctx, temporalClient, cfg.temporalNamespace); err != nil {
+		return err
+	}
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
 

@@ -36,7 +36,7 @@ func (s *RunStore) Save(run *orkstackv1.Run) {
 }
 
 // Apply merges a workflow-produced snapshot into the store. Fields the
-// workflow does not own (CreatedAt, and Input when the snapshot omits it) are
+// run workflow does not own (CreatedAt, and Input when the snapshot omits it) are
 // preserved from the existing record.
 func (s *RunStore) Apply(run *orkstackv1.Run) {
 	if run == nil || run.GetId() == "" {
@@ -96,40 +96,40 @@ func (s *RunStore) List(filter ListFilter) []*orkstackv1.Run {
 	return out
 }
 
-// WorkflowStore keeps compiled workflows by name and version.
+// WorkflowStore keeps compiled orkflows by name and version.
 type WorkflowStore struct {
 	mu       sync.RWMutex
-	byName   map[string]map[string]*orkstackv1.Workflow
+	byName   map[string]map[string]*orkstackv1.Orkflow
 	latest   map[string]string
 	nameList []string
 }
 
-// NewWorkflowStore returns an empty workflow store.
+// NewWorkflowStore returns an empty orkflow store.
 func NewWorkflowStore() *WorkflowStore {
 	return &WorkflowStore{
-		byName: map[string]map[string]*orkstackv1.Workflow{},
+		byName: map[string]map[string]*orkstackv1.Orkflow{},
 		latest: map[string]string{},
 	}
 }
 
-// Put stores a workflow. The most recently applied version becomes "latest"
+// Put stores an orkflow. The most recently applied version becomes "latest"
 // for that name.
-func (s *WorkflowStore) Put(wf *orkstackv1.Workflow) {
+func (s *WorkflowStore) Put(wf *orkstackv1.Orkflow) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	versions, ok := s.byName[wf.GetName()]
 	if !ok {
-		versions = map[string]*orkstackv1.Workflow{}
+		versions = map[string]*orkstackv1.Orkflow{}
 		s.byName[wf.GetName()] = versions
 		s.nameList = append(s.nameList, wf.GetName())
 	}
-	versions[wf.GetVersion()] = proto.Clone(wf).(*orkstackv1.Workflow)
+	versions[wf.GetVersion()] = proto.Clone(wf).(*orkstackv1.Orkflow)
 	s.latest[wf.GetName()] = wf.GetVersion()
 }
 
-// Get returns the workflow for name at version; an empty version means the
+// Get returns the orkflow for name at version; an empty version means the
 // most recently applied one.
-func (s *WorkflowStore) Get(name, version string) (*orkstackv1.Workflow, bool) {
+func (s *WorkflowStore) Get(name, version string) (*orkstackv1.Orkflow, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	versions, ok := s.byName[name]
@@ -143,19 +143,19 @@ func (s *WorkflowStore) Get(name, version string) (*orkstackv1.Workflow, bool) {
 	if !ok {
 		return nil, false
 	}
-	return proto.Clone(wf).(*orkstackv1.Workflow), true
+	return proto.Clone(wf).(*orkstackv1.Orkflow), true
 }
 
-// List returns the latest version of every workflow, ordered by name.
-func (s *WorkflowStore) List() []*orkstackv1.Workflow {
+// List returns the latest version of every orkflow, ordered by name.
+func (s *WorkflowStore) List() []*orkstackv1.Orkflow {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	names := append([]string(nil), s.nameList...)
 	sort.Strings(names)
-	out := make([]*orkstackv1.Workflow, 0, len(names))
+	out := make([]*orkstackv1.Orkflow, 0, len(names))
 	for _, name := range names {
 		if wf, ok := s.byName[name][s.latest[name]]; ok {
-			out = append(out, proto.Clone(wf).(*orkstackv1.Workflow))
+			out = append(out, proto.Clone(wf).(*orkstackv1.Orkflow))
 		}
 	}
 	return out

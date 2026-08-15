@@ -21,8 +21,8 @@ import (
 const _ = connect.IsAtLeastVersion1_13_0
 
 const (
-	// WorkflowServiceName is the fully-qualified name of the WorkflowService service.
-	WorkflowServiceName = "orkstack.v1.WorkflowService"
+	// OrkflowServiceName is the fully-qualified name of the OrkflowService service.
+	OrkflowServiceName = "orkstack.v1.OrkflowService"
 	// RunServiceName is the fully-qualified name of the RunService service.
 	RunServiceName = "orkstack.v1.RunService"
 	// PluginServiceName is the fully-qualified name of the PluginService service.
@@ -37,14 +37,15 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// WorkflowServiceApplyProcedure is the fully-qualified name of the WorkflowService's Apply RPC.
-	WorkflowServiceApplyProcedure = "/orkstack.v1.WorkflowService/Apply"
-	// WorkflowServiceGetWorkflowProcedure is the fully-qualified name of the WorkflowService's
-	// GetWorkflow RPC.
-	WorkflowServiceGetWorkflowProcedure = "/orkstack.v1.WorkflowService/GetWorkflow"
-	// WorkflowServiceListWorkflowsProcedure is the fully-qualified name of the WorkflowService's
-	// ListWorkflows RPC.
-	WorkflowServiceListWorkflowsProcedure = "/orkstack.v1.WorkflowService/ListWorkflows"
+	// OrkflowServiceApplyOrkflowProcedure is the fully-qualified name of the OrkflowService's
+	// ApplyOrkflow RPC.
+	OrkflowServiceApplyOrkflowProcedure = "/orkstack.v1.OrkflowService/ApplyOrkflow"
+	// OrkflowServiceGetOrkflowProcedure is the fully-qualified name of the OrkflowService's GetOrkflow
+	// RPC.
+	OrkflowServiceGetOrkflowProcedure = "/orkstack.v1.OrkflowService/GetOrkflow"
+	// OrkflowServiceListOrkflowsProcedure is the fully-qualified name of the OrkflowService's
+	// ListOrkflows RPC.
+	OrkflowServiceListOrkflowsProcedure = "/orkstack.v1.OrkflowService/ListOrkflows"
 	// RunServiceSubmitRunProcedure is the fully-qualified name of the RunService's SubmitRun RPC.
 	RunServiceSubmitRunProcedure = "/orkstack.v1.RunService/SubmitRun"
 	// RunServiceGetRunProcedure is the fully-qualified name of the RunService's GetRun RPC.
@@ -60,128 +61,128 @@ const (
 	PluginServiceListPluginsProcedure = "/orkstack.v1.PluginService/ListPlugins"
 )
 
-// WorkflowServiceClient is a client for the orkstack.v1.WorkflowService service.
-type WorkflowServiceClient interface {
-	// Apply validates and upserts a workflow from raw DSL YAML.
-	Apply(context.Context, *connect.Request[v1.ApplyWorkflowRequest]) (*connect.Response[v1.ApplyWorkflowResponse], error)
-	GetWorkflow(context.Context, *connect.Request[v1.GetWorkflowRequest]) (*connect.Response[v1.GetWorkflowResponse], error)
-	ListWorkflows(context.Context, *connect.Request[v1.ListWorkflowsRequest]) (*connect.Response[v1.ListWorkflowsResponse], error)
+// OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
+type OrkflowServiceClient interface {
+	// ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+	ApplyOrkflow(context.Context, *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error)
+	GetOrkflow(context.Context, *connect.Request[v1.GetOrkflowRequest]) (*connect.Response[v1.GetOrkflowResponse], error)
+	ListOrkflows(context.Context, *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error)
 }
 
-// NewWorkflowServiceClient constructs a client for the orkstack.v1.WorkflowService service. By
+// NewOrkflowServiceClient constructs a client for the orkstack.v1.OrkflowService service. By
 // default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
 // and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
 // connect.WithGRPC() or connect.WithGRPCWeb() options.
 //
 // The URL supplied here should be the base URL for the Connect or gRPC server (for example,
 // http://api.acme.com or https://acme.com/grpc).
-func NewWorkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) WorkflowServiceClient {
+func NewOrkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) OrkflowServiceClient {
 	baseURL = strings.TrimRight(baseURL, "/")
-	workflowServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("WorkflowService").Methods()
-	return &workflowServiceClient{
-		apply: connect.NewClient[v1.ApplyWorkflowRequest, v1.ApplyWorkflowResponse](
+	orkflowServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("OrkflowService").Methods()
+	return &orkflowServiceClient{
+		applyOrkflow: connect.NewClient[v1.ApplyOrkflowRequest, v1.ApplyOrkflowResponse](
 			httpClient,
-			baseURL+WorkflowServiceApplyProcedure,
-			connect.WithSchema(workflowServiceMethods.ByName("Apply")),
+			baseURL+OrkflowServiceApplyOrkflowProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("ApplyOrkflow")),
 			connect.WithClientOptions(opts...),
 		),
-		getWorkflow: connect.NewClient[v1.GetWorkflowRequest, v1.GetWorkflowResponse](
+		getOrkflow: connect.NewClient[v1.GetOrkflowRequest, v1.GetOrkflowResponse](
 			httpClient,
-			baseURL+WorkflowServiceGetWorkflowProcedure,
-			connect.WithSchema(workflowServiceMethods.ByName("GetWorkflow")),
+			baseURL+OrkflowServiceGetOrkflowProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("GetOrkflow")),
 			connect.WithClientOptions(opts...),
 		),
-		listWorkflows: connect.NewClient[v1.ListWorkflowsRequest, v1.ListWorkflowsResponse](
+		listOrkflows: connect.NewClient[v1.ListOrkflowsRequest, v1.ListOrkflowsResponse](
 			httpClient,
-			baseURL+WorkflowServiceListWorkflowsProcedure,
-			connect.WithSchema(workflowServiceMethods.ByName("ListWorkflows")),
+			baseURL+OrkflowServiceListOrkflowsProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflows")),
 			connect.WithClientOptions(opts...),
 		),
 	}
 }
 
-// workflowServiceClient implements WorkflowServiceClient.
-type workflowServiceClient struct {
-	apply         *connect.Client[v1.ApplyWorkflowRequest, v1.ApplyWorkflowResponse]
-	getWorkflow   *connect.Client[v1.GetWorkflowRequest, v1.GetWorkflowResponse]
-	listWorkflows *connect.Client[v1.ListWorkflowsRequest, v1.ListWorkflowsResponse]
+// orkflowServiceClient implements OrkflowServiceClient.
+type orkflowServiceClient struct {
+	applyOrkflow *connect.Client[v1.ApplyOrkflowRequest, v1.ApplyOrkflowResponse]
+	getOrkflow   *connect.Client[v1.GetOrkflowRequest, v1.GetOrkflowResponse]
+	listOrkflows *connect.Client[v1.ListOrkflowsRequest, v1.ListOrkflowsResponse]
 }
 
-// Apply calls orkstack.v1.WorkflowService.Apply.
-func (c *workflowServiceClient) Apply(ctx context.Context, req *connect.Request[v1.ApplyWorkflowRequest]) (*connect.Response[v1.ApplyWorkflowResponse], error) {
-	return c.apply.CallUnary(ctx, req)
+// ApplyOrkflow calls orkstack.v1.OrkflowService.ApplyOrkflow.
+func (c *orkflowServiceClient) ApplyOrkflow(ctx context.Context, req *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error) {
+	return c.applyOrkflow.CallUnary(ctx, req)
 }
 
-// GetWorkflow calls orkstack.v1.WorkflowService.GetWorkflow.
-func (c *workflowServiceClient) GetWorkflow(ctx context.Context, req *connect.Request[v1.GetWorkflowRequest]) (*connect.Response[v1.GetWorkflowResponse], error) {
-	return c.getWorkflow.CallUnary(ctx, req)
+// GetOrkflow calls orkstack.v1.OrkflowService.GetOrkflow.
+func (c *orkflowServiceClient) GetOrkflow(ctx context.Context, req *connect.Request[v1.GetOrkflowRequest]) (*connect.Response[v1.GetOrkflowResponse], error) {
+	return c.getOrkflow.CallUnary(ctx, req)
 }
 
-// ListWorkflows calls orkstack.v1.WorkflowService.ListWorkflows.
-func (c *workflowServiceClient) ListWorkflows(ctx context.Context, req *connect.Request[v1.ListWorkflowsRequest]) (*connect.Response[v1.ListWorkflowsResponse], error) {
-	return c.listWorkflows.CallUnary(ctx, req)
+// ListOrkflows calls orkstack.v1.OrkflowService.ListOrkflows.
+func (c *orkflowServiceClient) ListOrkflows(ctx context.Context, req *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error) {
+	return c.listOrkflows.CallUnary(ctx, req)
 }
 
-// WorkflowServiceHandler is an implementation of the orkstack.v1.WorkflowService service.
-type WorkflowServiceHandler interface {
-	// Apply validates and upserts a workflow from raw DSL YAML.
-	Apply(context.Context, *connect.Request[v1.ApplyWorkflowRequest]) (*connect.Response[v1.ApplyWorkflowResponse], error)
-	GetWorkflow(context.Context, *connect.Request[v1.GetWorkflowRequest]) (*connect.Response[v1.GetWorkflowResponse], error)
-	ListWorkflows(context.Context, *connect.Request[v1.ListWorkflowsRequest]) (*connect.Response[v1.ListWorkflowsResponse], error)
+// OrkflowServiceHandler is an implementation of the orkstack.v1.OrkflowService service.
+type OrkflowServiceHandler interface {
+	// ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+	ApplyOrkflow(context.Context, *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error)
+	GetOrkflow(context.Context, *connect.Request[v1.GetOrkflowRequest]) (*connect.Response[v1.GetOrkflowResponse], error)
+	ListOrkflows(context.Context, *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error)
 }
 
-// NewWorkflowServiceHandler builds an HTTP handler from the service implementation. It returns the
+// NewOrkflowServiceHandler builds an HTTP handler from the service implementation. It returns the
 // path on which to mount the handler and the handler itself.
 //
 // By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
 // and JSON codecs. They also support gzip compression.
-func NewWorkflowServiceHandler(svc WorkflowServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-	workflowServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("WorkflowService").Methods()
-	workflowServiceApplyHandler := connect.NewUnaryHandler(
-		WorkflowServiceApplyProcedure,
-		svc.Apply,
-		connect.WithSchema(workflowServiceMethods.ByName("Apply")),
+func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	orkflowServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("OrkflowService").Methods()
+	orkflowServiceApplyOrkflowHandler := connect.NewUnaryHandler(
+		OrkflowServiceApplyOrkflowProcedure,
+		svc.ApplyOrkflow,
+		connect.WithSchema(orkflowServiceMethods.ByName("ApplyOrkflow")),
 		connect.WithHandlerOptions(opts...),
 	)
-	workflowServiceGetWorkflowHandler := connect.NewUnaryHandler(
-		WorkflowServiceGetWorkflowProcedure,
-		svc.GetWorkflow,
-		connect.WithSchema(workflowServiceMethods.ByName("GetWorkflow")),
+	orkflowServiceGetOrkflowHandler := connect.NewUnaryHandler(
+		OrkflowServiceGetOrkflowProcedure,
+		svc.GetOrkflow,
+		connect.WithSchema(orkflowServiceMethods.ByName("GetOrkflow")),
 		connect.WithHandlerOptions(opts...),
 	)
-	workflowServiceListWorkflowsHandler := connect.NewUnaryHandler(
-		WorkflowServiceListWorkflowsProcedure,
-		svc.ListWorkflows,
-		connect.WithSchema(workflowServiceMethods.ByName("ListWorkflows")),
+	orkflowServiceListOrkflowsHandler := connect.NewUnaryHandler(
+		OrkflowServiceListOrkflowsProcedure,
+		svc.ListOrkflows,
+		connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflows")),
 		connect.WithHandlerOptions(opts...),
 	)
-	return "/orkstack.v1.WorkflowService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return "/orkstack.v1.OrkflowService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case WorkflowServiceApplyProcedure:
-			workflowServiceApplyHandler.ServeHTTP(w, r)
-		case WorkflowServiceGetWorkflowProcedure:
-			workflowServiceGetWorkflowHandler.ServeHTTP(w, r)
-		case WorkflowServiceListWorkflowsProcedure:
-			workflowServiceListWorkflowsHandler.ServeHTTP(w, r)
+		case OrkflowServiceApplyOrkflowProcedure:
+			orkflowServiceApplyOrkflowHandler.ServeHTTP(w, r)
+		case OrkflowServiceGetOrkflowProcedure:
+			orkflowServiceGetOrkflowHandler.ServeHTTP(w, r)
+		case OrkflowServiceListOrkflowsProcedure:
+			orkflowServiceListOrkflowsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
 	})
 }
 
-// UnimplementedWorkflowServiceHandler returns CodeUnimplemented from all methods.
-type UnimplementedWorkflowServiceHandler struct{}
+// UnimplementedOrkflowServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedOrkflowServiceHandler struct{}
 
-func (UnimplementedWorkflowServiceHandler) Apply(context.Context, *connect.Request[v1.ApplyWorkflowRequest]) (*connect.Response[v1.ApplyWorkflowResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WorkflowService.Apply is not implemented"))
+func (UnimplementedOrkflowServiceHandler) ApplyOrkflow(context.Context, *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ApplyOrkflow is not implemented"))
 }
 
-func (UnimplementedWorkflowServiceHandler) GetWorkflow(context.Context, *connect.Request[v1.GetWorkflowRequest]) (*connect.Response[v1.GetWorkflowResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WorkflowService.GetWorkflow is not implemented"))
+func (UnimplementedOrkflowServiceHandler) GetOrkflow(context.Context, *connect.Request[v1.GetOrkflowRequest]) (*connect.Response[v1.GetOrkflowResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.GetOrkflow is not implemented"))
 }
 
-func (UnimplementedWorkflowServiceHandler) ListWorkflows(context.Context, *connect.Request[v1.ListWorkflowsRequest]) (*connect.Response[v1.ListWorkflowsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WorkflowService.ListWorkflows is not implemented"))
+func (UnimplementedOrkflowServiceHandler) ListOrkflows(context.Context, *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ListOrkflows is not implemented"))
 }
 
 // RunServiceClient is a client for the orkstack.v1.RunService service.

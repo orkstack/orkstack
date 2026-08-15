@@ -18,7 +18,7 @@ import (
 // RunStarter is the seam between the API and Temporal. Tests substitute a fake
 // so the Connect surface can be exercised without a cluster.
 type RunStarter interface {
-	StartRun(ctx context.Context, runID string, wf *orkstackv1.Workflow, input *orkstackv1.Payload) error
+	StartRun(ctx context.Context, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload) error
 	CancelRun(ctx context.Context, runID, reason string) error
 }
 
@@ -46,7 +46,7 @@ type Config struct {
 	NewRunID func() string
 }
 
-// Service implements WorkflowService, RunService, and PluginService.
+// Service implements OrkflowService, RunService, and PluginService.
 type Service struct {
 	workflows *engine.WorkflowStore
 	runs      *engine.RunStore
@@ -101,7 +101,7 @@ func (s *Service) defaultRunID() string {
 	s.runCounter++
 	counter := s.runCounter
 	s.counterMu.Unlock()
-	return fmt.Sprintf("run-%d-%d", s.now().UTC().UnixNano(), counter)
+	return fmt.Sprintf("ork-%d-%d", s.now().UTC().UnixNano(), counter)
 }
 
 // Bus exposes the event bus (used by the WebSocket bridge).
@@ -110,47 +110,47 @@ func (s *Service) Bus() *engine.EventBus { return s.bus }
 // Runs exposes the run read model (used by the WebSocket bridge).
 func (s *Service) Runs() *engine.RunStore { return s.runs }
 
-// Apply compiles a DSL document and upserts the resulting workflow.
-func (s *Service) Apply(
+// ApplyOrkflow compiles a DSL document and upserts the resulting orkflow.
+func (s *Service) ApplyOrkflow(
 	_ context.Context,
-	req *connect.Request[orkstackv1.ApplyWorkflowRequest],
-) (*connect.Response[orkstackv1.ApplyWorkflowResponse], error) {
+	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
+) (*connect.Response[orkstackv1.ApplyOrkflowResponse], error) {
 	wf, err := dsl.Compile([]byte(req.Msg.GetYaml()))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
 	s.workflows.Put(wf)
-	return connect.NewResponse(&orkstackv1.ApplyWorkflowResponse{Workflow: wf}), nil
+	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{Orkflow: wf}), nil
 }
 
-// GetWorkflow returns a stored workflow; an empty version means the most
+// GetOrkflow returns a stored orkflow; an empty version means the most
 // recently applied one.
-func (s *Service) GetWorkflow(
+func (s *Service) GetOrkflow(
 	_ context.Context,
-	req *connect.Request[orkstackv1.GetWorkflowRequest],
-) (*connect.Response[orkstackv1.GetWorkflowResponse], error) {
+	req *connect.Request[orkstackv1.GetOrkflowRequest],
+) (*connect.Response[orkstackv1.GetOrkflowResponse], error) {
 	if req.Msg.GetName() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("name is required"))
 	}
 	wf, ok := s.workflows.Get(req.Msg.GetName(), req.Msg.GetVersion())
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound,
-			fmt.Errorf("workflow %q version %q not found", req.Msg.GetName(), req.Msg.GetVersion()))
+			fmt.Errorf("orkflow %q version %q not found", req.Msg.GetName(), req.Msg.GetVersion()))
 	}
-	return connect.NewResponse(&orkstackv1.GetWorkflowResponse{Workflow: wf}), nil
+	return connect.NewResponse(&orkstackv1.GetOrkflowResponse{Orkflow: wf}), nil
 }
 
-// ListWorkflows returns the latest version of every stored workflow.
-func (s *Service) ListWorkflows(
+// ListOrkflows returns the latest version of every stored orkflow.
+func (s *Service) ListOrkflows(
 	_ context.Context,
-	req *connect.Request[orkstackv1.ListWorkflowsRequest],
-) (*connect.Response[orkstackv1.ListWorkflowsResponse], error) {
+	req *connect.Request[orkstackv1.ListOrkflowsRequest],
+) (*connect.Response[orkstackv1.ListOrkflowsResponse], error) {
 	workflows := s.workflows.List()
 	if size := int(req.Msg.GetPageSize()); size > 0 && size < len(workflows) {
 		workflows = workflows[:size]
 	}
-	return connect.NewResponse(&orkstackv1.ListWorkflowsResponse{Workflows: workflows}), nil
+	return connect.NewResponse(&orkstackv1.ListOrkflowsResponse{Orkflows: workflows}), nil
 }
 
 // SubmitRun creates a pending run and starts its Temporal workflow.
@@ -165,7 +165,7 @@ func (s *Service) SubmitRun(
 	wf, ok := s.workflows.Get(name, req.Msg.GetWorkflowVersion())
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound,
-			fmt.Errorf("workflow %q version %q not found", name, req.Msg.GetWorkflowVersion()))
+			fmt.Errorf("orkflow %q version %q not found", name, req.Msg.GetWorkflowVersion()))
 	}
 	if s.starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
@@ -205,7 +205,7 @@ func (s *Service) SubmitRun(
 
 func (s *Service) newPendingRun(
 	runID string,
-	wf *orkstackv1.Workflow,
+	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
 ) *orkstackv1.Run {
 	return &orkstackv1.Run{
@@ -221,7 +221,7 @@ func (s *Service) newPendingRun(
 func (s *Service) startPreparedRun(
 	ctx context.Context,
 	run *orkstackv1.Run,
-	wf *orkstackv1.Workflow,
+	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	runID := run.GetId()
@@ -229,7 +229,7 @@ func (s *Service) startPreparedRun(
 		RunId:     runID,
 		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
 		Status:    orkstackv1.Status_STATUS_PENDING,
-		Message:   fmt.Sprintf("run created for workflow %s@%s", wf.GetName(), wf.GetVersion()),
+		Message:   fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion()),
 		Timestamp: timestamppb.New(s.now().UTC()),
 	}, runID+"#created")
 

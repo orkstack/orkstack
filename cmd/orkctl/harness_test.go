@@ -33,13 +33,13 @@ type stubStarter struct {
 	reasons   []string
 	startErr  error
 	cancelErr error
-	onStart   func(runID string, wf *orkstackv1.Workflow, input *orkstackv1.Payload)
+	onStart   func(runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload)
 }
 
 func (s *stubStarter) StartRun(
 	_ context.Context,
 	runID string,
-	wf *orkstackv1.Workflow,
+	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
 ) error {
 	s.mu.Lock()
@@ -73,7 +73,7 @@ func (s *stubStarter) canceledRuns() []string {
 	return append([]string(nil), s.canceled...)
 }
 
-// fixture is the real API server (the same one orkengine serves) listening on
+// fixture is the real API server (the same one ork serves) listening on
 // a loopback port, plus the stores behind it.
 type fixture struct {
 	t       *testing.T
@@ -162,7 +162,7 @@ func (f *fixture) applyExample() result {
 	return f.run("apply", examplePath(f.t))
 }
 
-// examplePath resolves the repo's example workflow from cmd/orkctl.
+// examplePath resolves the repo's example orkflow from cmd/orkctl.
 func examplePath(t *testing.T) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("..", "..", "examples", "hello.ork.yaml"))
@@ -170,7 +170,7 @@ func examplePath(t *testing.T) string {
 		t.Fatalf("resolve example path: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("example workflow missing: %v", err)
+		t.Fatalf("example orkflow missing: %v", err)
 	}
 	return path
 }

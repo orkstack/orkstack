@@ -17,7 +17,12 @@ import "github.com/orkstack/orkstack/pkg/plugin"
 
 const (
 	// DefaultQueue is the Temporal task queue Orkers poll for task execution.
-	DefaultQueue = "orkstack-tasks"
+	DefaultQueue = "ork-tasks"
+
+	// DefaultNamespace is the Temporal namespace OrkStack runs in when
+	// ORK_TEMPORAL_NAMESPACE is unset. Binaries provision it on startup when
+	// the cluster does not have it yet (see EnsureNamespace).
+	DefaultNamespace = "ork-main"
 
 	// ActivityExecuteTask is the registered activity name for task execution.
 	ActivityExecuteTask = "ExecuteTask"

@@ -1,9 +1,9 @@
 <h1 align="center">OrkStack</h1>
 
 <p align="center">
-  A powerful, Temporal-backed workflow engine. Author workflows in a simple YAML
-  DSL; run them durably on a fleet of pluggable workers (<em>Orkers</em>); drive
-  and observe them from a modern CLI and a realtime UI.
+  A powerful, Temporal-backed orkflow engine. Author <em>orkflows</em> in a simple
+  YAML DSL; run them durably on a fleet of pluggable workers (<em>Orkers</em>);
+  drive and observe them from a modern CLI and a realtime UI.
 </p>
 
 ---
@@ -17,15 +17,15 @@
   a fixed task contract: input payload + artifacts → output payload + artifacts.
 - **Artifacts by reference** — files flow between tasks through local or S3/MinIO
   storage, not through the control plane.
-- **One contract, everywhere** — a single Connect/proto API powers the Go engine,
-  the Go CLI, and the browser UI, with realtime events over WebSocket.
+- **One contract, everywhere** — a single Connect/proto API powers the `ork`
+  engine, the Go CLI, and the browser UI, with realtime events over WebSocket.
 
 ## Architecture
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md). In short:
 
 ```
-DSL yaml → Engine (Temporal) → Orker → Plugin → artifacts (local/S3)
+DSL yaml → ork engine (Temporal) → Orker → Plugin → artifacts (local/S3)
                  │  realtime events (Connect stream + WebSocket)
         CLI (orkctl) / SvelteKit UI
 ```
@@ -36,8 +36,8 @@ DSL yaml → Engine (Temporal) → Orker → Plugin → artifacts (local/S3)
 make tools          # install codegen tooling (buf, protoc-gen-*)
 make proto          # generate Go/TS from proto
 make infra-up       # start Temporal + MinIO (docker compose)
-make build          # build orkengine, orker, orkctl
-make run-engine     # terminal 1
+make build          # build ork, orker, orkctl
+make run-ork        # terminal 1
 make run-orker      # terminal 2
 ./bin/orkctl apply examples/hello.ork.yaml
 ./bin/orkctl run submit hello-ork --watch

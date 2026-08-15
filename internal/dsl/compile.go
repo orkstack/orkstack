@@ -59,8 +59,8 @@ type retryDocument struct {
 	MaximumIntervalSeconds int32   `yaml:"maximum_interval_seconds"`
 }
 
-// CompileFile reads path and compiles it into an orkstack.v1.Workflow.
-func CompileFile(path string) (*orkstackv1.Workflow, error) {
+// CompileFile reads path and compiles it into an orkstack.v1.Orkflow.
+func CompileFile(path string) (*orkstackv1.Orkflow, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("dsl: read %s: %w", path, err)
@@ -73,20 +73,20 @@ func CompileFile(path string) (*orkstackv1.Workflow, error) {
 }
 
 // Compile parses, validates, and compiles a DSL document. The returned
-// Workflow carries the original source bytes in SourceYaml; when the document
+// Orkflow carries the original source bytes in SourceYaml; when the document
 // does not pin `version`, Version is a stable content hash of the document.
-func Compile(source []byte) (*orkstackv1.Workflow, error) {
+func Compile(source []byte) (*orkstackv1.Orkflow, error) {
 	return CompileWithOptions(source, Options{})
 }
 
 // CompileWithOptions is Compile with explicit options.
-func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Workflow, error) {
+func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error) {
 	var doc document
 	if err := yaml.Unmarshal(source, &doc); err != nil {
 		return nil, fmt.Errorf("parse yaml: %w", err)
 	}
 
-	wf := &orkstackv1.Workflow{
+	wf := &orkstackv1.Orkflow{
 		Name:        doc.Name,
 		Version:     doc.Version,
 		Description: doc.Description,

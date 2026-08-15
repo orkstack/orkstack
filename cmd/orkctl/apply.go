@@ -14,20 +14,20 @@ import (
 func newApplyCommand(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "apply <file.ork.yaml>",
-		Short: "Compile and register a workflow from a DSL file",
-		Long: "apply uploads a workflow DSL document to the engine, which compiles,\n" +
+		Short: "Compile and register an orkflow from a DSL file",
+		Long: "apply uploads an orkflow DSL document to the engine, which compiles,\n" +
 			"validates, and stores it. Compilation errors are reported by the engine.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			source, err := os.ReadFile(args[0])
 			if err != nil {
-				return fmt.Errorf("read workflow file: %w", err)
+				return fmt.Errorf("read orkflow file: %w", err)
 			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			resp, err := g.workflowClient().Apply(ctx, connect.NewRequest(
-				&orkstackv1.ApplyWorkflowRequest{Yaml: string(source)},
+			resp, err := g.orkflowClient().ApplyOrkflow(ctx, connect.NewRequest(
+				&orkstackv1.ApplyOrkflowRequest{Yaml: string(source)},
 			))
 			if err != nil {
 				return rpcError("apply", err)
@@ -40,10 +40,10 @@ func newApplyCommand(g *globalFlags) *cobra.Command {
 	}
 }
 
-// renderApply prints the registered workflow and any compiler warnings.
-func renderApply(out io.Writer, resp *orkstackv1.ApplyWorkflowResponse) error {
-	wf := resp.GetWorkflow()
-	fmt.Fprintf(out, "Applied workflow %s (version %s)\n", wf.GetName(), wf.GetVersion())
+// renderApply prints the registered orkflow and any compiler warnings.
+func renderApply(out io.Writer, resp *orkstackv1.ApplyOrkflowResponse) error {
+	wf := resp.GetOrkflow()
+	fmt.Fprintf(out, "Applied orkflow %s (version %s)\n", wf.GetName(), wf.GetVersion())
 	if description := wf.GetDescription(); description != "" {
 		fmt.Fprintf(out, "%s\n", description)
 	}
@@ -57,7 +57,7 @@ func renderApply(out io.Writer, resp *orkstackv1.ApplyWorkflowResponse) error {
 	return renderTaskTable(out, wf.GetTasks())
 }
 
-// renderTaskTable prints a workflow's task DAG.
+// renderTaskTable prints an orkflow's task DAG.
 func renderTaskTable(out io.Writer, tasks []*orkstackv1.Task) error {
 	if len(tasks) == 0 {
 		fmt.Fprintln(out, "No tasks.")

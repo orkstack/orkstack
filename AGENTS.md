@@ -6,19 +6,19 @@ agents build independently without breaking each other.
 
 ## 0. What OrkStack is
 
-A workflow engine: users author workflows in a YAML **DSL**; the **engine**
-compiles them and runs them on **Temporal**; **Orkers** are generic Temporal
-workers that execute **plugins** (containerizable task implementations); a
-**CLI** (`orkctl`) and a **SvelteKit UI** drive and observe runs in realtime; an
+An orkflow engine: users author **orkflows** in a YAML **DSL**; the **engine**
+(`ork`) compiles them and runs them on **Temporal**; **Orkers** are generic
+Temporal workers that execute **plugins** (containerizable task implementations);
+a **CLI** (`orkctl`) and a **SvelteKit UI** drive and observe runs in realtime; an
 **artifact store** (local FS or S3/MinIO) carries files between tasks.
 
 ```
-DSL (yaml) ──apply──> Engine ──compile──> Temporal ──dispatch──> Orker ──run──> Plugin
-                        │  ▲                                                      │
-                   Connect API                                              artifacts
-                    + WS events  <───────────── events ─────────────────────────┘
-                        ▲
-              CLI (orkctl) / UI (SvelteKit)
+DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch──> Orker ──run──> Plugin
+                       │  ▲                                                    │
+                  Connect API                                            artifacts
+                   + WS events  <──────────── events ─────────────────────────┘
+                       ▲
+             CLI (orkctl) / UI (SvelteKit)
 ```
 
 ## 1. Non-negotiable invariants (the contracts)
@@ -37,8 +37,8 @@ DSL (yaml) ──apply──> Engine ──compile──> Temporal ──dispatc
 4. **Artifacts are references, not bytes.** Tasks exchange `ArtifactRef`s; the
    Orker materializes/uploads through `pkg/artifacts`. Never pipe large bytes
    through Temporal payloads or the event stream.
-5. **Everything is versioned.** A `Workflow` has a `name` + `version`. Runs pin
-   the version they executed.
+5. **Everything is versioned.** An `Orkflow` has a `name` + `version`. Runs pin
+   the version they executed, and are identified as `ork-{timestamp}-{sequence}`.
 6. **DONE means proven.** A change is done only when behavior tests pass and a
    proof artifact exists under `proof/` (see §6). No proof, not done.
 
@@ -47,19 +47,19 @@ DSL (yaml) ──apply──> Engine ──compile──> Temporal ──dispatc
 ```
 proto/orkstack/v1/     Proto contract (edit here)
 gen/go/                Generated Go (do not edit)
-cmd/orkengine/         Engine binary entrypoint
+cmd/ork/               Engine binary entrypoint (bin/ork)
 cmd/orker/             Orker binary entrypoint
 cmd/orkctl/            CLI binary entrypoint
 internal/engine/       Temporal workflows + activities + run store
 internal/api/          Connect service implementations + WS bridge
-internal/dsl/          YAML DSL parse → validate → compile to Workflow proto
+internal/dsl/          YAML DSL parse → validate → compile to Orkflow proto
 internal/orker/        Orker runtime: worker wiring, plugin dispatch
 pkg/plugin/            Public plugin SDK + task contract (imported by plugins)
 pkg/plugins/{http,shell,file}/  Builtin plugins
 pkg/artifacts/         Artifact storage providers (local FS, S3/MinIO)
 ui/                    SvelteKit + Vite + Tailwind app
 deploy/                docker-compose (Temporal + MinIO)
-examples/              Example workflows (*.ork.yaml)
+examples/              Example orkflows (*.ork.yaml)
 docs/                  Design + reference docs
 proof/                 Committed proof artifacts (logs, traces, recordings)
 scripts/               Dev helper scripts
@@ -70,8 +70,10 @@ scripts/               Dev helper scripts
 - **Go 1.25**, single module `github.com/orkstack/orkstack`. Format with `gofmt`;
   `make lint` (go vet + gofmt) must pass. Prefer `context.Context` first arg,
   wrapped errors (`fmt.Errorf("...: %w", err)`), no panics in library code.
-- **Temporal Go SDK** (`go.temporal.io/sdk`). Task queues: engine dispatches to
-  `orkstack-tasks` by default; a task may override via `queue`.
+- **Temporal Go SDK** (`go.temporal.io/sdk`). Namespace: `ORK_TEMPORAL_NAMESPACE`,
+  default `ork-main` (auto-provisioned at binary boot). Task queues: the engine
+  dispatches to `ORK_ORKER_QUEUE`, default `ork-tasks`; a task may override via
+  `queue`.
 - **Connect** (`connectrpc.com/connect`) for RPC. Server serves h2c on
   `:8080` (configurable). WebSocket event bridge on the same server at
   `/ws/runs/{id}`.
@@ -119,21 +121,22 @@ Every milestone writes evidence under `proof/<milestone>/`:
 
 ### Integration tests share one Temporal task queue — clean up workers
 
-Integration tests and the real binaries all poll the SAME queue
-(`orkstack-tasks`). Any leftover `orkengine`/`orker` process — or a second test
-binary registering a different `ExecuteTask` — will **steal activities** from the
-run under test. The failure looks like a code bug but is not: you get missing
+Integration tests and the real binaries all poll the SAME queue (`ork-tasks`) in
+the same namespace (`ork-main`). Any leftover `ork`/`orker` process — or a second
+test binary registering a different `ExecuteTask` — will **steal activities** from
+the run under test. The failure looks like a code bug but is not: you get missing
 lifecycle events, `observed 1 task inputs, want 3`, or a run that hangs until the
 stream deadline.
 
 Before trusting an integration failure:
 
 ```bash
-ps aux | grep -E 'bin/ork|orkengine|orker' | grep -v grep   # must be empty
-temporal task-queue describe --task-queue orkstack-tasks --address 127.0.0.1:7233
+ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep          # must be empty
+temporal task-queue describe --task-queue ork-tasks \
+  --namespace ork-main --address 127.0.0.1:7233
 ```
 
-Kill strays with `pkill -f 'bin/orker'; pkill -f 'bin/orkengine'` (match the full
+Kill strays with `pkill -f 'bin/orker'; pkill -f 'bin/ork'` (match the full
 path — `pkill -f './orker'` does NOT match `./bin/orker`). Never leave a
 backgrounded engine/orker running after a manual e2e; always kill what you start.
 Run integration suites with `-p 1` to stop packages from polling concurrently.
@@ -149,7 +152,7 @@ Proof must be reproducible via a single documented command.
 
 ## 8. Boundaries between agents (avoid collisions)
 
-- Engine agents own `internal/engine`, `internal/api`, `cmd/orkengine`.
+- Engine agents own `internal/engine`, `internal/api`, `cmd/ork`.
 - Orker/plugin agents own `internal/orker`, `pkg/plugin`, `pkg/plugins/*`,
   `cmd/orker`.
 - CLI agents own `cmd/orkctl`.

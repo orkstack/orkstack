@@ -15,10 +15,10 @@ message RetryPolicy {
   int32 maximum_interval_seconds = 4;    // default 100
 }
 
-// Task is a single node in the workflow DAG. It maps to exactly one plugin
+// Task is a single node in the orkflow DAG. It maps to exactly one plugin
 // invocation on an Orker.
 message Task {
-  string id = 1;                         // unique within the workflow
+  string id = 1;                         // unique within the orkflow
   string plugin = 2;                     // plugin name, e.g. "http", "shell", "file"
   // with holds the plugin-specific configuration (templated).
   google.protobuf.Struct with = 3;
@@ -32,8 +32,8 @@ message Task {
   string queue = 8;                      // optional task queue / orker pool override
 }
 
-// Workflow is the compiled, validated form of a DSL document.
-message Workflow {
+// Orkflow is the compiled, validated form of a DSL document.
+message Orkflow {
   string name = 1;                       // unique identifier (slug)
   string version = 2;                    // semantic or content hash
   string description = 3;

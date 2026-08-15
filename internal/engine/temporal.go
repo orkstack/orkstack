@@ -47,7 +47,7 @@ func NewTemporalStarterWithOrkerQueue(c client.Client, runQueue, orkerQueue stri
 func (s *TemporalStarter) StartRun(
 	ctx context.Context,
 	runID string,
-	wf *orkstackv1.Workflow,
+	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
 ) error {
 	_, err := s.client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{

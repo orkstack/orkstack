@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        (unknown)
-// source: orkstack/v1/workflow.proto
+// source: orkstack/v1/orkflow.proto
 
 package orkstackv1
 
@@ -36,7 +36,7 @@ type RetryPolicy struct {
 
 func (x *RetryPolicy) Reset() {
 	*x = RetryPolicy{}
-	mi := &file_orkstack_v1_workflow_proto_msgTypes[0]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -48,7 +48,7 @@ func (x *RetryPolicy) String() string {
 func (*RetryPolicy) ProtoMessage() {}
 
 func (x *RetryPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_workflow_proto_msgTypes[0]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -61,7 +61,7 @@ func (x *RetryPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryPolicy.ProtoReflect.Descriptor instead.
 func (*RetryPolicy) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_workflow_proto_rawDescGZIP(), []int{0}
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *RetryPolicy) GetMaximumAttempts() int32 {
@@ -92,11 +92,11 @@ func (x *RetryPolicy) GetMaximumIntervalSeconds() int32 {
 	return 0
 }
 
-// Task is a single node in the workflow DAG. It maps to exactly one plugin
+// Task is a single node in the orkflow DAG. It maps to exactly one plugin
 // invocation on an Orker.
 type Task struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
-	Id     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`         // unique within the workflow
+	Id     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`         // unique within the orkflow
 	Plugin string                 `protobuf:"bytes,2,opt,name=plugin,proto3" json:"plugin,omitempty"` // plugin name, e.g. "http", "shell", "file"
 	// with holds the plugin-specific configuration (templated).
 	With *structpb.Struct `protobuf:"bytes,3,opt,name=with,proto3" json:"with,omitempty"`
@@ -114,7 +114,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_orkstack_v1_workflow_proto_msgTypes[1]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -126,7 +126,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_workflow_proto_msgTypes[1]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -139,7 +139,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_workflow_proto_rawDescGZIP(), []int{1}
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Task) GetId() string {
@@ -198,8 +198,8 @@ func (x *Task) GetQueue() string {
 	return ""
 }
 
-// Workflow is the compiled, validated form of a DSL document.
-type Workflow struct {
+// Orkflow is the compiled, validated form of a DSL document.
+type Orkflow struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`       // unique identifier (slug)
 	Version     string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"` // semantic or content hash
@@ -214,21 +214,21 @@ type Workflow struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Workflow) Reset() {
-	*x = Workflow{}
-	mi := &file_orkstack_v1_workflow_proto_msgTypes[2]
+func (x *Orkflow) Reset() {
+	*x = Orkflow{}
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Workflow) String() string {
+func (x *Orkflow) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Workflow) ProtoMessage() {}
+func (*Orkflow) ProtoMessage() {}
 
-func (x *Workflow) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_workflow_proto_msgTypes[2]
+func (x *Orkflow) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -239,72 +239,72 @@ func (x *Workflow) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Workflow.ProtoReflect.Descriptor instead.
-func (*Workflow) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_workflow_proto_rawDescGZIP(), []int{2}
+// Deprecated: Use Orkflow.ProtoReflect.Descriptor instead.
+func (*Orkflow) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *Workflow) GetName() string {
+func (x *Orkflow) GetName() string {
 	if x != nil {
 		return x.Name
 	}
 	return ""
 }
 
-func (x *Workflow) GetVersion() string {
+func (x *Orkflow) GetVersion() string {
 	if x != nil {
 		return x.Version
 	}
 	return ""
 }
 
-func (x *Workflow) GetDescription() string {
+func (x *Orkflow) GetDescription() string {
 	if x != nil {
 		return x.Description
 	}
 	return ""
 }
 
-func (x *Workflow) GetLabels() map[string]string {
+func (x *Orkflow) GetLabels() map[string]string {
 	if x != nil {
 		return x.Labels
 	}
 	return nil
 }
 
-func (x *Workflow) GetInputs() *structpb.Struct {
+func (x *Orkflow) GetInputs() *structpb.Struct {
 	if x != nil {
 		return x.Inputs
 	}
 	return nil
 }
 
-func (x *Workflow) GetTasks() []*Task {
+func (x *Orkflow) GetTasks() []*Task {
 	if x != nil {
 		return x.Tasks
 	}
 	return nil
 }
 
-func (x *Workflow) GetSourceYaml() string {
+func (x *Orkflow) GetSourceYaml() string {
 	if x != nil {
 		return x.SourceYaml
 	}
 	return ""
 }
 
-func (x *Workflow) GetCreatedAt() *timestamppb.Timestamp {
+func (x *Orkflow) GetCreatedAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.CreatedAt
 	}
 	return nil
 }
 
-var File_orkstack_v1_workflow_proto protoreflect.FileDescriptor
+var File_orkstack_v1_orkflow_proto protoreflect.FileDescriptor
 
-const file_orkstack_v1_workflow_proto_rawDesc = "" +
+const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\n" +
-	"\x1aorkstack/v1/workflow.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xdd\x01\n" +
+	"\x19orkstack/v1/orkflow.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xdd\x01\n" +
 	"\vRetryPolicy\x12)\n" +
 	"\x10maximum_attempts\x18\x01 \x01(\x05R\x0fmaximumAttempts\x128\n" +
 	"\x18initial_interval_seconds\x18\x02 \x01(\x05R\x16initialIntervalSeconds\x12/\n" +
@@ -318,12 +318,12 @@ const file_orkstack_v1_workflow_proto_rawDesc = "" +
 	"\tcondition\x18\x05 \x01(\tR\tcondition\x12'\n" +
 	"\x0ftimeout_seconds\x18\x06 \x01(\x05R\x0etimeoutSeconds\x12.\n" +
 	"\x05retry\x18\a \x01(\v2\x18.orkstack.v1.RetryPolicyR\x05retry\x12\x14\n" +
-	"\x05queue\x18\b \x01(\tR\x05queue\"\x86\x03\n" +
-	"\bWorkflow\x12\x12\n" +
+	"\x05queue\x18\b \x01(\tR\x05queue\"\x84\x03\n" +
+	"\aOrkflow\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
-	"\vdescription\x18\x03 \x01(\tR\vdescription\x129\n" +
-	"\x06labels\x18\x04 \x03(\v2!.orkstack.v1.Workflow.LabelsEntryR\x06labels\x12/\n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x128\n" +
+	"\x06labels\x18\x04 \x03(\v2 .orkstack.v1.Orkflow.LabelsEntryR\x06labels\x12/\n" +
 	"\x06inputs\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x06inputs\x12'\n" +
 	"\x05tasks\x18\x06 \x03(\v2\x11.orkstack.v1.TaskR\x05tasks\x12\x1f\n" +
 	"\vsource_yaml\x18\a \x01(\tR\n" +
@@ -332,37 +332,37 @@ const file_orkstack_v1_workflow_proto_rawDesc = "" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\xa9\x01\n" +
-	"\x0fcom.orkstack.v1B\rWorkflowProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\xa8\x01\n" +
+	"\x0fcom.orkstack.v1B\fOrkflowProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
-	file_orkstack_v1_workflow_proto_rawDescOnce sync.Once
-	file_orkstack_v1_workflow_proto_rawDescData []byte
+	file_orkstack_v1_orkflow_proto_rawDescOnce sync.Once
+	file_orkstack_v1_orkflow_proto_rawDescData []byte
 )
 
-func file_orkstack_v1_workflow_proto_rawDescGZIP() []byte {
-	file_orkstack_v1_workflow_proto_rawDescOnce.Do(func() {
-		file_orkstack_v1_workflow_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_orkstack_v1_workflow_proto_rawDesc), len(file_orkstack_v1_workflow_proto_rawDesc)))
+func file_orkstack_v1_orkflow_proto_rawDescGZIP() []byte {
+	file_orkstack_v1_orkflow_proto_rawDescOnce.Do(func() {
+		file_orkstack_v1_orkflow_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_orkstack_v1_orkflow_proto_rawDesc), len(file_orkstack_v1_orkflow_proto_rawDesc)))
 	})
-	return file_orkstack_v1_workflow_proto_rawDescData
+	return file_orkstack_v1_orkflow_proto_rawDescData
 }
 
-var file_orkstack_v1_workflow_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
-var file_orkstack_v1_workflow_proto_goTypes = []any{
+var file_orkstack_v1_orkflow_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_orkstack_v1_orkflow_proto_goTypes = []any{
 	(*RetryPolicy)(nil),           // 0: orkstack.v1.RetryPolicy
 	(*Task)(nil),                  // 1: orkstack.v1.Task
-	(*Workflow)(nil),              // 2: orkstack.v1.Workflow
-	nil,                           // 3: orkstack.v1.Workflow.LabelsEntry
+	(*Orkflow)(nil),               // 2: orkstack.v1.Orkflow
+	nil,                           // 3: orkstack.v1.Orkflow.LabelsEntry
 	(*structpb.Struct)(nil),       // 4: google.protobuf.Struct
 	(*timestamppb.Timestamp)(nil), // 5: google.protobuf.Timestamp
 }
-var file_orkstack_v1_workflow_proto_depIdxs = []int32{
+var file_orkstack_v1_orkflow_proto_depIdxs = []int32{
 	4, // 0: orkstack.v1.Task.with:type_name -> google.protobuf.Struct
 	0, // 1: orkstack.v1.Task.retry:type_name -> orkstack.v1.RetryPolicy
-	3, // 2: orkstack.v1.Workflow.labels:type_name -> orkstack.v1.Workflow.LabelsEntry
-	4, // 3: orkstack.v1.Workflow.inputs:type_name -> google.protobuf.Struct
-	1, // 4: orkstack.v1.Workflow.tasks:type_name -> orkstack.v1.Task
-	5, // 5: orkstack.v1.Workflow.created_at:type_name -> google.protobuf.Timestamp
+	3, // 2: orkstack.v1.Orkflow.labels:type_name -> orkstack.v1.Orkflow.LabelsEntry
+	4, // 3: orkstack.v1.Orkflow.inputs:type_name -> google.protobuf.Struct
+	1, // 4: orkstack.v1.Orkflow.tasks:type_name -> orkstack.v1.Task
+	5, // 5: orkstack.v1.Orkflow.created_at:type_name -> google.protobuf.Timestamp
 	6, // [6:6] is the sub-list for method output_type
 	6, // [6:6] is the sub-list for method input_type
 	6, // [6:6] is the sub-list for extension type_name
@@ -370,26 +370,26 @@ var file_orkstack_v1_workflow_proto_depIdxs = []int32{
 	0, // [0:6] is the sub-list for field type_name
 }
 
-func init() { file_orkstack_v1_workflow_proto_init() }
-func file_orkstack_v1_workflow_proto_init() {
-	if File_orkstack_v1_workflow_proto != nil {
+func init() { file_orkstack_v1_orkflow_proto_init() }
+func file_orkstack_v1_orkflow_proto_init() {
+	if File_orkstack_v1_orkflow_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_workflow_proto_rawDesc), len(file_orkstack_v1_workflow_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_orkflow_proto_rawDesc), len(file_orkstack_v1_orkflow_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_orkstack_v1_workflow_proto_goTypes,
-		DependencyIndexes: file_orkstack_v1_workflow_proto_depIdxs,
-		MessageInfos:      file_orkstack_v1_workflow_proto_msgTypes,
+		GoTypes:           file_orkstack_v1_orkflow_proto_goTypes,
+		DependencyIndexes: file_orkstack_v1_orkflow_proto_depIdxs,
+		MessageInfos:      file_orkstack_v1_orkflow_proto_msgTypes,
 	}.Build()
-	File_orkstack_v1_workflow_proto = out.File
-	file_orkstack_v1_workflow_proto_goTypes = nil
-	file_orkstack_v1_workflow_proto_depIdxs = nil
+	File_orkstack_v1_orkflow_proto = out.File
+	file_orkstack_v1_orkflow_proto_goTypes = nil
+	file_orkstack_v1_orkflow_proto_depIdxs = nil
 }

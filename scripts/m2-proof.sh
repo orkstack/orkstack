@@ -46,8 +46,8 @@ echo "== coverage ==" | tee -a "$PROOF_DIR/test.log"
 go test ./internal/... -count=1 -coverprofile="$PROOF_DIR/coverage.out" 2>&1 | tee -a "$PROOF_DIR/test.log"
 go tool cover -func="$PROOF_DIR/coverage.out" | tail -1 | tee -a "$PROOF_DIR/test.log"
 
-echo "== orkengine smoke check ==" | tee "$PROOF_DIR/engine-smoke.log"
-ORK_HTTP_ADDR="$SMOKE_ADDR" go run ./cmd/orkengine >>"$PROOF_DIR/engine-smoke.log" 2>&1 &
+echo "== ork engine smoke check ==" | tee "$PROOF_DIR/engine-smoke.log"
+ORK_HTTP_ADDR="$SMOKE_ADDR" go run ./cmd/ork >>"$PROOF_DIR/engine-smoke.log" 2>&1 &
 ENGINE_PID=$!
 cleanup() {
   pkill -TERM -P "$ENGINE_PID" 2>/dev/null || true
@@ -58,7 +58,7 @@ trap cleanup EXIT
 
 for _ in $(seq 1 60); do
   if curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -d '{}' \
-    "http://${SMOKE_HOST}/orkstack.v1.WorkflowService/ListWorkflows" 2>/dev/null; then
+    "http://${SMOKE_HOST}/orkstack.v1.OrkflowService/ListOrkflows" 2>/dev/null; then
     break
   fi
   sleep 1
@@ -66,18 +66,18 @@ done
 
 {
   echo
-  echo "--- ListWorkflows (health/list) ---"
+  echo "--- ListOrkflows (health/list) ---"
   curl -fsS -X POST -H 'Content-Type: application/json' -d '{}' \
-    "http://${SMOKE_HOST}/orkstack.v1.WorkflowService/ListWorkflows"
+    "http://${SMOKE_HOST}/orkstack.v1.OrkflowService/ListOrkflows"
   echo
   echo "--- Apply examples/hello.ork.yaml ---"
   python3 -c 'import json;print(json.dumps({"yaml":open("examples/hello.ork.yaml").read()}))' >/tmp/ork-apply.json
   curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @/tmp/ork-apply.json \
-    "http://${SMOKE_HOST}/orkstack.v1.WorkflowService/Apply" | head -c 400
+    "http://${SMOKE_HOST}/orkstack.v1.OrkflowService/ApplyOrkflow" | head -c 400
   echo
-  echo "--- ListWorkflows after apply ---"
+  echo "--- ListOrkflows after apply ---"
   curl -fsS -X POST -H 'Content-Type: application/json' -d '{}' \
-    "http://${SMOKE_HOST}/orkstack.v1.WorkflowService/ListWorkflows" | head -c 200
+    "http://${SMOKE_HOST}/orkstack.v1.OrkflowService/ListOrkflows" | head -c 200
   echo
   echo "--- ListPlugins ---"
   curl -fsS -X POST -H 'Content-Type: application/json' -d '{}' \

@@ -19,8 +19,9 @@ const (
 
 	// EventQueue is the Temporal task queue for engine-internal projection
 	// activities. It is deliberately separate from task.DefaultQueue so Orkers
-	// polling for task execution never receive engine projection work.
-	EventQueue = "orkstack-engine-events"
+	// polling for task execution never receive engine projection work, and
+	// carries the ork- prefix every OrkStack Temporal name uses.
+	EventQueue = "ork-engine-events"
 
 	// ActivityPublishEvent is the registered name of the projection activity.
 	ActivityPublishEvent = "PublishEvent"
@@ -45,7 +46,7 @@ const eventActivityTimeout = 10 * time.Second
 func RunWorkflow(
 	ctx workflow.Context,
 	runID string,
-	wf *orkstackv1.Workflow,
+	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
 ) (*orkstackv1.Run, error) {
 	if runID == "" {
@@ -119,7 +120,7 @@ func RunWorkflow(
 // runState holds the deterministic in-workflow state of one run.
 type runState struct {
 	runID    string
-	wf       *orkstackv1.Workflow
+	wf       *orkstackv1.Orkflow
 	input    *orkstackv1.Payload
 	inputs   map[string]any
 	order    []string
@@ -137,7 +138,7 @@ type runState struct {
 	eventSeq  int
 }
 
-func newRunState(ctx workflow.Context, runID string, wf *orkstackv1.Workflow, input *orkstackv1.Payload) *runState {
+func newRunState(ctx workflow.Context, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload) *runState {
 	mergedInput := ApplyInputDefaults(wf, input)
 	state := &runState{
 		runID:     runID,

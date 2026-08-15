@@ -21,13 +21,13 @@ import (
 // apply
 // ---------------------------------------------------------------------------
 
-func TestApply_RegistersExampleWorkflowAgainstTheRealServer(t *testing.T) {
+func TestApply_RegistersExampleOrkflowAgainstTheRealServer(t *testing.T) {
 	f := newFixture(t)
 
 	applied := f.applyExample().requireExit(t, exitOK)
 	requireGolden(t, "apply.golden", applied.stdout)
 
-	listed := f.run("workflow", "list").requireExit(t, exitOK)
+	listed := f.run("orkflow", "list").requireExit(t, exitOK)
 	listed.requireContains(t, "hello-ork", "0.1.0")
 }
 
@@ -38,21 +38,21 @@ func TestApply_MissingFileExitsNonZero(t *testing.T) {
 	if outcome.code == exitOK {
 		t.Fatalf("expected a non-zero exit for a missing file, stdout:\n%s", outcome.stdout)
 	}
-	if !strings.Contains(outcome.stderr, "read workflow file") {
+	if !strings.Contains(outcome.stderr, "read orkflow file") {
 		t.Fatalf("stderr does not explain the failure:\n%s", outcome.stderr)
 	}
 }
 
-func TestApply_InvalidWorkflowExitsNonZero(t *testing.T) {
+func TestApply_InvalidOrkflowExitsNonZero(t *testing.T) {
 	f := newFixture(t)
 	path := filepath.Join(t.TempDir(), "broken.ork.yaml")
 	if err := os.WriteFile(path, []byte("name: \"\"\ntasks: []\n"), 0o644); err != nil {
-		t.Fatalf("write broken workflow: %v", err)
+		t.Fatalf("write broken orkflow: %v", err)
 	}
 
 	outcome := f.run("apply", path)
 	if outcome.code == exitOK {
-		t.Fatalf("expected a non-zero exit for an invalid workflow, stdout:\n%s", outcome.stdout)
+		t.Fatalf("expected a non-zero exit for an invalid orkflow, stdout:\n%s", outcome.stdout)
 	}
 	if !strings.Contains(outcome.stderr, "apply:") {
 		t.Fatalf("stderr does not name the failing operation:\n%s", outcome.stderr)
@@ -60,22 +60,22 @@ func TestApply_InvalidWorkflowExitsNonZero(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// workflow
+// orkflow
 // ---------------------------------------------------------------------------
 
-func TestWorkflowGet_ReturnsTheAppliedWorkflow(t *testing.T) {
+func TestOrkflowGet_ReturnsTheAppliedOrkflow(t *testing.T) {
 	f := newFixture(t)
 	f.applyExample().requireExit(t, exitOK)
 
-	f.run("workflow", "get", "hello-ork").
+	f.run("orkflow", "get", "hello-ork").
 		requireExit(t, exitOK).
 		requireContains(t, "hello-ork", "0.1.0", "fetch", "transform", "save", "url")
 }
 
-func TestWorkflowGet_UnknownWorkflowExitsNonZero(t *testing.T) {
+func TestOrkflowGet_UnknownOrkflowExitsNonZero(t *testing.T) {
 	f := newFixture(t)
 
-	outcome := f.run("workflow", "get", "does-not-exist")
+	outcome := f.run("orkflow", "get", "does-not-exist")
 	if outcome.code != exitError {
 		t.Fatalf("exit code = %d, want %d\nstderr:\n%s", outcome.code, exitError, outcome.stderr)
 	}
@@ -84,10 +84,10 @@ func TestWorkflowGet_UnknownWorkflowExitsNonZero(t *testing.T) {
 	}
 }
 
-func TestWorkflowList_ReportsEmptyRegistry(t *testing.T) {
+func TestOrkflowList_ReportsEmptyRegistry(t *testing.T) {
 	f := newFixture(t)
 
-	f.run("workflow", "list").requireExit(t, exitOK).requireContains(t, "No workflows.")
+	f.run("orkflow", "list").requireExit(t, exitOK).requireContains(t, "No orkflows.")
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ func TestRunSubmit_TypesInputValuesAndKeepsPlainStringsVerbatim(t *testing.T) {
 	f.applyExample().requireExit(t, exitOK)
 
 	observed := make(chan map[string]any, 1)
-	f.starter.onStart = func(_ string, _ *orkstackv1.Workflow, input *orkstackv1.Payload) {
+	f.starter.onStart = func(_ string, _ *orkstackv1.Orkflow, input *orkstackv1.Payload) {
 		observed <- input.GetData().AsMap()
 	}
 
@@ -152,10 +152,10 @@ func TestRunSubmit_RejectsMalformedInputPair(t *testing.T) {
 	}
 }
 
-func TestRunSubmit_UnknownWorkflowExitsNonZero(t *testing.T) {
+func TestRunSubmit_UnknownOrkflowExitsNonZero(t *testing.T) {
 	f := newFixture(t)
 
-	outcome := f.run("run", "submit", "no-such-workflow")
+	outcome := f.run("run", "submit", "no-such-orkflow")
 	if outcome.code != exitError {
 		t.Fatalf("exit code = %d, want %d\nstderr:\n%s", outcome.code, exitError, outcome.stderr)
 	}
@@ -300,7 +300,7 @@ func TestRunSubmitWatch_ExitsNonZeroWhenTheRunFails(t *testing.T) {
 
 	// The stub Temporal starter drives the run to a terminal state exactly as
 	// the engine's projection activity would.
-	f.starter.onStart = func(runID string, _ *orkstackv1.Workflow, _ *orkstackv1.Payload) {
+	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {
 		f.publish(runID, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
 			orkstackv1.Status_STATUS_RUNNING, "run started")
 		f.finishRun(runID, orkstackv1.Status_STATUS_FAILED,
@@ -319,7 +319,7 @@ func TestRunSubmitWatch_ExitsZeroWhenTheRunSucceeds(t *testing.T) {
 	f := newFixture(t)
 	f.applyExample().requireExit(t, exitOK)
 
-	f.starter.onStart = func(runID string, _ *orkstackv1.Workflow, _ *orkstackv1.Payload) {
+	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {
 		f.finishRun(runID, orkstackv1.Status_STATUS_SUCCEEDED, nil)
 		f.publish(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 			orkstackv1.Status_STATUS_SUCCEEDED, "run succeeded")
@@ -407,11 +407,11 @@ func TestServerFlag_FallsBackToTheOrkServerEnvironmentVariable(t *testing.T) {
 	t.Setenv(serverEnvVar, f.baseURL)
 
 	var stdout, stderr bytes.Buffer
-	code := Execute([]string{"workflow", "list"}, &stdout, &stderr)
+	code := Execute([]string{"orkflow", "list"}, &stdout, &stderr)
 	if code != exitOK {
 		t.Fatalf("exit code = %d, want %d\nstderr:\n%s", code, exitOK, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "No workflows.") {
+	if !strings.Contains(stdout.String(), "No orkflows.") {
 		t.Fatalf("unexpected stdout:\n%s", stdout.String())
 	}
 }
@@ -420,25 +420,25 @@ func TestServerFlag_OverridesTheEnvironmentVariable(t *testing.T) {
 	f := newFixture(t)
 	t.Setenv(serverEnvVar, "http://127.0.0.1:1")
 
-	f.run("workflow", "list").requireExit(t, exitOK).requireContains(t, "No workflows.")
+	f.run("orkflow", "list").requireExit(t, exitOK).requireContains(t, "No orkflows.")
 }
 
 func TestUnreachableServer_ExitsNonZero(t *testing.T) {
 	address := closedAddress(t)
 
 	var stdout, stderr bytes.Buffer
-	code := Execute([]string{"workflow", "list", "--server", "http://" + address}, &stdout, &stderr)
+	code := Execute([]string{"orkflow", "list", "--server", "http://" + address}, &stdout, &stderr)
 	if code != exitError {
 		t.Fatalf("exit code = %d, want %d\nstderr:\n%s", code, exitError, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "list workflows") {
+	if !strings.Contains(stderr.String(), "list orkflows") {
 		t.Fatalf("stderr does not name the failing operation:\n%s", stderr.String())
 	}
 }
 
 func TestServerFlag_RejectsAnUnusableURL(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := Execute([]string{"workflow", "list", "--server", "ftp://example.test"}, &stdout, &stderr)
+	code := Execute([]string{"orkflow", "list", "--server", "ftp://example.test"}, &stdout, &stderr)
 	if code != exitError {
 		t.Fatalf("exit code = %d, want %d", code, exitError)
 	}
@@ -450,11 +450,11 @@ func TestServerFlag_RejectsAnUnusableURL(t *testing.T) {
 func TestTimeoutFlag_BoundsTheRequest(t *testing.T) {
 	f := newFixture(t)
 
-	outcome := f.run("workflow", "list", "--timeout", "1ns")
+	outcome := f.run("orkflow", "list", "--timeout", "1ns")
 	if outcome.code != exitError {
 		t.Fatalf("exit code = %d, want %d\nstdout:\n%s", outcome.code, exitError, outcome.stdout)
 	}
-	if !strings.Contains(outcome.stderr, "list workflows") {
+	if !strings.Contains(outcome.stderr, "list orkflows") {
 		t.Fatalf("stderr does not name the failing operation:\n%s", outcome.stderr)
 	}
 }
@@ -466,7 +466,7 @@ func TestCLITransport_SpeaksUnencryptedHTTP2ToTheEngine(t *testing.T) {
 	g := &globalFlags{server: f.baseURL}
 
 	request, err := http.NewRequest(http.MethodPost,
-		f.baseURL+"/orkstack.v1.WorkflowService/ListWorkflows", strings.NewReader("{}"))
+		f.baseURL+"/orkstack.v1.OrkflowService/ListOrkflows", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 	f := newFixture(t, &orkstackv1.PluginInfo{Name: "http", Version: "0.1.0"})
 	f.applyExample().requireExit(t, exitOK)
 
-	f.starter.onStart = func(runID string, _ *orkstackv1.Workflow, _ *orkstackv1.Payload) {
+	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {
 		f.publish(runID, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
 			orkstackv1.Status_STATUS_RUNNING, "run started")
 		f.finishRun(runID, orkstackv1.Status_STATUS_SUCCEEDED, nil)
@@ -504,16 +504,16 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 	f.run("run", "submit", "hello-ork").requireExit(t, exitOK)
 
 	commands := map[string][]string{
-		"apply":         {"apply", examplePath(t)},
-		"workflow list": {"workflow", "list"},
-		"workflow get":  {"workflow", "get", "hello-ork"},
-		"run submit":    {"run", "submit", "hello-ork"},
-		"run get":       {"run", "get", "run-001"},
-		"run list":      {"run", "list"},
-		"run watch":     {"run", "watch", "run-001"},
-		"run cancel":    {"run", "cancel", "run-001"},
-		"plugin list":   {"plugin", "list"},
-		"version":       {"version"},
+		"apply":        {"apply", examplePath(t)},
+		"orkflow list": {"orkflow", "list"},
+		"orkflow get":  {"orkflow", "get", "hello-ork"},
+		"run submit":   {"run", "submit", "hello-ork"},
+		"run get":      {"run", "get", "run-001"},
+		"run list":     {"run", "list"},
+		"run watch":    {"run", "watch", "run-001"},
+		"run cancel":   {"run", "cancel", "run-001"},
+		"plugin list":  {"plugin", "list"},
+		"version":      {"version"},
 	}
 
 	for name, args := range commands {
@@ -564,30 +564,30 @@ func TestJSONFlag_WatchDocumentCarriesEventsAndFinalRun(t *testing.T) {
 	}
 }
 
-func TestJSONFlag_ApplyCarriesTheCompiledWorkflow(t *testing.T) {
+func TestJSONFlag_ApplyCarriesTheCompiledOrkflow(t *testing.T) {
 	f := newFixture(t)
 
 	outcome := f.run("apply", examplePath(t), "--json").requireExit(t, exitOK)
 
 	var document struct {
-		Workflow struct {
+		Orkflow struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 			Tasks   []struct {
 				ID     string `json:"id"`
 				Plugin string `json:"plugin"`
 			} `json:"tasks"`
-		} `json:"workflow"`
+		} `json:"orkflow"`
 	}
 	if err := json.Unmarshal([]byte(outcome.stdout), &document); err != nil {
 		t.Fatalf("apply --json is not valid JSON: %v\nstdout:\n%s", err, outcome.stdout)
 	}
-	if document.Workflow.Name != "hello-ork" || document.Workflow.Version != "0.1.0" {
-		t.Fatalf("workflow = %s@%s, want hello-ork@0.1.0",
-			document.Workflow.Name, document.Workflow.Version)
+	if document.Orkflow.Name != "hello-ork" || document.Orkflow.Version != "0.1.0" {
+		t.Fatalf("orkflow = %s@%s, want hello-ork@0.1.0",
+			document.Orkflow.Name, document.Orkflow.Version)
 	}
-	if len(document.Workflow.Tasks) != 3 {
-		t.Fatalf("tasks = %d, want 3", len(document.Workflow.Tasks))
+	if len(document.Orkflow.Tasks) != 3 {
+		t.Fatalf("tasks = %d, want 3", len(document.Orkflow.Tasks))
 	}
 }
 

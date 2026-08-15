@@ -1,4 +1,4 @@
-# OrkStack workflow DSL — v0
+# OrkStack orkflow DSL — v0
 # A minimal end-to-end demo: fetch JSON over HTTP, transform it in a shell
 # task, then persist the result as an artifact via the file plugin.
 name: hello-ork

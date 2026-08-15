@@ -31,7 +31,7 @@ tools: ## Install codegen + lint tooling
 .PHONY: build
 build: ## Build all binaries into ./bin
 	@mkdir -p bin
-	go build -o bin/orkengine ./cmd/orkengine
+	go build -o bin/ork      ./cmd/ork
 	go build -o bin/orker    ./cmd/orker
 	go build -o bin/orkctl   ./cmd/orkctl
 
@@ -69,9 +69,9 @@ infra-logs: ## Tail infrastructure logs
 	$(COMPOSE) logs -f
 
 ## ---- run ----
-.PHONY: run-engine
-run-engine: ## Run the engine (Connect API + WS + Temporal client)
-	go run ./cmd/orkengine
+.PHONY: run-ork
+run-ork: ## Run the ork engine (Connect API + WS + Temporal client)
+	go run ./cmd/ork
 
 .PHONY: run-orker
 run-orker: ## Run an Orker (generic Temporal worker + plugins)

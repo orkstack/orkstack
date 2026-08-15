@@ -205,10 +205,10 @@ func (x *TaskRun) GetFinishedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// Run is one execution of a Workflow.
+// Run is one execution of an Orkflow.
 type Run struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // orkstack run id (also Temporal workflow id)
+	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // ork run id, ork-{timestamp}-{sequence} (also Temporal workflow id)
 	WorkflowName    string                 `protobuf:"bytes,2,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
 	WorkflowVersion string                 `protobuf:"bytes,3,opt,name=workflow_version,json=workflowVersion,proto3" json:"workflow_version,omitempty"`
 	Status          Status                 `protobuf:"varint,4,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`

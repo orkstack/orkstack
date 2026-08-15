@@ -86,9 +86,9 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 	g := &globalFlags{}
 	root := &cobra.Command{
 		Use:   "orkctl",
-		Short: "Control and observe OrkStack workflows",
-		Long: "orkctl drives the OrkStack engine: apply workflow DSL files, submit runs,\n" +
-			"watch their events live, and inspect runs, workflows, and plugins.",
+		Short: "Control and observe OrkStack orkflows",
+		Long: "orkctl drives the OrkStack engine: apply orkflow DSL files, submit runs,\n" +
+			"watch their events live, and inspect runs, orkflows, and plugins.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -110,7 +110,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 
 	root.AddCommand(
 		newApplyCommand(g),
-		newWorkflowCommand(g),
+		newOrkflowCommand(g),
 		newRunCommand(g),
 		newPluginCommand(g),
 		newVersionCommand(g),
@@ -165,8 +165,8 @@ func (g *globalFlags) httpClient() *http.Client {
 	return g.client
 }
 
-func (g *globalFlags) workflowClient() orkstackv1connect.WorkflowServiceClient {
-	return orkstackv1connect.NewWorkflowServiceClient(g.httpClient(), g.baseURL())
+func (g *globalFlags) orkflowClient() orkstackv1connect.OrkflowServiceClient {
+	return orkstackv1connect.NewOrkflowServiceClient(g.httpClient(), g.baseURL())
 }
 
 func (g *globalFlags) runClient() orkstackv1connect.RunServiceClient {

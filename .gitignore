@@ -2,7 +2,7 @@
 /bin/
 /dist/
 *.exe
-/orkengine
+/ork
 /orker
 /orkctl
 

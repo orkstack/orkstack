@@ -5,39 +5,39 @@ package orkstack.v1;
 import "google/protobuf/struct.proto";
 import "orkstack/v1/common.proto";
 import "orkstack/v1/run.proto";
-import "orkstack/v1/workflow.proto";
+import "orkstack/v1/orkflow.proto";
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
-// WorkflowService manages workflow definitions (the compiled DSL).
-service WorkflowService {
-  // Apply validates and upserts a workflow from raw DSL YAML.
-  rpc Apply(ApplyWorkflowRequest) returns (ApplyWorkflowResponse);
-  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
-  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+// OrkflowService manages orkflow definitions (the compiled DSL).
+service OrkflowService {
+  // ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+  rpc ApplyOrkflow(ApplyOrkflowRequest) returns (ApplyOrkflowResponse);
+  rpc GetOrkflow(GetOrkflowRequest) returns (GetOrkflowResponse);
+  rpc ListOrkflows(ListOrkflowsRequest) returns (ListOrkflowsResponse);
 }
 
-message ApplyWorkflowRequest {
+message ApplyOrkflowRequest {
   string yaml = 1;                       // raw DSL document
 }
-message ApplyWorkflowResponse {
-  Workflow workflow = 1;
+message ApplyOrkflowResponse {
+  Orkflow orkflow = 1;
   repeated string warnings = 2;
 }
-message GetWorkflowRequest {
+message GetOrkflowRequest {
   string name = 1;
   string version = 2;                    // empty = latest
 }
-message GetWorkflowResponse { Workflow workflow = 1; }
-message ListWorkflowsRequest {
+message GetOrkflowResponse { Orkflow orkflow = 1; }
+message ListOrkflowsRequest {
   int32 page_size = 1;
   string page_token = 2;
 }
-message ListWorkflowsResponse {
-  repeated Workflow workflows = 1;
+message ListOrkflowsResponse {
+  repeated Orkflow orkflows = 1;
   string next_page_token = 2;
 }
 
-// RunService submits and observes workflow executions.
+// RunService submits and observes orkflow executions.
 service RunService {
   rpc SubmitRun(SubmitRunRequest) returns (SubmitRunResponse);
   rpc GetRun(GetRunRequest) returns (GetRunResponse);
@@ -49,8 +49,8 @@ service RunService {
 }
 
 message SubmitRunRequest {
-  string workflow_name = 1;
-  string workflow_version = 2;           // empty = latest
+  string workflow_name = 1;              // orkflow name
+  string workflow_version = 2;           // orkflow version; empty = latest
   Payload input = 3;
   string idempotency_key = 4;            // optional dedupe
 }
@@ -58,7 +58,7 @@ message SubmitRunResponse { Run run = 1; }
 message GetRunRequest { string run_id = 1; }
 message GetRunResponse { Run run = 1; }
 message ListRunsRequest {
-  string workflow_name = 1;              // optional filter
+  string workflow_name = 1;              // optional orkflow name filter
   Status status = 2;                     // optional filter
   int32 page_size = 3;
   string page_token = 4;

@@ -11,76 +11,76 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-func newWorkflowCommand(g *globalFlags) *cobra.Command {
+func newOrkflowCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "workflow",
-		Aliases: []string{"wf"},
-		Short:   "Inspect registered workflows",
+		Use:     "orkflow",
+		Aliases: []string{"of", "wf"},
+		Short:   "Inspect registered orkflows",
 	}
-	cmd.AddCommand(newWorkflowListCommand(g), newWorkflowGetCommand(g))
+	cmd.AddCommand(newOrkflowListCommand(g), newOrkflowGetCommand(g))
 	return cmd
 }
 
-func newWorkflowListCommand(g *globalFlags) *cobra.Command {
+func newOrkflowListCommand(g *globalFlags) *cobra.Command {
 	var limit int32
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List registered workflows",
+		Short: "List registered orkflows",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			resp, err := g.workflowClient().ListWorkflows(ctx, connect.NewRequest(
-				&orkstackv1.ListWorkflowsRequest{PageSize: limit},
+			resp, err := g.orkflowClient().ListOrkflows(ctx, connect.NewRequest(
+				&orkstackv1.ListOrkflowsRequest{PageSize: limit},
 			))
 			if err != nil {
-				return rpcError("list workflows", err)
+				return rpcError("list orkflows", err)
 			}
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			return renderWorkflowList(cmd.OutOrStdout(), resp.Msg.GetWorkflows())
+			return renderOrkflowList(cmd.OutOrStdout(), resp.Msg.GetOrkflows())
 		},
 	}
-	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of workflows to return (0 = server default)")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of orkflows to return (0 = server default)")
 	return cmd
 }
 
-func newWorkflowGetCommand(g *globalFlags) *cobra.Command {
+func newOrkflowGetCommand(g *globalFlags) *cobra.Command {
 	var version string
 	cmd := &cobra.Command{
 		Use:   "get <name>",
-		Short: "Show one workflow",
+		Short: "Show one orkflow",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			resp, err := g.workflowClient().GetWorkflow(ctx, connect.NewRequest(
-				&orkstackv1.GetWorkflowRequest{Name: args[0], Version: version},
+			resp, err := g.orkflowClient().GetOrkflow(ctx, connect.NewRequest(
+				&orkstackv1.GetOrkflowRequest{Name: args[0], Version: version},
 			))
 			if err != nil {
-				return rpcError("get workflow", err)
+				return rpcError("get orkflow", err)
 			}
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			return renderWorkflow(cmd.OutOrStdout(), resp.Msg.GetWorkflow())
+			return renderOrkflow(cmd.OutOrStdout(), resp.Msg.GetOrkflow())
 		},
 	}
-	cmd.Flags().StringVar(&version, "version", "", "workflow version (default: latest applied)")
+	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: latest applied)")
 	return cmd
 }
 
-func renderWorkflowList(out io.Writer, workflows []*orkstackv1.Workflow) error {
-	if len(workflows) == 0 {
-		fmt.Fprintln(out, "No workflows.")
+func renderOrkflowList(out io.Writer, orkflows []*orkstackv1.Orkflow) error {
+	if len(orkflows) == 0 {
+		fmt.Fprintln(out, "No orkflows.")
 		return nil
 	}
 	table := newTable(out)
 	fmt.Fprintln(table, "NAME\tVERSION\tTASKS\tCREATED\tDESCRIPTION")
-	for _, wf := range workflows {
+	for _, wf := range orkflows {
 		fmt.Fprintf(table, "%s\t%s\t%d\t%s\t%s\n",
 			wf.GetName(), wf.GetVersion(), len(wf.GetTasks()),
 			formatTime(wf.GetCreatedAt()), orDash(wf.GetDescription()))
@@ -91,7 +91,7 @@ func renderWorkflowList(out io.Writer, workflows []*orkstackv1.Workflow) error {
 	return nil
 }
 
-func renderWorkflow(out io.Writer, wf *orkstackv1.Workflow) error {
+func renderOrkflow(out io.Writer, wf *orkstackv1.Orkflow) error {
 	header := newTable(out)
 	fmt.Fprintf(header, "Name:\t%s\n", wf.GetName())
 	fmt.Fprintf(header, "Version:\t%s\n", wf.GetVersion())
@@ -101,15 +101,15 @@ func renderWorkflow(out io.Writer, wf *orkstackv1.Workflow) error {
 		return fmt.Errorf("write output: %w", err)
 	}
 	fmt.Fprintln(out)
-	if err := renderWorkflowInputs(out, wf.GetInputs()); err != nil {
+	if err := renderOrkflowInputs(out, wf.GetInputs()); err != nil {
 		return err
 	}
 	return renderTaskTable(out, wf.GetTasks())
 }
 
-// renderWorkflowInputs prints the declared inputs, best-effort: the schema is a
+// renderOrkflowInputs prints the declared inputs, best-effort: the schema is a
 // free-form struct, so unknown shapes render as a dash rather than failing.
-func renderWorkflowInputs(out io.Writer, inputs *structpb.Struct) error {
+func renderOrkflowInputs(out io.Writer, inputs *structpb.Struct) error {
 	fields := inputs.GetFields()
 	if len(fields) == 0 {
 		return nil
