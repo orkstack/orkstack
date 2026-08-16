@@ -40,12 +40,13 @@ func temporalAddress() string {
 	return client.DefaultHostPort
 }
 
-// TestIntegration_HelloOrkRunSucceedsOnRealTemporal drives the whole M2 engine
-// against a real Temporal cluster: the API compiles and stores the example
-// workflow, submits a run, a real worker executes RunWorkflow with a stub
-// ExecuteTask activity, and the run reaches STATUS_SUCCEEDED with observed
-// events.
+// TestIntegration_HelloOrkRunSucceedsOnRealTemporal drives the whole engine
+// against a real Temporal cluster and the real orkflow store: the API compiles
+// the example orkflow into S3, submits a run, a real worker executes
+// RunWorkflow with a stub ExecuteTask activity, and the run reaches
+// STATUS_SUCCEEDED with observed events.
 func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
+	orkflows := newDurableOrkflowStore(t)
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
@@ -135,7 +136,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	defer eventWorker.Stop()
 
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
+		Workflows: orkflows,
 		Runs:      runs,
 		Bus:       bus,
 		Starter:   engine.NewTemporalStarter(temporalClient, task.DefaultQueue),

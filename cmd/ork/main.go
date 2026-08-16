@@ -1,11 +1,16 @@
 // Command ork runs the OrkStack control plane: the Temporal worker hosting
 // RunWorkflow, the engine's event projection worker, and the Connect API plus
 // WebSocket event bridge.
+//
+// State lives outside the process. Runs live in Temporal; orkflow definitions
+// live in the S3 bucket (metadata/orkflows/{name}/{version}.json), read on
+// every call. Restarting ork therefore loses nothing.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,9 +25,11 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -87,9 +94,50 @@ func installServerShutdownContext(server *http.Server) context.CancelFunc {
 	return cancel
 }
 
+// openOrkflowStore connects the engine to the bucket that holds orkflow
+// definitions and reloads the catalog from it.
+//
+// The reload is the restart path: the store keeps no cache, so listing it here
+// both proves the bucket is reachable before the API accepts an apply and logs
+// exactly which orkflows this engine came up with. An unreachable bucket is
+// fatal — an engine that cannot read orkflows cannot run them, and answering
+// from memory is what this milestone removed.
+func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3OrkflowStore, error) {
+	cfg := artifacts.ConfigFromEnv()
+	store, err := artifacts.NewS3OrkflowStore(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open orkflow store: %w", err)
+	}
+	stored, err := store.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reload orkflows from %s (endpoint %s): %w",
+			store.Location(), cfg.S3Endpoint, err)
+	}
+	logger.Info("reloaded orkflows from durable store",
+		"store", store.Location(),
+		"endpoint", cfg.S3Endpoint,
+		"orkflows", len(stored),
+		"names", orkflowNames(stored))
+	return store, nil
+}
+
+// orkflowNames renders a catalog as name@version, for the boot log line.
+func orkflowNames(stored []*orkstackv1.Orkflow) []string {
+	names := make([]string, 0, len(stored))
+	for _, wf := range stored {
+		names = append(names, wf.GetName()+"@"+wf.GetVersion())
+	}
+	return names
+}
+
 func run(logger *slog.Logger, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	orkflows, err := openOrkflowStore(ctx, logger)
+	if err != nil {
+		return err
+	}
 
 	temporalClient, err := client.DialContext(ctx, client.Options{
 		HostPort:  cfg.temporalAddress,
@@ -136,7 +184,7 @@ func run(logger *slog.Logger, cfg config) error {
 		"task_queue", task.DefaultQueue, "event_queue", engine.EventQueue)
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, cfg.orkerQueue)
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
+		Workflows: orkflows,
 		Runs:      runs,
 		Bus:       bus,
 		Starter:   starter,
