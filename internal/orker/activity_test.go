@@ -3,6 +3,7 @@ package orker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -410,6 +411,65 @@ func TestBuiltinRegistry_RegistersTheThreeBuiltinPlugins(t *testing.T) {
 	}
 	if len(registry.List()) != 3 {
 		t.Errorf("builtin registry holds %d plugins, want 3", len(registry.List()))
+	}
+}
+
+// TestBuiltinPlugins_AllExposeAndValidateTheGenericOpSelector holds every
+// builtin to the shared `op` contract documented in docs/PLUGIN_DESIGN.md:
+// the selector appears in the discovery schema with its enumerated values, and
+// an unrecognized op fails the task permanently instead of being ignored.
+func TestBuiltinPlugins_AllExposeAndValidateTheGenericOpSelector(t *testing.T) {
+	// http checks `url` before `op`, so the config carries one; the address is
+	// unroutable to prove no request is attempted.
+	extraConfig := map[string]map[string]any{
+		"http": {"url": "http://127.0.0.1:1/never"},
+	}
+
+	for _, name := range []string{"http", "shell", "file"} {
+		t.Run(name, func(t *testing.T) {
+			p, ok := BuiltinRegistry().Get(name)
+			if !ok {
+				t.Fatalf("builtin registry is missing plugin %q", name)
+			}
+
+			properties, _ := p.Describe().InputSchema["properties"].(map[string]any)
+			opSchema, _ := properties["op"].(map[string]any)
+			if opSchema == nil {
+				t.Fatalf("%s does not document an `op` field in its input schema", name)
+			}
+			enum, _ := opSchema["enum"].([]any)
+			if len(enum) == 0 {
+				t.Errorf("%s.op has no enumerated ops in its input schema", name)
+			}
+			// Logged so the milestone's documentation review can diff the
+			// advertised ops against the prose (scripts/m7-3-doc-review.py).
+			ops := make([]string, 0, len(enum))
+			for _, value := range enum {
+				ops = append(ops, fmt.Sprintf("%v", value))
+			}
+			t.Logf("advertised ops: %s=%s", name, strings.Join(ops, ","))
+
+			config := map[string]any{"op": "frobnicate"}
+			for key, value := range extraConfig[name] {
+				config[key] = value
+			}
+			_, err := p.Execute(context.Background(), &plugin.ExecContext{
+				TaskID:  "t",
+				Config:  config,
+				WorkDir: t.TempDir(),
+				Log:     func(string, ...any) {},
+			})
+			if err == nil {
+				t.Fatalf("%s accepted op=frobnicate, want a permanent error", name)
+			}
+			if !strings.Contains(err.Error(), `unknown op "frobnicate"`) {
+				t.Errorf("%s error %q does not report the unknown op", name, err)
+			}
+			var retryable *plugin.RetryableError
+			if !errors.As(err, &retryable) || retryable.Retryable {
+				t.Errorf("%s error %v is not marked permanent", name, err)
+			}
+		})
 	}
 }
 

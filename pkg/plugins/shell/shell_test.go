@@ -206,6 +206,109 @@ func TestShellPlugin_RejectsMissingCommand(t *testing.T) {
 	}
 }
 
+// TestShellPlugin_OmittedOpRunsTheCommand keeps the pre-`op` default intact:
+// no `op` behaves exactly like `op: run`.
+func TestShellPlugin_OmittedOpRunsTheCommand(t *testing.T) {
+	explicit, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":      "run",
+		"command": "echo hello",
+	}))
+	if err != nil {
+		t.Fatalf("Execute(op=run): %v", err)
+	}
+	implicit, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"command": "echo hello",
+	}))
+	if err != nil {
+		t.Fatalf("Execute(no op): %v", err)
+	}
+	if explicit.Output["stdout"] != implicit.Output["stdout"] {
+		t.Errorf("stdout differs between op=run (%v) and no op (%v)",
+			explicit.Output["stdout"], implicit.Output["stdout"])
+	}
+	if _, ok := implicit.Output["value"]; ok {
+		t.Error("run produced a `value` field, which belongs to eval only")
+	}
+}
+
+// TestShellPlugin_EvalReportsTheTrimmedValue treats the command as a question
+// whose answer lands on output.value.
+func TestShellPlugin_EvalReportsTheTrimmedValue(t *testing.T) {
+	result, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":      "eval",
+		"command": "echo '  42  '",
+	}))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Output["value"] != "42" {
+		t.Errorf("value = %q, want the trimmed stdout 42", result.Output["value"])
+	}
+	if result.Output["exit_code"] != float64(0) {
+		t.Errorf("exit_code = %v, want 0", result.Output["exit_code"])
+	}
+}
+
+// TestShellPlugin_EvalReportsANonZeroExitAsDataNotFailure is the behavioral
+// difference between the two ops: `run` fails the task, `eval` answers it.
+func TestShellPlugin_EvalReportsANonZeroExitAsDataNotFailure(t *testing.T) {
+	result, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":                "eval",
+		"command":           "echo missing; exit 7",
+		"capture_stdout_as": "answer",
+	}))
+	if err != nil {
+		t.Fatalf("Execute(op=eval) failed on a non-zero exit: %v", err)
+	}
+	if result.Output["exit_code"] != float64(7) {
+		t.Errorf("exit_code = %v, want 7 reported as data", result.Output["exit_code"])
+	}
+	if result.Output["value"] != "missing" {
+		t.Errorf("value = %q, want missing", result.Output["value"])
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Name != "answer" {
+		t.Errorf("artifacts = %#v, want the captured stdout even after a non-zero exit", result.Artifacts)
+	}
+
+	// The same command under `run` still fails the task.
+	if _, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":      "run",
+		"command": "echo missing; exit 7",
+	})); err == nil {
+		t.Error("Execute(op=run) succeeded on exit 7, want a failure")
+	}
+}
+
+// TestShellPlugin_RejectsUnknownOp is the graceful-unknown-op contract: an
+// unrecognized op fails permanently and names the supported ops instead of
+// being silently ignored.
+func TestShellPlugin_RejectsUnknownOp(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	ec := execContext(t, map[string]any{
+		"op":      "exec",
+		"command": "touch " + marker,
+	})
+	_, err := New().Execute(context.Background(), ec)
+	if err == nil {
+		t.Fatal("Execute(op=exec) succeeded, want a permanent error")
+	}
+	if !strings.Contains(err.Error(), `unknown op "exec"`) {
+		t.Errorf("error %q does not name the rejected op", err)
+	}
+	for _, op := range []string{"run", "eval"} {
+		if !strings.Contains(err.Error(), op) {
+			t.Errorf("error %q does not list the supported op %q", err, op)
+		}
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("the command ran despite an unknown op")
+	}
+	var retryable *plugin.RetryableError
+	if !errors.As(err, &retryable) || retryable.Retryable {
+		t.Errorf("error %v is not marked permanent", err)
+	}
+}
+
 func TestShellPlugin_DescribeNamesThePlugin(t *testing.T) {
 	p := New()
 	if p.Name() != "shell" || p.Describe().Name != "shell" {

@@ -2,12 +2,19 @@
 //
 // `with`:
 //
-//	method            HTTP method, default GET
+//	op                get | post | put | patch | delete | head (default get)
+//	method            legacy spelling of `op`; any HTTP method verb
 //	url               request URL (required)
 //	headers           map of header name -> value
 //	body              request body string
 //	capture_body_as   artifact name for the exact response bytes
 //	timeout_seconds   per-request timeout (number or numeric string)
+//
+// `op` is the generic operation selector every OrkStack plugin shares (see
+// docs/PLUGIN_DESIGN.md). An unknown `op` fails the task permanently. `method`
+// stays supported for orkflows written before `op` existed and, unlike `op`,
+// accepts any verb (OPTIONS, TRACE, custom). Setting both to different verbs
+// is an error.
 //
 // `output`: status, headers (name -> list of values), json (present only when
 // the response body parses as JSON), duration_ms.
@@ -20,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +61,7 @@ func (p *Plugin) Describe() plugin.Descriptor {
 		InputSchema: plugin.SchemaDoc{
 			"type": "object",
 			"properties": map[string]any{
+				"op":              map[string]any{"type": "string", "enum": []any{"get", "post", "put", "patch", "delete", "head"}, "default": "get"},
 				"method":          map[string]any{"type": "string", "default": http.MethodGet},
 				"url":             map[string]any{"type": "string"},
 				"headers":         map[string]any{"type": "object"},
@@ -81,11 +90,10 @@ func (p *Plugin) Execute(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 	if url == "" {
 		return nil, plugin.Permanent(fmt.Errorf("http: `url` is required"))
 	}
-	method := strings.TrimSpace(configString(ec.Config, "method"))
-	if method == "" {
-		method = http.MethodGet
+	method, err := resolveMethod(ec.Config)
+	if err != nil {
+		return nil, plugin.Permanent(err)
 	}
-	method = strings.ToUpper(method)
 
 	timeout, err := configDuration(ec.Config, "timeout_seconds")
 	if err != nil {
@@ -172,6 +180,32 @@ func (p *Plugin) Execute(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		ec.Log("http %s %s -> %d (%d bytes in %s)", method, url, resp.StatusCode, size, elapsed)
 	}
 	return &plugin.Result{Output: output, Artifacts: produced}, nil
+}
+
+// knownOps are the operations `op` selects. They map one-to-one onto HTTP
+// method verbs, so `op` is just the portable spelling of `method`.
+var knownOps = []string{"get", "post", "put", "patch", "delete", "head"}
+
+// resolveMethod turns `op` (preferred) or `method` (legacy) into the verb to
+// send. An unrecognized `op` is a permanent user error rather than a request
+// the server would reject anyway.
+func resolveMethod(config map[string]any) (string, error) {
+	op := strings.TrimSpace(configString(config, "op"))
+	method := strings.TrimSpace(configString(config, "method"))
+
+	if op != "" && method != "" && !strings.EqualFold(op, method) {
+		return "", fmt.Errorf("http: `op` %q and `method` %q disagree; set one of them", op, method)
+	}
+	if op != "" {
+		if !slices.Contains(knownOps, strings.ToLower(op)) {
+			return "", fmt.Errorf("http: unknown op %q (want %s)", op, strings.Join(knownOps, ", "))
+		}
+		return strings.ToUpper(op), nil
+	}
+	if method == "" {
+		return http.MethodGet, nil
+	}
+	return strings.ToUpper(method), nil
 }
 
 // parseJSON decodes the body when it is valid JSON and small enough to hold in

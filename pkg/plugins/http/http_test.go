@@ -161,6 +161,132 @@ func TestHTTPPlugin_SendsMethodHeadersAndBody(t *testing.T) {
 	}
 }
 
+// TestHTTPPlugin_OpSelectsTheHTTPVerb pins the generic operation selector: the
+// same `op` field every plugin exposes chooses the HTTP verb.
+func TestHTTPPlugin_OpSelectsTheHTTPVerb(t *testing.T) {
+	for _, tc := range []struct{ op, want string }{
+		{op: "get", want: http.MethodGet},
+		{op: "post", want: http.MethodPost},
+		{op: "put", want: http.MethodPut},
+		{op: "patch", want: http.MethodPatch},
+		{op: "delete", want: http.MethodDelete},
+		{op: "head", want: http.MethodHead},
+		{op: "POST", want: http.MethodPost},
+	} {
+		t.Run(tc.op, func(t *testing.T) {
+			var gotMethod string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod = r.Method
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			if _, err := New().Execute(context.Background(), execContext(t, map[string]any{
+				"url": server.URL,
+				"op":  tc.op,
+			})); err != nil {
+				t.Fatalf("Execute(op=%q): %v", tc.op, err)
+			}
+			if gotMethod != tc.want {
+				t.Errorf("op %q sent %q, want %q", tc.op, gotMethod, tc.want)
+			}
+		})
+	}
+}
+
+// TestHTTPPlugin_OmittedOpDefaultsToGet keeps the pre-`op` default intact.
+func TestHTTPPlugin_OmittedOpDefaultsToGet(t *testing.T) {
+	var gotMethod string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+	}))
+	defer server.Close()
+
+	if _, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"url": server.URL,
+	})); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %q, want GET when neither op nor method is set", gotMethod)
+	}
+}
+
+// TestHTTPPlugin_RejectsUnknownOp is the graceful-unknown-op contract: the
+// task fails permanently with a message naming the supported ops, rather than
+// silently sending some other verb.
+func TestHTTPPlugin_RejectsUnknownOp(t *testing.T) {
+	var served bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		served = true
+	}))
+	defer server.Close()
+
+	_, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"url": server.URL,
+		"op":  "frobnicate",
+	}))
+	if err == nil {
+		t.Fatal("Execute(op=frobnicate) succeeded, want a permanent error")
+	}
+	if !strings.Contains(err.Error(), `unknown op "frobnicate"`) {
+		t.Errorf("error %q does not name the rejected op", err)
+	}
+	for _, op := range []string{"get", "post", "put", "patch", "delete", "head"} {
+		if !strings.Contains(err.Error(), op) {
+			t.Errorf("error %q does not list the supported op %q", err, op)
+		}
+	}
+	if served {
+		t.Error("an unknown op still reached the server, want no request at all")
+	}
+	var retryable *plugin.RetryableError
+	if !errors.As(err, &retryable) || retryable.Retryable {
+		t.Errorf("error %v is not marked permanent", err)
+	}
+}
+
+// TestHTTPPlugin_RejectsOpAndMethodDisagreeing refuses to guess which of two
+// conflicting selectors the author meant.
+func TestHTTPPlugin_RejectsOpAndMethodDisagreeing(t *testing.T) {
+	_, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"url":    "http://example.test",
+		"op":     "post",
+		"method": "DELETE",
+	}))
+	if err == nil {
+		t.Fatal("Execute succeeded, want a conflict error")
+	}
+	if !strings.Contains(err.Error(), "disagree") {
+		t.Errorf("error %q does not report the conflict", err)
+	}
+	var retryable *plugin.RetryableError
+	if !errors.As(err, &retryable) || retryable.Retryable {
+		t.Errorf("error %v is not marked permanent", err)
+	}
+}
+
+// TestHTTPPlugin_AgreeingOpAndMethodAreAccepted lets an orkflow spell the same
+// operation both ways while it migrates to `op`.
+func TestHTTPPlugin_AgreeingOpAndMethodAreAccepted(t *testing.T) {
+	var gotMethod string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+	}))
+	defer server.Close()
+
+	if _, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"url":    server.URL,
+		"op":     "post",
+		"method": "POST",
+	})); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+}
+
 func TestHTTPPlugin_ReportsNon2xxStatusWithoutFailingTheTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)

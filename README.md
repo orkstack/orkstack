@@ -62,6 +62,7 @@ a reproducible proof artifact under `proof/`.
 
 - [DSL reference](./docs/DSL.md)
 - [Plugin reference](./docs/PLUGINS.md)
+- [Plugin design: the `op` pattern](./docs/PLUGIN_DESIGN.md)
 - [Architecture](./ARCHITECTURE.md)
 
 ## Milestones

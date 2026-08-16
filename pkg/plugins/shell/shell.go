@@ -2,15 +2,25 @@
 //
 // `with`:
 //
+//	op                  run | eval (default run)
 //	command             shell command run by `sh -c` in WorkDir (required)
 //	env                 map of extra environment variables
 //	capture_stdout_as   artifact name for the full stdout stream
 //	capture_stderr_as   artifact name for the full stderr stream
 //	capture_paths       list of globs, relative to WorkDir, captured as artifacts
 //
-// `output`: exit_code, stdout, stderr. The stdout/stderr strings are truncated
-// to MaxCapturedOutput bytes; the full streams are available through
-// capture_stdout_as / capture_stderr_as. A non-zero exit fails the task.
+// `op` is the generic operation selector every OrkStack plugin shares (see
+// docs/PLUGIN_DESIGN.md); an unknown `op` fails the task permanently. The two
+// ops differ in how they treat a non-zero exit:
+//
+//	run    the command is the work. A non-zero exit fails the task.
+//	eval   the command is a question. Any exit succeeds; the answer is
+//	       output.value (stdout with surrounding whitespace trimmed) and the
+//	       caller branches on output.exit_code.
+//
+// `output`: exit_code, stdout, stderr, plus value for `eval`. The
+// stdout/stderr strings are truncated to MaxCapturedOutput bytes; the full
+// streams are available through capture_stdout_as / capture_stderr_as.
 package shellplugin
 
 import (
@@ -42,6 +52,10 @@ const (
 	// killDelay is how long a cancelled command may take to exit before its
 	// pipes are closed and the process is killed.
 	killDelay = 5 * time.Second
+
+	// opRun and opEval are the operations `op` selects.
+	opRun  = "run"
+	opEval = "eval"
 )
 
 // Plugin runs a shell command in the task workdir.
@@ -62,6 +76,7 @@ func (p *Plugin) Describe() plugin.Descriptor {
 		InputSchema: plugin.SchemaDoc{
 			"type": "object",
 			"properties": map[string]any{
+				"op":                map[string]any{"type": "string", "enum": []any{"run", "eval"}, "default": opRun},
 				"command":           map[string]any{"type": "string"},
 				"env":               map[string]any{"type": "object"},
 				"capture_stdout_as": map[string]any{"type": "string"},
@@ -76,14 +91,26 @@ func (p *Plugin) Describe() plugin.Descriptor {
 				"exit_code": map[string]any{"type": "number"},
 				"stdout":    map[string]any{"type": "string"},
 				"stderr":    map[string]any{"type": "string"},
+				"value":     map[string]any{"type": "string"},
 			},
 		},
 	}
 }
 
-// Execute runs the command. Streams are written to files (for artifact
+// Execute dispatches on `op`. Streams are written to files (for artifact
 // capture) while the first MaxCapturedOutput bytes are kept for the payload.
 func (p *Plugin) Execute(ctx context.Context, ec *plugin.ExecContext) (*plugin.Result, error) {
+	op := strings.TrimSpace(configString(ec.Config, "op"))
+	if op == "" {
+		op = opRun
+	}
+	switch op {
+	case opRun, opEval:
+	default:
+		return nil, plugin.Permanent(fmt.Errorf(
+			"shell: unknown op %q (want %s or %s)", op, opRun, opEval))
+	}
+
 	command := configString(ec.Config, "command")
 	if strings.TrimSpace(command) == "" {
 		return nil, plugin.Permanent(errors.New("shell: `command` is required"))
@@ -153,8 +180,12 @@ func (p *Plugin) Execute(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		"stdout":    stdoutHead.String(),
 		"stderr":    stderrHead.String(),
 	}
+	if op == opEval {
+		output["value"] = strings.TrimSpace(stdoutHead.String())
+	}
 
-	if exitCode != 0 {
+	// `run` treats a non-zero exit as failure; `eval` reports it as data.
+	if exitCode != 0 && op == opRun {
 		if ec.Log != nil {
 			ec.Log("shell: command exited %d", exitCode)
 		}
@@ -176,7 +207,7 @@ func (p *Plugin) Execute(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 	produced = append(produced, captured...)
 
 	if ec.Log != nil {
-		ec.Log("shell: exited %d with %d artifact(s)", exitCode, len(produced))
+		ec.Log("shell: %s exited %d with %d artifact(s)", op, exitCode, len(produced))
 	}
 	return &plugin.Result{Output: output, Artifacts: produced}, nil
 }

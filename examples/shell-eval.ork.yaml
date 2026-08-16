@@ -1,0 +1,53 @@
+# OrkStack orkflow DSL — v0
+# The shell plugin's two ops side by side:
+#   run   the command is the work — a non-zero exit fails the task.
+#   eval  the command is a question — any exit succeeds, the answer is
+#         output.value and the caller branches on output.exit_code.
+# See docs/PLUGIN_DESIGN.md.
+name: shell-eval
+version: "0.1.0"
+description: "Evaluate shell expressions with `op: eval` and report with `op: run`."
+
+inputs:
+  text:
+    type: string
+    default: "orkstack"
+
+tasks:
+  # 1. eval as measurement: stdout, trimmed, becomes output.value.
+  - id: measure
+    plugin: shell
+    with:
+      op: eval
+      command: |
+        printf '%s' "{{ .inputs.text }}" | wc -c | tr -d ' '
+
+  # 2. eval as a probe: this command exits 1 on purpose. Under `op: run` that
+  #    would fail the task; under `op: eval` the exit code is just data.
+  - id: probe
+    plugin: shell
+    with:
+      op: eval
+      command: test -f /definitely/not/here
+
+  # 3. run as the actual work: a non-zero exit here would fail the run.
+  - id: report
+    plugin: shell
+    needs: [measure, probe]
+    with:
+      op: run
+      command: |
+        printf 'text=%s bytes=%s probe_exit=%s\n' \
+          "{{ .inputs.text }}" \
+          "{{ .tasks.measure.output.value }}" \
+          "{{ .tasks.probe.output.exit_code }}"
+      capture_stdout_as: report
+
+  # 4. Persist the report with the file plugin's write op.
+  - id: save
+    plugin: file
+    needs: [report]
+    with:
+      op: write
+      path: report.txt
+      content: "{{ .tasks.report.output.stdout }}"
