@@ -21,8 +21,8 @@ import (
 // rule that selects one orkflow (prefix `orkflows/<name>/`), one run, or one
 // task within a run.
 //
-// Orkflow names are slugs (internal/dsl), run ids are
-// `ork-{timestamp}-{sequence}`, task ids are slugs, and artifact names are usually file names, so
+// Orkflow names and task ids are slugs (internal/dsl), run ids are
+// `ork-{timestamp}-{sequence}`, and artifact names are usually file names, so
 // in practice every segment is used verbatim. A segment that is not already
 // safe and short keeps a readable head plus a digest of its exact bytes, which
 // bounds the key and keeps distinct values apart. The exact logical name is
@@ -60,7 +60,6 @@ const (
 // alphanumeric also rules out "." and ".." and hidden-file segments.
 var cleanComponentPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// s3ObjectKey renders the physical key for an artifact produced by p.
 // s3ObjectKey renders the physical key for an artifact produced by p.
 func s3ObjectKey(p Provenance, name string) string {
 	return path.Join(

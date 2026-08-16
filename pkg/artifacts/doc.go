@@ -9,7 +9,7 @@
 // Layout differs by provider. Local storage is content-addressed under
 // reversible path-safe name tokens, so every local object key ends in the
 // lowercase sha256 of its bytes. S3 keys instead name the run an artifact came
-// from — orkflows/{orkflow-name}/{task-id}/{run-id}/{artifact-name} — built
+// from — orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name} — built
 // from the Provenance the Orker passes in PutOptions.Metadata, so a URI is
 // readable and an S3 lifecycle rule can expire one orkflow by prefix. URIs use
 // file:// for local objects and s3:// for S3.

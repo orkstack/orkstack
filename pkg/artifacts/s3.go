@@ -31,11 +31,11 @@ import (
 // Object keys are a human-readable hierarchy that names the run an artifact
 // came from:
 //
-//	s3://{bucket}/orkflows/{orkflow-name}/{task-id}/{run-id}/{artifact-name}
+//	s3://{bucket}/orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name}
 //
 // The Orker supplies those coordinates as Provenance (see PutOptions.Metadata),
 // so a URI is traceable on sight and an S3 lifecycle rule can expire one
-// orkflow, task or run by prefix. A versioned binary companion under
+// orkflow, run or task by prefix. A versioned binary companion under
 // `manifests/` preserves the exact logical name — including arbitrary bytes and
 // names too long for a key — without S3 key-length growth.
 type S3Store struct {
@@ -463,7 +463,7 @@ func (s *S3Store) parseURI(uri string) (string, []string, error) {
 	}
 	segments, ok := splitS3ObjectKey(key)
 	if !ok {
-		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: key must be %s/{orkflow-name}/{task-id}/{run-id}/{artifact-name}",
+		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: key must be %s/{orkflow-name}/{run-id}/{task-id}/{artifact-name}",
 			uri, ErrInvalidURI, s3OrkflowNamespace)
 	}
 	return key, segments, nil
