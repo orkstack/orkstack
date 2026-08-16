@@ -38,28 +38,42 @@ Rules:
 - Large data leaves as artifacts, never inline in `Output`.
 - Return a structured error; set retryable where appropriate.
 
+## The `op` convention
+
+Every plugin selects its operation with one generic field, `op`, declared as an
+`enum` in `Describe()` and validated before any side effect; an unknown `op`
+fails the task permanently. The rules, the rationale and every builtin op live
+in [PLUGIN_DESIGN.md](PLUGIN_DESIGN.md).
+
 ## Builtin plugins (v0)
 
-### `http`
+### `http` — [reference](../pkg/plugins/http/README.md)
 Perform an HTTP request.
-`with`: `method`, `url`, `headers` (map), `body` (string), `capture_body_as`
-(artifact name), `timeout_seconds`.
+`with`: `op` (`get|post|put|patch|delete|head`, default `get`), `method` (the
+pre-`op` spelling, any verb), `url`, `headers` (map), `body` (string),
+`capture_body_as` (artifact name), `timeout_seconds`.
 `output`: `status`, `headers`, `json` (parsed if JSON), `duration_ms`.
 
-### `shell`
-Run a command in `WorkDir`.
-`with`: `command` (string, templated), `env` (map), `capture_stdout_as`,
-`capture_stderr_as`, `capture_paths` (globs → artifacts).
-`output`: `exit_code`, `stdout` (truncated), `stderr` (truncated).
+### `shell` — [reference](../pkg/plugins/shell/README.md)
+Run a command or a script in `WorkDir`.
+`with`: `op` (`exec|eval|script`, default `exec`), `command` (string, templated,
+for `exec`/`eval`), `script` + `interpreter` (for `script`), `env` (map),
+`capture_stdout_as`, `capture_stderr_as`, `capture_paths` (globs → artifacts).
+`output`: `exit_code`, `stdout` (truncated), `stderr` (truncated), `value`
+(`eval` only), `script_path` (`script` only). `exec` and `script` fail the task
+on a non-zero exit; `eval` reports it as data.
 
-### `file`
+### `file` — [reference](../pkg/plugins/file/README.md)
 File manipulation.
-`with`: `op` (`write|read|copy|delete`), `path`, `content`, `from`, `to`.
+`with`: `op` (`write|read|copy|delete`, required), `path`, `content`, `from`,
+`to`, `capture_as`.
 `output`: `path`, `size_bytes`. Produces/consumes artifacts as appropriate.
 
 ## Adding a plugin
 
 1. Create `pkg/plugins/<name>/` implementing `plugin.Plugin`.
-2. Register it in the Orker's registry (`internal/orker`).
-3. Add table-driven behavior tests + a proof trace.
-4. Document `with`/`output` here.
+2. Give it an `op` field that follows [PLUGIN_DESIGN.md](PLUGIN_DESIGN.md).
+3. Register it in the Orker's registry (`internal/orker`).
+4. Add table-driven behavior tests (including the unknown-op case) + a proof
+   trace.
+5. Document `op`/`with`/`output` in `pkg/plugins/<name>/README.md` and here.

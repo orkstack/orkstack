@@ -1,0 +1,75 @@
+# OrkStack orkflow DSL — v0
+# The shell plugin's three ops side by side:
+#   exec    the command is the work — a non-zero exit fails the task.
+#   eval    the command is a question — any exit succeeds, the answer is
+#           output.value and the caller branches on output.exit_code.
+#   script  a program is the work — the body is written to a file in the
+#           workdir and executed there, so it can be multi-line.
+# See docs/PLUGIN_DESIGN.md.
+name: shell-eval
+version: "0.1.0"
+description: "Evaluate shell expressions with `op: eval`, report with `op: exec`, package with `op: script`."
+
+inputs:
+  text:
+    type: string
+    default: "orkstack"
+
+tasks:
+  # 1. eval as measurement: stdout, trimmed, becomes output.value.
+  - id: measure
+    plugin: shell
+    with:
+      op: eval
+      command: |
+        printf '%s' "{{ .inputs.text }}" | wc -c | tr -d ' '
+
+  # 2. eval as a probe: this command exits 1 on purpose. Under `op: exec` that
+  #    would fail the task; under `op: eval` the exit code is just data.
+  - id: probe
+    plugin: shell
+    with:
+      op: eval
+      command: test -f /definitely/not/here
+
+  # 3. exec as the actual work: a non-zero exit here would fail the run.
+  - id: report
+    plugin: shell
+    needs: [measure, probe]
+    with:
+      op: exec
+      command: |
+        printf 'text=%s bytes=%s probe_exit=%s\n' \
+          "{{ .inputs.text }}" \
+          "{{ .tasks.measure.output.value }}" \
+          "{{ .tasks.probe.output.exit_code }}"
+      capture_stdout_as: report
+
+  # 4. script as a program: multi-line, no `&&` chaining, its own $0. The body
+  #    lands in .ork-shell/script (reported on output.script_path) and runs
+  #    under `interpreter`, or under its own shebang when that is unset.
+  - id: package
+    plugin: shell
+    needs: [report]
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        {
+          echo "orkflow: shell-eval"
+          echo "bytes: {{ .tasks.measure.output.value }}"
+          echo "probe_exit: {{ .tasks.probe.output.exit_code }}"
+          echo "script: $0"
+        } > manifest.txt
+        cat manifest.txt
+      capture_paths: ["manifest.txt"]
+
+  # 5. Persist the report with the file plugin's write op.
+  - id: save
+    plugin: file
+    needs: [report, package]
+    with:
+      op: write
+      path: report.txt
+      content: "{{ .tasks.report.output.stdout }}"

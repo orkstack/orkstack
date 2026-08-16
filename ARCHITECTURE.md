@@ -55,14 +55,26 @@ author pins one).
 
 ### 5. Plugins (`pkg/plugin`, `pkg/plugins/*`)
 - `pkg/plugin` defines the `Plugin` interface and the `Task` context (input,
-  artifact resolver, logger, workdir). Builtin plugins:
-  - `http`: perform an HTTP request; capture body as artifact; expose status,
-    headers, parsed JSON on output.
-  - `shell`: run a command in the scratch dir; capture stdout/stderr; expose
-    exit code; optionally capture files as artifacts.
-  - `file`: read/write/copy/delete files; produce or consume artifacts.
+  artifact resolver, logger, workdir).
+- **Every plugin selects its operation with one generic field, `op`** — the
+  first line of every task, in every plugin. `op` lives entirely inside `with:`,
+  so adding an operation touches one plugin and never the proto, the engine or
+  the DSL. Each plugin declares its ops as an `enum` in `Describe()` and rejects
+  an unknown `op` with a permanent error before any side effect. The convention,
+  its rules and every builtin op are in
+  [`docs/PLUGIN_DESIGN.md`](docs/PLUGIN_DESIGN.md). Builtin plugins:
+  - `http` (`op: get | post | put | patch | delete | head`): perform an HTTP
+    request; capture body as artifact; expose status, headers, parsed JSON on
+    output.
+  - `shell` (`op: exec | eval | script`): run a command or a script file in the
+    scratch dir; capture stdout/stderr; expose exit code; optionally capture
+    files as artifacts. `exec` and `script` fail the task on a non-zero exit,
+    `eval` reports it as data.
+  - `file` (`op: write | read | copy | delete`): manipulate files; produce or
+    consume artifacts.
 - The interface is designed so a plugin can later be packaged as a container
-  image with the same input/output contract.
+  image with the same input/output contract — and, being a plugin, with the same
+  `op` convention.
 
 ### 6. Artifacts (`pkg/artifacts`)
 - `Store` interface: `Put`, `Get`, `Stat`, `List`, `Presign`, `Delete`.

@@ -76,6 +76,36 @@ func TestCompileFile_AcceptsHelloExample(t *testing.T) {
 	}
 }
 
+// TestCompile_AcceptsEveryShippedExample keeps examples/ honest: every file we
+// ship as documentation must still compile, and every task in it must name the
+// generic `op` selector so the examples stay a faithful reference for
+// docs/PLUGIN_DESIGN.md.
+func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
+	paths, err := filepath.Glob("../../examples/*.ork.yaml")
+	if err != nil {
+		t.Fatalf("glob examples: %v", err)
+	}
+	if len(paths) < 4 {
+		t.Fatalf("found %d examples (%v), want hello, http-post, file-read and shell-eval", len(paths), paths)
+	}
+
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			wf, err := dsl.CompileFile(path)
+			if err != nil {
+				t.Fatalf("CompileFile(%s) = error %v, want success", path, err)
+			}
+			for _, task := range wf.GetTasks() {
+				with := task.GetWith().AsMap()
+				op, _ := with["op"].(string)
+				if strings.TrimSpace(op) == "" {
+					t.Errorf("%s task %q does not set an explicit `op`", filepath.Base(path), task.GetId())
+				}
+			}
+		})
+	}
+}
+
 func TestCompile_RejectsInvalidDocuments(t *testing.T) {
 	tests := []struct {
 		name        string

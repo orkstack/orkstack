@@ -1,0 +1,51 @@
+# OrkStack orkflow DSL — v0
+# `op` on the http plugin: POST a JSON body, then archive the echoed response
+# with the file plugin's copy op. See docs/PLUGIN_DESIGN.md for the pattern.
+name: http-post
+version: "0.1.0"
+description: "POST a JSON body with `op: post` and archive the echoed response."
+
+inputs:
+  url:
+    type: string
+    default: "https://httpbin.org/post"
+  message:
+    type: string
+    default: "hello from orkstack"
+
+tasks:
+  # 1. `op: post` selects the HTTP verb. The full set is
+  #    get | post | put | patch | delete | head; an unknown op fails the task
+  #    permanently rather than sending some other verb.
+  - id: publish
+    plugin: http
+    with:
+      op: post
+      url: "{{ .inputs.url }}"
+      headers:
+        Content-Type: application/json
+      body: |
+        {"message": "{{ .inputs.message }}"}
+      capture_body_as: response      # exact response bytes, as an artifact
+
+  # 2. `op: copy` moves the materialized response artifact to a named file.
+  #    The artifact helper resolves to a local path inside this task's workdir.
+  - id: archive
+    plugin: file
+    needs: [publish]
+    with:
+      op: copy
+      from: '{{ artifact "publish/response" }}'
+      to: response.json
+      capture_as: response-json
+
+  # 3. `op: eval` asks the shell a question: the answer lands on output.value.
+  - id: summarize
+    plugin: shell
+    needs: [publish, archive]
+    with:
+      op: eval
+      command: |
+        printf 'status=%s bytes=%s' \
+          "{{ .tasks.publish.output.status }}" \
+          "$(wc -c < "{{ artifact "archive/response-json" }}" | tr -d ' ')"
