@@ -22,7 +22,7 @@ var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // KnownPlugins is the default set of plugin names accepted by rule 5. There is
 // no runtime plugin registry in M2, so the compiler validates against the
 // documented builtins (docs/PLUGINS.md).
-var KnownPlugins = []string{"file", "http", "shell"}
+var KnownPlugins = []string{"container", "file", "http", "shell"}
 
 // Options tunes compilation.
 type Options struct {

@@ -1,0 +1,86 @@
+# OrkStack orkflow DSL — v0
+# Containerized work: an upstream artifact goes in read-only, a scratch
+# directory is created for the run and removed after it, and both output
+# streams come back as artifacts.
+#
+# Needs a reachable Docker daemon on the Orker's host. The Orker's work
+# directory must be a path that daemon can bind-mount: on Linux that is
+# automatic, on macOS (colima, Lima, Rancher, Docker Desktop) set
+# ORK_ORKER_WORKDIR to a directory the VM shares — the container plugin says so
+# explicitly if it is not.
+name: container-example
+version: "0.1.0"
+description: Run a task inside a container with mounted inputs and captured output.
+
+inputs:
+  image:
+    type: string
+    default: "alpine:3.20"
+  release:
+    type: string
+    default: "v1.4.2"
+
+tasks:
+  # 1. Produce the file the container will read. Nothing container-specific
+  #    here: any task's artifact can be mounted.
+  - id: seed
+    plugin: file
+    with:
+      op: write
+      path: manifest.txt
+      content: |
+        release={{ .inputs.release }}
+        built-by=orkstack
+      capture_as: manifest
+
+  # 2. The containerized task.
+  #    - `pull: missing` uses the local image and fetches it only if absent.
+  #    - `env` values are templated by the engine, then `$VAR`-expanded by the
+  #      plugin, so ARCHIVE is built from RELEASE without repeating it.
+  #    - the upstream artifact is mounted read-only; the container cannot
+  #      corrupt an input another task also reads.
+  #    - the ephemeral mount is created before the run and removed after it,
+  #      and doubles as the container's working directory.
+  #    - `timeout_seconds` is the container's own budget: an over-running
+  #      container is killed and the task fails with its exit code.
+  - id: build
+    plugin: container
+    needs: [seed]
+    timeout_seconds: 180
+    with:
+      op: run
+      image: "{{ .inputs.image }}"
+      pull: missing
+      workdir: /work
+      timeout_seconds: 60
+      env:
+        RELEASE: "{{ .inputs.release }}"
+        ARCHIVE: "orkstack-${RELEASE}.tar.gz"
+      mounts:
+        - artifact: "seed/manifest"
+          path: /input/manifest.txt
+        - ephemeral: scratch
+          path: /work
+      command: |
+        set -eu
+        echo "release=$RELEASE archive=$ARCHIVE"
+        cat /input/manifest.txt
+        cp /input/manifest.txt /work/manifest.copy.txt
+        echo "lines=$(wc -l < /work/manifest.copy.txt | tr -d ' ')"
+        echo "scratch contains: $(ls /work)" >&2
+      capture_stdout_as: build-log
+      capture_stderr_as: build-diagnostics
+
+  # 3. The container's output payload crosses the task boundary like any
+  #    other: the file plugin persists it as a new artifact.
+  - id: record
+    plugin: file
+    needs: [build]
+    with:
+      op: write
+      path: container-report.txt
+      content: |
+        image: {{ .tasks.build.output.image }}
+        exit_code: {{ .tasks.build.output.exit_code }}
+        stdout:
+        {{ .tasks.build.output.stdout }}

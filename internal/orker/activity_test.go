@@ -411,15 +411,15 @@ func TestExecuteTask_StreamsPluginLogs(t *testing.T) {
 	}
 }
 
-func TestBuiltinRegistry_RegistersTheThreeBuiltinPlugins(t *testing.T) {
+func TestBuiltinRegistry_RegistersTheFourBuiltinPlugins(t *testing.T) {
 	registry := BuiltinRegistry()
-	for _, name := range []string{"http", "shell", "file"} {
+	for _, name := range []string{"http", "shell", "file", "container"} {
 		if _, ok := registry.Get(name); !ok {
 			t.Errorf("builtin registry is missing plugin %q", name)
 		}
 	}
-	if len(registry.List()) != 3 {
-		t.Errorf("builtin registry holds %d plugins, want 3", len(registry.List()))
+	if len(registry.List()) != 4 {
+		t.Errorf("builtin registry holds %d plugins, want 4", len(registry.List()))
 	}
 }
 
@@ -434,7 +434,7 @@ func TestBuiltinPlugins_AllExposeAndValidateTheGenericOpSelector(t *testing.T) {
 		"http": {"url": "http://127.0.0.1:1/never"},
 	}
 
-	for _, name := range []string{"http", "shell", "file"} {
+	for _, name := range []string{"http", "shell", "file", "container"} {
 		t.Run(name, func(t *testing.T) {
 			p, ok := BuiltinRegistry().Get(name)
 			if !ok {
