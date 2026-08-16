@@ -50,7 +50,10 @@ type RunArchive interface {
 
 // Config wires a Service to its stores and Temporal seams.
 type Config struct {
-	Workflows *engine.WorkflowStore
+	// Workflows is the durable orkflow store. `ork` wires the S3 store
+	// (cmd/ork/main.go); leaving it nil is a unit-test convenience that
+	// substitutes the in-memory store, never a fallback for a configured one.
+	Workflows engine.OrkflowStore
 	Runs      *engine.RunStore
 	Bus       *engine.EventBus
 	Starter   RunStarter
@@ -79,7 +82,7 @@ type Config struct {
 
 // Service implements OrkflowService, RunService, and PluginService.
 type Service struct {
-	workflows *engine.WorkflowStore
+	workflows engine.OrkflowStore
 	runs      *engine.RunStore
 	bus       *engine.EventBus
 	starter   RunStarter
@@ -113,6 +116,9 @@ func NewService(cfg Config) *Service {
 		newRunID:       cfg.NewRunID,
 		idempotencyMap: map[string]string{},
 	}
+	// Only an unconfigured Service gets the in-memory store, and only so a
+	// unit test can exercise runs without a bucket. A configured store is
+	// never bypassed: a failing durable store surfaces as an error.
 	if svc.workflows == nil {
 		svc.workflows = engine.NewWorkflowStore()
 	}
@@ -153,9 +159,10 @@ func (s *Service) Runs() *engine.RunStore { return s.runs }
 // Webhooks exposes the callback registry (used by the management endpoints).
 func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
 
-// ApplyOrkflow compiles a DSL document and upserts the resulting orkflow.
+// ApplyOrkflow compiles a DSL document and writes the resulting orkflow to the
+// durable store, so it outlives this process.
 func (s *Service) ApplyOrkflow(
-	_ context.Context,
+	ctx context.Context,
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
 ) (*connect.Response[orkstackv1.ApplyOrkflowResponse], error) {
 	wf, err := dsl.Compile([]byte(req.Msg.GetYaml()))
@@ -163,37 +170,57 @@ func (s *Service) ApplyOrkflow(
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
-	s.workflows.Put(wf)
+	if err := s.workflows.Put(ctx, wf); err != nil {
+		return nil, orkflowStoreError(err, "store orkflow %s@%s", wf.GetName(), wf.GetVersion())
+	}
 	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{Orkflow: wf}), nil
 }
 
-// GetOrkflow returns a stored orkflow; an empty version means the most
-// recently applied one.
+// GetOrkflow reads a stored orkflow; an empty version means the most recently
+// applied one.
 func (s *Service) GetOrkflow(
-	_ context.Context,
+	ctx context.Context,
 	req *connect.Request[orkstackv1.GetOrkflowRequest],
 ) (*connect.Response[orkstackv1.GetOrkflowResponse], error) {
 	if req.Msg.GetName() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("name is required"))
 	}
-	wf, ok := s.workflows.Get(req.Msg.GetName(), req.Msg.GetVersion())
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound,
-			fmt.Errorf("orkflow %q version %q not found", req.Msg.GetName(), req.Msg.GetVersion()))
+	wf, err := s.workflows.Get(ctx, req.Msg.GetName(), req.Msg.GetVersion())
+	if err != nil {
+		return nil, orkflowStoreError(err, "orkflow %q version %q",
+			req.Msg.GetName(), req.Msg.GetVersion())
 	}
 	return connect.NewResponse(&orkstackv1.GetOrkflowResponse{Orkflow: wf}), nil
 }
 
-// ListOrkflows returns the latest version of every stored orkflow.
+// ListOrkflows returns the latest version of every stored orkflow, read from
+// the durable store on every call.
 func (s *Service) ListOrkflows(
-	_ context.Context,
+	ctx context.Context,
 	req *connect.Request[orkstackv1.ListOrkflowsRequest],
 ) (*connect.Response[orkstackv1.ListOrkflowsResponse], error) {
-	workflows := s.workflows.List()
+	workflows, err := s.workflows.List(ctx)
+	if err != nil {
+		return nil, orkflowStoreError(err, "list orkflows")
+	}
 	if size := int(req.Msg.GetPageSize()); size > 0 && size < len(workflows) {
 		workflows = workflows[:size]
 	}
 	return connect.NewResponse(&orkstackv1.ListOrkflowsResponse{Orkflows: workflows}), nil
+}
+
+// orkflowStoreError maps a store failure onto a Connect code. A missing
+// orkflow is NotFound. Anything else means the durable store could not be
+// reached: it is reported as Unavailable, never answered from memory.
+func orkflowStoreError(err error, format string, args ...any) error {
+	subject := fmt.Sprintf(format, args...)
+	if errors.Is(err, artifacts.ErrNotFound) {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s not found", subject))
+	}
+	if errors.Is(err, artifacts.ErrInvalidOrkflow) {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s: %w", subject, err))
+	}
+	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s: %w", subject, err))
 }
 
 // SubmitRun creates a pending run and starts its Temporal workflow.
@@ -205,10 +232,9 @@ func (s *Service) SubmitRun(
 	if name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("workflow_name is required"))
 	}
-	wf, ok := s.workflows.Get(name, req.Msg.GetWorkflowVersion())
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound,
-			fmt.Errorf("orkflow %q version %q not found", name, req.Msg.GetWorkflowVersion()))
+	wf, err := s.workflows.Get(ctx, name, req.Msg.GetWorkflowVersion())
+	if err != nil {
+		return nil, orkflowStoreError(err, "orkflow %q version %q", name, req.Msg.GetWorkflowVersion())
 	}
 	if s.starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
