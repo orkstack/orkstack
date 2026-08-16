@@ -14,15 +14,15 @@ import (
 // S3 object keys are a human-readable hierarchy, so a key names the run that
 // produced it:
 //
-//	orkflows/{orkflow-name}/{task-id}/{run-id}/{artifact-name}
+//	orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name}
 //
 // Every part is exactly one path segment. That gives two things the previous
 // content-hash layout could not: a URI a person can read, and an S3 lifecycle
-// rule that selects one orkflow (prefix `orkflows/<name>/`), one task, or one
-// run.
+// rule that selects one orkflow (prefix `orkflows/<name>/`), one run, or one
+// task within a run.
 //
-// Orkflow names and task ids are slugs (internal/dsl), run ids are
-// `ork-{timestamp}-{sequence}`, and artifact names are usually file names, so
+// Orkflow names are slugs (internal/dsl), run ids are
+// `ork-{timestamp}-{sequence}`, task ids are slugs, and artifact names are usually file names, so
 // in practice every segment is used verbatim. A segment that is not already
 // safe and short keeps a readable head plus a digest of its exact bytes, which
 // bounds the key and keeps distinct values apart. The exact logical name is
@@ -32,7 +32,7 @@ const (
 	// s3OrkflowNamespace roots the object hierarchy.
 	s3OrkflowNamespace = "orkflows"
 	// s3ObjectKeySegments is the fixed segment count of every object key:
-	// namespace, orkflow, task, run, artifact.
+	// namespace, orkflow, run, task, artifact.
 	s3ObjectKeySegments = 5
 	// s3ManifestNamespace holds the binary companion that restores an object's
 	// exact logical name.
@@ -61,12 +61,13 @@ const (
 var cleanComponentPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // s3ObjectKey renders the physical key for an artifact produced by p.
+// s3ObjectKey renders the physical key for an artifact produced by p.
 func s3ObjectKey(p Provenance, name string) string {
 	return path.Join(
 		s3OrkflowNamespace,
 		s3ProvenanceComponent(p.Orkflow),
-		s3ProvenanceComponent(p.TaskID),
 		s3ProvenanceComponent(p.RunID),
+		s3ProvenanceComponent(p.TaskID),
 		s3KeyComponent(name),
 	)
 }
@@ -115,7 +116,7 @@ func sanitizeS3Component(raw string, budget int) string {
 }
 
 // splitS3ObjectKey reports whether key has the shape this store generates and
-// returns its segments (namespace, orkflow, task, run, artifact).
+// returns its segments (namespace, orkflow, run, task, artifact).
 func splitS3ObjectKey(key string) (segments []string, ok bool) {
 	parts := strings.Split(key, "/")
 	if len(parts) != s3ObjectKeySegments || parts[0] != s3OrkflowNamespace {
@@ -142,7 +143,7 @@ func s3NameFromKey(segments []string) (name string, exact bool) {
 }
 
 // s3ManifestKey addresses the companion manifest of one object key. Manifests
-// mirror the object hierarchy, so the same orkflow, task or run prefix that
+// mirror the object hierarchy, so the same orkflow, run or task prefix that
 // selects artifacts for a lifecycle rule selects their manifests too, and
 // nothing is left behind when an orkflow is expired.
 func s3ManifestKey(objectKey string) string {

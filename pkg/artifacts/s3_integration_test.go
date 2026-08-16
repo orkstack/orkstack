@@ -142,21 +142,21 @@ var cleanSegmentForTest = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,55}$`
 
 // s3URIForTest builds the URI M7.4 promises, independently of the store:
 //
-//	s3://{bucket}/orkflows/{orkflow-name}/{task-id}/{run-id}/{artifact-name}
+//	s3://{bucket}/orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name}
 func s3URIForTest(t *testing.T, bucket string, prov artifacts.Provenance, name string) string {
 	t.Helper()
-	for _, segment := range []string{prov.Orkflow, prov.TaskID, prov.RunID, name} {
+	for _, segment := range []string{prov.Orkflow, prov.RunID, prov.TaskID, name} {
 		if !cleanSegmentForTest.MatchString(segment) {
 			t.Fatalf("s3URIForTest: %q cannot appear verbatim in a key", segment)
 		}
 	}
-	key := path.Join("orkflows", prov.Orkflow, prov.TaskID, prov.RunID, name)
+	key := path.Join("orkflows", prov.Orkflow, prov.RunID, prov.TaskID, name)
 	return (&url.URL{Scheme: "s3", Host: bucket, Path: "/" + key}).String()
 }
 
 // runPrefixForTest is the URI prefix every artifact of one task run shares.
 func runPrefixForTest(bucket string, prov artifacts.Provenance) string {
-	return fmt.Sprintf("s3://%s/orkflows/%s/%s/%s/", bucket, prov.Orkflow, prov.TaskID, prov.RunID)
+	return fmt.Sprintf("s3://%s/orkflows/%s/%s/%s/", bucket, prov.Orkflow, prov.RunID, prov.TaskID)
 }
 
 // recordProofURI appends a sample to the committed M7.4 proof when

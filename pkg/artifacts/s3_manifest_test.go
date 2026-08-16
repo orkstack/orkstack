@@ -22,13 +22,13 @@ func TestS3ObjectKey_NamesTheOrkflowTaskAndRunThatProducedTheArtifact(t *testing
 			label: "example run",
 			prov:  runProvenance,
 			name:  "body",
-			want:  "orkflows/hello-ork/fetch/ork-1755302400123456789-1/body",
+			want:  "orkflows/hello-ork/ork-1755302400123456789-1/fetch/body",
 		},
 		{
 			label: "file name with extension",
 			prov:  Provenance{Orkflow: "nightly-etl", TaskID: "save", RunID: "ork-42-7"},
 			name:  "result.txt",
-			want:  "orkflows/nightly-etl/save/ork-42-7/result.txt",
+			want:  "orkflows/nightly-etl/ork-42-7/save/result.txt",
 		},
 	}
 
@@ -81,8 +81,8 @@ func TestS3ObjectKey_NestsRunsInsideTasksInsideOrkflows(t *testing.T) {
 	for _, prefix := range []string{
 		"orkflows/",
 		"orkflows/hello-ork/",
-		"orkflows/hello-ork/fetch/",
-		"orkflows/hello-ork/fetch/ork-1755302400123456789-1/",
+		"orkflows/hello-ork/ork-1755302400123456789-1/",
+		"orkflows/hello-ork/ork-1755302400123456789-1/fetch/",
 	} {
 		if !strings.HasPrefix(key, prefix) {
 			t.Errorf("key %q does not nest under %q", key, prefix)
@@ -158,7 +158,7 @@ func TestS3ObjectKey_FilesPutsWithoutProvenanceUnderTheReservedPrefix(t *testing
 	}
 	// A partially attributed put keeps the coordinates it does have.
 	partial := s3ObjectKey(Provenance{Orkflow: "hello-ork", TaskID: "fetch"}, "body")
-	if partial != "orkflows/hello-ork/fetch/_unattributed/body" {
+	if partial != "orkflows/hello-ork/_unattributed/fetch/body" {
 		t.Errorf("partial provenance key = %q, want the known coordinates kept", partial)
 	}
 }
