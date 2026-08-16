@@ -66,9 +66,10 @@ author pins one).
   - `http` (`op: get | post | put | patch | delete | head`): perform an HTTP
     request; capture body as artifact; expose status, headers, parsed JSON on
     output.
-  - `shell` (`op: run | eval`): run a command in the scratch dir; capture
-    stdout/stderr; expose exit code; optionally capture files as artifacts.
-    `run` fails the task on a non-zero exit, `eval` reports it as data.
+  - `shell` (`op: exec | eval | script`): run a command or a script file in the
+    scratch dir; capture stdout/stderr; expose exit code; optionally capture
+    files as artifacts. `exec` and `script` fail the task on a non-zero exit,
+    `eval` reports it as data.
   - `file` (`op: write | read | copy | delete`): manipulate files; produce or
     consume artifacts.
 - The interface is designed so a plugin can later be packaged as a container

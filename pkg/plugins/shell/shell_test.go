@@ -3,6 +3,7 @@ package shellplugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -206,15 +207,62 @@ func TestShellPlugin_RejectsMissingCommand(t *testing.T) {
 	}
 }
 
-// TestShellPlugin_OmittedOpRunsTheCommand keeps the pre-`op` default intact:
-// no `op` behaves exactly like `op: run`.
-func TestShellPlugin_OmittedOpRunsTheCommand(t *testing.T) {
+// TestShellPlugin_AcceptsEveryDocumentedOp holds the plugin to the op set it
+// advertises: exec, eval and script are all accepted, and each behaves
+// differently enough to be worth naming.
+func TestShellPlugin_AcceptsEveryDocumentedOp(t *testing.T) {
+	properties, _ := New().Describe().InputSchema["properties"].(map[string]any)
+	opSchema, _ := properties["op"].(map[string]any)
+	enum, _ := opSchema["enum"].([]any)
+	advertised := make([]string, 0, len(enum))
+	for _, value := range enum {
+		advertised = append(advertised, fmt.Sprintf("%v", value))
+	}
+	if got := strings.Join(advertised, ","); got != "exec,eval,script" {
+		t.Fatalf("advertised ops = %q, want exec,eval,script", got)
+	}
+	if opSchema["default"] != "exec" {
+		t.Errorf("default op = %v, want exec", opSchema["default"])
+	}
+
+	configs := map[string]map[string]any{
+		"exec":   {"op": "exec", "command": "echo ran-exec"},
+		"eval":   {"op": "eval", "command": "echo ran-eval"},
+		"script": {"op": "script", "script": "printf 'ran-%s\\n' script\n"},
+	}
+	for _, op := range advertised {
+		config, ok := configs[op]
+		if !ok {
+			t.Fatalf("op %q is advertised but this test does not exercise it", op)
+		}
+		result, err := New().Execute(context.Background(), execContext(t, config))
+		if err != nil {
+			t.Fatalf("Execute(op=%s): %v", op, err)
+		}
+		stdout, _ := result.Output["stdout"].(string)
+		if !strings.Contains(stdout, "ran-"+op) {
+			t.Errorf("op %s stdout = %q, want it to contain ran-%s", op, stdout, op)
+		}
+		_, hasValue := result.Output["value"]
+		_, hasScriptPath := result.Output["script_path"]
+		if hasValue != (op == "eval") {
+			t.Errorf("op %s: output.value present = %v, want %v", op, hasValue, op == "eval")
+		}
+		if hasScriptPath != (op == "script") {
+			t.Errorf("op %s: output.script_path present = %v, want %v", op, hasScriptPath, op == "script")
+		}
+	}
+}
+
+// TestShellPlugin_OmittedOpDefaultsToExec pins the documented default: no `op`
+// is exactly `op: exec`, including its non-zero-exit failure.
+func TestShellPlugin_OmittedOpDefaultsToExec(t *testing.T) {
 	explicit, err := New().Execute(context.Background(), execContext(t, map[string]any{
-		"op":      "run",
+		"op":      "exec",
 		"command": "echo hello",
 	}))
 	if err != nil {
-		t.Fatalf("Execute(op=run): %v", err)
+		t.Fatalf("Execute(op=exec): %v", err)
 	}
 	implicit, err := New().Execute(context.Background(), execContext(t, map[string]any{
 		"command": "echo hello",
@@ -223,11 +271,17 @@ func TestShellPlugin_OmittedOpRunsTheCommand(t *testing.T) {
 		t.Fatalf("Execute(no op): %v", err)
 	}
 	if explicit.Output["stdout"] != implicit.Output["stdout"] {
-		t.Errorf("stdout differs between op=run (%v) and no op (%v)",
+		t.Errorf("stdout differs between op=exec (%v) and no op (%v)",
 			explicit.Output["stdout"], implicit.Output["stdout"])
 	}
 	if _, ok := implicit.Output["value"]; ok {
-		t.Error("run produced a `value` field, which belongs to eval only")
+		t.Error("exec produced a `value` field, which belongs to eval only")
+	}
+	// The default is exec, not eval: a non-zero exit still fails the task.
+	if _, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"command": "exit 5",
+	})); err == nil {
+		t.Error("Execute(no op) succeeded on exit 5, want the exec default to fail")
 	}
 }
 
@@ -250,7 +304,8 @@ func TestShellPlugin_EvalReportsTheTrimmedValue(t *testing.T) {
 }
 
 // TestShellPlugin_EvalReportsANonZeroExitAsDataNotFailure is the behavioral
-// difference between the two ops: `run` fails the task, `eval` answers it.
+// difference between eval and the other two ops: exec and script fail the
+// task, eval answers it.
 func TestShellPlugin_EvalReportsANonZeroExitAsDataNotFailure(t *testing.T) {
 	result, err := New().Execute(context.Background(), execContext(t, map[string]any{
 		"op":                "eval",
@@ -270,32 +325,136 @@ func TestShellPlugin_EvalReportsANonZeroExitAsDataNotFailure(t *testing.T) {
 		t.Errorf("artifacts = %#v, want the captured stdout even after a non-zero exit", result.Artifacts)
 	}
 
-	// The same command under `run` still fails the task.
+	// The same command under exec and under script still fails the task.
 	if _, err := New().Execute(context.Background(), execContext(t, map[string]any{
-		"op":      "run",
+		"op":      "exec",
 		"command": "echo missing; exit 7",
 	})); err == nil {
-		t.Error("Execute(op=run) succeeded on exit 7, want a failure")
+		t.Error("Execute(op=exec) succeeded on exit 7, want a failure")
+	}
+	_, err = New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":     "script",
+		"script": "echo missing\nexit 7\n",
+	}))
+	if err == nil {
+		t.Fatal("Execute(op=script) succeeded on exit 7, want a failure")
+	}
+	if !strings.Contains(err.Error(), "exited with code 7") {
+		t.Errorf("script error %q does not report the exit code", err)
+	}
+}
+
+// TestShellPlugin_ScriptRunsAMultiLineProgramFromItsOwnFile is what separates
+// script from exec: the body is a program on disk, so it keeps its own $0 and
+// its path is reported on the output payload.
+func TestShellPlugin_ScriptRunsAMultiLineProgramFromItsOwnFile(t *testing.T) {
+	ec := execContext(t, map[string]any{
+		"op": "script",
+		"script": "set -e\n" +
+			"greeting=hello\n" +
+			"printf '%s from %s\\n' \"$greeting\" \"$(basename \"$0\")\"\n",
+		"capture_stdout_as": "log",
+	})
+	result, err := New().Execute(context.Background(), ec)
+	if err != nil {
+		t.Fatalf("Execute(op=script): %v", err)
+	}
+	stdout, _ := result.Output["stdout"].(string)
+	if !strings.Contains(stdout, "hello from script") {
+		t.Errorf("stdout = %q, want the script to run from a file named script", stdout)
+	}
+	if result.Output["script_path"] != ".ork-shell/script" {
+		t.Errorf("script_path = %v, want .ork-shell/script", result.Output["script_path"])
+	}
+	onDisk, err := os.ReadFile(filepath.Join(ec.WorkDir, ".ork-shell", "script"))
+	if err != nil {
+		t.Fatalf("read the written script: %v", err)
+	}
+	if !strings.Contains(string(onDisk), "greeting=hello") {
+		t.Errorf("written script = %q, want the configured body", onDisk)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Name != "log" {
+		t.Errorf("artifacts = %#v, want the captured stdout", result.Artifacts)
+	}
+}
+
+// TestShellPlugin_ScriptHonorsItsShebang proves the file is executed, not
+// piped through `sh -c`: under `sh` the body below would be a command-not-found
+// failure, but its shebang hands it to /bin/cat, which prints it verbatim.
+func TestShellPlugin_ScriptHonorsItsShebang(t *testing.T) {
+	if _, err := os.Stat("/bin/cat"); err != nil {
+		t.Skip("/bin/cat is absent; a shebang needs an interpreter that exists")
+	}
+	result, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":     "script",
+		"script": "#!/bin/cat\nthis-line-is-data-not-a-command\n",
+	}))
+	if err != nil {
+		t.Fatalf("Execute(op=script) with a shebang: %v", err)
+	}
+	stdout, _ := result.Output["stdout"].(string)
+	if !strings.Contains(stdout, "#!/bin/cat") || !strings.Contains(stdout, "this-line-is-data-not-a-command") {
+		t.Errorf("stdout = %q, want the shebang interpreter to have printed the file", stdout)
+	}
+}
+
+// TestShellPlugin_ScriptUsesTheConfiguredInterpreter: `interpreter` overrides
+// both `sh` and any shebang.
+func TestShellPlugin_ScriptUsesTheConfiguredInterpreter(t *testing.T) {
+	result, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":          "script",
+		"interpreter": "cat",
+		"script":      "plain text, not a command\n",
+	}))
+	if err != nil {
+		t.Fatalf("Execute(op=script, interpreter=cat): %v", err)
+	}
+	if stdout, _ := result.Output["stdout"].(string); stdout != "plain text, not a command\n" {
+		t.Errorf("stdout = %q, want the body printed by cat", stdout)
+	}
+}
+
+// TestShellPlugin_ScriptRequiresAScriptBody: script takes `script`, not
+// `command`, and says so instead of running something else.
+func TestShellPlugin_ScriptRequiresAScriptBody(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	_, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":      "script",
+		"command": "touch " + marker,
+	}))
+	if err == nil {
+		t.Fatal("Execute(op=script) without a script succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "`script` is required for op script") {
+		t.Errorf("error %q does not explain the missing script body", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("op=script ran the `command` field instead of failing")
+	}
+	var retryable *plugin.RetryableError
+	if !errors.As(err, &retryable) || retryable.Retryable {
+		t.Errorf("error %v is not marked permanent", err)
 	}
 }
 
 // TestShellPlugin_RejectsUnknownOp is the graceful-unknown-op contract: an
 // unrecognized op fails permanently and names the supported ops instead of
-// being silently ignored.
+// being silently ignored. Every documented op is accepted; only a value that
+// is not an op at all is refused.
 func TestShellPlugin_RejectsUnknownOp(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "ran")
 	ec := execContext(t, map[string]any{
-		"op":      "exec",
+		"op":      "frobnicate",
 		"command": "touch " + marker,
 	})
 	_, err := New().Execute(context.Background(), ec)
 	if err == nil {
-		t.Fatal("Execute(op=exec) succeeded, want a permanent error")
+		t.Fatal("Execute(op=frobnicate) succeeded, want a permanent error")
 	}
-	if !strings.Contains(err.Error(), `unknown op "exec"`) {
+	if !strings.Contains(err.Error(), `unknown op "frobnicate"`) {
 		t.Errorf("error %q does not name the rejected op", err)
 	}
-	for _, op := range []string{"run", "eval"} {
+	for _, op := range []string{"exec", "eval", "script"} {
 		if !strings.Contains(err.Error(), op) {
 			t.Errorf("error %q does not list the supported op %q", err, op)
 		}
@@ -306,6 +465,18 @@ func TestShellPlugin_RejectsUnknownOp(t *testing.T) {
 	var retryable *plugin.RetryableError
 	if !errors.As(err, &retryable) || retryable.Retryable {
 		t.Errorf("error %v is not marked permanent", err)
+	}
+
+	// The rejection is narrow: the documented ops still run.
+	accepted := filepath.Join(t.TempDir(), "ran")
+	if _, err := New().Execute(context.Background(), execContext(t, map[string]any{
+		"op":      "exec",
+		"command": "touch " + accepted,
+	})); err != nil {
+		t.Fatalf("Execute(op=exec): %v, want the documented default op to run", err)
+	}
+	if _, statErr := os.Stat(accepted); statErr != nil {
+		t.Errorf("op=exec did not run the command: %v", statErr)
 	}
 }
 

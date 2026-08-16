@@ -34,7 +34,7 @@ follows on top of it.
 ## Rules for plugin authors
 
 1. **Name the field `op`.** Not `action`, `mode`, `method`, or `command`.
-2. **Values are lowercase verbs**: `get`, `write`, `copy`, `run`. Compare
+2. **Values are lowercase verbs**: `get`, `write`, `copy`, `exec`. Compare
    case-insensitively; report the value the author actually wrote.
 3. **Declare the enum in `Describe().InputSchema`** under `properties.op`, so
    discovery advertises the real set.
@@ -46,7 +46,7 @@ follows on top of it.
 6. **Never silently ignore an unknown `op`.** A dropped field is a config bug
    that produces a plausible-looking run doing the wrong thing.
 7. **Pick a default only when one operation is obviously the common case**, and
-   document it. `http` defaults to `get`; `shell` defaults to `run`; `file` has
+   document it. `http` defaults to `get`; `shell` defaults to `exec`; `file` has
    no sensible default and requires `op`.
 8. **Keep an op's arguments minimal.** Arguments that only apply to one op are
    documented with that op and ignored by the others.
@@ -61,7 +61,7 @@ and asserts every plugin rejects `op: frobnicate` with a permanent error.
 | plugin  | ops                                          | default | required |
 |---------|----------------------------------------------|---------|----------|
 | `http`  | `get`, `post`, `put`, `patch`, `delete`, `head` | `get`   | no       |
-| `shell` | `run`, `eval`                                | `run`   | no       |
+| `shell` | `exec`, `eval`, `script`                     | `exec`  | no       |
 | `file`  | `write`, `read`, `copy`, `delete`            | —       | yes      |
 
 Per-plugin reference: [`pkg/plugins/http/README.md`](../pkg/plugins/http/README.md),
@@ -89,25 +89,42 @@ setting both to the same verb is fine.
 
 Full example: [`examples/http-post.ork.yaml`](../examples/http-post.ork.yaml).
 
-### `shell` — the op is what a non-zero exit means
+### `shell` — the op is how the body runs and what a non-zero exit means
 
 ```yaml
 - id: report
   plugin: shell
   with:
-    op: run               # run | eval
+    op: exec              # exec | eval | script
     command: ./build.sh
     capture_stdout_as: build-log
 ```
 
-| op     | meaning                                                                   |
-|--------|---------------------------------------------------------------------------|
-| `run`  | The command **is the work**. A non-zero exit fails the task.               |
-| `eval` | The command **is a question**. Any exit succeeds; the answer is `output.value` (stdout, trimmed) and the caller branches on `output.exit_code`. |
+| op       | body      | meaning                                                                |
+|----------|-----------|------------------------------------------------------------------------|
+| `exec`   | `command` | The command **is the work**: `sh -c command`. A non-zero exit fails the task. |
+| `eval`   | `command` | The command **is a question**: `sh -c command`. Any exit succeeds; the answer is `output.value` (stdout, trimmed) and the caller branches on `output.exit_code`. |
+| `script` | `script`  | A **program** is the work. The body is written to `.ork-shell/script` in the workdir and executed by `interpreter` (default `sh`) or by its own `#!` line. A non-zero exit fails the task. |
 
-Both ops take the same arguments and capture the same artifacts; they differ
-only in how the exit code is interpreted. Use `eval` for probes and
-measurements whose failure is information, not an outage.
+`eval` is for probes and measurements whose failure is information, not an
+outage. `script` is for work that is a program rather than a one-liner: it
+keeps its own `$0`, needs no `&&` chaining, and can choose its interpreter.
+
+```yaml
+- id: package
+  plugin: shell
+  with:
+    op: script
+    interpreter: sh       # optional; a `#!` first line wins if this is unset
+    script: |
+      set -eu
+      mkdir -p dist
+      date -u +%Y-%m-%dT%H:%M:%SZ > dist/built-at.txt
+    capture_paths: ["dist/*"]
+```
+
+All three ops take the same capture arguments and produce the same artifacts;
+`eval` produces them even after a non-zero exit.
 
 Full example: [`examples/shell-eval.ork.yaml`](../examples/shell-eval.ork.yaml).
 

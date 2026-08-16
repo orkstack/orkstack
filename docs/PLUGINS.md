@@ -55,13 +55,13 @@ pre-`op` spelling, any verb), `url`, `headers` (map), `body` (string),
 `output`: `status`, `headers`, `json` (parsed if JSON), `duration_ms`.
 
 ### `shell` — [reference](../pkg/plugins/shell/README.md)
-Run a command in `WorkDir`.
-`with`: `op` (`run|eval`, default `run`), `command` (string, templated), `env`
-(map), `capture_stdout_as`, `capture_stderr_as`, `capture_paths` (globs →
-artifacts).
+Run a command or a script in `WorkDir`.
+`with`: `op` (`exec|eval|script`, default `exec`), `command` (string, templated,
+for `exec`/`eval`), `script` + `interpreter` (for `script`), `env` (map),
+`capture_stdout_as`, `capture_stderr_as`, `capture_paths` (globs → artifacts).
 `output`: `exit_code`, `stdout` (truncated), `stderr` (truncated), `value`
-(`eval` only). `run` fails the task on a non-zero exit; `eval` reports it as
-data.
+(`eval` only), `script_path` (`script` only). `exec` and `script` fail the task
+on a non-zero exit; `eval` reports it as data.
 
 ### `file` — [reference](../pkg/plugins/file/README.md)
 File manipulation.

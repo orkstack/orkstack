@@ -31,7 +31,7 @@ tasks:
     plugin: shell
     needs: [fetch]
     with:
-      op: run                      # run: the command is the work; non-zero exit fails
+      op: exec                     # exec: the command is the work; non-zero exit fails
       command: |
         cat "{{ artifact "fetch/body" }}" | tr -d '\n' | head -c 512
       capture_stdout_as: title
