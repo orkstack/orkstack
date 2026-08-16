@@ -28,13 +28,80 @@ import (
 // server (MinIO in this repo's dev stack) through a custom endpoint plus
 // path-style addressing.
 //
-// Physical object keys use "objects/<name-sha256>/<content-sha256>" and stay
-// fixed in size. A versioned binary companion under `manifests/` preserves the
-// exact logical name, including arbitrary bytes, without S3 key-length growth.
+// Object keys are a human-readable hierarchy that names the run an artifact
+// came from:
+//
+//	s3://{bucket}/orkflows/{orkflow-name}/{task-id}/{run-id}/{artifact-name}
+//
+// The Orker supplies those coordinates as Provenance (see PutOptions.Metadata),
+// so a URI is traceable on sight and an S3 lifecycle rule can expire one
+// orkflow, task or run by prefix. A versioned binary companion under
+// `manifests/` preserves the exact logical name — including arbitrary bytes and
+// names too long for a key — without S3 key-length growth.
 type S3Store struct {
 	client  *s3.Client
 	presign *s3.PresignClient
 	bucket  string
+}
+
+// Provenance is the run coordinates an artifact came from. The S3 store lays
+// objects out by provenance, so the object key reads as the run that produced
+// it.
+//
+// Provenance travels in PutOptions.Metadata (see Metadata), which leaves the
+// artifact contract — Store, PutOptions and ArtifactRef — unchanged, and makes
+// every object state its own origin in S3 user metadata.
+type Provenance struct {
+	// Orkflow is the orkflow name, e.g. "hello-ork".
+	Orkflow string
+	// TaskID is the task that produced the artifact, e.g. "fetch".
+	TaskID string
+	// RunID is the run that produced it, e.g. "ork-1755302400123456789-1".
+	RunID string
+}
+
+// Metadata keys carrying Provenance through PutOptions.Metadata.
+const (
+	MetaOrkflow = "orkflow"
+	MetaTaskID  = "task_id"
+	MetaRunID   = "run_id"
+)
+
+// metaContentSHA256 records the content digest on the object itself, so Stat
+// and List report the digest of the bytes that are actually there. It is
+// reserved: the store writes it and strips it from every ArtifactRef.
+const metaContentSHA256 = "ork-content-sha256"
+
+// Metadata copies extra and writes the provenance keys over it. Provenance
+// addresses the object, so plugin metadata can never move an artifact.
+func (p Provenance) Metadata(extra map[string]string) map[string]string {
+	meta := make(map[string]string, len(extra)+3)
+	for k, v := range extra {
+		meta[k] = v
+	}
+	for key, value := range map[string]string{
+		MetaOrkflow: p.Orkflow,
+		MetaTaskID:  p.TaskID,
+		MetaRunID:   p.RunID,
+	} {
+		if value == "" {
+			delete(meta, key)
+			continue
+		}
+		meta[key] = value
+	}
+	return meta
+}
+
+// ProvenanceFromMetadata reads back what Metadata wrote. Missing coordinates
+// stay empty and the store files the artifact under its reserved unattributed
+// prefix.
+func ProvenanceFromMetadata(meta map[string]string) Provenance {
+	return Provenance{
+		Orkflow: metadataValue(meta, MetaOrkflow),
+		TaskID:  metadataValue(meta, MetaTaskID),
+		RunID:   metadataValue(meta, MetaRunID),
+	}
 }
 
 // compile-time contract check.
@@ -84,9 +151,9 @@ func NewS3Store(ctx context.Context, cfg Config) (*S3Store, error) {
 func (s *S3Store) Bucket() string { return s.bucket }
 
 // Put spools the reader to a local temp file to compute its digest and length,
-// then uploads it under the content-addressed key. Spooling keeps the upload
-// body seekable, so an unknown-length, non-seekable reader is supported without
-// buffering it all in memory.
+// then uploads it under the provenance key derived from opts.Metadata.
+// Spooling keeps the upload body seekable, so an unknown-length, non-seekable
+// reader is supported without buffering it all in memory.
 func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOptions) (ArtifactRef, error) {
 	if r == nil {
 		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: nil reader", name)
@@ -115,14 +182,17 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 	}
 
 	sum := hex.EncodeToString(hasher.Sum(nil))
-	nameSum := s3NameDigest(name)
-	key := s3ObjectKeyFromDigests(nameSum, sum)
+	key := s3ObjectKey(ProvenanceFromMetadata(opts.Metadata), name)
 	contentType := resolveContentType(opts.ContentType, sniff.head)
 	metadata := copyMetadata(opts.Metadata)
 
-	if err := s.writeNameManifest(ctx, nameSum, sum, name); err != nil {
-		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: %w", name, err)
+	// The digest rides on the object, so Stat and List always report the digest
+	// of the bytes actually stored under this key, even after an overwrite.
+	stored := make(map[string]string, len(metadata)+1)
+	for k, v := range metadata {
+		stored[k] = v
 	}
+	stored[metaContentSHA256] = sum
 
 	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
@@ -130,9 +200,19 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 		Body:          tmp,
 		ContentLength: aws.Int64(size),
 		ContentType:   aws.String(contentType),
-		Metadata:      metadata,
+		Metadata:      stored,
 	}); err != nil {
 		return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: %w", s.uri(key), err)
+	}
+
+	// A clean artifact segment already IS the logical name, so only a name the
+	// key cannot hold verbatim needs a companion manifest. The manifest follows
+	// the object: an object without its manifest is invisible to Stat and List,
+	// never a half-written artifact.
+	if !isCleanS3Component(name) {
+		if err := s.writeNameManifest(ctx, key, name); err != nil {
+			return ArtifactRef{}, fmt.Errorf("artifacts: s3 put %q: %w", name, err)
+		}
 	}
 
 	return ArtifactRef{
@@ -147,7 +227,7 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 
 // Get opens the object body at uri. The caller closes it.
 func (s *S3Store) Get(ctx context.Context, uri string) (io.ReadCloser, error) {
-	key, _, _, err := s.parseURI(uri)
+	key, _, err := s.parseURI(uri)
 	if err != nil {
 		return nil, err
 	}
@@ -164,27 +244,27 @@ func (s *S3Store) Get(ctx context.Context, uri string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
-// Stat heads the object and restores its exact logical name from the binary
-// companion manifest.
+// Stat heads the object and restores its exact logical name — from the key
+// itself, or from the binary companion manifest when the key could not hold it.
 func (s *S3Store) Stat(ctx context.Context, uri string) (ArtifactRef, error) {
-	key, nameSum, sum, err := s.parseURI(uri)
+	key, segments, err := s.parseURI(uri)
 	if err != nil {
 		return ArtifactRef{}, err
 	}
-	name, err := s.readNameManifest(ctx, nameSum, sum)
+	name, err := s.resolveName(ctx, key, segments)
 	if err != nil {
 		return ArtifactRef{}, fmt.Errorf("artifacts: s3 stat %q: %w", uri, err)
 	}
-	return s.statKey(ctx, key, name, sum)
+	return s.statKey(ctx, key, name)
 }
 
-// List scans bounded physical object keys, restores each exact logical name
-// from its binary manifest, filters by the caller's logical prefix, and orders
-// results by URI. Each object is also headed to match local-provider fields.
+// List scans the object hierarchy, restores each exact logical name, filters by
+// the caller's logical prefix, and orders results by URI. Each object is also
+// headed to match local-provider fields.
 func (s *S3Store) List(ctx context.Context, prefix string) ([]ArtifactRef, error) {
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(s.bucket),
-		Prefix: aws.String(objectNamespace + "/"),
+		Prefix: aws.String(s3OrkflowNamespace + "/"),
 	})
 
 	var refs []ArtifactRef
@@ -195,11 +275,11 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]ArtifactRef, error
 		}
 		for _, obj := range page.Contents {
 			key := aws.ToString(obj.Key)
-			nameSum, sum, ok := splitS3ObjectKey(key)
+			segments, ok := splitS3ObjectKey(key)
 			if !ok {
 				continue
 			}
-			name, err := s.readNameManifest(ctx, nameSum, sum)
+			name, err := s.resolveName(ctx, key, segments)
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {
 					continue // deleted between list and manifest read
@@ -209,7 +289,7 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]ArtifactRef, error
 			if !strings.HasPrefix(name, prefix) {
 				continue
 			}
-			ref, err := s.statKey(ctx, key, name, sum)
+			ref, err := s.statKey(ctx, key, name)
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {
 					continue // deleted between list and head
@@ -225,7 +305,7 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]ArtifactRef, error
 
 // Presign returns a signed GET URL valid for ttl.
 func (s *S3Store) Presign(ctx context.Context, uri string, ttl time.Duration) (string, error) {
-	key, _, _, err := s.parseURI(uri)
+	key, _, err := s.parseURI(uri)
 	if err != nil {
 		return "", err
 	}
@@ -242,10 +322,10 @@ func (s *S3Store) Presign(ctx context.Context, uri string, ttl time.Duration) (s
 	return req.URL, nil
 }
 
-// Delete removes the object and its binary name manifest. Like S3 itself, it
-// is idempotent.
+// Delete removes the object and any binary name manifest beside it. Like S3
+// itself, it is idempotent.
 func (s *S3Store) Delete(ctx context.Context, uri string) error {
-	key, nameSum, sum, err := s.parseURI(uri)
+	key, segments, err := s.parseURI(uri)
 	if err != nil {
 		return err
 	}
@@ -255,19 +335,31 @@ func (s *S3Store) Delete(ctx context.Context, uri string) error {
 	}); err != nil && !isNotFound(err) {
 		return fmt.Errorf("artifacts: s3 delete %q: %w", uri, err)
 	}
-	manifestKey := s3ManifestKey(nameSum, sum)
+	if _, exact := s3NameFromKey(segments); exact {
+		return nil // the key held the name; there is no manifest to remove
+	}
 	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(manifestKey),
+		Key:    aws.String(s3ManifestKey(key)),
 	}); err != nil && !isNotFound(err) {
 		return fmt.Errorf("artifacts: s3 delete %q: remove name manifest: %w", uri, err)
 	}
 	return nil
 }
 
-func (s *S3Store) writeNameManifest(ctx context.Context, nameSum, contentSum, name string) error {
-	manifest := marshalS3NameManifest(name)
-	key := s3ManifestKey(nameSum, contentSum)
+// resolveName returns the exact logical name of an object. A key whose artifact
+// segment is clean carries the name itself, which costs no request at all; only
+// a sanitized segment needs its companion manifest.
+func (s *S3Store) resolveName(ctx context.Context, key string, segments []string) (string, error) {
+	if name, exact := s3NameFromKey(segments); exact {
+		return name, nil
+	}
+	return s.readNameManifest(ctx, key)
+}
+
+func (s *S3Store) writeNameManifest(ctx context.Context, objectKey, name string) error {
+	manifest := marshalS3NameManifest(objectKey, name)
+	key := s3ManifestKey(objectKey)
 	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(key),
@@ -280,8 +372,8 @@ func (s *S3Store) writeNameManifest(ctx context.Context, nameSum, contentSum, na
 	return nil
 }
 
-func (s *S3Store) readNameManifest(ctx context.Context, nameSum, contentSum string) (string, error) {
-	key := s3ManifestKey(nameSum, contentSum)
+func (s *S3Store) readNameManifest(ctx context.Context, objectKey string) (string, error) {
+	key := s3ManifestKey(objectKey)
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -297,14 +389,14 @@ func (s *S3Store) readNameManifest(ctx context.Context, nameSum, contentSum stri
 	if err != nil {
 		return "", fmt.Errorf("read binary name manifest %q body: %w", key, err)
 	}
-	name, err := unmarshalS3NameManifest(manifest, nameSum)
+	name, err := unmarshalS3NameManifest(manifest, objectKey)
 	if err != nil {
 		return "", fmt.Errorf("decode binary name manifest %q: %w", key, err)
 	}
 	return name, nil
 }
 
-func (s *S3Store) statKey(ctx context.Context, key, name, sum string) (ArtifactRef, error) {
+func (s *S3Store) statKey(ctx context.Context, key, name string) (ArtifactRef, error) {
 	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -315,15 +407,21 @@ func (s *S3Store) statKey(ctx context.Context, key, name, sum string) (ArtifactR
 		}
 		return ArtifactRef{}, fmt.Errorf("artifacts: s3 stat %q: %w", s.uri(key), err)
 	}
+	metadata := copyMetadata(out.Metadata)
+	// The digest comes from the object's own metadata, never from ETag: ETag is
+	// opaque and is not a content hash for multipart or encrypted objects.
+	sum := metadataValue(metadata, metaContentSHA256)
+	deleteMetadataKey(metadata, metaContentSHA256)
+	if len(metadata) == 0 {
+		metadata = nil
+	}
 	return ArtifactRef{
 		Name:        name,
 		URI:         s.uri(key),
 		ContentType: aws.ToString(out.ContentType),
 		SizeBytes:   aws.ToInt64(out.ContentLength),
-		// The digest comes from the key, never from ETag: ETag is opaque and is
-		// not a content hash for multipart or encrypted objects.
-		SHA256:   sum,
-		Metadata: copyMetadata(out.Metadata),
+		SHA256:      sum,
+		Metadata:    metadata,
 	}, nil
 }
 
@@ -333,30 +431,53 @@ func (s *S3Store) uri(key string) string {
 }
 
 // parseURI validates an s3:// URI against this store's bucket and returns the
-// bounded physical key, logical-name digest, and content digest.
-func (s *S3Store) parseURI(uri string) (key, nameSum, contentSum string, err error) {
+// physical object key with its segments.
+func (s *S3Store) parseURI(uri string) (string, []string, error) {
 	u, perr := url.Parse(uri)
 	if perr != nil {
-		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: %v", uri, ErrInvalidURI, perr)
+		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: %v", uri, ErrInvalidURI, perr)
 	}
 	if u.Scheme != "s3" {
-		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: scheme must be s3://", uri, ErrInvalidURI)
+		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: scheme must be s3://", uri, ErrInvalidURI)
 	}
 	if u.Host != s.bucket {
-		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: bucket must be %q", uri, ErrInvalidURI, s.bucket)
+		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: bucket must be %q", uri, ErrInvalidURI, s.bucket)
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
-		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: query and fragment are not allowed", uri, ErrInvalidURI)
+		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: query and fragment are not allowed", uri, ErrInvalidURI)
 	}
-	key = strings.TrimPrefix(u.Path, "/")
+	key := strings.TrimPrefix(u.Path, "/")
 	if key == "" {
-		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: empty key", uri, ErrInvalidURI)
+		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: empty key", uri, ErrInvalidURI)
 	}
-	nameSum, contentSum, ok := splitS3ObjectKey(key)
+	segments, ok := splitS3ObjectKey(key)
 	if !ok {
-		return "", "", "", fmt.Errorf("artifacts: s3 %q: %w: malformed bounded object key", uri, ErrInvalidURI)
+		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: key must be %s/{orkflow-name}/{task-id}/{run-id}/{artifact-name}",
+			uri, ErrInvalidURI, s3OrkflowNamespace)
 	}
-	return key, nameSum, contentSum, nil
+	return key, segments, nil
+}
+
+// metadataValue reads a metadata key regardless of case: S3 servers normalize
+// user-metadata header names.
+func metadataValue(meta map[string]string, key string) string {
+	if value, ok := meta[key]; ok {
+		return value
+	}
+	for k, v := range meta {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
+}
+
+func deleteMetadataKey(meta map[string]string, key string) {
+	for k := range meta {
+		if strings.EqualFold(k, key) {
+			delete(meta, k)
+		}
+	}
 }
 
 // isNotFound reports whether err means "the object is not there". A 403 is

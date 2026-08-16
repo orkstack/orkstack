@@ -84,12 +84,6 @@ func localURIForTest(root, name, sha string) string {
 	}).String()
 }
 
-func s3URIForTest(bucket, name, sha string) string {
-	nameSum := sha256.Sum256([]byte(name))
-	key := path.Join("objects", hex.EncodeToString(nameSum[:]), sha)
-	return (&url.URL{Scheme: "s3", Host: bucket, Path: "/" + key}).String()
-}
-
 func TestLocalStore_PutGetRoundTripIsByteIdentical(t *testing.T) {
 	cases := []struct {
 		testName    string

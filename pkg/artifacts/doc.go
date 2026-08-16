@@ -2,10 +2,15 @@
 //
 // Artifacts are the only way bytes travel between OrkStack tasks: a plugin
 // returns files, the Orker stores them here, and downstream tasks receive
-// references (never inline bytes). Every physical object key ends in the
-// lowercase sha256 of its bytes. Logical names remain opaque and appear
-// unchanged in ArtifactRef.Name. Local storage uses reversible path-safe name
-// tokens; S3 uses bounded name digests plus binary name manifests. URIs use
+// references (never inline bytes). Logical names remain opaque and appear
+// unchanged in ArtifactRef.Name.
+//
+// Layout differs by provider. Local storage is content-addressed under
+// reversible path-safe name tokens, so every local object key ends in the
+// lowercase sha256 of its bytes. S3 keys instead name the run an artifact came
+// from — orkflows/{orkflow-name}/{task-id}/{run-id}/{artifact-name} — built
+// from the Provenance the Orker passes in PutOptions.Metadata, so a URI is
+// readable and an S3 lifecycle rule can expire one orkflow by prefix. URIs use
 // file:// for local objects and s3:// for S3.
 //
 // Selecting a backend:
