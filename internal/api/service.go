@@ -14,6 +14,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
+	"github.com/orkstack/orkstack/pkg/webhooks"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -49,10 +50,7 @@ type RunArchive interface {
 
 // Config wires a Service to its stores and Temporal seams.
 type Config struct {
-	// Workflows is the durable orkflow store. `ork` wires the S3 store
-	// (cmd/ork/main.go); leaving it nil is a unit-test convenience that
-	// substitutes the in-memory store, never a fallback for a configured one.
-	Workflows engine.OrkflowStore
+	Workflows *engine.WorkflowStore
 	Runs      *engine.RunStore
 	Bus       *engine.EventBus
 	Starter   RunStarter
@@ -60,6 +58,15 @@ type Config struct {
 
 	// Archive is the durable run history. Nil keeps runs in process only.
 	Archive RunArchive
+
+	// Webhooks holds the registered callbacks. Nil builds an empty registry,
+	// so the management endpoints exist whether or not anything is wired.
+	Webhooks *webhooks.Registry
+
+	// Notifier announces run state transitions this service observes itself.
+	// The engine announces every transition of a run that reached Temporal;
+	// this covers the one that never did, when StartRun fails.
+	Notifier engine.RunNotifier
 
 	// Plugins is the fallback discovery set for PluginService.ListPlugins
 	// when no live Orker lister is configured.
@@ -72,12 +79,14 @@ type Config struct {
 
 // Service implements OrkflowService, RunService, and PluginService.
 type Service struct {
-	workflows engine.OrkflowStore
+	workflows *engine.WorkflowStore
 	runs      *engine.RunStore
 	bus       *engine.EventBus
 	starter   RunStarter
 	lister    PluginLister
 	archive   RunArchive
+	webhooks  *webhooks.Registry
+	notifier  engine.RunNotifier
 	plugins   []*orkstackv1.PluginInfo
 	now       func() time.Time
 	newRunID  func() string
@@ -97,14 +106,13 @@ func NewService(cfg Config) *Service {
 		starter:        cfg.Starter,
 		lister:         cfg.Lister,
 		archive:        cfg.Archive,
+		webhooks:       cfg.Webhooks,
+		notifier:       cfg.Notifier,
 		plugins:        cfg.Plugins,
 		now:            cfg.Now,
 		newRunID:       cfg.NewRunID,
 		idempotencyMap: map[string]string{},
 	}
-	// Only an unconfigured Service gets the in-memory store, and only so a
-	// unit test can exercise runs without a bucket. A configured store is
-	// never bypassed: a failing durable store surfaces as an error.
 	if svc.workflows == nil {
 		svc.workflows = engine.NewWorkflowStore()
 	}
@@ -113,6 +121,9 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.bus == nil {
 		svc.bus = engine.NewEventBus()
+	}
+	if svc.webhooks == nil {
+		svc.webhooks = webhooks.NewRegistry()
 	}
 	if svc.now == nil {
 		svc.now = time.Now
@@ -139,10 +150,12 @@ func (s *Service) Bus() *engine.EventBus { return s.bus }
 // Runs exposes the run read model (used by the WebSocket bridge).
 func (s *Service) Runs() *engine.RunStore { return s.runs }
 
-// ApplyOrkflow compiles a DSL document and writes the resulting orkflow to the
-// durable store, so it outlives this process.
+// Webhooks exposes the callback registry (used by the management endpoints).
+func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
+
+// ApplyOrkflow compiles a DSL document and upserts the resulting orkflow.
 func (s *Service) ApplyOrkflow(
-	ctx context.Context,
+	_ context.Context,
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
 ) (*connect.Response[orkstackv1.ApplyOrkflowResponse], error) {
 	wf, err := dsl.Compile([]byte(req.Msg.GetYaml()))
@@ -150,57 +163,37 @@ func (s *Service) ApplyOrkflow(
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
-	if err := s.workflows.Put(ctx, wf); err != nil {
-		return nil, orkflowStoreError(err, "store orkflow %s@%s", wf.GetName(), wf.GetVersion())
-	}
+	s.workflows.Put(wf)
 	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{Orkflow: wf}), nil
 }
 
-// GetOrkflow reads a stored orkflow; an empty version means the most recently
-// applied one.
+// GetOrkflow returns a stored orkflow; an empty version means the most
+// recently applied one.
 func (s *Service) GetOrkflow(
-	ctx context.Context,
+	_ context.Context,
 	req *connect.Request[orkstackv1.GetOrkflowRequest],
 ) (*connect.Response[orkstackv1.GetOrkflowResponse], error) {
 	if req.Msg.GetName() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("name is required"))
 	}
-	wf, err := s.workflows.Get(ctx, req.Msg.GetName(), req.Msg.GetVersion())
-	if err != nil {
-		return nil, orkflowStoreError(err, "orkflow %q version %q",
-			req.Msg.GetName(), req.Msg.GetVersion())
+	wf, ok := s.workflows.Get(req.Msg.GetName(), req.Msg.GetVersion())
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound,
+			fmt.Errorf("orkflow %q version %q not found", req.Msg.GetName(), req.Msg.GetVersion()))
 	}
 	return connect.NewResponse(&orkstackv1.GetOrkflowResponse{Orkflow: wf}), nil
 }
 
-// ListOrkflows returns the latest version of every stored orkflow, read from
-// the durable store on every call.
+// ListOrkflows returns the latest version of every stored orkflow.
 func (s *Service) ListOrkflows(
-	ctx context.Context,
+	_ context.Context,
 	req *connect.Request[orkstackv1.ListOrkflowsRequest],
 ) (*connect.Response[orkstackv1.ListOrkflowsResponse], error) {
-	workflows, err := s.workflows.List(ctx)
-	if err != nil {
-		return nil, orkflowStoreError(err, "list orkflows")
-	}
+	workflows := s.workflows.List()
 	if size := int(req.Msg.GetPageSize()); size > 0 && size < len(workflows) {
 		workflows = workflows[:size]
 	}
 	return connect.NewResponse(&orkstackv1.ListOrkflowsResponse{Orkflows: workflows}), nil
-}
-
-// orkflowStoreError maps a store failure onto a Connect code. A missing
-// orkflow is NotFound. Anything else means the durable store could not be
-// reached: it is reported as Unavailable, never answered from memory.
-func orkflowStoreError(err error, format string, args ...any) error {
-	subject := fmt.Sprintf(format, args...)
-	if errors.Is(err, artifacts.ErrNotFound) {
-		return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s not found", subject))
-	}
-	if errors.Is(err, artifacts.ErrInvalidOrkflow) {
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s: %w", subject, err))
-	}
-	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s: %w", subject, err))
 }
 
 // SubmitRun creates a pending run and starts its Temporal workflow.
@@ -212,9 +205,10 @@ func (s *Service) SubmitRun(
 	if name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("workflow_name is required"))
 	}
-	wf, err := s.workflows.Get(ctx, name, req.Msg.GetWorkflowVersion())
-	if err != nil {
-		return nil, orkflowStoreError(err, "orkflow %q version %q", name, req.Msg.GetWorkflowVersion())
+	wf, ok := s.workflows.Get(name, req.Msg.GetWorkflowVersion())
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound,
+			fmt.Errorf("orkflow %q version %q not found", name, req.Msg.GetWorkflowVersion()))
 	}
 	if s.starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
@@ -296,14 +290,40 @@ func (s *Service) startPreparedRun(
 			Timestamp: failedAt,
 		}, runID+"#failed")
 		// A run that never reached Temporal still ends here, so this is the
-		// only place that can archive it. The engine's write-through covers
-		// every run that did start.
+		// only place that can archive it or announce its failure. The engine's
+		// projection activity covers every run that did start.
+		s.notifyRunFailedToStart(ctx, runID, failedAt, err)
 		s.archiveRun(ctx, runID)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
 	stored, _ := s.runs.Get(runID)
 	return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: stored}), nil
+}
+
+// notifyRunFailedToStart announces the terminal transition of a run that never
+// reached Temporal, so a subscriber sees the same RUN_FAILED it would have
+// seen had the run started and then failed.
+func (s *Service) notifyRunFailedToStart(
+	ctx context.Context,
+	runID string,
+	failedAt *timestamppb.Timestamp,
+	cause error,
+) {
+	if s.notifier == nil {
+		return
+	}
+	run, ok := s.runs.Get(runID)
+	if !ok {
+		return
+	}
+	s.notifier.NotifyRunTransition(ctx, &orkstackv1.Event{
+		RunId:     runID,
+		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+		Status:    orkstackv1.Status_STATUS_FAILED,
+		Message:   cause.Error(),
+		Timestamp: failedAt,
+	}, run)
 }
 
 // archiveRun writes a terminal run to the archive. Archiving is durability, not

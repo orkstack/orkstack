@@ -78,6 +78,13 @@ type fixture struct {
 // connect-go clients wired to it over unencrypted HTTP/2.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureWithNotifier(t, nil)
+}
+
+// newFixtureWithNotifier is newFixture with run transitions announced to
+// notifier, which is how the service is wired in production.
+func newFixtureWithNotifier(t *testing.T, notifier engine.RunNotifier) *fixture {
+	t.Helper()
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
@@ -88,6 +95,7 @@ func newFixture(t *testing.T) *fixture {
 		Runs:      runs,
 		Bus:       bus,
 		Starter:   starter,
+		Notifier:  notifier,
 		NewRunID: func() string {
 			counter++
 			return fmt.Sprintf("run-%03d", counter)

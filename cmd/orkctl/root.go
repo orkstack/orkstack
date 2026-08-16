@@ -113,6 +113,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newOrkflowCommand(g),
 		newRunCommand(g),
 		newPluginCommand(g),
+		newWebhookCommand(g),
 		newVersionCommand(g),
 	)
 	return root, g

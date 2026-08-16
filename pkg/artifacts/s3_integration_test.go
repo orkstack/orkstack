@@ -325,11 +325,11 @@ func TestS3Store_LifecycleRuleExpiresExactlyOneOrkflow(t *testing.T) {
 	selected = append(selected, listKeys(t, ctx, raw, cfg.S3Bucket, manifestPrefix)...)
 	sort.Strings(selected)
 	wantSelected := []string{
-		"manifests/orkflows/deprecated-flow/save/ork-1755302400000000001-1/nested-report-copy.txt~9031737d4770a2f1",
-		"orkflows/deprecated-flow/fetch/ork-1755302400000000001-1/body",
-		"orkflows/deprecated-flow/save/ork-1755302400000000001-1/nested-report-copy.txt~9031737d4770a2f1",
-		"orkflows/deprecated-flow/save/ork-1755302400000000001-1/result.txt",
-		"orkflows/deprecated-flow/save/ork-1755302400000000002-1/result.txt",
+		"manifests/orkflows/deprecated-flow/ork-1755302400000000001-1/save/nested-report-copy.txt~9031737d4770a2f1",
+		"orkflows/deprecated-flow/ork-1755302400000000001-1/fetch/body",
+		"orkflows/deprecated-flow/ork-1755302400000000001-1/save/nested-report-copy.txt~9031737d4770a2f1",
+		"orkflows/deprecated-flow/ork-1755302400000000001-1/save/result.txt",
+		"orkflows/deprecated-flow/ork-1755302400000000002-1/save/result.txt",
 	}
 	if strings.Join(selected, "\n") != strings.Join(wantSelected, "\n") {
 		t.Fatalf("prefix %q selected\n%s\nwant\n%s", artifactPrefix,
