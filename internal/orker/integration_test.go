@@ -3,7 +3,9 @@
 package orker_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -246,7 +248,39 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 		t.Errorf("save output path = %q, want result.txt", path)
 	}
 
+	// 4. M7.4: every artifact this run produced is addressed by the run that
+	// produced it, not by a content hash.
+	assertReadableArtifactURIs(t, storeConfig.S3Bucket, "hello-ork", runID, taskRuns)
+
 	writeHandoffProof(t, runID, origin.URL, taskRuns)
+	writeArtifactURIProof(t, runID, got.Msg, taskRuns)
+}
+
+// assertReadableArtifactURIs pins the M7.4 layout on a real run:
+//
+//	s3://{bucket}/orkflows/{orkflow-name}/{task-id}/{run-id}/{artifact-name}
+func assertReadableArtifactURIs(
+	t *testing.T,
+	bucket, orkflow, runID string,
+	taskRuns map[string]*orkstackv1.TaskRun,
+) {
+	t.Helper()
+	seen := 0
+	for _, id := range []string{"fetch", "transform", "save"} {
+		for _, ref := range taskRuns[id].GetArtifacts() {
+			want := fmt.Sprintf("s3://%s/orkflows/%s/%s/%s/%s", bucket, orkflow, id, runID, ref.GetName())
+			if ref.GetUri() != want {
+				t.Errorf("task %q artifact %q uri = %q, want %q", id, ref.GetName(), ref.GetUri(), want)
+			}
+			if strings.Contains(ref.GetUri(), ref.GetSha256()) {
+				t.Errorf("task %q artifact %q uri %q still carries the content hash", id, ref.GetName(), ref.GetUri())
+			}
+			seen++
+		}
+	}
+	if seen != 3 {
+		t.Errorf("checked %d artifact URIs, want 3 (fetch/body, transform/title, save/result.txt)", seen)
+	}
 }
 
 // requireMinIO skips the test unless the MinIO endpoint answers its health
@@ -334,4 +368,59 @@ func writeHandoffProof(t *testing.T, runID, originURL string, taskRuns map[strin
 	write("artifact-handoff.txt", transcript.String())
 	write("artifact-uris.txt", uris.String())
 	t.Logf("wrote proof transcripts to %s", dir)
+}
+
+// writeArtifactURIProof checks the M7.4 acceptance the CLI is responsible for —
+// `orkctl run get --json` shows clean URIs — and records the evidence.
+//
+// The rendering is the CLI's own: cmd/orkctl/output.go prints GetRunResponse
+// through api.MarshalJSON plus json.Indent, which is exactly what happens here.
+func writeArtifactURIProof(
+	t *testing.T,
+	runID string,
+	msg *orkstackv1.GetRunResponse,
+	taskRuns map[string]*orkstackv1.TaskRun,
+) {
+	t.Helper()
+	compact, err := api.MarshalJSON(msg)
+	if err != nil {
+		t.Fatalf("marshal run as orkctl does: %v", err)
+	}
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, compact, "", "  "); err != nil {
+		t.Fatalf("indent run json: %v", err)
+	}
+	rendered := indented.String()
+
+	var uris strings.Builder
+	fmt.Fprintf(&uris, "run_id:   %s\n", runID)
+	fmt.Fprintf(&uris, "captured: %s\n\n", time.Now().UTC().Format(time.RFC3339))
+	for _, id := range []string{"fetch", "transform", "save"} {
+		for _, ref := range taskRuns[id].GetArtifacts() {
+			if !strings.Contains(rendered, fmt.Sprintf("%q", ref.GetUri())) {
+				t.Errorf("run get --json does not show artifact uri %q", ref.GetUri())
+			}
+			fmt.Fprintf(&uris, "%-10s %-12s %s\n", id, ref.GetName(), ref.GetUri())
+		}
+	}
+	if strings.Contains(rendered, "/objects/") {
+		t.Errorf("run get --json still shows a pre-M7.4 content-hash URI:\n%s", rendered)
+	}
+
+	dir := os.Getenv("ORK_PROOF_M74_DIR")
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create proof dir: %v", err)
+	}
+	for name, content := range map[string]string{
+		"run-artifact-uris.txt": uris.String(),
+		"run-get.json":          rendered + "\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	t.Logf("wrote M7.4 artifact URI proof to %s", dir)
 }

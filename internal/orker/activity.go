@@ -201,15 +201,17 @@ func (a *Activities) upload(
 	return refs, nil
 }
 
-// artifactMetadata records provenance without overwriting plugin metadata.
+// artifactMetadata records provenance without discarding plugin metadata. The
+// artifact store lays objects out by these coordinates —
+// orkflows/{orkflow}/{task-id}/{run-id}/{artifact-name} — so a stored URI
+// names the run that produced it, and provenance always wins over whatever a
+// plugin wrote under the same keys.
 func artifactMetadata(in task.ExecuteTaskInput, item plugin.ProducedArtifact) map[string]string {
-	meta := make(map[string]string, len(item.Metadata)+4)
-	for k, v := range item.Metadata {
-		meta[k] = v
-	}
-	meta["run_id"] = in.RunID
-	meta["task_id"] = in.TaskID
-	meta["workflow"] = in.WorkflowName
+	meta := artifacts.Provenance{
+		Orkflow: in.WorkflowName,
+		TaskID:  in.TaskID,
+		RunID:   in.RunID,
+	}.Metadata(item.Metadata)
 	meta["artifact"] = item.Name
 	return meta
 }

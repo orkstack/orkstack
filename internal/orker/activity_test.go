@@ -14,6 +14,7 @@ import (
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
@@ -146,9 +147,17 @@ func TestExecuteTask_DispatchesByPluginNameAndUploadsProducedArtifacts(t *testin
 	if err != nil {
 		t.Fatalf("stat uploaded artifact: %v", err)
 	}
-	if stat.Metadata["task_id"] != "produce" || stat.Metadata["run_id"] != "run-1" ||
+	if stat.Metadata[artifacts.MetaOrkflow] != "hello-ork" ||
+		stat.Metadata[artifacts.MetaTaskID] != "produce" ||
+		stat.Metadata[artifacts.MetaRunID] != "run-1" ||
 		stat.Metadata["origin"] != "stub" {
 		t.Errorf("artifact metadata = %#v, want provenance plus plugin metadata", stat.Metadata)
+	}
+	// The store addresses an artifact by those coordinates, so the Orker must
+	// hand them over in the form ProvenanceFromMetadata reads back.
+	want := artifacts.Provenance{Orkflow: "hello-ork", TaskID: "produce", RunID: "run-1"}
+	if got := artifacts.ProvenanceFromMetadata(stat.Metadata); got != want {
+		t.Errorf("provenance = %+v, want %+v", got, want)
 	}
 }
 
