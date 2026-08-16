@@ -24,9 +24,16 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
-const shutdownTimeout = 10 * time.Second
+const (
+	shutdownTimeout = 10 * time.Second
+	// webhookDrainTimeout bounds how long shutdown waits for in-flight
+	// webhook deliveries, so one unresponsive subscriber cannot hold the
+	// engine open.
+	webhookDrainTimeout = 15 * time.Second
+)
 
 type config struct {
 	temporalAddress   string
@@ -118,6 +125,23 @@ func run(logger *slog.Logger, cfg config) error {
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
 
+	// Webhooks: the outbound half of the API. The registry holds who is
+	// subscribed, the notifier fans a run's state transitions out to them.
+	webhookRegistry := webhooks.NewRegistry()
+	webhookNotifier := webhooks.NewNotifier(
+		webhookRegistry,
+		webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+		webhooks.NotifierOptions{Logger: logger},
+	)
+	runNotifier := api.NewWebhookNotifier(webhookNotifier, logger)
+	defer func() {
+		drainCtx, cancelDrain := context.WithTimeout(context.Background(), webhookDrainTimeout)
+		defer cancelDrain()
+		if err := webhookNotifier.Wait(drainCtx); err != nil {
+			logger.Warn("webhook deliveries still in flight at shutdown", "error", err)
+		}
+	}()
+
 	// Run archive: the durable half of the read model. The in-process store
 	// answers live runs; the archive holds every finished run, so history
 	// outlives this process.
@@ -141,7 +165,9 @@ func run(logger *slog.Logger, cfg config) error {
 	// Orkers never receive them.
 	eventWorker := worker.New(temporalClient, engine.EventQueue, eventWorkerOptions())
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewArchivingEventActivities(bus, runs, archive).PublishEvent,
+		engine.NewArchivingEventActivities(bus, runs, archive).
+			WithRunNotifier(runNotifier).
+			PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
@@ -163,6 +189,8 @@ func run(logger *slog.Logger, cfg config) error {
 		Starter:   starter,
 		Lister:    starter,
 		Archive:   archive,
+		Webhooks:  webhookRegistry,
+		Notifier:  runNotifier,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,
@@ -172,7 +200,8 @@ func run(logger *slog.Logger, cfg config) error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("serving connect api (h2c) and websocket bridge", "addr", cfg.httpAddr)
+		logger.Info("serving connect api (h2c), websocket bridge and webhooks",
+			"addr", cfg.httpAddr, "webhooks", api.WebhookCollectionPath)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return

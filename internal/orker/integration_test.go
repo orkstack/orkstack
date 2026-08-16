@@ -258,7 +258,7 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 
 // assertReadableArtifactURIs pins the M7.4 layout on a real run:
 //
-//	s3://{bucket}/orkflows/{orkflow-name}/{task-id}/{run-id}/{artifact-name}
+//	s3://{bucket}/orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name}
 func assertReadableArtifactURIs(
 	t *testing.T,
 	bucket, orkflow, runID string,
@@ -268,7 +268,7 @@ func assertReadableArtifactURIs(
 	seen := 0
 	for _, id := range []string{"fetch", "transform", "save"} {
 		for _, ref := range taskRuns[id].GetArtifacts() {
-			want := fmt.Sprintf("s3://%s/orkflows/%s/%s/%s/%s", bucket, orkflow, id, runID, ref.GetName())
+			want := fmt.Sprintf("s3://%s/orkflows/%s/%s/%s/%s", bucket, orkflow, runID, id, ref.GetName())
 			if ref.GetUri() != want {
 				t.Errorf("task %q artifact %q uri = %q, want %q", id, ref.GetName(), ref.GetUri(), want)
 			}

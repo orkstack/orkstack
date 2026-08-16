@@ -30,6 +30,9 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	pluginPath, pluginHandler := orkstackv1connect.NewPluginServiceHandler(svc, handlerOptions...)
 	mux.Handle(pluginPath, pluginHandler)
 
+	mux.Handle(WebhookCollectionPath, NewWebhookHandler(svc.Webhooks()))
+	mux.Handle(WebhookItemPath, NewWebhookHandler(svc.Webhooks()))
+
 	mux.Handle("/ws/runs/{id}", NewWebSocketBridge(svc, opts.AllowedOrigins))
 	return mux
 }

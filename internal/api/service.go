@@ -14,6 +14,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
+	"github.com/orkstack/orkstack/pkg/webhooks"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -58,6 +59,15 @@ type Config struct {
 	// Archive is the durable run history. Nil keeps runs in process only.
 	Archive RunArchive
 
+	// Webhooks holds the registered callbacks. Nil builds an empty registry,
+	// so the management endpoints exist whether or not anything is wired.
+	Webhooks *webhooks.Registry
+
+	// Notifier announces run state transitions this service observes itself.
+	// The engine announces every transition of a run that reached Temporal;
+	// this covers the one that never did, when StartRun fails.
+	Notifier engine.RunNotifier
+
 	// Plugins is the fallback discovery set for PluginService.ListPlugins
 	// when no live Orker lister is configured.
 	Plugins []*orkstackv1.PluginInfo
@@ -75,6 +85,8 @@ type Service struct {
 	starter   RunStarter
 	lister    PluginLister
 	archive   RunArchive
+	webhooks  *webhooks.Registry
+	notifier  engine.RunNotifier
 	plugins   []*orkstackv1.PluginInfo
 	now       func() time.Time
 	newRunID  func() string
@@ -94,6 +106,8 @@ func NewService(cfg Config) *Service {
 		starter:        cfg.Starter,
 		lister:         cfg.Lister,
 		archive:        cfg.Archive,
+		webhooks:       cfg.Webhooks,
+		notifier:       cfg.Notifier,
 		plugins:        cfg.Plugins,
 		now:            cfg.Now,
 		newRunID:       cfg.NewRunID,
@@ -107,6 +121,9 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.bus == nil {
 		svc.bus = engine.NewEventBus()
+	}
+	if svc.webhooks == nil {
+		svc.webhooks = webhooks.NewRegistry()
 	}
 	if svc.now == nil {
 		svc.now = time.Now
@@ -132,6 +149,9 @@ func (s *Service) Bus() *engine.EventBus { return s.bus }
 
 // Runs exposes the run read model (used by the WebSocket bridge).
 func (s *Service) Runs() *engine.RunStore { return s.runs }
+
+// Webhooks exposes the callback registry (used by the management endpoints).
+func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
 
 // ApplyOrkflow compiles a DSL document and upserts the resulting orkflow.
 func (s *Service) ApplyOrkflow(
@@ -270,14 +290,40 @@ func (s *Service) startPreparedRun(
 			Timestamp: failedAt,
 		}, runID+"#failed")
 		// A run that never reached Temporal still ends here, so this is the
-		// only place that can archive it. The engine's write-through covers
-		// every run that did start.
+		// only place that can archive it or announce its failure. The engine's
+		// projection activity covers every run that did start.
+		s.notifyRunFailedToStart(ctx, runID, failedAt, err)
 		s.archiveRun(ctx, runID)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
 	stored, _ := s.runs.Get(runID)
 	return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: stored}), nil
+}
+
+// notifyRunFailedToStart announces the terminal transition of a run that never
+// reached Temporal, so a subscriber sees the same RUN_FAILED it would have
+// seen had the run started and then failed.
+func (s *Service) notifyRunFailedToStart(
+	ctx context.Context,
+	runID string,
+	failedAt *timestamppb.Timestamp,
+	cause error,
+) {
+	if s.notifier == nil {
+		return
+	}
+	run, ok := s.runs.Get(runID)
+	if !ok {
+		return
+	}
+	s.notifier.NotifyRunTransition(ctx, &orkstackv1.Event{
+		RunId:     runID,
+		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+		Status:    orkstackv1.Status_STATUS_FAILED,
+		Message:   cause.Error(),
+		Timestamp: failedAt,
+	}, run)
 }
 
 // archiveRun writes a terminal run to the archive. Archiving is durability, not
