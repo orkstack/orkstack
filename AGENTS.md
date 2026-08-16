@@ -120,7 +120,7 @@ Every milestone writes evidence under `proof/<milestone>/`:
   transcript, a CLI session recording, or UI screenshots/video.
 - A short `README.md` stating what was proven and how to reproduce.
 
-### Integration tests share one Temporal namespace — use deterministic task queues for parallel runs
+### Integration tests share one Temporal namespace — isolate parallel runs by namespace
 
 Integration tests and real binaries default to the **same Temporal namespace**
 (`ork-main`) and queue (`ork-tasks`). When **multiple agents run in parallel**
@@ -129,36 +129,42 @@ runs** — the failure looks like a code bug but is not: you get missing lifecyc
 events, `observed 1 task inputs, want 3`, or a run that hangs until the stream
 deadline. **Both M7.7 and M7.8 experienced this collision mid-milestone.**
 
-**Prevention: use deterministic, agent-specific task queue names.**
-
-The engine auto-discovers the task queue name from the Orker's activity
-registration. By setting a unique queue per concurrent run, tests become
-isolated even when multiple agents run in parallel.
-
-**For any test or binary that may run concurrently:**
+**Prevention: give each concurrent agent its own Temporal namespace.**
 
 ```bash
-# Option 1: Per-user random queue (if only one user per machine)
-export ORK_ORKER_QUEUE="ork-tasks-${USER}-${RANDOM}"
-
-# Option 2: Stable queue name per milestone worktree (preferred)
-export ORK_ORKER_QUEUE="ork-tasks-m7-7"  # unique per milestone/branch
-export ORK_ORKER_QUEUE="ork-tasks-m7-8"
+# Unique per milestone worktree. Both binaries provision it at boot.
+export ORK_TEMPORAL_NAMESPACE="ork-m7-7"
+export ORK_TEMPORAL_NAMESPACE="ork-m7-8"
 ```
 
-The Orker polls `$ORK_ORKER_QUEUE`. The engine attempts to dispatch to that same
-queue. If no Orker is present, the run waits indefinitely until the test timeout
-triggers — this is visible and debuggable.
+`ork` and `orker` both read `ORK_TEMPORAL_NAMESPACE` and call
+`task.EnsureNamespace` at startup (`cmd/ork/main.go`, `cmd/orker/main.go`), so
+an unused name is registered on first boot. A namespace is a hard partition:
+no workflow, activity or queue crosses it, so no cross-agent theft is possible.
 
-**In test harnesses:**
+**`ORK_ORKER_QUEUE` alone does NOT isolate a run — it hangs it.** It changes
+only which queue the Orker *polls* and which queue the engine uses for plugin
+*discovery* (`TemporalStarter.ListPlugins`). Task dispatch is decided inside
+workflow code by `queueFor(t)` (`internal/engine/workflow.go`), which returns
+the task's own `queue:` from the DSL or, failing that, the compiled-in
+`task.DefaultQueue` (`ork-tasks`) — it never reads the environment. Set
+`ORK_ORKER_QUEUE` on its own and the Orker listens to one queue while the
+workflow schedules onto another: every run sits in RUNNING until the timeout.
+To route by queue deliberately, set `queue:` on every task in the orkflow and
+point an Orker at that queue.
+
+**In test harnesses** that start their own engine and orker, give the pair a
+unique namespace. `cmd/orkctl/integration_test.go` shows the queue route done
+correctly instead: it sets `ORK_ORKER_QUEUE` on both binaries *and* applies a
+copy of the example with the queue pinned onto each task
+(`writeQueuePinnedWorkflow`). One without the other hangs the run.
 
 ```go
-// pkg/artifacts/s3_integration_test.go, cmd/orkctl/harness_test.go, etc.
 // Before starting the engine and orker:
-os.Setenv("ORK_ORKER_QUEUE", "ork-tasks-test-"+uniqueSuffix)
+os.Setenv("ORK_TEMPORAL_NAMESPACE", "ork-test-"+uniqueSuffix)
 ```
 
-**Process cleanup remains mandatory** even with isolated queues. Before any new
+**Process cleanup remains mandatory** even with isolation. Before any new
 run, kill all stray processes:
 
 ```bash
@@ -178,6 +184,51 @@ Proof must be reproducible via a single documented command.
   `docs: ...`, `chore(proto): ...`.
 - Keep commits scoped to one concern; keep `main` buildable (`make build test`).
 - Tag releases `vMAJOR.MINOR.PATCH`. First target: `v0.0.1`.
+
+### Gate every merge on the merged tree, not on the branch
+
+A green branch proves nothing about the merge. Two milestones can each pass
+every test and still produce a broken `main`, because the conflict is created
+by the merge itself and no branch CI ever compiles that combination.
+
+**This already happened twice, in one merge:**
+
+| what broke | how | found by |
+|---|---|---|
+| `internal/api/service.go` | M7.8's merge took the branch side whole, reverting M7.5's durable orkflow store. `Config.Workflows` went back to the in-memory type while `cmd/ork` still wired `artifacts.S3OrkflowStore` | `make build` — but only after both milestones were declared done |
+| `requireMinIO` in `internal/engine` | M7.5 and M7.6 each added the helper to their own `_integration_test.go`; merged, the package has it twice | nothing — hidden behind `//go:build integration` until the M7.5 proof was rerun |
+
+**Before finalizing any merge** (after resolving conflicts, before the merge
+commit is final — `git merge --no-commit`, or amend/reset if it is already
+written):
+
+```bash
+make merge-check
+```
+
+which is `make build` + `make lint` + `make test` + `go vet -tags=integration
+./...`. The last one is not optional: build-tagged files are invisible to
+`make build` and `make test`, so a duplicate helper or a stale signature there
+survives every default check and only surfaces when someone reruns a proof.
+
+**When a merge conflicts in a file both sides changed**, resolve it as a union
+of the two behaviors, and verify against the base:
+
+```bash
+git merge-file -p ours.go base.go theirs.go     # base = git merge-base A B
+```
+
+Never resolve by taking one side whole unless that file is untouched on the
+other. Afterwards, list what the resolution dropped:
+
+```bash
+# for each file differing between the parents, compare the result to both
+git diff --name-only $MERGE^1 $MERGE^2
+```
+
+**Rerun the affected milestones' `proof/*/reproduce.sh` after a merge that
+touched their code.** A proof taken on a branch describes that branch. Once
+merged, the proof is a claim about `main` that nothing has checked.
 
 ## 8. Boundaries between agents (avoid collisions)
 

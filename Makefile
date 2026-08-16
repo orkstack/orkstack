@@ -86,3 +86,8 @@ lint: ## Run go vet + gofmt check
 .PHONY: fmt
 fmt: ## Format Go code
 	gofmt -w $$(find . -name '*.go' -not -path './gen/*')
+
+.PHONY: merge-check
+merge-check: build lint test ## Gate a merge: build + lint + unit tests + compile the integration suites
+	go vet -tags=integration ./...
+	@echo "merge-check OK: the merged tree builds, passes lint and unit tests, and its integration suites compile"
