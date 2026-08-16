@@ -73,7 +73,8 @@ scripts/               Dev helper scripts
 - **Temporal Go SDK** (`go.temporal.io/sdk`). Namespace: `ORK_TEMPORAL_NAMESPACE`,
   default `ork-main` (auto-provisioned at binary boot). Task queues: the engine
   dispatches to `ORK_ORKER_QUEUE`, default `ork-tasks`; a task may override via
-  `queue`.
+  `queue`. **For parallel agent runs, use deterministic per-agent queue names
+  (see §6 below).**
 - **Connect** (`connectrpc.com/connect`) for RPC. Server serves h2c on
   `:8080` (configurable). WebSocket event bridge on the same server at
   `/ws/runs/{id}`.
@@ -110,7 +111,7 @@ scripts/               Dev helper scripts
 - Name tests for behavior: `TestHTTPPlugin_CapturesResponseBodyAsArtifact`.
 - No sleeps for synchronization; poll with deadlines or use test env helpers.
 
-## 6. Proof artifacts (definition of DONE)
+## 6. Proof artifacts & integration test isolation (definition of DONE)
 
 Every milestone writes evidence under `proof/<milestone>/`:
 - `test.log` — full `go test -v` (or Playwright) output.
@@ -119,27 +120,55 @@ Every milestone writes evidence under `proof/<milestone>/`:
   transcript, a CLI session recording, or UI screenshots/video.
 - A short `README.md` stating what was proven and how to reproduce.
 
-### Integration tests share one Temporal task queue — clean up workers
+### Integration tests share one Temporal namespace — use deterministic task queues for parallel runs
 
-Integration tests and the real binaries all poll the SAME queue (`ork-tasks`) in
-the same namespace (`ork-main`). Any leftover `ork`/`orker` process — or a second
-test binary registering a different `ExecuteTask` — will **steal activities** from
-the run under test. The failure looks like a code bug but is not: you get missing
-lifecycle events, `observed 1 task inputs, want 3`, or a run that hangs until the
-stream deadline.
+Integration tests and real binaries default to the **same Temporal namespace**
+(`ork-main`) and queue (`ork-tasks`). When **multiple agents run in parallel**
+(e.g. concurrent milestone worktrees), they **steal activities from each other's
+runs** — the failure looks like a code bug but is not: you get missing lifecycle
+events, `observed 1 task inputs, want 3`, or a run that hangs until the stream
+deadline. **Both M7.7 and M7.8 experienced this collision mid-milestone.**
 
-Before trusting an integration failure:
+**Prevention: use deterministic, agent-specific task queue names.**
+
+The engine auto-discovers the task queue name from the Orker's activity
+registration. By setting a unique queue per concurrent run, tests become
+isolated even when multiple agents run in parallel.
+
+**For any test or binary that may run concurrently:**
 
 ```bash
-ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep          # must be empty
-temporal task-queue describe --task-queue ork-tasks \
-  --namespace ork-main --address 127.0.0.1:7233
+# Option 1: Per-user random queue (if only one user per machine)
+export ORK_ORKER_QUEUE="ork-tasks-${USER}-${RANDOM}"
+
+# Option 2: Stable queue name per milestone worktree (preferred)
+export ORK_ORKER_QUEUE="ork-tasks-m7-7"  # unique per milestone/branch
+export ORK_ORKER_QUEUE="ork-tasks-m7-8"
 ```
 
-Kill strays with `pkill -f 'bin/orker'; pkill -f 'bin/ork'` (match the full
-path — `pkill -f './orker'` does NOT match `./bin/orker`). Never leave a
-backgrounded engine/orker running after a manual e2e; always kill what you start.
-Run integration suites with `-p 1` to stop packages from polling concurrently.
+The Orker polls `$ORK_ORKER_QUEUE`. The engine attempts to dispatch to that same
+queue. If no Orker is present, the run waits indefinitely until the test timeout
+triggers — this is visible and debuggable.
+
+**In test harnesses:**
+
+```go
+// pkg/artifacts/s3_integration_test.go, cmd/orkctl/harness_test.go, etc.
+// Before starting the engine and orker:
+os.Setenv("ORK_ORKER_QUEUE", "ork-tasks-test-"+uniqueSuffix)
+```
+
+**Process cleanup remains mandatory** even with isolated queues. Before any new
+run, kill all stray processes:
+
+```bash
+pkill -f 'bin/orker'; pkill -f 'bin/orkengine'; sleep 2
+ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep   # must be empty
+```
+
+Never leave a backgrounded engine/orker running after a manual e2e; always kill
+what you start. Run integration suites with `-p 1` to stop packages from polling
+concurrently.
 
 Proof must be reproducible via a single documented command.
 
