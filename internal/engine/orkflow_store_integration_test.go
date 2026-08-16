@@ -5,10 +5,8 @@ package engine_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -31,30 +29,8 @@ func s3Config() artifacts.Config {
 	return cfg
 }
 
-// requireMinIO skips (never fails) when the dev object store is not running.
-func requireMinIO(t *testing.T, cfg artifacts.Config) {
-	t.Helper()
-	endpoint, err := url.Parse(cfg.S3Endpoint)
-	if err != nil {
-		t.Skipf("MinIO endpoint %q is not a URL: %v; run `make infra-up`", cfg.S3Endpoint, err)
-	}
-	health := endpoint.JoinPath("/minio/health/live").String()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, health, nil)
-	if err != nil {
-		t.Skipf("MinIO is not reachable at %s: %v; run `make infra-up`", health, err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Skipf("MinIO is not reachable at %s: %v; run `make infra-up`", health, err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Skipf("MinIO health %s returned %d; run `make infra-up`", health, resp.StatusCode)
-	}
-}
+// requireMinIO, shared with the other integration suites in this package,
+// lives in archive_integration_test.go.
 
 // newDurableOrkflowStore builds the store the ork binary builds: orkflow
 // definitions in S3, no process-local copy.
