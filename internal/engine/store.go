@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"sort"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -92,71 +91,6 @@ func (s *RunStore) List(filter ListFilter) []*orkstackv1.Run {
 			continue
 		}
 		out = append(out, proto.Clone(run).(*orkstackv1.Run))
-	}
-	return out
-}
-
-// WorkflowStore keeps compiled orkflows by name and version.
-type WorkflowStore struct {
-	mu       sync.RWMutex
-	byName   map[string]map[string]*orkstackv1.Orkflow
-	latest   map[string]string
-	nameList []string
-}
-
-// NewWorkflowStore returns an empty orkflow store.
-func NewWorkflowStore() *WorkflowStore {
-	return &WorkflowStore{
-		byName: map[string]map[string]*orkstackv1.Orkflow{},
-		latest: map[string]string{},
-	}
-}
-
-// Put stores an orkflow. The most recently applied version becomes "latest"
-// for that name.
-func (s *WorkflowStore) Put(wf *orkstackv1.Orkflow) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	versions, ok := s.byName[wf.GetName()]
-	if !ok {
-		versions = map[string]*orkstackv1.Orkflow{}
-		s.byName[wf.GetName()] = versions
-		s.nameList = append(s.nameList, wf.GetName())
-	}
-	versions[wf.GetVersion()] = proto.Clone(wf).(*orkstackv1.Orkflow)
-	s.latest[wf.GetName()] = wf.GetVersion()
-}
-
-// Get returns the orkflow for name at version; an empty version means the
-// most recently applied one.
-func (s *WorkflowStore) Get(name, version string) (*orkstackv1.Orkflow, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	versions, ok := s.byName[name]
-	if !ok {
-		return nil, false
-	}
-	if version == "" {
-		version = s.latest[name]
-	}
-	wf, ok := versions[version]
-	if !ok {
-		return nil, false
-	}
-	return proto.Clone(wf).(*orkstackv1.Orkflow), true
-}
-
-// List returns the latest version of every orkflow, ordered by name.
-func (s *WorkflowStore) List() []*orkstackv1.Orkflow {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	names := append([]string(nil), s.nameList...)
-	sort.Strings(names)
-	out := make([]*orkstackv1.Orkflow, 0, len(names))
-	for _, name := range names {
-		if wf, ok := s.byName[name][s.latest[name]]; ok {
-			out = append(out, proto.Clone(wf).(*orkstackv1.Orkflow))
-		}
 	}
 	return out
 }

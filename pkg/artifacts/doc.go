@@ -1,4 +1,5 @@
-// Package artifacts defines the artifact Store interface and providers.
+// Package artifacts defines the artifact Store interface and providers, plus
+// the S3 store that holds orkflow definitions.
 //
 // Artifacts are the only way bytes travel between OrkStack tasks: a plugin
 // returns files, the Orker stores them here, and downstream tasks receive
@@ -12,6 +13,15 @@
 // from the Provenance the Orker passes in PutOptions.Metadata, so a URI is
 // readable and an S3 lifecycle rule can expire one orkflow by prefix. URIs use
 // file:// for local objects and s3:// for S3.
+//
+// The same bucket is also the engine's system of record for orkflows:
+// S3OrkflowStore writes one immutable JSON document per version at
+// metadata/orkflows/{name}/{version}.json and reads it back on every call, so
+// an engine restart reloads the catalog instead of losing it.
+//
+//	orkflows, err := artifacts.NewS3OrkflowStore(ctx, artifacts.ConfigFromEnv())
+//	err = orkflows.Put(ctx, compiled)             // apply
+//	catalog, err := orkflows.List(ctx)            // latest version of each
 //
 // Selecting a backend:
 //

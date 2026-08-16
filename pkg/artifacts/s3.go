@@ -107,19 +107,20 @@ func ProvenanceFromMetadata(meta map[string]string) Provenance {
 // compile-time contract check.
 var _ Store = (*S3Store)(nil)
 
-// NewS3Store builds an S3-backed store from cfg. Static credentials are used
-// when both key fields are set; otherwise the standard AWS credential chain
-// applies, so the same code serves MinIO and real AWS.
+// NewS3Store builds an S3-backed store from cfg.
 func NewS3Store(ctx context.Context, cfg Config) (*S3Store, error) {
 	client, bucket, err := newS3Client(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("artifacts: s3 store: %w", err)
+		return nil, err
 	}
 	return &S3Store{client: client, presign: s3.NewPresignClient(client), bucket: bucket}, nil
 }
 
-// newS3Client builds the SDK client and resolves the bucket. The artifact store
-// and the run archive share it, so both reach MinIO and real AWS the same way.
+// newS3Client builds the client and resolves the bucket that both S3-backed
+// stores share: run artifacts (S3Store) and orkflow definitions
+// (S3OrkflowStore). Static credentials are used when both key fields are set;
+// otherwise the standard AWS credential chain applies, so the same code serves
+// MinIO and real AWS.
 func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 	bucket := cfg.S3Bucket
 	if bucket == "" {
@@ -145,7 +146,7 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
-		return nil, "", fmt.Errorf("load aws config: %w", err)
+		return nil, "", fmt.Errorf("artifacts: s3 store: load aws config: %w", err)
 	}
 
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
