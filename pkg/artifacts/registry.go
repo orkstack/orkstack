@@ -75,23 +75,102 @@ func New(cfg Config) (Store, error) {
 // NewFromEnv builds the Store described by the ORK_* environment.
 func NewFromEnv() (Store, error) { return New(ConfigFromEnv()) }
 
+// ArchiveFactory builds a RunArchive from a Config. A backend that can persist
+// finished runs registers one of these.
+type ArchiveFactory func(cfg Config) (RunArchive, error)
+
+var archiveRegistry = map[string]ArchiveFactory{}
+
+// RegisterRunArchive adds a run-archive factory under name, mirroring Register.
+func RegisterRunArchive(name string, f ArchiveFactory) error {
+	if name == "" {
+		return fmt.Errorf("artifacts: register run archive: empty name")
+	}
+	if f == nil {
+		return fmt.Errorf("artifacts: register run archive %q: nil factory", name)
+	}
+
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, exists := archiveRegistry[name]; exists {
+		return fmt.Errorf("artifacts: register run archive %q: already registered", name)
+	}
+	archiveRegistry[name] = f
+	return nil
+}
+
+// RunArchiveBackends lists the backends that can archive runs, sorted.
+func RunArchiveBackends() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
+	names := make([]string, 0, len(archiveRegistry))
+	for name := range archiveRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// NewRunArchive builds the RunArchive named by cfg.Backend, so one
+// ORK_ARTIFACT_BACKEND selects where artifacts and run history both live.
+func NewRunArchive(cfg Config) (RunArchive, error) {
+	name := cfg.Backend
+	if name == "" {
+		name = DefaultBackend
+		cfg.Backend = name
+	}
+
+	registryMu.RLock()
+	f, ok := archiveRegistry[name]
+	registryMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("artifacts: run archive backend %q: %w (registered: %v)",
+			name, ErrUnknownBackend, RunArchiveBackends())
+	}
+
+	archive, err := f(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: run archive backend %q: %w", name, err)
+	}
+	return archive, nil
+}
+
+// NewRunArchiveFromEnv builds the RunArchive described by the ORK_* environment.
+func NewRunArchiveFromEnv() (RunArchive, error) { return NewRunArchive(ConfigFromEnv()) }
+
 func init() {
 	mustRegister(BackendLocal, func(cfg Config) (Store, error) {
-		dir := cfg.LocalDir
-		if dir == "" {
-			dir = DefaultLocalDir
-		}
-		return NewLocalStore(dir)
+		return NewLocalStore(localDir(cfg))
 	})
 	mustRegister(BackendS3, func(cfg Config) (Store, error) {
 		return NewS3Store(context.Background(), cfg)
 	})
+	mustRegisterArchive(BackendLocal, func(cfg Config) (RunArchive, error) {
+		return NewLocalRunArchive(localDir(cfg))
+	})
+	mustRegisterArchive(BackendS3, func(cfg Config) (RunArchive, error) {
+		return NewS3RunArchive(context.Background(), cfg)
+	})
+}
+
+func localDir(cfg Config) string {
+	if cfg.LocalDir == "" {
+		return DefaultLocalDir
+	}
+	return cfg.LocalDir
 }
 
 // mustRegister is only used for this package's own builtin backends, where a
 // duplicate would be an unrecoverable init-time programming error.
 func mustRegister(name string, f Factory) {
 	if err := Register(name, f); err != nil {
+		panic(err)
+	}
+}
+
+func mustRegisterArchive(name string, f ArchiveFactory) {
+	if err := RegisterRunArchive(name, f); err != nil {
 		panic(err)
 	}
 }

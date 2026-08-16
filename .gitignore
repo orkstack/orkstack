@@ -21,7 +21,9 @@ ui/dist/
 !.env.example
 
 # Local data / artifacts
-/.data/
+# Unanchored: `ork` writes its local run archive under the process's working
+# directory, which for `go test ./cmd/...` is the package directory.
+.data/
 /tmp/
 *.log
 

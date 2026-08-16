@@ -23,6 +23,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -53,6 +54,14 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// archiveLocation renders where archived runs land, for the boot log.
+func archiveLocation(cfg artifacts.Config) string {
+	if cfg.Backend == artifacts.BackendS3 {
+		return "s3://" + cfg.S3Bucket + "/" + artifacts.RunArchiveNamespace
+	}
+	return cfg.LocalDir + "/" + artifacts.RunArchiveNamespace
 }
 
 func main() {
@@ -109,6 +118,18 @@ func run(logger *slog.Logger, cfg config) error {
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
 
+	// Run archive: the durable half of the read model. The in-process store
+	// answers live runs; the archive holds every finished run, so history
+	// outlives this process.
+	archiveConfig := artifacts.ConfigFromEnv()
+	archiveStore, err := artifacts.NewRunArchive(archiveConfig)
+	if err != nil {
+		return err
+	}
+	archive := engine.NewRunArchiver(archiveStore)
+	logger.Info("run archive ready",
+		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
+
 	// Workflow worker: hosts RunWorkflow on the same queue Orkers poll for
 	// task activities.
 	runWorker := worker.New(temporalClient, task.DefaultQueue, runWorkerOptions())
@@ -120,7 +141,7 @@ func run(logger *slog.Logger, cfg config) error {
 	// Orkers never receive them.
 	eventWorker := worker.New(temporalClient, engine.EventQueue, eventWorkerOptions())
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewEventActivities(bus, runs).PublishEvent,
+		engine.NewArchivingEventActivities(bus, runs, archive).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
@@ -141,6 +162,7 @@ func run(logger *slog.Logger, cfg config) error {
 		Bus:       bus,
 		Starter:   starter,
 		Lister:    starter,
+		Archive:   archive,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,

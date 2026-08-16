@@ -111,6 +111,16 @@ var _ Store = (*S3Store)(nil)
 // when both key fields are set; otherwise the standard AWS credential chain
 // applies, so the same code serves MinIO and real AWS.
 func NewS3Store(ctx context.Context, cfg Config) (*S3Store, error) {
+	client, bucket, err := newS3Client(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: s3 store: %w", err)
+	}
+	return &S3Store{client: client, presign: s3.NewPresignClient(client), bucket: bucket}, nil
+}
+
+// newS3Client builds the SDK client and resolves the bucket. The artifact store
+// and the run archive share it, so both reach MinIO and real AWS the same way.
+func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 	bucket := cfg.S3Bucket
 	if bucket == "" {
 		bucket = DefaultS3Bucket
@@ -135,7 +145,7 @@ func NewS3Store(ctx context.Context, cfg Config) (*S3Store, error) {
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("artifacts: s3 store: load aws config: %w", err)
+		return nil, "", fmt.Errorf("load aws config: %w", err)
 	}
 
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
@@ -144,7 +154,7 @@ func NewS3Store(ctx context.Context, cfg Config) (*S3Store, error) {
 		}
 		o.UsePathStyle = cfg.S3PathStyle
 	})
-	return &S3Store{client: client, presign: s3.NewPresignClient(client), bucket: bucket}, nil
+	return client, bucket, nil
 }
 
 // Bucket returns the bucket this store reads and writes.
