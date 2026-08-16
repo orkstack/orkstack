@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -29,6 +31,22 @@ type PluginLister interface {
 	ListPlugins(ctx context.Context) ([]plugin.Descriptor, error)
 }
 
+// RunArchive is the seam between the API and durable run history. The
+// in-process read model only knows the runs this process has seen; the archive
+// knows every run that ever finished, which is what makes `run get` and
+// `run list` survive an engine restart. Tests substitute a fake.
+type RunArchive interface {
+	// Archive writes a finished run and its events.
+	Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event) error
+	// LoadRun returns an archived run, or an error matching
+	// artifacts.ErrNotFound when the run was never archived.
+	LoadRun(ctx context.Context, runID string) (*orkstackv1.Run, error)
+	// LoadRunEvents returns an archived run's events, in sequence order.
+	LoadRunEvents(ctx context.Context, runID string) ([]*orkstackv1.Event, error)
+	// ListRuns returns archived runs matching q, newest first.
+	ListRuns(ctx context.Context, q engine.ArchiveQuery) ([]*orkstackv1.Run, error)
+}
+
 // Config wires a Service to its stores and Temporal seams.
 type Config struct {
 	Workflows *engine.WorkflowStore
@@ -36,6 +54,9 @@ type Config struct {
 	Bus       *engine.EventBus
 	Starter   RunStarter
 	Lister    PluginLister
+
+	// Archive is the durable run history. Nil keeps runs in process only.
+	Archive RunArchive
 
 	// Plugins is the fallback discovery set for PluginService.ListPlugins
 	// when no live Orker lister is configured.
@@ -53,6 +74,7 @@ type Service struct {
 	bus       *engine.EventBus
 	starter   RunStarter
 	lister    PluginLister
+	archive   RunArchive
 	plugins   []*orkstackv1.PluginInfo
 	now       func() time.Time
 	newRunID  func() string
@@ -71,6 +93,7 @@ func NewService(cfg Config) *Service {
 		bus:            cfg.Bus,
 		starter:        cfg.Starter,
 		lister:         cfg.Lister,
+		archive:        cfg.Archive,
 		plugins:        cfg.Plugins,
 		now:            cfg.Now,
 		newRunID:       cfg.NewRunID,
@@ -246,6 +269,10 @@ func (s *Service) startPreparedRun(
 			Message:   err.Error(),
 			Timestamp: failedAt,
 		}, runID+"#failed")
+		// A run that never reached Temporal still ends here, so this is the
+		// only place that can archive it. The engine's write-through covers
+		// every run that did start.
+		s.archiveRun(ctx, runID)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
@@ -253,34 +280,132 @@ func (s *Service) startPreparedRun(
 	return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: stored}), nil
 }
 
-// GetRun returns a run from the read model.
-func (s *Service) GetRun(
-	_ context.Context,
-	req *connect.Request[orkstackv1.GetRunRequest],
-) (*connect.Response[orkstackv1.GetRunResponse], error) {
-	if req.Msg.GetRunId() == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
+// archiveRun writes a terminal run to the archive. Archiving is durability, not
+// orchestration: a failure here must not turn a recorded outcome into a
+// different error for the caller, so it is reported through the run's own
+// error and otherwise dropped.
+func (s *Service) archiveRun(ctx context.Context, runID string) {
+	if s.archive == nil {
+		return
 	}
-	run, ok := s.runs.Get(req.Msg.GetRunId())
+	run, ok := s.runs.Get(runID)
 	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", req.Msg.GetRunId()))
+		return
 	}
-	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
+	_ = s.archive.Archive(ctx, run, s.bus.Events(runID, 0))
 }
 
-// ListRuns returns runs, newest first, with optional filters.
+// ArchivedEvents returns the events archived for a run, after fromSequence. It
+// is the read path for a run this process never executed, and it reports the
+// same Connect errors the live path would: NotFound when nothing was archived
+// under that id, Internal when the archive itself is unreachable.
+func (s *Service) ArchivedEvents(
+	ctx context.Context,
+	runID string,
+	fromSequence int64,
+) ([]*orkstackv1.Event, error) {
+	if s.archive == nil {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
+	}
+	events, err := s.archive.LoadRunEvents(ctx, runID)
+	switch {
+	case errors.Is(err, artifacts.ErrNotFound):
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
+	case err != nil:
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("read run %q from archive: %w", runID, err))
+	}
+	after := make([]*orkstackv1.Event, 0, len(events))
+	for _, event := range events {
+		if event.GetSequence() > fromSequence {
+			after = append(after, event)
+		}
+	}
+	return after, nil
+}
+
+// GetRun returns a run: the live read model first, because a running run's
+// snapshot is fresher there, then the archive, which still holds every run this
+// process never saw — including everything from before the last restart.
+func (s *Service) GetRun(
+	ctx context.Context,
+	req *connect.Request[orkstackv1.GetRunRequest],
+) (*connect.Response[orkstackv1.GetRunResponse], error) {
+	runID := req.Msg.GetRunId()
+	if runID == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
+	}
+	if run, ok := s.runs.Get(runID); ok {
+		return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
+	}
+	if s.archive != nil {
+		run, err := s.archive.LoadRun(ctx, runID)
+		switch {
+		case err == nil:
+			return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
+		case !errors.Is(err, artifacts.ErrNotFound):
+			return nil, connect.NewError(connect.CodeInternal,
+				fmt.Errorf("read run %q from archive: %w", runID, err))
+		}
+	}
+	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
+}
+
+// ListRuns returns runs, newest first, with optional filters. Results merge the
+// live read model with the archive, so a query sees runs still executing and
+// runs that finished before this process started. A run present in both is
+// reported from the live model, which is at least as fresh as the archive.
 func (s *Service) ListRuns(
-	_ context.Context,
+	ctx context.Context,
 	req *connect.Request[orkstackv1.ListRunsRequest],
 ) (*connect.Response[orkstackv1.ListRunsResponse], error) {
+	size := int(req.Msg.GetPageSize())
 	runs := s.runs.List(engine.ListFilter{
 		WorkflowName: req.Msg.GetWorkflowName(),
 		Status:       req.Msg.GetStatus(),
 	})
-	if size := int(req.Msg.GetPageSize()); size > 0 && size < len(runs) {
+	if s.archive != nil {
+		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
+			WorkflowName: req.Msg.GetWorkflowName(),
+			Status:       req.Msg.GetStatus(),
+			Limit:        size,
+		})
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal,
+				fmt.Errorf("list runs from archive: %w", err))
+		}
+		runs = mergeRuns(runs, archived)
+	}
+	if size > 0 && size < len(runs) {
 		runs = runs[:size]
 	}
 	return connect.NewResponse(&orkstackv1.ListRunsResponse{Runs: runs}), nil
+}
+
+// mergeRuns folds archived runs into the live ones, newest first. Live wins on
+// a duplicate id, and equal timestamps fall back to the id so the order of a
+// page never depends on map iteration.
+func mergeRuns(live, archived []*orkstackv1.Run) []*orkstackv1.Run {
+	merged := make([]*orkstackv1.Run, 0, len(live)+len(archived))
+	seen := make(map[string]struct{}, len(live))
+	for _, run := range live {
+		seen[run.GetId()] = struct{}{}
+		merged = append(merged, run)
+	}
+	for _, run := range archived {
+		if _, duplicate := seen[run.GetId()]; duplicate {
+			continue
+		}
+		merged = append(merged, run)
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		a, b := engine.RunIndexTime(merged[i]), engine.RunIndexTime(merged[j])
+		if !a.Equal(b) {
+			return a.After(b)
+		}
+		return merged[i].GetId() > merged[j].GetId()
+	})
+	return merged
 }
 
 // CancelRun requests cancellation of a run's Temporal workflow.
@@ -306,6 +431,10 @@ func (s *Service) CancelRun(
 
 // StreamEvents server-streams a run's events: the backlog after from_sequence
 // followed by live events, ending when the run reaches a terminal event.
+//
+// A run this process never saw is replayed from the archive instead. It is
+// finished by definition — nothing archives before its terminal event — so the
+// replay is the whole stream and the call returns when it is sent.
 func (s *Service) StreamEvents(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.StreamEventsRequest],
@@ -316,7 +445,16 @@ func (s *Service) StreamEvents(
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
 	}
 	if _, ok := s.runs.Get(runID); !ok {
-		return connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
+		archived, err := s.ArchivedEvents(ctx, runID, req.Msg.GetFromSequence())
+		if err != nil {
+			return err
+		}
+		for _, event := range archived {
+			if err := stream.Send(event); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	events, cancel, terminalAlreadyReached := s.bus.Subscribe(runID, req.Msg.GetFromSequence())
