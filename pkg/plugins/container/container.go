@@ -176,9 +176,15 @@ func (p *Plugin) execPull(ctx context.Context, ec *plugin.ExecContext) (*plugin.
 	if err != nil {
 		return nil, err
 	}
+	seconds, err := configSeconds(ec.Config, "timeout_seconds")
+	if err != nil {
+		return nil, plugin.Permanent(fmt.Errorf("container: %w", err))
+	}
+	timeout := time.Duration(seconds * float64(time.Second))
+
 	log := logger(ec)
 	log("container: pulling %s", image)
-	if err := p.pullImage(ctx, image); err != nil {
+	if err := p.pullImageWithTimeout(ctx, image, timeout); err != nil {
 		return nil, err
 	}
 	return &plugin.Result{Output: plugin.Payload{
@@ -223,7 +229,7 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 
 	log := logger(ec)
 
-	pulled, err := p.acquireImage(ctx, image, policy, log)
+	pulled, err := p.acquireImage(ctx, image, policy, timeout, log)
 	if err != nil {
 		return nil, err
 	}
@@ -345,11 +351,12 @@ func (p *Plugin) runFailure(req runRequest, outcome runOutcome, streams *streamS
 func (p *Plugin) acquireImage(
 	ctx context.Context,
 	image, policy string,
+	timeout time.Duration,
 	log plugin.Logger,
 ) (bool, error) {
 	if policy == pullAlways {
 		log("container: pulling %s (pull: always)", image)
-		if err := p.pullImage(ctx, image); err != nil {
+		if err := p.pullImageWithTimeout(ctx, image, timeout); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -368,7 +375,7 @@ func (p *Plugin) acquireImage(
 			"container: image %s is not present locally and `pull: never` forbids fetching it", image))
 	}
 	log("container: %s is not present locally; pulling it", image)
-	if err := p.pullImage(ctx, image); err != nil {
+	if err := p.pullImageWithTimeout(ctx, image, timeout); err != nil {
 		return false, err
 	}
 	return true, nil

@@ -42,6 +42,15 @@ const (
 // cleaning up after a kill is exactly when the context is already gone.
 const controlCommandTimeout = 30 * time.Second
 
+// pullImageTimeout is the maximum duration allowed for docker pull operations.
+// Large images may take several minutes to download; 5 minutes is a reasonable
+// default that applications can override via timeout_seconds or the env var.
+const pullImageTimeout = 5 * time.Minute
+
+// pullImageTimeoutVar names the environment variable that overrides the default
+// pull timeout. It's a duration string (e.g. "10m", "600s").
+const pullImageTimeoutVar = "ORK_DOCKER_PULL_TIMEOUT"
+
 // dockerBin resolves the CLI to drive. An explicit path is used verbatim so a
 // test can point the plugin at a stand-in; a bare name is looked up on PATH.
 func (p *Plugin) dockerBin() (string, error) {
@@ -67,6 +76,7 @@ func (p *Plugin) dockerBin() (string, error) {
 
 // control runs a short docker command and returns its exit code plus combined
 // output. Only a failure to start the CLI is an error; a non-zero exit is data.
+// Failures to start the CLI are errors; exit codes are data.
 func (p *Plugin) control(ctx context.Context, args ...string) (int, string, error) {
 	bin, err := p.dockerBin()
 	if err != nil {
@@ -79,11 +89,14 @@ func (p *Plugin) control(ctx context.Context, args ...string) (int, string, erro
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
+	cmd.WaitDelay = 100 * time.Millisecond // prevent blocking on inherited pipes
 	switch err := cmd.Run(); {
 	case err == nil:
 		return 0, combined.String(), nil
 	case isExitError(err):
 		return exitCodeOf(err), combined.String(), nil
+	case ctx.Err() != nil:
+		return 0, combined.String(), fmt.Errorf("container: docker %s: %w", args[0], ctx.Err())
 	default:
 		return 0, combined.String(), fmt.Errorf("container: docker %s: %w", args[0], err)
 	}
@@ -98,18 +111,66 @@ func (p *Plugin) imagePresent(ctx context.Context, image string) (bool, error) {
 	return code == 0, nil
 }
 
-// pullImage fetches the image from its registry. A pull failure stays
-// retryable: registries rate-limit and networks blink.
-func (p *Plugin) pullImage(ctx context.Context, image string) error {
-	code, output, err := p.control(ctx, "pull", image)
+// pullImageWithTimeout fetches the image from its registry with an explicit
+// timeout. If the timeout is zero, uses the default pull timeout.
+// A pull failure stays retryable: registries rate-limit and networks blink.
+func (p *Plugin) pullImageWithTimeout(ctx context.Context, image string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = pullImageTimeout
+		if env := strings.TrimSpace(os.Getenv(pullImageTimeoutVar)); env != "" {
+			if parsed, err := time.ParseDuration(env); err == nil {
+				timeout = parsed
+			}
+		}
+	}
+
+	pullCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	code, output, err := p.controlWithContext(pullCtx, "pull", image)
 	if err != nil {
 		return err
 	}
 	if code != 0 {
+		if pullCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("container: pull %s timed out after %v", image, timeout)
+		}
 		return fmt.Errorf("container: pull %s failed (docker exited %d): %s",
 			image, code, strings.TrimSpace(output))
 	}
 	return nil
+}
+
+// pullImage fetches the image from its registry using the default timeout.
+// A pull failure stays retryable: registries rate-limit and networks blink.
+func (p *Plugin) pullImage(ctx context.Context, image string) error {
+	return p.pullImageWithTimeout(ctx, image, 0)
+}
+
+// controlWithContext is like control() but does NOT override the context timeout;
+// it uses the supplied context directly. This allows callerslike pullImageWithTimeout
+// to impose a custom deadline.
+func (p *Plugin) controlWithContext(ctx context.Context, args ...string) (int, string, error) {
+	bin, err := p.dockerBin()
+	if err != nil {
+		return 0, "", err
+	}
+
+	var combined bytes.Buffer
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Stdout = &combined
+	cmd.Stderr = &combined
+	cmd.WaitDelay = 100 * time.Millisecond // prevent blocking on inherited pipes
+	switch err := cmd.Run(); {
+	case err == nil:
+		return 0, combined.String(), nil
+	case isExitError(err):
+		return exitCodeOf(err), combined.String(), nil
+	case ctx.Err() != nil:
+		return 0, combined.String(), fmt.Errorf("container: docker %s: %w", args[0], ctx.Err())
+	default:
+		return 0, combined.String(), fmt.Errorf("container: docker %s: %w", args[0], err)
+	}
 }
 
 // removeContainer is the cleanup safety net. `docker run --rm` already removes
