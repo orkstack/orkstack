@@ -232,11 +232,18 @@ submitted runs sit at `HistoryLength 2` (`WorkflowExecutionStarted`,
 `WorkflowTaskScheduled`), no pending activities, indefinitely. Nothing in the
 logs says why, because nothing is wrong with the workers.
 
-One call fixes it, and no worker has to restart:
+One call fixes it, and no worker has to restart. It has to be told **where**,
+though: the `temporal` CLI reads none of the `ORK_` variables above. Its own
+defaults are the namespace `default` on `localhost:7233`, so a bare command
+does not fail — it succeeds, against a namespace nobody deployed to, or on a
+laptop rather than the cluster. Every invocation in this document therefore
+passes `--namespace` and `--address`, and names the deployment through
+`$ORK_DEPLOYMENT_NAME` rather than repeating a literal that §1 already owns.
 
 ```bash
 temporal worker deployment set-current-version \
-  --deployment-name orkstack --build-id "$ORK_BUILD_ID"
+  --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$ORK_BUILD_ID" \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
 ```
 
 Backlogged runs start within seconds of it. §3 step 0 is the full first-release
@@ -328,11 +335,17 @@ replica the v1 release does not contain.
 ## 3. Rolling a release forward
 
 ```bash
-export ORK_DEPLOYMENT_NAME=orkstack
+export ORK_DEPLOYMENT_NAME=orkstack          # §1's default, stated once
 export ORK_TEMPORAL_NAMESPACE=ork-main
+export ORK_TEMPORAL_ADDRESS=localhost:7233   # the frontend of the cluster you mean
 NEW=2026.08.16-a1b2c3d      # v2
 OLD=2026.08.09-9f8e7d6      # v1, currently serving
 ```
+
+The last two are for **you**; the CLI reads neither (§1), which is why every
+command below hands it both. `proof/M8.5/ha-deploy.sh` runs this whole
+sequence exactly this way — that is the version of these commands that is
+known to work.
 
 Steps 1–6 are every release that has a predecessor. **The very first versioned
 release of a deployment has none, so start at step 0** — skip it and the
@@ -347,12 +360,16 @@ release runs nothing at all (§1).
 
    # both queues must report pollers first — same check as step 2
    temporal worker deployment describe-version \
-     --deployment-name orkstack --build-id "$FIRST"
+     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$FIRST" \
+     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
 
    temporal worker deployment set-current-version \
-     --deployment-name orkstack --build-id "$FIRST"
+     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$FIRST" \
+     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
 
-   temporal worker deployment list      # CurrentVersionBuildID must not be empty
+   # CurrentVersionBuildID must not be empty
+   temporal worker deployment list \
+     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
    ```
 
    Runs submitted before that call are backlogged, not lost: they start within
@@ -380,7 +397,8 @@ release runs nothing at all (§1).
 
    ```bash
    temporal worker deployment describe-version \
-     --deployment-name orkstack --build-id "$NEW"
+     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" \
+     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
    ```
 
    Two entries must be there, one per role. They are two different queue names
@@ -406,7 +424,8 @@ release runs nothing at all (§1).
 
    ```bash
    temporal worker deployment set-ramping-version \
-     --deployment-name orkstack --build-id "$NEW" --percentage 10
+     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" --percentage 10 \
+     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
    ```
 
    New runs split between the versions. Watch error rates. Raise the percentage
@@ -416,7 +435,8 @@ release runs nothing at all (§1).
 
    ```bash
    temporal worker deployment set-current-version \
-     --deployment-name orkstack --build-id "$NEW"
+     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" \
+     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
    ```
 
    From this moment every **new** run executes on v2. Every run already in
@@ -436,9 +456,9 @@ release runs nothing at all (§1).
    ```bash
    # both physical queues, engine and Orker, must report the new version
    go run ./proof/M8.4/tools/queue-routing \
-     -namespace "$ORK_TEMPORAL_NAMESPACE" \
+     -namespace "$ORK_TEMPORAL_NAMESPACE" -address "$ORK_TEMPORAL_ADDRESS" \
      -queue ork-tasks:workflow -queue ork-tasks-gpu-pool:activity \
-     -want "orkstack.$NEW"
+     -want "$ORK_DEPLOYMENT_NAME.$NEW"
    ```
 
    It is a Go program because the CLI does not surface this: `versioning_info`
@@ -451,7 +471,8 @@ release runs nothing at all (§1).
 
    ```bash
    temporal worker deployment describe-version \
-     --deployment-name orkstack --build-id "$OLD" \
+     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$OLD" \
+     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS" \
      | grep -i drainage
    # DrainageStatus: Draining  → v1 still has pinned runs executing
    # DrainageStatus: Drained   → safe to stop v1
@@ -519,7 +540,8 @@ not about versioning: an Orker killed mid-task loses that attempt until its
 
 ```bash
 temporal worker deployment set-current-version \
-  --deployment-name orkstack --build-id "$OLD"
+  --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$OLD" \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
 ```
 
 New runs go back to v1 immediately. **Runs already pinned to v2 keep finishing
@@ -544,8 +566,9 @@ per-execution versioning override:
 temporal workflow update-options \
   --workflow-id ork-1786941899450567000 \
   --versioning-override-behavior pinned \
-  --versioning-override-deployment-name orkstack \
-  --versioning-override-build-id "$OLD"
+  --versioning-override-deployment-name "$ORK_DEPLOYMENT_NAME" \
+  --versioning-override-build-id "$OLD" \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
 ```
 
 That moves one run onto a version that did not start it, so the determinism
@@ -560,7 +583,8 @@ not a release step — point its Current Version at the unversioned workers:
 
 ```bash
 temporal worker deployment set-current-version \
-  --deployment-name orkstack --unversioned
+  --deployment-name "$ORK_DEPLOYMENT_NAME" --unversioned \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
 ```
 
 New runs then go to whatever unversioned pollers exist, so start those first;
@@ -573,9 +597,16 @@ Runs already pinned to a version still need that version's workers.
 ## 5. Ops notes
 
 - **Run ids** are `ork-{timestamp}-{sequence}` and single-use for all time.
-  Nothing may parse or order by one — the sequence carries a per-process nonce
-  in its high half (`internal/engine/runid.go`), so it is comparable only
-  within one replica and means nothing across two.
+  Nothing may parse one or derive meaning from its parts — the sequence
+  carries a per-process nonce in its high half (`internal/engine/runid.go`),
+  so it is comparable only within one replica and means nothing across two.
+  Order runs by `created_at`. The one exception, and it is not a licence to
+  order by id: two places compare ids to break a tie between runs with the
+  *same* timestamp, so a page is stable rather than arbitrary — `mergeRuns`
+  (`internal/api/service.go`, guarded by
+  `TestListRuns_OrdersRunsByTimeNotByRunID`) and `RunQuery.finish`, which
+  orders one page of the archive index (`pkg/artifacts/archive.go`). Those two
+  are the whole list; `proof/M8.5/docs-claims.sh` fails if a third appears.
 - **Any replica answers any run** (§0). Live runs are read from Temporal,
   finished ones from the archive in the bucket — the half that needs
   `ORK_ARTIFACT_BACKEND=s3` (§1), because on the default `local` backend each

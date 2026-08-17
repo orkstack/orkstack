@@ -6,7 +6,8 @@
 //
 //	go test -tags=integration ./pkg/artifacts/... -count=1
 //
-// The tests skip (never fail) when MinIO is unreachable.
+// The tests skip (never fail) when MinIO is unreachable, unless
+// ORK_REQUIRE_INFRA is set — see infraAbsent in infra_required_test.go.
 package artifacts_test
 
 import (
@@ -53,7 +54,7 @@ func requireMinIO(t *testing.T, cfg artifacts.Config) {
 	t.Helper()
 	base, err := url.Parse(cfg.S3Endpoint)
 	if err != nil {
-		t.Skipf(skipReason, cfg.S3Endpoint, err)
+		infraAbsent(t, skipReason, cfg.S3Endpoint, err)
 	}
 	health := base.JoinPath(minioHealthURL).String()
 
@@ -61,16 +62,16 @@ func requireMinIO(t *testing.T, cfg artifacts.Config) {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, health, nil)
 	if err != nil {
-		t.Skipf(skipReason, health, err)
+		infraAbsent(t, skipReason, health, err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Skipf(skipReason, health, err)
+		infraAbsent(t, skipReason, health, err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		t.Skipf(skipReason, health, fmt.Errorf("health status %d", resp.StatusCode))
+		infraAbsent(t, skipReason, health, fmt.Errorf("health status %d", resp.StatusCode))
 	}
 	t.Logf("MinIO health %s -> %d", health, resp.StatusCode)
 }

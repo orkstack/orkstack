@@ -61,7 +61,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		t.Skipf("temporal is not reachable at %s: %v", address, err)
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
 	}
 	_ = conn.Close()
 
@@ -466,7 +466,7 @@ func dialIsolatedNamespace(
 		Namespace: client.DefaultNamespace,
 	})
 	if err != nil {
-		t.Skipf("cannot dial temporal at %s: %v", address, err)
+		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
 	if err := task.EnsureNamespace(ctx, bootstrap, namespace); err != nil {
 		bootstrap.Close()
@@ -497,28 +497,30 @@ func idempotencyTaskQueue() string {
 }
 
 // requireMinIOForIdempotency skips when the dev object store is absent, so the
-// suite reports "skipped", never a false failure, without infrastructure.
+// suite reports "skipped", never a false failure, without infrastructure — and
+// fails instead under ORK_REQUIRE_INFRA, where the absence IS the failure
+// (see infraAbsent).
 func requireMinIOForIdempotency(t *testing.T, cfg artifacts.Config) {
 	t.Helper()
 	base, err := url.Parse(cfg.S3Endpoint)
 	if err != nil {
-		t.Skipf("MinIO endpoint %q is unusable: %v", cfg.S3Endpoint, err)
+		infraAbsent(t, "MinIO endpoint %q is unusable: %v", cfg.S3Endpoint, err)
 	}
 	health := base.JoinPath("/minio/health/live").String()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, health, nil)
 	if err != nil {
-		t.Skipf("MinIO health request: %v", err)
+		infraAbsent(t, "MinIO health request: %v", err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Skipf("MinIO not reachable at %s (%v); run `make infra-up`", health, err)
+		infraAbsent(t, "MinIO not reachable at %s (%v); run `make infra-up`", health, err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		t.Skipf("MinIO health %s returned %d; run `make infra-up`", health, resp.StatusCode)
+		infraAbsent(t, "MinIO health %s returned %d; run `make infra-up`", health, resp.StatusCode)
 	}
 	t.Logf("MinIO health %s -> %d", health, resp.StatusCode)
 }

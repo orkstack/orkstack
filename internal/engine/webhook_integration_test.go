@@ -90,7 +90,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		t.Skipf("temporal is not reachable at %s: %v", address, err)
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
 	}
 	_ = conn.Close()
 
@@ -102,7 +102,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 		Namespace: client.DefaultNamespace,
 	})
 	if err != nil {
-		t.Skipf("cannot dial temporal at %s: %v", address, err)
+		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
 	defer temporalClient.Close()
 
@@ -322,7 +322,7 @@ func TestIntegration_WebhookRetriesUntilTheReceiverAccepts(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		t.Skipf("temporal is not reachable at %s: %v", address, err)
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
 	}
 	_ = conn.Close()
 

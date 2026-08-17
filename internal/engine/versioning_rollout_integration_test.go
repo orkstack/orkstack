@@ -46,7 +46,7 @@ func dialVersioningCluster(t *testing.T, ctx context.Context, namespace string) 
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		t.Skipf("temporal is not reachable at %s: %v", address, err)
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
 	}
 	_ = conn.Close()
 
@@ -55,7 +55,7 @@ func dialVersioningCluster(t *testing.T, ctx context.Context, namespace string) 
 		Namespace: client.DefaultNamespace,
 	})
 	if err != nil {
-		t.Skipf("cannot dial temporal at %s: %v", address, err)
+		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
 	if err := task.EnsureNamespace(ctx, bootstrap, namespace); err != nil {
 		bootstrap.Close()

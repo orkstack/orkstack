@@ -189,12 +189,13 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	writeTwoReplicaTranscript(t, namespace, runID, orkflowName, liveRun, finished, fromB, archived)
 }
 
-// requireTemporal skips cleanly when the dev cluster is absent.
+// requireTemporal skips cleanly when the dev cluster is absent — or fails,
+// under ORK_REQUIRE_INFRA (see infraAbsent).
 func requireTemporal(t *testing.T, address string) {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		t.Skipf("temporal is not reachable at %s: %v", address, err)
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
 	}
 	_ = conn.Close()
 }

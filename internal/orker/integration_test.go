@@ -53,7 +53,7 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		t.Skipf("temporal is not reachable at %s: %v", address, err)
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
 	}
 	_ = conn.Close()
 
@@ -62,7 +62,7 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 	requireMinIO(t, storeConfig.S3Endpoint)
 	store, err := artifacts.New(storeConfig)
 	if err != nil {
-		t.Skipf("cannot open the s3 artifact store at %s: %v", storeConfig.S3Endpoint, err)
+		infraAbsent(t, "cannot open the s3 artifact store at %s: %v", storeConfig.S3Endpoint, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -73,7 +73,7 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 		Namespace: client.DefaultNamespace,
 	})
 	if err != nil {
-		t.Skipf("cannot dial temporal at %s: %v", address, err)
+		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
 	defer temporalClient.Close()
 
@@ -284,18 +284,19 @@ func assertReadableArtifactURIs(
 }
 
 // requireMinIO skips the test unless the MinIO endpoint answers its health
-// probe, matching the engine test's reachability convention.
+// probe, matching the engine test's reachability convention — and fails
+// instead under ORK_REQUIRE_INFRA (see infraAbsent).
 func requireMinIO(t *testing.T, endpoint string) {
 	t.Helper()
 	probe := strings.TrimSuffix(endpoint, "/") + "/minio/health/live"
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(probe)
 	if err != nil {
-		t.Skipf("minio is not reachable at %s: %v", endpoint, err)
+		infraAbsent(t, "minio is not reachable at %s: %v", endpoint, err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Skipf("minio health probe %s returned %d", probe, resp.StatusCode)
+		infraAbsent(t, "minio health probe %s returned %d", probe, resp.StatusCode)
 	}
 }
 

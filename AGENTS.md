@@ -144,7 +144,9 @@ scripts/               Dev helper scripts
   `TestWorkflowEnvironment` to test engine workflows with mocked activities.
 - **Integration**: gated behind `-tags=integration` and a running
   `make infra-up`; exercise real Temporal + MinIO. Skip cleanly when infra is
-  absent (`t.Skip`).
+  absent — through the package's `infraAbsent` helper, never a bare `t.Skip`,
+  so that a proof run can set `ORK_REQUIRE_INFRA=1` and turn the same absence
+  into a failure (§6).
 - **E2E**: full stack — CLI submits, Orker executes, artifacts land in MinIO, UI
   reflects it. Lives in `test/e2e` and drives real binaries.
 - Name tests for behavior, after one from the tree:
@@ -160,6 +162,29 @@ Every milestone writes evidence under `proof/<milestone>/`:
 - A behavior trace: e.g. a run's event stream JSON, an artifact roundtrip
   transcript, a CLI session recording, or UI screenshots/video.
 - A short `README.md` stating what was proven and how to reproduce.
+
+### A skipped prerequisite is not a pass
+
+`go test` exits 0 for a package whose every test called `t.Skip`, and a proof
+script that reads only an exit code cannot tell *proved* from *declined to
+run*. M8.5 was caught doing exactly that: on a machine with no cluster its
+`ha-deploy.sh` skipped, exited 0, and `reproduce.sh` printed
+`M8.5 PROOF: PASS` over artifacts left by an earlier execution. Three rules
+close it, and every script under `proof/` obeys them:
+
+- **Exit 0 = PASS, 1 = FAIL, 77 = SKIPPED/INCOMPLETE.** 77 is automake's skip
+  code: a prerequisite was absent, so nothing was measured. A caller
+  propagates it and never records it as green.
+- **Probe, then require.** A script that finds the cluster up exports
+  `ORK_REQUIRE_INFRA=1`, which makes every "infrastructure is absent" skip in
+  the module a failure instead. A skip is then not a fact about the
+  environment; it is a test opting out of the proof.
+- **An artifact counts only if this run wrote it.** Existence proves nothing —
+  yesterday's file exists too. `proof/M8.5/reproduce.sh` compares every
+  artifact against a marker stamped at startup and reports the rest as STALE.
+
+A skipped run must also leave the last real transcript alone: `ha-deploy.sh`
+decides its prerequisites *before* it opens the file it writes.
 
 ### Integration tests share one Temporal namespace — isolate parallel runs by namespace
 
