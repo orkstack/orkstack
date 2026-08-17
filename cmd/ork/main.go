@@ -47,6 +47,7 @@ type config struct {
 	httpAddr          string
 	allowedOrigins    []string
 	orkerQueue        string
+	idempotencyTTL    time.Duration
 }
 
 func loadConfig() config {
@@ -55,11 +56,27 @@ func loadConfig() config {
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		httpAddr:          env("ORK_HTTP_ADDR", api.DefaultHTTPAddr),
 		orkerQueue:        env("ORK_ORKER_QUEUE", task.DefaultQueue),
+		idempotencyTTL:    envDuration("ORK_IDEMPOTENCY_TTL", engine.DefaultClaimTTL),
 	}
 	if origins := env("ORK_WS_ALLOWED_ORIGINS", ""); origins != "" {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
 	return cfg
+}
+
+// envDuration reads a Go duration ("24h", "30m"). An unparsable value falls
+// back rather than failing boot: the engine still runs correctly with the
+// default, and a refused start would be a worse answer to a typo.
+func envDuration(key string, fallback time.Duration) time.Duration {
+	raw := env(key, "")
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func env(key, fallback string) string {
@@ -202,10 +219,14 @@ func run(logger *slog.Logger, cfg config) error {
 		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
 
 	// Workflow worker: hosts RunWorkflow on the same queue Orkers poll for
-	// task activities.
+	// task activities, and the idempotency claims, which are engine state no
+	// Orker ever sees.
 	runWorker := worker.New(temporalClient, task.DefaultQueue, runWorkerOptions())
 	runWorker.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
 		Name: engine.WorkflowName,
+	})
+	runWorker.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow, workflow.RegisterOptions{
+		Name: engine.ClaimWorkflowName,
 	})
 
 	// Projection worker: engine-internal activities on a dedicated queue so
@@ -230,15 +251,24 @@ func run(logger *slog.Logger, cfg config) error {
 		"task_queue", task.DefaultQueue, "event_queue", engine.EventQueue,
 		"orker_queue", cfg.orkerQueue)
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, cfg.orkerQueue)
+
+	// Idempotency: the cluster decides which run a key names, so every replica
+	// behind this address gets the same answer. Nothing about dedupe lives in
+	// this process.
+	idempotency := engine.NewTemporalIdempotency(temporalClient, task.DefaultQueue, cfg.idempotencyTTL)
+	logger.Info("idempotency claims ready",
+		"workflow", engine.ClaimWorkflowName, "ttl", cfg.idempotencyTTL)
+
 	svc := api.NewService(api.Config{
-		Workflows: orkflows,
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   starter,
-		Lister:    starter,
-		Archive:   archive,
-		Webhooks:  webhookRegistry,
-		Notifier:  runNotifier,
+		Workflows:   orkflows,
+		Runs:        runs,
+		Bus:         bus,
+		Starter:     starter,
+		Lister:      starter,
+		Archive:     archive,
+		Idempotency: idempotency,
+		Webhooks:    webhookRegistry,
+		Notifier:    runNotifier,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,

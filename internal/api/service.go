@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -15,6 +14,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -59,6 +59,13 @@ type Config struct {
 	Starter   RunStarter
 	Lister    PluginLister
 
+	// Idempotency decides which run an idempotency key names. `ork` wires
+	// engine.TemporalIdempotency, so the decision is the cluster's and every
+	// replica gets the same answer. Nil substitutes the process-local
+	// claimer, which is correct for one process and therefore for unit tests
+	// only.
+	Idempotency IdempotencyClaimer
+
 	// Archive is the durable run history. Nil keeps runs in process only.
 	Archive RunArchive
 
@@ -82,37 +89,35 @@ type Config struct {
 
 // Service implements OrkflowService, RunService, and PluginService.
 type Service struct {
-	workflows engine.OrkflowStore
-	runs      *engine.RunStore
-	bus       *engine.EventBus
-	starter   RunStarter
-	lister    PluginLister
-	archive   RunArchive
-	webhooks  *webhooks.Registry
-	notifier  engine.RunNotifier
-	plugins   []*orkstackv1.PluginInfo
-	now       func() time.Time
-	newRunID  func() string
-
-	idempotencyMu  sync.Mutex
-	idempotencyMap map[string]string
+	workflows   engine.OrkflowStore
+	runs        *engine.RunStore
+	bus         *engine.EventBus
+	starter     RunStarter
+	lister      PluginLister
+	archive     RunArchive
+	idempotency IdempotencyClaimer
+	webhooks    *webhooks.Registry
+	notifier    engine.RunNotifier
+	plugins     []*orkstackv1.PluginInfo
+	now         func() time.Time
+	newRunID    func() string
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
 func NewService(cfg Config) *Service {
 	svc := &Service{
-		workflows:      cfg.Workflows,
-		runs:           cfg.Runs,
-		bus:            cfg.Bus,
-		starter:        cfg.Starter,
-		lister:         cfg.Lister,
-		archive:        cfg.Archive,
-		webhooks:       cfg.Webhooks,
-		notifier:       cfg.Notifier,
-		plugins:        cfg.Plugins,
-		now:            cfg.Now,
-		newRunID:       cfg.NewRunID,
-		idempotencyMap: map[string]string{},
+		workflows:   cfg.Workflows,
+		runs:        cfg.Runs,
+		bus:         cfg.Bus,
+		starter:     cfg.Starter,
+		lister:      cfg.Lister,
+		archive:     cfg.Archive,
+		idempotency: cfg.Idempotency,
+		webhooks:    cfg.Webhooks,
+		notifier:    cfg.Notifier,
+		plugins:     cfg.Plugins,
+		now:         cfg.Now,
+		newRunID:    cfg.NewRunID,
 	}
 	// Only an unconfigured Service gets the in-memory store, and only so a
 	// unit test can exercise runs without a bucket. A configured store is
@@ -125,6 +130,12 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.bus == nil {
 		svc.bus = engine.NewEventBus()
+	}
+	if svc.idempotency == nil {
+		// The process-local claimer, which is only ever correct because an
+		// unconfigured Service is the only process there is. `ork` always
+		// wires the Temporal claimer, so this line is unreachable from it.
+		svc.idempotency = newInMemoryClaimer()
 	}
 	if svc.webhooks == nil {
 		svc.webhooks = webhooks.NewRegistry()
@@ -233,33 +244,112 @@ func (s *Service) SubmitRun(
 	mergedInput := engine.ApplyInputDefaults(wf, req.Msg.GetInput())
 	key := req.Msg.GetIdempotencyKey()
 
-	// A keyed submission reserves its key together with the pending run before
-	// any event publication or Temporal call. This makes concurrent requests
-	// converge on one run and keeps a failed start deduplicated to its recorded
-	// failed run.
+	// A keyed submission asks the claimer which run the key names before it
+	// publishes an event or calls Temporal. `ork` wires a claimer backed by
+	// the cluster, so concurrent requests converge on one run whether they
+	// reach one replica or several, and a failed start stays deduplicated to
+	// its recorded failed run because a claim is never released.
 	if key != "" {
-		s.idempotencyMu.Lock()
-		if existingID, seen := s.idempotencyMap[key]; seen {
-			existing, ok := s.runs.Get(existingID)
-			s.idempotencyMu.Unlock()
-			if ok {
-				return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: existing}), nil
-			}
-			return nil, connect.NewError(connect.CodeInternal,
-				fmt.Errorf("idempotency key %q refers to missing run %q", key, existingID))
-		}
-		runID := s.newRunID()
-		run := s.newPendingRun(runID, wf, mergedInput)
-		s.runs.Save(run)
-		s.idempotencyMap[key] = runID
-		s.idempotencyMu.Unlock()
-		return s.startPreparedRun(ctx, run, wf, mergedInput, key)
+		return s.submitClaimedRun(ctx, key, wf, mergedInput)
 	}
 
-	runID := s.newRunID()
-	run := s.newPendingRun(runID, wf, mergedInput)
+	run := s.newPendingRun(s.newRunID(), wf, mergedInput)
 	s.runs.Save(run)
 	return s.startPreparedRun(ctx, run, wf, mergedInput, "")
+}
+
+// submitClaimedRun runs a keyed submission: claim the key, then either start
+// the run this caller proposed or report the one that already holds the key.
+//
+// The candidate run is built inside the claim, not before it, because a
+// process-local claimer can answer a known key without minting a run id at
+// all — which is what keeps a repeated key from burning ids in a single-engine
+// deployment. A cluster-backed claimer has to propose first; there the burnt
+// id costs nothing, because nothing outside this process ever saw it.
+func (s *Service) submitClaimedRun(
+	ctx context.Context,
+	key string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	var candidate *orkstackv1.Run
+	winner, err := s.idempotency.Claim(ctx, key, func() (engine.Claim, error) {
+		candidate = s.newPendingRun(s.newRunID(), wf, input)
+		return newClaim(candidate)
+	})
+	if err != nil {
+		// The claim is the dedupe authority: starting a run without it would
+		// be the duplicate this milestone removes, so an unreachable authority
+		// fails the submission instead.
+		return nil, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("claim idempotency key %q: %w", key, err))
+	}
+	if candidate == nil || winner.RunID != candidate.GetId() {
+		return s.claimedRun(ctx, key, winner)
+	}
+	s.runs.Save(candidate)
+	return s.startPreparedRun(ctx, candidate, wf, input, key)
+}
+
+// claimedRun answers a caller whose candidate lost, with the run that won.
+//
+// The order is freshest first. This replica's read model has the live run when
+// it started it; the archive has every run that finished, which is where a
+// failed start lands; the claim's own snapshot is last and covers the case no
+// other source can — a run another replica started and is still executing.
+func (s *Service) claimedRun(
+	ctx context.Context,
+	key string,
+	winner engine.Claim,
+) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	if run, ok := s.runs.Get(winner.RunID); ok {
+		return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
+	}
+	if s.archive != nil {
+		run, err := s.archive.LoadRun(ctx, winner.RunID)
+		switch {
+		case err == nil:
+			return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
+		case !errors.Is(err, artifacts.ErrNotFound):
+			return nil, connect.NewError(connect.CodeInternal,
+				fmt.Errorf("read claimed run %q from archive: %w", winner.RunID, err))
+		}
+	}
+	run, err := claimedSnapshot(winner)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("idempotency key %q refers to run %q: %w", key, winner.RunID, err))
+	}
+	if run == nil {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("idempotency key %q refers to missing run %q", key, winner.RunID))
+	}
+	return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
+}
+
+// newClaim packs a pending run into the claim that binds a key to it. The
+// snapshot travels so a replica that loses the claim can answer with the
+// winner's run rather than with a plausible reconstruction of its own request.
+func newClaim(run *orkstackv1.Run) (engine.Claim, error) {
+	snapshot, err := proto.Marshal(run)
+	if err != nil {
+		return engine.Claim{}, fmt.Errorf("encode run %s: %w", run.GetId(), err)
+	}
+	return engine.Claim{RunID: run.GetId(), Snapshot: snapshot}, nil
+}
+
+// claimedSnapshot unpacks a claim's run. A claim written by an older engine
+// may carry none, which is not an error: it means this replica has no answer
+// from the claim and says so.
+func claimedSnapshot(claim engine.Claim) (*orkstackv1.Run, error) {
+	if len(claim.Snapshot) == 0 {
+		return nil, nil
+	}
+	run := &orkstackv1.Run{}
+	if err := proto.Unmarshal(claim.Snapshot, run); err != nil {
+		return nil, fmt.Errorf("decode claimed run: %w", err)
+	}
+	return run, nil
 }
 
 func (s *Service) newPendingRun(
@@ -312,7 +402,14 @@ func (s *Service) startPreparedRun(
 			return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: stored}), nil
 		}
 		if errors.Is(err, engine.ErrRunIDTaken) && attempt == 0 {
-			run = s.reissueRunID(run, wf, input, idempotencyKey)
+			next, reissueErr := s.reissueRunID(ctx, run, wf, input, idempotencyKey)
+			run = next
+			if reissueErr != nil {
+				// The key could not be moved onto the fresh id, so starting
+				// under it would leave the key naming a run that never
+				// existed. The submission ends here instead.
+				return nil, s.recordFailedStart(ctx, run, reissueErr)
+			}
 			continue
 		}
 		return nil, s.recordFailedStart(ctx, run, err)
@@ -323,26 +420,35 @@ func (s *Service) startPreparedRun(
 // it under a fresh one. Nothing outside this process has seen the discarded id
 // — SubmitRun has not returned — so it is removed rather than left behind as a
 // run that never existed.
+//
+// A keyed submission also moves its claim, and moves it *before* the fresh id
+// is started, so the key names a run at every instant: first the discarded
+// candidate, then the one that runs. Releasing it in between would let a
+// concurrent submission of the same key start a second run.
 func (s *Service) reissueRunID(
+	ctx context.Context,
 	discarded *orkstackv1.Run,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
 	idempotencyKey string,
-) *orkstackv1.Run {
+) (*orkstackv1.Run, error) {
 	s.runs.Delete(discarded.GetId())
 	s.bus.Discard(discarded.GetId())
 
 	next := s.newPendingRun(s.newRunID(), wf, input)
 	s.runs.Save(next)
-	if idempotencyKey != "" {
-		// The key was bound to the discarded id before the start was
-		// attempted. Leaving it there would make every repeat submission
-		// report a run that is missing because it never existed.
-		s.idempotencyMu.Lock()
-		s.idempotencyMap[idempotencyKey] = next.GetId()
-		s.idempotencyMu.Unlock()
+	if idempotencyKey == "" {
+		return next, nil
 	}
-	return next
+	claim, err := newClaim(next)
+	if err != nil {
+		return next, err
+	}
+	if err := s.idempotency.Rebind(ctx, idempotencyKey, claim, discarded.GetId()); err != nil {
+		return next, fmt.Errorf("move idempotency key %q from %s to %s: %w",
+			idempotencyKey, discarded.GetId(), next.GetId(), err)
+	}
+	return next, nil
 }
 
 // recordFailedStart ends a run that never reached Temporal. It is the only

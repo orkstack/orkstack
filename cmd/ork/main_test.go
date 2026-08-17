@@ -40,6 +40,32 @@ func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *test
 	}
 }
 
+// TestLoadConfig_IdempotencyTTL: the claim TTL is the only thing that ever
+// frees an idempotency key, so a mistyped value must not silently become zero
+// (a key freed immediately) and must not stop the engine booting either.
+func TestLoadConfig_IdempotencyTTL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  string
+		want time.Duration
+	}{
+		{"unset", "", engine.DefaultClaimTTL},
+		{"explicit", "30m", 30 * time.Minute},
+		{"unparsable", "half an hour", engine.DefaultClaimTTL},
+		{"zero", "0s", engine.DefaultClaimTTL},
+		{"negative", "-1h", engine.DefaultClaimTTL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set != "" {
+				t.Setenv("ORK_IDEMPOTENCY_TTL", tc.set)
+			}
+			if got := loadConfig().idempotencyTTL; got != tc.want {
+				t.Errorf("ORK_IDEMPOTENCY_TTL=%q gave %v, want %v", tc.set, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
