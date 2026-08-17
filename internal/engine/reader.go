@@ -89,6 +89,11 @@ type TemporalRunReader struct {
 	converter converter.DataConverter
 }
 
+// The reader is the archive writer's event source too: PublishEvent assembles
+// an archive body from the record rather than from the executing process's own
+// bus, which is the only way that body is whole under more than one replica.
+var _ RunEventSource = (*TemporalRunReader)(nil)
+
 // NewTemporalRunReader returns a reader over a Temporal client. It reads the
 // namespace the client is bound to, which is the hard partition every other
 // part of the engine already respects.
