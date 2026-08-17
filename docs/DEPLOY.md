@@ -58,9 +58,9 @@ adding processes and both survive losing one.
 |---|---|---|
 | orkflow definitions | the bucket | `artifacts.S3OrkflowStore`, opened at boot by `openOrkflowStore` (`cmd/ork/main.go`). It keeps no cache, so an `apply` on one replica is visible to every other |
 | live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), wired as the API's `RunReader` |
-| finished runs, past retention | the bucket | `engine.NewRunArchiver` over `artifacts.NewRunArchive`, written by the terminal `PublishEvent` |
+| finished runs, past retention | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `engine.NewRunArchiver` over `artifacts.NewRunArchive`, written by the terminal `PublishEvent`. The default backend is `local`: a directory on each host, so replicated it is one archive per replica (§1) |
 | idempotency keys | Temporal | `engine.IdempotencyClaimWorkflow` (`internal/engine/claim.go`), held for `ORK_IDEMPOTENCY_TTL` |
-| artifacts | the bucket | `pkg/artifacts`; events and payloads carry refs, never bytes |
+| artifacts | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `pkg/artifacts`; events and payloads carry refs, never bytes. Same default, same consequence: on `local` an Orker writes to its own disk and no other host can read the bytes back |
 | the in-process `RunStore` / `EventBus` | one process, and only that one | **write side only**: the candidate run a submission creates, the stream of a run whose start failed, and the archive + webhook write path. Behind a wired reader they are never read (`internal/api/service.go`, `LookupRun`) |
 
 So a replica owns nothing. Kill one and you lose its in-flight HTTP
@@ -69,12 +69,22 @@ workers, and a client that reconnects anywhere reads the same run. That is
 measured, not argued — `proof/M8.5/ha-transcript.txt` phase 4 kills the
 submitting replica with `-9` mid-run and the run finishes.
 
+**One variable decides whether two of those rows are true.**
+`ORK_ARTIFACT_BACKEND` defaults to `local` — a directory per process
+(`pkg/artifacts/config.go`) — which is right for `make run-ork` on a laptop
+and wrong for every topology in this document. A replicated deployment sets
+`s3` and the `ORK_S3_*` values **on both binaries** (§1). Orkflow definitions
+are the one piece of state that needs no decision: the engine's store is S3
+whatever the backend says (`openOrkflowStore`, `cmd/ork/main.go`), so `ork`
+needs `ORK_S3_*` either way.
+
 ### Running N `ork` replicas
 
 - **Identical configuration on every replica.** Same `ORK_TEMPORAL_ADDRESS`,
   `ORK_TEMPORAL_NAMESPACE`, `ORK_ORKER_QUEUE`, `ORK_DEPLOYMENT_NAME`,
-  `ORK_BUILD_ID`, same bucket. A replica differing in any of those is a
-  different deployment wearing the same address.
+  `ORK_BUILD_ID`, and the same bucket — `ORK_ARTIFACT_BACKEND=s3` with one set
+  of `ORK_S3_*`. A replica differing in any of those is a different deployment
+  wearing the same address.
 - **`ORK_HTTP_ADDR` is the one variable that must differ** when replicas share
   a host. On separate hosts it does not have to.
 - **No sticky sessions, no leader.** `GetRun`, `ListRuns`, `StreamEvents` and
@@ -86,9 +96,11 @@ submitting replica with `-9` mid-run and the run finishes.
   same stream with nothing repeated and nothing skipped.
 - **Readiness: there is no `/healthz` yet.** Probe with a cheap unary call —
   `OrkflowService.ListOrkflows`, i.e. `orkctl --server … orkflow list`. Every
-  script under `proof/` uses exactly that as its readiness gate; it reaches the
-  bucket the replica loads definitions from, so it fails while the replica
-  cannot serve.
+  script under `proof/` that starts today's engine binary gates on exactly
+  that; it reaches the bucket the replica loads definitions from, so it fails
+  while the replica cannot serve. (`proof/M6/e2e.sh` is the one exception, and
+  not a counter-example: it predates the M7.1 rename and drives `bin/orkengine`
+  with that release's `workflow list`.)
 - **Browser clients need `ORK_WS_ALLOWED_ORIGINS`** set on every replica, since
   any of them may take the socket.
 - **Every replica is also a worker host.** It polls `ork-tasks` (run workflows
@@ -129,7 +141,7 @@ deployment cares about.
 
 | variable | default | set on | effect |
 |---|---|---|---|
-| `ORK_TEMPORAL_ADDRESS` | `127.0.0.1:7233` | both | Temporal frontend |
+| `ORK_TEMPORAL_ADDRESS` | `localhost:7233` | both | Temporal frontend. The default is the SDK's `client.DefaultHostPort` |
 | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
 | `ORK_ORKER_QUEUE` | `ork-tasks` | **both** | queue Orkers poll and the engine dispatches **task activities** to. It does not move the engine's own queues (§2) |
 | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
@@ -139,7 +151,44 @@ deployment cares about.
 | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
 | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` |
 | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
-| `ORK_ARTIFACT_BACKEND`, `ORK_S3_*` | see `docs/STORAGE.md` | both | artifact + archive storage |
+| `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts and the run archive live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
+| `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
+| `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
+| `ORK_S3_REGION` | `us-east-1` | both | |
+| `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts and archived runs |
+| `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
+| `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
+| `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
+
+### The bucket stops being optional at the second replica
+
+`local` is the single-host default, and the one setting that breaks a
+replicated deployment quietly: each process keeps its own directory, so a run
+archived by replica 1 is invisible to replica 2 and an artifact written by one
+Orker cannot be materialized by another. Set the same values on every `ork`
+and every `orker`:
+
+```bash
+export ORK_ARTIFACT_BACKEND=s3
+export ORK_S3_ENDPOINT="https://s3.internal.example"   # or http://minio:9000
+export ORK_S3_BUCKET=orkstack-artifacts
+export ORK_S3_REGION=us-east-1
+export ORK_S3_ACCESS_KEY=…        # never the docker-compose dev credentials
+export ORK_S3_SECRET_KEY=…
+export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
+```
+
+One bucket, three key families (`pkg/artifacts`):
+
+| keys | what |
+|---|---|
+| `metadata/orkflows/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot |
+| `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/…` | archived runs: the body, and the key-only index `ListRuns` scans |
+| `orkflows/{orkflow}/{run-id}/{task-id}/{name}` | artifacts, addressed by provenance |
+
+`proof/M8.5/ha-deploy.sh` exports exactly that block, and phase 7 of
+`proof/M8.5/ha-transcript.txt` reads a finished run back out of the bucket —
+with a control showing nothing was written to local disk.
 
 ### Versioning is off until you set a build id
 
@@ -528,9 +577,12 @@ Runs already pinned to a version still need that version's workers.
   in its high half (`internal/engine/runid.go`), so it is comparable only
   within one replica and means nothing across two.
 - **Any replica answers any run** (§0). Live runs are read from Temporal,
-  finished ones from the archive in S3; nothing durable lives in a process, so
-  a read does not need to reach the replica that started the run — or that
-  replica to still exist.
+  finished ones from the archive in the bucket — the half that needs
+  `ORK_ARTIFACT_BACKEND=s3` (§1), because on the default `local` backend each
+  replica archives to its own disk and only that replica can answer for a run
+  past Temporal retention. Nothing durable lives in a process, so a read does
+  not need to reach the replica that started the run — or that replica to
+  still exist.
 - **A double submit is settled by the cluster, not by a replica.** One
   `--idempotency-key` sent to two replicas at once returns one run id, because
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not

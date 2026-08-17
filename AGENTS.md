@@ -49,22 +49,28 @@ DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch�
      `WorkflowExecutionErrorWhenAlreadyStarted` (`internal/engine/temporal.go`),
      so a reused id is an error, never a silent attach to someone else's run.
    - **nothing may parse a run id or derive meaning from its parts.** Order
-     runs by time (`created_at`); the only id comparison in the tree is
-     `mergeRuns`' stable tie-break for equal timestamps
-     (`internal/api/service.go`, guarded by
-     `TestListRuns_OrdersRunsByTimeNotByRunID`).
+     runs by time (`created_at`). Exactly two places compare ids, both only to
+     break a tie between two equal timestamps, and both on the `ListRuns` read
+     path: `mergeRuns` (`internal/api/service.go`, guarded by
+     `TestListRuns_OrdersRunsByTimeNotByRunID`) and `RunQuery.finish`, which
+     orders one page of the archive index (`pkg/artifacts/archive.go`). Those
+     two are the whole list, and `proof/M8.5/docs-claims.sh` holds the tree to
+     it. A tie-break is not a licence to order by id.
 6. **DONE means proven.** A change is done only when behavior tests pass and a
    proof artifact exists under `proof/` (see §6). No proof, not done.
 7. **Temporal is the read model for live runs.** `GetRun`, `ListRuns`,
    `StreamEvents` and `/ws/runs/{id}` are answered from the run's Temporal
    history through `engine.TemporalRunReader` (`internal/engine/reader.go`),
    wired as the API's `RunReader` seam (`internal/api/service.go`); finished
-   runs past retention come from the S3 archive. The in-process
-   `RunStore`/`EventBus` are **write-side** helpers — the candidate run a
-   submission creates, the archive and webhook write path, and the one stream
-   that never reaches Temporal (a run whose start failed). Never answer a read
-   from process memory behind a wired reader: any replica must answer for any
-   run, including one it never started and one whose replica is gone.
+   runs past retention come from the run archive, which is the bucket in any
+   replicated deployment — `ORK_ARTIFACT_BACKEND` defaults to a directory per
+   process, so `s3` stops being optional at the second replica
+   (`docs/DEPLOY.md` §0). The in-process `RunStore`/`EventBus` are
+   **write-side** helpers — the candidate run a submission creates, the archive
+   and webhook write path, and the one stream that never reaches Temporal (a
+   run whose start failed). Never answer a read from process memory behind a
+   wired reader: any replica must answer for any run, including one it never
+   started and one whose replica is gone.
 8. **Event sequence is producer-assigned.** `RunWorkflow` numbers every event
    it emits (`internal/engine/workflow.go`); the bus honours that number and
    assigns one only when given none (`internal/engine/bus.go`). That is what
