@@ -421,8 +421,12 @@ func (s *Service) startPreparedRun(
 		runID := run.GetId()
 		err := s.starter.StartRun(ctx, runID, wf, input)
 		if err == nil {
-			stored, _ := s.runs.Get(runID)
-			return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: stored}), nil
+			// The response is the run this call created, not a re-read of it.
+			// A read here would race the run's own first events — the workflow
+			// is already executing — and answer PENDING or RUNNING depending
+			// on which won. What a submission has to report is what it
+			// submitted; everything after that is a read.
+			return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
 		}
 		if errors.Is(err, engine.ErrRunIDTaken) && attempt == 0 {
 			next, reissueErr := s.reissueRunID(ctx, run, wf, input, idempotencyKey)
