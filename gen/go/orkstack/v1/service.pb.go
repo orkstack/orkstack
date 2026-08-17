@@ -319,13 +319,13 @@ func (x *ListOrkflowsResponse) GetNextPageToken() string {
 }
 
 type SubmitRunRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	WorkflowName    string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`          // orkflow name
-	WorkflowVersion string                 `protobuf:"bytes,2,opt,name=workflow_version,json=workflowVersion,proto3" json:"workflow_version,omitempty"` // orkflow version; empty = latest
-	Input           *Payload               `protobuf:"bytes,3,opt,name=input,proto3" json:"input,omitempty"`
-	IdempotencyKey  string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // optional dedupe
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrkflowName    string                 `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`          // orkflow name
+	OrkflowVersion string                 `protobuf:"bytes,2,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"` // orkflow version; empty = latest
+	Input          *Payload               `protobuf:"bytes,3,opt,name=input,proto3" json:"input,omitempty"`
+	IdempotencyKey string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // optional dedupe
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SubmitRunRequest) Reset() {
@@ -358,16 +358,16 @@ func (*SubmitRunRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *SubmitRunRequest) GetWorkflowName() string {
+func (x *SubmitRunRequest) GetOrkflowName() string {
 	if x != nil {
-		return x.WorkflowName
+		return x.OrkflowName
 	}
 	return ""
 }
 
-func (x *SubmitRunRequest) GetWorkflowVersion() string {
+func (x *SubmitRunRequest) GetOrkflowVersion() string {
 	if x != nil {
-		return x.WorkflowVersion
+		return x.OrkflowVersion
 	}
 	return ""
 }
@@ -520,8 +520,8 @@ func (x *GetRunResponse) GetRun() *Run {
 
 type ListRunsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkflowName  string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"` // optional orkflow name filter
-	Status        Status                 `protobuf:"varint,2,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`        // optional filter
+	OrkflowName   string                 `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"` // optional orkflow name filter
+	Status        Status                 `protobuf:"varint,2,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`     // optional filter
 	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	PageToken     string                 `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -558,9 +558,9 @@ func (*ListRunsRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{10}
 }
 
-func (x *ListRunsRequest) GetWorkflowName() string {
+func (x *ListRunsRequest) GetOrkflowName() string {
 	if x != nil {
-		return x.WorkflowName
+		return x.OrkflowName
 	}
 	return ""
 }
@@ -963,10 +963,10 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"page_token\x18\x02 \x01(\tR\tpageToken\"p\n" +
 	"\x14ListOrkflowsResponse\x120\n" +
 	"\borkflows\x18\x01 \x03(\v2\x14.orkstack.v1.OrkflowR\borkflows\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xb7\x01\n" +
-	"\x10SubmitRunRequest\x12#\n" +
-	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12)\n" +
-	"\x10workflow_version\x18\x02 \x01(\tR\x0fworkflowVersion\x12*\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xb3\x01\n" +
+	"\x10SubmitRunRequest\x12!\n" +
+	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12'\n" +
+	"\x0forkflow_version\x18\x02 \x01(\tR\x0eorkflowVersion\x12*\n" +
 	"\x05input\x18\x03 \x01(\v2\x14.orkstack.v1.PayloadR\x05input\x12'\n" +
 	"\x0fidempotency_key\x18\x04 \x01(\tR\x0eidempotencyKey\"7\n" +
 	"\x11SubmitRunResponse\x12\"\n" +
@@ -974,9 +974,9 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\rGetRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\"4\n" +
 	"\x0eGetRunResponse\x12\"\n" +
-	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\x9f\x01\n" +
-	"\x0fListRunsRequest\x12#\n" +
-	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12+\n" +
+	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\x9d\x01\n" +
+	"\x0fListRunsRequest\x12!\n" +
+	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12+\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +

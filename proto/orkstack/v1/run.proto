@@ -23,8 +23,8 @@ message TaskRun {
 // Run is one execution of an Orkflow.
 message Run {
   string id = 1;                         // ork run id, ork-{timestamp}-{sequence} (also Temporal workflow id)
-  string workflow_name = 2;
-  string workflow_version = 3;
+  string orkflow_name = 2;
+  string orkflow_version = 3;
   Status status = 4;
   Payload input = 5;
   Payload output = 6;                    // aggregated terminal outputs

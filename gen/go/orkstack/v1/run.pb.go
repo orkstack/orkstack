@@ -207,20 +207,20 @@ func (x *TaskRun) GetFinishedAt() *timestamppb.Timestamp {
 
 // Run is one execution of an Orkflow.
 type Run struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // ork run id, ork-{timestamp}-{sequence} (also Temporal workflow id)
-	WorkflowName    string                 `protobuf:"bytes,2,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
-	WorkflowVersion string                 `protobuf:"bytes,3,opt,name=workflow_version,json=workflowVersion,proto3" json:"workflow_version,omitempty"`
-	Status          Status                 `protobuf:"varint,4,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
-	Input           *Payload               `protobuf:"bytes,5,opt,name=input,proto3" json:"input,omitempty"`
-	Output          *Payload               `protobuf:"bytes,6,opt,name=output,proto3" json:"output,omitempty"` // aggregated terminal outputs
-	Error           *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
-	TaskRuns        []*TaskRun             `protobuf:"bytes,8,rep,name=task_runs,json=taskRuns,proto3" json:"task_runs,omitempty"`
-	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	StartedAt       *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	FinishedAt      *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // ork run id, ork-{timestamp}-{sequence} (also Temporal workflow id)
+	OrkflowName    string                 `protobuf:"bytes,2,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	OrkflowVersion string                 `protobuf:"bytes,3,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"`
+	Status         Status                 `protobuf:"varint,4,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
+	Input          *Payload               `protobuf:"bytes,5,opt,name=input,proto3" json:"input,omitempty"`
+	Output         *Payload               `protobuf:"bytes,6,opt,name=output,proto3" json:"output,omitempty"` // aggregated terminal outputs
+	Error          *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	TaskRuns       []*TaskRun             `protobuf:"bytes,8,rep,name=task_runs,json=taskRuns,proto3" json:"task_runs,omitempty"`
+	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	StartedAt      *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Run) Reset() {
@@ -260,16 +260,16 @@ func (x *Run) GetId() string {
 	return ""
 }
 
-func (x *Run) GetWorkflowName() string {
+func (x *Run) GetOrkflowName() string {
 	if x != nil {
-		return x.WorkflowName
+		return x.OrkflowName
 	}
 	return ""
 }
 
-func (x *Run) GetWorkflowVersion() string {
+func (x *Run) GetOrkflowVersion() string {
 	if x != nil {
-		return x.WorkflowVersion
+		return x.OrkflowVersion
 	}
 	return ""
 }
@@ -448,11 +448,11 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"finishedAt\"\xfc\x03\n" +
+	"finishedAt\"\xf8\x03\n" +
 	"\x03Run\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12#\n" +
-	"\rworkflow_name\x18\x02 \x01(\tR\fworkflowName\x12)\n" +
-	"\x10workflow_version\x18\x03 \x01(\tR\x0fworkflowVersion\x12+\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
+	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
+	"\x0forkflow_version\x18\x03 \x01(\tR\x0eorkflowVersion\x12+\n" +
 	"\x06status\x18\x04 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12*\n" +
 	"\x05input\x18\x05 \x01(\v2\x14.orkstack.v1.PayloadR\x05input\x12,\n" +
 	"\x06output\x18\x06 \x01(\v2\x14.orkstack.v1.PayloadR\x06output\x12(\n" +
