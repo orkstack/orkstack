@@ -78,7 +78,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
 	})
-	runWorker.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.WorkflowName})
+	engine.RegisterWorkflows(runWorker)
 
 	// Worker 2 is the activity-only Orker stub on the same shared queue.
 	taskWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{

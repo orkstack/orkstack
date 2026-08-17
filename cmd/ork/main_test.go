@@ -150,7 +150,7 @@ func TestEventWorkerOptions_StayUnversionedEvenWhenConfigured(t *testing.T) {
 	}
 }
 
-// recordedRegistration is one call registerEngineWorkflows made.
+// recordedRegistration is one call engine.RegisterWorkflows made.
 type recordedRegistration struct {
 	name     string
 	behavior workflow.VersioningBehavior
@@ -164,12 +164,15 @@ func (r *recordingRegistrar) RegisterWorkflowWithOptions(_ any, options workflow
 }
 
 // TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims is
-// acceptance 2. It reads what the binary registers, so dropping the behaviour
-// from cmd/ork fails here — asserting against a copy of the registration would
-// prove only that the test still compiles.
+// acceptance 2. It reads the list `ork` itself registers at boot
+// (engine.RegisterWorkflows, the binary's only call site), so dropping a
+// behaviour fails here — asserting against a copy of the registration would
+// prove only that the test still compiles. It is not the only such guard: the
+// versioning integration tests now stand their workers up through the same
+// function, so a flipped behaviour also fails the rollout against a cluster.
 func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t *testing.T) {
 	var registered recordingRegistrar
-	registerEngineWorkflows(&registered)
+	engine.RegisterWorkflows(&registered)
 
 	want := map[string]workflow.VersioningBehavior{
 		engine.WorkflowName:      workflow.VersioningBehaviorPinned,
@@ -197,8 +200,8 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 // checked against the SDK rather than against this test's own expectations: a
 // versioned worker with no DefaultVersioningBehavior PANICS on a workflow type
 // registered without one (sdk@v1.47.0/internal/internal_worker.go:1317-1322).
-// Registering through the binary's own function on a real (undialled) worker
-// is therefore a live check that both types declare one.
+// Registering the shipped list on a real (undialled) worker built from this
+// binary's own options is therefore a live check that both types declare one.
 func TestRegisterEngineWorkflows_SurvivesAVersionedWorker(t *testing.T) {
 	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
 	t.Setenv(task.EnvBuildID, "v2")
@@ -213,7 +216,7 @@ func TestRegisterEngineWorkflows_SurvivesAVersionedWorker(t *testing.T) {
 	if !cfg.deployment.Versioned() {
 		t.Fatal("test setup: the worker under test must be versioned for the SDK guard to apply")
 	}
-	registerEngineWorkflows(worker.New(c, task.DefaultQueue, runWorkerOptions(cfg)))
+	engine.RegisterWorkflows(worker.New(c, task.DefaultQueue, runWorkerOptions(cfg)))
 }
 
 // TestLoadConfig_IdempotencyTTL: the claim TTL is the only thing that ever

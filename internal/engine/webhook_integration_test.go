@@ -23,7 +23,6 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
@@ -124,8 +123,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
 	})
-	runWorker.RegisterWorkflowWithOptions(engine.RunWorkflow,
-		workflow.RegisterOptions{Name: engine.WorkflowName})
+	engine.RegisterWorkflows(runWorker)
 
 	taskWorker := worker.New(temporalClient, runQueue, worker.Options{
 		DisableRegistrationAliasing: true,

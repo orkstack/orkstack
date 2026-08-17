@@ -2,26 +2,39 @@ package engine_test
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"go.temporal.io/api/enums/v1"
-	historypb "go.temporal.io/api/history/v1"
-	"go.temporal.io/api/temporalproto"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
 // goldenHistory is a real, committed history from a successful multi-task run,
-// recorded by an earlier build against a real cluster
+// recorded against a real cluster by a VERSIONED worker
 // (golden_history_integration_test.go writes it, opt-in, and nothing else
 // touches it).
+//
+// Its provenance, stated exactly, because two docs used to overstate it: it
+// was recorded by the commit that added it, so on the day it landed it was
+// same-code, not old-code. It is a frozen command stream that AGES into the
+// cross-version guard — every commit after that one is measured against a
+// build that is genuinely older than itself. What proves the fixture can
+// detect the interesting change on day one is
+// TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream below, which replays
+// it against a body carrying one extra emit — the exact shape of the change
+// M8 made to RunWorkflow.
 const goldenHistory = "testdata/history/run-succeeded-v1.json"
 
-// TestRunWorkflow_ReplaysCommittedV1History is the cross-version determinism
-// guard.
+// TestRunWorkflow_ReplaysCommittedV1History is half of the cross-version
+// determinism guard: the COMMAND half.
 //
 // Under Worker Deployment Versioning a Pinned run keeps executing on the build
 // that started it, so today's code will one day be handed a history recorded
@@ -29,10 +42,18 @@ const goldenHistory = "testdata/history/run-succeeded-v1.json"
 // a versioning override, and on every replay Temporal performs after a worker
 // restart. The existing check in integration_test.go records a history and
 // replays it against the SAME code, so it can only catch a workflow body that
-// is non-deterministic with itself. This one is old-history-meets-new-code:
-// the fixture is frozen in git, so reordering the emit calls, renaming an
-// event, changing readyTasks' order, or altering task.ExecuteTaskInput fails
-// here the day it is written.
+// is non-deterministic with itself. This one holds the command stream still:
+// the fixture is frozen in git, so reordering the emit calls, adding or
+// deleting one, or changing readyTasks' order fails here. Each was
+// mutation-tested against this fixture; each fails with TMPRL1100.
+//
+// What it does NOT catch, and must not be trusted for: what is INSIDE a
+// payload. The replayer compares an activity's type and its position in the
+// command stream, never its input. Adding a field to task.ExecuteTaskInput, or
+// emitting a different EventType from the same emit call, replays perfectly
+// clean here — both were measured. That is
+// TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends' job
+// (replay_payload_test.go), and the two are only a guard together.
 //
 // It is a unit test on purpose: no cluster, runs in `make test`, so the guard
 // is in front of every change rather than behind an integration tag.
@@ -61,20 +82,90 @@ func TestRunWorkflow_ReplaysCommittedV1History(t *testing.T) {
 	}
 }
 
+// TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream is what makes the
+// guard above worth having on the day the fixture is recorded, instead of only
+// from the next change onward.
+//
+// The fixture is same-code the moment it lands, so nothing in the test above
+// yet demonstrates it can catch old-history-meets-new-code. This one supplies
+// the missing half by playing the other side: it replays the committed history
+// against a workflow body that publishes ONE extra event before doing exactly
+// what RunWorkflow does. History without the emit, code with it — which is
+// precisely the relationship between a pre-M8 history and this tree, whose
+// RunWorkflow inserted EVENT_TYPE_RUN_CREATED as command 1 of every run
+// (internal/engine/workflow.go; before M8 that event was published in-process
+// by internal/api/service.go and never appeared in a history).
+//
+// So the replay MUST fail. If it ever passes, the replayer is not comparing
+// what this repo believes it compares, and both `make test` replay guards are
+// worth nothing — including the green one above.
+func TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream(t *testing.T) {
+	replayer := worker.NewWorkflowReplayer()
+	replayer.RegisterWorkflowWithOptions(runWorkflowWithAnExtraEmit, workflow.RegisterOptions{
+		Name: engine.WorkflowName,
+	})
+
+	err := replayer.ReplayWorkflowHistoryFromJSONFile(nil, goldenHistory)
+	if err == nil {
+		t.Fatal("replaying the committed history against a body with one extra emit SUCCEEDED. " +
+			"The command-stream guard cannot see an inserted activity, so " +
+			"TestRunWorkflow_ReplaysCommittedV1History proves nothing about a build that added one.")
+	}
+	// Any error would satisfy the line above — a missing fixture, a decode
+	// failure — so name the class. TMPRL1100 is the SDK's determinism-violation
+	// code (sdk@v1.47.0/internal/internal_command_state_machine.go, via
+	// panicIllegalState); here it is "lookup failed for scheduledEventID to
+	// activityID", the history running out of the activity the extra command
+	// needs.
+	message := err.Error()
+	if !strings.Contains(message, "TMPRL1100") && !strings.Contains(strings.ToLower(message), "nondeterministic") {
+		t.Fatalf("replay failed, but not with a determinism violation: %v\n\n"+
+			"The guard is only meaningful while an inserted command is rejected for being "+
+			"an inserted command. Check the fixture is readable and the SDK still reports "+
+			"TMPRL1100 for this case.", err)
+	}
+	t.Logf("inserted emit rejected by the replayer, as it must be: %v", err)
+}
+
+// runWorkflowWithAnExtraEmit is RunWorkflow plus one projection activity at the
+// front: the smallest change of the class Pinned exists to protect a run from.
+// It delegates to the real body so the rest of the command stream is not a
+// hand-written imitation of it.
+func runWorkflowWithAnExtraEmit(
+	ctx workflow.Context,
+	runID string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+) (*orkstackv1.Run, error) {
+	activityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		TaskQueue:           engine.EventQueue,
+		StartToCloseTimeout: 10 * time.Second,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
+	})
+	event := &orkstackv1.Event{
+		RunId:     runID,
+		Sequence:  0,
+		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
+		Status:    orkstackv1.Status_STATUS_PENDING,
+		Message:   "an event a later build decided to publish",
+		Timestamp: timestamppb.New(workflow.Now(ctx)),
+	}
+	// The error is ignored exactly as runState.emit ignores it: a failed
+	// projection never stops a run, and here the call is only present for the
+	// command it schedules.
+	_ = workflow.ExecuteActivity(activityCtx, engine.ActivityPublishEvent,
+		event, &orkstackv1.Run{Id: runID}, runID+"#0").Get(ctx, nil)
+
+	return engine.RunWorkflow(ctx, runID, wf, input)
+}
+
 // TestGoldenHistory_StillDescribesAPinnedMultiTaskRun keeps the fixture
 // honest. A replay of a two-event history passes trivially, so the guard is
 // only worth having while the recorded run is the shape it was recorded for:
 // several activities, a terminal completion, and the Pinned behaviour a
 // versioned build stamps onto every workflow task it completes.
 func TestGoldenHistory_StillDescribesAPinnedMultiTaskRun(t *testing.T) {
-	raw, err := os.ReadFile(goldenHistory)
-	if err != nil {
-		t.Fatalf("read %s: %v", goldenHistory, err)
-	}
-	recorded := &historypb.History{}
-	if err := (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded); err != nil {
-		t.Fatalf("decode %s: %v", goldenHistory, err)
-	}
+	recorded := loadGoldenHistory(t)
 
 	var executeTasks, pinnedTasks int
 	completed := false

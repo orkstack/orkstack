@@ -483,6 +483,20 @@ release runs nothing at all (§1).
    bring v1 back, but until then they make no progress. Drainage is refreshed
    on a delay of a few minutes, so poll.
 
+   Measured, not asserted:
+   `TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained`
+   (`internal/engine`) stops v1's Orker with v2 Current and watches a run
+   pinned to v1 for 45 seconds — its task stays scheduled and unstarted, the
+   run stays `RUNNING`, and it finishes on v1 within a second of v1's Orker
+   coming back.
+
+   The same test holds the other half, which is the dangerous one: **v2 does
+   not pick those tasks up.** The exception in §2 routes an activity to the
+   Current Version when the workflow's own version has no workers on that task
+   queue, and if it ever fired here, skipping this step would silently run an
+   in-flight run's remaining tasks on new plugin code — the thing this whole
+   document exists to prevent. The test fails the day that changes.
+
 6. **Stop v1** once it reports `Drained` — every replica and every Orker
    carrying that build id. Stopping *some* of them earlier is safe (§5); the
    version is what must not disappear while runs are pinned to it.
@@ -521,13 +535,31 @@ That is convenient — nothing strands — but it is the one moment when a
 unversioned build wrote. Pinning cannot protect it, because the run was not
 pinned when it started. Two ways to handle it:
 
-- **Drain first (safest).** Stop submitting, let running runs finish, then do
-  §3 step 0. Nothing is ever replayed across builds.
-- **Switch live.** Acceptable when the versioned release is the same code as
-  the unversioned one already serving — the usual case, since a build id is a
-  label on a build you are already running. This is exactly what the committed
-  history replay guard covers (§6): it proves current code still reproduces an
-  older build's command stream.
+- **Drain first (safest, and the only safe option when the code changed).**
+  Stop submitting, let running runs finish, then do §3 step 0. Nothing is ever
+  replayed across builds.
+- **Switch live.** Safe only when the versioned release is the *same binary*
+  as the unversioned one already serving — the usual case, since a build id is
+  a label on a build you are already running. Same binary means the same
+  command stream by construction, which is the only thing that makes replaying
+  an unversioned run's partial history onto the new version a non-event.
+
+  It is **not** made safe by the replay guards in §6, and this document used to
+  claim it was. Those guards compare current code against a fixture recorded at
+  a known commit; they say nothing about whatever build is running in your
+  cluster right now, and a fixture is only "older" than the code once someone
+  commits a change after recording it.
+
+  Worse, a live switch across an actual code change is exactly what breaks. The
+  M8 engine inserted `RUN_CREATED` as command 1 of every run
+  (`internal/engine/workflow.go`; before M8 that event was published in-process
+  by the API and never entered a history), so an unversioned run started by a
+  pre-M8 engine cannot be upgraded onto an M8 version: its next workflow task
+  fails with a determinism violation. Measured, not assumed —
+  `TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream`
+  (`internal/engine/replay_test.go`) replays the committed history against a
+  body carrying one extra emit and the SDK rejects it with `TMPRL1100`.
+  Upgrading a pre-M8 system therefore means draining first.
 
 Either way, keep the old workers up until their runs are done. That rule is
 not about versioning: an Orker killed mid-task loses that attempt until its
@@ -657,15 +689,34 @@ rollback, on a versioning override, after any worker restart, and — the one
 case a rollout cannot avoid — when a run that started unversioned upgrades onto
 the first version (§3.5).
 
-`internal/engine/replay_test.go` guards it. It replays a **committed** history
+`internal/engine/replay_test.go` and `internal/engine/replay_payload_test.go`
+guard it, together. Both read the same **committed** history
 (`internal/engine/testdata/history/run-succeeded-v1.json`), recorded from a real
-multi-task run by an earlier build, against whatever the workflow code is
-today. It runs in `make test`, with no cluster.
+multi-task run by a versioned worker, and both run in `make test` with no
+cluster.
 
-If it fails, current code no longer reproduces that command stream. Either
-restore it (`workflow.GetVersion` for a deliberate change), or — if the
-contract genuinely changed and no old run can still be in flight — re-record
-the fixture and say so in the commit:
+**What the fixture is, exactly.** It was recorded by the commit that added it,
+so on that day it was current code replaying its own command stream. It is a
+frozen stream that AGES into a cross-version guard: every commit after that one
+is measured against a build genuinely older than itself. It is not a recording
+of any build you are running, and it cannot vouch for one (§3.5).
+
+They catch different halves, and neither is enough alone:
+
+| guard | what it compares | what it catches |
+|---|---|---|
+| `TestRunWorkflow_ReplaysCommittedV1History` | Temporal's own replayer: command types and their order | a reordered, added or deleted activity; a changed scheduling order |
+| `TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream` | the same replayer, run against a body with one extra emit — it must FAIL | the guard above going blind: it is the proof the fixture can reject an inserted command, on the day it is recorded rather than one change later |
+| `TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends` | the payloads, by re-executing the fixture's own input against the recorded ones | a changed `task.ExecuteTaskInput`, a renamed event type, a reworded message, a changed `Run` projection |
+
+The replayer never looks inside a payload: adding a field to
+`task.ExecuteTaskInput` replays perfectly clean, and an Orker of the recorded
+build would silently drop it. That is why the third guard exists.
+
+If any of them fails, current code no longer produces what the recorded build
+did. Either restore it (`workflow.GetVersion` for a deliberate command-stream
+change), or — if the contract genuinely changed and no old run can still be in
+flight — re-record the fixture and say so in the commit:
 
 ```bash
 ORK_RECORD_GOLDEN_HISTORY=1 go test -tags=integration ./internal/engine/ \
