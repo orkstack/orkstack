@@ -10,8 +10,8 @@
 
 <div class="mb-6 flex items-center justify-between">
 	<h1 class="text-2xl font-bold">
-		Runs{#if data.workflowName}
-			<span class="ml-2 text-base font-normal text-zinc-400">for {data.workflowName}</span>
+		Runs{#if data.orkflowName}
+			<span class="ml-2 text-base font-normal text-zinc-400">for {data.orkflowName}</span>
 		{/if}
 	</h1>
 	<a
@@ -48,7 +48,7 @@
 						<td class="px-4 py-3 font-medium">
 							<a href="/runs/{run.id}" class="text-emerald-300 hover:underline">{run.id}</a>
 						</td>
-						<td class="px-4 py-3 text-zinc-300">{run.workflowName}@{run.workflowVersion}</td>
+						<td class="px-4 py-3 text-zinc-300">{run.orkflowName}@{run.orkflowVersion}</td>
 						<td class="px-4 py-3"><StatusPill status={run.status} /></td>
 						<td class="px-4 py-3 text-zinc-400">{fmtTimestamp(run.createdAt)}</td>
 					</tr>

@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	// WorkflowName is the registered Temporal workflow type for a run.
-	WorkflowName = "RunWorkflow"
+	// RunWorkflowType is the registered Temporal workflow type for a run. It
+	// names a Temporal concept, not an OrkStack one: the OrkStack entity a run
+	// executes is an Orkflow, and this is the workflow TYPE that runs it.
+	RunWorkflowType = "RunWorkflow"
 
 	// EventQueue is the Temporal task queue for engine-internal projection
 	// activities. It is deliberately separate from task.DefaultQueue so Orkers
@@ -327,15 +329,15 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	})
 
 	input := task.ExecuteTaskInput{
-		RunID:           s.runID,
-		WorkflowName:    s.wf.GetName(),
-		WorkflowVersion: s.wf.GetVersion(),
-		TaskID:          id,
-		Plugin:          t.GetPlugin(),
-		With:            t.GetWith().AsMap(),
-		RunInput:        payloadToPlugin(s.input),
-		Upstream:        s.upstreamFor(id),
-		TimeoutSeconds:  timeoutSecondsFor(t),
+		RunID:          s.runID,
+		OrkflowName:    s.wf.GetName(),
+		OrkflowVersion: s.wf.GetVersion(),
+		TaskID:         id,
+		Plugin:         t.GetPlugin(),
+		With:           t.GetWith().AsMap(),
+		RunInput:       payloadToPlugin(s.input),
+		Upstream:       s.upstreamFor(id),
+		TimeoutSeconds: timeoutSecondsFor(t),
 	}
 	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
 }
@@ -447,16 +449,16 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 // the submission has no other source for the field.
 func (s *runState) snapshot() *orkstackv1.Run {
 	run := &orkstackv1.Run{
-		Id:              s.runID,
-		WorkflowName:    s.wf.GetName(),
-		WorkflowVersion: s.wf.GetVersion(),
-		Status:          s.status,
-		Input:           s.input,
-		Output:          s.output,
-		Error:           s.runError,
-		CreatedAt:       s.createdAt,
-		StartedAt:       s.startedAt,
-		FinishedAt:      s.finished,
+		Id:             s.runID,
+		OrkflowName:    s.wf.GetName(),
+		OrkflowVersion: s.wf.GetVersion(),
+		Status:         s.status,
+		Input:          s.input,
+		Output:         s.output,
+		Error:          s.runError,
+		CreatedAt:      s.createdAt,
+		StartedAt:      s.startedAt,
+		FinishedAt:     s.finished,
 	}
 	for _, id := range s.order {
 		run.TaskRuns = append(run.TaskRuns, s.taskRuns[id])

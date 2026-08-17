@@ -71,11 +71,11 @@ func newRunIDFixture(t *testing.T, starter api.RunStarter, archive api.RunArchiv
 	t.Helper()
 	runs, bus := engine.NewRunStore(), engine.NewEventBus()
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   starter,
-		Archive:   archive,
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  starter,
+		Archive:  archive,
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -88,7 +88,7 @@ func (f *runIDFixture) submit(t *testing.T, key string) (*orkstackv1.Run, error)
 	t.Helper()
 	resp, err := f.svc.SubmitRun(context.Background(),
 		connect.NewRequest(&orkstackv1.SubmitRunRequest{
-			WorkflowName:   "hello-ork",
+			OrkflowName:    "hello-ork",
 			IdempotencyKey: key,
 		}))
 	if err != nil {
@@ -282,11 +282,11 @@ func TestSubmitRun_GeneratedRunIDSurvivesTheDurablePath(t *testing.T) {
 	}
 
 	replica := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      engine.NewRunStore(),
-		Bus:       engine.NewEventBus(),
-		Starter:   &fakeStarter{},
-		Archive:   archive,
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     engine.NewRunStore(),
+		Bus:      engine.NewEventBus(),
+		Starter:  &fakeStarter{},
+		Archive:  archive,
 	})
 	got, err := replica.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: id}))
 	if err != nil {
@@ -314,11 +314,11 @@ func TestListRuns_OrdersRunsByTimeNotByRunID(t *testing.T) {
 	archive := newArchiver(t)
 	runs := engine.NewRunStore()
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       engine.NewEventBus(),
-		Starter:   &fakeStarter{},
-		Archive:   archive,
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      engine.NewEventBus(),
+		Starter:  &fakeStarter{},
+		Archive:  archive,
 	})
 
 	// Deliberately adversarial: the newest run carries the smallest id and the
@@ -333,10 +333,10 @@ func TestListRuns_OrdersRunsByTimeNotByRunID(t *testing.T) {
 	}
 	for _, run := range ordered {
 		runs.Save(&orkstackv1.Run{
-			Id:           run.id,
-			WorkflowName: "hello-ork",
-			Status:       orkstackv1.Status_STATUS_RUNNING,
-			CreatedAt:    timestamppb.New(base.Add(-run.age)),
+			Id:          run.id,
+			OrkflowName: "hello-ork",
+			Status:      orkstackv1.Status_STATUS_RUNNING,
+			CreatedAt:   timestamppb.New(base.Add(-run.age)),
 		})
 	}
 

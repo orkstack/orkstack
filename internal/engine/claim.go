@@ -13,8 +13,8 @@ import (
 // Names and defaults for the idempotency claim. The workflow is engine
 // internal: nothing outside this package should need to spell these.
 const (
-	// ClaimWorkflowName is the registered type of IdempotencyClaimWorkflow.
-	ClaimWorkflowName = "IdempotencyClaimWorkflow"
+	// ClaimWorkflowType is the registered type of IdempotencyClaimWorkflow.
+	ClaimWorkflowType = "IdempotencyClaimWorkflow"
 
 	// ClaimUpdateName is the update that binds a key to a run.
 	ClaimUpdateName = "claim"

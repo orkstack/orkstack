@@ -104,7 +104,7 @@ func startedEvent(t *testing.T, runID string, wf *orkstackv1.Orkflow) *historypb
 		EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
 		Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
 			WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{
-				WorkflowType: &commonpb.WorkflowType{Name: WorkflowName},
+				WorkflowType: &commonpb.WorkflowType{Name: RunWorkflowType},
 				Input:        payloadsOf(t, runID, wf, &orkstackv1.Payload{}),
 			},
 		},
@@ -161,11 +161,11 @@ func helloRun(t *testing.T, runID string) ([]*historypb.HistoryEvent, *orkstackv
 			runStatus = orkstackv1.Status_STATUS_SUCCEEDED
 		}
 		snapshot := &orkstackv1.Run{
-			Id:              runID,
-			WorkflowName:    wf.GetName(),
-			WorkflowVersion: wf.GetVersion(),
-			Status:          runStatus,
-			CreatedAt:       timestamppb.New(readerEpoch),
+			Id:             runID,
+			OrkflowName:    wf.GetName(),
+			OrkflowVersion: wf.GetVersion(),
+			Status:         runStatus,
+			CreatedAt:      timestamppb.New(readerEpoch),
 		}
 		if runStatus == orkstackv1.Status_STATUS_SUCCEEDED {
 			snapshot.FinishedAt = timestamppb.New(readerEpoch.Add(10 * time.Second))
@@ -258,8 +258,8 @@ func TestTemporalRunReader_GetRunReturnsTheLatestPublishedSnapshot(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
 	}
-	if run.GetId() != runID || run.GetWorkflowName() != "hello-ork" || run.GetWorkflowVersion() != "0.1.0" {
-		t.Fatalf("GetRun returned %s / %s@%s", run.GetId(), run.GetWorkflowName(), run.GetWorkflowVersion())
+	if run.GetId() != runID || run.GetOrkflowName() != "hello-ork" || run.GetOrkflowVersion() != "0.1.0" {
+		t.Fatalf("GetRun returned %s / %s@%s", run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion())
 	}
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Errorf("GetRun status = %s, want SUCCEEDED", run.GetStatus())
@@ -355,9 +355,9 @@ func TestTemporalRunReader_AnswersBeforeTheFirstEventIsPublished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
 	}
-	if run.GetWorkflowName() != "hello-ork" || run.GetWorkflowVersion() != "0.1.0" {
+	if run.GetOrkflowName() != "hello-ork" || run.GetOrkflowVersion() != "0.1.0" {
 		t.Fatalf("GetRun returned %s@%s, want hello-ork@0.1.0",
-			run.GetWorkflowName(), run.GetWorkflowVersion())
+			run.GetOrkflowName(), run.GetOrkflowVersion())
 	}
 	if run.GetStatus() != orkstackv1.Status_STATUS_PENDING {
 		t.Errorf("a run with no published event reads %s, want PENDING", run.GetStatus())
@@ -416,12 +416,12 @@ func TestTemporalRunReader_ListsRunsFromVisibility(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("ListRuns returned %d runs, want 2", len(all))
 	}
-	if fake.listQuery != fmt.Sprintf("WorkflowType = %q", WorkflowName) {
+	if fake.listQuery != fmt.Sprintf("WorkflowType = %q", RunWorkflowType) {
 		t.Errorf("ListRuns queried %q, want only run workflows", fake.listQuery)
 	}
-	if all[0].GetWorkflowName() != "hello-ork" || all[0].GetWorkflowVersion() != "0.1.0" {
+	if all[0].GetOrkflowName() != "hello-ork" || all[0].GetOrkflowVersion() != "0.1.0" {
 		t.Errorf("listed run 1 = %s@%s, want hello-ork@0.1.0",
-			all[0].GetWorkflowName(), all[0].GetWorkflowVersion())
+			all[0].GetOrkflowName(), all[0].GetOrkflowVersion())
 	}
 	if all[0].GetStatus() != orkstackv1.Status_STATUS_RUNNING {
 		t.Errorf("a running execution lists as %s, want RUNNING", all[0].GetStatus())
@@ -430,7 +430,7 @@ func TestTemporalRunReader_ListsRunsFromVisibility(t *testing.T) {
 		t.Errorf("a completed execution lists as %s, want SUCCEEDED", all[1].GetStatus())
 	}
 
-	byName, err := reader.ListRuns(context.Background(), RunQuery{WorkflowName: "other-ork"})
+	byName, err := reader.ListRuns(context.Background(), RunQuery{OrkflowName: "other-ork"})
 	if err != nil {
 		t.Fatalf("ListRuns(name): %v", err)
 	}
@@ -467,7 +467,7 @@ func visibilityRecord(
 	}
 	info := &workflowpb.WorkflowExecutionInfo{
 		Execution: &commonpb.WorkflowExecution{WorkflowId: runID},
-		Type:      &commonpb.WorkflowType{Name: WorkflowName},
+		Type:      &commonpb.WorkflowType{Name: RunWorkflowType},
 		Status:    status,
 		StartTime: timestamppb.New(startedAt),
 		Memo: &commonpb.Memo{Fields: map[string]*commonpb.Payload{

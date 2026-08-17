@@ -20,9 +20,9 @@ import (
 
 func TestMarshalJSON_WritesStatusWithoutItsEnumPrefix(t *testing.T) {
 	run := &orkstackv1.Run{
-		Id:           "ork-1786833695100960000-1",
-		WorkflowName: "hello-ork",
-		Status:       orkstackv1.Status_STATUS_SUCCEEDED,
+		Id:          "ork-1786833695100960000-1",
+		OrkflowName: "hello-ork",
+		Status:      orkstackv1.Status_STATUS_SUCCEEDED,
 	}
 
 	encoded, err := api.MarshalJSON(run)
@@ -172,10 +172,10 @@ func TestMarshalJSON_LeavesUserPayloadStringsAlone(t *testing.T) {
 // field order, numbers and nesting stay exactly as protojson wrote them.
 func TestMarshalJSON_ChangesNothingButTheEnumValues(t *testing.T) {
 	run := &orkstackv1.Run{
-		Id:              "ork-1",
-		WorkflowName:    "hello-ork",
-		WorkflowVersion: "0.1.0",
-		Status:          orkstackv1.Status_STATUS_SUCCEEDED,
+		Id:             "ork-1",
+		OrkflowName:    "hello-ork",
+		OrkflowVersion: "0.1.0",
+		Status:         orkstackv1.Status_STATUS_SUCCEEDED,
 		TaskRuns: []*orkstackv1.TaskRun{
 			{TaskId: "fetch", Status: orkstackv1.Status_STATUS_SUCCEEDED, Attempt: 2},
 		},
@@ -275,10 +275,10 @@ func TestMarshalJSON_RoundTripsThroughUnmarshalJSON(t *testing.T) {
 		t.Fatalf("build struct: %v", err)
 	}
 	run := &orkstackv1.Run{
-		Id:           "ork-1",
-		WorkflowName: "hello-ork",
-		Status:       orkstackv1.Status_STATUS_CANCELED,
-		Input:        &orkstackv1.Payload{Data: data},
+		Id:          "ork-1",
+		OrkflowName: "hello-ork",
+		Status:      orkstackv1.Status_STATUS_CANCELED,
+		Input:       &orkstackv1.Payload{Data: data},
 		TaskRuns: []*orkstackv1.TaskRun{
 			{TaskId: "fetch", Status: orkstackv1.Status_STATUS_SKIPPED, Attempt: 1},
 		},

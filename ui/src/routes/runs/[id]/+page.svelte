@@ -145,9 +145,9 @@
 		<div>
 			<h1 class="font-mono text-xl font-bold" data-testid="run-id">{run.id}</h1>
 			<p class="text-sm text-zinc-400">
-				<a href="/orkflows/{run.workflowName}" class="text-emerald-300 hover:underline"
-					>{run.workflowName}</a
-				>@{run.workflowVersion}
+				<a href="/orkflows/{run.orkflowName}" class="text-emerald-300 hover:underline"
+					>{run.orkflowName}</a
+				>@{run.orkflowVersion}
 			</p>
 			{#if statusTrail.length > 0}
 				<p class="mt-1 font-mono text-xs text-zinc-500" data-testid="run-status-trail">

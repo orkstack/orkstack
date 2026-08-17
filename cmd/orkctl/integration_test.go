@@ -24,13 +24,13 @@ import (
 )
 
 const (
-	// successWorkflowName is the example workflow, pinned to this test's
+	// successOrkflowName is the example workflow, pinned to this test's
 	// private task queue so only this test's Orker can execute it.
-	successWorkflowName = "hello-ork-m4"
+	successOrkflowName = "hello-ork-m4"
 
-	// failingWorkflowName is the same workflow with its tasks replaced by one
+	// failingOrkflowName is the same workflow with its tasks replaced by one
 	// shell command that exits non-zero, proving the failure exit code.
-	failingWorkflowName = "hello-ork-m4-failing"
+	failingOrkflowName = "hello-ork-m4-failing"
 )
 
 // servedBody is what the hermetic stand-in for the example's public fetch URL
@@ -109,13 +109,13 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	}
 
 	// Runs use a copy of that example pinned to this test's private task queue.
-	successPath := writeQueuePinnedWorkflow(t, repoRoot, successWorkflowName, taskQueue)
+	successPath := writeQueuePinnedOrkflow(t, repoRoot, successOrkflowName, taskQueue)
 	if _, stderr, code = cli("apply", successPath); code != 0 {
 		t.Fatalf("apply of the pinned workflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
 
 	// submit --watch: the real Orker runs http -> shell -> file for real.
-	stdout, stderr, code = cli("run", "submit", successWorkflowName,
+	stdout, stderr, code = cli("run", "submit", successOrkflowName,
 		"--input", "url="+origin.URL+"/json", "--watch")
 	if code != 0 {
 		t.Fatalf("submit --watch exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
@@ -138,11 +138,11 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	}
 
 	// The same path for a run whose task exits non-zero: the CLI must too.
-	failingPath := writeQueuePinnedWorkflow(t, repoRoot, failingWorkflowName, taskQueue)
+	failingPath := writeQueuePinnedOrkflow(t, repoRoot, failingOrkflowName, taskQueue)
 	if _, stderr, code = cli("apply", failingPath); code != 0 {
 		t.Fatalf("apply of the failing workflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
-	stdout, stderr, code = cli("run", "submit", failingWorkflowName, "--watch")
+	stdout, stderr, code = cli("run", "submit", failingOrkflowName, "--watch")
 	if code != exitRunFailed {
 		t.Fatalf("submit --watch of a failing run exit = %d, want %d\nstdout:\n%s\nstderr:\n%s",
 			code, exitRunFailed, stdout, stderr)
@@ -360,10 +360,10 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 	return "", "", -1
 }
 
-// writeQueuePinnedWorkflow rewrites examples/hello.ork.yaml under a new name
+// writeQueuePinnedOrkflow rewrites examples/hello.ork.yaml under a new name
 // with every task pinned to queue, and returns the file's path. The failing
 // variant keeps the same shape but runs one command that exits non-zero.
-func writeQueuePinnedWorkflow(t *testing.T, repoRoot, name, queue string) string {
+func writeQueuePinnedOrkflow(t *testing.T, repoRoot, name, queue string) string {
 	t.Helper()
 	source, err := os.ReadFile(filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
 	if err != nil {
@@ -375,7 +375,7 @@ func writeQueuePinnedWorkflow(t *testing.T, repoRoot, name, queue string) string
 	}
 	doc["name"] = name
 
-	if name == failingWorkflowName {
+	if name == failingOrkflowName {
 		doc["tasks"] = []any{map[string]any{
 			"id":     "fail",
 			"plugin": "shell",

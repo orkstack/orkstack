@@ -10,8 +10,8 @@ export const load: PageLoad = async ({ fetch, params }) => {
 		if (run) {
 			try {
 				const wfRes = await client.orkflows.getOrkflow({
-					name: run.workflowName,
-					version: run.workflowVersion
+					name: run.orkflowName,
+					version: run.orkflowVersion
 				});
 				orkflow = wfRes.orkflow ?? null;
 			} catch {

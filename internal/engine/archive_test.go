@@ -51,15 +51,15 @@ func sampleRun(t *testing.T, id string, status orkstackv1.Status, created time.T
 		t.Fatalf("output struct: %v", err)
 	}
 	return &orkstackv1.Run{
-		Id:              id,
-		WorkflowName:    "hello-ork",
-		WorkflowVersion: "v1",
-		Status:          status,
-		Input:           &orkstackv1.Payload{Data: input},
-		Output:          &orkstackv1.Payload{Data: output},
-		CreatedAt:       timestamppb.New(created),
-		StartedAt:       timestamppb.New(created.Add(time.Second)),
-		FinishedAt:      timestamppb.New(created.Add(3 * time.Second)),
+		Id:             id,
+		OrkflowName:    "hello-ork",
+		OrkflowVersion: "v1",
+		Status:         status,
+		Input:          &orkstackv1.Payload{Data: input},
+		Output:         &orkstackv1.Payload{Data: output},
+		CreatedAt:      timestamppb.New(created),
+		StartedAt:      timestamppb.New(created.Add(time.Second)),
+		FinishedAt:     timestamppb.New(created.Add(3 * time.Second)),
 		TaskRuns: []*orkstackv1.TaskRun{{
 			TaskId: "fetch",
 			Plugin: "http",
@@ -152,12 +152,12 @@ func TestRunArchive_RoundTripsEveryRunFieldAndEvent(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if loaded.GetWorkflowName() != run.GetWorkflowName() ||
-		loaded.GetWorkflowVersion() != run.GetWorkflowVersion() ||
+	if loaded.GetOrkflowName() != run.GetOrkflowName() ||
+		loaded.GetOrkflowVersion() != run.GetOrkflowVersion() ||
 		loaded.GetStatus() != run.GetStatus() {
 		t.Fatalf("loaded run identity = %s@%s %s, want %s@%s %s",
-			loaded.GetWorkflowName(), loaded.GetWorkflowVersion(), loaded.GetStatus(),
-			run.GetWorkflowName(), run.GetWorkflowVersion(), run.GetStatus())
+			loaded.GetOrkflowName(), loaded.GetOrkflowVersion(), loaded.GetStatus(),
+			run.GetOrkflowName(), run.GetOrkflowVersion(), run.GetStatus())
 	}
 	if got := loaded.GetInput().GetData().AsMap()["url"]; got != "https://example.test" {
 		t.Fatalf("loaded input url = %v, want the archived value", got)
@@ -206,7 +206,7 @@ func TestPublishEvent_ArchivesTheRunWhenItEnds(t *testing.T) {
 	created := at(t, "2026-08-14T09:30:15Z")
 	runID := "ork-1-1"
 	pending := &orkstackv1.Run{
-		Id: runID, WorkflowName: "hello-ork", WorkflowVersion: "v1",
+		Id: runID, OrkflowName: "hello-ork", OrkflowVersion: "v1",
 		Status: orkstackv1.Status_STATUS_PENDING, CreatedAt: timestamppb.New(created),
 	}
 	runs.Save(pending)
@@ -291,7 +291,7 @@ func TestPublishEvent_RepeatedTerminalEventArchivesOnce(t *testing.T) {
 	created := at(t, "2026-08-14T09:30:15Z")
 	runID := "ork-2-1"
 	runs.Save(&orkstackv1.Run{
-		Id: runID, WorkflowName: "hello-ork", WorkflowVersion: "v1",
+		Id: runID, OrkflowName: "hello-ork", OrkflowVersion: "v1",
 		Status: orkstackv1.Status_STATUS_PENDING, CreatedAt: timestamppb.New(created),
 	})
 	terminal := &orkstackv1.Event{
@@ -347,8 +347,8 @@ func TestRunArchiver_ListRunsReturnsWholeRunsNewestFirst(t *testing.T) {
 	}
 
 	runs, err := archiver.ListRuns(ctx, engine.ArchiveQuery{
-		WorkflowName: "hello-ork",
-		Status:       orkstackv1.Status_STATUS_SUCCEEDED,
+		OrkflowName: "hello-ork",
+		Status:      orkstackv1.Status_STATUS_SUCCEEDED,
 	})
 	if err != nil {
 		t.Fatalf("ListRuns: %v", err)
@@ -383,7 +383,7 @@ func TestRunArchiver_ArchiveRejectsARunItCannotIndex(t *testing.T) {
 	created := at(t, "2026-08-14T09:30:15Z")
 
 	nameless := sampleRun(t, "ork-1-1", orkstackv1.Status_STATUS_SUCCEEDED, created)
-	nameless.WorkflowName = ""
+	nameless.OrkflowName = ""
 	if err := archiver.Archive(context.Background(), nameless, nil); err == nil {
 		t.Fatal("archived a run with no orkflow name")
 	}

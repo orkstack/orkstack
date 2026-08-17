@@ -78,9 +78,9 @@ func serveAPI(
 ) (orkstackv1connect.OrkflowServiceClient, func()) {
 	t.Helper()
 	svc := api.NewService(api.Config{
-		Workflows: store,
-		Runs:      engine.NewRunStore(),
-		Bus:       engine.NewEventBus(),
+		Orkflows: store,
+		Runs:     engine.NewRunStore(),
+		Bus:      engine.NewEventBus(),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

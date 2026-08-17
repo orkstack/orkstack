@@ -102,7 +102,7 @@ func newReplica(
 	t.Helper()
 	runs := engine.NewRunStore()
 	svc := api.NewService(api.Config{
-		Workflows:   engine.NewWorkflowStore(),
+		Orkflows:    engine.NewMemoryOrkflowStore(),
 		Runs:        runs,
 		Bus:         engine.NewEventBus(),
 		Starter:     starter,
@@ -120,7 +120,7 @@ func (r *replica) submit(t *testing.T, key string) (*orkstackv1.Run, error) {
 	t.Helper()
 	resp, err := r.svc.SubmitRun(context.Background(),
 		connect.NewRequest(&orkstackv1.SubmitRunRequest{
-			WorkflowName:   "hello-ork",
+			OrkflowName:    "hello-ork",
 			IdempotencyKey: key,
 		}))
 	if err != nil {
@@ -170,10 +170,10 @@ func TestSubmitRun_TwoReplicasSharingAClaimerConverseOnOneRun(t *testing.T) {
 func TestSubmitRun_LosingReplicaReportsTheWinnersRunNotItsOwnRequest(t *testing.T) {
 	claimer := newSharedClaimer()
 	winner := &orkstackv1.Run{
-		Id:              "ork-1-1",
-		WorkflowName:    "hello-ork",
-		WorkflowVersion: "9.9.9-claimed-elsewhere",
-		Status:          orkstackv1.Status_STATUS_PENDING,
+		Id:             "ork-1-1",
+		OrkflowName:    "hello-ork",
+		OrkflowVersion: "9.9.9-claimed-elsewhere",
+		Status:         orkstackv1.Status_STATUS_PENDING,
 	}
 	claimer.bind("order-42", winner)
 
@@ -186,9 +186,9 @@ func TestSubmitRun_LosingReplicaReportsTheWinnersRunNotItsOwnRequest(t *testing.
 	if got.GetId() != winner.GetId() {
 		t.Errorf("run id = %q, want the claimed %q", got.GetId(), winner.GetId())
 	}
-	if got.GetWorkflowVersion() != winner.GetWorkflowVersion() {
+	if got.GetOrkflowVersion() != winner.GetOrkflowVersion() {
 		t.Errorf("run version = %q, want the winner's %q: the loser described its own request",
-			got.GetWorkflowVersion(), winner.GetWorkflowVersion())
+			got.GetOrkflowVersion(), winner.GetOrkflowVersion())
 	}
 	if started := loser.starter.startedRuns(); len(started) != 0 {
 		t.Errorf("the loser started %v", started)
@@ -272,9 +272,9 @@ func TestSubmitRun_AClaimWhoseWinnerDiedHoldsTheKeyUntilItsTTL(t *testing.T) {
 	// The binding a dead replica left behind: a PENDING run, in no read model
 	// and in no archive, because it never reached Temporal.
 	stranded := &orkstackv1.Run{
-		Id:           "ork-20260817000000-0001",
-		WorkflowName: "hello-ork",
-		Status:       orkstackv1.Status_STATUS_PENDING,
+		Id:          "ork-20260817000000-0001",
+		OrkflowName: "hello-ork",
+		Status:      orkstackv1.Status_STATUS_PENDING,
 	}
 	claimer.bind("order-42", stranded)
 
@@ -340,7 +340,7 @@ func TestSubmitRun_ReissueMovesTheClaimToTheRunThatStarted(t *testing.T) {
 	// so the Service is built directly.
 	runs := engine.NewRunStore()
 	svc := api.NewService(api.Config{
-		Workflows:   engine.NewWorkflowStore(),
+		Orkflows:    engine.NewMemoryOrkflowStore(),
 		Runs:        runs,
 		Bus:         engine.NewEventBus(),
 		Starter:     starter,
@@ -353,7 +353,7 @@ func TestSubmitRun_ReissueMovesTheClaimToTheRunThatStarted(t *testing.T) {
 	submit := func() (*orkstackv1.Run, error) {
 		resp, err := svc.SubmitRun(context.Background(),
 			connect.NewRequest(&orkstackv1.SubmitRunRequest{
-				WorkflowName:   "hello-ork",
+				OrkflowName:    "hello-ork",
 				IdempotencyKey: "order-42",
 			}))
 		if err != nil {

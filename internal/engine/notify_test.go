@@ -69,7 +69,7 @@ func TestPublishEvent_AnnouncesRunTransitionsAndIgnoresTaskEvents(t *testing.T) 
 		{orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED},
 	}
 	for i, step := range sequence {
-		run := &orkstackv1.Run{Id: runID, WorkflowName: "hello-ork", Status: step.status}
+		run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: step.status}
 		if err := activities.PublishEvent(context.Background(),
 			runEvent(runID, step.eventType, step.status), run, dedupe(runID, i)); err != nil {
 			t.Fatalf("PublishEvent %v: %v", step.eventType, err)
@@ -104,7 +104,7 @@ func TestPublishEvent_AnnouncesFailureAndCancellationToo(t *testing.T) {
 			WithRunNotifier(notifier)
 
 		const runID = "ork-1755302400123456789-2"
-		run := &orkstackv1.Run{Id: runID, WorkflowName: "hello-ork", Status: terminal.status}
+		run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: terminal.status}
 		if err := activities.PublishEvent(context.Background(),
 			runEvent(runID, terminal.eventType, terminal.status), run, runID+"#1"); err != nil {
 			t.Fatalf("PublishEvent: %v", err)
@@ -121,7 +121,7 @@ func TestPublishEvent_AnnouncesATransitionOnceAcrossActivityRetries(t *testing.T
 		WithRunNotifier(notifier)
 
 	const runID = "ork-1755302400123456789-3"
-	run := &orkstackv1.Run{Id: runID, WorkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED}
+	run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED}
 	event := runEvent(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		orkstackv1.Status_STATUS_SUCCEEDED)
 
@@ -146,17 +146,17 @@ func TestPublishEvent_AnnouncesTheMergedRunSnapshot(t *testing.T) {
 	const runID = "ork-1755302400123456789-4"
 	created := timestamppb.New(time.Unix(1755302399, 0).UTC())
 	store.Save(&orkstackv1.Run{
-		Id:           runID,
-		WorkflowName: "hello-ork",
-		Status:       orkstackv1.Status_STATUS_PENDING,
-		CreatedAt:    created,
+		Id:          runID,
+		OrkflowName: "hello-ork",
+		Status:      orkstackv1.Status_STATUS_PENDING,
+		CreatedAt:   created,
 	})
 
 	notifier := &recordingNotifier{}
 	activities := engine.NewEventActivities(engine.NewEventBus(), store).WithRunNotifier(notifier)
 	if err := activities.PublishEvent(context.Background(),
 		runEvent(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED),
-		&orkstackv1.Run{Id: runID, WorkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED},
+		&orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED},
 		runID+"#1"); err != nil {
 		t.Fatalf("PublishEvent: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestPublishEvent_ProjectsNormallyWithoutANotifier(t *testing.T) {
 	activities := engine.NewEventActivities(bus, store)
 
 	const runID = "ork-1755302400123456789-5"
-	run := &orkstackv1.Run{Id: runID, WorkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED}
+	run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED}
 	if err := activities.PublishEvent(context.Background(),
 		runEvent(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED),
 		run, runID+"#1"); err != nil {

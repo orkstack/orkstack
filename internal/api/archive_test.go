@@ -51,12 +51,12 @@ func boot(t *testing.T, archive *engine.RunArchiver, prefix string, now func() t
 	starter := &fakeStarter{}
 	var counter int
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   starter,
-		Archive:   archive,
-		Now:       now,
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  starter,
+		Archive:  archive,
+		Now:      now,
 		NewRunID: func() string {
 			counter++
 			return fmt.Sprintf("ork-%s-%d", prefix, counter)
@@ -86,7 +86,7 @@ func (h *archiveHarness) apply(t *testing.T, yaml string) {
 func (h *archiveHarness) submit(t *testing.T, name string) string {
 	t.Helper()
 	resp, err := h.svc.SubmitRun(context.Background(),
-		connect.NewRequest(&orkstackv1.SubmitRunRequest{WorkflowName: name}))
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name}))
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)
 	}
@@ -96,7 +96,7 @@ func (h *archiveHarness) submit(t *testing.T, name string) string {
 		Sequence:  1,
 		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
 		Status:    orkstackv1.Status_STATUS_PENDING,
-		Message:   "run created for orkflow " + run.GetWorkflowName(),
+		Message:   "run created for orkflow " + run.GetOrkflowName(),
 		Timestamp: run.GetCreatedAt(),
 	}, run, run.GetId()+"#1"); err != nil {
 		t.Fatalf("PublishEvent(created): %v", err)
@@ -117,12 +117,12 @@ func (h *archiveHarness) finish(t *testing.T, runID string, status orkstackv1.St
 		t.Fatalf("run %q is not in the live store", runID)
 	}
 	snapshot := &orkstackv1.Run{
-		Id:              runID,
-		WorkflowName:    stored.GetWorkflowName(),
-		WorkflowVersion: stored.GetWorkflowVersion(),
-		Status:          status,
-		StartedAt:       timestamppb.New(finishedAt.Add(-time.Second)),
-		FinishedAt:      timestamppb.New(finishedAt),
+		Id:             runID,
+		OrkflowName:    stored.GetOrkflowName(),
+		OrkflowVersion: stored.GetOrkflowVersion(),
+		Status:         status,
+		StartedAt:      timestamppb.New(finishedAt.Add(-time.Second)),
+		FinishedAt:     timestamppb.New(finishedAt),
 		TaskRuns: []*orkstackv1.TaskRun{
 			{TaskId: "fetch", Plugin: "http", Status: status},
 		},
@@ -212,7 +212,7 @@ func TestEngineRestart_RunHistorySurvivesANewProcess(t *testing.T) {
 	if recovered.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("recovered status = %s, want SUCCEEDED", recovered.GetStatus())
 	}
-	if recovered.GetWorkflowName() != "hello-ork" || len(recovered.GetTaskRuns()) != 1 {
+	if recovered.GetOrkflowName() != "hello-ork" || len(recovered.GetTaskRuns()) != 1 {
 		t.Fatalf("recovered run lost detail: %+v", recovered)
 	}
 	if recovered.GetCreatedAt() == nil {
@@ -264,20 +264,20 @@ func TestListRuns_StatusAndOrkflowFiltersReachTheArchive(t *testing.T) {
 		},
 		{
 			name: "orkflow only",
-			req:  &orkstackv1.ListRunsRequest{WorkflowName: "hello-ork"},
+			req:  &orkstackv1.ListRunsRequest{OrkflowName: "hello-ork"},
 			want: []string{ids[2], ids[1], ids[0]},
 		},
 		{
 			name: "orkflow and status",
 			req: &orkstackv1.ListRunsRequest{
-				WorkflowName: "hello-ork",
-				Status:       orkstackv1.Status_STATUS_FAILED,
+				OrkflowName: "hello-ork",
+				Status:      orkstackv1.Status_STATUS_FAILED,
 			},
 			want: []string{ids[1]},
 		},
 		{
 			name: "another orkflow matches nothing",
-			req:  &orkstackv1.ListRunsRequest{WorkflowName: "not-applied"},
+			req:  &orkstackv1.ListRunsRequest{OrkflowName: "not-applied"},
 			want: nil,
 		},
 		{
@@ -336,7 +336,7 @@ func TestGetRun_PrefersTheLiveSnapshotOverTheArchive(t *testing.T) {
 
 	// A later live update the archive will never see.
 	harness.runs.Apply(&orkstackv1.Run{
-		Id: runID, WorkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_CANCELED,
+		Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_CANCELED,
 	})
 	run, err := harness.get(t, runID)
 	if err != nil {
@@ -367,7 +367,7 @@ func TestSubmitRun_StarterFailureIsArchived(t *testing.T) {
 	first.apply(t, helloYAML(t))
 	first.starter.err = fmt.Errorf("temporal is down")
 	if _, err := first.svc.SubmitRun(context.Background(),
-		connect.NewRequest(&orkstackv1.SubmitRunRequest{WorkflowName: "hello-ork"})); err == nil {
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err == nil {
 		t.Fatal("SubmitRun succeeded despite a failing starter")
 	}
 
@@ -387,7 +387,7 @@ func TestListRuns_WithoutAnArchiveIsUnchanged(t *testing.T) {
 	runs := engine.NewRunStore()
 	svc := api.NewService(api.Config{Runs: runs, Starter: &fakeStarter{}})
 	runs.Save(&orkstackv1.Run{
-		Id: "ork-1", WorkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED,
+		Id: "ork-1", OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED,
 	})
 	resp, err := svc.ListRuns(context.Background(),
 		connect.NewRequest(&orkstackv1.ListRunsRequest{Status: orkstackv1.Status_STATUS_SUCCEEDED}))

@@ -158,12 +158,12 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	}
 
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   engine.NewTemporalStarter(temporalClient, runQueue),
-		Webhooks:  registry,
-		Notifier:  runNotifier,
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  engine.NewTemporalStarter(temporalClient, runQueue),
+		Webhooks: registry,
+		Notifier: runNotifier,
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -207,14 +207,14 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	// 3. A real run on a real cluster. Every task names the private queue, so
 	// no other worker on the shared queue can steal this run's activities
 	// (AGENTS.md §6).
-	workflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, origin)
+	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, origin)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, origin)
-	if _, err := workflowClient.ApplyOrkflow(ctx, connect.NewRequest(
+	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.ApplyOrkflowRequest{Yaml: webhookOrkflowYAML(runQueue)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(
-		&orkstackv1.SubmitRunRequest{WorkflowName: webhookOrkflowName}))
+		&orkstackv1.SubmitRunRequest{OrkflowName: webhookOrkflowName}))
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)
 	}

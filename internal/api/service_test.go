@@ -91,11 +91,11 @@ func newFixtureWithNotifier(t *testing.T, notifier engine.RunNotifier) *fixture 
 	starter := &fakeStarter{}
 	var counter int
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   starter,
-		Notifier:  notifier,
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  starter,
+		Notifier: notifier,
 		NewRunID: func() string {
 			counter++
 			return fmt.Sprintf("run-%03d", counter)
@@ -130,7 +130,7 @@ func newFixtureWithNotifier(t *testing.T, notifier engine.RunNotifier) *fixture 
 	}
 }
 
-func (f *fixture) workflowClient() orkstackv1connect.OrkflowServiceClient {
+func (f *fixture) orkflowClient() orkstackv1connect.OrkflowServiceClient {
 	return orkstackv1connect.NewOrkflowServiceClient(f.client, f.baseURL)
 }
 
@@ -154,7 +154,7 @@ func helloYAML(t *testing.T) string {
 func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	client := f.workflowClient()
+	client := f.orkflowClient()
 
 	applied, err := client.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)}))
 	if err != nil {
@@ -162,10 +162,10 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 	}
 	wf := applied.Msg.GetOrkflow()
 	if wf.GetName() != "hello-ork" || wf.GetVersion() != "0.1.0" {
-		t.Fatalf("applied workflow = %s@%s, want hello-ork@0.1.0", wf.GetName(), wf.GetVersion())
+		t.Fatalf("applied orkflow = %s@%s, want hello-ork@0.1.0", wf.GetName(), wf.GetVersion())
 	}
 	if len(wf.GetTasks()) != 3 {
-		t.Fatalf("applied workflow has %d tasks, want 3", len(wf.GetTasks()))
+		t.Fatalf("applied orkflow has %d tasks, want 3", len(wf.GetTasks()))
 	}
 
 	// Exact version.
@@ -173,13 +173,13 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 		Name: "hello-ork", Version: "0.1.0",
 	}))
 	if err != nil {
-		t.Fatalf("GetWorkflow: %v", err)
+		t.Fatalf("GetOrkflow: %v", err)
 	}
 	if got.Msg.GetOrkflow().GetSourceYaml() != wf.GetSourceYaml() {
 		t.Error("round-tripped source_yaml differs from the applied document")
 	}
 	if len(got.Msg.GetOrkflow().GetTasks()) != 3 {
-		t.Errorf("round-tripped workflow has %d tasks, want 3", len(got.Msg.GetOrkflow().GetTasks()))
+		t.Errorf("round-tripped orkflow has %d tasks, want 3", len(got.Msg.GetOrkflow().GetTasks()))
 	}
 	if got.Msg.GetOrkflow().GetTasks()[0].GetWith().AsMap()["url"] != "{{ .inputs.url }}" {
 		t.Error("round-tripped task `with` lost its raw template")
@@ -196,16 +196,16 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 
 	listed, err := client.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
 	if err != nil {
-		t.Fatalf("ListWorkflows: %v", err)
+		t.Fatalf("ListOrkflows: %v", err)
 	}
 	if len(listed.Msg.GetOrkflows()) != 1 {
-		t.Errorf("ListWorkflows returned %d workflows, want 1", len(listed.Msg.GetOrkflows()))
+		t.Errorf("ListOrkflows returned %d orkflows, want 1", len(listed.Msg.GetOrkflows()))
 	}
 }
 
 func TestApplyRejectsInvalidDocument(t *testing.T) {
 	f := newFixture(t)
-	_, err := f.workflowClient().ApplyOrkflow(context.Background(),
+	_, err := f.orkflowClient().ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: "name: Bad_Name\ntasks: []\n"}))
 	if err == nil {
 		t.Fatal("Apply(invalid) = nil error, want InvalidArgument")
@@ -217,7 +217,7 @@ func TestApplyRejectsInvalidDocument(t *testing.T) {
 
 func TestGetOrkflowUnknownReturnsNotFound(t *testing.T) {
 	f := newFixture(t)
-	_, err := f.workflowClient().GetOrkflow(context.Background(),
+	_, err := f.orkflowClient().GetOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: "ghost"}))
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Errorf("GetOrkflow(ghost) code = %v, want NotFound", connect.CodeOf(err))
@@ -227,13 +227,13 @@ func TestGetOrkflowUnknownReturnsNotFound(t *testing.T) {
 func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.workflowClient().ApplyOrkflow(ctx,
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
 	submitted, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "hello-ork",
+		OrkflowName: "hello-ork",
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)
@@ -245,8 +245,8 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	if run.GetStatus() != orkstackv1.Status_STATUS_PENDING {
 		t.Errorf("submitted run status = %v, want PENDING", run.GetStatus())
 	}
-	if run.GetWorkflowName() != "hello-ork" || run.GetWorkflowVersion() != "0.1.0" {
-		t.Errorf("run pins %s@%s, want hello-ork@0.1.0", run.GetWorkflowName(), run.GetWorkflowVersion())
+	if run.GetOrkflowName() != "hello-ork" || run.GetOrkflowVersion() != "0.1.0" {
+		t.Errorf("run pins %s@%s, want hello-ork@0.1.0", run.GetOrkflowName(), run.GetOrkflowVersion())
 	}
 	if started := f.starter.startedRuns(); len(started) != 1 || started[0] != "run-001" {
 		t.Errorf("started runs = %v, want [run-001]", started)
@@ -261,7 +261,7 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	}
 
 	listed, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		WorkflowName: "hello-ork",
+		OrkflowName: "hello-ork",
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns: %v", err)
@@ -276,10 +276,10 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 // id becomes the Temporal workflow id and the handle CLI users see.
 func TestSubmitRun_DefaultRunIDUsesOrkPrefix(t *testing.T) {
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      engine.NewRunStore(),
-		Bus:       engine.NewEventBus(),
-		Starter:   &fakeStarter{},
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     engine.NewRunStore(),
+		Bus:      engine.NewEventBus(),
+		Starter:  &fakeStarter{},
 	})
 	ctx := context.Background()
 	if _, err := svc.ApplyOrkflow(ctx,
@@ -291,7 +291,7 @@ func TestSubmitRun_DefaultRunIDUsesOrkPrefix(t *testing.T) {
 	seen := map[string]bool{}
 	for range 3 {
 		submitted, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-			WorkflowName: "hello-ork",
+			OrkflowName: "hello-ork",
 		}))
 		if err != nil {
 			t.Fatalf("SubmitRun: %v", err)
@@ -310,7 +310,7 @@ func TestSubmitRun_DefaultRunIDUsesOrkPrefix(t *testing.T) {
 func TestSubmitRunUnknownOrkflowReturnsNotFound(t *testing.T) {
 	f := newFixture(t)
 	_, err := f.runClient().SubmitRun(context.Background(),
-		connect.NewRequest(&orkstackv1.SubmitRunRequest{WorkflowName: "ghost"}))
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "ghost"}))
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Errorf("SubmitRun(ghost) code = %v, want NotFound", connect.CodeOf(err))
 	}
@@ -319,7 +319,7 @@ func TestSubmitRunUnknownOrkflowReturnsNotFound(t *testing.T) {
 func TestSubmitRunReportsStarterFailure(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.workflowClient().ApplyOrkflow(ctx,
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestSubmitRunReportsStarterFailure(t *testing.T) {
 	f.starter.mu.Unlock()
 
 	_, err := f.runClient().SubmitRun(ctx,
-		connect.NewRequest(&orkstackv1.SubmitRunRequest{WorkflowName: "hello-ork"}))
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"}))
 	if connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("SubmitRun code = %v, want Internal", connect.CodeOf(err))
 	}
@@ -344,7 +344,7 @@ func TestSubmitRunReportsStarterFailure(t *testing.T) {
 func TestSubmitRun_StarterFailureTerminatesConnectAndWebSocketStreams(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.workflowClient().ApplyOrkflow(ctx,
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestSubmitRun_StarterFailureTerminatesConnectAndWebSocketStreams(t *testing
 	f.starter.mu.Unlock()
 
 	_, err := f.runClient().SubmitRun(ctx,
-		connect.NewRequest(&orkstackv1.SubmitRunRequest{WorkflowName: "hello-ork"}))
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"}))
 	if connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("SubmitRun code = %v, want Internal", connect.CodeOf(err))
 	}
@@ -431,13 +431,13 @@ func assertStartFailureEvents(t *testing.T, events []*orkstackv1.Event) {
 func TestSubmitRunIsIdempotentPerKey(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.workflowClient().ApplyOrkflow(ctx,
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	req := func() *connect.Request[orkstackv1.SubmitRunRequest] {
 		return connect.NewRequest(&orkstackv1.SubmitRunRequest{
-			WorkflowName:   "hello-ork",
+			OrkflowName:    "hello-ork",
 			IdempotencyKey: "abc",
 		})
 	}
@@ -461,12 +461,12 @@ func TestSubmitRunIsIdempotentPerKey(t *testing.T) {
 func TestCancelRunForwardsToStarter(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.workflowClient().ApplyOrkflow(ctx,
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if _, err := f.runClient().SubmitRun(ctx,
-		connect.NewRequest(&orkstackv1.SubmitRunRequest{WorkflowName: "hello-ork"})); err != nil {
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err != nil {
 		t.Fatalf("SubmitRun: %v", err)
 	}
 	if _, err := f.runClient().CancelRun(ctx,
@@ -484,9 +484,9 @@ func TestCancelRunForwardsToStarter(t *testing.T) {
 func (f *fixture) seedRun(t *testing.T, runID string) []*orkstackv1.Event {
 	t.Helper()
 	f.runs.Save(&orkstackv1.Run{
-		Id:           runID,
-		WorkflowName: "hello-ork",
-		Status:       orkstackv1.Status_STATUS_RUNNING,
+		Id:          runID,
+		OrkflowName: "hello-ork",
+		Status:      orkstackv1.Status_STATUS_RUNNING,
 	})
 	published := []*orkstackv1.Event{}
 	stages := []struct {
@@ -815,7 +815,7 @@ func (failingLister) ListPlugins(context.Context) ([]plugin.Descriptor, error) {
 func TestServerSpeaksH2CToConnectClients(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.workflowClient().ApplyOrkflow(ctx,
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("Apply over h2c: %v", err)
 	}
@@ -843,13 +843,13 @@ func TestServerSpeaksH2CToConnectClients(t *testing.T) {
 func TestSubmitRun_MergesDeclaredInputDefaultsBeforeSavingAndStarting(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.workflowClient().ApplyOrkflow(ctx,
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
 	omitted, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "hello-ork",
+		OrkflowName: "hello-ork",
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun omitted input: %v", err)
@@ -867,8 +867,8 @@ func TestSubmitRun_MergesDeclaredInputDefaultsBeforeSavingAndStarting(t *testing
 		t.Fatalf("provided input: %v", err)
 	}
 	provided, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "hello-ork",
-		Input:        &orkstackv1.Payload{Data: providedData},
+		OrkflowName: "hello-ork",
+		Input:       &orkstackv1.Payload{Data: providedData},
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun provided input: %v", err)
@@ -881,7 +881,7 @@ func TestSubmitRun_MergesDeclaredInputDefaultsBeforeSavingAndStarting(t *testing
 func TestSubmitRun_ConcurrentIdempotencyKeyStartsExactlyOneRun(t *testing.T) {
 	const requests = 32
 
-	workflows := engine.NewWorkflowStore()
+	orkflows := engine.NewMemoryOrkflowStore()
 	runs := engine.NewRunStore()
 	starter := &fakeStarter{}
 	allocations := make(chan int, requests)
@@ -889,10 +889,10 @@ func TestSubmitRun_ConcurrentIdempotencyKeyStartsExactlyOneRun(t *testing.T) {
 	var allocationMu sync.Mutex
 	allocationCount := 0
 	svc := api.NewService(api.Config{
-		Workflows: workflows,
-		Runs:      runs,
-		Bus:       engine.NewEventBus(),
-		Starter:   starter,
+		Orkflows: orkflows,
+		Runs:     runs,
+		Bus:      engine.NewEventBus(),
+		Starter:  starter,
 		NewRunID: func() string {
 			allocationMu.Lock()
 			allocationCount++
@@ -921,7 +921,7 @@ func TestSubmitRun_ConcurrentIdempotencyKeyStartsExactlyOneRun(t *testing.T) {
 			defer wg.Done()
 			<-start
 			response, err := svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
-				WorkflowName:   "hello-ork",
+				OrkflowName:    "hello-ork",
 				IdempotencyKey: "shared-key",
 			}))
 			if err != nil {

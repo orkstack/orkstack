@@ -44,8 +44,8 @@ const (
 
 // RunQuery selects runs. Zero values mean "no filter".
 type RunQuery struct {
-	WorkflowName string
-	Status       orkstackv1.Status
+	OrkflowName string
+	Status      orkstackv1.Status
 	// Limit caps the runs returned, newest first. 0 means DefaultRunPageSize.
 	Limit int
 }
@@ -182,7 +182,7 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	var token []byte
 	for page := 0; page < maxRunListPages; page++ {
 		response, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
-			Query:         fmt.Sprintf("WorkflowType = %q", WorkflowName),
+			Query:         fmt.Sprintf("WorkflowType = %q", RunWorkflowType),
 			PageSize:      int32(limit),
 			NextPageToken: token,
 		})
@@ -405,8 +405,8 @@ func (r *TemporalRunReader) startedRun(
 	if len(payloads) > 1 {
 		var wf *orkstackv1.Orkflow
 		if err := r.converter.FromPayload(payloads[1], &wf); err == nil && wf != nil {
-			run.WorkflowName = wf.GetName()
-			run.WorkflowVersion = wf.GetVersion()
+			run.OrkflowName = wf.GetName()
+			run.OrkflowVersion = wf.GetVersion()
 		}
 	}
 	if len(payloads) > 2 {
@@ -428,8 +428,8 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 	if info.GetCloseTime() != nil {
 		run.FinishedAt = cloneTime(info.GetCloseTime())
 	}
-	run.WorkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
-	run.WorkflowVersion = r.memoString(info.GetMemo(), MemoOrkflowVersion)
+	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
+	run.OrkflowVersion = r.memoString(info.GetMemo(), MemoOrkflowVersion)
 	return run
 }
 
@@ -449,7 +449,7 @@ func (r *TemporalRunReader) memoString(memo *commonpb.Memo, key string) string {
 
 // matchesRunQuery applies the client-side half of a list query.
 func matchesRunQuery(run *orkstackv1.Run, q RunQuery) bool {
-	if q.WorkflowName != "" && run.GetWorkflowName() != q.WorkflowName {
+	if q.OrkflowName != "" && run.GetOrkflowName() != q.OrkflowName {
 		return false
 	}
 	if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != q.Status {
@@ -541,11 +541,11 @@ func mergeRunSnapshot(base, next *orkstackv1.Run) *orkstackv1.Run {
 	if next.GetInput() == nil {
 		next.Input = base.GetInput()
 	}
-	if next.GetWorkflowName() == "" {
-		next.WorkflowName = base.GetWorkflowName()
+	if next.GetOrkflowName() == "" {
+		next.OrkflowName = base.GetOrkflowName()
 	}
-	if next.GetWorkflowVersion() == "" {
-		next.WorkflowVersion = base.GetWorkflowVersion()
+	if next.GetOrkflowVersion() == "" {
+		next.OrkflowVersion = base.GetOrkflowVersion()
 	}
 	return next
 }

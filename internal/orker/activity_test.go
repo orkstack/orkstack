@@ -102,10 +102,10 @@ func TestExecuteTask_DispatchesByPluginNameAndUploadsProducedArtifacts(t *testin
 	activities := NewActivitiesWithOptions(registryWith(stub, &stubPlugin{name: "other"}), store, Options{})
 
 	result, err := runActivity(t, activities, task.ExecuteTaskInput{
-		RunID:        "run-1",
-		WorkflowName: "hello-ork",
-		TaskID:       "produce",
-		Plugin:       "demo",
+		RunID:       "run-1",
+		OrkflowName: "hello-ork",
+		TaskID:      "produce",
+		Plugin:      "demo",
 	})
 	if err != nil {
 		t.Fatalf("ExecuteTask: %v", err)

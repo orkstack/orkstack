@@ -84,12 +84,12 @@ func proofRun(t *testing.T) *orkstackv1.Run {
 		t.Fatalf("build struct: %v", err)
 	}
 	return &orkstackv1.Run{
-		Id:              "ork-1786837000491917000-1",
-		WorkflowName:    "hello-ork",
-		WorkflowVersion: "0.1.0",
-		Status:          orkstackv1.Status_STATUS_SUCCEEDED,
-		Input:           &orkstackv1.Payload{Data: input},
-		Output:          &orkstackv1.Payload{Data: output},
+		Id:             "ork-1786837000491917000-1",
+		OrkflowName:    "hello-ork",
+		OrkflowVersion: "0.1.0",
+		Status:         orkstackv1.Status_STATUS_SUCCEEDED,
+		Input:          &orkstackv1.Payload{Data: input},
+		Output:         &orkstackv1.Payload{Data: output},
 		TaskRuns: []*orkstackv1.TaskRun{
 			{TaskId: "fetch", Plugin: "http", Status: orkstackv1.Status_STATUS_SUCCEEDED,
 				Attempt: 1, StartedAt: at, FinishedAt: at},

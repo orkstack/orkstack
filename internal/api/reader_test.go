@@ -57,7 +57,7 @@ func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstack
 	}
 	var out []*orkstackv1.Run
 	for _, run := range f.runs {
-		if q.WorkflowName != "" && run.GetWorkflowName() != q.WorkflowName {
+		if q.OrkflowName != "" && run.GetOrkflowName() != q.OrkflowName {
 			continue
 		}
 		if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != q.Status {
@@ -113,11 +113,11 @@ func newReaderFixture(t *testing.T, reader *fakeReader) *readerFixture {
 	t.Helper()
 	runs := engine.NewRunStore()
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Reader:    reader,
-		Runs:      runs,
-		Bus:       engine.NewEventBus(),
-		Starter:   &fakeStarter{},
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Reader:   reader,
+		Runs:     runs,
+		Bus:      engine.NewEventBus(),
+		Starter:  &fakeStarter{},
 	})
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
@@ -155,13 +155,13 @@ func (f *readerFixture) runClient() orkstackv1connect.RunServiceClient {
 func foreignRun() (*orkstackv1.Run, []*orkstackv1.Event) {
 	at := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 	run := &orkstackv1.Run{
-		Id:              "ork-foreign-1",
-		WorkflowName:    "hello-ork",
-		WorkflowVersion: "0.1.0",
-		Status:          orkstackv1.Status_STATUS_SUCCEEDED,
-		CreatedAt:       timestamppb.New(at),
-		StartedAt:       timestamppb.New(at.Add(time.Second)),
-		FinishedAt:      timestamppb.New(at.Add(4 * time.Second)),
+		Id:             "ork-foreign-1",
+		OrkflowName:    "hello-ork",
+		OrkflowVersion: "0.1.0",
+		Status:         orkstackv1.Status_STATUS_SUCCEEDED,
+		CreatedAt:      timestamppb.New(at),
+		StartedAt:      timestamppb.New(at.Add(time.Second)),
+		FinishedAt:     timestamppb.New(at.Add(4 * time.Second)),
 	}
 	types := []orkstackv1.EventType{
 		orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
@@ -206,9 +206,9 @@ func TestGetRun_AnswersForARunThisReplicaNeverSaw(t *testing.T) {
 		t.Fatalf("GetRun on a replica that did not start the run: %v", err)
 	}
 	run := got.Msg.GetRun()
-	if run.GetId() != "ork-foreign-1" || run.GetWorkflowName() != "hello-ork" {
+	if run.GetId() != "ork-foreign-1" || run.GetOrkflowName() != "hello-ork" {
 		t.Fatalf("GetRun returned %s@%s, want ork-foreign-1 / hello-ork",
-			run.GetId(), run.GetWorkflowName())
+			run.GetId(), run.GetOrkflowName())
 	}
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Errorf("GetRun reports %s, want the record's SUCCEEDED", run.GetStatus())
@@ -231,10 +231,10 @@ func TestListRuns_AnswersForRunsThisReplicaNeverSaw(t *testing.T) {
 
 	// The filters have to reach the record too, not a local index of them.
 	filtered, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		WorkflowName: "something-else",
+		OrkflowName: "something-else",
 	}))
 	if err != nil {
-		t.Fatalf("ListRuns(workflow_name): %v", err)
+		t.Fatalf("ListRuns(orkflow_name): %v", err)
 	}
 	if len(filtered.Msg.GetRuns()) != 0 {
 		t.Fatalf("filtering by another orkflow returned %v, want nothing",
@@ -330,10 +330,10 @@ func TestWebSocketBridge_RejectsARunTheRecordDoesNotHold(t *testing.T) {
 func TestReads_IgnoreAStaleProcessLocalSnapshot(t *testing.T) {
 	f := newForeignFixture(t)
 	f.runs.Save(&orkstackv1.Run{
-		Id:              "ork-foreign-1",
-		WorkflowName:    "stale-local-copy",
-		WorkflowVersion: "0.0.1",
-		Status:          orkstackv1.Status_STATUS_RUNNING,
+		Id:             "ork-foreign-1",
+		OrkflowName:    "stale-local-copy",
+		OrkflowVersion: "0.0.1",
+		Status:         orkstackv1.Status_STATUS_RUNNING,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -344,7 +344,7 @@ func TestReads_IgnoreAStaleProcessLocalSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
 	}
-	if name := got.Msg.GetRun().GetWorkflowName(); name != "hello-ork" {
+	if name := got.Msg.GetRun().GetOrkflowName(); name != "hello-ork" {
 		t.Fatalf("GetRun answered from the process-local store (%s), not the record", name)
 	}
 	if status := got.Msg.GetRun().GetStatus(); status != orkstackv1.Status_STATUS_SUCCEEDED {

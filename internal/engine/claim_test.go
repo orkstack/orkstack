@@ -62,7 +62,7 @@ func claimEnv(t *testing.T, requests ...engine.ClaimRequest) []claimOutcome {
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(30 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
-		workflow.RegisterOptions{Name: engine.ClaimWorkflowName})
+		workflow.RegisterOptions{Name: engine.ClaimWorkflowType})
 
 	outcomes := make([]claimOutcome, len(requests))
 	for i, request := range requests {
@@ -72,7 +72,7 @@ func claimEnv(t *testing.T, requests ...engine.ClaimRequest) []claimOutcome {
 		}, time.Duration(i))
 	}
 
-	env.ExecuteWorkflow(engine.ClaimWorkflowName,
+	env.ExecuteWorkflow(engine.ClaimWorkflowType,
 		engine.ClaimWorkflowInput{Key: "order-42", TTL: time.Hour})
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("claim workflow did not complete")
@@ -184,7 +184,7 @@ func TestClaimWorkflow_HoldsTheKeyForItsWholeTTLAndThenFreesIt(t *testing.T) {
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(30 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
-		workflow.RegisterOptions{Name: engine.ClaimWorkflowName})
+		workflow.RegisterOptions{Name: engine.ClaimWorkflowType})
 
 	var outcome claimOutcome
 	env.RegisterDelayedCallback(func() {
@@ -201,7 +201,7 @@ func TestClaimWorkflow_HoldsTheKeyForItsWholeTTLAndThenFreesIt(t *testing.T) {
 	}, ttl-time.Minute)
 
 	start := env.Now()
-	env.ExecuteWorkflow(engine.ClaimWorkflowName,
+	env.ExecuteWorkflow(engine.ClaimWorkflowType,
 		engine.ClaimWorkflowInput{Key: "order-42", TTL: ttl})
 
 	if !env.IsWorkflowCompleted() {
@@ -239,7 +239,7 @@ func TestClaimWorkflow_CancellationFreesAStrandedKeyEarly(t *testing.T) {
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(30 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
-		workflow.RegisterOptions{Name: engine.ClaimWorkflowName})
+		workflow.RegisterOptions{Name: engine.ClaimWorkflowType})
 
 	var outcome claimOutcome
 	env.RegisterDelayedCallback(func() {
@@ -249,7 +249,7 @@ func TestClaimWorkflow_CancellationFreesAStrandedKeyEarly(t *testing.T) {
 	env.RegisterDelayedCallback(env.CancelWorkflow, time.Minute)
 
 	start := env.Now()
-	env.ExecuteWorkflow(engine.ClaimWorkflowName,
+	env.ExecuteWorkflow(engine.ClaimWorkflowType,
 		engine.ClaimWorkflowInput{Key: "order-42", TTL: ttl})
 
 	if !env.IsWorkflowCompleted() {

@@ -253,12 +253,12 @@ func TestWebhookNotifier_PostsASignedPayloadNamingTheRunAndItsStatus(t *testing.
 		t.Fatalf("build input: %v", err)
 	}
 	run := &orkstackv1.Run{
-		Id:              "ork-1755302400123456789-1",
-		WorkflowName:    "hello-ork",
-		WorkflowVersion: "0.1.0",
-		Status:          orkstackv1.Status_STATUS_SUCCEEDED,
-		Input:           &orkstackv1.Payload{Data: input},
-		FinishedAt:      timestamppb.New(finished),
+		Id:             "ork-1755302400123456789-1",
+		OrkflowName:    "hello-ork",
+		OrkflowVersion: "0.1.0",
+		Status:         orkstackv1.Status_STATUS_SUCCEEDED,
+		Input:          &orkstackv1.Payload{Data: input},
+		FinishedAt:     timestamppb.New(finished),
 		TaskRuns: []*orkstackv1.TaskRun{{
 			TaskId: "fetch",
 			Plugin: "http",
@@ -335,7 +335,7 @@ func TestWebhookNotifier_IgnoresEventsThatAreNotRunTransitions(t *testing.T) {
 	if _, err := f.registry.Register(webhooks.Registration{URL: f.server.URL}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	run := &orkstackv1.Run{Id: "ork-1-1", WorkflowName: "hello-ork"}
+	run := &orkstackv1.Run{Id: "ork-1-1", OrkflowName: "hello-ork"}
 	for _, eventType := range []orkstackv1.EventType{
 		orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
 		orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED,
@@ -382,12 +382,12 @@ func TestSubmitRun_AnnouncesARunThatNeverReachedTemporal(t *testing.T) {
 	fixture := newFixtureWithNotifier(t, f.adapter)
 	fixture.starter.err = fmt.Errorf("temporal is unreachable")
 	ctx := context.Background()
-	if _, err := fixture.workflowClient().ApplyOrkflow(ctx,
+	if _, err := fixture.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if _, err := fixture.runClient().SubmitRun(ctx,
-		connect.NewRequest(&orkstackv1.SubmitRunRequest{WorkflowName: "hello-ork"})); err == nil {
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err == nil {
 		t.Fatal("SubmitRun succeeded even though the starter failed")
 	}
 

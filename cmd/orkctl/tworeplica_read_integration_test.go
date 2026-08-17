@@ -87,7 +87,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 
 	// ---- the run: submitted to A, and only to A ----------------------------
 	submitted, err := replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: orkflowName,
+		OrkflowName: orkflowName,
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun on replica A: %v", err)
@@ -104,9 +104,9 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 
 	// ---- acceptance 1: B answers GetRun while the run is still executing ---
 	liveRun := awaitReadableOnB(ctx, t, replicaB, runID)
-	if liveRun.GetWorkflowName() != orkflowName || liveRun.GetWorkflowVersion() != "0.1.0" {
+	if liveRun.GetOrkflowName() != orkflowName || liveRun.GetOrkflowVersion() != "0.1.0" {
 		t.Errorf("replica B describes run %s as %s@%s, want %s@0.1.0",
-			runID, liveRun.GetWorkflowName(), liveRun.GetWorkflowVersion(), orkflowName)
+			runID, liveRun.GetOrkflowName(), liveRun.GetOrkflowVersion(), orkflowName)
 	}
 	// The proof that the archive cannot be answering: the cluster still reports
 	// the execution running, and nothing is archived before a terminal event.
@@ -271,7 +271,7 @@ func awaitListedOnB(
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		listed, err := replica.runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-			WorkflowName: orkflowName,
+			OrkflowName: orkflowName,
 		}))
 		if err != nil {
 			t.Fatalf("ListRuns on %s: %v", replica.name, err)
@@ -280,9 +280,9 @@ func awaitListedOnB(
 			if run.GetId() != runID {
 				continue
 			}
-			if run.GetWorkflowName() != orkflowName {
+			if run.GetOrkflowName() != orkflowName {
 				t.Fatalf("%s lists run %s under orkflow %q, want %q",
-					replica.name, runID, run.GetWorkflowName(), orkflowName)
+					replica.name, runID, run.GetOrkflowName(), orkflowName)
 			}
 			return run
 		}
@@ -539,7 +539,7 @@ func writeTwoReplicaTranscript(
 	fmt.Fprintf(&out, "submitted on           replica A (ork-A)\n")
 	fmt.Fprintf(&out, "every read below on    replica B (ork-B), which never saw the submission\n\n")
 	fmt.Fprintf(&out, "B GetRun while live    status=%s orkflow=%s@%s\n",
-		live.GetStatus(), live.GetWorkflowName(), live.GetWorkflowVersion())
+		live.GetStatus(), live.GetOrkflowName(), live.GetOrkflowVersion())
 	fmt.Fprintf(&out, "B GetRun at the end    status=%s task_runs=%d\n",
 		finished.GetStatus(), len(finished.GetTaskRuns()))
 	fmt.Fprintf(&out, "\nB StreamEvents (opened while the run was executing)\n")

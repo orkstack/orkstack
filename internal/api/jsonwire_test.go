@@ -93,9 +93,9 @@ func (f *fixture) postJSON(t *testing.T, procedure, body string) (int, string) {
 // old prefixed names keep working while new ones use the short form.
 func TestConnectJSONInputAcceptsShortAndPrefixedEnumNames(t *testing.T) {
 	f := newFixture(t)
-	f.runs.Save(&orkstackv1.Run{Id: "run-a", WorkflowName: "hello-ork",
+	f.runs.Save(&orkstackv1.Run{Id: "run-a", OrkflowName: "hello-ork",
 		Status: orkstackv1.Status_STATUS_RUNNING})
-	f.runs.Save(&orkstackv1.Run{Id: "run-b", WorkflowName: "hello-ork",
+	f.runs.Save(&orkstackv1.Run{Id: "run-b", OrkflowName: "hello-ork",
 		Status: orkstackv1.Status_STATUS_SUCCEEDED})
 
 	cases := []struct {

@@ -136,8 +136,8 @@ func TestTemporalIdempotency_JoinsTheKeysClaimInOneRoundTrip(t *testing.T) {
 	if got := c.startOptions.TaskQueue; got != task.DefaultQueue {
 		t.Errorf("claim task queue = %q, want the engine's own %q", got, task.DefaultQueue)
 	}
-	if got := c.workflowType; got != engine.ClaimWorkflowName {
-		t.Errorf("started workflow %v, want %q", got, engine.ClaimWorkflowName)
+	if got := c.workflowType; got != engine.ClaimWorkflowType {
+		t.Errorf("started workflow %v, want %q", got, engine.ClaimWorkflowType)
 	}
 	if got := c.updateInput.UpdateOptions.UpdateName; got != engine.ClaimUpdateName {
 		t.Errorf("update name = %q, want %q", got, engine.ClaimUpdateName)

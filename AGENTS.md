@@ -77,6 +77,17 @@ DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch�
    makes the three streams — Temporal history, the in-process log, the archived
    JSON — identical, and what lets a client resume with `from_sequence` against
    a different replica.
+9. **One word, one thing: the entity is an Orkflow.** What a user authors, the
+   engine stores and a run executes is an **orkflow** — `orkflow_name`,
+   `orkflow_version`, `OrkflowService`, `--orkflow`, `orkctl orkflow list`.
+   The word *workflow* in this repo means a **Temporal** workflow and nothing
+   else: `workflow.Context`, `StartWorkflowOptions`, `WorkflowReplayer`, the
+   registered type `RunWorkflowType = "RunWorkflow"`, `ClaimWorkflowType`, a
+   workflow id, a workflow task. So an identifier pairing *workflow* with
+   *name* or *version* is always wrong: the thing it names is either an
+   orkflow, or a Temporal workflow TYPE, and it must say which. The rename
+   landed at M9 with no shim and no dual-read, because nothing was deployed;
+   `proof/M9/naming-sweep.sh` is what holds the tree to it.
 
 ## 2. Repository layout
 
@@ -241,7 +252,7 @@ engine's default, which is how a step reaches a dedicated Orker pool
 **In test harnesses** that start their own engine and orker, give the pair a
 unique namespace, and a private queue when the test needs one
 (`cmd/orkctl/integration_test.go` does both — it also pins the queue onto each
-task through `writeQueuePinnedWorkflow`, which is still the way to prove
+task through `writeQueuePinnedOrkflow`, which is still the way to prove
 per-task routing):
 
 ```go

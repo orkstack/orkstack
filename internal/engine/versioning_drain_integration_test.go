@@ -161,7 +161,7 @@ func startPinnedToVersion(
 				BuildID:        deployment.BuildID,
 			},
 		},
-	}, engine.WorkflowName, runID, wf, (*orkstackv1.Payload)(nil)); err != nil {
+	}, engine.RunWorkflowType, runID, wf, (*orkstackv1.Payload)(nil)); err != nil {
 		t.Fatalf("start %s pinned to %s: %v", runID, deployment, err)
 	}
 }

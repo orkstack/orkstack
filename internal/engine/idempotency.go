@@ -133,7 +133,7 @@ func (t *TemporalIdempotency) update(
 		// claim has expired, and a closed claim's id is exactly that case.
 		WorkflowIDReusePolicy:    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		WorkflowExecutionTimeout: t.ttl + claimGrace,
-	}, ClaimWorkflowName, ClaimWorkflowInput{Key: key, TTL: t.ttl})
+	}, ClaimWorkflowType, ClaimWorkflowInput{Key: key, TTL: t.ttl})
 
 	handle, err := t.client.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{
 		StartWorkflowOperation: start,

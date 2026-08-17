@@ -50,10 +50,10 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 
 			client := g.runClient()
 			resp, err := client.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-				WorkflowName:    args[0],
-				WorkflowVersion: version,
-				Input:           payload,
-				IdempotencyKey:  idempotencyKey,
+				OrkflowName:    args[0],
+				OrkflowVersion: version,
+				Input:          payload,
+				IdempotencyKey: idempotencyKey,
 			}))
 			if err != nil {
 				return rpcError("submit run", err)
@@ -111,7 +111,7 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 
 func newRunListCommand(g *globalFlags) *cobra.Command {
 	var (
-		workflowName string
+		orkflowName  string
 		statusFilter string
 		limit        int32
 	)
@@ -128,9 +128,9 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			defer cancel()
 
 			resp, err := g.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-				WorkflowName: workflowName,
-				Status:       status,
-				PageSize:     limit,
+				OrkflowName: orkflowName,
+				Status:      status,
+				PageSize:    limit,
 			}))
 			if err != nil {
 				return rpcError("list runs", err)
@@ -141,7 +141,7 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			return renderRunList(cmd.OutOrStdout(), resp.Msg.GetRuns())
 		},
 	}
-	cmd.Flags().StringVar(&workflowName, "orkflow", "", "only runs of this orkflow")
+	cmd.Flags().StringVar(&orkflowName, "orkflow", "", "only runs of this orkflow")
 	cmd.Flags().StringVar(&statusFilter, "status", "",
 		"only runs with this status (pending, running, succeeded, failed, canceled, skipped)")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of runs to return (0 = server default)")
@@ -179,8 +179,8 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 func renderSubmitted(out io.Writer, run *orkstackv1.Run) error {
 	fmt.Fprintf(out, "Submitted run %s\n", run.GetId())
 	table := newTable(out)
-	fmt.Fprintf(table, "Orkflow:\t%s\n", run.GetWorkflowName())
-	fmt.Fprintf(table, "Version:\t%s\n", run.GetWorkflowVersion())
+	fmt.Fprintf(table, "Orkflow:\t%s\n", run.GetOrkflowName())
+	fmt.Fprintf(table, "Version:\t%s\n", run.GetOrkflowVersion())
 	fmt.Fprintf(table, "Status:\t%s\n", statusLabel(run.GetStatus()))
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -192,8 +192,8 @@ func renderSubmitted(out io.Writer, run *orkstackv1.Run) error {
 func renderRun(out io.Writer, run *orkstackv1.Run) error {
 	header := newTable(out)
 	fmt.Fprintf(header, "Run:\t%s\n", run.GetId())
-	fmt.Fprintf(header, "Orkflow:\t%s\n", run.GetWorkflowName())
-	fmt.Fprintf(header, "Version:\t%s\n", run.GetWorkflowVersion())
+	fmt.Fprintf(header, "Orkflow:\t%s\n", run.GetOrkflowName())
+	fmt.Fprintf(header, "Version:\t%s\n", run.GetOrkflowVersion())
 	fmt.Fprintf(header, "Status:\t%s\n", statusLabel(run.GetStatus()))
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(run.GetCreatedAt()))
 	fmt.Fprintf(header, "Started:\t%s\n", formatTime(run.GetStartedAt()))
@@ -235,7 +235,7 @@ func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {
 	fmt.Fprintln(table, "ID\tORKFLOW\tVERSION\tSTATUS\tCREATED\tFINISHED")
 	for _, run := range runs {
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			run.GetId(), run.GetWorkflowName(), run.GetWorkflowVersion(),
+			run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion(),
 			statusLabel(run.GetStatus()), formatTime(run.GetCreatedAt()), formatTime(run.GetFinishedAt()))
 	}
 	if err := table.Flush(); err != nil {

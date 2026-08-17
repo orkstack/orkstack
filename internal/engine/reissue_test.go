@@ -13,7 +13,7 @@ import (
 // behind — no row in a listing, no log to stream.
 
 func pending(id string) *orkstackv1.Run {
-	return &orkstackv1.Run{Id: id, WorkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_PENDING}
+	return &orkstackv1.Run{Id: id, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_PENDING}
 }
 
 func TestRunStoreDelete_RemovesARunFromReadsAndListings(t *testing.T) {

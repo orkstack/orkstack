@@ -34,7 +34,7 @@ func TestRunWorkflow_NumbersItsOwnEvents(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(60 * time.Second)
-	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.WorkflowName})
+	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 
 	// The events are captured as the workflow emitted them, before any bus
 	// touches them: this is the history copy, exactly.
@@ -95,7 +95,7 @@ func TestRunWorkflow_SnapshotCarriesCreatedAt(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(60 * time.Second)
-	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.WorkflowName})
+	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 
 	var snapshots []*orkstackv1.Run
 	env.RegisterActivityWithOptions(
