@@ -249,6 +249,30 @@ per-task routing):
 os.Setenv("ORK_TEMPORAL_NAMESPACE", "ork-test-"+uniqueSuffix)
 ```
 
+### A namespace holds 100 Worker Deployments, and versioning tests spend them
+
+`TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn` and
+`TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent` register a
+**new deployment per execution** in one fixed namespace
+(`internal/engine/versioning_rollout_integration_test.go`, `ork-m8-4-worker-versioning`
+unless `ORK_TEMPORAL_NAMESPACE` says otherwise), and Temporal caps a namespace
+at 100. Run the suite fifty times and the fifty-first fails like this:
+
+```
+WARN  Failed to poll for task … Error reached maximum deployments in namespace (100)
+--- FAIL: … never reported pollers on … (last error: Worker Deployment Version not found)
+```
+
+Another failure that looks like a code bug and is not. A deployment cannot be
+deleted while it holds versions, and its current version cannot be deleted at
+all, so the cheap reset is the namespace — the tests provision it again at the
+next boot (`task.EnsureNamespace`):
+
+```bash
+temporal operator namespace delete --namespace ork-m8-4-worker-versioning \
+  --address 127.0.0.1:7233 --yes
+```
+
 **Process cleanup remains mandatory** even with isolation. Before any new
 run, kill all stray processes:
 
