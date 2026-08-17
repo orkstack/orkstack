@@ -174,7 +174,7 @@ a **Current Version**, the task queue's current version is nil, and
 
 > A nil Current Version represents all the unversioned workers
 >
-> — `api@v1.63.5/workflowservice/v1/request_response.pb.go`,
+> — `api@v1.63.4/workflowservice/v1/request_response.pb.go`,
 > `SetWorkerDeploymentCurrentVersionRequest.BuildId`
 
 which a versioned release does not have. So the first release that sets
@@ -207,13 +207,14 @@ at all for 15s and then complete the same run 1s after the routing change.
 convention; it is what makes the pinning guarantee hold.
 
 Temporal routes the activities of a `PINNED` workflow to the workflow's own
-Deployment Version — with one exception, quoted from
-`api/enums/v1/workflow.pb.go`:
+Deployment Version — with one exception:
 
 > Activities of `PINNED` workflows are sent to the same Deployment Version.
 > Exception … when the activity Task Queue workers are not present in the
 > workflow's Deployment Version, in which case the activity will be sent to the
 > **Current Deployment Version of its own task queue**.
+>
+> — `api@v1.63.4/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_PINNED`
 
 So if the Orker polling `ORK_ORKER_QUEUE` does not carry the engine's exact
 `(ORK_DEPLOYMENT_NAME, ORK_BUILD_ID)`, the exception fires and an in-flight
@@ -436,7 +437,7 @@ started unversioned has **nothing pinning it**.
 > Workflow execution does not have a Versioning Behavior and is called
 > Unversioned. This is the legacy behavior.
 >
-> — `api@v1.63.5/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_UNSPECIFIED`
+> — `api@v1.63.4/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_UNSPECIFIED`
 
 So when the first version becomes Current, an unversioned run in flight
 **upgrades onto it** at its next workflow task, and is pinned there from then
@@ -554,9 +555,13 @@ Runs already pinned to a version still need that version's workers.
 - **Process hygiene.** Before any manual end-to-end, kill stray workers:
 
   ```bash
-  pkill -f 'bin/orker'; pkill -f 'bin/ork'; sleep 2
+  pkill -f '/bin/orker$'; pkill -f '/bin/ork$'; sleep 2
   ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep   # must be empty
   ```
+
+  Anchor both patterns with `/` and `$`, as `AGENTS.md` §6 does. Unanchored,
+  `bin/ork` also matches `bin/orkctl` — the cleanup then kills the CLI you are
+  about to drive the deploy with.
 
 ---
 
