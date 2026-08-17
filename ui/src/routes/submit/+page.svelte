@@ -10,16 +10,16 @@
 	let { data }: PageProps = $props();
 
 	// One-shot seed of the picker from the loaded page data.
-	let selected = $state(untrack(() => data.preselect || data.workflows[0]?.name || ''));
+	let selected = $state(untrack(() => data.preselect || data.orkflows[0]?.name || ''));
 	let inputsJson = $state('');
 	let submitting = $state(false);
 	let formError = $state('');
 
-	const workflow = $derived(data.workflows.find((w) => w.name === selected));
-	const declaredInputNames = $derived(Object.keys(workflow?.inputs ?? {}));
+	const orkflow = $derived(data.orkflows.find((w) => w.name === selected));
+	const declaredInputNames = $derived(Object.keys(orkflow?.inputs ?? {}));
 
 	function defaultsFor(name: string): JsonObject {
-		const wf = data.workflows.find((w) => w.name === name);
+		const wf = data.orkflows.find((w) => w.name === name);
 		const out: JsonObject = {};
 		const inputs = (wf?.inputs ?? {}) as JsonObject;
 		for (const [key, spec] of Object.entries(inputs)) {
@@ -31,15 +31,15 @@
 		return out;
 	}
 
-	// (Re)seed the inputs editor whenever the chosen workflow changes.
+	// (Re)seed the inputs editor whenever the chosen orkflow changes.
 	$effect(() => {
 		inputsJson = JSON.stringify(defaultsFor(selected), null, 2);
 	});
 
 	async function submit() {
 		formError = '';
-		if (!workflow) {
-			formError = 'Choose a workflow first.';
+		if (!orkflow) {
+			formError = 'Choose a orkflow first.';
 			return;
 		}
 		let parsed: JsonObject;
@@ -57,8 +57,8 @@
 		submitting = true;
 		try {
 			const res = await orkstack(fetch).runs.submitRun({
-				workflowName: workflow.name,
-				workflowVersion: workflow.version,
+				workflowName: orkflow.name,
+				workflowVersion: orkflow.version,
 				input: create(PayloadSchema, { data: parsed })
 			});
 			if (!res.run) throw new Error('engine returned no run');
@@ -81,9 +81,9 @@
 	>
 		Could not reach the engine: {data.error}
 	</div>
-{:else if data.workflows.length === 0}
+{:else if data.orkflows.length === 0}
 	<p class="text-sm text-zinc-400">
-		No workflows applied yet. <a href="/apply" class="text-emerald-300 hover:underline"
+		No orkflows applied yet. <a href="/apply" class="text-emerald-300 hover:underline"
 			>Apply one first.</a
 		>
 	</p>
@@ -97,14 +97,14 @@
 		}}
 	>
 		<div>
-			<label for="workflow" class="mb-1 block text-sm font-medium text-zinc-300">Workflow</label>
+			<label for="orkflow" class="mb-1 block text-sm font-medium text-zinc-300">Orkflow</label>
 			<select
-				id="workflow"
-				data-testid="workflow-select"
+				id="orkflow"
+				data-testid="orkflow-select"
 				bind:value={selected}
 				class="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
 			>
-				{#each data.workflows as wf (wf.name + '@' + wf.version)}
+				{#each data.orkflows as wf (wf.name + '@' + wf.version)}
 					<option value={wf.name}>{wf.name}@{wf.version} — {wf.description}</option>
 				{/each}
 			</select>
@@ -122,7 +122,7 @@
 				spellcheck="false"
 				class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100"
 			></textarea>
-			{#if workflow && declaredInputNames.length > 0}
+			{#if orkflow && declaredInputNames.length > 0}
 				<p class="mt-1 text-xs text-zinc-500">
 					Declared inputs: {declaredInputNames.join(', ')}
 				</p>

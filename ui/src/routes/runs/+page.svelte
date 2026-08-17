@@ -37,7 +37,7 @@
 			<thead class="bg-zinc-900 text-xs uppercase tracking-wide text-zinc-400">
 				<tr>
 					<th class="px-4 py-3">Run ID</th>
-					<th class="px-4 py-3">Workflow</th>
+					<th class="px-4 py-3">Orkflow</th>
 					<th class="px-4 py-3">Status</th>
 					<th class="px-4 py-3">Created</th>
 				</tr>

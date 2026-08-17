@@ -4,10 +4,10 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
-	const wf = $derived(data.workflow);
+	const wf = $derived(data.orkflow);
 </script>
 
-<svelte:head><title>{data.workflow?.name ?? 'Workflow'} — OrkStack</title></svelte:head>
+<svelte:head><title>{data.orkflow?.name ?? 'Orkflow'} — OrkStack</title></svelte:head>
 
 {#if data.error}
 	<div
@@ -19,8 +19,8 @@
 {:else if wf}
 	<div class="mb-6">
 		<div class="flex items-baseline gap-3">
-			<h1 class="text-2xl font-bold" data-testid="workflow-name">{wf.name}</h1>
-			<span class="text-sm text-zinc-400" data-testid="workflow-version">v{wf.version}</span>
+			<h1 class="text-2xl font-bold" data-testid="orkflow-name">{wf.name}</h1>
+			<span class="text-sm text-zinc-400" data-testid="orkflow-version">v{wf.version}</span>
 		</div>
 		{#if wf.description}
 			<p class="mt-1 text-sm text-zinc-400">{wf.description}</p>
@@ -63,13 +63,13 @@
 
 	<div class="flex gap-3">
 		<a
-			href="/submit?workflow={wf.name}"
+			href="/submit?orkflow={wf.name}"
 			class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
 		>
 			Submit a run
 		</a>
 		<a
-			href="/runs?workflow={wf.name}"
+			href="/runs?orkflow={wf.name}"
 			class="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
 		>
 			View runs

@@ -2,7 +2,7 @@ import { createClient } from '@connectrpc/connect';
 import { createConnectTransport } from '@connectrpc/connect-web';
 import { ConnectError } from '@connectrpc/connect';
 import {
-	WorkflowService,
+	OrkflowService,
 	RunService,
 	PluginService
 } from './gen/orkstack/v1/service_pb';
@@ -13,7 +13,7 @@ import {
 export function orkstack(fetchFn: typeof globalThis.fetch) {
 	const transport = createConnectTransport({ baseUrl: '/', fetch: fetchFn });
 	return {
-		workflows: createClient(WorkflowService, transport),
+		orkflows: createClient(OrkflowService, transport),
 		runs: createClient(RunService, transport),
 		plugins: createClient(PluginService, transport)
 	};

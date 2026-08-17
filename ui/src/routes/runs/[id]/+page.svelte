@@ -45,7 +45,7 @@
 
 	function seedTasks(): TaskView[] {
 		const views = new Map<string, TaskView>();
-		for (const task of data.workflow?.tasks ?? []) {
+		for (const task of data.orkflow?.tasks ?? []) {
 			views.set(task.id, { id: task.id, plugin: task.plugin, status: Status.PENDING, attempt: 0, message: '' });
 		}
 		for (const tr of data.run?.taskRuns ?? []) {
@@ -145,7 +145,7 @@
 		<div>
 			<h1 class="font-mono text-xl font-bold" data-testid="run-id">{run.id}</h1>
 			<p class="text-sm text-zinc-400">
-				<a href="/workflows/{run.workflowName}" class="text-emerald-300 hover:underline"
+				<a href="/orkflows/{run.workflowName}" class="text-emerald-300 hover:underline"
 					>{run.workflowName}</a
 				>@{run.workflowVersion}
 			</p>

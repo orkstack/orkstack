@@ -76,13 +76,13 @@ export const TaskRunSchema: GenMessage<TaskRun> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_run, 0);
 
 /**
- * Run is one execution of a Workflow.
+ * Run is one execution of an Orkflow.
  *
  * @generated from message orkstack.v1.Run
  */
 export type Run = Message<"orkstack.v1.Run"> & {
   /**
-   * orkstack run id (also Temporal workflow id)
+   * ork run id, ork-{timestamp}-{sequence} (also Temporal workflow id)
    *
    * @generated from field: string id = 1;
    */

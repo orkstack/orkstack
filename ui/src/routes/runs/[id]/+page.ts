@@ -6,20 +6,20 @@ export const load: PageLoad = async ({ fetch, params }) => {
 	try {
 		const res = await client.runs.getRun({ runId: params.id });
 		const run = res.run ?? null;
-		let workflow = null;
+		let orkflow = null;
 		if (run) {
 			try {
-				const wfRes = await client.workflows.getWorkflow({
+				const wfRes = await client.orkflows.getOrkflow({
 					name: run.workflowName,
 					version: run.workflowVersion
 				});
-				workflow = wfRes.workflow ?? null;
+				orkflow = wfRes.orkflow ?? null;
 			} catch {
-				workflow = null; // workflow may have been superseded; statuses still render
+				orkflow = null; // orkflow may have been superseded; statuses still render
 			}
 		}
-		return { run, workflow, error: null as string | null };
+		return { run, orkflow, error: null as string | null };
 	} catch (err) {
-		return { run: null, workflow: null, error: errorMessage(err) };
+		return { run: null, orkflow: null, error: errorMessage(err) };
 	}
 };

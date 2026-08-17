@@ -95,7 +95,7 @@ async function killAll(): Promise<void> {
 	}
 	// Backstop per AGENTS.md §6: never leave stray ork processes behind.
 	try {
-		execSync("pkill -f 'bin/orker' || true; pkill -f 'bin/orkengine' || true", {
+		execSync("pkill -f 'bin/orker' || true; pkill -f 'bin/ork' || true", {
 			timeout: 5_000
 		});
 	} catch {
@@ -113,7 +113,7 @@ test.beforeAll(async () => {
 	if (await tcpOpen(14173)) throw new Error('port 14173 already in use (stray UI?)');
 
 	// Build the real binaries and the production UI.
-	execFileSync('go', ['build', '-o', 'bin/orkengine', './cmd/orkengine'], { cwd: repoRoot });
+	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
 	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
@@ -131,13 +131,13 @@ test.beforeAll(async () => {
 	stubPort = addr.port;
 
 	// Engine: Connect API + WS bridge, with the UI origin allowed for the WS.
-	spawnLogged('engine.log', './bin/orkengine', [], {
+	spawnLogged('engine.log', './bin/ork', [], {
 		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
 		ORK_HTTP_ADDR: '127.0.0.1:18080',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
 	await waitFor('engine connect api', async () => {
-		const res = await fetch(`${ENGINE_HTTP}/orkstack.v1.WorkflowService/ListWorkflows`, {
+		const res = await fetch(`${ENGINE_HTTP}/orkstack.v1.OrkflowService/ListOrkflows`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: '{}'
@@ -170,18 +170,18 @@ test.beforeAll(async () => {
 		},
 		uiDir
 	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/workflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
 
 	// Register hello-ork through the UI proxy (the same path the browser uses).
 	const yaml = readFileSync(path.join(repoRoot, 'examples', 'hello.ork.yaml'), 'utf8');
-	const apply = await fetch(`${UI_ORIGIN}/orkstack.v1.WorkflowService/Apply`, {
+	const apply = await fetch(`${UI_ORIGIN}/orkstack.v1.OrkflowService/ApplyOrkflow`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ yaml })
 	});
 	if (!apply.ok) throw new Error(`apply failed: ${apply.status} ${await apply.text()}`);
-	const applied = (await apply.json()) as { workflow?: { name?: string } };
-	if (applied.workflow?.name !== 'hello-ork') {
+	const applied = (await apply.json()) as { orkflow?: { name?: string } };
+	if (applied.orkflow?.name !== 'hello-ork') {
 		throw new Error(`unexpected apply response: ${JSON.stringify(applied)}`);
 	}
 });
@@ -194,25 +194,25 @@ test.afterAll(async () => {
 test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge', async ({
 	page
 }) => {
-	// 1. Workflow list shows the applied workflow (screenshot for proof).
-	await page.goto(`${UI_ORIGIN}/workflows`);
-	await expect(page.getByTestId('workflow-row-hello-ork')).toBeVisible();
-	await expect(page.getByTestId('workflow-taskcount-hello-ork')).toHaveText('3');
-	await page.screenshot({ path: logPath('screenshot-workflows.png'), fullPage: true });
+	// 1. Orkflow list shows the applied orkflow (screenshot for proof).
+	await page.goto(`${UI_ORIGIN}/orkflows`);
+	await expect(page.getByTestId('orkflow-row-hello-ork')).toBeVisible();
+	await expect(page.getByTestId('orkflow-taskcount-hello-ork')).toHaveText('3');
+	await page.screenshot({ path: logPath('screenshot-orkflows.png'), fullPage: true });
 
-	// 2. Workflow detail renders the DAG with needs edges.
-	await page.goto(`${UI_ORIGIN}/workflows/hello-ork`);
-	await expect(page.getByTestId('workflow-dag')).toBeVisible();
+	// 2. Orkflow detail renders the DAG with needs edges.
+	await page.goto(`${UI_ORIGIN}/orkflows/hello-ork`);
+	await expect(page.getByTestId('orkflow-dag')).toBeVisible();
 	// SVG edges are stroke-only paths (zero-area bbox when horizontal), so
 	// assert DOM attachment rather than visibility.
 	await expect(page.getByTestId('dag-edge-fetch-transform')).toBeAttached();
 	await expect(page.getByTestId('dag-edge-transform-save')).toBeAttached();
-	await page.screenshot({ path: logPath('screenshot-workflow-dag.png'), fullPage: true });
+	await page.screenshot({ path: logPath('screenshot-orkflow-dag.png'), fullPage: true });
 
 	// 3. Submit hello-ork via the UI form with the hermetic stub URL.
-	await page.goto(`${UI_ORIGIN}/submit?workflow=hello-ork`);
+	await page.goto(`${UI_ORIGIN}/submit?orkflow=hello-ork`);
 	await expect(page.getByTestId('submit-form')).toBeVisible();
-	await page.getByTestId('workflow-select').selectOption('hello-ork');
+	await page.getByTestId('orkflow-select').selectOption('hello-ork');
 	await page
 		.getByTestId('inputs-json')
 		.fill(JSON.stringify({ url: `http://127.0.0.1:${stubPort}/data.json` }, null, 2));

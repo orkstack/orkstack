@@ -38,5 +38,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 			headers: responseHeaders
 		});
 	}
-	return resolve(event);
+	// A universal load that calls Connect runs on the server first, and
+	// SvelteKit serializes that response into the HTML so hydration does not
+	// refetch it. It strips every response header not named here, and the
+	// Connect client rejects a response whose content-type it cannot read, so
+	// without this the server render of every engine-backed page fails with
+	// "Failed to get response header content-type" and the browser shows
+	// "Could not reach the engine" even though the engine is up.
+	return resolve(event, {
+		filterSerializedResponseHeaders: (name) =>
+			name === 'content-type' || name.startsWith('connect-') || name.startsWith('grpc-')
+	});
 };

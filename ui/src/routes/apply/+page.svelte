@@ -2,9 +2,9 @@
 	import { goto } from '$app/navigation';
 	import { errorMessage, orkstack } from '$lib/client';
 
-	const PLACEHOLDER = `name: my-workflow
+	const PLACEHOLDER = `name: my-orkflow
 version: "0.1.0"
-description: Describe what this workflow does.
+description: Describe what this orkflow does.
 
 inputs:
   url:
@@ -29,18 +29,18 @@ tasks:
 		formError = '';
 		warnings = [];
 		if (!yaml.trim()) {
-			formError = 'Paste a workflow YAML document first.';
+			formError = 'Paste a orkflow YAML document first.';
 			return;
 		}
 		applying = true;
 		try {
-			const res = await orkstack(fetch).workflows.apply({ yaml });
+			const res = await orkstack(fetch).orkflows.applyOrkflow({ yaml });
 			warnings = res.warnings;
-			if (res.workflow) {
-				await goto(`/workflows/${res.workflow.name}`);
+			if (res.orkflow) {
+				await goto(`/orkflows/${res.orkflow.name}`);
 				return;
 			}
-			throw new Error('engine returned no workflow');
+			throw new Error('engine returned no orkflow');
 		} catch (err) {
 			formError = errorMessage(err);
 			applying = false;
@@ -48,9 +48,9 @@ tasks:
 	}
 </script>
 
-<svelte:head><title>Apply workflow — OrkStack</title></svelte:head>
+<svelte:head><title>Apply orkflow — OrkStack</title></svelte:head>
 
-<h1 class="mb-6 text-2xl font-bold">Apply a workflow</h1>
+<h1 class="mb-6 text-2xl font-bold">Apply a orkflow</h1>
 
 <form
 	class="max-w-3xl space-y-4"
@@ -62,7 +62,7 @@ tasks:
 >
 	<div>
 		<label for="yaml" class="mb-1 block text-sm font-medium text-zinc-300">
-			Workflow YAML (DSL v0)
+			Orkflow YAML (DSL v0)
 		</label>
 		<textarea
 			id="yaml"
@@ -97,6 +97,6 @@ tasks:
 		disabled={applying}
 		class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
 	>
-		{applying ? 'Applying…' : 'Apply workflow'}
+		{applying ? 'Applying…' : 'Apply orkflow'}
 	</button>
 </form>

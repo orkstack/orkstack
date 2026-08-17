@@ -9,20 +9,20 @@ import type { Payload, Status } from "./common_pb";
 import { file_orkstack_v1_common } from "./common_pb";
 import type { EventSchema, Run } from "./run_pb";
 import { file_orkstack_v1_run } from "./run_pb";
-import type { Workflow } from "./workflow_pb";
-import { file_orkstack_v1_workflow } from "./workflow_pb";
+import type { Orkflow } from "./orkflow_pb";
+import { file_orkstack_v1_orkflow } from "./orkflow_pb";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file orkstack/v1/service.proto.
  */
 export const file_orkstack_v1_service: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSIkChRBcHBseVdvcmtmbG93UmVxdWVzdBIMCgR5YW1sGAEgASgJIlIKFUFwcGx5V29ya2Zsb3dSZXNwb25zZRInCgh3b3JrZmxvdxgBIAEoCzIVLm9ya3N0YWNrLnYxLldvcmtmbG93EhAKCHdhcm5pbmdzGAIgAygJIjMKEkdldFdvcmtmbG93UmVxdWVzdBIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkiPgoTR2V0V29ya2Zsb3dSZXNwb25zZRInCgh3b3JrZmxvdxgBIAEoCzIVLm9ya3N0YWNrLnYxLldvcmtmbG93Ij0KFExpc3RXb3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJIloKFUxpc3RXb3JrZmxvd3NSZXNwb25zZRIoCgl3b3JrZmxvd3MYASADKAsyFS5vcmtzdGFjay52MS5Xb3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkigQEKEFN1Ym1pdFJ1blJlcXVlc3QSFQoNd29ya2Zsb3dfbmFtZRgBIAEoCRIYChB3b3JrZmxvd192ZXJzaW9uGAIgASgJEiMKBWlucHV0GAMgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIXCg9pZGVtcG90ZW5jeV9rZXkYBCABKAkiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIh8KDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJIi8KDkdldFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biJ0Cg9MaXN0UnVuc1JlcXVlc3QSFQoNd29ya2Zsb3dfbmFtZRgBIAEoCRIjCgZzdGF0dXMYAiABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSEQoJcGFnZV9zaXplGAMgASgFEhIKCnBhZ2VfdG9rZW4YBCABKAkiSwoQTGlzdFJ1bnNSZXNwb25zZRIeCgRydW5zGAEgAygLMhAub3Jrc3RhY2sudjEuUnVuEhcKD25leHRfcGFnZV90b2tlbhgCIAEoCSIyChBDYW5jZWxSdW5SZXF1ZXN0Eg4KBnJ1bl9pZBgBIAEoCRIOCgZyZWFzb24YAiABKAkiMgoRQ2FuY2VsUnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIjwKE1N0cmVhbUV2ZW50c1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhUKDWZyb21fc2VxdWVuY2UYAiABKAMiFAoSTGlzdFBsdWdpbnNSZXF1ZXN0Ip8BCgpQbHVnaW5JbmZvEgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCRITCgtkZXNjcmlwdGlvbhgDIAEoCRItCgxpbnB1dF9zY2hlbWEYBCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Ei4KDW91dHB1dF9zY2hlbWEYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Ij8KE0xpc3RQbHVnaW5zUmVzcG9uc2USKAoHcGx1Z2lucxgBIAMoCzIXLm9ya3N0YWNrLnYxLlBsdWdpbkluZm8yiwIKD1dvcmtmbG93U2VydmljZRJOCgVBcHBseRIhLm9ya3N0YWNrLnYxLkFwcGx5V29ya2Zsb3dSZXF1ZXN0GiIub3Jrc3RhY2sudjEuQXBwbHlXb3JrZmxvd1Jlc3BvbnNlElAKC0dldFdvcmtmbG93Eh8ub3Jrc3RhY2sudjEuR2V0V29ya2Zsb3dSZXF1ZXN0GiAub3Jrc3RhY2sudjEuR2V0V29ya2Zsb3dSZXNwb25zZRJWCg1MaXN0V29ya2Zsb3dzEiEub3Jrc3RhY2sudjEuTGlzdFdvcmtmbG93c1JlcXVlc3QaIi5vcmtzdGFjay52MS5MaXN0V29ya2Zsb3dzUmVzcG9uc2Uy+AIKClJ1blNlcnZpY2USSgoJU3VibWl0UnVuEh0ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlc3BvbnNlEkEKBkdldFJ1bhIaLm9ya3N0YWNrLnYxLkdldFJ1blJlcXVlc3QaGy5vcmtzdGFjay52MS5HZXRSdW5SZXNwb25zZRJHCghMaXN0UnVucxIcLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVxdWVzdBodLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVzcG9uc2USSgoJQ2FuY2VsUnVuEh0ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlc3BvbnNlEkYKDFN0cmVhbUV2ZW50cxIgLm9ya3N0YWNrLnYxLlN0cmVhbUV2ZW50c1JlcXVlc3QaEi5vcmtzdGFjay52MS5FdmVudDABMmEKDVBsdWdpblNlcnZpY2USUAoLTGlzdFBsdWdpbnMSHy5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1JlcXVlc3QaIC5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1Jlc3BvbnNlQqgBCg9jb20ub3Jrc3RhY2sudjFCDFNlcnZpY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_workflow]);
+  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSIjChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkiTwoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkiMgoRR2V0T3JrZmxvd1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyI8ChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJIlcKFExpc3RPcmtmbG93c1Jlc3BvbnNlEiYKCG9ya2Zsb3dzGAEgAygLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkigQEKEFN1Ym1pdFJ1blJlcXVlc3QSFQoNd29ya2Zsb3dfbmFtZRgBIAEoCRIYChB3b3JrZmxvd192ZXJzaW9uGAIgASgJEiMKBWlucHV0GAMgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIXCg9pZGVtcG90ZW5jeV9rZXkYBCABKAkiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIh8KDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJIi8KDkdldFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biJ0Cg9MaXN0UnVuc1JlcXVlc3QSFQoNd29ya2Zsb3dfbmFtZRgBIAEoCRIjCgZzdGF0dXMYAiABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSEQoJcGFnZV9zaXplGAMgASgFEhIKCnBhZ2VfdG9rZW4YBCABKAkiSwoQTGlzdFJ1bnNSZXNwb25zZRIeCgRydW5zGAEgAygLMhAub3Jrc3RhY2sudjEuUnVuEhcKD25leHRfcGFnZV90b2tlbhgCIAEoCSIyChBDYW5jZWxSdW5SZXF1ZXN0Eg4KBnJ1bl9pZBgBIAEoCRIOCgZyZWFzb24YAiABKAkiMgoRQ2FuY2VsUnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIjwKE1N0cmVhbUV2ZW50c1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhUKDWZyb21fc2VxdWVuY2UYAiABKAMiFAoSTGlzdFBsdWdpbnNSZXF1ZXN0Ip8BCgpQbHVnaW5JbmZvEgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCRITCgtkZXNjcmlwdGlvbhgDIAEoCRItCgxpbnB1dF9zY2hlbWEYBCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Ei4KDW91dHB1dF9zY2hlbWEYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Ij8KE0xpc3RQbHVnaW5zUmVzcG9uc2USKAoHcGx1Z2lucxgBIAMoCzIXLm9ya3N0YWNrLnYxLlBsdWdpbkluZm8yiQIKDk9ya2Zsb3dTZXJ2aWNlElMKDEFwcGx5T3JrZmxvdxIgLm9ya3N0YWNrLnYxLkFwcGx5T3JrZmxvd1JlcXVlc3QaIS5vcmtzdGFjay52MS5BcHBseU9ya2Zsb3dSZXNwb25zZRJNCgpHZXRPcmtmbG93Eh4ub3Jrc3RhY2sudjEuR2V0T3JrZmxvd1JlcXVlc3QaHy5vcmtzdGFjay52MS5HZXRPcmtmbG93UmVzcG9uc2USUwoMTGlzdE9ya2Zsb3dzEiAub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dzUmVxdWVzdBohLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93c1Jlc3BvbnNlMvgCCgpSdW5TZXJ2aWNlEkoKCVN1Ym1pdFJ1bhIdLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlcXVlc3QaHi5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXNwb25zZRJBCgZHZXRSdW4SGi5vcmtzdGFjay52MS5HZXRSdW5SZXF1ZXN0Ghsub3Jrc3RhY2sudjEuR2V0UnVuUmVzcG9uc2USRwoITGlzdFJ1bnMSHC5vcmtzdGFjay52MS5MaXN0UnVuc1JlcXVlc3QaHS5vcmtzdGFjay52MS5MaXN0UnVuc1Jlc3BvbnNlEkoKCUNhbmNlbFJ1bhIdLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlcXVlc3QaHi5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXNwb25zZRJGCgxTdHJlYW1FdmVudHMSIC5vcmtzdGFjay52MS5TdHJlYW1FdmVudHNSZXF1ZXN0GhIub3Jrc3RhY2sudjEuRXZlbnQwATJhCg1QbHVnaW5TZXJ2aWNlElAKC0xpc3RQbHVnaW5zEh8ub3Jrc3RhY2sudjEuTGlzdFBsdWdpbnNSZXF1ZXN0GiAub3Jrc3RhY2sudjEuTGlzdFBsdWdpbnNSZXNwb25zZUKoAQoPY29tLm9ya3N0YWNrLnYxQgxTZXJ2aWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow]);
 
 /**
- * @generated from message orkstack.v1.ApplyWorkflowRequest
+ * @generated from message orkstack.v1.ApplyOrkflowRequest
  */
-export type ApplyWorkflowRequest = Message<"orkstack.v1.ApplyWorkflowRequest"> & {
+export type ApplyOrkflowRequest = Message<"orkstack.v1.ApplyOrkflowRequest"> & {
   /**
    * raw DSL document
    *
@@ -32,20 +32,20 @@ export type ApplyWorkflowRequest = Message<"orkstack.v1.ApplyWorkflowRequest"> &
 };
 
 /**
- * Describes the message orkstack.v1.ApplyWorkflowRequest.
- * Use `create(ApplyWorkflowRequestSchema)` to create a new message.
+ * Describes the message orkstack.v1.ApplyOrkflowRequest.
+ * Use `create(ApplyOrkflowRequestSchema)` to create a new message.
  */
-export const ApplyWorkflowRequestSchema: GenMessage<ApplyWorkflowRequest> = /*@__PURE__*/
+export const ApplyOrkflowRequestSchema: GenMessage<ApplyOrkflowRequest> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 0);
 
 /**
- * @generated from message orkstack.v1.ApplyWorkflowResponse
+ * @generated from message orkstack.v1.ApplyOrkflowResponse
  */
-export type ApplyWorkflowResponse = Message<"orkstack.v1.ApplyWorkflowResponse"> & {
+export type ApplyOrkflowResponse = Message<"orkstack.v1.ApplyOrkflowResponse"> & {
   /**
-   * @generated from field: orkstack.v1.Workflow workflow = 1;
+   * @generated from field: orkstack.v1.Orkflow orkflow = 1;
    */
-  workflow?: Workflow | undefined;
+  orkflow?: Orkflow | undefined;
 
   /**
    * @generated from field: repeated string warnings = 2;
@@ -54,16 +54,16 @@ export type ApplyWorkflowResponse = Message<"orkstack.v1.ApplyWorkflowResponse">
 };
 
 /**
- * Describes the message orkstack.v1.ApplyWorkflowResponse.
- * Use `create(ApplyWorkflowResponseSchema)` to create a new message.
+ * Describes the message orkstack.v1.ApplyOrkflowResponse.
+ * Use `create(ApplyOrkflowResponseSchema)` to create a new message.
  */
-export const ApplyWorkflowResponseSchema: GenMessage<ApplyWorkflowResponse> = /*@__PURE__*/
+export const ApplyOrkflowResponseSchema: GenMessage<ApplyOrkflowResponse> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 1);
 
 /**
- * @generated from message orkstack.v1.GetWorkflowRequest
+ * @generated from message orkstack.v1.GetOrkflowRequest
  */
-export type GetWorkflowRequest = Message<"orkstack.v1.GetWorkflowRequest"> & {
+export type GetOrkflowRequest = Message<"orkstack.v1.GetOrkflowRequest"> & {
   /**
    * @generated from field: string name = 1;
    */
@@ -78,33 +78,33 @@ export type GetWorkflowRequest = Message<"orkstack.v1.GetWorkflowRequest"> & {
 };
 
 /**
- * Describes the message orkstack.v1.GetWorkflowRequest.
- * Use `create(GetWorkflowRequestSchema)` to create a new message.
+ * Describes the message orkstack.v1.GetOrkflowRequest.
+ * Use `create(GetOrkflowRequestSchema)` to create a new message.
  */
-export const GetWorkflowRequestSchema: GenMessage<GetWorkflowRequest> = /*@__PURE__*/
+export const GetOrkflowRequestSchema: GenMessage<GetOrkflowRequest> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 2);
 
 /**
- * @generated from message orkstack.v1.GetWorkflowResponse
+ * @generated from message orkstack.v1.GetOrkflowResponse
  */
-export type GetWorkflowResponse = Message<"orkstack.v1.GetWorkflowResponse"> & {
+export type GetOrkflowResponse = Message<"orkstack.v1.GetOrkflowResponse"> & {
   /**
-   * @generated from field: orkstack.v1.Workflow workflow = 1;
+   * @generated from field: orkstack.v1.Orkflow orkflow = 1;
    */
-  workflow?: Workflow | undefined;
+  orkflow?: Orkflow | undefined;
 };
 
 /**
- * Describes the message orkstack.v1.GetWorkflowResponse.
- * Use `create(GetWorkflowResponseSchema)` to create a new message.
+ * Describes the message orkstack.v1.GetOrkflowResponse.
+ * Use `create(GetOrkflowResponseSchema)` to create a new message.
  */
-export const GetWorkflowResponseSchema: GenMessage<GetWorkflowResponse> = /*@__PURE__*/
+export const GetOrkflowResponseSchema: GenMessage<GetOrkflowResponse> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 3);
 
 /**
- * @generated from message orkstack.v1.ListWorkflowsRequest
+ * @generated from message orkstack.v1.ListOrkflowsRequest
  */
-export type ListWorkflowsRequest = Message<"orkstack.v1.ListWorkflowsRequest"> & {
+export type ListOrkflowsRequest = Message<"orkstack.v1.ListOrkflowsRequest"> & {
   /**
    * @generated from field: int32 page_size = 1;
    */
@@ -117,20 +117,20 @@ export type ListWorkflowsRequest = Message<"orkstack.v1.ListWorkflowsRequest"> &
 };
 
 /**
- * Describes the message orkstack.v1.ListWorkflowsRequest.
- * Use `create(ListWorkflowsRequestSchema)` to create a new message.
+ * Describes the message orkstack.v1.ListOrkflowsRequest.
+ * Use `create(ListOrkflowsRequestSchema)` to create a new message.
  */
-export const ListWorkflowsRequestSchema: GenMessage<ListWorkflowsRequest> = /*@__PURE__*/
+export const ListOrkflowsRequestSchema: GenMessage<ListOrkflowsRequest> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 4);
 
 /**
- * @generated from message orkstack.v1.ListWorkflowsResponse
+ * @generated from message orkstack.v1.ListOrkflowsResponse
  */
-export type ListWorkflowsResponse = Message<"orkstack.v1.ListWorkflowsResponse"> & {
+export type ListOrkflowsResponse = Message<"orkstack.v1.ListOrkflowsResponse"> & {
   /**
-   * @generated from field: repeated orkstack.v1.Workflow workflows = 1;
+   * @generated from field: repeated orkstack.v1.Orkflow orkflows = 1;
    */
-  workflows: Workflow[];
+  orkflows: Orkflow[];
 
   /**
    * @generated from field: string next_page_token = 2;
@@ -139,10 +139,10 @@ export type ListWorkflowsResponse = Message<"orkstack.v1.ListWorkflowsResponse">
 };
 
 /**
- * Describes the message orkstack.v1.ListWorkflowsResponse.
- * Use `create(ListWorkflowsResponseSchema)` to create a new message.
+ * Describes the message orkstack.v1.ListOrkflowsResponse.
+ * Use `create(ListOrkflowsResponseSchema)` to create a new message.
  */
-export const ListWorkflowsResponseSchema: GenMessage<ListWorkflowsResponse> = /*@__PURE__*/
+export const ListOrkflowsResponseSchema: GenMessage<ListOrkflowsResponse> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 5);
 
 /**
@@ -150,12 +150,14 @@ export const ListWorkflowsResponseSchema: GenMessage<ListWorkflowsResponse> = /*
  */
 export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
   /**
+   * orkflow name
+   *
    * @generated from field: string workflow_name = 1;
    */
   workflowName: string;
 
   /**
-   * empty = latest
+   * orkflow version; empty = latest
    *
    * @generated from field: string workflow_version = 2;
    */
@@ -237,7 +239,7 @@ export const GetRunResponseSchema: GenMessage<GetRunResponse> = /*@__PURE__*/
  */
 export type ListRunsRequest = Message<"orkstack.v1.ListRunsRequest"> & {
   /**
-   * optional filter
+   * optional orkflow name filter
    *
    * @generated from field: string workflow_name = 1;
    */
@@ -419,42 +421,42 @@ export const ListPluginsResponseSchema: GenMessage<ListPluginsResponse> = /*@__P
   messageDesc(file_orkstack_v1_service, 17);
 
 /**
- * WorkflowService manages workflow definitions (the compiled DSL).
+ * OrkflowService manages orkflow definitions (the compiled DSL).
  *
- * @generated from service orkstack.v1.WorkflowService
+ * @generated from service orkstack.v1.OrkflowService
  */
-export const WorkflowService: GenService<{
+export const OrkflowService: GenService<{
   /**
-   * Apply validates and upserts a workflow from raw DSL YAML.
+   * ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
    *
-   * @generated from rpc orkstack.v1.WorkflowService.Apply
+   * @generated from rpc orkstack.v1.OrkflowService.ApplyOrkflow
    */
-  apply: {
+  applyOrkflow: {
     methodKind: "unary";
-    input: typeof ApplyWorkflowRequestSchema;
-    output: typeof ApplyWorkflowResponseSchema;
+    input: typeof ApplyOrkflowRequestSchema;
+    output: typeof ApplyOrkflowResponseSchema;
   },
   /**
-   * @generated from rpc orkstack.v1.WorkflowService.GetWorkflow
+   * @generated from rpc orkstack.v1.OrkflowService.GetOrkflow
    */
-  getWorkflow: {
+  getOrkflow: {
     methodKind: "unary";
-    input: typeof GetWorkflowRequestSchema;
-    output: typeof GetWorkflowResponseSchema;
+    input: typeof GetOrkflowRequestSchema;
+    output: typeof GetOrkflowResponseSchema;
   },
   /**
-   * @generated from rpc orkstack.v1.WorkflowService.ListWorkflows
+   * @generated from rpc orkstack.v1.OrkflowService.ListOrkflows
    */
-  listWorkflows: {
+  listOrkflows: {
     methodKind: "unary";
-    input: typeof ListWorkflowsRequestSchema;
-    output: typeof ListWorkflowsResponseSchema;
+    input: typeof ListOrkflowsRequestSchema;
+    output: typeof ListOrkflowsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_orkstack_v1_service, 0);
 
 /**
- * RunService submits and observes workflow executions.
+ * RunService submits and observes orkflow executions.
  *
  * @generated from service orkstack.v1.RunService
  */

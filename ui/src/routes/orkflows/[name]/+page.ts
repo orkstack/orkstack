@@ -5,9 +5,9 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 	const name = params.name;
 	const version = url.searchParams.get('version') ?? '';
 	try {
-		const res = await orkstack(fetch).workflows.getWorkflow({ name, version });
-		return { workflow: res.workflow ?? null, error: null as string | null };
+		const res = await orkstack(fetch).orkflows.getOrkflow({ name, version });
+		return { orkflow: res.orkflow ?? null, error: null as string | null };
 	} catch (err) {
-		return { workflow: null, error: errorMessage(err) };
+		return { orkflow: null, error: errorMessage(err) };
 	}
 };

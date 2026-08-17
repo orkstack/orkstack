@@ -1,4 +1,4 @@
-import type { Task } from './gen/orkstack/v1/workflow_pb';
+import type { Task } from './gen/orkstack/v1/orkflow_pb';
 
 export interface DagNode {
 	task: Task;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Task } from '$lib/gen/orkstack/v1/workflow_pb';
+	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import { DAG_NODE_H, DAG_NODE_W, layoutDag } from '$lib/dag';
 
 	let { tasks }: { tasks: Task[] } = $props();
@@ -12,13 +12,13 @@
 {:else}
 	<div class="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900/40 p-2">
 		<svg
-			data-testid="workflow-dag"
+			data-testid="orkflow-dag"
 			width={layout.width}
 			height={layout.height}
 			viewBox="0 0 {layout.width} {layout.height}"
 			class="block"
 			role="img"
-			aria-label="Workflow task DAG"
+			aria-label="Orkflow task DAG"
 		>
 			<defs>
 				<marker
