@@ -44,6 +44,49 @@ func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *test
 	}
 }
 
+// TestQueues_OrkerQueueMovesTaskExecutionOnly holds the runbook to what the
+// engine really polls.
+//
+// ORK_ORKER_QUEUE names where task activities are DISPATCHED. RunWorkflow and
+// the idempotency claims stay on task.DefaultQueue whatever it is set to. With
+// the variable unset the two queues are the same name, which is how
+// docs/DEPLOY.md came to claim the run worker polls ORK_ORKER_QUEUE — true
+// only by coincidence, and false for every operator who moves their Orker
+// pool. Under versioning that claim is load-bearing: it decides which queue
+// names an operator expects in `temporal worker deployment describe-version`,
+// and the runbook told them to abort a rollout when the expected name was
+// missing.
+func TestQueues_OrkerQueueMovesTaskExecutionOnly(t *testing.T) {
+	t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-gpu-pool")
+
+	q := queuesFor(loadConfig())
+	if q.run != task.DefaultQueue {
+		t.Errorf("the engine's run worker polls %q, want %q: ORK_ORKER_QUEUE moved the queue that hosts RunWorkflow",
+			q.run, task.DefaultQueue)
+	}
+	if q.orker != "ork-tasks-gpu-pool" {
+		t.Errorf("task activities go to %q, want the configured ork-tasks-gpu-pool", q.orker)
+	}
+	if q.events != engine.EventQueue {
+		t.Errorf("projection worker polls %q, want %q", q.events, engine.EventQueue)
+	}
+	if q.run == q.orker {
+		t.Error("a configured Orker pool collapsed back onto the engine's own queue")
+	}
+}
+
+// TestQueues_DefaultCollapsesTheOrkerPoolOntoTheEngineQueue is the other half:
+// with no configuration one queue carries both, which is what makes a
+// single-process dev run work — and what hid the runbook's error.
+func TestQueues_DefaultCollapsesTheOrkerPoolOntoTheEngineQueue(t *testing.T) {
+	t.Setenv("ORK_ORKER_QUEUE", "")
+
+	q := queuesFor(loadConfig())
+	if q.run != task.DefaultQueue || q.orker != task.DefaultQueue {
+		t.Fatalf("unconfigured queues = run %q orker %q, want both %q", q.run, q.orker, task.DefaultQueue)
+	}
+}
+
 // TestRunWorkerOptions_CarryTheConfiguredDeploymentVersion is acceptance 1 for
 // the engine: the process that hosts RunWorkflow registers with Worker
 // Deployment Versioning when — and only when — an operator configured a build

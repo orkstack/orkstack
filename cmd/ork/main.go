@@ -107,6 +107,27 @@ func main() {
 	}
 }
 
+// queues names every Temporal queue this engine touches. It exists because
+// which queue carries what is an operational claim (docs/DEPLOY.md §2) that
+// used to live only in a comment and a log line, where it was wrong: the run
+// worker polls task.DefaultQueue, ALWAYS, and ORK_ORKER_QUEUE moves task
+// EXECUTION only. Naming the split lets a test hold the runbook to it.
+type queues struct {
+	// run carries RunWorkflow and the idempotency claims: the engine's own
+	// workflows, hosted by every replica of a release. Fixed, because a run
+	// belongs to the engine, not to whichever Orker pool executes its tasks.
+	run string
+	// events carries PublishEvent, engine-internal so no Orker receives it.
+	events string
+	// orker is where task activities are dispatched — the one an operator
+	// moves with ORK_ORKER_QUEUE to reach a dedicated Orker pool.
+	orker string
+}
+
+func queuesFor(cfg config) queues {
+	return queues{run: task.DefaultQueue, events: engine.EventQueue, orker: cfg.orkerQueue}
+}
+
 // runWorkerOptions configures the worker that hosts RunWorkflow and the
 // idempotency claims. It carries the deployment identity, because the run
 // workflow is what a version pins: an in-flight run must keep executing on the
@@ -293,17 +314,20 @@ func run(logger *slog.Logger, cfg config) error {
 	// runs this one neither started nor projected.
 	reader := engine.NewTemporalRunReader(temporalClient)
 
-	// Workflow worker: hosts RunWorkflow on the same queue Orkers poll for
-	// task activities, and the idempotency claims, which are engine state no
-	// Orker ever sees.
-	runWorker := worker.New(temporalClient, task.DefaultQueue, runWorkerOptions(cfg))
+	// Workflow worker: hosts RunWorkflow and the idempotency claims on the
+	// engine's own queue — NOT ORK_ORKER_QUEUE, which moves task execution
+	// only. Under versioning the two show up separately in
+	// `temporal worker deployment describe-version`: this queue as the
+	// version's workflow poller, the Orker's as its activity poller.
+	q := queuesFor(cfg)
+	runWorker := worker.New(temporalClient, q.run, runWorkerOptions(cfg))
 	registerEngineWorkflows(runWorker)
 
 	// Projection worker: engine-internal activities on a dedicated queue so
 	// Orkers never receive them. The archive body's event log is read back
 	// from Temporal, because with more than one replica polling this queue no
 	// single process executes all of a run's events.
-	eventWorker := worker.New(temporalClient, engine.EventQueue, eventWorkerOptions(cfg))
+	eventWorker := worker.New(temporalClient, q.events, eventWorkerOptions(cfg))
 	eventWorker.RegisterActivityWithOptions(
 		engine.NewArchivingEventActivities(bus, runs, archive).
 			WithRunNotifier(runNotifier).
@@ -321,8 +345,8 @@ func run(logger *slog.Logger, cfg config) error {
 	}
 	defer eventWorker.Stop()
 	logger.Info("temporal workers started",
-		"task_queue", task.DefaultQueue, "event_queue", engine.EventQueue,
-		"orker_queue", cfg.orkerQueue)
+		"task_queue", q.run, "event_queue", q.events,
+		"orker_queue", q.orker)
 	// The versioning line is separate and always printed, because "which
 	// version am I" is the first question of any rollout. The Orker must
 	// report the same pair, or a pinned run's tasks fall through to the task
@@ -335,12 +359,12 @@ func run(logger *slog.Logger, cfg config) error {
 		"run_workflow_behavior", "Pinned",
 		"claim_workflow_behavior", "AutoUpgrade",
 		"event_worker", "unversioned")
-	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, cfg.orkerQueue)
+	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker)
 
 	// Idempotency: the cluster decides which run a key names, so every replica
 	// behind this address gets the same answer. Nothing about dedupe lives in
 	// this process.
-	idempotency := engine.NewTemporalIdempotency(temporalClient, task.DefaultQueue, cfg.idempotencyTTL)
+	idempotency := engine.NewTemporalIdempotency(temporalClient, q.run, cfg.idempotencyTTL)
 	logger.Info("idempotency claims ready",
 		"workflow", engine.ClaimWorkflowName, "ttl", cfg.idempotencyTTL)
 
