@@ -14,7 +14,6 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
@@ -89,8 +88,7 @@ func startClaimWorker(t *testing.T, c client.Client, queue string) {
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
 	})
-	w.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
-		workflow.RegisterOptions{Name: engine.ClaimWorkflowName})
+	engine.RegisterWorkflows(w)
 	if err := w.Start(); err != nil {
 		t.Fatalf("start claim worker: %v", err)
 	}

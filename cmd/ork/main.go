@@ -23,7 +23,6 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
@@ -158,49 +157,6 @@ func eventWorkerOptions(config) worker.Options {
 	}
 }
 
-// workflowRegistrar is the slice of worker.Worker that registers workflow
-// types. Naming it lets a test register the engine's workflows through the
-// same code the binary runs, so a lost VersioningBehavior fails a test rather
-// than only a production rollout.
-type workflowRegistrar interface {
-	RegisterWorkflowWithOptions(w any, options workflow.RegisterOptions)
-}
-
-// registerEngineWorkflows registers the engine's workflow types, each with the
-// versioning behaviour it needs. Under Worker Deployment Versioning a workflow
-// type with no declared behaviour panics at registration, so this list is also
-// the statement that both types have been considered.
-func registerEngineWorkflows(w workflowRegistrar) {
-	// Pinned: an in-flight run finishes on the code that started it.
-	//
-	// RunWorkflow interprets a DAG whose scheduling order, event sequence and
-	// activity arguments are all decided by current code. Change readyTasks'
-	// ordering, the emit counter, or the shape of task.ExecuteTaskInput, and
-	// replaying a half-finished history against the new build produces a
-	// different command stream — a non-determinism error that kills a run the
-	// operator did nothing to. AutoUpgrade would hand exactly that history to
-	// the new build on its next workflow task. Pinned keeps the run on its own
-	// version; the price is that v1 workers must stay up until the deployment
-	// version reports Drained (docs/DEPLOY.md).
-	w.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
-		Name:               engine.WorkflowName,
-		VersioningBehavior: workflow.VersioningBehaviorPinned,
-	})
-
-	// AutoUpgrade: the claim is a long-lived key holder, not a run.
-	//
-	// Its history is one update and one timer, and its command stream is
-	// independent of run semantics — replaying it against a newer build issues
-	// the same commands — so the determinism argument above does not apply. It
-	// lives for ORK_IDEMPOTENCY_TTL (default 24h), so pinning it would strand
-	// a key holder on a version an operator wants to decommission, and that
-	// version would never report Drained.
-	w.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow, workflow.RegisterOptions{
-		Name:               engine.ClaimWorkflowName,
-		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
-	})
-}
-
 // installServerShutdownContext gives all HTTP handlers a shared lifetime and
 // cancels it when Shutdown begins. Long-lived Connect and WebSocket streams
 // then return before http.Server waits for active connections to drain.
@@ -321,7 +277,7 @@ func run(logger *slog.Logger, cfg config) error {
 	// version's workflow poller, the Orker's as its activity poller.
 	q := queuesFor(cfg)
 	runWorker := worker.New(temporalClient, q.run, runWorkerOptions(cfg))
-	registerEngineWorkflows(runWorker)
+	engine.RegisterWorkflows(runWorker)
 
 	// Projection worker: engine-internal activities on a dedicated queue so
 	// Orkers never receive them. The archive body's event log is read back

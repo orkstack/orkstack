@@ -16,7 +16,6 @@ import (
 	"go.temporal.io/api/temporalproto"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -71,10 +70,10 @@ func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
 	}))
-	runWorker.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
-		Name:               engine.WorkflowName,
-		VersioningBehavior: workflow.VersioningBehaviorPinned,
-	})
+	// Through the shipped list, so the fixture carries whatever behaviour
+	// `bin/ork` declares. A copy of it here would let the recorded history
+	// claim Pinned while the binary registered something else.
+	engine.RegisterWorkflows(runWorker)
 
 	orkerWorker := worker.New(temporalClient, orkerQueue, deployment.Apply(worker.Options{
 		DisableRegistrationAliasing: true,

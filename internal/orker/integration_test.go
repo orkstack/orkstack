@@ -21,7 +21,6 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -92,9 +91,7 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
 	})
-	runWorker.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
-		Name: engine.WorkflowName,
-	})
+	engine.RegisterWorkflows(runWorker)
 
 	// Worker 2: the real Orker on the same shared queue.
 	orkerWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{

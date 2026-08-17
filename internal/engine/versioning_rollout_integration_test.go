@@ -20,7 +20,6 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -149,6 +148,14 @@ type replica struct {
 	orker      worker.Worker
 	events     worker.Worker
 
+	// The Orker is the one worker a test stops and starts on its own (see
+	// startOrker): docs/DEPLOY.md §3 step 6 is an operator stopping the old
+	// version's workers, and what that does to a run still pinned to it is a
+	// property, not a footnote. Its inputs are kept so it can be rebuilt.
+	client     client.Client
+	orkerQueue string
+	release    <-chan struct{}
+
 	mu sync.Mutex
 	// executed records which build actually ran each task, stamped by the
 	// stub itself: "<runID>/<taskID>" -> build id.
@@ -179,6 +186,9 @@ func newReplica(
 	t.Helper()
 	r := &replica{
 		deployment: deployment,
+		client:     c,
+		orkerQueue: orkerQueue,
+		release:    release,
 		executed:   map[string]string{},
 		projected:  map[string]string{},
 		started:    make(chan struct{}),
@@ -188,44 +198,12 @@ func newReplica(
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
 	}))
-	r.run.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
-		Name:               engine.WorkflowName,
-		VersioningBehavior: workflow.VersioningBehaviorPinned,
-	})
-
-	r.orker = worker.New(c, orkerQueue, deployment.Apply(worker.Options{
-		DisableRegistrationAliasing: true,
-		DisableWorkflowWorker:       true,
-	}))
-	r.orker.RegisterActivityWithOptions(
-		func(actCtx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-			r.mu.Lock()
-			r.executed[in.RunID+"/"+in.TaskID] = deployment.BuildID
-			r.mu.Unlock()
-
-			// The gate stands in for a long task: it is running when the
-			// rollout happens, so the run is unambiguously in flight.
-			if in.TaskID == gateTaskID {
-				r.once.Do(func() { close(r.started) })
-				select {
-				case <-release:
-				case <-actCtx.Done():
-					return task.ExecuteTaskResult{}, actCtx.Err()
-				}
-			}
-			return task.ExecuteTaskResult{
-				TaskID: in.TaskID,
-				Output: plugin.Payload{
-					// The stamp is the plugin-code-level evidence: it says
-					// which build's task implementation produced this result,
-					// and it is recorded in the run's own history.
-					"executed_by_build": deployment.BuildID,
-					"echoed_task":       in.TaskID,
-				},
-			}, nil
-		},
-		activity.RegisterOptions{Name: task.ActivityExecuteTask},
-	)
+	// Registered through the SHIPPED list, not a copy of it: this test's whole
+	// claim is that a run stays on the build that started it, and that claim
+	// belongs to whatever behaviour `bin/ork` declares. Declaring Pinned here
+	// would have made the test pass while the binary registered AutoUpgrade —
+	// measured: flipping engine.RegisterWorkflows used to leave this green.
+	engine.RegisterWorkflows(r.run)
 
 	// Unversioned on purpose: PublishEvent must stay executable by any live
 	// replica of any version. See eventWorkerOptions in cmd/ork.
@@ -244,14 +222,68 @@ func newReplica(
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
-	for name, w := range map[string]worker.Worker{"run": r.run, "orker": r.orker, "event": r.events} {
+	for name, w := range map[string]worker.Worker{"run": r.run, "event": r.events} {
 		if err := w.Start(); err != nil {
 			t.Fatalf("start %s worker of %s: %v", name, deployment, err)
 		}
 	}
+	r.startOrker(t)
 	return r
 }
 
+// startOrker builds and starts this release's Orker. It is separate from
+// newReplica because an Orker is the half of a release an operator stops
+// first, and a test that wants to know what that does to a pinned run has to
+// be able to stop it and bring it back.
+func (r *replica) startOrker(t *testing.T) {
+	t.Helper()
+	r.orker = worker.New(r.client, r.orkerQueue, r.deployment.Apply(worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	}))
+	r.orker.RegisterActivityWithOptions(
+		func(actCtx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+			r.mu.Lock()
+			r.executed[in.RunID+"/"+in.TaskID] = r.deployment.BuildID
+			r.mu.Unlock()
+
+			// The gate stands in for a long task: it is running when the
+			// rollout happens, so the run is unambiguously in flight.
+			if in.TaskID == gateTaskID {
+				r.once.Do(func() { close(r.started) })
+				select {
+				case <-r.release:
+				case <-actCtx.Done():
+					return task.ExecuteTaskResult{}, actCtx.Err()
+				}
+			}
+			return task.ExecuteTaskResult{
+				TaskID: in.TaskID,
+				Output: plugin.Payload{
+					// The stamp is the plugin-code-level evidence: it says
+					// which build's task implementation produced this result,
+					// and it is recorded in the run's own history.
+					"executed_by_build": r.deployment.BuildID,
+					"echoed_task":       in.TaskID,
+				},
+			}, nil
+		},
+		activity.RegisterOptions{Name: task.ActivityExecuteTask},
+	)
+	if err := r.orker.Start(); err != nil {
+		t.Fatalf("start orker worker of %s: %v", r.deployment, err)
+	}
+}
+
+// stopOrker stops this release's Orker and leaves the rest of it running,
+// which is the state docs/DEPLOY.md §3 step 6 puts a version into.
+func (r *replica) stopOrker() {
+	r.orker.Stop()
+}
+
+// stop stops every worker. Worker.Stop is idempotent (SDK v1.47.0
+// internal/internal_worker.go:1614 returns early once stopC is closed), so a
+// test that already stopped the Orker may still defer this.
 func (r *replica) stop() {
 	r.run.Stop()
 	r.orker.Stop()
@@ -694,6 +726,15 @@ func (tr *rolloutTranscript) step(message string) {
 
 func (tr *rolloutTranscript) result(message string) {
 	tr.lines = append(tr.lines, "         "+message)
+}
+
+// logOnly prints the transcript into the test log and nowhere else.
+//
+// proof/M8.4's rollout transcript belongs to the rollout test; a second writer
+// would leave whichever test finished last, and the file names one rollout.
+func (tr *rolloutTranscript) logOnly(t *testing.T) {
+	t.Helper()
+	t.Log("\n" + strings.Join(tr.lines, "\n") + "\n")
 }
 
 // write saves the transcript when ORK_PROOF_ROLLOUT_FILE names a destination.
