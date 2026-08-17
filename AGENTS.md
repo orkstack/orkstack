@@ -72,9 +72,9 @@ scripts/               Dev helper scripts
   wrapped errors (`fmt.Errorf("...: %w", err)`), no panics in library code.
 - **Temporal Go SDK** (`go.temporal.io/sdk`). Namespace: `ORK_TEMPORAL_NAMESPACE`,
   default `ork-main` (auto-provisioned at binary boot). Task queues: the engine
-  dispatches to `ORK_ORKER_QUEUE`, default `ork-tasks`; a task may override via
-  `queue`. **For parallel agent runs, use deterministic per-agent queue names
-  (see §6 below).**
+  dispatches to `ORK_ORKER_QUEUE`, default `ork-tasks`, on both binaries; a task
+  may override via `queue`. **For parallel agent runs, give each agent its own
+  namespace (see §6 below).**
 - **Connect** (`connectrpc.com/connect`) for RPC. Server serves h2c on
   `:8080` (configurable). WebSocket event bridge on the same server at
   `/ws/runs/{id}`.
@@ -142,22 +142,29 @@ export ORK_TEMPORAL_NAMESPACE="ork-m7-8"
 an unused name is registered on first boot. A namespace is a hard partition:
 no workflow, activity or queue crosses it, so no cross-agent theft is possible.
 
-**`ORK_ORKER_QUEUE` alone does NOT isolate a run — it hangs it.** It changes
-only which queue the Orker *polls* and which queue the engine uses for plugin
-*discovery* (`TemporalStarter.ListPlugins`). Task dispatch is decided inside
-workflow code by `queueFor(t)` (`internal/engine/workflow.go`), which returns
-the task's own `queue:` from the DSL or, failing that, the compiled-in
-`task.DefaultQueue` (`ork-tasks`) — it never reads the environment. Set
-`ORK_ORKER_QUEUE` on its own and the Orker listens to one queue while the
-workflow schedules onto another: every run sits in RUNNING until the timeout.
-To route by queue deliberately, set `queue:` on every task in the orkflow and
-point an Orker at that queue.
+**`ORK_ORKER_QUEUE` isolates task execution.** Set it on both binaries and the
+Orker polls that queue while the engine dispatches every task that names no
+`queue:` of its own to it (`TemporalStarter.StartRun` binds the name into the
+run's workflow input; workflow code is deterministic and cannot read the
+environment itself). Set it on only one of the two and the run strands in
+RUNNING: the Orker listens to one queue while the engine dispatches to another.
+
+```bash
+# Both processes, same value.
+export ORK_ORKER_QUEUE="ork-tasks-m7-9"
+```
+
+A queue partitions task execution only — run workflows and engine events still
+share their queues, so a namespace is the stronger boundary and the one to use
+for parallel agents. A task's own `queue:` in the DSL still outranks the
+engine's default, which is how a step reaches a dedicated Orker pool
+(`docs/DSL.md`). Proof for both: `proof/queue-routing/`.
 
 **In test harnesses** that start their own engine and orker, give the pair a
-unique namespace. `cmd/orkctl/integration_test.go` shows the queue route done
-correctly instead: it sets `ORK_ORKER_QUEUE` on both binaries *and* applies a
-copy of the example with the queue pinned onto each task
-(`writeQueuePinnedWorkflow`). One without the other hangs the run.
+unique namespace, and a private queue when the test needs one
+(`cmd/orkctl/integration_test.go` does both — it also pins the queue onto each
+task through `writeQueuePinnedWorkflow`, which is still the way to prove
+per-task routing):
 
 ```go
 // Before starting the engine and orker:
