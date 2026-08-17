@@ -39,8 +39,38 @@ DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch�
    through Temporal payloads or the event stream.
 5. **Everything is versioned.** An `Orkflow` has a `name` + `version`. Runs pin
    the version they executed, and are identified as `ork-{timestamp}-{sequence}`.
+   That shape is the whole of the contract, and the parts are not:
+   - `sequence` is `nonce<<32 | counter` — 32 bits of `crypto/rand` drawn once
+     per process, over a per-process counter (`internal/engine/runid.go`). It is
+     monotonic *within* one replica and meaningless across two, which is what
+     stops two replicas issuing the same id in one clock tick.
+   - a run id is the Temporal workflow id and is **single-use for all time**:
+     `StartRun` sets `REJECT_DUPLICATE` + `CONFLICT_POLICY_FAIL` +
+     `WorkflowExecutionErrorWhenAlreadyStarted` (`internal/engine/temporal.go`),
+     so a reused id is an error, never a silent attach to someone else's run.
+   - **nothing may parse a run id or derive meaning from its parts.** Order
+     runs by time (`created_at`); the only id comparison in the tree is
+     `mergeRuns`' stable tie-break for equal timestamps
+     (`internal/api/service.go`, guarded by
+     `TestListRuns_OrdersRunsByTimeNotByRunID`).
 6. **DONE means proven.** A change is done only when behavior tests pass and a
    proof artifact exists under `proof/` (see §6). No proof, not done.
+7. **Temporal is the read model for live runs.** `GetRun`, `ListRuns`,
+   `StreamEvents` and `/ws/runs/{id}` are answered from the run's Temporal
+   history through `engine.TemporalRunReader` (`internal/engine/reader.go`),
+   wired as the API's `RunReader` seam (`internal/api/service.go`); finished
+   runs past retention come from the S3 archive. The in-process
+   `RunStore`/`EventBus` are **write-side** helpers — the candidate run a
+   submission creates, the archive and webhook write path, and the one stream
+   that never reaches Temporal (a run whose start failed). Never answer a read
+   from process memory behind a wired reader: any replica must answer for any
+   run, including one it never started and one whose replica is gone.
+8. **Event sequence is producer-assigned.** `RunWorkflow` numbers every event
+   it emits (`internal/engine/workflow.go`); the bus honours that number and
+   assigns one only when given none (`internal/engine/bus.go`). That is what
+   makes the three streams — Temporal history, the in-process log, the archived
+   JSON — identical, and what lets a client resume with `from_sequence` against
+   a different replica.
 
 ## 2. Repository layout
 
@@ -54,6 +84,7 @@ internal/engine/       Temporal workflows + activities + run store
 internal/api/          Connect service implementations + WS bridge
 internal/dsl/          YAML DSL parse → validate → compile to Orkflow proto
 internal/orker/        Orker runtime: worker wiring, plugin dispatch
+internal/task/         Temporal plumbing: namespace, queue names, deployment identity
 pkg/plugin/            Public plugin SDK + task contract (imported by plugins)
 pkg/plugins/{http,shell,file}/  Builtin plugins
 pkg/artifacts/         Artifact storage providers (local FS, S3/MinIO)
@@ -72,9 +103,11 @@ scripts/               Dev helper scripts
   wrapped errors (`fmt.Errorf("...: %w", err)`), no panics in library code.
 - **Temporal Go SDK** (`go.temporal.io/sdk`). Namespace: `ORK_TEMPORAL_NAMESPACE`,
   default `ork-main` (auto-provisioned at binary boot). Task queues: the engine
-  dispatches to `ORK_ORKER_QUEUE`, default `ork-tasks`, on both binaries; a task
-  may override via `queue`. **For parallel agent runs, give each agent its own
-  namespace (see §6 below).**
+  dispatches task activities to `ORK_ORKER_QUEUE`, default `ork-tasks`, set on
+  both binaries; a task may override via `queue`. The engine's own workflows
+  always live on the fixed `ork-tasks` and `ork-engine-events`, whatever
+  `ORK_ORKER_QUEUE` says (`cmd/ork/main.go`, `queuesFor`). **For parallel agent
+  runs, give each agent its own namespace (see §6 below).**
 - **Connect** (`connectrpc.com/connect`) for RPC. Server serves h2c on
   `:8080` (configurable). WebSocket event bridge on the same server at
   `/ws/runs/{id}`.
@@ -108,7 +141,9 @@ scripts/               Dev helper scripts
   absent (`t.Skip`).
 - **E2E**: full stack — CLI submits, Orker executes, artifacts land in MinIO, UI
   reflects it. Lives in `test/e2e` and drives real binaries.
-- Name tests for behavior: `TestHTTPPlugin_CapturesResponseBodyAsArtifact`.
+- Name tests for behavior, after one from the tree:
+  `TestShellPlugin_CapturesStdoutAndStderrAsArtifacts`,
+  `TestIntegration_SecondReplicaServesARunItNeverStarted`.
 - No sleeps for synchronization; poll with deadlines or use test env helpers.
 
 ## 6. Proof artifacts & integration test isolation (definition of DONE)
@@ -141,6 +176,18 @@ export ORK_TEMPORAL_NAMESPACE="ork-m7-8"
 `task.EnsureNamespace` at startup (`cmd/ork/main.go`, `cmd/orker/main.go`), so
 an unused name is registered on first boot. A namespace is a hard partition:
 no workflow, activity or queue crosses it, so no cross-agent theft is possible.
+
+**The deliberate exception: a two-replica test needs ONE namespace for BOTH
+replicas.** Isolation is per agent, not per process. A test that proves any
+replica answers for any run, or that one idempotency key survives two
+replicas, must run its engines in the *same* namespace on the *same* queues —
+that sharing is the condition under test, and splitting it would make the test
+fail for a reason unrelated to the property
+(`cmd/orkctl/tworeplica_read_integration_test.go`,
+`cmd/orkctl/idempotency_two_engine_integration_test.go`). Both keep the rule
+above by suffixing a per-run namespace that the pair shares and no other agent
+is inside (`isolatedNamespace`). Say so in a comment when you do it, or the
+next reader will "fix" it.
 
 **`ORK_ORKER_QUEUE` isolates task execution.** Set it on both binaries and the
 Orker polls that queue while the engine dispatches every task that names no
@@ -175,9 +222,13 @@ os.Setenv("ORK_TEMPORAL_NAMESPACE", "ork-test-"+uniqueSuffix)
 run, kill all stray processes:
 
 ```bash
-pkill -f 'bin/orker'; pkill -f 'bin/orkengine'; sleep 2
+pkill -f '/bin/orker$'; pkill -f '/bin/ork$'; sleep 2
 ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep   # must be empty
 ```
+
+The engine binary is `bin/ork` (§2). Anchor both patterns with `/` and `$`:
+unanchored, `bin/ork` also matches `bin/orkctl` and kills the CLI you are
+running the proof with.
 
 Never leave a backgrounded engine/orker running after a manual e2e; always kill
 what you start. Run integration suites with `-p 1` to stop packages from polling
@@ -255,3 +306,34 @@ merged, the proof is a claim about `main` that nothing has checked.
   boundary and never interpolates untrusted input without the templating layer's
   escaping. Document any command construction.
 - Secrets come from env/secret refs, never committed. `.env` is gitignored.
+
+## 10. Deployment & versioning
+
+How to operate this lives in `docs/DEPLOY.md`. These are the invariants a code
+change must not break.
+
+- **One Worker Deployment spans both binaries.** `ork` and `orker` of one
+  release share `ORK_DEPLOYMENT_NAME` + `ORK_BUILD_ID`
+  (`internal/task/versioning.go`) and are released in lockstep. Temporal routes
+  a pinned workflow's activities to its own version only while that version has
+  workers on the activity queue; without them they fall through to that queue's
+  current version — new plugin code, mid-run.
+- **The three registered behaviours** (`cmd/ork/main.go`): `RunWorkflow` is
+  **Pinned**, `IdempotencyClaimWorkflow` is **AutoUpgrade**, the projection
+  worker on `ork-engine-events` is **unversioned**. Each is load-bearing.
+  Pinning the claim workflow strands a 24h key holder on a version that then
+  never drains; versioning the projection worker takes the read model away from
+  replicas of every other version; AutoUpgrading `RunWorkflow` hands a
+  half-finished history to a new build.
+- **Versioning is off unless `ORK_BUILD_ID` is set** (`Deployment.Versioned`),
+  which is what keeps `make run-ork` + `make run-orker` working with no
+  configuration. Keep the default off, and keep `DefaultVersioningBehavior`
+  unset while `UseVersioning` is false — the SDK panics on that combination.
+- **A version must drain before it is decommissioned.** Runs pinned to it still
+  need its workers; `temporal worker deployment describe-version` reports
+  `DrainageStatus`.
+- **Old histories must replay against new code.** `internal/engine/replay_test.go`
+  replays a committed history in `make test`. Re-record the fixture
+  deliberately, never to turn a red test green.
+- Proof: `proof/M8.4/` (versioning, rollout, runbook) and `proof/M8.5/` (two
+  engine replicas and two Orker builds, live, in one command).
