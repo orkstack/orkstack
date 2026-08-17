@@ -34,6 +34,27 @@ func (s *RunStore) Save(run *orkstackv1.Run) {
 	s.runs[run.GetId()] = proto.Clone(run).(*orkstackv1.Run)
 }
 
+// Delete removes a run from the read model.
+//
+// It exists for one case: a run id the API allocated but never started,
+// because Temporal reported the id already taken. Nothing outside the process
+// has seen that run — SubmitRun has not returned — so leaving it behind would
+// publish a run that never existed, stuck in PENDING forever.
+func (s *RunStore) Delete(runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.runs[runID]; !exists {
+		return
+	}
+	delete(s.runs, runID)
+	for i, id := range s.order {
+		if id == runID {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			break
+		}
+	}
+}
+
 // Apply merges a workflow-produced snapshot into the store. Fields the
 // run workflow does not own (CreatedAt, and Input when the snapshot omits it) are
 // preserved from the existing record.

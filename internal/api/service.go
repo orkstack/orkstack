@@ -94,10 +94,8 @@ type Service struct {
 	now       func() time.Time
 	newRunID  func() string
 
-	counterMu      sync.Mutex
 	idempotencyMu  sync.Mutex
 	idempotencyMap map[string]string
-	runCounter     int64
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
@@ -135,19 +133,11 @@ func NewService(cfg Config) *Service {
 		svc.now = time.Now
 	}
 	if svc.newRunID == nil {
-		svc.newRunID = svc.defaultRunID
+		// One generator serves the whole process, so its nonce covers every
+		// Service wired inside it.
+		svc.newRunID = engine.NewRunID
 	}
 	return svc
-}
-
-// defaultRunID derives a run id from the wall clock and a process counter. It
-// runs in the API process, never inside workflow code.
-func (s *Service) defaultRunID() string {
-	s.counterMu.Lock()
-	s.runCounter++
-	counter := s.runCounter
-	s.counterMu.Unlock()
-	return fmt.Sprintf("ork-%d-%d", s.now().UTC().UnixNano(), counter)
 }
 
 // Bus exposes the event bus (used by the WebSocket bridge).
@@ -263,13 +253,13 @@ func (s *Service) SubmitRun(
 		s.runs.Save(run)
 		s.idempotencyMap[key] = runID
 		s.idempotencyMu.Unlock()
-		return s.startPreparedRun(ctx, run, wf, mergedInput)
+		return s.startPreparedRun(ctx, run, wf, mergedInput, key)
 	}
 
 	runID := s.newRunID()
 	run := s.newPendingRun(runID, wf, mergedInput)
 	s.runs.Save(run)
-	return s.startPreparedRun(ctx, run, wf, mergedInput)
+	return s.startPreparedRun(ctx, run, wf, mergedInput, "")
 }
 
 func (s *Service) newPendingRun(
@@ -287,44 +277,98 @@ func (s *Service) newPendingRun(
 	}
 }
 
+// startPreparedRun publishes the run's creation event and starts its workflow.
+//
+// The creation event is published before the Temporal call so it can never be
+// numbered behind an event the workflow itself emits: the bus assigns
+// sequences in publication order, and RUN_STARTED comes back asynchronously
+// through the projection activity.
+//
+// A run id Temporal reports as taken is the one start failure that is not
+// about this run: another replica already owns that workflow id. The candidate
+// is discarded and one fresh id is tried. Only one — a second collision is a
+// broken generator rather than bad luck, and a submission that kept drawing
+// ids would hide it.
 func (s *Service) startPreparedRun(
 	ctx context.Context,
 	run *orkstackv1.Run,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	idempotencyKey string,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	runID := run.GetId()
-	s.bus.Publish(&orkstackv1.Event{
-		RunId:     runID,
-		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
-		Status:    orkstackv1.Status_STATUS_PENDING,
-		Message:   fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion()),
-		Timestamp: timestamppb.New(s.now().UTC()),
-	}, runID+"#created")
-
-	if err := s.starter.StartRun(ctx, runID, wf, input); err != nil {
-		failedAt := timestamppb.New(s.now().UTC())
-		run.Status = orkstackv1.Status_STATUS_FAILED
-		run.Error = &orkstackv1.Error{Code: "RUN_START_FAILED", Message: err.Error()}
-		run.FinishedAt = failedAt
-		s.runs.Save(run)
+	for attempt := 0; ; attempt++ {
+		runID := run.GetId()
 		s.bus.Publish(&orkstackv1.Event{
 			RunId:     runID,
-			Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
-			Status:    orkstackv1.Status_STATUS_FAILED,
-			Message:   err.Error(),
-			Timestamp: failedAt,
-		}, runID+"#failed")
-		// A run that never reached Temporal still ends here, so this is the
-		// only place that can archive it or announce its failure. The engine's
-		// projection activity covers every run that did start.
-		s.notifyRunFailedToStart(ctx, runID, failedAt, err)
-		s.archiveRun(ctx, runID)
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
+			Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
+			Status:    orkstackv1.Status_STATUS_PENDING,
+			Message:   fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion()),
+			Timestamp: timestamppb.New(s.now().UTC()),
+		}, runID+"#created")
 
-	stored, _ := s.runs.Get(runID)
-	return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: stored}), nil
+		err := s.starter.StartRun(ctx, runID, wf, input)
+		if err == nil {
+			stored, _ := s.runs.Get(runID)
+			return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: stored}), nil
+		}
+		if errors.Is(err, engine.ErrRunIDTaken) && attempt == 0 {
+			run = s.reissueRunID(run, wf, input, idempotencyKey)
+			continue
+		}
+		return nil, s.recordFailedStart(ctx, run, err)
+	}
+}
+
+// reissueRunID discards a candidate run whose id Temporal refused and rebuilds
+// it under a fresh one. Nothing outside this process has seen the discarded id
+// — SubmitRun has not returned — so it is removed rather than left behind as a
+// run that never existed.
+func (s *Service) reissueRunID(
+	discarded *orkstackv1.Run,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	idempotencyKey string,
+) *orkstackv1.Run {
+	s.runs.Delete(discarded.GetId())
+	s.bus.Discard(discarded.GetId())
+
+	next := s.newPendingRun(s.newRunID(), wf, input)
+	s.runs.Save(next)
+	if idempotencyKey != "" {
+		// The key was bound to the discarded id before the start was
+		// attempted. Leaving it there would make every repeat submission
+		// report a run that is missing because it never existed.
+		s.idempotencyMu.Lock()
+		s.idempotencyMap[idempotencyKey] = next.GetId()
+		s.idempotencyMu.Unlock()
+	}
+	return next
+}
+
+// recordFailedStart ends a run that never reached Temporal. It is the only
+// place that can: the engine's projection activity covers every run that did
+// start, and nothing covers one that did not.
+func (s *Service) recordFailedStart(
+	ctx context.Context,
+	run *orkstackv1.Run,
+	cause error,
+) error {
+	runID := run.GetId()
+	failedAt := timestamppb.New(s.now().UTC())
+	run.Status = orkstackv1.Status_STATUS_FAILED
+	run.Error = &orkstackv1.Error{Code: "RUN_START_FAILED", Message: cause.Error()}
+	run.FinishedAt = failedAt
+	s.runs.Save(run)
+	s.bus.Publish(&orkstackv1.Event{
+		RunId:     runID,
+		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+		Status:    orkstackv1.Status_STATUS_FAILED,
+		Message:   cause.Error(),
+		Timestamp: failedAt,
+	}, runID+"#failed")
+	s.notifyRunFailedToStart(ctx, runID, failedAt, cause)
+	s.archiveRun(ctx, runID)
+	return connect.NewError(connect.CodeInternal, cause)
 }
 
 // notifyRunFailedToStart announces the terminal transition of a run that never

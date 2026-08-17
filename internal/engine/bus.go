@@ -69,6 +69,19 @@ func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstack
 	return proto.Clone(stored).(*orkstackv1.Event), true
 }
 
+// Discard forgets a run's event log and dedupe state.
+//
+// Same case as RunStore.Delete: the events of a candidate run id Temporal
+// refused. That id was never returned to anyone, so no subscriber can hold it
+// and there is nothing to close — only a log to forget, so a run that never
+// existed cannot be streamed or archived.
+func (b *EventBus) Discard(runID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.log, runID)
+	delete(b.seen, runID)
+}
+
 // Events returns the recorded events for a run with sequence greater than
 // fromSequence (0 returns the whole log).
 func (b *EventBus) Events(runID string, fromSequence int64) []*orkstackv1.Event {
