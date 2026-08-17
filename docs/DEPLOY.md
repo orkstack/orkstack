@@ -255,6 +255,31 @@ release runs nothing at all (§1).
    From this moment every **new** run executes on v2. Every run already in
    flight stays on v1 and finishes there.
 
+   `temporal worker deployment list` reports v2 as Current the instant the call
+   returns. That is the deployment's routing **config** — your intent, recorded
+   by the deployment's own workflow. Dispatch reads something else: the task
+   queue's own current version, which the server syncs to the queues just
+   afterwards. On a healthy cluster the gap is milliseconds and no run is lost
+   either way (a run started a moment early simply runs on v1 and is pinned
+   there). It matters if you **automate** a check around the switch: assert on
+   the queue, or you are asserting on a fact the dispatcher has not seen yet.
+   That mistake made this milestone's own runbook proof red one execution in
+   three; see `proof/M8.4/README.md`.
+
+   ```bash
+   # both physical queues, engine and Orker, must report the new version
+   go run ./proof/M8.4/tools/queue-routing \
+     -namespace "$ORK_TEMPORAL_NAMESPACE" \
+     -queue ork-tasks:workflow -queue ork-tasks-gpu-pool:activity \
+     -want "orkstack.$NEW"
+   ```
+
+   It is a Go program because the CLI does not surface this: `versioning_info`
+   comes back only in `DescribeTaskQueue`'s default api mode, and it is per
+   **physical** queue — the engine's queue carries the version on its workflow
+   side, the Orker's on its activity side, and asking either about the other
+   answers `__unversioned__`.
+
 5. **Wait for v1 to drain — do not skip this:**
 
    ```bash
