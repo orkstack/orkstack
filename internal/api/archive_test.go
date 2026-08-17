@@ -79,6 +79,10 @@ func (h *archiveHarness) apply(t *testing.T, yaml string) {
 	}
 }
 
+// submit submits a run and plays the workflow's first act: RUN_CREATED, event
+// 1, published by RunWorkflow through the projection activity on a real
+// cluster. The API publishes nothing of its own on the happy path, so a
+// harness that skipped this would be modelling an engine that does not exist.
 func (h *archiveHarness) submit(t *testing.T, name string) string {
 	t.Helper()
 	resp, err := h.svc.SubmitRun(context.Background(),
@@ -86,7 +90,18 @@ func (h *archiveHarness) submit(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)
 	}
-	return resp.Msg.GetRun().GetId()
+	run := resp.Msg.GetRun()
+	if err := h.activities.PublishEvent(context.Background(), &orkstackv1.Event{
+		RunId:     run.GetId(),
+		Sequence:  1,
+		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
+		Status:    orkstackv1.Status_STATUS_PENDING,
+		Message:   "run created for orkflow " + run.GetWorkflowName(),
+		Timestamp: run.GetCreatedAt(),
+	}, run, run.GetId()+"#1"); err != nil {
+		t.Fatalf("PublishEvent(created): %v", err)
+	}
+	return run.GetId()
 }
 
 // finish plays the engine's terminal projection: the same activity the real

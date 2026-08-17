@@ -202,18 +202,22 @@ func TestRunWorkflow_ExecutesLinearNeedsInOrder(t *testing.T) {
 
 func assertEventOrder(t *testing.T, events []*orkstackv1.Event) {
 	t.Helper()
-	if len(events) == 0 {
-		t.Fatal("no events published")
+	if len(events) < 2 {
+		t.Fatalf("published %d events, want at least RUN_CREATED then RUN_STARTED", len(events))
 	}
-	if events[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_STARTED {
-		t.Errorf("first event = %v, want RUN_STARTED", events[0].GetType())
+	if events[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CREATED {
+		t.Errorf("first event = %v, want RUN_CREATED", events[0].GetType())
 	}
-	var previous int64
-	for _, event := range events {
-		if event.GetSequence() <= previous {
-			t.Fatalf("event sequences not strictly increasing: %d after %d", event.GetSequence(), previous)
+	if events[1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_STARTED {
+		t.Errorf("second event = %v, want RUN_STARTED", events[1].GetType())
+	}
+	// 1..N with no gaps: the stream contract every replica has to be able to
+	// reproduce from history.
+	for i, event := range events {
+		if got, want := event.GetSequence(), int64(i+1); got != want {
+			t.Fatalf("event %d (%v) carries sequence %d, want %d",
+				i, event.GetType(), got, want)
 		}
-		previous = event.GetSequence()
 	}
 }
 

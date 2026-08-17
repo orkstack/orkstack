@@ -176,7 +176,8 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 	writeRestartProof(t, transcript.String())
 }
 
-// requireTemporal returns the Temporal address, skipping when it is not up.
+// requireTemporal returns the Temporal address, skipping when it is not up
+// (failing instead under ORK_REQUIRE_INFRA; see infraAbsent).
 func requireTemporal(t *testing.T) string {
 	t.Helper()
 	address := os.Getenv("ORK_TEMPORAL_ADDRESS")
@@ -185,36 +186,37 @@ func requireTemporal(t *testing.T) string {
 	}
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		t.Skipf("temporal is not reachable at %s: %v; run `make infra-up`", address, err)
+		infraAbsent(t, "temporal is not reachable at %s: %v; run `make infra-up`", address, err)
 	}
 	_ = conn.Close()
 	return address
 }
 
-// requireMinIO returns the S3 config, skipping when the object store is not up.
+// requireMinIO returns the S3 config, skipping when the object store is not up
+// (failing instead under ORK_REQUIRE_INFRA; see infraAbsent).
 func requireMinIO(t *testing.T) artifacts.Config {
 	t.Helper()
 	cfg := artifacts.ConfigFromEnv()
 	cfg.Backend = artifacts.BackendS3
 	endpoint, err := url.Parse(cfg.S3Endpoint)
 	if err != nil {
-		t.Skipf("MinIO endpoint %q is not a URL: %v; run `make infra-up`", cfg.S3Endpoint, err)
+		infraAbsent(t, "MinIO endpoint %q is not a URL: %v; run `make infra-up`", cfg.S3Endpoint, err)
 	}
 	health := endpoint.JoinPath("/minio/health/live").String()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, health, nil)
 	if err != nil {
-		t.Skipf("MinIO is not reachable at %s: %v; run `make infra-up`", health, err)
+		infraAbsent(t, "MinIO is not reachable at %s: %v; run `make infra-up`", health, err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Skipf("MinIO is not reachable at %s: %v; run `make infra-up`", health, err)
+		infraAbsent(t, "MinIO is not reachable at %s: %v; run `make infra-up`", health, err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		t.Skipf("MinIO health %s returned %d; run `make infra-up`", health, resp.StatusCode)
+		infraAbsent(t, "MinIO health %s returned %d; run `make infra-up`", health, resp.StatusCode)
 	}
 	return cfg
 }

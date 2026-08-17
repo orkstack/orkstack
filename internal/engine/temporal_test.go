@@ -2,8 +2,11 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -15,11 +18,15 @@ import (
 // workflow input is the only place a run's task queues can be decided
 // deterministically: workflow code may not read the environment, so whatever
 // is recorded here is what every replay of the run will dispatch to.
+//
+// err, when set, stands in for the server's answer, which is how the
+// collision path is exercised without a cluster.
 type recordingClient struct {
 	client.Client
 
 	options client.StartWorkflowOptions
 	args    []any
+	err     error
 }
 
 func (c *recordingClient) ExecuteWorkflow(
@@ -30,7 +37,7 @@ func (c *recordingClient) ExecuteWorkflow(
 ) (client.WorkflowRun, error) {
 	c.options = options
 	c.args = args
-	return nil, nil
+	return nil, c.err
 }
 
 // startedOrkflow returns the Orkflow StartRun passed to Temporal.
@@ -132,5 +139,68 @@ func TestStartRun_StartsTheWorkflowOnTheEnginesOwnQueue(t *testing.T) {
 	}
 	if c.options.ID != "ork-1-1" {
 		t.Errorf("workflow id = %q, want the run id", c.options.ID)
+	}
+}
+
+// TestStartRun_MakesARunIDSingleUse pins the server-side half of M8.1.
+//
+// Without these three options a colliding id is silent: ExecuteWorkflow
+// returns a handle to whatever execution already holds the id and the caller
+// believes its own run started (SDK v1.47.0
+// internal/internal_workflow_client.go:2201 swallows the already-started error
+// when WorkflowExecutionErrorWhenAlreadyStarted is false). Uniqueness is then
+// only as good as the entropy in the id; with them it is decided by the
+// server.
+func TestStartRun_MakesARunIDSingleUse(t *testing.T) {
+	c := &recordingClient{}
+	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
+
+	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	if got := c.options.WorkflowIDReusePolicy; got != enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE {
+		t.Errorf("WorkflowIDReusePolicy = %v, want REJECT_DUPLICATE so a finished run's id is never reused", got)
+	}
+	if got := c.options.WorkflowIDConflictPolicy; got != enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL {
+		t.Errorf("WorkflowIDConflictPolicy = %v, want FAIL so a running run's id is never joined", got)
+	}
+	if !c.options.WorkflowExecutionErrorWhenAlreadyStarted {
+		t.Error("WorkflowExecutionErrorWhenAlreadyStarted = false: a collision would return a handle " +
+			"to another replica's run instead of an error")
+	}
+}
+
+// TestStartRun_ReportsATakenRunIDAsErrRunIDTaken is what lets the API tell a
+// collision apart from every other start failure, so it can reissue the id
+// instead of failing the submission.
+func TestStartRun_ReportsATakenRunIDAsErrRunIDTaken(t *testing.T) {
+	c := &recordingClient{err: serviceerror.NewWorkflowExecutionAlreadyStarted(
+		"Workflow execution is already running", "start-request-id", "temporal-run-id")}
+	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
+
+	err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil)
+	if !errors.Is(err, engine.ErrRunIDTaken) {
+		t.Fatalf("StartRun with a taken id = %v, want an error matching engine.ErrRunIDTaken", err)
+	}
+	var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
+	if !errors.As(err, &alreadyStarted) {
+		t.Error("the server's own error was dropped; it is the only record of which execution holds the id")
+	}
+}
+
+// TestStartRun_DoesNotMistakeAnUnrelatedFailureForATakenID keeps the retry
+// narrow: a run that failed to start because the cluster was unreachable must
+// not be silently reissued under a new id.
+func TestStartRun_DoesNotMistakeAnUnrelatedFailureForATakenID(t *testing.T) {
+	c := &recordingClient{err: serviceerror.NewUnavailable("temporal is down")}
+	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
+
+	err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil)
+	if err == nil {
+		t.Fatal("StartRun succeeded, want the cluster failure reported")
+	}
+	if errors.Is(err, engine.ErrRunIDTaken) {
+		t.Errorf("StartRun reported %v as a taken run id", err)
 	}
 }

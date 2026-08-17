@@ -57,6 +57,17 @@ func RunWorkflow(
 	}
 
 	state := newRunState(ctx, runID, wf, input)
+	// RUN_CREATED is emitted here, by the run itself, and not by whichever API
+	// process accepted the submission. It is event 1 of every run that reaches
+	// Temporal, so a replica rebuilding the stream from history starts at 1 with
+	// no gap — which the API-published version could never give it, because that
+	// copy only ever existed in one process's memory.
+	if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "",
+		orkstackv1.Status_STATUS_PENDING,
+		fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion())); err != nil {
+		return nil, err
+	}
+	state.start(ctx)
 	if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, "",
 		orkstackv1.Status_STATUS_RUNNING, "run started"); err != nil {
 		return nil, err
@@ -130,6 +141,7 @@ type runState struct {
 	closure  map[string][]string
 	leaves   map[string]struct{}
 
+	createdAt *timestamppb.Timestamp
 	startedAt *timestamppb.Timestamp
 	status    orkstackv1.Status
 	runError  *orkstackv1.Error
@@ -141,17 +153,22 @@ type runState struct {
 func newRunState(ctx workflow.Context, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload) *runState {
 	mergedInput := ApplyInputDefaults(wf, input)
 	state := &runState{
-		runID:     runID,
-		wf:        wf,
-		input:     mergedInput,
-		inputs:    map[string]any(payloadToPlugin(mergedInput)),
-		tasks:     map[string]*orkstackv1.Task{},
-		taskRuns:  map[string]*orkstackv1.TaskRun{},
-		results:   map[string]task.UpstreamResult{},
-		closure:   map[string][]string{},
-		leaves:    map[string]struct{}{},
-		startedAt: timestamppb.New(workflow.Now(ctx)),
-		status:    orkstackv1.Status_STATUS_RUNNING,
+		runID:    runID,
+		wf:       wf,
+		input:    mergedInput,
+		inputs:   map[string]any(payloadToPlugin(mergedInput)),
+		tasks:    map[string]*orkstackv1.Task{},
+		taskRuns: map[string]*orkstackv1.TaskRun{},
+		results:  map[string]task.UpstreamResult{},
+		closure:  map[string][]string{},
+		leaves:   map[string]struct{}{},
+		// CreatedAt is the execution's own start time, taken from the
+		// WorkflowExecutionStarted history event rather than from a clock, so
+		// every replica that reads this run dates it identically and a replay
+		// reproduces it exactly. StartedAt stays unset until the run actually
+		// starts, one event later.
+		createdAt: timestamppb.New(workflow.GetInfo(ctx).WorkflowStartTime),
+		status:    orkstackv1.Status_STATUS_PENDING,
 	}
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
@@ -172,6 +189,14 @@ func newRunState(ctx workflow.Context, runID string, wf *orkstackv1.Orkflow, inp
 		state.closure[id] = state.transitiveNeeds(id)
 	}
 	return state
+}
+
+// start moves the run from created to running. It is separate from
+// newRunState so the RUN_CREATED event and the snapshot published with it
+// describe a run that has not started yet.
+func (s *runState) start(ctx workflow.Context) {
+	s.status = orkstackv1.Status_STATUS_RUNNING
+	s.startedAt = timestamppb.New(workflow.Now(ctx))
 }
 
 // transitiveNeeds returns the sorted transitive `needs` closure of id. The DSL
@@ -416,6 +441,10 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 }
 
 // snapshot materializes the current Run read model.
+//
+// It carries CreatedAt because this snapshot is the run as every replica sees
+// it: Temporal records it alongside each event, and a replica that never saw
+// the submission has no other source for the field.
 func (s *runState) snapshot() *orkstackv1.Run {
 	run := &orkstackv1.Run{
 		Id:              s.runID,
@@ -425,6 +454,7 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		Input:           s.input,
 		Output:          s.output,
 		Error:           s.runError,
+		CreatedAt:       s.createdAt,
 		StartedAt:       s.startedAt,
 		FinishedAt:      s.finished,
 	}
@@ -434,9 +464,13 @@ func (s *runState) snapshot() *orkstackv1.Run {
 	return run
 }
 
-// emit publishes one lifecycle event through the projection activity. The
-// dedupe key is derived from the workflow-local event counter, so activity
-// retries cannot duplicate an event.
+// emit publishes one lifecycle event through the projection activity.
+//
+// The workflow numbers the event itself, from a counter that is part of its
+// deterministic state. That number is what Temporal records when the activity
+// is *scheduled*, so it is on the copy every replica can read, and it is the
+// same number the bus stores and the archive keeps. The dedupe key is derived
+// from the same counter, so activity retries cannot duplicate an event.
 func (s *runState) emit(
 	ctx workflow.Context,
 	eventType orkstackv1.EventType,
@@ -447,6 +481,7 @@ func (s *runState) emit(
 	s.eventSeq++
 	event := &orkstackv1.Event{
 		RunId:     s.runID,
+		Sequence:  int64(s.eventSeq),
 		Type:      eventType,
 		TaskId:    taskID,
 		Status:    status,

@@ -16,9 +16,9 @@ import (
 // dialect (enum values without their type prefix: "status":"RUNNING"), so
 // browsers get realtime updates without a streaming RPC client.
 //
-// A run this process never executed is replayed from the archive and the socket
-// closes, so a browser reattaching after an engine restart sees the run's
-// history instead of a 404.
+// Both go through Service.StreamRunEvents, so the socket reads the same system
+// of record: any replica serves any run, whether it is executing now, finished
+// long ago, or was started by a different process a moment earlier.
 func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 	marshaler := protojson.MarshalOptions{EmitUnpopulated: false}
 
@@ -28,7 +28,6 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			http.Error(w, "run id is required", http.StatusBadRequest)
 			return
 		}
-		_, live := svc.Runs().Get(runID)
 
 		var fromSequence int64
 		if raw := r.URL.Query().Get("from_sequence"); raw != "" {
@@ -40,21 +39,15 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			fromSequence = parsed
 		}
 
-		// Reading the archive before the upgrade keeps a missing run an HTTP
-		// 404 rather than a socket that opens and immediately dies.
-		var archived []*orkstackv1.Event
-		if !live {
-			events, err := svc.ArchivedEvents(r.Context(), runID, fromSequence)
-			if err != nil {
-				status := http.StatusInternalServerError
-				message := "read run archive"
-				if connect.CodeOf(err) == connect.CodeNotFound {
-					status, message = http.StatusNotFound, "run not found"
-				}
-				http.Error(w, message, status)
-				return
+		// Resolving the run before the upgrade keeps a missing run an HTTP 404
+		// rather than a socket that opens and immediately dies.
+		if _, err := svc.LookupRun(r.Context(), runID); err != nil {
+			status, message := http.StatusInternalServerError, "read run"
+			if connect.CodeOf(err) == connect.CodeNotFound {
+				status, message = http.StatusNotFound, "run not found"
 			}
-			archived = events
+			http.Error(w, message, status)
+			return
 		}
 
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -66,49 +59,30 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 		defer conn.CloseNow()
 
 		ctx := conn.CloseRead(r.Context())
-		if !live {
-			for _, event := range archived {
+		terminal := false
+		streamErr := svc.StreamRunEvents(ctx, runID, fromSequence,
+			func(event *orkstackv1.Event) error {
 				payload, err := MarshalJSONOptions(marshaler, event)
 				if err != nil {
-					_ = conn.Close(websocket.StatusInternalError, "encode event")
-					return
+					return err
 				}
 				if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
-					return
-				}
-			}
-			_ = conn.Close(websocket.StatusNormalClosure, "archived run replayed")
-			return
-		}
-
-		events, cancel, terminalAlreadyReached := svc.Bus().Subscribe(runID, fromSequence)
-		defer cancel()
-		if terminalAlreadyReached {
-			_ = conn.Close(websocket.StatusNormalClosure, "terminal event already received")
-			return
-		}
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case event, open := <-events:
-				if !open {
-					_ = conn.Close(websocket.StatusNormalClosure, "event stream closed")
-					return
-				}
-				payload, err := MarshalJSONOptions(marshaler, event)
-				if err != nil {
-					_ = conn.Close(websocket.StatusInternalError, "encode event")
-					return
-				}
-				if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
-					return
+					return err
 				}
 				if IsTerminalEvent(event) {
-					_ = conn.Close(websocket.StatusNormalClosure, "run finished")
-					return
+					terminal = true
 				}
-			}
+				return nil
+			})
+		switch {
+		case streamErr != nil:
+			// The stream failed, or the peer went away mid-write. Either way
+			// the socket cannot carry a normal close reason for it.
+			_ = conn.Close(websocket.StatusInternalError, "event stream failed")
+		case terminal:
+			_ = conn.Close(websocket.StatusNormalClosure, "run finished")
+		default:
+			_ = conn.Close(websocket.StatusNormalClosure, "event stream closed")
 		}
 	})
 }

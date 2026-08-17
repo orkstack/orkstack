@@ -46,7 +46,7 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		t.Skipf("temporal is not reachable at %s: %v", address, err)
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
 	}
 	_ = conn.Close()
 
@@ -55,7 +55,7 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 	requireMinIO(t, storeConfig.S3Endpoint)
 	store, err := artifacts.New(storeConfig)
 	if err != nil {
-		t.Skipf("cannot open the s3 artifact store at %s: %v", storeConfig.S3Endpoint, err)
+		infraAbsent(t, "cannot open the s3 artifact store at %s: %v", storeConfig.S3Endpoint, err)
 	}
 
 	// The Orker's workdir holds both the materialized artifact and the
@@ -71,7 +71,7 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 		Namespace: client.DefaultNamespace,
 	})
 	if err != nil {
-		t.Skipf("cannot dial temporal at %s: %v", address, err)
+		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
 	defer temporalClient.Close()
 
@@ -257,12 +257,13 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 	writeContainerProof(t, runID, eventLog, taskRuns, stdout, diagnostics, report)
 }
 
-// requireDockerDaemon skips unless a Docker daemon answers.
+// requireDockerDaemon skips unless a Docker daemon answers (fails instead
+// under ORK_REQUIRE_INFRA; see infraAbsent).
 func requireDockerDaemon(t *testing.T) {
 	t.Helper()
 	code, out := dockerCLI(t, 15*time.Second, "version", "--format", "{{.Server.Version}}")
 	if code != 0 {
-		t.Skipf("docker daemon is not reachable: %s", strings.TrimSpace(out))
+		infraAbsent(t, "docker daemon is not reachable: %s", strings.TrimSpace(out))
 	}
 	t.Logf("docker server %s", strings.TrimSpace(out))
 }
@@ -283,7 +284,7 @@ func dockerCLI(t *testing.T, timeout time.Duration, args ...string) (int, string
 	case errors.As(err, &exitErr):
 		return exitErr.ExitCode(), combined.String()
 	default:
-		t.Skipf("cannot run docker %s: %v", strings.Join(args, " "), err)
+		infraAbsent(t, "cannot run docker %s: %v", strings.Join(args, " "), err)
 		return -1, ""
 	}
 }

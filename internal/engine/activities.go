@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -17,6 +18,13 @@ type RunNotifier interface {
 	NotifyRunTransition(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run)
 }
 
+// RunEventSource reads a run's whole event stream from the system of record.
+// It is the seam that keeps an archive write complete under more than one
+// engine replica; engine.TemporalRunReader is the production implementation.
+type RunEventSource interface {
+	Events(ctx context.Context, runID string, fromSequence int64) ([]*orkstackv1.Event, error)
+}
+
 // EventActivities projects workflow-produced state into the in-process read
 // model and, when a run ends, into the durable archive. RunWorkflow must stay
 // deterministic, so every mutation of the store, every event publication and
@@ -26,6 +34,7 @@ type EventActivities struct {
 	store    *RunStore
 	archive  *RunArchiver
 	notifier RunNotifier
+	events   RunEventSource
 }
 
 // NewEventActivities wires the projection activity to a bus and run store.
@@ -44,6 +53,19 @@ func NewArchivingEventActivities(bus *EventBus, store *RunStore, archive *RunArc
 // returns the same activities so it can be chained onto a constructor.
 func (a *EventActivities) WithRunNotifier(notifier RunNotifier) *EventActivities {
 	a.notifier = notifier
+	return a
+}
+
+// WithEventSource makes the archive body come from the system of record rather
+// than from this process's own bus.
+//
+// It has to. Projection activities are dispatched to whichever replica polls
+// ork-engine-events first, so with more than one engine each process executes
+// an arbitrary subset of a run's events and its bus log holds only that subset.
+// The replica that happens to execute the terminal event would then archive a
+// stream with gaps — a corruption no test of a single process can see.
+func (a *EventActivities) WithEventSource(events RunEventSource) *EventActivities {
+	a.events = events
 	return a
 }
 
@@ -93,9 +115,34 @@ func (a *EventActivities) PublishEvent(
 	if snapshot == nil {
 		return nil
 	}
+	archived, err := a.archivedEvents(ctx, event.GetRunId())
+	if err != nil {
+		return err
+	}
 	// Returning the error makes Temporal retry the activity, so a transient
 	// storage failure heals itself instead of silently dropping the run.
-	return a.archive.Archive(ctx, snapshot, a.bus.Events(event.GetRunId(), 0))
+	return a.archive.Archive(ctx, snapshot, archived)
+}
+
+// archivedEvents is the event log that goes into the archive body.
+//
+// It comes from the system of record when one is wired, and a failure to read
+// it is returned rather than papered over with the local log: an archive
+// written from a partial view is worse than a retried activity, because the
+// gap is permanent and silent. Without a source — a single-process engine, or
+// a unit test — the local bus saw every event of the run and is exact.
+func (a *EventActivities) archivedEvents(
+	ctx context.Context,
+	runID string,
+) ([]*orkstackv1.Event, error) {
+	if a.events == nil {
+		return a.bus.Events(runID, 0), nil
+	}
+	events, err := a.events.Events(ctx, runID, 0)
+	if err != nil {
+		return nil, fmt.Errorf("read events of run %s for the archive: %w", runID, err)
+	}
+	return events, nil
 }
 
 // mergedSnapshot prefers the store's copy of a run: it still carries the

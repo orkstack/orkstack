@@ -47,6 +47,11 @@ type config struct {
 	httpAddr          string
 	allowedOrigins    []string
 	orkerQueue        string
+	idempotencyTTL    time.Duration
+	// deployment is this release's Worker Deployment identity. It carries no
+	// build id unless an operator configures one, which leaves versioning off
+	// and the workers exactly as they were before M8.4.
+	deployment task.Deployment
 }
 
 func loadConfig() config {
@@ -55,11 +60,28 @@ func loadConfig() config {
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		httpAddr:          env("ORK_HTTP_ADDR", api.DefaultHTTPAddr),
 		orkerQueue:        env("ORK_ORKER_QUEUE", task.DefaultQueue),
+		idempotencyTTL:    envDuration("ORK_IDEMPOTENCY_TTL", engine.DefaultClaimTTL),
+		deployment:        task.DeploymentFromEnv(),
 	}
 	if origins := env("ORK_WS_ALLOWED_ORIGINS", ""); origins != "" {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
 	return cfg
+}
+
+// envDuration reads a Go duration ("24h", "30m"). An unparsable value falls
+// back rather than failing boot: the engine still runs correctly with the
+// default, and a refused start would be a worse answer to a typo.
+func envDuration(key string, fallback time.Duration) time.Duration {
+	raw := env(key, "")
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func env(key, fallback string) string {
@@ -85,18 +107,98 @@ func main() {
 	}
 }
 
-func runWorkerOptions() worker.Options {
-	return worker.Options{
-		DisableRegistrationAliasing: true,
-		LocalActivityWorkerOnly:     true,
-	}
+// queues names every Temporal queue this engine touches. It exists because
+// which queue carries what is an operational claim (docs/DEPLOY.md §2) that
+// used to live only in a comment and a log line, where it was wrong: the run
+// worker polls task.DefaultQueue, ALWAYS, and ORK_ORKER_QUEUE moves task
+// EXECUTION only. Naming the split lets a test hold the runbook to it.
+type queues struct {
+	// run carries RunWorkflow and the idempotency claims: the engine's own
+	// workflows, hosted by every replica of a release. Fixed, because a run
+	// belongs to the engine, not to whichever Orker pool executes its tasks.
+	run string
+	// events carries PublishEvent, engine-internal so no Orker receives it.
+	events string
+	// orker is where task activities are dispatched — the one an operator
+	// moves with ORK_ORKER_QUEUE to reach a dedicated Orker pool.
+	orker string
 }
 
-func eventWorkerOptions() worker.Options {
+func queuesFor(cfg config) queues {
+	return queues{run: task.DefaultQueue, events: engine.EventQueue, orker: cfg.orkerQueue}
+}
+
+// runWorkerOptions configures the worker that hosts RunWorkflow and the
+// idempotency claims. It carries the deployment identity, because the run
+// workflow is what a version pins: an in-flight run must keep executing on the
+// build that started it.
+func runWorkerOptions(cfg config) worker.Options {
+	return cfg.deployment.Apply(worker.Options{
+		DisableRegistrationAliasing: true,
+		LocalActivityWorkerOnly:     true,
+	})
+}
+
+// eventWorkerOptions configures the projection worker, and deliberately does
+// NOT version it — which is why it ignores the config it is handed.
+//
+// PublishEvent carries no run semantics: it writes the read model and the
+// archive from arguments the workflow already computed. It must stay
+// executable by ANY live replica whatever version that replica is, which is
+// what keeps a run readable from every replica (M8.3). With no versioned
+// poller on ork-engine-events, Temporal's pinned-activity exception clause
+// routes these activities to that queue's own current version — the
+// unversioned pollers. The rollout integration test asserts exactly this: a
+// v1-pinned run's remaining events are published by a replica that came up
+// after v1 stopped projecting.
+func eventWorkerOptions(config) worker.Options {
 	return worker.Options{
 		DisableRegistrationAliasing: true,
 		DisableWorkflowWorker:       true,
 	}
+}
+
+// workflowRegistrar is the slice of worker.Worker that registers workflow
+// types. Naming it lets a test register the engine's workflows through the
+// same code the binary runs, so a lost VersioningBehavior fails a test rather
+// than only a production rollout.
+type workflowRegistrar interface {
+	RegisterWorkflowWithOptions(w any, options workflow.RegisterOptions)
+}
+
+// registerEngineWorkflows registers the engine's workflow types, each with the
+// versioning behaviour it needs. Under Worker Deployment Versioning a workflow
+// type with no declared behaviour panics at registration, so this list is also
+// the statement that both types have been considered.
+func registerEngineWorkflows(w workflowRegistrar) {
+	// Pinned: an in-flight run finishes on the code that started it.
+	//
+	// RunWorkflow interprets a DAG whose scheduling order, event sequence and
+	// activity arguments are all decided by current code. Change readyTasks'
+	// ordering, the emit counter, or the shape of task.ExecuteTaskInput, and
+	// replaying a half-finished history against the new build produces a
+	// different command stream — a non-determinism error that kills a run the
+	// operator did nothing to. AutoUpgrade would hand exactly that history to
+	// the new build on its next workflow task. Pinned keeps the run on its own
+	// version; the price is that v1 workers must stay up until the deployment
+	// version reports Drained (docs/DEPLOY.md).
+	w.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
+		Name:               engine.WorkflowName,
+		VersioningBehavior: workflow.VersioningBehaviorPinned,
+	})
+
+	// AutoUpgrade: the claim is a long-lived key holder, not a run.
+	//
+	// Its history is one update and one timer, and its command stream is
+	// independent of run semantics — replaying it against a newer build issues
+	// the same commands — so the determinism argument above does not apply. It
+	// lives for ORK_IDEMPOTENCY_TTL (default 24h), so pinning it would strand
+	// a key holder on a version an operator wants to decommission, and that
+	// version would never report Drained.
+	w.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow, workflow.RegisterOptions{
+		Name:               engine.ClaimWorkflowName,
+		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
+	})
 }
 
 // installServerShutdownContext gives all HTTP handlers a shared lifetime and
@@ -149,6 +251,12 @@ func run(logger *slog.Logger, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Fail on a deployment identity the cluster would reject later, while the
+	// error can still name the variable that caused it.
+	if err := cfg.deployment.Validate(); err != nil {
+		return err
+	}
+
 	orkflows, err := openOrkflowStore(ctx, logger)
 	if err != nil {
 		return err
@@ -189,9 +297,9 @@ func run(logger *slog.Logger, cfg config) error {
 		}
 	}()
 
-	// Run archive: the durable half of the read model. The in-process store
-	// answers live runs; the archive holds every finished run, so history
-	// outlives this process.
+	// Run archive: the record for a finished run. Temporal is the record for a
+	// live one (engine.TemporalRunReader below), and the archive outlives its
+	// retention, so between them nothing durable lives in this process.
 	archiveConfig := artifacts.ConfigFromEnv()
 	archiveStore, err := artifacts.NewRunArchive(archiveConfig)
 	if err != nil {
@@ -201,19 +309,29 @@ func run(logger *slog.Logger, cfg config) error {
 	logger.Info("run archive ready",
 		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
 
-	// Workflow worker: hosts RunWorkflow on the same queue Orkers poll for
-	// task activities.
-	runWorker := worker.New(temporalClient, task.DefaultQueue, runWorkerOptions())
-	runWorker.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
-		Name: engine.WorkflowName,
-	})
+	// The read model. Every run read leaves this process: a run's history is
+	// its event log, and Temporal hands the same answer to every replica, for
+	// runs this one neither started nor projected.
+	reader := engine.NewTemporalRunReader(temporalClient)
+
+	// Workflow worker: hosts RunWorkflow and the idempotency claims on the
+	// engine's own queue — NOT ORK_ORKER_QUEUE, which moves task execution
+	// only. Under versioning the two show up separately in
+	// `temporal worker deployment describe-version`: this queue as the
+	// version's workflow poller, the Orker's as its activity poller.
+	q := queuesFor(cfg)
+	runWorker := worker.New(temporalClient, q.run, runWorkerOptions(cfg))
+	registerEngineWorkflows(runWorker)
 
 	// Projection worker: engine-internal activities on a dedicated queue so
-	// Orkers never receive them.
-	eventWorker := worker.New(temporalClient, engine.EventQueue, eventWorkerOptions())
+	// Orkers never receive them. The archive body's event log is read back
+	// from Temporal, because with more than one replica polling this queue no
+	// single process executes all of a run's events.
+	eventWorker := worker.New(temporalClient, q.events, eventWorkerOptions(cfg))
 	eventWorker.RegisterActivityWithOptions(
 		engine.NewArchivingEventActivities(bus, runs, archive).
 			WithRunNotifier(runNotifier).
+			WithEventSource(reader).
 			PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
@@ -227,18 +345,40 @@ func run(logger *slog.Logger, cfg config) error {
 	}
 	defer eventWorker.Stop()
 	logger.Info("temporal workers started",
-		"task_queue", task.DefaultQueue, "event_queue", engine.EventQueue,
-		"orker_queue", cfg.orkerQueue)
-	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, cfg.orkerQueue)
+		"task_queue", q.run, "event_queue", q.events,
+		"orker_queue", q.orker)
+	// The versioning line is separate and always printed, because "which
+	// version am I" is the first question of any rollout. The Orker must
+	// report the same pair, or a pinned run's tasks fall through to the task
+	// queue's current version and land on the wrong plugin code.
+	logger.Info("worker deployment versioning",
+		"enabled", cfg.deployment.Versioned(),
+		"deployment", cfg.deployment.Name,
+		"build_id", cfg.deployment.BuildID,
+		"version", cfg.deployment.String(),
+		"run_workflow_behavior", "Pinned",
+		"claim_workflow_behavior", "AutoUpgrade",
+		"event_worker", "unversioned")
+	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker)
+
+	// Idempotency: the cluster decides which run a key names, so every replica
+	// behind this address gets the same answer. Nothing about dedupe lives in
+	// this process.
+	idempotency := engine.NewTemporalIdempotency(temporalClient, q.run, cfg.idempotencyTTL)
+	logger.Info("idempotency claims ready",
+		"workflow", engine.ClaimWorkflowName, "ttl", cfg.idempotencyTTL)
+
 	svc := api.NewService(api.Config{
-		Workflows: orkflows,
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   starter,
-		Lister:    starter,
-		Archive:   archive,
-		Webhooks:  webhookRegistry,
-		Notifier:  runNotifier,
+		Workflows:   orkflows,
+		Reader:      reader,
+		Runs:        runs,
+		Bus:         bus,
+		Starter:     starter,
+		Lister:      starter,
+		Archive:     archive,
+		Idempotency: idempotency,
+		Webhooks:    webhookRegistry,
+		Notifier:    runNotifier,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,

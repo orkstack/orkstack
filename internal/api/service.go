@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -15,6 +14,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -32,10 +32,10 @@ type PluginLister interface {
 	ListPlugins(ctx context.Context) ([]plugin.Descriptor, error)
 }
 
-// RunArchive is the seam between the API and durable run history. The
-// in-process read model only knows the runs this process has seen; the archive
-// knows every run that ever finished, which is what makes `run get` and
-// `run list` survive an engine restart. Tests substitute a fake.
+// RunArchive is the seam between the API and durable run history. Temporal is
+// the record for a live run; the archive is the record for a finished one, and
+// the only record left once history ages out of retention. Tests substitute a
+// fake.
 type RunArchive interface {
 	// Archive writes a finished run and its events.
 	Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event) error
@@ -48,16 +48,57 @@ type RunArchive interface {
 	ListRuns(ctx context.Context, q engine.ArchiveQuery) ([]*orkstackv1.Run, error)
 }
 
+// RunReader is the seam between the API and the system of record for live
+// runs. `ork` wires engine.TemporalRunReader, so a read is answered from
+// Temporal and any replica answers for any run — including one it did not
+// start and whose projection activities it never executed.
+//
+// A missing run is reported with an error matching artifacts.ErrNotFound, and
+// only ever before the first event of a stream has been sent, so a caller can
+// fall back to the archive without duplicating anything.
+type RunReader interface {
+	// GetRun returns a run as the system of record holds it.
+	GetRun(ctx context.Context, runID string) (*orkstackv1.Run, error)
+	// ListRuns returns runs matching q, newest first.
+	ListRuns(ctx context.Context, q engine.RunQuery) ([]*orkstackv1.Run, error)
+	// StreamEvents delivers a run's events after fromSequence to send, and
+	// returns when the run reaches its terminal event.
+	StreamEvents(
+		ctx context.Context,
+		runID string,
+		fromSequence int64,
+		send func(*orkstackv1.Event) error,
+	) error
+}
+
 // Config wires a Service to its stores and Temporal seams.
 type Config struct {
 	// Workflows is the durable orkflow store. `ork` wires the S3 store
 	// (cmd/ork/main.go); leaving it nil is a unit-test convenience that
 	// substitutes the in-memory store, never a fallback for a configured one.
 	Workflows engine.OrkflowStore
-	Runs      *engine.RunStore
-	Bus       *engine.EventBus
 	Starter   RunStarter
 	Lister    PluginLister
+
+	// Reader is the system of record for live runs. `ork` wires
+	// engine.TemporalRunReader, and every read then leaves the process. Nil
+	// falls back to Runs/Bus below, which is one process answering for the
+	// runs it happens to have seen — correct only when there is one process,
+	// and therefore for unit tests only.
+	Reader RunReader
+
+	// Runs and Bus are the write-side helpers: the projection activity fills
+	// them so an archive body can be assembled and a webhook notification
+	// deduplicated. They answer a read only when no Reader is wired.
+	Runs *engine.RunStore
+	Bus  *engine.EventBus
+
+	// Idempotency decides which run an idempotency key names. `ork` wires
+	// engine.TemporalIdempotency, so the decision is the cluster's and every
+	// replica gets the same answer. Nil substitutes the process-local
+	// claimer, which is correct for one process and therefore for unit tests
+	// only.
+	Idempotency IdempotencyClaimer
 
 	// Archive is the durable run history. Nil keeps runs in process only.
 	Archive RunArchive
@@ -82,39 +123,37 @@ type Config struct {
 
 // Service implements OrkflowService, RunService, and PluginService.
 type Service struct {
-	workflows engine.OrkflowStore
-	runs      *engine.RunStore
-	bus       *engine.EventBus
-	starter   RunStarter
-	lister    PluginLister
-	archive   RunArchive
-	webhooks  *webhooks.Registry
-	notifier  engine.RunNotifier
-	plugins   []*orkstackv1.PluginInfo
-	now       func() time.Time
-	newRunID  func() string
-
-	counterMu      sync.Mutex
-	idempotencyMu  sync.Mutex
-	idempotencyMap map[string]string
-	runCounter     int64
+	workflows   engine.OrkflowStore
+	reader      RunReader
+	runs        *engine.RunStore
+	bus         *engine.EventBus
+	starter     RunStarter
+	lister      PluginLister
+	archive     RunArchive
+	idempotency IdempotencyClaimer
+	webhooks    *webhooks.Registry
+	notifier    engine.RunNotifier
+	plugins     []*orkstackv1.PluginInfo
+	now         func() time.Time
+	newRunID    func() string
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
 func NewService(cfg Config) *Service {
 	svc := &Service{
-		workflows:      cfg.Workflows,
-		runs:           cfg.Runs,
-		bus:            cfg.Bus,
-		starter:        cfg.Starter,
-		lister:         cfg.Lister,
-		archive:        cfg.Archive,
-		webhooks:       cfg.Webhooks,
-		notifier:       cfg.Notifier,
-		plugins:        cfg.Plugins,
-		now:            cfg.Now,
-		newRunID:       cfg.NewRunID,
-		idempotencyMap: map[string]string{},
+		workflows:   cfg.Workflows,
+		reader:      cfg.Reader,
+		runs:        cfg.Runs,
+		bus:         cfg.Bus,
+		starter:     cfg.Starter,
+		lister:      cfg.Lister,
+		archive:     cfg.Archive,
+		idempotency: cfg.Idempotency,
+		webhooks:    cfg.Webhooks,
+		notifier:    cfg.Notifier,
+		plugins:     cfg.Plugins,
+		now:         cfg.Now,
+		newRunID:    cfg.NewRunID,
 	}
 	// Only an unconfigured Service gets the in-memory store, and only so a
 	// unit test can exercise runs without a bucket. A configured store is
@@ -128,6 +167,12 @@ func NewService(cfg Config) *Service {
 	if svc.bus == nil {
 		svc.bus = engine.NewEventBus()
 	}
+	if svc.idempotency == nil {
+		// The process-local claimer, which is only ever correct because an
+		// unconfigured Service is the only process there is. `ork` always
+		// wires the Temporal claimer, so this line is unreachable from it.
+		svc.idempotency = newInMemoryClaimer()
+	}
 	if svc.webhooks == nil {
 		svc.webhooks = webhooks.NewRegistry()
 	}
@@ -135,25 +180,19 @@ func NewService(cfg Config) *Service {
 		svc.now = time.Now
 	}
 	if svc.newRunID == nil {
-		svc.newRunID = svc.defaultRunID
+		// One generator serves the whole process, so its nonce covers every
+		// Service wired inside it.
+		svc.newRunID = engine.NewRunID
 	}
 	return svc
 }
 
-// defaultRunID derives a run id from the wall clock and a process counter. It
-// runs in the API process, never inside workflow code.
-func (s *Service) defaultRunID() string {
-	s.counterMu.Lock()
-	s.runCounter++
-	counter := s.runCounter
-	s.counterMu.Unlock()
-	return fmt.Sprintf("ork-%d-%d", s.now().UTC().UnixNano(), counter)
-}
-
-// Bus exposes the event bus (used by the WebSocket bridge).
+// Bus exposes the event bus. It is the write side of the read model: the
+// projection activity fills it, and it answers a read only when no RunReader
+// is wired.
 func (s *Service) Bus() *engine.EventBus { return s.bus }
 
-// Runs exposes the run read model (used by the WebSocket bridge).
+// Runs exposes the in-process run store, on the same terms as Bus.
 func (s *Service) Runs() *engine.RunStore { return s.runs }
 
 // Webhooks exposes the callback registry (used by the management endpoints).
@@ -243,33 +282,105 @@ func (s *Service) SubmitRun(
 	mergedInput := engine.ApplyInputDefaults(wf, req.Msg.GetInput())
 	key := req.Msg.GetIdempotencyKey()
 
-	// A keyed submission reserves its key together with the pending run before
-	// any event publication or Temporal call. This makes concurrent requests
-	// converge on one run and keeps a failed start deduplicated to its recorded
-	// failed run.
+	// A keyed submission asks the claimer which run the key names before it
+	// publishes an event or calls Temporal. `ork` wires a claimer backed by
+	// the cluster, so concurrent requests converge on one run whether they
+	// reach one replica or several, and a failed start stays deduplicated to
+	// its recorded failed run because a claim is never released.
 	if key != "" {
-		s.idempotencyMu.Lock()
-		if existingID, seen := s.idempotencyMap[key]; seen {
-			existing, ok := s.runs.Get(existingID)
-			s.idempotencyMu.Unlock()
-			if ok {
-				return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: existing}), nil
-			}
-			return nil, connect.NewError(connect.CodeInternal,
-				fmt.Errorf("idempotency key %q refers to missing run %q", key, existingID))
-		}
-		runID := s.newRunID()
-		run := s.newPendingRun(runID, wf, mergedInput)
-		s.runs.Save(run)
-		s.idempotencyMap[key] = runID
-		s.idempotencyMu.Unlock()
-		return s.startPreparedRun(ctx, run, wf, mergedInput)
+		return s.submitClaimedRun(ctx, key, wf, mergedInput)
 	}
 
-	runID := s.newRunID()
-	run := s.newPendingRun(runID, wf, mergedInput)
+	run := s.newPendingRun(s.newRunID(), wf, mergedInput)
 	s.runs.Save(run)
-	return s.startPreparedRun(ctx, run, wf, mergedInput)
+	return s.startPreparedRun(ctx, run, wf, mergedInput, "")
+}
+
+// submitClaimedRun runs a keyed submission: claim the key, then either start
+// the run this caller proposed or report the one that already holds the key.
+//
+// The candidate run is built inside the claim, not before it, because a
+// process-local claimer can answer a known key without minting a run id at
+// all — which is what keeps a repeated key from burning ids in a single-engine
+// deployment. A cluster-backed claimer has to propose first; there the burnt
+// id costs nothing, because nothing outside this process ever saw it.
+func (s *Service) submitClaimedRun(
+	ctx context.Context,
+	key string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	var candidate *orkstackv1.Run
+	winner, err := s.idempotency.Claim(ctx, key, func() (engine.Claim, error) {
+		candidate = s.newPendingRun(s.newRunID(), wf, input)
+		return newClaim(candidate)
+	})
+	if err != nil {
+		// The claim is the dedupe authority: starting a run without it would
+		// be the duplicate this milestone removes, so an unreachable authority
+		// fails the submission instead.
+		return nil, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("claim idempotency key %q: %w", key, err))
+	}
+	if candidate == nil || winner.RunID != candidate.GetId() {
+		return s.claimedRun(ctx, key, winner)
+	}
+	s.runs.Save(candidate)
+	return s.startPreparedRun(ctx, candidate, wf, input, key)
+}
+
+// claimedRun answers a caller whose candidate lost, with the run that won.
+//
+// The run is read the same way any other read is, so a loser answers for a run
+// another replica started and is still executing — which is exactly the case a
+// process-local read model could not cover. The claim's own snapshot is the
+// last resort, for a winner whose run has not reached the cluster yet.
+func (s *Service) claimedRun(
+	ctx context.Context,
+	key string,
+	winner engine.Claim,
+) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	switch run, err := s.LookupRun(ctx, winner.RunID); {
+	case err == nil:
+		return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
+	case connect.CodeOf(err) != connect.CodeNotFound:
+		return nil, err
+	}
+	run, err := claimedSnapshot(winner)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("idempotency key %q refers to run %q: %w", key, winner.RunID, err))
+	}
+	if run == nil {
+		return nil, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("idempotency key %q refers to missing run %q", key, winner.RunID))
+	}
+	return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
+}
+
+// newClaim packs a pending run into the claim that binds a key to it. The
+// snapshot travels so a replica that loses the claim can answer with the
+// winner's run rather than with a plausible reconstruction of its own request.
+func newClaim(run *orkstackv1.Run) (engine.Claim, error) {
+	snapshot, err := proto.Marshal(run)
+	if err != nil {
+		return engine.Claim{}, fmt.Errorf("encode run %s: %w", run.GetId(), err)
+	}
+	return engine.Claim{RunID: run.GetId(), Snapshot: snapshot}, nil
+}
+
+// claimedSnapshot unpacks a claim's run. A claim written by an older engine
+// may carry none, which is not an error: it means this replica has no answer
+// from the claim and says so.
+func claimedSnapshot(claim engine.Claim) (*orkstackv1.Run, error) {
+	if len(claim.Snapshot) == 0 {
+		return nil, nil
+	}
+	run := &orkstackv1.Run{}
+	if err := proto.Unmarshal(claim.Snapshot, run); err != nil {
+		return nil, fmt.Errorf("decode claimed run: %w", err)
+	}
+	return run, nil
 }
 
 func (s *Service) newPendingRun(
@@ -287,44 +398,130 @@ func (s *Service) newPendingRun(
 	}
 }
 
+// startPreparedRun starts the run's Temporal workflow.
+//
+// It publishes no RUN_CREATED. That event is emitted by RunWorkflow itself, as
+// event 1 of the run, so it reaches Temporal history and every replica can
+// read it; a copy published here would exist only in this process's memory and
+// would leave a history-derived stream starting at 2, with a gap at 1.
+//
+// A run id Temporal reports as taken is the one start failure that is not
+// about this run: another replica already owns that workflow id. The candidate
+// is discarded and one fresh id is tried. Only one — a second collision is a
+// broken generator rather than bad luck, and a submission that kept drawing
+// ids would hide it.
 func (s *Service) startPreparedRun(
 	ctx context.Context,
 	run *orkstackv1.Run,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	idempotencyKey string,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	for attempt := 0; ; attempt++ {
+		runID := run.GetId()
+		err := s.starter.StartRun(ctx, runID, wf, input)
+		if err == nil {
+			// The response is the run this call created, not a re-read of it.
+			// A read here would race the run's own first events — the workflow
+			// is already executing — and answer PENDING or RUNNING depending
+			// on which won. What a submission has to report is what it
+			// submitted; everything after that is a read.
+			return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
+		}
+		if errors.Is(err, engine.ErrRunIDTaken) && attempt == 0 {
+			next, reissueErr := s.reissueRunID(ctx, run, wf, input, idempotencyKey)
+			run = next
+			if reissueErr != nil {
+				// The key could not be moved onto the fresh id, so starting
+				// under it would leave the key naming a run that never
+				// existed. The submission ends here instead.
+				return nil, s.recordFailedStart(ctx, run, reissueErr)
+			}
+			continue
+		}
+		return nil, s.recordFailedStart(ctx, run, err)
+	}
+}
+
+// reissueRunID discards a candidate run whose id Temporal refused and rebuilds
+// it under a fresh one. Nothing outside this process has seen the discarded id
+// — SubmitRun has not returned — so it is removed rather than left behind as a
+// run that never existed.
+//
+// A keyed submission also moves its claim, and moves it *before* the fresh id
+// is started, so the key names a run at every instant: first the discarded
+// candidate, then the one that runs. Releasing it in between would let a
+// concurrent submission of the same key start a second run.
+func (s *Service) reissueRunID(
+	ctx context.Context,
+	discarded *orkstackv1.Run,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	idempotencyKey string,
+) (*orkstackv1.Run, error) {
+	s.runs.Delete(discarded.GetId())
+	s.bus.Discard(discarded.GetId())
+
+	next := s.newPendingRun(s.newRunID(), wf, input)
+	s.runs.Save(next)
+	if idempotencyKey == "" {
+		return next, nil
+	}
+	claim, err := newClaim(next)
+	if err != nil {
+		return next, err
+	}
+	if err := s.idempotency.Rebind(ctx, idempotencyKey, claim, discarded.GetId()); err != nil {
+		return next, fmt.Errorf("move idempotency key %q from %s to %s: %w",
+			idempotencyKey, discarded.GetId(), next.GetId(), err)
+	}
+	return next, nil
+}
+
+// recordFailedStart ends a run that never reached Temporal. It is the only
+// place that can: the engine's projection activity covers every run that did
+// start, and nothing covers one that did not.
+//
+// It is also the only place that publishes a run's whole stream itself, and so
+// the only place that has to number it: this run has no history, so nothing
+// else will ever produce its RUN_CREATED. Both events are numbered explicitly,
+// 1 and 2, so a stream read back from the archive is indistinguishable from one
+// a workflow produced.
+func (s *Service) recordFailedStart(
+	ctx context.Context,
+	run *orkstackv1.Run,
+	cause error,
+) error {
 	runID := run.GetId()
+	failedAt := timestamppb.New(s.now().UTC())
+	createdAt := run.GetCreatedAt()
+	if createdAt == nil {
+		createdAt = failedAt
+	}
+	run.Status = orkstackv1.Status_STATUS_FAILED
+	run.Error = &orkstackv1.Error{Code: "RUN_START_FAILED", Message: cause.Error()}
+	run.FinishedAt = failedAt
+	s.runs.Save(run)
+	s.bus.Publish(&orkstackv1.Event{
+		RunId:    runID,
+		Sequence: 1,
+		Type:     orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
+		Status:   orkstackv1.Status_STATUS_PENDING,
+		Message: fmt.Sprintf("run created for orkflow %s@%s",
+			run.GetWorkflowName(), run.GetWorkflowVersion()),
+		Timestamp: createdAt,
+	}, runID+"#created")
 	s.bus.Publish(&orkstackv1.Event{
 		RunId:     runID,
-		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
-		Status:    orkstackv1.Status_STATUS_PENDING,
-		Message:   fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion()),
-		Timestamp: timestamppb.New(s.now().UTC()),
-	}, runID+"#created")
-
-	if err := s.starter.StartRun(ctx, runID, wf, input); err != nil {
-		failedAt := timestamppb.New(s.now().UTC())
-		run.Status = orkstackv1.Status_STATUS_FAILED
-		run.Error = &orkstackv1.Error{Code: "RUN_START_FAILED", Message: err.Error()}
-		run.FinishedAt = failedAt
-		s.runs.Save(run)
-		s.bus.Publish(&orkstackv1.Event{
-			RunId:     runID,
-			Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
-			Status:    orkstackv1.Status_STATUS_FAILED,
-			Message:   err.Error(),
-			Timestamp: failedAt,
-		}, runID+"#failed")
-		// A run that never reached Temporal still ends here, so this is the
-		// only place that can archive it or announce its failure. The engine's
-		// projection activity covers every run that did start.
-		s.notifyRunFailedToStart(ctx, runID, failedAt, err)
-		s.archiveRun(ctx, runID)
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-
-	stored, _ := s.runs.Get(runID)
-	return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: stored}), nil
+		Sequence:  2,
+		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+		Status:    orkstackv1.Status_STATUS_FAILED,
+		Message:   cause.Error(),
+		Timestamp: failedAt,
+	}, runID+"#failed")
+	s.notifyRunFailedToStart(ctx, runID, failedAt, cause)
+	s.archiveRun(ctx, runID)
+	return connect.NewError(connect.CodeInternal, cause)
 }
 
 // notifyRunFailedToStart announces the terminal transition of a run that never
@@ -396,25 +593,36 @@ func (s *Service) ArchivedEvents(
 	return after, nil
 }
 
-// GetRun returns a run: the live read model first, because a running run's
-// snapshot is fresher there, then the archive, which still holds every run this
-// process never saw — including everything from before the last restart.
-func (s *Service) GetRun(
-	ctx context.Context,
-	req *connect.Request[orkstackv1.GetRunRequest],
-) (*connect.Response[orkstackv1.GetRunResponse], error) {
-	runID := req.Msg.GetRunId()
-	if runID == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
-	}
-	if run, ok := s.runs.Get(runID); ok {
-		return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
+// LookupRun resolves a run through the read model, in the order the system of
+// record demands: Temporal first, because it holds every run that ever
+// started, live or finished; then the archive, which is the record for a run
+// whose history has aged out of retention and for one whose start failed and
+// so has no history at all.
+//
+// With no reader wired — a unit test — the process-local store answers instead.
+// It is never consulted behind a reader: a cache that can turn a NotFound into
+// a run, or a run into a NotFound, is not a cache.
+//
+// Errors are already Connect-coded, so a caller can branch on
+// connect.CodeNotFound.
+func (s *Service) LookupRun(ctx context.Context, runID string) (*orkstackv1.Run, error) {
+	if s.reader != nil {
+		run, err := s.reader.GetRun(ctx, runID)
+		switch {
+		case err == nil:
+			return run, nil
+		case !errors.Is(err, artifacts.ErrNotFound):
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("read run %q: %w", runID, err))
+		}
+	} else if run, ok := s.runs.Get(runID); ok {
+		return run, nil
 	}
 	if s.archive != nil {
 		run, err := s.archive.LoadRun(ctx, runID)
 		switch {
 		case err == nil:
-			return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
+			return run, nil
 		case !errors.Is(err, artifacts.ErrNotFound):
 			return nil, connect.NewError(connect.CodeInternal,
 				fmt.Errorf("read run %q from archive: %w", runID, err))
@@ -423,19 +631,61 @@ func (s *Service) GetRun(
 	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
 }
 
-// ListRuns returns runs, newest first, with optional filters. Results merge the
-// live read model with the archive, so a query sees runs still executing and
-// runs that finished before this process started. A run present in both is
-// reported from the live model, which is at least as fresh as the archive.
+// GetRun returns a run, from whichever replica the request reached.
+func (s *Service) GetRun(
+	ctx context.Context,
+	req *connect.Request[orkstackv1.GetRunRequest],
+) (*connect.Response[orkstackv1.GetRunResponse], error) {
+	runID := req.Msg.GetRunId()
+	if runID == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
+	}
+	run, err := s.LookupRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
+}
+
+// ListRuns returns runs, newest first, with optional filters.
+//
+// The two halves are Temporal's visibility index, which holds every run that
+// started and is the only source for one still executing, and the archive,
+// which holds every run that finished. A run in both is reported from the
+// archive: visibility knows a run's id, orkflow, status and times, while the
+// archive holds its task runs, input and output, and a finished run's outcome
+// is settled, so the richer record is also the correct one.
+//
+// Visibility is eventually consistent. A run submitted a moment ago may not be
+// listed yet; it is readable by id throughout, because GetRun reads history
+// rather than the index.
 func (s *Service) ListRuns(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListRunsRequest],
 ) (*connect.Response[orkstackv1.ListRunsResponse], error) {
 	size := int(req.Msg.GetPageSize())
-	runs := s.runs.List(engine.ListFilter{
-		WorkflowName: req.Msg.GetWorkflowName(),
-		Status:       req.Msg.GetStatus(),
-	})
+	var (
+		runs       []*orkstackv1.Run
+		fromMemory bool
+	)
+	if s.reader != nil {
+		listed, err := s.reader.ListRuns(ctx, engine.RunQuery{
+			WorkflowName: req.Msg.GetWorkflowName(),
+			Status:       req.Msg.GetStatus(),
+			Limit:        size,
+		})
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("list runs: %w", err))
+		}
+		runs = listed
+	} else {
+		runs = s.runs.List(engine.ListFilter{
+			WorkflowName: req.Msg.GetWorkflowName(),
+			Status:       req.Msg.GetStatus(),
+		})
+		fromMemory = true
+	}
 	if s.archive != nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
 			WorkflowName: req.Msg.GetWorkflowName(),
@@ -446,7 +696,13 @@ func (s *Service) ListRuns(
 			return nil, connect.NewError(connect.CodeInternal,
 				fmt.Errorf("list runs from archive: %w", err))
 		}
-		runs = mergeRuns(runs, archived)
+		if fromMemory {
+			// This process executed those runs, so its snapshots are at least
+			// as fresh as the archive's.
+			runs = mergeRuns(runs, archived)
+		} else {
+			runs = mergeRuns(archived, runs)
+		}
 	}
 	if size > 0 && size < len(runs) {
 		runs = runs[:size]
@@ -454,17 +710,17 @@ func (s *Service) ListRuns(
 	return connect.NewResponse(&orkstackv1.ListRunsResponse{Runs: runs}), nil
 }
 
-// mergeRuns folds archived runs into the live ones, newest first. Live wins on
-// a duplicate id, and equal timestamps fall back to the id so the order of a
-// page never depends on map iteration.
-func mergeRuns(live, archived []*orkstackv1.Run) []*orkstackv1.Run {
-	merged := make([]*orkstackv1.Run, 0, len(live)+len(archived))
-	seen := make(map[string]struct{}, len(live))
-	for _, run := range live {
+// mergeRuns folds two sources of runs into one page, newest first. preferred
+// wins on a duplicate id, and equal timestamps fall back to the id so the order
+// of a page never depends on map iteration.
+func mergeRuns(preferred, others []*orkstackv1.Run) []*orkstackv1.Run {
+	merged := make([]*orkstackv1.Run, 0, len(preferred)+len(others))
+	seen := make(map[string]struct{}, len(preferred))
+	for _, run := range preferred {
 		seen[run.GetId()] = struct{}{}
 		merged = append(merged, run)
 	}
-	for _, run := range archived {
+	for _, run := range others {
 		if _, duplicate := seen[run.GetId()]; duplicate {
 			continue
 		}
@@ -480,7 +736,9 @@ func mergeRuns(live, archived []*orkstackv1.Run) []*orkstackv1.Run {
 	return merged
 }
 
-// CancelRun requests cancellation of a run's Temporal workflow.
+// CancelRun requests cancellation of a run's Temporal workflow. The run is
+// resolved through the read model, so a replica can cancel a run it did not
+// start.
 func (s *Service) CancelRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.CancelRunRequest],
@@ -488,9 +746,9 @@ func (s *Service) CancelRun(
 	if req.Msg.GetRunId() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
 	}
-	run, ok := s.runs.Get(req.Msg.GetRunId())
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", req.Msg.GetRunId()))
+	run, err := s.LookupRun(ctx, req.Msg.GetRunId())
+	if err != nil {
+		return nil, err
 	}
 	if s.starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
@@ -501,12 +759,8 @@ func (s *Service) CancelRun(
 	return connect.NewResponse(&orkstackv1.CancelRunResponse{Run: run}), nil
 }
 
-// StreamEvents server-streams a run's events: the backlog after from_sequence
-// followed by live events, ending when the run reaches a terminal event.
-//
-// A run this process never saw is replayed from the archive instead. It is
-// finished by definition — nothing archives before its terminal event — so the
-// replay is the whole stream and the call returns when it is sent.
+// StreamEvents server-streams a run's events: everything after from_sequence,
+// ending at the run's terminal event.
 func (s *Service) StreamEvents(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.StreamEventsRequest],
@@ -516,20 +770,48 @@ func (s *Service) StreamEvents(
 	if runID == "" {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
 	}
+	return s.StreamRunEvents(ctx, runID, req.Msg.GetFromSequence(), stream.Send)
+}
+
+// StreamRunEvents delivers a run's events after fromSequence to send, and
+// returns when the run reaches its terminal event. It is the one streaming
+// path: the Connect handler and the WebSocket bridge both go through it, so
+// they cannot drift apart.
+//
+// Temporal is read first and answers for every run that started, live or
+// finished — on any replica, whoever started it. A run it does not know is
+// replayed from the archive: its history has aged out of retention, or its
+// start failed and there is no history at all. The reader reports a missing run
+// before it sends anything, so the fallback cannot duplicate an event.
+//
+// With no reader wired — a unit test — the process-local bus answers instead,
+// on the same terms as before this milestone.
+func (s *Service) StreamRunEvents(
+	ctx context.Context,
+	runID string,
+	fromSequence int64,
+	send func(*orkstackv1.Event) error,
+) error {
+	if s.reader != nil {
+		err := s.reader.StreamEvents(ctx, runID, fromSequence, send)
+		switch {
+		case err == nil:
+			return nil
+		case ctx.Err() != nil:
+			// The caller went away mid-stream. That is not a failure of the
+			// run, and the old bus path reported it as a clean end too.
+			return nil
+		case !errors.Is(err, artifacts.ErrNotFound):
+			return connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("stream run %q: %w", runID, err))
+		}
+		return s.replayArchivedEvents(ctx, runID, fromSequence, send)
+	}
 	if _, ok := s.runs.Get(runID); !ok {
-		archived, err := s.ArchivedEvents(ctx, runID, req.Msg.GetFromSequence())
-		if err != nil {
-			return err
-		}
-		for _, event := range archived {
-			if err := stream.Send(event); err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.replayArchivedEvents(ctx, runID, fromSequence, send)
 	}
 
-	events, cancel, terminalAlreadyReached := s.bus.Subscribe(runID, req.Msg.GetFromSequence())
+	events, cancel, terminalAlreadyReached := s.bus.Subscribe(runID, fromSequence)
 	defer cancel()
 	if terminalAlreadyReached {
 		return nil
@@ -543,7 +825,7 @@ func (s *Service) StreamEvents(
 			if !open {
 				return nil
 			}
-			if err := stream.Send(event); err != nil {
+			if err := send(event); err != nil {
 				return err
 			}
 			if IsTerminalEvent(event) {
@@ -551,6 +833,27 @@ func (s *Service) StreamEvents(
 			}
 		}
 	}
+}
+
+// replayArchivedEvents sends an archived run's stream and ends. It is finished
+// by definition — nothing archives before its terminal event — so the replay is
+// the whole stream.
+func (s *Service) replayArchivedEvents(
+	ctx context.Context,
+	runID string,
+	fromSequence int64,
+	send func(*orkstackv1.Event) error,
+) error {
+	archived, err := s.ArchivedEvents(ctx, runID, fromSequence)
+	if err != nil {
+		return err
+	}
+	for _, event := range archived {
+		if err := send(event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // IsTerminalEvent reports whether an event ends a run's stream.

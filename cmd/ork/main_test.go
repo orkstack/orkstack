@@ -9,15 +9,19 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *testing.T) {
-	runOptions := runWorkerOptions()
+	runOptions := runWorkerOptions(config{})
 	if !runOptions.LocalActivityWorkerOnly {
 		t.Fatal("run worker must be workflow/local-activity only on the shared Orker queue")
 	}
@@ -28,7 +32,7 @@ func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *test
 		t.Fatal("run worker must disable registration aliases")
 	}
 
-	eventOptions := eventWorkerOptions()
+	eventOptions := eventWorkerOptions(config{})
 	if !eventOptions.DisableWorkflowWorker {
 		t.Fatal("event worker must be activity-only")
 	}
@@ -37,6 +41,204 @@ func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *test
 	}
 	if !eventOptions.DisableRegistrationAliasing {
 		t.Fatal("event worker must disable registration aliases")
+	}
+}
+
+// TestQueues_OrkerQueueMovesTaskExecutionOnly holds the runbook to what the
+// engine really polls.
+//
+// ORK_ORKER_QUEUE names where task activities are DISPATCHED. RunWorkflow and
+// the idempotency claims stay on task.DefaultQueue whatever it is set to. With
+// the variable unset the two queues are the same name, which is how
+// docs/DEPLOY.md came to claim the run worker polls ORK_ORKER_QUEUE — true
+// only by coincidence, and false for every operator who moves their Orker
+// pool. Under versioning that claim is load-bearing: it decides which queue
+// names an operator expects in `temporal worker deployment describe-version`,
+// and the runbook told them to abort a rollout when the expected name was
+// missing.
+func TestQueues_OrkerQueueMovesTaskExecutionOnly(t *testing.T) {
+	t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-gpu-pool")
+
+	q := queuesFor(loadConfig())
+	if q.run != task.DefaultQueue {
+		t.Errorf("the engine's run worker polls %q, want %q: ORK_ORKER_QUEUE moved the queue that hosts RunWorkflow",
+			q.run, task.DefaultQueue)
+	}
+	if q.orker != "ork-tasks-gpu-pool" {
+		t.Errorf("task activities go to %q, want the configured ork-tasks-gpu-pool", q.orker)
+	}
+	if q.events != engine.EventQueue {
+		t.Errorf("projection worker polls %q, want %q", q.events, engine.EventQueue)
+	}
+	if q.run == q.orker {
+		t.Error("a configured Orker pool collapsed back onto the engine's own queue")
+	}
+}
+
+// TestQueues_DefaultCollapsesTheOrkerPoolOntoTheEngineQueue is the other half:
+// with no configuration one queue carries both, which is what makes a
+// single-process dev run work — and what hid the runbook's error.
+func TestQueues_DefaultCollapsesTheOrkerPoolOntoTheEngineQueue(t *testing.T) {
+	t.Setenv("ORK_ORKER_QUEUE", "")
+
+	q := queuesFor(loadConfig())
+	if q.run != task.DefaultQueue || q.orker != task.DefaultQueue {
+		t.Fatalf("unconfigured queues = run %q orker %q, want both %q", q.run, q.orker, task.DefaultQueue)
+	}
+}
+
+// TestRunWorkerOptions_CarryTheConfiguredDeploymentVersion is acceptance 1 for
+// the engine: the process that hosts RunWorkflow registers with Worker
+// Deployment Versioning when — and only when — an operator configured a build
+// id.
+func TestRunWorkerOptions_CarryTheConfiguredDeploymentVersion(t *testing.T) {
+	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
+	t.Setenv(task.EnvBuildID, "v2")
+
+	options := runWorkerOptions(loadConfig())
+	if !options.DeploymentOptions.UseVersioning {
+		t.Fatal("run worker is unversioned with ORK_BUILD_ID set: an engine rollout would move in-flight runs")
+	}
+	want := worker.WorkerDeploymentVersion{DeploymentName: "orkstack-prod", BuildID: "v2"}
+	if options.DeploymentOptions.Version != want {
+		t.Fatalf("run worker version = %+v, want %+v", options.DeploymentOptions.Version, want)
+	}
+	if !options.LocalActivityWorkerOnly {
+		t.Error("versioning dropped LocalActivityWorkerOnly")
+	}
+}
+
+// TestWorkerOptions_UnsetDeploymentEnvLeavesBothWorkersUnversioned is
+// acceptance 6 at the binary's own seam: `make run-ork` with no configuration
+// must produce exactly the workers it produced before this milestone.
+func TestWorkerOptions_UnsetDeploymentEnvLeavesBothWorkersUnversioned(t *testing.T) {
+	t.Setenv(task.EnvDeploymentName, "")
+	t.Setenv(task.EnvBuildID, "")
+	cfg := loadConfig()
+
+	if cfg.deployment.Versioned() {
+		t.Fatalf("deployment %v is versioned with no configuration", cfg.deployment)
+	}
+	for name, options := range map[string]worker.Options{
+		"run": runWorkerOptions(cfg), "event": eventWorkerOptions(cfg),
+	} {
+		if options.DeploymentOptions.UseVersioning {
+			t.Errorf("%s worker uses versioning with no configuration", name)
+		}
+		if options.DeploymentOptions.DefaultVersioningBehavior != workflow.VersioningBehaviorUnspecified {
+			t.Errorf("%s worker sets DefaultVersioningBehavior while unversioned; the SDK panics on that pair", name)
+		}
+	}
+}
+
+// TestEventWorkerOptions_StayUnversionedEvenWhenConfigured pins the one
+// deliberate exception. PublishEvent must remain executable by any live
+// replica of any version, which is what keeps a run readable from every
+// replica; versioning that worker would make a pinned run's projections wait
+// for its own build's pollers.
+func TestEventWorkerOptions_StayUnversionedEvenWhenConfigured(t *testing.T) {
+	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
+	t.Setenv(task.EnvBuildID, "v2")
+	cfg := loadConfig()
+
+	if !cfg.deployment.Versioned() {
+		t.Fatal("test setup: the deployment should be versioned here")
+	}
+	if options := eventWorkerOptions(cfg); options.DeploymentOptions.UseVersioning {
+		t.Fatalf("event worker joined deployment version %+v; the projection worker must stay unversioned",
+			options.DeploymentOptions.Version)
+	}
+}
+
+// recordedRegistration is one call registerEngineWorkflows made.
+type recordedRegistration struct {
+	name     string
+	behavior workflow.VersioningBehavior
+}
+
+// recordingRegistrar captures what the binary registers, without a worker.
+type recordingRegistrar []recordedRegistration
+
+func (r *recordingRegistrar) RegisterWorkflowWithOptions(_ any, options workflow.RegisterOptions) {
+	*r = append(*r, recordedRegistration{name: options.Name, behavior: options.VersioningBehavior})
+}
+
+// TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims is
+// acceptance 2. It reads what the binary registers, so dropping the behaviour
+// from cmd/ork fails here — asserting against a copy of the registration would
+// prove only that the test still compiles.
+func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t *testing.T) {
+	var registered recordingRegistrar
+	registerEngineWorkflows(&registered)
+
+	want := map[string]workflow.VersioningBehavior{
+		engine.WorkflowName:      workflow.VersioningBehaviorPinned,
+		engine.ClaimWorkflowName: workflow.VersioningBehaviorAutoUpgrade,
+	}
+	if len(registered) != len(want) {
+		t.Fatalf("registered %d workflow types (%+v), want %d", len(registered), registered, len(want))
+	}
+	for _, got := range registered {
+		expected, known := want[got.name]
+		if !known {
+			t.Errorf("workflow %q is registered but declares no considered behaviour", got.name)
+			continue
+		}
+		if got.behavior != expected {
+			t.Errorf("workflow %q registers behaviour %v, want %v", got.name, got.behavior, expected)
+		}
+		if got.behavior == workflow.VersioningBehaviorUnspecified {
+			t.Errorf("workflow %q declares no versioning behaviour; a versioned worker panics on it", got.name)
+		}
+	}
+}
+
+// TestRegisterEngineWorkflows_SurvivesAVersionedWorker is the same acceptance
+// checked against the SDK rather than against this test's own expectations: a
+// versioned worker with no DefaultVersioningBehavior PANICS on a workflow type
+// registered without one (sdk@v1.47.0/internal/internal_worker.go:1317-1322).
+// Registering through the binary's own function on a real (undialled) worker
+// is therefore a live check that both types declare one.
+func TestRegisterEngineWorkflows_SurvivesAVersionedWorker(t *testing.T) {
+	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
+	t.Setenv(task.EnvBuildID, "v2")
+
+	c, err := client.NewLazyClient(client.Options{HostPort: "127.0.0.1:1"})
+	if err != nil {
+		t.Fatalf("NewLazyClient: %v", err)
+	}
+	defer c.Close()
+
+	cfg := loadConfig()
+	if !cfg.deployment.Versioned() {
+		t.Fatal("test setup: the worker under test must be versioned for the SDK guard to apply")
+	}
+	registerEngineWorkflows(worker.New(c, task.DefaultQueue, runWorkerOptions(cfg)))
+}
+
+// TestLoadConfig_IdempotencyTTL: the claim TTL is the only thing that ever
+// frees an idempotency key, so a mistyped value must not silently become zero
+// (a key freed immediately) and must not stop the engine booting either.
+func TestLoadConfig_IdempotencyTTL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  string
+		want time.Duration
+	}{
+		{"unset", "", engine.DefaultClaimTTL},
+		{"explicit", "30m", 30 * time.Minute},
+		{"unparsable", "half an hour", engine.DefaultClaimTTL},
+		{"zero", "0s", engine.DefaultClaimTTL},
+		{"negative", "-1h", engine.DefaultClaimTTL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set != "" {
+				t.Setenv("ORK_IDEMPOTENCY_TTL", tc.set)
+			}
+			if got := loadConfig().idempotencyTTL; got != tc.want {
+				t.Errorf("ORK_IDEMPOTENCY_TTL=%q gave %v, want %v", tc.set, got, tc.want)
+			}
+		})
 	}
 }
 

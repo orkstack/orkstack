@@ -8,10 +8,18 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// EventBus is the in-process pub/sub for run events. It owns sequence
-// assignment: publishers supply a dedupe key (stable across Temporal activity
-// retries and replays) and the bus assigns the next monotonic sequence for the
-// run. Subscribers receive the backlog followed by live events.
+// EventBus is the in-process pub/sub for run events.
+//
+// Sequence belongs to the *producer*. RunWorkflow numbers every event it
+// emits, so the copy Temporal records when the projection activity is
+// scheduled carries the same number the bus stores; that is what makes the
+// history-derived stream, this log and the archived stream identical. The bus
+// only assigns a number when it is given none, which covers the one stream
+// that never reaches Temporal — a run whose start failed — and unit-test
+// publishers.
+//
+// Publishers also supply a dedupe key (stable across Temporal activity retries
+// and replays). Subscribers receive the backlog followed by live events.
 type EventBus struct {
 	mu     sync.Mutex
 	log    map[string][]*orkstackv1.Event
@@ -30,7 +38,8 @@ func NewEventBus() *EventBus {
 }
 
 // Publish appends event to its run's log and fans it out to subscribers. The
-// returned event carries the assigned sequence. dedupeKey makes publication
+// returned event carries the sequence it was stored under: the producer's when
+// it set one, otherwise the next for this run. dedupeKey makes publication
 // idempotent: republishing a key returns the already-stored event and false.
 func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstackv1.Event, bool) {
 	if event == nil || event.GetRunId() == "" {
@@ -51,8 +60,10 @@ func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstack
 	}
 
 	stored := proto.Clone(event).(*orkstackv1.Event)
-	stored.Sequence = int64(len(b.log[runID])) + 1
-	b.log[runID] = append(b.log[runID], stored)
+	if stored.GetSequence() == 0 {
+		stored.Sequence = b.nextSequenceLocked(runID)
+	}
+	b.insertLocked(runID, stored)
 	if dedupeKey != "" {
 		if b.seen[runID] == nil {
 			b.seen[runID] = map[string]int64{}
@@ -67,6 +78,49 @@ func (b *EventBus) Publish(event *orkstackv1.Event, dedupeKey string) (*orkstack
 	}
 	b.mu.Unlock()
 	return proto.Clone(stored).(*orkstackv1.Event), true
+}
+
+// nextSequenceLocked is one past the highest sequence this run holds, so a bus
+// that has already stored producer-numbered events keeps numbering above them
+// instead of colliding with one.
+func (b *EventBus) nextSequenceLocked(runID string) int64 {
+	log := b.log[runID]
+	if len(log) == 0 {
+		return 1
+	}
+	return log[len(log)-1].GetSequence() + 1
+}
+
+// insertLocked keeps a run's log ordered by sequence.
+//
+// Publication order is not sequence order once more than one engine replica
+// runs the projection worker: the activities of one run are handed to whichever
+// replica polls first, so a process sees an arbitrary subset in an arbitrary
+// interleaving. The log it keeps — which is what an archive write and a
+// backlog replay read — is defined by the producer's numbering, not by arrival.
+func (b *EventBus) insertLocked(runID string, stored *orkstackv1.Event) {
+	log := b.log[runID]
+	at := len(log)
+	for at > 0 && log[at-1].GetSequence() > stored.GetSequence() {
+		at--
+	}
+	log = append(log, nil)
+	copy(log[at+1:], log[at:])
+	log[at] = stored
+	b.log[runID] = log
+}
+
+// Discard forgets a run's event log and dedupe state.
+//
+// Same case as RunStore.Delete: the events of a candidate run id Temporal
+// refused. That id was never returned to anyone, so no subscriber can hold it
+// and there is nothing to close — only a log to forget, so a run that never
+// existed cannot be streamed or archived.
+func (b *EventBus) Discard(runID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.log, runID)
+	delete(b.seen, runID)
 }
 
 // Events returns the recorded events for a run with sequence greater than

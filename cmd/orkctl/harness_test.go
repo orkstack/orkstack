@@ -24,10 +24,16 @@ import (
 // deterministic, which is what makes the human-output golden files stable.
 var fixedNow = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-// stubStarter stands in for Temporal. M3's Orker does not exist yet, so tests
-// drive run state through the event bus and run store directly.
+// stubStarter stands in for Temporal. Tests drive run state through the event
+// bus and run store directly.
+//
+// A started run emits its own RUN_CREATED as event 1, because that is what
+// RunWorkflow does on a real cluster: the API publishes no event of its own on
+// the happy path, so a stub that did not emit it would be simulating an engine
+// that does not exist.
 type stubStarter struct {
 	mu        sync.Mutex
+	bus       *engine.EventBus
 	started   []string
 	canceled  []string
 	reasons   []string
@@ -45,10 +51,21 @@ func (s *stubStarter) StartRun(
 	s.mu.Lock()
 	s.started = append(s.started, runID)
 	onStart := s.onStart
+	bus := s.bus
 	err := s.startErr
 	s.mu.Unlock()
 	if onStart != nil {
 		onStart(runID, wf, input)
+	}
+	if err == nil && bus != nil {
+		bus.Publish(&orkstackv1.Event{
+			RunId:     runID,
+			Sequence:  1,
+			Type:      orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
+			Status:    orkstackv1.Status_STATUS_PENDING,
+			Message:   fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion()),
+			Timestamp: timestamppb.New(fixedNow),
+		}, runID+"#1")
 	}
 	return err
 }
@@ -93,7 +110,7 @@ func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
-	starter := &stubStarter{}
+	starter := &stubStarter{bus: bus}
 	counter := 0
 	svc := api.NewService(api.Config{
 		Workflows: engine.NewWorkflowStore(),

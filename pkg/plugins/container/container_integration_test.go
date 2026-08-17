@@ -19,7 +19,8 @@ import (
 )
 
 // These tests drive a real Docker daemon. They skip cleanly when one is not
-// reachable, in line with the repository's integration convention (AGENTS.md
+// reachable — or fail, under ORK_REQUIRE_INFRA, so a proof run cannot report
+// green having run none of them — in line with the repository's convention (AGENTS.md
 // §5), and they leave the host as they found it: every container is removed and
 // every image they pull is an image they also make sure is present at the end.
 
@@ -38,7 +39,7 @@ func requireDocker(t *testing.T) {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
 	if err != nil {
-		t.Skipf("docker daemon is not reachable: %v: %s", err, strings.TrimSpace(string(out)))
+		infraAbsent(t, "docker daemon is not reachable: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	t.Logf("docker server %s", strings.TrimSpace(string(out)))
 }
