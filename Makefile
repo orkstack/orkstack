@@ -54,6 +54,31 @@ cover: ## Run tests with coverage -> proof/coverage.out
 	go test ./... -count=1 -coverprofile=proof/coverage.out
 	go tool cover -func=proof/coverage.out | tail -1
 
+## ---- whole stack ----
+.PHONY: up
+up: ## Start everything: Temporal, MinIO, engine, orker and the UI
+	@scripts/stack.sh up
+
+.PHONY: down
+down: ## Stop everything `make up` started (data is kept)
+	@scripts/stack.sh down
+
+.PHONY: status
+status: ## Show what is running, and where
+	@scripts/stack.sh status
+
+.PHONY: logs
+logs: ## Tail the engine, orker and UI logs
+	@tail -f .run/ork.log .run/orker.log .run/ui.log
+
+.PHONY: reset
+reset: ## Wipe ALL local state — Temporal history, MinIO objects, build output
+	@scripts/reset.sh
+
+.PHONY: reset-force
+reset-force: ## reset without the confirmation prompt
+	@scripts/reset.sh --force
+
 ## ---- infra ----
 .PHONY: infra-up
 infra-up: ## Start Temporal + MinIO

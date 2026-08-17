@@ -33,18 +33,25 @@ DSL yaml → ork engine (Temporal) → Orker → Plugin → artifacts (local/S3)
 ## Quickstart (dev)
 
 ```bash
-make tools          # install codegen tooling (buf, protoc-gen-*)
-make proto          # generate Go/TS from proto
-make infra-up       # start Temporal + MinIO (docker compose)
-make build          # build ork, orker, orkctl
-make run-ork        # terminal 1
-make run-orker      # terminal 2
+make up             # Temporal + MinIO + engine + orker + UI, health-checked
 ./bin/orkctl apply examples/hello.ork.yaml
 ./bin/orkctl run submit hello-ork --watch
+make down           # stop everything (data is kept)
 ```
 
+- UI: http://localhost:5173
+- Engine API: http://localhost:8080
 - Temporal UI: http://localhost:8233
 - MinIO console: http://localhost:9001 (`orkstack` / `orkstack-secret`)
+
+`make status` shows what is running, `make logs` tails all three processes,
+and `make reset` returns the machine to a vanilla state — it deletes Temporal
+history, every MinIO object (artifacts, archived runs, and the orkflow
+catalogue), the local artifact store and all build output. The repository,
+including `proof/`, is untouched.
+
+The individual steps are still there when you want them: `make tools`,
+`make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
 
 ## Repository layout
 

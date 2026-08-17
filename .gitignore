@@ -41,3 +41,6 @@ ui/dist/
 !.atomic/workflows/
 !/proof/**/*.log
 !/proof/**/*.out
+
+# Process state written by scripts/stack.sh (make up).
+.run/
