@@ -93,6 +93,18 @@ func ClaimWorkflowID(key string) string {
 // execution, so a workflow whose id is derived from the key turns "who saw it
 // first" into a question the server answers once for the whole fleet.
 //
+// The cost of holding it server-side, stated plainly: the binding outlives the
+// replica that won it. If a replica wins a claim and dies before its StartRun
+// reaches the cluster, the key stays bound to a run that will never execute,
+// and every later submission of that key is answered with that PENDING run
+// (internal/api/service.go, claimedRun) until the TTL expires. The
+// process-local map this replaced had no such window — a crash cleared it —
+// and could not have the guarantee either: it let two replicas start two runs
+// for one key. Never two runs is the property that was bought; the window is
+// the price, ORK_IDEMPOTENCY_TTL bounds it for every key, and terminating the
+// claim execution (its id is ClaimWorkflowID(key)) frees one by hand. See
+// docs/DEPLOY.md §5.
+//
 // Determinism (AGENTS.md §1.3): the body sets an update handler, sleeps, and
 // returns. No clock is read, no IO is done, nothing iterates a map, and the
 // key's digest is computed by the caller and arrives as the workflow id.
