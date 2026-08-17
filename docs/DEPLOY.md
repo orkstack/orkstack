@@ -1,18 +1,124 @@
 # Deploying OrkStack
 
-How to roll a new OrkStack release out without breaking runs that are already
-executing.
+How to run OrkStack as a replicated deployment, and how to roll a new release
+out without breaking runs that are already executing.
 
-The short version: `ork` and `orker` of one release share a **Worker Deployment
+The short version, twice.
+
+**Topology.** Every `ork` replica is interchangeable: nothing durable lives in
+a process, so any replica answers for any run — including one it never started
+and one whose replica has since died. Add replicas for API and workflow
+capacity, add Orker pools for task execution. Neither holds state (§0).
+
+**Releases.** `ork` and `orker` of one release share a **Worker Deployment
 Version**. A run is **pinned** to the version that started it and finishes
 there, whatever you deploy next. That guarantee costs you two rules — make each
 version **Current** when you want it to serve (the first one especially: until
 then it serves nothing), and do not stop the old workers until their version
 reports `Drained`.
 
-Everything here is executed against the built binaries by
-`proof/M8.4/deploy-runbook.sh`, whose transcript is the evidence for the
+Everything here is executed against the built binaries. The topology claims and
+a rollout across a live two-replica deployment: `proof/M8.5/ha-deploy.sh`, one
+command. The release procedure, transition by transition:
+`proof/M8.4/deploy-runbook.sh`. Their transcripts are the evidence for the
 claims below.
+
+---
+
+## 0. Topology — what you run, and where state lives
+
+```
+                         one address (LB / ingress / DNS RR)
+                                        │
+           ┌────────────────┬───────────┴────┬────────────────┐
+       ork replica 1    ork replica 2       …            ork replica N
+       ORK_HTTP_ADDR    ORK_HTTP_ADDR                  ORK_HTTP_ADDR
+       :8081            :8082                          :808N
+           └────────────────┴───────────┬────┴────────────────┘
+                                        │   one Temporal namespace
+                              ┌─────────┴─────────┐
+                              │     Temporal      │  ork-tasks           run workflows + idempotency claims
+                              │                   │  ork-engine-events   projection
+                              └─────────┬─────────┘  ORK_ORKER_QUEUE…    task activities, one queue per pool
+           ┌────────────────┬───────────┴────┬────────────────┐
+     Orker pool 1      Orker pool 2         …           Orker pool M
+           └────────────────┴───────────┬────┴────────────────┘
+                                        │
+                              one S3 / MinIO bucket
+                    definitions · artifacts · finished runs
+```
+
+Two independent dials. **Replicas** carry the API and the run workflows;
+**Orker pools** carry task execution. Neither holds state, so both scale by
+adding processes and both survive losing one.
+
+### Nothing durable lives in a process
+
+| state | where it lives | code |
+|---|---|---|
+| orkflow definitions | the bucket | `artifacts.S3OrkflowStore`, opened at boot by `openOrkflowStore` (`cmd/ork/main.go`). It keeps no cache, so an `apply` on one replica is visible to every other |
+| live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), wired as the API's `RunReader` |
+| finished runs, past retention | the bucket | `engine.NewRunArchiver` over `artifacts.NewRunArchive`, written by the terminal `PublishEvent` |
+| idempotency keys | Temporal | `engine.IdempotencyClaimWorkflow` (`internal/engine/claim.go`), held for `ORK_IDEMPOTENCY_TTL` |
+| artifacts | the bucket | `pkg/artifacts`; events and payloads carry refs, never bytes |
+| the in-process `RunStore` / `EventBus` | one process, and only that one | **write side only**: the candidate run a submission creates, the stream of a run whose start failed, and the archive + webhook write path. Behind a wired reader they are never read (`internal/api/service.go`, `LookupRun`) |
+
+So a replica owns nothing. Kill one and you lose its in-flight HTTP
+connections and nothing else: its runs keep executing on another replica's
+workers, and a client that reconnects anywhere reads the same run. That is
+measured, not argued — `proof/M8.5/ha-transcript.txt` phase 4 kills the
+submitting replica with `-9` mid-run and the run finishes.
+
+### Running N `ork` replicas
+
+- **Identical configuration on every replica.** Same `ORK_TEMPORAL_ADDRESS`,
+  `ORK_TEMPORAL_NAMESPACE`, `ORK_ORKER_QUEUE`, `ORK_DEPLOYMENT_NAME`,
+  `ORK_BUILD_ID`, same bucket. A replica differing in any of those is a
+  different deployment wearing the same address.
+- **`ORK_HTTP_ADDR` is the one variable that must differ** when replicas share
+  a host. On separate hosts it does not have to.
+- **No sticky sessions, no leader.** `GetRun`, `ListRuns`, `StreamEvents` and
+  `/ws/runs/{id}` are answered from Temporal, so any replica serves any run.
+- **Reconnects resume rather than replay.** `StreamEvents.from_sequence`
+  (`orkctl run watch --from-sequence`) and `/ws/runs/{id}?from_sequence=N`
+  continue after an event number, and the number is the producer's — the
+  workflow assigns it — so resuming against a *different* replica yields the
+  same stream with nothing repeated and nothing skipped.
+- **Readiness: there is no `/healthz` yet.** Probe with a cheap unary call —
+  `OrkflowService.ListOrkflows`, i.e. `orkctl --server … orkflow list`. Every
+  script under `proof/` uses exactly that as its readiness gate; it reaches the
+  bucket the replica loads definitions from, so it fails while the replica
+  cannot serve.
+- **Browser clients need `ORK_WS_ALLOWED_ORIGINS`** set on every replica, since
+  any of them may take the socket.
+- **Every replica is also a worker host.** It polls `ork-tasks` (run workflows
+  and idempotency claims) and `ork-engine-events` (projection). Adding a
+  replica therefore adds workflow capacity as well as API capacity, and it is
+  why a run outlives the replica that started it: the next workflow task goes
+  to another replica's poller.
+
+### Running M Orker pools
+
+- **One pool = one queue = one set of Orker processes** sharing an
+  `ORK_ORKER_QUEUE`. Add processes to a pool for throughput; add a pool for
+  isolation — a GPU host, a pool with different plugins, a pool near some data.
+- **The engine's default pool must match.** The engine dispatches every task
+  that names no `queue:` to its own `ORK_ORKER_QUEUE`, so the variable is set
+  on both binaries or runs strand in `RUNNING` (§2, §5). A task's own `queue:`
+  in the DSL outranks it, and is how one step reaches a dedicated pool
+  (`docs/DSL.md`).
+- **Under versioning, every pool a release dispatches to needs an Orker of that
+  release's version.** A pool left on the old build is not "lagging": it is the
+  pinned-activity exception (§2) firing, which sends that queue's tasks to
+  whatever is current there — including tasks of a run pinned elsewhere. Roll
+  every pool together, and check each queue appears in
+  `describe-version` (§3 step 2).
+- **A pool can name itself.** `ORK_ORKER_ENV_ALLOWLIST=ORK_BUILD_ID` on the
+  Orker lets a task render `{{ env "ORK_BUILD_ID" }}`; the template resolves in
+  the Orker process (`internal/orker/render.go`), so the task output names the
+  build that executed it. `proof/M8.5` uses this to show a task scheduled
+  *after* a rollout still executed on the old build — from the plugin's own
+  output, independent of what the server records.
 
 ---
 
@@ -26,9 +132,12 @@ deployment cares about.
 | `ORK_TEMPORAL_ADDRESS` | `127.0.0.1:7233` | both | Temporal frontend |
 | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
 | `ORK_ORKER_QUEUE` | `ork-tasks` | **both** | queue Orkers poll and the engine dispatches **task activities** to. It does not move the engine's own queues (§2) |
+| `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
+| `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory |
 | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
 | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
+| `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` |
 | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
 | `ORK_ARTIFACT_BACKEND`, `ORK_S3_*` | see `docs/STORAGE.md` | both | artifact + archive storage |
 
@@ -209,6 +318,14 @@ release runs nothing at all (§1).
    ORK_BUILD_ID=$NEW ./bin/orker &
    ```
 
+   In a replicated deployment (§0) that means **all** of v2: every `ork`
+   replica and an Orker in every pool the release dispatches to. v1's replicas
+   stay up and keep serving the API — the two versions coexist behind one
+   address, and which version a new run executes on is the deployment's
+   Current Version, never the replica the client happened to reach. `proof/M8.5`
+   shows this directly: after the switch, a run submitted **to a v1 replica**
+   executes wholly on v2.
+
 2. **Check v2 polls every queue it should**, engine and Orker both:
 
    ```bash
@@ -295,13 +412,18 @@ release runs nothing at all (§1).
    bring v1 back, but until then they make no progress. Drainage is refreshed
    on a delay of a few minutes, so poll.
 
-6. **Stop v1** once it reports `Drained`.
+6. **Stop v1** once it reports `Drained` — every replica and every Orker
+   carrying that build id. Stopping *some* of them earlier is safe (§5); the
+   version is what must not disappear while runs are pinned to it.
 
-A rollout done this way is proven end to end on the real binaries in
-`proof/M8.4/deploy-runbook-transcript.txt` (phase 3): the run in flight when v2
-became Current finished on v1 and **both** of its tasks — including the one
-scheduled after the switch — were executed by v1's Orker, while the run
-submitted after the switch ran wholly on v2.
+A rollout done this way is proven end to end on the real binaries twice, from
+two angles. `proof/M8.4/deploy-runbook-transcript.txt` (phase 3) walks the
+transitions one release pair at a time: the run in flight when v2 became
+Current finished on v1 and **both** of its tasks — including the one scheduled
+after the switch — were executed by v1's Orker, while the run submitted after
+the switch ran wholly on v2. `proof/M8.5/ha-transcript.txt` does it across a
+live **two-replica** v1 deployment, and adds the plugin's own account: the task
+scheduled after the switch printed the build id of the Orker that ran it, `v1`.
 
 ---
 
@@ -354,9 +476,16 @@ New runs go back to v1 immediately. **Runs already pinned to v2 keep finishing
 on v2** — that is the intended outcome, not a fault, and it is why v2's workers
 must stay up until *they* drain.
 
+Both halves are measured, on the real binaries, in
+`proof/M8.5/ha-transcript.txt` (phase 6): a run was put in flight on v2, v1 was
+made Current again, and a run submitted **to the v2 replica** afterwards
+executed on v1 — while the in-flight run finished on v2, its task scheduled
+*after* the rollback executed by v2's Orker.
+
 This only works while v1's workers are still running, which is the real rule
 behind the drain wait: **never decommission the previous version until the next
-one is proven.**
+one is proven.** Pinning cuts both ways: after a rollback, v2 is the version you
+cannot decommission yet.
 
 If v2 is already gone and a run is stranded on it, the escape hatch is a
 per-execution versioning override:
@@ -394,10 +523,17 @@ Runs already pinned to a version still need that version's workers.
 ## 5. Ops notes
 
 - **Run ids** are `ork-{timestamp}-{sequence}` and single-use for all time.
-  Nothing may parse or order by one.
-- **Any replica answers any run.** Live runs are read from Temporal, finished
-  ones from the archive in S3; nothing durable lives in a process, so a read
-  does not need to reach the replica that started the run.
+  Nothing may parse or order by one — the sequence carries a per-process nonce
+  in its high half (`internal/engine/runid.go`), so it is comparable only
+  within one replica and means nothing across two.
+- **Any replica answers any run** (§0). Live runs are read from Temporal,
+  finished ones from the archive in S3; nothing durable lives in a process, so
+  a read does not need to reach the replica that started the run — or that
+  replica to still exist.
+- **A double submit is settled by the cluster, not by a replica.** One
+  `--idempotency-key` sent to two replicas at once returns one run id, because
+  the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not
+  process memory. Retries are safe from any address behind the load balancer.
 - **`ORK_ORKER_QUEUE` must be set on both binaries.** Set it on only one and
   runs strand in `RUNNING`: the Orker polls one queue while the engine
   dispatches to another. It moves **task execution only** — the engine's own
@@ -410,6 +546,11 @@ Runs already pinned to a version still need that version's workers.
 - **`ORK_TEMPORAL_NAMESPACE` is the hard partition.** Nothing — no workflow, no
   activity, no queue, and no worker deployment — crosses it. Parallel test or
   staging environments get their own namespace.
+- **Rolling a replica.** Stop it whenever you like: its runs continue on the
+  other replicas' workers, and a client reconnects anywhere with
+  `from_sequence`. Under versioning the constraint is the *version*, not the
+  replica — do not take the **last** replica of a version down until that
+  version reports `Drained` (§3 step 5).
 - **Process hygiene.** Before any manual end-to-end, kill stray workers:
 
   ```bash
