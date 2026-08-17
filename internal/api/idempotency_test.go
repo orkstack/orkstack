@@ -250,6 +250,63 @@ func TestSubmitRun_FailedStartStaysDeduplicatedOnAnotherReplica(t *testing.T) {
 	}
 }
 
+// TestSubmitRun_AClaimWhoseWinnerDiedHoldsTheKeyUntilItsTTL pins the ONE case
+// acceptance 3 does not cover, and the liveness price the durable claim
+// charges for "never two runs for one key".
+//
+// A replica can win a claim and die before its StartRun reaches the cluster.
+// The claim survives the replica, so the key stays bound to a run that nobody
+// will ever execute, and every later submission is answered from the claim's
+// own PENDING snapshot — no error, no second run — until the claim workflow
+// completes at ORK_IDEMPOTENCY_TTL or an operator terminates it by hand
+// (internal/engine/claim.go, docs/DEPLOY.md §5). The in-process map this
+// replaced had no such window; it also let two replicas start two runs.
+//
+// It is written down as a test so the shape of the window cannot drift
+// unnoticed: if some later change decided to start a fresh run here, that is
+// two runs for one key and the milestone's headline property is gone; if it
+// decided to fail the submission instead, the runbook's advice would be
+// wrong. Both are visible from here.
+func TestSubmitRun_AClaimWhoseWinnerDiedHoldsTheKeyUntilItsTTL(t *testing.T) {
+	claimer := newSharedClaimer()
+	// The binding a dead replica left behind: a PENDING run, in no read model
+	// and in no archive, because it never reached Temporal.
+	stranded := &orkstackv1.Run{
+		Id:           "ork-20260817000000-0001",
+		WorkflowName: "hello-ork",
+		Status:       orkstackv1.Status_STATUS_PENDING,
+	}
+	claimer.bind("order-42", stranded)
+
+	survivor := newReplica(t, claimer, newArchiver(t), &fakeStarter{})
+	got, err := survivor.submit(t, "order-42")
+	if err != nil {
+		t.Fatalf("submit against a stranded claim: %v", err)
+	}
+
+	if got.GetId() != stranded.GetId() {
+		t.Errorf("submission answered with run %q, want the claim's stranded run %q: "+
+			"a different id means a second run was started for one key",
+			got.GetId(), stranded.GetId())
+	}
+	if got.GetStatus() != orkstackv1.Status_STATUS_PENDING {
+		t.Errorf("stranded claim answered %s, want PENDING — the snapshot the winner recorded",
+			got.GetStatus())
+	}
+	if started := survivor.starter.startedRuns(); len(started) != 0 {
+		t.Errorf("started %v for a key already bound; the dedupe guarantee is the point of the claim",
+			started)
+	}
+
+	// The TTL is the only thing that ends the window, so the engine must never
+	// hold a claim forever by default. DefaultClaimTTL is what an unset
+	// ORK_IDEMPOTENCY_TTL resolves to (cmd/ork, loadConfig).
+	if engine.DefaultClaimTTL <= 0 {
+		t.Fatalf("DefaultClaimTTL = %v: a non-positive default would strand a crashed "+
+			"replica's key for the life of the cluster", engine.DefaultClaimTTL)
+	}
+}
+
 // TestSubmitRun_AnUnreachableClaimerFailsTheSubmission: without the authority
 // there is no way to know whether the key is already bound, and guessing is
 // the duplicate this milestone removes. The submission fails and nothing

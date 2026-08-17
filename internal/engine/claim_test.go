@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 
@@ -162,6 +163,109 @@ func TestClaimWorkflow_ARunlessClaimIsRefused(t *testing.T) {
 	// And the key is still free for the next real candidate.
 	if got := outcomes[1].winner.RunID; got != "ork-1-1" {
 		t.Errorf("after the refused claim the key names %q, want ork-1-1", got)
+	}
+}
+
+// TestClaimWorkflow_HoldsTheKeyForItsWholeTTLAndThenFreesIt is the bound on
+// the window a durable claim creates.
+//
+// A replica that wins a claim and dies before its StartRun reaches the cluster
+// leaves the key bound to a run that will never execute (internal/engine/
+// claim.go, internal/api/service.go claimedRun). Nothing releases a claim
+// early — that is deliberate, a released key is a key that can start a second
+// run — so the TTL is the ONLY thing that ends that window, and
+// docs/DEPLOY.md §5 tells operators to shorten ORK_IDEMPOTENCY_TTL to bound
+// it. This test is what makes that advice true: the claim must hold for the
+// whole TTL, and must not hold for a moment longer.
+func TestClaimWorkflow_HoldsTheKeyForItsWholeTTLAndThenFreesIt(t *testing.T) {
+	const ttl = 90 * time.Minute
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(30 * time.Second)
+	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
+		workflow.RegisterOptions{Name: engine.ClaimWorkflowName})
+
+	var outcome claimOutcome
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(engine.ClaimUpdateName, "",
+			claimRecorder{outcome: &outcome}, candidate("ork-1-1"))
+	}, 0)
+	// One minute before the deadline the key must still be held: this is the
+	// stranded-claim window, and a submission arriving here is answered with
+	// the winner's run rather than starting a second one.
+	env.RegisterDelayedCallback(func() {
+		if env.IsWorkflowCompleted() {
+			t.Error("the claim released its key before its TTL; a key freed early can bind twice")
+		}
+	}, ttl-time.Minute)
+
+	start := env.Now()
+	env.ExecuteWorkflow(engine.ClaimWorkflowName,
+		engine.ClaimWorkflowInput{Key: "order-42", TTL: ttl})
+
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("the claim never completed, so the key is held for the life of the cluster")
+	}
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("claim workflow: %v", err)
+	}
+	if got := outcome.winner.RunID; got != "ork-1-1" {
+		t.Fatalf("the claim bound the key to %q, want ork-1-1", got)
+	}
+	// The test environment skips timers rather than sleeping, so this is the
+	// workflow's own clock: exactly one TTL passed between claiming the key
+	// and releasing it.
+	if held := env.Now().Sub(start); held != ttl {
+		t.Errorf("the claim held the key for %v, want exactly the configured TTL %v", held, ttl)
+	}
+}
+
+// TestClaimWorkflow_CancellationFreesAStrandedKeyEarly is the escape hatch the
+// runbook hands an operator who cannot wait out the TTL: a claim whose winner
+// died holds a key for up to 24h by default, and docs/DEPLOY.md §5 says to end
+// the claim execution by hand. Ending it must actually free the key — the
+// workflow closes, and a closed claim id can be reused
+// (WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE, internal/engine/idempotency.go).
+//
+// Cancellation is what a test environment can deliver; a terminate is stricter
+// still, since it closes the execution without running workflow code at all.
+// What is asserted here is the half that is code: the sleep does not swallow
+// the cancellation, and history keeps the binding it held.
+func TestClaimWorkflow_CancellationFreesAStrandedKeyEarly(t *testing.T) {
+	const ttl = 24 * time.Hour
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(30 * time.Second)
+	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
+		workflow.RegisterOptions{Name: engine.ClaimWorkflowName})
+
+	var outcome claimOutcome
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(engine.ClaimUpdateName, "",
+			claimRecorder{outcome: &outcome}, candidate("ork-1-1"))
+	}, 0)
+	env.RegisterDelayedCallback(env.CancelWorkflow, time.Minute)
+
+	start := env.Now()
+	env.ExecuteWorkflow(engine.ClaimWorkflowName,
+		engine.ClaimWorkflowInput{Key: "order-42", TTL: ttl})
+
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("the cancelled claim is still running; the operator's escape hatch does not free the key")
+	}
+	err := env.GetWorkflowError()
+	var canceled *temporal.CanceledError
+	if !errors.As(err, &canceled) {
+		t.Fatalf("cancelled claim ended with %v, want a cancellation: the sleep must not swallow it", err)
+	}
+	if held := env.Now().Sub(start); held >= ttl {
+		t.Errorf("the claim ran for %v before closing, want well under the %v TTL", held, ttl)
+	}
+	if got := outcome.winner.RunID; got != "ork-1-1" {
+		t.Errorf("the cancelled claim reports holder %q, want the binding it held (ork-1-1) "+
+			"so history says whose key was freed", got)
 	}
 }
 
