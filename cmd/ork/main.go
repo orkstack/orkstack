@@ -227,7 +227,8 @@ func run(logger *slog.Logger, cfg config) error {
 	}
 	defer eventWorker.Stop()
 	logger.Info("temporal workers started",
-		"task_queue", task.DefaultQueue, "event_queue", engine.EventQueue)
+		"task_queue", task.DefaultQueue, "event_queue", engine.EventQueue,
+		"orker_queue", cfg.orkerQueue)
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, cfg.orkerQueue)
 	svc := api.NewService(api.Config{
 		Workflows: orkflows,

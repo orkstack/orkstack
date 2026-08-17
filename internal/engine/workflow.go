@@ -470,6 +470,12 @@ func (s *runState) emit(
 	return nil
 }
 
+// queueFor is the queue a task's activity is scheduled on. Every task in a run
+// started by this engine already carries one: TemporalStarter.StartRun binds
+// the engine's orker queue into the workflow input, because workflow code is
+// deterministic and may not read process configuration itself. The fallback
+// covers a history written before that binding existed, so those runs still
+// replay onto the queue they originally used.
 func queueFor(t *orkstackv1.Task) string {
 	if t.GetQueue() != "" {
 		return t.GetQueue()
