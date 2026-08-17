@@ -206,9 +206,9 @@ func run(logger *slog.Logger, cfg config) error {
 		}
 	}()
 
-	// Run archive: the durable half of the read model. The in-process store
-	// answers live runs; the archive holds every finished run, so history
-	// outlives this process.
+	// Run archive: the record for a finished run. Temporal is the record for a
+	// live one (engine.TemporalRunReader below), and the archive outlives its
+	// retention, so between them nothing durable lives in this process.
 	archiveConfig := artifacts.ConfigFromEnv()
 	archiveStore, err := artifacts.NewRunArchive(archiveConfig)
 	if err != nil {
@@ -217,6 +217,11 @@ func run(logger *slog.Logger, cfg config) error {
 	archive := engine.NewRunArchiver(archiveStore)
 	logger.Info("run archive ready",
 		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
+
+	// The read model. Every run read leaves this process: a run's history is
+	// its event log, and Temporal hands the same answer to every replica, for
+	// runs this one neither started nor projected.
+	reader := engine.NewTemporalRunReader(temporalClient)
 
 	// Workflow worker: hosts RunWorkflow on the same queue Orkers poll for
 	// task activities, and the idempotency claims, which are engine state no
@@ -230,11 +235,14 @@ func run(logger *slog.Logger, cfg config) error {
 	})
 
 	// Projection worker: engine-internal activities on a dedicated queue so
-	// Orkers never receive them.
+	// Orkers never receive them. The archive body's event log is read back
+	// from Temporal, because with more than one replica polling this queue no
+	// single process executes all of a run's events.
 	eventWorker := worker.New(temporalClient, engine.EventQueue, eventWorkerOptions())
 	eventWorker.RegisterActivityWithOptions(
 		engine.NewArchivingEventActivities(bus, runs, archive).
 			WithRunNotifier(runNotifier).
+			WithEventSource(reader).
 			PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
@@ -261,6 +269,7 @@ func run(logger *slog.Logger, cfg config) error {
 
 	svc := api.NewService(api.Config{
 		Workflows:   orkflows,
+		Reader:      reader,
 		Runs:        runs,
 		Bus:         bus,
 		Starter:     starter,

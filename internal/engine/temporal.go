@@ -88,6 +88,14 @@ func (s *TemporalStarter) StartRun(
 		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
+		// The memo is how `run list` names an orkflow without reading a
+		// history per run: visibility returns it with the execution, on every
+		// replica. It is a copy of the definition's identity, never a second
+		// source of truth for it.
+		Memo: map[string]any{
+			MemoOrkflowName:    wf.GetName(),
+			MemoOrkflowVersion: wf.GetVersion(),
+		},
 	}, WorkflowName, runID, pinTaskQueues(wf, s.orkerQueue), input)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
