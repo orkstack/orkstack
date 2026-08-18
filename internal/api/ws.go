@@ -1,8 +1,12 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/coder/websocket"
@@ -39,6 +43,22 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			fromSequence = parsed
 		}
 
+		// Origin is checked before the run is resolved, for two reasons. A
+		// foreign origin must not learn which run ids exist by telling 404 from
+		// 403. And a probe with any run id can then ask one question — "will
+		// this engine talk to the page I serve?" — which is what `make up` uses
+		// to refuse to report a stack that looks fine and never goes live.
+		if !originAllowed(r, allowedOrigins) {
+			slog.Warn("websocket upgrade refused",
+				"run_id", runID,
+				"origin", r.Header.Get("Origin"),
+				"host", r.Host,
+				"allowed_origins", allowedOrigins,
+				"hint", "set ORK_WS_ALLOWED_ORIGINS to the origin serving the UI")
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+
 		// Resolving the run before the upgrade keeps a missing run an HTTP 404
 		// rather than a socket that opens and immediately dies.
 		if _, err := svc.LookupRun(r.Context(), runID); err != nil {
@@ -54,7 +74,19 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			OriginPatterns: allowedOrigins,
 		})
 		if err != nil {
-			return // Accept already wrote the error response.
+			// Accept already wrote the error response, but a refused upgrade is
+			// otherwise invisible: the browser shows a page that never goes
+			// live and the engine says nothing at all. The common cause is an
+			// origin this engine was not told to allow, so name both sides and
+			// the setting that fixes it.
+			slog.Warn("websocket upgrade refused",
+				"run_id", runID,
+				"origin", r.Header.Get("Origin"),
+				"host", r.Host,
+				"allowed_origins", allowedOrigins,
+				"hint", "set ORK_WS_ALLOWED_ORIGINS to the origin serving the UI",
+				"error", err)
+			return
 		}
 		defer conn.CloseNow()
 
@@ -85,4 +117,51 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			_ = conn.Close(websocket.StatusNormalClosure, "event stream closed")
 		}
 	})
+}
+
+// originAllowed reports whether a browser at r's Origin may open this socket.
+//
+// It mirrors what coder/websocket enforces during Accept, and Accept still
+// enforces it too — this is the same rule applied early enough to answer
+// before the run is looked up. The rules:
+//
+//   - No Origin header: not a browser. Allowed; CLI and test clients send none.
+//   - Origin whose host equals the request Host: same-origin. Always allowed,
+//     which is the library's default when no patterns are configured.
+//   - Otherwise: allowed only when the Origin's host matches one of patterns,
+//     compared case-insensitively, with `*` wildcards (so `*.example.com` and
+//     `localhost:5173` both work).
+func originAllowed(r *http.Request, patterns []string) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Host)
+	if host == strings.ToLower(r.Host) {
+		return true
+	}
+	for _, pattern := range patterns {
+		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		if pattern == "" {
+			continue
+		}
+		// Mirror coder/websocket exactly (accept.go, authenticateOrigin): a
+		// pattern carrying a scheme is matched against scheme://host, one
+		// without it against the bare host. Both spellings appear in the wild —
+		// ORK_WS_ALLOWED_ORIGINS=http://localhost:5173 and =localhost:5173 —
+		// and this check must not accept a narrower set than Accept does, or it
+		// rejects sockets the library would have allowed.
+		target := host
+		if strings.Contains(pattern, "://") {
+			target = strings.ToLower(parsed.Scheme) + "://" + host
+		}
+		if ok, err := path.Match(pattern, target); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }

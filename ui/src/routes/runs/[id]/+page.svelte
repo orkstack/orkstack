@@ -25,6 +25,11 @@
 	let runStatus = $state<Status>(untrack(() => data.run?.status) ?? Status.UNSPECIFIED);
 	let runError = $state<string>(untrack(() => data.run?.error?.message) ?? '');
 	let socketState = $state<RunSocketState>('connecting');
+	let streamDelivered = $state(false);
+	// The socket is only 'live' once it has actually delivered something.
+	// 'error' or a reconnect loop that never delivers means the browser is
+	// not receiving this run, whatever the run itself is doing.
+	const streamBroken = $derived(!streamDelivered && (socketState === 'error' || socketState === 'closed'));
 	let events = $state<Event[]>([]);
 	let tasks = $state<TaskView[]>(untrack(seedTasks));
 	let finishedAt = $state(untrack(() => data.run?.finishedAt));
@@ -118,9 +123,21 @@
 		}
 	}
 
+	// A socket that never opens is the failure this page must not hide. It
+	// looked identical to a quiet run: an amber CONNECTING badge and an empty
+	// event log reading "Waiting for events…", while the run had in fact
+	// finished. Track whether the stream ever delivered anything so the page
+	// can say "not connected" instead of implying "nothing has happened".
 	$effect(() => {
 		if (!run) return;
-		const stop = watchRunEvents(run.id, onEvent, (s) => (socketState = s));
+		const stop = watchRunEvents(
+			run.id,
+			(event) => {
+				streamDelivered = true;
+				onEvent(event);
+			},
+			(s) => (socketState = s)
+		);
 		return stop;
 	});
 
@@ -174,7 +191,13 @@
 							? 'bg-emerald-400'
 							: 'bg-amber-400'}"
 				></span>
-				{isTerminal(runStatus) ? 'ENDED' : socketState === 'open' ? 'LIVE' : 'CONNECTING'}
+				{isTerminal(runStatus)
+					? 'ENDED'
+					: socketState === 'open'
+						? 'LIVE'
+						: streamBroken
+							? 'NOT CONNECTED'
+							: 'CONNECTING'}
 			</span>
 		</div>
 	</div>
@@ -238,7 +261,14 @@
 				data-testid="event-log"
 				class="max-h-[28rem] overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 font-mono text-xs"
 			>
-				{#if events.length === 0}
+				{#if events.length === 0 && streamBroken}
+					<p data-testid="event-log-offline" class="text-amber-300">
+						Not receiving events. The engine refused or dropped this page's
+						websocket, so this run cannot update live — reload to see its current
+						state. If the engine serves the UI from another origin, it needs
+						<code class="text-amber-200">ORK_WS_ALLOWED_ORIGINS</code> to include it.
+					</p>
+				{:else if events.length === 0}
 					<p class="text-zinc-500">Waiting for events…</p>
 				{:else}
 					{#each events as event (event.sequence.toString())}

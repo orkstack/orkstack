@@ -116,8 +116,16 @@ cmd_up() {
 	# MinIO, archived runs on local disk, and `make reset` wiping the volume
 	# leaves runs that a fresh engine still lists.
 	local backend="${ORK_ARTIFACT_BACKEND:-s3}"
+	# The UI is served from one port and the engine listens on another, so every
+	# WebSocket the browser opens is cross-origin. The engine's default is
+	# same-origin only — right for production, fatal here: without this the
+	# upgrade is refused, the run page never goes live and its event log stays
+	# empty, while a refresh still works because that reads through the
+	# same-origin Connect proxy instead of the socket.
+	local ws_origins="${ORK_WS_ALLOWED_ORIGINS:-localhost:$UI_PORT,127.0.0.1:$UI_PORT}"
 	start orker env ORK_ARTIFACT_BACKEND="$backend" "$REPO/bin/orker"
-	start ork env ORK_ARTIFACT_BACKEND="$backend" ORK_HTTP_ADDR="$ENGINE_ADDR" "$REPO/bin/ork"
+	start ork env ORK_ARTIFACT_BACKEND="$backend" ORK_HTTP_ADDR="$ENGINE_ADDR" \
+		ORK_WS_ALLOWED_ORIGINS="$ws_origins" "$REPO/bin/ork"
 	wait_for "engine api" 60 "$REPO/bin/orkctl" --server "$ENGINE_URL" orkflow list
 	# Plugin discovery is an activity the engine schedules onto the Orker's
 	# queue, so this answers only when the Orker is actually polling. A
@@ -135,6 +143,21 @@ cmd_up() {
 		bash -c "cd '$REPO/ui' && exec bun run dev --port $UI_PORT --strictPort"
 	wait_for "ui" 90 curl -sf -o /dev/null "$UI_URL/orkflows"
 
+	# The browser's own handshake, made the way the browser makes it. Serving a
+	# page proves nothing about the socket that page opens: the UI can render
+	# perfectly while every run sits there never going live. A refused upgrade
+	# answers 403 here rather than 101.
+	local ws_probe
+	ws_probe="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+		-H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+		-H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+		-H "Origin: $UI_URL" \
+		"$ENGINE_URL/ws/runs/ork-probe-nonexistent?from_sequence=0" || true)"
+	case "$ws_probe" in
+	404) say "  websocket ready (origin $UI_URL accepted)" ;;
+	403) die "the engine refuses websockets from $UI_URL (ORK_WS_ALLOWED_ORIGINS=$ws_origins); the UI would never go live" ;;
+	*) die "unexpected websocket probe response: $ws_probe" ;;
+	esac
 	say ""
 	say "OrkStack is up."
 	say "  UI             $UI_URL"

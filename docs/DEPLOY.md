@@ -102,7 +102,14 @@ needs `ORK_S3_*` either way.
   not a counter-example: it predates the M7.1 rename and drives `bin/orkengine`
   with that release's `workflow list`.)
 - **Browser clients need `ORK_WS_ALLOWED_ORIGINS`** set on every replica, since
-  any of them may take the socket.
+  any of them may take the socket. Unset, the engine allows same-origin only,
+  which is right for production and wrong the moment the UI is served from its
+  own port: the upgrade is refused with 403, the run page never goes live and
+  its event log stays empty, while a page refresh still works because that
+  reads through Connect rather than the socket. The engine logs
+  `websocket upgrade refused` with the origin, the host and this variable's
+  value, and `make up` probes the handshake and refuses to report a stack the
+  browser cannot stream from.
 - **Every replica is also a worker host.** It polls `ork-tasks` (run workflows
   and idempotency claims) and `ork-engine-events` (projection). Adding a
   replica therefore adds workflow capacity as well as API capacity, and it is
