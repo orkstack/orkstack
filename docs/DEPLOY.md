@@ -118,14 +118,64 @@ needs `ORK_S3_*` either way.
 
 ### Running M Orker pools
 
-- **One pool = one queue = one set of Orker processes** sharing an
-  `ORK_ORKER_QUEUE`. Add processes to a pool for throughput; add a pool for
-  isolation — a GPU host, a pool with different plugins, a pool near some data.
-- **The engine's default pool must match.** The engine dispatches every task
-  that names no `pool:` to its own `ORK_ORKER_QUEUE`, so the variable is set
-  on both binaries or runs strand in `RUNNING` (§2, §5). A task's own `pool:`
-  in the DSL outranks it, and is how one step reaches a dedicated pool
-  (`docs/DSL.md`).
+- **A pool is a set of Orkers, and `ORK_ORKER_POOL` is how a process joins
+  one.** Start Orkers with `ORK_ORKER_POOL=gpu` and they serve the pool a task
+  reaches by writing `pool: gpu` (`docs/DSL.md`). Add processes to a pool for
+  throughput; add a pool for isolation — a GPU host, a pool with different
+  plugins, a pool near some data. `main` is the built-in pool and needs no
+  configuration: `make run-ork` + `make run-orker` with nothing set is one
+  Orker serving `main`.
+- **`ORK_ORKER_QUEUE` is the operator escape hatch underneath it**, naming the
+  raw Temporal task queue directly. It exists for the test harnesses, which
+  isolate concurrent runs by pinning a queue no other agent polls (AGENTS.md
+  §6). Prefer `ORK_ORKER_POOL`: a pool is a name the whole system speaks, a
+  raw queue is nobody's pool and is reported as `main` with a boot log saying
+  so.
+- **Set both and they must agree, or the process refuses to boot.** The check
+  is `task.ResolvePoolBinding`, and both binaries run it:
+
+  | set | channel polled / dispatched to | pool reported |
+  |---|---|---|
+  | neither | `ork-tasks` | `main` |
+  | `ORK_ORKER_POOL=gpu` | `ork-pool-gpu` | `gpu` |
+  | `ORK_ORKER_QUEUE=ork-tasks-m7-9` | that queue, verbatim | `main`, with a boot log naming the raw queue |
+  | both, agreeing | that queue | that pool |
+  | both, disagreeing | **boot fails** | `ORK_ORKER_POOL=gpu resolves to "ork-pool-gpu" but ORK_ORKER_QUEUE="ork-tasks-m7-9"` |
+
+  Refusing is the point. Silently picking a winner is how an Orker ends up
+  polling one channel while the engine dispatches to another, which strands
+  every run in `RUNNING` with nothing to say why.
+- **The engine's default route must match its Orkers.** A task that names no
+  `pool:` runs on its namespace's `default_pool`, then on `main`. Setting
+  `ORK_ORKER_POOL` (or `ORK_ORKER_QUEUE`) on the engine pins that default
+  route to the same channel its Orkers poll, so the variable goes on **both**
+  binaries. A task's own `pool:` outranks it and is never redirected by it.
+- **A submit into a pool with no live Orkers is refused, at submit.** The
+  engine asks Temporal which workers are polling the pool's channel and
+  refuses the submission when the answer is none, naming the pool, the tasks
+  and the fix:
+
+  ```
+  pool "gpu" (namespace "payments", tasks: settle) has no live Orkers, so nothing
+  would pick these tasks up. Start one with ORK_ORKER_POOL=gpu, or submit with
+  allow_empty_pool to wait for one
+  ```
+
+  The window is 60 seconds of poller freshness, and the asymmetry is
+  deliberate: Temporal keeps poller records for minutes after a worker dies,
+  so a stale record can still say "live" shortly after an Orker stopped. That
+  degrades to the old behaviour — a run that waits — never to a false
+  rejection of a healthy submit. `SubmitRunRequest.allow_empty_pool` submits
+  anyway; it is off by default and taking it logs
+  `WARN submit into empty pool` with the pool and the tasks.
+- **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
+  enforced on the server at both apply and submit, so no client can skip it.
+  An empty list means no restriction.
+- **"Is anything serving my pools?" has an answer.**
+  `NamespaceService.ListPools` reports each pool's name, its live Orker count
+  and the plugins those Orkers run. Every number is read from the cluster, so
+  any replica answers — including one that started nothing. A `orkctl` command
+  for it arrives with the namespace CLI; until then it is one Connect call.
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
@@ -150,7 +200,8 @@ deployment cares about.
 |---|---|---|---|
 | `ORK_TEMPORAL_ADDRESS` | `localhost:7233` | both | Temporal frontend. The default is the SDK's `client.DefaultHostPort` |
 | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
-| `ORK_ORKER_QUEUE` | `ork-tasks` | **both** | queue Orkers poll and the engine dispatches **task activities** to. It does not move the engine's own queues (§2) |
+| `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
+| `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §6). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
 | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory |
 | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |

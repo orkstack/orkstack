@@ -1,0 +1,582 @@
+//go:build integration
+
+package engine_test
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/worker"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/plugin"
+)
+
+// poolRoutingNamespace isolates this suite's Temporal namespace, per
+// AGENTS.md §6: it starts Orkers on well-known pool channels
+// (ork-pool-alpha and friends), and a parallel agent's run must never be
+// picked up by them.
+func poolRoutingNamespace() string {
+	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
+		return ns
+	}
+	return fmt.Sprintf("ork-m10-2-pool-routing-%d", os.Getpid())
+}
+
+// isolatedRegistry is the namespace registry this engine was configured with.
+//
+// The document is REAL — written to and read back from the bucket through
+// artifacts.S3NamespaceStore — but it is registered under a name unique to
+// this test rather than under "default". Writing an allow-list onto the shared
+// default namespace would refuse every other suite's pools for as long as this
+// one ran, which is a collision of exactly the kind AGENTS.md §6 is about.
+// Selecting a namespace per request arrives with the namespace-aware API
+// (M10.3); until then this stands in for it, and everything below the seam —
+// the resolver, the allow-list, the error text — is the production path.
+type isolatedRegistry struct {
+	store *artifacts.S3NamespaceStore
+	name  string
+}
+
+func (r isolatedRegistry) Get(ctx context.Context, _ string) (*orkstackv1.Namespace, error) {
+	return r.store.Get(ctx, r.name)
+}
+
+// poolOrker is one Orker stub: it serves a single pool and records every task
+// it was handed, together with the channel Temporal delivered it on. The
+// channel comes from Temporal's own activity info, not from the engine, so it
+// is evidence rather than an echo.
+type poolOrker struct {
+	name  string
+	pool  string
+	queue string
+	// plugins is what this Orker answers when its pool is asked what it can
+	// run. The two Orkers answer differently on purpose: a report that came
+	// from the engine rather than from the pool would give both the same set.
+	plugins []plugin.Descriptor
+
+	mu       sync.Mutex
+	executed []string
+	channels map[string]string
+}
+
+func newPoolOrker(t *testing.T, name, pool string, plugins ...string) *poolOrker {
+	t.Helper()
+	queue, err := task.QueueForPool(pool)
+	if err != nil {
+		t.Fatalf("QueueForPool(%q): %v", pool, err)
+	}
+	descriptors := make([]plugin.Descriptor, 0, len(plugins))
+	for _, name := range plugins {
+		descriptors = append(descriptors, plugin.Descriptor{Name: name, Version: "0.1.0"})
+	}
+	return &poolOrker{
+		name: name, pool: pool, queue: queue,
+		plugins:  descriptors,
+		channels: map[string]string{},
+	}
+}
+
+// listPlugins answers the engine's plugin-discovery activity, as a real Orker
+// does (cmd/orker registers task.ActivityListPlugins on its own channel).
+func (o *poolOrker) listPlugins(context.Context) ([]plugin.Descriptor, error) {
+	return o.plugins, nil
+}
+
+func (o *poolOrker) execute(ctx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+	o.mu.Lock()
+	o.executed = append(o.executed, in.TaskID)
+	o.channels[in.TaskID] = activity.GetInfo(ctx).TaskQueue
+	o.mu.Unlock()
+	return task.ExecuteTaskResult{
+		TaskID: in.TaskID,
+		Output: plugin.Payload{"ran_on_orker": o.name, "pool": in.Pool},
+	}, nil
+}
+
+func (o *poolOrker) ran() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := append([]string(nil), o.executed...)
+	sort.Strings(out)
+	return out
+}
+
+func (o *poolOrker) channelFor(taskID string) string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.channels[taskID]
+}
+
+// TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently is this
+// milestone's acceptance, against a real cluster, with two Orkers on two
+// different pools.
+//
+// Three properties, one deployment:
+//
+//  1. a task pinned to pool alpha runs on alpha's Orker and never on bravo's,
+//     and a sibling task pinned to bravo runs on bravo's and never on alpha's
+//     — in the SAME run, so the routing is per task and not per engine;
+//  2. a task naming a pool the namespace forbids is refused at SubmitRun, with
+//     an error naming the namespace, the task and the pool;
+//  3. a submit whose pool has no live Orkers is refused at SubmitRun, and no
+//     run is created for it — the failure AGENTS.md §6 describes, converted
+//     from a run stranded in RUNNING into an error a client can act on.
+//
+// Before this milestone: (1) sent both tasks to one channel, (2) was accepted
+// and ran, (3) hung until the stream deadline.
+func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
+	address := temporalAddress()
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
+	}
+	_ = conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	namespace := poolRoutingNamespace()
+	temporalClient := dialVersioningCluster(t, ctx, namespace)
+	defer temporalClient.Close()
+
+	// The namespace registry is the real S3 store against MinIO: the
+	// allow-list this test enforces is a document that made a round trip
+	// through the bucket.
+	storeConfig := artifacts.ConfigFromEnv()
+	storeConfig.Backend = artifacts.BackendS3
+	namespaceStore, err := artifacts.NewS3NamespaceStore(ctx, storeConfig)
+	if err != nil {
+		infraAbsent(t, "cannot open the namespace registry: %v", err)
+	}
+	nsName := fmt.Sprintf("m10-2-pools-%d-%d", os.Getpid(), time.Now().UnixNano())
+	registered := &orkstackv1.Namespace{
+		Name:         nsName,
+		Description:  "M10.2 pool routing acceptance",
+		DefaultPool:  task.DefaultPool,
+		AllowedPools: []string{task.DefaultPool, "alpha", "bravo", "cold"},
+	}
+	if err := namespaceStore.Put(ctx, registered); err != nil {
+		infraAbsent(t, "cannot write the namespace document (is MinIO up?): %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		if err := namespaceStore.Delete(cleanupCtx, nsName); err != nil {
+			t.Logf("could not remove the test namespace %q: %v", nsName, err)
+		}
+	})
+
+	alpha := newPoolOrker(t, "orker-A", "alpha", "shell")
+	bravo := newPoolOrker(t, "orker-B", "bravo", "file", "http")
+
+	bus := engine.NewEventBus()
+	runs := engine.NewRunStore()
+
+	runWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		LocalActivityWorkerOnly:     true,
+	})
+	engine.RegisterWorkflows(runWorker)
+
+	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	})
+	eventWorker.RegisterActivityWithOptions(
+		engine.NewEventActivities(bus, runs).PublishEvent,
+		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
+	)
+
+	started := map[string]worker.Worker{"run": runWorker, "event": eventWorker}
+	for _, orker := range []*poolOrker{alpha, bravo} {
+		w := worker.New(temporalClient, orker.queue, worker.Options{
+			DisableRegistrationAliasing: true,
+			DisableWorkflowWorker:       true,
+		})
+		w.RegisterActivityWithOptions(orker.execute,
+			activity.RegisterOptions{Name: task.ActivityExecuteTask})
+		w.RegisterActivityWithOptions(orker.listPlugins,
+			activity.RegisterOptions{Name: task.ActivityListPlugins})
+		started[orker.name] = w
+	}
+	for name, w := range started {
+		if err := w.Start(); err != nil {
+			t.Fatalf("start %s worker: %v", name, err)
+		}
+		defer w.Stop()
+	}
+
+	orkflows := engine.NewMemoryOrkflowStore()
+	starter := engine.NewTemporalStarter(temporalClient, task.DefaultQueue)
+	svc := api.NewService(api.Config{
+		Orkflows:   orkflows,
+		Namespaces: isolatedRegistry{store: namespaceStore, name: nsName},
+		Reader:     engine.NewTemporalRunReader(temporalClient),
+		Runs:       runs,
+		Bus:        bus,
+		Starter:    starter,
+		Lister:     starter,
+		// The liveness answer comes from Temporal's poller information, which
+		// is the whole point: the engine asks the cluster rather than guessing.
+		Pools:       engine.NewTemporalPoolProbe(temporalClient),
+		PoolPlugins: starter,
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
+	go func() { _ = server.Serve(listener) }()
+	transport := &http.Transport{}
+	transport.Protocols = new(http.Protocols)
+	transport.Protocols.SetUnencryptedHTTP2(true)
+	httpClient := &http.Client{Transport: transport}
+	baseURL := "http://" + listener.Addr().String()
+	defer func() {
+		transport.CloseIdleConnections()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+
+	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
+	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
+	namespaceClient := orkstackv1connect.NewNamespaceServiceClient(httpClient, baseURL)
+
+	transcript := &poolTranscript{}
+	defer transcript.write(t)
+	transcript.section("deployment")
+	transcript.line("temporal namespace   %s", namespace)
+	transcript.line("ork namespace        %s", nsName)
+	transcript.line("allowed pools        %s", strings.Join(registered.GetAllowedPools(), ", "))
+	transcript.line("orker A serves pool  %s", alpha.pool)
+	transcript.line("orker B serves pool  %s", bravo.pool)
+
+	// Wait until the cluster reports both Orkers, so the liveness check below
+	// is answering about a deployment that is actually up.
+	probe := engine.NewTemporalPoolProbe(temporalClient)
+	for _, orker := range []*poolOrker{alpha, bravo} {
+		awaitLiveOrker(t, ctx, probe, orker)
+	}
+
+	// ── 1. a task pinned to a pool runs on that pool's Orker, and only there ──
+	const twoPoolJob = `
+name: two-pool-job
+version: 0.1.0
+tasks:
+  - id: crunch
+    plugin: shell
+    pool: alpha
+    with: {command: "echo crunch"}
+  - id: polish
+    plugin: shell
+    pool: bravo
+    needs: [crunch]
+    with: {command: "echo polish"}
+`
+	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
+		&orkstackv1.ApplyOrkflowRequest{Yaml: twoPoolJob})); err != nil {
+		t.Fatalf("apply the two-pool orkflow: %v", err)
+	}
+
+	// ── 3's setup, submitted FIRST so the visibility argument below holds ──
+	const coldJob = `
+name: cold-job
+version: 0.1.0
+tasks:
+  - id: freeze
+    plugin: shell
+    pool: cold
+    with: {command: "echo freeze"}
+`
+	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
+		&orkstackv1.ApplyOrkflowRequest{Yaml: coldJob})); err != nil {
+		t.Fatalf("apply the cold orkflow: %v", err)
+	}
+	_, coldErr := runClient.SubmitRun(ctx, connect.NewRequest(
+		&orkstackv1.SubmitRunRequest{OrkflowName: "cold-job"}))
+	if coldErr == nil {
+		t.Fatal("submitting into pool \"cold\" succeeded; nothing serves it, so the run " +
+			"would have reached RUNNING and stayed there")
+	}
+	if code := connect.CodeOf(coldErr); code != connect.CodeFailedPrecondition {
+		t.Errorf("empty-pool submit refused with %v, want FailedPrecondition", code)
+	}
+	for _, want := range []string{"cold", "freeze", "ORK_ORKER_POOL=cold"} {
+		if !strings.Contains(coldErr.Error(), want) {
+			t.Errorf("empty-pool error %q does not name %q", coldErr, want)
+		}
+	}
+	transcript.section("3. submit into a pool with no Orkers")
+	transcript.line("SubmitRun(cold-job) -> %v", connect.CodeOf(coldErr))
+	transcript.line("%s", coldErr)
+
+	// ── 2. a pool the namespace forbids is refused, at apply and at submit ──
+	const forbiddenJob = `
+name: forbidden-job
+version: 0.1.0
+tasks:
+  - id: sneak
+    plugin: shell
+    pool: forbidden
+    with: {command: "echo sneak"}
+`
+	_, applyErr := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
+		&orkstackv1.ApplyOrkflowRequest{Yaml: forbiddenJob}))
+	if applyErr == nil {
+		t.Fatal("applying an orkflow onto a forbidden pool succeeded")
+	}
+	// The submit gate is the one that cannot be bypassed: put the definition
+	// into the store behind the API's back, exactly as a definition applied
+	// while the allow-list was wider would be, and submit it.
+	if err := orkflows.Put(ctx, &orkstackv1.Orkflow{
+		Name:    "forbidden-job",
+		Version: "0.1.0",
+		Tasks: []*orkstackv1.Task{
+			{Id: "sneak", Plugin: "shell", Pool: "forbidden"},
+		},
+	}); err != nil {
+		t.Fatalf("seed the stored definition: %v", err)
+	}
+	_, submitErr := runClient.SubmitRun(ctx, connect.NewRequest(
+		&orkstackv1.SubmitRunRequest{OrkflowName: "forbidden-job"}))
+	if submitErr == nil {
+		t.Fatal("submitting a stored definition onto a forbidden pool succeeded; the " +
+			"allow-list is bypassable by anything that did not go through apply")
+	}
+	if code := connect.CodeOf(submitErr); code != connect.CodeInvalidArgument {
+		t.Errorf("forbidden-pool submit refused with %v, want InvalidArgument", code)
+	}
+	for _, want := range []string{nsName, "sneak", "forbidden"} {
+		if !strings.Contains(submitErr.Error(), want) {
+			t.Errorf("forbidden-pool error %q does not name %q", submitErr, want)
+		}
+	}
+	transcript.section("2. a pool the namespace does not allow")
+	transcript.line("ApplyOrkflow(forbidden-job)  -> %v", connect.CodeOf(applyErr))
+	transcript.line("%s", applyErr)
+	transcript.line("SubmitRun(forbidden-job)     -> %v", connect.CodeOf(submitErr))
+	transcript.line("%s", submitErr)
+
+	// ── now run the two-pool job for real ──
+	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(
+		&orkstackv1.SubmitRunRequest{OrkflowName: "two-pool-job"}))
+	if err != nil {
+		t.Fatalf("SubmitRun(two-pool-job): %v", err)
+	}
+	runID := submitted.Msg.GetRun().GetId()
+
+	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(
+		&orkstackv1.StreamEventsRequest{RunId: runID}))
+	if err != nil {
+		t.Fatalf("StreamEvents: %v", err)
+	}
+	defer stream.Close()
+	scheduled := map[string]string{}
+	var last *orkstackv1.Event
+	for stream.Receive() {
+		event := stream.Msg()
+		if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED {
+			scheduled[event.GetTaskId()] = event.GetMessage()
+		}
+		last = event
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("event stream error: %v. Run %s never terminated; orker A ran %v, orker B ran %v",
+			err, runID, alpha.ran(), bravo.ran())
+	}
+	if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
+		t.Fatalf("run %s ended on %v (%s), want RUN_SUCCEEDED", runID, last.GetType(), last.GetMessage())
+	}
+
+	// The evidence: which Orker ran which task, and on which channel Temporal
+	// delivered it. Both come from the Orkers themselves.
+	if got := alpha.ran(); len(got) != 1 || got[0] != "crunch" {
+		t.Errorf("orker A (pool %s) ran %v, want exactly [crunch]", alpha.pool, got)
+	}
+	if got := bravo.ran(); len(got) != 1 || got[0] != "polish" {
+		t.Errorf("orker B (pool %s) ran %v, want exactly [polish]", bravo.pool, got)
+	}
+	if got := alpha.channelFor("crunch"); got != alpha.queue {
+		t.Errorf("crunch was delivered on %q, want pool %s's channel %q", got, alpha.pool, alpha.queue)
+	}
+	if got := bravo.channelFor("polish"); got != bravo.queue {
+		t.Errorf("polish was delivered on %q, want pool %s's channel %q", got, bravo.pool, bravo.queue)
+	}
+	// The client-facing event says pool, never channel.
+	for taskID, wantPool := range map[string]string{"crunch": "alpha", "polish": "bravo"} {
+		message := scheduled[taskID]
+		if !strings.Contains(message, "pool "+wantPool) {
+			t.Errorf("TASK_SCHEDULED for %q says %q, want it to name pool %q", taskID, message, wantPool)
+		}
+		if strings.Contains(strings.ToLower(message), "queue") || strings.Contains(message, "ork-pool-") {
+			t.Errorf("TASK_SCHEDULED for %q says %q; the engine's channel must not reach a client",
+				taskID, message)
+		}
+	}
+
+	transcript.section("1. per-task pool routing, one run, two Orkers")
+	transcript.line("run                  %s -> %s", runID, last.GetType())
+	transcript.line("orker A (pool %-5s) ran %v on %s", alpha.pool, alpha.ran(), alpha.channelFor("crunch"))
+	transcript.line("orker B (pool %-5s) ran %v on %s", bravo.pool, bravo.ran(), bravo.channelFor("polish"))
+	for _, taskID := range []string{"crunch", "polish"} {
+		transcript.line("TASK_SCHEDULED %-7s %s", taskID, scheduled[taskID])
+	}
+
+	// ── 3's assertion: the refused submit left no run behind ──
+	//
+	// The cold submit happened BEFORE this run was created, so once this run
+	// is visible, a run the cold submit had started would be visible too.
+	awaitRunListed(t, ctx, runClient, "two-pool-job", runID)
+	listed, err := runClient.ListRuns(ctx, connect.NewRequest(
+		&orkstackv1.ListRunsRequest{OrkflowName: "cold-job"}))
+	if err != nil {
+		t.Fatalf("ListRuns(cold-job): %v", err)
+	}
+	if n := len(listed.Msg.GetRuns()); n != 0 {
+		t.Errorf("the refused empty-pool submit left %d run(s) behind: %v", n, listed.Msg.GetRuns())
+	}
+	transcript.line("runs for cold-job    %d (the refused submit created nothing)", len(listed.Msg.GetRuns()))
+
+	// ── pools are observable, from the cluster, on this replica ──
+	pools, err := namespaceClient.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPools: %v", err)
+	}
+	byName := map[string]*orkstackv1.Pool{}
+	for _, pool := range pools.Msg.GetPools() {
+		byName[pool.GetName()] = pool
+	}
+	for _, orker := range []*poolOrker{alpha, bravo} {
+		reported := byName[orker.pool]
+		if reported.GetLiveOrkerCount() < 1 {
+			t.Errorf("ListPools reports %d Orkers on pool %q, want at least 1",
+				reported.GetLiveOrkerCount(), orker.pool)
+		}
+		// The plugin set has to come from the POOL, not from the engine: each
+		// Orker answers with its own, and a report that asked the wrong one
+		// would hand back the other's.
+		want := make([]string, 0, len(orker.plugins))
+		for _, descriptor := range orker.plugins {
+			want = append(want, descriptor.Name)
+		}
+		sort.Strings(want)
+		if got := strings.Join(reported.GetPlugins(), ","); got != strings.Join(want, ",") {
+			t.Errorf("ListPools reports plugins %q on pool %q, want %q — the answer must come "+
+				"from that pool's own Orkers", got, orker.pool, strings.Join(want, ","))
+		}
+	}
+	if got := byName["cold"].GetLiveOrkerCount(); got != 0 {
+		t.Errorf("ListPools reports %d Orkers on the unserved pool %q, want 0", got, "cold")
+	}
+	transcript.section("6. pools, observed from the cluster")
+	transcript.line("default pool         %s", pools.Msg.GetDefaultPool())
+	for _, pool := range pools.Msg.GetPools() {
+		transcript.line("pool %-6s orkers=%d plugins=%v", pool.GetName(),
+			pool.GetLiveOrkerCount(), pool.GetPlugins())
+	}
+}
+
+// awaitLiveOrker waits until the cluster reports a poller on one pool's
+// channel, so a liveness check is measuring a deployment that is up.
+func awaitLiveOrker(t *testing.T, ctx context.Context, probe engine.PoolProbe, orker *poolOrker) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		live, err := probe.ObservePool(ctx, orker.queue)
+		if err == nil && live.Fresh(time.Now(), engine.DefaultPollerFreshness) {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("the cluster never reported an Orker serving pool %q", orker.pool)
+}
+
+// awaitRunListed waits until a run appears in the read model, so a later
+// "nothing is listed" assertion is made against warm visibility.
+func awaitRunListed(
+	t *testing.T,
+	ctx context.Context,
+	runs orkstackv1connect.RunServiceClient,
+	orkflow, runID string,
+) {
+	t.Helper()
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		listed, err := runs.ListRuns(ctx, connect.NewRequest(
+			&orkstackv1.ListRunsRequest{OrkflowName: orkflow}))
+		if err == nil {
+			for _, run := range listed.Msg.GetRuns() {
+				if run.GetId() == runID {
+					return
+				}
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("run %s never became visible; a later empty listing would prove nothing", runID)
+}
+
+// poolTranscript records what happened, for proof/M10.2.
+type poolTranscript struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (p *poolTranscript) section(title string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lines = append(p.lines, "", "── "+title+" "+strings.Repeat("─", max(0, 60-len(title))))
+}
+
+func (p *poolTranscript) line(format string, args ...any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lines = append(p.lines, fmt.Sprintf(format, args...))
+}
+
+func (p *poolTranscript) write(t *testing.T) {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	dir := filepath.Join("..", "..", "proof", "M10.2")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Logf("cannot create %s: %v", dir, err)
+		return
+	}
+	header := []string{
+		"# M10.2 — two Orkers, two pools, one cluster",
+		"#",
+		"# Written by TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently",
+		"# (internal/engine/pool_routing_integration_test.go) against a real Temporal",
+		"# and a real MinIO. Every fact below came from the cluster or from the Orker",
+		"# that executed the task, never from the engine's own expectation.",
+		"#",
+		"# recorded " + time.Now().UTC().Format(time.RFC3339),
+	}
+	body := strings.Join(append(header, p.lines...), "\n") + "\n"
+	path := filepath.Join(dir, "two-pool-transcript.txt")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Logf("cannot write %s: %v", path, err)
+		return
+	}
+	t.Logf("wrote %s", path)
+}
