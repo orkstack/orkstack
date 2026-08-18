@@ -8,7 +8,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// validate enforces the six documented DSL rules (docs/DSL.md).
+// validate enforces the eight documented DSL rules (docs/DSL.md).
 func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	known := opts.KnownPlugins
 	if len(known) == 0 {
@@ -19,24 +19,25 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		knownSet[name] = struct{}{}
 	}
 
-	// Rule 1: orkflow name present and slug-formatted.
+	// Rule 1: an explicit namespace is a slug. Absent is legal and means the
+	// built-in "default" namespace, so an empty value is not checked here —
+	// the store resolves it where the name becomes a key.
+	if ns := wf.GetNamespace(); ns != "" && !slugPattern.MatchString(ns) {
+		return fmt.Errorf("namespace %q is not a slug (%s)", ns, slugPattern.String())
+	}
+
+	// Rule 2: orkflow name present and slug-formatted.
 	if wf.GetName() == "" {
 		return fmt.Errorf("orkflow name is required")
 	}
 	if !slugPattern.MatchString(wf.GetName()) {
 		return fmt.Errorf("orkflow name %q is not a slug (%s)", wf.GetName(), slugPattern.String())
 	}
-	// Rule 7: an explicit namespace is a slug. Absent is legal and means the
-	// built-in "default" namespace, so an empty value is not checked here —
-	// the store resolves it where the name becomes a key.
-	if ns := wf.GetNamespace(); ns != "" && !slugPattern.MatchString(ns) {
-		return fmt.Errorf("namespace %q is not a slug (%s)", ns, slugPattern.String())
-	}
 	if len(wf.GetTasks()) == 0 {
 		return fmt.Errorf("orkflow %q declares no tasks", wf.GetName())
 	}
 
-	// Rule 2: task ids unique and slug-formatted.
+	// Rule 3: task ids unique and slug-formatted.
 	byID := make(map[string]*orkstackv1.Task, len(wf.GetTasks()))
 	for _, task := range wf.GetTasks() {
 		if task.GetId() == "" {
@@ -52,7 +53,7 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	}
 
 	for _, task := range wf.GetTasks() {
-		// Rule 3: every needs entry references an existing task id.
+		// Rule 4: every needs entry references an existing task id.
 		for _, need := range task.GetNeeds() {
 			if _, ok := byID[need]; !ok {
 				return fmt.Errorf("task %q needs unknown task %q", task.GetId(), need)
@@ -61,7 +62,7 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 				return fmt.Errorf("task %q needs itself (cycle)", task.GetId())
 			}
 		}
-		// Rule 5: plugin is a non-empty known plugin name.
+		// Rule 6: plugin is a non-empty known plugin name.
 		if task.GetPlugin() == "" {
 			return fmt.Errorf("task %q: plugin is required", task.GetId())
 		}
@@ -78,12 +79,12 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		}
 	}
 
-	// Rule 4: the needs graph is acyclic.
+	// Rule 5: the needs graph is acyclic.
 	if err := checkAcyclic(wf.GetTasks()); err != nil {
 		return err
 	}
 
-	// Rule 6: templates parse and reference only declared inputs and
+	// Rule 8: templates parse and reference only declared inputs and
 	// (transitively) upstream tasks.
 	inputs := map[string]struct{}{}
 	for name := range wf.GetInputs().GetFields() {

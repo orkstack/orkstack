@@ -431,7 +431,7 @@ tasks:
 }
 
 // TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty pins the two halves of
-// rule 7's namespace: an author who names one gets it verbatim, and an author
+// rule 1's namespace: an author who names one gets it verbatim, and an author
 // who names none gets an empty field — "empty means default" is resolved once,
 // where the name becomes a storage key, and never guessed twice.
 func TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty(t *testing.T) {

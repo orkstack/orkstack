@@ -15,12 +15,12 @@ import (
 // DefaultTimeoutSeconds is applied when a task omits timeout_seconds.
 const DefaultTimeoutSeconds = 300
 
-// slugPattern is the identifier rule for orkflow names, task ids, namespaces
-// and pools (docs/DSL.md validation rules 1, 2 and 7). "default" and "main"
+// slugPattern is the identifier rule for namespaces, orkflow names, task ids
+// and pools (docs/DSL.md validation rules 1, 2, 3 and 7). "default" and "main"
 // are ordinary slugs, so the built-in namespace and pool need no special case.
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-// KnownPlugins is the default set of plugin names accepted by rule 5. There is
+// KnownPlugins is the default set of plugin names accepted by rule 6. There is
 // no runtime plugin registry in M2, so the compiler validates against the
 // documented builtins (docs/PLUGINS.md).
 var KnownPlugins = []string{"container", "file", "http", "shell"}

@@ -25,7 +25,7 @@ func Parse(name, text string) (*template.Template, error) {
 	return template.New(name).Option("missingkey=zero").Funcs(TemplateFuncs()).Parse(text)
 }
 
-// templateChecker validates rule 6 for one task.
+// templateChecker validates rule 8 for one task.
 type templateChecker struct {
 	taskID   string
 	inputs   map[string]struct{}
