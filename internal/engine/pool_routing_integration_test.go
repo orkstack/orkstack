@@ -290,7 +290,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	// deployment that is actually up — and about no other.
 	probe := engine.NewTemporalPoolProbe(temporalClient)
 	for _, orker := range []*poolOrker{alpha, bravo} {
-		settled := awaitPoolServedBy(t, ctx, probe, orker, 1)
+		settled := awaitPoolServedBy(t, ctx, probe, orker.pool, orker.queue, 1)
 		transcript.line("cluster reports pool %s served by 1 Orker after %s",
 			orker.pool, settled.Round(time.Millisecond))
 	}
@@ -529,11 +529,15 @@ tasks:
 // the deployment does not justify. The deadline outlasts
 // DefaultPollerFreshness so that a stale record, if one could ever reach here,
 // would age out rather than be asserted around.
+//
+// It takes the channel rather than reading it off a poolOrker, because the
+// operator's raw channel (ORK_ORKER_QUEUE) is nobody's pool and still has to
+// be waited for the same way — see TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll.
 func awaitPoolServedBy(
 	t *testing.T,
 	ctx context.Context,
 	probe engine.PoolProbe,
-	orker *poolOrker,
+	pool, channel string,
 	want int,
 ) time.Duration {
 	t.Helper()
@@ -541,7 +545,7 @@ func awaitPoolServedBy(
 	deadline := started.Add(engine.DefaultPollerFreshness + 30*time.Second)
 	var last engine.PoolLiveness
 	for time.Now().Before(deadline) {
-		live, err := probe.ObservePool(ctx, orker.queue)
+		live, err := probe.ObservePool(ctx, channel)
 		if err == nil {
 			last = live
 			if live.Orkers == want && live.Fresh(time.Now(), engine.DefaultPollerFreshness) {
@@ -551,7 +555,7 @@ func awaitPoolServedBy(
 		time.Sleep(250 * time.Millisecond)
 	}
 	t.Fatalf("the cluster reports %d Orkers on pool %q, want %d (last seen %v)",
-		last.Orkers, orker.pool, want, last.LastSeen)
+		last.Orkers, pool, want, last.LastSeen)
 	return 0
 }
 

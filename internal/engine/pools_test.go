@@ -124,12 +124,24 @@ func TestPoolResolver_ResolvesTaskPoolThenNamespaceDefaultThenMain(t *testing.T)
 // escape hatch working: an engine started with ORK_ORKER_QUEUE dispatches a
 // task that names no pool there, which is how a test harness isolates itself
 // (AGENTS.md §6) with no change to any document.
+//
+// Dispatch and reporting must read the same map. One process holding two
+// answers about one pool — accepting a submit because the operator's channel
+// is served, and reporting that same pool deserted — is worse than either
+// answer alone, because the number an operator reads is the wrong one.
 func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T) {
 	const raw = "ork-tasks-m10-2-agent"
-	resolver := &engine.PoolResolver{Probe: everyPoolLive{}, RawQueue: raw}
+	gpuQueue, _ := task.QueueForPool("gpu")
+	// Three Orkers on the operator's channel, one on gpu's own, and nobody on
+	// the channel the default pool would have used without the override.
+	resolver := &engine.PoolResolver{
+		Probe:    livePools{raw: 3, gpuQueue: 1},
+		Plugins:  fakePoolPlugins{raw: {"shell"}, gpuQueue: {"http"}},
+		RawQueue: raw,
+	}
+	ns := &orkstackv1.Namespace{Name: "default"}
 
-	_, plan, err := resolver.Plan(context.Background(),
-		&orkstackv1.Namespace{Name: "default"}, compile(t, twoPoolDocument), false)
+	_, plan, err := resolver.Plan(context.Background(), ns, compile(t, twoPoolDocument), false)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
@@ -139,9 +151,29 @@ func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T)
 	}
 	// A task that named a pool is NOT redirected: the override moves the
 	// default route only, or `pool: gpu` would silently run somewhere else.
-	gpuQueue, _ := task.QueueForPool("gpu")
 	if plan.Routes["gpu"] != gpuQueue {
 		t.Errorf("route for pool gpu = %q, want %q", plan.Routes["gpu"], gpuQueue)
+	}
+
+	pools, err := resolver.Pools(context.Background(), ns, []string{"gpu"})
+	if err != nil {
+		t.Fatalf("Pools: %v", err)
+	}
+	byName := map[string]*orkstackv1.Pool{}
+	for _, p := range pools {
+		byName[p.GetName()] = p
+	}
+	if got := byName[task.DefaultPool].GetLiveOrkerCount(); got != 3 {
+		t.Errorf("pool %q reports %d live Orkers, want the 3 serving %q — the channel "+
+			"this very resolver dispatches the pool's work to", task.DefaultPool, got, raw)
+	}
+	if got := strings.Join(byName[task.DefaultPool].GetPlugins(), ","); got != "shell" {
+		t.Errorf("pool %q reports plugins %q, want the ones its Orkers run",
+			task.DefaultPool, got)
+	}
+	// The override moved one route, so it moves one report.
+	if got := byName["gpu"].GetLiveOrkerCount(); got != 1 {
+		t.Errorf("pool gpu reports %d live Orkers, want 1", got)
 	}
 }
 
@@ -214,6 +246,48 @@ func TestPoolResolver_RefusesASubmitOntoAPoolWithNoLiveOrkers(t *testing.T) {
 	// The override exists and is not the default.
 	if _, _, err := resolver.Plan(context.Background(), ns, compile(t, twoPoolDocument), true); err != nil {
 		t.Fatalf("Plan with allowEmpty: %v", err)
+	}
+}
+
+// unreachableCluster is a probe that cannot answer at all: an unreachable
+// Temporal, or one slower than the probe's own five-second bound.
+type unreachableCluster struct{}
+
+func (unreachableCluster) ObservePool(context.Context, string) (engine.PoolLiveness, error) {
+	return engine.PoolLiveness{}, errors.New("context deadline exceeded")
+}
+
+// TestPoolResolver_SeparatesCannotAskFromNobodyIsThere keeps a broken cluster
+// out of the caller's lap.
+//
+// "Nobody serves this pool" is a fact, and the submission is answerable on it.
+// "I could not ask" is not a fact about the pool at all: the request may be
+// perfectly good and the only true instruction is to try again. Handed up as
+// one error the two are indistinguishable, and everything above has to guess —
+// so Plan says which it is, in the type.
+func TestPoolResolver_SeparatesCannotAskFromNobodyIsThere(t *testing.T) {
+	resolver := &engine.PoolResolver{Probe: unreachableCluster{}}
+	ns := &orkstackv1.Namespace{Name: "payments"}
+
+	_, _, err := resolver.Plan(context.Background(), ns, compile(t, onePoolDocument), false)
+	var unreachable *engine.PoolUnreachableError
+	if !errors.As(err, &unreachable) {
+		t.Fatalf("Plan error = %v (%T), want a PoolUnreachableError", err, err)
+	}
+	if errors.As(err, new(*engine.PoolEmptyError)) {
+		t.Error("a probe that could not answer is reported as an empty pool; the two " +
+			"need opposite reactions — start an Orker, or wait for the cluster")
+	}
+	if unreachable.Pool != task.DefaultPool {
+		t.Errorf("PoolUnreachableError.Pool = %q, want %q", unreachable.Pool, task.DefaultPool)
+	}
+
+	// allow_empty_pool answers "nobody is there", not "nobody answered". It
+	// cannot vouch for a pool nothing could ask about.
+	if _, _, err := resolver.Plan(context.Background(),
+		ns, compile(t, onePoolDocument), true); !errors.As(err, &unreachable) {
+		t.Errorf("Plan with allowEmpty over an unreachable cluster = %v, want the same "+
+			"refusal", err)
 	}
 }
 

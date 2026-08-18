@@ -129,6 +129,26 @@ func (e *PoolEmptyError) Error() string {
 		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.Pool)
 }
 
+// PoolUnreachableError reports that the cluster could not be asked whether a
+// pool has Orkers.
+//
+// It is deliberately not a PoolEmptyError. "Nobody serves this pool" is a fact
+// about the deployment, and the caller acts on it by starting an Orker or
+// taking the override. "Nothing answered" is not a fact about the pool at all:
+// the submission may be perfectly good, and the only true instruction is to
+// ask again. Collapsing the two would tell a client to fix a request that has
+// nothing wrong with it, for as long as a Temporal hiccup lasts.
+type PoolUnreachableError struct {
+	Pool string
+	Err  error
+}
+
+func (e *PoolUnreachableError) Error() string {
+	return fmt.Sprintf("cannot tell whether pool %q has live Orkers: %v", e.Pool, e.Err)
+}
+
+func (e *PoolUnreachableError) Unwrap() error { return e.Err }
+
 // PoolResolver decides where a run's tasks go, at submit.
 //
 // It is the whole of the routing decision and it lives outside workflow code
@@ -299,7 +319,10 @@ func (r *PoolResolver) Plan(
 	for _, pool := range order {
 		live, err := r.Probe.ObservePool(ctx, routes[pool])
 		if err != nil {
-			return nil, RunPlan{}, fmt.Errorf("check pool %q for live orkers: %w", pool, err)
+			// Not an empty pool: nothing was measured. The distinction
+			// survives all the way to the client, where it is the difference
+			// between "start an Orker" and "try again".
+			return nil, RunPlan{}, &PoolUnreachableError{Pool: pool, Err: err}
 		}
 		if live.Fresh(r.now(), r.freshness()) {
 			continue
@@ -331,6 +354,12 @@ func (r *PoolResolver) Plan(
 // The override moves the DEFAULT route. A task that named a pool keeps its
 // own, or `pool: gpu` would silently run wherever an unrelated environment
 // variable pointed — the failure the pool name exists to prevent.
+//
+// It is the single mapping for BOTH questions this type answers: where a
+// pool's work is dispatched (Plan), and where its Orkers are looked for
+// (Pools). Asked through two mappings they can disagree inside one process —
+// a submit accepted onto the operator's channel while the report calls that
+// same pool deserted, which is a worse answer than either one alone.
 func (r *PoolResolver) queueFor(pool, defaultPool string) (string, error) {
 	if r.RawQueue != "" && pool == defaultPool {
 		return r.RawQueue, nil
@@ -349,6 +378,10 @@ func (r *PoolResolver) queueFor(pool, defaultPool string) (string, error) {
 // plus whatever extra pools the caller knows about (the pools its orkflows
 // name). Everything comes from the cluster, so any replica answers — including
 // one that started nothing.
+//
+// Each pool is looked for on the channel a submit would dispatch it to — the
+// operator's raw channel included, since that is where its Orkers are when one
+// is configured. See queueFor.
 func (r *PoolResolver) Pools(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
@@ -375,7 +408,7 @@ func (r *PoolResolver) Pools(
 
 	pools := make([]*orkstackv1.Pool, 0, len(ordered))
 	for _, name := range ordered {
-		queue, err := task.QueueForPool(name)
+		queue, err := r.queueFor(name, defaultPool)
 		if err != nil {
 			// A namespace document can hold a pool name this engine cannot
 			// map. Report it as unserved rather than failing the whole
@@ -387,7 +420,7 @@ func (r *PoolResolver) Pools(
 		if r.Probe != nil {
 			live, err := r.Probe.ObservePool(ctx, queue)
 			if err != nil {
-				return nil, fmt.Errorf("observe pool %q: %w", name, err)
+				return nil, &PoolUnreachableError{Pool: name, Err: err}
 			}
 			if live.Fresh(r.now(), r.freshness()) {
 				pool.LiveOrkerCount = int32(live.Orkers)

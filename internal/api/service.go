@@ -472,10 +472,15 @@ func (s *Service) prepare(
 
 // poolPlanError maps a routing refusal onto a Connect code.
 //
-// A pool the namespace forbids is the caller's mistake: InvalidArgument. A
-// pool with no Orkers is not — the request is well formed and the deployment
-// is not ready for it — so it is FailedPrecondition, which is the code a
-// client can retry after starting one.
+// Three answers, and each sends the caller somewhere different. A pool the
+// namespace forbids is the caller's mistake: InvalidArgument, fix the
+// document. A pool with no Orkers is not — the request is well formed and the
+// deployment is not ready for it — so it is FailedPrecondition, retryable once
+// someone starts one. A pool that could not be checked at all is a fact about
+// this engine's cluster and about nothing the caller did: Unavailable, ask
+// again. Reporting that third case as InvalidArgument would tell every client
+// to fix a request that has nothing wrong with it, which is the wrong fleet
+// debugging the wrong thing for as long as the cluster is unwell.
 func poolPlanError(err error) error {
 	var notAllowed *engine.PoolNotAllowedError
 	if errors.As(err, &notAllowed) {
@@ -484,6 +489,10 @@ func poolPlanError(err error) error {
 	var empty *engine.PoolEmptyError
 	if errors.As(err, &empty) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	var unreachable *engine.PoolUnreachableError
+	if errors.As(err, &unreachable) {
+		return connect.NewError(connect.CodeUnavailable, err)
 	}
 	return connect.NewError(connect.CodeInvalidArgument, err)
 }

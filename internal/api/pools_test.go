@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -186,6 +187,45 @@ func TestSubmitRun_FailsFastWhenTheResolvedPoolHasNoOrkers(t *testing.T) {
 	}
 }
 
+// unreachablePools is a probe that cannot answer: an unreachable cluster, or
+// one slower than the probe's own bound.
+type unreachablePools struct{}
+
+func (unreachablePools) ObservePool(context.Context, string) (engine.PoolLiveness, error) {
+	return engine.PoolLiveness{}, errors.New("dial tcp 127.0.0.1:7233: connection refused")
+}
+
+// TestSubmitRun_ReportsAnUncheckablePoolAsUnavailableNotAsABadRequest keeps a
+// broken deployment from being reported as a broken request.
+//
+// InvalidArgument means "fix this and stop retrying". A Temporal hiccup makes
+// every submission uncheckable for as long as it lasts, and every one of those
+// requests is perfectly well formed — telling their authors to fix them sends
+// the whole fleet to debug the wrong thing. Unavailable is the answer, and it
+// is the same distinction the namespace lookup two functions away already
+// makes, for the same reason (pools.go: NotFound vs Unavailable).
+func TestSubmitRun_ReportsAnUncheckablePoolAsUnavailableNotAsABadRequest(t *testing.T) {
+	starter := &fakeStarter{}
+	svc := api.NewService(api.Config{Starter: starter, Pools: unreachablePools{}})
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: gpuOrkflow})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	_, err := svc.SubmitRun(context.Background(),
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "gpu-job"}))
+	if err == nil {
+		t.Fatal("submitting while no pool could be checked succeeded")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeUnavailable {
+		t.Errorf("submit refused with %v, want Unavailable — the request is well formed, "+
+			"and the instruction is 'ask again', not 'fix your request'", code)
+	}
+	if len(starter.startedRuns()) != 0 {
+		t.Errorf("a submission nothing could check still started %v", starter.startedRuns())
+	}
+}
+
 // TestSubmitRun_EmptyPoolOverrideIsNotTheDefaultAndIsLogged covers the escape
 // hatch on both counts the acceptance asks for: off unless asked for, and on
 // the record when taken.
@@ -323,5 +363,65 @@ func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
 	}
 	if byName["main"].GetLastSeen() == nil {
 		t.Error("a served pool reports no last_seen; an operator cannot judge staleness without it")
+	}
+}
+
+// TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo covers the
+// configuration AGENTS.md §6 mandates for every parallel agent and
+// docs/DEPLOY.md documents for a single-pool deployment: an engine started
+// with ORK_ORKER_QUEUE.
+//
+// There the default pool's work goes to the operator's channel, so that is
+// where its Orkers are. Both halves are asserted against one Service, because
+// the failure is that they disagree: a submit accepted because the channel it
+// dispatches to is served, and a report of the same pool, in the same process,
+// in the same second, saying nobody is there. An operator reading that report
+// scales up a pool that is already running their work.
+func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
+	const raw = "ork-tasks-m10-2-agent"
+	starter := &fakeStarter{}
+	svc := api.NewService(api.Config{
+		Starter:     starter,
+		RawQueue:    raw,
+		Pools:       livePools{raw: 3},
+		PoolPlugins: poolPlugins{raw: {"http", "shell"}},
+	})
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	// The submit is accepted: the pool's work goes to the operator's channel,
+	// and three Orkers are polling it.
+	if _, err := svc.SubmitRun(context.Background(),
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err != nil {
+		t.Fatalf("SubmitRun into the overridden default pool: %v", err)
+	}
+	if routes := starter.startedPlans()[0].Routes; routes[task.DefaultPool] != raw {
+		t.Fatalf("the run's route for %q = %q, want the operator's channel %q",
+			task.DefaultPool, routes[task.DefaultPool], raw)
+	}
+
+	resp, err := svc.ListPools(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPools: %v", err)
+	}
+	var main *orkstackv1.Pool
+	for _, pool := range resp.Msg.GetPools() {
+		if pool.GetName() == task.DefaultPool {
+			main = pool
+		}
+	}
+	if main == nil {
+		t.Fatalf("ListPools returned %v, without the default pool", resp.Msg.GetPools())
+	}
+	if got := main.GetLiveOrkerCount(); got != 3 {
+		t.Errorf("pool %q reports %d live Orkers, want the 3 this same Service just "+
+			"accepted a run onto", task.DefaultPool, got)
+	}
+	if got := strings.Join(main.GetPlugins(), ","); got != "http,shell" {
+		t.Errorf("pool %q reports plugins %q, want http,shell — the plugins its Orkers run",
+			task.DefaultPool, got)
 	}
 }

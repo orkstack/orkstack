@@ -176,6 +176,14 @@ needs `ORK_S3_*` either way.
   submit. `SubmitRunRequest.allow_empty_pool` submits anyway; it is off by
   default and taking it logs `WARN submit into empty pool` with the pool and
   the tasks.
+
+  A cluster that cannot be asked is a third answer, and it is kept apart from
+  the other two. "No Orkers" is `failed_precondition` — start one, or take the
+  override. A probe that got no reply at all (Temporal unreachable, or slower
+  than its five-second bound) measured nothing, and the submission it refuses
+  may be perfectly good, so it is `unavailable`: ask again. Reported as
+  `invalid_argument` it would send every client off to fix a request with
+  nothing wrong with it for as long as the cluster was unwell.
 - **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
   enforced on the server at both apply and submit, so no client can skip it.
   An empty list means no restriction.
@@ -184,9 +192,12 @@ needs `ORK_S3_*` either way.
   and the plugins those Orkers run. The count is the one described above — the
   Orkers polling now, one per worker — so scaling a pool down shows up in it
   within the window rather than minutes later. Every number is read from the
-  cluster, so any replica answers, including one that started nothing. A
-  `orkctl` command for it arrives with the namespace CLI; until then it is one
-  Connect call.
+  cluster, so any replica answers, including one that started nothing. It
+  reports each pool from the same channel a submit dispatches it to, so an
+  engine using the `ORK_ORKER_QUEUE` escape hatch reports its default pool
+  from that raw queue — the Orkers it accepts runs onto are the Orkers it
+  says the pool has. A `orkctl` command for it arrives with the namespace
+  CLI; until then it is one Connect call.
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
