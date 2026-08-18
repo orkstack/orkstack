@@ -207,11 +207,22 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		}
 	}
 
-	// The run's own event stream names the queue too, so an operator can see
-	// where a task went without reading Temporal.
+	// The run's own event stream reports where a task went — in pools, the
+	// word an author types. The queue this test proves the dispatch reached
+	// (above, from Temporal's own activity info) is a raw isolation queue and
+	// therefore nobody's pool, so an ordinary orkflow that named none is
+	// reported on the built-in default. A client reads this string: `orkctl
+	// watch` prints it and the run page renders it, so a queue name here would
+	// be Temporal's word plus an internal name the author never typed. The
+	// naming gate exempts internal/engine and cannot see it; this can.
 	for _, message := range scheduled {
-		if !strings.Contains(message, orkerQueue) {
-			t.Errorf("TASK_SCHEDULED event says %q, want it to name queue %q", message, orkerQueue)
+		if !strings.Contains(message, "pool "+task.DefaultPool) {
+			t.Errorf("TASK_SCHEDULED event says %q, want it to name pool %q",
+				message, task.DefaultPool)
+		}
+		if strings.Contains(strings.ToLower(message), "queue") || strings.Contains(message, orkerQueue) {
+			t.Errorf("TASK_SCHEDULED event says %q; the engine word and the queue name %q "+
+				"must not reach a client", message, orkerQueue)
 		}
 	}
 }

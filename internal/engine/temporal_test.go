@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -114,6 +115,62 @@ func TestStartRun_SendsTheStoredDefinitionVerbatim(t *testing.T) {
 	if !proto.Equal(started, twoTaskOrkflow()) {
 		t.Errorf("the orkflow reached Temporal modified: %v", started)
 	}
+}
+
+// TestStartRun_WritesTheOrkflowCoordinatesAsAQualifiedMemo pins the memo keys
+// a run is listed by.
+//
+// Visibility returns them with the execution, which is how `run list` names an
+// orkflow and scopes to a namespace without reading a history per run. They go
+// into Temporal history, so their spelling is a wire contract: an execution one
+// build started is listed by another, and a renamed key reads as absent.
+//
+// All three carry the orkflow_ prefix. The namespace one needs it most — an
+// unqualified `namespace` sitting on a Temporal execution reads as the
+// Temporal namespace, which is the ambiguity AGENTS.md §1.9 forbids.
+func TestStartRun_WritesTheOrkflowCoordinatesAsAQualifiedMemo(t *testing.T) {
+	c := &recordingClient{}
+	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
+
+	stored := twoTaskOrkflow()
+	stored.Namespace = "payments"
+	if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	want := map[string]any{
+		"orkflow_name":      "hello-ork",
+		"orkflow_version":   "0.1.0",
+		"orkflow_namespace": "payments",
+	}
+	for key, wantValue := range want {
+		got, ok := c.options.Memo[key]
+		if !ok {
+			t.Errorf("no memo %q on the started execution; visibility answers a list from these keys, "+
+				"and it has %v", key, memoKeys(c.options.Memo))
+			continue
+		}
+		if got != wantValue {
+			t.Errorf("memo %q = %v, want %v", key, got, wantValue)
+		}
+	}
+	if len(c.options.Memo) != len(want) {
+		t.Errorf("the execution carries the memo keys %v, want exactly %v",
+			memoKeys(c.options.Memo), memoKeys(want))
+	}
+}
+
+// memoKeys names what a memo carries, sorted, for a failure message. It is
+// spelled memoKeys rather than sortedKeys because a build-tagged file in this
+// same package already has the latter (versioning_rollout_integration_test.go),
+// and a duplicate there is invisible to `make test` — AGENTS.md §7.
+func memoKeys(memo map[string]any) []string {
+	out := make([]string, 0, len(memo))
+	for key := range memo {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestStartRun_FallsBackToTheSharedQueueWhenNoOrkerQueueIsConfigured(t *testing.T) {

@@ -335,8 +335,13 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	if err != nil {
 		return nil, err
 	}
+	// The queue is how the engine dispatches; the pool is what the author
+	// wrote. Everything below this line that a client can read says pool.
+	pool := s.poolForTask(t)
+	taskRun.Pool = pool
+
 	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id,
-		orkstackv1.Status_STATUS_RUNNING, "task scheduled on queue "+queue); err != nil {
+		orkstackv1.Status_STATUS_RUNNING, "task scheduled on pool "+pool); err != nil {
 		return nil, err
 	}
 	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
@@ -355,6 +360,8 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		RunID:          s.runID,
 		OrkflowName:    s.wf.GetName(),
 		OrkflowVersion: s.wf.GetVersion(),
+		Namespace:      s.wf.GetNamespace(),
+		Pool:           pool,
 		TaskID:         id,
 		Plugin:         t.GetPlugin(),
 		With:           t.GetWith().AsMap(),
@@ -556,6 +563,32 @@ func (s *runState) queueForTask(t *orkstackv1.Task) (string, error) {
 		return s.orkerQueue, nil
 	}
 	return task.DefaultQueue, nil
+}
+
+// poolForTask is where a task ran, in the word its author typed. It is what
+// every client-facing surface reports: the TASK_SCHEDULED message `orkctl
+// watch` prints and the run page renders, TaskRun.pool on the projection, and
+// the coordinate the Orker keys its output by.
+//
+// A task that names a pool IS that pool — no inversion, the value is read
+// straight off the bound input. A task that names none runs on this run's
+// default route, and the honest label for that route is the pool whose image
+// it is: task.PoolForQueue answers "main" for the default queue, names the
+// pool when an operator pointed the default route at one, and declines for a
+// raw isolation queue (ORK_ORKER_QUEUE=ork-tasks-m7-9, AGENTS.md §6), which is
+// nobody's pool. Declining resolves to the built-in default, which is the pool
+// a document that named none asked for.
+//
+// Pure function of the workflow input, so it holds the determinism boundary
+// and a replay reports what the original run did.
+func (s *runState) poolForTask(t *orkstackv1.Task) string {
+	if pool := t.GetPool(); pool != "" {
+		return pool
+	}
+	if pool, ok := task.PoolForQueue(s.orkerQueue); ok {
+		return pool
+	}
+	return task.DefaultPool
 }
 
 func timeoutSecondsFor(t *orkstackv1.Task) int {

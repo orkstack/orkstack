@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -146,6 +147,74 @@ func TestOrkflowPaths_ReportAMissingOrkflowAsNotFound(t *testing.T) {
 		OrkflowName: "ghost",
 	})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Errorf("SubmitRun code = %v, want NotFound", connect.CodeOf(err))
+	}
+}
+
+// TestApplyOrkflow_RejectsNonDefaultNamespaceUntilM103 closes the black hole
+// M10.1 would otherwise open.
+//
+// The DSL, the store, the archive index and the registry are namespace-aware
+// in this slice; the API's read paths are not — GetOrkflow, ListOrkflows and
+// SubmitRun all ask the store for the default namespace until M10.3. So an
+// accepted `namespace: payments` would write an object under a key nothing can
+// read and no run can execute: a success that silently does nothing, which is
+// worse than a refusal. Documenting a field a user cannot use is the same
+// defect stated in prose.
+//
+// The refusal is Unimplemented, not InvalidArgument: the document is correct
+// and will be accepted verbatim one slice later. Deleting the guard is what
+// M10.3 does, and this test is what makes that a deliberate act rather than an
+// accident — it fails the moment the guard goes, and its replacement is a test
+// that applies and then READS BACK a non-default namespace.
+func TestApplyOrkflow_RejectsNonDefaultNamespaceUntilM103(t *testing.T) {
+	const document = `
+namespace: payments
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo settle"}
+`
+	store := newRecordingStore()
+	svc := api.NewService(api.Config{Orkflows: store, Starter: noopStarter{}})
+	ctx := context.Background()
+
+	applied, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+		Yaml: document,
+	}))
+	if err == nil {
+		t.Fatalf("ApplyOrkflow(namespace: payments) stored %s@%s and returned no error; "+
+			"nothing can read or run it until M10.3",
+			applied.Msg.GetOrkflow().GetName(), applied.Msg.GetOrkflow().GetVersion())
+	}
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Errorf("ApplyOrkflow(namespace: payments) code = %v, want Unimplemented", connect.CodeOf(err))
+	}
+	// The message has to tell the author which slice lifts the restriction;
+	// "not implemented" alone leaves them guessing whether it is their document.
+	for _, want := range []string{"payments", "M10.3"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ApplyOrkflow(namespace: payments) error = %q, want it to name %q", err, want)
+		}
+	}
+	if len(store.puts) != 0 {
+		t.Errorf("the store received %d write(s); a refused apply must not leave an unreadable object",
+			len(store.puts))
+	}
+
+	// The default namespace, named explicitly or left out, still applies.
+	for _, accepted := range []string{
+		"namespace: " + artifacts.DefaultNamespace + "\nname: nightly-close\ntasks:\n  - id: settle\n    plugin: shell\n",
+		"name: nightly-close\ntasks:\n  - id: settle\n    plugin: shell\n",
+	} {
+		if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+			Yaml: accepted,
+		})); err != nil {
+			t.Errorf("ApplyOrkflow(%q) = %v, want the default namespace to still apply", accepted, err)
+		}
+	}
+	if len(store.puts) != 2 {
+		t.Errorf("the store received %d write(s) for the default namespace, want 2", len(store.puts))
 	}
 }
 

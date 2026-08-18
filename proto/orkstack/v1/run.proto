@@ -18,6 +18,12 @@ message TaskRun {
   Error error = 7;
   google.protobuf.Timestamp started_at = 8;
   google.protobuf.Timestamp finished_at = 9;
+  // pool is the set of Orkers this attempt ran on: the task's own `pool:`, or
+  // the built-in default when it named none. It answers "where did this go"
+  // without a reader consulting the engine, and it answers in the word the
+  // author typed. Empty means the task never reached an Orker (skipped, or
+  // terminal before dispatch).
+  string pool = 10;
 }
 
 // Run is one execution of an Orkflow.

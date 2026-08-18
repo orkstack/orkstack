@@ -7,13 +7,26 @@ applied to the `ork` engine with `orkctl apply`.
 
 | field         | required | description                                            |
 |---------------|----------|--------------------------------------------------------|
-| `namespace`   | no       | Slug scope; absent means the built-in `default`.       |
+| `namespace`   | no       | Slug scope; absent means the built-in `default`. **Only `default` can be applied today — see below.** |
 | `name`        | yes      | Slug identifier, unique within its namespace.           |
 | `version`     | no       | Author-pinned version; defaults to a content hash.     |
 | `description` | no       | Human description.                                     |
 | `labels`      | no       | `map[string]string` for organization/filtering.        |
 | `inputs`      | no       | Declared input parameters (see below).                 |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
+
+### `namespace` is not readable yet (until M10.3)
+
+A namespace is a scope: an orkflow name is unique *within* one, and definitions
+and runs are stored and indexed under it. The document field, the store and the
+run index understand it now, but the API's read paths do not — `orkctl orkflow
+get`, `orkctl orkflow list` and run submission all answer for `default` alone
+until M10.3.
+
+So a document naming any other namespace is **refused** at apply time, with
+`unimplemented` and a message naming M10.3. Storing it would be worse: the
+object would land under a key nothing can read and no run can execute. Until
+M10.3, leave the field out or write `namespace: default`.
 
 ## Inputs
 
@@ -41,10 +54,14 @@ tasks:
       initial_interval_seconds: 1
       backoff_coefficient: 2.0
       maximum_interval_seconds: 100
-    pool: ""             # optional Orker pool override
+    pool: ""             # optional: the set of Orkers this task runs on
     with:                # plugin-specific config (templated)
       key: value
 ```
+
+A task with no `pool:` runs on the built-in `main` pool. A task that names a
+pool waits for an Orker serving it; M10.2 refuses the submission up front
+instead.
 
 ## Templating
 
@@ -62,7 +79,9 @@ referencing an unrelated task's output is a compile-time error.
 
 ## Validation rules (enforced by `internal/dsl`)
 
-1. `namespace`, when present, is slug-formatted (`^[a-z][a-z0-9-]*$`); absent means `default`.
+1. `namespace`, when present, is slug-formatted (`^[a-z][a-z0-9-]*$`); absent
+   means `default`, and until M10.3 `default` is the only one that can be
+   applied (see above).
 2. `name` present and slug-formatted (`^[a-z][a-z0-9-]*$`) within its namespace.
 3. Task ids unique and slug-formatted.
 4. Every `needs` entry references an existing task id.

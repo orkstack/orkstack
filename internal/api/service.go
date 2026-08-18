@@ -204,7 +204,9 @@ func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
 // The namespace comes from the document. Selecting one per request, and
 // reading one back by name, arrives with the namespace-aware API (M10.3); this
 // slice makes the store, the archive index and the DSL namespace-aware, and
-// every read below still asks for the default namespace.
+// every read below still asks for the default namespace — which is why a
+// document naming another one is refused here rather than stored where nothing
+// could reach it.
 func (s *Service) ApplyOrkflow(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
@@ -212,6 +214,21 @@ func (s *Service) ApplyOrkflow(
 	wf, err := dsl.Compile([]byte(req.Msg.GetYaml()))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// Interim guard, M10.1 -> M10.3. GetOrkflow, ListOrkflows and SubmitRun
+	// below are still pinned to the default namespace, so storing under
+	// another one would write an object no read path can reach and no run can
+	// execute. Refusing is the honest answer until the reads catch up:
+	// Unimplemented, not InvalidArgument, because the document is correct and
+	// will be accepted verbatim one slice later.
+	//
+	// M10.3 adds the namespace to those paths and DELETES this block;
+	// TestApplyOrkflow_RejectsNonDefaultNamespaceUntilM103 is what makes the
+	// deletion a deliberate act.
+	if ns := wf.GetNamespace(); ns != "" && ns != artifacts.DefaultNamespace {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf(
+			"namespace %q cannot be applied yet: orkflow reads and run submission "+
+				"are scoped to the %q namespace until M10.3", ns, artifacts.DefaultNamespace))
 	}
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
 	if err := s.orkflows.Put(ctx, wf); err != nil {

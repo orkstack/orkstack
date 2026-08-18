@@ -98,16 +98,22 @@ func (EventType) EnumDescriptor() ([]byte, []int) {
 
 // TaskRun is the execution record of a single Task within a Run.
 type TaskRun struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	Plugin        string                 `protobuf:"bytes,2,opt,name=plugin,proto3" json:"plugin,omitempty"`
-	Status        Status                 `protobuf:"varint,3,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
-	Attempt       int32                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	Output        *Payload               `protobuf:"bytes,5,opt,name=output,proto3" json:"output,omitempty"`
-	Artifacts     []*ArtifactRef         `protobuf:"bytes,6,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
-	Error         *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
-	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	TaskId     string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Plugin     string                 `protobuf:"bytes,2,opt,name=plugin,proto3" json:"plugin,omitempty"`
+	Status     Status                 `protobuf:"varint,3,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
+	Attempt    int32                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Output     *Payload               `protobuf:"bytes,5,opt,name=output,proto3" json:"output,omitempty"`
+	Artifacts  []*ArtifactRef         `protobuf:"bytes,6,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
+	Error      *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	StartedAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	// pool is the set of Orkers this attempt ran on: the task's own `pool:`, or
+	// the built-in default when it named none. It answers "where did this go"
+	// without a reader consulting the engine, and it answers in the word the
+	// author typed. Empty means the task never reached an Orker (skipped, or
+	// terminal before dispatch).
+	Pool          string `protobuf:"bytes,10,opt,name=pool,proto3" json:"pool,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -203,6 +209,13 @@ func (x *TaskRun) GetFinishedAt() *timestamppb.Timestamp {
 		return x.FinishedAt
 	}
 	return nil
+}
+
+func (x *TaskRun) GetPool() string {
+	if x != nil {
+		return x.Pool
+	}
+	return ""
 }
 
 // Run is one execution of an Orkflow.
@@ -448,7 +461,7 @@ var File_orkstack_v1_run_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
-	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\"\x89\x03\n" +
+	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\"\x9d\x03\n" +
 	"\aTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x16\n" +
 	"\x06plugin\x18\x02 \x01(\tR\x06plugin\x12+\n" +
@@ -460,7 +473,9 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"finishedAt\"\x96\x04\n" +
+	"finishedAt\x12\x12\n" +
+	"\x04pool\x18\n" +
+	" \x01(\tR\x04pool\"\x96\x04\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +

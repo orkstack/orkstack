@@ -30,9 +30,14 @@ const (
 	// MemoOrkflowName, MemoOrkflowVersion and MemoNamespace are the memo keys
 	// StartRun writes onto an execution. Visibility returns them with the
 	// execution, so a list can scope by namespace without reading history.
+	//
+	// All three carry the orkflow_ prefix, and the third one needs it most: an
+	// unqualified `namespace` sitting beside a Temporal client would read as
+	// the Temporal namespace, which is exactly the ambiguity AGENTS.md §1.9
+	// forbids. The key is written into history, so it is chosen once.
 	MemoOrkflowName    = "orkflow_name"
 	MemoOrkflowVersion = "orkflow_version"
-	MemoNamespace      = "namespace"
+	MemoNamespace      = "orkflow_namespace"
 	// DefaultRunPageSize bounds an unlimited ListRuns.
 	DefaultRunPageSize = 200
 

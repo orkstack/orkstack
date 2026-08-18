@@ -44,3 +44,13 @@ ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
 
 Both replay guards still run unchanged against this new versioned history.
 Nothing was deployed, so no compatibility shim or dual-read path is needed.
+
+**Once, and everything the slice needed.** The recording committed here is the
+second and last of M10.1: round-2 review found the first one had reset the
+baseline without carrying the whole contract change, which would have forced a
+third reset at M10.5. It now carries all of it —
+`ExecuteTaskInput.Namespace`/`.Pool` (the Orker keys a run's logs by them at
+M10.5), `TaskRun.pool` on the projection, and the client-facing
+`task scheduled on pool main` message. Anything that changes what the engine
+puts into an activity is part of this one reset or it waits for a deployed
+build to be compatible with.
