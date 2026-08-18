@@ -176,7 +176,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 	if applied.Msg.GetOrkflow().GetName() != "hello-ork" {
-		t.Fatalf("applied workflow = %q, want hello-ork", applied.Msg.GetOrkflow().GetName())
+		t.Fatalf("applied orkflow = %q, want hello-ork", applied.Msg.GetOrkflow().GetName())
 	}
 
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{

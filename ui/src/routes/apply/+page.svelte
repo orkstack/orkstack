@@ -29,7 +29,7 @@ tasks:
 		formError = '';
 		warnings = [];
 		if (!yaml.trim()) {
-			formError = 'Paste a orkflow YAML document first.';
+			formError = 'Paste an orkflow YAML document first.';
 			return;
 		}
 		applying = true;
@@ -50,7 +50,7 @@ tasks:
 
 <svelte:head><title>Apply orkflow — OrkStack</title></svelte:head>
 
-<h1 class="mb-6 text-2xl font-bold">Apply a orkflow</h1>
+<h1 class="mb-6 text-2xl font-bold">Apply an orkflow</h1>
 
 <form
 	class="max-w-3xl space-y-4"

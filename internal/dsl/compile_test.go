@@ -167,7 +167,7 @@ tasks:
 			wantMessage: "cycle",
 		},
 		{
-			name: "invalid workflow slug",
+			name: "invalid orkflow slug",
 			yaml: `
 name: Hello_Ork
 tasks:

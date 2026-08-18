@@ -39,7 +39,7 @@
 	async function submit() {
 		formError = '';
 		if (!orkflow) {
-			formError = 'Choose a orkflow first.';
+			formError = 'Choose an orkflow first.';
 			return;
 		}
 		let parsed: JsonObject;

@@ -111,7 +111,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	// Runs use a copy of that example pinned to this test's private task queue.
 	successPath := writeQueuePinnedOrkflow(t, repoRoot, successOrkflowName, taskQueue)
 	if _, stderr, code = cli("apply", successPath); code != 0 {
-		t.Fatalf("apply of the pinned workflow exit = %d, want 0\nstderr:\n%s", code, stderr)
+		t.Fatalf("apply of the pinned orkflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
 
 	// submit --watch: the real Orker runs http -> shell -> file for real.
@@ -140,7 +140,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	// The same path for a run whose task exits non-zero: the CLI must too.
 	failingPath := writeQueuePinnedOrkflow(t, repoRoot, failingOrkflowName, taskQueue)
 	if _, stderr, code = cli("apply", failingPath); code != 0 {
-		t.Fatalf("apply of the failing workflow exit = %d, want 0\nstderr:\n%s", code, stderr)
+		t.Fatalf("apply of the failing orkflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
 	stdout, stderr, code = cli("run", "submit", failingOrkflowName, "--watch")
 	if code != exitRunFailed {
@@ -396,11 +396,11 @@ func writeQueuePinnedOrkflow(t *testing.T, repoRoot, name, queue string) string 
 
 	encoded, err := yaml.Marshal(doc)
 	if err != nil {
-		t.Fatalf("encode workflow: %v", err)
+		t.Fatalf("encode orkflow: %v", err)
 	}
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
 	if err := os.WriteFile(path, encoded, 0o644); err != nil {
-		t.Fatalf("write workflow: %v", err)
+		t.Fatalf("write orkflow: %v", err)
 	}
 	return path
 }
