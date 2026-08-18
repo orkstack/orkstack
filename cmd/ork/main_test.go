@@ -298,3 +298,65 @@ func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 		t.Fatalf("Serve: %v", err)
 	}
 }
+
+// TestQueues_ThePoolTheEngineDispatchesToIsTheOneItsOrkersJoin is the engine's
+// half of acceptance 5: both binaries resolve ORK_ORKER_POOL and
+// ORK_ORKER_QUEUE through the same function, so a pool named on one and a
+// channel named on the other cannot silently diverge.
+func TestQueues_ThePoolTheEngineDispatchesToIsTheOneItsOrkersJoin(t *testing.T) {
+	gpuQueue, err := task.QueueForPool("gpu")
+	if err != nil {
+		t.Fatalf("QueueForPool(gpu): %v", err)
+	}
+	t.Setenv("ORK_ORKER_POOL", "gpu")
+	t.Setenv("ORK_ORKER_QUEUE", "")
+
+	cfg := loadConfig()
+	if cfg.poolErr != nil {
+		t.Fatalf("ORK_ORKER_POOL=gpu refused: %v", cfg.poolErr)
+	}
+	if q := queuesFor(cfg); q.orker != gpuQueue {
+		t.Errorf("task activities go to %q, want pool gpu's channel %q", q.orker, gpuQueue)
+	} else if q.run != task.DefaultQueue {
+		t.Errorf("the engine's run worker moved to %q; a pool moves task execution only", q.run)
+	}
+	// The default route is pinned only because an operator asked for it. With
+	// neither variable set it stays empty, which is what lets a namespace's own
+	// default_pool decide where an unpinned task runs.
+	if cfg.defaultRouteOverride != gpuQueue {
+		t.Errorf("default route override = %q, want %q", cfg.defaultRouteOverride, gpuQueue)
+	}
+}
+
+// TestLoadConfig_LeavesTheDefaultRouteToTheNamespaceWhenNothingIsSet is the
+// other half. An engine that pinned its default route unconditionally would
+// override every namespace's default_pool with `main`, which is the setting
+// silently winning over the document.
+func TestLoadConfig_LeavesTheDefaultRouteToTheNamespaceWhenNothingIsSet(t *testing.T) {
+	t.Setenv("ORK_ORKER_POOL", "")
+	t.Setenv("ORK_ORKER_QUEUE", "")
+
+	cfg := loadConfig()
+	if cfg.defaultRouteOverride != "" {
+		t.Errorf("an unconfigured engine pinned the default route to %q; a namespace's "+
+			"own default_pool would then never be reachable", cfg.defaultRouteOverride)
+	}
+	if q := queuesFor(cfg); q.orker != task.DefaultQueue {
+		t.Errorf("unconfigured orker channel = %q, want %q", q.orker, task.DefaultQueue)
+	}
+}
+
+// TestLoadConfig_RefusesAPoolAndAChannelThatDisagree keeps the engine from
+// booting into the split-brain AGENTS.md §6 describes.
+func TestLoadConfig_RefusesAPoolAndAChannelThatDisagree(t *testing.T) {
+	t.Setenv("ORK_ORKER_POOL", "gpu")
+	t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-m7-9")
+
+	cfg := loadConfig()
+	if cfg.poolErr == nil {
+		t.Fatal("a disagreeing pool and channel booted")
+	}
+	if err := run(nil, cfg); err == nil {
+		t.Fatal("run() started with a disagreeing pool and channel")
+	}
+}

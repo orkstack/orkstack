@@ -143,7 +143,7 @@ func runWorkflowWithAnExtraEmit(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
-	orkerQueue string,
+	plan engine.RunPlan,
 ) (*orkstackv1.Run, error) {
 	activityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		TaskQueue:           engine.EventQueue,
@@ -164,7 +164,7 @@ func runWorkflowWithAnExtraEmit(
 	_ = workflow.ExecuteActivity(activityCtx, engine.ActivityPublishEvent,
 		event, &orkstackv1.Run{Id: runID}, runID+"#0").Get(ctx, nil)
 
-	return engine.RunWorkflow(ctx, runID, wf, input, orkerQueue)
+	return engine.RunWorkflow(ctx, runID, wf, input, plan)
 }
 
 // TestGoldenHistory_StillDescribesAPinnedMultiTaskRun keeps the fixture

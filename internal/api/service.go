@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -20,10 +21,11 @@ import (
 
 // RunStarter is the seam between the API and Temporal. Tests substitute a fake
 // so the Connect surface can be exercised without a cluster.
-type RunStarter interface {
-	StartRun(ctx context.Context, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload) error
-	CancelRun(ctx context.Context, runID, reason string) error
-}
+//
+// It is an alias for the engine's declaration, not a second copy of it: a
+// namespace router hands out bindings carrying a starter, and one type keeps
+// what the router returns and what the API accepts from drifting apart.
+type RunStarter = engine.RunStarter
 
 // PluginLister is the seam between the API and a live Orker: ListPlugins
 // returns descriptors for every plugin a connected Orker can run. Tests
@@ -56,20 +58,10 @@ type RunArchive interface {
 // A missing run is reported with an error matching artifacts.ErrNotFound, and
 // only ever before the first event of a stream has been sent, so a caller can
 // fall back to the archive without duplicating anything.
-type RunReader interface {
-	// GetRun returns a run as the system of record holds it.
-	GetRun(ctx context.Context, runID string) (*orkstackv1.Run, error)
-	// ListRuns returns runs matching q, newest first.
-	ListRuns(ctx context.Context, q engine.RunQuery) ([]*orkstackv1.Run, error)
-	// StreamEvents delivers a run's events after fromSequence to send, and
-	// returns when the run reaches its terminal event.
-	StreamEvents(
-		ctx context.Context,
-		runID string,
-		fromSequence int64,
-		send func(*orkstackv1.Event) error,
-	) error
-}
+//
+// It is an alias for the engine's declaration, for the same reason RunStarter
+// is: the namespace router hands one out with every binding.
+type RunReader = engine.RunReader
 
 // Config wires a Service to its stores and Temporal seams.
 type Config struct {
@@ -116,24 +108,61 @@ type Config struct {
 	// when no live Orker lister is configured.
 	Plugins []*orkstackv1.PluginInfo
 
+	// Namespaces is the registry routing reads pool defaults and allow-lists
+	// from. Nil serves the built-in default namespace only, which is what an
+	// unconfigured Service has to work with.
+	Namespaces engine.NamespaceReader
+
+	// Pools answers whether a pool has live Orkers, so a submit onto a pool
+	// nothing serves fails at submit instead of stranding a run in RUNNING.
+	// Nil disables the check: there is no authority to ask, and inventing an
+	// answer would either refuse every submit or vouch for every pool.
+	Pools engine.PoolProbe
+
+	// PoolPlugins reports what one pool's Orkers can run, for ListPools.
+	PoolPlugins engine.PoolPluginLister
+
+	// RawQueue is the operator escape hatch (ORK_ORKER_QUEUE): the execution
+	// channel a task that names no pool is dispatched to. Empty routes the
+	// default pool to its own channel, which is the zero-config behaviour.
+	RawQueue string
+
+	// Router resolves an ork namespace to the cluster serving it. Nil builds
+	// the one-binding router from Reader, Starter and Pools above, which is
+	// every deployment there is today.
+	Router engine.NamespaceRouter
+
+	// Logger records the decisions a submission makes that an operator would
+	// otherwise have to infer, such as an empty-pool override. Nil uses the
+	// process default.
+	Logger *slog.Logger
+
 	// Now and NewRunID are injectable for deterministic tests.
 	Now      func() time.Time
 	NewRunID func() string
 }
 
-// Service implements OrkflowService, RunService, and PluginService.
+// Service implements OrkflowService, RunService, NamespaceService and
+// PluginService.
 type Service struct {
-	orkflows    engine.OrkflowStore
-	reader      RunReader
-	runs        *engine.RunStore
-	bus         *engine.EventBus
-	starter     RunStarter
-	lister      PluginLister
+	orkflows engine.OrkflowStore
+	runs     *engine.RunStore
+	bus      *engine.EventBus
+	lister   PluginLister
+	// router resolves which cluster answers for a namespace or a run. It
+	// holds one binding today; every read and write path goes through it, so
+	// partitioning namespaces across clusters later is configuration rather
+	// than a change to this file.
+	router engine.NamespaceRouter
+	// pools is the routing decision: pool resolution, allow-list enforcement
+	// and the liveness check, all of which happen at submit.
+	pools       *engine.PoolResolver
 	archive     RunArchive
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
 	notifier    engine.RunNotifier
 	plugins     []*orkstackv1.PluginInfo
+	logger      *slog.Logger
 	now         func() time.Time
 	newRunID    func() string
 }
@@ -142,18 +171,37 @@ type Service struct {
 func NewService(cfg Config) *Service {
 	svc := &Service{
 		orkflows:    cfg.Orkflows,
-		reader:      cfg.Reader,
 		runs:        cfg.Runs,
 		bus:         cfg.Bus,
-		starter:     cfg.Starter,
 		lister:      cfg.Lister,
+		router:      cfg.Router,
 		archive:     cfg.Archive,
 		idempotency: cfg.Idempotency,
 		webhooks:    cfg.Webhooks,
 		notifier:    cfg.Notifier,
 		plugins:     cfg.Plugins,
+		logger:      cfg.Logger,
 		now:         cfg.Now,
 		newRunID:    cfg.NewRunID,
+	}
+	if svc.router == nil {
+		// One binding: this cluster, every namespace. Reader, Starter and
+		// Pools are the flat form of exactly that, kept because almost every
+		// caller has one cluster and nothing to route between.
+		svc.router = engine.NewSingleRouter(engine.Binding{
+			Reader:  cfg.Reader,
+			Starter: cfg.Starter,
+			Pools:   cfg.Pools,
+		})
+	}
+	if svc.logger == nil {
+		svc.logger = slog.Default()
+	}
+	svc.pools = &engine.PoolResolver{
+		Namespaces: cfg.Namespaces,
+		Plugins:    cfg.PoolPlugins,
+		RawQueue:   cfg.RawQueue,
+		Logger:     svc.logger,
 	}
 	// Only an unconfigured Service gets the in-memory store, and only so a
 	// unit test can exercise runs without a bucket. A configured store is
@@ -185,6 +233,35 @@ func NewService(cfg Config) *Service {
 		svc.newRunID = engine.NewRunID
 	}
 	return svc
+}
+
+// binding resolves which cluster serves one namespace.
+func (s *Service) binding(namespace string) (engine.Binding, error) {
+	binding, err := s.router.For(namespace)
+	if err != nil {
+		return engine.Binding{}, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return binding, nil
+}
+
+// locate resolves which cluster owns a run id, for the reads that carry no
+// namespace. With one binding it is total and free — see engine.SingleRouter.
+func (s *Service) locate(ctx context.Context, runID string) (engine.Binding, error) {
+	binding, err := s.router.Locate(ctx, runID)
+	if err != nil {
+		return engine.Binding{}, connect.NewError(connect.CodeNotFound,
+			fmt.Errorf("run %q: %w", runID, err))
+	}
+	return binding, nil
+}
+
+// resolverFor is the pool resolver bound to one cluster. The routing rules are
+// the service's and identical everywhere; the liveness probe belongs to the
+// cluster that would run the work, so it comes from the binding.
+func (s *Service) resolverFor(binding engine.Binding) *engine.PoolResolver {
+	resolver := *s.pools
+	resolver.Probe = binding.Pools
+	return &resolver
 }
 
 // Bus exposes the event bus. It is the write side of the read model: the
@@ -229,6 +306,22 @@ func (s *Service) ApplyOrkflow(
 		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf(
 			"namespace %q cannot be applied yet: orkflow reads and run submission "+
 				"are scoped to the %q namespace until M10.3", ns, artifacts.DefaultNamespace))
+	}
+	// Gate one of two on allowed_pools: the authoring gate, with the file in
+	// hand, so an author is told now rather than at the first submit. It is
+	// deliberately not the only gate — SubmitRun enforces the same rule again
+	// (submitPlan), because a client can submit a definition applied when the
+	// allow-list was wider, and because nothing forces a client through
+	// apply at all.
+	//
+	// Not in the DSL compiler either: the compiler has no namespace registry
+	// to consult, and it is one `curl` away from being skipped.
+	ns, err := s.namespace(ctx, wf.GetNamespace())
+	if err != nil {
+		return nil, err
+	}
+	if err := engine.CheckAllowedPools(ns, wf); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
 	if err := s.orkflows.Put(ctx, wf); err != nil {
@@ -284,38 +377,115 @@ func orkflowStoreError(err error, format string, args ...any) error {
 	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s: %w", subject, err))
 }
 
+// submission is one accepted request after routing has been decided: which
+// cluster serves it, which definition it will execute, and where every task in
+// that definition goes.
+//
+// It travels as one value because its parts must not be separable. The plan
+// was computed FROM this definition; starting one with the other's routing
+// would dispatch a task to a pool the plan never checked.
+type submission struct {
+	binding engine.Binding
+	// wf is the planned definition: a clone of the stored one with every
+	// task's pool filled in. The stored document is untouched.
+	wf    *orkstackv1.Orkflow
+	input *orkstackv1.Payload
+	plan  engine.RunPlan
+	key   string
+}
+
 // SubmitRun creates a pending run and starts its Temporal workflow.
 func (s *Service) SubmitRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.SubmitRunRequest],
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	name := req.Msg.GetOrkflowName()
-	if name == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("orkflow_name is required"))
-	}
-	wf, err := s.orkflows.Get(ctx, artifacts.DefaultNamespace, name, req.Msg.GetOrkflowVersion())
+	sub, err := s.prepare(ctx, req.Msg)
 	if err != nil {
-		return nil, orkflowStoreError(err, "orkflow %q version %q", name, req.Msg.GetOrkflowVersion())
+		return nil, err
 	}
-	if s.starter == nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
-	}
-
-	mergedInput := engine.ApplyInputDefaults(wf, req.Msg.GetInput())
-	key := req.Msg.GetIdempotencyKey()
 
 	// A keyed submission asks the claimer which run the key names before it
 	// publishes an event or calls Temporal. `ork` wires a claimer backed by
 	// the cluster, so concurrent requests converge on one run whether they
 	// reach one replica or several, and a failed start stays deduplicated to
 	// its recorded failed run because a claim is never released.
-	if key != "" {
-		return s.submitClaimedRun(ctx, key, wf, mergedInput)
+	if sub.key != "" {
+		return s.submitClaimedRun(ctx, sub)
 	}
 
-	run := s.newPendingRun(s.newRunID(), wf, mergedInput)
+	run := s.newPendingRun(s.newRunID(), sub.wf, sub.input)
 	s.runs.Save(run)
-	return s.startPreparedRun(ctx, run, wf, mergedInput, "")
+	return s.startPreparedRun(ctx, run, sub)
+}
+
+// prepare turns a request into a routed submission, or refuses it.
+//
+// This is where a run's routing is decided, and it is the last place that may
+// decide it: everything below is Temporal, and workflow code is deterministic
+// and may not read a namespace document, this process's configuration, or the
+// cluster (AGENTS.md §1.3). Three things happen here and nowhere else — a
+// task's pool is resolved (its own, then its namespace's default, then the
+// built-in "main"), the namespace's allow-list is enforced, and each resolved
+// pool is checked for someone to run the work.
+//
+// It refuses before minting a run id, so a refused submission leaves nothing
+// behind: no id burnt, no claim taken, no run recorded as failed.
+func (s *Service) prepare(
+	ctx context.Context,
+	msg *orkstackv1.SubmitRunRequest,
+) (submission, error) {
+	name := msg.GetOrkflowName()
+	if name == "" {
+		return submission{}, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("orkflow_name is required"))
+	}
+	stored, err := s.orkflows.Get(ctx, artifacts.DefaultNamespace, name, msg.GetOrkflowVersion())
+	if err != nil {
+		return submission{}, orkflowStoreError(err, "orkflow %q version %q",
+			name, msg.GetOrkflowVersion())
+	}
+	ns, err := s.namespace(ctx, stored.GetNamespace())
+	if err != nil {
+		return submission{}, err
+	}
+	binding, err := s.binding(ns.GetName())
+	if err != nil {
+		return submission{}, err
+	}
+	if binding.Starter == nil {
+		return submission{}, connect.NewError(connect.CodeFailedPrecondition,
+			fmt.Errorf("no run starter configured"))
+	}
+
+	planned, plan, err := s.resolverFor(binding).Plan(ctx, ns, stored, msg.GetAllowEmptyPool())
+	if err != nil {
+		return submission{}, poolPlanError(err)
+	}
+	return submission{
+		binding: binding,
+		wf:      planned,
+		input:   engine.ApplyInputDefaults(planned, msg.GetInput()),
+		plan:    plan,
+		key:     msg.GetIdempotencyKey(),
+	}, nil
+}
+
+// poolPlanError maps a routing refusal onto a Connect code.
+//
+// A pool the namespace forbids is the caller's mistake: InvalidArgument. A
+// pool with no Orkers is not — the request is well formed and the deployment
+// is not ready for it — so it is FailedPrecondition, which is the code a
+// client can retry after starting one.
+func poolPlanError(err error) error {
+	var notAllowed *engine.PoolNotAllowedError
+	if errors.As(err, &notAllowed) {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	var empty *engine.PoolEmptyError
+	if errors.As(err, &empty) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewError(connect.CodeInvalidArgument, err)
 }
 
 // submitClaimedRun runs a keyed submission: claim the key, then either start
@@ -328,13 +498,11 @@ func (s *Service) SubmitRun(
 // id costs nothing, because nothing outside this process ever saw it.
 func (s *Service) submitClaimedRun(
 	ctx context.Context,
-	key string,
-	wf *orkstackv1.Orkflow,
-	input *orkstackv1.Payload,
+	sub submission,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	var candidate *orkstackv1.Run
-	winner, err := s.idempotency.Claim(ctx, key, func() (engine.Claim, error) {
-		candidate = s.newPendingRun(s.newRunID(), wf, input)
+	winner, err := s.idempotency.Claim(ctx, sub.key, func() (engine.Claim, error) {
+		candidate = s.newPendingRun(s.newRunID(), sub.wf, sub.input)
 		return newClaim(candidate)
 	})
 	if err != nil {
@@ -342,13 +510,13 @@ func (s *Service) submitClaimedRun(
 		// be the duplicate this milestone removes, so an unreachable authority
 		// fails the submission instead.
 		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("claim idempotency key %q: %w", key, err))
+			fmt.Errorf("claim idempotency key %q: %w", sub.key, err))
 	}
 	if candidate == nil || winner.RunID != candidate.GetId() {
-		return s.claimedRun(ctx, key, winner)
+		return s.claimedRun(ctx, sub.key, winner)
 	}
 	s.runs.Save(candidate)
-	return s.startPreparedRun(ctx, candidate, wf, input, key)
+	return s.startPreparedRun(ctx, candidate, sub)
 }
 
 // claimedRun answers a caller whose candidate lost, with the run that won.
@@ -436,13 +604,11 @@ func (s *Service) newPendingRun(
 func (s *Service) startPreparedRun(
 	ctx context.Context,
 	run *orkstackv1.Run,
-	wf *orkstackv1.Orkflow,
-	input *orkstackv1.Payload,
-	idempotencyKey string,
+	sub submission,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	for attempt := 0; ; attempt++ {
 		runID := run.GetId()
-		err := s.starter.StartRun(ctx, runID, wf, input)
+		err := sub.binding.Starter.StartRun(ctx, runID, sub.wf, sub.input, sub.plan)
 		if err == nil {
 			// The response is the run this call created, not a re-read of it.
 			// A read here would race the run's own first events — the workflow
@@ -452,7 +618,7 @@ func (s *Service) startPreparedRun(
 			return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
 		}
 		if errors.Is(err, engine.ErrRunIDTaken) && attempt == 0 {
-			next, reissueErr := s.reissueRunID(ctx, run, wf, input, idempotencyKey)
+			next, reissueErr := s.reissueRunID(ctx, run, sub)
 			run = next
 			if reissueErr != nil {
 				// The key could not be moved onto the fresh id, so starting
@@ -478,25 +644,23 @@ func (s *Service) startPreparedRun(
 func (s *Service) reissueRunID(
 	ctx context.Context,
 	discarded *orkstackv1.Run,
-	wf *orkstackv1.Orkflow,
-	input *orkstackv1.Payload,
-	idempotencyKey string,
+	sub submission,
 ) (*orkstackv1.Run, error) {
 	s.runs.Delete(discarded.GetId())
 	s.bus.Discard(discarded.GetId())
 
-	next := s.newPendingRun(s.newRunID(), wf, input)
+	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input)
 	s.runs.Save(next)
-	if idempotencyKey == "" {
+	if sub.key == "" {
 		return next, nil
 	}
 	claim, err := newClaim(next)
 	if err != nil {
 		return next, err
 	}
-	if err := s.idempotency.Rebind(ctx, idempotencyKey, claim, discarded.GetId()); err != nil {
+	if err := s.idempotency.Rebind(ctx, sub.key, claim, discarded.GetId()); err != nil {
 		return next, fmt.Errorf("move idempotency key %q from %s to %s: %w",
-			idempotencyKey, discarded.GetId(), next.GetId(), err)
+			sub.key, discarded.GetId(), next.GetId(), err)
 	}
 	return next, nil
 }
@@ -629,8 +793,12 @@ func (s *Service) ArchivedEvents(
 // Errors are already Connect-coded, so a caller can branch on
 // connect.CodeNotFound.
 func (s *Service) LookupRun(ctx context.Context, runID string) (*orkstackv1.Run, error) {
-	if s.reader != nil {
-		run, err := s.reader.GetRun(ctx, runID)
+	binding, err := s.locate(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if binding.Reader != nil {
+		run, err := binding.Reader.GetRun(ctx, runID)
 		switch {
 		case err == nil:
 			return run, nil
@@ -691,8 +859,12 @@ func (s *Service) ListRuns(
 		runs       []*orkstackv1.Run
 		fromMemory bool
 	)
-	if s.reader != nil {
-		listed, err := s.reader.ListRuns(ctx, engine.RunQuery{
+	binding, err := s.binding(artifacts.DefaultNamespace)
+	if err != nil {
+		return nil, err
+	}
+	if binding.Reader != nil {
+		listed, err := binding.Reader.ListRuns(ctx, engine.RunQuery{
 			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
@@ -776,10 +948,14 @@ func (s *Service) CancelRun(
 	if err != nil {
 		return nil, err
 	}
-	if s.starter == nil {
+	binding, err := s.locate(ctx, req.Msg.GetRunId())
+	if err != nil {
+		return nil, err
+	}
+	if binding.Starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
 	}
-	if err := s.starter.CancelRun(ctx, req.Msg.GetRunId(), req.Msg.GetReason()); err != nil {
+	if err := binding.Starter.CancelRun(ctx, req.Msg.GetRunId(), req.Msg.GetReason()); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&orkstackv1.CancelRunResponse{Run: run}), nil
@@ -818,8 +994,12 @@ func (s *Service) StreamRunEvents(
 	fromSequence int64,
 	send func(*orkstackv1.Event) error,
 ) error {
-	if s.reader != nil {
-		err := s.reader.StreamEvents(ctx, runID, fromSequence, send)
+	binding, err := s.locate(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if binding.Reader != nil {
+		err := binding.Reader.StreamEvents(ctx, runID, fromSequence, send)
 		switch {
 		case err == nil:
 			return nil

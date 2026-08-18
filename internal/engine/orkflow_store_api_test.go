@@ -221,7 +221,7 @@ tasks:
 // noopStarter satisfies the API's Temporal seam; these tests never reach it.
 type noopStarter struct{}
 
-func (noopStarter) StartRun(context.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload) error {
+func (noopStarter) StartRun(context.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
 	return nil
 }
 

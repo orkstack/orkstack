@@ -51,7 +51,7 @@ func TestRunWorkflow_ScheduledEventNamesThePoolNotTheQueue(t *testing.T) {
 	const rawQueue = "ork-tasks-m10-1-agent"
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-message",
-		compile(t, poolDocument), payload(t, nil), rawQueue)
+		compile(t, poolDocument), payload(t, nil), rawPlan(rawQueue, "gpu"))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestRunWorkflow_TaskRunRecordsThePoolItRanOn(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-projection",
-		compile(t, poolDocument), payload(t, nil), task.DefaultQueue)
+		compile(t, poolDocument), payload(t, nil), defaultPlan("gpu"))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -141,7 +141,7 @@ tasks:
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-input",
-		compile(t, document), payload(t, nil), task.DefaultQueue)
+		compile(t, document), payload(t, nil), defaultPlan("gpu"))
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}

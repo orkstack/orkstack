@@ -47,7 +47,7 @@ func (c *recordingClient) ExecuteWorkflow(
 func (c *recordingClient) startedOrkflow(t *testing.T) *orkstackv1.Orkflow {
 	t.Helper()
 	if len(c.args) < 4 {
-		t.Fatalf("ExecuteWorkflow got %d args, want runID, orkflow, input, orker queue", len(c.args))
+		t.Fatalf("ExecuteWorkflow got %d args, want runID, orkflow, input, plan", len(c.args))
 	}
 	wf, ok := c.args[1].(*orkstackv1.Orkflow)
 	if !ok {
@@ -56,17 +56,17 @@ func (c *recordingClient) startedOrkflow(t *testing.T) *orkstackv1.Orkflow {
 	return wf
 }
 
-// startedOrkerQueue returns the queue StartRun bound into the workflow input.
-func (c *recordingClient) startedOrkerQueue(t *testing.T) string {
+// startedPlan returns the routing StartRun bound into the workflow input.
+func (c *recordingClient) startedPlan(t *testing.T) engine.RunPlan {
 	t.Helper()
 	if len(c.args) < 4 {
-		t.Fatalf("ExecuteWorkflow got %d args, want runID, orkflow, input, orker queue", len(c.args))
+		t.Fatalf("ExecuteWorkflow got %d args, want runID, orkflow, input, plan", len(c.args))
 	}
-	queue, ok := c.args[3].(string)
+	plan, ok := c.args[3].(engine.RunPlan)
 	if !ok {
-		t.Fatalf("fourth workflow arg is %T, want the orker queue as a string", c.args[3])
+		t.Fatalf("fourth workflow arg is %T, want engine.RunPlan", c.args[3])
 	}
-	return queue
+	return plan
 }
 
 // twoTaskOrkflow has one task that names no pool and one that names its own.
@@ -81,16 +81,42 @@ func twoTaskOrkflow() *orkstackv1.Orkflow {
 	}
 }
 
-func TestStartRun_BindsTheQueueItsOrkersPollIntoTheWorkflowInput(t *testing.T) {
+// TestStartRun_BindsTheCallersRoutingIntoTheWorkflowInput is the whole reason
+// the plan is an argument.
+//
+// Where a task runs is decided at submit, by the process that read the
+// namespace document and this deployment's configuration; workflow code may
+// read none of that (AGENTS.md §1.3). So StartRun binds what it was handed,
+// verbatim — it does not consult its own orker channel, and it does not
+// substitute a route of its own. Binding it records the routing in the run's
+// history, which is what makes a replay dispatch where the original run did
+// and lets a second engine finish this run without redirecting its tasks.
+func TestStartRun_BindsTheCallersRoutingIntoTheWorkflowInput(t *testing.T) {
 	c := &recordingClient{}
+	// A starter whose OWN default channel is a different name entirely: if
+	// StartRun substituted its configuration for the caller's plan, this is
+	// where it would show.
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
 
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil); err != nil {
+	plan := rawPlan("ork-tasks-submitted", "gpu")
+	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, plan); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 
-	if got := c.startedOrkerQueue(t); got != "ork-tasks-m7-9" {
-		t.Errorf("bound orker queue = %q, want the configured one %q", got, "ork-tasks-m7-9")
+	bound := c.startedPlan(t)
+	if bound.Namespace != plan.Namespace {
+		t.Errorf("bound namespace = %q, want %q", bound.Namespace, plan.Namespace)
+	}
+	if len(bound.Routes) != len(plan.Routes) {
+		t.Fatalf("bound routes = %v, want the caller's %v", bound.Routes, plan.Routes)
+	}
+	for pool, queue := range plan.Routes {
+		if bound.Routes[pool] != queue {
+			t.Errorf("bound route for pool %q = %q, want %q", pool, bound.Routes[pool], queue)
+		}
+	}
+	if bound.Routes[task.DefaultPool] == "ork-tasks-m7-9" {
+		t.Error("StartRun overwrote the caller's default route with its own configuration")
 	}
 }
 
@@ -104,7 +130,7 @@ func TestStartRun_SendsTheStoredDefinitionVerbatim(t *testing.T) {
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
 
 	stored := twoTaskOrkflow()
-	if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil); err != nil {
+	if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil, defaultPlan()); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 
@@ -134,7 +160,7 @@ func TestStartRun_WritesTheOrkflowCoordinatesAsAQualifiedMemo(t *testing.T) {
 
 	stored := twoTaskOrkflow()
 	stored.Namespace = "payments"
-	if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil); err != nil {
+	if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil, defaultPlan()); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 
@@ -173,16 +199,19 @@ func memoKeys(memo map[string]any) []string {
 	return out
 }
 
-func TestStartRun_FallsBackToTheSharedQueueWhenNoOrkerQueueIsConfigured(t *testing.T) {
+// TestStartRun_ZeroConfigRoutingReachesTheChannelAZeroConfigOrkerPolls is the
+// dev stack, byte for byte: no pool anywhere, no override anywhere, and the
+// built-in pool still resolves to the channel `make run-orker` polls.
+func TestStartRun_ZeroConfigRoutingReachesTheChannelAZeroConfigOrkerPolls(t *testing.T) {
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
 
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil); err != nil {
+	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 
-	if got := c.startedOrkerQueue(t); got != task.DefaultQueue {
-		t.Errorf("bound orker queue = %q, want %q", got, task.DefaultQueue)
+	if got := c.startedPlan(t).Routes[task.DefaultPool]; got != task.DefaultQueue {
+		t.Errorf("the built-in pool routes to %q, want %q", got, task.DefaultQueue)
 	}
 }
 
@@ -190,7 +219,7 @@ func TestStartRun_StartsTheWorkflowOnTheEnginesOwnQueue(t *testing.T) {
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
 
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil); err != nil {
+	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 
@@ -217,7 +246,7 @@ func TestStartRun_MakesARunIDSingleUse(t *testing.T) {
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
 
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil); err != nil {
+	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 
@@ -241,7 +270,7 @@ func TestStartRun_ReportsATakenRunIDAsErrRunIDTaken(t *testing.T) {
 		"Workflow execution is already running", "start-request-id", "temporal-run-id")}
 	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
 
-	err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil)
+	err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan())
 	if !errors.Is(err, engine.ErrRunIDTaken) {
 		t.Fatalf("StartRun with a taken id = %v, want an error matching engine.ErrRunIDTaken", err)
 	}
@@ -258,7 +287,7 @@ func TestStartRun_DoesNotMistakeAnUnrelatedFailureForATakenID(t *testing.T) {
 	c := &recordingClient{err: serviceerror.NewUnavailable("temporal is down")}
 	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
 
-	err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil)
+	err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan())
 	if err == nil {
 		t.Fatal("StartRun succeeded, want the cluster failure reported")
 	}

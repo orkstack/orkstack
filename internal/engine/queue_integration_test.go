@@ -116,6 +116,13 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		Bus:      bus,
 		Starter: engine.NewTemporalStarterWithOrkerQueue(
 			temporalClient, task.DefaultQueue, orkerQueue),
+		// RawQueue is the operator escape hatch, and it is what pins this
+		// engine's DEFAULT route — where a task that names no pool goes. The
+		// starter's own orker queue above is plugin discovery only; since
+		// M10.2 dispatch comes from the plan the submission builds, and this
+		// is the field that puts the private channel into it. `cmd/ork` sets
+		// the same value from ORK_ORKER_QUEUE (or ORK_ORKER_POOL).
+		RawQueue: orkerQueue,
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

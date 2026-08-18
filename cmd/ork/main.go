@@ -45,8 +45,21 @@ type config struct {
 	temporalNamespace string
 	httpAddr          string
 	allowedOrigins    []string
-	orkerQueue        string
-	idempotencyTTL    time.Duration
+	// pool is the OrkStack name for where this engine dispatches a task that
+	// names no pool of its own; orkerQueue is the raw execution channel that
+	// pool resolves to. See task.ResolvePoolBinding for the five ways the two
+	// environment variables combine, and for the one that is refused.
+	pool       string
+	orkerQueue string
+	// defaultRouteOverride is the channel an operator pinned the default route
+	// to, or empty when neither variable was set. Empty is what keeps a
+	// namespace's own default_pool meaningful: with no override, the default
+	// pool resolves to its own channel like every other pool.
+	defaultRouteOverride string
+	// poolErr is a refused ORK_ORKER_POOL/ORK_ORKER_QUEUE pair, reported at
+	// boot rather than resolved by picking a winner.
+	poolErr        error
+	idempotencyTTL time.Duration
 	// deployment is this release's Worker Deployment identity. It carries no
 	// build id unless an operator configures one, which leaves versioning off
 	// and the workers exactly as they were before M8.4.
@@ -58,9 +71,15 @@ func loadConfig() config {
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		httpAddr:          env("ORK_HTTP_ADDR", api.DefaultHTTPAddr),
-		orkerQueue:        env("ORK_ORKER_QUEUE", task.DefaultQueue),
 		idempotencyTTL:    envDuration("ORK_IDEMPOTENCY_TTL", engine.DefaultClaimTTL),
 		deployment:        task.DeploymentFromEnv(),
+	}
+	rawPool := env("ORK_ORKER_POOL", "")
+	rawQueue := env("ORK_ORKER_QUEUE", "")
+	binding, err := task.ResolvePoolBinding(rawPool, rawQueue)
+	cfg.pool, cfg.orkerQueue, cfg.poolErr = binding.Pool, binding.Queue, err
+	if err == nil && (rawPool != "" || rawQueue != "") {
+		cfg.defaultRouteOverride = binding.Queue
 	}
 	if origins := env("ORK_WS_ALLOWED_ORIGINS", ""); origins != "" {
 		cfg.allowedOrigins = strings.Split(origins, ",")
@@ -207,6 +226,34 @@ func orkflowNames(stored []*orkstackv1.Orkflow) []string {
 	return names
 }
 
+// openNamespaceStore connects the engine to the registry that holds namespace
+// documents: pool defaults and allow-lists.
+//
+// It is opened at boot for the same reason the orkflow store is — an engine
+// that cannot read a namespace cannot decide where a task runs, and answering
+// from a built-in default would silently ignore an operator's allow-list. The
+// default namespace resolves whether or not a document was ever written, so a
+// fresh deployment needs no bootstrap step.
+func openNamespaceStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3NamespaceStore, error) {
+	cfg := artifacts.ConfigFromEnv()
+	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open namespace registry: %w", err)
+	}
+	registered, err := store.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read namespaces from %s (endpoint %s): %w",
+			store.Location(), cfg.S3Endpoint, err)
+	}
+	names := make([]string, 0, len(registered))
+	for _, ns := range registered {
+		names = append(names, ns.GetName())
+	}
+	logger.Info("namespace registry ready",
+		"store", store.Location(), "namespaces", len(registered), "names", names)
+	return store, nil
+}
+
 func run(logger *slog.Logger, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -214,6 +261,18 @@ func run(logger *slog.Logger, cfg config) error {
 	// Fail on a deployment identity the cluster would reject later, while the
 	// error can still name the variable that caused it.
 	if err := cfg.deployment.Validate(); err != nil {
+		return err
+	}
+	// Fail on a pool and a raw execution channel that disagree, for the same
+	// reason: an engine dispatching to one channel while its Orkers poll
+	// another strands every run in RUNNING with nothing to say why
+	// (AGENTS.md §6).
+	if cfg.poolErr != nil {
+		return cfg.poolErr
+	}
+
+	namespaces, err := openNamespaceStore(ctx, logger)
+	if err != nil {
 		return err
 	}
 
@@ -306,7 +365,7 @@ func run(logger *slog.Logger, cfg config) error {
 	defer eventWorker.Stop()
 	logger.Info("temporal workers started",
 		"task_queue", q.run, "event_queue", q.events,
-		"orker_queue", q.orker)
+		"orker_queue", q.orker, "pool", cfg.pool)
 	// The versioning line is separate and always printed, because "which
 	// version am I" is the first question of any rollout. The Orker must
 	// report the same pair, or a pinned run's tasks fall through to the task
@@ -321,6 +380,15 @@ func run(logger *slog.Logger, cfg config) error {
 		"event_worker", "unversioned")
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker)
 
+	// Pool routing: the cluster answers whether a pool has Orkers, so a submit
+	// onto a pool nothing serves fails at submit rather than leaving a run in
+	// RUNNING forever. The engine never guesses this — it asks.
+	pools := engine.NewTemporalPoolProbe(temporalClient)
+	if cfg.defaultRouteOverride != "" {
+		logger.Info("default pool route overridden",
+			"pool", cfg.pool, "orker_queue", cfg.defaultRouteOverride)
+	}
+
 	// Idempotency: the cluster decides which run a key names, so every replica
 	// behind this address gets the same answer. Nothing about dedupe lives in
 	// this process.
@@ -330,15 +398,20 @@ func run(logger *slog.Logger, cfg config) error {
 
 	svc := api.NewService(api.Config{
 		Orkflows:    orkflows,
+		Namespaces:  namespaces,
 		Reader:      reader,
 		Runs:        runs,
 		Bus:         bus,
 		Starter:     starter,
 		Lister:      starter,
+		Pools:       pools,
+		PoolPlugins: starter,
+		RawQueue:    cfg.defaultRouteOverride,
 		Archive:     archive,
 		Idempotency: idempotency,
 		Webhooks:    webhookRegistry,
 		Notifier:    runNotifier,
+		Logger:      logger,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,

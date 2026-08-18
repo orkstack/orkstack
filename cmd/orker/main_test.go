@@ -74,3 +74,75 @@ func TestLoadConfig_RejectsADeploymentNameTheClusterWould(t *testing.T) {
 		t.Fatal("a deployment name containing \".\" was accepted; the cluster reserves that character")
 	}
 }
+
+// TestLoadConfig_JoinsThePoolItWasToldToServe is acceptance 5 at the Orker's
+// own boot seam.
+//
+// ORK_ORKER_POOL is the OrkStack setting: which set of Orkers is this.
+// ORK_ORKER_QUEUE is the operator escape hatch to the channel underneath, used
+// by the test harnesses to isolate concurrent runs (AGENTS.md §6). The engine
+// resolves the same two variables through the same function, because an Orker
+// polling one channel while the engine dispatches to another strands every run
+// in RUNNING with nothing to say why.
+func TestLoadConfig_JoinsThePoolItWasToldToServe(t *testing.T) {
+	gpuQueue, err := task.QueueForPool("gpu")
+	if err != nil {
+		t.Fatalf("QueueForPool(gpu): %v", err)
+	}
+
+	t.Run("zero config serves the built-in pool", func(t *testing.T) {
+		t.Setenv("ORK_ORKER_POOL", "")
+		t.Setenv("ORK_ORKER_QUEUE", "")
+		cfg := loadConfig()
+		if cfg.poolErr != nil {
+			t.Fatalf("unconfigured boot refused: %v", cfg.poolErr)
+		}
+		if cfg.pool != task.DefaultPool || cfg.queue != task.DefaultQueue {
+			t.Errorf("unconfigured Orker serves pool %q on %q, want %q on %q",
+				cfg.pool, cfg.queue, task.DefaultPool, task.DefaultQueue)
+		}
+		if cfg.rawOverride {
+			t.Error("unconfigured Orker reports a hand-pinned channel")
+		}
+	})
+
+	t.Run("a pool resolves to its own channel", func(t *testing.T) {
+		t.Setenv("ORK_ORKER_POOL", "gpu")
+		t.Setenv("ORK_ORKER_QUEUE", "")
+		cfg := loadConfig()
+		if cfg.poolErr != nil {
+			t.Fatalf("ORK_ORKER_POOL=gpu refused: %v", cfg.poolErr)
+		}
+		if cfg.pool != "gpu" || cfg.queue != gpuQueue {
+			t.Errorf("Orker serves pool %q on %q, want gpu on %q", cfg.pool, cfg.queue, gpuQueue)
+		}
+	})
+
+	t.Run("a raw channel is nobody's pool", func(t *testing.T) {
+		t.Setenv("ORK_ORKER_POOL", "")
+		t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-m7-9")
+		cfg := loadConfig()
+		if cfg.poolErr != nil {
+			t.Fatalf("ORK_ORKER_QUEUE alone refused: %v", cfg.poolErr)
+		}
+		if cfg.queue != "ork-tasks-m7-9" {
+			t.Errorf("Orker polls %q, want the operator's channel verbatim", cfg.queue)
+		}
+		if cfg.pool != task.DefaultPool || !cfg.rawOverride {
+			t.Errorf("Orker reports pool %q (raw=%v), want the built-in default and a "+
+				"flag saying the channel was pinned by hand", cfg.pool, cfg.rawOverride)
+		}
+	})
+
+	t.Run("a pool and a channel that disagree refuse to boot", func(t *testing.T) {
+		t.Setenv("ORK_ORKER_POOL", "gpu")
+		t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-m7-9")
+		cfg := loadConfig()
+		if cfg.poolErr == nil {
+			t.Fatalf("a disagreeing pair booted, serving pool %q on %q", cfg.pool, cfg.queue)
+		}
+		if err := run(nil, cfg); err == nil {
+			t.Fatal("run() started with a disagreeing pool and channel")
+		}
+	})
+}

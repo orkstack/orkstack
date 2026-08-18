@@ -110,13 +110,13 @@ func TestIntegration_WithoutTheStartPoliciesACollisionAttachesToAnotherRun(t *te
 
 	first, err := c.ExecuteWorkflow(ctx,
 		client.StartWorkflowOptions{ID: runID, TaskQueue: queue},
-		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil), queue)
+		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil), rawPlan(queue))
 	if err != nil {
 		t.Fatalf("first start: %v", err)
 	}
 	second, err := c.ExecuteWorkflow(ctx,
 		client.StartWorkflowOptions{ID: runID, TaskQueue: queue},
-		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil), queue)
+		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil), rawPlan(queue))
 	if err != nil {
 		t.Fatalf("second start with the same id returned %v; "+
 			"this test records the default behaviour and must be revisited if the server changed it", err)
@@ -145,10 +145,10 @@ func TestIntegration_StartRunRefusesARunIDTheClusterAlreadyHolds(t *testing.T) {
 	runID := engine.NewRunID()
 	terminateAll(t, c, runID)
 
-	if err := replicaA.StartRun(ctx, runID, twoTaskOrkflow(), nil); err != nil {
+	if err := replicaA.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan()); err != nil {
 		t.Fatalf("replica A start: %v", err)
 	}
-	err := replicaB.StartRun(ctx, runID, twoTaskOrkflow(), nil)
+	err := replicaB.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan())
 	if !errors.Is(err, engine.ErrRunIDTaken) {
 		t.Fatalf("replica B start with A's id = %v, want engine.ErrRunIDTaken", err)
 	}
@@ -159,7 +159,7 @@ func TestIntegration_StartRunRefusesARunIDTheClusterAlreadyHolds(t *testing.T) {
 	if err := c.TerminateWorkflow(ctx, runID, "", "closing the execution for the reuse check"); err != nil {
 		t.Fatalf("terminate %s: %v", runID, err)
 	}
-	err = replicaB.StartRun(ctx, runID, twoTaskOrkflow(), nil)
+	err = replicaB.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan())
 	if !errors.Is(err, engine.ErrRunIDTaken) {
 		t.Fatalf("start with a closed run's id = %v, want engine.ErrRunIDTaken", err)
 	}
@@ -188,7 +188,7 @@ func TestIntegration_ConcurrentReplicasNeverBothOwnOneRunID(t *testing.T) {
 	for _, replica := range replicas {
 		go func(r *engine.TemporalStarter) {
 			<-start
-			results <- r.StartRun(ctx, runID, twoTaskOrkflow(), nil)
+			results <- r.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan())
 		}(replica)
 	}
 	close(start)
@@ -227,7 +227,7 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 	// it, exactly as it would for a real cross-replica collision.
 	taken, reissued := engine.NewRunID(), engine.NewRunID()
 	terminateAll(t, c, taken, reissued)
-	if err := starter.StartRun(ctx, taken, wf, nil); err != nil {
+	if err := starter.StartRun(ctx, taken, wf, nil, defaultPlan()); err != nil {
 		t.Fatalf("occupy %s: %v", taken, err)
 	}
 

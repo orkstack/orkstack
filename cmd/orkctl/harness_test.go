@@ -47,6 +47,7 @@ func (s *stubStarter) StartRun(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	_ engine.RunPlan,
 ) error {
 	s.mu.Lock()
 	s.started = append(s.started, runID)

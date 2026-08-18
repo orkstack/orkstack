@@ -27,6 +27,9 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	runPath, runHandler := orkstackv1connect.NewRunServiceHandler(svc, handlerOptions...)
 	mux.Handle(runPath, runHandler)
 
+	namespacePath, namespaceHandler := orkstackv1connect.NewNamespaceServiceHandler(svc, handlerOptions...)
+	mux.Handle(namespacePath, namespaceHandler)
+
 	pluginPath, pluginHandler := orkstackv1connect.NewPluginServiceHandler(svc, handlerOptions...)
 	mux.Handle(pluginPath, pluginHandler)
 

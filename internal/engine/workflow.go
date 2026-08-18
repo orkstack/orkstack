@@ -46,19 +46,21 @@ const eventActivityTimeout = 10 * time.Second
 // nesting them in a plain Go struct would fall back to encoding/json, which
 // cannot round-trip google.protobuf.Struct.
 //
-// orkerQueue is where a task that names no pool runs. It is an argument, not a
-// lookup, for two reasons that both matter: workflow code is deterministic and
-// may not read process configuration, and the orkflow message must not carry
-// it — a queue is Temporal's word, the definition is the user's document, and
-// the two stopped touching at M10.1. Binding it into the input records it in
-// history, so every replay dispatches where the original run did and a second
-// engine finishes a run this one started without redirecting its tasks.
+// plan is this run's routing, resolved at submit by TemporalStarter.StartRun
+// and bound into the input here. It is an argument, not a lookup, for two
+// reasons that both matter: workflow code is deterministic and may not read
+// process configuration or a namespace document, and the orkflow message must
+// not carry a channel name — that is Temporal's word, the definition is the
+// user's document, and the two stopped touching at M10.1. Binding the plan
+// records the routing in history, so every replay dispatches where the
+// original run did and a second engine finishes a run this one started without
+// redirecting its tasks onto its own defaults.
 func RunWorkflow(
 	ctx workflow.Context,
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
-	orkerQueue string,
+	plan RunPlan,
 ) (*orkstackv1.Run, error) {
 	if runID == "" {
 		return nil, temporal.NewNonRetryableApplicationError("run id is required", "INVALID_RUN", nil)
@@ -67,7 +69,7 @@ func RunWorkflow(
 		return nil, temporal.NewNonRetryableApplicationError("orkflow has no tasks", "INVALID_ORKFLOW", nil)
 	}
 
-	state := newRunState(ctx, runID, wf, input, orkerQueue)
+	state := newRunState(ctx, runID, wf, input, plan)
 	// RUN_CREATED is emitted here, by the run itself, and not by whichever API
 	// process accepted the submission. It is event 1 of every run that reaches
 	// Temporal, so a replica rebuilding the stream from history starts at 1 with
@@ -143,17 +145,18 @@ func RunWorkflow(
 type runState struct {
 	runID string
 	wf    *orkstackv1.Orkflow
-	// orkerQueue is the queue a task that names no pool dispatches to. It
-	// comes from the workflow input, never from the environment.
-	orkerQueue string
-	input      *orkstackv1.Payload
-	inputs     map[string]any
-	order      []string
-	tasks      map[string]*orkstackv1.Task
-	taskRuns   map[string]*orkstackv1.TaskRun
-	results    map[string]task.UpstreamResult
-	closure    map[string][]string
-	leaves     map[string]struct{}
+	// plan is this run's routing, bound into the workflow input at submit. It
+	// is the only source of a channel name here: never the environment, never
+	// a namespace document, never a lookup.
+	plan     RunPlan
+	input    *orkstackv1.Payload
+	inputs   map[string]any
+	order    []string
+	tasks    map[string]*orkstackv1.Task
+	taskRuns map[string]*orkstackv1.TaskRun
+	results  map[string]task.UpstreamResult
+	closure  map[string][]string
+	leaves   map[string]struct{}
 
 	createdAt *timestamppb.Timestamp
 	startedAt *timestamppb.Timestamp
@@ -169,20 +172,20 @@ func newRunState(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
-	orkerQueue string,
+	plan RunPlan,
 ) *runState {
 	mergedInput := ApplyInputDefaults(wf, input)
 	state := &runState{
-		runID:      runID,
-		wf:         wf,
-		orkerQueue: orkerQueue,
-		input:      mergedInput,
-		inputs:     map[string]any(payloadToPlugin(mergedInput)),
-		tasks:      map[string]*orkstackv1.Task{},
-		taskRuns:   map[string]*orkstackv1.TaskRun{},
-		results:    map[string]task.UpstreamResult{},
-		closure:    map[string][]string{},
-		leaves:     map[string]struct{}{},
+		runID:    runID,
+		wf:       wf,
+		plan:     plan,
+		input:    mergedInput,
+		inputs:   map[string]any(payloadToPlugin(mergedInput)),
+		tasks:    map[string]*orkstackv1.Task{},
+		taskRuns: map[string]*orkstackv1.TaskRun{},
+		results:  map[string]task.UpstreamResult{},
+		closure:  map[string][]string{},
+		leaves:   map[string]struct{}{},
 		// CreatedAt is the execution's own start time, taken from the
 		// WorkflowExecutionStarted history event rather than from a clock, so
 		// every replica that reads this run dates it identically and a replay
@@ -538,31 +541,29 @@ func (s *runState) emit(
 	return nil
 }
 
-// queueForTask is the queue a task's activity is scheduled on.
+// queueForTask is the channel a task's activity is scheduled on.
 //
-// A task that names a pool goes to that pool's queue, through the one mapping
-// in internal/task; a task that names none goes to the queue this run was
-// started with, which TemporalStarter.StartRun bound into the workflow input
-// because workflow code is deterministic and may not read process
-// configuration itself. Both come from the input alone, so a replay dispatches
-// exactly where the original run did.
+// It is a table lookup and nothing else. The plan bound into this run's input
+// already answered where every pool goes: the resolution — the task's own
+// pool, then its namespace's default, then the built-in "main", then that
+// pool's channel or the operator's override — happened at submit, in
+// PoolResolver.Plan, which is the last place allowed to read a store, the
+// environment or the cluster. Here there is only the recorded answer, so a
+// replay dispatches exactly where the original run did and a second engine
+// finishing this run cannot redirect it onto its own defaults.
 //
-// A pool name that cannot be mapped fails the run rather than falling back to
-// a queue nobody asked for: silently running a gpu task on the shared pool is
-// worse than not running it.
+// A pool with no route fails the run rather than falling back to a channel
+// nobody asked for: silently running a gpu task on the shared pool is worse
+// than not running it. It is unreachable through SubmitRun, because the plan
+// is built from this very definition; it is reachable by starting RunWorkflow
+// by hand with a mismatched plan, and then it says so.
 func (s *runState) queueForTask(t *orkstackv1.Task) (string, error) {
-	if pool := t.GetPool(); pool != "" {
-		queue, err := task.QueueForPool(pool)
-		if err != nil {
-			return "", temporal.NewNonRetryableApplicationError(
-				fmt.Sprintf("task %q: %v", t.GetId(), err), "INVALID_POOL", err)
-		}
-		return queue, nil
+	queue, err := s.plan.Route(s.poolForTask(t))
+	if err != nil {
+		return "", temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("task %q: %v", t.GetId(), err), "INVALID_POOL", err)
 	}
-	if s.orkerQueue != "" {
-		return s.orkerQueue, nil
-	}
-	return task.DefaultQueue, nil
+	return queue, nil
 }
 
 // poolForTask is where a task ran, in the word its author typed. It is what
@@ -570,22 +571,15 @@ func (s *runState) queueForTask(t *orkstackv1.Task) (string, error) {
 // watch` prints and the run page renders, TaskRun.pool on the projection, and
 // the coordinate the Orker keys its output by.
 //
-// A task that names a pool IS that pool — no inversion, the value is read
-// straight off the bound input. A task that names none runs on this run's
-// default route, and the honest label for that route is the pool whose image
-// it is: task.PoolForQueue answers "main" for the default queue, names the
-// pool when an operator pointed the default route at one, and declines for a
-// raw isolation queue (ORK_ORKER_QUEUE=ork-tasks-m7-9, AGENTS.md §6), which is
-// nobody's pool. Declining resolves to the built-in default, which is the pool
-// a document that named none asked for.
+// The value is read straight off the bound input, because the plan filled it
+// in on every task at submit. A definition that reached this workflow without
+// passing through the resolver falls back to the built-in default, which is
+// the pool a document that named none asked for.
 //
 // Pure function of the workflow input, so it holds the determinism boundary
 // and a replay reports what the original run did.
 func (s *runState) poolForTask(t *orkstackv1.Task) string {
 	if pool := t.GetPool(); pool != "" {
-		return pool
-	}
-	if pool, ok := task.PoolForQueue(s.orkerQueue); ok {
 		return pool
 	}
 	return task.DefaultPool

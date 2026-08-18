@@ -37,6 +37,7 @@ func (s *takenIDStarter) StartRun(
 	runID string,
 	_ *orkstackv1.Orkflow,
 	_ *orkstackv1.Payload,
+	_ engine.RunPlan,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

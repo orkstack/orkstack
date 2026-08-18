@@ -55,17 +55,18 @@ func NewTemporalStarterWithOrkerQueue(c client.Client, runQueue, orkerQueue stri
 
 // StartRun starts RunWorkflow with the run id as the Temporal workflow id.
 //
-// This engine's orker queue is bound into the workflow input here, before the
-// workflow starts, because this is the last place that may read process
-// configuration: workflow code must be deterministic, so it cannot consult the
-// environment for a queue name. Binding it records the queue in the run's
-// history, which makes every replay dispatch where the original run did — and
-// lets a second engine execute a workflow this one started without redirecting
-// its tasks.
+// The run's routing is bound into the workflow input here, before the workflow
+// starts, because this is the last place that may read process configuration:
+// workflow code must be deterministic, so it cannot consult a namespace
+// document, the environment, or the cluster for where a task should run. The
+// plan carries the answer — every pool this run uses, mapped to the channel
+// that carries it — so the routing is recorded in the run's history. Every
+// replay dispatches where the original run did, and a second engine can finish
+// a run this one started without redirecting its tasks onto its own defaults.
 //
-// The orkflow travels verbatim. It used to be cloned so a queue name could be
-// written into each task; since M10.1 a definition carries no queue at all,
-// and the stored document is passed exactly as the bucket holds it.
+// The orkflow travels as the plan resolved it: a clone of the stored document
+// with every task's pool filled in (its own, its namespace's default, or the
+// built-in "main"). The stored document is untouched.
 //
 // The three start policies make the run id single use for all time, which is
 // the half of run identity that entropy cannot provide (see RunIDGenerator):
@@ -84,6 +85,7 @@ func (s *TemporalStarter) StartRun(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	plan RunPlan,
 ) error {
 	_, err := s.client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
 		ID:                                       runID,
@@ -100,7 +102,7 @@ func (s *TemporalStarter) StartRun(
 			MemoOrkflowVersion: wf.GetVersion(),
 			MemoNamespace:      wf.GetNamespace(),
 		},
-	}, RunWorkflowType, runID, wf, input, s.orkerQueue)
+	}, RunWorkflowType, runID, wf, input, plan)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if errors.As(err, &alreadyStarted) {
@@ -122,14 +124,26 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID, _ string) error 
 	return nil
 }
 
-// ListPlugins executes the Orker's ListPlugins activity and returns the
-// descriptors of every plugin the connected Orker can run.
+// ListPlugins executes the Orker's ListPlugins activity on this engine's
+// default execution channel and returns the descriptors of every plugin the
+// Orkers there can run.
 func (s *TemporalStarter) ListPlugins(ctx context.Context) ([]plugin.Descriptor, error) {
+	return s.listPluginsOn(ctx, s.orkerQueue, 10*time.Second)
+}
+
+// listPluginsOn asks one execution channel's Orkers what they can run. It is
+// the shared half of ListPlugins and the per-pool report (PluginsOnPool): the
+// question is the same activity, the channel is what differs.
+func (s *TemporalStarter) listPluginsOn(
+	ctx context.Context,
+	queue string,
+	within time.Duration,
+) ([]plugin.Descriptor, error) {
 	var descriptors []plugin.Descriptor
 	handle, err := s.client.ExecuteActivity(ctx, client.StartActivityOptions{
 		ID:                     "list-plugins-" + fmt.Sprint(time.Now().UnixNano()),
-		TaskQueue:              s.orkerQueue,
-		ScheduleToCloseTimeout: 10 * time.Second,
+		TaskQueue:              queue,
+		ScheduleToCloseTimeout: within,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 2,
 		},
