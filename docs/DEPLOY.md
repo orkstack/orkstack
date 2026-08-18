@@ -161,21 +161,32 @@ needs `ORK_S3_*` either way.
   allow_empty_pool to wait for one
   ```
 
-  The window is 60 seconds of poller freshness, and the asymmetry is
-  deliberate: Temporal keeps poller records for minutes after a worker dies,
-  so a stale record can still say "live" shortly after an Orker stopped. That
-  degrades to the old behaviour — a run that waits — never to a false
-  rejection of a healthy submit. `SubmitRunRequest.allow_empty_pool` submits
-  anyway; it is off by default and taking it logs
-  `WARN submit into empty pool` with the pool and the tasks.
+  The window is 60 seconds of poller freshness, applied to each poller
+  separately: a worker that stopped polling more than 60 seconds ago is not
+  counted, however busy its neighbours are. Temporal remembers a poller for
+  minutes after its worker died, so a pool you scaled from three Orkers to one
+  would otherwise report three for as long as the survivor kept the newest
+  record fresh. Two workers of one release can also be described twice while a
+  version is being promoted, so the count is per worker identity, not per
+  record.
+
+  The residue is bounded and deliberate: inside those 60 seconds a stale record
+  can still say "live" just after an Orker stopped. That degrades to the old
+  behaviour — a run that waits — never to a false rejection of a healthy
+  submit. `SubmitRunRequest.allow_empty_pool` submits anyway; it is off by
+  default and taking it logs `WARN submit into empty pool` with the pool and
+  the tasks.
 - **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
   enforced on the server at both apply and submit, so no client can skip it.
   An empty list means no restriction.
 - **"Is anything serving my pools?" has an answer.**
   `NamespaceService.ListPools` reports each pool's name, its live Orker count
-  and the plugins those Orkers run. Every number is read from the cluster, so
-  any replica answers — including one that started nothing. A `orkctl` command
-  for it arrives with the namespace CLI; until then it is one Connect call.
+  and the plugins those Orkers run. The count is the one described above — the
+  Orkers polling now, one per worker — so scaling a pool down shows up in it
+  within the window rather than minutes later. Every number is read from the
+  cluster, so any replica answers, including one that started nothing. A
+  `orkctl` command for it arrives with the namespace CLI; until then it is one
+  Connect call.
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to

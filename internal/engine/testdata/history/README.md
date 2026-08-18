@@ -45,12 +45,38 @@ ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
 Both replay guards still run unchanged against this new versioned history.
 Nothing was deployed, so no compatibility shim or dual-read path is needed.
 
-**Once, and everything the slice needed.** The recording committed here is the
-second and last of M10.1: round-2 review found the first one had reset the
-baseline without carrying the whole contract change, which would have forced a
-third reset at M10.5. It now carries all of it —
-`ExecuteTaskInput.Namespace`/`.Pool` (the Orker keys a run's logs by them at
-M10.5), `TaskRun.pool` on the projection, and the client-facing
-`task scheduled on pool main` message. Anything that changes what the engine
-puts into an activity is part of this one reset or it waits for a deployed
-build to be compatible with.
+**Once, and everything the slice needed.** The recording M10.1 committed was
+its second: round-2 review found the first one had reset the baseline without
+carrying the whole contract change, which would have forced a third reset at
+M10.5. It carried all of it — `ExecuteTaskInput.Namespace`/`.Pool` (the Orker
+keys a run's logs by them at M10.5), `TaskRun.pool` on the projection, and the
+client-facing `task scheduled on pool main` message.
+
+## And again at M10.2, because the fourth argument changed TYPE
+
+The file committed here now is **M10.2's**, not M10.1's. M10.1 put a bare
+channel name in the fourth workflow argument; M10.2 made routing per task, so
+that slot became the run's whole routing record — the namespace plus a
+`pool → channel` table:
+
+```
+M10.1  arg[3] = "ork-golden-tasks-44650-1787080239606352000"
+M10.2  arg[3] = {"namespace":"default","routes":{"main":"ork-golden-tasks-…"}}
+```
+
+A string does not decode as that struct, so no history recorded before M10.2
+can replay, and the fixture was re-recorded by the same opt-in test above.
+M10.1's "once and last" held for the shape of the argument list; it did not
+survive the slot changing type, and saying so here is cheaper than the next
+reader trusting a sentence the tree had already outgrown. The reasoning, and
+why the alternative (keeping the dead string beside the plan) was worse, is in
+`proof/M10.2/README.md` §1.
+
+Both replay guards pass unchanged against the M10.2 recording. Nothing is
+deployed, so no shim and no dual-read.
+
+**The rule the two resets share:** anything that changes what the engine puts
+into an activity is part of the reset that lands with it, or it waits for a
+deployed build to be compatible with. A fixture is re-recorded when the
+contract genuinely moved and never to turn a red test green (AGENTS.md §10) —
+and when it is, this section grows a line.

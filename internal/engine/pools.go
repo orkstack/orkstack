@@ -39,13 +39,20 @@ const poolPluginTimeout = 10 * time.Second
 
 // PoolLiveness is what the cluster says about the Orkers serving one pool.
 type PoolLiveness struct {
-	// Orkers is how many were polling when the question was asked.
+	// Orkers is how many distinct Orkers were still polling when the question
+	// was asked. A probe reports the ones inside the freshness window and no
+	// others: a worker Temporal still remembers but that stopped polling is
+	// not an Orker this pool has (see livePollers).
 	Orkers int
 	// LastSeen is the most recent moment one of them was observed.
 	LastSeen time.Time
 }
 
 // Fresh reports whether this observation still counts as live at now.
+//
+// It is the seam's own gate rather than a repeat of the probe's: a PoolProbe
+// is an interface, and an implementation that hands back a count it never
+// bounded in time must not be able to vouch for a pool by saying a number.
 //
 // An observation with no Orkers is never fresh; one with Orkers and no
 // timestamp is trusted, because a cluster that reports a poller without a
@@ -65,6 +72,12 @@ func (l PoolLiveness) Fresh(now time.Time, within time.Duration) bool {
 // It takes the Temporal task queue rather than the pool, because it is below
 // the seam: the mapping happened one layer up, in internal/task. Production
 // wires TemporalPoolProbe; a test states the fact directly.
+//
+// The contract is a count of Orkers polling NOW: one per worker, and none the
+// cluster merely remembers. An implementation that cannot honour it must
+// report LastSeen so PoolLiveness.Fresh can, because everything above reads
+// the number as live — a submit is refused on it and an operator sizes a pool
+// by it.
 type PoolProbe interface {
 	ObservePool(ctx context.Context, queue string) (PoolLiveness, error)
 }

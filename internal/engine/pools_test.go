@@ -220,6 +220,11 @@ func TestPoolResolver_RefusesASubmitOntoAPoolWithNoLiveOrkers(t *testing.T) {
 // TestPoolResolver_TreatsAStaleOrkerAsGone bounds the liveness answer in time.
 // Temporal keeps poller history for minutes after a worker dies, so freshness
 // is what stops a submit being accepted into a pool that stopped serving.
+//
+// It is checked at both ends: on the value, and on what the resolver does with
+// a probe that hands one back. The Temporal probe drops a stale record itself
+// (TestLivePollers_CountsOnlyTheOrkersStillInsideTheWindow); a PoolProbe is an
+// interface, so the seam must not publish a number it was given on trust.
 func TestPoolResolver_TreatsAStaleOrkerAsGone(t *testing.T) {
 	live := engine.PoolLiveness{Orkers: 1, LastSeen: time.Now().Add(-10 * time.Minute)}
 	if live.Fresh(time.Now(), engine.DefaultPollerFreshness) {
@@ -230,7 +235,43 @@ func TestPoolResolver_TreatsAStaleOrkerAsGone(t *testing.T) {
 	if !live.Fresh(time.Now(), engine.DefaultPollerFreshness) {
 		t.Errorf("an Orker seen 5 seconds ago does not count as live")
 	}
+
+	// A probe that reports three Orkers nobody has seen for ten minutes.
+	resolver := &engine.PoolResolver{Probe: stalePool{Orkers: 3, Age: 10 * time.Minute}}
+	ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"main"}}
+
+	if _, _, err := resolver.Plan(context.Background(),
+		ns, compile(t, onePoolDocument), false); !errors.As(err, new(*engine.PoolEmptyError)) {
+		t.Fatalf("Plan error = %v, want a PoolEmptyError: three Orkers last seen ten "+
+			"minutes ago would strand the run", err)
+	}
+
+	pools, err := resolver.Pools(context.Background(), ns, nil)
+	if err != nil {
+		t.Fatalf("Pools: %v", err)
+	}
+	if got := pools[0].GetLiveOrkerCount(); got != 0 {
+		t.Errorf("ListPools would report %d Orkers on a pool everyone left, want 0", got)
+	}
 }
+
+// stalePool answers with Orkers that stopped polling Age ago.
+type stalePool struct {
+	Orkers int
+	Age    time.Duration
+}
+
+func (s stalePool) ObservePool(context.Context, string) (engine.PoolLiveness, error) {
+	return engine.PoolLiveness{Orkers: s.Orkers, LastSeen: time.Now().Add(-s.Age)}, nil
+}
+
+const onePoolDocument = `
+name: one-pool
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo settle"}
+`
 
 // TestPoolResolver_ReportsPoolsWithTheirOrkersAndPlugins is the observability
 // half: an operator asks which pools exist, how many Orkers serve each, and

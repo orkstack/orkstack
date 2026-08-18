@@ -130,8 +130,8 @@ func (o *poolOrker) channelFor(taskID string) string {
 //
 // Three properties, one deployment:
 //
-//  1. a task pinned to pool alpha runs on alpha's Orker and never on bravo's,
-//     and a sibling task pinned to bravo runs on bravo's and never on alpha's
+//  1. a task pinned to one pool runs on that pool's Orker and never on the
+//     other's, and a sibling task pinned to the other runs there and not here
 //     — in the SAME run, so the routing is per task and not per engine;
 //  2. a task naming a pool the namespace forbids is refused at SubmitRun, with
 //     an error naming the namespace, the task and the pool;
@@ -149,7 +149,9 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// The budget outlasts the pool-liveness waits below, which are bounded by
+	// DefaultPollerFreshness rather than by anything this test does.
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
 	namespace := poolRoutingNamespace()
@@ -166,11 +168,21 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		infraAbsent(t, "cannot open the namespace registry: %v", err)
 	}
 	nsName := fmt.Sprintf("m10-2-pools-%d-%d", os.Getpid(), time.Now().UnixNano())
+	// Pools of this run's own. A pool name is a channel name (task.QueueForPool)
+	// and Temporal remembers a channel's pollers for minutes after their worker
+	// stopped, so a fixed "alpha" would be described by every earlier run of
+	// this suite in the same namespace as well as by this one — and the count
+	// this test exists to check would be a count of ghosts. The suffix makes
+	// the channel this run's alone, so "exactly one Orker" is exact.
+	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
+	poolAlpha := "alpha-" + token
+	poolBravo := "bravo-" + token
+	poolCold := "cold-" + token
 	registered := &orkstackv1.Namespace{
 		Name:         nsName,
 		Description:  "M10.2 pool routing acceptance",
 		DefaultPool:  task.DefaultPool,
-		AllowedPools: []string{task.DefaultPool, "alpha", "bravo", "cold"},
+		AllowedPools: []string{task.DefaultPool, poolAlpha, poolBravo, poolCold},
 	}
 	if err := namespaceStore.Put(ctx, registered); err != nil {
 		infraAbsent(t, "cannot write the namespace document (is MinIO up?): %v", err)
@@ -183,8 +195,8 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		}
 	})
 
-	alpha := newPoolOrker(t, "orker-A", "alpha", "shell")
-	bravo := newPoolOrker(t, "orker-B", "bravo", "file", "http")
+	alpha := newPoolOrker(t, "orker-A", poolAlpha, "shell")
+	bravo := newPoolOrker(t, "orker-B", poolBravo, "file", "http")
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
@@ -269,44 +281,50 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	transcript.line("allowed pools        %s", strings.Join(registered.GetAllowedPools(), ", "))
 	transcript.line("orker A serves pool  %s", alpha.pool)
 	transcript.line("orker B serves pool  %s", bravo.pool)
+	transcript.line("pool names carry a per-run suffix: Temporal describes a channel's")
+	transcript.line("pollers for minutes after their worker stopped, so a fixed name would")
+	transcript.line("let an earlier run of this suite be counted as this one's Orkers.")
 
-	// Wait until the cluster reports both Orkers, so the liveness check below
-	// is answering about a deployment that is actually up.
+	// Wait until the cluster reports each pool served by exactly the one Orker
+	// this test started, so the liveness check below is answering about a
+	// deployment that is actually up — and about no other.
 	probe := engine.NewTemporalPoolProbe(temporalClient)
 	for _, orker := range []*poolOrker{alpha, bravo} {
-		awaitLiveOrker(t, ctx, probe, orker)
+		settled := awaitPoolServedBy(t, ctx, probe, orker, 1)
+		transcript.line("cluster reports pool %s served by 1 Orker after %s",
+			orker.pool, settled.Round(time.Millisecond))
 	}
 
 	// ── 1. a task pinned to a pool runs on that pool's Orker, and only there ──
-	const twoPoolJob = `
+	twoPoolJob := fmt.Sprintf(`
 name: two-pool-job
 version: 0.1.0
 tasks:
   - id: crunch
     plugin: shell
-    pool: alpha
+    pool: %s
     with: {command: "echo crunch"}
   - id: polish
     plugin: shell
-    pool: bravo
+    pool: %s
     needs: [crunch]
     with: {command: "echo polish"}
-`
+`, poolAlpha, poolBravo)
 	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.ApplyOrkflowRequest{Yaml: twoPoolJob})); err != nil {
 		t.Fatalf("apply the two-pool orkflow: %v", err)
 	}
 
 	// ── 3's setup, submitted FIRST so the visibility argument below holds ──
-	const coldJob = `
+	coldJob := fmt.Sprintf(`
 name: cold-job
 version: 0.1.0
 tasks:
   - id: freeze
     plugin: shell
-    pool: cold
+    pool: %s
     with: {command: "echo freeze"}
-`
+`, poolCold)
 	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.ApplyOrkflowRequest{Yaml: coldJob})); err != nil {
 		t.Fatalf("apply the cold orkflow: %v", err)
@@ -314,13 +332,13 @@ tasks:
 	_, coldErr := runClient.SubmitRun(ctx, connect.NewRequest(
 		&orkstackv1.SubmitRunRequest{OrkflowName: "cold-job"}))
 	if coldErr == nil {
-		t.Fatal("submitting into pool \"cold\" succeeded; nothing serves it, so the run " +
-			"would have reached RUNNING and stayed there")
+		t.Fatalf("submitting into pool %q succeeded; nothing serves it, so the run "+
+			"would have reached RUNNING and stayed there", poolCold)
 	}
 	if code := connect.CodeOf(coldErr); code != connect.CodeFailedPrecondition {
 		t.Errorf("empty-pool submit refused with %v, want FailedPrecondition", code)
 	}
-	for _, want := range []string{"cold", "freeze", "ORK_ORKER_POOL=cold"} {
+	for _, want := range []string{poolCold, "freeze", "ORK_ORKER_POOL=" + poolCold} {
 		if !strings.Contains(coldErr.Error(), want) {
 			t.Errorf("empty-pool error %q does not name %q", coldErr, want)
 		}
@@ -422,7 +440,7 @@ tasks:
 		t.Errorf("polish was delivered on %q, want pool %s's channel %q", got, bravo.pool, bravo.queue)
 	}
 	// The client-facing event says pool, never channel.
-	for taskID, wantPool := range map[string]string{"crunch": "alpha", "polish": "bravo"} {
+	for taskID, wantPool := range map[string]string{"crunch": poolAlpha, "polish": poolBravo} {
 		message := scheduled[taskID]
 		if !strings.Contains(message, "pool "+wantPool) {
 			t.Errorf("TASK_SCHEDULED for %q says %q, want it to name pool %q", taskID, message, wantPool)
@@ -435,8 +453,8 @@ tasks:
 
 	transcript.section("1. per-task pool routing, one run, two Orkers")
 	transcript.line("run                  %s -> %s", runID, last.GetType())
-	transcript.line("orker A (pool %-5s) ran %v on %s", alpha.pool, alpha.ran(), alpha.channelFor("crunch"))
-	transcript.line("orker B (pool %-5s) ran %v on %s", bravo.pool, bravo.ran(), bravo.channelFor("polish"))
+	transcript.line("orker A (pool %s) ran %v on %s", alpha.pool, alpha.ran(), alpha.channelFor("crunch"))
+	transcript.line("orker B (pool %s) ran %v on %s", bravo.pool, bravo.ran(), bravo.channelFor("polish"))
 	for _, taskID := range []string{"crunch", "polish"} {
 		transcript.line("TASK_SCHEDULED %-7s %s", taskID, scheduled[taskID])
 	}
@@ -467,9 +485,15 @@ tasks:
 	}
 	for _, orker := range []*poolOrker{alpha, bravo} {
 		reported := byName[orker.pool]
-		if reported.GetLiveOrkerCount() < 1 {
-			t.Errorf("ListPools reports %d Orkers on pool %q, want at least 1",
-				reported.GetLiveOrkerCount(), orker.pool)
+		// EXACTLY one. This test started one Orker per pool onto a channel
+		// nothing else has ever polled, so any other number is a count of
+		// something that is not serving the pool. "At least one" would report
+		// a remembered-but-departed worker as success, and that is the whole
+		// failure: an operator scaling a pool from three Orkers to one must be
+		// told one.
+		if got := reported.GetLiveOrkerCount(); got != 1 {
+			t.Errorf("ListPools reports %d Orkers on pool %q; exactly 1 is serving it",
+				got, orker.pool)
 		}
 		// The plugin set has to come from the POOL, not from the engine: each
 		// Orker answers with its own, and a report that asked the wrong one
@@ -484,30 +508,51 @@ tasks:
 				"from that pool's own Orkers", got, orker.pool, strings.Join(want, ","))
 		}
 	}
-	if got := byName["cold"].GetLiveOrkerCount(); got != 0 {
-		t.Errorf("ListPools reports %d Orkers on the unserved pool %q, want 0", got, "cold")
+	if got := byName[poolCold].GetLiveOrkerCount(); got != 0 {
+		t.Errorf("ListPools reports %d Orkers on the unserved pool %q, want 0", got, poolCold)
 	}
 	transcript.section("6. pools, observed from the cluster")
 	transcript.line("default pool         %s", pools.Msg.GetDefaultPool())
 	for _, pool := range pools.Msg.GetPools() {
-		transcript.line("pool %-6s orkers=%d plugins=%v", pool.GetName(),
+		transcript.line("pool %-24s orkers=%d plugins=%v", pool.GetName(),
 			pool.GetLiveOrkerCount(), pool.GetPlugins())
 	}
 }
 
-// awaitLiveOrker waits until the cluster reports a poller on one pool's
-// channel, so a liveness check is measuring a deployment that is up.
-func awaitLiveOrker(t *testing.T, ctx context.Context, probe engine.PoolProbe, orker *poolOrker) {
+// awaitPoolServedBy waits until the cluster reports exactly want Orkers on one
+// pool's channel, and returns how long that took.
+//
+// It waits for two reasons. The Orker this test started may not have polled
+// yet, and Temporal's poller information is not instantaneous. Exactly is the
+// point: the pools are this run's own (see the token above), so nothing else
+// has ever polled these channels and any number other than want is a number
+// the deployment does not justify. The deadline outlasts
+// DefaultPollerFreshness so that a stale record, if one could ever reach here,
+// would age out rather than be asserted around.
+func awaitPoolServedBy(
+	t *testing.T,
+	ctx context.Context,
+	probe engine.PoolProbe,
+	orker *poolOrker,
+	want int,
+) time.Duration {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	started := time.Now()
+	deadline := started.Add(engine.DefaultPollerFreshness + 30*time.Second)
+	var last engine.PoolLiveness
 	for time.Now().Before(deadline) {
 		live, err := probe.ObservePool(ctx, orker.queue)
-		if err == nil && live.Fresh(time.Now(), engine.DefaultPollerFreshness) {
-			return
+		if err == nil {
+			last = live
+			if live.Orkers == want && live.Fresh(time.Now(), engine.DefaultPollerFreshness) {
+				return time.Since(started)
+			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("the cluster never reported an Orker serving pool %q", orker.pool)
+	t.Fatalf("the cluster reports %d Orkers on pool %q, want %d (last seen %v)",
+		last.Orkers, orker.pool, want, last.LastSeen)
+	return 0
 }
 
 // awaitRunListed waits until a run appears in the read model, so a later
