@@ -9,11 +9,13 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -146,6 +148,9 @@ func unmarshalNamespace(document []byte) (*orkstackv1.Namespace, error) {
 type S3NamespaceStore struct {
 	client *s3.Client
 	bucket string
+	// now stamps created_at and updated_at. It is a field only so a test can
+	// hold the clock still; every constructor sets it to the wall clock.
+	now func() time.Time
 }
 
 // compile-time contract check.
@@ -158,7 +163,11 @@ func NewS3NamespaceStore(ctx context.Context, cfg Config) (*S3NamespaceStore, er
 	if err != nil {
 		return nil, err
 	}
-	return &S3NamespaceStore{client: client, bucket: bucket}, nil
+	return &S3NamespaceStore{
+		client: client,
+		bucket: bucket,
+		now:    func() time.Time { return time.Now().UTC() },
+	}, nil
 }
 
 // Bucket returns the bucket holding the registry.
@@ -172,6 +181,13 @@ func (s *S3NamespaceStore) uri(key string) string {
 }
 
 // Put writes one namespace document.
+//
+// The registry owns the document's times, not the caller: created_at is
+// stamped when the name is first written and carried forward verbatim on every
+// later write, updated_at is stamped on each one. Whatever a caller sent in
+// either field is discarded — a client that could backdate created_at could
+// hide when a tenant appeared, and a client that could freeze updated_at could
+// hide that it changed one.
 func (s *S3NamespaceStore) Put(ctx context.Context, ns *orkstackv1.Namespace) error {
 	if ns == nil {
 		return fmt.Errorf("artifacts: encode namespace: %w: nil namespace", ErrInvalidNamespace)
@@ -186,6 +202,18 @@ func (s *S3NamespaceStore) Put(ctx context.Context, ns *orkstackv1.Namespace) er
 	}
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
 	stored.Name = name
+	stamp := timestamppb.New(s.clock())
+	stored.CreatedAt, stored.UpdatedAt = stamp, stamp
+	switch existing, err := s.read(ctx, key); {
+	case err == nil:
+		if created := existing.GetCreatedAt(); created != nil {
+			stored.CreatedAt = created
+		}
+	case errors.Is(err, ErrNotFound):
+		// First write of this name: the stamp above is its birth.
+	default:
+		return err
+	}
 	document, err := marshalNamespace(stored)
 	if err != nil {
 		return err
@@ -200,6 +228,15 @@ func (s *S3NamespaceStore) Put(ctx context.Context, ns *orkstackv1.Namespace) er
 		return fmt.Errorf("artifacts: put namespace %q: %w", s.uri(key), err)
 	}
 	return nil
+}
+
+// clock is the store's time source, defaulting to the wall clock so a
+// zero-valued store still stamps a real time rather than the epoch.
+func (s *S3NamespaceStore) clock() time.Time {
+	if s.now == nil {
+		return time.Now().UTC()
+	}
+	return s.now()
 }
 
 // validNamespacePools enforces the one invariant the document carries on its

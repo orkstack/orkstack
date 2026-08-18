@@ -249,7 +249,10 @@ A queue partitions task execution only — run workflows and engine events still
 share their queues, so a namespace is the stronger boundary and the one to use
 for parallel agents. A task's own `pool:` in the DSL resolves to its dedicated
 Orker pool, which is how one step reaches a separate worker group
-(`docs/DSL.md`). Proof for both: `proof/queue-routing/`.
+(`docs/DSL.md`). Proof for both: `proof/queue-routing/`, which
+`proof/M10.1/proof-claims.sh` holds to this tree — a proof this file points a
+reader at is a claim about the tree, and M10.1 renamed five symbols that proof
+argued from before anything noticed.
 
 **In test harnesses** that start their own engine and orker, give the pair a
 unique namespace, and a private queue when the test needs one

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -18,8 +17,8 @@ import (
 //
 // Two object families, both under one prefix:
 //
-//	metadata/runs/{run-id}.jsonl                                the immutable body
-//	metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{millis}/{run-id}
+//	metadata/runs/{run-id}.jsonl                                  the immutable body
+//	metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{run-id}
 //
 // The body holds the run and every one of its events, one JSON record per line.
 // It is written once, when the run reaches a terminal state, and never
@@ -32,11 +31,6 @@ import (
 // timestamp — so a query that pins the first segments scans only its own
 // subtree, and a time range starts the scan at its lower bound instead of at
 // the first key.
-//
-// The trailing {millis} is the run's wall duration. It is in the key because a
-// duration statistic must be answerable from the same keys-only scan; reading
-// a body per run to time it would make "how long do these runs take" cost as
-// much as replaying them.
 const (
 	// RunArchiveNamespace prefixes every archived run body.
 	RunArchiveNamespace = "metadata/runs"
@@ -50,13 +44,8 @@ const (
 	// the same lexicographically as chronologically.
 	RunStampLayout = "20060102T150405.000000000Z"
 	// runIndexSegments is the fixed segment count of an index key:
-	// metadata, index, runs, namespace, orkflow, status, stamp, millis, run-id.
-	runIndexSegments = 9
-	// runDurationDigits is the width of the {millis} segment. Fixed width so
-	// it sorts numerically as text; 12 digits hold 31 years of milliseconds,
-	// and a longer run is clamped rather than allowed to widen the segment and
-	// sort as if it were short.
-	runDurationDigits = 12
+	// metadata, index, runs, namespace, orkflow, status, stamp, run-id.
+	runIndexSegments = 8
 	// archiveMaxComponent bounds one generated segment. Orkflow names and task
 	// ids are DSL slugs and run ids are ork-{timestamp}-{sequence}, so a real
 	// segment is far shorter; the bound only rejects abuse.
@@ -87,9 +76,6 @@ type RunRecord struct {
 	// Time orders the run in the index. The engine passes the run's creation
 	// time, so a date range means "runs created in this window".
 	Time time.Time
-	// Duration is the run's wall time. A run that never started, or whose
-	// clocks disagree, records zero rather than a negative number.
-	Duration time.Duration
 	// JSONL is the archive body: one JSON record per line.
 	JSONL []byte
 }
@@ -102,7 +88,6 @@ type RunIndexEntry struct {
 	Orkflow   string
 	Status    string
 	Time      time.Time
-	Duration  time.Duration
 }
 
 // RunQuery narrows a prefix scan. Zero values mean "no filter".
@@ -168,26 +153,8 @@ func RunIndexKey(rec RunRecord) (string, error) {
 		return "", fmt.Errorf("artifacts: run index key: run id: %w", err)
 	}
 	return path.Join(RunIndexNamespace, namespace, orkflow, status,
-		RunStamp(rec.Time), RunDurationSegment(rec.Duration), runID), nil
+		RunStamp(rec.Time), runID), nil
 }
-
-// RunDurationSegment renders a wall duration as the fixed-width {millis}
-// segment. A negative duration (a run whose clocks disagreed) records zero,
-// and one too long to fit is clamped to the widest value the segment holds
-// rather than widening it and sorting as though it were short.
-func RunDurationSegment(d time.Duration) string {
-	millis := d.Milliseconds()
-	if millis < 0 {
-		millis = 0
-	}
-	if max := int64(maxRunDurationMillis); millis > max {
-		millis = max
-	}
-	return fmt.Sprintf("%0*d", runDurationDigits, millis)
-}
-
-// maxRunDurationMillis is the largest value runDurationDigits can hold.
-const maxRunDurationMillis = 999999999999
 
 // ParseRunIndexKey reverses RunIndexKey. A key this package did not generate
 // reports ok=false rather than an error, so a scan can skip foreign objects.
@@ -212,14 +179,7 @@ func ParseRunIndexKey(key string) (RunIndexEntry, bool) {
 	if err != nil {
 		return RunIndexEntry{}, false
 	}
-	if len(parts[7]) != runDurationDigits {
-		return RunIndexEntry{}, false
-	}
-	millis, err := strconv.ParseInt(parts[7], 10, 64)
-	if err != nil || millis < 0 {
-		return RunIndexEntry{}, false
-	}
-	runID, ok := decodeArchiveSegment(parts[8])
+	runID, ok := decodeArchiveSegment(parts[7])
 	if !ok {
 		return RunIndexEntry{}, false
 	}
@@ -229,7 +189,6 @@ func ParseRunIndexKey(key string) (RunIndexEntry, bool) {
 		Orkflow:   orkflow,
 		Status:    status,
 		Time:      stamp,
-		Duration:  time.Duration(millis) * time.Millisecond,
 	}, true
 }
 
@@ -281,9 +240,8 @@ func (q RunQuery) ScanPrefix() (prefix, startAfter string, err error) {
 	if q.Since.IsZero() {
 		return prefix, "", nil
 	}
-	// Keys are prefix+stamp+"/"+millis+"/"+run-id, so every key at exactly
-	// Since sorts after prefix+stamp; an exclusive start-after still includes
-	// them.
+	// Keys are prefix+stamp+"/"+run-id, so every key at exactly Since sorts
+	// after prefix+stamp; an exclusive start-after still includes them.
 	return prefix, prefix + RunStamp(q.Since), nil
 }
 

@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIqwCCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQqoBCg9jb20ub3Jrc3RhY2sudjFCDk5hbWVzcGFjZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIp4CCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUKqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -51,19 +51,32 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * default_pool is where a task that names no pool runs. Empty means the
    * built-in pool "main".
    *
+   * It is recorded and kept self-consistent here; it is not yet consulted at
+   * dispatch. The engine resolves an empty Task.pool to "main" today, and
+   * M10.2 is the slice that reads this field on the submit path.
+   *
    * @generated from field: string default_pool = 4;
    */
   defaultPool: string;
 
   /**
    * allowed_pools bounds every pool this namespace may dispatch onto. Empty
-   * means no restriction. A non-empty list must contain default_pool.
+   * means no restriction. A non-empty list must contain default_pool, which
+   * the registry refuses to store otherwise — an allow-list that excludes the
+   * namespace's own default would refuse every task that names no pool.
+   *
+   * Like default_pool it is stored, not enforced, until M10.2 enforces it at
+   * the API boundary.
    *
    * @generated from field: repeated string allowed_pools = 5;
    */
   allowedPools: string[];
 
   /**
+   * created_at and updated_at are written by the registry, never by a client:
+   * created_at when the document is first written and preserved on every
+   * later write, updated_at on each one.
+   *
    * @generated from field: google.protobuf.Timestamp created_at = 6;
    */
   createdAt?: Timestamp | undefined;
@@ -72,16 +85,6 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * @generated from field: google.protobuf.Timestamp updated_at = 7;
    */
   updatedAt?: Timestamp | undefined;
-
-  /**
-   * etag is the store's opaque concurrency token. A caller sends back the one
-   * Get returned; a mismatch is refused rather than clobbered. It is written
-   * by the store, never by a client, and stays empty until compare-and-swap
-   * lands with the namespace API.
-   *
-   * @generated from field: string etag = 8;
-   */
-  etag: string;
 };
 
 /**

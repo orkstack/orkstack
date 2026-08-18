@@ -24,15 +24,22 @@ message Namespace {
   map<string, string> labels = 3;
   // default_pool is where a task that names no pool runs. Empty means the
   // built-in pool "main".
+  //
+  // It is recorded and kept self-consistent here; it is not yet consulted at
+  // dispatch. The engine resolves an empty Task.pool to "main" today, and
+  // M10.2 is the slice that reads this field on the submit path.
   string default_pool = 4;
   // allowed_pools bounds every pool this namespace may dispatch onto. Empty
-  // means no restriction. A non-empty list must contain default_pool.
+  // means no restriction. A non-empty list must contain default_pool, which
+  // the registry refuses to store otherwise — an allow-list that excludes the
+  // namespace's own default would refuse every task that names no pool.
+  //
+  // Like default_pool it is stored, not enforced, until M10.2 enforces it at
+  // the API boundary.
   repeated string allowed_pools = 5;
+  // created_at and updated_at are written by the registry, never by a client:
+  // created_at when the document is first written and preserved on every
+  // later write, updated_at on each one.
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
-  // etag is the store's opaque concurrency token. A caller sends back the one
-  // Get returned; a mismatch is refused rather than clobbered. It is written
-  // by the store, never by a client, and stays empty until compare-and-swap
-  // lands with the namespace API.
-  string etag = 8;
 }

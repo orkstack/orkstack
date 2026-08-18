@@ -113,8 +113,9 @@ export type Task = Message<"orkstack.v1.Task"> & {
 
   /**
    * pool names the set of Orkers this task runs on. Empty resolves to the
-   * namespace's default_pool, then to the built-in pool "main". The engine
-   * maps it to its internal execution channel and nowhere else.
+   * built-in pool "main"; Namespace.default_pool joins that resolution in
+   * M10.2, which is the slice that reads it. The engine maps a pool to its
+   * internal execution channel and nowhere else.
    *
    * @generated from field: string pool = 9;
    */
