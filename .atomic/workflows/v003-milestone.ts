@@ -186,6 +186,8 @@ const SLICES: Slice[] = [
       "6. A namespace registry: metadata/namespaces/{name}.json with Put/Get/List/Delete, same validation discipline. Delete REFUSES while the namespace still holds orkflows and says how many. The `default` namespace always resolves and needs no creation.",
       "7. Nothing is deployed, so this is a clean cut like M9: no shim, no dual-read, no migration path. Move existing tests, examples/*.ork.yaml and docs to the new spelling in this slice.",
       "8. proof/M10.1/ with README.md, test.log, naming-sweep.sh and a reproduce.sh that regenerates it.",
+      "9. The event messages the engine SHIPS TO CLIENTS name the pool, never the queue. internal/engine/workflow.go emits `task scheduled on queue <queue>` for EVENT_TYPE_TASK_SCHEDULED; cmd/orkctl/watch.go prints that string in its MESSAGE column and ui/src/routes/runs/[id]/+page.svelte renders it, so an author who wrote `pool: gpu` is currently told about `queue ork-pool-gpu` — Temporal's word plus an internal queue name they never typed. Emit the POOL (task.PoolForQueue exists for exactly this and must gain a real caller), and add a behavior test over the EMITTED EVENT STREAM asserting the message names the pool and not the queue. The naming gate cannot catch this — it correctly exempts internal/engine/, so its PASS is not evidence about strings the engine sends to a client. Any user-visible string the gate cannot see must be covered by a test instead.",
+      "10. Do not document a field that cannot be read. `namespace:` compiles and stores, but every API read path (GetOrkflow, ListOrkflows, SubmitRun in internal/api/service.go) is pinned to the default namespace until M10.3, so applying `namespace: payments` today succeeds, writes the object, and then nothing can read or run it. Close the black hole in this slice: ApplyOrkflow REJECTS a non-default namespace with an error naming M10.3 as the slice that enables it, and docs/DSL.md states the limitation next to the field. internal/api is otherwise out of scope for this slice — this guard is the only change permitted there, and M10.3 removes it.",
     ].join("\n"),
     scopeLock:
       "proto/, gen/, internal/dsl/, pkg/artifacts/, internal/engine/ (store seams only), examples/, docs/DSL.md, proof/M10.1/",
@@ -224,7 +226,8 @@ const SLICES: Slice[] = [
       "3. orkctl: `orkctl namespace create|list|get|update|delete`, a global `--namespace`/`-n` flag, and a persisted default in the CLI config so a user is not retyping it. Every command supports `--json`.",
       "4. Errors are actionable: submitting into a missing namespace says which namespace, and lists the namespaces that do exist.",
       "5. Golden CLI tests cover both human and --json output for the new commands, following cmd/orkctl/golden_test.go.",
-      "6. proof/M10.3/ with README.md, test.log, a CLI session transcript covering two isolated namespaces, and reproduce.sh.",
+      "6. M10.1 left an interim guard in ApplyOrkflow rejecting a non-default namespace, because the read paths could not honour it yet. This slice is what it was waiting for: REMOVE the guard, and prove end to end that a non-default namespace now applies, lists, reads and submits. A guard that outlives the slice it was waiting for is a bug.",
+      "7. proof/M10.3/ with README.md, test.log, a CLI session transcript covering two isolated namespaces, and reproduce.sh.",
     ].join("\n"),
     scopeLock:
       "internal/api/, cmd/orkctl/, proto/ (only if a field is missing), docs/, proof/M10.3/",
