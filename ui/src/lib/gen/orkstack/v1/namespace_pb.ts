@@ -90,3 +90,4 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
  */
 export const NamespaceSchema: GenMessage<Namespace> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_namespace, 0);
+
