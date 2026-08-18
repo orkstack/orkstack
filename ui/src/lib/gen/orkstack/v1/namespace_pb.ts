@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIqwCCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQqoBCg9jb20ub3Jrc3RhY2sudjFCDk5hbWVzcGFjZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIqwCCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIoIBCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRIPCgdwbHVnaW5zGAMgAygJEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEKqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -90,4 +90,62 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
  */
 export const NamespaceSchema: GenMessage<Namespace> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_namespace, 0);
+
+/**
+ * Pool is a set of Orkers, observed live.
+ *
+ * Nothing writes a Pool: it is derived on read from what the cluster reports
+ * about the Orkers polling for a pool's work, so any replica answers, including
+ * one that started nothing and holds no state of its own.
+ *
+ * @generated from message orkstack.v1.Pool
+ */
+export type Pool = Message<"orkstack.v1.Pool"> & {
+  /**
+   * name is the pool a task's `pool:` names. "main" is built in and is where a
+   * task runs when neither it nor its namespace names one.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * live_orker_count is how many Orkers were serving this pool when the answer
+   * was computed. Zero means a task sent here would wait for an Orker that is
+   * not there, which is what a submit refuses.
+   *
+   * @generated from field: int32 live_orker_count = 2;
+   */
+  liveOrkerCount: number;
+
+  /**
+   * plugins are the plugins those Orkers can run, asked of the pool itself. It
+   * is empty when the pool has no live Orkers: there is nobody to ask.
+   *
+   * @generated from field: repeated string plugins = 3;
+   */
+  plugins: string[];
+
+  /**
+   * is_default marks the pool a task of this namespace runs on when it names
+   * none.
+   *
+   * @generated from field: bool is_default = 4;
+   */
+  isDefault: boolean;
+
+  /**
+   * last_seen is the most recent moment an Orker of this pool was observed.
+   *
+   * @generated from field: google.protobuf.Timestamp last_seen = 5;
+   */
+  lastSeen?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.Pool.
+ * Use `create(PoolSchema)` to create a new message.
+ */
+export const PoolSchema: GenMessage<Pool> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_namespace, 1);
 

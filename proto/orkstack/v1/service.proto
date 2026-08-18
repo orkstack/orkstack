@@ -6,6 +6,7 @@ import "google/protobuf/struct.proto";
 import "orkstack/v1/common.proto";
 import "orkstack/v1/run.proto";
 import "orkstack/v1/orkflow.proto";
+import "orkstack/v1/namespace.proto";
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
 // OrkflowService manages orkflow definitions (the compiled DSL).
@@ -53,6 +54,15 @@ message SubmitRunRequest {
   string orkflow_version = 2;            // orkflow version; empty = latest
   Payload input = 3;
   string idempotency_key = 4;            // optional dedupe
+  // 5 is reserved for the namespace selector, which arrives with the
+  // namespace-aware API. Submissions are scoped to the default namespace
+  // until then.
+  //
+  // allow_empty_pool submits even when a task's resolved pool has no live
+  // Orkers. Default false: an empty pool is an error at submit, not a run
+  // that reaches RUNNING and stays there because nothing will ever pick its
+  // tasks up. Setting it is logged with the pool it overrode.
+  bool allow_empty_pool = 6;
 }
 message SubmitRunResponse { Run run = 1; }
 message GetRunRequest { string run_id = 1; }
@@ -72,6 +82,26 @@ message CancelRunResponse { Run run = 1; }
 message StreamEventsRequest {
   string run_id = 1;
   int64 from_sequence = 2;
+}
+
+// NamespaceService manages namespaces and reports the pools they may dispatch
+// onto. Registering, updating and deleting a namespace arrives with the
+// namespace-aware API; this service exists now because a pool is only useful
+// if an operator can see whether anything is serving it.
+service NamespaceService {
+  // ListPools reports every pool a namespace may dispatch onto, each with the
+  // number of Orkers serving it right now and the plugins those Orkers run.
+  //
+  // The answer is read from the cluster, never from process memory, so any
+  // replica answers — including one that started nothing.
+  rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
+}
+message ListPoolsRequest {
+  string namespace = 1;                  // empty = the default namespace
+}
+message ListPoolsResponse {
+  repeated Pool pools = 1;               // ordered by name
+  string default_pool = 2;               // where a task naming no pool runs
 }
 
 // PluginService exposes the plugins registered across connected Orkers.

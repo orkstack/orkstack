@@ -142,6 +142,97 @@ func (x *Namespace) GetEtag() string {
 	return ""
 }
 
+// Pool is a set of Orkers, observed live.
+//
+// Nothing writes a Pool: it is derived on read from what the cluster reports
+// about the Orkers polling for a pool's work, so any replica answers, including
+// one that started nothing and holds no state of its own.
+type Pool struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the pool a task's `pool:` names. "main" is built in and is where a
+	// task runs when neither it nor its namespace names one.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// live_orker_count is how many Orkers were serving this pool when the answer
+	// was computed. Zero means a task sent here would wait for an Orker that is
+	// not there, which is what a submit refuses.
+	LiveOrkerCount int32 `protobuf:"varint,2,opt,name=live_orker_count,json=liveOrkerCount,proto3" json:"live_orker_count,omitempty"`
+	// plugins are the plugins those Orkers can run, asked of the pool itself. It
+	// is empty when the pool has no live Orkers: there is nobody to ask.
+	Plugins []string `protobuf:"bytes,3,rep,name=plugins,proto3" json:"plugins,omitempty"`
+	// is_default marks the pool a task of this namespace runs on when it names
+	// none.
+	IsDefault bool `protobuf:"varint,4,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	// last_seen is the most recent moment an Orker of this pool was observed.
+	LastSeen      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Pool) Reset() {
+	*x = Pool{}
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Pool) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Pool) ProtoMessage() {}
+
+func (x *Pool) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Pool.ProtoReflect.Descriptor instead.
+func (*Pool) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Pool) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Pool) GetLiveOrkerCount() int32 {
+	if x != nil {
+		return x.LiveOrkerCount
+	}
+	return 0
+}
+
+func (x *Pool) GetPlugins() []string {
+	if x != nil {
+		return x.Plugins
+	}
+	return nil
+}
+
+func (x *Pool) GetIsDefault() bool {
+	if x != nil {
+		return x.IsDefault
+	}
+	return false
+}
+
+func (x *Pool) GetLastSeen() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastSeen
+	}
+	return nil
+}
+
 var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
@@ -160,7 +251,14 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\x04etag\x18\b \x01(\tR\x04etag\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\xaa\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb6\x01\n" +
+	"\x04Pool\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12(\n" +
+	"\x10live_orker_count\x18\x02 \x01(\x05R\x0eliveOrkerCount\x12\x18\n" +
+	"\aplugins\x18\x03 \x03(\tR\aplugins\x12\x1d\n" +
+	"\n" +
+	"is_default\x18\x04 \x01(\bR\tisDefault\x127\n" +
+	"\tlast_seen\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeenB\xaa\x01\n" +
 	"\x0fcom.orkstack.v1B\x0eNamespaceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -175,21 +273,23 @@ func file_orkstack_v1_namespace_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_namespace_proto_rawDescData
 }
 
-var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_orkstack_v1_namespace_proto_goTypes = []any{
 	(*Namespace)(nil),             // 0: orkstack.v1.Namespace
-	nil,                           // 1: orkstack.v1.Namespace.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 2: google.protobuf.Timestamp
+	(*Pool)(nil),                  // 1: orkstack.v1.Pool
+	nil,                           // 2: orkstack.v1.Namespace.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
 }
 var file_orkstack_v1_namespace_proto_depIdxs = []int32{
-	1, // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
-	2, // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
-	2, // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	2, // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
+	3, // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
+	3, // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
+	3, // 3: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_namespace_proto_init() }
@@ -203,7 +303,7 @@ func file_orkstack_v1_namespace_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_namespace_proto_rawDesc), len(file_orkstack_v1_namespace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

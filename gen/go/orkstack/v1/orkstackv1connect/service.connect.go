@@ -25,6 +25,8 @@ const (
 	OrkflowServiceName = "orkstack.v1.OrkflowService"
 	// RunServiceName is the fully-qualified name of the RunService service.
 	RunServiceName = "orkstack.v1.RunService"
+	// NamespaceServiceName is the fully-qualified name of the NamespaceService service.
+	NamespaceServiceName = "orkstack.v1.NamespaceService"
 	// PluginServiceName is the fully-qualified name of the PluginService service.
 	PluginServiceName = "orkstack.v1.PluginService"
 )
@@ -56,6 +58,9 @@ const (
 	RunServiceCancelRunProcedure = "/orkstack.v1.RunService/CancelRun"
 	// RunServiceStreamEventsProcedure is the fully-qualified name of the RunService's StreamEvents RPC.
 	RunServiceStreamEventsProcedure = "/orkstack.v1.RunService/StreamEvents"
+	// NamespaceServiceListPoolsProcedure is the fully-qualified name of the NamespaceService's
+	// ListPools RPC.
+	NamespaceServiceListPoolsProcedure = "/orkstack.v1.NamespaceService/ListPools"
 	// PluginServiceListPluginsProcedure is the fully-qualified name of the PluginService's ListPlugins
 	// RPC.
 	PluginServiceListPluginsProcedure = "/orkstack.v1.PluginService/ListPlugins"
@@ -361,6 +366,86 @@ func (UnimplementedRunServiceHandler) CancelRun(context.Context, *connect.Reques
 
 func (UnimplementedRunServiceHandler) StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest], *connect.ServerStream[v1.Event]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.StreamEvents is not implemented"))
+}
+
+// NamespaceServiceClient is a client for the orkstack.v1.NamespaceService service.
+type NamespaceServiceClient interface {
+	// ListPools reports every pool a namespace may dispatch onto, each with the
+	// number of Orkers serving it right now and the plugins those Orkers run.
+	//
+	// The answer is read from the cluster, never from process memory, so any
+	// replica answers — including one that started nothing.
+	ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error)
+}
+
+// NewNamespaceServiceClient constructs a client for the orkstack.v1.NamespaceService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewNamespaceServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) NamespaceServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	namespaceServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("NamespaceService").Methods()
+	return &namespaceServiceClient{
+		listPools: connect.NewClient[v1.ListPoolsRequest, v1.ListPoolsResponse](
+			httpClient,
+			baseURL+NamespaceServiceListPoolsProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("ListPools")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// namespaceServiceClient implements NamespaceServiceClient.
+type namespaceServiceClient struct {
+	listPools *connect.Client[v1.ListPoolsRequest, v1.ListPoolsResponse]
+}
+
+// ListPools calls orkstack.v1.NamespaceService.ListPools.
+func (c *namespaceServiceClient) ListPools(ctx context.Context, req *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error) {
+	return c.listPools.CallUnary(ctx, req)
+}
+
+// NamespaceServiceHandler is an implementation of the orkstack.v1.NamespaceService service.
+type NamespaceServiceHandler interface {
+	// ListPools reports every pool a namespace may dispatch onto, each with the
+	// number of Orkers serving it right now and the plugins those Orkers run.
+	//
+	// The answer is read from the cluster, never from process memory, so any
+	// replica answers — including one that started nothing.
+	ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error)
+}
+
+// NewNamespaceServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewNamespaceServiceHandler(svc NamespaceServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	namespaceServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("NamespaceService").Methods()
+	namespaceServiceListPoolsHandler := connect.NewUnaryHandler(
+		NamespaceServiceListPoolsProcedure,
+		svc.ListPools,
+		connect.WithSchema(namespaceServiceMethods.ByName("ListPools")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/orkstack.v1.NamespaceService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case NamespaceServiceListPoolsProcedure:
+			namespaceServiceListPoolsHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedNamespaceServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedNamespaceServiceHandler struct{}
+
+func (UnimplementedNamespaceServiceHandler) ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.ListPools is not implemented"))
 }
 
 // PluginServiceClient is a client for the orkstack.v1.PluginService service.

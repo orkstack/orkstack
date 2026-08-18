@@ -36,3 +36,26 @@ message Namespace {
   // lands with the namespace API.
   string etag = 8;
 }
+
+// Pool is a set of Orkers, observed live.
+//
+// Nothing writes a Pool: it is derived on read from what the cluster reports
+// about the Orkers polling for a pool's work, so any replica answers, including
+// one that started nothing and holds no state of its own.
+message Pool {
+  // name is the pool a task's `pool:` names. "main" is built in and is where a
+  // task runs when neither it nor its namespace names one.
+  string name = 1;
+  // live_orker_count is how many Orkers were serving this pool when the answer
+  // was computed. Zero means a task sent here would wait for an Orker that is
+  // not there, which is what a submit refuses.
+  int32 live_orker_count = 2;
+  // plugins are the plugins those Orkers can run, asked of the pool itself. It
+  // is empty when the pool has no live Orkers: there is nobody to ask.
+  repeated string plugins = 3;
+  // is_default marks the pool a task of this namespace runs on when it names
+  // none.
+  bool is_default = 4;
+  // last_seen is the most recent moment an Orker of this pool was observed.
+  google.protobuf.Timestamp last_seen = 5;
+}

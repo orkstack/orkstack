@@ -11,13 +11,15 @@ import type { EventSchema, Run } from "./run_pb";
 import { file_orkstack_v1_run } from "./run_pb";
 import type { Orkflow } from "./orkflow_pb";
 import { file_orkstack_v1_orkflow } from "./orkflow_pb";
+import type { Pool } from "./namespace_pb";
+import { file_orkstack_v1_namespace } from "./namespace_pb";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file orkstack/v1/service.proto.
  */
 export const file_orkstack_v1_service: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSIjChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkiTwoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkiMgoRR2V0T3JrZmxvd1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyI8ChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJIlcKFExpc3RPcmtmbG93c1Jlc3BvbnNlEiYKCG9ya2Zsb3dzGAEgAygLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkifwoQU3VibWl0UnVuUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAIgASgJEiMKBWlucHV0GAMgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIXCg9pZGVtcG90ZW5jeV9rZXkYBCABKAkiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIh8KDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJIi8KDkdldFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biJzCg9MaXN0UnVuc1JlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEiMKBnN0YXR1cxgCIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIRCglwYWdlX3NpemUYAyABKAUSEgoKcGFnZV90b2tlbhgEIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIjIKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSIyChFDYW5jZWxSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iPAoTU3RyZWFtRXZlbnRzUmVxdWVzdBIOCgZydW5faWQYASABKAkSFQoNZnJvbV9zZXF1ZW5jZRgCIAEoAyIUChJMaXN0UGx1Z2luc1JlcXVlc3QinwEKClBsdWdpbkluZm8SDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEi0KDGlucHV0X3NjaGVtYRgEIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSLgoNb3V0cHV0X3NjaGVtYRgFIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QiPwoTTGlzdFBsdWdpbnNSZXNwb25zZRIoCgdwbHVnaW5zGAEgAygLMhcub3Jrc3RhY2sudjEuUGx1Z2luSW5mbzKJAgoOT3JrZmxvd1NlcnZpY2USUwoMQXBwbHlPcmtmbG93EiAub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVxdWVzdBohLm9ya3N0YWNrLnYxLkFwcGx5T3JrZmxvd1Jlc3BvbnNlEk0KCkdldE9ya2Zsb3cSHi5vcmtzdGFjay52MS5HZXRPcmtmbG93UmVxdWVzdBofLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXNwb25zZRJTCgxMaXN0T3JrZmxvd3MSIC5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXF1ZXN0GiEub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dzUmVzcG9uc2Uy+AIKClJ1blNlcnZpY2USSgoJU3VibWl0UnVuEh0ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlc3BvbnNlEkEKBkdldFJ1bhIaLm9ya3N0YWNrLnYxLkdldFJ1blJlcXVlc3QaGy5vcmtzdGFjay52MS5HZXRSdW5SZXNwb25zZRJHCghMaXN0UnVucxIcLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVxdWVzdBodLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVzcG9uc2USSgoJQ2FuY2VsUnVuEh0ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlc3BvbnNlEkYKDFN0cmVhbUV2ZW50cxIgLm9ya3N0YWNrLnYxLlN0cmVhbUV2ZW50c1JlcXVlc3QaEi5vcmtzdGFjay52MS5FdmVudDABMmEKDVBsdWdpblNlcnZpY2USUAoLTGlzdFBsdWdpbnMSHy5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1JlcXVlc3QaIC5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1Jlc3BvbnNlQqgBCg9jb20ub3Jrc3RhY2sudjFCDFNlcnZpY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow]);
+  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSIjChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkiTwoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkiMgoRR2V0T3JrZmxvd1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyI8ChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJIlcKFExpc3RPcmtmbG93c1Jlc3BvbnNlEiYKCG9ya2Zsb3dzGAEgAygLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkimQEKEFN1Ym1pdFJ1blJlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgCIAEoCRIjCgVpbnB1dBgDIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSFwoPaWRlbXBvdGVuY3lfa2V5GAQgASgJEhgKEGFsbG93X2VtcHR5X3Bvb2wYBiABKAgiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIh8KDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJIi8KDkdldFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biJzCg9MaXN0UnVuc1JlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEiMKBnN0YXR1cxgCIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIRCglwYWdlX3NpemUYAyABKAUSEgoKcGFnZV90b2tlbhgEIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIjIKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSIyChFDYW5jZWxSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iPAoTU3RyZWFtRXZlbnRzUmVxdWVzdBIOCgZydW5faWQYASABKAkSFQoNZnJvbV9zZXF1ZW5jZRgCIAEoAyIlChBMaXN0UG9vbHNSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCSJLChFMaXN0UG9vbHNSZXNwb25zZRIgCgVwb29scxgBIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSFAoMZGVmYXVsdF9wb29sGAIgASgJIhQKEkxpc3RQbHVnaW5zUmVxdWVzdCKfAQoKUGx1Z2luSW5mbxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSLQoMaW5wdXRfc2NoZW1hGAQgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIuCg1vdXRwdXRfc2NoZW1hGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCI/ChNMaXN0UGx1Z2luc1Jlc3BvbnNlEigKB3BsdWdpbnMYASADKAsyFy5vcmtzdGFjay52MS5QbHVnaW5JbmZvMokCCg5PcmtmbG93U2VydmljZRJTCgxBcHBseU9ya2Zsb3cSIC5vcmtzdGFjay52MS5BcHBseU9ya2Zsb3dSZXF1ZXN0GiEub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVzcG9uc2USTQoKR2V0T3JrZmxvdxIeLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXF1ZXN0Gh8ub3Jrc3RhY2sudjEuR2V0T3JrZmxvd1Jlc3BvbnNlElMKDExpc3RPcmtmbG93cxIgLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93c1JlcXVlc3QaIS5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXNwb25zZTL4AgoKUnVuU2VydmljZRJKCglTdWJtaXRSdW4SHS5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVzcG9uc2USQQoGR2V0UnVuEhoub3Jrc3RhY2sudjEuR2V0UnVuUmVxdWVzdBobLm9ya3N0YWNrLnYxLkdldFJ1blJlc3BvbnNlEkcKCExpc3RSdW5zEhwub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXF1ZXN0Gh0ub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXNwb25zZRJKCglDYW5jZWxSdW4SHS5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVzcG9uc2USRgoMU3RyZWFtRXZlbnRzEiAub3Jrc3RhY2sudjEuU3RyZWFtRXZlbnRzUmVxdWVzdBoSLm9ya3N0YWNrLnYxLkV2ZW50MAEyXgoQTmFtZXNwYWNlU2VydmljZRJKCglMaXN0UG9vbHMSHS5vcmtzdGFjay52MS5MaXN0UG9vbHNSZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuTGlzdFBvb2xzUmVzcG9uc2UyYQoNUGx1Z2luU2VydmljZRJQCgtMaXN0UGx1Z2lucxIfLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVxdWVzdBogLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVzcG9uc2VCqAEKD2NvbS5vcmtzdGFjay52MUIMU2VydmljZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
 
 /**
  * @generated from message orkstack.v1.ApplyOrkflowRequest
@@ -174,6 +176,20 @@ export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
    * @generated from field: string idempotency_key = 4;
    */
   idempotencyKey: string;
+
+  /**
+   * 5 is reserved for the namespace selector, which arrives with the
+   * namespace-aware API. Submissions are scoped to the default namespace
+   * until then.
+   *
+   * allow_empty_pool submits even when a task's resolved pool has no live
+   * Orkers. Default false: an empty pool is an error at submit, not a run
+   * that reaches RUNNING and stays there because nothing will ever pick its
+   * tasks up. Setting it is logged with the pool it overrode.
+   *
+   * @generated from field: bool allow_empty_pool = 6;
+   */
+  allowEmptyPool: boolean;
 };
 
 /**
@@ -354,6 +370,51 @@ export const StreamEventsRequestSchema: GenMessage<StreamEventsRequest> = /*@__P
   messageDesc(file_orkstack_v1_service, 14);
 
 /**
+ * @generated from message orkstack.v1.ListPoolsRequest
+ */
+export type ListPoolsRequest = Message<"orkstack.v1.ListPoolsRequest"> & {
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+};
+
+/**
+ * Describes the message orkstack.v1.ListPoolsRequest.
+ * Use `create(ListPoolsRequestSchema)` to create a new message.
+ */
+export const ListPoolsRequestSchema: GenMessage<ListPoolsRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 15);
+
+/**
+ * @generated from message orkstack.v1.ListPoolsResponse
+ */
+export type ListPoolsResponse = Message<"orkstack.v1.ListPoolsResponse"> & {
+  /**
+   * ordered by name
+   *
+   * @generated from field: repeated orkstack.v1.Pool pools = 1;
+   */
+  pools: Pool[];
+
+  /**
+   * where a task naming no pool runs
+   *
+   * @generated from field: string default_pool = 2;
+   */
+  defaultPool: string;
+};
+
+/**
+ * Describes the message orkstack.v1.ListPoolsResponse.
+ * Use `create(ListPoolsResponseSchema)` to create a new message.
+ */
+export const ListPoolsResponseSchema: GenMessage<ListPoolsResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 16);
+
+/**
  * @generated from message orkstack.v1.ListPluginsRequest
  */
 export type ListPluginsRequest = Message<"orkstack.v1.ListPluginsRequest"> & {
@@ -364,7 +425,7 @@ export type ListPluginsRequest = Message<"orkstack.v1.ListPluginsRequest"> & {
  * Use `create(ListPluginsRequestSchema)` to create a new message.
  */
 export const ListPluginsRequestSchema: GenMessage<ListPluginsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 15);
+  messageDesc(file_orkstack_v1_service, 17);
 
 /**
  * @generated from message orkstack.v1.PluginInfo
@@ -401,7 +462,7 @@ export type PluginInfo = Message<"orkstack.v1.PluginInfo"> & {
  * Use `create(PluginInfoSchema)` to create a new message.
  */
 export const PluginInfoSchema: GenMessage<PluginInfo> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 16);
+  messageDesc(file_orkstack_v1_service, 18);
 
 /**
  * @generated from message orkstack.v1.ListPluginsResponse
@@ -418,7 +479,7 @@ export type ListPluginsResponse = Message<"orkstack.v1.ListPluginsResponse"> & {
  * Use `create(ListPluginsResponseSchema)` to create a new message.
  */
 export const ListPluginsResponseSchema: GenMessage<ListPluginsResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 17);
+  messageDesc(file_orkstack_v1_service, 19);
 
 /**
  * OrkflowService manages orkflow definitions (the compiled DSL).
@@ -508,6 +569,32 @@ export const RunService: GenService<{
   serviceDesc(file_orkstack_v1_service, 1);
 
 /**
+ * NamespaceService manages namespaces and reports the pools they may dispatch
+ * onto. Registering, updating and deleting a namespace arrives with the
+ * namespace-aware API; this service exists now because a pool is only useful
+ * if an operator can see whether anything is serving it.
+ *
+ * @generated from service orkstack.v1.NamespaceService
+ */
+export const NamespaceService: GenService<{
+  /**
+   * ListPools reports every pool a namespace may dispatch onto, each with the
+   * number of Orkers serving it right now and the plugins those Orkers run.
+   *
+   * The answer is read from the cluster, never from process memory, so any
+   * replica answers — including one that started nothing.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.ListPools
+   */
+  listPools: {
+    methodKind: "unary";
+    input: typeof ListPoolsRequestSchema;
+    output: typeof ListPoolsResponseSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_orkstack_v1_service, 2);
+
+/**
  * PluginService exposes the plugins registered across connected Orkers.
  *
  * @generated from service orkstack.v1.PluginService
@@ -522,5 +609,5 @@ export const PluginService: GenService<{
     output: typeof ListPluginsResponseSchema;
   },
 }> = /*@__PURE__*/
-  serviceDesc(file_orkstack_v1_service, 2);
+  serviceDesc(file_orkstack_v1_service, 3);
 
