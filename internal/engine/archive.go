@@ -144,8 +144,8 @@ func marshalArchiveMessage(m proto.Message) (json.RawMessage, error) {
 
 // ArchiveQuery selects archived runs. Zero values mean "no filter".
 type ArchiveQuery struct {
-	WorkflowName string
-	Status       orkstackv1.Status
+	OrkflowName string
+	Status      orkstackv1.Status
 	// Since is the inclusive lower bound, Until the exclusive upper bound, on
 	// the run's creation time.
 	Since time.Time
@@ -179,7 +179,7 @@ func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events [
 	if a == nil {
 		return nil
 	}
-	if run.GetWorkflowName() == "" {
+	if run.GetOrkflowName() == "" {
 		return fmt.Errorf("engine: archive run %q: orkflow name is required", run.GetId())
 	}
 	body, err := MarshalRunArchive(run, events)
@@ -188,7 +188,7 @@ func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events [
 	}
 	record := artifacts.RunRecord{
 		RunID:   run.GetId(),
-		Orkflow: run.GetWorkflowName(),
+		Orkflow: run.GetOrkflowName(),
 		Status:  archiveStatus(run.GetStatus()),
 		Time:    RunIndexTime(run),
 		JSONL:   body,
@@ -242,7 +242,7 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		limit = DefaultArchivePageSize
 	}
 	entries, err := a.archive.ListRuns(ctx, artifacts.RunQuery{
-		Orkflow: q.WorkflowName,
+		Orkflow: q.OrkflowName,
 		Status:  archiveStatus(q.Status),
 		Since:   q.Since,
 		Until:   q.Until,

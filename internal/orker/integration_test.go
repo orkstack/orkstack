@@ -123,10 +123,10 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 	}
 
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -147,14 +147,14 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	workflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
+	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
 	source, err := os.ReadFile("../../examples/hello.ork.yaml")
 	if err != nil {
-		t.Fatalf("read example workflow: %v", err)
+		t.Fatalf("read example orkflow: %v", err)
 	}
-	if _, err := workflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: string(source),
 	})); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -165,8 +165,8 @@ func TestIntegration_OrkerRunsHelloOrkOnRealTemporalAndMinIO(t *testing.T) {
 		t.Fatalf("build run input: %v", err)
 	}
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "hello-ork",
-		Input:        &orkstackv1.Payload{Data: input},
+		OrkflowName: "hello-ork",
+		Input:       &orkstackv1.Payload{Data: input},
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)

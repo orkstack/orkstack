@@ -113,12 +113,12 @@ func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
 	starter := &stubStarter{bus: bus}
 	counter := 0
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   starter,
-		Plugins:   plugins,
-		Now:       func() time.Time { return fixedNow },
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  starter,
+		Plugins:  plugins,
+		Now:      func() time.Time { return fixedNow },
 		NewRunID: func() string {
 			counter++
 			return fmt.Sprintf("run-%03d", counter)

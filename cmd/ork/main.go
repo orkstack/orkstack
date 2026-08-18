@@ -322,10 +322,10 @@ func run(logger *slog.Logger, cfg config) error {
 	// this process.
 	idempotency := engine.NewTemporalIdempotency(temporalClient, q.run, cfg.idempotencyTTL)
 	logger.Info("idempotency claims ready",
-		"workflow", engine.ClaimWorkflowName, "ttl", cfg.idempotencyTTL)
+		"workflow", engine.ClaimWorkflowType, "ttl", cfg.idempotencyTTL)
 
 	svc := api.NewService(api.Config{
-		Workflows:   orkflows,
+		Orkflows:    orkflows,
 		Reader:      reader,
 		Runs:        runs,
 		Bus:         bus,

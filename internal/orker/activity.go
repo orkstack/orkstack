@@ -208,7 +208,7 @@ func (a *Activities) upload(
 // plugin wrote under the same keys.
 func artifactMetadata(in task.ExecuteTaskInput, item plugin.ProducedArtifact) map[string]string {
 	meta := artifacts.Provenance{
-		Orkflow: in.WorkflowName,
+		Orkflow: in.OrkflowName,
 		TaskID:  in.TaskID,
 		RunID:   in.RunID,
 	}.Metadata(item.Metadata)

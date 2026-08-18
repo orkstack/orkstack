@@ -27,8 +27,8 @@ func orkflowFixture(name, version string, appliedAt time.Time) *orkstackv1.Orkfl
 	}
 }
 
-func TestWorkflowStore_ReadsBackWhatWasApplied(t *testing.T) {
-	store := engine.NewWorkflowStore()
+func TestMemoryOrkflowStore_ReadsBackWhatWasApplied(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 	applied := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 
@@ -54,8 +54,8 @@ func TestWorkflowStore_ReadsBackWhatWasApplied(t *testing.T) {
 	}
 }
 
-func TestWorkflowStore_EmptyVersionIsTheMostRecentlyApplied(t *testing.T) {
-	store := engine.NewWorkflowStore()
+func TestMemoryOrkflowStore_EmptyVersionIsTheMostRecentlyApplied(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 	base := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 
@@ -84,8 +84,8 @@ func TestWorkflowStore_EmptyVersionIsTheMostRecentlyApplied(t *testing.T) {
 	}
 }
 
-func TestWorkflowStore_ListsTheLatestVersionOfEveryOrkflowByName(t *testing.T) {
-	store := engine.NewWorkflowStore()
+func TestMemoryOrkflowStore_ListsTheLatestVersionOfEveryOrkflowByName(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 	base := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 
@@ -114,8 +114,8 @@ func TestWorkflowStore_ListsTheLatestVersionOfEveryOrkflowByName(t *testing.T) {
 	}
 }
 
-func TestWorkflowStore_MissingOrkflowIsNotFound(t *testing.T) {
-	store := engine.NewWorkflowStore()
+func TestMemoryOrkflowStore_MissingOrkflowIsNotFound(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 
 	if _, err := store.Get(ctx, "ghost", ""); !errors.Is(err, artifacts.ErrNotFound) {
@@ -127,14 +127,14 @@ func TestWorkflowStore_MissingOrkflowIsNotFound(t *testing.T) {
 	if _, err := store.Get(ctx, "hello-ork", "9.9.9"); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Get(unknown version) = %v, want artifacts.ErrNotFound", err)
 	}
-	empty, err := engine.NewWorkflowStore().List(ctx)
+	empty, err := engine.NewMemoryOrkflowStore().List(ctx)
 	if err != nil || len(empty) != 0 {
 		t.Errorf("List(empty store) = %v, %v; want no orkflows", empty, err)
 	}
 }
 
-func TestWorkflowStore_RejectsAnOrkflowItCannotAddress(t *testing.T) {
-	store := engine.NewWorkflowStore()
+func TestMemoryOrkflowStore_RejectsAnOrkflowItCannotAddress(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 
 	for _, wf := range []*orkstackv1.Orkflow{

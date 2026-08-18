@@ -39,7 +39,7 @@
 	async function submit() {
 		formError = '';
 		if (!orkflow) {
-			formError = 'Choose a orkflow first.';
+			formError = 'Choose an orkflow first.';
 			return;
 		}
 		let parsed: JsonObject;
@@ -57,8 +57,8 @@
 		submitting = true;
 		try {
 			const res = await orkstack(fetch).runs.submitRun({
-				workflowName: orkflow.name,
-				workflowVersion: orkflow.version,
+				orkflowName: orkflow.name,
+				orkflowVersion: orkflow.version,
 				input: create(PayloadSchema, { data: parsed })
 			});
 			if (!res.run) throw new Error('engine returned no run');

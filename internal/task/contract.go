@@ -41,9 +41,9 @@ type UpstreamResult struct {
 
 // ExecuteTaskInput is the activity input the engine sends to an Orker.
 type ExecuteTaskInput struct {
-	RunID           string `json:"run_id"`
-	WorkflowName    string `json:"workflow_name"`
-	WorkflowVersion string `json:"workflow_version"`
+	RunID          string `json:"run_id"`
+	OrkflowName    string `json:"orkflow_name"`
+	OrkflowVersion string `json:"orkflow_version"`
 
 	TaskID string `json:"task_id"`
 	Plugin string `json:"plugin"`

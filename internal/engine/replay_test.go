@@ -31,6 +31,15 @@ import (
 // TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream below, which replays
 // it against a body carrying one extra emit — the exact shape of the change
 // M8 made to RunWorkflow.
+//
+// The baseline was reset once, at M9, and this recording is that reset. M9
+// renamed OrkStack's entity from workflow to orkflow on the wire, so
+// task.ExecuteTaskInput's JSON tags changed and the previous fixture's
+// payloads no longer described what this code sends. Nothing was deployed, so
+// no build anywhere still speaks the old spelling and there was nothing to
+// stay compatible with. The guard was not weakened — both halves run
+// unchanged against this recording — but its clock starts at M9. See
+// testdata/history/README.md and proof/M9/.
 const goldenHistory = "testdata/history/run-succeeded-v1.json"
 
 // TestRunWorkflow_ReplaysCommittedV1History is half of the cross-version
@@ -70,7 +79,7 @@ func TestRunWorkflow_ReplaysCommittedV1History(t *testing.T) {
 	// behaviour, which is worker configuration and plays no part in replay:
 	// nothing inside RunWorkflow reads it and no history event depends on it.
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{
-		Name: engine.WorkflowName,
+		Name: engine.RunWorkflowType,
 	})
 
 	if err := replayer.ReplayWorkflowHistoryFromJSONFile(nil, goldenHistory); err != nil {
@@ -102,7 +111,7 @@ func TestRunWorkflow_ReplaysCommittedV1History(t *testing.T) {
 func TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream(t *testing.T) {
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflowWithOptions(runWorkflowWithAnExtraEmit, workflow.RegisterOptions{
-		Name: engine.WorkflowName,
+		Name: engine.RunWorkflowType,
 	})
 
 	err := replayer.ReplayWorkflowHistoryFromJSONFile(nil, goldenHistory)

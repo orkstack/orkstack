@@ -77,6 +77,17 @@ DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch�
    makes the three streams — Temporal history, the in-process log, the archived
    JSON — identical, and what lets a client resume with `from_sequence` against
    a different replica.
+9. **One word, one thing: the entity is an Orkflow.** What a user authors, the
+   engine stores and a run executes is an **orkflow** — `orkflow_name`,
+   `orkflow_version`, `OrkflowService`, `--orkflow`, `orkctl orkflow list`.
+   The word *workflow* in this repo means a **Temporal** workflow and nothing
+   else: `workflow.Context`, `StartWorkflowOptions`, `WorkflowReplayer`, the
+   registered type `RunWorkflowType = "RunWorkflow"`, `ClaimWorkflowType`, a
+   workflow id, a workflow task. So an identifier pairing *workflow* with
+   *name* or *version* is always wrong: the thing it names is either an
+   orkflow, or a Temporal workflow TYPE, and it must say which. The rename
+   landed at M9 with no shim and no dual-read, because nothing was deployed;
+   `proof/M9/naming-sweep.sh` is what holds the tree to it.
 
 ## 2. Repository layout
 
@@ -241,7 +252,7 @@ engine's default, which is how a step reaches a dedicated Orker pool
 **In test harnesses** that start their own engine and orker, give the pair a
 unique namespace, and a private queue when the test needs one
 (`cmd/orkctl/integration_test.go` does both — it also pins the queue onto each
-task through `writeQueuePinnedWorkflow`, which is still the way to prove
+task through `writeQueuePinnedOrkflow`, which is still the way to prove
 per-task routing):
 
 ```go
@@ -308,7 +319,7 @@ by the merge itself and no branch CI ever compiles that combination.
 
 | what broke | how | found by |
 |---|---|---|
-| `internal/api/service.go` | M7.8's merge took the branch side whole, reverting M7.5's durable orkflow store. `Config.Workflows` went back to the in-memory type while `cmd/ork` still wired `artifacts.S3OrkflowStore` | `make build` — but only after both milestones were declared done |
+| `internal/api/service.go` | M7.8's merge took the branch side whole, reverting M7.5's durable orkflow store. `Config.Orkflows` went back to the in-memory type while `cmd/ork` still wired `artifacts.S3OrkflowStore` | `make build` — but only after both milestones were declared done |
 | `requireMinIO` in `internal/engine` | M7.5 and M7.6 each added the helper to their own `_integration_test.go`; merged, the package has it twice | nothing — hidden behind `//go:build integration` until the M7.5 proof was rerun |
 
 **Before finalizing any merge** (after resolving conflicts, before the merge

@@ -49,8 +49,8 @@ service RunService {
 }
 
 message SubmitRunRequest {
-  string workflow_name = 1;              // orkflow name
-  string workflow_version = 2;           // orkflow version; empty = latest
+  string orkflow_name = 1;               // orkflow name
+  string orkflow_version = 2;            // orkflow version; empty = latest
   Payload input = 3;
   string idempotency_key = 4;            // optional dedupe
 }
@@ -58,7 +58,7 @@ message SubmitRunResponse { Run run = 1; }
 message GetRunRequest { string run_id = 1; }
 message GetRunResponse { Run run = 1; }
 message ListRunsRequest {
-  string workflow_name = 1;              // optional orkflow name filter
+  string orkflow_name = 1;               // optional orkflow name filter
   Status status = 2;                     // optional filter
   int32 page_size = 3;
   string page_token = 4;

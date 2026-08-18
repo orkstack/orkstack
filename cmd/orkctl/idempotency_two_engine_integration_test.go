@@ -120,7 +120,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 			defer wg.Done()
 			<-start
 			response, err := replica.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-				WorkflowName:   orkflowName,
+				OrkflowName:    orkflowName,
 				IdempotencyKey: idempotencyKey,
 			}))
 			results[i] = submission{replica: replica.name, err: err}
@@ -151,9 +151,9 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	// Both descriptions have to be of the same run. The loser answers from the
 	// claim, so the orkflow it reports is the one the winner claimed under.
 	for i, run := range []*orkstackv1.Run{a, b} {
-		if run.GetWorkflowName() != orkflowName || run.GetWorkflowVersion() != "0.1.0" {
+		if run.GetOrkflowName() != orkflowName || run.GetOrkflowVersion() != "0.1.0" {
 			t.Errorf("%s described the run as %s@%s, want %s@0.1.0",
-				results[i].replica, run.GetWorkflowName(), run.GetWorkflowVersion(), orkflowName)
+				results[i].replica, run.GetOrkflowName(), run.GetOrkflowVersion(), orkflowName)
 		}
 	}
 
@@ -179,16 +179,16 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 			t.Fatalf("GetRun(%s) on %s: %v", runID, replica.name, err)
 		}
 		if got.Msg.GetRun().GetId() != runID ||
-			got.Msg.GetRun().GetWorkflowName() != orkflowName {
+			got.Msg.GetRun().GetOrkflowName() != orkflowName {
 			t.Errorf("%s answers GetRun(%s) with %s@%s", replica.name, runID,
-				got.Msg.GetRun().GetId(), got.Msg.GetRun().GetWorkflowName())
+				got.Msg.GetRun().GetId(), got.Msg.GetRun().GetOrkflowName())
 		}
 	}
 
 	// ---- the binding outlives the run: a later repeat still dedupes ---------
 	for _, replica := range []*engineReplica{replicaA, replicaB} {
 		repeat, err := replica.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-			WorkflowName:   orkflowName,
+			OrkflowName:    orkflowName,
 			IdempotencyKey: idempotencyKey,
 		}))
 		if err != nil {
@@ -228,7 +228,7 @@ func assertSingleRunExecution(
 	var ids []string
 	for {
 		ids = listExecutions(ctx, t, c, namespace,
-			fmt.Sprintf("WorkflowType = %q", engine.WorkflowName))
+			fmt.Sprintf("WorkflowType = %q", engine.RunWorkflowType))
 		if len(ids) > 1 {
 			t.Fatalf("namespace %s holds %d RunWorkflow executions %v, want exactly one: "+
 				"the idempotency key started a run on each replica", namespace, len(ids), ids)

@@ -106,7 +106,7 @@ func startEngine(
 					Artifacts: []plugin.ArtifactRef{{
 						Name: "echo",
 						URI: fmt.Sprintf("s3://orkstack-artifacts/orkflows/%s/%s/%s/echo",
-							in.WorkflowName, in.TaskID, in.RunID),
+							in.OrkflowName, in.TaskID, in.RunID),
 					}},
 				}, nil
 			},
@@ -131,11 +131,11 @@ func startEngine(
 	}
 
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
-		Archive:   archive,
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
+		Archive:  archive,
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -218,7 +218,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 		t.Fatalf("ApplyOrkflow: %v", err)
 	}
 	submitted, err := first.client.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "hello-ork",
+		OrkflowName: "hello-ork",
 	}))
 	if err != nil {
 		first.stop()
@@ -308,9 +308,9 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	if recovered.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("recovered status = %s, want SUCCEEDED", recovered.GetStatus())
 	}
-	if recovered.GetWorkflowName() != "hello-ork" || len(recovered.GetTaskRuns()) != 3 {
+	if recovered.GetOrkflowName() != "hello-ork" || len(recovered.GetTaskRuns()) != 3 {
 		t.Fatalf("recovered run lost detail: %d task runs of %q",
-			len(recovered.GetTaskRuns()), recovered.GetWorkflowName())
+			len(recovered.GetTaskRuns()), recovered.GetOrkflowName())
 	}
 	if len(recovered.GetTaskRuns()[0].GetArtifacts()) != 1 {
 		t.Fatal("recovered run lost its artifact references")
@@ -318,8 +318,8 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 
 	// ---- acceptance 2: `run list --status SUCCEEDED` is answered from S3 -----
 	listed, err := second.client.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		WorkflowName: "hello-ork",
-		Status:       orkstackv1.Status_STATUS_SUCCEEDED,
+		OrkflowName: "hello-ork",
+		Status:      orkstackv1.Status_STATUS_SUCCEEDED,
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns after restart: %v", err)
@@ -332,14 +332,14 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 		if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 			t.Fatalf("status filter leaked %s (%s)", run.GetId(), run.GetStatus())
 		}
-		if run.GetWorkflowName() != "hello-ork" {
-			t.Fatalf("orkflow filter leaked %s (%s)", run.GetId(), run.GetWorkflowName())
+		if run.GetOrkflowName() != "hello-ork" {
+			t.Fatalf("orkflow filter leaked %s (%s)", run.GetId(), run.GetOrkflowName())
 		}
 	}
 
 	failedOnly, err := second.client.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
-		WorkflowName: "hello-ork",
-		Status:       orkstackv1.Status_STATUS_FAILED,
+		OrkflowName: "hello-ork",
+		Status:      orkstackv1.Status_STATUS_FAILED,
 	}))
 	if err != nil {
 		t.Fatalf("ListRuns(FAILED): %v", err)

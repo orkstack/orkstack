@@ -175,8 +175,8 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 	engine.RegisterWorkflows(&registered)
 
 	want := map[string]workflow.VersioningBehavior{
-		engine.WorkflowName:      workflow.VersioningBehaviorPinned,
-		engine.ClaimWorkflowName: workflow.VersioningBehaviorAutoUpgrade,
+		engine.RunWorkflowType:   workflow.VersioningBehaviorPinned,
+		engine.ClaimWorkflowType: workflow.VersioningBehaviorAutoUpgrade,
 	}
 	if len(registered) != len(want) {
 		t.Fatalf("registered %d workflow types (%+v), want %d", len(registered), registered, len(want))

@@ -73,12 +73,12 @@ type RunReader interface {
 
 // Config wires a Service to its stores and Temporal seams.
 type Config struct {
-	// Workflows is the durable orkflow store. `ork` wires the S3 store
+	// Orkflows is the durable orkflow store. `ork` wires the S3 store
 	// (cmd/ork/main.go); leaving it nil is a unit-test convenience that
 	// substitutes the in-memory store, never a fallback for a configured one.
-	Workflows engine.OrkflowStore
-	Starter   RunStarter
-	Lister    PluginLister
+	Orkflows engine.OrkflowStore
+	Starter  RunStarter
+	Lister   PluginLister
 
 	// Reader is the system of record for live runs. `ork` wires
 	// engine.TemporalRunReader, and every read then leaves the process. Nil
@@ -123,7 +123,7 @@ type Config struct {
 
 // Service implements OrkflowService, RunService, and PluginService.
 type Service struct {
-	workflows   engine.OrkflowStore
+	orkflows    engine.OrkflowStore
 	reader      RunReader
 	runs        *engine.RunStore
 	bus         *engine.EventBus
@@ -141,7 +141,7 @@ type Service struct {
 // NewService builds a Service, filling in defaults for anything omitted.
 func NewService(cfg Config) *Service {
 	svc := &Service{
-		workflows:   cfg.Workflows,
+		orkflows:    cfg.Orkflows,
 		reader:      cfg.Reader,
 		runs:        cfg.Runs,
 		bus:         cfg.Bus,
@@ -158,8 +158,8 @@ func NewService(cfg Config) *Service {
 	// Only an unconfigured Service gets the in-memory store, and only so a
 	// unit test can exercise runs without a bucket. A configured store is
 	// never bypassed: a failing durable store surfaces as an error.
-	if svc.workflows == nil {
-		svc.workflows = engine.NewWorkflowStore()
+	if svc.orkflows == nil {
+		svc.orkflows = engine.NewMemoryOrkflowStore()
 	}
 	if svc.runs == nil {
 		svc.runs = engine.NewRunStore()
@@ -209,7 +209,7 @@ func (s *Service) ApplyOrkflow(
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
-	if err := s.workflows.Put(ctx, wf); err != nil {
+	if err := s.orkflows.Put(ctx, wf); err != nil {
 		return nil, orkflowStoreError(err, "store orkflow %s@%s", wf.GetName(), wf.GetVersion())
 	}
 	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{Orkflow: wf}), nil
@@ -224,7 +224,7 @@ func (s *Service) GetOrkflow(
 	if req.Msg.GetName() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("name is required"))
 	}
-	wf, err := s.workflows.Get(ctx, req.Msg.GetName(), req.Msg.GetVersion())
+	wf, err := s.orkflows.Get(ctx, req.Msg.GetName(), req.Msg.GetVersion())
 	if err != nil {
 		return nil, orkflowStoreError(err, "orkflow %q version %q",
 			req.Msg.GetName(), req.Msg.GetVersion())
@@ -238,14 +238,14 @@ func (s *Service) ListOrkflows(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListOrkflowsRequest],
 ) (*connect.Response[orkstackv1.ListOrkflowsResponse], error) {
-	workflows, err := s.workflows.List(ctx)
+	orkflows, err := s.orkflows.List(ctx)
 	if err != nil {
 		return nil, orkflowStoreError(err, "list orkflows")
 	}
-	if size := int(req.Msg.GetPageSize()); size > 0 && size < len(workflows) {
-		workflows = workflows[:size]
+	if size := int(req.Msg.GetPageSize()); size > 0 && size < len(orkflows) {
+		orkflows = orkflows[:size]
 	}
-	return connect.NewResponse(&orkstackv1.ListOrkflowsResponse{Orkflows: workflows}), nil
+	return connect.NewResponse(&orkstackv1.ListOrkflowsResponse{Orkflows: orkflows}), nil
 }
 
 // orkflowStoreError maps a store failure onto a Connect code. A missing
@@ -267,13 +267,13 @@ func (s *Service) SubmitRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.SubmitRunRequest],
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	name := req.Msg.GetWorkflowName()
+	name := req.Msg.GetOrkflowName()
 	if name == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("workflow_name is required"))
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("orkflow_name is required"))
 	}
-	wf, err := s.workflows.Get(ctx, name, req.Msg.GetWorkflowVersion())
+	wf, err := s.orkflows.Get(ctx, name, req.Msg.GetOrkflowVersion())
 	if err != nil {
-		return nil, orkflowStoreError(err, "orkflow %q version %q", name, req.Msg.GetWorkflowVersion())
+		return nil, orkflowStoreError(err, "orkflow %q version %q", name, req.Msg.GetOrkflowVersion())
 	}
 	if s.starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
@@ -389,12 +389,12 @@ func (s *Service) newPendingRun(
 	input *orkstackv1.Payload,
 ) *orkstackv1.Run {
 	return &orkstackv1.Run{
-		Id:              runID,
-		WorkflowName:    wf.GetName(),
-		WorkflowVersion: wf.GetVersion(),
-		Status:          orkstackv1.Status_STATUS_PENDING,
-		Input:           input,
-		CreatedAt:       timestamppb.New(s.now().UTC()),
+		Id:             runID,
+		OrkflowName:    wf.GetName(),
+		OrkflowVersion: wf.GetVersion(),
+		Status:         orkstackv1.Status_STATUS_PENDING,
+		Input:          input,
+		CreatedAt:      timestamppb.New(s.now().UTC()),
 	}
 }
 
@@ -508,7 +508,7 @@ func (s *Service) recordFailedStart(
 		Type:     orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
 		Status:   orkstackv1.Status_STATUS_PENDING,
 		Message: fmt.Sprintf("run created for orkflow %s@%s",
-			run.GetWorkflowName(), run.GetWorkflowVersion()),
+			run.GetOrkflowName(), run.GetOrkflowVersion()),
 		Timestamp: createdAt,
 	}, runID+"#created")
 	s.bus.Publish(&orkstackv1.Event{
@@ -670,9 +670,9 @@ func (s *Service) ListRuns(
 	)
 	if s.reader != nil {
 		listed, err := s.reader.ListRuns(ctx, engine.RunQuery{
-			WorkflowName: req.Msg.GetWorkflowName(),
-			Status:       req.Msg.GetStatus(),
-			Limit:        size,
+			OrkflowName: req.Msg.GetOrkflowName(),
+			Status:      req.Msg.GetStatus(),
+			Limit:       size,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable,
@@ -681,16 +681,16 @@ func (s *Service) ListRuns(
 		runs = listed
 	} else {
 		runs = s.runs.List(engine.ListFilter{
-			WorkflowName: req.Msg.GetWorkflowName(),
-			Status:       req.Msg.GetStatus(),
+			OrkflowName: req.Msg.GetOrkflowName(),
+			Status:      req.Msg.GetStatus(),
 		})
 		fromMemory = true
 	}
 	if s.archive != nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
-			WorkflowName: req.Msg.GetWorkflowName(),
-			Status:       req.Msg.GetStatus(),
-			Limit:        size,
+			OrkflowName: req.Msg.GetOrkflowName(),
+			Status:      req.Msg.GetStatus(),
+			Limit:       size,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal,

@@ -59,7 +59,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(60 * time.Second)
-	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.WorkflowName})
+	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
 			mu.Lock()

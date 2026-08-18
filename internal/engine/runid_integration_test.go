@@ -110,13 +110,13 @@ func TestIntegration_WithoutTheStartPoliciesACollisionAttachesToAnotherRun(t *te
 
 	first, err := c.ExecuteWorkflow(ctx,
 		client.StartWorkflowOptions{ID: runID, TaskQueue: queue},
-		engine.WorkflowName, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil))
+		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil))
 	if err != nil {
 		t.Fatalf("first start: %v", err)
 	}
 	second, err := c.ExecuteWorkflow(ctx,
 		client.StartWorkflowOptions{ID: runID, TaskQueue: queue},
-		engine.WorkflowName, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil))
+		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil))
 	if err != nil {
 		t.Fatalf("second start with the same id returned %v; "+
 			"this test records the default behaviour and must be revisited if the server changed it", err)
@@ -231,16 +231,16 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 		t.Fatalf("occupy %s: %v", taken, err)
 	}
 
-	orkflows := engine.NewWorkflowStore()
+	orkflows := engine.NewMemoryOrkflowStore()
 	if err := orkflows.Put(ctx, wf); err != nil {
 		t.Fatalf("store orkflow: %v", err)
 	}
 	candidates := []string{taken, reissued}
 	svc := api.NewService(api.Config{
-		Workflows: orkflows,
-		Runs:      engine.NewRunStore(),
-		Bus:       engine.NewEventBus(),
-		Starter:   starter,
+		Orkflows: orkflows,
+		Runs:     engine.NewRunStore(),
+		Bus:      engine.NewEventBus(),
+		Starter:  starter,
 		NewRunID: func() string {
 			id := candidates[0]
 			candidates = candidates[1:]
@@ -249,7 +249,7 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 	})
 
 	resp, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: wf.GetName(),
+		OrkflowName: wf.GetName(),
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun against a taken id: %v", err)

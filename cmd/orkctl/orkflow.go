@@ -14,7 +14,7 @@ import (
 func newOrkflowCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "orkflow",
-		Aliases: []string{"of", "wf"},
+		Aliases: []string{"of"},
 		Short:   "Inspect registered orkflows",
 	}
 	cmd.AddCommand(newOrkflowListCommand(g), newOrkflowGetCommand(g))

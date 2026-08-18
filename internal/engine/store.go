@@ -91,8 +91,8 @@ func (s *RunStore) Get(runID string) (*orkstackv1.Run, bool) {
 
 // ListFilter narrows List results. Zero values mean "no filter".
 type ListFilter struct {
-	WorkflowName string
-	Status       orkstackv1.Status
+	OrkflowName string
+	Status      orkstackv1.Status
 }
 
 // List returns clones of the stored runs, newest first.
@@ -105,7 +105,7 @@ func (s *RunStore) List(filter ListFilter) []*orkstackv1.Run {
 		if run == nil {
 			continue
 		}
-		if filter.WorkflowName != "" && run.GetWorkflowName() != filter.WorkflowName {
+		if filter.OrkflowName != "" && run.GetOrkflowName() != filter.OrkflowName {
 			continue
 		}
 		if filter.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != filter.Status {

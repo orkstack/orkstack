@@ -100,8 +100,8 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 					"echoed_task":     in.TaskID,
 					"echoed_plugin":   in.Plugin,
 					"upstream_count":  float64(len(upstream)),
-					"workflow":        in.WorkflowName,
-					"workflow_versio": in.WorkflowVersion,
+					"workflow":        in.OrkflowName,
+					"workflow_versio": in.OrkflowVersion,
 				},
 				Artifacts: []plugin.ArtifactRef{{
 					Name: "echo",
@@ -136,10 +136,10 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	defer eventWorker.Stop()
 
 	svc := api.NewService(api.Config{
-		Workflows: orkflows,
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
+		Orkflows: orkflows,
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -162,25 +162,25 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	workflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
+	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
 	source, err := os.ReadFile("../../examples/hello.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}
-	applied, err := workflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+	applied, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: string(source),
 	}))
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if applied.Msg.GetOrkflow().GetName() != "hello-ork" {
-		t.Fatalf("applied workflow = %q, want hello-ork", applied.Msg.GetOrkflow().GetName())
+		t.Fatalf("applied orkflow = %q, want hello-ork", applied.Msg.GetOrkflow().GetName())
 	}
 
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "hello-ork",
+		OrkflowName: "hello-ork",
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)
@@ -274,7 +274,7 @@ func assertDeterministicReplay(t *testing.T, ctx context.Context, c client.Clien
 	}
 
 	replayer := worker.NewWorkflowReplayer()
-	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.WorkflowName})
+	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	if err := replayer.ReplayWorkflowHistory(nil, history); err != nil {
 		t.Fatalf("replaying the run's history failed (non-deterministic workflow): %v", err)
 	}

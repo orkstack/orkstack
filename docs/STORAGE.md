@@ -5,6 +5,13 @@
 **Scope:** persistence for orkflow definitions, runs, and run events, to be built in M7.5.
 **Supersedes:** nothing. This is the first storage decision record.
 
+> **M9 note.** This record was written before the entity was renamed. Its
+> identifiers were re-spelled at M9 — the proposed run columns are now
+> `orkflow_name`/`orkflow_version` and the in-memory store is
+> `MemoryOrkflowStore` — so the schema it proposes and the tree it cites read
+> as one vocabulary. The measurements, the decision and the dates are
+> untouched.
+
 ---
 
 ## 1. Decision
@@ -35,8 +42,8 @@ SQLite clears the sub-second budget by three orders of magnitude at 100× the st
 | Fact | Evidence |
 |---|---|
 | `RunStore` = `map[string]*Run` + `order []string` + `sync.RWMutex` | `internal/engine/store.go:13-18` |
-| `ListFilter` supports only `WorkflowName`, `Status` — **no time bounds** | `internal/engine/store.go:71-75` |
-| `WorkflowStore` = nested maps; `List()` returns only the *latest* version per name | `internal/engine/store.go:99-162` |
+| `ListFilter` supports only `OrkflowName`, `Status` — **no time bounds** | `internal/engine/store.go:71-75` |
+| `MemoryOrkflowStore` = nested maps; `List()` returns only the *latest* version per name | `internal/engine/store.go:99-162` |
 | Stores and bus constructed fresh at process start | `cmd/orkengine/main.go:106-107,135` |
 | `EventBus` holds the event log and assigns `sequence` from `len(b.log[runID])+1` | `internal/engine/bus.go:35-68` |
 | Idempotency map and run-id counter are in-memory | `internal/api/service.go:59-63,181-190` |
@@ -64,17 +71,17 @@ the system of record, a swallowed write is silent data loss. See open question O
 ### 2.2 Contract gaps found while reading (independent of backend)
 
 - `proto/orkstack/v1/service.proto:60-65` — `ListRunsRequest` is
-  `{workflow_name, status, page_size, page_token}`. **No date-range filter**, which the stated API
+  `{orkflow_name, status, page_size, page_token}`. **No date-range filter**, which the stated API
   constraint explicitly requires. `cmd/orkctl/run.go` has no matching flag.
 - `internal/api/service.go:271-283` — `ListRuns` **ignores `page_token`** and never sets
   `next_page_token`; it materializes everything and truncates with `runs[:size]`. Verified: the
   identifiers `PageToken`/`NextPageToken` do not appear anywhere in `internal/api/service.go`.
-  `ListWorkflows` has the same gap.
-- `ListWorkflowsRequest` (`service.proto:31-34`) has no name filter, and `WorkflowStore.List`
+  `ListOrkflows` has the same gap.
+- `ListOrkflowsRequest` (`service.proto:31-34`) has no name filter, and `MemoryOrkflowStore.List`
   returns only the latest version per name — there is no way to enumerate versions of one orkflow.
-- Useful: `Workflow.version` is either a DSL-pinned value or a content hash over the semantically
+- Useful: `Orkflow.version` is either a DSL-pinned value or a content hash over the semantically
   normalized YAML (`internal/dsl/hash.go:19-35`) → a natural immutable primary key `(name, version)`.
-  `Workflow.source_yaml` is inline, so an orkflow row carries its full DSL.
+  `Orkflow.source_yaml` is inline, so an orkflow row carries its full DSL.
 
 ---
 
@@ -107,7 +114,7 @@ Temporal ──PublishEvent activity──> engine ──single writer──> �
 ```
 
 Tables: `orkflows(name, version, …)` PK `(name, version)`; `orkflow_latest(name, version)`;
-`runs(id PK, workflow_name, workflow_version, status, created_at, started_at, finished_at,
+`runs(id PK, orkflow_name, orkflow_version, status, created_at, started_at, finished_at,
 snapshot BLOB)`; `run_events(run_id, sequence, dedupe_key, type, …)` with
 `UNIQUE(run_id, dedupe_key)` and `UNIQUE(run_id, sequence)`. Backend chosen by
 `ORK_STORE_BACKEND=memory|sqlite`, mirroring the registry precedent in
@@ -380,7 +387,7 @@ Sequencing follows AGENTS.md §4:
 1. **Proto first, in its own commit** (`chore(proto):`, then `make proto`): add date-range filtering
    to `ListRunsRequest` (`created_after` / `created_before` as `google.protobuf.Timestamp`) and make
    pagination real. Regenerate `gen/go` **and** `ui/src/lib/gen`.
-2. **Promote `RunStore`/`WorkflowStore` to interfaces** in `internal/engine`, keeping the current
+2. **Promote `RunStore`/`MemoryOrkflowStore` to interfaces** in `internal/engine`, keeping the current
    maps as the `memory` implementation so every existing test keeps passing untouched.
 3. **Add the SQLite implementation** with goose + `embed.FS` migrations. Two pools: a write pool
    with `SetMaxOpenConns(1)` and `_txlock=immediate`, and a read pool. Pragmas
@@ -400,7 +407,7 @@ Sequencing follows AGENTS.md §4:
    first so the rest can proceed in parallel.
 
 **Schema notes.** `(name, version)` is a natural immutable primary key for orkflows
-(`internal/dsl/hash.go:19-35`), and `Workflow.source_yaml` means the row carries its full DSL.
+(`internal/dsl/hash.go:19-35`), and `Orkflow.source_yaml` means the row carries its full DSL.
 Store the `Run` proto as a `BLOB` via `proto.Marshal` with hot predicates promoted to typed
 columns. The measured 452 MB at 100 000 runs argues for a slim list projection rather than
 returning the blob from `ListRuns` — and the re-measured latency table above is exactly that slim
@@ -461,8 +468,8 @@ in Temporal docs but was not found in server source; plan for 255 on Keyword val
 {
   "chosen_approach": "SQLite (modernc.org/sqlite, WAL) as the durable read model and system of record for orkflow definitions, runs, and run events, written exclusively from the existing EventActivities.PublishEvent activity, selected via ORK_STORE_BACKEND behind Store interfaces that keep the current in-memory maps as the 'memory' implementation.",
   "reasoning": "Measured on this machine, SQLite answers the exact target query (status + date range, newest 50) in 166 microseconds at 100,000 rows, with 23 microsecond point gets and 106 microsecond write commits - roughly 6000x inside the sub-second budget at 100x the stated scale, with zero new containers and no CGO. An earlier independent pass carrying the snapshot blob measured 404 microseconds for the same query, so the conclusion holds across both. Temporal event history is disqualified on three independent grounds: reconstructing run detail costs 8.2-8.5 ms/run serial and 2.5-2.6 ms/run at 8-way concurrency (about 8.2 s / 2.5 s for 1000 runs, on localhost against an in-memory DB), ORDER BY is rejected outright by the SQL visibility store so 'newest first' cannot be expressed, and the namespace retention is 24h while deploy/docker-compose.yml runs 'temporal server start-dev' with no --db-filename and no volume, making Temporal itself ephemeral. Both the ORDER BY rejection and the 24h retention were re-verified live against the running dev server. S3/MinIO metadata is disqualified because LIST exposes only prefix/delimiter/start-after, so filtering by status requires reading every object (3.094 s serial / 344 ms at 32-way for 1000 objects on localhost, roughly 150 s on real S3), standard S3 has no append so a runs/{id}.jsonl design is O(N^2) bytes, the existing pkg/artifacts Store is content-addressed and immutable (objects/{sha256(name)}/{sha256(content)}) so it cannot hold a mutable run object at all, its List already does two extra sequential round trips per object, and it would fuse the metadata and artifact failure domains. PostgreSQL is the correct v1.0 destination but is over-built for the MVP and adds a container the dev stack does not have. The hybrid checkpoint option optimizes a cost that does not exist (about 106-164 microseconds per commit) while reintroducing data loss on SIGKILL. The engine is already CQRS-shaped with a single idempotent write seam, so SQLite drops in behind PublishEvent with no change to Temporal workflow code and no violation of the determinism boundary.",
-  "orkflow_strategy": "Table orkflows(name, version, description, labels_json, inputs_json, tasks_blob, source_yaml, created_at) with PRIMARY KEY (name, version) - immutable rows, since Workflow.version is either the DSL-pinned value or the semantic content hash from internal/dsl/hash.go, and Workflow.source_yaml already carries the full DSL for round-trip and audit. A separate orkflow_latest(name, version) pointer preserves the current 'most recently applied wins' semantics of WorkflowStore.Put. Apply() writes the row and updates the pointer in one transaction. This also unblocks listing all versions of a name, which WorkflowStore.List cannot do today.",
-  "run_strategy": "Table runs(id PK, workflow_name, workflow_version, status, created_at, started_at, finished_at, snapshot BLOB) storing the Run proto via proto.Marshal, with hot predicates promoted to typed columns and indexes on created_at DESC, (status, created_at DESC), (workflow_name, created_at DESC); plus run_events(run_id, sequence, dedupe_key, type, task_id, status, message, data_blob, timestamp) with UNIQUE(run_id, dedupe_key) and UNIQUE(run_id, sequence). PublishEvent performs one transaction: upsert the run snapshot (preserving created_at and input exactly as RunStore.Apply does today) and INSERT the event ON CONFLICT(run_id, dedupe_key) DO NOTHING, which makes Temporal activity retries and workflow replays idempotent for free. Sequence assignment moves from len(bus.log) to MAX(sequence)+1 within that transaction so StreamEvents and /ws/runs/{id} resume correctly after a restart. SubmitRun's pending run and idempotency key persist to the same DB. ListRuns gets a slim projection that omits the snapshot blob - the measured 166 microsecond figure is that projection - plus real keyset pagination on (created_at, id). On boot the engine restores nothing into memory and reconciles non-terminal runs against Temporal via ListWorkflowExecutions (35-53 ms measured).",
+  "orkflow_strategy": "Table orkflows(name, version, description, labels_json, inputs_json, tasks_blob, source_yaml, created_at) with PRIMARY KEY (name, version) - immutable rows, since Orkflow.version is either the DSL-pinned value or the semantic content hash from internal/dsl/hash.go, and Orkflow.source_yaml already carries the full DSL for round-trip and audit. A separate orkflow_latest(name, version) pointer preserves the current 'most recently applied wins' semantics of MemoryOrkflowStore.Put. Apply() writes the row and updates the pointer in one transaction. This also unblocks listing all versions of a name, which MemoryOrkflowStore.List cannot do today.",
+  "run_strategy": "Table runs(id PK, orkflow_name, orkflow_version, status, created_at, started_at, finished_at, snapshot BLOB) storing the Run proto via proto.Marshal, with hot predicates promoted to typed columns and indexes on created_at DESC, (status, created_at DESC), (orkflow_name, created_at DESC); plus run_events(run_id, sequence, dedupe_key, type, task_id, status, message, data_blob, timestamp) with UNIQUE(run_id, dedupe_key) and UNIQUE(run_id, sequence). PublishEvent performs one transaction: upsert the run snapshot (preserving created_at and input exactly as RunStore.Apply does today) and INSERT the event ON CONFLICT(run_id, dedupe_key) DO NOTHING, which makes Temporal activity retries and workflow replays idempotent for free. Sequence assignment moves from len(bus.log) to MAX(sequence)+1 within that transaction so StreamEvents and /ws/runs/{id} resume correctly after a restart. SubmitRun's pending run and idempotency key persist to the same DB. ListRuns gets a slim projection that omits the snapshot blob - the measured 166 microsecond figure is that projection - plus real keyset pagination on (created_at, id). On boot the engine restores nothing into memory and reconciles non-terminal runs against Temporal via ListWorkflowExecutions (35-53 ms measured).",
   "pros": [
     "Measured 166 us for the exact target query at 100k rows, 137 us status-filtered, 23 us point get - about 6000x inside the sub-second budget at 100x scale",
     "Zero new containers, zero credentials, zero external services - satisfies the 'no external databases in dev stack' constraint literally",
@@ -509,8 +516,8 @@ in Temporal docs but was not found in server source; plan for 255 on Keyword val
     "Changing deploy/, Makefile, proto/, and go.mod all cross the AGENTS.md section 8 coordinated boundary and need deliberate, announced commits"
   ],
   "validation_steps": [
-    "Restart-durability integration test (-tags=integration, -p 1): apply orkflow, submit run to SUCCEEDED, SIGKILL only the engine, restart, assert GetWorkflow/GetRun/ListRuns all return pre-restart data",
-    "Latency gate: seed 1,000 and 10,000 runs, assert ListRuns with status + date range + workflow_name completes within a documented budget end-to-end through the Connect client; commit the numbers to proof/M7.5/",
+    "Restart-durability integration test (-tags=integration, -p 1): apply orkflow, submit run to SUCCEEDED, SIGKILL only the engine, restart, assert GetOrkflow/GetRun/ListRuns all return pre-restart data",
+    "Latency gate: seed 1,000 and 10,000 runs, assert ListRuns with status + date range + orkflow_name completes within a documented budget end-to-end through the Connect client; commit the numbers to proof/M7.5/",
     "Idempotency test: replay the same dedupeKey through PublishEvent and assert exactly one event row and one run row",
     "Sequence-continuity test: restart with an in-flight run, assert StreamEvents(from_sequence=N) resumes with no gaps or repeats and /ws/runs/{id} no longer 404s for a pre-restart run",
     "Concurrent-writer test under -race with several parallel runs, asserting no SQLITE_BUSY escapes",

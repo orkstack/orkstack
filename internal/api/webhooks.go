@@ -186,7 +186,7 @@ func (n *WebhookNotifier) NotifyRunTransition(
 	n.notifier.Notify(ctx, webhooks.Delivery{
 		Event:       transition,
 		RunID:       event.GetRunId(),
-		OrkflowName: run.GetWorkflowName(),
+		OrkflowName: run.GetOrkflowName(),
 		// The event's status is the transition itself, which is what a
 		// subscriber filtered on.
 		Status:    strings.TrimPrefix(event.GetStatus().String(), "STATUS_"),

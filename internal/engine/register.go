@@ -36,7 +36,7 @@ func RegisterWorkflows(w WorkflowRegistrar) {
 	// version; the price is that v1 workers must stay up until the deployment
 	// version reports Drained (docs/DEPLOY.md).
 	w.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{
-		Name:               WorkflowName,
+		Name:               RunWorkflowType,
 		VersioningBehavior: workflow.VersioningBehaviorPinned,
 	})
 
@@ -49,7 +49,7 @@ func RegisterWorkflows(w WorkflowRegistrar) {
 	// a key holder on a version an operator wants to decommission, and that
 	// version would never report Drained.
 	w.RegisterWorkflowWithOptions(IdempotencyClaimWorkflow, workflow.RegisterOptions{
-		Name:               ClaimWorkflowName,
+		Name:               ClaimWorkflowType,
 		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
 	})
 }

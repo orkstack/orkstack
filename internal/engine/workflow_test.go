@@ -42,7 +42,7 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 		store: engine.NewRunStore(),
 	}
 	h.env.SetTestTimeout(60 * time.Second)
-	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.WorkflowName})
+	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	h.env.RegisterActivityWithOptions(
 		engine.NewEventActivities(h.bus, h.store).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},

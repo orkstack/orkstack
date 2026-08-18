@@ -96,7 +96,7 @@ func (s *TemporalStarter) StartRun(
 			MemoOrkflowName:    wf.GetName(),
 			MemoOrkflowVersion: wf.GetVersion(),
 		},
-	}, WorkflowName, runID, pinTaskQueues(wf, s.orkerQueue), input)
+	}, RunWorkflowType, runID, pinTaskQueues(wf, s.orkerQueue), input)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if errors.As(err, &alreadyStarted) {

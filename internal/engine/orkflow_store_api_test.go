@@ -21,12 +21,12 @@ import (
 
 // recordingStore captures what the API writes.
 type recordingStore struct {
-	inner *engine.WorkflowStore
+	inner *engine.MemoryOrkflowStore
 	puts  []*orkstackv1.Orkflow
 }
 
 func newRecordingStore() *recordingStore {
-	return &recordingStore{inner: engine.NewWorkflowStore()}
+	return &recordingStore{inner: engine.NewMemoryOrkflowStore()}
 }
 
 func (r *recordingStore) Put(ctx context.Context, wf *orkstackv1.Orkflow) error {
@@ -66,7 +66,7 @@ func exampleYAML(t *testing.T) string {
 
 func TestApplyOrkflow_WritesTheCompiledOrkflowThroughToTheStore(t *testing.T) {
 	store := newRecordingStore()
-	svc := api.NewService(api.Config{Workflows: store})
+	svc := api.NewService(api.Config{Orkflows: store})
 	ctx := context.Background()
 
 	applied, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
@@ -101,7 +101,7 @@ func TestApplyOrkflow_WritesTheCompiledOrkflowThroughToTheStore(t *testing.T) {
 // path fails loudly. An empty list or a stale answer would be a lie.
 func TestOrkflowPaths_ReportAnUnreachableStoreInsteadOfAnEmptyCatalog(t *testing.T) {
 	down := unreachableStore{err: errors.New("dial tcp 127.0.0.1:9000: connect: connection refused")}
-	svc := api.NewService(api.Config{Workflows: down, Starter: noopStarter{}})
+	svc := api.NewService(api.Config{Orkflows: down, Starter: noopStarter{}})
 	ctx := context.Background()
 
 	listed, err := svc.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
@@ -125,7 +125,7 @@ func TestOrkflowPaths_ReportAnUnreachableStoreInsteadOfAnEmptyCatalog(t *testing
 	}
 
 	if _, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "hello-ork",
+		OrkflowName: "hello-ork",
 	})); connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Errorf("SubmitRun code = %v, want Unavailable", connect.CodeOf(err))
 	}
@@ -134,7 +134,7 @@ func TestOrkflowPaths_ReportAnUnreachableStoreInsteadOfAnEmptyCatalog(t *testing
 // A store that is reachable but has no such orkflow is a different answer.
 func TestOrkflowPaths_ReportAMissingOrkflowAsNotFound(t *testing.T) {
 	missing := unreachableStore{err: artifacts.ErrNotFound}
-	svc := api.NewService(api.Config{Workflows: missing, Starter: noopStarter{}})
+	svc := api.NewService(api.Config{Orkflows: missing, Starter: noopStarter{}})
 	ctx := context.Background()
 
 	if _, err := svc.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{
@@ -143,7 +143,7 @@ func TestOrkflowPaths_ReportAMissingOrkflowAsNotFound(t *testing.T) {
 		t.Errorf("GetOrkflow code = %v, want NotFound", connect.CodeOf(err))
 	}
 	if _, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "ghost",
+		OrkflowName: "ghost",
 	})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Errorf("SubmitRun code = %v, want NotFound", connect.CodeOf(err))
 	}

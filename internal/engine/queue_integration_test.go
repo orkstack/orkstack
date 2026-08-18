@@ -111,9 +111,9 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	}
 
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
 		Starter: engine.NewTemporalStarterWithOrkerQueue(
 			temporalClient, task.DefaultQueue, orkerQueue),
 	})
@@ -145,16 +145,16 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		t.Fatalf("the example now pins a queue; this test needs an orkflow that names none")
 	}
 
-	workflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
+	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
-	if _, err := workflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: string(source),
 	})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "hello-ork",
+		OrkflowName: "hello-ork",
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)

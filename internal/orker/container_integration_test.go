@@ -113,10 +113,10 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 	}
 
 	svc := api.NewService(api.Config{
-		Workflows: engine.NewWorkflowStore(),
-		Runs:      runs,
-		Bus:       bus,
-		Starter:   engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      bus,
+		Starter:  engine.NewTemporalStarter(temporalClient, task.DefaultQueue),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -137,21 +137,21 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	workflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
+	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
 	source, err := os.ReadFile("../../examples/container-example.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example orkflow: %v", err)
 	}
-	if _, err := workflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: string(source),
 	})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		WorkflowName: "container-example",
+		OrkflowName: "container-example",
 	}))
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)
