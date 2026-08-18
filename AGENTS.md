@@ -319,7 +319,7 @@ by the merge itself and no branch CI ever compiles that combination.
 
 | what broke | how | found by |
 |---|---|---|
-| `internal/api/service.go` | M7.8's merge took the branch side whole, reverting M7.5's durable orkflow store. `Config.Workflows` went back to the in-memory type while `cmd/ork` still wired `artifacts.S3OrkflowStore` | `make build` — but only after both milestones were declared done |
+| `internal/api/service.go` | M7.8's merge took the branch side whole, reverting M7.5's durable orkflow store. `Config.Orkflows` went back to the in-memory type while `cmd/ork` still wired `artifacts.S3OrkflowStore` | `make build` — but only after both milestones were declared done |
 | `requireMinIO` in `internal/engine` | M7.5 and M7.6 each added the helper to their own `_integration_test.go`; merged, the package has it twice | nothing — hidden behind `//go:build integration` until the M7.5 proof was rerun |
 
 **Before finalizing any merge** (after resolving conflicts, before the merge
