@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -239,17 +240,37 @@ func (s *S3NamespaceStore) clock() time.Time {
 	return s.now()
 }
 
-// validNamespacePools enforces the one invariant the document carries on its
-// own: an allow-list that excludes the namespace's own default would refuse
-// every task that names no pool.
+// DefaultPool is the pool a task runs on when neither the task nor its
+// namespace names one. It is the same name internal/task.DefaultPool maps to
+// the execution queue a zero-configuration stack polls; the constant is
+// repeated here because pkg/ may not import internal/, and the two are pinned
+// together by TestNamespacePools_AreExactlyThePoolsDispatchCanReach.
+const DefaultPool = "main"
+
+// poolNamePattern is the rule for a pool name this registry will store.
+//
+// It is TIGHTER than cleanComponentPattern, which validated these two fields
+// until review measured what that let through: "GPU", "Main", "gpu.1" and
+// "1gpu" were all stored, and every one of them is refused by the only
+// pool->queue translation in the tree (internal/task.QueueForPool) and by the
+// DSL. A registry that stores a routing target no dispatch can honour is the
+// same "stored field nothing can honour" defect as a namespace no read path
+// reaches — and M10.2 is the slice that reads default_pool, so it would be
+// the one handed the unroutable name.
+var poolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// validNamespacePools enforces what the document can be held to on its own:
+// every pool it names must be one dispatch can reach, and an allow-list that
+// excluded the namespace's own default would refuse every task that names no
+// pool.
 func validNamespacePools(ns *orkstackv1.Namespace) error {
 	defaultPool := ns.GetDefaultPool()
 	if defaultPool == "" {
-		defaultPool = "main"
+		defaultPool = DefaultPool
 	}
-	if !cleanComponentPattern.MatchString(defaultPool) {
-		return fmt.Errorf("artifacts: namespace %q default pool %q is invalid: %w",
-			ns.GetName(), defaultPool, ErrInvalidNamespace)
+	if !poolNamePattern.MatchString(defaultPool) {
+		return fmt.Errorf("artifacts: namespace %q default pool %q must match %s: %w",
+			ns.GetName(), defaultPool, poolNamePattern, ErrInvalidNamespace)
 	}
 	allowed := ns.GetAllowedPools()
 	if len(allowed) == 0 {
@@ -257,9 +278,9 @@ func validNamespacePools(ns *orkstackv1.Namespace) error {
 	}
 	foundDefault := false
 	for _, pool := range allowed {
-		if !cleanComponentPattern.MatchString(pool) {
-			return fmt.Errorf("artifacts: namespace %q allowed pool %q is invalid: %w",
-				ns.GetName(), pool, ErrInvalidNamespace)
+		if !poolNamePattern.MatchString(pool) {
+			return fmt.Errorf("artifacts: namespace %q allowed pool %q must match %s: %w",
+				ns.GetName(), pool, poolNamePattern, ErrInvalidNamespace)
 		}
 		if pool == defaultPool {
 			foundDefault = true

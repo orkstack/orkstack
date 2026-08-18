@@ -44,12 +44,16 @@ type Namespace struct {
 	//
 	// It is recorded and kept self-consistent here; it is not yet consulted at
 	// dispatch. The engine resolves an empty Task.pool to "main" today, and
-	// M10.2 is the slice that reads this field on the submit path.
+	// M10.2 is the slice that reads this field on the submit path. So the
+	// registry stores only a name M10.2 could route to — the same slug rule the
+	// DSL and the engine's pool mapping use — because a stored routing target
+	// nothing can honour is a defect, not a placeholder.
 	DefaultPool string `protobuf:"bytes,4,opt,name=default_pool,json=defaultPool,proto3" json:"default_pool,omitempty"`
 	// allowed_pools bounds every pool this namespace may dispatch onto. Empty
 	// means no restriction. A non-empty list must contain default_pool, which
 	// the registry refuses to store otherwise — an allow-list that excludes the
-	// namespace's own default would refuse every task that names no pool.
+	// namespace's own default would refuse every task that names no pool. Each
+	// entry is held to the same pool-name rule as default_pool.
 	//
 	// Like default_pool it is stored, not enforced, until M10.2 enforces it at
 	// the API boundary.

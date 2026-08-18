@@ -148,74 +148,111 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
-	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml: string(source),
-	})); err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
-	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		OrkflowName: "hello-ork",
-	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
-	runID := submitted.Msg.GetRun().GetId()
-
-	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
-		RunId: runID,
-	}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
-	defer stream.Close()
-
-	var scheduled []string
-	var last *orkstackv1.Event
-	for stream.Receive() {
-		event := stream.Msg()
-		if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED {
-			scheduled = append(scheduled, event.GetMessage())
+	// runOrkflow applies a document, submits it, drains its event stream to a
+	// terminal event and returns the TASK_SCHEDULED messages a client read.
+	runOrkflow := func(label, source, orkflowName string) []string {
+		t.Helper()
+		if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+			Yaml: source,
+		})); err != nil {
+			t.Fatalf("%s: Apply: %v", label, err)
 		}
-		last = event
-	}
-	if err := stream.Err(); err != nil {
-		// A deadline here is the symptom this test exists for: the tasks were
-		// scheduled onto a queue no worker polls, so the run never terminated
-		// and the stream stayed open until the context expired.
-		observedMu.Lock()
-		reached := fmt.Sprintf("%v", observedQueues)
-		observedMu.Unlock()
-		t.Fatalf("event stream error: %v. Run %s never reached a terminal state; "+
-			"the orker on %q executed %s, so check that dispatch follows the engine's orker queue",
-			err, runID, orkerQueue, reached)
+		submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+			OrkflowName: orkflowName,
+		}))
+		if err != nil {
+			t.Fatalf("%s: SubmitRun: %v", label, err)
+		}
+		runID := submitted.Msg.GetRun().GetId()
+
+		stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
+			RunId: runID,
+		}))
+		if err != nil {
+			t.Fatalf("%s: StreamEvents: %v", label, err)
+		}
+		defer stream.Close()
+
+		var scheduled []string
+		var last *orkstackv1.Event
+		for stream.Receive() {
+			event := stream.Msg()
+			if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED {
+				scheduled = append(scheduled, event.GetMessage())
+			}
+			last = event
+		}
+		if err := stream.Err(); err != nil {
+			// A deadline here is the symptom this test exists for: the tasks
+			// were scheduled onto a queue no worker polls, so the run never
+			// terminated and the stream stayed open until the context expired.
+			observedMu.Lock()
+			reached := fmt.Sprintf("%v", observedQueues)
+			observedMu.Unlock()
+			t.Fatalf("%s: event stream error: %v. Run %s never reached a terminal state; "+
+				"the orker on %q executed %s, so check that dispatch follows the engine's orker queue",
+				label, err, runID, orkerQueue, reached)
+		}
+		if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
+			t.Fatalf("%s: run %s ended on %v (%s), want RUN_SUCCEEDED. Tasks reached the queues %v; "+
+				"an unassigned run means dispatch ignored the engine's orker queue %q",
+				label, runID, last.GetType(), last.GetMessage(), observedQueues, orkerQueue)
+		}
+		return scheduled
 	}
 
-	if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
-		t.Fatalf("run %s ended on %v (%s), want RUN_SUCCEEDED. Tasks reached the queues %v; "+
-			"an unassigned run means dispatch ignored the engine's orker queue %q",
-			runID, last.GetType(), last.GetMessage(), observedQueues, orkerQueue)
-	}
+	scheduled := runOrkflow("no pool", string(source), "hello-ork")
+
+	// The same pool, written out. The stream above reports an orkflow that
+	// named no pool as running on the built-in default; a document that names
+	// that default must therefore reach the SAME Orkers — the ones on the
+	// private queue — or the word the client read named a pool the task never
+	// ran on. It is also the isolation guarantee: `pool: main` may not escape
+	// ORK_ORKER_QUEUE onto the shared queue (AGENTS.md §6).
+	pinnedSource := fmt.Sprintf(`
+name: pool-main-pinned
+version: "0.1.0"
+tasks:
+  - id: pinned-echo
+    plugin: shell
+    pool: %s
+    with:
+      op: exec
+      command: "echo pinned"
+`, task.DefaultPool)
+	pinnedScheduled := runOrkflow("pool: "+task.DefaultPool, pinnedSource, "pool-main-pinned")
 
 	observedMu.Lock()
 	defer observedMu.Unlock()
-	if len(observedQueues) != 3 {
-		t.Fatalf("orker executed %d tasks (%v), want the example's 3", len(observedQueues), observedQueues)
+	if len(observedQueues) != 4 {
+		t.Fatalf("orker executed %d tasks (%v), want the example's 3 plus the pinned one",
+			len(observedQueues), observedQueues)
 	}
 	for taskID, queue := range observedQueues {
 		if queue != orkerQueue {
 			t.Errorf("task %q ran on queue %q, want the engine's orker queue %q", taskID, queue, orkerQueue)
 		}
 	}
+	if queue := observedQueues["pinned-echo"]; queue != orkerQueue {
+		t.Errorf("`pool: %s` ran on %q, want the engine's orker queue %q. The stream tells a client "+
+			"the task ran on pool %s; resubmitting to that pool must reach these Orkers, and must not "+
+			"reach the shared queue %q",
+			task.DefaultPool, queue, orkerQueue, task.DefaultPool, task.DefaultQueue)
+	}
 
 	// The run's own event stream reports where a task went — in pools, the
 	// word an author types. The queue this test proves the dispatch reached
 	// (above, from Temporal's own activity info) is a raw isolation queue and
-	// therefore nobody's pool, so an ordinary orkflow that named none is
-	// reported on the built-in default. A client reads this string: `orkctl
-	// watch` prints it and the run page renders it, so a queue name here would
-	// be Temporal's word plus an internal name the author never typed. The
-	// naming gate exempts internal/engine and cannot see it; this can.
-	for _, message := range scheduled {
+	// therefore nobody's pool, so both orkflows — the one that named no pool
+	// and the one that named the built-in default — are reported on that
+	// default. A client reads this string: `orkctl watch` prints it and the
+	// run page renders it, so a queue name here would be Temporal's word plus
+	// an internal name the author never typed. The naming gate exempts
+	// internal/engine and cannot see it; this can.
+	if len(pinnedScheduled) != 1 {
+		t.Fatalf("the pinned run carries %d TASK_SCHEDULED events (%v), want one", len(pinnedScheduled), pinnedScheduled)
+	}
+	for _, message := range append(scheduled, pinnedScheduled...) {
 		if !strings.Contains(message, "pool "+task.DefaultPool) {
 			t.Errorf("TASK_SCHEDULED event says %q, want it to name pool %q",
 				message, task.DefaultPool)

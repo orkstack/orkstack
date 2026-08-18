@@ -22,14 +22,15 @@ message TaskRun {
   // its author typed: the task's own `pool:`, or the pool this run's default
   // route resolves to when the task named none.
   //
-  // It is the routing request, not a measurement of the host that answered.
-  // An operator may point the engine's default route at an execution channel
-  // that belongs to no pool — the per-deployment isolation override operators
-  // use to keep two stacks apart; a task that named no pool then still reports
-  // the built-in "main", because that is the pool it asked for and the
-  // override is an operator concern this contract does not expose.
-  // Resubmitting to the pool named here reaches that pool, which is the same
-  // set of Orkers unless such an override is in force.
+  // Within a run, one pool name means one set of Orkers, so naming this pool
+  // on a task reaches exactly the Orkers this attempt reached. That holds
+  // under the per-deployment route override operators use to keep two stacks
+  // apart: an execution channel belonging to no pool reports as the built-in
+  // "main", and a task that writes "main" follows the same override instead
+  // of escaping it. The override is an operator concern this contract does
+  // not expose, so this name is the routing request rather than a measurement
+  // of the host that answered, and another deployment resolves it against its
+  // own Orkers.
   //
   // Empty means the task never reached an Orker (skipped, or terminal before
   // dispatch).

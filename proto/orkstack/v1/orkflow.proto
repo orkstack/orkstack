@@ -39,8 +39,11 @@ message Task {
 
   // pool names the set of Orkers this task runs on. Empty resolves to the
   // built-in pool "main"; Namespace.default_pool joins that resolution in
-  // M10.2, which is the slice that reads it. The engine maps a pool to its
-  // internal execution channel and nowhere else.
+  // M10.2, which is the slice that reads it. Writing "main" and writing
+  // nothing are one route: within a run, one pool name means one set of
+  // Orkers, whatever execution channel an operator has pointed the default
+  // route at. The engine maps a pool to its internal execution channel and
+  // nowhere else.
   string pool = 9;
 }
 

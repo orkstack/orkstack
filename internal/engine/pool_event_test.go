@@ -159,3 +159,90 @@ tasks:
 		}
 	}
 }
+
+// TestRunWorkflow_TheReportedPoolNamesTheOrkersTheTaskReached closes the gap
+// between the two halves of the M10.1 contract. The tests above prove the
+// engine SAYS "pool"; this one proves the word is true — the pool a client
+// reads names the Orkers the activity was really dispatched to, measured from
+// Temporal's own activity info.
+//
+// It is also the isolation guarantee, stated where a run can see it. Under the
+// ORK_ORKER_QUEUE override AGENTS.md §6 gives every parallel agent, `pool:
+// main` and no pool at all are one route: a document cannot leave the
+// operator's queue by naming the pool it was already told it was on
+// (docs/DSL.md).
+func TestRunWorkflow_TheReportedPoolNamesTheOrkersTheTaskReached(t *testing.T) {
+	// Same pool, spelled both ways, plus a pool of its own.
+	const document = `
+name: pool-agreement
+tasks:
+  - id: silent
+    plugin: shell
+    with: {command: "echo silent"}
+  - id: named
+    plugin: shell
+    pool: main
+    with: {command: "echo named"}
+  - id: crunch
+    plugin: shell
+    pool: gpu
+    with: {command: "echo crunch"}
+`
+	const rawQueue = "ork-tasks-m10-1-agent"
+
+	var suite testsuite.WorkflowTestSuite
+	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+	})
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-agreement",
+		compile(t, document), payload(t, nil), rawQueue)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+
+	// The pool each task was reported on, from the projection a client reads.
+	reported := map[string]string{}
+	for _, tr := range mustWorkflowResult(t, h.env).GetTaskRuns() {
+		reported[tr.GetTaskId()] = tr.GetPool()
+	}
+	// The queue each task's activity arrived on, from Temporal.
+	reached := map[string]string{}
+	for _, id := range []string{"silent", "named", "crunch"} {
+		queue, ok := h.queueFor(id)
+		if !ok {
+			t.Fatalf("task %q never reached an orker", id)
+		}
+		reached[id] = queue
+	}
+
+	// One pool name, one set of Orkers: `pool: main` and no pool are the same
+	// route, and both are reported as the same pool.
+	if reported["silent"] != reported["named"] {
+		t.Errorf("no pool reported %q and `pool: main` reported %q; the DSL says they are the same pool",
+			reported["silent"], reported["named"])
+	}
+	if reached["silent"] != reached["named"] {
+		t.Errorf("no pool ran on %q and `pool: main` ran on %q; one reported pool, two sets of Orkers",
+			reached["silent"], reached["named"])
+	}
+	if reached["named"] != rawQueue {
+		t.Errorf("`pool: main` ran on %q, want the run's own route %q — naming the default pool must not "+
+			"escape ORK_ORKER_QUEUE onto the shared queue %q",
+			reached["named"], rawQueue, task.DefaultQueue)
+	}
+	if reported["named"] != task.DefaultPool {
+		t.Errorf("`pool: main` was reported on pool %q, want %q", reported["named"], task.DefaultPool)
+	}
+
+	// A different pool is a different set of Orkers, and says so.
+	if reported["crunch"] != "gpu" {
+		t.Errorf("`pool: gpu` was reported on pool %q, want %q", reported["crunch"], "gpu")
+	}
+	if reached["crunch"] == reached["silent"] {
+		t.Errorf("pool gpu and pool %s both ran on %q; two reported pools, one set of Orkers",
+			task.DefaultPool, reached["crunch"])
+	}
+	if want, err := task.QueueForPool("gpu"); err != nil || reached["crunch"] != want {
+		t.Errorf("`pool: gpu` ran on %q, want %q (%v)", reached["crunch"], want, err)
+	}
+}

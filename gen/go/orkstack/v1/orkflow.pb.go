@@ -109,8 +109,11 @@ type Task struct {
 	Retry          *RetryPolicy `protobuf:"bytes,7,opt,name=retry,proto3" json:"retry,omitempty"`
 	// pool names the set of Orkers this task runs on. Empty resolves to the
 	// built-in pool "main"; Namespace.default_pool joins that resolution in
-	// M10.2, which is the slice that reads it. The engine maps a pool to its
-	// internal execution channel and nowhere else.
+	// M10.2, which is the slice that reads it. Writing "main" and writing
+	// nothing are one route: within a run, one pool name means one set of
+	// Orkers, whatever execution channel an operator has pointed the default
+	// route at. The engine maps a pool to its internal execution channel and
+	// nowhere else.
 	Pool          string `protobuf:"bytes,9,opt,name=pool,proto3" json:"pool,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
