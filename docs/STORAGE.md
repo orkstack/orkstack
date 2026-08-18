@@ -254,7 +254,8 @@ and defers this cleanly.
 
 ### Option 4 — S3-backed metadata
 
-**Architecture sketch.** `metadata/orkflows/{name}/{version}.json`,
+**Architecture sketch.** `metadata/namespaces/{name}.json`,
+`metadata/orkflows/{namespace}/{name}/{version}.json`,
 `metadata/runs/{run-id}.jsonl`; `ListObjectsV2` prefix scans for queries.
 
 **Query performance** — *measured*, aws-sdk-go-v2 v1.107.1, path-style, localhost MinIO:

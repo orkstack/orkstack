@@ -397,13 +397,13 @@ tasks:
 	}
 }
 
-func TestCompile_CompilesRetryTimeoutAndQueue(t *testing.T) {
+func TestCompile_CompilesRetryTimeoutAndPool(t *testing.T) {
 	const doc = `
 name: options
 tasks:
   - id: a
     plugin: shell
-    queue: special-queue
+    pool: gpu
     timeout_seconds: 42
     retry:
       maximum_attempts: 3
@@ -417,8 +417,8 @@ tasks:
 		t.Fatalf("Compile: %v", err)
 	}
 	task := wf.GetTasks()[0]
-	if task.GetQueue() != "special-queue" {
-		t.Errorf("queue = %q", task.GetQueue())
+	if task.GetPool() != "gpu" {
+		t.Errorf("pool = %q, want gpu", task.GetPool())
 	}
 	if task.GetTimeoutSeconds() != 42 {
 		t.Errorf("timeout_seconds = %d, want 42", task.GetTimeoutSeconds())
@@ -427,6 +427,83 @@ tasks:
 	if retry.GetMaximumAttempts() != 3 || retry.GetInitialIntervalSeconds() != 2 ||
 		retry.GetBackoffCoefficient() != 1.5 || retry.GetMaximumIntervalSeconds() != 10 {
 		t.Errorf("retry = %+v, want the DSL values", retry)
+	}
+}
+
+// TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty pins the two halves of
+// rule 7's namespace: an author who names one gets it verbatim, and an author
+// who names none gets an empty field — "empty means default" is resolved once,
+// where the name becomes a storage key, and never guessed twice.
+func TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty(t *testing.T) {
+	const named = `
+namespace: payments
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo 1"}
+`
+	wf, err := dsl.Compile([]byte(named))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetNamespace() != "payments" {
+		t.Errorf("namespace = %q, want payments", wf.GetNamespace())
+	}
+
+	const anonymous = `
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo 1"}
+`
+	wf, err = dsl.Compile([]byte(anonymous))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetNamespace() != "" {
+		t.Errorf("namespace = %q, want empty (meaning the default namespace)", wf.GetNamespace())
+	}
+}
+
+func TestCompile_RejectsANamespaceOrPoolThatIsNotASlug(t *testing.T) {
+	cases := []struct{ name, doc, want string }{
+		{
+			name: "namespace",
+			doc: `
+namespace: Payments Team
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo 1"}
+`,
+			want: "namespace",
+		},
+		{
+			name: "pool",
+			doc: `
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    pool: GPU_Large
+    with: {command: "echo 1"}
+`,
+			want: "pool",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := dsl.Compile([]byte(tc.doc))
+			if err == nil {
+				t.Fatalf("Compile accepted a %s that is not a slug", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not name %q", err.Error(), tc.want)
+			}
+		})
 	}
 }
 

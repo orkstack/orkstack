@@ -32,14 +32,12 @@ import (
 // it against a body carrying one extra emit — the exact shape of the change
 // M8 made to RunWorkflow.
 //
-// The baseline was reset once, at M9, and this recording is that reset. M9
-// renamed OrkStack's entity from workflow to orkflow on the wire, so
-// task.ExecuteTaskInput's JSON tags changed and the previous fixture's
-// payloads no longer described what this code sends. Nothing was deployed, so
-// no build anywhere still speaks the old spelling and there was nothing to
-// stay compatible with. The guard was not weakened — both halves run
-// unchanged against this recording — but its clock starts at M9. See
-// testdata/history/README.md and proof/M9/.
+// The baseline was reset at M10.1. M10.1 removed the user-facing task routing
+// field and added the selected default execution channel as a fourth workflow
+// input, so the pre-change history could not decode against this clean-cut
+// contract. Nothing was deployed; the fixture was re-recorded by the opt-in
+// real-cluster test, and both command and payload guards remain active. See
+// testdata/history/README.md and proof/M10.1/.
 const goldenHistory = "testdata/history/run-succeeded-v1.json"
 
 // TestRunWorkflow_ReplaysCommittedV1History is half of the cross-version
@@ -145,6 +143,7 @@ func runWorkflowWithAnExtraEmit(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	orkerQueue string,
 ) (*orkstackv1.Run, error) {
 	activityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		TaskQueue:           engine.EventQueue,
@@ -165,7 +164,7 @@ func runWorkflowWithAnExtraEmit(
 	_ = workflow.ExecuteActivity(activityCtx, engine.ActivityPublishEvent,
 		event, &orkstackv1.Run{Id: runID}, runID+"#0").Get(ctx, nil)
 
-	return engine.RunWorkflow(ctx, runID, wf, input)
+	return engine.RunWorkflow(ctx, runID, wf, input, orkerQueue)
 }
 
 // TestGoldenHistory_StillDescribesAPinnedMultiTaskRun keeps the fixture

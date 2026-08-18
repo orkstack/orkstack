@@ -122,8 +122,8 @@ needs `ORK_S3_*` either way.
   `ORK_ORKER_QUEUE`. Add processes to a pool for throughput; add a pool for
   isolation — a GPU host, a pool with different plugins, a pool near some data.
 - **The engine's default pool must match.** The engine dispatches every task
-  that names no `queue:` to its own `ORK_ORKER_QUEUE`, so the variable is set
-  on both binaries or runs strand in `RUNNING` (§2, §5). A task's own `queue:`
+  that names no `pool:` to its own `ORK_ORKER_QUEUE`, so the variable is set
+  on both binaries or runs strand in `RUNNING` (§2, §5). A task's own `pool:`
   in the DSL outranks it, and is how one step reaches a dedicated pool
   (`docs/DSL.md`).
 - **Under versioning, every pool a release dispatches to needs an Orker of that
@@ -185,12 +185,13 @@ export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
 ```
 
-One bucket, three key families (`pkg/artifacts`):
+One bucket, four key families (`pkg/artifacts`):
 
 | keys | what |
 |---|---|
-| `metadata/orkflows/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot |
-| `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/…` | archived runs: the body, and the key-only index `ListRuns` scans |
+| `metadata/orkflows/{namespace}/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot |
+| `metadata/namespaces/{name}.json` | namespace registry documents; `default` is synthesized when absent |
+| `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/{namespace}/…` | archived runs: the body, and the key-only index `ListRuns` scans |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{name}` | artifacts, addressed by provenance |
 
 `proof/M8.5/ha-deploy.sh` exports exactly that block, and phase 7 of
@@ -661,7 +662,7 @@ Runs already pinned to a version still need that version's workers.
   runs strand in `RUNNING`: the Orker polls one queue while the engine
   dispatches to another. It moves **task execution only** — the engine's own
   workers stay on `ork-tasks` and `ork-engine-events` (§2). A task's own
-  `queue:` in the DSL outranks the engine default and is how a step reaches a
+  `pool:` in the DSL outranks the engine default and is how a step reaches a
   dedicated Orker pool (`docs/DSL.md`).
 - **One namespace, one deployment.** The engine's queue name is fixed, so two
   OrkStack deployments in one namespace would fight over the current version of

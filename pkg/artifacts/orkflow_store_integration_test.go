@@ -98,14 +98,14 @@ func readKey(t *testing.T, ctx context.Context, client *s3.Client, bucket, key s
 
 // TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject is the milestone's
 // storage claim: an applied orkflow becomes
-// s3://orkstack-artifacts/metadata/orkflows/{name}/{version}.json, and
+// s3://orkstack-artifacts/metadata/orkflows/{namespace}/{name}/{version}.json, and
 // publishing another version adds an object rather than rewriting one.
 func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	store, cfg := newS3OrkflowStore(t)
 	ctx := context.Background()
 	raw := newRawS3Client(t, cfg)
 	name := testOrkflowName(t)
-	prefix := artifacts.OrkflowPrefix + "/" + name + "/"
+	prefix := artifacts.OrkflowPrefix + "/" + artifacts.DefaultNamespace + "/" + name + "/"
 	t.Cleanup(func() { deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, prefix) })
 
 	applied := time.Now().UTC().Truncate(time.Millisecond)
@@ -115,12 +115,12 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	}
 
 	// The key is the documented path, and the URI names it exactly.
-	firstKey := fmt.Sprintf("metadata/orkflows/%s/0.1.0.json", name)
+	firstKey := fmt.Sprintf("metadata/orkflows/%s/%s/0.1.0.json", artifacts.DefaultNamespace, name)
 	if got := listKeys(t, ctx, raw, cfg.S3Bucket, prefix); len(got) != 1 || got[0] != firstKey {
 		t.Fatalf("bucket keys = %v, want [%s]", got, firstKey)
 	}
 	wantURI := "s3://" + cfg.S3Bucket + "/" + firstKey
-	gotURI, err := store.URI(name, "0.1.0")
+	gotURI, err := store.URI(artifacts.DefaultNamespace, name, "0.1.0")
 	if err != nil {
 		t.Fatalf("URI: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	if err := store.Put(ctx, second); err != nil {
 		t.Fatalf("Put(0.2.0): %v", err)
 	}
-	secondKey := fmt.Sprintf("metadata/orkflows/%s/0.2.0.json", name)
+	secondKey := fmt.Sprintf("metadata/orkflows/%s/%s/0.2.0.json", artifacts.DefaultNamespace, name)
 	keys := listKeys(t, ctx, raw, cfg.S3Bucket, prefix)
 	sort.Strings(keys)
 	if len(keys) != 2 || keys[0] != firstKey || keys[1] != secondKey {
@@ -181,7 +181,7 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	}
 
 	// Reads: an exact version, and "latest" meaning the most recently applied.
-	pinned, err := store.Get(ctx, name, "0.1.0")
+	pinned, err := store.Get(ctx, artifacts.DefaultNamespace, name, "0.1.0")
 	if err != nil {
 		t.Fatalf("Get(0.1.0): %v", err)
 	}
@@ -191,7 +191,7 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	if len(pinned.GetTasks()) != 1 || pinned.GetTasks()[0].GetWith().AsMap()["url"] != "{{ .inputs.url }}" {
 		t.Errorf("Get(0.1.0) lost the raw task template: %v", pinned.GetTasks())
 	}
-	latest, err := store.Get(ctx, name, "")
+	latest, err := store.Get(ctx, artifacts.DefaultNamespace, name, "")
 	if err != nil {
 		t.Fatalf("Get(latest): %v", err)
 	}
@@ -200,7 +200,7 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	}
 
 	// List reports one entry per orkflow: the latest version.
-	listed, err := store.List(ctx)
+	listed, err := store.List(ctx, artifacts.DefaultNamespace)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestS3OrkflowStore_OutlivesTheStoreThatWroteIt(t *testing.T) {
 	name := testOrkflowName(t)
 	t.Cleanup(func() {
 		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket,
-			artifacts.OrkflowPrefix+"/"+name+"/")
+			artifacts.OrkflowPrefix+"/"+artifacts.DefaultNamespace+"/"+name+"/")
 	})
 
 	wf := testOrkflow(t, name, "1.0.0", time.Now().UTC())
@@ -247,7 +247,7 @@ func TestS3OrkflowStore_OutlivesTheStoreThatWroteIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewS3OrkflowStore (restart): %v", err)
 	}
-	got, err := reader.Get(ctx, name, "")
+	got, err := reader.Get(ctx, artifacts.DefaultNamespace, name, "")
 	if err != nil {
 		t.Fatalf("Get after restart: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestS3OrkflowStore_OutlivesTheStoreThatWroteIt(t *testing.T) {
 		t.Fatalf("restarted store read %s@%s (source %q), want the applied definition",
 			got.GetName(), got.GetVersion(), got.GetSourceYaml())
 	}
-	listed, err := reader.List(ctx)
+	listed, err := reader.List(ctx, artifacts.DefaultNamespace)
 	if err != nil {
 		t.Fatalf("List after restart: %v", err)
 	}
@@ -277,17 +277,75 @@ func TestS3OrkflowStore_ReportsAMissingOrkflowAsNotFound(t *testing.T) {
 	store, _ := newS3OrkflowStore(t)
 	ctx := context.Background()
 
-	if _, err := store.Get(ctx, testOrkflowName(t), ""); !errors.Is(err, artifacts.ErrNotFound) {
+	if _, err := store.Get(ctx, artifacts.DefaultNamespace, testOrkflowName(t), ""); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Get(unknown, latest) = %v, want ErrNotFound", err)
 	}
-	if _, err := store.Get(ctx, testOrkflowName(t), "0.1.0"); !errors.Is(err, artifacts.ErrNotFound) {
+	if _, err := store.Get(ctx, artifacts.DefaultNamespace, testOrkflowName(t), "0.1.0"); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Get(unknown, 0.1.0) = %v, want ErrNotFound", err)
 	}
-	if _, err := store.Get(ctx, "../../etc/passwd", "0.1.0"); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
+	if _, err := store.Get(ctx, artifacts.DefaultNamespace, "../../etc/passwd", "0.1.0"); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 		t.Errorf("Get(traversal) = %v, want ErrInvalidOrkflow", err)
 	}
 	if err := store.Put(ctx, &orkstackv1.Orkflow{Name: "no-version"}); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 		t.Errorf("Put(no version) = %v, want ErrInvalidOrkflow", err)
+	}
+}
+
+// TestOrkflowStore_TwoNamespacesHoldTheSameNameIndependently is M10.1's
+// storage isolation canary: the namespace is part of the object key, not a
+// label filtered after reading a global catalog.
+func TestOrkflowStore_TwoNamespacesHoldTheSameNameIndependently(t *testing.T) {
+	store, cfg := newS3OrkflowStore(t)
+	ctx := context.Background()
+	raw := newRawS3Client(t, cfg)
+	name := testOrkflowName(t)
+	token := uniqueToken(t)
+	nsA, nsB := "m101-a-"+token, "m101-b-"+token
+	t.Cleanup(func() {
+		for _, namespace := range []string{nsA, nsB} {
+			deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket,
+				artifacts.OrkflowPrefix+"/"+namespace+"/")
+		}
+	})
+
+	inA := testOrkflow(t, name, "1.0.0", time.Now().UTC())
+	inA.Namespace = nsA
+	inA.SourceYaml = "namespace: " + nsA + "\nname: " + name + "\n# A\n"
+	inB := testOrkflow(t, name, "1.0.0", time.Now().UTC().Add(time.Second))
+	inB.Namespace = nsB
+	inB.SourceYaml = "namespace: " + nsB + "\nname: " + name + "\n# B\n"
+	for _, wf := range []*orkstackv1.Orkflow{inA, inB} {
+		if err := store.Put(ctx, wf); err != nil {
+			t.Fatalf("Put(%s): %v", wf.GetNamespace(), err)
+		}
+	}
+
+	for _, tc := range []struct {
+		namespace string
+		want      *orkstackv1.Orkflow
+	}{{nsA, inA}, {nsB, inB}} {
+		key := fmt.Sprintf("metadata/orkflows/%s/%s/1.0.0.json", tc.namespace, name)
+		keys := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.OrkflowPrefix+"/"+tc.namespace+"/")
+		if len(keys) != 1 || keys[0] != key {
+			t.Fatalf("keys for %s = %v, want [%s]", tc.namespace, keys, key)
+		}
+		got, err := store.Get(ctx, tc.namespace, name, "")
+		if err != nil {
+			t.Fatalf("Get(%s): %v", tc.namespace, err)
+		}
+		if got.GetSourceYaml() != tc.want.GetSourceYaml() {
+			t.Errorf("Get(%s) returned %q, want its own document", tc.namespace, got.GetSourceYaml())
+		}
+		listed, err := store.List(ctx, tc.namespace)
+		if err != nil {
+			t.Fatalf("List(%s): %v", tc.namespace, err)
+		}
+		if len(listed) != 1 || listed[0].GetSourceYaml() != tc.want.GetSourceYaml() {
+			t.Errorf("List(%s) = %v, want its one document", tc.namespace, listed)
+		}
+	}
+	if _, err := store.Get(ctx, "m101-empty-"+token, name, ""); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("Get from an unused namespace = %v, want ErrNotFound", err)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -23,31 +24,46 @@ import (
 // restarted engine sees exactly what the bucket holds and nothing is served
 // from process memory.
 //
+// An orkflow is addressed by three coordinates, not two: a name is unique
+// WITHIN a namespace, so two namespaces may each hold a "deploy" and never see
+// each other's documents.
+//
 // internal/engine declares the same method set as the interface the API
 // depends on; Go's structural typing lets this package satisfy it without
 // importing internal/.
 type OrkflowStore interface {
-	// Put writes one orkflow version. Writing a version replaces only that
-	// version's object; other versions are never touched.
+	// Put writes one orkflow version into the namespace the message names.
+	// Writing a version replaces only that version's object; other versions,
+	// and every other namespace, are never touched.
 	Put(ctx context.Context, wf *orkstackv1.Orkflow) error
-	// Get returns one orkflow version. An empty version means the most
-	// recently applied one. A missing orkflow returns an error matching
-	// ErrNotFound.
-	Get(ctx context.Context, name, version string) (*orkstackv1.Orkflow, error)
-	// List returns the most recently applied version of every stored orkflow,
-	// ordered by name.
-	List(ctx context.Context) ([]*orkstackv1.Orkflow, error)
+	// Get returns one orkflow version from one namespace. An empty version
+	// means the most recently applied one in that namespace, and an empty
+	// namespace means DefaultNamespace. A missing orkflow returns an error
+	// matching ErrNotFound.
+	Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error)
+	// List returns the most recently applied version of every orkflow in one
+	// namespace, ordered by name.
+	List(ctx context.Context, namespace string) ([]*orkstackv1.Orkflow, error)
 }
 
 const (
 	// OrkflowPrefix roots orkflow definitions in the bucket:
 	//
-	//	s3://{bucket}/metadata/orkflows/{name}/{version}.json
+	//	s3://{bucket}/metadata/orkflows/{namespace}/{name}/{version}.json
+	//
+	// The namespace comes first so listing one namespace is a single prefix
+	// scan, which is what makes namespace isolation a property of the key
+	// rather than a filter applied after reading everyone's documents.
 	//
 	// It is disjoint from the run-artifact hierarchy (`orkflows/`) and from
 	// artifact name manifests (`manifests/`), so a lifecycle rule that expires
 	// one orkflow's artifacts never deletes the definitions.
 	OrkflowPrefix = "metadata/orkflows"
+
+	// DefaultNamespace holds every orkflow that names no namespace. It always
+	// resolves and is never created: a deployment that registered nothing
+	// still has one namespace.
+	DefaultNamespace = "default"
 
 	// orkflowSuffix ends every definition object. The document is JSON.
 	orkflowSuffix = ".json"
@@ -55,58 +71,90 @@ const (
 	// orkflowContentType is what a definition object is served as.
 	orkflowContentType = "application/json"
 
-	// maxOrkflowComponent bounds a name or version so a key stays far below
-	// S3's 1024-byte limit and is a legal path component everywhere.
+	// maxOrkflowComponent bounds a namespace, name or version so a key stays
+	// far below S3's 1024-byte limit and is a legal path component everywhere.
 	maxOrkflowComponent = 200
 )
 
-// ErrInvalidOrkflow reports a name or version this store cannot address.
+// ErrInvalidOrkflow reports coordinates this store cannot address.
 var ErrInvalidOrkflow = errors.New("invalid orkflow coordinates")
 
+// ResolveNamespace turns an unset namespace into DefaultNamespace. It is the
+// ONE place "empty means default" happens: the DSL keeps an absent namespace
+// empty and the proto documents it as empty, so the rule is applied where a
+// name becomes a key and nowhere else.
+func ResolveNamespace(namespace string) string {
+	if namespace == "" {
+		return DefaultNamespace
+	}
+	return namespace
+}
+
 // OrkflowKey renders the object key holding one orkflow version:
-// metadata/orkflows/{name}/{version}.json.
+// metadata/orkflows/{namespace}/{name}/{version}.json.
 //
-// Both coordinates are validated rather than sanitized: a name or version that
+// All three coordinates are validated rather than sanitized: a component that
 // is not already a safe single path component (a DSL slug and a version string
-// always are) is rejected, so no input can escape the prefix or collide with
-// another orkflow's key.
-func OrkflowKey(name, version string) (string, error) {
-	if err := validOrkflowComponent("name", name); err != nil {
+// always are) is rejected, so no input can escape the prefix, climb out of its
+// namespace, or collide with another orkflow's key.
+func OrkflowKey(namespace, name, version string) (string, error) {
+	prefix, err := orkflowNamePrefix(namespace, name)
+	if err != nil {
 		return "", err
 	}
 	if err := validOrkflowComponent("version", version); err != nil {
 		return "", err
 	}
-	return OrkflowPrefix + "/" + name + "/" + version + orkflowSuffix, nil
+	return prefix + version + orkflowSuffix, nil
+}
+
+// OrkflowNamespacePrefix is the key prefix holding every orkflow of one
+// namespace. Listing a namespace is exactly this one prefix scan.
+func OrkflowNamespacePrefix(namespace string) (string, error) {
+	namespace = ResolveNamespace(namespace)
+	if err := validOrkflowComponent("namespace", namespace); err != nil {
+		return "", err
+	}
+	return OrkflowPrefix + "/" + namespace + "/", nil
 }
 
 // orkflowNamePrefix is the key prefix holding every version of one orkflow.
-func orkflowNamePrefix(name string) (string, error) {
+func orkflowNamePrefix(namespace, name string) (string, error) {
+	prefix, err := OrkflowNamespacePrefix(namespace)
+	if err != nil {
+		return "", err
+	}
 	if err := validOrkflowComponent("name", name); err != nil {
 		return "", err
 	}
-	return OrkflowPrefix + "/" + name + "/", nil
+	return prefix + name + "/", nil
 }
 
 // parseOrkflowKey reverses OrkflowKey. Keys that are not definitions (a future
 // document beside them, a stray object) report false and are skipped by List.
-func parseOrkflowKey(key string) (name, version string, ok bool) {
+func parseOrkflowKey(key string) (namespace, name, version string, ok bool) {
 	rest, found := strings.CutPrefix(key, OrkflowPrefix+"/")
 	if !found {
-		return "", "", false
+		return "", "", "", false
+	}
+	namespace, rest, found = strings.Cut(rest, "/")
+	if !found {
+		return "", "", "", false
 	}
 	name, file, found := strings.Cut(rest, "/")
 	if !found {
-		return "", "", false
+		return "", "", "", false
 	}
 	version, found = strings.CutSuffix(file, orkflowSuffix)
 	if !found {
-		return "", "", false
+		return "", "", "", false
 	}
-	if validOrkflowComponent("name", name) != nil || validOrkflowComponent("version", version) != nil {
-		return "", "", false
+	if validOrkflowComponent("namespace", namespace) != nil ||
+		validOrkflowComponent("name", name) != nil ||
+		validOrkflowComponent("version", version) != nil {
+		return "", "", "", false
 	}
-	return name, version, true
+	return namespace, name, version, true
 }
 
 func validOrkflowComponent(kind, value string) error {
@@ -121,6 +169,19 @@ func validOrkflowComponent(kind, value string) error {
 			kind, value, cleanComponentPattern, ErrInvalidOrkflow)
 	}
 	return nil
+}
+
+// namespacedOrkflow returns wf with its namespace resolved, so a stored
+// document always names the namespace it lives in and a reader needs no key to
+// know where it came from. The input message is never mutated: it belongs to
+// the caller.
+func namespacedOrkflow(wf *orkstackv1.Orkflow) *orkstackv1.Orkflow {
+	if wf == nil || wf.GetNamespace() == ResolveNamespace(wf.GetNamespace()) {
+		return wf
+	}
+	stamped := proto.Clone(wf).(*orkstackv1.Orkflow)
+	stamped.Namespace = ResolveNamespace(wf.GetNamespace())
+	return stamped
 }
 
 // marshalOrkflow renders the stored document: the orkflow message as canonical
@@ -204,7 +265,7 @@ func latestByName(all []*orkstackv1.Orkflow) []*orkstackv1.Orkflow {
 // S3OrkflowStore keeps orkflow definitions in an S3-compatible bucket, one
 // immutable JSON object per version:
 //
-//	s3://{bucket}/metadata/orkflows/{name}/{version}.json
+//	s3://{bucket}/metadata/orkflows/{namespace}/{name}/{version}.json
 //
 // It holds no cache. Apply writes the object; get and list read it back. A
 // restarted engine therefore reloads every orkflow simply by reading, and two
@@ -235,8 +296,8 @@ func (s *S3OrkflowStore) Bucket() string { return s.bucket }
 func (s *S3OrkflowStore) Location() string { return s.uri(OrkflowPrefix + "/") }
 
 // URI is the s3:// URI of one orkflow version's document.
-func (s *S3OrkflowStore) URI(name, version string) (string, error) {
-	key, err := OrkflowKey(name, version)
+func (s *S3OrkflowStore) URI(namespace, name, version string) (string, error) {
+	key, err := OrkflowKey(namespace, name, version)
 	if err != nil {
 		return "", err
 	}
@@ -255,11 +316,11 @@ func (s *S3OrkflowStore) uri(key string) string {
 // replaces that one object and nothing else, which keeps `orkctl apply`
 // idempotent.
 func (s *S3OrkflowStore) Put(ctx context.Context, wf *orkstackv1.Orkflow) error {
-	key, err := OrkflowKey(wf.GetName(), wf.GetVersion())
+	key, err := OrkflowKey(wf.GetNamespace(), wf.GetName(), wf.GetVersion())
 	if err != nil {
 		return err
 	}
-	document, err := marshalOrkflow(wf)
+	document, err := marshalOrkflow(namespacedOrkflow(wf))
 	if err != nil {
 		return err
 	}
@@ -275,40 +336,46 @@ func (s *S3OrkflowStore) Put(ctx context.Context, wf *orkstackv1.Orkflow) error 
 	return nil
 }
 
-// Get reads one orkflow version. An empty version resolves to the most
-// recently applied one.
-func (s *S3OrkflowStore) Get(ctx context.Context, name, version string) (*orkstackv1.Orkflow, error) {
+// Get reads one orkflow version from one namespace. An empty version resolves
+// to the most recently applied one in that namespace, never in another.
+func (s *S3OrkflowStore) Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error) {
 	if version == "" {
-		versions, err := s.versions(ctx, name)
+		versions, err := s.versions(ctx, namespace, name)
 		if err != nil {
 			return nil, err
 		}
 		latest := latestOrkflow(versions)
 		if latest == nil {
-			return nil, fmt.Errorf("artifacts: get orkflow %q: %w", name, ErrNotFound)
+			return nil, fmt.Errorf("artifacts: get orkflow %q in namespace %q: %w",
+				name, ResolveNamespace(namespace), ErrNotFound)
 		}
 		return latest, nil
 	}
-	key, err := OrkflowKey(name, version)
+	key, err := OrkflowKey(namespace, name, version)
 	if err != nil {
 		return nil, err
 	}
 	return s.read(ctx, key)
 }
 
-// List returns the most recently applied version of every orkflow in the
-// bucket, ordered by name.
-func (s *S3OrkflowStore) List(ctx context.Context) ([]*orkstackv1.Orkflow, error) {
-	all, err := s.readPrefix(ctx, OrkflowPrefix+"/")
+// List returns the most recently applied version of every orkflow in one
+// namespace, ordered by name. It is one prefix scan: another namespace's
+// documents are never read, let alone filtered out afterwards.
+func (s *S3OrkflowStore) List(ctx context.Context, namespace string) ([]*orkstackv1.Orkflow, error) {
+	prefix, err := OrkflowNamespacePrefix(namespace)
+	if err != nil {
+		return nil, err
+	}
+	all, err := s.readPrefix(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
 	return latestByName(all), nil
 }
 
-// versions reads every stored version of one orkflow.
-func (s *S3OrkflowStore) versions(ctx context.Context, name string) ([]*orkstackv1.Orkflow, error) {
-	prefix, err := orkflowNamePrefix(name)
+// versions reads every stored version of one orkflow in one namespace.
+func (s *S3OrkflowStore) versions(ctx context.Context, namespace, name string) ([]*orkstackv1.Orkflow, error) {
+	prefix, err := orkflowNamePrefix(namespace, name)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +398,7 @@ func (s *S3OrkflowStore) readPrefix(ctx context.Context, prefix string) ([]*orks
 		}
 		for _, object := range page.Contents {
 			key := aws.ToString(object.Key)
-			if _, _, ok := parseOrkflowKey(key); !ok {
+			if _, _, _, ok := parseOrkflowKey(key); !ok {
 				continue
 			}
 			wf, err := s.read(ctx, key)

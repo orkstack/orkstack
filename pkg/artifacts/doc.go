@@ -15,13 +15,12 @@
 // file:// for local objects and s3:// for S3.
 //
 // The same bucket is also the engine's system of record for orkflows:
-// S3OrkflowStore writes one immutable JSON document per version at
-// metadata/orkflows/{name}/{version}.json and reads it back on every call, so
-// an engine restart reloads the catalog instead of losing it.
+// metadata/orkflows/{namespace}/{name}/{version}.json and reads it back on
+// every call, so an engine restart reloads the catalog instead of losing it.
 //
 //	orkflows, err := artifacts.NewS3OrkflowStore(ctx, artifacts.ConfigFromEnv())
 //	err = orkflows.Put(ctx, compiled)             // apply
-//	catalog, err := orkflows.List(ctx)            // latest version of each
+//	catalog, err := orkflows.List(ctx, "default") // latest version of each
 //
 // Selecting a backend:
 //

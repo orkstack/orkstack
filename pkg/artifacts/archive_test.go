@@ -75,19 +75,23 @@ func TestRunArchiveKey_IsTheDocumentedJSONLPath(t *testing.T) {
 }
 
 // TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack is why a list query
-// reads keys only: orkflow, status, time and run id are all in the key.
+// reads keys only: namespace, orkflow, status, time, duration and run id are
+// all in the key.
 func TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack(t *testing.T) {
 	record := artifacts.RunRecord{
-		RunID:   "ork-1786856120616785000-7",
-		Orkflow: "hello-ork",
-		Status:  "SUCCEEDED",
-		Time:    day(t, "2026-08-14T09:30:15Z"),
+		RunID:     "ork-1786856120616785000-7",
+		Namespace: "payments",
+		Orkflow:   "hello-ork",
+		Status:    "SUCCEEDED",
+		Time:      day(t, "2026-08-14T09:30:15Z"),
+		Duration:  1500 * time.Millisecond,
 	}
 	key, err := artifacts.RunIndexKey(record)
 	if err != nil {
 		t.Fatalf("RunIndexKey: %v", err)
 	}
-	want := "metadata/index/runs/hello-ork/succeeded/20260814T093015.000000000Z/ork-1786856120616785000-7"
+	want := "metadata/index/runs/payments/hello-ork/succeeded/" +
+		"20260814T093015.000000000Z/000000001500/ork-1786856120616785000-7"
 	if key != want {
 		t.Fatalf("index key = %q, want %q", key, want)
 	}
@@ -96,11 +100,60 @@ func TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack(t *testing.T) {
 	if !ok {
 		t.Fatalf("ParseRunIndexKey(%q) reported not ok", key)
 	}
-	if entry.RunID != record.RunID || entry.Orkflow != "hello-ork" || entry.Status != "succeeded" {
+	if entry.RunID != record.RunID || entry.Namespace != "payments" ||
+		entry.Orkflow != "hello-ork" || entry.Status != "succeeded" {
 		t.Fatalf("parsed entry = %+v, want the record's coordinates", entry)
 	}
 	if !entry.Time.Equal(record.Time) {
 		t.Fatalf("parsed time = %s, want %s", entry.Time, record.Time)
+	}
+	if entry.Duration != record.Duration {
+		t.Fatalf("parsed duration = %s, want %s", entry.Duration, record.Duration)
+	}
+
+	// A record that names no namespace is indexed under the default one, so
+	// every key has the segment and a namespace-scoped scan misses nothing.
+	record.Namespace = ""
+	unnamespaced, err := artifacts.RunIndexKey(record)
+	if err != nil {
+		t.Fatalf("RunIndexKey (no namespace): %v", err)
+	}
+	entry, ok = artifacts.ParseRunIndexKey(unnamespaced)
+	if !ok || entry.Namespace != artifacts.DefaultNamespace {
+		t.Fatalf("key %q parsed to namespace %q, want %q",
+			unnamespaced, entry.Namespace, artifacts.DefaultNamespace)
+	}
+
+	// Keys of the pre-namespace shape are not index keys any more: they parse
+	// as foreign and are skipped, never mistaken for a run in some namespace.
+	old := "metadata/index/runs/hello-ork/succeeded/20260814T093015.000000000Z/ork-1786856120616785000-7"
+	if entry, ok := artifacts.ParseRunIndexKey(old); ok {
+		t.Fatalf("ParseRunIndexKey(%q) = %+v, true; want false", old, entry)
+	}
+}
+
+// TestRunIndexKey_RendersDurationAsAFixedWidthSortableSegment keeps the
+// duration segment usable as a key: fixed width, so text order is numeric
+// order, and never widened by a value that does not fit.
+func TestRunIndexKey_RendersDurationAsAFixedWidthSortableSegment(t *testing.T) {
+	widths := map[time.Duration]string{
+		0:                               "000000000000",
+		time.Millisecond:                "000000000001",
+		1500 * time.Millisecond:         "000000001500",
+		-5 * time.Second:                "000000000000", // clocks disagreed
+		200 * 365 * 24 * time.Hour:      "999999999999", // clamped, not widened
+		999999999999 * time.Millisecond: "999999999999",
+	}
+	for d, want := range widths {
+		if got := artifacts.RunDurationSegment(d); got != want {
+			t.Errorf("RunDurationSegment(%s) = %q, want %q", d, got, want)
+		}
+	}
+
+	// Text order is numeric order, which is what makes a percentile over a
+	// keys-only scan meaningful.
+	if artifacts.RunDurationSegment(2*time.Millisecond) >= artifacts.RunDurationSegment(10*time.Millisecond) {
+		t.Error("2ms does not sort before 10ms")
 	}
 }
 
@@ -144,20 +197,43 @@ func TestRunQuery_ScanPrefixNarrowsWithEveryPinnedField(t *testing.T) {
 			wantPrefix: "metadata/index/runs/",
 		},
 		{
-			name:       "orkflow pins the first segment",
+			name:       "namespace pins the first segment",
+			query:      artifacts.RunQuery{Namespace: "payments"},
+			wantPrefix: "metadata/index/runs/payments/",
+		},
+		{
+			// An orkflow name is unique within a namespace, not across the
+			// deployment, so the same name may live in several and the scan
+			// has to see them all.
+			name:       "an orkflow without a namespace cannot narrow",
 			query:      artifacts.RunQuery{Orkflow: "hello-ork"},
-			wantPrefix: "metadata/index/runs/hello-ork/",
+			wantPrefix: "metadata/index/runs/",
 		},
 		{
-			name:       "status pins the second",
-			query:      artifacts.RunQuery{Orkflow: "hello-ork", Status: "SUCCEEDED"},
-			wantPrefix: "metadata/index/runs/hello-ork/succeeded/",
+			name:       "orkflow pins the second segment",
+			query:      artifacts.RunQuery{Namespace: "payments", Orkflow: "hello-ork"},
+			wantPrefix: "metadata/index/runs/payments/hello-ork/",
 		},
 		{
-			name:           "a lower bound starts the scan at its timestamp",
-			query:          artifacts.RunQuery{Orkflow: "hello-ork", Status: "succeeded", Since: since},
-			wantPrefix:     "metadata/index/runs/hello-ork/succeeded/",
-			wantStartAfter: "metadata/index/runs/hello-ork/succeeded/20260814T000000.000000000Z",
+			name:       "status pins the third",
+			query:      artifacts.RunQuery{Namespace: "payments", Orkflow: "hello-ork", Status: "SUCCEEDED"},
+			wantPrefix: "metadata/index/runs/payments/hello-ork/succeeded/",
+		},
+		{
+			// An explicit default namespace selects the same key segment as a
+			// record that named no namespace.
+			name:       "an unnamed namespace scans the default one",
+			query:      artifacts.RunQuery{Namespace: artifacts.DefaultNamespace, Orkflow: "hello-ork"},
+			wantPrefix: "metadata/index/runs/default/hello-ork/",
+		},
+		{
+			name: "a lower bound starts the scan at its timestamp",
+			query: artifacts.RunQuery{
+				Namespace: "payments", Orkflow: "hello-ork", Status: "succeeded", Since: since,
+			},
+			wantPrefix: "metadata/index/runs/payments/hello-ork/succeeded/",
+			wantStartAfter: "metadata/index/runs/payments/hello-ork/succeeded/" +
+				"20260814T000000.000000000Z",
 		},
 		{
 			name:       "a lower bound alone cannot narrow an unpinned scan",

@@ -27,12 +27,12 @@ import (
 var ErrRunNotFound = fmt.Errorf("engine: run not found: %w", artifacts.ErrNotFound)
 
 const (
-	// MemoOrkflowName and MemoOrkflowVersion are the memo keys StartRun writes
-	// onto a run's execution. Visibility returns a memo with the execution, so
-	// a list can name the orkflow without reading a single history.
+	// MemoOrkflowName, MemoOrkflowVersion and MemoNamespace are the memo keys
+	// StartRun writes onto an execution. Visibility returns them with the
+	// execution, so a list can scope by namespace without reading history.
 	MemoOrkflowName    = "orkflow_name"
 	MemoOrkflowVersion = "orkflow_version"
-
+	MemoNamespace      = "namespace"
 	// DefaultRunPageSize bounds an unlimited ListRuns.
 	DefaultRunPageSize = 200
 
@@ -44,6 +44,9 @@ const (
 
 // RunQuery selects runs. Zero values mean "no filter".
 type RunQuery struct {
+	// Namespace narrows the list to one OrkStack namespace. Empty means no
+	// namespace filter; callers that mean the built-in default pass "default".
+	Namespace   string
 	OrkflowName string
 	Status      orkstackv1.Status
 	// Limit caps the runs returned, newest first. 0 means DefaultRunPageSize.
@@ -407,6 +410,7 @@ func (r *TemporalRunReader) startedRun(
 		if err := r.converter.FromPayload(payloads[1], &wf); err == nil && wf != nil {
 			run.OrkflowName = wf.GetName()
 			run.OrkflowVersion = wf.GetVersion()
+			run.Namespace = wf.GetNamespace()
 		}
 	}
 	if len(payloads) > 2 {
@@ -430,6 +434,7 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 	}
 	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
 	run.OrkflowVersion = r.memoString(info.GetMemo(), MemoOrkflowVersion)
+	run.Namespace = r.memoString(info.GetMemo(), MemoNamespace)
 	return run
 }
 
@@ -449,6 +454,9 @@ func (r *TemporalRunReader) memoString(memo *commonpb.Memo, key string) string {
 
 // matchesRunQuery applies the client-side half of a list query.
 func matchesRunQuery(run *orkstackv1.Run, q RunQuery) bool {
+	if q.Namespace != "" && artifacts.ResolveNamespace(run.GetNamespace()) != artifacts.ResolveNamespace(q.Namespace) {
+		return false
+	}
 	if q.OrkflowName != "" && run.GetOrkflowName() != q.OrkflowName {
 		return false
 	}

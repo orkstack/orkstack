@@ -3,8 +3,8 @@
 // WebSocket event bridge.
 //
 // State lives outside the process. Runs live in Temporal; orkflow definitions
-// live in the S3 bucket (metadata/orkflows/{name}/{version}.json), read on
-// every call. Restarting ork therefore loses nothing.
+// live in the S3 bucket (metadata/orkflows/{namespace}/{name}/{version}.json),
+// read on every call. Restarting ork therefore loses nothing.
 package main
 
 import (
@@ -181,14 +181,18 @@ func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3Or
 	if err != nil {
 		return nil, fmt.Errorf("open orkflow store: %w", err)
 	}
-	stored, err := store.List(ctx)
+	stored, err := store.List(ctx, artifacts.DefaultNamespace)
 	if err != nil {
 		return nil, fmt.Errorf("reload orkflows from %s (endpoint %s): %w",
 			store.Location(), cfg.S3Endpoint, err)
 	}
+	// The boot log names the default namespace's catalog. It is a reachability
+	// check and a human breadcrumb, not an inventory: listing every namespace
+	// at boot would scan the whole prefix to log something nobody reads.
 	logger.Info("reloaded orkflows from durable store",
 		"store", store.Location(),
 		"endpoint", cfg.S3Endpoint,
+		"namespace", artifacts.DefaultNamespace,
 		"orkflows", len(stored),
 		"names", orkflowNames(stored))
 	return store, nil

@@ -139,7 +139,7 @@ func TestRunWorkflow_RejectsAnOrkflowWithNoTasks(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-1-1",
-		&orkstackv1.Orkflow{Name: "empty", Version: "0.1.0"}, payload(t, nil))
+		&orkstackv1.Orkflow{Name: "empty", Version: "0.1.0"}, payload(t, nil), task.DefaultQueue)
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -162,7 +162,7 @@ func TestRunWorkflow_ExecutesLinearNeedsInOrder(t *testing.T) {
 		}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-linear", compile(t, linearDocument), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-linear", compile(t, linearDocument), payload(t, nil), task.DefaultQueue)
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -269,7 +269,7 @@ func TestRunWorkflow_FansOutIndependentTasks(t *testing.T) {
 		return task.ExecuteTaskResult{TaskID: in.TaskID, Output: plugin.Payload{"stdout": in.TaskID}}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fanout", compile(t, fanOutDocument), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fanout", compile(t, fanOutDocument), payload(t, nil), task.DefaultQueue)
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -325,7 +325,7 @@ func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 		}
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-upstream", compile(t, upstreamDocument), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-upstream", compile(t, upstreamDocument), payload(t, nil), task.DefaultQueue)
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -407,7 +407,7 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition",
-		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}))
+		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}), task.DefaultQueue)
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -448,7 +448,7 @@ func TestRunWorkflow_RunsTaskWithMetCondition(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition-true",
-		compile(t, conditionDocument), payload(t, map[string]any{"enabled": true}))
+		compile(t, conditionDocument), payload(t, map[string]any{"enabled": true}), task.DefaultQueue)
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -493,7 +493,7 @@ func TestRunWorkflow_RetriesPerPolicyThenFailsRun(t *testing.T) {
 			return task.ExecuteTaskResult{}, errors.New("plugin exited 1")
 		}).Times(3)
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil), task.DefaultQueue)
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -554,7 +554,7 @@ tasks:
 		return task.ExecuteTaskResult{}, errors.New("boom")
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-retry", compile(t, document), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-retry", compile(t, document), payload(t, nil), task.DefaultQueue)
 
 	if h.env.GetWorkflowError() == nil {
 		t.Fatal("workflow error = nil, want failure")
@@ -584,7 +584,7 @@ tasks:
 		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil), task.DefaultQueue)
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -628,7 +628,7 @@ tasks:
 		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil), task.DefaultQueue)
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)

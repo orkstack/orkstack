@@ -94,7 +94,7 @@ func TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained(t *
 	transcript.step("stopped v1's Orker (its run worker stays up, as `stop v1` is one step later)")
 
 	runID := "ork-drain-pinned-" + suffix
-	startPinnedToVersion(t, ctx, c, v1, runQueue, runID, drainOrkflow(orkerQueue))
+	startPinnedToVersion(t, ctx, c, v1, runQueue, orkerQueue, runID, drainOrkflow(orkerQueue))
 	transcript.step("started " + runID + ", pinned to v1, with no v1 Orker to execute it")
 
 	awaitVersioningVerdict(t, ctx, c, runID, v1)
@@ -146,7 +146,7 @@ func startPinnedToVersion(
 	ctx context.Context,
 	c client.Client,
 	deployment task.Deployment,
-	runQueue, runID string,
+	runQueue, orkerQueue, runID string,
 	wf *orkstackv1.Orkflow,
 ) {
 	t.Helper()
@@ -161,7 +161,7 @@ func startPinnedToVersion(
 				BuildID:        deployment.BuildID,
 			},
 		},
-	}, engine.RunWorkflowType, runID, wf, (*orkstackv1.Payload)(nil)); err != nil {
+	}, engine.RunWorkflowType, runID, wf, (*orkstackv1.Payload)(nil), orkerQueue); err != nil {
 		t.Fatalf("start %s pinned to %s: %v", runID, deployment, err)
 	}
 }
@@ -259,16 +259,18 @@ func assertTaskScheduledAndNeverStarted(
 	return len(scheduled)
 }
 
-// drainOrkflow is a plain two-task chain, pinned to the Orker queue the way
-// TemporalStarter.StartRun pins one. Its first task is the one that strands.
-func drainOrkflow(queue string) *orkstackv1.Orkflow {
+// drainOrkflow is a plain two-task chain. Its task activities use the run's
+// bound default pool queue, just as a production submission with no explicit
+// pool does. The queue argument remains so callers can name the queue bound
+// into the workflow input while this fixture keeps the definition user-facing.
+func drainOrkflow(_ string) *orkstackv1.Orkflow {
 	return &orkstackv1.Orkflow{
 		Name:    "drain-pinned",
 		Version: "1.0.0",
 		Tasks: []*orkstackv1.Task{
-			{Id: "prepare", Plugin: "shell", TimeoutSeconds: 240, Queue: queue,
+			{Id: "prepare", Plugin: "shell", TimeoutSeconds: 240,
 				With: mustStruct(map[string]any{"run": "echo prepare"})},
-			{Id: "report", Plugin: "shell", Needs: []string{"prepare"}, TimeoutSeconds: 240, Queue: queue,
+			{Id: "report", Plugin: "shell", Needs: []string{"prepare"}, TimeoutSeconds: 240,
 				With: mustStruct(map[string]any{"run": "echo report"})},
 		},
 	}

@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
+// names, runs and pool defaults. Two namespaces may both hold an orkflow
+// called "deploy" and never see each other's documents.
+//
+// It is OrkStack's own coordinate. The deployment runtime partition is an
+// operator setting outside this contract and appears in no proto field, DSL
+// key, CLI flag or UI control.
+//
+// The registry lives in the artifact store at metadata/namespaces/{name}.json.
+// "default" always resolves and is never created: a deployment that registered
+// nothing still has one namespace, and every orkflow that names none is in it.
+message Namespace {
+  // name is a slug, unique in the deployment, and is the key of the document.
+  string name = 1;
+  string description = 2;
+  map<string, string> labels = 3;
+  // default_pool is where a task that names no pool runs. Empty means the
+  // built-in pool "main".
+  string default_pool = 4;
+  // allowed_pools bounds every pool this namespace may dispatch onto. Empty
+  // means no restriction. A non-empty list must contain default_pool.
+  repeated string allowed_pools = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  // etag is the store's opaque concurrency token. A caller sends back the one
+  // Get returned; a mismatch is refused rather than clobbered. It is written
+  // by the store, never by a client, and stays empty until compare-and-swap
+  // lands with the namespace API.
+  string etag = 8;
+}

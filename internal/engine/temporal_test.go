@@ -9,13 +9,15 @@ import (
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 
+	"google.golang.org/protobuf/proto"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
 // recordingClient captures the arguments StartRun hands to Temporal. The
-// workflow input is the only place a run's task queues can be decided
+// workflow input is the only place a run's task queue can be decided
 // deterministically: workflow code may not read the environment, so whatever
 // is recorded here is what every replay of the run will dispatch to.
 //
@@ -43,8 +45,8 @@ func (c *recordingClient) ExecuteWorkflow(
 // startedOrkflow returns the Orkflow StartRun passed to Temporal.
 func (c *recordingClient) startedOrkflow(t *testing.T) *orkstackv1.Orkflow {
 	t.Helper()
-	if len(c.args) < 2 {
-		t.Fatalf("ExecuteWorkflow got %d args, want runID, orkflow, input", len(c.args))
+	if len(c.args) < 4 {
+		t.Fatalf("ExecuteWorkflow got %d args, want runID, orkflow, input, orker queue", len(c.args))
 	}
 	wf, ok := c.args[1].(*orkstackv1.Orkflow)
 	if !ok {
@@ -53,30 +55,32 @@ func (c *recordingClient) startedOrkflow(t *testing.T) *orkstackv1.Orkflow {
 	return wf
 }
 
-// twoTaskOrkflow has one task that names no queue and one that names its own.
+// startedOrkerQueue returns the queue StartRun bound into the workflow input.
+func (c *recordingClient) startedOrkerQueue(t *testing.T) string {
+	t.Helper()
+	if len(c.args) < 4 {
+		t.Fatalf("ExecuteWorkflow got %d args, want runID, orkflow, input, orker queue", len(c.args))
+	}
+	queue, ok := c.args[3].(string)
+	if !ok {
+		t.Fatalf("fourth workflow arg is %T, want the orker queue as a string", c.args[3])
+	}
+	return queue
+}
+
+// twoTaskOrkflow has one task that names no pool and one that names its own.
 func twoTaskOrkflow() *orkstackv1.Orkflow {
 	return &orkstackv1.Orkflow{
 		Name:    "hello-ork",
 		Version: "0.1.0",
 		Tasks: []*orkstackv1.Task{
 			{Id: "fetch", Plugin: "http"},
-			{Id: "render", Plugin: "shell", Queue: "gpu-orkers"},
+			{Id: "render", Plugin: "shell", Pool: "gpu"},
 		},
 	}
 }
 
-func queueOf(t *testing.T, wf *orkstackv1.Orkflow, id string) string {
-	t.Helper()
-	for _, tk := range wf.GetTasks() {
-		if tk.GetId() == id {
-			return tk.GetQueue()
-		}
-	}
-	t.Fatalf("orkflow has no task %q", id)
-	return ""
-}
-
-func TestStartRun_DispatchesTasksToTheQueueItsOrkersPoll(t *testing.T) {
+func TestStartRun_BindsTheQueueItsOrkersPollIntoTheWorkflowInput(t *testing.T) {
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
 
@@ -84,17 +88,17 @@ func TestStartRun_DispatchesTasksToTheQueueItsOrkersPoll(t *testing.T) {
 		t.Fatalf("StartRun: %v", err)
 	}
 
-	started := c.startedOrkflow(t)
-	if got := queueOf(t, started, "fetch"); got != "ork-tasks-m7-9" {
-		t.Errorf("task without a queue dispatches to %q, want the configured orker queue %q",
-			got, "ork-tasks-m7-9")
-	}
-	if got := queueOf(t, started, "render"); got != "gpu-orkers" {
-		t.Errorf("task naming its own queue dispatches to %q, want %q", got, "gpu-orkers")
+	if got := c.startedOrkerQueue(t); got != "ork-tasks-m7-9" {
+		t.Errorf("bound orker queue = %q, want the configured one %q", got, "ork-tasks-m7-9")
 	}
 }
 
-func TestStartRun_LeavesTheStoredOrkflowUntouched(t *testing.T) {
+// TestStartRun_SendsTheStoredDefinitionVerbatim is the M10.1 half of the same
+// property. The engine used to clone the orkflow to write a queue name onto
+// every task; a definition carries no queue at all now, so the document that
+// reaches Temporal is the one the bucket holds — including a task's own pool,
+// which is the user's word and not the engine's to rewrite.
+func TestStartRun_SendsTheStoredDefinitionVerbatim(t *testing.T) {
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
 
@@ -103,11 +107,12 @@ func TestStartRun_LeavesTheStoredOrkflowUntouched(t *testing.T) {
 		t.Fatalf("StartRun: %v", err)
 	}
 
-	// The definition in the durable store is immutable and shared by every
-	// engine pointed at the bucket. Only this run's input may carry a queue
-	// this process happens to be configured with.
-	if got := queueOf(t, stored, "fetch"); got != "" {
-		t.Errorf("StartRun wrote %q onto the caller's orkflow, want it unchanged", got)
+	started := c.startedOrkflow(t)
+	if started != stored {
+		t.Error("StartRun sent a copy of the orkflow; the stored definition travels as it is")
+	}
+	if !proto.Equal(started, twoTaskOrkflow()) {
+		t.Errorf("the orkflow reached Temporal modified: %v", started)
 	}
 }
 
@@ -119,8 +124,8 @@ func TestStartRun_FallsBackToTheSharedQueueWhenNoOrkerQueueIsConfigured(t *testi
 		t.Fatalf("StartRun: %v", err)
 	}
 
-	if got := queueOf(t, c.startedOrkflow(t), "fetch"); got != task.DefaultQueue {
-		t.Errorf("task without a queue dispatches to %q, want %q", got, task.DefaultQueue)
+	if got := c.startedOrkerQueue(t); got != task.DefaultQueue {
+		t.Errorf("bound orker queue = %q, want %q", got, task.DefaultQueue)
 	}
 }
 

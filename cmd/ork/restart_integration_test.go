@@ -93,16 +93,16 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 	if err != nil {
 		t.Fatalf("open orkflow store: %v", err)
 	}
-	uri, err := store.URI(probeOrkflowName, probeOrkflowVersion)
+	uri, err := store.URI(artifacts.DefaultNamespace, probeOrkflowName, probeOrkflowVersion)
 	if err != nil {
 		t.Fatalf("orkflow URI: %v", err)
 	}
-	want := fmt.Sprintf("s3://%s/metadata/orkflows/%s/%s.json",
-		cfg.S3Bucket, probeOrkflowName, probeOrkflowVersion)
+	want := fmt.Sprintf("s3://%s/metadata/orkflows/%s/%s/%s.json",
+		cfg.S3Bucket, artifacts.DefaultNamespace, probeOrkflowName, probeOrkflowVersion)
 	if uri != want {
 		t.Fatalf("orkflow URI = %q, want %q", uri, want)
 	}
-	stored, err := store.Get(ctx, probeOrkflowName, probeOrkflowVersion)
+	stored, err := store.Get(ctx, artifacts.DefaultNamespace, probeOrkflowName, probeOrkflowVersion)
 	if err != nil {
 		t.Fatalf("read %s: %v", uri, err)
 	}

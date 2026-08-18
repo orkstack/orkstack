@@ -34,12 +34,12 @@ func (r *recordingStore) Put(ctx context.Context, wf *orkstackv1.Orkflow) error 
 	return r.inner.Put(ctx, wf)
 }
 
-func (r *recordingStore) Get(ctx context.Context, name, version string) (*orkstackv1.Orkflow, error) {
-	return r.inner.Get(ctx, name, version)
+func (r *recordingStore) Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error) {
+	return r.inner.Get(ctx, namespace, name, version)
 }
 
-func (r *recordingStore) List(ctx context.Context) ([]*orkstackv1.Orkflow, error) {
-	return r.inner.List(ctx)
+func (r *recordingStore) List(ctx context.Context, namespace string) ([]*orkstackv1.Orkflow, error) {
+	return r.inner.List(ctx, namespace)
 }
 
 // unreachableStore is a durable store that is down.
@@ -47,11 +47,11 @@ type unreachableStore struct{ err error }
 
 func (u unreachableStore) Put(context.Context, *orkstackv1.Orkflow) error { return u.err }
 
-func (u unreachableStore) Get(context.Context, string, string) (*orkstackv1.Orkflow, error) {
+func (u unreachableStore) Get(context.Context, string, string, string) (*orkstackv1.Orkflow, error) {
 	return nil, u.err
 }
 
-func (u unreachableStore) List(context.Context) ([]*orkstackv1.Orkflow, error) {
+func (u unreachableStore) List(context.Context, string) ([]*orkstackv1.Orkflow, error) {
 	return nil, u.err
 }
 

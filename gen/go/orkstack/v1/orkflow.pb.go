@@ -107,9 +107,12 @@ type Task struct {
 	Condition      string       `protobuf:"bytes,5,opt,name=condition,proto3" json:"condition,omitempty"`
 	TimeoutSeconds int32        `protobuf:"varint,6,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"` // default 300
 	Retry          *RetryPolicy `protobuf:"bytes,7,opt,name=retry,proto3" json:"retry,omitempty"`
-	Queue          string       `protobuf:"bytes,8,opt,name=queue,proto3" json:"queue,omitempty"` // optional task queue / orker pool override
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// pool names the set of Orkers this task runs on. Empty resolves to the
+	// namespace's default_pool, then to the built-in pool "main". The engine
+	// maps it to its internal execution channel and nowhere else.
+	Pool          string `protobuf:"bytes,9,opt,name=pool,proto3" json:"pool,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Task) Reset() {
@@ -191,9 +194,9 @@ func (x *Task) GetRetry() *RetryPolicy {
 	return nil
 }
 
-func (x *Task) GetQueue() string {
+func (x *Task) GetPool() string {
 	if x != nil {
-		return x.Queue
+		return x.Pool
 	}
 	return ""
 }
@@ -206,10 +209,15 @@ type Orkflow struct {
 	Description string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	Labels      map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// inputs declares the accepted input parameters (JSON schema fragment as struct).
-	Inputs        *structpb.Struct       `protobuf:"bytes,5,opt,name=inputs,proto3" json:"inputs,omitempty"`
-	Tasks         []*Task                `protobuf:"bytes,6,rep,name=tasks,proto3" json:"tasks,omitempty"`
-	SourceYaml    string                 `protobuf:"bytes,7,opt,name=source_yaml,json=sourceYaml,proto3" json:"source_yaml,omitempty"` // original DSL for round-trip/audit
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Inputs     *structpb.Struct       `protobuf:"bytes,5,opt,name=inputs,proto3" json:"inputs,omitempty"`
+	Tasks      []*Task                `protobuf:"bytes,6,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	SourceYaml string                 `protobuf:"bytes,7,opt,name=source_yaml,json=sourceYaml,proto3" json:"source_yaml,omitempty"` // original DSL for round-trip/audit
+	CreatedAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// namespace scopes this orkflow. Empty means the built-in "default"
+	// namespace. A name is unique WITHIN a namespace, never globally: two
+	// namespaces may both hold an orkflow called "deploy", and they are two
+	// different orkflows stored under two different keys.
+	Namespace     string `protobuf:"bytes,9,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -300,6 +308,13 @@ func (x *Orkflow) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Orkflow) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
 var File_orkstack_v1_orkflow_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_orkflow_proto_rawDesc = "" +
@@ -309,7 +324,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\x10maximum_attempts\x18\x01 \x01(\x05R\x0fmaximumAttempts\x128\n" +
 	"\x18initial_interval_seconds\x18\x02 \x01(\x05R\x16initialIntervalSeconds\x12/\n" +
 	"\x13backoff_coefficient\x18\x03 \x01(\x01R\x12backoffCoefficient\x128\n" +
-	"\x18maximum_interval_seconds\x18\x04 \x01(\x05R\x16maximumIntervalSeconds\"\xfe\x01\n" +
+	"\x18maximum_interval_seconds\x18\x04 \x01(\x05R\x16maximumIntervalSeconds\"\x89\x02\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06plugin\x18\x02 \x01(\tR\x06plugin\x12+\n" +
@@ -317,8 +332,8 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\x05needs\x18\x04 \x03(\tR\x05needs\x12\x1c\n" +
 	"\tcondition\x18\x05 \x01(\tR\tcondition\x12'\n" +
 	"\x0ftimeout_seconds\x18\x06 \x01(\x05R\x0etimeoutSeconds\x12.\n" +
-	"\x05retry\x18\a \x01(\v2\x18.orkstack.v1.RetryPolicyR\x05retry\x12\x14\n" +
-	"\x05queue\x18\b \x01(\tR\x05queue\"\x84\x03\n" +
+	"\x05retry\x18\a \x01(\v2\x18.orkstack.v1.RetryPolicyR\x05retry\x12\x12\n" +
+	"\x04pool\x18\t \x01(\tR\x04poolJ\x04\b\b\x10\tR\x05queue\"\xa2\x03\n" +
 	"\aOrkflow\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
@@ -329,7 +344,8 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\vsource_yaml\x18\a \x01(\tR\n" +
 	"sourceYaml\x129\n" +
 	"\n" +
-	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1a9\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x1c\n" +
+	"\tnamespace\x18\t \x01(\tR\tnamespace\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\xa8\x01\n" +

@@ -7,7 +7,8 @@ applied to the `ork` engine with `orkctl apply`.
 
 | field         | required | description                                            |
 |---------------|----------|--------------------------------------------------------|
-| `name`        | yes      | Slug identifier, unique within the platform.           |
+| `namespace`   | no       | Slug scope; absent means the built-in `default`.       |
+| `name`        | yes      | Slug identifier, unique within its namespace.           |
 | `version`     | no       | Author-pinned version; defaults to a content hash.     |
 | `description` | no       | Human description.                                     |
 | `labels`      | no       | `map[string]string` for organization/filtering.        |
@@ -40,7 +41,7 @@ tasks:
       initial_interval_seconds: 1
       backoff_coefficient: 2.0
       maximum_interval_seconds: 100
-    queue: ""            # optional task-queue / orker-pool override
+    pool: ""             # optional Orker pool override
     with:                # plugin-specific config (templated)
       key: value
 ```
@@ -61,12 +62,14 @@ referencing an unrelated task's output is a compile-time error.
 
 ## Validation rules (enforced by `internal/dsl`)
 
-1. `name` present and slug-formatted (`^[a-z][a-z0-9-]*$`).
-2. Task ids unique and slug-formatted.
-3. Every `needs` entry references an existing task id.
-4. The `needs` graph is acyclic (DAG).
-5. `plugin` is a non-empty known plugin name.
-6. Templates parse and only reference declared inputs and upstream tasks.
+1. `namespace`, when present, is slug-formatted (`^[a-z][a-z0-9-]*$`); absent means `default`.
+2. `name` present and slug-formatted (`^[a-z][a-z0-9-]*$`) within its namespace.
+3. Task ids unique and slug-formatted.
+4. Every `needs` entry references an existing task id.
+5. The `needs` graph is acyclic (DAG).
+6. `plugin` is a non-empty known plugin name.
+7. A task `pool`, when present, is slug-formatted.
+8. Templates parse and only reference declared inputs and upstream tasks.
 
 ## Example
 

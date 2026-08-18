@@ -33,6 +33,11 @@ message Run {
   google.protobuf.Timestamp created_at = 9;
   google.protobuf.Timestamp started_at = 10;
   google.protobuf.Timestamp finished_at = 11;
+  // namespace is the namespace of the orkflow this run executed. Empty means
+  // the built-in "default" namespace. It is a coordinate of the run, not a
+  // lookup: the archive indexes runs under it, so listing one namespace's runs
+  // is a single prefix scan.
+  string namespace = 12;
 }
 
 // EventType classifies a run event on the realtime stream.

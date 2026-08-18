@@ -15,8 +15,9 @@ import (
 // DefaultTimeoutSeconds is applied when a task omits timeout_seconds.
 const DefaultTimeoutSeconds = 300
 
-// slugPattern is the identifier rule for orkflow names and task ids
-// (docs/DSL.md validation rules 1 and 2).
+// slugPattern is the identifier rule for orkflow names, task ids, namespaces
+// and pools (docs/DSL.md validation rules 1, 2 and 7). "default" and "main"
+// are ordinary slugs, so the built-in namespace and pool need no special case.
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // KnownPlugins is the default set of plugin names accepted by rule 5. There is
@@ -33,6 +34,10 @@ type Options struct {
 
 // document is the YAML shape of a *.ork.yaml file.
 type document struct {
+	// Namespace scopes the orkflow. Absent means the built-in "default"
+	// namespace, and it stays empty in the compiled message: "empty means
+	// default" is one rule, resolved once, where the name becomes a key.
+	Namespace   string            `yaml:"namespace"`
 	Name        string            `yaml:"name"`
 	Version     string            `yaml:"version"`
 	Description string            `yaml:"description"`
@@ -48,8 +53,13 @@ type taskDocument struct {
 	Condition      string         `yaml:"condition"`
 	TimeoutSeconds *int32         `yaml:"timeout_seconds"`
 	Retry          *retryDocument `yaml:"retry"`
-	Queue          string         `yaml:"queue"`
-	With           map[string]any `yaml:"with"`
+	// Pool is the set of Orkers this task runs on. Absent means the
+	// namespace's default pool, then the built-in pool "main".
+	Pool string         `yaml:"pool"`
+	With map[string]any `yaml:"with"`
+	// Removed carries keys this document may no longer use, decoded only so
+	// the compiler can refuse them by name (removed.go).
+	Removed removedTaskFields `yaml:",inline"`
 }
 
 type retryDocument struct {
@@ -87,6 +97,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	wf := &orkstackv1.Orkflow{
+		Namespace:   doc.Namespace,
 		Name:        doc.Name,
 		Version:     doc.Version,
 		Description: doc.Description,
@@ -103,13 +114,16 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	for _, td := range doc.Tasks {
+		if err := td.Removed.check(td.ID); err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
 			Id:             td.ID,
 			Plugin:         td.Plugin,
 			Needs:          td.Needs,
 			Condition:      td.Condition,
 			TimeoutSeconds: DefaultTimeoutSeconds,
-			Queue:          td.Queue,
+			Pool:           td.Pool,
 		}
 		if td.TimeoutSeconds != nil {
 			task.TimeoutSeconds = *td.TimeoutSeconds

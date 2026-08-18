@@ -200,6 +200,11 @@ func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
 
 // ApplyOrkflow compiles a DSL document and writes the resulting orkflow to the
 // durable store, so it outlives this process.
+//
+// The namespace comes from the document. Selecting one per request, and
+// reading one back by name, arrives with the namespace-aware API (M10.3); this
+// slice makes the store, the archive index and the DSL namespace-aware, and
+// every read below still asks for the default namespace.
 func (s *Service) ApplyOrkflow(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
@@ -224,7 +229,7 @@ func (s *Service) GetOrkflow(
 	if req.Msg.GetName() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("name is required"))
 	}
-	wf, err := s.orkflows.Get(ctx, req.Msg.GetName(), req.Msg.GetVersion())
+	wf, err := s.orkflows.Get(ctx, artifacts.DefaultNamespace, req.Msg.GetName(), req.Msg.GetVersion())
 	if err != nil {
 		return nil, orkflowStoreError(err, "orkflow %q version %q",
 			req.Msg.GetName(), req.Msg.GetVersion())
@@ -238,7 +243,7 @@ func (s *Service) ListOrkflows(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListOrkflowsRequest],
 ) (*connect.Response[orkstackv1.ListOrkflowsResponse], error) {
-	orkflows, err := s.orkflows.List(ctx)
+	orkflows, err := s.orkflows.List(ctx, artifacts.DefaultNamespace)
 	if err != nil {
 		return nil, orkflowStoreError(err, "list orkflows")
 	}
@@ -271,7 +276,7 @@ func (s *Service) SubmitRun(
 	if name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("orkflow_name is required"))
 	}
-	wf, err := s.orkflows.Get(ctx, name, req.Msg.GetOrkflowVersion())
+	wf, err := s.orkflows.Get(ctx, artifacts.DefaultNamespace, name, req.Msg.GetOrkflowVersion())
 	if err != nil {
 		return nil, orkflowStoreError(err, "orkflow %q version %q", name, req.Msg.GetOrkflowVersion())
 	}
@@ -390,6 +395,7 @@ func (s *Service) newPendingRun(
 ) *orkstackv1.Run {
 	return &orkstackv1.Run{
 		Id:             runID,
+		Namespace:      wf.GetNamespace(),
 		OrkflowName:    wf.GetName(),
 		OrkflowVersion: wf.GetVersion(),
 		Status:         orkstackv1.Status_STATUS_PENDING,
@@ -670,6 +676,7 @@ func (s *Service) ListRuns(
 	)
 	if s.reader != nil {
 		listed, err := s.reader.ListRuns(ctx, engine.RunQuery{
+			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 			Limit:       size,
@@ -681,6 +688,7 @@ func (s *Service) ListRuns(
 		runs = listed
 	} else {
 		runs = s.runs.List(engine.ListFilter{
+			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 		})
@@ -688,6 +696,7 @@ func (s *Service) ListRuns(
 	}
 	if s.archive != nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
+			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 			Limit:       size,

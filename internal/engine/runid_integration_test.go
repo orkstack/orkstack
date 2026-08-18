@@ -110,13 +110,13 @@ func TestIntegration_WithoutTheStartPoliciesACollisionAttachesToAnotherRun(t *te
 
 	first, err := c.ExecuteWorkflow(ctx,
 		client.StartWorkflowOptions{ID: runID, TaskQueue: queue},
-		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil))
+		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil), queue)
 	if err != nil {
 		t.Fatalf("first start: %v", err)
 	}
 	second, err := c.ExecuteWorkflow(ctx,
 		client.StartWorkflowOptions{ID: runID, TaskQueue: queue},
-		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil))
+		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil), queue)
 	if err != nil {
 		t.Fatalf("second start with the same id returned %v; "+
 			"this test records the default behaviour and must be revisited if the server changed it", err)

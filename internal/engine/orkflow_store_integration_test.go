@@ -105,7 +105,7 @@ func serveAPI(
 
 // TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt is the M7.5
 // contract at API level: apply writes the definition to
-// s3://{bucket}/metadata/orkflows/{name}/{version}.json, and a service built
+// s3://{bucket}/metadata/orkflows/{namespace}/{name}/{version}.json, and a service built
 // afterwards — with its own store, as a restarted engine has — serves it.
 // Nothing is carried over in memory.
 func TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt(t *testing.T) {
@@ -125,12 +125,12 @@ func TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt(t *testing.T) 
 		t.Fatalf("applied %q, want %q", applied.Msg.GetOrkflow().GetName(), name)
 	}
 
-	uri, err := store.URI(name, version)
+	uri, err := store.URI(artifacts.DefaultNamespace, name, version)
 	if err != nil {
 		t.Fatalf("URI: %v", err)
 	}
 	t.Logf("applied orkflow lives at %s", uri)
-	if want := fmt.Sprintf("s3://%s/metadata/orkflows/%s/%s.json", store.Bucket(), name, version); uri != want {
+	if want := fmt.Sprintf("s3://%s/metadata/orkflows/%s/%s/%s.json", store.Bucket(), artifacts.DefaultNamespace, name, version); uri != want {
 		t.Fatalf("orkflow URI = %q, want %q", uri, want)
 	}
 

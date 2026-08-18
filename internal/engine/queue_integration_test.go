@@ -141,8 +141,8 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}
-	if strings.Contains(string(source), "queue:") {
-		t.Fatalf("the example now pins a queue; this test needs an orkflow that names none")
+	if strings.Contains(string(source), "pool:") {
+		t.Fatalf("the example now pins a pool; this test needs an orkflow that names none")
 	}
 
 	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
