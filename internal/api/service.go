@@ -691,9 +691,16 @@ func (s *Service) ListRuns(
 		runs       []*orkstackv1.Run
 		fromMemory bool
 	)
+	// ListRuns names no namespace, in either projection or in the archive
+	// query. M10.1 is the slice that puts the coordinate on the wire and in
+	// the key; scoping a READ to a namespace is M10.3's, and until it lands
+	// ApplyOrkflow refuses every namespace but the default, so the flat
+	// catalog a v0.0.2 client sees is exactly "every namespace there is".
+	// Pinning the three queries to `default` here would be the same answer
+	// today and one more call site M10.3 has to unwind (AGENTS.md §8: this
+	// slice's only permitted change in internal/api is the guard).
 	if s.reader != nil {
 		listed, err := s.reader.ListRuns(ctx, engine.RunQuery{
-			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 			Limit:       size,
@@ -705,7 +712,6 @@ func (s *Service) ListRuns(
 		runs = listed
 	} else {
 		runs = s.runs.List(engine.ListFilter{
-			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 		})
@@ -713,7 +719,6 @@ func (s *Service) ListRuns(
 	}
 	if s.archive != nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
-			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 			Limit:       size,

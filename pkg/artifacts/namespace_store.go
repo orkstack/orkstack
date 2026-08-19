@@ -274,6 +274,26 @@ const DefaultPool = "main"
 // the one handed the unroutable name.
 var poolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
+// maxPoolName bounds a pool name. It is internal/task.MaxPoolName and the
+// DSL's dsl.MaxSlug, the same 200: a pattern with no bound is half a rule, and
+// the half that was missing is the one a corpus of short names cannot see.
+const maxPoolName = 200
+
+// validPoolName reports why a pool name cannot be stored. field names where
+// the pool was written, so an allow-list entry and a default_pool report
+// differently.
+func validPoolName(field, pool string) error {
+	switch {
+	case len(pool) > maxPoolName:
+		return fmt.Errorf("artifacts: %s of %d bytes exceeds the %d-byte limit (%.32q…): %w",
+			field, len(pool), maxPoolName, pool, ErrInvalidNamespace)
+	case !poolNamePattern.MatchString(pool):
+		return fmt.Errorf("artifacts: %s %q must match %s: %w",
+			field, pool, poolNamePattern, ErrInvalidNamespace)
+	}
+	return nil
+}
+
 // validNamespacePools enforces what the document can be held to on its own:
 // every pool it names must be one dispatch can reach, and an allow-list that
 // excluded the namespace's own default would refuse every task that names no
@@ -283,9 +303,9 @@ func validNamespacePools(ns *orkstackv1.Namespace) error {
 	if defaultPool == "" {
 		defaultPool = DefaultPool
 	}
-	if !poolNamePattern.MatchString(defaultPool) {
-		return fmt.Errorf("artifacts: namespace %q default pool %q must match %s: %w",
-			ns.GetName(), defaultPool, poolNamePattern, ErrInvalidNamespace)
+	if err := validPoolName(
+		fmt.Sprintf("namespace %q default pool", ns.GetName()), defaultPool); err != nil {
+		return err
 	}
 	allowed := ns.GetAllowedPools()
 	if len(allowed) == 0 {
@@ -293,9 +313,9 @@ func validNamespacePools(ns *orkstackv1.Namespace) error {
 	}
 	foundDefault := false
 	for _, pool := range allowed {
-		if !poolNamePattern.MatchString(pool) {
-			return fmt.Errorf("artifacts: namespace %q allowed pool %q must match %s: %w",
-				ns.GetName(), pool, poolNamePattern, ErrInvalidNamespace)
+		if err := validPoolName(
+			fmt.Sprintf("namespace %q allowed pool", ns.GetName()), pool); err != nil {
+			return err
 		}
 		if pool == defaultPool {
 			foundDefault = true

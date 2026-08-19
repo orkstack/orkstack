@@ -196,7 +196,7 @@ tasks:
     pool: gpu
     with: {command: "echo crunch"}
 `
-	gpuQueue, err := task.QueueForPool("gpu")
+	gpuQueue, err := task.QueueForPool("gpu", "")
 	if err != nil {
 		t.Fatalf("QueueForPool(gpu): %v", err)
 	}

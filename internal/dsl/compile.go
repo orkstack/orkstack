@@ -20,6 +20,36 @@ const DefaultTimeoutSeconds = 300
 // are ordinary slugs, so the built-in namespace and pool need no special case.
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
+// MaxSlug bounds every identifier the DSL accepts, and it is half of the slug
+// rule, not a detail of it.
+//
+// A name is written here and stored somewhere else: a namespace, an orkflow
+// name and a version are path components of an object key
+// (pkg/artifacts.maxOrkflowComponent, the same 200), and a pool becomes an
+// execution channel name (internal/task.MaxPoolName, also 200). Without the
+// bound here the pattern alone let a 201-character namespace compile and then
+// fail at the registry with "exceeds 200 bytes" — a name a document can
+// reference and nothing can store, which is the same "one rule, two answers"
+// defect the pattern itself closed, measured in the one class the corpus had
+// no member of. pkg/ may not import internal/, so the two bounds are held
+// together by measurement: TestNamespaceName_RegistryAndCompilerAgree and
+// TestNamespacePools_AreExactlyThePoolsDispatchCanReach both carry a name at
+// the bound and a name one byte over.
+const MaxSlug = 200
+
+// checkSlug reports why value cannot be used as an identifier, naming the kind
+// of identifier so the message says which field is wrong.
+func checkSlug(kind, value string) error {
+	if len(value) > MaxSlug {
+		return fmt.Errorf("%s of %d bytes exceeds the %d-byte limit (%.32q…)",
+			kind, len(value), MaxSlug, value)
+	}
+	if !slugPattern.MatchString(value) {
+		return fmt.Errorf("%s %q is not a slug (%s)", kind, value, slugPattern.String())
+	}
+	return nil
+}
+
 // KnownPlugins is the default set of plugin names accepted by rule 6. There is
 // no runtime plugin registry in M2, so the compiler validates against the
 // documented builtins (docs/PLUGINS.md).

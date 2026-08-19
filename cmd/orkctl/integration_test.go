@@ -75,7 +75,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	defer origin.Close()
 
 	pool := privateTaskPool()
-	taskQueue, err := task.QueueForPool(pool)
+	taskQueue, err := task.QueueForPool(pool, "")
 	if err != nil {
 		t.Fatalf("map test pool: %v", err)
 	}

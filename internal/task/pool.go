@@ -24,34 +24,59 @@ const (
 // went through the compiler.
 var poolPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
+// MaxPoolName bounds a pool name, and is the DSL's own bound (dsl.MaxSlug).
+// The pattern without a bound is only half a rule: a 201-character pool is
+// refused by every document and would still map to a queue here.
+const MaxPoolName = 200
+
 // ErrInvalidPool reports a pool name that cannot be mapped to a queue.
 var ErrInvalidPool = fmt.Errorf("invalid pool name")
 
 // QueueForPool is the ONLY translation from an OrkStack pool to a Temporal
 // task queue.
 //
-// It is injective. DefaultPool maps to DefaultQueue, the one mapping outside
-// the prefix, because a zero-configuration dev stack depends on it: `make
-// run-orker` polls DefaultQueue, ORK_ORKER_QUEUE defaults to it in both
-// binaries, and the committed replay history's activities name it. Every other
-// pool maps under poolQueuePrefix, and since a pool name may not contain the
-// characters that would let it forge one, no pool can reach DefaultQueue,
-// EventQueue or another pool's queue.
+// defaultQueue is the execution channel this deployment bound as its default —
+// ORK_ORKER_QUEUE, or the queue TemporalStarter.StartRun bound into a run's
+// input. Empty means the unconfigured task.DefaultQueue, which is what `make
+// run-ork` + `make run-orker` poll.
 //
-// DefaultPool -> DefaultQueue is the UNCONFIGURED answer, and it is the answer
-// only for a caller with no run in hand. A run carries the default queue an
-// operator bound into it, and inside the engine `main` means THAT queue —
-// engine.runState.routeForTask resolves it there and never asks this function.
-// Confusing the two is what once sent `pool: main` to DefaultQueue while a
-// task naming no pool took the run's own queue.
-func QueueForPool(pool string) (string, error) {
-	if pool == "" || pool == DefaultPool {
-		return DefaultQueue, nil
+// It is a parameter and not a package default because `main` is the NAME of
+// the deployment's default pool, not a synonym for one fixed queue: whatever
+// channel an operator bound, `main` is a word for it. Answering DefaultQueue
+// for `main` regardless is how `pool: main` came to dispatch to ork-tasks
+// while a task naming no pool took the run's own channel — two disjoint sets
+// of Orkers under one reported pool, and, under the ORK_ORKER_QUEUE isolation
+// AGENTS.md §6 gives every parallel agent, an escape from it. The signature
+// carries the fix: a caller cannot ask this question without saying what the
+// default channel is, so the answer cannot be wrong by omission.
+//
+// It is injective over pools. Every pool other than the default maps under
+// poolQueuePrefix, and since a pool name may not contain the characters that
+// would let it forge one, no pool can reach DefaultQueue, EventQueue or
+// another pool's queue.
+func QueueForPool(pool, defaultQueue string) (string, error) {
+	if defaultQueue == "" {
+		defaultQueue = DefaultQueue
 	}
-	if !poolPattern.MatchString(pool) {
-		return "", fmt.Errorf("%w: %q must match %s", ErrInvalidPool, pool, poolPattern)
+	if pool == "" || pool == DefaultPool {
+		return defaultQueue, nil
+	}
+	if err := validPool(pool); err != nil {
+		return "", err
 	}
 	return poolQueuePrefix + pool, nil
+}
+
+// validPool reports why a pool name cannot be mapped.
+func validPool(pool string) error {
+	if len(pool) > MaxPoolName {
+		return fmt.Errorf("%w: %d bytes exceeds the %d-byte limit (%.32q…)",
+			ErrInvalidPool, len(pool), MaxPoolName, pool)
+	}
+	if !poolPattern.MatchString(pool) {
+		return fmt.Errorf("%w: %q must match %s", ErrInvalidPool, pool, poolPattern)
+	}
+	return nil
 }
 
 // PoolForQueue reverses QueueForPool for labelling and reporting. A queue this
@@ -64,7 +89,7 @@ func PoolForQueue(queue string) (string, bool) {
 		return "", false
 	}
 	pool := queue[len(poolQueuePrefix):]
-	if !poolPattern.MatchString(pool) {
+	if validPool(pool) != nil {
 		return "", false
 	}
 	return pool, true

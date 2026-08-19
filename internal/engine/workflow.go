@@ -578,27 +578,19 @@ func (s *runState) defaultRoute() route {
 
 // routeForTask resolves one task to its route.
 //
-// Two spellings take the run's default route, and they are the same route in
-// both projections:
+// It is one call to the one translation in internal/task, against the channel
+// this run bound as its default. That channel is what `main` means: a task
+// that names NO pool is asking for the default, and a task that names
+// task.DefaultPool is naming it — of the deployment's default pool, not of one
+// fixed queue. task.QueueForPool takes the default channel as an argument for
+// exactly this reason, so neither spelling can be resolved without it.
 //
-//   - a task that names NO pool, which is asking for the default; and
-//   - a task that names task.DefaultPool, "main", which is the NAME of the
-//     default — of the deployment's default pool, not of one fixed queue.
-//     Whatever execution channel an operator bound as this run's default,
-//     `main` is a word for it. Mapping `main` forward through
-//     task.QueueForPool instead is how `pool: main` came to dispatch to
-//     task.DefaultQueue while a task that named no pool took the run's own
-//     channel: two disjoint sets of Orkers, and, under a pool-shaped
-//     ORK_ORKER_QUEUE, an escape from the isolation AGENTS.md §6 depends on.
-//
-// A task that names the pool the default route already serves takes it too,
-// for the same reason from the other side: one set of Orkers must not have
-// two names. Any other pool maps through the one translation in internal/task.
-//
-// So under a channel an operator pointed at a pool's own queue, `pool: main`
-// is reported on THAT pool. The word a client reads names the Orkers the task
-// reached, which is the whole contract; reporting "main" while running on the
-// gpu pool's Orkers would be the same lie one rename later.
+// The pool a client is told is then the name of the queue the task actually
+// reached: any task landing on the default channel is reported on the pool
+// that channel answers to (defaultRoute), so one set of Orkers never has two
+// names. Under a channel an operator pointed at a pool's own queue, `pool:
+// main` is therefore reported on THAT pool — reporting "main" while running on
+// the gpu pool's Orkers would be a lie one rename later.
 //
 // A pool name that cannot be mapped fails the run rather than falling back to
 // a queue nobody asked for: silently running a gpu task on the shared pool is
@@ -608,16 +600,15 @@ func (s *runState) defaultRoute() route {
 // and a replay dispatches and reports exactly what the original run did.
 func (s *runState) routeForTask(t *orkstackv1.Task) (route, error) {
 	def := s.defaultRoute()
-	pool := t.GetPool()
-	if pool == "" || pool == task.DefaultPool || pool == def.pool {
-		return def, nil
-	}
-	queue, err := task.QueueForPool(pool)
+	queue, err := task.QueueForPool(t.GetPool(), def.queue)
 	if err != nil {
 		return route{}, temporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("task %q: %v", t.GetId(), err), "INVALID_POOL", err)
 	}
-	return route{pool: pool, queue: queue}, nil
+	if queue == def.queue {
+		return def, nil
+	}
+	return route{pool: t.GetPool(), queue: queue}, nil
 }
 
 // queueForTask is the queue a task's activity is scheduled on.

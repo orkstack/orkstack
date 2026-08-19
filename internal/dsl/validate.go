@@ -22,16 +22,18 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	// Rule 1: an explicit namespace is a slug. Absent is legal and means the
 	// built-in "default" namespace, so an empty value is not checked here —
 	// the store resolves it where the name becomes a key.
-	if ns := wf.GetNamespace(); ns != "" && !slugPattern.MatchString(ns) {
-		return fmt.Errorf("namespace %q is not a slug (%s)", ns, slugPattern.String())
+	if ns := wf.GetNamespace(); ns != "" {
+		if err := checkSlug("namespace", ns); err != nil {
+			return err
+		}
 	}
 
 	// Rule 2: orkflow name present and slug-formatted.
 	if wf.GetName() == "" {
 		return fmt.Errorf("orkflow name is required")
 	}
-	if !slugPattern.MatchString(wf.GetName()) {
-		return fmt.Errorf("orkflow name %q is not a slug (%s)", wf.GetName(), slugPattern.String())
+	if err := checkSlug("orkflow name", wf.GetName()); err != nil {
+		return err
 	}
 	if len(wf.GetTasks()) == 0 {
 		return fmt.Errorf("orkflow %q declares no tasks", wf.GetName())
@@ -43,8 +45,8 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		if task.GetId() == "" {
 			return fmt.Errorf("task id is required")
 		}
-		if !slugPattern.MatchString(task.GetId()) {
-			return fmt.Errorf("task id %q is not a slug (%s)", task.GetId(), slugPattern.String())
+		if err := checkSlug("task id", task.GetId()); err != nil {
+			return err
 		}
 		if _, dup := byID[task.GetId()]; dup {
 			return fmt.Errorf("duplicate task id %q", task.GetId())
@@ -73,9 +75,10 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		// Rule 7: an explicit pool is a slug. The compiler checks the shape
 		// only; whether this namespace may dispatch onto that pool is the
 		// server's call, on a path a hand-written request cannot skip.
-		if pool := task.GetPool(); pool != "" && !slugPattern.MatchString(pool) {
-			return fmt.Errorf("task %q: pool %q is not a slug (%s)",
-				task.GetId(), pool, slugPattern.String())
+		if pool := task.GetPool(); pool != "" {
+			if err := checkSlug(fmt.Sprintf("task %q: pool", task.GetId()), pool); err != nil {
+				return err
+			}
 		}
 	}
 

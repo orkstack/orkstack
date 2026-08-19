@@ -25,14 +25,27 @@ import (
 // namespaceCorpus is spelled out rather than generated, so a reader can see
 // exactly what is claimed. The second group is what review measured slipping
 // through cleanComponentPattern (`^[A-Za-z0-9][A-Za-z0-9._-]*$`), which is the
-// rule for a stored VERSION string and was never the rule for a name.
-var namespaceCorpus = []string{
+// rule for a stored VERSION string and was never the rule for a name. The last
+// group is the one class a corpus of short names cannot hold: a name is a
+// pattern AND a length, and while only the pattern was shared the two rules
+// disagreed above 200 bytes — a 201-character lower-case slug compiled and the
+// registry then refused to key it.
+var namespaceCorpus = append([]string{
 	// nameable in a document, and storable
 	"default", "payments", "pay-ments", "a", "team-42", "a--b", "x1",
 	// stored by the old clean-component rule; no document can name any of them
 	"Payments", "pay.ments", "1payments", "a_b",
 	// refused by both, and the reason a name is validated and not sanitized
 	"-a", "..", "../billing", "billing/team", "billing team", "PAY", "_a",
+}, lengthCorpus()...)
+
+// lengthCorpus is the two members that cannot be written out: the longest name
+// both rules accept, and the shortest they must both refuse.
+func lengthCorpus() []string {
+	return []string{
+		strings.Repeat("a", maxOrkflowComponent),
+		strings.Repeat("a", maxOrkflowComponent+1),
+	}
 }
 
 // TestNamespaceName_RegistryAndCompilerAgree is the pin: for every name, the
@@ -70,6 +83,39 @@ func TestNamespaceName_RejectsTheCaseReviewMeasured(t *testing.T) {
 			t.Errorf("OrkflowKey(%q, …) = %q, %v; want an error matching both ErrInvalidNamespace "+
 				"and ErrInvalidOrkflow", name, key, err)
 		}
+	}
+}
+
+// TestNamespaceName_BoundsTheNameWhereTheCompilerDoes states the length half
+// of the rule at the public boundary, on the exact values review measured.
+//
+// The pattern alone made the two rules agree on every name a reader would
+// think to try and disagree on every name over 200 bytes: `dsl.Compile`
+// returned nil for a 201-character lower-case slug while `NamespaceKey`
+// answered "exceeds 200 bytes". An apply failed loudly rather than writing an
+// unreachable object, so nothing leaked — but the claim "the registry accepts
+// exactly the names a document can reference" was false in one direction, and
+// the corpus that was supposed to hold it had no member longer than nine
+// bytes.
+func TestNamespaceName_BoundsTheNameWhereTheCompilerDoes(t *testing.T) {
+	atBound := strings.Repeat("a", maxOrkflowComponent)
+	if key, err := NamespaceKey(atBound); err != nil {
+		t.Errorf("NamespaceKey(%d-byte name) = %q, %v; want it keyed — it is the longest name "+
+			"the compiler accepts", maxOrkflowComponent, key, err)
+	}
+	if !compilerAcceptsNamespace(t, atBound) {
+		t.Errorf("a %d-byte namespace does not compile, but the registry keys it",
+			maxOrkflowComponent)
+	}
+
+	over := strings.Repeat("a", maxOrkflowComponent+1)
+	if key, err := NamespaceKey(over); !errors.Is(err, ErrInvalidNamespace) {
+		t.Errorf("NamespaceKey(%d-byte name) = %q, %v; want ErrInvalidNamespace",
+			maxOrkflowComponent+1, key, err)
+	}
+	if compilerAcceptsNamespace(t, over) {
+		t.Errorf("a %d-byte namespace compiles, and the registry refuses to key it: a document "+
+			"could name a namespace nothing can store", maxOrkflowComponent+1)
 	}
 }
 

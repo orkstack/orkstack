@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -22,15 +23,19 @@ import (
 
 // poolCorpus is spelled out rather than generated, so a reader can see exactly
 // what is claimed. The four names in the first invalid group are the ones
-// review measured slipping through cleanComponentPattern.
-var poolCorpus = []string{
+// review measured slipping through cleanComponentPattern. The last two cannot
+// be written out: a name is a pattern AND a length, and a corpus of short
+// names measures only half the rule — the half that hid a 201-byte namespace
+// the compiler accepted and the registry refused (namespace_name_test.go).
+var poolCorpus = append([]string{
 	// routable
 	"main", "gpu", "gpu-2", "a", "x1", "ork-pool",
 	// not routable, and once stored anyway
 	"GPU", "Main", "gpu.1", "1gpu",
 	// not routable, never stored
 	"-gpu", "gpu_1", "ork pool", "gpu/1", "..", "gpu~1", "_gpu",
-}
+	// the longest pool both rules accept, and the shortest they must refuse
+}, strings.Repeat("p", maxPoolName), strings.Repeat("p", maxPoolName+1))
 
 // TestNamespacePools_AreExactlyThePoolsDispatchCanReach is the pin: for every
 // name, the registry and the only pool->queue translation in the tree agree.
@@ -41,7 +46,7 @@ func TestNamespacePools_AreExactlyThePoolsDispatchCanReach(t *testing.T) {
 			DefaultPool:  pool,
 			AllowedPools: []string{pool},
 		}) == nil
-		_, dispatchErr := task.QueueForPool(pool)
+		_, dispatchErr := task.QueueForPool(pool, "")
 		routable := dispatchErr == nil
 
 		switch {
