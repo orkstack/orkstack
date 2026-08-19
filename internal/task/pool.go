@@ -37,6 +37,13 @@ var ErrInvalidPool = fmt.Errorf("invalid pool name")
 // pool maps under poolQueuePrefix, and since a pool name may not contain the
 // characters that would let it forge one, no pool can reach DefaultQueue,
 // EventQueue or another pool's queue.
+//
+// DefaultPool -> DefaultQueue is the UNCONFIGURED answer, and it is the answer
+// only for a caller with no run in hand. A run carries the default queue an
+// operator bound into it, and inside the engine `main` means THAT queue —
+// engine.runState.routeForTask resolves it there and never asks this function.
+// Confusing the two is what once sent `pool: main` to DefaultQueue while a
+// task naming no pool took the run's own queue.
 func QueueForPool(pool string) (string, error) {
 	if pool == "" || pool == DefaultPool {
 		return DefaultQueue, nil

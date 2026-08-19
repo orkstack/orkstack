@@ -578,12 +578,27 @@ func (s *runState) defaultRoute() route {
 
 // routeForTask resolves one task to its route.
 //
-// A task that names the pool this run's default route already serves takes
-// that route — naming a pool explicitly must reach the same Orkers as leaving
-// it out, which is what docs/DSL.md promises ("a task with no `pool:` runs on
-// the built-in `main` pool") and what TaskRun.pool means when a client
-// resubmits against it. Any other pool maps through the one translation in
-// internal/task.
+// Two spellings take the run's default route, and they are the same route in
+// both projections:
+//
+//   - a task that names NO pool, which is asking for the default; and
+//   - a task that names task.DefaultPool, "main", which is the NAME of the
+//     default — of the deployment's default pool, not of one fixed queue.
+//     Whatever execution channel an operator bound as this run's default,
+//     `main` is a word for it. Mapping `main` forward through
+//     task.QueueForPool instead is how `pool: main` came to dispatch to
+//     task.DefaultQueue while a task that named no pool took the run's own
+//     channel: two disjoint sets of Orkers, and, under a pool-shaped
+//     ORK_ORKER_QUEUE, an escape from the isolation AGENTS.md §6 depends on.
+//
+// A task that names the pool the default route already serves takes it too,
+// for the same reason from the other side: one set of Orkers must not have
+// two names. Any other pool maps through the one translation in internal/task.
+//
+// So under a channel an operator pointed at a pool's own queue, `pool: main`
+// is reported on THAT pool. The word a client reads names the Orkers the task
+// reached, which is the whole contract; reporting "main" while running on the
+// gpu pool's Orkers would be the same lie one rename later.
 //
 // A pool name that cannot be mapped fails the run rather than falling back to
 // a queue nobody asked for: silently running a gpu task on the shared pool is
@@ -594,7 +609,7 @@ func (s *runState) defaultRoute() route {
 func (s *runState) routeForTask(t *orkstackv1.Task) (route, error) {
 	def := s.defaultRoute()
 	pool := t.GetPool()
-	if pool == "" || pool == def.pool {
+	if pool == "" || pool == task.DefaultPool || pool == def.pool {
 		return def, nil
 	}
 	queue, err := task.QueueForPool(pool)

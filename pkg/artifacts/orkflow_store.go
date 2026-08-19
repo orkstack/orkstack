@@ -112,10 +112,27 @@ func OrkflowKey(namespace, name, version string) (string, error) {
 // namespace. Listing a namespace is exactly this one prefix scan.
 func OrkflowNamespacePrefix(namespace string) (string, error) {
 	namespace = ResolveNamespace(namespace)
-	if err := validOrkflowComponent("namespace", namespace); err != nil {
+	if err := validOrkflowNamespace(namespace); err != nil {
 		return "", err
 	}
 	return OrkflowPrefix + "/" + namespace + "/", nil
+}
+
+// validOrkflowNamespace holds the namespace component of an orkflow key to the
+// registry's name rule, which is the compiler's. The other two components have
+// their own rules — a version is a semver or a content hash, not a slug — but
+// a namespace is the same concept here as in metadata/namespaces/, and one
+// concept gets one rule (design §2.5). Without this, an orkflow could be
+// stored under a namespace the registry can never hold and no document can
+// name: reachable by key, absent from every listing of namespaces.
+//
+// The error matches ErrInvalidNamespace and ErrInvalidOrkflow both, because it
+// is truthfully each, and a caller checking either should see it.
+func validOrkflowNamespace(namespace string) error {
+	if err := validNamespaceName(namespace); err != nil {
+		return fmt.Errorf("%w: %w", err, ErrInvalidOrkflow)
+	}
+	return nil
 }
 
 // orkflowNamePrefix is the key prefix holding every version of one orkflow.
@@ -149,7 +166,7 @@ func parseOrkflowKey(key string) (namespace, name, version string, ok bool) {
 	if !found {
 		return "", "", "", false
 	}
-	if validOrkflowComponent("namespace", namespace) != nil ||
+	if validOrkflowNamespace(namespace) != nil ||
 		validOrkflowComponent("name", name) != nil ||
 		validOrkflowComponent("version", version) != nil {
 		return "", "", "", false

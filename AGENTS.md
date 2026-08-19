@@ -237,12 +237,14 @@ next reader will "fix" it.
 Orker polls that queue while the engine dispatches every task that names no
 `pool:` of its own to it (`TemporalStarter.StartRun` binds the name into the
 run's workflow input; workflow code is deterministic and cannot read the
-environment itself). A task that writes `pool: main` goes there too: the
-override renames this run's default route, and one pool name means one set of
-Orkers, so a document cannot escape the isolation onto the shared queue by
-naming the pool it was already reported on (`runState.routeForTask`). Set it
-on only one of the two and the run strands in RUNNING: the Orker listens to
-one queue while the engine dispatches to another.
+environment itself). A task that writes `pool: main` goes there too, whatever
+shape the override has: `main` names this deployment's default pool, not the
+queue `ork-tasks`, so the override moves it, and one pool name means one set
+of Orkers. A document cannot escape the isolation onto the shared queue by
+naming the default pool, nor by naming the pool it was already reported on
+(`runState.routeForTask`). Set it on only one of the two and the run strands
+in RUNNING: the Orker listens to one queue while the engine dispatches to
+another.
 
 ```bash
 # Both processes, same value.

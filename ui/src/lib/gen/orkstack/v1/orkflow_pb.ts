@@ -112,13 +112,17 @@ export type Task = Message<"orkstack.v1.Task"> & {
   retry?: RetryPolicy | undefined;
 
   /**
-   * pool names the set of Orkers this task runs on. Empty resolves to the
-   * built-in pool "main"; Namespace.default_pool joins that resolution in
-   * M10.2, which is the slice that reads it. Writing "main" and writing
-   * nothing are one route: within a run, one pool name means one set of
-   * Orkers, whatever execution channel an operator has pointed the default
-   * route at. The engine maps a pool to its internal execution channel and
-   * nowhere else.
+   * pool names the set of Orkers this task runs on. Empty means the
+   * deployment's default pool, which answers to the name "main";
+   * Namespace.default_pool joins that resolution in M10.2, which is the slice
+   * that reads it.
+   *
+   * Writing "main" and writing nothing are ONE route, always: "main" is a name
+   * for the deployment's default pool and not for one fixed set of Orkers, so
+   * wherever an operator has pointed the default, both spellings go there and
+   * both are reported on the pool that answers for it. Within a run, one pool
+   * name means one set of Orkers, in both directions. The engine maps a pool
+   * to its internal execution channel and nowhere else.
    *
    * @generated from field: string pool = 9;
    */

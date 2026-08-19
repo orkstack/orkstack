@@ -92,6 +92,21 @@ func ParseNamespaceKey(key string) (name string, ok bool) {
 	return name, true
 }
 
+// namespaceNamePattern is the rule for a namespace name.
+//
+// It is the DSL's slug rule (internal/dsl.slugPattern), not the
+// cleanComponentPattern that validates a stored VERSION string. A version is a
+// semver or a content hash and may be neither lower-case nor slug-shaped; a
+// namespace is a NAME, and the only way an orkflow enters one is a
+// `namespace:` in a document. cleanComponentPattern accepted `Payments`,
+// `pay.ments`, `1payments` and `a_b` — every one refused by the compiler — so
+// each was a namespace that could be created, written to, and then never named
+// in YAML. pkg/ may not import internal/, so the two rules are held together
+// by measurement instead: TestNamespaceName_RegistryAndCompilerAgree runs one
+// corpus through this rule and through the compiler and fails on any
+// disagreement, in either direction.
+var namespaceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
 func validNamespaceName(name string) error {
 	switch {
 	case name == "":
@@ -99,9 +114,9 @@ func validNamespaceName(name string) error {
 	case len(name) > maxOrkflowComponent:
 		return fmt.Errorf("artifacts: namespace %q exceeds %d bytes: %w",
 			name, maxOrkflowComponent, ErrInvalidNamespace)
-	case !cleanComponentPattern.MatchString(name):
+	case !namespaceNamePattern.MatchString(name):
 		return fmt.Errorf("artifacts: namespace %q must match %s: %w",
-			name, cleanComponentPattern, ErrInvalidNamespace)
+			name, namespaceNamePattern, ErrInvalidNamespace)
 	}
 	return nil
 }

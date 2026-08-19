@@ -59,10 +59,14 @@ tasks:
       key: value
 ```
 
-A task with no `pool:` runs on the built-in `main` pool, and writing `pool:
-main` is the same thing: within a run, one pool name means one set of Orkers,
-so the two spellings always reach the same Orkers. A task that names a pool
-waits for an Orker serving it; M10.2 refuses the submission up front instead.
+A task with no `pool:` runs on the deployment's default pool, which answers to
+the name `main`. Writing `pool: main` is the same thing, always: `main` names
+the default pool, not one fixed set of Orkers, so wherever an operator has
+pointed the default, both spellings go there and a run reports both on the
+same pool. Within a run, one pool name means one set of Orkers and one set of
+Orkers has one name — so the pool a run reports a task on is a pool you can
+write to reach those same Orkers. A task that names a pool nothing serves
+waits for one; M10.2 refuses the submission up front instead.
 
 ## Templating
 
