@@ -46,6 +46,17 @@ message Namespace {
   // later write, updated_at on each one.
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
+  // etag is the registry's compare-and-swap token for this document: the
+  // value a read handed back, which an update sends back to say which version
+  // it edited. A write whose etag no longer matches the stored one is refused,
+  // so two operators editing the same namespace at once cannot silently
+  // clobber each other — the loser is told to re-read.
+  //
+  // It is the store's token and opaque: nothing derives meaning from its
+  // shape, and a client only ever round-trips it. It is never stored inside
+  // the document — it names the document's stored bytes, so a copy inside
+  // them could only ever be the token of the write before.
+  string etag = 8;
 }
 
 // Pool is a set of Orkers, observed live.

@@ -19,6 +19,16 @@ service OrkflowService {
 
 message ApplyOrkflowRequest {
   string yaml = 1;                       // raw DSL document
+  // namespace selects where the document is applied. Empty honours the
+  // document's own `namespace:` (itself empty = "default"); a non-empty value
+  // must EQUAL the document's namespace, or the document names none and is
+  // applied INTO this one. The two are never allowed to disagree silently: a
+  // file that says `namespace: payments` applied with -n staging is a mistake
+  // one of the two made, and guessing which would store the definition
+  // somewhere its author cannot find it.
+  string namespace = 2;
+  // 3 is reserved for base_version, the optimistic-concurrency token that
+  // arrives with version operations.
 }
 message ApplyOrkflowResponse {
   Orkflow orkflow = 1;
@@ -27,11 +37,13 @@ message ApplyOrkflowResponse {
 message GetOrkflowRequest {
   string name = 1;
   string version = 2;                    // empty = latest
+  string namespace = 3;                  // empty = the default namespace
 }
 message GetOrkflowResponse { Orkflow orkflow = 1; }
 message ListOrkflowsRequest {
   int32 page_size = 1;
   string page_token = 2;
+  string namespace = 3;                  // empty = the default namespace
 }
 message ListOrkflowsResponse {
   repeated Orkflow orkflows = 1;
@@ -54,9 +66,10 @@ message SubmitRunRequest {
   string orkflow_version = 2;            // orkflow version; empty = latest
   Payload input = 3;
   string idempotency_key = 4;            // optional dedupe
-  // 5 is reserved for the namespace selector, which arrives with the
-  // namespace-aware API. Submissions are scoped to the default namespace
-  // until then.
+  // namespace selects which namespace's orkflow_name is submitted. Empty is
+  // the default namespace. A name is unique WITHIN a namespace, so this is
+  // half of the orkflow's address, not a filter.
+  string namespace = 5;
   //
   // allow_empty_pool submits even when a task's resolved pool has no live
   // Orkers. Default false: an empty pool is an error at submit, not a run
@@ -72,6 +85,7 @@ message ListRunsRequest {
   Status status = 2;                     // optional filter
   int32 page_size = 3;
   string page_token = 4;
+  string namespace = 5;                  // empty = the default namespace
 }
 message ListRunsResponse {
   repeated Run runs = 1;
@@ -85,10 +99,38 @@ message StreamEventsRequest {
 }
 
 // NamespaceService manages namespaces and reports the pools they may dispatch
-// onto. Registering, updating and deleting a namespace arrives with the
-// namespace-aware API; this service exists now because a pool is only useful
-// if an operator can see whether anything is serving it.
+// onto.
+//
+// A namespace is a scope that owns orkflow names, runs and pool defaults. The
+// registry is durable (the artifact store), so any replica answers for any
+// namespace, including one it never created.
 service NamespaceService {
+  // CreateNamespace registers a namespace.
+  //
+  // It is idempotent for an identical spec: creating the same namespace twice
+  // with the same description, labels, default pool and allowed pools returns
+  // the existing document rather than an error, so a provisioning script is
+  // safe to re-run. A second create that differs is AlreadyExists, naming what
+  // differs — that one is a collision, not a repeat.
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+  // GetNamespace reads one namespace. The default namespace always resolves,
+  // whether or not anyone created it.
+  rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
+  // ListNamespaces returns every registered namespace, ordered by name.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  // UpdateNamespace replaces a namespace's mutable fields.
+  //
+  // It is a compare-and-swap on Namespace.etag: the token a read handed back.
+  // A stale token is FailedPrecondition, so two operators editing at once
+  // cannot silently clobber each other — the loser re-reads and re-applies.
+  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse);
+  // DeleteNamespace removes a namespace that holds no orkflows.
+  //
+  // It refuses while any orkflow is still stored in it, and says how many:
+  // deleting the registry entry would not delete the definitions, so they
+  // would survive under a namespace nothing lists. The default namespace is
+  // refused unconditionally — every orkflow that names none is in it.
+  rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
   // ListPools reports every pool a namespace may dispatch onto, each with the
   // number of Orkers serving it right now and the plugins those Orkers run.
   //
@@ -96,6 +138,27 @@ service NamespaceService {
   // replica answers — including one that started nothing.
   rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
 }
+message CreateNamespaceRequest {
+  Namespace namespace = 1;               // name is required; times are the registry's
+}
+message CreateNamespaceResponse {
+  Namespace namespace = 1;
+  // created is false when an identical namespace already existed, so an
+  // idempotent repeat is distinguishable from the write that did it.
+  bool created = 2;
+}
+message GetNamespaceRequest { string name = 1; }
+message GetNamespaceResponse { Namespace namespace = 1; }
+message ListNamespacesRequest {}
+message ListNamespacesResponse { repeated Namespace namespaces = 1; }
+message UpdateNamespaceRequest {
+  // namespace carries the new spec and the etag it was read at. An empty etag
+  // is an unconditional write, which a caller has to ask for explicitly.
+  Namespace namespace = 1;
+}
+message UpdateNamespaceResponse { Namespace namespace = 1; }
+message DeleteNamespaceRequest { string name = 1; }
+message DeleteNamespaceResponse {}
 message ListPoolsRequest {
   string namespace = 1;                  // empty = the default namespace
 }

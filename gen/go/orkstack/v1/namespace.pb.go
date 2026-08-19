@@ -61,8 +61,19 @@ type Namespace struct {
 	// created_at and updated_at are written by the registry, never by a client:
 	// created_at when the document is first written and preserved on every
 	// later write, updated_at on each one.
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// etag is the registry's compare-and-swap token for this document: the
+	// value a read handed back, which an update sends back to say which version
+	// it edited. A write whose etag no longer matches the stored one is refused,
+	// so two operators editing the same namespace at once cannot silently
+	// clobber each other — the loser is told to re-read.
+	//
+	// It is the store's token and opaque: nothing derives meaning from its
+	// shape, and a client only ever round-trips it. It is never stored inside
+	// the document — it names the document's stored bytes, so a copy inside
+	// them could only ever be the token of the write before.
+	Etag          string `protobuf:"bytes,8,opt,name=etag,proto3" json:"etag,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -144,6 +155,13 @@ func (x *Namespace) GetUpdatedAt() *timestamppb.Timestamp {
 		return x.UpdatedAt
 	}
 	return nil
+}
+
+func (x *Namespace) GetEtag() string {
+	if x != nil {
+		return x.Etag
+	}
+	return ""
 }
 
 // Pool is a set of Orkers, observed live.
@@ -241,7 +259,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf6\x02\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\x03\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -251,7 +269,8 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a9\n" +
+	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x12\n" +
+	"\x04etag\x18\b \x01(\tR\x04etag\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb6\x01\n" +

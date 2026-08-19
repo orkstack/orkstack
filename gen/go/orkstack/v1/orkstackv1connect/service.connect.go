@@ -58,6 +58,21 @@ const (
 	RunServiceCancelRunProcedure = "/orkstack.v1.RunService/CancelRun"
 	// RunServiceStreamEventsProcedure is the fully-qualified name of the RunService's StreamEvents RPC.
 	RunServiceStreamEventsProcedure = "/orkstack.v1.RunService/StreamEvents"
+	// NamespaceServiceCreateNamespaceProcedure is the fully-qualified name of the NamespaceService's
+	// CreateNamespace RPC.
+	NamespaceServiceCreateNamespaceProcedure = "/orkstack.v1.NamespaceService/CreateNamespace"
+	// NamespaceServiceGetNamespaceProcedure is the fully-qualified name of the NamespaceService's
+	// GetNamespace RPC.
+	NamespaceServiceGetNamespaceProcedure = "/orkstack.v1.NamespaceService/GetNamespace"
+	// NamespaceServiceListNamespacesProcedure is the fully-qualified name of the NamespaceService's
+	// ListNamespaces RPC.
+	NamespaceServiceListNamespacesProcedure = "/orkstack.v1.NamespaceService/ListNamespaces"
+	// NamespaceServiceUpdateNamespaceProcedure is the fully-qualified name of the NamespaceService's
+	// UpdateNamespace RPC.
+	NamespaceServiceUpdateNamespaceProcedure = "/orkstack.v1.NamespaceService/UpdateNamespace"
+	// NamespaceServiceDeleteNamespaceProcedure is the fully-qualified name of the NamespaceService's
+	// DeleteNamespace RPC.
+	NamespaceServiceDeleteNamespaceProcedure = "/orkstack.v1.NamespaceService/DeleteNamespace"
 	// NamespaceServiceListPoolsProcedure is the fully-qualified name of the NamespaceService's
 	// ListPools RPC.
 	NamespaceServiceListPoolsProcedure = "/orkstack.v1.NamespaceService/ListPools"
@@ -370,6 +385,32 @@ func (UnimplementedRunServiceHandler) StreamEvents(context.Context, *connect.Req
 
 // NamespaceServiceClient is a client for the orkstack.v1.NamespaceService service.
 type NamespaceServiceClient interface {
+	// CreateNamespace registers a namespace.
+	//
+	// It is idempotent for an identical spec: creating the same namespace twice
+	// with the same description, labels, default pool and allowed pools returns
+	// the existing document rather than an error, so a provisioning script is
+	// safe to re-run. A second create that differs is AlreadyExists, naming what
+	// differs — that one is a collision, not a repeat.
+	CreateNamespace(context.Context, *connect.Request[v1.CreateNamespaceRequest]) (*connect.Response[v1.CreateNamespaceResponse], error)
+	// GetNamespace reads one namespace. The default namespace always resolves,
+	// whether or not anyone created it.
+	GetNamespace(context.Context, *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error)
+	// ListNamespaces returns every registered namespace, ordered by name.
+	ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error)
+	// UpdateNamespace replaces a namespace's mutable fields.
+	//
+	// It is a compare-and-swap on Namespace.etag: the token a read handed back.
+	// A stale token is FailedPrecondition, so two operators editing at once
+	// cannot silently clobber each other — the loser re-reads and re-applies.
+	UpdateNamespace(context.Context, *connect.Request[v1.UpdateNamespaceRequest]) (*connect.Response[v1.UpdateNamespaceResponse], error)
+	// DeleteNamespace removes a namespace that holds no orkflows.
+	//
+	// It refuses while any orkflow is still stored in it, and says how many:
+	// deleting the registry entry would not delete the definitions, so they
+	// would survive under a namespace nothing lists. The default namespace is
+	// refused unconditionally — every orkflow that names none is in it.
+	DeleteNamespace(context.Context, *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error)
 	// ListPools reports every pool a namespace may dispatch onto, each with the
 	// number of Orkers serving it right now and the plugins those Orkers run.
 	//
@@ -389,6 +430,36 @@ func NewNamespaceServiceClient(httpClient connect.HTTPClient, baseURL string, op
 	baseURL = strings.TrimRight(baseURL, "/")
 	namespaceServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("NamespaceService").Methods()
 	return &namespaceServiceClient{
+		createNamespace: connect.NewClient[v1.CreateNamespaceRequest, v1.CreateNamespaceResponse](
+			httpClient,
+			baseURL+NamespaceServiceCreateNamespaceProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("CreateNamespace")),
+			connect.WithClientOptions(opts...),
+		),
+		getNamespace: connect.NewClient[v1.GetNamespaceRequest, v1.GetNamespaceResponse](
+			httpClient,
+			baseURL+NamespaceServiceGetNamespaceProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("GetNamespace")),
+			connect.WithClientOptions(opts...),
+		),
+		listNamespaces: connect.NewClient[v1.ListNamespacesRequest, v1.ListNamespacesResponse](
+			httpClient,
+			baseURL+NamespaceServiceListNamespacesProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("ListNamespaces")),
+			connect.WithClientOptions(opts...),
+		),
+		updateNamespace: connect.NewClient[v1.UpdateNamespaceRequest, v1.UpdateNamespaceResponse](
+			httpClient,
+			baseURL+NamespaceServiceUpdateNamespaceProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("UpdateNamespace")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteNamespace: connect.NewClient[v1.DeleteNamespaceRequest, v1.DeleteNamespaceResponse](
+			httpClient,
+			baseURL+NamespaceServiceDeleteNamespaceProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("DeleteNamespace")),
+			connect.WithClientOptions(opts...),
+		),
 		listPools: connect.NewClient[v1.ListPoolsRequest, v1.ListPoolsResponse](
 			httpClient,
 			baseURL+NamespaceServiceListPoolsProcedure,
@@ -400,7 +471,37 @@ func NewNamespaceServiceClient(httpClient connect.HTTPClient, baseURL string, op
 
 // namespaceServiceClient implements NamespaceServiceClient.
 type namespaceServiceClient struct {
-	listPools *connect.Client[v1.ListPoolsRequest, v1.ListPoolsResponse]
+	createNamespace *connect.Client[v1.CreateNamespaceRequest, v1.CreateNamespaceResponse]
+	getNamespace    *connect.Client[v1.GetNamespaceRequest, v1.GetNamespaceResponse]
+	listNamespaces  *connect.Client[v1.ListNamespacesRequest, v1.ListNamespacesResponse]
+	updateNamespace *connect.Client[v1.UpdateNamespaceRequest, v1.UpdateNamespaceResponse]
+	deleteNamespace *connect.Client[v1.DeleteNamespaceRequest, v1.DeleteNamespaceResponse]
+	listPools       *connect.Client[v1.ListPoolsRequest, v1.ListPoolsResponse]
+}
+
+// CreateNamespace calls orkstack.v1.NamespaceService.CreateNamespace.
+func (c *namespaceServiceClient) CreateNamespace(ctx context.Context, req *connect.Request[v1.CreateNamespaceRequest]) (*connect.Response[v1.CreateNamespaceResponse], error) {
+	return c.createNamespace.CallUnary(ctx, req)
+}
+
+// GetNamespace calls orkstack.v1.NamespaceService.GetNamespace.
+func (c *namespaceServiceClient) GetNamespace(ctx context.Context, req *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error) {
+	return c.getNamespace.CallUnary(ctx, req)
+}
+
+// ListNamespaces calls orkstack.v1.NamespaceService.ListNamespaces.
+func (c *namespaceServiceClient) ListNamespaces(ctx context.Context, req *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error) {
+	return c.listNamespaces.CallUnary(ctx, req)
+}
+
+// UpdateNamespace calls orkstack.v1.NamespaceService.UpdateNamespace.
+func (c *namespaceServiceClient) UpdateNamespace(ctx context.Context, req *connect.Request[v1.UpdateNamespaceRequest]) (*connect.Response[v1.UpdateNamespaceResponse], error) {
+	return c.updateNamespace.CallUnary(ctx, req)
+}
+
+// DeleteNamespace calls orkstack.v1.NamespaceService.DeleteNamespace.
+func (c *namespaceServiceClient) DeleteNamespace(ctx context.Context, req *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error) {
+	return c.deleteNamespace.CallUnary(ctx, req)
 }
 
 // ListPools calls orkstack.v1.NamespaceService.ListPools.
@@ -410,6 +511,32 @@ func (c *namespaceServiceClient) ListPools(ctx context.Context, req *connect.Req
 
 // NamespaceServiceHandler is an implementation of the orkstack.v1.NamespaceService service.
 type NamespaceServiceHandler interface {
+	// CreateNamespace registers a namespace.
+	//
+	// It is idempotent for an identical spec: creating the same namespace twice
+	// with the same description, labels, default pool and allowed pools returns
+	// the existing document rather than an error, so a provisioning script is
+	// safe to re-run. A second create that differs is AlreadyExists, naming what
+	// differs — that one is a collision, not a repeat.
+	CreateNamespace(context.Context, *connect.Request[v1.CreateNamespaceRequest]) (*connect.Response[v1.CreateNamespaceResponse], error)
+	// GetNamespace reads one namespace. The default namespace always resolves,
+	// whether or not anyone created it.
+	GetNamespace(context.Context, *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error)
+	// ListNamespaces returns every registered namespace, ordered by name.
+	ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error)
+	// UpdateNamespace replaces a namespace's mutable fields.
+	//
+	// It is a compare-and-swap on Namespace.etag: the token a read handed back.
+	// A stale token is FailedPrecondition, so two operators editing at once
+	// cannot silently clobber each other — the loser re-reads and re-applies.
+	UpdateNamespace(context.Context, *connect.Request[v1.UpdateNamespaceRequest]) (*connect.Response[v1.UpdateNamespaceResponse], error)
+	// DeleteNamespace removes a namespace that holds no orkflows.
+	//
+	// It refuses while any orkflow is still stored in it, and says how many:
+	// deleting the registry entry would not delete the definitions, so they
+	// would survive under a namespace nothing lists. The default namespace is
+	// refused unconditionally — every orkflow that names none is in it.
+	DeleteNamespace(context.Context, *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error)
 	// ListPools reports every pool a namespace may dispatch onto, each with the
 	// number of Orkers serving it right now and the plugins those Orkers run.
 	//
@@ -425,6 +552,36 @@ type NamespaceServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewNamespaceServiceHandler(svc NamespaceServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	namespaceServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("NamespaceService").Methods()
+	namespaceServiceCreateNamespaceHandler := connect.NewUnaryHandler(
+		NamespaceServiceCreateNamespaceProcedure,
+		svc.CreateNamespace,
+		connect.WithSchema(namespaceServiceMethods.ByName("CreateNamespace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceGetNamespaceHandler := connect.NewUnaryHandler(
+		NamespaceServiceGetNamespaceProcedure,
+		svc.GetNamespace,
+		connect.WithSchema(namespaceServiceMethods.ByName("GetNamespace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceListNamespacesHandler := connect.NewUnaryHandler(
+		NamespaceServiceListNamespacesProcedure,
+		svc.ListNamespaces,
+		connect.WithSchema(namespaceServiceMethods.ByName("ListNamespaces")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceUpdateNamespaceHandler := connect.NewUnaryHandler(
+		NamespaceServiceUpdateNamespaceProcedure,
+		svc.UpdateNamespace,
+		connect.WithSchema(namespaceServiceMethods.ByName("UpdateNamespace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceDeleteNamespaceHandler := connect.NewUnaryHandler(
+		NamespaceServiceDeleteNamespaceProcedure,
+		svc.DeleteNamespace,
+		connect.WithSchema(namespaceServiceMethods.ByName("DeleteNamespace")),
+		connect.WithHandlerOptions(opts...),
+	)
 	namespaceServiceListPoolsHandler := connect.NewUnaryHandler(
 		NamespaceServiceListPoolsProcedure,
 		svc.ListPools,
@@ -433,6 +590,16 @@ func NewNamespaceServiceHandler(svc NamespaceServiceHandler, opts ...connect.Han
 	)
 	return "/orkstack.v1.NamespaceService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case NamespaceServiceCreateNamespaceProcedure:
+			namespaceServiceCreateNamespaceHandler.ServeHTTP(w, r)
+		case NamespaceServiceGetNamespaceProcedure:
+			namespaceServiceGetNamespaceHandler.ServeHTTP(w, r)
+		case NamespaceServiceListNamespacesProcedure:
+			namespaceServiceListNamespacesHandler.ServeHTTP(w, r)
+		case NamespaceServiceUpdateNamespaceProcedure:
+			namespaceServiceUpdateNamespaceHandler.ServeHTTP(w, r)
+		case NamespaceServiceDeleteNamespaceProcedure:
+			namespaceServiceDeleteNamespaceHandler.ServeHTTP(w, r)
 		case NamespaceServiceListPoolsProcedure:
 			namespaceServiceListPoolsHandler.ServeHTTP(w, r)
 		default:
@@ -443,6 +610,26 @@ func NewNamespaceServiceHandler(svc NamespaceServiceHandler, opts ...connect.Han
 
 // UnimplementedNamespaceServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedNamespaceServiceHandler struct{}
+
+func (UnimplementedNamespaceServiceHandler) CreateNamespace(context.Context, *connect.Request[v1.CreateNamespaceRequest]) (*connect.Response[v1.CreateNamespaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.CreateNamespace is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) GetNamespace(context.Context, *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.GetNamespace is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.ListNamespaces is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) UpdateNamespace(context.Context, *connect.Request[v1.UpdateNamespaceRequest]) (*connect.Response[v1.UpdateNamespaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.UpdateNamespace is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) DeleteNamespace(context.Context, *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.DeleteNamespace is not implemented"))
+}
 
 func (UnimplementedNamespaceServiceHandler) ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.ListPools is not implemented"))

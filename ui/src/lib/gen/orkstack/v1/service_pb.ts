@@ -11,7 +11,7 @@ import type { EventSchema, Run } from "./run_pb";
 import { file_orkstack_v1_run } from "./run_pb";
 import type { Orkflow } from "./orkflow_pb";
 import { file_orkstack_v1_orkflow } from "./orkflow_pb";
-import type { Pool } from "./namespace_pb";
+import type { Namespace, Pool } from "./namespace_pb";
 import { file_orkstack_v1_namespace } from "./namespace_pb";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
@@ -19,7 +19,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/service.proto.
  */
 export const file_orkstack_v1_service: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSIjChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkiTwoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkiMgoRR2V0T3JrZmxvd1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyI8ChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJIlcKFExpc3RPcmtmbG93c1Jlc3BvbnNlEiYKCG9ya2Zsb3dzGAEgAygLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkimQEKEFN1Ym1pdFJ1blJlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgCIAEoCRIjCgVpbnB1dBgDIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSFwoPaWRlbXBvdGVuY3lfa2V5GAQgASgJEhgKEGFsbG93X2VtcHR5X3Bvb2wYBiABKAgiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIh8KDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJIi8KDkdldFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biJzCg9MaXN0UnVuc1JlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEiMKBnN0YXR1cxgCIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIRCglwYWdlX3NpemUYAyABKAUSEgoKcGFnZV90b2tlbhgEIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIjIKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSIyChFDYW5jZWxSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iPAoTU3RyZWFtRXZlbnRzUmVxdWVzdBIOCgZydW5faWQYASABKAkSFQoNZnJvbV9zZXF1ZW5jZRgCIAEoAyIlChBMaXN0UG9vbHNSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCSJLChFMaXN0UG9vbHNSZXNwb25zZRIgCgVwb29scxgBIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSFAoMZGVmYXVsdF9wb29sGAIgASgJIhQKEkxpc3RQbHVnaW5zUmVxdWVzdCKfAQoKUGx1Z2luSW5mbxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSLQoMaW5wdXRfc2NoZW1hGAQgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIuCg1vdXRwdXRfc2NoZW1hGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCI/ChNMaXN0UGx1Z2luc1Jlc3BvbnNlEigKB3BsdWdpbnMYASADKAsyFy5vcmtzdGFjay52MS5QbHVnaW5JbmZvMokCCg5PcmtmbG93U2VydmljZRJTCgxBcHBseU9ya2Zsb3cSIC5vcmtzdGFjay52MS5BcHBseU9ya2Zsb3dSZXF1ZXN0GiEub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVzcG9uc2USTQoKR2V0T3JrZmxvdxIeLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXF1ZXN0Gh8ub3Jrc3RhY2sudjEuR2V0T3JrZmxvd1Jlc3BvbnNlElMKDExpc3RPcmtmbG93cxIgLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93c1JlcXVlc3QaIS5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXNwb25zZTL4AgoKUnVuU2VydmljZRJKCglTdWJtaXRSdW4SHS5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVzcG9uc2USQQoGR2V0UnVuEhoub3Jrc3RhY2sudjEuR2V0UnVuUmVxdWVzdBobLm9ya3N0YWNrLnYxLkdldFJ1blJlc3BvbnNlEkcKCExpc3RSdW5zEhwub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXF1ZXN0Gh0ub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXNwb25zZRJKCglDYW5jZWxSdW4SHS5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVzcG9uc2USRgoMU3RyZWFtRXZlbnRzEiAub3Jrc3RhY2sudjEuU3RyZWFtRXZlbnRzUmVxdWVzdBoSLm9ya3N0YWNrLnYxLkV2ZW50MAEyXgoQTmFtZXNwYWNlU2VydmljZRJKCglMaXN0UG9vbHMSHS5vcmtzdGFjay52MS5MaXN0UG9vbHNSZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuTGlzdFBvb2xzUmVzcG9uc2UyYQoNUGx1Z2luU2VydmljZRJQCgtMaXN0UGx1Z2lucxIfLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVxdWVzdBogLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVzcG9uc2VCqAEKD2NvbS5vcmtzdGFjay52MUIMU2VydmljZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
+  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSI2ChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJIk8KFEFwcGx5T3JrZmxvd1Jlc3BvbnNlEiUKB29ya2Zsb3cYASABKAsyFC5vcmtzdGFjay52MS5PcmtmbG93EhAKCHdhcm5pbmdzGAIgAygJIkUKEUdldE9ya2Zsb3dSZXF1ZXN0EgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkiOwoSR2V0T3JrZmxvd1Jlc3BvbnNlEiUKB29ya2Zsb3cYASABKAsyFC5vcmtzdGFjay52MS5PcmtmbG93Ik8KE0xpc3RPcmtmbG93c1JlcXVlc3QSEQoJcGFnZV9zaXplGAEgASgFEhIKCnBhZ2VfdG9rZW4YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIlcKFExpc3RPcmtmbG93c1Jlc3BvbnNlEiYKCG9ya2Zsb3dzGAEgAygLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkirAEKEFN1Ym1pdFJ1blJlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgCIAEoCRIjCgVpbnB1dBgDIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSFwoPaWRlbXBvdGVuY3lfa2V5GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIYChBhbGxvd19lbXB0eV9wb29sGAYgASgIIjIKEVN1Ym1pdFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biIfCg1HZXRSdW5SZXF1ZXN0Eg4KBnJ1bl9pZBgBIAEoCSIvCg5HZXRSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4ihgEKD0xpc3RSdW5zUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSIwoGc3RhdHVzGAIgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEhEKCXBhZ2Vfc2l6ZRgDIAEoBRISCgpwYWdlX3Rva2VuGAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIjIKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSIyChFDYW5jZWxSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iPAoTU3RyZWFtRXZlbnRzUmVxdWVzdBIOCgZydW5faWQYASABKAkSFQoNZnJvbV9zZXF1ZW5jZRgCIAEoAyJDChZDcmVhdGVOYW1lc3BhY2VSZXF1ZXN0EikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJVChdDcmVhdGVOYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2USDwoHY3JlYXRlZBgCIAEoCCIjChNHZXROYW1lc3BhY2VSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoUR2V0TmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIhcKFUxpc3ROYW1lc3BhY2VzUmVxdWVzdCJEChZMaXN0TmFtZXNwYWNlc1Jlc3BvbnNlEioKCm5hbWVzcGFjZXMYASADKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiQwoWVXBkYXRlTmFtZXNwYWNlUmVxdWVzdBIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiRAoXVXBkYXRlTmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIiYKFkRlbGV0ZU5hbWVzcGFjZVJlcXVlc3QSDAoEbmFtZRgBIAEoCSIZChdEZWxldGVOYW1lc3BhY2VSZXNwb25zZSIlChBMaXN0UG9vbHNSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCSJLChFMaXN0UG9vbHNSZXNwb25zZRIgCgVwb29scxgBIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSFAoMZGVmYXVsdF9wb29sGAIgASgJIhQKEkxpc3RQbHVnaW5zUmVxdWVzdCKfAQoKUGx1Z2luSW5mbxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSLQoMaW5wdXRfc2NoZW1hGAQgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIuCg1vdXRwdXRfc2NoZW1hGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCI/ChNMaXN0UGx1Z2luc1Jlc3BvbnNlEigKB3BsdWdpbnMYASADKAsyFy5vcmtzdGFjay52MS5QbHVnaW5JbmZvMokCCg5PcmtmbG93U2VydmljZRJTCgxBcHBseU9ya2Zsb3cSIC5vcmtzdGFjay52MS5BcHBseU9ya2Zsb3dSZXF1ZXN0GiEub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVzcG9uc2USTQoKR2V0T3JrZmxvdxIeLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXF1ZXN0Gh8ub3Jrc3RhY2sudjEuR2V0T3JrZmxvd1Jlc3BvbnNlElMKDExpc3RPcmtmbG93cxIgLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93c1JlcXVlc3QaIS5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXNwb25zZTL4AgoKUnVuU2VydmljZRJKCglTdWJtaXRSdW4SHS5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVzcG9uc2USQQoGR2V0UnVuEhoub3Jrc3RhY2sudjEuR2V0UnVuUmVxdWVzdBobLm9ya3N0YWNrLnYxLkdldFJ1blJlc3BvbnNlEkcKCExpc3RSdW5zEhwub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXF1ZXN0Gh0ub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXNwb25zZRJKCglDYW5jZWxSdW4SHS5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVzcG9uc2USRgoMU3RyZWFtRXZlbnRzEiAub3Jrc3RhY2sudjEuU3RyZWFtRXZlbnRzUmVxdWVzdBoSLm9ya3N0YWNrLnYxLkV2ZW50MAEyqAQKEE5hbWVzcGFjZVNlcnZpY2USXAoPQ3JlYXRlTmFtZXNwYWNlEiMub3Jrc3RhY2sudjEuQ3JlYXRlTmFtZXNwYWNlUmVxdWVzdBokLm9ya3N0YWNrLnYxLkNyZWF0ZU5hbWVzcGFjZVJlc3BvbnNlElMKDEdldE5hbWVzcGFjZRIgLm9ya3N0YWNrLnYxLkdldE5hbWVzcGFjZVJlcXVlc3QaIS5vcmtzdGFjay52MS5HZXROYW1lc3BhY2VSZXNwb25zZRJZCg5MaXN0TmFtZXNwYWNlcxIiLm9ya3N0YWNrLnYxLkxpc3ROYW1lc3BhY2VzUmVxdWVzdBojLm9ya3N0YWNrLnYxLkxpc3ROYW1lc3BhY2VzUmVzcG9uc2USXAoPVXBkYXRlTmFtZXNwYWNlEiMub3Jrc3RhY2sudjEuVXBkYXRlTmFtZXNwYWNlUmVxdWVzdBokLm9ya3N0YWNrLnYxLlVwZGF0ZU5hbWVzcGFjZVJlc3BvbnNlElwKD0RlbGV0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLkRlbGV0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5EZWxldGVOYW1lc3BhY2VSZXNwb25zZRJKCglMaXN0UG9vbHMSHS5vcmtzdGFjay52MS5MaXN0UG9vbHNSZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuTGlzdFBvb2xzUmVzcG9uc2UyYQoNUGx1Z2luU2VydmljZRJQCgtMaXN0UGx1Z2lucxIfLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVxdWVzdBogLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVzcG9uc2VCqAEKD2NvbS5vcmtzdGFjay52MUIMU2VydmljZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
 
 /**
  * @generated from message orkstack.v1.ApplyOrkflowRequest
@@ -31,6 +31,22 @@ export type ApplyOrkflowRequest = Message<"orkstack.v1.ApplyOrkflowRequest"> & {
    * @generated from field: string yaml = 1;
    */
   yaml: string;
+
+  /**
+   * namespace selects where the document is applied. Empty honours the
+   * document's own `namespace:` (itself empty = "default"); a non-empty value
+   * must EQUAL the document's namespace, or the document names none and is
+   * applied INTO this one. The two are never allowed to disagree silently: a
+   * file that says `namespace: payments` applied with -n staging is a mistake
+   * one of the two made, and guessing which would store the definition
+   * somewhere its author cannot find it.
+   *
+   * 3 is reserved for base_version, the optimistic-concurrency token that
+   * arrives with version operations.
+   *
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
 };
 
 /**
@@ -77,6 +93,13 @@ export type GetOrkflowRequest = Message<"orkstack.v1.GetOrkflowRequest"> & {
    * @generated from field: string version = 2;
    */
   version: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 3;
+   */
+  namespace: string;
 };
 
 /**
@@ -116,6 +139,13 @@ export type ListOrkflowsRequest = Message<"orkstack.v1.ListOrkflowsRequest"> & {
    * @generated from field: string page_token = 2;
    */
   pageToken: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 3;
+   */
+  namespace: string;
 };
 
 /**
@@ -178,9 +208,15 @@ export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
   idempotencyKey: string;
 
   /**
-   * 5 is reserved for the namespace selector, which arrives with the
-   * namespace-aware API. Submissions are scoped to the default namespace
-   * until then.
+   * namespace selects which namespace's orkflow_name is submitted. Empty is
+   * the default namespace. A name is unique WITHIN a namespace, so this is
+   * half of the orkflow's address, not a filter.
+   *
+   * @generated from field: string namespace = 5;
+   */
+  namespace: string;
+
+  /**
    *
    * allow_empty_pool submits even when a task's resolved pool has no live
    * Orkers. Default false: an empty pool is an error at submit, not a run
@@ -277,6 +313,13 @@ export type ListRunsRequest = Message<"orkstack.v1.ListRunsRequest"> & {
    * @generated from field: string page_token = 4;
    */
   pageToken: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 5;
+   */
+  namespace: string;
 };
 
 /**
@@ -370,6 +413,181 @@ export const StreamEventsRequestSchema: GenMessage<StreamEventsRequest> = /*@__P
   messageDesc(file_orkstack_v1_service, 14);
 
 /**
+ * @generated from message orkstack.v1.CreateNamespaceRequest
+ */
+export type CreateNamespaceRequest = Message<"orkstack.v1.CreateNamespaceRequest"> & {
+  /**
+   * name is required; times are the registry's
+   *
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.CreateNamespaceRequest.
+ * Use `create(CreateNamespaceRequestSchema)` to create a new message.
+ */
+export const CreateNamespaceRequestSchema: GenMessage<CreateNamespaceRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 15);
+
+/**
+ * @generated from message orkstack.v1.CreateNamespaceResponse
+ */
+export type CreateNamespaceResponse = Message<"orkstack.v1.CreateNamespaceResponse"> & {
+  /**
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+
+  /**
+   * created is false when an identical namespace already existed, so an
+   * idempotent repeat is distinguishable from the write that did it.
+   *
+   * @generated from field: bool created = 2;
+   */
+  created: boolean;
+};
+
+/**
+ * Describes the message orkstack.v1.CreateNamespaceResponse.
+ * Use `create(CreateNamespaceResponseSchema)` to create a new message.
+ */
+export const CreateNamespaceResponseSchema: GenMessage<CreateNamespaceResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 16);
+
+/**
+ * @generated from message orkstack.v1.GetNamespaceRequest
+ */
+export type GetNamespaceRequest = Message<"orkstack.v1.GetNamespaceRequest"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message orkstack.v1.GetNamespaceRequest.
+ * Use `create(GetNamespaceRequestSchema)` to create a new message.
+ */
+export const GetNamespaceRequestSchema: GenMessage<GetNamespaceRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 17);
+
+/**
+ * @generated from message orkstack.v1.GetNamespaceResponse
+ */
+export type GetNamespaceResponse = Message<"orkstack.v1.GetNamespaceResponse"> & {
+  /**
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.GetNamespaceResponse.
+ * Use `create(GetNamespaceResponseSchema)` to create a new message.
+ */
+export const GetNamespaceResponseSchema: GenMessage<GetNamespaceResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 18);
+
+/**
+ * @generated from message orkstack.v1.ListNamespacesRequest
+ */
+export type ListNamespacesRequest = Message<"orkstack.v1.ListNamespacesRequest"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.ListNamespacesRequest.
+ * Use `create(ListNamespacesRequestSchema)` to create a new message.
+ */
+export const ListNamespacesRequestSchema: GenMessage<ListNamespacesRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 19);
+
+/**
+ * @generated from message orkstack.v1.ListNamespacesResponse
+ */
+export type ListNamespacesResponse = Message<"orkstack.v1.ListNamespacesResponse"> & {
+  /**
+   * @generated from field: repeated orkstack.v1.Namespace namespaces = 1;
+   */
+  namespaces: Namespace[];
+};
+
+/**
+ * Describes the message orkstack.v1.ListNamespacesResponse.
+ * Use `create(ListNamespacesResponseSchema)` to create a new message.
+ */
+export const ListNamespacesResponseSchema: GenMessage<ListNamespacesResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 20);
+
+/**
+ * @generated from message orkstack.v1.UpdateNamespaceRequest
+ */
+export type UpdateNamespaceRequest = Message<"orkstack.v1.UpdateNamespaceRequest"> & {
+  /**
+   * namespace carries the new spec and the etag it was read at. An empty etag
+   * is an unconditional write, which a caller has to ask for explicitly.
+   *
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.UpdateNamespaceRequest.
+ * Use `create(UpdateNamespaceRequestSchema)` to create a new message.
+ */
+export const UpdateNamespaceRequestSchema: GenMessage<UpdateNamespaceRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 21);
+
+/**
+ * @generated from message orkstack.v1.UpdateNamespaceResponse
+ */
+export type UpdateNamespaceResponse = Message<"orkstack.v1.UpdateNamespaceResponse"> & {
+  /**
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.UpdateNamespaceResponse.
+ * Use `create(UpdateNamespaceResponseSchema)` to create a new message.
+ */
+export const UpdateNamespaceResponseSchema: GenMessage<UpdateNamespaceResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 22);
+
+/**
+ * @generated from message orkstack.v1.DeleteNamespaceRequest
+ */
+export type DeleteNamespaceRequest = Message<"orkstack.v1.DeleteNamespaceRequest"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message orkstack.v1.DeleteNamespaceRequest.
+ * Use `create(DeleteNamespaceRequestSchema)` to create a new message.
+ */
+export const DeleteNamespaceRequestSchema: GenMessage<DeleteNamespaceRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 23);
+
+/**
+ * @generated from message orkstack.v1.DeleteNamespaceResponse
+ */
+export type DeleteNamespaceResponse = Message<"orkstack.v1.DeleteNamespaceResponse"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.DeleteNamespaceResponse.
+ * Use `create(DeleteNamespaceResponseSchema)` to create a new message.
+ */
+export const DeleteNamespaceResponseSchema: GenMessage<DeleteNamespaceResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 24);
+
+/**
  * @generated from message orkstack.v1.ListPoolsRequest
  */
 export type ListPoolsRequest = Message<"orkstack.v1.ListPoolsRequest"> & {
@@ -386,7 +604,7 @@ export type ListPoolsRequest = Message<"orkstack.v1.ListPoolsRequest"> & {
  * Use `create(ListPoolsRequestSchema)` to create a new message.
  */
 export const ListPoolsRequestSchema: GenMessage<ListPoolsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 15);
+  messageDesc(file_orkstack_v1_service, 25);
 
 /**
  * @generated from message orkstack.v1.ListPoolsResponse
@@ -412,7 +630,7 @@ export type ListPoolsResponse = Message<"orkstack.v1.ListPoolsResponse"> & {
  * Use `create(ListPoolsResponseSchema)` to create a new message.
  */
 export const ListPoolsResponseSchema: GenMessage<ListPoolsResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 16);
+  messageDesc(file_orkstack_v1_service, 26);
 
 /**
  * @generated from message orkstack.v1.ListPluginsRequest
@@ -425,7 +643,7 @@ export type ListPluginsRequest = Message<"orkstack.v1.ListPluginsRequest"> & {
  * Use `create(ListPluginsRequestSchema)` to create a new message.
  */
 export const ListPluginsRequestSchema: GenMessage<ListPluginsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 17);
+  messageDesc(file_orkstack_v1_service, 27);
 
 /**
  * @generated from message orkstack.v1.PluginInfo
@@ -462,7 +680,7 @@ export type PluginInfo = Message<"orkstack.v1.PluginInfo"> & {
  * Use `create(PluginInfoSchema)` to create a new message.
  */
 export const PluginInfoSchema: GenMessage<PluginInfo> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 18);
+  messageDesc(file_orkstack_v1_service, 28);
 
 /**
  * @generated from message orkstack.v1.ListPluginsResponse
@@ -479,7 +697,7 @@ export type ListPluginsResponse = Message<"orkstack.v1.ListPluginsResponse"> & {
  * Use `create(ListPluginsResponseSchema)` to create a new message.
  */
 export const ListPluginsResponseSchema: GenMessage<ListPluginsResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 19);
+  messageDesc(file_orkstack_v1_service, 29);
 
 /**
  * OrkflowService manages orkflow definitions (the compiled DSL).
@@ -570,13 +788,81 @@ export const RunService: GenService<{
 
 /**
  * NamespaceService manages namespaces and reports the pools they may dispatch
- * onto. Registering, updating and deleting a namespace arrives with the
- * namespace-aware API; this service exists now because a pool is only useful
- * if an operator can see whether anything is serving it.
+ * onto.
+ *
+ * A namespace is a scope that owns orkflow names, runs and pool defaults. The
+ * registry is durable (the artifact store), so any replica answers for any
+ * namespace, including one it never created.
  *
  * @generated from service orkstack.v1.NamespaceService
  */
 export const NamespaceService: GenService<{
+  /**
+   * CreateNamespace registers a namespace.
+   *
+   * It is idempotent for an identical spec: creating the same namespace twice
+   * with the same description, labels, default pool and allowed pools returns
+   * the existing document rather than an error, so a provisioning script is
+   * safe to re-run. A second create that differs is AlreadyExists, naming what
+   * differs — that one is a collision, not a repeat.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.CreateNamespace
+   */
+  createNamespace: {
+    methodKind: "unary";
+    input: typeof CreateNamespaceRequestSchema;
+    output: typeof CreateNamespaceResponseSchema;
+  },
+  /**
+   * GetNamespace reads one namespace. The default namespace always resolves,
+   * whether or not anyone created it.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.GetNamespace
+   */
+  getNamespace: {
+    methodKind: "unary";
+    input: typeof GetNamespaceRequestSchema;
+    output: typeof GetNamespaceResponseSchema;
+  },
+  /**
+   * ListNamespaces returns every registered namespace, ordered by name.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.ListNamespaces
+   */
+  listNamespaces: {
+    methodKind: "unary";
+    input: typeof ListNamespacesRequestSchema;
+    output: typeof ListNamespacesResponseSchema;
+  },
+  /**
+   * UpdateNamespace replaces a namespace's mutable fields.
+   *
+   * It is a compare-and-swap on Namespace.etag: the token a read handed back.
+   * A stale token is FailedPrecondition, so two operators editing at once
+   * cannot silently clobber each other — the loser re-reads and re-applies.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.UpdateNamespace
+   */
+  updateNamespace: {
+    methodKind: "unary";
+    input: typeof UpdateNamespaceRequestSchema;
+    output: typeof UpdateNamespaceResponseSchema;
+  },
+  /**
+   * DeleteNamespace removes a namespace that holds no orkflows.
+   *
+   * It refuses while any orkflow is still stored in it, and says how many:
+   * deleting the registry entry would not delete the definitions, so they
+   * would survive under a namespace nothing lists. The default namespace is
+   * refused unconditionally — every orkflow that names none is in it.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.DeleteNamespace
+   */
+  deleteNamespace: {
+    methodKind: "unary";
+    input: typeof DeleteNamespaceRequestSchema;
+    output: typeof DeleteNamespaceResponseSchema;
+  },
   /**
    * ListPools reports every pool a namespace may dispatch onto, each with the
    * number of Orkers serving it right now and the plugins those Orkers run.
