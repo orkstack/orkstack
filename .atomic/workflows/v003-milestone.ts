@@ -43,17 +43,27 @@ import { Type, type Static } from "typebox";
 import milestoneFinish from "./milestone-finish.js";
 
 // ---------------------------------------------------------------------------
-// Models. Roles per docs/models/model-selection.md; every id and thinking
-// level below was checked against the configured catalog before launch.
-//   design            -> architecture/planning across eight slices  => high
-//   adversarial probe -> high cost of error (silent data leak)      => max
-//   repair            -> triage/repair                              => high
-//   report            -> final reporting                            => medium
+// Models. Roles per docs/MODEL_SELECTION.md; every id and thinking level below
+// was checked against the configured catalog before launch.
+//   design (ARCHITECT) -> contract-setting architecture              => max
+//   adversarial probe  -> high cost of error (silent data leak)      => max
+//   repair             -> triage/repair                              => high
+//   report             -> final reporting                            => medium
 // Slice children pin their own cross-provider chains; they are not overridden.
+//
+// The design stage is the one place a single call is worth `max` twice over:
+// it fixes the proto contract, the store layout and the routing rule that all
+// eight slices inherit, and a slice cannot cheaply revise a decision it was
+// handed. So the level does NOT decay down the chain (docs/MODEL_SELECTION.md
+// rule 6) — a fallback at `:high` would buy a cheaper contract for the same
+// eight slices. claude-fable-5 leads and claude-opus-5 backs it because the
+// first fallback should preserve reasoning depth, not provider spread; the
+// chain still spans all three subscriptions from its third entry.
 // ---------------------------------------------------------------------------
-const DESIGN_MODEL = "anthropic/claude-opus-5:high";
+const DESIGN_MODEL = "anthropic/claude-fable-5:max";
 const DESIGN_FALLBACKS = [
-  "openai-codex/gpt-5.6-luna:high",
+  "anthropic/claude-opus-5:max",
+  "openai-codex/gpt-5.6-sol:max",
   "opencode-go/kimi-k3:max",
 ];
 
@@ -542,32 +552,54 @@ export default workflow({
             // which is exactly the branch this slice was cut from. Merge it
             // forward or those repairs are silently dropped at the final
             // merge, which takes only the LAST branch.
+            // A dirty reused worktree is restored, not refused. A slice only
+            // becomes the stack's base by passing verification, which requires
+            // a clean tree — so anything dirty here arrived AFTER that, from a
+            // probe round regenerating a transcript or a child that died
+            // mid-edit. Neither is work worth keeping, and refusing it strands
+            // the whole stack on a file nobody committed.
             const dirty = run(["git", "status", "--porcelain"], dir);
-            if ((dirty.stdout ?? "").trim() !== "") {
-              return {
-                dir,
-                action: "reused-dirty",
-                ok: false,
-                detail: `worktree has uncommitted changes, refusing to restack:\n${tail(dirty.stdout ?? "")}`,
-              };
+            const discarded = (dirty.stdout ?? "").trim();
+            if (discarded !== "") {
+              run(["git", "checkout", "--", "."], dir);
+              run(["git", "clean", "-fd"], dir);
             }
             const restack = run(["git", "merge", "--no-edit", previousRef], dir, 5 * 60_000);
             if (restack.status !== 0) {
+              // A conflicting restack is not a broken stack, it is WORK, and
+              // it is this slice's work: the base moved because slice N-1 was
+              // repaired in the same code this slice rewrote. Abort the merge
+              // so the child starts from a clean tree, and hand it the
+              // conflict as its first task, under the same reviewers and gates
+              // as everything else. Resolving it here would put an unreviewed
+              // integration of two slices onto the branch.
+              const conflicts = run(
+                ["git", "diff", "--name-only", "--diff-filter=U"],
+                dir,
+              );
+              const files = (conflicts.stdout ?? "").trim();
               run(["git", "merge", "--abort"], dir);
               return {
                 dir,
                 action: "reused-conflict",
-                ok: false,
-                detail: `restacking ${previousRef} into ${slice.branch} conflicts; resolve it by hand:\n${tail(
-                  (restack.stdout ?? "") + (restack.stderr ?? ""),
-                )}`,
+                ok: true,
+                conflicted: true,
+                conflicts: files,
+                detail: `restacking ${previousRef} into ${slice.branch} conflicts in:\n${files}`,
               };
             }
             return {
               dir,
               action: "reused",
               ok: true,
-              detail: tail((restack.stdout ?? "") + (restack.stderr ?? "")),
+              conflicted: false,
+              conflicts: "",
+              detail: [
+                discarded ? `discarded uncommitted leftovers before restacking:\n${discarded}` : "",
+                tail((restack.stdout ?? "") + (restack.stderr ?? "")),
+              ]
+                .filter(Boolean)
+                .join("\n"),
             };
           }
           const add = run(
@@ -579,10 +611,19 @@ export default workflow({
             dir,
             action: "created",
             ok: add.status === 0,
+            conflicted: false,
+            conflicts: "",
             detail: tail((add.stdout ?? "") + (add.stderr ?? "")),
           };
         },
-      )) as { dir: string; action: string; ok: boolean; detail: string };
+      )) as {
+        dir: string;
+        action: string;
+        ok: boolean;
+        conflicted: boolean;
+        conflicts: string;
+        detail: string;
+      };
 
       if (!prepared.ok) {
         stoppedAt = `${slice.id} (worktree)`;
@@ -596,6 +637,39 @@ export default workflow({
           milestone: slice.id,
           objective: slice.objective,
           acceptance: [
+            prepared.conflicted
+              ? [
+                  "<keepContext>",
+                  `STEP 0, BEFORE ANY OTHER WORK: restack this branch onto ${previousRef}.`,
+                  "",
+                  `${previousRef} moved after ${slice.branch} was cut from it — an adversarial`,
+                  "repair round fixed defects in the SAME code this slice rewrote. Run:",
+                  "",
+                  `    git merge --no-commit --no-ff ${previousRef}`,
+                  "",
+                  `and resolve the conflicts. They are in:\n${prepared.conflicts}`,
+                  "",
+                  "Resolve as a UNION OF BEHAVIORS, per AGENTS.md §7. Do NOT take either side",
+                  "whole unless the file is untouched on the other. Both sides are correct about",
+                  "different things: the base slice owns the primitives and the invariants it was",
+                  "repaired to guarantee; this slice owns the architecture built on top of them.",
+                  "The union normally means calling the base's repaired primitive from this",
+                  "slice's newer structure, NOT reinstating an older call site the repair removed.",
+                  "",
+                  "Use the base to see what each side actually changed:",
+                  `    git merge-file -p ours.go $(git merge-base HEAD ${previousRef}):file theirs.go`,
+                  `    git diff --name-only HEAD ${previousRef}`,
+                  "",
+                  "Regenerate, never hand-merge, anything under gen/ or ui/src/lib/gen: resolve",
+                  "proto/ first, then `make proto` and `make tsgen` and take the generated result.",
+                  "",
+                  "The merged tree must COMPILE and pass every gate before you continue to the",
+                  "acceptance items below. When you are done, state in your final message exactly",
+                  "what each side contributed and what the resolution dropped, if anything.",
+                  "</keepContext>",
+                  "",
+                ].join("\n")
+              : "",
             slice.acceptance,
             "",
             "GENERAL (applies to every item above):",
@@ -734,12 +808,23 @@ export default workflow({
         const results = (await ctx.tool(
           `run-probes-${round}`,
           { count: planned.length, dir: lastGoodDir },
-          async () =>
-            planned.map((p) => ({
+          async () => {
+            const out = planned.map((p) => ({
               ...probe(p.argv, lastGoodDir, p.name),
               requirement: p.requirement,
               expectation: p.expectation,
-            })),
+            }));
+            // Probes are READS, and must leave no trace. Several of them run a
+            // proof's reproduce.sh, which regenerates its transcripts by
+            // design, so a probe round reliably dirties the worktree. Left
+            // there it deadlocks the NEXT run: prepare will not restack a
+            // dirty tree, and the slice can never start. Restore to HEAD and
+            // drop anything a probe created. The slice's own work is committed
+            // by this point — verification refused it otherwise.
+            run(["git", "checkout", "--", "."], lastGoodDir);
+            run(["git", "clean", "-fd"], lastGoodDir);
+            return out;
+          },
         )) as (Probe & { requirement: string; expectation: string })[];
 
         probeSummary = results.length > 0 ? summarize(results) : "adversary proposed no probes";

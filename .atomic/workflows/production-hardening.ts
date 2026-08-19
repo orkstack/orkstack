@@ -32,17 +32,22 @@ import { Type, type Static } from "typebox";
 import milestoneFinish from "./milestone-finish.js";
 
 // ---------------------------------------------------------------------------
-// Models. Roles per docs/models/model-selection.md; every id and thinking
-// level below was checked against the configured catalog before launch.
-//   design            -> planning/synthesis                      => high
-//   adversarial probe -> high cost of error (silent corruption)  => max
-//   repair            -> triage/repair                           => high
-//   report            -> final reporting                         => medium
+// Models. Roles per docs/MODEL_SELECTION.md; every id and thinking level below
+// was checked against the configured catalog before launch.
+//   design (ARCHITECT) -> contract-setting architecture           => max
+//   adversarial probe  -> high cost of error (silent corruption)  => max
+//   repair             -> triage/repair                           => high
+//   report             -> final reporting                         => medium
 // Slice children pin their own cross-provider chains; they are not overridden.
+//
+// The architect chain does not decay: every fallback stays at `:max`, because
+// the stage's output is a contract the slices obey rather than advice they
+// weigh (docs/MODEL_SELECTION.md rule 6).
 // ---------------------------------------------------------------------------
-const DESIGN_MODEL = "anthropic/claude-opus-5:high";
+const DESIGN_MODEL = "anthropic/claude-fable-5:max";
 const DESIGN_FALLBACKS = [
-  "openai-codex/gpt-5.6-luna:high",
+  "anthropic/claude-opus-5:max",
+  "openai-codex/gpt-5.6-sol:max",
   "opencode-go/kimi-k3:max",
 ];
 
