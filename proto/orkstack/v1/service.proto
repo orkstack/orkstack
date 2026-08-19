@@ -3,6 +3,7 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 import "orkstack/v1/common.proto";
 import "orkstack/v1/run.proto";
 import "orkstack/v1/orkflow.proto";
@@ -10,11 +11,43 @@ import "orkstack/v1/namespace.proto";
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
 // OrkflowService manages orkflow definitions (the compiled DSL).
+//
+// A version is immutable and a name is unique within a namespace, so the three
+// coordinates (namespace, name, version) address one document for all time.
+// What moves is a per-orkflow POINTER: `current` decides which version an
+// empty version resolves to, and moving it is the only mutation this service
+// performs on an existing orkflow.
 service OrkflowService {
-  // ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+  // ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+  //
+  // It never rewrites a stored version: identical YAML under an existing
+  // version is a no-op that writes nothing, and DIFFERENT YAML under an
+  // existing version is refused (AlreadyExists). An edit therefore always
+  // arrives as a new version — which is what lets a run pinned to a version
+  // keep reading the bytes it pinned.
   rpc ApplyOrkflow(ApplyOrkflowRequest) returns (ApplyOrkflowResponse);
   rpc GetOrkflow(GetOrkflowRequest) returns (GetOrkflowResponse);
   rpc ListOrkflows(ListOrkflowsRequest) returns (ListOrkflowsResponse);
+  // ListOrkflowVersions lists every stored version of one orkflow, newest
+  // applied first, marking the one an empty version resolves to.
+  rpc ListOrkflowVersions(ListOrkflowVersionsRequest) returns (ListOrkflowVersionsResponse);
+  // SetCurrentOrkflowVersion moves the orkflow's current pointer.
+  //
+  // The target must already exist: promoting to an unknown version is
+  // NotFound, so a reader can never observe a pointer to a version that is not
+  // there. Two replicas promoting at once are arbitrated by the store's
+  // compare-and-swap — one value wins, and it is one of the two asked for.
+  rpc SetCurrentOrkflowVersion(SetCurrentOrkflowVersionRequest) returns (SetCurrentOrkflowVersionResponse);
+  // DiffOrkflowVersions renders the unified diff between two versions'
+  // source_yaml.
+  //
+  // The diff is computed SERVER-side, deliberately. Two clients read it (the
+  // CLI and the UI) and a third will follow; a client-side diff would put a
+  // diff dependency in each of them and let their renderings drift, so that
+  // `orkctl orkflow diff` and the version page could disagree about what
+  // changed. One implementation, golden-tested once, rendered verbatim by
+  // every client.
+  rpc DiffOrkflowVersions(DiffOrkflowVersionsRequest) returns (DiffOrkflowVersionsResponse);
 }
 
 message ApplyOrkflowRequest {
@@ -27,16 +60,35 @@ message ApplyOrkflowRequest {
   // one of the two made, and guessing which would store the definition
   // somewhere its author cannot find it.
   string namespace = 2;
-  // 3 is reserved for base_version, the optimistic-concurrency token that
-  // arrives with version operations.
+  // base_version is the optimistic-concurrency token: the version this edit
+  // was derived from. The server compares it against the HEAD version (the
+  // most recently applied one, which is what an editor last read) and refuses
+  // with FailedPrecondition when they differ, naming both — so an edit made
+  // from a stale copy is reported instead of landing beside a newer one
+  // nobody looked at. Empty means unchecked, which is what a plain
+  // `orkctl apply file.yaml` sends.
+  //
+  // It is a VERSION token rather than a content hash. Both detect the same
+  // staleness; only the token names something the user can act on —
+  // `orkctl orkflow diff <name> <base_version> <head>` shows exactly what
+  // arrived underneath the edit. A hash names nothing.
+  string base_version = 3;
 }
 message ApplyOrkflowResponse {
   Orkflow orkflow = 1;
   repeated string warnings = 2;
+  // created is false when this apply stored nothing because the version was
+  // already there with byte-identical source YAML. The orkflow above is then
+  // the STORED document, created_at and all, not the one this request would
+  // have written.
+  bool created = 3;
 }
 message GetOrkflowRequest {
   string name = 1;
-  string version = 2;                    // empty = latest
+  // version selects one stored version. Empty resolves through the current
+  // pointer when one has been set, and to the most recently applied version
+  // when none ever was.
+  string version = 2;
   string namespace = 3;                  // empty = the default namespace
 }
 message GetOrkflowResponse { Orkflow orkflow = 1; }
@@ -48,6 +100,58 @@ message ListOrkflowsRequest {
 message ListOrkflowsResponse {
   repeated Orkflow orkflows = 1;
   string next_page_token = 2;
+}
+
+// OrkflowVersion is one stored version in a version listing: the document's
+// coordinates, not the document.
+message OrkflowVersion {
+  string version = 1;
+  google.protobuf.Timestamp applied_at = 2;
+  // is_current marks the version an empty version resolves to — the pointer's
+  // target when one is set, otherwise the most recently applied version.
+  bool is_current = 3;
+  string description = 4;
+}
+message ListOrkflowVersionsRequest {
+  string name = 1;
+  string namespace = 2;                  // empty = the default namespace
+}
+message ListOrkflowVersionsResponse {
+  repeated OrkflowVersion versions = 1;  // newest applied first
+  // current_version is the pointer's target, empty when nobody ever promoted
+  // this orkflow. Empty does NOT mean "nothing runs": resolution then falls
+  // back to head_version.
+  string current_version = 2;
+  // head_version is the most recently applied version — the edit lineage's
+  // tip, and the base_version an editor should send back.
+  string head_version = 3;
+}
+message SetCurrentOrkflowVersionRequest {
+  string name = 1;
+  string version = 2;                    // must already exist
+  string namespace = 3;                  // empty = the default namespace
+}
+message SetCurrentOrkflowVersionResponse {
+  string name = 1;
+  string namespace = 2;
+  string current_version = 3;
+  // previous_version is what the pointer named before, empty when it was
+  // never set. It is what a rollback promotes back to.
+  string previous_version = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+message DiffOrkflowVersionsRequest {
+  string name = 1;
+  string from_version = 2;               // empty = the resolved current version
+  string to_version = 3;                 // empty = the resolved current version
+  string namespace = 4;                  // empty = the default namespace
+}
+message DiffOrkflowVersionsResponse {
+  // unified_diff is standard unified-diff text, empty when the two versions'
+  // source YAML is identical.
+  string unified_diff = 1;
+  string from_version = 2;               // resolved
+  string to_version = 3;                 // resolved
 }
 
 // RunService submits and observes orkflow executions.

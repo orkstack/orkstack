@@ -48,6 +48,15 @@ const (
 	// OrkflowServiceListOrkflowsProcedure is the fully-qualified name of the OrkflowService's
 	// ListOrkflows RPC.
 	OrkflowServiceListOrkflowsProcedure = "/orkstack.v1.OrkflowService/ListOrkflows"
+	// OrkflowServiceListOrkflowVersionsProcedure is the fully-qualified name of the OrkflowService's
+	// ListOrkflowVersions RPC.
+	OrkflowServiceListOrkflowVersionsProcedure = "/orkstack.v1.OrkflowService/ListOrkflowVersions"
+	// OrkflowServiceSetCurrentOrkflowVersionProcedure is the fully-qualified name of the
+	// OrkflowService's SetCurrentOrkflowVersion RPC.
+	OrkflowServiceSetCurrentOrkflowVersionProcedure = "/orkstack.v1.OrkflowService/SetCurrentOrkflowVersion"
+	// OrkflowServiceDiffOrkflowVersionsProcedure is the fully-qualified name of the OrkflowService's
+	// DiffOrkflowVersions RPC.
+	OrkflowServiceDiffOrkflowVersionsProcedure = "/orkstack.v1.OrkflowService/DiffOrkflowVersions"
 	// RunServiceSubmitRunProcedure is the fully-qualified name of the RunService's SubmitRun RPC.
 	RunServiceSubmitRunProcedure = "/orkstack.v1.RunService/SubmitRun"
 	// RunServiceGetRunProcedure is the fully-qualified name of the RunService's GetRun RPC.
@@ -83,10 +92,36 @@ const (
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
 type OrkflowServiceClient interface {
-	// ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+	// ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+	//
+	// It never rewrites a stored version: identical YAML under an existing
+	// version is a no-op that writes nothing, and DIFFERENT YAML under an
+	// existing version is refused (AlreadyExists). An edit therefore always
+	// arrives as a new version — which is what lets a run pinned to a version
+	// keep reading the bytes it pinned.
 	ApplyOrkflow(context.Context, *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error)
 	GetOrkflow(context.Context, *connect.Request[v1.GetOrkflowRequest]) (*connect.Response[v1.GetOrkflowResponse], error)
 	ListOrkflows(context.Context, *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error)
+	// ListOrkflowVersions lists every stored version of one orkflow, newest
+	// applied first, marking the one an empty version resolves to.
+	ListOrkflowVersions(context.Context, *connect.Request[v1.ListOrkflowVersionsRequest]) (*connect.Response[v1.ListOrkflowVersionsResponse], error)
+	// SetCurrentOrkflowVersion moves the orkflow's current pointer.
+	//
+	// The target must already exist: promoting to an unknown version is
+	// NotFound, so a reader can never observe a pointer to a version that is not
+	// there. Two replicas promoting at once are arbitrated by the store's
+	// compare-and-swap — one value wins, and it is one of the two asked for.
+	SetCurrentOrkflowVersion(context.Context, *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error)
+	// DiffOrkflowVersions renders the unified diff between two versions'
+	// source_yaml.
+	//
+	// The diff is computed SERVER-side, deliberately. Two clients read it (the
+	// CLI and the UI) and a third will follow; a client-side diff would put a
+	// diff dependency in each of them and let their renderings drift, so that
+	// `orkctl orkflow diff` and the version page could disagree about what
+	// changed. One implementation, golden-tested once, rendered verbatim by
+	// every client.
+	DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error)
 }
 
 // NewOrkflowServiceClient constructs a client for the orkstack.v1.OrkflowService service. By
@@ -118,14 +153,35 @@ func NewOrkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflows")),
 			connect.WithClientOptions(opts...),
 		),
+		listOrkflowVersions: connect.NewClient[v1.ListOrkflowVersionsRequest, v1.ListOrkflowVersionsResponse](
+			httpClient,
+			baseURL+OrkflowServiceListOrkflowVersionsProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflowVersions")),
+			connect.WithClientOptions(opts...),
+		),
+		setCurrentOrkflowVersion: connect.NewClient[v1.SetCurrentOrkflowVersionRequest, v1.SetCurrentOrkflowVersionResponse](
+			httpClient,
+			baseURL+OrkflowServiceSetCurrentOrkflowVersionProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("SetCurrentOrkflowVersion")),
+			connect.WithClientOptions(opts...),
+		),
+		diffOrkflowVersions: connect.NewClient[v1.DiffOrkflowVersionsRequest, v1.DiffOrkflowVersionsResponse](
+			httpClient,
+			baseURL+OrkflowServiceDiffOrkflowVersionsProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("DiffOrkflowVersions")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // orkflowServiceClient implements OrkflowServiceClient.
 type orkflowServiceClient struct {
-	applyOrkflow *connect.Client[v1.ApplyOrkflowRequest, v1.ApplyOrkflowResponse]
-	getOrkflow   *connect.Client[v1.GetOrkflowRequest, v1.GetOrkflowResponse]
-	listOrkflows *connect.Client[v1.ListOrkflowsRequest, v1.ListOrkflowsResponse]
+	applyOrkflow             *connect.Client[v1.ApplyOrkflowRequest, v1.ApplyOrkflowResponse]
+	getOrkflow               *connect.Client[v1.GetOrkflowRequest, v1.GetOrkflowResponse]
+	listOrkflows             *connect.Client[v1.ListOrkflowsRequest, v1.ListOrkflowsResponse]
+	listOrkflowVersions      *connect.Client[v1.ListOrkflowVersionsRequest, v1.ListOrkflowVersionsResponse]
+	setCurrentOrkflowVersion *connect.Client[v1.SetCurrentOrkflowVersionRequest, v1.SetCurrentOrkflowVersionResponse]
+	diffOrkflowVersions      *connect.Client[v1.DiffOrkflowVersionsRequest, v1.DiffOrkflowVersionsResponse]
 }
 
 // ApplyOrkflow calls orkstack.v1.OrkflowService.ApplyOrkflow.
@@ -143,12 +199,53 @@ func (c *orkflowServiceClient) ListOrkflows(ctx context.Context, req *connect.Re
 	return c.listOrkflows.CallUnary(ctx, req)
 }
 
+// ListOrkflowVersions calls orkstack.v1.OrkflowService.ListOrkflowVersions.
+func (c *orkflowServiceClient) ListOrkflowVersions(ctx context.Context, req *connect.Request[v1.ListOrkflowVersionsRequest]) (*connect.Response[v1.ListOrkflowVersionsResponse], error) {
+	return c.listOrkflowVersions.CallUnary(ctx, req)
+}
+
+// SetCurrentOrkflowVersion calls orkstack.v1.OrkflowService.SetCurrentOrkflowVersion.
+func (c *orkflowServiceClient) SetCurrentOrkflowVersion(ctx context.Context, req *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error) {
+	return c.setCurrentOrkflowVersion.CallUnary(ctx, req)
+}
+
+// DiffOrkflowVersions calls orkstack.v1.OrkflowService.DiffOrkflowVersions.
+func (c *orkflowServiceClient) DiffOrkflowVersions(ctx context.Context, req *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error) {
+	return c.diffOrkflowVersions.CallUnary(ctx, req)
+}
+
 // OrkflowServiceHandler is an implementation of the orkstack.v1.OrkflowService service.
 type OrkflowServiceHandler interface {
-	// ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+	// ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+	//
+	// It never rewrites a stored version: identical YAML under an existing
+	// version is a no-op that writes nothing, and DIFFERENT YAML under an
+	// existing version is refused (AlreadyExists). An edit therefore always
+	// arrives as a new version — which is what lets a run pinned to a version
+	// keep reading the bytes it pinned.
 	ApplyOrkflow(context.Context, *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error)
 	GetOrkflow(context.Context, *connect.Request[v1.GetOrkflowRequest]) (*connect.Response[v1.GetOrkflowResponse], error)
 	ListOrkflows(context.Context, *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error)
+	// ListOrkflowVersions lists every stored version of one orkflow, newest
+	// applied first, marking the one an empty version resolves to.
+	ListOrkflowVersions(context.Context, *connect.Request[v1.ListOrkflowVersionsRequest]) (*connect.Response[v1.ListOrkflowVersionsResponse], error)
+	// SetCurrentOrkflowVersion moves the orkflow's current pointer.
+	//
+	// The target must already exist: promoting to an unknown version is
+	// NotFound, so a reader can never observe a pointer to a version that is not
+	// there. Two replicas promoting at once are arbitrated by the store's
+	// compare-and-swap — one value wins, and it is one of the two asked for.
+	SetCurrentOrkflowVersion(context.Context, *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error)
+	// DiffOrkflowVersions renders the unified diff between two versions'
+	// source_yaml.
+	//
+	// The diff is computed SERVER-side, deliberately. Two clients read it (the
+	// CLI and the UI) and a third will follow; a client-side diff would put a
+	// diff dependency in each of them and let their renderings drift, so that
+	// `orkctl orkflow diff` and the version page could disagree about what
+	// changed. One implementation, golden-tested once, rendered verbatim by
+	// every client.
+	DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error)
 }
 
 // NewOrkflowServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -176,6 +273,24 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 		connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflows")),
 		connect.WithHandlerOptions(opts...),
 	)
+	orkflowServiceListOrkflowVersionsHandler := connect.NewUnaryHandler(
+		OrkflowServiceListOrkflowVersionsProcedure,
+		svc.ListOrkflowVersions,
+		connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflowVersions")),
+		connect.WithHandlerOptions(opts...),
+	)
+	orkflowServiceSetCurrentOrkflowVersionHandler := connect.NewUnaryHandler(
+		OrkflowServiceSetCurrentOrkflowVersionProcedure,
+		svc.SetCurrentOrkflowVersion,
+		connect.WithSchema(orkflowServiceMethods.ByName("SetCurrentOrkflowVersion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	orkflowServiceDiffOrkflowVersionsHandler := connect.NewUnaryHandler(
+		OrkflowServiceDiffOrkflowVersionsProcedure,
+		svc.DiffOrkflowVersions,
+		connect.WithSchema(orkflowServiceMethods.ByName("DiffOrkflowVersions")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.OrkflowService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case OrkflowServiceApplyOrkflowProcedure:
@@ -184,6 +299,12 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 			orkflowServiceGetOrkflowHandler.ServeHTTP(w, r)
 		case OrkflowServiceListOrkflowsProcedure:
 			orkflowServiceListOrkflowsHandler.ServeHTTP(w, r)
+		case OrkflowServiceListOrkflowVersionsProcedure:
+			orkflowServiceListOrkflowVersionsHandler.ServeHTTP(w, r)
+		case OrkflowServiceSetCurrentOrkflowVersionProcedure:
+			orkflowServiceSetCurrentOrkflowVersionHandler.ServeHTTP(w, r)
+		case OrkflowServiceDiffOrkflowVersionsProcedure:
+			orkflowServiceDiffOrkflowVersionsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -203,6 +324,18 @@ func (UnimplementedOrkflowServiceHandler) GetOrkflow(context.Context, *connect.R
 
 func (UnimplementedOrkflowServiceHandler) ListOrkflows(context.Context, *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ListOrkflows is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) ListOrkflowVersions(context.Context, *connect.Request[v1.ListOrkflowVersionsRequest]) (*connect.Response[v1.ListOrkflowVersionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ListOrkflowVersions is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) SetCurrentOrkflowVersion(context.Context, *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.SetCurrentOrkflowVersion is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.DiffOrkflowVersions is not implemented"))
 }
 
 // RunServiceClient is a client for the orkstack.v1.RunService service.
