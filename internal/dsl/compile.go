@@ -31,10 +31,16 @@ var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // fail at the registry with "exceeds 200 bytes" — a name a document can
 // reference and nothing can store, which is the same "one rule, two answers"
 // defect the pattern itself closed, measured in the one class the corpus had
-// no member of. pkg/ may not import internal/, so the two bounds are held
-// together by measurement: TestNamespaceName_RegistryAndCompilerAgree and
+// no member of. The two bounds are not one constant, and the reason is
+// layering rather than the compiler: the artifact store is a public package
+// and this one is not, so the store does not import this package and a
+// program that only stores artifacts never builds the YAML front end. They
+// are held together by measurement instead —
+// TestNamespaceName_RegistryAndCompilerAgree and
 // TestNamespacePools_AreExactlyThePoolsDispatchCanReach both carry a name at
-// the bound and a name one byte over.
+// the bound and a name one byte over. Both are tests inside pkg/artifacts
+// that import this package, which is free: a test dependency is not part of
+// an importer's build.
 const MaxSlug = 200
 
 // checkSlug reports why value cannot be used as an identifier, naming the kind

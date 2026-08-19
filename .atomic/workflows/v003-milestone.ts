@@ -239,7 +239,11 @@ const SLICES: Slice[] = [
       "4. Errors are actionable: submitting into a missing namespace says which namespace, and lists the namespaces that do exist.",
       "5. Golden CLI tests cover both human and --json output for the new commands, following cmd/orkctl/golden_test.go.",
       "6. M10.1 left an interim guard in ApplyOrkflow rejecting a non-default namespace, because the read paths could not honour it yet. This slice is what it was waiting for: REMOVE the guard, and prove end to end that a non-default namespace now applies, lists, reads and submits. A guard that outlives the slice it was waiting for is a bug.",
-      "7. proof/M10.3/ with README.md, test.log, a CLI session transcript covering two isolated namespaces, and reproduce.sh.",
+      "7. A run's namespace survives every snapshot merge. engine.mergeRunSnapshot drops Namespace when a later snapshot omits it, so a run silently becomes `default` — and because the namespace is what authorizes a namespace-scoped read or cancel, that is a tenancy boundary failing open, not a display bug. Carry the field the way the other identity fields are carried, and add a test that merges a later snapshot with no namespace and asserts the original survives.",
+      "8. Namespace validation is enforced on READ paths, not only on write. ListOrkflows, ListRuns and GetNamespace accept `Payments`, `pay ments`, `1payments` and `pay/ments` and fail somewhere downstream instead of returning InvalidArgument at the boundary. artifacts.NamespaceKey already knows the rule; wire it into the read paths and return InvalidArgument, so a malformed name is one clear error rather than a NotFound that looks like an empty namespace.",
+      "9. The proto and the implementation must agree about UpdateNamespace. service.proto documents an empty etag as an unconditional write; internal/api/namespaces.go writes with IfAbsent:true and fails FailedPrecondition. Pick the behavior you want, make the code do it, and make the comment say it. A proto comment that contradicts the server is worse than no comment: every client is written against it.",
+      "10. ListPools must survive an unreachable orkflow store. pools.go comments that a store failure is non-fatal and falls back to the pools the namespaces define, and then errors instead. Either implement the documented fallback or delete the claim — and test it with a store that fails, because a fallback nobody exercises is a fallback that does not work.",
+      "11. proof/M10.3/ with README.md, test.log, a CLI session transcript covering two isolated namespaces, and reproduce.sh.",
     ].join("\n"),
     scopeLock:
       "internal/api/, cmd/orkctl/, proto/ (only if a field is missing), docs/, proof/M10.3/",
@@ -708,15 +712,50 @@ export default workflow({
         { dir, branch: slice.branch },
         async () => {
           const committed = probe(["git", "status", "--porcelain"], dir, "committed");
-          const gates = slice.checks.map((argv, i) => probe(argv, dir, `gate-${i}`));
-          const head = run(["git", "rev-parse", "HEAD"], dir);
-          const uncommitted = committed.stdout
+          let uncommitted = committed.stdout
             .split("\n")
             .filter((l) => l.trim() !== "" && !/\.atomic|research\//.test(l));
+
+          // Running this repo's gates REGENERATES committed proof artifacts of
+          // EARLIER milestones — proof/M8.5/docs-claims-sweep.txt asserts the
+          // docs still match the tree, and this milestone changes the tree, so
+          // its output legitimately moves. AGENTS.md §7 says to rerun an
+          // affected milestone's proof after touching its code, which makes
+          // the regenerated file the correct evidence rather than dirt. Commit
+          // it and carry on; stalling an eight-slice stack on a text file the
+          // suite rewrites deterministically is the wrong trade. Dirt anywhere
+          // else, including this slice's OWN proof directory, still fails: the
+          // slice owns that evidence and must commit it deliberately.
+          const ownProof = `proof/${slice.id}/`;
+          const isForeignProof = (line: string) => {
+            const path = line.slice(3).trim();
+            return (
+              line.startsWith(" M ") && path.startsWith("proof/") && !path.startsWith(ownProof)
+            );
+          };
+          let refreshed: string[] = [];
+          if (uncommitted.length > 0 && uncommitted.every(isForeignProof)) {
+            refreshed = uncommitted.map((l) => l.slice(3).trim());
+            run(["git", "add", ...refreshed], dir);
+            run(
+              [
+                "git",
+                "commit",
+                "-m",
+                `chore(proof): regenerate an earlier milestone's evidence on ${slice.branch}\n\nThe gates rewrote ${refreshed.join(", ")}. AGENTS.md §7: a proof taken on an\nearlier tree is a claim about this one that nothing has checked, so the\nregenerated output is committed rather than discarded.`,
+              ],
+              dir,
+            );
+            uncommitted = [];
+          }
+
+          const gates = slice.checks.map((argv, i) => probe(argv, dir, `gate-${i}`));
+          const head = run(["git", "rev-parse", "HEAD"], dir);
           return {
             ok: uncommitted.length === 0 && gates.every((g) => g.ok),
             head: (head.stdout ?? "").trim(),
             uncommitted,
+            refreshed,
             summary: summarize(gates),
             detail: failureDetail(gates),
           };
@@ -725,6 +764,7 @@ export default workflow({
         ok: boolean;
         head: string;
         uncommitted: string[];
+        refreshed: string[];
         summary: string;
         detail: string;
       };

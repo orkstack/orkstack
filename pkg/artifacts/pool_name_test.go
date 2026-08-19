@@ -12,12 +12,13 @@ import (
 // The registry stores two routing targets — default_pool and allowed_pools —
 // and M10.2 is the slice that reads them. A name this store accepts and
 // dispatch refuses is a value nothing can ever honour, so the two rules must
-// be the same rule. They cannot be the same CODE: pkg/ may not import
-// internal/, or no external importer of pkg/artifacts could build. So they are
-// the same rule by measurement, here, in a test — which no external importer
-// builds either.
+// be the same rule. They are not the same CODE, and the reason is layering,
+// not the compiler: nothing stops this package importing internal/task, but
+// doing so from a non-test file would pull the Temporal SDK into the build of
+// every program that stores an artifact. So they are the same rule by
+// measurement, here, in a test — which no importer of this package builds.
 //
-// The import below is the whole point of the file: it is the only place
+// The import above is the whole point of the file: it is the only place
 // pkg/artifacts names internal/task, and it exists to make drift a test
 // failure rather than a stored value M10.2 must reject.
 
