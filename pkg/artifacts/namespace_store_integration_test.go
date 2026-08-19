@@ -100,7 +100,7 @@ func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T)
 	for _, o := range stored {
 		orkflow := testOrkflow(t, o.name, o.version, time.Now().UTC())
 		orkflow.Namespace = nsName
-		if err := orkflowStore.Put(ctx, orkflow); err != nil {
+		if _, _, err := orkflowStore.Put(ctx, orkflow); err != nil {
 			t.Fatalf("Put %s@%s: %v", o.name, o.version, err)
 		}
 	}

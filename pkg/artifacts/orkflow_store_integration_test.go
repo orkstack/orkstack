@@ -110,7 +110,7 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 
 	applied := time.Now().UTC().Truncate(time.Millisecond)
 	first := testOrkflow(t, name, "0.1.0", applied)
-	if err := store.Put(ctx, first); err != nil {
+	if _, _, err := store.Put(ctx, first); err != nil {
 		t.Fatalf("Put(0.1.0): %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	// exactly as they were.
 	second := testOrkflow(t, name, "0.2.0", applied.Add(time.Second))
 	second.Description = "second version, different content"
-	if err := store.Put(ctx, second); err != nil {
+	if _, _, err := store.Put(ctx, second); err != nil {
 		t.Fatalf("Put(0.2.0): %v", err)
 	}
 	secondKey := fmt.Sprintf("metadata/orkflows/%s/%s/0.2.0.json", artifacts.DefaultNamespace, name)
@@ -155,29 +155,38 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 		t.Fatalf("publishing 0.2.0 rewrote 0.1.0:\nbefore:\n%s\nafter:\n%s", document, after)
 	}
 
-	// Re-applying a version replaces that one object and nothing else: the
-	// same definition writes the same bytes, a changed one changes only its
-	// own version.
-	if err := store.Put(ctx, first); err != nil {
+	// Re-applying the SAME definition writes nothing: same object, same bytes,
+	// same created_at, and the call says it created nothing.
+	restored, created, err := store.Put(ctx, first)
+	if err != nil {
 		t.Fatalf("Put(0.1.0) again: %v", err)
+	}
+	if created {
+		t.Error("re-applying an existing version reported that it created it")
+	}
+	if restored.GetCreatedAt().AsTime() != first.GetCreatedAt().AsTime() {
+		t.Errorf("re-applying returned created_at %s, want the stored %s",
+			restored.GetCreatedAt().AsTime(), first.GetCreatedAt().AsTime())
 	}
 	if again := readKey(t, ctx, raw, cfg.S3Bucket, firstKey); !bytes.Equal(document, again) {
 		t.Fatalf("re-applying the same definition changed its object:\nbefore:\n%s\nafter:\n%s",
 			document, again)
 	}
+
+	// A DIFFERENT definition under a stored version is refused. A version is
+	// immutable: a run pinned to 0.1.0 reads this object long after the apply,
+	// so rewriting it would change what an already-started run executes.
 	amended := testOrkflow(t, name, "0.1.0", applied)
 	amended.Description = "amended in place"
-	if err := store.Put(ctx, amended); err != nil {
-		t.Fatalf("Put(0.1.0) amended: %v", err)
+	if _, _, err := store.Put(ctx, amended); !errors.Is(err, artifacts.ErrVersionExists) {
+		t.Fatalf("Put(0.1.0) amended = %v, want artifacts.ErrVersionExists", err)
 	}
-	if got := string(readKey(t, ctx, raw, cfg.S3Bucket, firstKey)); !strings.Contains(got, "amended in place") {
-		t.Fatalf("re-applying 0.1.0 did not replace its object:\n%s", got)
+	if got := readKey(t, ctx, raw, cfg.S3Bucket, firstKey); !bytes.Equal(document, got) {
+		t.Fatalf("a refused amendment still changed the object:\nbefore:\n%s\nafter:\n%s",
+			document, got)
 	}
 	if got := string(readKey(t, ctx, raw, cfg.S3Bucket, secondKey)); !strings.Contains(got, "second version") {
 		t.Fatalf("re-applying 0.1.0 disturbed 0.2.0:\n%s", got)
-	}
-	if err := store.Put(ctx, first); err != nil { // leave the version as this test found it
-		t.Fatalf("Put(0.1.0) restore: %v", err)
 	}
 
 	// Reads: an exact version, and "latest" meaning the most recently applied.
@@ -238,7 +247,7 @@ func TestS3OrkflowStore_OutlivesTheStoreThatWroteIt(t *testing.T) {
 	})
 
 	wf := testOrkflow(t, name, "1.0.0", time.Now().UTC())
-	if err := writer.Put(ctx, wf); err != nil {
+	if _, _, err := writer.Put(ctx, wf); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
@@ -286,7 +295,7 @@ func TestS3OrkflowStore_ReportsAMissingOrkflowAsNotFound(t *testing.T) {
 	if _, err := store.Get(ctx, artifacts.DefaultNamespace, "../../etc/passwd", "0.1.0"); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 		t.Errorf("Get(traversal) = %v, want ErrInvalidOrkflow", err)
 	}
-	if err := store.Put(ctx, &orkstackv1.Orkflow{Name: "no-version"}); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
+	if _, _, err := store.Put(ctx, &orkstackv1.Orkflow{Name: "no-version"}); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 		t.Errorf("Put(no version) = %v, want ErrInvalidOrkflow", err)
 	}
 }
@@ -315,7 +324,7 @@ func TestOrkflowStore_TwoNamespacesHoldTheSameNameIndependently(t *testing.T) {
 	inB.Namespace = nsB
 	inB.SourceYaml = "namespace: " + nsB + "\nname: " + name + "\n# B\n"
 	for _, wf := range []*orkstackv1.Orkflow{inA, inB} {
-		if err := store.Put(ctx, wf); err != nil {
+		if _, _, err := store.Put(ctx, wf); err != nil {
 			t.Fatalf("Put(%s): %v", wf.GetNamespace(), err)
 		}
 	}

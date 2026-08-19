@@ -262,7 +262,7 @@ func TestLatestOrkflow_IsTheMostRecentlyApplied(t *testing.T) {
 	}
 }
 
-func TestLatestByName_ReturnsOneVersionPerNameOrderedByName(t *testing.T) {
+func TestResolveByName_ReturnsOneVersionPerNameOrderedByName(t *testing.T) {
 	stamp := func(name, version string, seconds int) *orkstackv1.Orkflow {
 		return &orkstackv1.Orkflow{
 			Name:      name,
@@ -270,19 +270,36 @@ func TestLatestByName_ReturnsOneVersionPerNameOrderedByName(t *testing.T) {
 			CreatedAt: timestamppb.New(time.Date(2026, 8, 16, 12, 0, seconds, 0, time.UTC)),
 		}
 	}
-	got := latestByName([]*orkstackv1.Orkflow{
+	all := []*orkstackv1.Orkflow{
 		stamp("zeta", "1.0.0", 1),
 		stamp("alpha", "0.1.0", 2),
 		stamp("alpha", "0.2.0", 3),
 		stamp("mid", "9.9.9", 0),
-	})
-
-	want := []string{"alpha@0.2.0", "mid@9.9.9", "zeta@1.0.0"}
-	rendered := make([]string, 0, len(got))
-	for _, wf := range got {
-		rendered = append(rendered, wf.GetName()+"@"+wf.GetVersion())
 	}
-	if strings.Join(rendered, ",") != strings.Join(want, ",") {
-		t.Errorf("latestByName = %v, want %v", rendered, want)
+	render := func(got []*orkstackv1.Orkflow) string {
+		rendered := make([]string, 0, len(got))
+		for _, wf := range got {
+			rendered = append(rendered, wf.GetName()+"@"+wf.GetVersion())
+		}
+		return strings.Join(rendered, ",")
+	}
+
+	// Nobody promoted anything: the most recently applied version of each.
+	if got, want := render(resolveByName(all, nil)),
+		"alpha@0.2.0,mid@9.9.9,zeta@1.0.0"; got != want {
+		t.Errorf("resolveByName(no pointers) = %v, want %v", got, want)
+	}
+
+	// A promotion decides what that name resolves to, and only that name.
+	if got, want := render(resolveByName(all, map[string]string{"alpha": "0.1.0"})),
+		"alpha@0.1.0,mid@9.9.9,zeta@1.0.0"; got != want {
+		t.Errorf("resolveByName(alpha promoted) = %v, want %v", got, want)
+	}
+
+	// A pointer naming a version this scan did not see falls back to the head
+	// rather than dropping the orkflow out of the listing.
+	if got, want := render(resolveByName(all, map[string]string{"alpha": "7.7.7"})),
+		"alpha@0.2.0,mid@9.9.9,zeta@1.0.0"; got != want {
+		t.Errorf("resolveByName(dangling pointer) = %v, want %v", got, want)
 	}
 }
