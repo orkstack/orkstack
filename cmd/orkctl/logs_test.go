@@ -29,6 +29,13 @@ func newLogFixture(t *testing.T) (*fixture, *cliLogStore) {
 	return f, logs
 }
 
+// quietGap is a silence long enough to outlast many of the engine's poll
+// cycles (5–25 ms below). Every "it is still following" claim in this file is
+// measured across one, because without it the test races the engine and a
+// follower that quietly stopped passes whenever the next write happens to
+// land inside a single poll interval.
+const quietGap = 300 * time.Millisecond
+
 // cliLogStore is the shared bucket as the CLI's engine sees it.
 type cliLogStore struct {
 	mu     sync.Mutex
@@ -145,15 +152,24 @@ func TestRunLogs_FollowPrintsWhileTheRunIsLiveAndExitsOnTheTerminalState(t *test
 	go func() { done <- f.runTo(out, "run", "logs", "run-logs-3", "--task", "build", "-f") }()
 
 	awaitOutput(t, out, "first")
+
+	// A QUIET GAP, longer than many of the engine's poll cycles. It is what
+	// makes the claim below a measurement rather than a race: a follower that
+	// ended at the first sweep finding nothing has already exited, and the
+	// line written after it could never be printed.
+	time.Sleep(quietGap)
 	select {
 	case outcome := <-done:
-		t.Fatalf("the command exited while the run was still RUNNING: %+v", outcome)
+		t.Fatalf("the command exited after %s while the run was still RUNNING: %+v",
+			quietGap, outcome)
 	default:
 	}
 
-	// Written after the follower attached: this is the live half.
+	// Written long after the follower attached: this is the live half.
 	logs.write("run-logs-3", "build", 2, "second\n")
 	awaitOutput(t, out, "second")
+
+	time.Sleep(quietGap)
 
 	// The run finishes: the command must return on its own.
 	seedLoggedRun(t, f, "run-logs-3", orkstackv1.Status_STATUS_SUCCEEDED, "build")

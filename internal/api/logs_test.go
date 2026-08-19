@@ -30,6 +30,13 @@ type memoryLogStore struct {
 	chunks []artifacts.LogChunk
 }
 
+// quietGap is a silence long enough to outlast many poll cycles of the
+// fixture's log poller (5–20 ms below). Every "it is still following" claim in
+// this file is measured across one, because without it the test races the
+// server and a stream that quietly ended passes whenever the next write lands
+// inside a single poll interval.
+const quietGap = 300 * time.Millisecond
+
 func (s *memoryLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogChunk) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -182,10 +189,15 @@ func TestStreamTaskLogs_FollowsChunksWrittenAfterTheReaderConnected(t *testing.T
 		t.Fatalf("first chunk = %q, want %q", got, "before\n")
 	}
 
-	// Written AFTER the reader is attached and blocked on Receive.
+	// A QUIET GAP, longer than many poll cycles. It is the load-bearing part
+	// of this test: a follower that ends at the first sweep that finds nothing
+	// is dead by now, so the chunk written after it could never arrive. Without
+	// the gap the two race, and a non-following implementation passes whenever
+	// the write happens to land inside one poll interval.
+	time.Sleep(quietGap)
 	fixture.logs.write(ref, 2, "after\n")
 	if !stream.Receive() {
-		t.Fatalf("the chunk written mid-stream never arrived: %v", stream.Err())
+		t.Fatalf("the chunk written after a %s silence never arrived: %v", quietGap, stream.Err())
 	}
 	if got := string(stream.Msg().GetData()); got != "after\n" {
 		t.Fatalf("second chunk = %q, want %q", got, "after\n")
@@ -195,7 +207,9 @@ func TestStreamTaskLogs_FollowsChunksWrittenAfterTheReaderConnected(t *testing.T
 	}
 
 	// Now the task finishes: the stream must end, and it must end after one
-	// more sweep that picks up whatever landed with the terminal state.
+	// more sweep that picks up whatever landed with the terminal state. The
+	// same quiet gap first, for the same reason.
+	time.Sleep(quietGap)
 	fixture.logs.write(ref, 3, "final\n")
 	fixture.reader.setRun(finish(runningRun(run.GetId(), "build"), orkstackv1.Status_STATUS_SUCCEEDED))
 
@@ -437,10 +451,14 @@ func TestWebSocketTaskLogs_ReplaysAndFollowsTheSameStream(t *testing.T) {
 		t.Fatalf("first frame = %q", got)
 	}
 
+	// The same quiet gap the RPC test uses, for the same reason: a socket that
+	// ended at the first empty sweep is gone by now, and the frame below could
+	// not arrive.
+	time.Sleep(quietGap)
 	fixture.logs.write(ref, 2, "socket line 2\n")
 	second := readLogFrame(t, ctx, conn)
 	if got := string(second.GetData()); got != "socket line 2\n" {
-		t.Fatalf("second frame = %q", got)
+		t.Fatalf("second frame = %q, want the line written after a %s silence", got, quietGap)
 	}
 
 	fixture.reader.setRun(finish(runningRun(run.GetId(), "build"), orkstackv1.Status_STATUS_SUCCEEDED))
