@@ -74,6 +74,7 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 // globalFlags holds the persistent flags and the derived API clients.
 type globalFlags struct {
 	server         string
+	namespace      string
 	json           bool
 	timeout        time.Duration
 	timeoutChanged bool
@@ -88,7 +89,10 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		Use:   "orkctl",
 		Short: "Control and observe OrkStack orkflows",
 		Long: "orkctl drives the OrkStack engine: apply orkflow DSL files, submit runs,\n" +
-			"watch their events live, and inspect runs, orkflows, and plugins.",
+			"watch their events live, and inspect runs, orkflows, and plugins.\n\n" +
+			"Everything an orkflow or a run belongs to is scoped by a namespace.\n" +
+			"--namespace picks one for a single command; `orkctl namespace use`\n" +
+			"remembers one so it does not have to be typed again.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -97,12 +101,18 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 					g.server = fromEnv
 				}
 			}
+			if err := g.resolveNamespace(cmd); err != nil {
+				return err
+			}
 			g.timeoutChanged = cmd.Flags().Changed("timeout")
 			return g.validate()
 		},
 	}
 	root.PersistentFlags().StringVar(&g.server, "server", defaultServer,
 		"OrkStack engine base URL (env "+serverEnvVar+")")
+	root.PersistentFlags().StringVarP(&g.namespace, "namespace", "n", "",
+		"namespace to act in (env "+namespaceEnvVar+
+			", then `orkctl namespace use`; default \"default\")")
 	root.PersistentFlags().BoolVar(&g.json, "json", false,
 		"emit machine-readable JSON instead of human tables")
 	root.PersistentFlags().DurationVar(&g.timeout, "timeout", 30*time.Second,
@@ -110,6 +120,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 
 	root.AddCommand(
 		newApplyCommand(g),
+		newNamespaceCommand(g),
 		newOrkflowCommand(g),
 		newRunCommand(g),
 		newPluginCommand(g),
@@ -117,6 +128,34 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newVersionCommand(g),
 	)
 	return root, g
+}
+
+// resolveNamespace settles which namespace this invocation acts in.
+//
+// Precedence, most specific first: the --namespace flag, ORK_NAMESPACE, the
+// persisted default from `orkctl namespace use`, then the server's own default
+// namespace (sent as an empty string, so the CLI never has to know its name).
+// The order is the ordinary one — what you typed beats what your shell says
+// beats what you saved — and each step is only consulted when the one above it
+// said nothing.
+//
+// An unreadable config file is an error rather than a shrug: running against
+// `default` when the user believes they selected `payments` is the mistake
+// this whole flag exists to prevent.
+func (g *globalFlags) resolveNamespace(cmd *cobra.Command) error {
+	if cmd.Flags().Changed("namespace") {
+		return nil
+	}
+	if fromEnv := os.Getenv(namespaceEnvVar); fromEnv != "" {
+		g.namespace = fromEnv
+		return nil
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	g.namespace = cfg.Namespace
+	return nil
 }
 
 // closeIdleConnections releases the transport's sockets once the command ends.
@@ -176,6 +215,10 @@ func (g *globalFlags) runClient() orkstackv1connect.RunServiceClient {
 
 func (g *globalFlags) pluginClient() orkstackv1connect.PluginServiceClient {
 	return orkstackv1connect.NewPluginServiceClient(g.httpClient(), g.baseURL())
+}
+
+func (g *globalFlags) namespaceClient() orkstackv1connect.NamespaceServiceClient {
+	return orkstackv1connect.NewNamespaceServiceClient(g.httpClient(), g.baseURL())
 }
 
 func (g *globalFlags) baseURL() string {

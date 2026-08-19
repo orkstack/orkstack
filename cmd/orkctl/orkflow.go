@@ -32,7 +32,7 @@ func newOrkflowListCommand(g *globalFlags) *cobra.Command {
 			defer cancel()
 
 			resp, err := g.orkflowClient().ListOrkflows(ctx, connect.NewRequest(
-				&orkstackv1.ListOrkflowsRequest{PageSize: limit},
+				&orkstackv1.ListOrkflowsRequest{PageSize: limit, Namespace: g.namespace},
 			))
 			if err != nil {
 				return rpcError("list orkflows", err)
@@ -58,7 +58,7 @@ func newOrkflowGetCommand(g *globalFlags) *cobra.Command {
 			defer cancel()
 
 			resp, err := g.orkflowClient().GetOrkflow(ctx, connect.NewRequest(
-				&orkstackv1.GetOrkflowRequest{Name: args[0], Version: version},
+				&orkstackv1.GetOrkflowRequest{Name: args[0], Version: version, Namespace: g.namespace},
 			))
 			if err != nil {
 				return rpcError("get orkflow", err)

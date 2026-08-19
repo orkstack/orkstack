@@ -54,6 +54,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 				OrkflowVersion: version,
 				Input:          payload,
 				IdempotencyKey: idempotencyKey,
+				Namespace:      g.namespace,
 			}))
 			if err != nil {
 				return rpcError("submit run", err)
@@ -131,6 +132,7 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 				OrkflowName: orkflowName,
 				Status:      status,
 				PageSize:    limit,
+				Namespace:   g.namespace,
 			}))
 			if err != nil {
 				return rpcError("list runs", err)

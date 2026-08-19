@@ -7,7 +7,7 @@ applied to the `ork` engine with `orkctl apply`.
 
 | field         | required | description                                            |
 |---------------|----------|--------------------------------------------------------|
-| `namespace`   | no       | Slug scope; absent means the built-in `default`. **Only `default` can be applied today — see below.** |
+| `namespace`   | no       | Slug scope; absent means the built-in `default`.        |
 | `name`        | yes      | Slug identifier, unique within its namespace.           |
 | `version`     | no       | Author-pinned version; defaults to a content hash.     |
 | `description` | no       | Human description.                                     |
@@ -15,18 +15,31 @@ applied to the `ork` engine with `orkctl apply`.
 | `inputs`      | no       | Declared input parameters (see below).                 |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
-### `namespace` is not readable yet (until M10.3)
+### `namespace`
 
-A namespace is a scope: an orkflow name is unique *within* one, and definitions
-and runs are stored and indexed under it. The document field, the store and the
-run index understand it now, but the API's read paths do not — `orkctl orkflow
-get`, `orkctl orkflow list` and run submission all answer for `default` alone
-until M10.3.
+A namespace is a scope: an orkflow name is unique *within* one, so two
+namespaces may each hold a `deploy` and never see each other's. Definitions and
+runs are stored and indexed under it, and every read is scoped by it —
+`orkctl orkflow list`, `orkctl orkflow get`, `orkctl run list` and run
+submission all answer for one namespace and never for another's documents.
 
-So a document naming any other namespace is **refused** at apply time, with
-`unimplemented` and a message naming M10.3. Storing it would be worse: the
-object would land under a key nothing can read and no run can execute. Until
-M10.3, leave the field out or write `namespace: default`.
+There are two ways to say which, and they must agree:
+
+```bash
+orkctl apply payments.ork.yaml              # the document's own `namespace:`
+orkctl apply portable.ork.yaml -n payments  # a document that names none
+```
+
+A document that names `payments` applied with `-n staging` is refused: one of
+the two is a mistake, and guessing which would store the definition where its
+author will not look for it.
+
+The namespace a command acts in is, most specific first: `--namespace`/`-n`,
+then `ORK_NAMESPACE`, then the one saved by `orkctl namespace use`, then
+`default`. Namespaces themselves are managed with
+`orkctl namespace create|list|get|update|delete|use`; a namespace also carries
+a `default_pool` and an `allowed_pools` list, which decide and bound where its
+tasks run (see `pool` below).
 
 ## Inputs
 
@@ -85,8 +98,9 @@ referencing an unrelated task's output is a compile-time error.
 ## Validation rules (enforced by `internal/dsl`)
 
 1. `namespace`, when present, is slug-formatted (`^[a-z][a-z0-9-]*$`); absent
-   means `default`, and until M10.3 `default` is the only one that can be
-   applied (see above).
+   means `default`. The engine additionally refuses a namespace nothing
+   registered, naming the ones that exist — the compiler has no registry to
+   consult.
 2. `name` present and slug-formatted (`^[a-z][a-z0-9-]*$`) within its namespace.
 3. Task ids unique and slug-formatted.
 4. Every `needs` entry references an existing task id.
