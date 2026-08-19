@@ -106,9 +106,10 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 	// the same time as the other.
 	const rounds = 10
 	type promotion struct {
-		replica string
-		version string
-		err     error
+		replica  string
+		previous string
+		version  string
+		err      error
 	}
 	results := make([]promotion, 0, 2*rounds)
 	var mu sync.Mutex
@@ -118,10 +119,15 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 			writers.Add(1)
 			go func(replica *engineReplica, version string) {
 				defer writers.Done()
-				_, err := replica.flows.SetCurrentOrkflowVersion(ctx, connect.NewRequest(
+				moved, err := replica.flows.SetCurrentOrkflowVersion(ctx, connect.NewRequest(
 					&orkstackv1.SetCurrentOrkflowVersionRequest{Name: name, Version: version}))
 				mu.Lock()
-				results = append(results, promotion{replica.name, version, err})
+				results = append(results, promotion{
+					replica:  replica.name,
+					previous: moved.Msg.GetPreviousVersion(),
+					version:  version,
+					err:      err,
+				})
 				mu.Unlock()
 			}(replica, versions[index])
 		}
@@ -135,10 +141,12 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 	//    else: a promotion that "succeeded" while another value won would be a
 	//    lost write reported as a success.
 	landed, refused := 0, 0
+	var chain [][2]string
 	for _, result := range results {
 		switch {
 		case result.err == nil:
 			landed++
+			chain = append(chain, [2]string{result.previous, result.version})
 		case connect.CodeOf(result.err) == connect.CodeFailedPrecondition:
 			refused++
 		default:
@@ -181,6 +189,16 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 		t.Fatalf("the final current version is %q, which is not stored", finalA)
 	}
 	t.Logf("both replicas report current version %s", finalA)
+
+	// 4. And no write was lost. Every promotion reports the version it
+	//    REPLACED, so the ones that succeeded must form a single chain from
+	//    "no pointer" to the final value: each success replaced the state the
+	//    previous success created. Two writers replacing the SAME state means
+	//    one of the two writes is gone, and it shows up here as a state left
+	//    more often than it is entered. Every assertion above survives that
+	//    intact — the pointer still names a stored version and both replicas
+	//    still agree — which is why this one is here.
+	requireOnePromotionChain(t, chain, finalA)
 
 	// And the version listing agrees on both, marking one version current.
 	for _, replica := range []*engineReplica{replicaA, replicaB} {
@@ -431,6 +449,46 @@ func awaitTerminalRun(
 	}
 	t.Fatalf("run %s never reached a terminal state (last %v)", runID, last)
 	return nil
+}
+
+// requireOnePromotionChain holds the reported promotions to one chain: read as
+// a multigraph whose edges are (version replaced -> version written), every
+// state must be left exactly as often as it is entered, except "no pointer",
+// which is left once, and the final value, which is entered once.
+//
+// It is the assertion that separates a compare-and-swap from a
+// last-writer-wins. Under CAS a success can only replace the state it read, so
+// the successes are a path. Without it, two replicas replace one state, both
+// are told they succeeded, and one of the two promotions is gone.
+func requireOnePromotionChain(t *testing.T, chain [][2]string, final string) {
+	t.Helper()
+	if len(chain) == 0 {
+		t.Fatal("no promotion landed at all")
+	}
+	delta := map[string]int{}
+	for _, edge := range chain {
+		delta[edge[0]]++
+		delta[edge[1]]--
+	}
+	for state, balance := range delta {
+		want := 0
+		switch state {
+		case "":
+			want = 1
+		case final:
+			want = -1
+		}
+		if balance != want {
+			name := state
+			if name == "" {
+				name = "no pointer"
+			}
+			t.Fatalf("the promotions that reported success are not one chain: %q is left "+
+				"%d more times than it is entered (want %d) — a write was lost.\n"+
+				"transitions: %v", name, balance, want, chain)
+		}
+	}
+	t.Logf("the %d promotions that landed form one chain to %s", len(chain), final)
 }
 
 func countAll(counts map[string]int) int {

@@ -221,8 +221,13 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 	writers := []*artifacts.S3OrkflowStore{store, other}
 
 	const rounds = 12
+	type promotion struct {
+		previous string
+		version  string
+		err      error
+	}
 	var wg sync.WaitGroup
-	results := make([]error, 2*rounds)
+	results := make([]promotion, 2*rounds)
 	observations := make(chan string, 8*rounds)
 	stop := make(chan struct{})
 
@@ -254,8 +259,9 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 			wg.Add(1)
 			go func(index int, writer *artifacts.S3OrkflowStore, version string) {
 				defer wg.Done()
-				_, err := writer.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, version)
-				results[index] = err
+				previous, err := writer.SetCurrentVersion(
+					ctx, artifacts.DefaultNamespace, name, version)
+				results[index] = promotion{previous: previous, version: version, err: err}
 			}(round*2+w, writer, []string{"1.0.0", "2.0.0"}[w])
 		}
 	}
@@ -267,13 +273,15 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 	// Every promotion either landed or reported that it lost the race. A lost
 	// race is a fact the caller is told, never a silent overwrite.
 	refused := 0
-	for i, err := range results {
+	var chain [][2]string
+	for i, result := range results {
 		switch {
-		case err == nil:
-		case errors.Is(err, artifacts.ErrPreconditionFailed):
+		case result.err == nil:
+			chain = append(chain, [2]string{result.previous, result.version})
+		case errors.Is(result.err, artifacts.ErrPreconditionFailed):
 			refused++
 		default:
-			t.Fatalf("promotion %d failed for an unexpected reason: %v", i, err)
+			t.Fatalf("promotion %d failed for an unexpected reason: %v", i, result.err)
 		}
 	}
 	t.Logf("%d concurrent promotions: %d landed, %d reported a lost race",
@@ -317,7 +325,61 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 	if pointers != 1 {
 		t.Fatalf("the orkflow has %d pointer objects, want exactly 1", pointers)
 	}
+	// And no write was lost: the promotions that reported success form ONE
+	// chain from "no pointer" to the final value.
+	requireOneChain(t, chain, finalA)
 	writePromotionProof(t, name, finalA, len(results)-refused, refused, seen)
+}
+
+// requireOneChain is the property that separates a compare-and-swap from a
+// last-writer-wins, and it is the only assertion here that can tell them
+// apart.
+//
+// Every promotion reports the version it REPLACED. Under a compare-and-swap
+// each success replaced the state the previous success created, so the
+// successes form a single path "" -> … -> final: read as a multigraph whose
+// edges are (replaced -> written), every state is left exactly as often as it
+// is entered, except "" which is left once and the final value which is
+// entered once.
+//
+// Drop the condition from the write and two writers read the same state and
+// both replace it. Both report success, one of the two writes is gone, and
+// that state is left twice and entered once — which is what this counts. The
+// coarser assertions above survive a lost write intact: the pointer still
+// names a stored version, both replicas still read the same object, and the
+// counts still add up.
+func requireOneChain(t *testing.T, chain [][2]string, final string) {
+	t.Helper()
+	if len(chain) == 0 {
+		t.Fatal("no promotion landed at all")
+	}
+	delta := map[string]int{}
+	for _, edge := range chain {
+		delta[edge[0]]++ // left this state
+		delta[edge[1]]-- // entered that state
+	}
+	for state, balance := range delta {
+		want := 0
+		switch state {
+		case "":
+			want = 1 // the pointer is created once, from nothing
+		case final:
+			want = -1 // and ends here
+		}
+		if balance != want {
+			t.Fatalf("the promotions that reported success are not one chain: state %q is "+
+				"left %d more times than it is entered (want %d) — a write was lost.\n"+
+				"transitions: %v",
+				stateName(state), balance, want, chain)
+		}
+	}
+}
+
+func stateName(state string) string {
+	if state == "" {
+		return "no pointer"
+	}
+	return state
 }
 
 // requireResolves asserts what an empty version means right now, through both
