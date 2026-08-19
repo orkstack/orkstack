@@ -1,6 +1,7 @@
 <script lang="ts">
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { fmtTimestamp } from '$lib/status';
+	import { withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -15,7 +16,7 @@
 		{/if}
 	</h1>
 	<a
-		href="/submit"
+		href={withNamespace('/submit', data.namespace)}
 		class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
 	>
 		Submit run
@@ -46,7 +47,7 @@
 				{#each data.runs as run (run.id)}
 					<tr class="hover:bg-zinc-900/60" data-testid="run-row-{run.id}">
 						<td class="px-4 py-3 font-medium">
-							<a href="/runs/{run.id}" class="text-emerald-300 hover:underline">{run.id}</a>
+							<a href={withNamespace(`/runs/${run.id}`, data.namespace)} class="text-emerald-300 hover:underline">{run.id}</a>
 						</td>
 						<td class="px-4 py-3 text-zinc-300">{run.orkflowName}@{run.orkflowVersion}</td>
 						<td class="px-4 py-3"><StatusPill status={run.status} /></td>

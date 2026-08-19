@@ -1,11 +1,13 @@
 import { errorMessage, orkstack } from '$lib/client';
+import { namespaceFrom } from '$lib/namespace';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ fetch }) => {
+export const load: PageLoad = async ({ fetch, url }) => {
+	const namespace = namespaceFrom(url);
 	try {
-		const res = await orkstack(fetch).orkflows.listOrkflows({});
-		return { orkflows: res.orkflows, error: null as string | null };
+		const res = await orkstack(fetch).orkflows.listOrkflows({ namespace });
+		return { orkflows: res.orkflows, namespace, error: null as string | null };
 	} catch (err) {
-		return { orkflows: [], error: errorMessage(err) };
+		return { orkflows: [], namespace, error: errorMessage(err) };
 	}
 };

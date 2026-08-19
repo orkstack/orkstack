@@ -92,13 +92,16 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <run-id>",
 		Short: "Show one run",
-		Args:  cobra.ExactArgs(1),
+		Long: "get shows one run of the namespace this command acts in. A run id\n" +
+			"addresses a run inside a namespace, so a run of another one is not found\n" +
+			"here even when its id is known.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.runClient().GetRun(ctx, connect.NewRequest(
-				&orkstackv1.GetRunRequest{RunId: args[0]},
+				&orkstackv1.GetRunRequest{RunId: args[0], Namespace: g.namespace},
 			))
 			if err != nil {
 				return rpcError("get run", err)
@@ -156,13 +159,16 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cancel <run-id>",
 		Short: "Request cancellation of a run",
-		Args:  cobra.ExactArgs(1),
+		Long: "cancel requests cancellation of a run of the namespace this command acts\n" +
+			"in. A run of another namespace is not found here: cancelling is a write,\n" +
+			"and holding an id is not authority over somebody else's tenant.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.runClient().CancelRun(ctx, connect.NewRequest(
-				&orkstackv1.CancelRunRequest{RunId: args[0], Reason: reason},
+				&orkstackv1.CancelRunRequest{RunId: args[0], Reason: reason, Namespace: g.namespace},
 			))
 			if err != nil {
 				return rpcError("cancel run", err)

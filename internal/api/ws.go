@@ -33,6 +33,13 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			return
 		}
 
+		// The namespace is a query parameter because the path is the run's
+		// address and the socket has no request body to put it in. Empty is
+		// the default namespace, the same rule the RPC follows: a run of
+		// another namespace is 404 here too, so a browser holding an id it
+		// read somewhere cannot watch a tenant it cannot name.
+		namespace := r.URL.Query().Get("namespace")
+
 		var fromSequence int64
 		if raw := r.URL.Query().Get("from_sequence"); raw != "" {
 			parsed, err := strconv.ParseInt(raw, 10, 64)
@@ -60,11 +67,16 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 		}
 
 		// Resolving the run before the upgrade keeps a missing run an HTTP 404
-		// rather than a socket that opens and immediately dies.
-		if _, err := svc.LookupRun(r.Context(), runID); err != nil {
+		// rather than a socket that opens and immediately dies. It is resolved
+		// INSIDE the namespace asked for, so the 404 also covers a run of
+		// another one.
+		if _, err := svc.LookupRunIn(r.Context(), runID, namespace); err != nil {
 			status, message := http.StatusInternalServerError, "read run"
-			if connect.CodeOf(err) == connect.CodeNotFound {
+			switch connect.CodeOf(err) {
+			case connect.CodeNotFound:
 				status, message = http.StatusNotFound, "run not found"
+			case connect.CodeInvalidArgument, connect.CodeFailedPrecondition:
+				status, message = http.StatusBadRequest, "namespace cannot be resolved"
 			}
 			http.Error(w, message, status)
 			return
@@ -92,7 +104,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 
 		ctx := conn.CloseRead(r.Context())
 		terminal := false
-		streamErr := svc.StreamRunEvents(ctx, runID, fromSequence,
+		streamErr := svc.StreamRunEvents(ctx, runID, namespace, fromSequence,
 			func(event *orkstackv1.Event) error {
 				payload, err := MarshalJSONOptions(marshaler, event)
 				if err != nil {

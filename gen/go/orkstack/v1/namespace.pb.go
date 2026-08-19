@@ -69,6 +69,15 @@ type Namespace struct {
 	// so two operators editing the same namespace at once cannot silently
 	// clobber each other — the loser is told to re-read.
 	//
+	// An EMPTY etag is a condition too, not the absence of one: it says the
+	// version this update edited had no stored bytes at all, and the write is
+	// refused if some other writer has since created them. That is what the
+	// default namespace needs — until somebody writes its document a read hands
+	// back a synthesized one carrying no token — and it is why an update never
+	// has an unconditional mode: an empty token read as "overwrite whatever is
+	// there" turned the promise above off for exactly the one namespace every
+	// deployment has.
+	//
 	// It is the store's token and opaque: nothing derives meaning from its
 	// shape, and a client only ever round-trips it. It is never stored inside
 	// the document — it names the document's stored bytes, so a copy inside

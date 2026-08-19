@@ -57,7 +57,7 @@ adding processes and both survive losing one.
 | state | where it lives | code |
 |---|---|---|
 | orkflow definitions | the bucket | `artifacts.S3OrkflowStore`, opened at boot by `openOrkflowStore` (`cmd/ork/main.go`). It keeps no cache, so an `apply` on one replica is visible to every other |
-| live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), wired as the API's `RunReader` |
+| live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), handed to the API as `Binding.Reader` by `engine.NamespaceRouter` (`internal/engine/router.go`) |
 | finished runs, past retention | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `engine.NewRunArchiver` over `artifacts.NewRunArchive`, written by the terminal `PublishEvent`. The default backend is `local`: a directory on each host, so replicated it is one archive per replica (§1) |
 | idempotency keys | Temporal | `engine.IdempotencyClaimWorkflow` (`internal/engine/claim.go`), held for `ORK_IDEMPOTENCY_TTL` |
 | artifacts | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `pkg/artifacts`; events and payloads carry refs, never bytes. Same default, same consequence: on `local` an Orker writes to its own disk and no other host can read the bytes back |
@@ -88,7 +88,11 @@ needs `ORK_S3_*` either way.
 - **`ORK_HTTP_ADDR` is the one variable that must differ** when replicas share
   a host. On separate hosts it does not have to.
 - **No sticky sessions, no leader.** `GetRun`, `ListRuns`, `StreamEvents` and
-  `/ws/runs/{id}` are answered from Temporal, so any replica serves any run.
+  `/ws/runs/{id}` are answered from Temporal, so any replica serves any run —
+  inside the namespace the request names. A run id addresses a run within a
+  namespace, not across the deployment: every one of those four carries the
+  namespace (`/ws/runs/{id}?namespace=…`), an absent one is `default`, and a
+  run of another namespace is `NotFound`.
 - **Reconnects resume rather than replay.** `StreamEvents.from_sequence`
   (`orkctl run watch --from-sequence`) and `/ws/runs/{id}?from_sequence=N`
   continue after an event number, and the number is the producer's — the
@@ -149,7 +153,15 @@ needs `ORK_S3_*` either way.
   `pool:` runs on its namespace's `default_pool`, then on `main`. Setting
   `ORK_ORKER_POOL` (or `ORK_ORKER_QUEUE`) on the engine pins that default
   route to the same channel its Orkers poll, so the variable goes on **both**
-  binaries. A task's own `pool:` outranks it and is never redirected by it.
+  binaries. A task that names a pool of its own goes to that pool's channel
+  instead, which is how one step reaches a dedicated pool (`docs/DSL.md`) —
+  with one exception that is not an exception: `pool: main` names *this
+  deployment's default pool*, not the channel `ork-tasks`, so it follows
+  whatever you bound here, exactly as an omitted `pool:` does. `main` is a
+  word for the default, never an override of it, so no document can escape an
+  operator's isolation by naming it (`task.RouteForPool`,
+  `runState.routeForTask`,
+  `TestPoolResolver_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute`).
 - **One set of Orkers has exactly one name.** With `ORK_ORKER_POOL=gpu` on both
   binaries the deployment's default channel *is* gpu's channel, so `main` and
   `gpu` are two words for the same machines. Everything reports the second:
@@ -195,6 +207,23 @@ needs `ORK_S3_*` either way.
 - **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
   enforced on the server at both apply and submit, so no client can skip it.
   An empty list means no restriction.
+
+  The list is read in the same vocabulary as the dispatch — the collapsed name
+  of the bullet above. With `ORK_ORKER_POOL=gpu` on the engine, a task that
+  names no pool is dispatched to, stamped as and reported on `gpu`, so a
+  namespace whose list is `[main]` is refused there and one whose list is
+  `[gpu]` accepts `pool: main`:
+
+  ```
+  namespace "payments" does not allow pool "gpu" for task "settle" (allowed: main);
+  this deployment dispatches pool "main" onto "gpu"'s Orkers, so allow "gpu" or
+  drop the override
+  ```
+
+  Every pool a run reports is therefore one its namespace allows. Bind an
+  execution channel to a pool's own queue and the namespaces on that
+  deployment must allow that pool by name; `main` there names Orkers this
+  deployment does not have.
 - **"Is anything serving my pools?" has an answer.**
   `NamespaceService.ListPools` reports each pool's name, its live Orker count
   and the plugins those Orkers run. The count is the one described above — the
@@ -751,6 +780,32 @@ Runs already pinned to a version still need that version's workers.
   past Temporal retention. Nothing durable lives in a process, so a read does
   not need to reach the replica that started the run — or that replica to
   still exist.
+- **Listing one namespace's runs is a question the cluster answers.** Each
+  engine registers the `OrkflowNamespace` search attribute on its Temporal
+  namespace at boot (`task.EnsureRunSearchAttributes`, beside the namespace
+  itself) and stamps every run it starts with the namespace that run belongs
+  to, so `run list -n payments` is a visibility predicate rather than a filter
+  over a page of everyone's runs. That distinction is a tenancy one: filtered
+  afterwards, how far the list could see was set by how busy the OTHER
+  namespaces were, and a namespace with one live run behind a neighbour's
+  hundred was told it had none.
+
+  A cluster that refuses the registration — the operator API behind an
+  authorizer, a visibility store without custom attributes — still boots, and
+  says so once:
+
+  ```
+  WARN visibility does not index a run's orkflow namespace
+       search_attribute=OrkflowNamespace
+       consequence="listing a namespace's live runs scans the whole index"
+  ```
+
+  The reader then reads the index to the end instead of trusting a predicate
+  the cluster cannot apply, which is slower and still the tenant's own answer;
+  a list that cannot finish even that walk fails rather than returning a short
+  one. Runs started *before* the attribute existed carry the namespace in
+  their memo but not in the index, so they are listed by id and, once
+  finished, from the archive — whose key already begins with the namespace.
 - **A double submit is settled by the cluster, not by a replica.** One
   `--idempotency-key` sent to two replicas at once returns one run id, because
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not
@@ -763,8 +818,12 @@ Runs already pinned to a version still need that version's workers.
   runs strand in `RUNNING`: the Orker polls one queue while the engine
   dispatches to another. It moves **task execution only** — the engine's own
   workers stay on `ork-tasks` and `ork-engine-events` (§2). A task's own
-  `pool:` in the DSL outranks the engine default and is how a step reaches a
-  dedicated Orker pool (`docs/DSL.md`).
+  `pool:` in the DSL is how a step reaches a dedicated Orker pool
+  (`docs/DSL.md`), and it cannot be used to escape this setting: `pool: main`
+  is the name of whatever queue you bound here, so it follows the override
+  rather than outranking it, and no document can route itself back onto
+  `ork-tasks` by naming the default pool
+  (`TestPoolResolver_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute`).
 - **One namespace, one deployment.** The engine's queue name is fixed, so two
   OrkStack deployments in one namespace would fight over the current version of
   `ork-tasks`. Give each environment its own namespace, as above.

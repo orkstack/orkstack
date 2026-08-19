@@ -13,6 +13,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
@@ -32,6 +33,12 @@ type TemporalStarter struct {
 	// queue (normally task.DefaultQueue) and can be overridden so both plugin
 	// discovery and task dispatch follow Orkers on a custom queue.
 	orkerQueue string
+
+	// namespaceIndexed reports that this cluster has the OrkflowNamespace
+	// search attribute, so a run may be stamped with the namespace it belongs
+	// to and listed by it. Stamping an attribute a cluster does not have fails
+	// the start, so it is off until a boot says otherwise.
+	namespaceIndexed bool
 }
 
 // NewTemporalStarter returns a starter that dispatches RunWorkflow onto queue.
@@ -50,6 +57,14 @@ func NewTemporalStarterWithOrkerQueue(c client.Client, runQueue, orkerQueue stri
 	if orkerQueue != "" {
 		s.orkerQueue = orkerQueue
 	}
+	return s
+}
+
+// WithNamespaceIndex records whether the cluster indexes a run's OrkStack
+// namespace (task.EnsureRunSearchAttributes). The engine's boot is what knows,
+// because it is what registered it.
+func (s *TemporalStarter) WithNamespaceIndex(indexed bool) *TemporalStarter {
+	s.namespaceIndexed = indexed
 	return s
 }
 
@@ -87,7 +102,7 @@ func (s *TemporalStarter) StartRun(
 	input *orkstackv1.Payload,
 	plan RunPlan,
 ) error {
-	_, err := s.client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+	options := client.StartWorkflowOptions{
 		ID:                                       runID,
 		TaskQueue:                                s.queue,
 		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
@@ -102,7 +117,20 @@ func (s *TemporalStarter) StartRun(
 			MemoOrkflowVersion: wf.GetVersion(),
 			MemoNamespace:      wf.GetNamespace(),
 		},
-	}, RunWorkflowType, runID, wf, input, plan)
+	}
+	// The namespace is stamped a second time, as a search attribute, because a
+	// memo is returned with a record and cannot select one. A tenant listing
+	// its runs needs the cluster to do the selecting — see ListRuns — and this
+	// is the value it selects on. It is resolved, so the built-in default is
+	// spelled one way whether the document named it or left it empty.
+	if s.namespaceIndexed {
+		options.TypedSearchAttributes = temporal.NewSearchAttributes(
+			task.SearchKeyOrkflowNamespace.ValueSet(
+				artifacts.ResolveNamespace(wf.GetNamespace())),
+		)
+	}
+	_, err := s.client.ExecuteWorkflow(ctx, options,
+		RunWorkflowType, runID, wf, input, plan)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if errors.As(err, &alreadyStarted) {

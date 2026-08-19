@@ -3,6 +3,8 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"sync"
@@ -821,4 +823,277 @@ func namespaceNames(namespaces []*orkstackv1.Namespace) []string {
 		names = append(names, ns.GetName())
 	}
 	return names
+}
+
+// TestRunID_IsAnAddressInsideANamespaceNotACapabilityOverTheDeployment is the
+// tenancy boundary for every request that carries a run id.
+//
+// A run id is unguessable, and unguessable was doing all the work: GetRun,
+// CancelRun and StreamEvents took an id and nothing else, so any caller
+// holding one read and CANCELLED a run of a namespace they could not list.
+// An id is not a secret — it is printed by submit, quoted in tickets, and
+// echoed into every CI transcript — and cancel is a write, which makes the
+// gap a way to stop another tenant's work rather than merely to watch it.
+//
+// So the namespace scopes the id the same way it scopes an orkflow name, and
+// the refusal is NotFound rather than PermissionDenied: a caller who cannot
+// name the namespace must not be able to tell "that id is not yours" from
+// "there is no such run".
+func TestRunID_IsAnAddressInsideANamespaceNotACapabilityOverTheDeployment(t *testing.T) {
+	const document = `
+name: deploy
+tasks:
+  - id: build
+    plugin: shell
+    with: {command: "echo build"}
+`
+	starter := &fakeStarter{}
+	bus := engine.NewEventBus()
+	counter := 0
+	svc := api.NewService(api.Config{
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Namespaces: newFakeRegistry(
+			&orkstackv1.Namespace{Name: "alpha"},
+			&orkstackv1.Namespace{Name: "bravo"},
+		),
+		Runs:    engine.NewRunStore(),
+		Bus:     bus,
+		Starter: starter,
+		NewRunID: func() string {
+			counter++
+			return fmt.Sprintf("run-%03d", counter)
+		},
+	})
+	ctx := context.Background()
+	mustApply(t, svc, document, "alpha")
+
+	submitted, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+		OrkflowName: "deploy",
+		Namespace:   "alpha",
+	}))
+	if err != nil {
+		t.Fatalf("SubmitRun(alpha, deploy): %v", err)
+	}
+	runID := submitted.Msg.GetRun().GetId()
+
+	// The run's stream is finished before anything asks for it, so a stream
+	// that is NOT refused ends immediately and reports "succeeded" instead of
+	// blocking for a run that will never terminate. A test whose refusal is
+	// the only reason it returns cannot tell a working scope from a hang, and
+	// the mutation that removes the scope would time out rather than fail.
+	bus.Publish(&orkstackv1.Event{
+		RunId: runID,
+		Type:  orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+	}, runID+"#done")
+
+	// Its own namespace reads it.
+	if _, err := svc.GetRun(ctx, connect.NewRequest(
+		&orkstackv1.GetRunRequest{RunId: runID, Namespace: "alpha"})); err != nil {
+		t.Fatalf("GetRun(alpha, %s): %v", runID, err)
+	}
+
+	// Another namespace does not — and neither does the default, which is what
+	// a request that names no namespace at all resolves to.
+	for _, namespace := range []string{"bravo", ""} {
+		label := namespace
+		if label == "" {
+			label = "(unset, so the default namespace)"
+		}
+		t.Run("GetRun from "+label, func(t *testing.T) {
+			_, err := svc.GetRun(ctx, connect.NewRequest(
+				&orkstackv1.GetRunRequest{RunId: runID, Namespace: namespace}))
+			if err == nil {
+				t.Fatalf("GetRun(%s, %s) succeeded: alpha's run is readable from another namespace",
+					label, runID)
+			}
+			if code := connect.CodeOf(err); code != connect.CodeNotFound {
+				t.Errorf("code = %v, want NotFound", code)
+			}
+		})
+		t.Run("StreamEvents from "+label, func(t *testing.T) {
+			err := svc.StreamRunEvents(ctx, runID, namespace, 0,
+				func(*orkstackv1.Event) error { return nil })
+			if err == nil {
+				t.Fatalf("StreamRunEvents(%s, %s) succeeded: alpha's events stream to another namespace",
+					label, runID)
+			}
+			if code := connect.CodeOf(err); code != connect.CodeNotFound {
+				t.Errorf("code = %v, want NotFound", code)
+			}
+		})
+		t.Run("CancelRun from "+label, func(t *testing.T) {
+			_, err := svc.CancelRun(ctx, connect.NewRequest(
+				&orkstackv1.CancelRunRequest{RunId: runID, Namespace: namespace}))
+			if err == nil {
+				t.Fatalf("CancelRun(%s, %s) succeeded: another namespace stopped alpha's work",
+					label, runID)
+			}
+			if code := connect.CodeOf(err); code != connect.CodeNotFound {
+				t.Errorf("code = %v, want NotFound", code)
+			}
+		})
+	}
+
+	// The refusal must be a refusal, not a slow yes: nothing reached the
+	// starter.
+	if canceled := starter.canceledRuns(); len(canceled) != 0 {
+		t.Errorf("the starter was asked to cancel %v", canceled)
+	}
+
+	// …and the run's own namespace still cancels it, so the scope is a scope
+	// and not a wall.
+	if _, err := svc.CancelRun(ctx, connect.NewRequest(
+		&orkstackv1.CancelRunRequest{RunId: runID, Namespace: "alpha"})); err != nil {
+		t.Fatalf("CancelRun(alpha, %s): %v", runID, err)
+	}
+	if canceled := starter.canceledRuns(); len(canceled) != 1 || canceled[0] != runID {
+		t.Errorf("canceled = %v, want exactly [%s]", canceled, runID)
+	}
+}
+
+// TestWebSocketBridge_RefusesARunOfAnotherNamespace holds the second entry
+// point to the same rule.
+//
+// The bridge is the UI's read path and takes the run id in the URL, so it is
+// exactly where a scope gets forgotten: it shares Service.StreamRunEvents with
+// the RPC, but it resolves the run itself before upgrading, and a check
+// written only in the RPC handler would leave this door open. The namespace
+// travels as a query parameter — a socket has no request body — and a run of
+// another namespace is 404, before any upgrade.
+func TestWebSocketBridge_RefusesARunOfAnotherNamespace(t *testing.T) {
+	const document = `
+name: deploy
+tasks:
+  - id: build
+    plugin: shell
+    with: {command: "echo build"}
+`
+	counter := 0
+	svc := api.NewService(api.Config{
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Namespaces: newFakeRegistry(
+			&orkstackv1.Namespace{Name: "alpha"},
+			&orkstackv1.Namespace{Name: "bravo"},
+		),
+		Runs:    engine.NewRunStore(),
+		Bus:     engine.NewEventBus(),
+		Starter: &fakeStarter{},
+		NewRunID: func() string {
+			counter++
+			return fmt.Sprintf("run-%03d", counter)
+		},
+	})
+	ctx := context.Background()
+	mustApply(t, svc, document, "alpha")
+	submitted, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+		OrkflowName: "deploy",
+		Namespace:   "alpha",
+	}))
+	if err != nil {
+		t.Fatalf("SubmitRun(alpha, deploy): %v", err)
+	}
+	runID := submitted.Msg.GetRun().GetId()
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws/runs/{id}", api.NewWebSocketBridge(svc, nil))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// A plain GET never upgrades, so what is being read here is the decision
+	// the bridge makes BEFORE the upgrade: 404 for a run this namespace
+	// cannot address, and anything else for one it can.
+	get := func(namespace string) int {
+		t.Helper()
+		resp, err := server.Client().Get(
+			server.URL + "/ws/runs/" + runID + "?namespace=" + namespace)
+		if err != nil {
+			t.Fatalf("GET /ws/runs/%s?namespace=%s: %v", runID, namespace, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+
+	for _, namespace := range []string{"bravo", ""} {
+		if code := get(namespace); code != http.StatusNotFound {
+			t.Errorf("GET /ws/runs/%s?namespace=%q = %d, want 404: alpha's run is watchable "+
+				"from another namespace", runID, namespace, code)
+		}
+	}
+	if code := get("alpha"); code == http.StatusNotFound {
+		t.Errorf("GET /ws/runs/%s?namespace=alpha = 404: its own namespace cannot watch it", runID)
+	}
+}
+
+// TestUpdateNamespace_TwoFirstEditsOfTheDefaultCannotClobberEachOther is the
+// compare-and-swap on the one document nobody created.
+//
+// Namespace.etag promises that "two operators editing the same namespace at
+// once cannot silently clobber each other". For `default` that promise had a
+// hole with nothing in the tree to catch it: until somebody writes its
+// document, a read hands back a SYNTHESIZED one whose etag is empty, and an
+// empty etag means "no such requirement" to the store. So both of two
+// concurrent first edits were unconditional writes, and one of them vanished
+// with no error — the caller never asked for an unconditional write, the
+// server handed them the token that means one.
+//
+// TestUpdateNamespace_RefusesAStaleEtag proves the ordinary case and cannot
+// see this one: it creates its namespace first, so it never holds a document
+// with no stored bytes.
+func TestUpdateNamespace_TwoFirstEditsOfTheDefaultCannotClobberEachOther(t *testing.T) {
+	reg := newFakeRegistry()
+	svc, _ := namespacedService(t, reg)
+	ctx := context.Background()
+
+	// Both operators read `default` before either writes. Neither read has an
+	// etag to carry, because nothing has ever been stored under that name.
+	read := func() *orkstackv1.Namespace {
+		t.Helper()
+		resp, err := svc.GetNamespace(ctx,
+			connect.NewRequest(&orkstackv1.GetNamespaceRequest{Name: "default"}))
+		if err != nil {
+			t.Fatalf("GetNamespace(default): %v", err)
+		}
+		return resp.Msg.GetNamespace()
+	}
+	first, second := read(), read()
+	if first.GetEtag() != "" || second.GetEtag() != "" {
+		t.Fatalf("the synthesized default carries etags %q/%q; this test is about the case "+
+			"where it carries none", first.GetEtag(), second.GetEtag())
+	}
+
+	first.Description = "the winner"
+	if _, err := svc.UpdateNamespace(ctx,
+		connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: first})); err != nil {
+		t.Fatalf("the first edit of default: %v", err)
+	}
+
+	second.Description = "the loser"
+	_, err := svc.UpdateNamespace(ctx,
+		connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: second}))
+	if err == nil {
+		t.Fatal("the second first-time edit of default overwrote the first with no error")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeFailedPrecondition {
+		t.Errorf("code = %v, want FailedPrecondition", code)
+	}
+	if !strings.Contains(err.Error(), "read it again") {
+		t.Errorf("error %q does not tell the loser what to do", err)
+	}
+
+	if got := read().GetDescription(); got != "the winner" {
+		t.Errorf("description = %q, want %q: the loser's write landed", got, "the winner")
+	}
+
+	// Once the document exists, the ordinary rule takes over: the etag the
+	// read handed back is the token, and the escape hatch is still an escape
+	// hatch rather than a permanent one.
+	stored := read()
+	if stored.GetEtag() == "" {
+		t.Fatal("the stored default still has no etag, so nothing can compare-and-swap on it")
+	}
+	stored.Description = "edited again"
+	if _, err := svc.UpdateNamespace(ctx,
+		connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: stored})); err != nil {
+		t.Fatalf("editing the stored default with the etag it handed back: %v", err)
+	}
 }

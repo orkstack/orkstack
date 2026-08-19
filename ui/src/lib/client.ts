@@ -4,7 +4,8 @@ import { ConnectError } from '@connectrpc/connect';
 import {
 	OrkflowService,
 	RunService,
-	PluginService
+	PluginService,
+	NamespaceService
 } from './gen/orkstack/v1/service_pb';
 
 // All platform access goes through the clients generated from
@@ -15,7 +16,8 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 	return {
 		orkflows: createClient(OrkflowService, transport),
 		runs: createClient(RunService, transport),
-		plugins: createClient(PluginService, transport)
+		plugins: createClient(PluginService, transport),
+		namespaces: createClient(NamespaceService, transport)
 	};
 }
 

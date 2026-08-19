@@ -23,6 +23,14 @@ runs are stored and indexed under it, and every read is scoped by it —
 `orkctl orkflow list`, `orkctl orkflow get`, `orkctl run list` and run
 submission all answer for one namespace and never for another's documents.
 
+A run id is scoped the same way, and this is worth stating because an id looks
+like an address that stands on its own. It does not: `orkctl run get`,
+`orkctl run watch` and `orkctl run cancel` all address a run *inside* the
+namespace the command acts in, and a run of another one is not found even when
+its id is known. An id is not a secret — submit prints it, tickets quote it,
+CI transcripts echo it — and cancel is a write, so holding one is not
+authority over somebody else's tenant.
+
 There are two ways to say which, and they must agree:
 
 ```bash
@@ -170,7 +178,11 @@ path components of a stored object key, and a pool becomes an execution
 channel, so a longer name is one the compiler could accept and nothing could
 store. It is the same 200 the orkflow store and the namespace registry enforce
 (`pkg/artifacts`), and the two are held together by measurement rather than by
-a shared constant — `pkg/` may not import `internal/`.
+a shared constant: the artifact store is a public package and the compiler is
+not, so the store does not depend on the compiler and does not drag it into
+the build of every program that stores an artifact. A test inside
+`pkg/artifacts` imports the compiler and fails on any disagreement, in either
+direction — a test dependency costs an importer nothing.
 
 ## Example
 

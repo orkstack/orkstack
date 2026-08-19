@@ -121,16 +121,29 @@ type NamespaceRegistry interface {
 // PoolNotAllowedError reports a task routed onto a pool its namespace does not
 // allow. It carries the three coordinates that make the refusal actionable:
 // who forbade it, which task asked, and what it asked for.
+//
+// Pool is the pool the task would be DISPATCHED to, which is the only name
+// worth refusing on: it is what the Orkers running the work answer to and what
+// every report calls it. Requested records the name the document wrote when
+// this deployment resolves it to another — `pool: main` under an engine whose
+// default channel is gpu's own queue — because an operator handed the refusal
+// has to be able to find the line it is about.
 type PoolNotAllowedError struct {
 	Namespace string
 	Task      string
 	Pool      string
+	Requested string
 	Allowed   []string
 }
 
 func (e *PoolNotAllowedError) Error() string {
-	return fmt.Sprintf("namespace %q does not allow pool %q for task %q (allowed: %s)",
+	msg := fmt.Sprintf("namespace %q does not allow pool %q for task %q (allowed: %s)",
 		e.Namespace, e.Pool, e.Task, strings.Join(e.Allowed, ", "))
+	if e.Requested != "" && e.Requested != e.Pool {
+		msg += fmt.Sprintf("; this deployment dispatches pool %q onto %q's Orkers, "+
+			"so allow %q or drop the override", e.Requested, e.Pool, e.Pool)
+	}
+	return msg
 }
 
 // PoolEmptyError reports a submit refused because the pool it resolved to has
@@ -287,7 +300,30 @@ func (r *PoolResolver) DefaultPool(ns *orkstackv1.Namespace) string {
 // so an author is told at apply rather than at the first submit. It is not the
 // only gate — see Plan, which cannot be bypassed by a client that never
 // applied, or by a definition stored while the list was wider.
-func CheckAllowedPools(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) error {
+//
+// It is a method, and it has to be: the list is checked in the vocabulary the
+// tasks are DISPATCHED in, and that vocabulary is a property of the
+// deployment. routeFor collapses a pool whose channel is this deployment's
+// bound channel onto that channel's name (ORK_ORKER_POOL=gpu on the engine,
+// which docs/DEPLOY.md recommends), so `pool: main` there is dispatched to,
+// stamped as, and reported on `gpu`. Checking the name before the collapse
+// asked about a word nothing downstream uses: it let a namespace allowing only
+// `main` dispatch onto gpu's Orkers, and refused `pool: main` in a namespace
+// that allows `gpu` even though gpu's Orkers are where it was going. The check
+// and the dispatch are one name now.
+func (r *PoolResolver) CheckAllowedPools(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) error {
+	permitted := permittedPools(ns)
+	for _, t := range wf.GetTasks() {
+		if err := r.checkPoolAllowed(ns, t.GetId(), PoolFor(ns, t), permitted); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// permittedPools is a namespace's allow-list as a set, and nil when it has
+// none: an empty allow-list is no restriction, not a restriction to nothing.
+func permittedPools(ns *orkstackv1.Namespace) map[string]struct{} {
 	allowed := ns.GetAllowedPools()
 	if len(allowed) == 0 {
 		return nil
@@ -296,19 +332,50 @@ func CheckAllowedPools(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) error {
 	for _, pool := range allowed {
 		permitted[pool] = struct{}{}
 	}
-	for _, t := range wf.GetTasks() {
-		pool := PoolFor(ns, t)
-		if _, ok := permitted[pool]; ok {
-			continue
-		}
-		return &PoolNotAllowedError{
-			Namespace: namespaceName(ns),
-			Task:      t.GetId(),
-			Pool:      pool,
-			Allowed:   append([]string(nil), allowed...),
-		}
+	return permitted
+}
+
+// checkPoolAllowed holds one task's requested pool against the allow-list, in
+// the name that pool answers to under this deployment.
+//
+// A pool this engine cannot route at all keeps its own spelling: Plan refuses
+// the submit with the routing error, and an allow-list refusal that renamed it
+// would describe a pool nobody wrote.
+func (r *PoolResolver) checkPoolAllowed(
+	ns *orkstackv1.Namespace,
+	taskID, requested string,
+	permitted map[string]struct{},
+) error {
+	if permitted == nil {
+		return nil
 	}
-	return nil
+	dispatched := r.dispatchedPool(requested)
+	if _, ok := permitted[dispatched]; ok {
+		return nil
+	}
+	return &PoolNotAllowedError{
+		Namespace: namespaceName(ns),
+		Task:      taskID,
+		Pool:      dispatched,
+		Requested: requested,
+		Allowed:   append([]string(nil), ns.GetAllowedPools()...),
+	}
+}
+
+// dispatchedPool is the name a requested pool answers to under this
+// deployment: the pool stamped on the task, carried by every event, and
+// reported by ListPools. It is routeFor's answer, and the whole reason the
+// allow-list asks for it — a check on the requested name would be a check on
+// a word that stops existing one line later (Plan stamps route.Pool).
+//
+// A pool this engine cannot route keeps its own spelling; Plan refuses that
+// submit with the routing error.
+func (r *PoolResolver) dispatchedPool(requested string) string {
+	route, err := r.routeFor(requested)
+	if err != nil {
+		return requested
+	}
+	return route.Pool
 }
 
 // Plan resolves every task's pool, enforces the namespace's allow-list, checks
@@ -330,9 +397,7 @@ func (r *PoolResolver) Plan(
 	if wf == nil || len(wf.GetTasks()) == 0 {
 		return nil, RunPlan{}, fmt.Errorf("orkflow has no tasks")
 	}
-	if err := CheckAllowedPools(ns, wf); err != nil {
-		return nil, RunPlan{}, err
-	}
+	permitted := permittedPools(ns)
 
 	planned := proto.Clone(wf).(*orkstackv1.Orkflow)
 	routes := map[string]string{}
@@ -341,8 +406,16 @@ func (r *PoolResolver) Plan(
 	tasksByPool := map[string][]string{}
 
 	for _, t := range planned.GetTasks() {
-		route, err := r.routeFor(PoolFor(ns, t))
+		requested := PoolFor(ns, t)
+		route, err := r.routeFor(requested)
 		if err != nil {
+			return nil, RunPlan{}, err
+		}
+		// The allow-list, held against the name the work is dispatched under
+		// rather than the one the document wrote. The two differ exactly when
+		// this deployment's bound channel collapses them, and the dispatched
+		// name is what the Orkers, the events and every report answer to.
+		if err := r.checkPoolAllowed(ns, t.GetId(), requested, permitted); err != nil {
 			return nil, RunPlan{}, err
 		}
 		// The route's pool, not the requested one: routeFor collapses a pool

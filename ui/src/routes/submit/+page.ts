@@ -1,12 +1,14 @@
 import { errorMessage, orkstack } from '$lib/client';
+import { namespaceFrom } from '$lib/namespace';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, url }) => {
 	const preselect = url.searchParams.get('orkflow') ?? '';
+	const namespace = namespaceFrom(url);
 	try {
-		const res = await orkstack(fetch).orkflows.listOrkflows({});
-		return { orkflows: res.orkflows, preselect, error: null as string | null };
+		const res = await orkstack(fetch).orkflows.listOrkflows({ namespace });
+		return { orkflows: res.orkflows, preselect, namespace, error: null as string | null };
 	} catch (err) {
-		return { orkflows: [], preselect, error: errorMessage(err) };
+		return { orkflows: [], preselect, namespace, error: errorMessage(err) };
 	}
 };

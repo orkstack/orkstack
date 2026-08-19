@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { errorMessage, orkstack } from '$lib/client';
+	import { namespaceLabel, withNamespace } from '$lib/namespace';
+	import type { PageProps } from './$types';
 
 	const PLACEHOLDER = `name: my-orkflow
 version: "0.1.0"
@@ -20,6 +22,8 @@ tasks:
       capture_body_as: body
 `;
 
+	let { data }: PageProps = $props();
+
 	let yaml = $state('');
 	let applying = $state(false);
 	let formError = $state('');
@@ -34,10 +38,10 @@ tasks:
 		}
 		applying = true;
 		try {
-			const res = await orkstack(fetch).orkflows.applyOrkflow({ yaml });
+			const res = await orkstack(fetch).orkflows.applyOrkflow({ yaml, namespace: data.namespace });
 			warnings = res.warnings;
 			if (res.orkflow) {
-				await goto(`/orkflows/${res.orkflow.name}`);
+				await goto(withNamespace(`/orkflows/${res.orkflow.name}`, data.namespace));
 				return;
 			}
 			throw new Error('engine returned no orkflow');
@@ -50,7 +54,11 @@ tasks:
 
 <svelte:head><title>Apply orkflow — OrkStack</title></svelte:head>
 
-<h1 class="mb-6 text-2xl font-bold">Apply an orkflow</h1>
+<h1 class="mb-2 text-2xl font-bold">Apply an orkflow</h1>
+<p class="mb-6 text-sm text-zinc-400" data-testid="apply-namespace">
+	Into namespace <span class="font-medium text-zinc-200">{namespaceLabel(data.namespace)}</span>.
+	A document that names a different one is refused rather than moved.
+</p>
 
 <form
 	class="max-w-3xl space-y-4"

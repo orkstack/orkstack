@@ -143,10 +143,13 @@ func ParseNamespaceKey(key string) (name string, ok bool) {
 // `namespace:` in a document. cleanComponentPattern accepted `Payments`,
 // `pay.ments`, `1payments` and `a_b` — every one refused by the compiler — so
 // each was a namespace that could be created, written to, and then never named
-// in YAML. pkg/ may not import internal/, so the two rules are held together
-// by measurement instead: TestNamespaceName_RegistryAndCompilerAgree runs one
-// corpus through this rule and through the compiler and fails on any
-// disagreement, in either direction.
+// in YAML. This package does not import the compiler — it is public and the
+// compiler is internal, and a program that only stores artifacts should not
+// have to build a YAML front end to do it — so the two rules are held
+// together by measurement instead: TestNamespaceName_RegistryAndCompilerAgree
+// runs one corpus through this rule and through the compiler and fails on any
+// disagreement, in either direction. Being a test, it can import what this
+// file will not, at no cost to any importer.
 var namespaceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 func validNamespaceName(name string) error {
@@ -323,10 +326,13 @@ func (s *S3NamespaceStore) clock() time.Time {
 }
 
 // DefaultPool is the pool a task runs on when neither the task nor its
-// namespace names one. It is the same name internal/task.DefaultPool maps to
-// the execution queue a zero-configuration stack polls; the constant is
-// repeated here because pkg/ may not import internal/, and the two are pinned
-// together by TestNamespacePools_AreExactlyThePoolsDispatchCanReach.
+// namespace names one. It is the same name internal/task.DefaultPool resolves
+// to the deployment's default execution channel; the constant is repeated
+// here because this package does not import internal/task, which would put
+// the Temporal SDK into the build of every program that stores an artifact.
+// The two are pinned together by
+// TestNamespacePools_AreExactlyThePoolsDispatchCanReach, a test, which does
+// import it — a test dependency reaches no importer.
 const DefaultPool = "main"
 
 // poolNamePattern is the rule for a pool name this registry will store.

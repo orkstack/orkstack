@@ -1,6 +1,7 @@
 <script lang="ts">
 	import DagGraph from '$lib/components/DagGraph.svelte';
 	import { fmtTimestamp } from '$lib/status';
+	import { withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -63,13 +64,13 @@
 
 	<div class="flex gap-3">
 		<a
-			href="/submit?orkflow={wf.name}"
+			href={withNamespace(`/submit?orkflow=${wf.name}`, data.namespace)}
 			class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
 		>
 			Submit a run
 		</a>
 		<a
-			href="/runs?orkflow={wf.name}"
+			href={withNamespace(`/runs?orkflow=${wf.name}`, data.namespace)}
 			class="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
 		>
 			View runs

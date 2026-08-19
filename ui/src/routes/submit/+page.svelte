@@ -5,6 +5,7 @@
 	import type { JsonObject } from '@bufbuild/protobuf';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { PayloadSchema } from '$lib/gen/orkstack/v1/common_pb';
+	import { withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -59,10 +60,11 @@
 			const res = await orkstack(fetch).runs.submitRun({
 				orkflowName: orkflow.name,
 				orkflowVersion: orkflow.version,
+				namespace: data.namespace,
 				input: create(PayloadSchema, { data: parsed })
 			});
 			if (!res.run) throw new Error('engine returned no run');
-			await goto(`/runs/${res.run.id}`);
+			await goto(withNamespace(`/runs/${res.run.id}`, data.namespace));
 		} catch (err) {
 			formError = errorMessage(err);
 			submitting = false;
@@ -83,7 +85,7 @@
 	</div>
 {:else if data.orkflows.length === 0}
 	<p class="text-sm text-zinc-400">
-		No orkflows applied yet. <a href="/apply" class="text-emerald-300 hover:underline"
+		No orkflows applied yet. <a href={withNamespace('/apply', data.namespace)} class="text-emerald-300 hover:underline"
 			>Apply one first.</a
 		>
 	</p>

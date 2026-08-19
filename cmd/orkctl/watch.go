@@ -17,7 +17,9 @@ func newRunWatchCommand(g *globalFlags) *cobra.Command {
 		Short: "Stream a run's events until it reaches a terminal state",
 		Long: "watch consumes RunService.StreamEvents and prints each event as it arrives,\n" +
 			"exiting when the run reaches a terminal state. The exit code reflects the\n" +
-			"final status: 0 succeeded, 2 failed, 3 canceled.",
+			"final status: 0 succeeded, 2 failed, 3 canceled.\n\n" +
+			"The run is addressed inside the namespace this command acts in; a run of\n" +
+			"another namespace is not found here.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return watchRun(cmd, g, args[0], fromSequence)
@@ -46,6 +48,7 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 	stream, err := client.StreamEvents(streamCtx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId:        runID,
 		FromSequence: fromSequence,
+		Namespace:    g.namespace,
 	}))
 	if err != nil {
 		return rpcError("watch run", err)
@@ -76,7 +79,8 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 
 	runCtx, cancelRun := g.unaryContext(cmd)
 	defer cancelRun()
-	resp, err := client.GetRun(runCtx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
+	resp, err := client.GetRun(runCtx, connect.NewRequest(
+		&orkstackv1.GetRunRequest{RunId: runID, Namespace: g.namespace}))
 	if err != nil {
 		return rpcError("get run", err)
 	}

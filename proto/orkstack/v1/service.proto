@@ -182,7 +182,18 @@ message SubmitRunRequest {
   bool allow_empty_pool = 6;
 }
 message SubmitRunResponse { Run run = 1; }
-message GetRunRequest { string run_id = 1; }
+// A run id addresses a run INSIDE a namespace, exactly as an orkflow name
+// does. It is unguessable, but unguessable is not a tenancy boundary: an id
+// travels into logs, tickets and CI transcripts, and CancelRun is a write. So
+// every request that carries one carries the namespace it is addressed in, on
+// the same rule as every other namespace field — empty is the default
+// namespace, never "any of them". A run of another namespace is NotFound, not
+// PermissionDenied: telling the two apart would confirm to a caller who may
+// not name the namespace that the id exists.
+message GetRunRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+}
 message GetRunResponse { Run run = 1; }
 message ListRunsRequest {
   string orkflow_name = 1;               // optional orkflow name filter
@@ -195,11 +206,16 @@ message ListRunsResponse {
   repeated Run runs = 1;
   string next_page_token = 2;
 }
-message CancelRunRequest { string run_id = 1; string reason = 2; }
+message CancelRunRequest {
+  string run_id = 1;
+  string reason = 2;
+  string namespace = 3;                  // empty = the default namespace
+}
 message CancelRunResponse { Run run = 1; }
 message StreamEventsRequest {
   string run_id = 1;
   int64 from_sequence = 2;
+  string namespace = 3;                  // empty = the default namespace
 }
 
 // NamespaceService manages namespaces and reports the pools they may dispatch
@@ -256,8 +272,13 @@ message GetNamespaceResponse { Namespace namespace = 1; }
 message ListNamespacesRequest {}
 message ListNamespacesResponse { repeated Namespace namespaces = 1; }
 message UpdateNamespaceRequest {
-  // namespace carries the new spec and the etag it was read at. An empty etag
-  // is an unconditional write, which a caller has to ask for explicitly.
+  // namespace carries the new spec and the etag it was read at. Every update
+  // is conditional: the etag names the stored version this edit replaces, and
+  // an empty etag says the version it edited had no stored bytes at all —
+  // which is what a read of the synthesized `default` namespace hands back.
+  // Both are compare-and-swaps, and a write whose condition no longer holds
+  // is FAILED_PRECONDITION: re-read and re-apply. There is no unconditional
+  // mode; see Namespace.etag for why an empty token cannot be one.
   Namespace namespace = 1;
 }
 message UpdateNamespaceResponse { Namespace namespace = 1; }

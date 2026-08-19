@@ -30,8 +30,14 @@ function withProtoEnumNames(frame: JsonValue): JsonValue {
 // replays the backlog (from_sequence=0), delivers every event in order,
 // dedupes by sequence, and reconnects with a resume cursor until the run
 // reaches a terminal event. Returns an unsubscribe function.
+//
+// namespace is where the run is addressed. It travels as a query parameter
+// because the path is the run's address and a socket has no request body; the
+// bridge answers 404 for a run of another namespace, on the same rule as the
+// RPC, and an empty value means the default namespace.
 export function watchRunEvents(
 	runId: string,
+	namespace: string,
 	onEvent: (event: Event) => void,
 	onState?: (state: RunSocketState) => void
 ): () => void {
@@ -45,7 +51,9 @@ export function watchRunEvents(
 	const connect = () => {
 		if (stopped) return;
 		setState('connecting');
-		const url = `${wsBaseUrl()}/ws/runs/${encodeURIComponent(runId)}?from_sequence=${lastSequence.toString()}`;
+		const query = new URLSearchParams({ from_sequence: lastSequence.toString() });
+		if (namespace) query.set('namespace', namespace);
+		const url = `${wsBaseUrl()}/ws/runs/${encodeURIComponent(runId)}?${query.toString()}`;
 		socket = new WebSocket(url);
 
 		socket.onopen = () => {
