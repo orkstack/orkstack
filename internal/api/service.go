@@ -424,7 +424,35 @@ type submission struct {
 	wf    *orkstackv1.Orkflow
 	input *orkstackv1.Payload
 	plan  engine.RunPlan
-	key   string
+	// namespace is what the request resolved to, as prepare resolved it. It
+	// is the run's tenant, and half of the claim coordinate below.
+	namespace string
+	// key is the caller's idempotency key, "" when they sent none. It is the
+	// caller's own word and what an error quotes back to them; the coordinate
+	// the claim authority is asked about is claimKey(), which is a different
+	// string.
+	key string
+}
+
+// claimKey is the coordinate one idempotency key occupies: the caller's key,
+// scoped by the namespace it was submitted into.
+//
+// The scope is load-bearing. engine.ClaimWorkflowID hashes this string into a
+// Temporal workflow id, and one id is one binding for the whole deployment, so
+// an unscoped key makes "nightly" in payments and "nightly" in staging the
+// same claim: the second tenant is answered with the first tenant's run id,
+// reported as success, and the run they asked for is never started. A key is
+// a caller's private word for one submission, so it is a coordinate WITHIN a
+// namespace exactly as an orkflow name is.
+//
+// A namespace name is a slug (^[a-z][a-z0-9-]*$, pkg/artifacts), so it can
+// never contain "/": the first separator splits the pair back apart, and no
+// two (namespace, key) pairs can compose to one coordinate.
+func (s submission) claimKey() string {
+	if s.key == "" {
+		return ""
+	}
+	return s.namespace + "/" + s.key
 }
 
 // SubmitRun creates a pending run and starts its Temporal workflow.
@@ -502,11 +530,12 @@ func (s *Service) prepare(
 		return submission{}, poolPlanError(err)
 	}
 	return submission{
-		binding: binding,
-		wf:      planned,
-		input:   engine.ApplyInputDefaults(planned, msg.GetInput()),
-		plan:    plan,
-		key:     msg.GetIdempotencyKey(),
+		binding:   binding,
+		wf:        planned,
+		input:     engine.ApplyInputDefaults(planned, msg.GetInput()),
+		plan:      plan,
+		namespace: ns.GetName(),
+		key:       msg.GetIdempotencyKey(),
 	}, nil
 }
 
@@ -550,7 +579,7 @@ func (s *Service) submitClaimedRun(
 	sub submission,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	var candidate *orkstackv1.Run
-	winner, err := s.idempotency.Claim(ctx, sub.key, func() (engine.Claim, error) {
+	winner, err := s.idempotency.Claim(ctx, sub.claimKey(), func() (engine.Claim, error) {
 		candidate = s.newPendingRun(s.newRunID(), sub.wf, sub.input)
 		return newClaim(candidate)
 	})
@@ -707,7 +736,7 @@ func (s *Service) reissueRunID(
 	if err != nil {
 		return next, err
 	}
-	if err := s.idempotency.Rebind(ctx, sub.key, claim, discarded.GetId()); err != nil {
+	if err := s.idempotency.Rebind(ctx, sub.claimKey(), claim, discarded.GetId()); err != nil {
 		return next, fmt.Errorf("move idempotency key %q from %s to %s: %w",
 			sub.key, discarded.GetId(), next.GetId(), err)
 	}

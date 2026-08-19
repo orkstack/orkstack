@@ -301,6 +301,89 @@ func runIDs(runs []*orkstackv1.Run) []string {
 	return ids
 }
 
+// TestSubmitRun_OneIdempotencyKeyInTwoNamespacesStartsTwoRuns covers the last
+// coordinate on the submit path that was still global.
+//
+// An idempotency key is the caller's own word for "this submission", and two
+// tenants pick the same words: nightly, deploy-1, retry. The claim authority
+// binds one key to one run for the whole deployment — engine.ClaimWorkflowID
+// hashes it into a single Temporal workflow id — so a key that is not scoped
+// by namespace answers the second tenant with the FIRST tenant's run: a run id
+// from a namespace they cannot read, reported as success, while the work they
+// asked for is never started.
+//
+// The repeat at the end is the other half of the property. Scoping the key
+// must not turn dedupe off: one key, twice, in one namespace is still one run.
+func TestSubmitRun_OneIdempotencyKeyInTwoNamespacesStartsTwoRuns(t *testing.T) {
+	// One portable document, applied into both namespaces — the case a
+	// shared provisioning script produces, and the one where a shared key is
+	// most likely.
+	const document = `
+name: deploy
+tasks:
+  - id: build
+    plugin: shell
+    with: {command: "echo build"}
+`
+	claimer := newSharedClaimer()
+	starter := &fakeStarter{}
+	counter := 0
+	svc := api.NewService(api.Config{
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Namespaces: newFakeRegistry(
+			&orkstackv1.Namespace{Name: "alpha"},
+			&orkstackv1.Namespace{Name: "bravo"},
+		),
+		Runs:        engine.NewRunStore(),
+		Bus:         engine.NewEventBus(),
+		Starter:     starter,
+		Idempotency: claimer,
+		NewRunID: func() string {
+			counter++
+			return fmt.Sprintf("run-%03d", counter)
+		},
+	})
+	ctx := context.Background()
+	mustApply(t, svc, document, "alpha")
+	mustApply(t, svc, document, "bravo")
+
+	submit := func(namespace string) *orkstackv1.Run {
+		t.Helper()
+		resp, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+			OrkflowName:    "deploy",
+			Namespace:      namespace,
+			IdempotencyKey: "nightly",
+		}))
+		if err != nil {
+			t.Fatalf("SubmitRun(%q, key nightly): %v", namespace, err)
+		}
+		return resp.Msg.GetRun()
+	}
+
+	alpha := submit("alpha")
+	bravo := submit("bravo")
+
+	if alpha.GetId() == bravo.GetId() {
+		t.Fatalf("one key in two namespaces produced one run (%s): the second tenant was "+
+			"answered with the first tenant's run and its own was never started", alpha.GetId())
+	}
+	if ns := bravo.GetNamespace(); ns != "bravo" {
+		t.Errorf("the bravo submission was answered with a run in namespace %q", ns)
+	}
+	if started := starter.startedRuns(); len(started) != 2 {
+		t.Errorf("started %v, want one run per namespace", started)
+	}
+
+	repeat := submit("alpha")
+	if repeat.GetId() != alpha.GetId() {
+		t.Errorf("repeating the key in alpha answered with %q, want its own run %q: "+
+			"scoping a key must not stop it deduplicating", repeat.GetId(), alpha.GetId())
+	}
+	if started := starter.startedRuns(); len(started) != 2 {
+		t.Errorf("started %v after the repeat, want the same two runs", started)
+	}
+}
+
 // TestApplyOrkflow_AppliesIntoANonDefaultNamespaceAndReadsItBack is the
 // replacement for M10.1's interim guard.
 //
@@ -483,6 +566,49 @@ func TestCreateNamespace_IsIdempotentForAnIdenticalSpec(t *testing.T) {
 	if got := second.Msg.GetNamespace().GetEtag(); got != first.Msg.GetNamespace().GetEtag() {
 		t.Errorf("etag moved from %q to %q on an idempotent repeat",
 			first.Msg.GetNamespace().GetEtag(), got)
+	}
+
+	// An omitted default_pool and an explicit "main" are the same namespace
+	// said differently, and the system says so itself: "" MEANS main
+	// (artifacts.DefaultPool), `orkctl namespace list` prints main for a
+	// stored "", and `--default-pool` advertises main as its own default. So
+	// a user who creates a namespace, reads what the CLI tells them and
+	// re-runs the create with it is re-sending an identical spec. Comparing
+	// the raw strings refused that with `default_pool is "main", not "main"`
+	// — a collision whose two sides print identically.
+	for _, tc := range []struct {
+		name    string
+		created string
+		repeat  string
+	}{
+		{name: "omitted-then-main", created: "", repeat: artifacts.DefaultPool},
+		{name: "main-then-omitted", created: artifacts.DefaultPool, repeat: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := namespacedService(t, newFakeRegistry())
+			created, err := svc.CreateNamespace(ctx,
+				connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+					Namespace: &orkstackv1.Namespace{Name: "billing", DefaultPool: tc.created},
+				}))
+			if err != nil {
+				t.Fatalf("CreateNamespace(default_pool %q): %v", tc.created, err)
+			}
+			again, err := svc.CreateNamespace(ctx,
+				connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+					Namespace: &orkstackv1.Namespace{Name: "billing", DefaultPool: tc.repeat},
+				}))
+			if err != nil {
+				t.Fatalf("re-creating with default_pool %q after %q: %v",
+					tc.repeat, tc.created, err)
+			}
+			if again.Msg.GetCreated() {
+				t.Error("the repeated create reports created=true; nothing was written")
+			}
+			if got := again.Msg.GetNamespace().GetEtag(); got != created.Msg.GetNamespace().GetEtag() {
+				t.Errorf("etag moved from %q to %q on an idempotent repeat",
+					created.Msg.GetNamespace().GetEtag(), got)
+			}
+		})
 	}
 }
 

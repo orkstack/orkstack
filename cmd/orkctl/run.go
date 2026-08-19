@@ -82,7 +82,8 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&inputJSON, "input-json", "",
 		"run input as a JSON object; merged under --input values")
 	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: latest applied)")
-	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "dedupe key for repeated submissions")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "",
+		"dedupe key for repeated submissions, scoped to this namespace")
 	cmd.Flags().BoolVar(&watch, "watch", false, "stream events until the run reaches a terminal state")
 	return cmd
 }

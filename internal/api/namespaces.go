@@ -117,15 +117,25 @@ func (s *Service) createConflict(
 // Only the fields a client sets are compared. created_at, updated_at and the
 // etag are the registry's and always differ between a request and a stored
 // document; comparing them would make every repeat a collision, which is the
-// opposite of idempotent. allowed_pools is compared as a set, because a list
-// reordered is the same allow-list and refusing a reformatted script would be
-// a collision that is not one.
+// opposite of idempotent.
+//
+// Two fields are compared through the meaning of their value rather than its
+// spelling, because a spec is identical when the system would act on it
+// identically. allowed_pools is a set: a list reordered is the same
+// allow-list, and refusing a reformatted script would be a collision that is
+// not one. default_pool is compared through engine.DefaultPoolFor — the
+// resolution rule itself — because an unset value MEANS main: `orkctl
+// namespace list` prints main for a stored "", and `--default-pool`
+// advertises main as its default, so a user who reads back what the CLI told
+// them and re-runs their create is sending the same spec. Comparing the raw
+// strings refused exactly that, with `default_pool is "main", not "main"` — a
+// difference report whose two sides print identically.
 func specDifference(stored, requested *orkstackv1.Namespace) string {
 	if got, want := stored.GetDescription(), requested.GetDescription(); got != want {
 		return fmt.Sprintf("description is %q, not %q", got, want)
 	}
-	if got, want := stored.GetDefaultPool(), requested.GetDefaultPool(); got != want {
-		return fmt.Sprintf("default_pool is %q, not %q", orDefaultPool(got), orDefaultPool(want))
+	if got, want := engine.DefaultPoolFor(stored), engine.DefaultPoolFor(requested); got != want {
+		return fmt.Sprintf("default_pool is %q, not %q", got, want)
 	}
 	if got, want := sortedCopy(stored.GetAllowedPools()),
 		sortedCopy(requested.GetAllowedPools()); !equalStrings(got, want) {
@@ -136,15 +146,6 @@ func specDifference(stored, requested *orkstackv1.Namespace) string {
 		return fmt.Sprintf("labels are %s, not %s", renderLabels(got), renderLabels(want))
 	}
 	return ""
-}
-
-// orDefaultPool renders an unset default pool as the pool it means, so a
-// difference report never compares "" against the name of the same thing.
-func orDefaultPool(pool string) string {
-	if pool == "" {
-		return artifacts.DefaultPool
-	}
-	return pool
 }
 
 func sortedCopy(values []string) []string {

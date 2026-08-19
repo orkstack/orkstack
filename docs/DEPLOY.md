@@ -747,6 +747,10 @@ Runs already pinned to a version still need that version's workers.
   `--idempotency-key` sent to two replicas at once returns one run id, because
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not
   process memory. Retries are safe from any address behind the load balancer.
+  A key is scoped to the ork namespace it was submitted into, so two tenants
+  can both submit `nightly` and get their own run
+  (`api.submission.claimKey`); unscoped, the second would be answered with the
+  first tenant's run id and its work would never start.
 - **`ORK_ORKER_QUEUE` must be set on both binaries.** Set it on only one and
   runs strand in `RUNNING`: the Orker polls one queue while the engine
   dispatches to another. It moves **task execution only** — the engine's own
