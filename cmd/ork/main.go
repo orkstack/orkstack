@@ -117,6 +117,14 @@ func archiveLocation(cfg artifacts.Config) string {
 	return cfg.LocalDir + "/" + artifacts.RunArchiveNamespace
 }
 
+// logLocation renders where task log chunks land, for the boot log.
+func logLocation(cfg artifacts.Config) string {
+	if cfg.Backend == artifacts.BackendS3 {
+		return "s3://" + cfg.S3Bucket + "/" + artifacts.LogPrefix
+	}
+	return cfg.LocalDir + "/" + artifacts.LogPrefix
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(logger, loadConfig()); err != nil {
@@ -387,6 +395,17 @@ func run(logger *slog.Logger, cfg config) error {
 	logger.Info("run archive ready",
 		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
 
+	// Task logs: the chunks an Orker wrote while a task ran. They live in the
+	// same bucket, so this engine serves the logs of a run it never started
+	// and of one whose Orker has long exited — the same reason the archive is
+	// not in this process either.
+	logStore, err := artifacts.NewLogStore(archiveConfig)
+	if err != nil {
+		return err
+	}
+	logger.Info("task log store ready",
+		"backend", archiveConfig.Backend, "location", logLocation(archiveConfig))
+
 	// The read model. Every run read leaves this process: a run's history is
 	// its event log, and Temporal hands the same answer to every replica, for
 	// runs this one neither started nor projected.
@@ -468,6 +487,7 @@ func run(logger *slog.Logger, cfg config) error {
 		PoolPlugins: starter,
 		RawQueue:    cfg.defaultRouteOverride,
 		Archive:     archive,
+		Logs:        logStore,
 		Idempotency: idempotency,
 		Webhooks:    webhookRegistry,
 		Notifier:    runNotifier,

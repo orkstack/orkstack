@@ -41,6 +41,13 @@ type Options struct {
 	EnvAllowlist []string
 	// LogSink observes plugin log lines in addition to the activity logger.
 	LogSink func(in task.ExecuteTaskInput, line string)
+	// Logs is where a task attempt's output is streamed while it runs. Nil
+	// leaves an Orker that executes tasks and streams nothing: logging is
+	// observability, and losing it must never lose the work.
+	Logs artifacts.LogStore
+	// Log bounds that stream — flush size, flush interval and the per-attempt
+	// cap. The zero value is the documented default in every field.
+	Log LogOptions
 }
 
 // Activities implements the engine<->Orker activity seam: it renders task
@@ -49,6 +56,8 @@ type Options struct {
 type Activities struct {
 	registry  *plugin.Registry
 	store     artifacts.Store
+	logs      artifacts.LogStore
+	logOpts   LogOptions
 	workRoot  string
 	allowlist map[string]struct{}
 	logSink   func(in task.ExecuteTaskInput, line string)
@@ -76,6 +85,8 @@ func NewActivitiesWithOptions(registry *plugin.Registry, store artifacts.Store, 
 	return &Activities{
 		registry:  registry,
 		store:     store,
+		logs:      opts.Logs,
+		logOpts:   opts.Log,
 		workRoot:  workRoot,
 		allowlist: allowlist,
 		logSink:   opts.LogSink,
@@ -101,7 +112,15 @@ func (a *Activities) ExecuteTask(ctx context.Context, in task.ExecuteTaskInput) 
 			ErrTypeUnknownPlugin, nil)
 	}
 
-	logf := a.logger(ctx, in)
+	// The live log sink is opened before anything else this attempt does, so
+	// even a workdir failure is visible to somebody watching the task, and it
+	// is closed BEFORE this function returns — Temporal records the activity's
+	// completion after the return, so every chunk is durable before the task's
+	// terminal event exists. That ordering is what lets a reader end its
+	// stream on the terminal event without losing the last chunk.
+	sink := a.openLogSink(ctx, in)
+	defer sink.Close()
+	logf := a.logger(ctx, in, sink)
 	heartbeat(ctx, "start")
 
 	workDir, err := a.makeWorkDir(ctx, in)
@@ -244,10 +263,38 @@ func (a *Activities) pluginNames() []string {
 	return names
 }
 
-// logger streams plugin logs to the activity logger (and the optional sink).
-func (a *Activities) logger(ctx context.Context, in task.ExecuteTaskInput) plugin.Logger {
+// openLogSink builds the chunk sink for this attempt. The attempt number comes
+// from Temporal, so a retry writes its own stream rather than appending to the
+// last try's — which is what keeps a resumed reader from seeing two tries
+// interleaved.
+func (a *Activities) openLogSink(ctx context.Context, in task.ExecuteTaskInput) *logChunkSink {
+	return newLogChunkSink(ctx, a.logs, artifacts.LogRef{
+		RunID:   in.RunID,
+		TaskID:  in.TaskID,
+		Attempt: attempt(ctx),
+	}, a.logOpts).withErrorReporter(func(err error) {
+		if activity.IsActivity(ctx) {
+			activity.GetLogger(ctx).Warn("task log chunk lost",
+				"run_id", in.RunID, "task_id", in.TaskID, "error", err)
+		}
+	})
+}
+
+// logger is plugin.Logger: it fans one line out to the live log stream (the
+// artifact store, where the bytes belong), to the activity logger, and to the
+// optional in-process observer.
+//
+// The live stream is the load-bearing one. Nothing here touches the Event
+// stream or a Temporal payload: a task's output is bytes, and bytes are
+// carried by the store (AGENTS.md §1.4).
+func (a *Activities) logger(
+	ctx context.Context,
+	in task.ExecuteTaskInput,
+	sink *logChunkSink,
+) plugin.Logger {
 	return func(format string, args ...any) {
 		line := fmt.Sprintf(format, args...)
+		sink.Write(line)
 		if activity.IsActivity(ctx) {
 			activity.GetLogger(ctx).Info(line,
 				"run_id", in.RunID, "task_id", in.TaskID, "plugin", in.Plugin)

@@ -107,6 +107,16 @@ func run(logger *slog.Logger, cfg config) error {
 		return err
 	}
 
+	// The live log sink's destination. It is the SAME backend the artifacts go
+	// to, so an engine replica reading a task's log reads the bucket this
+	// process wrote it into — no side channel between the two, and therefore
+	// no run whose logs only one replica can serve.
+	logStore, err := artifacts.NewLogStoreFromEnv()
+	if err != nil {
+		return err
+	}
+	logOptions := orker.LogOptionsFromEnv()
+
 	temporalClient, err := client.DialContext(ctx, client.Options{
 		HostPort:  cfg.temporalAddress,
 		Namespace: cfg.temporalNamespace,
@@ -123,7 +133,10 @@ func run(logger *slog.Logger, cfg config) error {
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
 
 	registry := orker.BuiltinRegistry()
-	activities := orker.NewActivities(registry, store)
+	activities := orker.NewActivitiesWithOptions(registry, store, orker.Options{
+		Logs: logStore,
+		Log:  logOptions,
+	})
 	taskWorker := worker.New(temporalClient, cfg.queue, workerOptions(cfg))
 	taskWorker.RegisterActivityWithOptions(
 		activities.ExecuteTask,
@@ -146,6 +159,10 @@ func run(logger *slog.Logger, cfg config) error {
 	logger.Info("orker started",
 		"pool", cfg.pool, "task_queue", cfg.queue,
 		"activity", task.ActivityExecuteTask, "plugins", names)
+	logger.Info("task log streaming ready",
+		"flush_bytes", logOptions.FlushBytes,
+		"flush_interval", logOptions.FlushInterval,
+		"max_bytes_per_attempt", logOptions.MaxBytes)
 	if cfg.rawOverride {
 		// The channel was pinned by hand. Say so, because a raw channel this
 		// process did not derive from a pool name is not necessarily any

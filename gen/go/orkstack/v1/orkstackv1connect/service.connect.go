@@ -67,6 +67,9 @@ const (
 	RunServiceCancelRunProcedure = "/orkstack.v1.RunService/CancelRun"
 	// RunServiceStreamEventsProcedure is the fully-qualified name of the RunService's StreamEvents RPC.
 	RunServiceStreamEventsProcedure = "/orkstack.v1.RunService/StreamEvents"
+	// RunServiceStreamTaskLogsProcedure is the fully-qualified name of the RunService's StreamTaskLogs
+	// RPC.
+	RunServiceStreamTaskLogsProcedure = "/orkstack.v1.RunService/StreamTaskLogs"
 	// NamespaceServiceCreateNamespaceProcedure is the fully-qualified name of the NamespaceService's
 	// CreateNamespace RPC.
 	NamespaceServiceCreateNamespaceProcedure = "/orkstack.v1.NamespaceService/CreateNamespace"
@@ -347,6 +350,21 @@ type RunServiceClient interface {
 	// StreamEvents server-streams realtime events for a run. from_sequence
 	// allows resuming after a disconnect (0 = from start).
 	StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest]) (*connect.ServerStreamForClient[v1.Event], error)
+	// StreamTaskLogs server-streams one task attempt's output: every chunk
+	// already written, in order, then each new one as it lands.
+	//
+	// Logs are a SEPARATE stream from Event on purpose. Task output is bytes,
+	// and bytes never enter a Temporal payload or the event stream (a run's
+	// history is replayed forever, and a chatty task would bloat it forever
+	// too). The Orker writes numbered chunks to the artifact store while the
+	// task runs; this RPC reads them back from there. EventType gains nothing:
+	// EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no
+	// task output in it.
+	//
+	// Any replica answers for any run, on the same terms as StreamEvents: the
+	// chunks are in the shared store and the task's state comes from the shared
+	// cluster, so a replica that started nothing serves a run to completion.
+	StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest]) (*connect.ServerStreamForClient[v1.TaskLogChunk], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -390,16 +408,23 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("StreamEvents")),
 			connect.WithClientOptions(opts...),
 		),
+		streamTaskLogs: connect.NewClient[v1.StreamTaskLogsRequest, v1.TaskLogChunk](
+			httpClient,
+			baseURL+RunServiceStreamTaskLogsProcedure,
+			connect.WithSchema(runServiceMethods.ByName("StreamTaskLogs")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // runServiceClient implements RunServiceClient.
 type runServiceClient struct {
-	submitRun    *connect.Client[v1.SubmitRunRequest, v1.SubmitRunResponse]
-	getRun       *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
-	listRuns     *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
-	cancelRun    *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
-	streamEvents *connect.Client[v1.StreamEventsRequest, v1.Event]
+	submitRun      *connect.Client[v1.SubmitRunRequest, v1.SubmitRunResponse]
+	getRun         *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
+	listRuns       *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	cancelRun      *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
+	streamEvents   *connect.Client[v1.StreamEventsRequest, v1.Event]
+	streamTaskLogs *connect.Client[v1.StreamTaskLogsRequest, v1.TaskLogChunk]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -427,6 +452,11 @@ func (c *runServiceClient) StreamEvents(ctx context.Context, req *connect.Reques
 	return c.streamEvents.CallServerStream(ctx, req)
 }
 
+// StreamTaskLogs calls orkstack.v1.RunService.StreamTaskLogs.
+func (c *runServiceClient) StreamTaskLogs(ctx context.Context, req *connect.Request[v1.StreamTaskLogsRequest]) (*connect.ServerStreamForClient[v1.TaskLogChunk], error) {
+	return c.streamTaskLogs.CallServerStream(ctx, req)
+}
+
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
 type RunServiceHandler interface {
 	SubmitRun(context.Context, *connect.Request[v1.SubmitRunRequest]) (*connect.Response[v1.SubmitRunResponse], error)
@@ -436,6 +466,21 @@ type RunServiceHandler interface {
 	// StreamEvents server-streams realtime events for a run. from_sequence
 	// allows resuming after a disconnect (0 = from start).
 	StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest], *connect.ServerStream[v1.Event]) error
+	// StreamTaskLogs server-streams one task attempt's output: every chunk
+	// already written, in order, then each new one as it lands.
+	//
+	// Logs are a SEPARATE stream from Event on purpose. Task output is bytes,
+	// and bytes never enter a Temporal payload or the event stream (a run's
+	// history is replayed forever, and a chatty task would bloat it forever
+	// too). The Orker writes numbered chunks to the artifact store while the
+	// task runs; this RPC reads them back from there. EventType gains nothing:
+	// EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no
+	// task output in it.
+	//
+	// Any replica answers for any run, on the same terms as StreamEvents: the
+	// chunks are in the shared store and the task's state comes from the shared
+	// cluster, so a replica that started nothing serves a run to completion.
+	StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest], *connect.ServerStream[v1.TaskLogChunk]) error
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -475,6 +520,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("StreamEvents")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceStreamTaskLogsHandler := connect.NewServerStreamHandler(
+		RunServiceStreamTaskLogsProcedure,
+		svc.StreamTaskLogs,
+		connect.WithSchema(runServiceMethods.ByName("StreamTaskLogs")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -487,6 +538,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceCancelRunHandler.ServeHTTP(w, r)
 		case RunServiceStreamEventsProcedure:
 			runServiceStreamEventsHandler.ServeHTTP(w, r)
+		case RunServiceStreamTaskLogsProcedure:
+			runServiceStreamTaskLogsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -514,6 +567,10 @@ func (UnimplementedRunServiceHandler) CancelRun(context.Context, *connect.Reques
 
 func (UnimplementedRunServiceHandler) StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest], *connect.ServerStream[v1.Event]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.StreamEvents is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest], *connect.ServerStream[v1.TaskLogChunk]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.StreamTaskLogs is not implemented"))
 }
 
 // NamespaceServiceClient is a client for the orkstack.v1.NamespaceService service.

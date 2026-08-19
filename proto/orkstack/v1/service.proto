@@ -163,6 +163,21 @@ service RunService {
   // StreamEvents server-streams realtime events for a run. from_sequence
   // allows resuming after a disconnect (0 = from start).
   rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+  // StreamTaskLogs server-streams one task attempt's output: every chunk
+  // already written, in order, then each new one as it lands.
+  //
+  // Logs are a SEPARATE stream from Event on purpose. Task output is bytes,
+  // and bytes never enter a Temporal payload or the event stream (a run's
+  // history is replayed forever, and a chatty task would bloat it forever
+  // too). The Orker writes numbered chunks to the artifact store while the
+  // task runs; this RPC reads them back from there. EventType gains nothing:
+  // EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no
+  // task output in it.
+  //
+  // Any replica answers for any run, on the same terms as StreamEvents: the
+  // chunks are in the shared store and the task's state comes from the shared
+  // cluster, so a replica that started nothing serves a run to completion.
+  rpc StreamTaskLogs(StreamTaskLogsRequest) returns (stream TaskLogChunk);
 }
 
 message SubmitRunRequest {
@@ -216,6 +231,47 @@ message StreamEventsRequest {
   string run_id = 1;
   int64 from_sequence = 2;
   string namespace = 3;                  // empty = the default namespace
+}
+message StreamTaskLogsRequest {
+  string run_id = 1;
+  string task_id = 2;
+  // attempt selects one try of the task. 0 means the latest attempt that has
+  // written anything, so a caller that never saw a retry does not have to
+  // know retries exist.
+  int32 attempt = 3;
+  // from_seq resumes: the first chunk sequence NOT yet seen. 0 starts at the
+  // beginning. It is the same contract StreamEvents.from_sequence has, over
+  // the log's own numbering — dense and 1-based per (run, task, attempt) —
+  // so a client that reconnects to a DIFFERENT replica replays nothing twice
+  // and misses nothing.
+  int64 from_seq = 4;
+  // follow keeps the stream open for chunks that do not exist yet, ending
+  // when the task reaches a terminal state. False replays what is stored and
+  // ends, which is the post-mortem read.
+  bool follow = 5;
+  string namespace = 6;                  // empty = the default namespace
+}
+// TaskLogChunk is one slice of a task attempt's output, exactly as the Orker
+// flushed it.
+message TaskLogChunk {
+  string run_id = 1;
+  string task_id = 2;
+  int32 attempt = 3;
+  // seq orders the chunk within (run_id, task_id, attempt): dense, starting
+  // at 1. It is assigned by the single Orker executing the attempt, so it is
+  // total and gap-free without any coordination, and it is what a client
+  // hands back as from_seq.
+  int64 seq = 4;
+  // data is UTF-8 log bytes ending on a line boundary, except where one line
+  // exceeded the chunk limit and was split.
+  bytes data = 5;
+  // truncated marks the notice chunk the Orker writes when a task's output
+  // passed its cap. Its data says so in words; no further output was stored.
+  // Truncation is visible in the stream, never silent.
+  bool truncated = 6;
+  // last marks the final chunk of the stream: the task has reached a terminal
+  // state and everything it wrote has been delivered. It carries no data.
+  bool last = 7;
 }
 
 // NamespaceService manages namespaces and reports the pools they may dispatch

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,9 @@ import (
 // fakeReader stands in for engine.TemporalRunReader: the run and the ordered
 // stream that Temporal holds for it, with nothing of either in this process.
 type fakeReader struct {
+	// mu guards runs, so a test can move a run to a terminal state while a
+	// stream is following it — which is the whole shape of a live log follow.
+	mu     sync.Mutex
 	runs   map[string]*orkstackv1.Run
 	events map[string][]*orkstackv1.Event
 	// live blocks the stream after the events already recorded, so a test can
@@ -40,10 +44,23 @@ type fakeReader struct {
 	getErr  error
 }
 
+// setRun replaces what the record answers for a run, as the cluster would when
+// the run moves on.
+func (f *fakeReader) setRun(run *orkstackv1.Run) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.runs == nil {
+		f.runs = map[string]*orkstackv1.Run{}
+	}
+	f.runs[run.GetId()] = run
+}
+
 func (f *fakeReader) GetRun(_ context.Context, runID string) (*orkstackv1.Run, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	run, ok := f.runs[runID]
 	if !ok {
 		return nil, fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)
@@ -55,6 +72,8 @@ func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstack
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []*orkstackv1.Run
 	for _, run := range f.runs {
 		if q.OrkflowName != "" && run.GetOrkflowName() != q.OrkflowName {
@@ -111,14 +130,30 @@ type readerFixture struct {
 
 func newReaderFixture(t *testing.T, reader *fakeReader) *readerFixture {
 	t.Helper()
+	return newReaderFixtureWith(t, reader, nil)
+}
+
+// newReaderFixtureWith is newReaderFixture with the config left open for one
+// more seam, so a test about logs does not need a second copy of the server
+// wiring.
+func newReaderFixtureWith(
+	t *testing.T,
+	reader *fakeReader,
+	configure func(*api.Config),
+) *readerFixture {
+	t.Helper()
 	runs := engine.NewRunStore()
-	svc := api.NewService(api.Config{
+	cfg := api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(),
 		Reader:   reader,
 		Runs:     runs,
 		Bus:      engine.NewEventBus(),
 		Starter:  &fakeStarter{},
-	})
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	svc := api.NewService(cfg)
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

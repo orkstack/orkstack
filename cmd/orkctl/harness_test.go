@@ -202,6 +202,17 @@ type fixture struct {
 // internal/api/service_test.go's harness.
 func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
 	t.Helper()
+	return newFixtureWith(t, nil, plugins...)
+}
+
+// newFixtureWith is newFixture with the service config left open for one more
+// seam, so a test about task logs does not need a second copy of this wiring.
+func newFixtureWith(
+	t *testing.T,
+	configure func(*api.Config),
+	plugins ...*orkstackv1.PluginInfo,
+) *fixture {
+	t.Helper()
 	// A stray ORK_SERVER or ORK_NAMESPACE in the developer's environment must
 	// not reach the commands under test, and neither must a config file they
 	// saved with `orkctl namespace use`: both would silently move every
@@ -216,7 +227,7 @@ func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
 	starter := &stubStarter{bus: bus}
 	namespaces := newMemoryRegistry()
 	counter := 0
-	svc := api.NewService(api.Config{
+	cfg := api.Config{
 		Orkflows:   engine.NewMemoryOrkflowStore(),
 		Namespaces: namespaces,
 		Runs:       runs,
@@ -228,7 +239,11 @@ func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
 			counter++
 			return fmt.Sprintf("run-%03d", counter)
 		},
-	})
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	svc := api.NewService(cfg)
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

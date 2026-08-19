@@ -37,6 +37,7 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	mux.Handle(WebhookItemPath, NewWebhookHandler(svc.Webhooks()))
 
 	mux.Handle("/ws/runs/{id}", NewWebSocketBridge(svc, opts.AllowedOrigins))
+	mux.Handle(TaskLogSocketPath, NewTaskLogSocket(svc, opts.AllowedOrigins))
 	return mux
 }
 

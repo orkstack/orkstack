@@ -41,6 +41,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orkstack/orkstack/pkg/plugin"
@@ -179,17 +180,35 @@ func (p *Plugin) Execute(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		}
 	}
 
+	// The live stream. Every complete line the command writes goes to ec.Log
+	// as it is produced, so a task's output is visible WHILE it runs rather
+	// than only afterwards as an artifact. The capture files and the payload
+	// head buffers are untouched: this is a third reader of the same bytes,
+	// added to the MultiWriter, not a replacement for either.
+	//
+	// Both streams feed one logger, so the live view is the interleaved
+	// console a person expects. The separation stdout/stderr callers rely on
+	// stays where it always was: the two capture artifacts.
+	stdoutTee := newLineTee(ec.Log)
+	stderrTee := newLineTee(ec.Log)
+	defer stdoutTee.Close()
+	defer stderrTee.Close()
+
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = ec.WorkDir
 	cmd.Env = commandEnv(ec.WorkDir, environ)
-	cmd.Stdout = io.MultiWriter(stdoutFile, stdoutHead)
-	cmd.Stderr = io.MultiWriter(stderrFile, stderrHead)
+	cmd.Stdout = io.MultiWriter(stdoutFile, stdoutHead, stdoutTee)
+	cmd.Stderr = io.MultiWriter(stderrFile, stderrHead, stderrTee)
 	cmd.WaitDelay = killDelay
 
 	if ec.Log != nil {
 		ec.Log("shell: %s in %s", op, ec.WorkDir)
 	}
 	runErr := cmd.Run()
+	// Flush the last unterminated line of each stream before anything reads
+	// the exit code: a command whose final line has no newline still wrote it.
+	stdoutTee.Close()
+	stderrTee.Close()
 	if err := stdoutFile.Sync(); err != nil {
 		return nil, fmt.Errorf("shell: flush stdout: %w", err)
 	}
@@ -338,6 +357,76 @@ func (h *headBuffer) Write(p []byte) (int, error) {
 }
 
 func (h *headBuffer) String() string { return h.buf.String() }
+
+// maxStreamedLine bounds one streamed piece. A command that writes megabytes
+// with no newline is the plugin-side way to exhaust memory, so the tee emits
+// a piece every maxStreamedLine bytes instead of waiting for a newline that
+// may never come. It sits below the Orker sink's own per-line limit, so the
+// split happens once, here, where the bytes are.
+const maxStreamedLine = 64 << 10
+
+// lineTee turns a byte stream into whole lines on a plugin.Logger.
+//
+// It is a writer rather than a scanner over a pipe, so it inherits exec.Cmd's
+// own copying goroutine: a line reaches the logger when the command writes it,
+// with no second goroutine to join and nothing to leak if the command is
+// killed. Writes never fail — a log must not be able to fail a task — so Write
+// always reports the full length.
+type lineTee struct {
+	log plugin.Logger
+	mu  sync.Mutex
+	buf []byte
+}
+
+func newLineTee(log plugin.Logger) *lineTee { return &lineTee{log: log} }
+
+func (t *lineTee) Write(p []byte) (int, error) {
+	if t == nil || t.log == nil {
+		return len(p), nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	for {
+		if i := bytes.IndexByte(t.buf, '\n'); i >= 0 {
+			t.emitLocked(string(t.buf[:i]))
+			t.buf = t.buf[i+1:]
+			continue
+		}
+		if len(t.buf) >= maxStreamedLine {
+			t.emitLocked(string(t.buf[:maxStreamedLine]))
+			t.buf = t.buf[maxStreamedLine:]
+			continue
+		}
+		break
+	}
+	// Reclaim the backing array once it has been consumed, so a long stream
+	// does not hold on to the largest slice it ever saw.
+	if len(t.buf) == 0 {
+		t.buf = nil
+	}
+	return len(p), nil
+}
+
+// Close emits whatever is left, which is the command's final line when it
+// ended without a newline. It is idempotent: the deferred close and the one
+// after cmd.Run are the same close.
+func (t *lineTee) Close() {
+	if t == nil || t.log == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.buf) > 0 {
+		t.emitLocked(string(t.buf))
+		t.buf = nil
+	}
+}
+
+// emitLocked hands one line to the logger as DATA. plugin.Logger is
+// printf-shaped, so a line carrying a percent sign must go through %s or a
+// task printing "100%" streams "100%!(NOVERB)".
+func (t *lineTee) emitLocked(line string) { t.log("%s", line) }
 
 func configString(config map[string]any, key string) string {
 	value, ok := config[key]

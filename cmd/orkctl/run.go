@@ -20,6 +20,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunGetCommand(g),
 		newRunListCommand(g),
 		newRunWatchCommand(g),
+		newRunLogsCommand(g),
 		newRunCancelCommand(g),
 	)
 	return cmd

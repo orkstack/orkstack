@@ -95,6 +95,18 @@ type Config struct {
 	// Archive is the durable run history. Nil keeps runs in process only.
 	Archive RunArchive
 
+	// Logs is where a task attempt's output chunks live. `ork` wires the same
+	// artifact backend the Orker writes them to, which is what makes any
+	// replica able to serve any run's logs — including one it never started
+	// and one whose Orker is gone. Nil answers StreamTaskLogs with
+	// FailedPrecondition rather than an empty stream: an operator who never
+	// configured a store must be told, not shown a quiet task.
+	Logs artifacts.LogStore
+
+	// LogPoll tunes how often a log follower re-lists the store. The zero
+	// value is the documented default.
+	LogPoll LogPollOptions
+
 	// Webhooks holds the registered callbacks. Nil builds an empty registry,
 	// so the management endpoints exist whether or not anything is wired.
 	Webhooks *webhooks.Registry
@@ -164,8 +176,12 @@ type Service struct {
 	router engine.NamespaceRouter
 	// pools is the routing decision: pool resolution, allow-list enforcement
 	// and the liveness check, all of which happen at submit.
-	pools       *engine.PoolResolver
-	archive     RunArchive
+	pools   *engine.PoolResolver
+	archive RunArchive
+	// logs is the durable task-log store, read by StreamTaskLogs. It is the
+	// same bucket the Orker wrote into and belongs to no process.
+	logs        artifacts.LogStore
+	logPoll     LogPollOptions
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
 	notifier    engine.RunNotifier
@@ -185,6 +201,8 @@ func NewService(cfg Config) *Service {
 		lister:      cfg.Lister,
 		router:      cfg.Router,
 		archive:     cfg.Archive,
+		logs:        cfg.Logs,
+		logPoll:     cfg.LogPoll,
 		idempotency: cfg.Idempotency,
 		webhooks:    cfg.Webhooks,
 		notifier:    cfg.Notifier,
