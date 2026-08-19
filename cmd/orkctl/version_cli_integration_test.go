@@ -181,6 +181,37 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 	if !strings.Contains(original, "-      command: echo two") {
 		t.Fatalf("2.0.0 no longer holds what it held:\n%s", original)
 	}
+
+	// ---- an edit made while somebody else applied --------------------------
+	//
+	// The editor is a real program, so it can do what a second operator does
+	// between a fetch and a save: apply a competing version. The refusal that
+	// follows is the stale-edit gate, seen end to end and recorded in the
+	// session beside this test.
+	competing := writeVersionedCLIOrkflow(t, name, "4.0.0", pool, "competing")
+	racing := writeCLIEditor(t, fmt.Sprintf(
+		`%q --server %q apply %q >/dev/null; sed -i.bak 's/echo edited/echo mine/' "$1"`,
+		orkctlPath, "http://"+engineAddr, competing))
+	stdout, stderr, code := cli("orkflow", "edit", name, "--editor", racing)
+	if code == 0 {
+		t.Fatalf("an edit derived from a version that stopped being the head was applied:\n%s",
+			stdout)
+	}
+	for _, want := range []string{"failed_precondition", "3.0.0", "4.0.0", "orkctl orkflow diff"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the refusal does not mention %q:\n%s", want, stderr)
+		}
+	}
+	if !strings.Contains(stderr, "your edit was kept at ") {
+		t.Errorf("a refused edit was not kept anywhere:\n%s", stderr)
+	}
+	// Nothing was stored for the refused edit: the versions are the four that
+	// were really applied.
+	final := requireCLI(t, cli, "the refused edit stored nothing",
+		"orkflow", "versions", name)
+	if strings.Contains(final, "echo mine") {
+		t.Errorf("a refused edit reached the store:\n%s", final)
+	}
 }
 
 // requireCLI runs one command, fails the test when it exits non-zero, and
