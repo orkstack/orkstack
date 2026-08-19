@@ -308,6 +308,12 @@ msg="temporal workers started" task_queue=ork-tasks event_queue=ork-engine-event
   orker_queue=ork-tasks-gpu-pool
 ```
 
+One value is refused: `ORK_ORKER_QUEUE=ork-engine-events` is the projection
+worker's own queue, so every task activity would be dispatched to it and the
+pool a document names would resolve to the engine's internals. `ork` reports it
+and exits at boot rather than starting (`cmd/ork/main.go`, `queues.validate`;
+`TestQueues_RefuseAnExecutionChannelThatIsTheEnginesOwnEventQueue`).
+
 Under versioning both appear, separately, in that version's poller list — the
 engine's queue as a **workflow** poller and the Orker's as an **activity**
 poller. That is the shape §3 step 2 checks, and reading it as one name aborts

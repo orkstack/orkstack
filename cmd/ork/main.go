@@ -127,6 +127,26 @@ func queuesFor(cfg config) queues {
 	return queues{run: task.DefaultQueue, events: engine.EventQueue, orker: cfg.orkerQueue}
 }
 
+// validate refuses a configuration whose task execution channel is a queue the
+// engine keeps for itself.
+//
+// Only the event queue qualifies. ORK_ORKER_QUEUE=ork-tasks is the ordinary
+// default, where one queue carries the engine's workflows and its tasks; but
+// ORK_ORKER_QUEUE=ork-engine-events points every task activity at the queue
+// that carries PublishEvent, so tasks would be dispatched to the projection
+// worker and `pool: main` would name the engine's own internals. Refusing at
+// boot is what makes task.QueueForPool's promise — no pool reaches the event
+// queue — true of a running deployment and not just of a named pool: the
+// function is handed the channel, it does not choose it.
+func (q queues) validate() error {
+	if q.orker == q.events {
+		return fmt.Errorf("ORK_ORKER_QUEUE=%q is the engine's own event queue, "+
+			"which carries %s; point it at a queue Orkers poll for task execution",
+			q.orker, engine.ActivityPublishEvent)
+	}
+	return nil
+}
+
 // runWorkerOptions configures the worker that hosts RunWorkflow and the
 // idempotency claims. It carries the deployment identity, because the run
 // workflow is what a version pins: an in-flight run must keep executing on the
@@ -214,6 +234,13 @@ func run(logger *slog.Logger, cfg config) error {
 	// Fail on a deployment identity the cluster would reject later, while the
 	// error can still name the variable that caused it.
 	if err := cfg.deployment.Validate(); err != nil {
+		return err
+	}
+
+	// Same reason: an execution channel that is one of the engine's own queues
+	// is refused here, where the error can name the variable, rather than at
+	// the first task dispatch.
+	if err := queuesFor(cfg).validate(); err != nil {
 		return err
 	}
 

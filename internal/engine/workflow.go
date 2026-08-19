@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -22,8 +23,11 @@ const (
 	// EventQueue is the Temporal task queue for engine-internal projection
 	// activities. It is deliberately separate from task.DefaultQueue so Orkers
 	// polling for task execution never receive engine projection work, and
-	// carries the ork- prefix every OrkStack Temporal name uses.
-	EventQueue = "ork-engine-events"
+	// carries the ork- prefix every OrkStack Temporal name uses. The literal
+	// lives in internal/task because the two places that must refuse to run
+	// tasks on it — task.QueueForPool and `ork` at boot — cannot import this
+	// package.
+	EventQueue = task.EngineEventQueue
 
 	// ActivityPublishEvent is the registered name of the projection activity.
 	ActivityPublishEvent = "PublishEvent"
@@ -540,81 +544,49 @@ func (s *runState) emit(
 	return nil
 }
 
-// route is where one task runs: the pool its author asked for, and the
-// Temporal task queue that pool's Orkers poll on this run. The two travel
-// together because they are one decision. Computing them separately is how
-// `pool: main` came to dispatch to task.DefaultQueue while a task that named
-// no pool dispatched to the run's own orkerQueue — two disjoint sets of
-// Orkers under one reported pool, and, under the ORK_ORKER_QUEUE isolation
-// AGENTS.md §6 gives every parallel agent, an escape from that isolation onto
-// the shared queue.
-type route struct {
-	pool  string
-	queue string
-}
-
-// defaultRoute is where a task that names no pool runs, and the pool that
-// route is called.
-//
-// The queue is the one TemporalStarter.StartRun bound into the workflow input,
-// because workflow code is deterministic and may not read process
-// configuration itself. The pool is that queue's own name in the user's
-// vocabulary: task.PoolForQueue answers "main" for the default queue, names
-// the pool when an operator pointed the default route at one, and declines for
-// a raw isolation queue (ORK_ORKER_QUEUE=ork-tasks-m7-9), which is nobody's
-// pool. Declining resolves to the built-in default, which is the pool a
-// document that named none asked for.
-func (s *runState) defaultRoute() route {
-	queue := s.orkerQueue
-	if queue == "" {
-		queue = task.DefaultQueue
-	}
-	pool, ok := task.PoolForQueue(queue)
-	if !ok {
-		pool = task.DefaultPool
-	}
-	return route{pool: pool, queue: queue}
-}
+// The route decision — which queue an activity is scheduled on, and which pool
+// a client is told it ran on — lives in internal/task (task.Route,
+// task.RouteForPool). It used to live here, in a `route` struct, a
+// defaultRoute method and a three-clause routeForTask: one layer above the
+// function whose comment claimed the guarantee, where the next caller
+// (M10.2's pool resolver) would not have passed through it.
 
 // routeForTask resolves one task to its route.
 //
-// It is one call to the one translation in internal/task, against the channel
-// this run bound as its default. That channel is what `main` means: a task
-// that names NO pool is asking for the default, and a task that names
-// task.DefaultPool is naming it — of the deployment's default pool, not of one
-// fixed queue. task.QueueForPool takes the default channel as an argument for
-// exactly this reason, so neither spelling can be resolved without it.
-//
-// The pool a client is told is then the name of the queue the task actually
-// reached: any task landing on the default channel is reported on the pool
-// that channel answers to (defaultRoute), so one set of Orkers never has two
-// names. Under a channel an operator pointed at a pool's own queue, `pool:
-// main` is therefore reported on THAT pool — reporting "main" while running on
-// the gpu pool's Orkers would be a lie one rename later.
+// It is one call to that one resolution, against the channel this run bound as
+// its default: the queue TemporalStarter.StartRun put in the workflow input,
+// because workflow code is deterministic and may not read process
+// configuration itself. A task that names NO pool is asking for that channel,
+// and a task that names task.DefaultPool is naming it — `main` is the name of
+// the deployment's default pool, not of one fixed queue — so both spellings
+// resolve to the same route, and the pool a client is told is the name the
+// channel the task actually reached answers to.
 //
 // A pool name that cannot be mapped fails the run rather than falling back to
 // a queue nobody asked for: silently running a gpu task on the shared pool is
-// worse than not running it.
+// worse than not running it. So does a deployment that bound one of the
+// engine's own queues as its execution channel, which `ork` refuses at boot
+// and which reaches here only from a harness that wired it by hand.
 //
 // Pure function of the workflow input, so it holds the determinism boundary
 // and a replay dispatches and reports exactly what the original run did.
-func (s *runState) routeForTask(t *orkstackv1.Task) (route, error) {
-	def := s.defaultRoute()
-	queue, err := task.QueueForPool(t.GetPool(), def.queue)
+func (s *runState) routeForTask(t *orkstackv1.Task) (task.Route, error) {
+	r, err := task.RouteForPool(t.GetPool(), s.orkerQueue)
 	if err != nil {
-		return route{}, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("task %q: %v", t.GetId(), err), "INVALID_POOL", err)
+		reason := "INVALID_POOL"
+		if errors.Is(err, task.ErrReservedQueue) {
+			reason = "RESERVED_QUEUE"
+		}
+		return task.Route{}, temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("task %q: %v", t.GetId(), err), reason, err)
 	}
-	if queue == def.queue {
-		return def, nil
-	}
-	return route{pool: t.GetPool(), queue: queue}, nil
+	return r, nil
 }
 
 // queueForTask is the queue a task's activity is scheduled on.
 func (s *runState) queueForTask(t *orkstackv1.Task) (string, error) {
 	r, err := s.routeForTask(t)
-	return r.queue, err
+	return r.Queue, err
 }
 
 // poolForTask is where a task ran, in the word its author typed. It is what
@@ -630,7 +602,7 @@ func (s *runState) poolForTask(t *orkstackv1.Task) string {
 	if err != nil {
 		return t.GetPool()
 	}
-	return r.pool
+	return r.Pool
 }
 
 func timeoutSecondsFor(t *orkstackv1.Task) int {

@@ -31,12 +31,70 @@ func privateOrkerQueue() string {
 	return fmt.Sprintf("ork-tasks-engine-%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
+// routingNamespace names a Temporal namespace this test run alone uses.
+//
+// A private orker queue is NOT enough isolation on its own, and this test used
+// to have only that: it hosts RunWorkflow on the shared task.DefaultQueue, so
+// in the cluster's default namespace a parallel agent polling `ork-tasks` can
+// take its workflow tasks and its PASS becomes a fact about who else was on
+// the cluster. ORK_ORKER_QUEUE partitions task EXECUTION only; a namespace is
+// the hard partition, and the one AGENTS.md §6 tells a parallel agent to use.
+// The operator's ORK_TEMPORAL_NAMESPACE stays as the prefix so the choice is
+// visible in `temporal workflow list`.
+func routingNamespace() string {
+	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
+	if base == "" {
+		base = task.DefaultNamespace
+	}
+	return fmt.Sprintf("%s-routing-%d-%d", base, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
+}
+
+// dialRoutingCluster provisions that namespace and returns a client bound to
+// it, skipping cleanly when no cluster is there.
+func dialRoutingCluster(t *testing.T, ctx context.Context, address, namespace string) client.Client {
+	t.Helper()
+	bootstrap, err := client.DialContext(ctx, client.Options{
+		HostPort:  address,
+		Namespace: client.DefaultNamespace,
+	})
+	if err != nil {
+		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
+	}
+	if err := task.EnsureNamespace(ctx, bootstrap, namespace); err != nil {
+		bootstrap.Close()
+		t.Fatalf("provision namespace %q: %v", namespace, err)
+	}
+	bootstrap.Close()
+
+	// A freshly registered namespace is not immediately visible to the
+	// frontend's namespace cache, so the first dial is retried rather than
+	// failed.
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+		if err == nil {
+			if _, probe := c.DescribeTaskQueue(ctx, privateOrkerQueue(), 0); probe == nil {
+				t.Cleanup(c.Close)
+				return c
+			}
+			c.Close()
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("namespace %q did not become usable: %v", namespace, err)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
 // TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll is the end of the
 // ORK_ORKER_QUEUE story: an engine configured for a private orker queue must
 // dispatch an ordinary orkflow's tasks there. The orkflow (examples/hello.ork.yaml)
 // names no queue, and nothing in this test polls the shared default queue for
 // activities — so if dispatch ignored the engine's configuration, every task
 // would sit unassigned and the run would never leave RUNNING.
+//
+// It runs in a namespace of its own (routingNamespace), because the run worker
+// below polls the shared task.DefaultQueue exactly as `ork` does.
 func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
@@ -45,17 +103,11 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	temporalClient, err := client.DialContext(ctx, client.Options{
-		HostPort:  address,
-		Namespace: client.DefaultNamespace,
-	})
-	if err != nil {
-		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
-	}
-	defer temporalClient.Close()
+	namespace := routingNamespace()
+	temporalClient := dialRoutingCluster(t, ctx, address, namespace)
 
 	orkerQueue := privateOrkerQueue()
 	bus := engine.NewEventBus()

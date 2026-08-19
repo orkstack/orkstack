@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,38 @@ func TestQueues_DefaultCollapsesTheOrkerPoolOntoTheEngineQueue(t *testing.T) {
 	q := queuesFor(loadConfig())
 	if q.run != task.DefaultQueue || q.orker != task.DefaultQueue {
 		t.Fatalf("unconfigured queues = run %q orker %q, want both %q", q.run, q.orker, task.DefaultQueue)
+	}
+}
+
+// TestQueues_RefuseAnExecutionChannelThatIsTheEnginesOwnEventQueue is the
+// third configuration, and the one that must not boot at all.
+//
+// ORK_ORKER_QUEUE=ork-engine-events points every task activity at the queue
+// carrying PublishEvent: tasks would be dispatched to the projection worker,
+// and `pool: main` — the pool a document that names none runs on — would
+// resolve to the engine's own internals. task.QueueForPool refuses the channel
+// too, but by then a run has already started; this is where an operator learns
+// it, with the variable named.
+func TestQueues_RefuseAnExecutionChannelThatIsTheEnginesOwnEventQueue(t *testing.T) {
+	t.Setenv("ORK_ORKER_QUEUE", engine.EventQueue)
+
+	err := queuesFor(loadConfig()).validate()
+	if err == nil {
+		t.Fatal("ork accepted ORK_ORKER_QUEUE=ork-engine-events: every task would be " +
+			"dispatched onto the engine's projection queue")
+	}
+	if !strings.Contains(err.Error(), "ORK_ORKER_QUEUE") {
+		t.Errorf("boot error is %q; it must name the variable an operator has to change", err)
+	}
+
+	// And the two legitimate shapes still boot: the unconfigured default,
+	// where one queue carries the engine's workflows and its tasks, and a
+	// parallel agent's isolation queue (AGENTS.md §6).
+	for _, channel := range []string{"", task.DefaultQueue, "ork-tasks-m7-9", "ork-pool-gpu"} {
+		t.Setenv("ORK_ORKER_QUEUE", channel)
+		if err := queuesFor(loadConfig()).validate(); err != nil {
+			t.Errorf("ORK_ORKER_QUEUE=%q refused at boot: %v", channel, err)
+		}
 	}
 }
 
