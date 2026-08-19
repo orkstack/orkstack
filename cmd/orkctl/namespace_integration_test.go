@@ -42,8 +42,9 @@ const envProofDir = "ORK_PROOF_DIR"
 //     not across the deployment.
 //  3. Listing and getting in one namespace never shows the other's document,
 //     and the default namespace holds neither.
-//  4. A run submitted in each executes for real, and listing runs in one never
-//     shows the other's.
+//  4. A run submitted in each executes for real — both under ONE idempotency
+//     key, which is a coordinate inside a namespace like every other one — and
+//     listing runs in one never shows the other's.
 //  5. `orkctl namespace use` persists a default so `-n` is not retyped.
 //  6. Deleting a namespace that still holds an orkflow is refused, by name.
 //  7. Submitting into a namespace nobody registered names it AND lists the ones
@@ -188,9 +189,23 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	}
 
 	// ── 4. a real run in each, and run lists stay disjoint ─────────────────
+	//
+	// Both submissions carry the SAME idempotency key, deliberately. A key is
+	// the caller's own word for one submission and two tenants pick the same
+	// words, so it is a coordinate inside a namespace like every other one
+	// here: the claim that arbitrates it is a Temporal workflow whose id is
+	// the key's digest, one binding for the whole deployment, so an unscoped
+	// key would answer bravo with alpha's run id and never start bravo's
+	// work. This is the live half of
+	// TestSubmitRun_OneIdempotencyKeyInTwoNamespacesStartsTwoRuns, against the
+	// real claim authority rather than a double. The key needs no per-run
+	// suffix: this test's Temporal namespace is its own, so no other run's
+	// claim can be in it.
+	const sharedKey = "nightly"
 	runIn := map[string]string{}
 	for _, ns := range []string{alpha, bravo} {
-		stdout, stderr, code := cli("run", "submit", orkflowName, "-n", ns, "--watch")
+		stdout, stderr, code := cli("run", "submit", orkflowName, "-n", ns,
+			"--idempotency-key", sharedKey, "--watch")
 		if code != 0 {
 			t.Fatalf("run submit -n %s exit = %d\nstdout:\n%s\nstderr:\n%s",
 				ns, code, stdout, stderr)
@@ -200,6 +215,23 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 			t.Fatalf("run %s in %s did not reach SUCCEEDED:\n%s", runID, ns, stdout)
 		}
 		runIn[ns] = runID
+	}
+	if runIn[alpha] == runIn[bravo] {
+		t.Fatalf("one idempotency key in two namespaces produced one run (%s): "+
+			"the second namespace was answered with the first one's run and its own "+
+			"was never started", runIn[alpha])
+	}
+	// …and scoping the key must not stop it deduplicating: repeated inside its
+	// own namespace it still names the run it already started.
+	stdout, stderr, code = cli("run", "submit", orkflowName, "-n", alpha,
+		"--idempotency-key", sharedKey)
+	if code != 0 {
+		t.Fatalf("repeating the key in %s exit = %d\nstdout:\n%s\nstderr:\n%s",
+			alpha, code, stdout, stderr)
+	}
+	if got := parseRunID(t, stdout); got != runIn[alpha] {
+		t.Fatalf("repeating the key in %s answered with run %s, want its own run %s",
+			alpha, got, runIn[alpha])
 	}
 	for _, tc := range []struct{ namespace, want, unwanted string }{
 		{alpha, runIn[alpha], runIn[bravo]},
