@@ -714,12 +714,16 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 		"connection refused",
 	} {
 		if !strings.Contains(logs.String(), want) {
-			// The wanted attribute comes first: a failure line that opens with
-			// the whole record opens with a wall clock, and a proof that
-			// quotes it goes stale on the next run rather than on the next
-			// defect.
-			t.Errorf("the degradation log does not carry %q; it says: %s", want, logs.String())
+			// The assertion names the missing attribute and nothing else. The
+			// record itself is evidence for a human, and it goes on its own
+			// line: it carries a wall clock and its own `level=`, so a failure
+			// line containing it can be neither quoted by a proof that
+			// survives a rerun nor told apart from a subprocess's log.
+			t.Errorf("the degradation log does not carry %q", want)
 		}
+	}
+	if t.Failed() {
+		t.Logf("the log said: %s", logs.String())
 	}
 }
 
