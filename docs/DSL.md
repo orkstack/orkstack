@@ -101,7 +101,11 @@ path components of a stored object key, and a pool becomes an execution
 channel, so a longer name is one the compiler could accept and nothing could
 store. It is the same 200 the orkflow store and the namespace registry enforce
 (`pkg/artifacts`), and the two are held together by measurement rather than by
-a shared constant — `pkg/` may not import `internal/`.
+a shared constant: the artifact store is a public package and the compiler is
+not, so the store does not depend on the compiler and does not drag it into
+the build of every program that stores an artifact. A test inside
+`pkg/artifacts` imports the compiler and fails on any disagreement, in either
+direction — a test dependency costs an importer nothing.
 
 ## Example
 
