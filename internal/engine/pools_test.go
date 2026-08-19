@@ -308,6 +308,10 @@ func TestPoolResolver_HoldsTheAllowListAgainstThePoolItDispatchesTo(t *testing.T
 			t.Errorf("the refusal names pool %q, want the pool it would have dispatched to (gpu)",
 				notAllowed.Pool)
 		}
+		// Printed, because the README quotes it: a refusal is only actionable
+		// if it names both the pool it would have run on and the pool the
+		// document asked for.
+		t.Logf("the refusal, as a client is handed it: %v", err)
 		// The name the document wrote is what the operator has to go and find.
 		if !strings.Contains(err.Error(), `"main"`) {
 			t.Errorf("the refusal %q does not name the pool the document asked for", err)
