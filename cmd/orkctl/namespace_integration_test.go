@@ -12,7 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // envProofDir names where a run publishes its proof artifacts. It is an
@@ -102,15 +108,16 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	alpha := "m103-alpha-" + token
 	bravo := "m103-bravo-" + token
+	// The bucket is shared, so this run takes its own two namespaces away with
+	// it. It cannot do that through the CLI: `namespace delete` refuses one
+	// that still holds an orkflow, and nothing deletes an orkflow yet — so the
+	// objects go, definitions first, exactly as an operator emptying the
+	// prefix would. Leaving them costs the next run a longer "these do:" list
+	// and the bucket one more tenant per execution.
 	t.Cleanup(func() {
-		// Best effort: leave the shared bucket as this run found it.
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cleanupCancel()
-		for _, ns := range []string{alpha, bravo} {
-			_, _, _ = runBinaryWithEnv(cleanupCtx, t, orkctlPath, repoRoot,
-				[]string{configEnvVar + "=" + configPath},
-				"namespace", "delete", ns, "--server", "http://"+engineAddr)
-		}
+		removeNamespaceObjects(t, cleanupCtx, alpha, bravo)
 	})
 
 	// ── 1. create, and creating twice is idempotent ────────────────────────
@@ -383,4 +390,64 @@ func runBinaryWithEnv(
 		t.Setenv(key, value)
 	}
 	return stdout, stderr, code
+}
+
+// removeNamespaceObjects deletes a namespace's definitions and its registry
+// document straight from the bucket.
+//
+// It talks to the store the engine talks to, not through it: the API has no
+// way to delete an orkflow, and a namespace that still holds one cannot be
+// deleted — correctly, because the definitions would survive where nothing
+// lists them. Emptying both prefixes is what an operator decommissioning a
+// tenant does, and it is what leaves the shared bucket as this run found it.
+//
+// It is best-effort: a cleanup that failed the test would report a fault in
+// the tree that is not in the tree.
+func removeNamespaceObjects(t *testing.T, ctx context.Context, namespaces ...string) {
+	t.Helper()
+	cfg := artifacts.ConfigFromEnv()
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(cfg.S3Region),
+		awsconfig.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
+		awsconfig.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3SessionToken)),
+	)
+	if err != nil {
+		t.Logf("cleanup: load aws config: %v", err)
+		return
+	}
+	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		if cfg.S3Endpoint != "" {
+			o.BaseEndpoint = aws.String(cfg.S3Endpoint)
+		}
+		o.UsePathStyle = cfg.S3PathStyle
+	})
+	for _, namespace := range namespaces {
+		prefixes := []string{artifacts.OrkflowPrefix + "/" + namespace + "/"}
+		if key, err := artifacts.NamespaceKey(namespace); err == nil {
+			prefixes = append(prefixes, key)
+		}
+		for _, prefix := range prefixes {
+			pager := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+				Bucket: aws.String(cfg.S3Bucket),
+				Prefix: aws.String(prefix),
+			})
+			for pager.HasMorePages() {
+				page, err := pager.NextPage(ctx)
+				if err != nil {
+					t.Logf("cleanup: list %s: %v", prefix, err)
+					break
+				}
+				for _, object := range page.Contents {
+					if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+						Bucket: aws.String(cfg.S3Bucket),
+						Key:    object.Key,
+					}); err != nil {
+						t.Logf("cleanup: delete %s: %v", aws.ToString(object.Key), err)
+					}
+				}
+			}
+		}
+	}
 }
