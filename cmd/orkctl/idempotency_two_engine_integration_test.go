@@ -30,17 +30,33 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// idempotencyKey is the key both replicas submit under. Its hash names the
-// claim workflow, so the test can look that workflow up without asking the
-// implementation what it called it.
-const idempotencyKey = "m8-2-two-engine-key"
+// idempotencyKey is the key both replicas submit under, and submittedInto is
+// the ork namespace they submit it into: neither request names one, and an
+// unnamed namespace means the default (M10.3). Together they are the
+// coordinate whose hash names the claim workflow, so the test can look that
+// workflow up without asking the implementation what it called it.
+const (
+	idempotencyKey = "m8-2-two-engine-key"
+	submittedInto  = artifacts.DefaultNamespace
+)
 
-// claimWorkflowIDPrefix and claimWorkflowIDHexLen restate the documented shape
-// of the claim workflow's id, `ork-idem-` + the first 32 hex digits of
-// sha256(key). Restating it here rather than calling engine.ClaimWorkflowID is
-// deliberate: this test has to be able to disagree with the implementation.
+// claimWorkflowIDPrefix, claimScopeSeparator and claimWorkflowIDHexLen restate
+// the documented shape of the claim workflow's id: `ork-idem-` + the first 32
+// hex digits of sha256 over the coordinate the key occupies. Restating it here
+// rather than calling engine.ClaimWorkflowID is deliberate: this test has to
+// be able to disagree with the implementation.
+//
+// That coordinate is `namespace/key`, not the key alone. A key is the caller's
+// own word for one submission and two tenants pick the same words, so M10.3
+// made it a coordinate inside a namespace exactly as an orkflow name is
+// (api.submission.claimKey): one unscoped binding would be shared by the whole
+// deployment, and the second tenant would be answered with the first tenant's
+// run id while its own work was never started. So the lookup below is live
+// evidence for the scope too — drop it from the implementation and the claim
+// exists at an id this test never asks about.
 const (
 	claimWorkflowIDPrefix = "ork-idem-"
+	claimScopeSeparator   = "/"
 	claimWorkflowIDHexLen = 32
 )
 
@@ -79,7 +95,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	// rather than leaving a 24-hour execution behind on the dev cluster.
 	t.Cleanup(func() {
 		_ = temporalClient.TerminateWorkflow(context.Background(),
-			claimWorkflowIDFor(idempotencyKey), "", "m8.2 integration test cleanup")
+			claimWorkflowIDFor(submittedInto, idempotencyKey), "", "m8.2 integration test cleanup")
 	})
 
 	root := repoRoot(t)
@@ -162,8 +178,8 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	// cannot report "one" merely because the second run has not landed yet.
 	assertSingleRunExecution(ctx, t, temporalClient, namespace, runID)
 
-	// ---- the claim itself: one execution, at the id the key derives ---------
-	claimID := claimWorkflowIDFor(idempotencyKey)
+	// ---- the claim itself: one execution, at the id the coordinate derives --
+	claimID := claimWorkflowIDFor(submittedInto, idempotencyKey)
 	assertSingleClaimExecution(ctx, t, temporalClient, namespace, claimID)
 
 	// ---- the claimed run is real, and it executes ---------------------------
@@ -203,9 +219,10 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	writeIdempotencyTranscript(t, namespace, runID, claimID, results[0].replica, results[1].replica)
 }
 
-// claimWorkflowIDFor renders the documented claim workflow id for a key.
-func claimWorkflowIDFor(key string) string {
-	sum := sha256.Sum256([]byte(key))
+// claimWorkflowIDFor renders the documented claim workflow id for a key
+// submitted into a namespace.
+func claimWorkflowIDFor(namespace, key string) string {
+	sum := sha256.Sum256([]byte(namespace + claimScopeSeparator + key))
 	return claimWorkflowIDPrefix + hex.EncodeToString(sum[:])[:claimWorkflowIDHexLen]
 }
 
@@ -248,7 +265,7 @@ func assertSingleRunExecution(
 }
 
 // assertSingleClaimExecution asserts the key's claim exists exactly once, at
-// the workflow id the key's hash names.
+// the workflow id its coordinate's hash names.
 func assertSingleClaimExecution(
 	ctx context.Context,
 	t *testing.T,
@@ -538,6 +555,8 @@ func writeIdempotencyTranscript(t *testing.T, namespace, runID, claimID, replica
 		time.Now().UTC().Format(time.RFC3339))
 	fmt.Fprintf(&out, "namespace           %s\n", namespace)
 	fmt.Fprintf(&out, "idempotency key     %s\n", idempotencyKey)
+	fmt.Fprintf(&out, "claim coordinate    %s%s%s\n",
+		submittedInto, claimScopeSeparator, idempotencyKey)
 	fmt.Fprintf(&out, "claim workflow id   %s\n", claimID)
 	fmt.Fprintf(&out, "%s returned run    %s\n", replicaA, runID)
 	fmt.Fprintf(&out, "%s returned run    %s\n", replicaB, runID)
