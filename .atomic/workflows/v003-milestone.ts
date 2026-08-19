@@ -552,14 +552,17 @@ export default workflow({
             // which is exactly the branch this slice was cut from. Merge it
             // forward or those repairs are silently dropped at the final
             // merge, which takes only the LAST branch.
+            // A dirty reused worktree is restored, not refused. A slice only
+            // becomes the stack's base by passing verification, which requires
+            // a clean tree — so anything dirty here arrived AFTER that, from a
+            // probe round regenerating a transcript or a child that died
+            // mid-edit. Neither is work worth keeping, and refusing it strands
+            // the whole stack on a file nobody committed.
             const dirty = run(["git", "status", "--porcelain"], dir);
-            if ((dirty.stdout ?? "").trim() !== "") {
-              return {
-                dir,
-                action: "reused-dirty",
-                ok: false,
-                detail: `worktree has uncommitted changes, refusing to restack:\n${tail(dirty.stdout ?? "")}`,
-              };
+            const discarded = (dirty.stdout ?? "").trim();
+            if (discarded !== "") {
+              run(["git", "checkout", "--", "."], dir);
+              run(["git", "clean", "-fd"], dir);
             }
             const restack = run(["git", "merge", "--no-edit", previousRef], dir, 5 * 60_000);
             if (restack.status !== 0) {
@@ -591,7 +594,12 @@ export default workflow({
               ok: true,
               conflicted: false,
               conflicts: "",
-              detail: tail((restack.stdout ?? "") + (restack.stderr ?? "")),
+              detail: [
+                discarded ? `discarded uncommitted leftovers before restacking:\n${discarded}` : "",
+                tail((restack.stdout ?? "") + (restack.stderr ?? "")),
+              ]
+                .filter(Boolean)
+                .join("\n"),
             };
           }
           const add = run(
@@ -800,12 +808,23 @@ export default workflow({
         const results = (await ctx.tool(
           `run-probes-${round}`,
           { count: planned.length, dir: lastGoodDir },
-          async () =>
-            planned.map((p) => ({
+          async () => {
+            const out = planned.map((p) => ({
               ...probe(p.argv, lastGoodDir, p.name),
               requirement: p.requirement,
               expectation: p.expectation,
-            })),
+            }));
+            // Probes are READS, and must leave no trace. Several of them run a
+            // proof's reproduce.sh, which regenerates its transcripts by
+            // design, so a probe round reliably dirties the worktree. Left
+            // there it deadlocks the NEXT run: prepare will not restack a
+            // dirty tree, and the slice can never start. Restore to HEAD and
+            // drop anything a probe created. The slice's own work is committed
+            // by this point — verification refused it otherwise.
+            run(["git", "checkout", "--", "."], lastGoodDir);
+            run(["git", "clean", "-fd"], lastGoodDir);
+            return out;
+          },
         )) as (Probe & { requirement: string; expectation: string })[];
 
         probeSummary = results.length > 0 ? summarize(results) : "adversary proposed no probes";
