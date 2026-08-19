@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
@@ -758,7 +761,19 @@ tasks:
 	}
 }
 
-func TestCompile_UnpinnedHashIsStableWhenNormalizedKeysCollide(t *testing.T) {
+// TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime guards the other
+// half of "one version, one document".
+//
+// YAML lets two distinct keys stringify to one JSON key (`null` and
+// `"<nil>"`), so the conversion loses one of them — and which one it loses
+// must not depend on map iteration order. The version cannot notice any more:
+// it is the source's hash, and the source does not change. The STORE notices,
+// because it compares the whole compiled document, so a compilation that
+// varied would make re-applying an unchanged file a "different document under
+// a stored version" every few tries (pkg/artifacts.sameStoredOrkflow). The
+// assertion is therefore on the compiled message, not only on the version it
+// used to be derived through.
+func TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime(t *testing.T) {
 	const document = `
 name: colliding-keys
 tasks:
@@ -769,18 +784,23 @@ tasks:
         null: one
         "<nil>": two
 `
-	var first string
+	var first *orkstackv1.Orkflow
 	for i := 0; i < 5_000; i++ {
 		wf, err := dsl.Compile([]byte(document))
 		if err != nil {
 			t.Fatalf("Compile() iteration %d: %v", i, err)
 		}
 		if i == 0 {
-			first = wf.GetVersion()
+			first = wf
 			continue
 		}
-		if wf.GetVersion() != first {
-			t.Fatalf("version changed at iteration %d: %q vs %q", i, wf.GetVersion(), first)
+		if wf.GetVersion() != first.GetVersion() {
+			t.Fatalf("version changed at iteration %d: %q vs %q",
+				i, wf.GetVersion(), first.GetVersion())
+		}
+		if !proto.Equal(wf, first) {
+			t.Fatalf("the same bytes compiled differently at iteration %d:\n%v\nvs\n%v",
+				i, wf, first)
 		}
 	}
 }

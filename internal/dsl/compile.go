@@ -205,8 +205,12 @@ func normalizeValue(v any) any {
 		// YAML permits non-string keys, while JSON/Struct do not. Distinct YAML
 		// keys can stringify to the same value (for example null and "<nil>").
 		// Sort by both the normalized key and a typed identity before applying
-		// the unavoidable last-value-wins conversion so the result, and thus an
-		// unpinned content hash, is stable across map iteration order.
+		// the unavoidable last-value-wins conversion, so one document always
+		// compiles to one message. A version no longer depends on this — it is
+		// the source's hash — but the STORE compares the compiled document, so
+		// a compilation that varied with map iteration order would make
+		// re-applying an unchanged file a different document under a stored
+		// version (pkg/artifacts.sameStoredOrkflow).
 		type entry struct {
 			key      string
 			identity string
