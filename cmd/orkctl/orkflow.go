@@ -15,9 +15,19 @@ func newOrkflowCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "orkflow",
 		Aliases: []string{"of"},
-		Short:   "Inspect registered orkflows",
+		Short:   "Inspect registered orkflows and their versions",
+		Long: "An orkflow's versions are immutable: applying an edit adds a version and\n" +
+			"never rewrites one. Which version runs is a pointer you move with\n" +
+			"`promote`, and move back the same way.",
 	}
-	cmd.AddCommand(newOrkflowListCommand(g), newOrkflowGetCommand(g))
+	cmd.AddCommand(
+		newOrkflowListCommand(g),
+		newOrkflowGetCommand(g),
+		newOrkflowVersionsCommand(g),
+		newOrkflowPromoteCommand(g),
+		newOrkflowDiffCommand(g),
+		newOrkflowEditCommand(g),
+	)
 	return cmd
 }
 
@@ -69,7 +79,7 @@ func newOrkflowGetCommand(g *globalFlags) *cobra.Command {
 			return renderOrkflow(cmd.OutOrStdout(), resp.Msg.GetOrkflow())
 		},
 	}
-	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: latest applied)")
+	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: the current one)")
 	return cmd
 }
 

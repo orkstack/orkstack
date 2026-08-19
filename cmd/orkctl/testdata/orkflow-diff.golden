@@ -1,0 +1,15 @@
+--- a/deploy@1.0.0
++++ b/deploy@2.0.0
+@@ -1,9 +1,9 @@
+ name: deploy
+-version: "1.0.0"
+-description: the 1.0.0 version
++version: "2.0.0"
++description: the 2.0.0 version
+ tasks:
+   - id: build
+     plugin: shell
+     with:
+       op: exec
+-      command: echo one
++      command: echo two

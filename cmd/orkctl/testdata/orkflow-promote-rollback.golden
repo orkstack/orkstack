@@ -1,0 +1,2 @@
+Promoted deploy to version 2.0.0 in namespace default
+Previous: 1.0.0 (roll back with: orkctl orkflow promote deploy 1.0.0)
