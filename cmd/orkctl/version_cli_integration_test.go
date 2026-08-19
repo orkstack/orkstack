@@ -84,16 +84,26 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 	second := writeVersionedCLIOrkflow(t, name, "2.0.0", pool, "two")
 
 	requireCLI(t, cli, "apply the first version", "apply", first)
-	requireCLI(t, cli, "apply the second version", "apply", second)
 
-	// Re-applying an unchanged file is a no-op, and says so rather than
-	// pretending to have stored something.
-	repeat, _, code := cli("apply", second)
-	if code != 0 {
-		t.Fatalf("re-applying an unchanged file exited %d", code)
+	// The second version is applied TWICE, both times as `--json`, because
+	// that is the only rendering that can tell the two applies apart:
+	// `ApplyOrkflowResponse.created` is a bool, so protojson prints it on the
+	// apply that created a version and omits it on the repeat, while the human
+	// rendering prints the same "Applied orkflow …" line for both.
+	//
+	// The first of the pair is the control. Without it, an absent `created`
+	// would prove nothing — a field can be missing because the apply was a
+	// no-op, or because the CLI never sends it at all.
+	firstApply := requireCLI(t, cli, "apply the second version", "apply", second, "--json")
+	if !strings.Contains(firstApply, `"created": true`) {
+		t.Fatalf("applying a new version did not report that it created one:\n%s", firstApply)
 	}
-	if !strings.Contains(repeat, "Applied orkflow "+name) {
-		t.Fatalf("re-apply stdout:\n%s", repeat)
+	repeat := requireCLI(t, cli, "re-apply the unchanged file", "apply", second, "--json")
+	if strings.Contains(repeat, `"created"`) {
+		t.Fatalf("re-applying an unchanged file reported that it created a version:\n%s", repeat)
+	}
+	if !strings.Contains(repeat, `"version": "2.0.0"`) {
+		t.Fatalf("the no-op did not answer with the stored version:\n%s", repeat)
 	}
 
 	listed := requireCLI(t, cli, "list the versions", "orkflow", "versions", name)
