@@ -85,7 +85,7 @@ func TestLoadConfig_RejectsADeploymentNameTheClusterWould(t *testing.T) {
 // polling one channel while the engine dispatches to another strands every run
 // in RUNNING with nothing to say why.
 func TestLoadConfig_JoinsThePoolItWasToldToServe(t *testing.T) {
-	gpuQueue, err := task.QueueForPool("gpu")
+	gpuQueue, err := task.QueueForPool("gpu", "")
 	if err != nil {
 		t.Fatalf("QueueForPool(gpu): %v", err)
 	}

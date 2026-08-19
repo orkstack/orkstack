@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -80,25 +81,58 @@ func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T)
 		t.Fatalf("List names = %v, want default and %s", seen, nsName)
 	}
 
-	orkflow := testOrkflow(t, "owned", "1.0.0", time.Now().UTC())
-	orkflow.Namespace = nsName
-	orkflowKey := fmt.Sprintf("%s/%s/owned/1.0.0.json", artifacts.OrkflowPrefix, nsName)
+	// The refusal has to say HOW MANY orkflows are in the way, so the count is
+	// asserted as a count. Three distinct names, one of them holding two
+	// versions: the message must read 3, not 4 — it counts orkflows, not
+	// objects — and each name that goes must move it. A bare substring like
+	// "1" proves nothing here: the namespace name supplies one.
 	orkflowStore, err := artifacts.NewS3OrkflowStore(ctx, cfg)
 	if err != nil {
 		t.Fatalf("NewS3OrkflowStore: %v", err)
 	}
-	if err := orkflowStore.Put(ctx, orkflow); err != nil {
-		t.Fatalf("Put owned orkflow: %v", err)
+	stored := []struct{ name, version string }{
+		{"owned", "1.0.0"},
+		{"owned", "2.0.0"},
+		{"second", "1.0.0"},
+		{"third", "1.0.0"},
 	}
-	if err := store.Delete(ctx, nsName); !errors.Is(err, artifacts.ErrNamespaceNotEmpty) || !strings.Contains(err.Error(), "1") {
-		t.Fatalf("Delete(non-empty) = %v, want ErrNamespaceNotEmpty with a count", err)
+	for _, o := range stored {
+		orkflow := testOrkflow(t, o.name, o.version, time.Now().UTC())
+		orkflow.Namespace = nsName
+		if err := orkflowStore.Put(ctx, orkflow); err != nil {
+			t.Fatalf("Put %s@%s: %v", o.name, o.version, err)
+		}
 	}
-	if _, err := raw.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(cfg.S3Bucket),
-		Key:    aws.String(orkflowKey),
-	}); err != nil {
-		t.Fatalf("delete owned orkflow: %v", err)
+	refusalSays := func(want string) {
+		t.Helper()
+		err := store.Delete(ctx, nsName)
+		if !errors.Is(err, artifacts.ErrNamespaceNotEmpty) {
+			t.Fatalf("Delete(non-empty) = %v, want ErrNamespaceNotEmpty", err)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Delete(non-empty) said %q, want it to say %q", err.Error(), want)
+		}
 	}
+	dropOrkflow := func(name, version string) {
+		t.Helper()
+		key := fmt.Sprintf("%s/%s/%s/%s.json", artifacts.OrkflowPrefix, nsName, name, version)
+		if _, err := raw.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(cfg.S3Bucket),
+			Key:    aws.String(key),
+		}); err != nil {
+			t.Fatalf("delete %s: %v", key, err)
+		}
+	}
+
+	refusalSays("3 orkflow(s)")
+	dropOrkflow("owned", "1.0.0")
+	refusalSays("3 orkflow(s)") // a version went; the orkflow did not
+	dropOrkflow("owned", "2.0.0")
+	refusalSays("2 orkflow(s)")
+	dropOrkflow("second", "1.0.0")
+	refusalSays("1 orkflow(s)")
+	dropOrkflow("third", "1.0.0")
+
 	if err := store.Delete(ctx, nsName); err != nil {
 		t.Fatalf("Delete(empty): %v", err)
 	}
@@ -107,5 +141,72 @@ func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T)
 	}
 	if err := store.Delete(ctx, artifacts.DefaultNamespace); !errors.Is(err, artifacts.ErrNamespaceNotEmpty) {
 		t.Fatalf("Delete(default) = %v, want ErrNamespaceNotEmpty", err)
+	}
+}
+
+// TestNamespaceStore_StampsCreatedAndUpdatedItself is why those two fields are
+// on the wire at all: something writes them. The registry does — created_at
+// once, updated_at on every write — and a caller cannot dictate either.
+func TestNamespaceStore_StampsCreatedAndUpdatedItself(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	raw := newRawS3Client(t, cfg)
+	nsName := "m101-clock-" + uniqueToken(t)
+	t.Cleanup(func() {
+		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket,
+			artifacts.NamespacePrefix+"/"+nsName+".json")
+	})
+
+	// The caller sends times of its own; they are discarded.
+	backdated := timestamppb.New(time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
+	before := time.Now().UTC().Add(-time.Minute)
+	if err := store.Put(ctx, &orkstackv1.Namespace{
+		Name:        nsName,
+		Description: "created",
+		CreatedAt:   backdated,
+		UpdatedAt:   backdated,
+	}); err != nil {
+		t.Fatalf("Put(%s): %v", nsName, err)
+	}
+	first, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", nsName, err)
+	}
+	if first.GetCreatedAt() == nil || first.GetUpdatedAt() == nil {
+		t.Fatalf("Get(%s) = created_at %v, updated_at %v; want both stamped",
+			nsName, first.GetCreatedAt(), first.GetUpdatedAt())
+	}
+	if !first.GetCreatedAt().AsTime().After(before) || !first.GetUpdatedAt().AsTime().After(before) {
+		t.Fatalf("Get(%s) = created_at %s, updated_at %s; want the store's clock, not the caller's %s",
+			nsName, first.GetCreatedAt().AsTime(), first.GetUpdatedAt().AsTime(), backdated.AsTime())
+	}
+
+	// A second write keeps the birth and moves the change.
+	if err := store.Put(ctx, &orkstackv1.Namespace{
+		Name:        nsName,
+		Description: "edited",
+		CreatedAt:   backdated,
+	}); err != nil {
+		t.Fatalf("Put(%s) again: %v", nsName, err)
+	}
+	second, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get(%s) after edit: %v", nsName, err)
+	}
+	if second.GetDescription() != "edited" {
+		t.Fatalf("Get(%s).Description = %q, want the second write's", nsName, second.GetDescription())
+	}
+	if !second.GetCreatedAt().AsTime().Equal(first.GetCreatedAt().AsTime()) {
+		t.Fatalf("created_at moved from %s to %s; a rewrite is not a birth",
+			first.GetCreatedAt().AsTime(), second.GetCreatedAt().AsTime())
+	}
+	if second.GetUpdatedAt().AsTime().Before(first.GetUpdatedAt().AsTime()) {
+		t.Fatalf("updated_at went backwards: %s then %s",
+			first.GetUpdatedAt().AsTime(), second.GetUpdatedAt().AsTime())
 	}
 }

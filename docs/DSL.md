@@ -59,9 +59,14 @@ tasks:
       key: value
 ```
 
-A task with no `pool:` runs on the built-in `main` pool. A task that names a
-pool waits for an Orker serving it; M10.2 refuses the submission up front
-instead.
+A task with no `pool:` runs on the deployment's default pool, which answers to
+the name `main`. Writing `pool: main` is the same thing, always: `main` names
+the default pool, not one fixed set of Orkers, so wherever an operator has
+pointed the default, both spellings go there and a run reports both on the
+same pool. Within a run, one pool name means one set of Orkers and one set of
+Orkers has one name — so the pool a run reports a task on is a pool you can
+write to reach those same Orkers. A task that names a pool nothing serves
+waits for one; M10.2 refuses the submission up front instead.
 
 ## Templating
 
@@ -89,6 +94,14 @@ referencing an unrelated task's output is a compile-time error.
 6. `plugin` is a non-empty known plugin name.
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks.
+
+A slug is at most **200 bytes**, in every position above. The bound is half the
+rule and not a detail of it: a namespace, an orkflow name and a version are
+path components of a stored object key, and a pool becomes an execution
+channel, so a longer name is one the compiler could accept and nothing could
+store. It is the same 200 the orkflow store and the namespace registry enforce
+(`pkg/artifacts`), and the two are held together by measurement rather than by
+a shared constant — `pkg/` may not import `internal/`.
 
 ## Example
 

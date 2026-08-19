@@ -195,7 +195,6 @@ func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events [
 		Orkflow:   run.GetOrkflowName(),
 		Status:    archiveStatus(run.GetStatus()),
 		Time:      RunIndexTime(run),
-		Duration:  RunWallDuration(run),
 		JSONL:     body,
 	}
 	if record.Status == "" {
@@ -313,30 +312,4 @@ func RunIndexTime(run *orkstackv1.Run) time.Time {
 		}
 	}
 	return time.Time{}
-}
-
-// RunWallDuration is how long a run took: finished minus started, falling back
-// to finished minus created for a run that never reported a start.
-//
-// Like RunIndexTime it never reads the clock — the value is part of the index
-// key, so a retried archive write must produce the same key as the first
-// attempt. A run that never finished, or whose stamps disagree, measures zero
-// rather than a negative or invented duration.
-func RunWallDuration(run *orkstackv1.Run) time.Duration {
-	finished := run.GetFinishedAt()
-	if finished == nil {
-		return 0
-	}
-	start := run.GetStartedAt()
-	if start == nil {
-		start = run.GetCreatedAt()
-	}
-	if start == nil {
-		return 0
-	}
-	elapsed := finished.AsTime().Sub(start.AsTime())
-	if elapsed < 0 {
-		return 0
-	}
-	return elapsed
 }

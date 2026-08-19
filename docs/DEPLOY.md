@@ -150,6 +150,14 @@ needs `ORK_S3_*` either way.
   `ORK_ORKER_POOL` (or `ORK_ORKER_QUEUE`) on the engine pins that default
   route to the same channel its Orkers poll, so the variable goes on **both**
   binaries. A task's own `pool:` outranks it and is never redirected by it.
+- **One set of Orkers has exactly one name.** With `ORK_ORKER_POOL=gpu` on both
+  binaries the deployment's default channel *is* gpu's channel, so `main` and
+  `gpu` are two words for the same machines. Everything reports the second:
+  `ListPools` returns one pool, named `gpu`, marked default; a task that named
+  no pool is scheduled, projected and logged on `gpu`. The collapse happens in
+  one function (`task.RouteForPool`) and nowhere else. Reporting both would
+  give an operator two pools to size and two to drain when there is one, and
+  tell a client a task ran on `main` while gpu's Orkers ran it.
 - **A submit into a pool with no live Orkers is refused, at submit.** The
   engine asks Temporal which workers are polling the pool's channel and
   refuses the submission when the answer is none, naming the pool, the tasks
@@ -380,6 +388,14 @@ one release polls two queues:
 msg="temporal workers started" task_queue=ork-tasks event_queue=ork-engine-events \
   orker_queue=ork-tasks-gpu-pool
 ```
+
+One value is refused: `ORK_ORKER_QUEUE=ork-engine-events` is the projection
+worker's own queue, so every task activity would be dispatched to it and the
+pool a document names would resolve to the engine's internals. Both binaries
+report it and exit at boot rather than starting — `task.ResolvePoolBinding`
+refuses the channel wherever it came from, and `ork` checks it again against
+its own queues (`cmd/ork/main.go`, `queues.validate`;
+`TestQueues_RefuseAnExecutionChannelThatIsTheEnginesOwnEventQueue`).
 
 Under versioning both appear, separately, in that version's poller list — the
 engine's queue as a **workflow** poller and the Orker's as an **activity**

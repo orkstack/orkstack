@@ -41,17 +41,28 @@ type Namespace struct {
 	Labels      map[string]string `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// default_pool is where a task that names no pool runs. Empty means the
 	// built-in pool "main".
+	//
+	// It is read on the submit path: a run's routing resolves a task's own
+	// `pool:`, then this, then "main". The registry stores only a name the
+	// engine can route to — the same slug rule the DSL and the engine's pool
+	// mapping use — because a stored routing target nothing can honour is a
+	// defect, not a placeholder.
 	DefaultPool string `protobuf:"bytes,4,opt,name=default_pool,json=defaultPool,proto3" json:"default_pool,omitempty"`
 	// allowed_pools bounds every pool this namespace may dispatch onto. Empty
-	// means no restriction. A non-empty list must contain default_pool.
-	AllowedPools []string               `protobuf:"bytes,5,rep,name=allowed_pools,json=allowedPools,proto3" json:"allowed_pools,omitempty"`
-	CreatedAt    *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt    *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	// etag is the store's opaque concurrency token. A caller sends back the one
-	// Get returned; a mismatch is refused rather than clobbered. It is written
-	// by the store, never by a client, and stays empty until compare-and-swap
-	// lands with the namespace API.
-	Etag          string `protobuf:"bytes,8,opt,name=etag,proto3" json:"etag,omitempty"`
+	// means no restriction. A non-empty list must contain default_pool, which
+	// the registry refuses to store otherwise — an allow-list that excludes the
+	// namespace's own default would refuse every task that names no pool. Each
+	// entry is held to the same pool-name rule as default_pool.
+	//
+	// It is enforced at the API boundary, in both places a pool can be chosen:
+	// when an orkflow is applied, with the file in hand, and again when a run is
+	// submitted, which is the gate no client can bypass.
+	AllowedPools []string `protobuf:"bytes,5,rep,name=allowed_pools,json=allowedPools,proto3" json:"allowed_pools,omitempty"`
+	// created_at and updated_at are written by the registry, never by a client:
+	// created_at when the document is first written and preserved on every
+	// later write, updated_at on each one.
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -133,13 +144,6 @@ func (x *Namespace) GetUpdatedAt() *timestamppb.Timestamp {
 		return x.UpdatedAt
 	}
 	return nil
-}
-
-func (x *Namespace) GetEtag() string {
-	if x != nil {
-		return x.Etag
-	}
-	return ""
 }
 
 // Pool is a set of Orkers, observed live.
@@ -237,7 +241,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\x03\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf6\x02\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -247,8 +251,7 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x12\n" +
-	"\x04etag\x18\b \x01(\tR\x04etag\x1a9\n" +
+	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb6\x01\n" +

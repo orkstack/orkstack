@@ -140,10 +140,47 @@ type queues struct {
 	// orker is where task activities are dispatched — the one an operator
 	// moves with ORK_ORKER_QUEUE to reach a dedicated Orker pool.
 	orker string
+	// binding is a refused ORK_ORKER_POOL/ORK_ORKER_QUEUE pair, carried here
+	// so one call answers "may this process boot on these channels".
+	binding error
 }
 
 func queuesFor(cfg config) queues {
-	return queues{run: task.DefaultQueue, events: engine.EventQueue, orker: cfg.orkerQueue}
+	return queues{
+		run:     task.DefaultQueue,
+		events:  engine.EventQueue,
+		orker:   cfg.orkerQueue,
+		binding: cfg.poolErr,
+	}
+}
+
+// validate refuses a configuration whose task execution channel is a queue the
+// engine keeps for itself, or whose two variables disagree about which channel
+// that is.
+//
+// Only the event queue qualifies as reserved. ORK_ORKER_QUEUE=ork-tasks is the
+// ordinary default, where one queue carries the engine's workflows and its
+// tasks; but ORK_ORKER_QUEUE=ork-engine-events points every task activity at
+// the queue that carries PublishEvent, so tasks would be dispatched to the
+// projection worker and `pool: main` would name the engine's own internals.
+// Refusing at boot is what makes task.QueueForPool's promise — no pool reaches
+// the event queue — true of a running deployment and not just of a named pool:
+// the function is handed the channel, it does not choose it.
+//
+// task.ResolvePoolBinding refuses the same channel one layer earlier, which is
+// what catches it when ORK_ORKER_POOL is how the operator spelled it. Both are
+// kept: the resolution refuses what it can name, and this refuses the channel
+// whatever produced it.
+func (q queues) validate() error {
+	if q.binding != nil {
+		return q.binding
+	}
+	if q.orker == q.events {
+		return fmt.Errorf("ORK_ORKER_QUEUE=%q is the engine's own event queue, "+
+			"which carries %s; point it at a queue Orkers poll for task execution",
+			q.orker, engine.ActivityPublishEvent)
+	}
+	return nil
 }
 
 // runWorkerOptions configures the worker that hosts RunWorkflow and the
@@ -273,6 +310,13 @@ func run(logger *slog.Logger, cfg config) error {
 
 	namespaces, err := openNamespaceStore(ctx, logger)
 	if err != nil {
+		return err
+	}
+
+	// Same reason: an execution channel that is one of the engine's own queues
+	// is refused here, where the error can name the variable, rather than at
+	// the first task dispatch.
+	if err := queuesFor(cfg).validate(); err != nil {
 		return err
 	}
 

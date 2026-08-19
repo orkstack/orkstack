@@ -43,17 +43,27 @@ import { Type, type Static } from "typebox";
 import milestoneFinish from "./milestone-finish.js";
 
 // ---------------------------------------------------------------------------
-// Models. Roles per docs/models/model-selection.md; every id and thinking
-// level below was checked against the configured catalog before launch.
-//   design            -> architecture/planning across eight slices  => high
-//   adversarial probe -> high cost of error (silent data leak)      => max
-//   repair            -> triage/repair                              => high
-//   report            -> final reporting                            => medium
+// Models. Roles per docs/MODEL_SELECTION.md; every id and thinking level below
+// was checked against the configured catalog before launch.
+//   design (ARCHITECT) -> contract-setting architecture              => max
+//   adversarial probe  -> high cost of error (silent data leak)      => max
+//   repair             -> triage/repair                              => high
+//   report             -> final reporting                            => medium
 // Slice children pin their own cross-provider chains; they are not overridden.
+//
+// The design stage is the one place a single call is worth `max` twice over:
+// it fixes the proto contract, the store layout and the routing rule that all
+// eight slices inherit, and a slice cannot cheaply revise a decision it was
+// handed. So the level does NOT decay down the chain (docs/MODEL_SELECTION.md
+// rule 6) — a fallback at `:high` would buy a cheaper contract for the same
+// eight slices. claude-fable-5 leads and claude-opus-5 backs it because the
+// first fallback should preserve reasoning depth, not provider spread; the
+// chain still spans all three subscriptions from its third entry.
 // ---------------------------------------------------------------------------
-const DESIGN_MODEL = "anthropic/claude-opus-5:high";
+const DESIGN_MODEL = "anthropic/claude-fable-5:max";
 const DESIGN_FALLBACKS = [
-  "openai-codex/gpt-5.6-luna:high",
+  "anthropic/claude-opus-5:max",
+  "openai-codex/gpt-5.6-sol:max",
   "opencode-go/kimi-k3:max",
 ];
 
@@ -186,6 +196,10 @@ const SLICES: Slice[] = [
       "6. A namespace registry: metadata/namespaces/{name}.json with Put/Get/List/Delete, same validation discipline. Delete REFUSES while the namespace still holds orkflows and says how many. The `default` namespace always resolves and needs no creation.",
       "7. Nothing is deployed, so this is a clean cut like M9: no shim, no dual-read, no migration path. Move existing tests, examples/*.ork.yaml and docs to the new spelling in this slice.",
       "8. proof/M10.1/ with README.md, test.log, naming-sweep.sh and a reproduce.sh that regenerates it.",
+      "9. The event messages the engine SHIPS TO CLIENTS name the pool, never the queue. internal/engine/workflow.go emits `task scheduled on queue <queue>` for EVENT_TYPE_TASK_SCHEDULED; cmd/orkctl/watch.go prints that string in its MESSAGE column and ui/src/routes/runs/[id]/+page.svelte renders it, so an author who wrote `pool: gpu` is currently told about `queue ork-pool-gpu` — Temporal's word plus an internal queue name they never typed. Emit the POOL (task.PoolForQueue exists for exactly this and must gain a real caller), and add a behavior test over the EMITTED EVENT STREAM asserting the message names the pool and not the queue. The naming gate cannot catch this — it correctly exempts internal/engine/, so its PASS is not evidence about strings the engine sends to a client. Any user-visible string the gate cannot see must be covered by a test instead.",
+      "10. Do not document a field that cannot be read. `namespace:` compiles and stores, but every API read path (GetOrkflow, ListOrkflows, SubmitRun in internal/api/service.go) is pinned to the default namespace until M10.3, so applying `namespace: payments` today succeeds, writes the object, and then nothing can read or run it. Close the black hole in this slice: ApplyOrkflow REJECTS a non-default namespace with an error naming M10.3 as the slice that enables it, and docs/DSL.md states the limitation next to the field. internal/api is otherwise out of scope for this slice — this guard is the only change permitted there, and M10.3 removes it.",
+      "11. `pool: main` and an omitted pool must reach the SAME Orkers under every configuration, by construction rather than by coincidence. Today task.QueueForPool hardcodes DefaultPool -> DefaultQueue while an unpinned task follows the engine's configured orker queue, so they diverge the moment ORK_ORKER_QUEUE is overridden: with ORK_ORKER_QUEUE=ork-pool-gpu an unpinned task goes to ork-pool-gpu and `pool: main` goes to ork-tasks. That breaks the queue-isolation contract in AGENTS.md §6, where an override is what keeps one agent's tasks away from another's. Make `main` resolve to the deployment's default orker channel, whatever it is configured to be, and add a table test asserting the two routes are identical for at least: the default, a plain override, an override that is itself pool-shaped, and empty.",
+      "12. The namespace registry must accept EXACTLY the names a DSL document can reference, no more. artifacts.NamespaceKey currently accepts `Payments`, `pay.ments`, `1payments` and `a_b`, none of which satisfy the DSL slug rule at internal/dsl/compile.go, so a namespace can be created and written to and then never named in YAML. Apply the slug rule at the registry boundary and test the accept/reject sets agree, the way pool names already do.",
     ].join("\n"),
     scopeLock:
       "proto/, gen/, internal/dsl/, pkg/artifacts/, internal/engine/ (store seams only), examples/, docs/DSL.md, proof/M10.1/",
@@ -224,7 +238,8 @@ const SLICES: Slice[] = [
       "3. orkctl: `orkctl namespace create|list|get|update|delete`, a global `--namespace`/`-n` flag, and a persisted default in the CLI config so a user is not retyping it. Every command supports `--json`.",
       "4. Errors are actionable: submitting into a missing namespace says which namespace, and lists the namespaces that do exist.",
       "5. Golden CLI tests cover both human and --json output for the new commands, following cmd/orkctl/golden_test.go.",
-      "6. proof/M10.3/ with README.md, test.log, a CLI session transcript covering two isolated namespaces, and reproduce.sh.",
+      "6. M10.1 left an interim guard in ApplyOrkflow rejecting a non-default namespace, because the read paths could not honour it yet. This slice is what it was waiting for: REMOVE the guard, and prove end to end that a non-default namespace now applies, lists, reads and submits. A guard that outlives the slice it was waiting for is a bug.",
+      "7. proof/M10.3/ with README.md, test.log, a CLI session transcript covering two isolated namespaces, and reproduce.sh.",
     ].join("\n"),
     scopeLock:
       "internal/api/, cmd/orkctl/, proto/ (only if a field is missing), docs/, proof/M10.3/",
@@ -531,7 +546,61 @@ export default workflow({
         async () => {
           if (!existsSync(worktreeRoot)) mkdirSync(worktreeRoot, { recursive: true });
           if (existsSync(join(dir, ".git"))) {
-            return { dir, action: "reused", ok: true, detail: "" };
+            // Reusing a worktree from an earlier run. The previous slice's
+            // branch may have moved since this one forked off it — an
+            // adversarial repair round commits onto the last VERIFIED branch,
+            // which is exactly the branch this slice was cut from. Merge it
+            // forward or those repairs are silently dropped at the final
+            // merge, which takes only the LAST branch.
+            // A dirty reused worktree is restored, not refused. A slice only
+            // becomes the stack's base by passing verification, which requires
+            // a clean tree — so anything dirty here arrived AFTER that, from a
+            // probe round regenerating a transcript or a child that died
+            // mid-edit. Neither is work worth keeping, and refusing it strands
+            // the whole stack on a file nobody committed.
+            const dirty = run(["git", "status", "--porcelain"], dir);
+            const discarded = (dirty.stdout ?? "").trim();
+            if (discarded !== "") {
+              run(["git", "checkout", "--", "."], dir);
+              run(["git", "clean", "-fd"], dir);
+            }
+            const restack = run(["git", "merge", "--no-edit", previousRef], dir, 5 * 60_000);
+            if (restack.status !== 0) {
+              // A conflicting restack is not a broken stack, it is WORK, and
+              // it is this slice's work: the base moved because slice N-1 was
+              // repaired in the same code this slice rewrote. Abort the merge
+              // so the child starts from a clean tree, and hand it the
+              // conflict as its first task, under the same reviewers and gates
+              // as everything else. Resolving it here would put an unreviewed
+              // integration of two slices onto the branch.
+              const conflicts = run(
+                ["git", "diff", "--name-only", "--diff-filter=U"],
+                dir,
+              );
+              const files = (conflicts.stdout ?? "").trim();
+              run(["git", "merge", "--abort"], dir);
+              return {
+                dir,
+                action: "reused-conflict",
+                ok: true,
+                conflicted: true,
+                conflicts: files,
+                detail: `restacking ${previousRef} into ${slice.branch} conflicts in:\n${files}`,
+              };
+            }
+            return {
+              dir,
+              action: "reused",
+              ok: true,
+              conflicted: false,
+              conflicts: "",
+              detail: [
+                discarded ? `discarded uncommitted leftovers before restacking:\n${discarded}` : "",
+                tail((restack.stdout ?? "") + (restack.stderr ?? "")),
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            };
           }
           const add = run(
             ["git", "worktree", "add", "-b", slice.branch, dir, previousRef],
@@ -542,10 +611,19 @@ export default workflow({
             dir,
             action: "created",
             ok: add.status === 0,
+            conflicted: false,
+            conflicts: "",
             detail: tail((add.stdout ?? "") + (add.stderr ?? "")),
           };
         },
-      )) as { dir: string; action: string; ok: boolean; detail: string };
+      )) as {
+        dir: string;
+        action: string;
+        ok: boolean;
+        conflicted: boolean;
+        conflicts: string;
+        detail: string;
+      };
 
       if (!prepared.ok) {
         stoppedAt = `${slice.id} (worktree)`;
@@ -559,6 +637,39 @@ export default workflow({
           milestone: slice.id,
           objective: slice.objective,
           acceptance: [
+            prepared.conflicted
+              ? [
+                  "<keepContext>",
+                  `STEP 0, BEFORE ANY OTHER WORK: restack this branch onto ${previousRef}.`,
+                  "",
+                  `${previousRef} moved after ${slice.branch} was cut from it — an adversarial`,
+                  "repair round fixed defects in the SAME code this slice rewrote. Run:",
+                  "",
+                  `    git merge --no-commit --no-ff ${previousRef}`,
+                  "",
+                  `and resolve the conflicts. They are in:\n${prepared.conflicts}`,
+                  "",
+                  "Resolve as a UNION OF BEHAVIORS, per AGENTS.md §7. Do NOT take either side",
+                  "whole unless the file is untouched on the other. Both sides are correct about",
+                  "different things: the base slice owns the primitives and the invariants it was",
+                  "repaired to guarantee; this slice owns the architecture built on top of them.",
+                  "The union normally means calling the base's repaired primitive from this",
+                  "slice's newer structure, NOT reinstating an older call site the repair removed.",
+                  "",
+                  "Use the base to see what each side actually changed:",
+                  `    git merge-file -p ours.go $(git merge-base HEAD ${previousRef}):file theirs.go`,
+                  `    git diff --name-only HEAD ${previousRef}`,
+                  "",
+                  "Regenerate, never hand-merge, anything under gen/ or ui/src/lib/gen: resolve",
+                  "proto/ first, then `make proto` and `make tsgen` and take the generated result.",
+                  "",
+                  "The merged tree must COMPILE and pass every gate before you continue to the",
+                  "acceptance items below. When you are done, state in your final message exactly",
+                  "what each side contributed and what the resolution dropped, if anything.",
+                  "</keepContext>",
+                  "",
+                ].join("\n")
+              : "",
             slice.acceptance,
             "",
             "GENERAL (applies to every item above):",
@@ -570,6 +681,7 @@ export default workflow({
             `- Isolate every integration run you start: ORK_TEMPORAL_NAMESPACE=ork-${slice.dir} (AGENTS.md §6). Kill every engine and orker you start; anchor the patterns as '/bin/ork$' and '/bin/orker$'.`,
             "- Proto changes go through `make proto` and `make tsgen`. Never hand-edit anything under gen/ or ui/src/lib/gen.",
             "- DONE means proven: the proof directory must be regenerable by its own reproduce.sh, and its README must state what was proven and how.",
+            "- Finish with a CLEAN worktree. `git status --porcelain` must be empty when you stop: regenerate proof artifacts first, then commit them. The parent verifies your branch independently and treats any uncommitted file as a failed slice, however green the gates are.",
             "</keepContext>",
           ].join("\n"),
           scope_lock: slice.scopeLock,
@@ -696,12 +808,23 @@ export default workflow({
         const results = (await ctx.tool(
           `run-probes-${round}`,
           { count: planned.length, dir: lastGoodDir },
-          async () =>
-            planned.map((p) => ({
+          async () => {
+            const out = planned.map((p) => ({
               ...probe(p.argv, lastGoodDir, p.name),
               requirement: p.requirement,
               expectation: p.expectation,
-            })),
+            }));
+            // Probes are READS, and must leave no trace. Several of them run a
+            // proof's reproduce.sh, which regenerates its transcripts by
+            // design, so a probe round reliably dirties the worktree. Left
+            // there it deadlocks the NEXT run: prepare will not restack a
+            // dirty tree, and the slice can never start. Restore to HEAD and
+            // drop anything a probe created. The slice's own work is committed
+            // by this point — verification refused it otherwise.
+            run(["git", "checkout", "--", "."], lastGoodDir);
+            run(["git", "clean", "-fd"], lastGoodDir);
+            return out;
+          },
         )) as (Probe & { requirement: string; expectation: string })[];
 
         probeSummary = results.length > 0 ? summarize(results) : "adversary proposed no probes";
@@ -828,7 +951,9 @@ export default workflow({
         "Per-slice result:",
         ...sliceReports,
         "",
-        "Adversarial probe results (real command exits):",
+        `Adversarial probe results. These probes ran against ${lastGoodBranch}, the last VERIFIED`,
+        "slice — NOT against the slice the stack stopped at. Attribute them to that branch, and do",
+        "not report a probe failure as the reason a later slice failed. Real command exits:",
         probeSummary,
         "",
         `Merge into ${baseBranch}: ${merged ? "done, gated on the merged tree" : mergeSummary}`,

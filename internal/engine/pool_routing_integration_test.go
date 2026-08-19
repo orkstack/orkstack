@@ -78,7 +78,7 @@ type poolOrker struct {
 
 func newPoolOrker(t *testing.T, name, pool string, plugins ...string) *poolOrker {
 	t.Helper()
-	queue, err := task.QueueForPool(pool)
+	queue, err := task.QueueForPool(pool, "")
 	if err != nil {
 		t.Fatalf("QueueForPool(%q): %v", pool, err)
 	}

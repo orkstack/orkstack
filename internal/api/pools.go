@@ -65,14 +65,18 @@ func (s *Service) ListPools(
 		return nil, err
 	}
 
-	pools, err := s.resolverFor(binding).Pools(ctx, ns, named)
+	resolver := s.resolverFor(binding)
+	pools, err := resolver.Pools(ctx, ns, named)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("list pools for namespace %q: %w", ns.GetName(), err))
 	}
+	// The default pool comes from the resolver, not from the document: it is
+	// where THIS deployment sends a task that names none, which is the only
+	// answer a client can act on.
 	return connect.NewResponse(&orkstackv1.ListPoolsResponse{
 		Pools:       pools,
-		DefaultPool: engine.DefaultPoolFor(ns),
+		DefaultPool: resolver.DefaultPool(ns),
 	}), nil
 }
 

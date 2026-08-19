@@ -32,14 +32,20 @@ type harness struct {
 
 	mu    sync.Mutex
 	calls []task.ExecuteTaskInput
+	// queues records the task queue each task's activity actually arrived on,
+	// read from Temporal's own activity info rather than from the engine. It
+	// is what lets a test check the pool a client is TOLD against the Orkers
+	// the task was dispatched to.
+	queues map[string]string
 }
 
 func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(task.ExecuteTaskInput) (task.ExecuteTaskResult, error)) *harness {
 	t.Helper()
 	h := &harness{
-		env:   suite.NewTestWorkflowEnvironment(),
-		bus:   engine.NewEventBus(),
-		store: engine.NewRunStore(),
+		env:    suite.NewTestWorkflowEnvironment(),
+		bus:    engine.NewEventBus(),
+		store:  engine.NewRunStore(),
+		queues: map[string]string{},
 	}
 	h.env.SetTestTimeout(60 * time.Second)
 	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
@@ -48,9 +54,10 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	h.env.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		func(actCtx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
 			h.mu.Lock()
 			h.calls = append(h.calls, in)
+			h.queues[in.TaskID] = activity.GetInfo(actCtx).TaskQueue
 			h.mu.Unlock()
 			return behavior(in)
 		},
@@ -81,6 +88,14 @@ func (h *harness) inputFor(taskID string) (task.ExecuteTaskInput, bool) {
 		}
 	}
 	return task.ExecuteTaskInput{}, false
+}
+
+// queueFor is the task queue taskID's activity arrived on.
+func (h *harness) queueFor(taskID string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	queue, ok := h.queues[taskID]
+	return queue, ok
 }
 
 func compile(t *testing.T, document string) *orkstackv1.Orkflow {

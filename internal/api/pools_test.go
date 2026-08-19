@@ -70,7 +70,7 @@ tasks:
 
 func poolQueue(t *testing.T, pool string) string {
 	t.Helper()
-	queue, err := task.QueueForPool(pool)
+	queue, err := task.QueueForPool(pool, "")
 	if err != nil {
 		t.Fatalf("QueueForPool(%q): %v", pool, err)
 	}
@@ -423,5 +423,62 @@ func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
 	if got := strings.Join(main.GetPlugins(), ","); got != "http,shell" {
 		t.Errorf("pool %q reports plugins %q, want http,shell — the plugins its Orkers run",
 			task.DefaultPool, got)
+	}
+}
+
+// TestListPools_OneSetOfOrkersIsReportedOnce covers the other shape of the
+// same configuration, the one docs/DEPLOY.md recommends: ORK_ORKER_POOL=gpu on
+// both binaries, so the engine's bound channel IS gpu's own queue.
+//
+// Through the RPC a client actually calls, one set of Orkers must appear once,
+// under the name its channel answers to, and a run that named no pool must be
+// reported on that name. Two entries here is a client-visible lie: two pools
+// to size, two to drain, one set of machines — and a run reported on `main`
+// that gpu's Orkers executed.
+func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
+	gpuQueue, err := task.QueueForPool("gpu", "")
+	if err != nil {
+		t.Fatalf("QueueForPool(gpu): %v", err)
+	}
+	starter := &fakeStarter{}
+	svc := api.NewService(api.Config{
+		Starter:     starter,
+		RawQueue:    gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
+		Pools:       livePools{gpuQueue: 2},
+		PoolPlugins: poolPlugins{gpuQueue: {"shell"}},
+	})
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := svc.SubmitRun(context.Background(),
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err != nil {
+		t.Fatalf("SubmitRun: %v", err)
+	}
+	routes := starter.startedPlans()[0].Routes
+	if len(routes) != 1 || routes["gpu"] != gpuQueue {
+		t.Fatalf("the run's routes = %v, want exactly {gpu: %s}: an orkflow that names no pool "+
+			"runs on the pool this deployment bound", routes, gpuQueue)
+	}
+
+	resp, err := svc.ListPools(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPools: %v", err)
+	}
+	if n := len(resp.Msg.GetPools()); n != 1 {
+		t.Fatalf("ListPools returned %d pools (%v) for one set of Orkers", n, resp.Msg.GetPools())
+	}
+	only := resp.Msg.GetPools()[0]
+	if only.GetName() != "gpu" || !only.GetIsDefault() {
+		t.Errorf("the pool is reported as %q (default=%v), want gpu marked default",
+			only.GetName(), only.GetIsDefault())
+	}
+	if got := only.GetLiveOrkerCount(); got != 2 {
+		t.Errorf("pool %q reports %d live Orkers, want the 2 polling its channel", only.GetName(), got)
+	}
+	if got := resp.Msg.GetDefaultPool(); got != "gpu" {
+		t.Errorf("ListPools says the default pool is %q, want %q — a task that names none runs "+
+			"on gpu's Orkers under this deployment", got, "gpu")
 	}
 }

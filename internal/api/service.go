@@ -868,13 +868,20 @@ func (s *Service) ListRuns(
 		runs       []*orkstackv1.Run
 		fromMemory bool
 	)
+	// The router answers which cluster serves the request; the query answers
+	// what to list off it, and it names no namespace, in either projection or
+	// archive. Those are two questions. M10.1 put the coordinate on the wire
+	// and in the key; scoping a READ to a namespace is M10.3's, and until it
+	// lands ApplyOrkflow refuses every namespace but the default, so the flat
+	// catalog a v0.0.2 client sees is exactly "every namespace there is".
+	// Filtering the three queries to `default` here would be the same answer
+	// today and one more call site M10.3 has to unwind.
 	binding, err := s.binding(artifacts.DefaultNamespace)
 	if err != nil {
 		return nil, err
 	}
 	if binding.Reader != nil {
 		listed, err := binding.Reader.ListRuns(ctx, engine.RunQuery{
-			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 			Limit:       size,
@@ -886,7 +893,6 @@ func (s *Service) ListRuns(
 		runs = listed
 	} else {
 		runs = s.runs.List(engine.ListFilter{
-			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 		})
@@ -894,7 +900,6 @@ func (s *Service) ListRuns(
 	}
 	if s.archive != nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
-			Namespace:   artifacts.DefaultNamespace,
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 			Limit:       size,

@@ -237,6 +237,26 @@ func DefaultPoolFor(ns *orkstackv1.Namespace) string {
 	return task.DefaultPool
 }
 
+// DefaultPool is where a task of this namespace runs when it names no pool,
+// under THIS deployment.
+//
+// It is DefaultPoolFor put through the route every task takes, which is what
+// makes it answerable to a client: with ORK_ORKER_POOL=gpu on the engine, a
+// namespace whose default_pool is the built-in `main` dispatches its unpinned
+// tasks to gpu's Orkers, so `main` is not the name to report — gpu is. The
+// name and the machines have to agree, or an operator reading the report acts
+// on a pool that is not the one running the work.
+//
+// A default_pool this engine cannot route to reports the stored name: the
+// document says it, and Plan refuses the submit with the reason.
+func (r *PoolResolver) DefaultPool(ns *orkstackv1.Namespace) string {
+	route, err := r.routeFor(DefaultPoolFor(ns))
+	if err != nil {
+		return DefaultPoolFor(ns)
+	}
+	return route.Pool
+}
+
 // CheckAllowedPools enforces a namespace's allow-list over a definition,
 // without asking the cluster anything.
 //
@@ -292,24 +312,27 @@ func (r *PoolResolver) Plan(
 	}
 
 	planned := proto.Clone(wf).(*orkstackv1.Orkflow)
-	defaultPool := DefaultPoolFor(ns)
 	routes := map[string]string{}
 	// Ordered, so the error a submit reports is the same one every time.
 	var order []string
 	tasksByPool := map[string][]string{}
 
 	for _, t := range planned.GetTasks() {
-		pool := PoolFor(ns, t)
-		t.Pool = pool
-		if _, seen := routes[pool]; !seen {
-			queue, err := r.queueFor(pool, defaultPool)
-			if err != nil {
-				return nil, RunPlan{}, err
-			}
-			routes[pool] = queue
-			order = append(order, pool)
+		route, err := r.routeFor(PoolFor(ns, t))
+		if err != nil {
+			return nil, RunPlan{}, err
 		}
-		tasksByPool[pool] = append(tasksByPool[pool], t.GetId())
+		// The route's pool, not the requested one: routeFor collapses a pool
+		// whose channel IS this deployment's bound channel onto that channel's
+		// name, so the pool stamped on the task — the pool every client is
+		// told, from TASK_SCHEDULED to TaskRun.pool — is the pool whose Orkers
+		// actually take the work.
+		t.Pool = route.Pool
+		if _, seen := routes[route.Pool]; !seen {
+			routes[route.Pool] = route.Queue
+			order = append(order, route.Pool)
+		}
+		tasksByPool[route.Pool] = append(tasksByPool[route.Pool], t.GetId())
 	}
 
 	plan := RunPlan{Namespace: namespaceName(ns), Routes: routes}
@@ -348,27 +371,27 @@ func (r *PoolResolver) Plan(
 	return planned, plan, nil
 }
 
-// queueFor maps one pool onto the channel that carries it, honouring the
-// operator escape hatch for the run's default pool only.
+// routeFor resolves one pool against the channel this deployment bound as its
+// default, and is the single mapping for BOTH questions this type answers:
+// where a pool's work is dispatched (Plan), and where its Orkers are looked
+// for (Pools). Asked through two mappings they can disagree inside one
+// process — a submit accepted onto the operator's channel while the report
+// calls that same pool deserted, which is a worse answer than either alone.
 //
-// The override moves the DEFAULT route. A task that named a pool keeps its
-// own, or `pool: gpu` would silently run wherever an unrelated environment
-// variable pointed — the failure the pool name exists to prevent.
+// It is one call to task.RouteForPool, which is where the collapse lives: a
+// pool whose queue IS the bound channel is reported under the name that
+// channel answers to. Resolving the two halves here instead is how one set of
+// Orkers came to be reported as two pools — `ORK_ORKER_POOL=gpu` on the
+// engine binds ork-pool-gpu, and `main` and `gpu` then both dispatch there
+// while ListPools counted the same Orkers twice and a task that named no pool
+// was reported running on `main`.
 //
-// It is the single mapping for BOTH questions this type answers: where a
-// pool's work is dispatched (Plan), and where its Orkers are looked for
-// (Pools). Asked through two mappings they can disagree inside one process —
-// a submit accepted onto the operator's channel while the report calls that
-// same pool deserted, which is a worse answer than either one alone.
-func (r *PoolResolver) queueFor(pool, defaultPool string) (string, error) {
-	if r.RawQueue != "" && pool == defaultPool {
-		return r.RawQueue, nil
-	}
-	queue, err := task.QueueForPool(pool)
-	if err != nil {
-		return "", err
-	}
-	return queue, nil
+// RawQueue is the operator escape hatch (ORK_ORKER_QUEUE, or the pool
+// ORK_ORKER_POOL names). It moves the DEFAULT route only: a task that named a
+// pool keeps its own, or `pool: gpu` would silently run wherever an unrelated
+// environment variable pointed — the failure the pool name exists to prevent.
+func (r *PoolResolver) routeFor(pool string) (task.Route, error) {
+	return task.RouteForPool(pool, r.RawQueue)
 }
 
 // Pools reports the pools a namespace may dispatch onto, each with the Orkers
@@ -381,42 +404,62 @@ func (r *PoolResolver) queueFor(pool, defaultPool string) (string, error) {
 //
 // Each pool is looked for on the channel a submit would dispatch it to — the
 // operator's raw channel included, since that is where its Orkers are when one
-// is configured. See queueFor.
+// is configured. See routeFor.
+//
+// A pool is listed once. Two names that resolve to one channel are one set of
+// Orkers, and routeFor collapses them onto the name that channel answers to
+// before anything is counted: reporting `main` and `gpu` each with the same
+// two Orkers would be a report a client cannot act on — two pools to size, two
+// pools to drain, one set of machines.
 func (r *PoolResolver) Pools(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
 	extra []string,
 ) ([]*orkstackv1.Pool, error) {
-	defaultPool := DefaultPoolFor(ns)
-	names := map[string]struct{}{defaultPool: {}}
-	for _, pool := range ns.GetAllowedPools() {
-		names[pool] = struct{}{}
-	}
+	candidates := []string{DefaultPoolFor(ns)}
+	candidates = append(candidates, ns.GetAllowedPools()...)
 	if len(ns.GetAllowedPools()) == 0 {
-		for _, pool := range extra {
-			if pool != "" {
-				names[pool] = struct{}{}
-			}
-		}
+		candidates = append(candidates, extra...)
 	}
 
-	ordered := make([]string, 0, len(names))
-	for pool := range names {
-		ordered = append(ordered, pool)
+	defaultRoute, err := r.routeFor(DefaultPoolFor(ns))
+	if err != nil {
+		// The namespace's own default cannot be routed, so nothing in this
+		// namespace can run. Say so rather than reporting a catalogue of
+		// pools around a hole.
+		return nil, err
+	}
+
+	// name -> channel, collapsed. An unroutable name keeps its own spelling
+	// and no channel: a namespace document can hold a pool this engine cannot
+	// map, and the operator asked what is out there.
+	queues := map[string]string{}
+	var ordered []string
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		name := candidate
+		queue := ""
+		if route, err := r.routeFor(candidate); err == nil {
+			name, queue = route.Pool, route.Queue
+		}
+		if _, seen := queues[name]; seen {
+			continue
+		}
+		queues[name] = queue
+		ordered = append(ordered, name)
 	}
 	sort.Strings(ordered)
 
 	pools := make([]*orkstackv1.Pool, 0, len(ordered))
 	for _, name := range ordered {
-		queue, err := r.queueFor(name, defaultPool)
-		if err != nil {
-			// A namespace document can hold a pool name this engine cannot
-			// map. Report it as unserved rather than failing the whole
-			// listing: the operator asked what is out there.
-			pools = append(pools, &orkstackv1.Pool{Name: name, IsDefault: name == defaultPool})
+		pool := &orkstackv1.Pool{Name: name, IsDefault: name == defaultRoute.Pool}
+		queue := queues[name]
+		if queue == "" {
+			pools = append(pools, pool)
 			continue
 		}
-		pool := &orkstackv1.Pool{Name: name, IsDefault: name == defaultPool}
 		if r.Probe != nil {
 			live, err := r.Probe.ObservePool(ctx, queue)
 			if err != nil {

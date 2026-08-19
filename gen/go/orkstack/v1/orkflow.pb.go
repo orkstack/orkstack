@@ -107,9 +107,17 @@ type Task struct {
 	Condition      string       `protobuf:"bytes,5,opt,name=condition,proto3" json:"condition,omitempty"`
 	TimeoutSeconds int32        `protobuf:"varint,6,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"` // default 300
 	Retry          *RetryPolicy `protobuf:"bytes,7,opt,name=retry,proto3" json:"retry,omitempty"`
-	// pool names the set of Orkers this task runs on. Empty resolves to the
-	// namespace's default_pool, then to the built-in pool "main". The engine
-	// maps it to its internal execution channel and nowhere else.
+	// pool names the set of Orkers this task runs on. Empty means the
+	// deployment's default pool, which answers to the name "main";
+	// Namespace.default_pool joins that resolution in M10.2, which is the slice
+	// that reads it.
+	//
+	// Writing "main" and writing nothing are ONE route, always: "main" is a name
+	// for the deployment's default pool and not for one fixed set of Orkers, so
+	// wherever an operator has pointed the default, both spellings go there and
+	// both are reported on the pool that answers for it. Within a run, one pool
+	// name means one set of Orkers, in both directions. The engine maps a pool
+	// to its internal execution channel and nowhere else.
 	Pool          string `protobuf:"bytes,9,opt,name=pool,proto3" json:"pool,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -68,11 +68,22 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
   finishedAt?: Timestamp | undefined;
 
   /**
-   * pool is the set of Orkers this attempt ran on: the task's own `pool:`, or
-   * the built-in default when it named none. It answers "where did this go"
-   * without a reader consulting the engine, and it answers in the word the
-   * author typed. Empty means the task never reached an Orker (skipped, or
-   * terminal before dispatch).
+   * pool names the set of Orkers this attempt was dispatched to, in the word
+   * its author typed: the task's own `pool:`, or the pool this run's default
+   * route resolves to when the task named none.
+   *
+   * Within a run, one pool name means one set of Orkers, so naming this pool
+   * on a task reaches exactly the Orkers this attempt reached. That holds
+   * under the per-deployment route override operators use to keep two stacks
+   * apart: an execution channel belonging to no pool reports as the built-in
+   * "main", and a task that writes "main" follows the same override instead
+   * of escaping it. The override is an operator concern this contract does
+   * not expose, so this name is the routing request rather than a measurement
+   * of the host that answered, and another deployment resolves it against its
+   * own Orkers.
+   *
+   * Empty means the task never reached an Orker (skipped, or terminal before
+   * dispatch).
    *
    * @generated from field: string pool = 10;
    */

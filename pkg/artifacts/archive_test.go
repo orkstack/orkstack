@@ -75,8 +75,8 @@ func TestRunArchiveKey_IsTheDocumentedJSONLPath(t *testing.T) {
 }
 
 // TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack is why a list query
-// reads keys only: namespace, orkflow, status, time, duration and run id are
-// all in the key.
+// reads keys only: namespace, orkflow, status, time and run id are all in the
+// key.
 func TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack(t *testing.T) {
 	record := artifacts.RunRecord{
 		RunID:     "ork-1786856120616785000-7",
@@ -84,14 +84,13 @@ func TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack(t *testing.T) {
 		Orkflow:   "hello-ork",
 		Status:    "SUCCEEDED",
 		Time:      day(t, "2026-08-14T09:30:15Z"),
-		Duration:  1500 * time.Millisecond,
 	}
 	key, err := artifacts.RunIndexKey(record)
 	if err != nil {
 		t.Fatalf("RunIndexKey: %v", err)
 	}
 	want := "metadata/index/runs/payments/hello-ork/succeeded/" +
-		"20260814T093015.000000000Z/000000001500/ork-1786856120616785000-7"
+		"20260814T093015.000000000Z/ork-1786856120616785000-7"
 	if key != want {
 		t.Fatalf("index key = %q, want %q", key, want)
 	}
@@ -106,9 +105,6 @@ func TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack(t *testing.T) {
 	}
 	if !entry.Time.Equal(record.Time) {
 		t.Fatalf("parsed time = %s, want %s", entry.Time, record.Time)
-	}
-	if entry.Duration != record.Duration {
-		t.Fatalf("parsed duration = %s, want %s", entry.Duration, record.Duration)
 	}
 
 	// A record that names no namespace is indexed under the default one, so
@@ -126,34 +122,16 @@ func TestRunIndexKey_CarriesEveryQueriedFieldAndParsesBack(t *testing.T) {
 
 	// Keys of the pre-namespace shape are not index keys any more: they parse
 	// as foreign and are skipped, never mistaken for a run in some namespace.
-	old := "metadata/index/runs/hello-ork/succeeded/20260814T093015.000000000Z/ork-1786856120616785000-7"
-	if entry, ok := artifacts.ParseRunIndexKey(old); ok {
-		t.Fatalf("ParseRunIndexKey(%q) = %+v, true; want false", old, entry)
-	}
-}
-
-// TestRunIndexKey_RendersDurationAsAFixedWidthSortableSegment keeps the
-// duration segment usable as a key: fixed width, so text order is numeric
-// order, and never widened by a value that does not fit.
-func TestRunIndexKey_RendersDurationAsAFixedWidthSortableSegment(t *testing.T) {
-	widths := map[time.Duration]string{
-		0:                               "000000000000",
-		time.Millisecond:                "000000000001",
-		1500 * time.Millisecond:         "000000001500",
-		-5 * time.Second:                "000000000000", // clocks disagreed
-		200 * 365 * 24 * time.Hour:      "999999999999", // clamped, not widened
-		999999999999 * time.Millisecond: "999999999999",
-	}
-	for d, want := range widths {
-		if got := artifacts.RunDurationSegment(d); got != want {
-			t.Errorf("RunDurationSegment(%s) = %q, want %q", d, got, want)
+	// Nor is a key carrying a segment this layout does not define: the key is
+	// the whole query contract, so a writer that invents a segment is a
+	// different index, not a compatible one.
+	for _, foreign := range []string{
+		"metadata/index/runs/hello-ork/succeeded/20260814T093015.000000000Z/ork-1786856120616785000-7",
+		"metadata/index/runs/payments/hello-ork/succeeded/20260814T093015.000000000Z/000000001500/ork-1786856120616785000-7",
+	} {
+		if entry, ok := artifacts.ParseRunIndexKey(foreign); ok {
+			t.Fatalf("ParseRunIndexKey(%q) = %+v, true; want false", foreign, entry)
 		}
-	}
-
-	// Text order is numeric order, which is what makes a percentile over a
-	// keys-only scan meaningful.
-	if artifacts.RunDurationSegment(2*time.Millisecond) >= artifacts.RunDurationSegment(10*time.Millisecond) {
-		t.Error("2ms does not sort before 10ms")
 	}
 }
 
@@ -414,6 +392,109 @@ func TestRunArchive_ListFiltersByOrkflowStatusAndDateRange(t *testing.T) {
 			}
 			if got := runIDs(entries); !equalStrings(got, tc.want) {
 				t.Fatalf("run ids = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunArchive_ListNeverCrossesANamespace is the behaviour the namespace
+// segment exists for, stated over a populated archive rather than over key
+// arithmetic.
+//
+// The key math was covered from the start (TestRunIndexKey_… and
+// TestRunQuery_ScanPrefixNarrowsWithEveryPinnedField), and the only test that
+// archived runs and listed them seeded five records that all carried an empty
+// namespace — so nothing measured the property the segment is FOR: a
+// namespace-scoped query returns that namespace's runs and no others. The
+// orkflow store has exactly this test (two namespaces, one orkflow name); the
+// archive did not.
+//
+// Two namespaces hold a run of the SAME orkflow name here, because an orkflow
+// name is unique within a namespace and not across the deployment: a query
+// that narrowed on the name alone would return both.
+func TestRunArchive_ListNeverCrossesANamespace(t *testing.T) {
+	archive := newLocalArchive(t)
+	seed := []artifacts.RunRecord{
+		{RunID: "ork-pay-1", Namespace: "payments", Orkflow: "deploy", Status: "succeeded",
+			Time: day(t, "2026-08-10T10:00:00Z")},
+		{RunID: "ork-pay-2", Namespace: "payments", Orkflow: "deploy", Status: "failed",
+			Time: day(t, "2026-08-11T10:00:00Z")},
+		{RunID: "ork-bill-1", Namespace: "billing", Orkflow: "deploy", Status: "succeeded",
+			Time: day(t, "2026-08-12T10:00:00Z")},
+		// An unset namespace is the default one, resolved where the key is
+		// built — so this run is listed by a query for "default".
+		{RunID: "ork-plain-1", Orkflow: "deploy", Status: "succeeded",
+			Time: day(t, "2026-08-13T10:00:00Z")},
+		{RunID: "ork-plain-2", Namespace: artifacts.DefaultNamespace, Orkflow: "hello-ork",
+			Status: "succeeded", Time: day(t, "2026-08-14T10:00:00Z")},
+	}
+	for _, record := range seed {
+		archiveRun(t, archive, record)
+	}
+
+	tests := []struct {
+		name  string
+		query artifacts.RunQuery
+		want  []string
+	}{
+		{
+			name:  "one namespace, and nothing from the others",
+			query: artifacts.RunQuery{Namespace: "payments"},
+			want:  []string{"ork-pay-2", "ork-pay-1"},
+		},
+		{
+			name:  "the other namespace, same orkflow name",
+			query: artifacts.RunQuery{Namespace: "billing", Orkflow: "deploy"},
+			want:  []string{"ork-bill-1"},
+		},
+		{
+			name:  "an unset namespace was archived in the default one",
+			query: artifacts.RunQuery{Namespace: artifacts.DefaultNamespace},
+			want:  []string{"ork-plain-2", "ork-plain-1"},
+		},
+		{
+			name:  "an empty query is the flat catalog: every namespace",
+			query: artifacts.RunQuery{},
+			want: []string{"ork-plain-2", "ork-plain-1", "ork-bill-1",
+				"ork-pay-2", "ork-pay-1"},
+		},
+		{
+			name:  "narrowing on the orkflow name alone spans namespaces",
+			query: artifacts.RunQuery{Orkflow: "deploy"},
+			want:  []string{"ork-plain-1", "ork-bill-1", "ork-pay-2", "ork-pay-1"},
+		},
+		{
+			name:  "namespace and status together",
+			query: artifacts.RunQuery{Namespace: "payments", Status: "SUCCEEDED"},
+			want:  []string{"ork-pay-1"},
+		},
+		{
+			name:  "a namespace holding nothing lists nothing",
+			query: artifacts.RunQuery{Namespace: "never-registered"},
+			want:  nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, err := archive.ListRuns(context.Background(), tc.query)
+			if err != nil {
+				t.Fatalf("ListRuns: %v", err)
+			}
+			if got := runIDs(entries); !equalStrings(got, tc.want) {
+				t.Fatalf("run ids = %v, want %v", got, tc.want)
+			}
+			// Every row also carries the namespace it was archived under, so
+			// a caller can tell two same-named orkflows apart.
+			for _, entry := range entries {
+				if tc.query.Namespace != "" && entry.Namespace != tc.query.Namespace {
+					t.Errorf("run %s listed under namespace %q for a query on %q",
+						entry.RunID, entry.Namespace, tc.query.Namespace)
+				}
+				if entry.Namespace == "" {
+					t.Errorf("run %s listed with no namespace; an unset one resolves to %q",
+						entry.RunID, artifacts.DefaultNamespace)
+				}
 			}
 		})
 	}

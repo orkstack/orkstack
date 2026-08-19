@@ -237,8 +237,14 @@ next reader will "fix" it.
 Orker polls that queue while the engine dispatches every task that names no
 `pool:` of its own to it (`TemporalStarter.StartRun` binds the name into the
 run's workflow input; workflow code is deterministic and cannot read the
-environment itself). Set it on only one of the two and the run strands in
-RUNNING: the Orker listens to one queue while the engine dispatches to another.
+environment itself). A task that writes `pool: main` goes there too, whatever
+shape the override has: `main` names this deployment's default pool, not the
+queue `ork-tasks`, so the override moves it, and one pool name means one set
+of Orkers. A document cannot escape the isolation onto the shared queue by
+naming the default pool, nor by naming the pool it was already reported on
+(`runState.routeForTask`). Set it on only one of the two and the run strands
+in RUNNING: the Orker listens to one queue while the engine dispatches to
+another.
 
 ```bash
 # Both processes, same value.
@@ -249,7 +255,10 @@ A queue partitions task execution only — run workflows and engine events still
 share their queues, so a namespace is the stronger boundary and the one to use
 for parallel agents. A task's own `pool:` in the DSL resolves to its dedicated
 Orker pool, which is how one step reaches a separate worker group
-(`docs/DSL.md`). Proof for both: `proof/queue-routing/`.
+(`docs/DSL.md`). Proof for both: `proof/queue-routing/`, which
+`proof/M10.1/proof-claims.sh` holds to this tree — a proof this file points a
+reader at is a claim about the tree, and M10.1 renamed five symbols that proof
+argued from before anything noticed.
 
 **In test harnesses** that start their own engine and orker, give the pair a
 unique namespace, and a private queue when the test needs one

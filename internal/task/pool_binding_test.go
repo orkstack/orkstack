@@ -18,7 +18,7 @@ import (
 // way, or an Orker polls one place while the engine dispatches to another and
 // the run strands in RUNNING.
 func TestResolvePoolBinding_ResolvesTheFiveWaysAProcessCanBeToldWhereItsWorkLives(t *testing.T) {
-	poolQueue, err := task.QueueForPool("gpu")
+	poolQueue, err := task.QueueForPool("gpu", "")
 	if err != nil {
 		t.Fatalf("QueueForPool(gpu): %v", err)
 	}

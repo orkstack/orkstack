@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIqwCCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIoIBCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRIPCgdwbHVnaW5zGAMgAygJEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEKqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIp4CCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKCAQoEUG9vbBIMCgRuYW1lGAEgASgJEhgKEGxpdmVfb3JrZXJfY291bnQYAiABKAUSDwoHcGx1Z2lucxgDIAMoCRISCgppc19kZWZhdWx0GAQgASgIEi0KCWxhc3Rfc2VlbhgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCqgEKD2NvbS5vcmtzdGFjay52MUIOTmFtZXNwYWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -51,19 +51,36 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * default_pool is where a task that names no pool runs. Empty means the
    * built-in pool "main".
    *
+   * It is read on the submit path: a run's routing resolves a task's own
+   * `pool:`, then this, then "main". The registry stores only a name the
+   * engine can route to — the same slug rule the DSL and the engine's pool
+   * mapping use — because a stored routing target nothing can honour is a
+   * defect, not a placeholder.
+   *
    * @generated from field: string default_pool = 4;
    */
   defaultPool: string;
 
   /**
    * allowed_pools bounds every pool this namespace may dispatch onto. Empty
-   * means no restriction. A non-empty list must contain default_pool.
+   * means no restriction. A non-empty list must contain default_pool, which
+   * the registry refuses to store otherwise — an allow-list that excludes the
+   * namespace's own default would refuse every task that names no pool. Each
+   * entry is held to the same pool-name rule as default_pool.
+   *
+   * It is enforced at the API boundary, in both places a pool can be chosen:
+   * when an orkflow is applied, with the file in hand, and again when a run is
+   * submitted, which is the gate no client can bypass.
    *
    * @generated from field: repeated string allowed_pools = 5;
    */
   allowedPools: string[];
 
   /**
+   * created_at and updated_at are written by the registry, never by a client:
+   * created_at when the document is first written and preserved on every
+   * later write, updated_at on each one.
+   *
    * @generated from field: google.protobuf.Timestamp created_at = 6;
    */
   createdAt?: Timestamp | undefined;
@@ -72,16 +89,6 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * @generated from field: google.protobuf.Timestamp updated_at = 7;
    */
   updatedAt?: Timestamp | undefined;
-
-  /**
-   * etag is the store's opaque concurrency token. A caller sends back the one
-   * Get returned; a mismatch is refused rather than clobbered. It is written
-   * by the store, never by a client, and stays empty until compare-and-swap
-   * lands with the namespace API.
-   *
-   * @generated from field: string etag = 8;
-   */
-  etag: string;
 };
 
 /**

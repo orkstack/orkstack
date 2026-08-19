@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // RunPlan is a run's routing, decided at submit and bound into the workflow
@@ -38,12 +40,25 @@ type RunPlan struct {
 // gpu task on the shared pool — the wrong machines, silently, which is worse
 // than not running it. The error names the pool and the routes that do exist,
 // because the only way this happens is a plan built for a different definition.
+//
+// A route onto one of the engine's own queues is refused for the same reason
+// task.QueueForPool refuses it: ork-engine-events carries the engine's
+// projection activities, and an Orker polling it would take engine work off
+// the queue the engine is waiting on. The resolver cannot produce such a plan
+// (task.RouteForPool refuses first) and `ork` will not boot on that channel;
+// the check is here because this is the last place the plan is read, and a
+// plan is data a harness can hand-build.
 func (p RunPlan) Route(pool string) (string, error) {
-	if queue := p.Routes[pool]; queue != "" {
-		return queue, nil
+	queue := p.Routes[pool]
+	if queue == "" {
+		return "", fmt.Errorf("pool %q has no route in this run's plan (planned pools: %s)",
+			pool, p.pools())
 	}
-	return "", fmt.Errorf("pool %q has no route in this run's plan (planned pools: %s)",
-		pool, p.pools())
+	if queue == task.EngineEventQueue {
+		return "", fmt.Errorf("%w: this run's plan routes pool %q to %q, which carries "+
+			"the engine's own projection activities", task.ErrReservedQueue, pool, queue)
+	}
+	return queue, nil
 }
 
 func (p RunPlan) pools() string {

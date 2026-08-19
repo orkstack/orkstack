@@ -7,13 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -89,6 +92,21 @@ func ParseNamespaceKey(key string) (name string, ok bool) {
 	return name, true
 }
 
+// namespaceNamePattern is the rule for a namespace name.
+//
+// It is the DSL's slug rule (internal/dsl.slugPattern), not the
+// cleanComponentPattern that validates a stored VERSION string. A version is a
+// semver or a content hash and may be neither lower-case nor slug-shaped; a
+// namespace is a NAME, and the only way an orkflow enters one is a
+// `namespace:` in a document. cleanComponentPattern accepted `Payments`,
+// `pay.ments`, `1payments` and `a_b` — every one refused by the compiler — so
+// each was a namespace that could be created, written to, and then never named
+// in YAML. pkg/ may not import internal/, so the two rules are held together
+// by measurement instead: TestNamespaceName_RegistryAndCompilerAgree runs one
+// corpus through this rule and through the compiler and fails on any
+// disagreement, in either direction.
+var namespaceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
 func validNamespaceName(name string) error {
 	switch {
 	case name == "":
@@ -96,9 +114,9 @@ func validNamespaceName(name string) error {
 	case len(name) > maxOrkflowComponent:
 		return fmt.Errorf("artifacts: namespace %q exceeds %d bytes: %w",
 			name, maxOrkflowComponent, ErrInvalidNamespace)
-	case !cleanComponentPattern.MatchString(name):
+	case !namespaceNamePattern.MatchString(name):
 		return fmt.Errorf("artifacts: namespace %q must match %s: %w",
-			name, cleanComponentPattern, ErrInvalidNamespace)
+			name, namespaceNamePattern, ErrInvalidNamespace)
 	}
 	return nil
 }
@@ -146,6 +164,9 @@ func unmarshalNamespace(document []byte) (*orkstackv1.Namespace, error) {
 type S3NamespaceStore struct {
 	client *s3.Client
 	bucket string
+	// now stamps created_at and updated_at. It is a field only so a test can
+	// hold the clock still; every constructor sets it to the wall clock.
+	now func() time.Time
 }
 
 // compile-time contract check.
@@ -158,7 +179,11 @@ func NewS3NamespaceStore(ctx context.Context, cfg Config) (*S3NamespaceStore, er
 	if err != nil {
 		return nil, err
 	}
-	return &S3NamespaceStore{client: client, bucket: bucket}, nil
+	return &S3NamespaceStore{
+		client: client,
+		bucket: bucket,
+		now:    func() time.Time { return time.Now().UTC() },
+	}, nil
 }
 
 // Bucket returns the bucket holding the registry.
@@ -172,6 +197,13 @@ func (s *S3NamespaceStore) uri(key string) string {
 }
 
 // Put writes one namespace document.
+//
+// The registry owns the document's times, not the caller: created_at is
+// stamped when the name is first written and carried forward verbatim on every
+// later write, updated_at is stamped on each one. Whatever a caller sent in
+// either field is discarded — a client that could backdate created_at could
+// hide when a tenant appeared, and a client that could freeze updated_at could
+// hide that it changed one.
 func (s *S3NamespaceStore) Put(ctx context.Context, ns *orkstackv1.Namespace) error {
 	if ns == nil {
 		return fmt.Errorf("artifacts: encode namespace: %w: nil namespace", ErrInvalidNamespace)
@@ -186,6 +218,18 @@ func (s *S3NamespaceStore) Put(ctx context.Context, ns *orkstackv1.Namespace) er
 	}
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
 	stored.Name = name
+	stamp := timestamppb.New(s.clock())
+	stored.CreatedAt, stored.UpdatedAt = stamp, stamp
+	switch existing, err := s.read(ctx, key); {
+	case err == nil:
+		if created := existing.GetCreatedAt(); created != nil {
+			stored.CreatedAt = created
+		}
+	case errors.Is(err, ErrNotFound):
+		// First write of this name: the stamp above is its birth.
+	default:
+		return err
+	}
 	document, err := marshalNamespace(stored)
 	if err != nil {
 		return err
@@ -202,17 +246,66 @@ func (s *S3NamespaceStore) Put(ctx context.Context, ns *orkstackv1.Namespace) er
 	return nil
 }
 
-// validNamespacePools enforces the one invariant the document carries on its
-// own: an allow-list that excludes the namespace's own default would refuse
-// every task that names no pool.
+// clock is the store's time source, defaulting to the wall clock so a
+// zero-valued store still stamps a real time rather than the epoch.
+func (s *S3NamespaceStore) clock() time.Time {
+	if s.now == nil {
+		return time.Now().UTC()
+	}
+	return s.now()
+}
+
+// DefaultPool is the pool a task runs on when neither the task nor its
+// namespace names one. It is the same name internal/task.DefaultPool maps to
+// the execution queue a zero-configuration stack polls; the constant is
+// repeated here because pkg/ may not import internal/, and the two are pinned
+// together by TestNamespacePools_AreExactlyThePoolsDispatchCanReach.
+const DefaultPool = "main"
+
+// poolNamePattern is the rule for a pool name this registry will store.
+//
+// It is TIGHTER than cleanComponentPattern, which validated these two fields
+// until review measured what that let through: "GPU", "Main", "gpu.1" and
+// "1gpu" were all stored, and every one of them is refused by the only
+// pool->queue translation in the tree (internal/task.QueueForPool) and by the
+// DSL. A registry that stores a routing target no dispatch can honour is the
+// same "stored field nothing can honour" defect as a namespace no read path
+// reaches — and M10.2 is the slice that reads default_pool, so it would be
+// the one handed the unroutable name.
+var poolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// maxPoolName bounds a pool name. It is internal/task.MaxPoolName and the
+// DSL's dsl.MaxSlug, the same 200: a pattern with no bound is half a rule, and
+// the half that was missing is the one a corpus of short names cannot see.
+const maxPoolName = 200
+
+// validPoolName reports why a pool name cannot be stored. field names where
+// the pool was written, so an allow-list entry and a default_pool report
+// differently.
+func validPoolName(field, pool string) error {
+	switch {
+	case len(pool) > maxPoolName:
+		return fmt.Errorf("artifacts: %s of %d bytes exceeds the %d-byte limit (%.32q…): %w",
+			field, len(pool), maxPoolName, pool, ErrInvalidNamespace)
+	case !poolNamePattern.MatchString(pool):
+		return fmt.Errorf("artifacts: %s %q must match %s: %w",
+			field, pool, poolNamePattern, ErrInvalidNamespace)
+	}
+	return nil
+}
+
+// validNamespacePools enforces what the document can be held to on its own:
+// every pool it names must be one dispatch can reach, and an allow-list that
+// excluded the namespace's own default would refuse every task that names no
+// pool.
 func validNamespacePools(ns *orkstackv1.Namespace) error {
 	defaultPool := ns.GetDefaultPool()
 	if defaultPool == "" {
-		defaultPool = "main"
+		defaultPool = DefaultPool
 	}
-	if !cleanComponentPattern.MatchString(defaultPool) {
-		return fmt.Errorf("artifacts: namespace %q default pool %q is invalid: %w",
-			ns.GetName(), defaultPool, ErrInvalidNamespace)
+	if err := validPoolName(
+		fmt.Sprintf("namespace %q default pool", ns.GetName()), defaultPool); err != nil {
+		return err
 	}
 	allowed := ns.GetAllowedPools()
 	if len(allowed) == 0 {
@@ -220,9 +313,9 @@ func validNamespacePools(ns *orkstackv1.Namespace) error {
 	}
 	foundDefault := false
 	for _, pool := range allowed {
-		if !cleanComponentPattern.MatchString(pool) {
-			return fmt.Errorf("artifacts: namespace %q allowed pool %q is invalid: %w",
-				ns.GetName(), pool, ErrInvalidNamespace)
+		if err := validPoolName(
+			fmt.Sprintf("namespace %q allowed pool", ns.GetName()), pool); err != nil {
+			return err
 		}
 		if pool == defaultPool {
 			foundDefault = true

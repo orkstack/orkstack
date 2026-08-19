@@ -60,25 +60,33 @@ func ResolvePoolBinding(pool, rawQueue string) (PoolBinding, error) {
 	}
 
 	if pool == "" {
-		binding := PoolBinding{Pool: DefaultPool, Queue: rawQueue, RawOverride: true}
-		if named, ok := PoolForQueue(rawQueue); ok {
-			binding.Pool = named
+		// The raw channel is nobody's pool until PoolForQueue recognises it,
+		// which DefaultRoute asks on this process's behalf — the same question
+		// a run's default route answers, so an Orker's own name for itself and
+		// the name a client is told are one answer. It also refuses the
+		// engine's own queues here, exactly as it refuses them for a pool.
+		route, err := DefaultRoute(rawQueue)
+		if err != nil {
+			return PoolBinding{}, fmt.Errorf("ORK_ORKER_QUEUE: %w", err)
 		}
-		return binding, nil
+		return PoolBinding{Pool: route.Pool, Queue: route.Queue, RawOverride: true}, nil
 	}
 
-	queue, err := QueueForPool(pool)
+	// A process naming a pool is declaring its own channel, so it resolves
+	// against the unconfigured default rather than against a channel it has
+	// not been handed: there is no prior binding here to collapse onto.
+	route, err := RouteForPool(pool, "")
 	if err != nil {
 		return PoolBinding{}, fmt.Errorf("ORK_ORKER_POOL: %w", err)
 	}
 	if rawQueue == "" {
-		return PoolBinding{Pool: pool, Queue: queue}, nil
+		return PoolBinding{Pool: route.Pool, Queue: route.Queue}, nil
 	}
-	if rawQueue != queue {
+	if rawQueue != route.Queue {
 		return PoolBinding{}, fmt.Errorf(
 			"%w: ORK_ORKER_POOL=%s resolves to %q but ORK_ORKER_QUEUE=%q; "+
 				"set one of them, or make them agree",
-			ErrPoolBindingConflict, pool, queue, rawQueue)
+			ErrPoolBindingConflict, pool, route.Queue, rawQueue)
 	}
-	return PoolBinding{Pool: pool, Queue: queue, RawOverride: true}, nil
+	return PoolBinding{Pool: route.Pool, Queue: route.Queue, RawOverride: true}, nil
 }

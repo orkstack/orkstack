@@ -24,17 +24,28 @@ message Namespace {
   map<string, string> labels = 3;
   // default_pool is where a task that names no pool runs. Empty means the
   // built-in pool "main".
+  //
+  // It is read on the submit path: a run's routing resolves a task's own
+  // `pool:`, then this, then "main". The registry stores only a name the
+  // engine can route to — the same slug rule the DSL and the engine's pool
+  // mapping use — because a stored routing target nothing can honour is a
+  // defect, not a placeholder.
   string default_pool = 4;
   // allowed_pools bounds every pool this namespace may dispatch onto. Empty
-  // means no restriction. A non-empty list must contain default_pool.
+  // means no restriction. A non-empty list must contain default_pool, which
+  // the registry refuses to store otherwise — an allow-list that excludes the
+  // namespace's own default would refuse every task that names no pool. Each
+  // entry is held to the same pool-name rule as default_pool.
+  //
+  // It is enforced at the API boundary, in both places a pool can be chosen:
+  // when an orkflow is applied, with the file in hand, and again when a run is
+  // submitted, which is the gate no client can bypass.
   repeated string allowed_pools = 5;
+  // created_at and updated_at are written by the registry, never by a client:
+  // created_at when the document is first written and preserved on every
+  // later write, updated_at on each one.
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
-  // etag is the store's opaque concurrency token. A caller sends back the one
-  // Get returned; a mismatch is refused rather than clobbered. It is written
-  // by the store, never by a client, and stays empty until compare-and-swap
-  // lands with the namespace API.
-  string etag = 8;
 }
 
 // Pool is a set of Orkers, observed live.

@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -75,8 +76,8 @@ func TestPoolResolver_ResolvesTaskPoolThenNamespaceDefaultThenMain(t *testing.T)
 		}
 		// Exactly the pools this run uses, and nothing else: a route table is
 		// the run's own routing record, not a copy of the deployment.
-		gpuQueue, _ := task.QueueForPool("gpu")
-		batchQueue, _ := task.QueueForPool("batch")
+		gpuQueue, _ := task.QueueForPool("gpu", "")
+		batchQueue, _ := task.QueueForPool("batch", "")
 		wantRoutes := map[string]string{"gpu": gpuQueue, "batch": batchQueue}
 		if len(plan.Routes) != len(wantRoutes) {
 			t.Fatalf("routes = %v, want exactly %v", plan.Routes, wantRoutes)
@@ -131,7 +132,7 @@ func TestPoolResolver_ResolvesTaskPoolThenNamespaceDefaultThenMain(t *testing.T)
 // answer alone, because the number an operator reads is the wrong one.
 func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T) {
 	const raw = "ork-tasks-m10-2-agent"
-	gpuQueue, _ := task.QueueForPool("gpu")
+	gpuQueue, _ := task.QueueForPool("gpu", "")
 	// Three Orkers on the operator's channel, one on gpu's own, and nobody on
 	// the channel the default pool would have used without the override.
 	resolver := &engine.PoolResolver{
@@ -177,6 +178,69 @@ func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T)
 	}
 }
 
+// TestPoolResolver_OneSetOfOrkersIsOnePool is the configuration
+// docs/DEPLOY.md documents as the preferred one — ORK_ORKER_POOL=gpu on BOTH
+// binaries — where the engine's bound channel IS a pool's own queue.
+//
+// Then `main` and `gpu` are two names for one set of Orkers, and the report
+// must say so once. Counting them twice tells an operator there are two pools
+// to size and two to drain when there is one; and a task that named no pool
+// would be reported to every client (TASK_SCHEDULED, TaskRun.pool, the Orker's
+// own key) as running on `main` while gpu's Orkers ran it.
+//
+// This is the defect the collapse in task.RouteForPool closes, asserted where
+// a client would read it.
+func TestPoolResolver_OneSetOfOrkersIsOnePool(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	resolver := &engine.PoolResolver{
+		Probe:    livePools{gpuQueue: 2},
+		Plugins:  fakePoolPlugins{gpuQueue: {"shell"}},
+		RawQueue: gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
+	}
+	ns := &orkstackv1.Namespace{Name: "default"}
+
+	planned, plan, err := resolver.Plan(context.Background(), ns, compile(t, twoPoolDocument), false)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	// One route, because it is one set of Orkers: `pool: gpu` and the task
+	// that named none are the same route under this deployment.
+	if len(plan.Routes) != 1 || plan.Routes["gpu"] != gpuQueue {
+		t.Fatalf("routes = %v, want exactly {gpu: %s}", plan.Routes, gpuQueue)
+	}
+	for _, tk := range planned.GetTasks() {
+		if got := tk.GetPool(); got != "gpu" {
+			t.Errorf("task %q is reported on pool %q while it runs on gpu's Orkers; the pool a "+
+				"client reads must be the pool the work reached", tk.GetId(), got)
+		}
+	}
+
+	pools, err := resolver.Pools(context.Background(), ns, []string{"gpu"})
+	if err != nil {
+		t.Fatalf("Pools: %v", err)
+	}
+	if len(pools) != 1 {
+		names := make([]string, 0, len(pools))
+		for _, p := range pools {
+			names = append(names, fmt.Sprintf("%s(orkers=%d)", p.GetName(), p.GetLiveOrkerCount()))
+		}
+		t.Fatalf("ListPools reports %d pools (%s) for one set of Orkers; two names for one "+
+			"channel is one pool", len(pools), strings.Join(names, " "))
+	}
+	only := pools[0]
+	if only.GetName() != "gpu" {
+		t.Errorf("the pool is reported as %q, want %q — the name its channel answers to",
+			only.GetName(), "gpu")
+	}
+	if !only.GetIsDefault() {
+		t.Errorf("pool %q is not marked default, but it is where a task that names no pool runs",
+			only.GetName())
+	}
+	if got := only.GetLiveOrkerCount(); got != 2 {
+		t.Errorf("pool %q reports %d live Orkers, want the 2 polling %q", only.GetName(), got, gpuQueue)
+	}
+}
+
 // TestPoolResolver_RefusesAPoolTheNamespaceDoesNotAllow is the enforcement
 // half of allowed_pools: a list nothing checks is a comment.
 func TestPoolResolver_RefusesAPoolTheNamespaceDoesNotAllow(t *testing.T) {
@@ -214,7 +278,7 @@ func TestPoolResolver_RefusesAPoolTheNamespaceDoesNotAllow(t *testing.T) {
 // RUNNING until a human noticed. The pool is asked, once, at the moment the
 // routing decision is made.
 func TestPoolResolver_RefusesASubmitOntoAPoolWithNoLiveOrkers(t *testing.T) {
-	gpuQueue, err := task.QueueForPool("gpu")
+	gpuQueue, err := task.QueueForPool("gpu", "")
 	if err != nil {
 		t.Fatalf("QueueForPool: %v", err)
 	}
@@ -351,7 +415,7 @@ tasks:
 // half: an operator asks which pools exist, how many Orkers serve each, and
 // what those Orkers can run.
 func TestPoolResolver_ReportsPoolsWithTheirOrkersAndPlugins(t *testing.T) {
-	gpuQueue, _ := task.QueueForPool("gpu")
+	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
 		Probe:   livePools{task.DefaultQueue: 2, gpuQueue: 1},
 		Plugins: fakePoolPlugins{gpuQueue: {"shell"}, task.DefaultQueue: {"http", "shell"}},

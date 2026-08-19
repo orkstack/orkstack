@@ -108,7 +108,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	// A private task queue keeps this run's activities away from any other
 	// worker polling the shared queue (AGENTS.md §6).
 	pool := fmt.Sprintf("webhook-%d", time.Now().UnixNano())
-	runQueue, err := task.QueueForPool(pool)
+	runQueue, err := task.QueueForPool(pool, "")
 	if err != nil {
 		t.Fatalf("map webhook pool: %v", err)
 	}

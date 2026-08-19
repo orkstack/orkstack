@@ -54,7 +54,7 @@ func TestIntegration_APoolCountsTheOrkersPollingItAndNotTheOnesThatLeft(t *testi
 	// A pool of this run's own, so the only records on the channel are the two
 	// this test creates. Everything else here is production code.
 	pool := fmt.Sprintf("scale-down-%d-%d", os.Getpid(), time.Now().UnixNano())
-	queue, err := task.QueueForPool(pool)
+	queue, err := task.QueueForPool(pool, "")
 	if err != nil {
 		t.Fatalf("QueueForPool(%q): %v", pool, err)
 	}

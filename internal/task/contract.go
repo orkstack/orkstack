@@ -19,6 +19,13 @@ const (
 	// DefaultQueue is the Temporal task queue Orkers poll for task execution.
 	DefaultQueue = "ork-tasks"
 
+	// EngineEventQueue is the Temporal task queue that carries the engine's
+	// own projection activities, and the one queue no task may be dispatched
+	// to. It is declared here, beside DefaultQueue, because the two places
+	// that must refuse it — QueueForPool and `ork` at boot — cannot import
+	// internal/engine. engine.EventQueue is this literal, not a second one.
+	EngineEventQueue = "ork-engine-events"
+
 	// DefaultNamespace is the Temporal namespace OrkStack runs in when
 	// ORK_TEMPORAL_NAMESPACE is unset. Binaries provision it on startup when
 	// the cluster does not have it yet (see EnsureNamespace).

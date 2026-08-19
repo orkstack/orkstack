@@ -44,21 +44,37 @@ tasks:
 	}
 }
 
-// TestCompile_RejectsTheRemovedKeyEvenWhenEmpty stops the obvious escape: a
-// document that writes the key with no value is still a document written
-// against the old contract, and yaml decodes it to the zero value.
-func TestCompile_RejectsTheRemovedKeyEvenWhenEmpty(t *testing.T) {
-	const doc = `
-name: nightly-close
-tasks:
-  - id: settle
-    plugin: shell
-    queue: ""
-    with: {command: "echo 1"}
-`
-	if _, err := dsl.Compile([]byte(doc)); err == nil {
-		t.Fatal("Compile accepted the removed key with an empty value")
-	} else if !strings.Contains(err.Error(), "pool:") {
-		t.Errorf("error %q does not name pool:", err.Error())
+// TestCompile_RejectsTheRemovedKeyHoweverItIsSpelled stops the obvious escape:
+// a document that writes the key with no value is still a document written
+// against the old contract. Every YAML spelling of a valueless key is here,
+// because the first version of this test fed only a valued key: the compiler
+// decoded the key into a *string, yaml.v3 leaves that pointer nil for an
+// explicitly null value, and `queue:` and `queue: null` compiled in silence
+// while `queue: ""` was refused. The rejection reads the key's PRESENCE now,
+// and this table is what says so.
+func TestCompile_RejectsTheRemovedKeyHoweverItIsSpelled(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"a queue name", "ork-tasks"},
+		{"an empty string", `""`},
+		{"no value at all", ""},
+		{"an explicit null", "null"},
+		{"a null tilde", "~"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := "name: nightly-close\ntasks:\n  - id: settle\n    plugin: shell\n" +
+				"    queue: " + tc.value + "\n    with: {command: \"echo 1\"}\n"
+			wf, err := dsl.Compile([]byte(doc))
+			if err == nil {
+				t.Fatalf("Compile accepted the removed key written as `queue: %s`; got %v", tc.value, wf)
+			}
+			for _, want := range []string{"settle", "pool:"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not name %q", err.Error(), want)
+				}
+			}
+		})
 	}
 }
