@@ -188,6 +188,8 @@ const SLICES: Slice[] = [
       "8. proof/M10.1/ with README.md, test.log, naming-sweep.sh and a reproduce.sh that regenerates it.",
       "9. The event messages the engine SHIPS TO CLIENTS name the pool, never the queue. internal/engine/workflow.go emits `task scheduled on queue <queue>` for EVENT_TYPE_TASK_SCHEDULED; cmd/orkctl/watch.go prints that string in its MESSAGE column and ui/src/routes/runs/[id]/+page.svelte renders it, so an author who wrote `pool: gpu` is currently told about `queue ork-pool-gpu` — Temporal's word plus an internal queue name they never typed. Emit the POOL (task.PoolForQueue exists for exactly this and must gain a real caller), and add a behavior test over the EMITTED EVENT STREAM asserting the message names the pool and not the queue. The naming gate cannot catch this — it correctly exempts internal/engine/, so its PASS is not evidence about strings the engine sends to a client. Any user-visible string the gate cannot see must be covered by a test instead.",
       "10. Do not document a field that cannot be read. `namespace:` compiles and stores, but every API read path (GetOrkflow, ListOrkflows, SubmitRun in internal/api/service.go) is pinned to the default namespace until M10.3, so applying `namespace: payments` today succeeds, writes the object, and then nothing can read or run it. Close the black hole in this slice: ApplyOrkflow REJECTS a non-default namespace with an error naming M10.3 as the slice that enables it, and docs/DSL.md states the limitation next to the field. internal/api is otherwise out of scope for this slice — this guard is the only change permitted there, and M10.3 removes it.",
+      "11. `pool: main` and an omitted pool must reach the SAME Orkers under every configuration, by construction rather than by coincidence. Today task.QueueForPool hardcodes DefaultPool -> DefaultQueue while an unpinned task follows the engine's configured orker queue, so they diverge the moment ORK_ORKER_QUEUE is overridden: with ORK_ORKER_QUEUE=ork-pool-gpu an unpinned task goes to ork-pool-gpu and `pool: main` goes to ork-tasks. That breaks the queue-isolation contract in AGENTS.md §6, where an override is what keeps one agent's tasks away from another's. Make `main` resolve to the deployment's default orker channel, whatever it is configured to be, and add a table test asserting the two routes are identical for at least: the default, a plain override, an override that is itself pool-shaped, and empty.",
+      "12. The namespace registry must accept EXACTLY the names a DSL document can reference, no more. artifacts.NamespaceKey currently accepts `Payments`, `pay.ments`, `1payments` and `a_b`, none of which satisfy the DSL slug rule at internal/dsl/compile.go, so a namespace can be created and written to and then never named in YAML. Apply the slug rule at the registry boundary and test the accept/reject sets agree, the way pool names already do.",
     ].join("\n"),
     scopeLock:
       "proto/, gen/, internal/dsl/, pkg/artifacts/, internal/engine/ (store seams only), examples/, docs/DSL.md, proof/M10.1/",
@@ -534,7 +536,39 @@ export default workflow({
         async () => {
           if (!existsSync(worktreeRoot)) mkdirSync(worktreeRoot, { recursive: true });
           if (existsSync(join(dir, ".git"))) {
-            return { dir, action: "reused", ok: true, detail: "" };
+            // Reusing a worktree from an earlier run. The previous slice's
+            // branch may have moved since this one forked off it — an
+            // adversarial repair round commits onto the last VERIFIED branch,
+            // which is exactly the branch this slice was cut from. Merge it
+            // forward or those repairs are silently dropped at the final
+            // merge, which takes only the LAST branch.
+            const dirty = run(["git", "status", "--porcelain"], dir);
+            if ((dirty.stdout ?? "").trim() !== "") {
+              return {
+                dir,
+                action: "reused-dirty",
+                ok: false,
+                detail: `worktree has uncommitted changes, refusing to restack:\n${tail(dirty.stdout ?? "")}`,
+              };
+            }
+            const restack = run(["git", "merge", "--no-edit", previousRef], dir, 5 * 60_000);
+            if (restack.status !== 0) {
+              run(["git", "merge", "--abort"], dir);
+              return {
+                dir,
+                action: "reused-conflict",
+                ok: false,
+                detail: `restacking ${previousRef} into ${slice.branch} conflicts; resolve it by hand:\n${tail(
+                  (restack.stdout ?? "") + (restack.stderr ?? ""),
+                )}`,
+              };
+            }
+            return {
+              dir,
+              action: "reused",
+              ok: true,
+              detail: tail((restack.stdout ?? "") + (restack.stderr ?? "")),
+            };
           }
           const add = run(
             ["git", "worktree", "add", "-b", slice.branch, dir, previousRef],
@@ -573,6 +607,7 @@ export default workflow({
             `- Isolate every integration run you start: ORK_TEMPORAL_NAMESPACE=ork-${slice.dir} (AGENTS.md §6). Kill every engine and orker you start; anchor the patterns as '/bin/ork$' and '/bin/orker$'.`,
             "- Proto changes go through `make proto` and `make tsgen`. Never hand-edit anything under gen/ or ui/src/lib/gen.",
             "- DONE means proven: the proof directory must be regenerable by its own reproduce.sh, and its README must state what was proven and how.",
+            "- Finish with a CLEAN worktree. `git status --porcelain` must be empty when you stop: regenerate proof artifacts first, then commit them. The parent verifies your branch independently and treats any uncommitted file as a failed slice, however green the gates are.",
             "</keepContext>",
           ].join("\n"),
           scope_lock: slice.scopeLock,
@@ -831,7 +866,9 @@ export default workflow({
         "Per-slice result:",
         ...sliceReports,
         "",
-        "Adversarial probe results (real command exits):",
+        `Adversarial probe results. These probes ran against ${lastGoodBranch}, the last VERIFIED`,
+        "slice — NOT against the slice the stack stopped at. Attribute them to that branch, and do",
+        "not report a probe failure as the reason a later slice failed. Real command exits:",
         probeSummary,
         "",
         `Merge into ${baseBranch}: ${merged ? "done, gated on the merged tree" : mergeSummary}`,
