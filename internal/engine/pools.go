@@ -349,10 +349,7 @@ func (r *PoolResolver) checkPoolAllowed(
 	if permitted == nil {
 		return nil
 	}
-	dispatched := requested
-	if route, err := r.routeFor(requested); err == nil {
-		dispatched = route.Pool
-	}
+	dispatched := r.dispatchedPool(requested)
 	if _, ok := permitted[dispatched]; ok {
 		return nil
 	}
@@ -363,6 +360,22 @@ func (r *PoolResolver) checkPoolAllowed(
 		Requested: requested,
 		Allowed:   append([]string(nil), ns.GetAllowedPools()...),
 	}
+}
+
+// dispatchedPool is the name a requested pool answers to under this
+// deployment: the pool stamped on the task, carried by every event, and
+// reported by ListPools. It is routeFor's answer, and the whole reason the
+// allow-list asks for it — a check on the requested name would be a check on
+// a word that stops existing one line later (Plan stamps route.Pool).
+//
+// A pool this engine cannot route keeps its own spelling; Plan refuses that
+// submit with the routing error.
+func (r *PoolResolver) dispatchedPool(requested string) string {
+	route, err := r.routeFor(requested)
+	if err != nil {
+		return requested
+	}
+	return route.Pool
 }
 
 // Plan resolves every task's pool, enforces the namespace's allow-list, checks
