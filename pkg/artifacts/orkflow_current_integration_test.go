@@ -228,16 +228,28 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 	}
 	var wg sync.WaitGroup
 	results := make([]promotion, 2*rounds)
-	observations := make(chan string, 8*rounds)
 	stop := make(chan struct{})
 
-	// A reader running throughout: every value it sees must be a version that
-	// exists. This is the property a dangling pointer would break.
+	// A reader on each store, running throughout: every value it sees must be
+	// a version that exists. This is the property a dangling pointer breaks.
+	//
+	// Each reader keeps its own slice rather than sending on a channel: a
+	// buffered channel bounds how many reads the race may take, and a reader
+	// that fills it blocks forever holding the wait group — a test that HANGS
+	// instead of failing, which is worse than either.
+	var observedMu sync.Mutex
+	var observations []string
 	var readers sync.WaitGroup
 	for _, reader := range writers {
 		readers.Add(1)
 		go func(reader *artifacts.S3OrkflowStore) {
 			defer readers.Done()
+			var mine []string
+			defer func() {
+				observedMu.Lock()
+				observations = append(observations, mine...)
+				observedMu.Unlock()
+			}()
 			for {
 				select {
 				case <-stop:
@@ -246,10 +258,10 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 				}
 				wf, err := reader.Get(ctx, artifacts.DefaultNamespace, name, "")
 				if err != nil {
-					observations <- "ERROR: " + err.Error()
+					mine = append(mine, "ERROR: "+err.Error())
 					return
 				}
-				observations <- wf.GetVersion()
+				mine = append(mine, wf.GetVersion())
 			}
 		}(reader)
 	}
@@ -268,7 +280,6 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 	wg.Wait()
 	close(stop)
 	readers.Wait()
-	close(observations)
 
 	// Every promotion either landed or reported that it lost the race. A lost
 	// race is a fact the caller is told, never a silent overwrite.
@@ -289,7 +300,7 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 
 	// No reader ever saw a version that does not exist.
 	seen := map[string]int{}
-	for observation := range observations {
+	for _, observation := range observations {
 		if strings.HasPrefix(observation, "ERROR: ") {
 			t.Fatalf("a read during concurrent promotion failed: %s", observation)
 		}

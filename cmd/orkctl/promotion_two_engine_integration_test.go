@@ -78,13 +78,25 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 
 	// Readers on BOTH replicas, running for the whole race. A dangling pointer
 	// shows up here as a NotFound or as a version nobody applied.
+	//
+	// Each reader keeps its own slice rather than sending on a channel: a
+	// buffered channel bounds how many reads the race is allowed to take, and
+	// a reader that fills it blocks forever holding the wait group — a test
+	// that HANGS instead of failing, which is the one outcome worse than red.
 	stop := make(chan struct{})
-	observed := make(chan string, 4096)
+	var observedMu sync.Mutex
+	var observed []string
 	var readers sync.WaitGroup
 	for _, replica := range []*engineReplica{replicaA, replicaB} {
 		readers.Add(1)
 		go func(replica *engineReplica) {
 			defer readers.Done()
+			var mine []string
+			defer func() {
+				observedMu.Lock()
+				observed = append(observed, mine...)
+				observedMu.Unlock()
+			}()
 			for {
 				select {
 				case <-stop:
@@ -94,10 +106,10 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 				got, err := replica.flows.GetOrkflow(ctx, connect.NewRequest(
 					&orkstackv1.GetOrkflowRequest{Name: name}))
 				if err != nil {
-					observed <- replica.name + " ERROR: " + err.Error()
+					mine = append(mine, replica.name+" ERROR: "+err.Error())
 					return
 				}
-				observed <- got.Msg.GetOrkflow().GetVersion()
+				mine = append(mine, got.Msg.GetOrkflow().GetVersion())
 			}
 		}(replica)
 	}
@@ -119,15 +131,15 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 			writers.Add(1)
 			go func(replica *engineReplica, version string) {
 				defer writers.Done()
+				landed := promotion{replica: replica.name, version: version}
 				moved, err := replica.flows.SetCurrentOrkflowVersion(ctx, connect.NewRequest(
 					&orkstackv1.SetCurrentOrkflowVersionRequest{Name: name, Version: version}))
+				landed.err = err
+				if err == nil {
+					landed.previous = moved.Msg.GetPreviousVersion()
+				}
 				mu.Lock()
-				results = append(results, promotion{
-					replica:  replica.name,
-					previous: moved.Msg.GetPreviousVersion(),
-					version:  version,
-					err:      err,
-				})
+				results = append(results, landed)
 				mu.Unlock()
 			}(replica, versions[index])
 		}
@@ -135,7 +147,6 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 	writers.Wait()
 	close(stop)
 	readers.Wait()
-	close(observed)
 
 	// 1. Every promotion either landed or was told it lost the race. Nothing
 	//    else: a promotion that "succeeded" while another value won would be a
@@ -163,7 +174,7 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 	// 2. No reader ever saw a version that is not stored.
 	stored := map[string]bool{"1.0.0": true, "2.0.0": true}
 	seen := map[string]int{}
-	for observation := range observed {
+	for _, observation := range observed {
 		if strings.Contains(observation, "ERROR") {
 			t.Fatalf("a read during the race failed: %s", observation)
 		}
