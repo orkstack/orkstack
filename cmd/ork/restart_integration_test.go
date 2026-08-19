@@ -34,16 +34,24 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// probeOrkflow is the orkflow this test owns in the dev bucket. The name and
-// version are stable so repeated runs rewrite one object instead of filling the
-// bucket; the description carries a per-run nonce, which is what proves the
-// restarted engine served THIS run's apply and not an earlier leftover.
-const (
-	probeOrkflowName    = "m75-engine-restart-probe"
-	probeOrkflowVersion = "0.1.0"
-)
+// probeOrkflow is the orkflow this test owns in the dev bucket. The name is
+// stable; the VERSION is per-run, and that is not incidental. This document
+// changes every run — its description carries a nonce, which is what proves
+// the restarted engine served THIS run's apply and not an earlier leftover —
+// and since M10.4 a stored version is immutable: re-applying different content
+// under one version is refused with artifacts.ErrVersionExists, never written.
+// So the nonce that makes the document new also has to make the version new.
+// Each run leaves one small JSON behind instead of rewriting one object; that
+// is the cost of a version meaning one document forever.
+const probeOrkflowName = "m75-engine-restart-probe"
 
-func probeOrkflowYAML(nonce string) string {
+// probeOrkflowVersion is unique to this process and this instant, so two runs
+// — or two agents sharing the dev bucket — never contend for one version.
+func probeOrkflowVersion() string {
+	return fmt.Sprintf("0.1.0-%d-%d", os.Getpid(), time.Now().UnixNano())
+}
+
+func probeOrkflowYAML(version, nonce string) string {
 	return fmt.Sprintf(`name: %s
 version: "%s"
 description: %s
@@ -53,7 +61,7 @@ tasks:
     with:
       op: get
       url: "https://example.test/json"
-`, probeOrkflowName, probeOrkflowVersion, nonce)
+`, probeOrkflowName, version, nonce)
 }
 
 // TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess is acceptance
@@ -66,6 +74,7 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 	defer cancel()
 
 	binary := buildOrk(t)
+	version := probeOrkflowVersion()
 	nonce := fmt.Sprintf("applied by pid %d at %s", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
 	transcript := &strings.Builder{}
 	fmt.Fprintf(transcript, "# ork restart: an orkflow applied to one engine process is served by the next\n")
@@ -77,7 +86,7 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 	addrA, clientA, logA := bootEngine(ctx, t, binary, temporal, "engine-A")
 
 	applied, err := clientA.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml: probeOrkflowYAML(nonce),
+		Yaml: probeOrkflowYAML(version, nonce),
 	}))
 	if err != nil {
 		t.Fatalf("apply against engine A: %v", err)
@@ -86,23 +95,23 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 		t.Fatalf("engine A applied description %q, want %q", got, nonce)
 	}
 	fmt.Fprintf(transcript, "$ engine A (%s): ApplyOrkflow %s@%s\n  description: %s\n\n",
-		addrA, probeOrkflowName, probeOrkflowVersion, nonce)
+		addrA, probeOrkflowName, version, nonce)
 
 	// The definition is in the bucket, at the documented key, before any read.
 	store, err := artifacts.NewS3OrkflowStore(ctx, cfg)
 	if err != nil {
 		t.Fatalf("open orkflow store: %v", err)
 	}
-	uri, err := store.URI(artifacts.DefaultNamespace, probeOrkflowName, probeOrkflowVersion)
+	uri, err := store.URI(artifacts.DefaultNamespace, probeOrkflowName, version)
 	if err != nil {
 		t.Fatalf("orkflow URI: %v", err)
 	}
 	want := fmt.Sprintf("s3://%s/metadata/orkflows/%s/%s/%s.json",
-		cfg.S3Bucket, artifacts.DefaultNamespace, probeOrkflowName, probeOrkflowVersion)
+		cfg.S3Bucket, artifacts.DefaultNamespace, probeOrkflowName, version)
 	if uri != want {
 		t.Fatalf("orkflow URI = %q, want %q", uri, want)
 	}
-	stored, err := store.Get(ctx, artifacts.DefaultNamespace, probeOrkflowName, probeOrkflowVersion)
+	stored, err := store.Get(ctx, artifacts.DefaultNamespace, probeOrkflowName, version)
 	if err != nil {
 		t.Fatalf("read %s: %v", uri, err)
 	}
@@ -129,10 +138,10 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 		t.Fatalf("GetOrkflow against engine B: %v\nengine B log:\n%s", err, logB.String())
 	}
 	reloaded := got.Msg.GetOrkflow()
-	if reloaded.GetVersion() != probeOrkflowVersion || reloaded.GetDescription() != nonce {
+	if reloaded.GetVersion() != version || reloaded.GetDescription() != nonce {
 		t.Fatalf("engine B served %s@%s (%q), want %s@%s (%q)",
 			reloaded.GetName(), reloaded.GetVersion(), reloaded.GetDescription(),
-			probeOrkflowName, probeOrkflowVersion, nonce)
+			probeOrkflowName, version, nonce)
 	}
 	if len(reloaded.GetTasks()) != 1 || reloaded.GetTasks()[0].GetPlugin() != "http" {
 		t.Fatalf("engine B served a truncated definition: %v", reloaded.GetTasks())
@@ -156,7 +165,7 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 		t.Fatalf("engine B does not list %q; listed %v", probeOrkflowName, names)
 	}
 	fmt.Fprintf(transcript, "$ engine B: ListOrkflows -> %d orkflows, including %s@%s\n\n",
-		len(names), probeOrkflowName, probeOrkflowVersion)
+		len(names), probeOrkflowName, version)
 
 	// The boot log records the reload, so an operator can see what an engine
 	// came up with.
@@ -164,7 +173,7 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 	if bootLine == "" {
 		t.Fatalf("engine B did not log the reload:\n%s", logB.String())
 	}
-	if !strings.Contains(bootLine, probeOrkflowName+"@"+probeOrkflowVersion) {
+	if !strings.Contains(bootLine, probeOrkflowName+"@"+version) {
 		t.Errorf("engine B boot log does not name the reloaded orkflow:\n%s", bootLine)
 	}
 	if !strings.Contains(bootLine, "s3://"+cfg.S3Bucket+"/metadata/orkflows/") {

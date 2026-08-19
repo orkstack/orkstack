@@ -370,6 +370,16 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 // writePoolPinnedOrkflow rewrites examples/hello.ork.yaml under a new name
 // with every task assigned to pool, and returns the file's path. The failing
 // variant keeps the same shape but runs one command that exits non-zero.
+//
+// The example's pinned `version:` is dropped, which is what keeps this
+// repeatable against the dev bucket. The pool carries a per-process stamp, so
+// every run of this test produces a DIFFERENT document under one name — and
+// since M10.4 a stored version is immutable, so re-applying that document
+// under the example's `0.1.0` would be refused, not written. Unpinning the
+// version hands the job to the DSL's own rule: an unpinned document's version
+// is a content hash (internal/dsl.contentHash), so changed content lands on a
+// new version and identical content re-applies as a no-op. `run submit <name>`
+// then resolves the empty version to it, being the most recently applied.
 func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {
 	t.Helper()
 	source, err := os.ReadFile(filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
@@ -381,6 +391,7 @@ func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {
 		t.Fatalf("parse example: %v", err)
 	}
 	doc["name"] = name
+	delete(doc, "version")
 
 	if name == failingOrkflowName {
 		doc["tasks"] = []any{map[string]any{
