@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -168,16 +167,28 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		infraAbsent(t, "cannot open the namespace registry: %v", err)
 	}
 	nsName := fmt.Sprintf("m10-2-pools-%d-%d", os.Getpid(), time.Now().UnixNano())
-	// Pools of this run's own. A pool name is a channel name (task.QueueForPool)
-	// and Temporal remembers a channel's pollers for minutes after their worker
-	// stopped, so a fixed "alpha" would be described by every earlier run of
-	// this suite in the same namespace as well as by this one — and the count
-	// this test exists to check would be a count of ghosts. The suffix makes
-	// the channel this run's alone, so "exactly one Orker" is exact.
+	// Pools and orkflow names of this run's own. A pool name is a channel name
+	// (task.QueueForPool) and Temporal remembers a channel's pollers for
+	// minutes after their worker stopped, so a fixed "alpha" would be
+	// described by every earlier run of this suite in the same namespace as
+	// well as by this one — and the count this test exists to check would be a
+	// count of ghosts.
+	//
+	// The orkflow names carry the same suffix for the same reason, one layer
+	// up: `ListRuns(orkflow_name=...)` is answered from the whole Temporal
+	// namespace, so a fixed "cold-job" would let a run some EARLIER execution
+	// started answer the assertion that THIS execution's refused submit
+	// created nothing. That is not a hypothesis: a run left in
+	// ork-m10-2-review by an earlier execution failed this assertion while the
+	// submit under test had been correctly refused. Scoped, the question is
+	// about this run and nothing else.
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	poolAlpha := "alpha-" + token
 	poolBravo := "bravo-" + token
 	poolCold := "cold-" + token
+	twoPoolName := "two-pool-job-" + token
+	coldName := "cold-job-" + token
+	forbiddenName := "forbidden-job-" + token
 	registered := &orkstackv1.Namespace{
 		Name:         nsName,
 		Description:  "M10.2 pool routing acceptance",
@@ -297,7 +308,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 
 	// ── 1. a task pinned to a pool runs on that pool's Orker, and only there ──
 	twoPoolJob := fmt.Sprintf(`
-name: two-pool-job
+name: %s
 version: 0.1.0
 tasks:
   - id: crunch
@@ -309,7 +320,7 @@ tasks:
     pool: %s
     needs: [crunch]
     with: {command: "echo polish"}
-`, poolAlpha, poolBravo)
+`, twoPoolName, poolAlpha, poolBravo)
 	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.ApplyOrkflowRequest{Yaml: twoPoolJob})); err != nil {
 		t.Fatalf("apply the two-pool orkflow: %v", err)
@@ -317,20 +328,20 @@ tasks:
 
 	// ── 3's setup, submitted FIRST so the visibility argument below holds ──
 	coldJob := fmt.Sprintf(`
-name: cold-job
+name: %s
 version: 0.1.0
 tasks:
   - id: freeze
     plugin: shell
     pool: %s
     with: {command: "echo freeze"}
-`, poolCold)
+`, coldName, poolCold)
 	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.ApplyOrkflowRequest{Yaml: coldJob})); err != nil {
 		t.Fatalf("apply the cold orkflow: %v", err)
 	}
 	_, coldErr := runClient.SubmitRun(ctx, connect.NewRequest(
-		&orkstackv1.SubmitRunRequest{OrkflowName: "cold-job"}))
+		&orkstackv1.SubmitRunRequest{OrkflowName: coldName}))
 	if coldErr == nil {
 		t.Fatalf("submitting into pool %q succeeded; nothing serves it, so the run "+
 			"would have reached RUNNING and stayed there", poolCold)
@@ -344,19 +355,19 @@ tasks:
 		}
 	}
 	transcript.section("3. submit into a pool with no Orkers")
-	transcript.line("SubmitRun(cold-job) -> %v", connect.CodeOf(coldErr))
+	transcript.line("SubmitRun(%s) -> %v", coldName, connect.CodeOf(coldErr))
 	transcript.line("%s", coldErr)
 
 	// ── 2. a pool the namespace forbids is refused, at apply and at submit ──
-	const forbiddenJob = `
-name: forbidden-job
+	forbiddenJob := fmt.Sprintf(`
+name: %s
 version: 0.1.0
 tasks:
   - id: sneak
     plugin: shell
     pool: forbidden
     with: {command: "echo sneak"}
-`
+`, forbiddenName)
 	_, applyErr := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.ApplyOrkflowRequest{Yaml: forbiddenJob}))
 	if applyErr == nil {
@@ -366,7 +377,7 @@ tasks:
 	// into the store behind the API's back, exactly as a definition applied
 	// while the allow-list was wider would be, and submit it.
 	if err := orkflows.Put(ctx, &orkstackv1.Orkflow{
-		Name:    "forbidden-job",
+		Name:    forbiddenName,
 		Version: "0.1.0",
 		Tasks: []*orkstackv1.Task{
 			{Id: "sneak", Plugin: "shell", Pool: "forbidden"},
@@ -375,7 +386,7 @@ tasks:
 		t.Fatalf("seed the stored definition: %v", err)
 	}
 	_, submitErr := runClient.SubmitRun(ctx, connect.NewRequest(
-		&orkstackv1.SubmitRunRequest{OrkflowName: "forbidden-job"}))
+		&orkstackv1.SubmitRunRequest{OrkflowName: forbiddenName}))
 	if submitErr == nil {
 		t.Fatal("submitting a stored definition onto a forbidden pool succeeded; the " +
 			"allow-list is bypassable by anything that did not go through apply")
@@ -389,16 +400,16 @@ tasks:
 		}
 	}
 	transcript.section("2. a pool the namespace does not allow")
-	transcript.line("ApplyOrkflow(forbidden-job)  -> %v", connect.CodeOf(applyErr))
+	transcript.line("ApplyOrkflow(%s)  -> %v", forbiddenName, connect.CodeOf(applyErr))
 	transcript.line("%s", applyErr)
-	transcript.line("SubmitRun(forbidden-job)     -> %v", connect.CodeOf(submitErr))
+	transcript.line("SubmitRun(%s)     -> %v", forbiddenName, connect.CodeOf(submitErr))
 	transcript.line("%s", submitErr)
 
 	// ── now run the two-pool job for real ──
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(
-		&orkstackv1.SubmitRunRequest{OrkflowName: "two-pool-job"}))
+		&orkstackv1.SubmitRunRequest{OrkflowName: twoPoolName}))
 	if err != nil {
-		t.Fatalf("SubmitRun(two-pool-job): %v", err)
+		t.Fatalf("SubmitRun(%s): %v", twoPoolName, err)
 	}
 	runID := submitted.Msg.GetRun().GetId()
 
@@ -462,17 +473,21 @@ tasks:
 	// ── 3's assertion: the refused submit left no run behind ──
 	//
 	// The cold submit happened BEFORE this run was created, so once this run
-	// is visible, a run the cold submit had started would be visible too.
-	awaitRunListed(t, ctx, runClient, "two-pool-job", runID)
+	// is visible, a run the cold submit had started would be visible too. The
+	// orkflow name is this execution's own, so the only run that could answer
+	// here is one this execution started — no other execution's residue can
+	// pass or fail it.
+	awaitRunListed(t, ctx, runClient, twoPoolName, runID)
 	listed, err := runClient.ListRuns(ctx, connect.NewRequest(
-		&orkstackv1.ListRunsRequest{OrkflowName: "cold-job"}))
+		&orkstackv1.ListRunsRequest{OrkflowName: coldName}))
 	if err != nil {
-		t.Fatalf("ListRuns(cold-job): %v", err)
+		t.Fatalf("ListRuns(%s): %v", coldName, err)
 	}
 	if n := len(listed.Msg.GetRuns()); n != 0 {
 		t.Errorf("the refused empty-pool submit left %d run(s) behind: %v", n, listed.Msg.GetRuns())
 	}
-	transcript.line("runs for cold-job    %d (the refused submit created nothing)", len(listed.Msg.GetRuns()))
+	transcript.line("runs for %s    %d (the refused submit created nothing)",
+		coldName, len(listed.Msg.GetRuns()))
 
 	// ── pools are observable, from the cluster, on this replica ──
 	pools, err := namespaceClient.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
@@ -606,11 +621,6 @@ func (p *poolTranscript) write(t *testing.T) {
 	t.Helper()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	dir := filepath.Join("..", "..", "proof", "M10.2")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Logf("cannot create %s: %v", dir, err)
-		return
-	}
 	header := []string{
 		"# M10.2 — two Orkers, two pools, one cluster",
 		"#",
@@ -621,11 +631,6 @@ func (p *poolTranscript) write(t *testing.T) {
 		"#",
 		"# recorded " + time.Now().UTC().Format(time.RFC3339),
 	}
-	body := strings.Join(append(header, p.lines...), "\n") + "\n"
-	path := filepath.Join(dir, "two-pool-transcript.txt")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Logf("cannot write %s: %v", path, err)
-		return
-	}
-	t.Logf("wrote %s", path)
+	publishProofArtifact(t, "two-pool-transcript.txt",
+		strings.Join(append(header, p.lines...), "\n")+"\n")
 }

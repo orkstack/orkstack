@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -257,15 +256,5 @@ func writeLiveCountMeasurement(
 			fmt.Sprintf("%d.", len(records)),
 	)
 
-	dir := filepath.Join("..", "..", "proof", "M10.2")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Logf("cannot create %s: %v", dir, err)
-		return
-	}
-	path := filepath.Join(dir, "live-count-measurement.txt")
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		t.Logf("cannot write %s: %v", path, err)
-		return
-	}
-	t.Logf("wrote %s", path)
+	publishProofArtifact(t, "live-count-measurement.txt", strings.Join(lines, "\n")+"\n")
 }
