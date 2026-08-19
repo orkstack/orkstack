@@ -78,7 +78,18 @@ message SubmitRunRequest {
   bool allow_empty_pool = 6;
 }
 message SubmitRunResponse { Run run = 1; }
-message GetRunRequest { string run_id = 1; }
+// A run id addresses a run INSIDE a namespace, exactly as an orkflow name
+// does. It is unguessable, but unguessable is not a tenancy boundary: an id
+// travels into logs, tickets and CI transcripts, and CancelRun is a write. So
+// every request that carries one carries the namespace it is addressed in, on
+// the same rule as every other namespace field — empty is the default
+// namespace, never "any of them". A run of another namespace is NotFound, not
+// PermissionDenied: telling the two apart would confirm to a caller who may
+// not name the namespace that the id exists.
+message GetRunRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+}
 message GetRunResponse { Run run = 1; }
 message ListRunsRequest {
   string orkflow_name = 1;               // optional orkflow name filter
@@ -91,11 +102,16 @@ message ListRunsResponse {
   repeated Run runs = 1;
   string next_page_token = 2;
 }
-message CancelRunRequest { string run_id = 1; string reason = 2; }
+message CancelRunRequest {
+  string run_id = 1;
+  string reason = 2;
+  string namespace = 3;                  // empty = the default namespace
+}
 message CancelRunResponse { Run run = 1; }
 message StreamEventsRequest {
   string run_id = 1;
   int64 from_sequence = 2;
+  string namespace = 3;                  // empty = the default namespace
 }
 
 // NamespaceService manages namespaces and reports the pools they may dispatch

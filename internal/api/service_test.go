@@ -69,6 +69,12 @@ func (f *fakeStarter) startedRuns() []string {
 	return append([]string(nil), f.started...)
 }
 
+func (f *fakeStarter) canceledRuns() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.canceled...)
+}
+
 func (f *fakeStarter) startedInputs() []map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -484,9 +484,18 @@ func (x *SubmitRunResponse) GetRun() *Run {
 	return nil
 }
 
+// A run id addresses a run INSIDE a namespace, exactly as an orkflow name
+// does. It is unguessable, but unguessable is not a tenancy boundary: an id
+// travels into logs, tickets and CI transcripts, and CancelRun is a write. So
+// every request that carries one carries the namespace it is addressed in, on
+// the same rule as every other namespace field — empty is the default
+// namespace, never "any of them". A run of another namespace is NotFound, not
+// PermissionDenied: telling the two apart would confirm to a caller who may
+// not name the namespace that the id exists.
 type GetRunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Namespace     string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -524,6 +533,13 @@ func (*GetRunRequest) Descriptor() ([]byte, []int) {
 func (x *GetRunRequest) GetRunId() string {
 	if x != nil {
 		return x.RunId
+	}
+	return ""
+}
+
+func (x *GetRunRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
 	}
 	return ""
 }
@@ -704,6 +720,7 @@ type CancelRunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	Namespace     string                 `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -748,6 +765,13 @@ func (x *CancelRunRequest) GetRunId() string {
 func (x *CancelRunRequest) GetReason() string {
 	if x != nil {
 		return x.Reason
+	}
+	return ""
+}
+
+func (x *CancelRunRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
 	}
 	return ""
 }
@@ -800,6 +824,7 @@ type StreamEventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	FromSequence  int64                  `protobuf:"varint,2,opt,name=from_sequence,json=fromSequence,proto3" json:"from_sequence,omitempty"`
+	Namespace     string                 `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -846,6 +871,13 @@ func (x *StreamEventsRequest) GetFromSequence() int64 {
 		return x.FromSequence
 	}
 	return 0
+}
+
+func (x *StreamEventsRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
 }
 
 type CreateNamespaceRequest struct {
@@ -1569,9 +1601,10 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\tnamespace\x18\x05 \x01(\tR\tnamespace\x12(\n" +
 	"\x10allow_empty_pool\x18\x06 \x01(\bR\x0eallowEmptyPool\"7\n" +
 	"\x11SubmitRunResponse\x12\"\n" +
-	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"&\n" +
+	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"D\n" +
 	"\rGetRunRequest\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\"4\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1c\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"4\n" +
 	"\x0eGetRunResponse\x12\"\n" +
 	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\xbb\x01\n" +
 	"\x0fListRunsRequest\x12!\n" +
@@ -1583,15 +1616,17 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\tnamespace\x18\x05 \x01(\tR\tnamespace\"`\n" +
 	"\x10ListRunsResponse\x12$\n" +
 	"\x04runs\x18\x01 \x03(\v2\x10.orkstack.v1.RunR\x04runs\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"A\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"_\n" +
 	"\x10CancelRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"7\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x1c\n" +
+	"\tnamespace\x18\x03 \x01(\tR\tnamespace\"7\n" +
 	"\x11CancelRunResponse\x12\"\n" +
-	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"Q\n" +
+	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"o\n" +
 	"\x13StreamEventsRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
-	"\rfrom_sequence\x18\x02 \x01(\x03R\ffromSequence\"N\n" +
+	"\rfrom_sequence\x18\x02 \x01(\x03R\ffromSequence\x12\x1c\n" +
+	"\tnamespace\x18\x03 \x01(\tR\tnamespace\"N\n" +
 	"\x16CreateNamespaceRequest\x124\n" +
 	"\tnamespace\x18\x01 \x01(\v2\x16.orkstack.v1.NamespaceR\tnamespace\"i\n" +
 	"\x17CreateNamespaceResponse\x124\n" +

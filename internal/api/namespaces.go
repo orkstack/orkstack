@@ -233,14 +233,19 @@ func (s *Service) ListNamespaces(
 //
 // The etag travels inside the document rather than in a field of its own
 // because it belongs to the document: a client reads a namespace, edits it and
-// sends it back. An empty etag is an unconditional write — the escape hatch
-// for a caller who genuinely means "whatever is there now", asked for by
-// clearing a field rather than by forgetting one.
+// sends it back. Every update is conditional, and the etag says on WHAT: a
+// token names the stored version it replaces, and no token says "the version I
+// read had no stored bytes at all", which is written IfAbsent.
 //
-// The default namespace needs no special case: when nobody wrote its document
-// the read hands back a synthesized one whose etag is empty, so the first
-// update writes it unconditionally, which is the same rule as any other empty
-// etag.
+// There is deliberately no unconditional escape hatch. It used to be the
+// meaning of an empty etag, and `default` is why that could not stand: until
+// somebody writes metadata/namespaces/default.json a read hands back a
+// SYNTHESIZED document, whose etag is empty because there is nothing stored to
+// name — not because the caller asked for anything. Read as an escape hatch,
+// the first two edits of `default` were both unconditional writes and one of
+// them vanished with no error, which is exactly what Namespace.etag promises
+// cannot happen. A caller who genuinely means "whatever is there now" reads
+// first and sends that token back; that round trip IS the compare-and-swap.
 func (s *Service) UpdateNamespace(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.UpdateNamespaceRequest],
@@ -259,11 +264,19 @@ func (s *Service) UpdateNamespace(
 	if _, err := s.namespace(ctx, spec.GetName()); err != nil {
 		return nil, err
 	}
-	stored, err := registry.Put(ctx, proto.Clone(spec).(*orkstackv1.Namespace),
-		artifacts.PutConditions{IfMatch: spec.GetEtag()})
+	cond := artifacts.PutConditions{IfMatch: spec.GetEtag()}
+	if spec.GetEtag() == "" {
+		cond = artifacts.PutConditions{IfAbsent: true}
+	}
+	stored, err := registry.Put(ctx, proto.Clone(spec).(*orkstackv1.Namespace), cond)
 	switch {
 	case err == nil:
 		return connect.NewResponse(&orkstackv1.UpdateNamespaceResponse{Namespace: stored}), nil
+	case errors.Is(err, artifacts.ErrPreconditionFailed) && cond.IfAbsent:
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"namespace %q was written by somebody else since it was read "+
+				"(it had no stored version then and has one now); "+
+				"read it again and re-apply the change", spec.GetName()))
 	case errors.Is(err, artifacts.ErrPreconditionFailed):
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"namespace %q changed since it was read (etag %q is stale); "+

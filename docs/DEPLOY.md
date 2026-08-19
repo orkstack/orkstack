@@ -57,7 +57,7 @@ adding processes and both survive losing one.
 | state | where it lives | code |
 |---|---|---|
 | orkflow definitions | the bucket | `artifacts.S3OrkflowStore`, opened at boot by `openOrkflowStore` (`cmd/ork/main.go`). It keeps no cache, so an `apply` on one replica is visible to every other |
-| live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), wired as the API's `RunReader` |
+| live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), handed to the API as `Binding.Reader` by `engine.NamespaceRouter` (`internal/engine/router.go`) |
 | finished runs, past retention | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `engine.NewRunArchiver` over `artifacts.NewRunArchive`, written by the terminal `PublishEvent`. The default backend is `local`: a directory on each host, so replicated it is one archive per replica (§1) |
 | idempotency keys | Temporal | `engine.IdempotencyClaimWorkflow` (`internal/engine/claim.go`), held for `ORK_IDEMPOTENCY_TTL` |
 | artifacts | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `pkg/artifacts`; events and payloads carry refs, never bytes. Same default, same consequence: on `local` an Orker writes to its own disk and no other host can read the bytes back |
@@ -88,7 +88,11 @@ needs `ORK_S3_*` either way.
 - **`ORK_HTTP_ADDR` is the one variable that must differ** when replicas share
   a host. On separate hosts it does not have to.
 - **No sticky sessions, no leader.** `GetRun`, `ListRuns`, `StreamEvents` and
-  `/ws/runs/{id}` are answered from Temporal, so any replica serves any run.
+  `/ws/runs/{id}` are answered from Temporal, so any replica serves any run —
+  inside the namespace the request names. A run id addresses a run within a
+  namespace, not across the deployment: every one of those four carries the
+  namespace (`/ws/runs/{id}?namespace=…`), an absent one is `default`, and a
+  run of another namespace is `NotFound`.
 - **Reconnects resume rather than replay.** `StreamEvents.from_sequence`
   (`orkctl run watch --from-sequence`) and `/ws/runs/{id}?from_sequence=N`
   continue after an event number, and the number is the producer's — the

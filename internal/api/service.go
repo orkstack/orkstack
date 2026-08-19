@@ -903,7 +903,40 @@ func (s *Service) LookupRun(ctx context.Context, runID string) (*orkstackv1.Run,
 	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
 }
 
-// GetRun returns a run, from whichever replica the request reached.
+// LookupRunIn resolves a run by id INSIDE one namespace, and is the read every
+// request carrying a run id goes through.
+//
+// A run id is an address inside a namespace, not a capability over the
+// deployment. It is unguessable, but unguessable is not a tenancy boundary: an
+// id travels into logs, tickets and CI transcripts, and CancelRun is a WRITE —
+// so before this check, `orkctl -n alpha run cancel <a-bravo-run-id>`
+// succeeded, and the tenant whose run it was learned about it from the run.
+//
+// The namespace is checked against the run the read model returned, never
+// against the id: nothing parses a run id (AGENTS.md §1.5), and the run's own
+// namespace is a coordinate it carries (`Run.namespace`). A run of another
+// namespace is NotFound rather than PermissionDenied, on the same grounds the
+// WebSocket bridge checks its origin before it resolves the run: telling the
+// two apart would confirm the id exists to a caller who may not name the
+// namespace holding it.
+func (s *Service) LookupRunIn(ctx context.Context, runID, namespace string) (*orkstackv1.Run, error) {
+	ns, err := s.namespace(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	run, err := s.LookupRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if artifacts.ResolveNamespace(run.GetNamespace()) != ns.GetName() {
+		return nil, connect.NewError(connect.CodeNotFound,
+			fmt.Errorf("run %q not found in namespace %q", runID, ns.GetName()))
+	}
+	return run, nil
+}
+
+// GetRun returns a run of one namespace, from whichever replica the request
+// reached.
 func (s *Service) GetRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.GetRunRequest],
@@ -912,7 +945,7 @@ func (s *Service) GetRun(
 	if runID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
 	}
-	run, err := s.LookupRun(ctx, runID)
+	run, err := s.LookupRunIn(ctx, runID, req.Msg.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
@@ -1032,8 +1065,9 @@ func mergeRuns(preferred, others []*orkstackv1.Run) []*orkstackv1.Run {
 }
 
 // CancelRun requests cancellation of a run's Temporal workflow. The run is
-// resolved through the read model, so a replica can cancel a run it did not
-// start.
+// resolved through the read model and inside the request's namespace, so a
+// replica can cancel a run it did not start and no namespace can cancel
+// another's.
 func (s *Service) CancelRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.CancelRunRequest],
@@ -1041,7 +1075,7 @@ func (s *Service) CancelRun(
 	if req.Msg.GetRunId() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
 	}
-	run, err := s.LookupRun(ctx, req.Msg.GetRunId())
+	run, err := s.LookupRunIn(ctx, req.Msg.GetRunId(), req.Msg.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
@@ -1069,7 +1103,7 @@ func (s *Service) StreamEvents(
 	if runID == "" {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
 	}
-	return s.StreamRunEvents(ctx, runID, req.Msg.GetFromSequence(), stream.Send)
+	return s.StreamRunEvents(ctx, runID, req.Msg.GetNamespace(), req.Msg.GetFromSequence(), stream.Send)
 }
 
 // StreamRunEvents delivers a run's events after fromSequence to send, and
@@ -1085,12 +1119,21 @@ func (s *Service) StreamEvents(
 //
 // With no reader wired — a unit test — the process-local bus answers instead,
 // on the same terms as before this milestone.
+//
+// The namespace is resolved here rather than in the two entry points, for the
+// same reason the streaming is: a scope one caller enforces and the other
+// forgets is not a scope. A run of another namespace is NotFound before a
+// single event is sent.
 func (s *Service) StreamRunEvents(
 	ctx context.Context,
 	runID string,
+	namespace string,
 	fromSequence int64,
 	send func(*orkstackv1.Event) error,
 ) error {
+	if _, err := s.LookupRunIn(ctx, runID, namespace); err != nil {
+		return err
+	}
 	binding, err := s.locate(ctx, runID)
 	if err != nil {
 		return err

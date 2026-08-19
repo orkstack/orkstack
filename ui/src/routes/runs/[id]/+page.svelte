@@ -4,6 +4,7 @@
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
+	import { withNamespace } from '$lib/namespace';
 	import { eventTypeLabel, fmtTime, fmtTimestamp, isTerminal, statusLabel } from '$lib/status';
 	import type { PageProps } from './$types';
 
@@ -132,6 +133,7 @@
 		if (!run) return;
 		const stop = watchRunEvents(
 			run.id,
+			data.namespace,
 			(event) => {
 				streamDelivered = true;
 				onEvent(event);
@@ -162,7 +164,7 @@
 		<div>
 			<h1 class="font-mono text-xl font-bold" data-testid="run-id">{run.id}</h1>
 			<p class="text-sm text-zinc-400">
-				<a href="/orkflows/{run.orkflowName}" class="text-emerald-300 hover:underline"
+				<a href={withNamespace(`/orkflows/${run.orkflowName}`, data.namespace)} class="text-emerald-300 hover:underline"
 					>{run.orkflowName}</a
 				>@{run.orkflowVersion}
 			</p>

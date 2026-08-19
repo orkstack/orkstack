@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fmtTimestamp } from '$lib/status';
+	import { withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -10,7 +11,7 @@
 <div class="mb-6 flex items-center justify-between">
 	<h1 class="text-2xl font-bold">Orkflows</h1>
 	<a
-		href="/apply"
+		href={withNamespace('/apply', data.namespace)}
 		class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
 	>
 		Apply orkflow
@@ -44,7 +45,7 @@
 				{#each data.orkflows as wf (wf.name + '@' + wf.version)}
 					<tr class="hover:bg-zinc-900/60" data-testid="orkflow-row-{wf.name}">
 						<td class="px-4 py-3 font-medium">
-							<a href="/orkflows/{wf.name}" class="text-emerald-300 hover:underline">{wf.name}</a>
+							<a href={withNamespace(`/orkflows/${wf.name}`, data.namespace)} class="text-emerald-300 hover:underline">{wf.name}</a>
 						</td>
 						<td class="px-4 py-3 text-zinc-300">{wf.version}</td>
 						<td class="max-w-md truncate px-4 py-3 text-zinc-400">{wf.description}</td>

@@ -61,7 +61,10 @@ DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch�
 7. **Temporal is the read model for live runs.** `GetRun`, `ListRuns`,
    `StreamEvents` and `/ws/runs/{id}` are answered from the run's Temporal
    history through `engine.TemporalRunReader` (`internal/engine/reader.go`),
-   wired as the API's `RunReader` seam (`internal/api/service.go`); finished
+   handed to the API as `Binding.Reader` by the namespace router
+   (`internal/engine/router.go`) — the `RunReader` seam is declared there
+   because a `Binding` cannot name the API's type without a cycle, and it is
+   consumed in `internal/api/service.go`; finished
    runs past retention come from the run archive, which is the bucket in any
    replicated deployment — `ORK_ARTIFACT_BACKEND` defaults to a directory per
    process, so `s3` stops being optional at the second replica
