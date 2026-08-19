@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -29,8 +32,16 @@ import (
 // It holds no cache, on the same terms as OrkflowStore: any replica answers
 // for any namespace, including one it never created.
 type NamespaceStore interface {
-	// Put writes one namespace document, creating or replacing it.
-	Put(ctx context.Context, ns *orkstackv1.Namespace) error
+	// Put writes one namespace document and returns what it stored, including
+	// the etag naming those bytes.
+	//
+	// cond decides whether the write is allowed to land: an unconditional Put
+	// creates or replaces, IfAbsent must create, IfMatch must replace exactly
+	// the version whose etag it names. A condition the store refuses returns
+	// an error matching ErrPreconditionFailed — which is a fact about the
+	// object, not about the request, so a caller re-reads rather than retrying
+	// verbatim.
+	Put(ctx context.Context, ns *orkstackv1.Namespace, cond PutConditions) (*orkstackv1.Namespace, error)
 	// Get reads one namespace. DefaultNamespace always resolves, whether or
 	// not a document was ever written for it. Any other missing name returns
 	// an error matching ErrNotFound.
@@ -42,6 +53,30 @@ type NamespaceStore interface {
 	// still holds any is refused, and the error says how many.
 	Delete(ctx context.Context, name string) error
 }
+
+// PutConditions is the compare-and-swap a registry write may demand.
+//
+// It exists because two engine replicas share one bucket and neither
+// coordinates with the other (AGENTS.md §1.7): an unconditional write is a
+// last-writer-wins, and the loser never learns it lost. S3 and MinIO both
+// answer conditional PUTs natively, so the arbitration is the store's and
+// needs no lock, no lease and nothing in Temporal.
+//
+// The zero value is unconditional, which is what a caller that genuinely does
+// not care must ask for by saying nothing.
+type PutConditions struct {
+	// IfAbsent requires the object not to exist. It is how a create stays a
+	// create: two replicas both racing to register "payments" produce one
+	// winner and one ErrPreconditionFailed, never two writes where the second
+	// silently overwrote the first.
+	IfAbsent bool
+	// IfMatch requires the stored object to carry exactly this etag — the one
+	// a read handed back. Empty means no such requirement.
+	IfMatch string
+}
+
+// conditional reports whether these conditions ask the store for anything.
+func (c PutConditions) conditional() bool { return c.IfAbsent || c.IfMatch != "" }
 
 const (
 	// NamespacePrefix roots the namespace registry in the bucket. It sits
@@ -63,6 +98,13 @@ var ErrInvalidNamespace = errors.New("invalid namespace")
 // ErrNamespaceNotEmpty reports a delete refused because the namespace still
 // holds orkflows.
 var ErrNamespaceNotEmpty = errors.New("namespace is not empty")
+
+// ErrPreconditionFailed reports a conditional write the store refused: the
+// object already existed under IfAbsent, or its etag had moved under IfMatch.
+//
+// It is never "the write failed": the write did not happen, and the reason is
+// that somebody else got there first. A caller re-reads and decides again.
+var ErrPreconditionFailed = errors.New("precondition failed")
 
 // NamespaceKey renders the object key holding one namespace document:
 // metadata/namespaces/{name}.json.
@@ -196,28 +238,38 @@ func (s *S3NamespaceStore) uri(key string) string {
 	return "s3://" + s.bucket + "/" + key
 }
 
-// Put writes one namespace document.
+// Put writes one namespace document and returns what it stored.
 //
 // The registry owns the document's times, not the caller: created_at is
 // stamped when the name is first written and carried forward verbatim on every
 // later write, updated_at is stamped on each one. Whatever a caller sent in
 // either field is discarded — a client that could backdate created_at could
 // hide when a tenant appeared, and a client that could freeze updated_at could
-// hide that it changed one.
-func (s *S3NamespaceStore) Put(ctx context.Context, ns *orkstackv1.Namespace) error {
+// hide that it changed one. The etag is discarded for the same reason and a
+// stronger one: it names the bytes about to be written, so it cannot be inside
+// them.
+//
+// cond is handed to the backend as a conditional PUT, so the arbitration
+// between two replicas is the store's own and no lock is invented above it.
+func (s *S3NamespaceStore) Put(
+	ctx context.Context,
+	ns *orkstackv1.Namespace,
+	cond PutConditions,
+) (*orkstackv1.Namespace, error) {
 	if ns == nil {
-		return fmt.Errorf("artifacts: encode namespace: %w: nil namespace", ErrInvalidNamespace)
+		return nil, fmt.Errorf("artifacts: encode namespace: %w: nil namespace", ErrInvalidNamespace)
 	}
 	name := ResolveNamespace(ns.GetName())
 	key, err := NamespaceKey(name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := validNamespacePools(ns); err != nil {
-		return err
+		return nil, err
 	}
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
 	stored.Name = name
+	stored.Etag = ""
 	stamp := timestamppb.New(s.clock())
 	stored.CreatedAt, stored.UpdatedAt = stamp, stamp
 	switch existing, err := s.read(ctx, key); {
@@ -228,22 +280,37 @@ func (s *S3NamespaceStore) Put(ctx context.Context, ns *orkstackv1.Namespace) er
 	case errors.Is(err, ErrNotFound):
 		// First write of this name: the stamp above is its birth.
 	default:
-		return err
+		return nil, err
 	}
 	document, err := marshalNamespace(stored)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(key),
 		Body:          bytes.NewReader(document),
 		ContentLength: aws.Int64(int64(len(document))),
 		ContentType:   aws.String(namespaceContentType),
-	}); err != nil {
-		return fmt.Errorf("artifacts: put namespace %q: %w", s.uri(key), err)
 	}
-	return nil
+	if cond.IfAbsent {
+		// The S3 conditional-create spelling: "*" means any etag, so
+		// If-None-Match: * is "only if nothing is there".
+		input.IfNoneMatch = aws.String("*")
+	}
+	if cond.IfMatch != "" {
+		input.IfMatch = aws.String(cond.IfMatch)
+	}
+	out, err := s.client.PutObject(ctx, input)
+	if err != nil {
+		if cond.conditional() && isPreconditionFailed(err) {
+			return nil, fmt.Errorf("artifacts: put namespace %q: %w",
+				s.uri(key), ErrPreconditionFailed)
+		}
+		return nil, fmt.Errorf("artifacts: put namespace %q: %w", s.uri(key), err)
+	}
+	stored.Etag = aws.ToString(out.ETag)
+	return stored, nil
 }
 
 // clock is the store's time source, defaulting to the wall clock so a
@@ -472,5 +539,34 @@ func (s *S3NamespaceStore) read(ctx context.Context, key string) (*orkstackv1.Na
 	if name, ok := ParseNamespaceKey(key); ok {
 		ns.Name = name
 	}
+	// The etag names the bytes just read, so it comes from the response and
+	// never from the document: a token stored inside the object it names could
+	// only ever be the previous write's.
+	ns.Etag = aws.ToString(object.ETag)
 	return ns, nil
+}
+
+// isPreconditionFailed reports a conditional PUT the backend refused.
+//
+// Two codes, because the two backends this repo deploys use both: a plain
+// refusal is 412 PreconditionFailed, and S3 answers 409
+// ConditionalRequestConflict when a concurrent write raced the same key. Both
+// mean the same thing to a caller — somebody else got there first — and the
+// SDK surfaces the code without a typed error, so the string is what there is.
+func isPreconditionFailed(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "PreconditionFailed", "ConditionalRequestConflict":
+			return true
+		}
+	}
+	var respErr *smithyhttp.ResponseError
+	if errors.As(err, &respErr) {
+		switch respErr.HTTPStatusCode() {
+		case http.StatusPreconditionFailed, http.StatusConflict:
+			return true
+		}
+	}
+	return false
 }

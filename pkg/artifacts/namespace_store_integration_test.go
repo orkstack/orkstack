@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +34,12 @@ func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T)
 		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, artifacts.OrkflowPrefix+"/"+nsName+"/")
 	})
 
-	if err := store.Put(ctx, &orkstackv1.Namespace{
+	if _, err := store.Put(ctx, &orkstackv1.Namespace{
 		Name:         nsName,
 		Description:  "M10.1 namespace registry",
 		DefaultPool:  "main",
 		AllowedPools: []string{"main", "gpu"},
-	}); err != nil {
+	}, artifacts.PutConditions{}); err != nil {
 		t.Fatalf("Put(%s): %v", nsName, err)
 	}
 
@@ -165,12 +166,12 @@ func TestNamespaceStore_StampsCreatedAndUpdatedItself(t *testing.T) {
 	// The caller sends times of its own; they are discarded.
 	backdated := timestamppb.New(time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
 	before := time.Now().UTC().Add(-time.Minute)
-	if err := store.Put(ctx, &orkstackv1.Namespace{
+	if _, err := store.Put(ctx, &orkstackv1.Namespace{
 		Name:        nsName,
 		Description: "created",
 		CreatedAt:   backdated,
 		UpdatedAt:   backdated,
-	}); err != nil {
+	}, artifacts.PutConditions{}); err != nil {
 		t.Fatalf("Put(%s): %v", nsName, err)
 	}
 	first, err := store.Get(ctx, nsName)
@@ -187,11 +188,11 @@ func TestNamespaceStore_StampsCreatedAndUpdatedItself(t *testing.T) {
 	}
 
 	// A second write keeps the birth and moves the change.
-	if err := store.Put(ctx, &orkstackv1.Namespace{
+	if _, err := store.Put(ctx, &orkstackv1.Namespace{
 		Name:        nsName,
 		Description: "edited",
 		CreatedAt:   backdated,
-	}); err != nil {
+	}, artifacts.PutConditions{}); err != nil {
 		t.Fatalf("Put(%s) again: %v", nsName, err)
 	}
 	second, err := store.Get(ctx, nsName)
@@ -209,4 +210,118 @@ func TestNamespaceStore_StampsCreatedAndUpdatedItself(t *testing.T) {
 		t.Fatalf("updated_at went backwards: %s then %s",
 			first.GetUpdatedAt().AsTime(), second.GetUpdatedAt().AsTime())
 	}
+}
+
+// TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters measures the
+// compare-and-swap against a real backend.
+//
+// It matters that this is not a unit test. The whole point of the conditions
+// is that the STORE arbitrates: two engine replicas share one bucket, neither
+// coordinates with the other, and an unconditional write is a
+// last-writer-wins in which the loser never learns it lost. A double that
+// implemented IfMatch itself would prove only that the double works.
+//
+// Three facts, in the order a caller meets them: a create cannot overwrite, an
+// update with the etag it read succeeds, and the same etag used twice is
+// refused — which is exactly the second replica's edit landing on top of the
+// first's.
+func TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	store, err := artifacts.NewS3NamespaceStore(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	raw := newRawS3Client(t, cfg)
+	ctx := context.Background()
+	nsName := "m103-cas-" + uniqueToken(t)
+	t.Cleanup(func() {
+		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket,
+			artifacts.NamespacePrefix+"/"+nsName+".json")
+	})
+
+	created, err := store.Put(ctx, &orkstackv1.Namespace{
+		Name:        nsName,
+		Description: "first",
+	}, artifacts.PutConditions{IfAbsent: true})
+	if err != nil {
+		t.Fatalf("Put(%s, IfAbsent) on an absent name: %v", nsName, err)
+	}
+	if created.GetEtag() == "" {
+		t.Fatal("a conditional create returned no etag, so nothing can compare-and-swap on it")
+	}
+
+	// A second create of the same name is refused by the backend, not by us.
+	if _, err := store.Put(ctx, &orkstackv1.Namespace{
+		Name:        nsName,
+		Description: "second",
+	}, artifacts.PutConditions{IfAbsent: true}); !errors.Is(err, artifacts.ErrPreconditionFailed) {
+		t.Fatalf("Put(%s, IfAbsent) over an existing name = %v, want ErrPreconditionFailed",
+			nsName, err)
+	}
+
+	// The etag a read hands back is the one that works.
+	read, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", nsName, err)
+	}
+	if read.GetEtag() != created.GetEtag() {
+		t.Fatalf("Get etag %q != Put etag %q; the token has to name the same bytes both ways",
+			read.GetEtag(), created.GetEtag())
+	}
+	winner, err := store.Put(ctx, &orkstackv1.Namespace{
+		Name:        nsName,
+		Description: "the winner",
+	}, artifacts.PutConditions{IfMatch: read.GetEtag()})
+	if err != nil {
+		t.Fatalf("Put(%s, IfMatch the current etag): %v", nsName, err)
+	}
+	if winner.GetEtag() == read.GetEtag() {
+		t.Fatal("the etag did not move after a successful conditional write")
+	}
+
+	// The second writer still holds the etag it read before the winner wrote.
+	// This is the two-replica race, with the interleaving forced.
+	if _, err := store.Put(ctx, &orkstackv1.Namespace{
+		Name:        nsName,
+		Description: "the loser",
+	}, artifacts.PutConditions{IfMatch: read.GetEtag()}); !errors.Is(err, artifacts.ErrPreconditionFailed) {
+		t.Fatalf("Put(%s, IfMatch a stale etag) = %v, want ErrPreconditionFailed", nsName, err)
+	}
+	final, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get(%s) after the race: %v", nsName, err)
+	}
+	if final.GetDescription() != "the winner" {
+		t.Fatalf("stored description = %q, want %q: the loser's write landed",
+			final.GetDescription(), "the winner")
+	}
+
+	// The etag is never stored inside the document it names: a copy in the
+	// body could only ever be the previous write's token.
+	body := getObject(t, ctx, raw, cfg.S3Bucket,
+		artifacts.NamespacePrefix+"/"+nsName+".json")
+	if strings.Contains(string(body), "etag") {
+		t.Fatalf("the stored document mentions an etag:\n%s", body)
+	}
+}
+
+// getObject reads one object's bytes through the raw client, so an assertion
+// about what was STORED is made against the bucket rather than against what
+// the store hands back.
+func getObject(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string) []byte {
+	t.Helper()
+	object, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("get %s/%s: %v", bucket, key, err)
+	}
+	defer object.Body.Close()
+	body, err := io.ReadAll(object.Body)
+	if err != nil {
+		t.Fatalf("read %s/%s: %v", bucket, key, err)
+	}
+	return body
 }

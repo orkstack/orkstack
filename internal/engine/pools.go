@@ -95,6 +95,29 @@ type NamespaceReader interface {
 	Get(ctx context.Context, name string) (*orkstackv1.Namespace, error)
 }
 
+// NamespaceRegistry is the whole registry: the read routing needs, plus the
+// writes the namespace API performs.
+//
+// It is split from NamespaceReader because the two have different audiences.
+// Routing reads one document on the submit path and must not be able to write
+// anything; the API's namespace surface creates, replaces and removes them.
+// artifacts.S3NamespaceStore satisfies both, structurally, without pkg/
+// importing internal/.
+//
+// Put carries artifacts.PutConditions because the arbitration between two
+// replicas is the store's own: a conditional write is refused by the backend,
+// so nothing above it invents a lock (design §5, AGENTS.md §1.7).
+type NamespaceRegistry interface {
+	NamespaceReader
+	List(ctx context.Context) ([]*orkstackv1.Namespace, error)
+	Put(
+		ctx context.Context,
+		ns *orkstackv1.Namespace,
+		cond artifacts.PutConditions,
+	) (*orkstackv1.Namespace, error)
+	Delete(ctx context.Context, name string) error
+}
+
 // PoolNotAllowedError reports a task routed onto a pool its namespace does not
 // allow. It carries the three coordinates that make the refusal actionable:
 // who forbade it, which task asked, and what it asked for.
