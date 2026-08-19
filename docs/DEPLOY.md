@@ -123,9 +123,13 @@ needs `ORK_S3_*` either way.
   isolation — a GPU host, a pool with different plugins, a pool near some data.
 - **The engine's default pool must match.** The engine dispatches every task
   that names no `pool:` to its own `ORK_ORKER_QUEUE`, so the variable is set
-  on both binaries or runs strand in `RUNNING` (§2, §5). A task's own `pool:`
-  in the DSL outranks it, and is how one step reaches a dedicated pool
-  (`docs/DSL.md`).
+  on both binaries or runs strand in `RUNNING` (§2, §5). A task that names a
+  pool of its own goes to that pool's queue instead, which is how one step
+  reaches a dedicated pool (`docs/DSL.md`) — with one exception that is not an
+  exception: `pool: main` names *this deployment's default pool*, not the
+  queue `ork-tasks`, so it resolves to whatever `ORK_ORKER_QUEUE` is set to,
+  exactly as an omitted `pool:` does. `main` is a word for the default, never
+  an override of it (`task.RouteForPool`, `runState.routeForTask`).
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
@@ -668,8 +672,12 @@ Runs already pinned to a version still need that version's workers.
   runs strand in `RUNNING`: the Orker polls one queue while the engine
   dispatches to another. It moves **task execution only** — the engine's own
   workers stay on `ork-tasks` and `ork-engine-events` (§2). A task's own
-  `pool:` in the DSL outranks the engine default and is how a step reaches a
-  dedicated Orker pool (`docs/DSL.md`).
+  `pool:` in the DSL is how a step reaches a dedicated Orker pool
+  (`docs/DSL.md`), and it cannot be used to escape this setting: `pool: main`
+  is the name of whatever queue you bound here, so it follows the override
+  rather than outranking it, and no document can route itself back onto
+  `ork-tasks` by naming the default pool
+  (`TestRunState_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute`).
 - **One namespace, one deployment.** The engine's queue name is fixed, so two
   OrkStack deployments in one namespace would fight over the current version of
   `ork-tasks`. Give each environment its own namespace, as above.

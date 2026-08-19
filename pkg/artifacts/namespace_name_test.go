@@ -15,12 +15,14 @@ import (
 // then never used — the same "stored value nothing can honour" defect the
 // registry's pool fields had (pool_name_test.go), one concept over.
 //
-// So the two rules must be one rule. They cannot be one piece of CODE: pkg/
-// may not import internal/, or no external importer of pkg/artifacts could
-// build. They are one rule by measurement instead, here, in a test — which no
-// external importer builds either. The import above is the whole point of the
-// file: it is the only place pkg/artifacts names internal/dsl, and it exists
-// to make drift a test failure rather than an unreachable stored namespace.
+// So the two rules must be one rule. They are not one piece of CODE, and the
+// reason is layering, not the compiler: nothing stops this package importing
+// internal/dsl, but doing so from a non-test file would make every program
+// that stores an artifact build the YAML front end too. They are one rule by
+// measurement instead, here, in a test — which no importer of this package
+// builds. The import above is the whole point of the file: it is the only
+// place pkg/artifacts names internal/dsl, and it exists to make drift a test
+// failure rather than an unreachable stored namespace.
 
 // namespaceCorpus is spelled out rather than generated, so a reader can see
 // exactly what is claimed. The second group is what review measured slipping
