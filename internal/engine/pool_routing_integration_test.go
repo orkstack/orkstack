@@ -368,7 +368,7 @@ tasks:
 	// The submit gate is the one that cannot be bypassed: put the definition
 	// into the store behind the API's back, exactly as a definition applied
 	// while the allow-list was wider would be, and submit it.
-	if err := orkflows.Put(ctx, &orkstackv1.Orkflow{
+	if _, _, err := orkflows.Put(ctx, &orkstackv1.Orkflow{
 		Namespace: nsName,
 		Name:      forbiddenName,
 		Version:   "0.1.0",

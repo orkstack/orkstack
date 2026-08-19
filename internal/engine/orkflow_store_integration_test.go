@@ -187,7 +187,7 @@ func TestIntegration_ListOrkflowsReadsTheBucketNotTheProcess(t *testing.T) {
 	defer shutdown()
 
 	// Written by a different store instance, as a second engine would.
-	if err := store.Put(ctx, &orkstackv1.Orkflow{
+	if _, _, err := store.Put(ctx, &orkstackv1.Orkflow{
 		Name:    name,
 		Version: "0.1.0",
 		Tasks:   []*orkstackv1.Task{{Id: "fetch", Plugin: "http"}},

@@ -293,6 +293,13 @@ func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
 // document that names none adopts it, which is how one portable file is
 // applied into staging and into production. The two disagreeing is refused —
 // see applyNamespace.
+//
+// It never rewrites a stored version. Re-applying the same document writes
+// nothing and answers with what is stored (created=false); a DIFFERENT
+// document under a stored version is AlreadyExists, because a run pinned to
+// that version reads its bytes long after the apply. An edit therefore always
+// arrives as a new version — the DSL derives one from the content when the
+// document pins none.
 func (s *Service) ApplyOrkflow(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
@@ -324,12 +331,62 @@ func (s *Service) ApplyOrkflow(
 	// The stored document names the namespace it lives in, whichever of the
 	// two said so, so a reader needs no key to know where it came from.
 	wf.Namespace = ns.GetName()
+	if err := s.checkBaseVersion(ctx, ns.GetName(), wf.GetName(), req.Msg.GetBaseVersion()); err != nil {
+		return nil, err
+	}
+	// The stamp is applied here, but it does NOT decide whether this apply is a
+	// repeat: the store compares everything except created_at and hands back
+	// the stored document untouched when they match, so a re-apply cannot
+	// churn the object merely by arriving at a different time. Stamping first
+	// and comparing bytes afterwards is what made every apply a rewrite.
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
-	if err := s.orkflows.Put(ctx, wf); err != nil {
+	stored, created, err := s.orkflows.Put(ctx, wf)
+	if err != nil {
 		return nil, orkflowStoreError(err, "store orkflow %s@%s in namespace %q",
 			wf.GetName(), wf.GetVersion(), ns.GetName())
 	}
-	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{Orkflow: wf}), nil
+	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{
+		Orkflow: stored,
+		Created: created,
+	}), nil
+}
+
+// checkBaseVersion is the optimistic-concurrency gate: an edit derived from a
+// version that is no longer the head is refused instead of landing beside a
+// newer one nobody has seen.
+//
+// The comparison is against the HEAD version (most recently applied), not
+// against the current pointer: head is edit lineage — what an editor read and
+// changed — while the pointer is execution policy, and an operator promoting an
+// older version must not make every open editor stale.
+//
+// An empty token means unchecked, which is what a plain `orkctl apply file.yaml`
+// sends. The window between this check and the write is deliberately left
+// open: closing it would mean holding a lock across a user's editor session,
+// and the cost of losing the race is nil — both versions are stored, both are
+// listed, and nothing is overwritten.
+func (s *Service) checkBaseVersion(ctx context.Context, namespace, name, base string) error {
+	if base == "" {
+		return nil
+	}
+	versions, err := s.orkflows.Versions(ctx, namespace, name)
+	if err != nil {
+		return orkflowStoreError(err, "read versions of orkflow %q in namespace %q", name, namespace)
+	}
+	if versions.Head == "" {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"this edit says it was derived from version %q of orkflow %q, "+
+				"but that orkflow has no stored version in namespace %q",
+			base, name, namespace))
+	}
+	if versions.Head != base {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"orkflow %q in namespace %q changed underneath this edit: it was derived from "+
+				"version %q but the newest applied version is now %q; "+
+				"run `orkctl orkflow diff %s %s %s` and re-apply",
+			name, namespace, base, versions.Head, name, base, versions.Head))
+	}
+	return nil
 }
 
 // applyNamespace reconciles the two ways a request names a namespace.
@@ -406,6 +463,12 @@ func orkflowStoreError(err error, format string, args ...any) error {
 	}
 	if errors.Is(err, artifacts.ErrInvalidOrkflow) {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s: %w", subject, err))
+	}
+	// A version already stored with different content is a collision, not an
+	// outage: AlreadyExists, so a client can tell "publish a new version" from
+	// "the bucket is unreachable" without reading the message.
+	if errors.Is(err, artifacts.ErrVersionExists) {
+		return connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("%s: %w", subject, err))
 	}
 	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s: %w", subject, err))
 }

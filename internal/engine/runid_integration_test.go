@@ -232,7 +232,7 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 	}
 
 	orkflows := engine.NewMemoryOrkflowStore()
-	if err := orkflows.Put(ctx, wf); err != nil {
+	if _, _, err := orkflows.Put(ctx, wf); err != nil {
 		t.Fatalf("store orkflow: %v", err)
 	}
 	candidates := []string{taken, reissued}

@@ -29,7 +29,10 @@ func newRecordingStore() *recordingStore {
 	return &recordingStore{inner: engine.NewMemoryOrkflowStore()}
 }
 
-func (r *recordingStore) Put(ctx context.Context, wf *orkstackv1.Orkflow) error {
+func (r *recordingStore) Put(
+	ctx context.Context,
+	wf *orkstackv1.Orkflow,
+) (*orkstackv1.Orkflow, bool, error) {
 	r.puts = append(r.puts, wf)
 	return r.inner.Put(ctx, wf)
 }
@@ -42,10 +45,29 @@ func (r *recordingStore) List(ctx context.Context, namespace string) ([]*orkstac
 	return r.inner.List(ctx, namespace)
 }
 
+func (r *recordingStore) Versions(
+	ctx context.Context,
+	namespace, name string,
+) (artifacts.OrkflowVersions, error) {
+	return r.inner.Versions(ctx, namespace, name)
+}
+
+func (r *recordingStore) SetCurrentVersion(
+	ctx context.Context,
+	namespace, name, version string,
+) (string, error) {
+	return r.inner.SetCurrentVersion(ctx, namespace, name, version)
+}
+
 // unreachableStore is a durable store that is down.
 type unreachableStore struct{ err error }
 
-func (u unreachableStore) Put(context.Context, *orkstackv1.Orkflow) error { return u.err }
+func (u unreachableStore) Put(
+	context.Context,
+	*orkstackv1.Orkflow,
+) (*orkstackv1.Orkflow, bool, error) {
+	return nil, false, u.err
+}
 
 func (u unreachableStore) Get(context.Context, string, string, string) (*orkstackv1.Orkflow, error) {
 	return nil, u.err
@@ -53,6 +75,17 @@ func (u unreachableStore) Get(context.Context, string, string, string) (*orkstac
 
 func (u unreachableStore) List(context.Context, string) ([]*orkstackv1.Orkflow, error) {
 	return nil, u.err
+}
+
+func (u unreachableStore) Versions(
+	context.Context,
+	string, string,
+) (artifacts.OrkflowVersions, error) {
+	return artifacts.OrkflowVersions{}, u.err
+}
+
+func (u unreachableStore) SetCurrentVersion(context.Context, string, string, string) (string, error) {
+	return "", u.err
 }
 
 func exampleYAML(t *testing.T) string {
