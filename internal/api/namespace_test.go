@@ -848,6 +848,7 @@ tasks:
     with: {command: "echo build"}
 `
 	starter := &fakeStarter{}
+	bus := engine.NewEventBus()
 	counter := 0
 	svc := api.NewService(api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(),
@@ -856,7 +857,7 @@ tasks:
 			&orkstackv1.Namespace{Name: "bravo"},
 		),
 		Runs:    engine.NewRunStore(),
-		Bus:     engine.NewEventBus(),
+		Bus:     bus,
 		Starter: starter,
 		NewRunID: func() string {
 			counter++
@@ -874,6 +875,16 @@ tasks:
 		t.Fatalf("SubmitRun(alpha, deploy): %v", err)
 	}
 	runID := submitted.Msg.GetRun().GetId()
+
+	// The run's stream is finished before anything asks for it, so a stream
+	// that is NOT refused ends immediately and reports "succeeded" instead of
+	// blocking for a run that will never terminate. A test whose refusal is
+	// the only reason it returns cannot tell a working scope from a hang, and
+	// the mutation that removes the scope would time out rather than fail.
+	bus.Publish(&orkstackv1.Event{
+		RunId: runID,
+		Type:  orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+	}, runID+"#done")
 
 	// Its own namespace reads it.
 	if _, err := svc.GetRun(ctx, connect.NewRequest(
