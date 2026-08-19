@@ -563,20 +563,34 @@ export default workflow({
             }
             const restack = run(["git", "merge", "--no-edit", previousRef], dir, 5 * 60_000);
             if (restack.status !== 0) {
+              // A conflicting restack is not a broken stack, it is WORK, and
+              // it is this slice's work: the base moved because slice N-1 was
+              // repaired in the same code this slice rewrote. Abort the merge
+              // so the child starts from a clean tree, and hand it the
+              // conflict as its first task, under the same reviewers and gates
+              // as everything else. Resolving it here would put an unreviewed
+              // integration of two slices onto the branch.
+              const conflicts = run(
+                ["git", "diff", "--name-only", "--diff-filter=U"],
+                dir,
+              );
+              const files = (conflicts.stdout ?? "").trim();
               run(["git", "merge", "--abort"], dir);
               return {
                 dir,
                 action: "reused-conflict",
-                ok: false,
-                detail: `restacking ${previousRef} into ${slice.branch} conflicts; resolve it by hand:\n${tail(
-                  (restack.stdout ?? "") + (restack.stderr ?? ""),
-                )}`,
+                ok: true,
+                conflicted: true,
+                conflicts: files,
+                detail: `restacking ${previousRef} into ${slice.branch} conflicts in:\n${files}`,
               };
             }
             return {
               dir,
               action: "reused",
               ok: true,
+              conflicted: false,
+              conflicts: "",
               detail: tail((restack.stdout ?? "") + (restack.stderr ?? "")),
             };
           }
@@ -589,10 +603,19 @@ export default workflow({
             dir,
             action: "created",
             ok: add.status === 0,
+            conflicted: false,
+            conflicts: "",
             detail: tail((add.stdout ?? "") + (add.stderr ?? "")),
           };
         },
-      )) as { dir: string; action: string; ok: boolean; detail: string };
+      )) as {
+        dir: string;
+        action: string;
+        ok: boolean;
+        conflicted: boolean;
+        conflicts: string;
+        detail: string;
+      };
 
       if (!prepared.ok) {
         stoppedAt = `${slice.id} (worktree)`;
@@ -606,6 +629,39 @@ export default workflow({
           milestone: slice.id,
           objective: slice.objective,
           acceptance: [
+            prepared.conflicted
+              ? [
+                  "<keepContext>",
+                  `STEP 0, BEFORE ANY OTHER WORK: restack this branch onto ${previousRef}.`,
+                  "",
+                  `${previousRef} moved after ${slice.branch} was cut from it — an adversarial`,
+                  "repair round fixed defects in the SAME code this slice rewrote. Run:",
+                  "",
+                  `    git merge --no-commit --no-ff ${previousRef}`,
+                  "",
+                  `and resolve the conflicts. They are in:\n${prepared.conflicts}`,
+                  "",
+                  "Resolve as a UNION OF BEHAVIORS, per AGENTS.md §7. Do NOT take either side",
+                  "whole unless the file is untouched on the other. Both sides are correct about",
+                  "different things: the base slice owns the primitives and the invariants it was",
+                  "repaired to guarantee; this slice owns the architecture built on top of them.",
+                  "The union normally means calling the base's repaired primitive from this",
+                  "slice's newer structure, NOT reinstating an older call site the repair removed.",
+                  "",
+                  "Use the base to see what each side actually changed:",
+                  `    git merge-file -p ours.go $(git merge-base HEAD ${previousRef}):file theirs.go`,
+                  `    git diff --name-only HEAD ${previousRef}`,
+                  "",
+                  "Regenerate, never hand-merge, anything under gen/ or ui/src/lib/gen: resolve",
+                  "proto/ first, then `make proto` and `make tsgen` and take the generated result.",
+                  "",
+                  "The merged tree must COMPILE and pass every gate before you continue to the",
+                  "acceptance items below. When you are done, state in your final message exactly",
+                  "what each side contributed and what the resolution dropped, if anything.",
+                  "</keepContext>",
+                  "",
+                ].join("\n")
+              : "",
             slice.acceptance,
             "",
             "GENERAL (applies to every item above):",
