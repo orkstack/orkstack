@@ -271,6 +271,118 @@ func TestPoolResolver_RefusesAPoolTheNamespaceDoesNotAllow(t *testing.T) {
 	}
 }
 
+// TestPoolResolver_HoldsTheAllowListAgainstThePoolItDispatchesTo pairs the two
+// halves that were each tested alone: a namespace with an allow-list, and a
+// deployment whose default execution channel is bound to another pool's own
+// queue (ORK_ORKER_POOL=gpu on the engine, which docs/DEPLOY.md recommends and
+// which every parallel-agent harness runs).
+//
+// Apart, both halves passed. Together, the allow-list was asked about the name
+// the document wrote while the dispatch used the name that channel answers to,
+// so a namespace allowing only `main` planned its tasks onto gpu's Orkers —
+// docs/DEPLOY.md calls the list a bound on "what it may dispatch onto" — and
+// the mirror refused `pool: main` in a namespace that allows `gpu`, which is
+// where it was going anyway.
+//
+// The invariant, in one sentence: the pool stamped on a planned task is one
+// the namespace allows, or there is no planned task.
+func TestPoolResolver_HoldsTheAllowListAgainstThePoolItDispatchesTo(t *testing.T) {
+	gpuQueue, err := task.QueueForPool("gpu", "")
+	if err != nil {
+		t.Fatalf("QueueForPool: %v", err)
+	}
+	resolver := &engine.PoolResolver{RawQueue: gpuQueue, Probe: everyPoolLive{}}
+
+	t.Run("the default pool collapsed onto a pool the namespace forbids", func(t *testing.T) {
+		ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"main"}}
+		doc := compile(t, onePoolDocument) // `settle` names no pool
+
+		planned, plan, err := resolver.Plan(context.Background(), ns, doc, false)
+		var notAllowed *engine.PoolNotAllowedError
+		if !errors.As(err, &notAllowed) {
+			t.Fatalf("Plan = (%v, %v, %v), want a PoolNotAllowedError: the task would be "+
+				"dispatched to gpu's Orkers, and this namespace allows only main",
+				stampedPools(planned), plan.Routes, err)
+		}
+		if notAllowed.Pool != "gpu" {
+			t.Errorf("the refusal names pool %q, want the pool it would have dispatched to (gpu)",
+				notAllowed.Pool)
+		}
+		// The name the document wrote is what the operator has to go and find.
+		if !strings.Contains(err.Error(), `"main"`) {
+			t.Errorf("the refusal %q does not name the pool the document asked for", err)
+		}
+		// Apply says exactly what submit says. An author told "yes" at apply
+		// and "no" at submit learns the rule twice.
+		if applyErr := resolver.CheckAllowedPools(ns, doc); !errors.As(applyErr, &notAllowed) {
+			t.Errorf("CheckAllowedPools = %v, want the same refusal Plan makes (%v)", applyErr, err)
+		}
+	})
+
+	t.Run("`pool: main` inside a namespace that allows the bound pool", func(t *testing.T) {
+		ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"gpu"}}
+		doc := compile(t, mainPoolDocument) // `settle` names `pool: main`
+
+		if err := resolver.CheckAllowedPools(ns, doc); err != nil {
+			t.Fatalf("CheckAllowedPools refused `pool: main` under a channel bound to "+
+				"gpu's queue: %v — that is where it dispatches", err)
+		}
+		planned, plan, err := resolver.Plan(context.Background(), ns, doc, false)
+		if err != nil {
+			t.Fatalf("Plan: %v", err)
+		}
+		if got := planned.GetTasks()[0].GetPool(); got != "gpu" {
+			t.Errorf("`pool: main` was stamped %q, want gpu — the name its channel answers to", got)
+		}
+		if plan.Routes["gpu"] != gpuQueue {
+			t.Errorf("routes = %v, want gpu on %q", plan.Routes, gpuQueue)
+		}
+	})
+
+	t.Run("every planned pool is one the namespace allows", func(t *testing.T) {
+		for _, allowed := range [][]string{{"main"}, {"gpu"}, {"batch"}, {"gpu", "batch"}} {
+			ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: allowed}
+			for _, doc := range []string{onePoolDocument, mainPoolDocument, twoPoolDocument} {
+				planned, _, err := resolver.Plan(context.Background(), ns, compile(t, doc), false)
+				if err != nil {
+					continue // refused, which is the other permitted outcome
+				}
+				permitted := map[string]struct{}{}
+				for _, pool := range allowed {
+					permitted[pool] = struct{}{}
+				}
+				for _, stamped := range stampedPools(planned) {
+					if _, ok := permitted[stamped]; !ok {
+						t.Errorf("namespace allows %v, but a task was planned onto pool %q",
+							allowed, stamped)
+					}
+				}
+			}
+		}
+	})
+}
+
+// mainPoolDocument names the default pool the long way, which is the spelling
+// a bound channel collapses.
+const mainPoolDocument = `
+name: main-pool
+tasks:
+  - id: settle
+    plugin: shell
+    pool: main
+    with: {command: "echo settle"}
+`
+
+// stampedPools is the pool each planned task carries: what the run reports and
+// what its dispatch follows.
+func stampedPools(planned *orkstackv1.Orkflow) []string {
+	pools := make([]string, 0, len(planned.GetTasks()))
+	for _, t := range planned.GetTasks() {
+		pools = append(pools, t.GetPool())
+	}
+	return pools
+}
+
 // TestPoolResolver_RefusesASubmitOntoAPoolWithNoLiveOrkers converts the
 // stranded-RUNNING failure AGENTS.md §6 describes into an error at submit.
 //

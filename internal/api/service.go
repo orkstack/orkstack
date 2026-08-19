@@ -318,7 +318,10 @@ func (s *Service) ApplyOrkflow(
 	if err != nil {
 		return nil, err
 	}
-	if err := engine.CheckAllowedPools(ns, wf); err != nil {
+	// The resolver, not a free function: the allow-list is checked in the
+	// vocabulary this deployment dispatches in (PoolResolver.CheckAllowedPools),
+	// which is a property of the process's own routing.
+	if err := s.pools.CheckAllowedPools(ns, wf); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	// The stored document names the namespace it lives in, whichever of the
@@ -925,14 +928,15 @@ func (s *Service) GetRun(
 // archive holds its task runs, input and output, and a finished run's outcome
 // is settled, so the richer record is also the correct one.
 //
-// BOTH halves are namespace-scoped before they are merged, and they are scoped
-// differently because they are indexed differently: the archive's key begins
-// with the namespace, so naming one narrows the scan, while visibility cannot
-// filter on a memo, so live runs are filtered client-side over the listed page
-// — the same trade the reader already makes for the orkflow name. Filtering
-// after the merge would work and is not done: it would fetch another
-// namespace's runs to discard them, and the archive can avoid reading them at
-// all.
+// BOTH halves are namespace-scoped by their own index, and neither by a filter
+// over the merged list. The archive's key begins with the namespace, so naming
+// one narrows the scan; visibility is asked with the namespace as a query
+// predicate, on the search attribute the engine registers at boot
+// (engine.TemporalRunReader.ListRuns). Scoped after the fact instead — the
+// trade the reader still makes for an orkflow name — a tenancy boundary would
+// be answered out of whatever page budget another namespace's traffic left,
+// and a quiet namespace beside a busy one is told it has no runs. An orkflow
+// name inside one namespace is not a tenancy boundary and stays a filter.
 //
 // Visibility is eventually consistent. A run submitted a moment ago may not be
 // listed yet; it is readable by id throughout, because GetRun reads history

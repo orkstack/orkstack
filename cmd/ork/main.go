@@ -337,8 +337,23 @@ func run(logger *slog.Logger, cfg config) error {
 	if err := task.EnsureNamespace(ctx, temporalClient, cfg.temporalNamespace); err != nil {
 		return err
 	}
+	// The run index, provisioned beside the namespace: it is what makes "list
+	// this namespace's runs" a question the cluster answers, instead of a
+	// filter over whatever page walk another tenant's traffic left room for.
+	// A cluster that will not register it is not a reason to refuse to boot —
+	// everything else works, and the reader falls back to reading the whole
+	// index — but it IS worth a line, because that fallback is slow and its
+	// limit is an error a client would otherwise have to explain.
+	namespaceIndexed, err := task.EnsureRunSearchAttributes(ctx, temporalClient, cfg.temporalNamespace)
+	if err != nil {
+		logger.Warn("visibility does not index a run's orkflow namespace",
+			"search_attribute", task.SearchAttrOrkflowNamespace,
+			"consequence", "listing a namespace's live runs scans the whole index",
+			"error", err)
+	}
 	logger.Info("connected to temporal",
-		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
+		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace,
+		"run_namespace_index", namespaceIndexed)
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
@@ -375,7 +390,7 @@ func run(logger *slog.Logger, cfg config) error {
 	// The read model. Every run read leaves this process: a run's history is
 	// its event log, and Temporal hands the same answer to every replica, for
 	// runs this one neither started nor projected.
-	reader := engine.NewTemporalRunReader(temporalClient)
+	reader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(namespaceIndexed)
 
 	// Workflow worker: hosts RunWorkflow and the idempotency claims on the
 	// engine's own queue — NOT ORK_ORKER_QUEUE, which moves task execution
@@ -422,7 +437,8 @@ func run(logger *slog.Logger, cfg config) error {
 		"run_workflow_behavior", "Pinned",
 		"claim_workflow_behavior", "AutoUpgrade",
 		"event_worker", "unversioned")
-	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker)
+	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker).
+		WithNamespaceIndex(namespaceIndexed)
 
 	// Pool routing: the cluster answers whether a pool has Orkers, so a submit
 	// onto a pool nothing serves fails at submit rather than leaving a run in

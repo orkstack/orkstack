@@ -195,6 +195,23 @@ needs `ORK_S3_*` either way.
 - **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
   enforced on the server at both apply and submit, so no client can skip it.
   An empty list means no restriction.
+
+  The list is read in the same vocabulary as the dispatch — the collapsed name
+  of the bullet above. With `ORK_ORKER_POOL=gpu` on the engine, a task that
+  names no pool is dispatched to, stamped as and reported on `gpu`, so a
+  namespace whose list is `[main]` is refused there and one whose list is
+  `[gpu]` accepts `pool: main`:
+
+  ```
+  namespace "payments" does not allow pool "gpu" for task "settle" (allowed: main);
+  this deployment dispatches pool "main" onto "gpu"'s Orkers, so allow "gpu" or
+  drop the override
+  ```
+
+  Every pool a run reports is therefore one its namespace allows. Bind an
+  execution channel to a pool's own queue and the namespaces on that
+  deployment must allow that pool by name; `main` there names Orkers this
+  deployment does not have.
 - **"Is anything serving my pools?" has an answer.**
   `NamespaceService.ListPools` reports each pool's name, its live Orker count
   and the plugins those Orkers run. The count is the one described above — the
@@ -743,6 +760,32 @@ Runs already pinned to a version still need that version's workers.
   past Temporal retention. Nothing durable lives in a process, so a read does
   not need to reach the replica that started the run — or that replica to
   still exist.
+- **Listing one namespace's runs is a question the cluster answers.** Each
+  engine registers the `OrkflowNamespace` search attribute on its Temporal
+  namespace at boot (`task.EnsureRunSearchAttributes`, beside the namespace
+  itself) and stamps every run it starts with the namespace that run belongs
+  to, so `run list -n payments` is a visibility predicate rather than a filter
+  over a page of everyone's runs. That distinction is a tenancy one: filtered
+  afterwards, how far the list could see was set by how busy the OTHER
+  namespaces were, and a namespace with one live run behind a neighbour's
+  hundred was told it had none.
+
+  A cluster that refuses the registration — the operator API behind an
+  authorizer, a visibility store without custom attributes — still boots, and
+  says so once:
+
+  ```
+  WARN visibility does not index a run's orkflow namespace
+       search_attribute=OrkflowNamespace
+       consequence="listing a namespace's live runs scans the whole index"
+  ```
+
+  The reader then reads the index to the end instead of trusting a predicate
+  the cluster cannot apply, which is slower and still the tenant's own answer;
+  a list that cannot finish even that walk fails rather than returning a short
+  one. Runs started *before* the attribute existed carry the namespace in
+  their memo but not in the index, so they are listed by id and, once
+  finished, from the archive — whose key already begins with the namespace.
 - **A double submit is settled by the cluster, not by a replica.** One
   `--idempotency-key` sent to two replicas at once returns one run id, because
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not

@@ -181,6 +181,106 @@ func TestSubmitRun_RefusesAPoolTheNamespaceDoesNotAllow(t *testing.T) {
 	}
 }
 
+// TestApplyAndSubmit_AgreeOnTheAllowListUnderABoundChannel is the two gates
+// held against each other on a deployment that has an execution channel bound
+// to a pool's own queue — ORK_ORKER_POOL=gpu on the engine (docs/DEPLOY.md),
+// which is also the shape every parallel-agent harness runs.
+//
+// The allow-list bounds what a namespace may dispatch onto, so it is checked
+// against the pool the tasks are dispatched to and reported on, not against
+// the word the document happened to use for it. Checked before the collapse,
+// apply and submit both accepted a document a namespace allowing only `main`
+// then ran on gpu's Orkers, and both refused `pool: main` in a namespace that
+// allows `gpu` — the same channel, refused for its other name.
+func TestApplyAndSubmit_AgreeOnTheAllowListUnderABoundChannel(t *testing.T) {
+	// A task that names no pool at all; under the bound channel it is gpu's.
+	const unpinned = `
+name: unpinned
+version: 0.1.0
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo settle"}
+`
+	// The same channel, named the other way round.
+	const mainPinned = `
+name: main-pinned
+version: 0.1.0
+tasks:
+  - id: settle
+    plugin: shell
+    pool: main
+    with: {command: "echo settle"}
+`
+	gpuQueue := poolQueue(t, "gpu")
+	serviceFor := func(orkflows engine.OrkflowStore, starter *fakeStarter, allowed ...string) *api.Service {
+		return api.NewService(api.Config{
+			Orkflows: orkflows,
+			Starter:  starter,
+			Pools:    livePools{gpuQueue: 1},
+			RawQueue: gpuQueue,
+			Namespaces: registry{"default": {
+				Name:         "default",
+				AllowedPools: allowed,
+			}},
+		})
+	}
+
+	t.Run("a namespace that allows only main cannot reach gpu's Orkers", func(t *testing.T) {
+		starter := &fakeStarter{}
+		orkflows := engine.NewMemoryOrkflowStore()
+		svc := serviceFor(orkflows, starter, "main")
+
+		if _, err := svc.ApplyOrkflow(context.Background(),
+			connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: unpinned})); err == nil {
+			t.Error("apply accepted a document whose tasks would run on gpu's Orkers")
+		}
+		// Stored anyway — a definition applied before the channel was bound,
+		// or written by a client that never applied.
+		if _, err := api.NewService(api.Config{Orkflows: orkflows, Starter: starter}).ApplyOrkflow(
+			context.Background(),
+			connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: unpinned})); err != nil {
+			t.Fatalf("Apply into an unrestricted namespace: %v", err)
+		}
+		_, err := svc.SubmitRun(context.Background(),
+			connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "unpinned"}))
+		if err == nil {
+			t.Fatal("submitting onto gpu's Orkers succeeded in a namespace that allows only main")
+		}
+		if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+			t.Errorf("submit refused with %v, want InvalidArgument", code)
+		}
+		if !strings.Contains(err.Error(), "gpu") {
+			t.Errorf("the refusal %q does not name the pool it would have dispatched to", err)
+		}
+		if len(starter.startedRuns()) != 0 {
+			t.Errorf("a refused submission still started %v", starter.startedRuns())
+		}
+	})
+
+	t.Run("a namespace that allows gpu accepts the channel's other name", func(t *testing.T) {
+		starter := &fakeStarter{}
+		svc := serviceFor(engine.NewMemoryOrkflowStore(), starter, "gpu")
+
+		if _, err := svc.ApplyOrkflow(context.Background(),
+			connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: mainPinned})); err != nil {
+			t.Fatalf("apply refused `pool: main` in a namespace that allows gpu, which is "+
+				"where this deployment dispatches it: %v", err)
+		}
+		if _, err := svc.SubmitRun(context.Background(),
+			connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "main-pinned"})); err != nil {
+			t.Fatalf("SubmitRun: %v", err)
+		}
+		started := starter.startedOrkflows()
+		if len(started) != 1 {
+			t.Fatalf("started %d runs, want 1", len(started))
+		}
+		if got := started[0].GetTasks()[0].GetPool(); got != "gpu" {
+			t.Errorf("the task was dispatched on pool %q, want gpu", got)
+		}
+	})
+}
+
 // TestSubmitRun_FailsFastWhenTheResolvedPoolHasNoOrkers converts the stranded
 // run of AGENTS.md §6 into an error at submit.
 //
