@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,11 @@ import (
 
 // registry is a namespace registry in a map: the documents an operator wrote,
 // with the built-in default always resolving.
+//
+// It answers reads only. The pool tests never write through it, and a double
+// that accepted a conditional write would vouch for arbitration it does not
+// implement — the registry double that does implement it is fakeRegistry, in
+// namespace_test.go.
 type registry map[string]*orkstackv1.Namespace
 
 func (r registry) Get(_ context.Context, name string) (*orkstackv1.Namespace, error) {
@@ -33,6 +39,31 @@ func (r registry) Get(_ context.Context, name string) (*orkstackv1.Namespace, er
 		return &orkstackv1.Namespace{Name: "default"}, nil
 	}
 	return nil, artifacts.ErrNotFound
+}
+
+func (r registry) List(_ context.Context) ([]*orkstackv1.Namespace, error) {
+	names := make([]string, 0, len(r))
+	for name := range r {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]*orkstackv1.Namespace, 0, len(names))
+	for _, name := range names {
+		out = append(out, r[name])
+	}
+	return out, nil
+}
+
+func (r registry) Put(
+	_ context.Context,
+	_ *orkstackv1.Namespace,
+	_ artifacts.PutConditions,
+) (*orkstackv1.Namespace, error) {
+	return nil, errors.New("registry: this double answers reads only")
+}
+
+func (r registry) Delete(_ context.Context, _ string) error {
+	return errors.New("registry: this double answers reads only")
 }
 
 // livePools stands in for the cluster's poller information.

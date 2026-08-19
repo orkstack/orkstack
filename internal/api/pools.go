@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"connectrpc.com/connect"
 
@@ -19,20 +20,49 @@ import (
 // NotFound; a registry that cannot be reached is Unavailable, and the two are
 // kept apart because they need opposite reactions — fix the request, or fix
 // the deployment.
+//
+// A NotFound also lists the namespaces that DO exist. "namespace not found" is
+// true and useless: the caller mistyped one of a handful of names, and the
+// names are one List away on a server that has already decided to answer with
+// an error. Making them run a second command to learn what the first should
+// have said is the difference between an error and an answer.
 func (s *Service) namespace(ctx context.Context, name string) (*orkstackv1.Namespace, error) {
 	ns, err := s.pools.Namespace(ctx, name)
 	switch {
 	case err == nil:
 		return ns, nil
 	case errors.Is(err, artifacts.ErrNotFound):
-		return nil, connect.NewError(connect.CodeNotFound,
-			fmt.Errorf("namespace %q does not exist", artifacts.ResolveNamespace(name)))
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
+			"namespace %q does not exist%s", artifacts.ResolveNamespace(name),
+			s.existingNamespaces(ctx)))
 	case errors.Is(err, engine.ErrNoNamespaceRegistry):
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("read namespace %q: %w", artifacts.ResolveNamespace(name), err))
 	}
+}
+
+// existingNamespaces renders the registered names as a suffix for a NotFound.
+//
+// It is best-effort by construction: it is decorating an error that has
+// already been decided, so a registry that cannot be listed adds nothing
+// rather than replacing "you mistyped the namespace" with "the registry is
+// unwell". The caller still gets the accurate half.
+func (s *Service) existingNamespaces(ctx context.Context) string {
+	if s.namespaces == nil {
+		return ""
+	}
+	registered, err := s.namespaces.List(ctx)
+	if err != nil || len(registered) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(registered))
+	for _, ns := range registered {
+		names = append(names, ns.GetName())
+	}
+	sort.Strings(names)
+	return "; these do: " + strings.Join(names, ", ")
 }
 
 // ListPools reports the pools a namespace may dispatch onto, with the Orkers

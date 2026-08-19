@@ -38,24 +38,16 @@ func poolRoutingNamespace() string {
 	return fmt.Sprintf("ork-m10-2-pool-routing-%d", os.Getpid())
 }
 
-// isolatedRegistry is the namespace registry this engine was configured with.
+// The engine under test is wired to the REAL namespace registry
+// (artifacts.S3NamespaceStore), and every request below names this suite's own
+// namespace, which is unique to the execution.
 //
-// The document is REAL — written to and read back from the bucket through
-// artifacts.S3NamespaceStore — but it is registered under a name unique to
-// this test rather than under "default". Writing an allow-list onto the shared
-// default namespace would refuse every other suite's pools for as long as this
-// one ran, which is a collision of exactly the kind AGENTS.md §6 is about.
-// Selecting a namespace per request arrives with the namespace-aware API
-// (M10.3); until then this stands in for it, and everything below the seam —
-// the resolver, the allow-list, the error text — is the production path.
-type isolatedRegistry struct {
-	store *artifacts.S3NamespaceStore
-	name  string
-}
-
-func (r isolatedRegistry) Get(ctx context.Context, _ string) (*orkstackv1.Namespace, error) {
-	return r.store.Get(ctx, r.name)
-}
+// It used to be a shim pinning every read to that one name, because until
+// M10.3 a request could not select a namespace and writing an allow-list onto
+// the shared "default" would have refused every other suite's pools for as
+// long as this one ran — a collision of exactly the kind AGENTS.md §6 is
+// about. M10.3 put the selector on the wire, so the isolation is now the
+// production path rather than a stand-in for it.
 
 // poolOrker is one Orker stub: it serves a single pool and records every task
 // it was handed, together with the channel Temporal delivered it on. The
@@ -195,7 +187,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		DefaultPool:  task.DefaultPool,
 		AllowedPools: []string{task.DefaultPool, poolAlpha, poolBravo, poolCold},
 	}
-	if err := namespaceStore.Put(ctx, registered); err != nil {
+	if _, err := namespaceStore.Put(ctx, registered, artifacts.PutConditions{}); err != nil {
 		infraAbsent(t, "cannot write the namespace document (is MinIO up?): %v", err)
 	}
 	t.Cleanup(func() {
@@ -250,7 +242,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	starter := engine.NewTemporalStarter(temporalClient, task.DefaultQueue)
 	svc := api.NewService(api.Config{
 		Orkflows:   orkflows,
-		Namespaces: isolatedRegistry{store: namespaceStore, name: nsName},
+		Namespaces: namespaceStore,
 		Reader:     engine.NewTemporalRunReader(temporalClient),
 		Runs:       runs,
 		Bus:        bus,
@@ -322,7 +314,7 @@ tasks:
     with: {command: "echo polish"}
 `, twoPoolName, poolAlpha, poolBravo)
 	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
-		&orkstackv1.ApplyOrkflowRequest{Yaml: twoPoolJob})); err != nil {
+		&orkstackv1.ApplyOrkflowRequest{Yaml: twoPoolJob, Namespace: nsName})); err != nil {
 		t.Fatalf("apply the two-pool orkflow: %v", err)
 	}
 
@@ -337,11 +329,11 @@ tasks:
     with: {command: "echo freeze"}
 `, coldName, poolCold)
 	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
-		&orkstackv1.ApplyOrkflowRequest{Yaml: coldJob})); err != nil {
+		&orkstackv1.ApplyOrkflowRequest{Yaml: coldJob, Namespace: nsName})); err != nil {
 		t.Fatalf("apply the cold orkflow: %v", err)
 	}
 	_, coldErr := runClient.SubmitRun(ctx, connect.NewRequest(
-		&orkstackv1.SubmitRunRequest{OrkflowName: coldName}))
+		&orkstackv1.SubmitRunRequest{OrkflowName: coldName, Namespace: nsName}))
 	if coldErr == nil {
 		t.Fatalf("submitting into pool %q succeeded; nothing serves it, so the run "+
 			"would have reached RUNNING and stayed there", poolCold)
@@ -369,7 +361,7 @@ tasks:
     with: {command: "echo sneak"}
 `, forbiddenName)
 	_, applyErr := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
-		&orkstackv1.ApplyOrkflowRequest{Yaml: forbiddenJob}))
+		&orkstackv1.ApplyOrkflowRequest{Yaml: forbiddenJob, Namespace: nsName}))
 	if applyErr == nil {
 		t.Fatal("applying an orkflow onto a forbidden pool succeeded")
 	}
@@ -377,8 +369,9 @@ tasks:
 	// into the store behind the API's back, exactly as a definition applied
 	// while the allow-list was wider would be, and submit it.
 	if err := orkflows.Put(ctx, &orkstackv1.Orkflow{
-		Name:    forbiddenName,
-		Version: "0.1.0",
+		Namespace: nsName,
+		Name:      forbiddenName,
+		Version:   "0.1.0",
 		Tasks: []*orkstackv1.Task{
 			{Id: "sneak", Plugin: "shell", Pool: "forbidden"},
 		},
@@ -386,7 +379,7 @@ tasks:
 		t.Fatalf("seed the stored definition: %v", err)
 	}
 	_, submitErr := runClient.SubmitRun(ctx, connect.NewRequest(
-		&orkstackv1.SubmitRunRequest{OrkflowName: forbiddenName}))
+		&orkstackv1.SubmitRunRequest{OrkflowName: forbiddenName, Namespace: nsName}))
 	if submitErr == nil {
 		t.Fatal("submitting a stored definition onto a forbidden pool succeeded; the " +
 			"allow-list is bypassable by anything that did not go through apply")
@@ -407,7 +400,7 @@ tasks:
 
 	// ── now run the two-pool job for real ──
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(
-		&orkstackv1.SubmitRunRequest{OrkflowName: twoPoolName}))
+		&orkstackv1.SubmitRunRequest{OrkflowName: twoPoolName, Namespace: nsName}))
 	if err != nil {
 		t.Fatalf("SubmitRun(%s): %v", twoPoolName, err)
 	}
@@ -477,9 +470,9 @@ tasks:
 	// orkflow name is this execution's own, so the only run that could answer
 	// here is one this execution started — no other execution's residue can
 	// pass or fail it.
-	awaitRunListed(t, ctx, runClient, twoPoolName, runID)
+	awaitRunListed(t, ctx, runClient, nsName, twoPoolName, runID)
 	listed, err := runClient.ListRuns(ctx, connect.NewRequest(
-		&orkstackv1.ListRunsRequest{OrkflowName: coldName}))
+		&orkstackv1.ListRunsRequest{OrkflowName: coldName, Namespace: nsName}))
 	if err != nil {
 		t.Fatalf("ListRuns(%s): %v", coldName, err)
 	}
@@ -490,7 +483,9 @@ tasks:
 		coldName, len(listed.Msg.GetRuns()))
 
 	// ── pools are observable, from the cluster, on this replica ──
-	pools, err := namespaceClient.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	pools, err := namespaceClient.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{
+		Namespace: nsName,
+	}))
 	if err != nil {
 		t.Fatalf("ListPools: %v", err)
 	}
@@ -580,13 +575,13 @@ func awaitRunListed(
 	t *testing.T,
 	ctx context.Context,
 	runs orkstackv1connect.RunServiceClient,
-	orkflow, runID string,
+	namespace, orkflow, runID string,
 ) {
 	t.Helper()
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		listed, err := runs.ListRuns(ctx, connect.NewRequest(
-			&orkstackv1.ListRunsRequest{OrkflowName: orkflow}))
+			&orkstackv1.ListRunsRequest{OrkflowName: orkflow, Namespace: namespace}))
 		if err == nil {
 			for _, run := range listed.Msg.GetRuns() {
 				if run.GetId() == runID {

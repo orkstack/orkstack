@@ -108,10 +108,13 @@ type Config struct {
 	// when no live Orker lister is configured.
 	Plugins []*orkstackv1.PluginInfo
 
-	// Namespaces is the registry routing reads pool defaults and allow-lists
-	// from. Nil serves the built-in default namespace only, which is what an
-	// unconfigured Service has to work with.
-	Namespaces engine.NamespaceReader
+	// Namespaces is the registry: routing reads pool defaults and allow-lists
+	// from it, and NamespaceService creates, updates and deletes through it.
+	// Nil serves the built-in default namespace only and refuses every write,
+	// which is what an unconfigured Service has to work with — inventing a
+	// process-local registry would lose every namespace at the first restart
+	// and answer differently on each replica.
+	Namespaces engine.NamespaceRegistry
 
 	// Pools answers whether a pool has live Orkers, so a submit onto a pool
 	// nothing serves fails at submit instead of stranding a run in RUNNING.
@@ -146,9 +149,14 @@ type Config struct {
 // PluginService.
 type Service struct {
 	orkflows engine.OrkflowStore
-	runs     *engine.RunStore
-	bus      *engine.EventBus
-	lister   PluginLister
+	// namespaces is the durable registry. Nil means no registry is wired:
+	// reads answer for the built-in default only and writes are refused,
+	// because a namespace this process invented would be gone at the next
+	// restart and absent from every other replica.
+	namespaces engine.NamespaceRegistry
+	runs       *engine.RunStore
+	bus        *engine.EventBus
+	lister     PluginLister
 	// router resolves which cluster answers for a namespace or a run. It
 	// holds one binding today; every read and write path goes through it, so
 	// partitioning namespaces across clusters later is configuration rather
@@ -171,6 +179,7 @@ type Service struct {
 func NewService(cfg Config) *Service {
 	svc := &Service{
 		orkflows:    cfg.Orkflows,
+		namespaces:  cfg.Namespaces,
 		runs:        cfg.Runs,
 		bus:         cfg.Bus,
 		lister:      cfg.Lister,
@@ -278,12 +287,12 @@ func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
 // ApplyOrkflow compiles a DSL document and writes the resulting orkflow to the
 // durable store, so it outlives this process.
 //
-// The namespace comes from the document. Selecting one per request, and
-// reading one back by name, arrives with the namespace-aware API (M10.3); this
-// slice makes the store, the archive index and the DSL namespace-aware, and
-// every read below still asks for the default namespace — which is why a
-// document naming another one is refused here rather than stored where nothing
-// could reach it.
+// A document is applied into exactly one namespace, and there are two ways to
+// say which: the document's own `namespace:`, and the request's selector
+// (`orkctl -n`). An empty selector honours the document; a selector over a
+// document that names none adopts it, which is how one portable file is
+// applied into staging and into production. The two disagreeing is refused —
+// see applyNamespace.
 func (s *Service) ApplyOrkflow(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
@@ -292,20 +301,9 @@ func (s *Service) ApplyOrkflow(
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	// Interim guard, M10.1 -> M10.3. GetOrkflow, ListOrkflows and SubmitRun
-	// below are still pinned to the default namespace, so storing under
-	// another one would write an object no read path can reach and no run can
-	// execute. Refusing is the honest answer until the reads catch up:
-	// Unimplemented, not InvalidArgument, because the document is correct and
-	// will be accepted verbatim one slice later.
-	//
-	// M10.3 adds the namespace to those paths and DELETES this block;
-	// TestApplyOrkflow_RejectsNonDefaultNamespaceUntilM103 is what makes the
-	// deletion a deliberate act.
-	if ns := wf.GetNamespace(); ns != "" && ns != artifacts.DefaultNamespace {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf(
-			"namespace %q cannot be applied yet: orkflow reads and run submission "+
-				"are scoped to the %q namespace until M10.3", ns, artifacts.DefaultNamespace))
+	selected, err := applyNamespace(req.Msg.GetNamespace(), wf.GetNamespace())
+	if err != nil {
+		return nil, err
 	}
 	// Gate one of two on allowed_pools: the authoring gate, with the file in
 	// hand, so an author is told now rather than at the first submit. It is
@@ -316,22 +314,46 @@ func (s *Service) ApplyOrkflow(
 	//
 	// Not in the DSL compiler either: the compiler has no namespace registry
 	// to consult, and it is one `curl` away from being skipped.
-	ns, err := s.namespace(ctx, wf.GetNamespace())
+	ns, err := s.namespace(ctx, selected)
 	if err != nil {
 		return nil, err
 	}
 	if err := engine.CheckAllowedPools(ns, wf); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	// The stored document names the namespace it lives in, whichever of the
+	// two said so, so a reader needs no key to know where it came from.
+	wf.Namespace = ns.GetName()
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
 	if err := s.orkflows.Put(ctx, wf); err != nil {
-		return nil, orkflowStoreError(err, "store orkflow %s@%s", wf.GetName(), wf.GetVersion())
+		return nil, orkflowStoreError(err, "store orkflow %s@%s in namespace %q",
+			wf.GetName(), wf.GetVersion(), ns.GetName())
 	}
 	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{Orkflow: wf}), nil
 }
 
-// GetOrkflow reads a stored orkflow; an empty version means the most recently
-// applied one.
+// applyNamespace reconciles the two ways a request names a namespace.
+//
+// A selector that contradicts the document is a mistake one of the two made,
+// and there is no safe guess: taking the flag stores the definition where its
+// author will not look for it, and taking the file ignores what the operator
+// typed. Refusing names both, which is the only answer that tells the caller
+// what to change.
+func applyNamespace(selector, document string) (string, error) {
+	if selector == "" {
+		return document, nil
+	}
+	if document == "" || artifacts.ResolveNamespace(document) == artifacts.ResolveNamespace(selector) {
+		return selector, nil
+	}
+	return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+		"the document names namespace %q but it was applied into %q; "+
+			"remove one of the two so there is a single answer",
+		document, selector))
+}
+
+// GetOrkflow reads a stored orkflow from one namespace; an empty version means
+// the most recently applied one there, and an empty namespace is the default.
 func (s *Service) GetOrkflow(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.GetOrkflowRequest],
@@ -339,23 +361,34 @@ func (s *Service) GetOrkflow(
 	if req.Msg.GetName() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("name is required"))
 	}
-	wf, err := s.orkflows.Get(ctx, artifacts.DefaultNamespace, req.Msg.GetName(), req.Msg.GetVersion())
+	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
 	if err != nil {
-		return nil, orkflowStoreError(err, "orkflow %q version %q",
-			req.Msg.GetName(), req.Msg.GetVersion())
+		return nil, err
+	}
+	wf, err := s.orkflows.Get(ctx, ns.GetName(), req.Msg.GetName(), req.Msg.GetVersion())
+	if err != nil {
+		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
+			req.Msg.GetName(), req.Msg.GetVersion(), ns.GetName())
 	}
 	return connect.NewResponse(&orkstackv1.GetOrkflowResponse{Orkflow: wf}), nil
 }
 
-// ListOrkflows returns the latest version of every stored orkflow, read from
-// the durable store on every call.
+// ListOrkflows returns the latest version of every orkflow in one namespace,
+// read from the durable store on every call.
+//
+// It is one prefix scan of that namespace, not a scan of everything followed
+// by a filter: another namespace's documents are never read.
 func (s *Service) ListOrkflows(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListOrkflowsRequest],
 ) (*connect.Response[orkstackv1.ListOrkflowsResponse], error) {
-	orkflows, err := s.orkflows.List(ctx, artifacts.DefaultNamespace)
+	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
 	if err != nil {
-		return nil, orkflowStoreError(err, "list orkflows")
+		return nil, err
+	}
+	orkflows, err := s.orkflows.List(ctx, ns.GetName())
+	if err != nil {
+		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
 	}
 	if size := int(req.Msg.GetPageSize()); size > 0 && size < len(orkflows) {
 		orkflows = orkflows[:size]
@@ -439,14 +472,21 @@ func (s *Service) prepare(
 		return submission{}, connect.NewError(connect.CodeInvalidArgument,
 			fmt.Errorf("orkflow_name is required"))
 	}
-	stored, err := s.orkflows.Get(ctx, artifacts.DefaultNamespace, name, msg.GetOrkflowVersion())
-	if err != nil {
-		return submission{}, orkflowStoreError(err, "orkflow %q version %q",
-			name, msg.GetOrkflowVersion())
-	}
-	ns, err := s.namespace(ctx, stored.GetNamespace())
+	// The namespace is resolved BEFORE the orkflow is read, and it is the
+	// request's, not the stored document's. A name is unique within a
+	// namespace, so the pair is the orkflow's address: reading first and
+	// asking afterwards would have to pick a namespace to read from, which is
+	// the question being answered. It also puts the actionable error first —
+	// a mistyped namespace says so, instead of reporting a missing orkflow in
+	// a namespace that does not exist either.
+	ns, err := s.namespace(ctx, msg.GetNamespace())
 	if err != nil {
 		return submission{}, err
+	}
+	stored, err := s.orkflows.Get(ctx, ns.GetName(), name, msg.GetOrkflowVersion())
+	if err != nil {
+		return submission{}, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
+			name, msg.GetOrkflowVersion(), ns.GetName())
 	}
 	binding, err := s.binding(ns.GetName())
 	if err != nil {
@@ -847,7 +887,7 @@ func (s *Service) GetRun(
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
-// ListRuns returns runs, newest first, with optional filters.
+// ListRuns returns runs of one namespace, newest first, with optional filters.
 //
 // The two halves are Temporal's visibility index, which holds every run that
 // started and is the only source for one still executing, and the archive,
@@ -855,6 +895,15 @@ func (s *Service) GetRun(
 // archive: visibility knows a run's id, orkflow, status and times, while the
 // archive holds its task runs, input and output, and a finished run's outcome
 // is settled, so the richer record is also the correct one.
+//
+// BOTH halves are namespace-scoped before they are merged, and they are scoped
+// differently because they are indexed differently: the archive's key begins
+// with the namespace, so naming one narrows the scan, while visibility cannot
+// filter on a memo, so live runs are filtered client-side over the listed page
+// — the same trade the reader already makes for the orkflow name. Filtering
+// after the merge would work and is not done: it would fetch another
+// namespace's runs to discard them, and the archive can avoid reading them at
+// all.
 //
 // Visibility is eventually consistent. A run submitted a moment ago may not be
 // listed yet; it is readable by id throughout, because GetRun reads history
@@ -868,31 +917,31 @@ func (s *Service) ListRuns(
 		runs       []*orkstackv1.Run
 		fromMemory bool
 	)
-	// The router answers which cluster serves the request; the query answers
-	// what to list off it, and it names no namespace, in either projection or
-	// archive. Those are two questions. M10.1 put the coordinate on the wire
-	// and in the key; scoping a READ to a namespace is M10.3's, and until it
-	// lands ApplyOrkflow refuses every namespace but the default, so the flat
-	// catalog a v0.0.2 client sees is exactly "every namespace there is".
-	// Filtering the three queries to `default` here would be the same answer
-	// today and one more call site M10.3 has to unwind.
-	binding, err := s.binding(artifacts.DefaultNamespace)
+	// Two questions, two answers: the router says which cluster serves this
+	// namespace, and the namespace itself scopes what is listed off it.
+	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
+	if err != nil {
+		return nil, err
+	}
+	binding, err := s.binding(ns.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if binding.Reader != nil {
 		listed, err := binding.Reader.ListRuns(ctx, engine.RunQuery{
+			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 			Limit:       size,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable,
-				fmt.Errorf("list runs: %w", err))
+				fmt.Errorf("list runs in namespace %q: %w", ns.GetName(), err))
 		}
 		runs = listed
 	} else {
 		runs = s.runs.List(engine.ListFilter{
+			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 		})
@@ -900,13 +949,14 @@ func (s *Service) ListRuns(
 	}
 	if s.archive != nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
+			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 			Limit:       size,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal,
-				fmt.Errorf("list runs from archive: %w", err))
+				fmt.Errorf("list runs in namespace %q from archive: %w", ns.GetName(), err))
 		}
 		if fromMemory {
 			// This process executed those runs, so its snapshots are at least

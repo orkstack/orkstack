@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -150,23 +149,22 @@ func TestOrkflowPaths_ReportAMissingOrkflowAsNotFound(t *testing.T) {
 	}
 }
 
-// TestApplyOrkflow_RejectsNonDefaultNamespaceUntilM103 closes the black hole
-// M10.1 would otherwise open.
+// TestApplyOrkflow_StoresTheNamespaceTheDocumentNames replaces M10.1's interim
+// guard.
 //
-// The DSL, the store, the archive index and the registry are namespace-aware
-// in this slice; the API's read paths are not — GetOrkflow, ListOrkflows and
-// SubmitRun all ask the store for the default namespace until M10.3. So an
-// accepted `namespace: payments` would write an object under a key nothing can
-// read and no run can execute: a success that silently does nothing, which is
-// worse than a refusal. Documenting a field a user cannot use is the same
-// defect stated in prose.
+// That guard refused every namespace but the default, because the API's read
+// paths could not honour one and a stored `namespace: payments` would have
+// been an object nothing could read. M10.3 made the reads namespace-aware and
+// deleted the guard; what has to hold now is that a document naming a
+// namespace is written INTO it, which is what this asserts at the store seam.
 //
-// The refusal is Unimplemented, not InvalidArgument: the document is correct
-// and will be accepted verbatim one slice later. Deleting the guard is what
-// M10.3 does, and this test is what makes that a deliberate act rather than an
-// accident — it fails the moment the guard goes, and its replacement is a test
-// that applies and then READS BACK a non-default namespace.
-func TestApplyOrkflow_RejectsNonDefaultNamespaceUntilM103(t *testing.T) {
+// The end-to-end half — apply, list, get and submit in a non-default namespace,
+// invisible from the default — is
+// TestTwoNamespaces_SameOrkflowName_ListsAndRunsStayDisjoint and
+// TestApplyOrkflow_AppliesIntoANonDefaultNamespaceAndReadsItBack, both in
+// internal/api, and against real Temporal and MinIO in
+// TestIntegration_TwoNamespacesStayDisjointThroughTheCLI.
+func TestApplyOrkflow_StoresTheNamespaceTheDocumentNames(t *testing.T) {
 	const document = `
 namespace: payments
 name: nightly-close
@@ -176,30 +174,28 @@ tasks:
     with: {command: "echo settle"}
 `
 	store := newRecordingStore()
-	svc := api.NewService(api.Config{Orkflows: store, Starter: noopStarter{}})
+	svc := api.NewService(api.Config{
+		Orkflows:   store,
+		Namespaces: everyNamespace{},
+		Starter:    noopStarter{},
+	})
 	ctx := context.Background()
 
 	applied, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: document,
 	}))
-	if err == nil {
-		t.Fatalf("ApplyOrkflow(namespace: payments) stored %s@%s and returned no error; "+
-			"nothing can read or run it until M10.3",
-			applied.Msg.GetOrkflow().GetName(), applied.Msg.GetOrkflow().GetVersion())
+	if err != nil {
+		t.Fatalf("ApplyOrkflow(namespace: payments): %v", err)
 	}
-	if connect.CodeOf(err) != connect.CodeUnimplemented {
-		t.Errorf("ApplyOrkflow(namespace: payments) code = %v, want Unimplemented", connect.CodeOf(err))
+	if got := applied.Msg.GetOrkflow().GetNamespace(); got != "payments" {
+		t.Errorf("applied namespace = %q, want payments", got)
 	}
-	// The message has to tell the author which slice lifts the restriction;
-	// "not implemented" alone leaves them guessing whether it is their document.
-	for _, want := range []string{"payments", "M10.3"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("ApplyOrkflow(namespace: payments) error = %q, want it to name %q", err, want)
-		}
+	if len(store.puts) != 1 {
+		t.Fatalf("the store received %d write(s), want 1", len(store.puts))
 	}
-	if len(store.puts) != 0 {
-		t.Errorf("the store received %d write(s); a refused apply must not leave an unreadable object",
-			len(store.puts))
+	if got := store.puts[0].GetNamespace(); got != "payments" {
+		t.Errorf("stored namespace = %q, want payments: the document would be "+
+			"written where its author cannot find it", got)
 	}
 
 	// The default namespace, named explicitly or left out, still applies.
@@ -213,9 +209,39 @@ tasks:
 			t.Errorf("ApplyOrkflow(%q) = %v, want the default namespace to still apply", accepted, err)
 		}
 	}
-	if len(store.puts) != 2 {
-		t.Errorf("the store received %d write(s) for the default namespace, want 2", len(store.puts))
+	if len(store.puts) != 3 {
+		t.Errorf("the store received %d write(s), want 3", len(store.puts))
 	}
+	for _, stored := range store.puts[1:] {
+		if got := stored.GetNamespace(); got != artifacts.DefaultNamespace {
+			t.Errorf("stored namespace = %q, want %q", got, artifacts.DefaultNamespace)
+		}
+	}
+}
+
+// everyNamespace is a registry in which every name exists with no allow-list.
+// These tests are about the orkflow store seam, not about the registry, and a
+// nil registry would refuse a non-default name before the store was reached.
+type everyNamespace struct{}
+
+func (everyNamespace) Get(_ context.Context, name string) (*orkstackv1.Namespace, error) {
+	return &orkstackv1.Namespace{Name: artifacts.ResolveNamespace(name)}, nil
+}
+
+func (everyNamespace) List(context.Context) ([]*orkstackv1.Namespace, error) {
+	return []*orkstackv1.Namespace{artifacts.DefaultNamespaceDocument()}, nil
+}
+
+func (everyNamespace) Put(
+	context.Context,
+	*orkstackv1.Namespace,
+	artifacts.PutConditions,
+) (*orkstackv1.Namespace, error) {
+	return nil, errors.New("everyNamespace: this double answers reads only")
+}
+
+func (everyNamespace) Delete(context.Context, string) error {
+	return errors.New("everyNamespace: this double answers reads only")
 }
 
 // noopStarter satisfies the API's Temporal seam; these tests never reach it.
