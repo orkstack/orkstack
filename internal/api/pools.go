@@ -105,7 +105,25 @@ func (s *Service) ListPools(
 	// orkflows name are what "the pools in scope" can honestly mean. A
 	// namespace with an allow-list uses that instead, and the resolver ignores
 	// this.
-	named := s.poolsNamedByOrkflows(ctx, ns)
+	//
+	// A store that cannot be read narrows this report rather than replacing it
+	// with an error. The answer has two halves from two sources — which pools
+	// are in scope (the namespace document plus this) and who is serving them
+	// (the cluster) — and only this half needs the store. Pool health during a
+	// bucket wobble is precisely when an operator is looking, so what remains
+	// is the pools the namespace itself defines.
+	//
+	// A narrowed answer that says nothing is indistinguishable from a complete
+	// one, so the degradation is logged with the namespace and the failure.
+	// There is no field on the wire for it: this is a report whose other half
+	// is a liveness snapshot that was already stale when it was taken.
+	named, err := s.poolsNamedByOrkflows(ctx, ns)
+	if err != nil {
+		s.logger.Warn("list pools: the orkflow store could not be read, so only the "+
+			"namespace's own pools are reported",
+			"namespace", ns.GetName(), "error", err)
+		named = nil
+	}
 
 	resolver := s.resolverFor(binding)
 	pools, err := resolver.Pools(ctx, ns, named)
@@ -123,36 +141,24 @@ func (s *Service) ListPools(
 }
 
 // poolsNamedByOrkflows collects every pool the namespace's stored definitions
-// mention.
+// mention. A namespace with an allow-list needs none of them, and a namespace
+// nothing was ever applied into has none, which is not a failure.
 //
-// It is a report, and an unreachable store is not fatal to it: this answer has
-// two halves from two sources — which pools are in scope (this one) and who is
-// serving them (the cluster) — and only the first needs the store. Pool health
-// during a bucket wobble is precisely when an operator is looking, so a store
-// that cannot be listed narrows the answer to the pools the namespace itself
-// defines rather than replacing it with an error.
-//
-// A narrowed answer that says nothing is indistinguishable from a complete
-// one, so the degradation is logged with the namespace and the failure. There
-// is no field on the wire for it: ListPoolsResponse reports pools, and a
-// client that must not miss a pool is asking the wrong question of a report
-// whose other half is a liveness snapshot that was already stale when it was
-// taken.
+// What a store failure MEANS is ListPools' decision, not this one's: the
+// caller degrades, and this reports.
 func (s *Service) poolsNamedByOrkflows(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
-) []string {
+) ([]string, error) {
 	if len(ns.GetAllowedPools()) > 0 {
-		return nil
+		return nil, nil
 	}
 	orkflows, err := s.orkflows.List(ctx, ns.GetName())
 	if err != nil {
-		if !errors.Is(err, artifacts.ErrNotFound) {
-			s.logger.Warn("list pools: the orkflow store could not be read, so only the "+
-				"namespace's own pools are reported",
-				"namespace", ns.GetName(), "error", err)
+		if errors.Is(err, artifacts.ErrNotFound) {
+			return nil, nil
 		}
-		return nil
+		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
 	}
 	seen := map[string]struct{}{}
 	for _, wf := range orkflows {
@@ -167,5 +173,5 @@ func (s *Service) poolsNamedByOrkflows(
 		named = append(named, pool)
 	}
 	sort.Strings(named)
-	return named
+	return named, nil
 }
