@@ -59,6 +59,11 @@ func (s *RunStore) Delete(runID string) {
 // Apply merges a workflow-produced snapshot into the store. Fields the
 // run workflow does not own (CreatedAt, and Input when the snapshot omits it) are
 // preserved from the existing record.
+//
+// So is the namespace, and for a reason the other two do not carry: List
+// filters on it, so a snapshot that omits it does not blank a column — it
+// moves the run into another tenant's listing. Same fold, same rule, as
+// mergeRunSnapshot on the read path.
 func (s *RunStore) Apply(run *orkstackv1.Run) {
 	if run == nil || run.GetId() == "" {
 		return
@@ -72,6 +77,9 @@ func (s *RunStore) Apply(run *orkstackv1.Run) {
 		}
 		if next.GetInput() == nil {
 			next.Input = existing.GetInput()
+		}
+		if next.GetNamespace() == "" {
+			next.Namespace = existing.GetNamespace()
 		}
 	} else {
 		s.order = append(s.order, run.GetId())

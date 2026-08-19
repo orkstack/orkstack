@@ -16,7 +16,9 @@ import (
 
 // namespace resolves a namespace name to its registered document.
 //
-// An empty name is the built-in default. A name nothing registered is
+// An empty name is the built-in default. A name the rule forbids is
+// InvalidArgument and never reaches the registry — one clear answer instead of
+// a NotFound that reads as an empty namespace. A name nothing registered is
 // NotFound; a registry that cannot be reached is Unavailable, and the two are
 // kept apart because they need opposite reactions — fix the request, or fix
 // the deployment.
@@ -26,11 +28,24 @@ import (
 // names are one List away on a server that has already decided to answer with
 // an error. Making them run a second command to learn what the first should
 // have said is the difference between an error and an answer.
+//
+// This is the one seam every namespace-carrying request passes through —
+// ListOrkflows, GetOrkflow, ApplyOrkflow, SubmitRun, ListRuns, the run-id
+// paths, ListPools and the namespace RPCs themselves — which is why the rule
+// is checked here rather than restated at each caller.
 func (s *Service) namespace(ctx context.Context, name string) (*orkstackv1.Namespace, error) {
+	if err := validNamespaceSelector(name); err != nil {
+		return nil, err
+	}
 	ns, err := s.pools.Namespace(ctx, name)
 	switch {
 	case err == nil:
 		return ns, nil
+	case errors.Is(err, artifacts.ErrInvalidNamespace):
+		// The boundary above refuses every name this store would, so reaching
+		// here means a store with a stricter rule of its own. It is still the
+		// request that is wrong, not the deployment.
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.Is(err, artifacts.ErrNotFound):
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
 			"namespace %q does not exist%s", artifacts.ResolveNamespace(name),
@@ -90,10 +105,7 @@ func (s *Service) ListPools(
 	// orkflows name are what "the pools in scope" can honestly mean. A
 	// namespace with an allow-list uses that instead, and the resolver ignores
 	// this.
-	named, err := s.poolsNamedByOrkflows(ctx, ns)
-	if err != nil {
-		return nil, err
-	}
+	named := s.poolsNamedByOrkflows(ctx, ns)
 
 	resolver := s.resolverFor(binding)
 	pools, err := resolver.Pools(ctx, ns, named)
@@ -111,21 +123,36 @@ func (s *Service) ListPools(
 }
 
 // poolsNamedByOrkflows collects every pool the namespace's stored definitions
-// mention. It is a report, so an unreachable store is not fatal: the answer
-// falls back to the pools the namespace itself defines.
+// mention.
+//
+// It is a report, and an unreachable store is not fatal to it: this answer has
+// two halves from two sources — which pools are in scope (this one) and who is
+// serving them (the cluster) — and only the first needs the store. Pool health
+// during a bucket wobble is precisely when an operator is looking, so a store
+// that cannot be listed narrows the answer to the pools the namespace itself
+// defines rather than replacing it with an error.
+//
+// A narrowed answer that says nothing is indistinguishable from a complete
+// one, so the degradation is logged with the namespace and the failure. There
+// is no field on the wire for it: ListPoolsResponse reports pools, and a
+// client that must not miss a pool is asking the wrong question of a report
+// whose other half is a liveness snapshot that was already stale when it was
+// taken.
 func (s *Service) poolsNamedByOrkflows(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
-) ([]string, error) {
+) []string {
 	if len(ns.GetAllowedPools()) > 0 {
-		return nil, nil
+		return nil
 	}
 	orkflows, err := s.orkflows.List(ctx, ns.GetName())
 	if err != nil {
-		if errors.Is(err, artifacts.ErrNotFound) {
-			return nil, nil
+		if !errors.Is(err, artifacts.ErrNotFound) {
+			s.logger.Warn("list pools: the orkflow store could not be read, so only the "+
+				"namespace's own pools are reported",
+				"namespace", ns.GetName(), "error", err)
 		}
-		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
+		return nil
 	}
 	seen := map[string]struct{}{}
 	for _, wf := range orkflows {
@@ -140,5 +167,5 @@ func (s *Service) poolsNamedByOrkflows(
 		named = append(named, pool)
 	}
 	sort.Strings(named)
-	return named, nil
+	return named
 }

@@ -613,3 +613,110 @@ func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 			"on gpu's Orkers under this deployment", got, "gpu")
 	}
 }
+
+// downOrkflowStore is the durable orkflow store during a bucket wobble: every
+// call fails the way a client reports a refused connection.
+type downOrkflowStore struct{ err error }
+
+func (d downOrkflowStore) Put(context.Context, *orkstackv1.Orkflow) error { return d.err }
+
+func (d downOrkflowStore) Get(context.Context, string, string, string) (*orkstackv1.Orkflow, error) {
+	return nil, d.err
+}
+
+func (d downOrkflowStore) List(context.Context, string) ([]*orkstackv1.Orkflow, error) {
+	return nil, d.err
+}
+
+// TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown is
+// the degradation the code promises, measured.
+//
+// ListPools answers two questions from two sources: WHICH pools are in scope
+// (the namespace document, plus — for a namespace with no allow-list — the
+// pools its stored definitions name) and WHO is serving them (the cluster).
+// Only the first needs the orkflow store, and it is the less important half.
+// Pool health during a bucket wobble is precisely when an operator is looking,
+// so a store that cannot be listed narrows the answer instead of replacing it
+// with an error, and says so in the log.
+func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *testing.T) {
+	batch := poolQueue(t, "batch")
+	gpu := poolQueue(t, "gpu")
+	payments := registry{"payments": {Name: "payments", DefaultPool: "batch"}}
+	live := livePools{batch: 2, gpu: 1}
+	plugins := poolPlugins{batch: {"shell"}, gpu: {"shell"}}
+
+	// The control: with the store up, the pool an orkflow names is in scope.
+	healthy := engine.NewMemoryOrkflowStore()
+	up := api.NewService(api.Config{
+		Orkflows:    healthy,
+		Namespaces:  payments,
+		Pools:       live,
+		PoolPlugins: plugins,
+	})
+	if _, err := up.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+			Yaml:      gpuOrkflow,
+			Namespace: "payments",
+		})); err != nil {
+		t.Fatalf("Apply into payments: %v", err)
+	}
+	upResp, err := up.ListPools(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPoolsRequest{Namespace: "payments"}))
+	if err != nil {
+		t.Fatalf("ListPools with a healthy store: %v", err)
+	}
+	if got := poolNames(upResp.Msg.GetPools()); strings.Join(got, ",") != "batch,gpu" {
+		t.Fatalf("ListPools with a healthy store = %v, want [batch gpu]: the fallback below "+
+			"is only meaningful if the store contributes gpu here", got)
+	}
+
+	// The degradation.
+	logs := &bytes.Buffer{}
+	refused := errors.New("dial tcp 127.0.0.1:9000: connect: connection refused")
+	down := api.NewService(api.Config{
+		Orkflows:    downOrkflowStore{err: refused},
+		Namespaces:  payments,
+		Pools:       live,
+		PoolPlugins: plugins,
+		Logger:      slog.New(slog.NewTextHandler(logs, nil)),
+	})
+
+	resp, err := down.ListPools(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPoolsRequest{Namespace: "payments"}))
+	if err != nil {
+		t.Fatalf("ListPools with an unreachable orkflow store: %v — a store failure must "+
+			"narrow the report, not replace it", err)
+	}
+	if got := poolNames(resp.Msg.GetPools()); strings.Join(got, ",") != "batch" {
+		t.Fatalf("ListPools = %v, want [batch]: the namespace's own pools are what is left "+
+			"when the definitions cannot be read", got)
+	}
+	// The half that never needed the store still has to be right: liveness
+	// comes from the cluster.
+	only := resp.Msg.GetPools()[0]
+	if only.GetLiveOrkerCount() != 2 || !only.GetIsDefault() {
+		t.Errorf("pool batch = %v, want 2 live Orkers and the default mark", only)
+	}
+	if got := strings.Join(only.GetPlugins(), ","); got != "shell" {
+		t.Errorf("pool batch reports plugins %q, want shell", got)
+	}
+	if got := resp.Msg.GetDefaultPool(); got != "batch" {
+		t.Errorf("default pool = %q, want batch", got)
+	}
+	// A narrowed answer that says nothing is indistinguishable from a complete
+	// one, so the degradation is logged with what could not be read.
+	for _, want := range []string{"payments", "connection refused"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("the degradation log %q does not mention %q", logs.String(), want)
+		}
+	}
+}
+
+func poolNames(pools []*orkstackv1.Pool) []string {
+	names := make([]string, 0, len(pools))
+	for _, pool := range pools {
+		names = append(names, pool.GetName())
+	}
+	sort.Strings(names)
+	return names
+}

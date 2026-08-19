@@ -612,6 +612,12 @@ func terminalEventFor(status orkstackv1.Status) orkstackv1.EventType {
 // mergeRunSnapshot folds a newer snapshot over an older one. The workflow owns
 // everything it publishes; the fields it can omit are filled from what came
 // before, so a late snapshot never erases the run's identity.
+//
+// The namespace is carried for a harder reason than the rest. internal/api
+// resolves a run id INSIDE the namespace the caller named and refuses it in
+// any other, so a projection that lost the field resolves to `default` and
+// hands one tenant's run to another to read, watch and cancel. A dropped
+// namespace is a tenancy boundary failing open, not a blank column.
 func mergeRunSnapshot(base, next *orkstackv1.Run) *orkstackv1.Run {
 	if next == nil {
 		return base
@@ -624,6 +630,9 @@ func mergeRunSnapshot(base, next *orkstackv1.Run) *orkstackv1.Run {
 	}
 	if next.GetInput() == nil {
 		next.Input = base.GetInput()
+	}
+	if next.GetNamespace() == "" {
+		next.Namespace = base.GetNamespace()
 	}
 	if next.GetOrkflowName() == "" {
 		next.OrkflowName = base.GetOrkflowName()

@@ -49,6 +49,24 @@ func validNamespaceName(name string) error {
 	return nil
 }
 
+// validNamespaceSelector is the same rule for a request that SELECTS a
+// namespace rather than naming one to write: empty is the default namespace,
+// which is the contract of every `namespace` field on the wire.
+//
+// It is asked on every path, not only the writing ones. A read used to hand
+// the raw name to the registry and answer with whatever came back, so
+// `Payments` was NotFound against an in-memory registry — "does not exist;
+// these do: default", which reads as an empty namespace and sends the caller
+// to create it — and Unavailable against a store that validates its own keys,
+// which blames the deployment for a typo. Neither is true: the name cannot be
+// a namespace anywhere, and that is a bad request.
+func validNamespaceSelector(name string) error {
+	if name == "" {
+		return nil
+	}
+	return validNamespaceName(name)
+}
+
 // CreateNamespace registers a namespace, idempotently for an identical spec.
 //
 // The write is conditional on the object being absent, so two replicas racing

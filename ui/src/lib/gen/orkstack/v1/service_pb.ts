@@ -555,8 +555,13 @@ export const ListNamespacesResponseSchema: GenMessage<ListNamespacesResponse> = 
  */
 export type UpdateNamespaceRequest = Message<"orkstack.v1.UpdateNamespaceRequest"> & {
   /**
-   * namespace carries the new spec and the etag it was read at. An empty etag
-   * is an unconditional write, which a caller has to ask for explicitly.
+   * namespace carries the new spec and the etag it was read at. Every update
+   * is conditional: the etag names the stored version this edit replaces, and
+   * an empty etag says the version it edited had no stored bytes at all —
+   * which is what a read of the synthesized `default` namespace hands back.
+   * Both are compare-and-swaps, and a write whose condition no longer holds
+   * is FAILED_PRECONDITION: re-read and re-apply. There is no unconditional
+   * mode; see Namespace.etag for why an empty token cannot be one.
    *
    * @generated from field: orkstack.v1.Namespace namespace = 1;
    */

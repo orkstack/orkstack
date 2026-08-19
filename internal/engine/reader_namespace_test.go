@@ -11,12 +11,14 @@ import (
 
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
+	historypb "go.temporal.io/api/history/v1"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -231,5 +233,108 @@ func TestTemporalRunReader_ReportsAnUnscopedListItCouldNotFinish(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %q; a caller cannot act on it", err, want)
 		}
+	}
+}
+
+// A run's namespace is not a label on a read; it is what AUTHORIZES one.
+// internal/api resolves a run id inside the namespace the caller asked for and
+// refuses it in any other, so a projection that lost the field resolves to
+// `default` and hands one tenant's run to another — readable, watchable and
+// cancellable. The fold below is where that can happen: a run's projection is
+// built from many snapshots written over its life, and a snapshot that omits a
+// field must never erase it. CreatedAt, Input and the orkflow's name and
+// version were already carried for exactly that reason; the namespace is the
+// same shape of field and the only one with a boundary attached.
+
+// TestTemporalRunReader_ARunKeepsItsNamespaceWhenALaterSnapshotOmitsIt reads a
+// history whose lifecycle snapshots carry no namespace — the shape a build
+// that does not fill the field writes, and the shape every history recorded
+// before the field existed already has. The run's own start payload carries
+// the definition, so the namespace is in history; the question is whether the
+// fold keeps it.
+func TestTemporalRunReader_ARunKeepsItsNamespaceWhenALaterSnapshotOmitsIt(t *testing.T) {
+	const runID = "ork-tenancy-1"
+	wf := &orkstackv1.Orkflow{Name: "deploy", Version: "1.4.0", Namespace: "payments"}
+	history := []*historypb.HistoryEvent{startedEvent(t, runID, wf)}
+	for i, stage := range []struct {
+		eventType orkstackv1.EventType
+		status    orkstackv1.Status
+	}{
+		{orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, orkstackv1.Status_STATUS_PENDING},
+		{orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, orkstackv1.Status_STATUS_RUNNING},
+		{orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED},
+	} {
+		sequence := int64(i + 1)
+		history = append(history, publishEventScheduled(t, sequence+1, &orkstackv1.Event{
+			RunId:     runID,
+			Sequence:  sequence,
+			Type:      stage.eventType,
+			Status:    stage.status,
+			Message:   stage.eventType.String(),
+			Timestamp: timestamppb.New(readerEpoch.Add(time.Duration(sequence) * time.Second)),
+		}, &orkstackv1.Run{
+			// No Namespace: this is the snapshot under test.
+			Id:             runID,
+			OrkflowName:    wf.GetName(),
+			OrkflowVersion: wf.GetVersion(),
+			Status:         stage.status,
+		}))
+	}
+	reader, _ := readerOver(history, runID)
+
+	run, err := reader.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if run.GetNamespace() != "payments" {
+		t.Fatalf("GetRun(%s).Namespace = %q, want %q: a snapshot that omits the namespace "+
+			"moves the run to the default namespace, where another tenant may read and "+
+			"cancel it", runID, run.GetNamespace(), "payments")
+	}
+	// The neighbouring identity fields are the control: they prove the run was
+	// actually folded rather than answered from the start event alone.
+	if run.GetOrkflowName() != "deploy" || run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("GetRun(%s) = %v, want the succeeded run of orkflow deploy", runID, run)
+	}
+}
+
+// TestMergeRunSnapshot_KeepsTheIdentityALaterSnapshotOmits states the same
+// claim over the fold itself, field by field, so a field added to the run
+// without being carried here fails one named row rather than a whole read.
+func TestMergeRunSnapshot_KeepsTheIdentityALaterSnapshotOmits(t *testing.T) {
+	base := &orkstackv1.Run{
+		Id:             "ork-tenancy-2",
+		Namespace:      "payments",
+		OrkflowName:    "deploy",
+		OrkflowVersion: "1.4.0",
+		Status:         orkstackv1.Status_STATUS_PENDING,
+		Input:          &orkstackv1.Payload{},
+		CreatedAt:      timestamppb.New(readerEpoch),
+	}
+	// The later snapshot carries only what it observed: a status change.
+	merged := mergeRunSnapshot(base, &orkstackv1.Run{
+		Id:     base.GetId(),
+		Status: orkstackv1.Status_STATUS_RUNNING,
+	})
+
+	for _, field := range []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"namespace", merged.GetNamespace(), base.GetNamespace()},
+		{"orkflow name", merged.GetOrkflowName(), base.GetOrkflowName()},
+		{"orkflow version", merged.GetOrkflowVersion(), base.GetOrkflowVersion()},
+		{"created at", merged.GetCreatedAt().AsTime(), base.GetCreatedAt().AsTime()},
+		{"input present", merged.GetInput() != nil, true},
+	} {
+		if field.got != field.want {
+			t.Errorf("merged %s = %v, want %v — a snapshot that omits a field must not "+
+				"erase it", field.name, field.got, field.want)
+		}
+	}
+	if merged.GetStatus() != orkstackv1.Status_STATUS_RUNNING {
+		t.Errorf("merged status = %v, want RUNNING: the newer snapshot still wins on what "+
+			"it does carry", merged.GetStatus())
 	}
 }
