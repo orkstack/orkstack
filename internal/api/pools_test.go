@@ -704,10 +704,21 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 		t.Errorf("default pool = %q, want batch", got)
 	}
 	// A narrowed answer that says nothing is indistinguishable from a complete
-	// one, so the degradation is logged with what could not be read.
-	for _, want := range []string{"payments", "connection refused"} {
+	// one, so the degradation is logged with what could not be read. The
+	// namespace is asserted as its own ATTRIBUTE rather than as a substring of
+	// the record: the wrapped error names it too, so a substring passes for a
+	// log that dropped the field an operator filters on.
+	for _, want := range []string{
+		"namespace=payments",
+		"orkflow store could not be read",
+		"connection refused",
+	} {
 		if !strings.Contains(logs.String(), want) {
-			t.Errorf("the degradation log %q does not mention %q", logs.String(), want)
+			// The wanted attribute comes first: a failure line that opens with
+			// the whole record opens with a wall clock, and a proof that
+			// quotes it goes stale on the next run rather than on the next
+			// defect.
+			t.Errorf("the degradation log does not carry %q; it says: %s", want, logs.String())
 		}
 	}
 }
