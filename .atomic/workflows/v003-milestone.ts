@@ -43,17 +43,27 @@ import { Type, type Static } from "typebox";
 import milestoneFinish from "./milestone-finish.js";
 
 // ---------------------------------------------------------------------------
-// Models. Roles per docs/models/model-selection.md; every id and thinking
-// level below was checked against the configured catalog before launch.
-//   design            -> architecture/planning across eight slices  => high
-//   adversarial probe -> high cost of error (silent data leak)      => max
-//   repair            -> triage/repair                              => high
-//   report            -> final reporting                            => medium
+// Models. Roles per docs/MODEL_SELECTION.md; every id and thinking level below
+// was checked against the configured catalog before launch.
+//   design (ARCHITECT) -> contract-setting architecture              => max
+//   adversarial probe  -> high cost of error (silent data leak)      => max
+//   repair             -> triage/repair                              => high
+//   report             -> final reporting                            => medium
 // Slice children pin their own cross-provider chains; they are not overridden.
+//
+// The design stage is the one place a single call is worth `max` twice over:
+// it fixes the proto contract, the store layout and the routing rule that all
+// eight slices inherit, and a slice cannot cheaply revise a decision it was
+// handed. So the level does NOT decay down the chain (docs/MODEL_SELECTION.md
+// rule 6) — a fallback at `:high` would buy a cheaper contract for the same
+// eight slices. claude-fable-5 leads and claude-opus-5 backs it because the
+// first fallback should preserve reasoning depth, not provider spread; the
+// chain still spans all three subscriptions from its third entry.
 // ---------------------------------------------------------------------------
-const DESIGN_MODEL = "anthropic/claude-opus-5:high";
+const DESIGN_MODEL = "anthropic/claude-fable-5:max";
 const DESIGN_FALLBACKS = [
-  "openai-codex/gpt-5.6-luna:high",
+  "anthropic/claude-opus-5:max",
+  "openai-codex/gpt-5.6-sol:max",
   "opencode-go/kimi-k3:max",
 ];
 
