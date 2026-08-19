@@ -263,16 +263,19 @@ deployment cares about.
 | `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §6). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
 | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory |
+| `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
+| `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
+| `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
 | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
-| `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` |
+| `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
 | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
-| `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts and the run archive live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
+| `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts, the run archive and task logs live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
 | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `ORK_S3_REGION` | `us-east-1` | both | |
-| `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts and archived runs |
+| `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts, archived runs and task logs |
 | `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
 | `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
 | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
@@ -295,7 +298,7 @@ export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
 ```
 
-One bucket, five key families (`pkg/artifacts`):
+One bucket, six key families (`pkg/artifacts`):
 
 | keys | what |
 |---|---|
@@ -303,6 +306,7 @@ One bucket, five key families (`pkg/artifacts`):
 | `metadata/orkflows/{namespace}/{name}/@current.json` | which version that orkflow runs: `{"version":…,"updated_at":…}` and nothing else. Moved by `orkctl orkflow promote`; absent means "the newest applied version" |
 | `metadata/namespaces/{name}.json` | namespace registry documents; `default` is synthesized when absent |
 | `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/{namespace}/…` | archived runs: the body, and the key-only index `ListRuns` scans |
+| `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` | task output, one chunk per object, written while the task runs (below) |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{name}` | artifacts, addressed by provenance |
 
 A basename beginning `@` is reserved for per-orkflow metadata stored beside the
@@ -315,6 +319,68 @@ string: a copy of the document there could drift from the document.
 `proof/M8.5/ha-deploy.sh` exports exactly that block, and phase 7 of
 `proof/M8.5/ha-transcript.txt` reads a finished run back out of the bucket —
 with a control showing nothing was written to local disk.
+
+### Live task logs: where they are, what bounds them, how long they stay
+
+A task's output is bytes, so it travels as stored objects and never through a
+Temporal payload or the event stream (AGENTS.md §1.4). The Orker executing an
+attempt buffers its lines and flushes them as numbered chunks **while the task
+runs**; `orkctl run logs -f`, `RunService.StreamTaskLogs` and the
+`/ws/runs/{id}/tasks/{task}/logs` socket read them back.
+
+```
+metadata/logs/{run-id}/{task-id}/{attempt}/{seq}         one chunk
+metadata/logs/{run-id}/{task-id}/{attempt}/{seq}.trunc   the truncation notice
+```
+
+Both counters are zero-padded to a fixed width, so a lexicographic listing is
+numeric order: **the key carries the order**, and no reader sorts by
+modification time, which two clocks and a retry would make a lie.
+
+Because the chunks are in the bucket rather than in the process that produced
+them, **any replica serves any run's logs** — one it never started, one whose
+Orker has exited, one that finished before the reader connected. Under
+`ORK_ARTIFACT_BACKEND=local` that stops being true for the same reason the run
+archive does: each process reads its own directory.
+
+Two bounds decide when a chunk is written, and a deployment tunes both:
+
+- `ORK_ORKER_LOG_FLUSH_BYTES` (64 KiB) batches a chatty task, so a hundred
+  thousand lines cost a few hundred objects rather than a hundred thousand.
+- `ORK_ORKER_LOG_FLUSH_INTERVAL` (500 ms) bounds the wait for a slow one, so a
+  task printing a line a minute is visible in half a second rather than when it
+  eventually reaches 64 KiB.
+
+A third bounds the damage. `ORK_ORKER_LOG_MAX_BYTES` (16 MiB) caps ONE task
+attempt: at the cap the Orker writes a final chunk saying so, in words, and
+stores nothing more. **Truncation is visible in the stream**, never silent —
+`orkctl run logs` prints the notice and the RPC sets `truncated` on it. The
+Orker's own memory is one flush buffer per running task, and a single
+over-long line is split rather than accumulated, so neither a chatty task nor
+one that never prints a newline can exhaust it.
+
+**Retention is the bucket's.** Nothing in OrkStack deletes a log chunk; the run
+archive never embeds one, so expiring them cannot damage a run's record. The
+default is to keep them forever, which is rarely what an operator wants for
+16 MiB per attempt. One lifecycle rule on the prefix:
+
+```bash
+# MinIO: expire task logs after 30 days, leaving definitions, artifacts and
+# archived runs alone.
+mc ilm rule add local/orkstack-artifacts \
+  --prefix "metadata/logs/" --expire-days 30
+```
+
+```bash
+# AWS S3: the same rule.
+aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
+  --lifecycle-configuration '{"Rules":[{"ID":"ork-task-logs","Status":"Enabled",
+    "Filter":{"Prefix":"metadata/logs/"},"Expiration":{"Days":30}}]}'
+```
+
+A reader that meets an expired chunk mid-stream stops at the gap rather than
+skipping it, so a resumed read continues from the last sequence it actually
+received.
 
 ### Versioning is off until you set a build id
 
