@@ -110,9 +110,12 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 	}
 	root.PersistentFlags().StringVar(&g.server, "server", defaultServer,
 		"OrkStack engine base URL (env "+serverEnvVar+")")
+	// No backticks in this usage string: Cobra reads a backticked span as the
+	// flag's value placeholder, so "`orkctl namespace use`" would render as
+	// `-n, --namespace orkctl namespace use`.
 	root.PersistentFlags().StringVarP(&g.namespace, "namespace", "n", "",
 		"namespace to act in (env "+namespaceEnvVar+
-			", then `orkctl namespace use`; default \"default\")")
+			", then the one saved by 'orkctl namespace use'; default \"default\")")
 	root.PersistentFlags().BoolVar(&g.json, "json", false,
 		"emit machine-readable JSON instead of human tables")
 	root.PersistentFlags().DurationVar(&g.timeout, "timeout", 30*time.Second,
