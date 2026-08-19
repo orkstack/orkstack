@@ -266,14 +266,22 @@ export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
 ```
 
-One bucket, four key families (`pkg/artifacts`):
+One bucket, five key families (`pkg/artifacts`):
 
 | keys | what |
 |---|---|
-| `metadata/orkflows/{namespace}/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot |
+| `metadata/orkflows/{namespace}/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot; immutable once written |
+| `metadata/orkflows/{namespace}/{name}/@current.json` | which version that orkflow runs: `{"version":…,"updated_at":…}` and nothing else. Moved by `orkctl orkflow promote`; absent means "the newest applied version" |
 | `metadata/namespaces/{name}.json` | namespace registry documents; `default` is synthesized when absent |
 | `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/{namespace}/…` | archived runs: the body, and the key-only index `ListRuns` scans |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{name}` | artifacts, addressed by provenance |
+
+A basename beginning `@` is reserved for per-orkflow metadata stored beside the
+versions, so a pointer can never be read as a version. Two replicas promoting
+at once are arbitrated by the object store's own conditional PUT — the loser is
+told it lost and swaps again against the winner's etag — so promotion needs no
+lock, no lease and nothing in Temporal. The pointer holds only a version
+string: a copy of the document there could drift from the document.
 
 `proof/M8.5/ha-deploy.sh` exports exactly that block, and phase 7 of
 `proof/M8.5/ha-transcript.txt` reads a finished run back out of the bucket —

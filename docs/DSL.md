@@ -41,6 +41,57 @@ then `ORK_NAMESPACE`, then the one saved by `orkctl namespace use`, then
 a `default_pool` and an `allowed_pools` list, which decide and bound where its
 tasks run (see `pool` below).
 
+### `version`
+
+A version is a name for one document, and it is **immutable**: applying an edit
+adds a version and never rewrites one, because a run pinned to a version reads
+its definition long after it was applied.
+
+```bash
+orkctl apply deploy.ork.yaml     # unchanged file: no new version, nothing written
+orkctl apply deploy.ork.yaml     # edited file:    a new version
+```
+
+`version:` is optional. When a document pins none, the compiler derives one
+from the document's semantic content (comments, whitespace and mapping order do
+not change it), so editing and applying produces a new version without anybody
+inventing a number, and re-applying an unchanged file produces the same version
+and writes nothing.
+
+Pinning one is a promise about the bytes: applying a **changed** document under
+a version that is already stored is refused (`already_exists`), and the fix is a
+new version rather than a force.
+
+### Which version runs
+
+Each orkflow has one movable pointer, its **current** version. A run that names
+no version executes it:
+
+```bash
+orkctl orkflow versions deploy          # every version, newest first, CURRENT marked
+orkctl orkflow promote deploy 1.4.0     # move the pointer
+orkctl orkflow promote deploy 1.3.0     # roll back: the same command
+orkctl orkflow diff deploy 1.3.0 1.4.0  # what changed between two versions
+orkctl orkflow edit deploy              # $EDITOR round trip, applied as a new version
+```
+
+Until somebody promotes, an orkflow runs its **most recently applied** version,
+which is what it did before pointers existed — promoting nothing changes
+nothing. Promoting to a version that was never applied is refused, so a pointer
+never names a version that is not there.
+
+A promotion decides what STARTS, never what is already running: a run in flight
+carries its own resolved definition and finishes on the version it began with,
+whichever way the pointer moves under it. `--version` on `orkctl run submit`
+pins one run explicitly and ignores the pointer.
+
+Two questions are reported separately, because they are two questions: the
+**current** version is what runs, and the **newest applied** version is where
+editing continues from. `orkctl orkflow edit` starts from the newest applied one
+and sends it back as the edit's base, so an edit made while somebody else
+applied is refused (`failed_precondition`, naming both versions) instead of
+landing beside a newer version nobody looked at.
+
 ## Inputs
 
 ```yaml
