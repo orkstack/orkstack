@@ -381,6 +381,12 @@ func pinnedOrkflow(versions []*orkstackv1.Orkflow, version string) *orkstackv1.O
 // — and two genuinely different definitions would then both compare as "" and
 // the second would be silently dropped. Comparing everything is strictly
 // safer: it never treats a difference as a repeat.
+//
+// It is also the reason a DERIVED version covers the source bytes rather than
+// the document's semantic content (internal/dsl.sourceHash): this comparison
+// is what "the same document" means, so a derivation that ignored comments
+// would hand one version two documents and get the second refused below, with
+// no version left for the author to publish it under.
 func sameStoredOrkflow(stored, incoming *orkstackv1.Orkflow) bool {
 	if stored.GetSourceYaml() != incoming.GetSourceYaml() {
 		return false

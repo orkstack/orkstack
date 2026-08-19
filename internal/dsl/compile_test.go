@@ -1,6 +1,8 @@
 package dsl_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -333,7 +335,20 @@ tasks:
 	}
 }
 
-func TestCompile_UnpinnedVersionIsStableContentHash(t *testing.T) {
+// TestCompile_UnpinnedVersionNamesTheBytesItStores is the derived version's
+// whole contract: it is the sha256 of the source the document is stored with.
+//
+// The second half is not decoration. A version names ONE stored document, and
+// the store decides "this apply is what is already there" by comparing what it
+// holds — source bytes included (pkg/artifacts.sameStoredOrkflow). A
+// derivation covering LESS than those bytes names two different documents: a
+// comment-only edit compiled to the same version carrying different source,
+// and the store then refused it as an attempt to rewrite an immutable version
+// — with advice ("publish a new version") its author could not follow, because
+// a derived version is not theirs to choose. So the derivation covers exactly
+// the bytes that are stored, and the two notions of "the same document" cannot
+// disagree.
+func TestCompile_UnpinnedVersionNamesTheBytesItStores(t *testing.T) {
 	const doc = `
 name: unpinned
 description: hash me
@@ -350,6 +365,8 @@ tasks:
 		t.Fatalf("version = %q, want a 64-char sha256 hex hash", first.GetVersion())
 	}
 
+	// The same bytes are the same version. This is what makes re-applying an
+	// unchanged file a no-op rather than a second version of the same thing.
 	second, err := dsl.Compile([]byte(doc))
 	if err != nil {
 		t.Fatalf("Compile (repeat): %v", err)
@@ -358,24 +375,36 @@ tasks:
 		t.Errorf("version is not stable: %q vs %q", first.GetVersion(), second.GetVersion())
 	}
 
-	// Comments and formatting must not change the version.
-	reformatted := "# a comment\n" + strings.ReplaceAll(doc, "description: hash me", "description:   hash me")
-	third, err := dsl.Compile([]byte(reformatted))
-	if err != nil {
-		t.Fatalf("Compile (reformatted): %v", err)
-	}
-	if third.GetVersion() != first.GetVersion() {
-		t.Errorf("cosmetic change altered the version: %q vs %q", third.GetVersion(), first.GetVersion())
+	// And the version IS those bytes' hash, so nothing else has to agree with
+	// the compiler about what "the same document" means — it can measure it.
+	sum := sha256.Sum256([]byte(first.GetSourceYaml()))
+	if want := hex.EncodeToString(sum[:]); first.GetVersion() != want {
+		t.Errorf("version %q does not name the stored source (sha256 %q)",
+			first.GetVersion(), want)
 	}
 
-	// A semantic change must change the version.
-	changed := strings.ReplaceAll(doc, "echo 1", "echo 2")
-	fourth, err := dsl.Compile([]byte(changed))
-	if err != nil {
-		t.Fatalf("Compile (changed): %v", err)
-	}
-	if fourth.GetVersion() == first.GetVersion() {
-		t.Errorf("semantic change did not alter the version %q", fourth.GetVersion())
+	// Every change to those bytes is a new version, including the ones a
+	// compiler could dismiss as cosmetic: a comment is part of the document
+	// its author reads, and an edit that adds one has to be storable.
+	for what, edited := range map[string]string{
+		"a comment":         "# remind me why this exists\n" + doc,
+		"whitespace":        strings.ReplaceAll(doc, "description: hash me", "description:   hash me"),
+		"an edited command": strings.ReplaceAll(doc, "echo 1", "echo 2"),
+		"a reordered mapping": strings.Replace(doc, "name: unpinned\ndescription: hash me",
+			"description: hash me\nname: unpinned", 1),
+	} {
+		changed, err := dsl.Compile([]byte(edited))
+		if err != nil {
+			t.Fatalf("Compile (%s): %v", what, err)
+		}
+		if changed.GetVersion() == first.GetVersion() {
+			t.Errorf("%s did not change the version %q", what, first.GetVersion())
+		}
+		sum := sha256.Sum256([]byte(changed.GetSourceYaml()))
+		if want := hex.EncodeToString(sum[:]); changed.GetVersion() != want {
+			t.Errorf("%s: version %q does not name the stored source (sha256 %q)",
+				what, changed.GetVersion(), want)
+		}
 	}
 }
 

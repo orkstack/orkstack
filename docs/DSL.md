@@ -9,7 +9,7 @@ applied to the `ork` engine with `orkctl apply`.
 |---------------|----------|--------------------------------------------------------|
 | `namespace`   | no       | Slug scope; absent means the built-in `default`.        |
 | `name`        | yes      | Slug identifier, unique within its namespace.           |
-| `version`     | no       | Author-pinned version; defaults to a content hash.     |
+| `version`     | no       | Author-pinned version; defaults to the source's hash.  |
 | `description` | no       | Human description.                                     |
 | `labels`      | no       | `map[string]string` for organization/filtering.        |
 | `inputs`      | no       | Declared input parameters (see below).                 |
@@ -53,14 +53,18 @@ orkctl apply deploy.ork.yaml     # edited file:    a new version
 ```
 
 `version:` is optional. When a document pins none, the compiler derives one
-from the document's semantic content (comments, whitespace and mapping order do
-not change it), so editing and applying produces a new version without anybody
-inventing a number, and re-applying an unchanged file produces the same version
-and writes nothing.
+from the source itself: the sha256 of the very bytes that version is stored
+with. So editing and applying produces a new version without anybody inventing
+a number, and re-applying an unchanged file produces the same version and
+writes nothing. A version names the document a reader opens, comments
+included — a comment-only edit is a new version, because what is stored
+changed.
 
-Pinning one is a promise about the bytes: applying a **changed** document under
-a version that is already stored is refused (`already_exists`), and the fix is a
-new version rather than a force.
+Pinning one takes that decision back: the number is yours, and applying a
+**changed** document under a version that is already stored is refused
+(`already_exists`), because a run pinned to it is still reading those bytes.
+The fix is a new version rather than a force — bump `version:`, or drop it and
+let the source name one.
 
 ### Which version runs
 

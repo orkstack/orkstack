@@ -281,6 +281,80 @@ tasks:
 	}
 }
 
+// TestApplyOrkflow_ACommentOnlyEditOfAnUnpinnedDocumentIsANewVersion is
+// acceptance 4 for the edit that a version derived from less than the source
+// could not store at all.
+//
+// The two notions of "the same document" have to be one notion. An unpinned
+// document's version comes from its source, and the store decides that an
+// apply is a repeat by comparing the source it holds; while the derivation
+// ignored comments and the comparison did not, a comment-only edit compiled to
+// the SAME version carrying DIFFERENT bytes and was refused as an attempt to
+// rewrite an immutable version — a refusal whose advice ("publish a new
+// version") nobody could follow, because a derived version is not the author's
+// to choose. Editing a comment is editing the document, so it is a version.
+func TestApplyOrkflow_ACommentOnlyEditOfAnUnpinnedDocumentIsANewVersion(t *testing.T) {
+	svc := versionedService(t)
+	ctx := context.Background()
+	const document = `name: deploy
+tasks:
+  - id: build
+    plugin: shell
+    with:
+      op: exec
+      command: echo one
+`
+	const commented = "# remind me why this exists\n" + document
+
+	first := apply(t, svc, document)
+	edited := apply(t, svc, commented)
+	if !edited.GetCreated() {
+		t.Error("a comment-only edit reported that it created nothing")
+	}
+	if edited.GetOrkflow().GetVersion() == first.GetOrkflow().GetVersion() {
+		t.Fatalf("a comment-only edit kept the old version %q",
+			first.GetOrkflow().GetVersion())
+	}
+
+	// Each version carries its own source, and the earlier one is untouched:
+	// this is the difference between adding a version and rewriting one.
+	for version, want := range map[string]bool{
+		first.GetOrkflow().GetVersion():  false,
+		edited.GetOrkflow().GetVersion(): true,
+	} {
+		got, err := svc.GetOrkflow(ctx, connect.NewRequest(
+			&orkstackv1.GetOrkflowRequest{Name: "deploy", Version: version}))
+		if err != nil {
+			t.Fatalf("GetOrkflow(%s): %v", version, err)
+		}
+		if has := strings.Contains(
+			got.Msg.GetOrkflow().GetSourceYaml(), "# remind me why this exists"); has != want {
+			t.Errorf("version %s carries the comment = %v, want %v:\n%s",
+				version, has, want, got.Msg.GetOrkflow().GetSourceYaml())
+		}
+	}
+
+	// The comment is now the head, and re-applying it is still the no-op a
+	// repeat has always been.
+	repeat := apply(t, svc, commented)
+	if repeat.GetCreated() {
+		t.Error("re-applying the commented document created a second version of it")
+	}
+	listed, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
+		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy"}))
+	if err != nil {
+		t.Fatalf("ListOrkflowVersions: %v", err)
+	}
+	if len(listed.Msg.GetVersions()) != 2 {
+		t.Fatalf("want the two documents that were applied: %s",
+			versionRows(listed.Msg.GetVersions()))
+	}
+	if listed.Msg.GetHeadVersion() != edited.GetOrkflow().GetVersion() {
+		t.Errorf("head_version = %q, want the edited version (%q)",
+			listed.Msg.GetHeadVersion(), edited.GetOrkflow().GetVersion())
+	}
+}
+
 // TestApplyOrkflow_DetectsAnEditDerivedFromAStaleVersion is acceptance 5: an
 // edit that says which version it came from is refused when that is no longer
 // the head, and the refusal names both versions so the user can diff them.

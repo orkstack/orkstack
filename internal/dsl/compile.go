@@ -114,7 +114,8 @@ func CompileFile(path string) (*orkstackv1.Orkflow, error) {
 
 // Compile parses, validates, and compiles a DSL document. The returned
 // Orkflow carries the original source bytes in SourceYaml; when the document
-// does not pin `version`, Version is a stable content hash of the document.
+// does not pin `version`, Version is the sha256 of those same bytes, so a
+// version always names the source it is stored with (sourceHash).
 func Compile(source []byte) (*orkstackv1.Orkflow, error) {
 	return CompileWithOptions(source, Options{})
 }
@@ -181,11 +182,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	if wf.GetVersion() == "" {
-		version, err := contentHash(source)
-		if err != nil {
-			return nil, err
-		}
-		wf.Version = version
+		wf.Version = sourceHash(source)
 	}
 	return wf, nil
 }

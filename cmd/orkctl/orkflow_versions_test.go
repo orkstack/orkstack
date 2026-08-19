@@ -190,6 +190,49 @@ func TestOrkflowEdit_RoundTripsThroughTheEditorAndAppliesANewVersion(t *testing.
 	}
 }
 
+// TestOrkflowEdit_ACommentOnlyEditIsAppliedAsANewVersion is the same
+// acceptance through the command that found it, on the documents most people
+// write: one that pins no version, edited to add a comment and nothing else.
+//
+// It could not be applied at all while the version was derived from less than
+// the source: the edit compiled to the version already stored, carrying
+// different bytes, and the store refused it as a rewrite of an immutable
+// version — `orkctl orkflow edit` answered `already_exists` and told the user
+// to publish a new version they had no way to name. A comment is part of the
+// document, so editing one is a version.
+func TestOrkflowEdit_ACommentOnlyEditIsAppliedAsANewVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub editor is a shell script")
+	}
+	f := newFixture(t)
+	f.run("apply", writeUnpinnedOrkflow(t, "deploy", "one")).requireExit(t, exitOK)
+
+	const note = "# remind me why this exists"
+	editor := stubEditor(t, fmt.Sprintf(
+		`printf '%s\n' | cat - "$1" >"$1.new" && mv "$1.new" "$1"`, note))
+
+	edited := f.run("orkflow", "edit", "deploy", "--editor", editor).requireExit(t, exitOK)
+	edited.requireContains(t, "Applied orkflow deploy")
+
+	versions := f.run("--json", "orkflow", "versions", "deploy").requireExit(t, exitOK)
+	if count := strings.Count(versions.stdout, `"version"`); count != 2 {
+		t.Fatalf("a comment-only edit did not become a version of its own:\n%s",
+			versions.stdout)
+	}
+	// What the engine serves now is the edited document, comment included.
+	f.run("--json", "orkflow", "get", "deploy").requireExit(t, exitOK).requireContains(t, note)
+
+	// And saving the same comment again is still the no-op a repeat is: the
+	// editor changed nothing, so there is nothing to apply.
+	f.run("orkflow", "edit", "deploy", "--editor", stubEditor(t, `true`)).
+		requireExit(t, exitOK).
+		requireContains(t, "No change to deploy@")
+	after := f.run("--json", "orkflow", "versions", "deploy").requireExit(t, exitOK)
+	if count := strings.Count(after.stdout, `"version"`); count != 2 {
+		t.Fatalf("an editor that changed nothing created a version:\n%s", after.stdout)
+	}
+}
+
 // TestOrkflowEdit_ReportsAnEditMadeFromAStaleVersion is acceptance 5 through
 // the CLI, and it is a real interleaving rather than a description of one: the
 // stub editor blocks until this test has applied a competing version, so the
@@ -284,6 +327,27 @@ tasks:
 `, name, version, version, marker)
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write orkflow %s@%s: %v", name, version, err)
+	}
+	return path
+}
+
+// writeUnpinnedOrkflow writes the same one-task orkflow with NO `version:`, so
+// the version is the one the DSL derives from the document — which is what a
+// user who never invented a number is editing.
+func writeUnpinnedOrkflow(t *testing.T, name, marker string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name+".ork.yaml")
+	document := fmt.Sprintf(`name: %s
+description: an orkflow that names no version
+tasks:
+  - id: build
+    plugin: shell
+    with:
+      op: exec
+      command: echo %s
+`, name, marker)
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatalf("write orkflow %s: %v", name, err)
 	}
 	return path
 }
