@@ -82,13 +82,20 @@
 		return [...views.values()];
 	}
 
+	// Patch the view IN PLACE. Replacing `tasks[idx]` carries the same data,
+	// but a keyed `{#each}` hands each item to its block as ONE value: replace
+	// it and every reader of `task.id` is invalidated, including the props
+	// that carry a log pane's subscription coordinates. Measured: a task
+	// turning SUCCEEDED tore that pane's socket down and replayed the whole
+	// attempt from its first chunk, emptying the pane under a reader who had
+	// scrolled up. A field-by-field patch touches only the fields that moved.
 	function upsertTask(taskId: string, patch: Partial<TaskView>) {
-		const idx = tasks.findIndex((t) => t.id === taskId);
-		if (idx >= 0) {
-			tasks[idx] = { ...tasks[idx], ...patch };
-		} else {
-			tasks.push({ id: taskId, plugin: '', status: Status.PENDING, attempt: 0, message: '', ...patch });
+		const existing = tasks.find((t) => t.id === taskId);
+		if (existing) {
+			Object.assign(existing, patch);
+			return;
 		}
+		tasks.push({ id: taskId, plugin: '', status: Status.PENDING, attempt: 0, message: '', ...patch });
 	}
 
 	function onEvent(event: Event) {

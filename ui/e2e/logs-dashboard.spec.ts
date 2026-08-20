@@ -43,9 +43,26 @@ const B_PORT = '18083';
 
 const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m10-8-ui-logs-dashboard';
 
-const ALPHA = 'm10-8-alpha';
-const BETA = 'm10-8-beta';
+// Per-run ork namespaces, and per-run orkflow names inside them.
+//
+// M10.7's spec fixes its two namespace names so the registry does not grow by
+// two on every run. This one deliberately does not, because what it asserts is
+// an AGGREGATE over a shared bucket. The dashboard's recent-failures table is
+// the top `MostFailingLimit = 5` rows of a 24h window (internal/api/stats.go),
+// and rows tied at failed=1/total=1 are ordered by orkflow name ASCENDING
+// (`mostFailing`). A fixed namespace collects one `flaky-<stamp>` row per proof
+// run, so once five of them sit in the window the newest — this run's own — is
+// always the row that gets cut, and the assertion in test 5 can never pass
+// again. Measured on the committed tree: three runs, three failures at
+// `failure-flaky-<stamp>`, with five older stamps holding the table.
+//
+// A namespace of this run's own makes every number on the dashboard this run's:
+// the failures table has one row and it is ours. The cost is registry entries;
+// the empty one is handed back in afterAll, and the other holds this run's
+// orkflows, which nothing can delete (there is no DeleteOrkflow).
 const STAMP = Date.now().toString(36);
+const ALPHA = `m10-8-alpha-${STAMP}`;
+const BETA = `m10-8-beta-${STAMP}`;
 const ORKFLOW = `chatty-${STAMP}`;
 const FAILING = `flaky-${STAMP}`;
 
@@ -398,6 +415,16 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+	// The empty namespace holds nothing, so hand it back to the shared
+	// registry. Best effort and never fatal: this is tidiness, not a claim,
+	// and a proof that has already measured everything must not fail in its
+	// own cleanup.
+	try {
+		await rpc(ENGINE_A, 'NamespaceService/DeleteNamespace', { name: BETA });
+	} catch {
+		// The engines may already be gone, or the registry may refuse. Either
+		// way the run is over and nothing below depends on it.
+	}
 	await killAll();
 });
 
@@ -460,10 +487,17 @@ test('a task log follows live in the browser, in order, from the replica that st
 
 	// SCROLLBACK AND PAUSE. Scrolling up stops the follow, and output arriving
 	// afterwards does not yank the reader back down.
+	//
+	// The park is MID-PANE, not at the top, and that is deliberate: a reader
+	// parked at scrollTop=0 cannot be moved to 0 again, so a pane that resets
+	// its buffer fires no scroll event and the defect below hides. Half way up
+	// is where a real reader sits, and it is the position that makes an
+	// unwanted reset observable.
 	const box = page.getByTestId('task-log-talk');
-	await box.evaluate((el) => el.scrollTo({ top: 0 }));
+	await box.evaluate((el) => el.scrollTo({ top: Math.floor((el.scrollHeight - el.clientHeight) / 2) }));
 	await expect(page.getByTestId('task-log-follow-talk')).toHaveText('PAUSED');
 	const parkedAt = await box.evaluate((el) => el.scrollTop);
+	expect(parkedAt).toBeGreaterThan(0);
 	const before = (await lineNumbers(page, 'talk', 'talk')).length;
 	await expect
 		.poll(async () => (await lineNumbers(page, 'talk', 'talk')).length, { timeout: 60_000 })
@@ -471,6 +505,24 @@ test('a task log follows live in the browser, in order, from the replica that st
 	expect(await box.evaluate((el) => el.scrollTop)).toBe(parkedAt);
 	note(`follow paused at scrollTop=${parkedAt}; ${before} lines grew while the view stayed put`);
 	await shot(page, 'screenshot-log-paused.png');
+
+	// AND THE PAUSE SURVIVES THE TASK ENDING — which is the moment it used to
+	// break, and the reason this assertion is here rather than after a
+	// convenient click. The last line of a task arrives with its terminal
+	// status event, so a pane whose subscription is invalidated by that event
+	// tears its socket down, opens a second one at from_seq=0, empties its
+	// buffer, and reads the empty box as "the reader is at the tail": the
+	// follow silently resumes and throws the reader to the bottom at exactly
+	// the instant the output they were reading is completed. Measured on this
+	// tree before the fix: PAUSED scrollTop=500 -> FOLLOWING scrollTop=976.
+	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 180_000 });
+	await expect(page.getByTestId('task-talk-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	expect((await page.getByTestId('task-log-follow-talk').innerText()).trim()).toBe('PAUSED');
+	expect(await box.evaluate((el) => el.scrollTop)).toBe(parkedAt);
+	note(
+		`task talk reached SUCCEEDED and its stream ENDED with the reader still parked at ` +
+			`scrollTop=${parkedAt}: the terminal status did not resume the follow`
+	);
 
 	// RESUME. Jump-to-bottom follows again, and lands at the bottom.
 	await page.getByTestId('task-log-jump-talk').click();
@@ -481,9 +533,8 @@ test('a task log follows live in the browser, in order, from the replica that st
 		)
 		.toBe(true);
 
-	// The stream ends on the task's terminal state, and what it delivered is
-	// the whole output: dense 1..N, no repeats, no gaps.
-	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 180_000 });
+	// What the stream delivered is the whole output: dense 1..N, no repeats,
+	// no gaps.
 	const all = await lineNumbers(page, 'talk', 'talk');
 	expect(all).toEqual(Array.from({ length: TALK_TOTAL }, (_, i) => i + 1));
 	note(`task talk ended with ${all.length} lines, dense 1..${TALK_TOTAL}, no repeats`);
@@ -493,8 +544,21 @@ test('a task log follows live in the browser, in order, from the replica that st
 	// nothing — including the log socket the lines above came down.
 	expect(sockets.length).toBeGreaterThan(0);
 	for (const url of sockets) expect(url).toContain(`:${B_PORT}`);
+
+	// EXACTLY ONE log socket, for a whole attempt that ran from PENDING to
+	// SUCCEEDED with the pane open throughout. A second one is not a harmless
+	// reconnect: a new subscription replays the attempt from its first chunk,
+	// so every line is downloaded and re-rendered again (up to the whole
+	// ORK_ORKER_LOG_MAX_BYTES an attempt may hold) — the exact opposite of the
+	// resume `from_seq` exists for, and the same defect the paused reader
+	// above feels as a yank to the bottom.
 	const logSockets = sockets.filter((u) => u.includes('/tasks/talk/logs'));
-	expect(logSockets.length).toBeGreaterThan(0);
+	expect(logSockets).toHaveLength(1);
+	expect(new URL(logSockets[0]).searchParams.get('from_seq')).toBe('0');
+	note(
+		`task talk was served by exactly ${logSockets.length} log socket for the whole attempt: ` +
+			'no status change re-subscribed the pane'
+	);
 	note(`sockets opened by the browser, all on engine B:\n    ${sockets.join('\n    ')}`);
 
 	// Two pools, one run: the engine recorded where each task actually went,
@@ -641,8 +705,14 @@ test('a dropped log socket resumes from the last sequence, repeating and losing 
 
 	// The drop really happened, and the second socket really resumed: its
 	// from_seq is the last sequence the first one delivered, not 0.
+	//
+	// TWO sockets, exactly: the one that was dropped and the one that resumed.
+	// A third would be a re-subscription — and this test would not notice it
+	// in its line numbers, because a replay from from_seq=0 into an emptied
+	// buffer produces a dense 1..N too. The count is the only thing that can
+	// tell a resume from a restart, so the count is asserted.
 	expect(dropped).toBe(true);
-	expect(socketUrls.length).toBeGreaterThanOrEqual(2);
+	expect(socketUrls).toHaveLength(2);
 	expect(new URL(socketUrls[0]).searchParams.get('from_seq')).toBe('0');
 	const resumed = Number(new URL(socketUrls[1]).searchParams.get('from_seq'));
 	expect(resumed).toBeGreaterThan(0);

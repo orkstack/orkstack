@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { followTaskLogs, type LogLine, type LogSocketState } from '$lib/taskLogs';
 
@@ -46,17 +47,9 @@
 		status !== Status.PENDING && status !== Status.UNSPECIFIED && status !== Status.SKIPPED
 	);
 
-	// dispatched latches `started` so that the subscription below depends on a
-	// value that changes ONCE, from false to true.
-	//
-	// This is not a micro-optimisation, it is a correctness fix, and it was
-	// measured: subscribing on `started` re-subscribed when the task moved
-	// RUNNING -> SUCCEEDED. A new subscription replays the attempt from its
-	// first chunk, so the pane received line 1 again on top of the fifty-five
-	// it already had, two entries claimed the same key, and Svelte threw
-	// `each_key_duplicate` — which stops the component updating at all. The
-	// symptom was a pane frozen on LIVE over a finished task, and the cause
-	// was a subscription that had no business being replaced.
+	// dispatched latches `started`: a task that has been dispatched once has
+	// output to read for ever, so a later status reading as not-started must
+	// not take this pane's subscription away. It changes once, false to true.
 	let dispatched = $state(false);
 	$effect(() => {
 		if (started) dispatched = true;
@@ -77,19 +70,44 @@
 		}
 	});
 
+	// The coordinates this subscription is FOR, as one value that changes only
+	// when one of them actually changes.
+	//
+	// It is load-bearing, and it was measured. These props are read through a
+	// keyed each-item on the run page, so anything that invalidates the item
+	// invalidates them — even when every value is identical. The subscription
+	// below therefore re-ran on the task's own terminal status event: it tore
+	// the socket down, opened a second one at from_seq=0 and replayed the
+	// whole attempt, every line downloaded and rendered again (up to the
+	// ORK_ORKER_LOG_MAX_BYTES an attempt may hold) — the exact opposite of the
+	// resume `from_seq` exists for. And since a new subscription empties the
+	// buffer, a reader parked mid-pane was thrown to the tail at the instant
+	// the last line landed: PAUSED scrollTop=500 -> FOLLOWING scrollTop=976,
+	// measured in a browser on the task that was ending.
+	//
+	// A $derived propagates only when its VALUE changes, so an each-item
+	// replaced by an equal one stops here. The run page also patches its tasks
+	// in place rather than replacing them; either one alone closes this, and a
+	// log socket is worth both.
+	const coordinates = $derived([runId, taskId, namespace, attempt].join('\u0000'));
+
 	$effect(() => {
 		if (!open || !dispatched) return;
-		// Read the coordinates synchronously so a changed run, task or attempt
-		// tears this subscription down and opens the right one.
-		const target = { runId, taskId, namespace, attempt };
+		coordinates; // the ONE reactive dependency of this subscription
+		// Untracked on purpose: reading a prop here would put the each-item
+		// back in the dependency set and undo the paragraph above.
+		const target = untrack(() => ({ runId, taskId, namespace, attempt }));
 		// A subscription replays this attempt from its first chunk, so the pane
 		// it feeds starts empty. Keeping what a previous subscription left
 		// would double every line, and the numbering it is keyed by would
-		// repeat.
+		// repeat. This now runs only for a genuinely different run, task,
+		// namespace or attempt — which is why the follow is reset with it: a
+		// different subject is a new read, and a new read starts at the tail.
 		lines = [];
 		dropped = 0;
 		truncated = false;
 		ended = false;
+		following = true;
 		return followTaskLogs({
 			...target,
 			onState: (s) => (socketState = s),
@@ -122,6 +140,15 @@
 	// reading. Scrolling back to the bottom resumes it, and so does the button.
 	function onScroll() {
 		if (!box) return;
+		// A box with nothing to scroll cannot carry a reader's gesture: its
+		// scrollTop is 0 and its distance to the bottom is 0, which is exactly
+		// what "the reader is at the tail" looks like. Read as a gesture, that
+		// silently resumes the follow whenever the content shrinks below one
+		// screen — after a buffer reset, or on a task that wrote two lines —
+		// and the reader who had scrolled up is returned to the tail by the
+		// next line to arrive. A reset is not a gesture, so it is not read as
+		// one.
+		if (box.scrollHeight - box.clientHeight <= 8) return;
 		const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
 		following = distance <= 8;
 	}
