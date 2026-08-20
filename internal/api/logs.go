@@ -90,13 +90,23 @@ type TaskLogQuery struct {
 }
 
 // StreamRunTaskLogs delivers a task attempt's chunks after FromSeq to send,
-// and returns when the task is terminal (or, without Follow, when the stored
-// chunks run out).
+// and returns when the task is terminal (or, without Follow, as soon as the
+// stored chunks have been delivered).
 //
 // It is the one streaming path, for the same reason StreamRunEvents is: the
 // RPC and the socket must not be able to drift into two different contracts.
 //
-// The termination rule is what makes the stream gap-free. The Orker closes its
+// The two modes are a FOLLOW and a REPLAY, and the difference is the flag,
+// never the task's behaviour:
+//
+//   - Follow waits for chunks that do not exist yet and ends on the task's
+//     terminal state.
+//   - Without it the stream is a replay: one sweep of what the store holds,
+//     then the terminator. It must not end merely when the task goes quiet,
+//     or `orkctl run logs` with no -f would block for as long as a chatty
+//     task keeps talking — a replay would silently have become a follow.
+//
+// The termination rule is what makes the follow gap-free. The Orker closes its
 // sink BEFORE ExecuteTask returns, so every chunk is durable before the task's
 // terminal state exists. This loop therefore reads the state first, sweeps the
 // prefix after, and only then ends: anything written in the last instant of the
@@ -149,13 +159,14 @@ func (s *Service) StreamRunTaskLogs(
 		if err != nil {
 			return err
 		}
-		switch {
-		case terminal:
-			// Everything the task wrote is durable (the sink closes before the
-			// activity returns), and this sweep read all of it.
-			return sendTerminator(send, ref, cursor)
-		case !q.Follow && !delivered:
-			// A replay was asked for and the stored chunks ran out.
+		if terminal || !q.Follow {
+			// terminal: everything the task wrote is durable (the sink closes
+			// before the activity returns), and the sweep above read all of
+			// it.
+			//
+			// !Follow: a replay was asked for, and that sweep delivered every
+			// chunk the store held when it ran. Ending here bounds the replay
+			// to what existed, whether or not the task is still writing.
 			return sendTerminator(send, ref, cursor)
 		}
 		if delivered {
@@ -173,8 +184,12 @@ func (s *Service) StreamRunTaskLogs(
 	}
 }
 
-// drainLogChunks sends every stored chunk after *cursor, advancing it as it
-// goes, one bounded page at a time.
+// drainLogChunks sends every chunk the store holds after *cursor, advancing it
+// as it goes, one bounded page at a time. It returns when a page comes back
+// short — the store had no more at that instant — so one call is the whole of
+// what a replay owes its caller. A writer cannot hold it open forever: an
+// attempt's chunks are capped (internal/orker/logsink.go), and every page
+// moves the cursor forward.
 func (s *Service) drainLogChunks(
 	ctx context.Context,
 	ref artifacts.LogRef,

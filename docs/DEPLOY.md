@@ -350,6 +350,16 @@ Orker has exited, one that finished before the reader connected. Under
 `ORK_ARTIFACT_BACKEND=local` that stops being true for the same reason the run
 archive does: each process reads its own directory.
 
+**Following and replaying are two different reads, and the flag decides which
+— never the task.** `orkctl run logs -f` (`follow=true` on the RPC and the
+socket) waits for chunks that do not exist yet and returns when the task
+reaches a terminal state. Without `-f` the command prints the chunks the store
+holds when it runs and returns, even against a task that is still writing, so
+a script that wants a transcript is not left tailing a chatty task forever.
+Both resume on `from_seq`, which is the last sequence already received: the
+stream continues **after** it, so a reconnect replays nothing and skips
+nothing.
+
 Two bounds decide when a chunk is written, and a deployment tunes both:
 
 - `ORK_ORKER_LOG_FLUSH_BYTES` (64 KiB) batches a chatty task, so a hundred

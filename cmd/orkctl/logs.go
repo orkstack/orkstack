@@ -28,9 +28,11 @@ func newRunLogsCommand(g *globalFlags) *cobra.Command {
 		Short: "Print a run's task output, and follow it live with -f",
 		Long: "logs prints what a run's tasks wrote, in order.\n\n" +
 			"With -f it follows the output as it is produced and returns when the run\n" +
-			"reaches a terminal state. Naming one task with --task prints that task's\n" +
-			"output verbatim; without it every task of the run is printed, each line\n" +
-			"prefixed with the task that wrote it.\n\n" +
+			"reaches a terminal state. Without -f it prints what has been stored and\n" +
+			"returns, even while the run is still going: a replay never turns into a\n" +
+			"follow. Naming one task with --task prints that task's output verbatim;\n" +
+			"without it every task of the run is printed, each line prefixed with the\n" +
+			"task that wrote it.\n\n" +
 			"Output is read from the artifact store, never from the engine's memory, so\n" +
 			"any replica answers — including one that never started the run, one whose\n" +
 			"Orker has exited, and a run that finished before this command was typed.\n\n" +

@@ -28,6 +28,11 @@ import (
 type memoryLogStore struct {
 	mu     sync.Mutex
 	chunks []artifacts.LogChunk
+	// grow, when set, appends one more chunk to that attempt after every read
+	// this store serves: the task never goes quiet. It is what tells a
+	// BOUNDED replay from a follow — against a store that is never silent, a
+	// stream that ends only on a sweep finding nothing never ends at all.
+	grow *artifacts.LogRef
 }
 
 // quietGap is a silence long enough to outlast many poll cycles of the
@@ -61,6 +66,9 @@ func (s *memoryLogStore) ReadLogChunks(
 			break
 		}
 	}
+	if s.grow != nil {
+		s.appendLocked(*s.grow)
+	}
 	return out, nil
 }
 
@@ -85,6 +93,27 @@ func (s *memoryLogStore) write(ref artifacts.LogRef, seq int64, body string) {
 	}); err != nil {
 		panic(err)
 	}
+}
+
+// keepWriting makes the task chatty for as long as anyone reads it.
+func (s *memoryLogStore) keepWriting(ref artifacts.LogRef) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	copied := ref
+	s.grow = &copied
+}
+
+func (s *memoryLogStore) appendLocked(ref artifacts.LogRef) {
+	next := int64(0)
+	for _, chunk := range s.chunks {
+		if chunk.LogRef == ref && chunk.Seq > next {
+			next = chunk.Seq
+		}
+	}
+	next++
+	s.chunks = append(s.chunks, artifacts.LogChunk{
+		LogRef: ref, Seq: next, Data: []byte(fmt.Sprintf("still writing %d\n", next)),
+	})
 }
 
 // logFixture is a Service reading a run out of the record and its logs out of
@@ -228,6 +257,69 @@ func TestStreamTaskLogs_FollowsChunksWrittenAfterTheReaderConnected(t *testing.T
 	}
 	if strings.Join(tail, "") != "final\n" {
 		t.Fatalf("the chunks after the terminal state were %q, want the final line", tail)
+	}
+}
+
+// The other half of the same contract: WITHOUT follow the stream is a replay.
+// It delivers what the store holds and ends there, whether or not the task is
+// still writing — `orkctl run logs` with no -f must return a transcript, not
+// become a follower nobody asked for.
+//
+// The store below never goes quiet: it appends another chunk after every read
+// it serves, which is exactly what a chatty running task does. So a replay
+// that ended on the first sweep finding nothing would not end at all here,
+// and the deadline names that failure rather than reporting a bare timeout.
+func TestStreamTaskLogs_WithoutFollowReplaysWhatIsStoredWhileTheTaskKeepsWriting(t *testing.T) {
+	run := runningRun("ork-logs-replay", "build") // still RUNNING throughout
+	fixture := newLogFixture(t, run)
+	ref := artifacts.LogRef{RunID: run.GetId(), TaskID: "build", Attempt: 1}
+	for seq := int64(1); seq <= 3; seq++ {
+		fixture.logs.write(ref, seq, fmt.Sprintf("line %d\n", seq))
+	}
+	fixture.logs.keepWriting(ref)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(
+		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "build"}))
+	if err != nil {
+		t.Fatalf("StreamTaskLogs: %v", err)
+	}
+	defer stream.Close()
+
+	var chunks []*orkstackv1.TaskLogChunk
+	for stream.Receive() {
+		chunks = append(chunks, stream.Msg())
+	}
+	if err := stream.Err(); err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("the replay never ended (%v); without follow it is still tailing a task that keeps writing", err)
+	}
+	if body := chunkBody(chunks); body != "line 1\nline 2\nline 3\n" {
+		t.Fatalf("the replay read %q, want the three chunks stored when it opened", body)
+	}
+	last := chunks[len(chunks)-1]
+	if !last.GetLast() {
+		t.Fatal("the replay's final chunk is not marked last")
+	}
+	if last.GetSeq() != 3 {
+		t.Errorf("the terminator carries seq %d, want 3 — a client resumes the follow from there",
+			last.GetSeq())
+	}
+
+	// And follow=true over the same store does NOT end: the difference is the
+	// flag, not the store.
+	followCtx, cancelFollow := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelFollow()
+	following, err := fixture.runClient().StreamTaskLogs(followCtx, connect.NewRequest(
+		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "build", Follow: true}))
+	if err != nil {
+		t.Fatalf("StreamTaskLogs(follow): %v", err)
+	}
+	defer following.Close()
+	for following.Receive() {
+		if following.Msg().GetLast() {
+			t.Fatal("the follower ended while the task was still RUNNING and still writing")
+		}
 	}
 }
 

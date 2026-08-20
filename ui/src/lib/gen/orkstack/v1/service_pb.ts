@@ -735,11 +735,13 @@ export type StreamTaskLogsRequest = Message<"orkstack.v1.StreamTaskLogsRequest">
   attempt: number;
 
   /**
-   * from_seq resumes: the first chunk sequence NOT yet seen. 0 starts at the
-   * beginning. It is the same contract StreamEvents.from_sequence has, over
-   * the log's own numbering — dense and 1-based per (run, task, attempt) —
-   * so a client that reconnects to a DIFFERENT replica replays nothing twice
-   * and misses nothing.
+   * from_seq resumes AFTER this sequence: it is the LAST chunk sequence the
+   * client already received, and the stream continues with the next one. 0
+   * starts at the beginning. It is the same contract
+   * StreamEvents.from_sequence has, over the log's own numbering — dense and
+   * 1-based per (run, task, attempt) — so a client that hands back the seq of
+   * the last chunk it saw replays nothing twice and misses nothing, even when
+   * it reconnects to a DIFFERENT replica.
    *
    * @generated from field: int64 from_seq = 4;
    */
@@ -747,8 +749,9 @@ export type StreamTaskLogsRequest = Message<"orkstack.v1.StreamTaskLogsRequest">
 
   /**
    * follow keeps the stream open for chunks that do not exist yet, ending
-   * when the task reaches a terminal state. False replays what is stored and
-   * ends, which is the post-mortem read.
+   * when the task reaches a terminal state. False makes it a replay: the
+   * chunks the store holds when the request is served, then the end — whether
+   * or not the task is still writing, so a replay never turns into a follow.
    *
    * @generated from field: bool follow = 5;
    */
@@ -819,8 +822,10 @@ export type TaskLogChunk = Message<"orkstack.v1.TaskLogChunk"> & {
   truncated: boolean;
 
   /**
-   * last marks the final chunk of the stream: the task has reached a terminal
-   * state and everything it wrote has been delivered. It carries no data.
+   * last marks the end of the stream: everything this stream will deliver has
+   * been delivered, and its seq is the last sequence sent, so a client resumes
+   * from it. With follow that means the task reached a terminal state; without
+   * follow it means the replay is complete. It carries no data.
    *
    * @generated from field: bool last = 7;
    */

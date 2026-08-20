@@ -40,6 +40,10 @@ const quietGap = 300 * time.Millisecond
 type cliLogStore struct {
 	mu     sync.Mutex
 	chunks []artifacts.LogChunk
+	// grow, when set, appends one more chunk after every read this store
+	// serves: the task never goes quiet, exactly as a chatty running task
+	// does not.
+	grow *artifacts.LogRef
 }
 
 func (s *cliLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogChunk) error {
@@ -66,6 +70,9 @@ func (s *cliLogStore) ReadLogChunks(
 			break
 		}
 	}
+	if s.grow != nil {
+		s.appendLocked(*s.grow)
+	}
 	return out, nil
 }
 
@@ -91,6 +98,26 @@ func (s *cliLogStore) write(runID, taskID string, seq int64, body string) {
 	}); err != nil {
 		panic(err)
 	}
+}
+
+// keepWriting makes the named task chatty for as long as anyone reads it.
+func (s *cliLogStore) keepWriting(runID, taskID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.grow = &artifacts.LogRef{RunID: runID, TaskID: taskID, Attempt: 1}
+}
+
+func (s *cliLogStore) appendLocked(ref artifacts.LogRef) {
+	next := int64(0)
+	for _, chunk := range s.chunks {
+		if chunk.LogRef == ref && chunk.Seq > next {
+			next = chunk.Seq
+		}
+	}
+	next++
+	s.chunks = append(s.chunks, artifacts.LogChunk{
+		LogRef: ref, Seq: next, Data: []byte(fmt.Sprintf("still writing %d\n", next)),
+	})
 }
 
 // seedLoggedRun puts a run with the named tasks into the read model.
@@ -184,6 +211,46 @@ func TestRunLogs_FollowPrintsWhileTheRunIsLiveAndExitsOnTheTerminalState(t *test
 	if got := out.String(); !strings.Contains(got, "first") || !strings.Contains(got, "second") {
 		t.Fatalf("the followed log reads %q, want both lines", got)
 	}
+}
+
+// Without -f the command is a REPLAY: it prints what the store holds and
+// returns, even though the run is still going. The store here never goes
+// quiet — it appends another chunk after every read it serves, as a chatty
+// task does — so a replay that waited for silence would never return, and the
+// deadline below says exactly that instead of hanging the suite.
+func TestRunLogs_WithoutFollowReturnsWhileTheRunIsStillRunning(t *testing.T) {
+	f, logs := newLogFixture(t)
+	seedLoggedRun(t, f, "run-logs-8", orkstackv1.Status_STATUS_RUNNING, "build")
+	logs.write("run-logs-8", "build", 1, "stored\n")
+	logs.keepWriting("run-logs-8", "build")
+
+	out := &syncBuffer{}
+	done := make(chan result, 1)
+	go func() { done <- f.runTo(out, "run", "logs", "run-logs-8", "--task", "build") }()
+
+	select {
+	case outcome := <-done:
+		if outcome.code != 0 {
+			t.Fatalf("exit code = %d, want 0\nstderr: %s", outcome.code, outcome.stderr)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("`orkctl run logs` without -f never returned against a task that keeps "+
+			"writing; a replay became a follow. It printed %s", preview(out.String()))
+	}
+	if got := out.String(); got != "stored\n" {
+		t.Fatalf("the replay printed %s, want the one chunk stored when it ran", preview(got))
+	}
+}
+
+// preview trims a follower's output for a failure message. Against a task
+// that never stops writing, printing the whole buffer buries the failure in
+// megabytes of the log it is complaining about.
+func preview(text string) string {
+	const limit = 200
+	if len(text) <= limit {
+		return fmt.Sprintf("%q", text)
+	}
+	return fmt.Sprintf("%q… (%d bytes in total)", text[:limit], len(text))
 }
 
 // Resume is the CLI's half of the same contract: --from-seq skips what the

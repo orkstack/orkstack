@@ -1381,15 +1381,18 @@ type StreamTaskLogsRequest struct {
 	// written anything, so a caller that never saw a retry does not have to
 	// know retries exist.
 	Attempt int32 `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	// from_seq resumes: the first chunk sequence NOT yet seen. 0 starts at the
-	// beginning. It is the same contract StreamEvents.from_sequence has, over
-	// the log's own numbering — dense and 1-based per (run, task, attempt) —
-	// so a client that reconnects to a DIFFERENT replica replays nothing twice
-	// and misses nothing.
+	// from_seq resumes AFTER this sequence: it is the LAST chunk sequence the
+	// client already received, and the stream continues with the next one. 0
+	// starts at the beginning. It is the same contract
+	// StreamEvents.from_sequence has, over the log's own numbering — dense and
+	// 1-based per (run, task, attempt) — so a client that hands back the seq of
+	// the last chunk it saw replays nothing twice and misses nothing, even when
+	// it reconnects to a DIFFERENT replica.
 	FromSeq int64 `protobuf:"varint,4,opt,name=from_seq,json=fromSeq,proto3" json:"from_seq,omitempty"`
 	// follow keeps the stream open for chunks that do not exist yet, ending
-	// when the task reaches a terminal state. False replays what is stored and
-	// ends, which is the post-mortem read.
+	// when the task reaches a terminal state. False makes it a replay: the
+	// chunks the store holds when the request is served, then the end — whether
+	// or not the task is still writing, so a replay never turns into a follow.
 	Follow        bool   `protobuf:"varint,5,opt,name=follow,proto3" json:"follow,omitempty"`
 	Namespace     string `protobuf:"bytes,6,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
 	unknownFields protoimpl.UnknownFields
@@ -1487,8 +1490,10 @@ type TaskLogChunk struct {
 	// passed its cap. Its data says so in words; no further output was stored.
 	// Truncation is visible in the stream, never silent.
 	Truncated bool `protobuf:"varint,6,opt,name=truncated,proto3" json:"truncated,omitempty"`
-	// last marks the final chunk of the stream: the task has reached a terminal
-	// state and everything it wrote has been delivered. It carries no data.
+	// last marks the end of the stream: everything this stream will deliver has
+	// been delivered, and its seq is the last sequence sent, so a client resumes
+	// from it. With follow that means the task reached a terminal state; without
+	// follow it means the replay is complete. It carries no data.
 	Last          bool `protobuf:"varint,7,opt,name=last,proto3" json:"last,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
