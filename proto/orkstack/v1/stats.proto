@@ -117,9 +117,11 @@ message GetStatsResponse {
   // when they were asked for: an answer may be served from a short-lived cache.
   // It is the age of every number here, on the wire, so a client can show it.
   google.protobuf.Timestamp computed_at = 11;
-  // window_since and window_until are the window that was actually measured,
-  // with an empty request resolved. A client that asked for the default window
-  // cannot label its own numbers without them.
+  // namespace, window_since and window_until are the question that was
+  // actually answered, with an empty request resolved. A client that asked
+  // for "the default namespace, the last day" cannot label its own numbers
+  // without them, and it should not have to know the default's name to do it.
+  string namespace = 14;
   google.protobuf.Timestamp window_since = 12;
   google.protobuf.Timestamp window_until = 13;
 }

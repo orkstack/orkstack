@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -228,11 +229,12 @@ func (h *StatsHandler) compute(
 			"this engine has no read model wired, so live runs could only be counted "+
 				"from its own memory — which would make every replica answer differently"))
 	}
+	// The seam is asked for, not assumed. An archive that cannot tally is an
+	// engine that cannot count a finished run, and a stats answer over live
+	// runs alone is not one.
 	tallier, ok := h.svc.archive.(RunIndexTallier)
 	if !ok || h.svc.archive == nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"this engine has no run archive configured (ORK_ARTIFACT_BACKEND), so no "+
-				"finished run can be counted; a success rate over live runs alone is not one"))
+		return nil, errNoArchive()
 	}
 
 	tally, err := tallier.TallyRuns(ctx, engine.ArchiveQuery{
@@ -240,7 +242,13 @@ func (h *StatsHandler) compute(
 		Since:     window.Since,
 		Until:     window.Until,
 	})
-	if err != nil {
+	switch {
+	// A tallier that exists as a type but holds no store answers this rather
+	// than a total of zero. The two render identically and mean the opposite,
+	// and zero is the one a reader believes.
+	case errors.Is(err, engine.ErrNoRunArchive):
+		return nil, errNoArchive()
+	case err != nil:
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("count finished runs in namespace %q: %w", window.Namespace, err))
 	}
@@ -261,6 +269,7 @@ func (h *StatsHandler) compute(
 		Running:      executions.Running,
 		Pools:        pools,
 		ComputedAt:   timestamppb.New(now),
+		Namespace:    window.Namespace,
 		WindowSince:  timestamppb.New(window.Since),
 		WindowUntil:  timestamppb.New(window.Until),
 	}
@@ -363,6 +372,15 @@ func mostFailing(tally engine.RunTally) []*orkstackv1.OrkflowFailures {
 		rows = rows[:MostFailingLimit]
 	}
 	return rows
+}
+
+// errNoArchive is the one answer for every way an engine can turn out to have
+// no run archive. It names the variable that configures one, because a caller
+// who cannot act on an error is left exactly where they were.
+func errNoArchive() error {
+	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		"this engine has no run archive configured (ORK_ARTIFACT_BACKEND), so no "+
+			"finished run can be counted; a success rate over live runs alone is not one"))
 }
 
 // durationCoverageSince is the instant the percentiles actually cover: the

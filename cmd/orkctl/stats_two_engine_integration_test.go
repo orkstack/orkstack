@@ -369,6 +369,9 @@ func statsDigest(stats *orkstackv1.GetStatsResponse) string {
 		fmt.Fprintf(&out, "| %s:%d/%d ", row.GetOrkflowName(), row.GetFailed(), row.GetTotal())
 	}
 	fmt.Fprintf(&out, "| running=%s ", strings.Join(runningIDs(stats), ","))
+	// The subject of the answer, compared like everything else: a reply that
+	// named the wrong namespace would be identical in every number and wrong.
+	fmt.Fprintf(&out, "| ns=%s ", stats.GetNamespace())
 	for _, pool := range stats.GetPools() {
 		fmt.Fprintf(&out, "| pool %s orkers=%d default=%t plugins=%s ",
 			pool.GetName(), pool.GetLiveOrkerCount(), pool.GetIsDefault(),

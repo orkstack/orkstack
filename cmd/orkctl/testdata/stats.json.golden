@@ -34,6 +34,7 @@
     }
   ],
   "computedAt": "2026-01-02T03:04:05Z",
+  "namespace": "default",
   "windowSince": "2026-01-01T03:04:05Z",
   "windowUntil": "2026-01-02T03:04:05Z"
 }

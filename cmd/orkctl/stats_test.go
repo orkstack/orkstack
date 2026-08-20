@@ -54,11 +54,11 @@ func seedStats(t *testing.T, executions map[string]engine.Executions) *fixture {
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
 
-	archive := func(id, orkflow string, status orkstackv1.Status, at time.Time) {
+	archive := func(id, namespace, orkflow string, status orkstackv1.Status, at time.Time) {
 		t.Helper()
 		if err := archiver.Archive(context.Background(), &orkstackv1.Run{
 			Id:          id,
-			Namespace:   "default",
+			Namespace:   namespace,
 			OrkflowName: orkflow,
 			Status:      status,
 			CreatedAt:   timestamppb.New(at),
@@ -68,15 +68,20 @@ func seedStats(t *testing.T, executions map[string]engine.Executions) *fixture {
 		}
 	}
 	inWindow := fixedNow.Add(-2 * time.Hour)
-	archive("ork-a", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, inWindow)
-	archive("ork-b", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, inWindow)
-	archive("ork-c", "deploy", orkstackv1.Status_STATUS_FAILED, inWindow)
-	archive("ork-d", "nightly", orkstackv1.Status_STATUS_CANCELED, inWindow)
+	archive("ork-a", "default", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, inWindow)
+	archive("ork-b", "default", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, inWindow)
+	archive("ork-c", "default", "deploy", orkstackv1.Status_STATUS_FAILED, inWindow)
+	archive("ork-d", "default", "nightly", orkstackv1.Status_STATUS_CANCELED, inWindow)
+	// A second namespace, so --namespace has something to be wrong about.
+	archive("ork-e", "payments", "charge", orkstackv1.Status_STATUS_FAILED, inWindow)
+	archive("ork-f", "payments", "charge", orkstackv1.Status_STATUS_FAILED, inWindow)
 
-	return newFixtureWith(t, func(cfg *api.Config) {
+	f := newFixtureWith(t, func(cfg *api.Config) {
 		cfg.Reader = statsReader{executions: executions}
 		cfg.Archive = archiver
 	})
+	f.run("namespace", "create", "payments").requireExit(t, exitOK)
+	return f
 }
 
 // TestStats_GoldenHumanAndJSON pins both renderings.
@@ -123,6 +128,38 @@ func TestStats_SinceNarrowsTheWindow(t *testing.T) {
 	}
 	if !strings.Contains(hour.stdout, unavailable) {
 		t.Errorf("a window with no finished runs reports a success rate:\n%s", hour.stdout)
+	}
+}
+
+// TestStats_NamespaceScopesTheAnswer. --namespace is half of what makes these
+// numbers mean anything: a rate that quietly mixed two tenants would be a
+// number about nobody.
+func TestStats_NamespaceScopesTheAnswer(t *testing.T) {
+	f := seedStats(t, map[string]engine.Executions{})
+
+	fallback := f.run("stats").requireExit(t, exitOK)
+	if !strings.Contains(fallback.stdout, "Namespace:     default") {
+		t.Errorf("with no --namespace, stats did not act in the default namespace:\n%s",
+			fallback.stdout)
+	}
+	if !strings.Contains(fallback.stdout, "succeeded  2") ||
+		!strings.Contains(fallback.stdout, "failed     1") {
+		t.Errorf("the default namespace does not report its own runs:\n%s", fallback.stdout)
+	}
+
+	scoped := f.run("-n", "payments", "stats").requireExit(t, exitOK)
+	if !strings.Contains(scoped.stdout, "Namespace:     payments") {
+		t.Errorf("--namespace did not reach the report header:\n%s", scoped.stdout)
+	}
+	if !strings.Contains(scoped.stdout, "succeeded  0") ||
+		!strings.Contains(scoped.stdout, "failed     2") {
+		t.Errorf("payments was answered with the default namespace's runs:\n%s", scoped.stdout)
+	}
+	if !strings.Contains(scoped.stdout, "charge        2       2") {
+		t.Errorf("payments' most-failing table is not its own:\n%s", scoped.stdout)
+	}
+	if strings.Contains(scoped.stdout, "deploy") || strings.Contains(scoped.stdout, "nightly") {
+		t.Errorf("payments' report names the default namespace's orkflows:\n%s", scoped.stdout)
 	}
 }
 

@@ -227,9 +227,11 @@ type GetStatsResponse struct {
 	// when they were asked for: an answer may be served from a short-lived cache.
 	// It is the age of every number here, on the wire, so a client can show it.
 	ComputedAt *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=computed_at,json=computedAt,proto3" json:"computed_at,omitempty"`
-	// window_since and window_until are the window that was actually measured,
-	// with an empty request resolved. A client that asked for the default window
-	// cannot label its own numbers without them.
+	// namespace, window_since and window_until are the question that was
+	// actually answered, with an empty request resolved. A client that asked
+	// for "the default namespace, the last day" cannot label its own numbers
+	// without them, and it should not have to know the default's name to do it.
+	Namespace     string                 `protobuf:"bytes,14,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	WindowSince   *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=window_since,json=windowSince,proto3" json:"window_since,omitempty"`
 	WindowUntil   *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=window_until,json=windowUntil,proto3" json:"window_until,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -343,6 +345,13 @@ func (x *GetStatsResponse) GetComputedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *GetStatsResponse) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
 func (x *GetStatsResponse) GetWindowSince() *timestamppb.Timestamp {
 	if x != nil {
 		return x.WindowSince
@@ -370,7 +379,7 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\x0fOrkflowFailures\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x16\n" +
 	"\x06failed\x18\x02 \x01(\x03R\x06failed\x12\x14\n" +
-	"\x05total\x18\x03 \x01(\x03R\x05total\"\xd4\x06\n" +
+	"\x05total\x18\x03 \x01(\x03R\x05total\"\xf2\x06\n" +
 	"\x10GetStatsResponse\x12U\n" +
 	"\x0eruns_by_status\x18\x01 \x03(\v2/.orkstack.v1.GetStatsResponse.RunsByStatusEntryR\frunsByStatus\x12!\n" +
 	"\fsuccess_rate\x18\x02 \x01(\x01R\vsuccessRate\x120\n" +
@@ -384,7 +393,8 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\x05pools\x18\n" +
 	" \x03(\v2\x11.orkstack.v1.PoolR\x05pools\x12;\n" +
 	"\vcomputed_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"computedAt\x12=\n" +
+	"computedAt\x12\x1c\n" +
+	"\tnamespace\x18\x0e \x01(\tR\tnamespace\x12=\n" +
 	"\fwindow_since\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\vwindowSince\x12=\n" +
 	"\fwindow_until\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\vwindowUntil\x1a?\n" +
 	"\x11RunsByStatusEntry\x12\x10\n" +

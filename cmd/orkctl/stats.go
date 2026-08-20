@@ -59,7 +59,7 @@ func newStatsCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			return renderStats(cmd.OutOrStdout(), g.namespace, resp.Msg)
+			return renderStats(cmd.OutOrStdout(), resp.Msg)
 		},
 	}
 	cmd.Flags().StringVar(&since, "since", "",
@@ -99,9 +99,15 @@ func parseSince(raw string) (lookback time.Duration, at time.Time, err error) {
 }
 
 // renderStats writes the human report.
-func renderStats(out io.Writer, namespace string, stats *orkstackv1.GetStatsResponse) error {
+//
+// The namespace it prints is the one the SERVER answered for, not the one this
+// command was asked to act in. An empty --namespace means "the deployment's
+// default", whose name this CLI deliberately does not know (see
+// globalFlags.resolveNamespace), and a header reading "-" would leave a reader
+// guessing which tenant the numbers below belong to.
+func renderStats(out io.Writer, stats *orkstackv1.GetStatsResponse) error {
 	header := newTable(out)
-	fmt.Fprintf(header, "Namespace:\t%s\n", orDash(namespace))
+	fmt.Fprintf(header, "Namespace:\t%s\n", orDash(stats.GetNamespace()))
 	fmt.Fprintf(header, "Window:\t%s to %s\n",
 		formatTime(stats.GetWindowSince()), formatTime(stats.GetWindowUntil()))
 	fmt.Fprintf(header, "Computed:\t%s\n", formatTime(stats.GetComputedAt()))

@@ -83,6 +83,12 @@ type Executions struct {
 	Durations []time.Duration
 }
 
+// ErrNoRunArchive reports a stats question asked of a process with no run
+// archive wired. It is not "nothing finished": it is "this process cannot
+// tell", and the two need opposite reactions — look at the runs, or configure
+// the deployment.
+var ErrNoRunArchive = fmt.Errorf("no run archive is configured")
+
 // ExecutionReader is the cluster half of a stats answer.
 //
 // It is declared beside RunReader and satisfied by the same type on purpose.
@@ -347,7 +353,12 @@ func TallyRunIndex(entries []artifacts.RunIndexEntry) RunTally {
 // that stopped at a page size is not a total.
 func (a *RunArchiver) TallyRuns(ctx context.Context, q ArchiveQuery) (RunTally, error) {
 	if a == nil {
-		return TallyRunIndex(nil), nil
+		// Not an empty tally. "No archive is configured" and "no run finished"
+		// are opposite facts that would render identically, and the second is
+		// the one a dashboard would believe. ListRuns may answer an absent
+		// archive with an empty page — a list of nothing is still a list — but
+		// a TOTAL of nothing is a claim, and this one cannot be made.
+		return RunTally{}, ErrNoRunArchive
 	}
 	entries, err := a.archive.ListRuns(ctx, artifacts.RunQuery{
 		Namespace: q.Namespace,

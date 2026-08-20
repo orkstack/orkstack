@@ -51,6 +51,12 @@ counting a run twice.
 - A window that ends at or before it starts is refused. Answering it with zeros
   would hand back numbers that read exactly like a healthy, idle namespace.
 
+The response echoes what it answered: `namespace`, `window_since` and
+`window_until`, all resolved. A client that asked for "the default namespace,
+the last day" can then label its own numbers without knowing the default's
+name — which is why `orkctl stats` prints the namespace the *server* named
+rather than the one it was asked to act in.
+
 `orkctl stats --since 6h` sends the **duration**, not an instant. One clock
 then decides both ends of the window — the server's, which is the clock every
 stored time is compared against. A client that resolved "six hours ago" itself

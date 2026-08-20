@@ -597,26 +597,43 @@ func TestGetStats_ReportsPoolHealthFromTheCluster(t *testing.T) {
 // TestGetStats_SaysWhatIsMissingWhenNoRecordIsWired. An engine with no archive
 // could still count live runs, and a success rate over live runs alone is not
 // one — so it says what to configure instead of answering.
+//
+// Both ways of having no archive are covered, and the second is the one that
+// bites: engine.NewRunArchiver(nil) is a TYPED nil, so the interface holding
+// it is not nil and the assertion succeeds. An implementation that answered
+// that with an empty tally would report a namespace with no finished runs —
+// which is what a healthy, idle namespace looks like.
 func TestGetStats_SaysWhatIsMissingWhenNoRecordIsWired(t *testing.T) {
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
-	clock := newStatsClock(now)
-	svc := api.NewService(api.Config{
-		Reader:  &fakeReader{executions: map[string]engine.Executions{}},
-		Starter: &fakeStarter{},
-		Now:     clock.Now,
-	})
-	handler := api.NewStatsHandler(svc, 0)
+	for _, testCase := range []struct {
+		name    string
+		archive api.RunArchive
+	}{
+		{name: "no archive at all"},
+		{name: "an archiver over no store", archive: engine.NewRunArchiver(nil)},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			clock := newStatsClock(now)
+			svc := api.NewService(api.Config{
+				Reader:  &fakeReader{executions: map[string]engine.Executions{}},
+				Archive: testCase.archive,
+				Starter: &fakeStarter{},
+				Now:     clock.Now,
+			})
+			handler := api.NewStatsHandler(svc, 0)
 
-	_, err := handler.GetStats(context.Background(),
-		connect.NewRequest(&orkstackv1.GetStatsRequest{}))
-	if err == nil {
-		t.Fatal("an engine with no run archive answered a stats request")
-	}
-	if code := connect.CodeOf(err); code != connect.CodeFailedPrecondition {
-		t.Errorf("refused with %v, want FailedPrecondition", code)
-	}
-	if !strings.Contains(err.Error(), "ORK_ARTIFACT_BACKEND") {
-		t.Errorf("error %q does not name what to configure", err)
+			got, err := handler.GetStats(context.Background(),
+				connect.NewRequest(&orkstackv1.GetStatsRequest{}))
+			if err == nil {
+				t.Fatalf("an engine with no run archive answered a stats request: %v", got.Msg)
+			}
+			if code := connect.CodeOf(err); code != connect.CodeFailedPrecondition {
+				t.Errorf("refused with %v, want FailedPrecondition", code)
+			}
+			if !strings.Contains(err.Error(), "ORK_ARTIFACT_BACKEND") {
+				t.Errorf("error %q does not name what to configure", err)
+			}
+		})
 	}
 }
 
