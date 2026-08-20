@@ -77,6 +77,10 @@ type statsFixture struct {
 	archive artifacts.RunArchive
 	clock   *statsClock
 	runs    *engine.RunStore
+	// seeded numbers the runs this fixture archives, so two runs of one
+	// orkflow at one instant do not collide on an index key. It is a counter,
+	// not an ordering: nothing here reads meaning out of a run id.
+	seeded int
 }
 
 // newStatsFixture wires a service the way `ork` does: a durable archive, a
@@ -110,7 +114,7 @@ func newStatsFixture(t *testing.T, at time.Time, namespaces ...string) *statsFix
 }
 
 // archiveRun writes one finished run through the production archiver, which is
-// what puts an index key in the tree.
+// what puts a real index key in the tree.
 func (f *statsFixture) archiveRun(
 	t *testing.T,
 	namespace, orkflow string,
@@ -118,30 +122,20 @@ func (f *statsFixture) archiveRun(
 	at time.Time,
 ) string {
 	t.Helper()
-	runID := fmt.Sprintf("ork-%d-%d", at.UnixNano(), len(runID(namespace, orkflow, status, at)))
+	f.seeded++
+	id := fmt.Sprintf("ork-%d-%d", at.UnixNano(), f.seeded)
 	run := &orkstackv1.Run{
-		Id:          runID,
+		Id:          id,
 		Namespace:   namespace,
 		OrkflowName: orkflow,
 		Status:      status,
 		CreatedAt:   timestamppb.New(at),
 		FinishedAt:  timestamppb.New(at.Add(time.Minute)),
 	}
-	archiver := engine.NewRunArchiver(f.archive)
-	if err := archiver.Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("archive run %s: %v", runID, err)
+	if err := engine.NewRunArchiver(f.archive).Archive(context.Background(), run, nil); err != nil {
+		t.Fatalf("archive run %s: %v", id, err)
 	}
-	return runID
-}
-
-// runID makes each seeded run distinct without deriving anything from an id:
-// two runs of one orkflow at one instant would otherwise share an index key.
-var seededRuns = map[string]int{}
-
-func runID(namespace, orkflow string, status orkstackv1.Status, at time.Time) string {
-	key := fmt.Sprintf("%s/%s/%s/%d", namespace, orkflow, status, at.UnixNano())
-	seededRuns[key]++
-	return strings.Repeat("x", seededRuns[key])
+	return id
 }
 
 func (f *statsFixture) stats(
