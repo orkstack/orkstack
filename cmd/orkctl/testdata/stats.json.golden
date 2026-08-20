@@ -1,0 +1,39 @@
+{
+  "runsByStatus": {
+    "canceled": "1",
+    "failed": "1",
+    "running": "1",
+    "succeeded": "2"
+  },
+  "successRate": 0.5,
+  "successRateDefined": true,
+  "p50Duration": "4s",
+  "p95Duration": "8s",
+  "durationCoverageSince": "2026-01-01T03:04:05Z",
+  "durationSampleCount": "4",
+  "mostFailing": [
+    {
+      "orkflowName": "deploy",
+      "failed": "1",
+      "total": "3"
+    }
+  ],
+  "running": [
+    {
+      "id": "ork-live-1",
+      "orkflowName": "deploy",
+      "status": "RUNNING",
+      "createdAt": "2026-01-02T02:54:05Z",
+      "namespace": "default"
+    }
+  ],
+  "pools": [
+    {
+      "name": "main",
+      "isDefault": true
+    }
+  ],
+  "computedAt": "2026-01-02T03:04:05Z",
+  "windowSince": "2026-01-01T03:04:05Z",
+  "windowUntil": "2026-01-02T03:04:05Z"
+}

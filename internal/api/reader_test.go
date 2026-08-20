@@ -42,6 +42,39 @@ type fakeReader struct {
 	// listErr and getErr make the record unreachable rather than empty.
 	listErr error
 	getErr  error
+	// executions is the aggregate half of the same record: what the cluster's
+	// index says about a whole namespace rather than about one run. It is
+	// keyed by namespace, because a namespace is a tenancy boundary and a
+	// double that answered the same thing for every name could not fail the
+	// test that says one namespace's numbers exclude another's.
+	executions    map[string]engine.Executions
+	executionsErr error
+	// executionWindows records every window the aggregate half was asked
+	// about, so a test can prove that an answer served from the cache
+	// consulted the record no further.
+	executionWindows []engine.StatsWindow
+}
+
+// Executions answers the aggregate question. It records the window first, so
+// a call that fails is still a call that happened.
+func (f *fakeReader) Executions(
+	_ context.Context,
+	w engine.StatsWindow,
+) (engine.Executions, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.executionWindows = append(f.executionWindows, w)
+	if f.executionsErr != nil {
+		return engine.Executions{}, f.executionsErr
+	}
+	return f.executions[w.Namespace], nil
+}
+
+// executionCalls is how many times the aggregate half was consulted.
+func (f *fakeReader) executionCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.executionWindows)
 }
 
 // setRun replaces what the record answers for a run, as the cluster would when

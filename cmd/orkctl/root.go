@@ -127,6 +127,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newOrkflowCommand(g),
 		newRunCommand(g),
 		newPluginCommand(g),
+		newStatsCommand(g),
 		newWebhookCommand(g),
 		newVersionCommand(g),
 	)
@@ -222,6 +223,10 @@ func (g *globalFlags) pluginClient() orkstackv1connect.PluginServiceClient {
 
 func (g *globalFlags) namespaceClient() orkstackv1connect.NamespaceServiceClient {
 	return orkstackv1connect.NewNamespaceServiceClient(g.httpClient(), g.baseURL())
+}
+
+func (g *globalFlags) statsClient() orkstackv1connect.StatsServiceClient {
+	return orkstackv1connect.NewStatsServiceClient(g.httpClient(), g.baseURL())
 }
 
 func (g *globalFlags) baseURL() string {

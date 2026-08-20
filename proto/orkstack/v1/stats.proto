@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/namespace.proto";
+import "orkstack/v1/run.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// StatsService answers one question — "how is this namespace doing?" — from
+// the two records that already exist. It adds no write path, keeps no counter
+// and stores nothing: a number here is derived on read, or it is not reported.
+//
+// The two sources are the cluster's own index of executions (live runs, and
+// how long the finished ones took) and the run archive's INDEX, whose keys
+// carry a run's namespace, orkflow, status and time. Neither is this process's
+// memory, so any replica answers identically — including one that started
+// nothing and holds no state of its own.
+//
+// A counter would have been cheaper to read and impossible to trust: it is a
+// third record of a fact two records already hold, and the day it disagrees
+// with them there is no way to tell which is lying. Deriving on read cannot
+// drift, and the cost is bounded by a short-lived cache whose age every answer
+// carries (computed_at).
+service StatsService {
+  // GetStats reports one namespace's runs over one time window.
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+}
+
+message GetStatsRequest {
+  string namespace = 1;                  // empty = the default namespace
+  // since is the inclusive start of the window. Empty means lookback before
+  // the window ends, and lookback's own default is 24 hours.
+  google.protobuf.Timestamp since = 2;
+  // until is the exclusive end of the window. Empty means the moment the
+  // answer is computed. A window whose end is not after its start is refused
+  // rather than answered with zeros, which is a number that reads like a fact.
+  google.protobuf.Timestamp until = 3;
+  // lookback says how far back from `until` the window reaches, for the client
+  // that means "the last six hours" rather than a pair of instants. It is
+  // ignored when `since` is set.
+  //
+  // It exists so that ONE clock decides a relative window. A client that
+  // resolved "six hours ago" itself would be pairing its own clock with the
+  // server's — the two ends of one window measured by two machines — and a
+  // client running a few minutes fast would silently ask about a window of
+  // the wrong length, or about one that ends before it starts. The times a
+  // window is compared against are the server's either way, so the arithmetic
+  // belongs there.
+  google.protobuf.Duration lookback = 4;
+}
+
+// OrkflowFailures is one orkflow's failure record inside the window: how many
+// of its finished runs failed, and how many finished at all.
+//
+// Both numbers travel together because neither means anything alone. Three
+// failures out of four is an outage; three out of three thousand is Tuesday.
+message OrkflowFailures {
+  string orkflow_name = 1;
+  int64 failed = 2;
+  int64 total = 3;
+}
+
+message GetStatsResponse {
+  // runs_by_status counts the window's runs. Keys are the lowercase, unprefixed
+  // status names: "running", "succeeded", "failed", "canceled". All four are
+  // always present, so a client renders a real zero rather than a blank.
+  //
+  // There is deliberately no "pending" key. A run that has been accepted but
+  // has not started its first task is still one executing entry in the
+  // cluster's index, and telling the two apart means reading that run's
+  // history — one read per run, which is the cost this whole service is built
+  // to avoid. "running" therefore means "accepted and not finished", and the
+  // `running` list below is exactly the same set. A key that could only ever
+  // be answered by guessing is not reported at all.
+  map<string, int64> runs_by_status = 1;
+  // success_rate is succeeded / finished, between 0 and 1. Canceled runs count
+  // as finished: a client that cancels half its runs has not succeeded at
+  // them, and hiding them would make the rate rise when things go wrong.
+  double success_rate = 2;
+  // success_rate_defined is false when the window finished no runs at all.
+  // A rate over nothing is not 0 — it is unanswerable, and 0 is the most
+  // alarming number a dashboard can show. Render "no data", never zero.
+  bool success_rate_defined = 3;
+  // p50_duration and p95_duration are the median and 95th percentile of how
+  // long the window's finished runs took, by nearest rank over the samples
+  // duration_sample_count reports.
+  google.protobuf.Duration p50_duration = 4;
+  google.protobuf.Duration p95_duration = 5;
+  // duration_coverage_since is the instant the percentiles actually cover,
+  // which can be later than the window's start. How long a run took is known
+  // only while the cluster still holds its execution record; the archive index
+  // carries a run's status and time but not its duration, and reading bodies
+  // to recover one is the cost this service refuses.
+  //
+  // So a 30-day window over a 3-day record answers for 3 days AND SAYS SO
+  // here, instead of quietly presenting three days of latency as thirty.
+  google.protobuf.Timestamp duration_coverage_since = 6;
+  // duration_sample_count is how many runs the percentiles were computed from.
+  // Zero means they are unavailable and the two durations above are unset —
+  // a client shows "unavailable", never "0s", which reads as instant success.
+  int64 duration_sample_count = 7;
+  // most_failing lists the orkflows with the most failed runs in the window,
+  // worst first, and only those that failed at least once.
+  repeated OrkflowFailures most_failing = 8;
+  // running is every run executing when the answer was computed, newest first.
+  // Each is the shallow projection an index can give — id, namespace, orkflow,
+  // status and start time. A run's tasks, input and output live elsewhere;
+  // GetRun reads them.
+  repeated Run running = 9;
+  // pools is the same pool health ListPools reports: every pool this namespace
+  // may dispatch onto, with the Orkers serving it right now.
+  repeated Pool pools = 10;
+  // computed_at is when these numbers were measured, which is not necessarily
+  // when they were asked for: an answer may be served from a short-lived cache.
+  // It is the age of every number here, on the wire, so a client can show it.
+  google.protobuf.Timestamp computed_at = 11;
+  // window_since and window_until are the window that was actually measured,
+  // with an empty request resolved. A client that asked for the default window
+  // cannot label its own numbers without them.
+  google.protobuf.Timestamp window_since = 12;
+  google.protobuf.Timestamp window_until = 13;
+}

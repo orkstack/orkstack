@@ -17,7 +17,15 @@ import (
 // the API's type without a cycle: internal/api imports internal/engine. The
 // two are the same method set, so one implementation satisfies both and the
 // API accepts what the router returns.
+//
+// It embeds ExecutionReader — the aggregate half, which reads the same index
+// for a whole namespace instead of for one run. The two are one interface
+// because they must be one cluster: a dashboard whose numbers came from
+// somewhere else than the runs it links to would be a report about a
+// deployment nobody is running.
 type RunReader interface {
+	ExecutionReader
+
 	GetRun(ctx context.Context, runID string) (*orkstackv1.Run, error)
 	ListRuns(ctx context.Context, q RunQuery) ([]*orkstackv1.Run, error)
 	StreamEvents(

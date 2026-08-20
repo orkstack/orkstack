@@ -101,3 +101,6 @@ func (nopReader) StreamEvents(
 ) error {
 	return nil
 }
+func (nopReader) Executions(context.Context, engine.StatsWindow) (engine.Executions, error) {
+	return engine.Executions{}, nil
+}
