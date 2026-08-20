@@ -82,9 +82,26 @@ func (o LogPollOptions) withDefaults() LogPollOptions {
 // tick after its last chunk. Nothing is lost — the sweep that follows the
 // terminal observation is what delivers the tail (see StreamRunTaskLogs).
 
-// logChunkPage bounds how many chunks one read pulls into memory. The engine's
-// log memory is therefore one page per subscriber, whatever the task wrote.
-const logChunkPage = 32
+// logChunkPage and logChunkPageBytes bound one read, and the ENGINE'S LOG
+// MEMORY IS THE PAIR: a subscriber holds one page, and a page is at most
+// logChunkPageBytes of chunk data plus the one chunk that crossed the budget.
+//
+// The count alone is not a bound and must not be read as one. A chunk is
+// whatever the Orker flushed, which is ORK_ORKER_LOG_FLUSH_BYTES (64 KiB by
+// default, and an operator's to raise) plus one over-long line of up to 1 MiB
+// (internal/orker/logsink.go). At 32 chunks that is ~34 MiB per open
+// subscriber on the defaults alone, and a run detail page opens one subscriber
+// per expanded task. The byte budget is what makes the number the engine
+// states a number the engine controls; the count still caps the LIST, which
+// is what keeps a quiet poll cheap.
+//
+// A page that comes back short of either bound is not the end of the log: the
+// drain reads again until a page is short of BOTH, which is what keeps a
+// replay of a 16 MiB attempt complete while costing one page at a time.
+const (
+	logChunkPage      = 32
+	logChunkPageBytes = 4 << 20
+)
 
 // StreamTaskLogs server-streams one task attempt's output.
 func (s *Service) StreamTaskLogs(
@@ -260,10 +277,11 @@ func (s *Service) StreamRunTaskLogs(
 
 // drainLogChunks sends every chunk the store holds after *cursor, advancing it
 // as it goes, one bounded page at a time. It returns when a page comes back
-// short — the store had no more at that instant — so one call is the whole of
-// what a replay owes its caller. A writer cannot hold it open forever: an
-// attempt's chunks are capped (internal/orker/logsink.go), and every page
-// moves the cursor forward.
+// short of BOTH bounds — the store had no more at that instant — so one call
+// is the whole of what a replay owes its caller, at one page of memory rather
+// than a whole attempt's. A writer cannot hold it open forever: an attempt's
+// chunks are capped (internal/orker/logsink.go), and every page moves the
+// cursor forward.
 func (s *Service) drainLogChunks(
 	ctx context.Context,
 	ref artifacts.LogRef,
@@ -272,7 +290,7 @@ func (s *Service) drainLogChunks(
 ) (bool, error) {
 	delivered := false
 	for {
-		chunks, err := s.logs.ReadLogChunks(ctx, ref, *cursor, logChunkPage)
+		chunks, err := s.logs.ReadLogChunks(ctx, ref, *cursor, logChunkPage, logChunkPageBytes)
 		if err != nil {
 			if ctx.Err() != nil {
 				return delivered, nil
@@ -283,6 +301,7 @@ func (s *Service) drainLogChunks(
 		if len(chunks) == 0 {
 			return delivered, nil
 		}
+		read := 0
 		for _, chunk := range chunks {
 			if err := send(&orkstackv1.TaskLogChunk{
 				RunId:     chunk.RunID,
@@ -295,9 +314,15 @@ func (s *Service) drainLogChunks(
 				return delivered, err
 			}
 			*cursor = chunk.Seq
+			read += len(chunk.Data)
 			delivered = true
 		}
-		if len(chunks) < logChunkPage {
+		// Short of both bounds is the only proof the store is exhausted. A
+		// page cut by the BYTE budget is short in count while the log goes on,
+		// and stopping there would end a replay in the middle of a chatty
+		// task's output — the same silent truncation the budget exists to
+		// avoid paying for in memory.
+		if len(chunks) < logChunkPage && int64(read) < logChunkPageBytes {
 			return delivered, nil
 		}
 	}

@@ -23,7 +23,7 @@ import { wsBaseUrl } from './ws';
 //     an animation frame, so a task writing thousands of lines a second costs
 //     one render per frame instead of one per line.
 
-export type LogSocketState = 'connecting' | 'open' | 'closed' | 'error' | 'ended';
+export type LogSocketState = 'connecting' | 'open' | 'closed' | 'error' | 'ended' | 'failed';
 
 /** One line of a task's output, numbered in the order the engine sent it. */
 export interface LogLine {
@@ -67,7 +67,12 @@ export interface FollowTaskLogsOptions {
 	/** 0 = the latest attempt that wrote anything. */
 	attempt?: number;
 	onLines: (delivery: LogDelivery) => void;
-	onState?: (state: LogSocketState) => void;
+	/**
+	 * onState reports the socket's state. `failed` is TERMINAL — nothing will
+	 * reconnect after it — and carries a reason naming what went wrong, which
+	 * is what a view needs to show instead of a spinner.
+	 */
+	onState?: (state: LogSocketState, detail?: string) => void;
 	/**
 	 * schedule defers a batch. It exists as a seam so a test can flush
 	 * synchronously; the default is an animation frame with a timeout backstop.
@@ -75,6 +80,16 @@ export interface FollowTaskLogsOptions {
 	schedule?: (flush: () => void) => () => void;
 	/** Bounded reconnect backoff, exposed for tests. */
 	retryBaseMs?: number;
+	/**
+	 * maxRetries bounds the reconnects that deliver NOTHING. A socket the
+	 * server will never accept — the engine is down, the origin is refused
+	 * (ORK_WS_ALLOWED_ORIGINS), the run is gone — closes exactly like a wifi
+	 * handover does, so an unbounded retry loop shows a reader "reconnecting"
+	 * for ever and never says what is wrong. Progress resets the budget: a
+	 * connection that delivers a chunk costs nothing against it, so a long
+	 * silent follow across real network blips is unaffected.
+	 */
+	maxRetries?: number;
 }
 
 // A hidden tab gets no animation frames, so rAF alone would let a background
@@ -101,6 +116,20 @@ function scheduleFrame(flush: () => void): () => void {
 }
 
 /**
+ * describeClose renders what the browser knows about a socket that closed.
+ *
+ * It is not much — a rejection before the upgrade arrives as an abnormal
+ * closure with no status — but a code and a server's reason are the difference
+ * between "something went wrong" and a line an operator can act on.
+ */
+function describeClose(event?: { code?: number; reason?: string }): string {
+	const code = event?.code;
+	const reason = event?.reason?.trim();
+	if (!code && !reason) return 'the connection dropped';
+	return `close ${code ?? 'unknown'}${reason ? `: ${reason}` : ''}`;
+}
+
+/**
  * followTaskLogs streams one task attempt into onLines and returns the
  * unsubscribe function. It follows until the task is terminal, reconnecting
  * with a resume cursor for as long as it is subscribed.
@@ -108,13 +137,20 @@ function scheduleFrame(flush: () => void): () => void {
 export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 	const schedule = opts.schedule ?? scheduleFrame;
 	const retryBase = opts.retryBaseMs ?? 500;
+	const maxRetries = opts.maxRetries ?? 6;
 
 	let stopped = false;
 	let socket: WebSocket | null = null;
 	let reconnect: ReturnType<typeof setTimeout> | undefined;
 	let cancelBatch: (() => void) | undefined;
 	let scheduled = false;
+	// retries counts CONSECUTIVE connections that delivered nothing. A chunk
+	// resets it, an open does not: a server that accepts the socket and then
+	// drops it is exactly as unusable as one that refuses it, and resetting on
+	// `open` would retry that pair for ever.
 	let retries = 0;
+	let everOpened = false;
+	let lastClose = 'the connection dropped';
 
 	// The resume cursor, and the only state a reconnect carries — BOTH halves
 	// of it. A chunk's seq is dense per ATTEMPT, so a cursor without the
@@ -135,7 +171,7 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 	let pendingEnded = false;
 	let pendingRestart = false;
 
-	const setState = (s: LogSocketState) => opts.onState?.(s);
+	const setState = (s: LogSocketState, detail?: string) => opts.onState?.(s, detail);
 
 	const flush = () => {
 		scheduled = false;
@@ -259,7 +295,7 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 		socket = new WebSocket(url);
 
 		socket.onopen = () => {
-			retries = 0;
+			everOpened = true;
 			setState('open');
 		};
 
@@ -270,6 +306,10 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 			} catch {
 				return; // ignore a frame this build cannot read
 			}
+			// A frame is PROGRESS, and progress is what buys the next
+			// reconnect: this connection is serving, so whatever went wrong
+			// before it is over.
+			retries = 0;
 			// A resumed stream can only move forward. Anything at or before the
 			// cursor was already decoded and numbered; replaying it would
 			// duplicate lines the reader has already seen. The terminator is
@@ -288,15 +328,41 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 
 		socket.onerror = () => setState('error');
 
-		socket.onclose = () => {
+		socket.onclose = (event?: { code?: number; reason?: string }) => {
 			socket = null;
 			if (stopped) return;
+			lastClose = describeClose(event);
+			if (retries >= maxRetries) {
+				// TERMINAL, and it says what happened. A pane that kept
+				// reconnecting here would show RECONNECTING for ever against
+				// an engine that is down, an origin the engine refuses, or a
+				// run that is not there — three fixable things, none of them
+				// visible.
+				stopped = true;
+				setState('failed', failureReason());
+				return;
+			}
 			setState('closed');
 			// Resume after the last seq decoded, with a bounded backoff.
 			const delay = Math.min(retryBase * 2 ** retries, 8000);
 			retries += 1;
 			reconnect = setTimeout(connect, delay);
 		};
+	};
+
+	// failureReason names what a reader can act on. A browser is told very
+	// little about a socket that failed — a rejection before the upgrade has no
+	// status code here — so the two cases it CAN tell apart are told apart:
+	// one that never opened at all, and one that opened and delivered nothing.
+	const failureReason = (): string => {
+		const attempts = retries + 1;
+		return everOpened
+			? `The log stream opened and closed ${attempts} times without delivering anything ` +
+					`(${lastClose}). The engine may have lost the run's logs, or be failing to read ` +
+					`the artifact store.`
+			: `The log stream could not be opened after ${attempts} attempts (${lastClose}). ` +
+					`The engine may be unreachable, or it may be refusing this page's origin ` +
+					`(ORK_WS_ALLOWED_ORIGINS).`;
 	};
 
 	connect();

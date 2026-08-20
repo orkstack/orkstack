@@ -95,12 +95,14 @@ func (s *LocalLogStore) PutLogChunk(ctx context.Context, chunk LogChunk) error {
 	return nil
 }
 
-// ReadLogChunks returns the attempt's chunks after afterSeq, in order.
+// ReadLogChunks returns the attempt's chunks after afterSeq, in order, bounded
+// by both limit and maxBytes.
 func (s *LocalLogStore) ReadLogChunks(
 	ctx context.Context,
 	ref LogRef,
 	afterSeq int64,
 	limit int,
+	maxBytes int64,
 ) ([]LogChunk, error) {
 	prefix, err := LogAttemptPrefix(ref)
 	if err != nil {
@@ -132,6 +134,7 @@ func (s *LocalLogStore) ReadLogChunks(
 	if limit > 0 && limit < len(found) {
 		found = found[:limit]
 	}
+	read := int64(0)
 	for i := range found {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -151,6 +154,13 @@ func (s *LocalLogStore) ReadLogChunks(
 			return nil, fmt.Errorf("artifacts: local log chunk %q: %w", key, err)
 		}
 		found[i].Data = data
+		// The budget is spent AFTER this chunk, never before it: the first
+		// chunk is always returned whole, so a reader cannot be stalled by a
+		// chunk larger than one page.
+		read += int64(len(data))
+		if maxBytes > 0 && read >= maxBytes {
+			return found[:i+1], nil
+		}
 	}
 	return found, nil
 }
@@ -187,7 +197,7 @@ func (s *LocalLogStore) LatestLogAttempt(ctx context.Context, runID, taskID stri
 		// something to read.
 		chunks, err := s.ReadLogChunks(ctx, LogRef{
 			RunID: runID, TaskID: taskID, Attempt: int32(attempt),
-		}, 0, 1)
+		}, 0, 1, 0)
 		if err != nil {
 			return 0, err
 		}

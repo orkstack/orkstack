@@ -33,7 +33,7 @@ func TestExecuteTask_PluginLogsAreReadableFromTheStoreWhileTheTaskRuns(t *testin
 			// about this task has finished yet.
 			deadline := time.Now().Add(10 * time.Second)
 			for time.Now().Before(deadline) {
-				chunks, err := store.ReadLogChunks(context.Background(), ref, 0, 0)
+				chunks, err := store.ReadLogChunks(context.Background(), ref, 0, 0, 0)
 				if err != nil {
 					return nil, err
 				}

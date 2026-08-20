@@ -89,9 +89,27 @@ type LogStore interface {
 	// rewriting the same coordinates is allowed but pointless.
 	PutLogChunk(ctx context.Context, chunk LogChunk) error
 	// ReadLogChunks returns the attempt's chunks with Seq strictly greater
-	// than afterSeq, in sequence order, at most limit of them (0 = no cap).
+	// than afterSeq, in sequence order, at most limit of them (0 = no cap)
+	// and at most maxBytes of chunk data (0 = no cap).
+	//
+	// BOTH BOUNDS ARE NEEDED, because a count is not a size. One chunk is
+	// whatever the Orker flushed — up to ORK_ORKER_LOG_FLUSH_BYTES plus one
+	// over-long line (internal/orker/logsink.go) — so a page of 32 chunks is
+	// a page of anywhere between a few hundred bytes and tens of megabytes,
+	// and a reader that bounded only the count would size its memory on a
+	// number the writer's configuration decides. maxBytes is the bound that
+	// holds whatever those flush bounds are set to.
+	//
+	// The FIRST chunk is always returned whole, even when it alone passes
+	// maxBytes: a page that could come back empty would stall a reader on a
+	// chunk it can never receive. A short page therefore means "no more at
+	// this instant, OR the budget is spent", and a caller that must drain
+	// everything reads again from the last sequence it received.
+	//
 	// An attempt that wrote nothing reads empty, never an error.
-	ReadLogChunks(ctx context.Context, ref LogRef, afterSeq int64, limit int) ([]LogChunk, error)
+	ReadLogChunks(
+		ctx context.Context, ref LogRef, afterSeq int64, limit int, maxBytes int64,
+	) ([]LogChunk, error)
 	// LatestLogAttempt returns the highest attempt of a task that wrote any
 	// chunk. A task with no logs at all returns an error matching ErrNotFound.
 	LatestLogAttempt(ctx context.Context, runID, taskID string) (int32, error)

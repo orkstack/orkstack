@@ -799,25 +799,33 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 	note(`dashboard for ${ALPHA}, served by engine B: ${JSON.stringify(alphaNumbers)}`);
 	expect(Number(alphaNumbers.failed)).toBeGreaterThanOrEqual(1);
 
-	// ONE WINDOW, ONE POPULATION. Every card on this row is about the runs the
-	// window CREATED, and the note under the percentiles says so as a SHARE of
-	// them. It used to be a bare count of runs that had CLOSED in the window —
-	// a different set from the one the rate beside it was a rate over, with
-	// nothing on the screen to say so.
+	// ONE WINDOW, ONE POPULATION. The note under the percentiles states them as
+	// a SHARE of the set they are drawn from: the window's runs that have
+	// FINISHED, which is the same set the success rate beside them is a rate
+	// over. It used to be a bare count of runs that had CLOSED in the window —
+	// a different set again, with nothing on the screen to say so.
+	//
+	// The denominator EXCLUDES `running`, and that is what is asserted below.
+	// `running` is the one number on this row that is not about the window: it
+	// is a fact about now (proto/orkstack/v1/stats.proto), so a namespace with
+	// one long-lived run started before the window would inflate the total and
+	// the samples would be a share of a set they are not drawn from. `orkctl
+	// stats` prints the same denominator (cmd/orkctl/stats.go), and one number
+	// must not have two.
 	const coverage = (await page.getByTestId('stat-p50-note').innerText()).trim();
-	const share = coverage.match(/^(\d+) of (\d+) runs this window started/);
+	const share = coverage.match(/^(\d+) of the window's (\d+) finished runs/);
 	if (!share) throw new Error(`the p50 note reads ${JSON.stringify(coverage)}`);
-	const windowRuns =
-		Number(alphaNumbers.running) +
+	const finishedRuns =
 		Number(alphaNumbers.succeeded) +
 		Number(alphaNumbers.failed) +
 		Number(await page.getByTestId('stat-canceled').innerText());
-	expect(Number(share[2])).toBe(windowRuns);
-	// The samples are drawn from the finished ones, so they cannot outnumber
-	// them: a bigger number would be the two populations parting company again.
-	expect(Number(share[1])).toBeLessThanOrEqual(windowRuns - Number(alphaNumbers.running));
+	expect(Number(share[2])).toBe(finishedRuns);
+	// The samples are drawn from those finished runs, so they cannot outnumber
+	// them: a bigger number would be two populations parting company again.
+	expect(Number(share[1])).toBeLessThanOrEqual(finishedRuns);
 	note(`dashboard for ${ALPHA}: percentiles cover ${coverage}, over the same runs the ` +
-		`rate ${alphaNumbers.rate} is a rate over`);
+		`rate ${alphaNumbers.rate} is a rate over (${alphaNumbers.running} running excluded: ` +
+		'that number is about now, not about the window)');
 	await shot(page, 'screenshot-dashboard.png');
 
 	// ---- beta: a namespace where the numbers cannot be answered ------------

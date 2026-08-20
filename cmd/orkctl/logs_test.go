@@ -56,17 +56,25 @@ func (s *cliLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogChunk) e
 }
 
 func (s *cliLogStore) ReadLogChunks(
-	_ context.Context, ref artifacts.LogRef, afterSeq int64, limit int,
+	_ context.Context, ref artifacts.LogRef, afterSeq int64, limit int, maxBytes int64,
 ) ([]artifacts.LogChunk, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []artifacts.LogChunk
+	read := int64(0)
 	for _, chunk := range s.chunks {
 		if chunk.LogRef != ref || chunk.Seq <= afterSeq {
 			continue
 		}
 		out = append(out, chunk)
+		read += int64(len(chunk.Data))
+		// Both bounds, as the contract states them: the first chunk is always
+		// returned whole, and a page stops at whichever bound is met first
+		// (pkg/artifacts/logs.go).
 		if limit > 0 && len(out) == limit {
+			break
+		}
+		if maxBytes > 0 && read >= maxBytes {
 			break
 		}
 	}
@@ -92,8 +100,15 @@ func (s *cliLogStore) LatestLogAttempt(_ context.Context, runID, taskID string) 
 }
 
 func (s *cliLogStore) write(runID, taskID string, seq int64, body string) {
+	s.writeAttempt(runID, taskID, 1, seq, body)
+}
+
+// writeAttempt stores one chunk of a named TRY. A retry writes under its own
+// attempt with its own sequence starting again at 1, which is the shape a
+// resume across a retry has to cope with.
+func (s *cliLogStore) writeAttempt(runID, taskID string, attempt int32, seq int64, body string) {
 	if err := s.PutLogChunk(context.Background(), artifacts.LogChunk{
-		LogRef: artifacts.LogRef{RunID: runID, TaskID: taskID, Attempt: 1},
+		LogRef: artifacts.LogRef{RunID: runID, TaskID: taskID, Attempt: attempt},
 		Seq:    seq, Data: []byte(body),
 	}); err != nil {
 		panic(err)
@@ -254,7 +269,8 @@ func preview(text string) string {
 }
 
 // Resume is the CLI's half of the same contract: --from-seq skips what the
-// caller already has.
+// caller already has, and it names the attempt it counted — a cursor is half
+// of one without it.
 func TestRunLogs_FromSeqResumes(t *testing.T) {
 	f, logs := newLogFixture(t)
 	seedLoggedRun(t, f, "run-logs-4", orkstackv1.Status_STATUS_SUCCEEDED, "build")
@@ -262,10 +278,79 @@ func TestRunLogs_FromSeqResumes(t *testing.T) {
 		logs.write("run-logs-4", "build", seq, fmt.Sprintf("line %d\n", seq))
 	}
 
-	out := f.run("run", "logs", "run-logs-4", "--task", "build", "--from-seq", "3").
-		requireExit(t, 0)
+	out := f.run("run", "logs", "run-logs-4", "--task", "build",
+		"--from-seq", "3", "--from-attempt", "1").requireExit(t, 0)
 	if out.stdout != "line 4\n" {
 		t.Fatalf("stdout = %q, want only the chunk after seq 3", out.stdout)
+	}
+}
+
+// THE RESUME THAT CROSSES A RETRY. A chunk sequence is dense per ATTEMPT and
+// starts again at 1, so a cursor of 5 taken from try 1 means nothing to try 2.
+// The engine drops a foreign cursor and delivers the resolved attempt from its
+// first chunk — but only when it is told which attempt the cursor counted
+// (internal/api/logs.go, StreamTaskLogsRequest.from_attempt).
+//
+// A CLI that sent the number alone would have try 1's cursor applied to try 2
+// and would print nothing here, while exiting 0 as if the log had been read:
+// a retry is usually shorter than the try that failed, which is what makes
+// this loss silent.
+func TestRunLogs_ResumeAcrossARetryDeliversTheNewAttemptFromItsFirstChunk(t *testing.T) {
+	f, logs := newLogFixture(t)
+	seedLoggedRun(t, f, "run-logs-9", orkstackv1.Status_STATUS_SUCCEEDED, "flaky")
+	// Try 1 talked for five chunks and died; try 2 wrote two and succeeded.
+	for seq := int64(1); seq <= 5; seq++ {
+		logs.writeAttempt("run-logs-9", "flaky", 1, seq, fmt.Sprintf("try one line %d\n", seq))
+	}
+	for seq := int64(1); seq <= 2; seq++ {
+		logs.writeAttempt("run-logs-9", "flaky", 2, seq, fmt.Sprintf("try two line %d\n", seq))
+	}
+
+	out := f.run("run", "logs", "run-logs-9", "--task", "flaky",
+		"--from-seq", "5", "--from-attempt", "1").requireExit(t, 0)
+	want := "try two line 1\ntry two line 2\n"
+	if out.stdout != want {
+		t.Fatalf("stdout = %q, want %q: the cursor belongs to attempt 1, so attempt 2 is "+
+			"delivered from its first chunk", out.stdout, want)
+	}
+}
+
+// A cursor with no attempt is REFUSED, not guessed. Applying it to whichever
+// try is latest is the silent loss above; the CLI cannot recover the missing
+// half, so it says so and exits non-zero instead of printing a short log that
+// looks complete.
+func TestRunLogs_FromSeqWithoutAnAttemptIsRefused(t *testing.T) {
+	f, logs := newLogFixture(t)
+	seedLoggedRun(t, f, "run-logs-10", orkstackv1.Status_STATUS_SUCCEEDED, "build")
+	logs.write("run-logs-10", "build", 1, "one\n")
+
+	out := f.run("run", "logs", "run-logs-10", "--task", "build", "--from-seq", "1").
+		requireExit(t, 1)
+	for _, want := range []string{"--from-attempt", "--attempt"} {
+		if !strings.Contains(out.stderr, want) {
+			t.Errorf("stderr = %q, want it to name %s", out.stderr, want)
+		}
+	}
+	if out.stdout != "" {
+		t.Fatalf("stdout = %q, want nothing printed for a cursor that cannot be honoured",
+			out.stdout)
+	}
+}
+
+// A pinned --attempt is itself the cursor's other half: one try's transcript
+// resumed inside that try needs no second flag.
+func TestRunLogs_APinnedAttemptSuppliesTheCursorsAttempt(t *testing.T) {
+	f, logs := newLogFixture(t)
+	seedLoggedRun(t, f, "run-logs-11", orkstackv1.Status_STATUS_SUCCEEDED, "flaky")
+	for seq := int64(1); seq <= 3; seq++ {
+		logs.writeAttempt("run-logs-11", "flaky", 1, seq, fmt.Sprintf("try one line %d\n", seq))
+	}
+	logs.writeAttempt("run-logs-11", "flaky", 2, 1, "try two line 1\n")
+
+	out := f.run("run", "logs", "run-logs-11", "--task", "flaky",
+		"--attempt", "1", "--from-seq", "2").requireExit(t, 0)
+	if out.stdout != "try one line 3\n" {
+		t.Fatalf("stdout = %q, want the rest of attempt 1", out.stdout)
 	}
 }
 

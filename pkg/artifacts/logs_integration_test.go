@@ -48,7 +48,7 @@ func TestIntegration_S3LogStore_OrdersAndResumesOverARealListing(t *testing.T) {
 		}
 	}
 
-	all, err := store.ReadLogChunks(ctx, ref, 0, 0)
+	all, err := store.ReadLogChunks(ctx, ref, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestIntegration_S3LogStore_OrdersAndResumesOverARealListing(t *testing.T) {
 		}
 	}
 
-	resumed, err := store.ReadLogChunks(ctx, ref, 20, 0)
+	resumed, err := store.ReadLogChunks(ctx, ref, 20, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks(after 20): %v", err)
 	}
@@ -99,7 +99,7 @@ func TestIntegration_S3LogStore_TruncationNoticeIsVisibleAndResumesPastIt(t *tes
 		t.Fatalf("PutLogChunk(notice): %v", err)
 	}
 
-	chunks, err := store.ReadLogChunks(ctx, ref, 0, 0)
+	chunks, err := store.ReadLogChunks(ctx, ref, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestIntegration_S3LogStore_TruncationNoticeIsVisibleAndResumesPastIt(t *tes
 
 	// Resuming after the notice's own sequence must return nothing: the
 	// ceiling key is the notice spelling, so the same object cannot come back.
-	after, err := store.ReadLogChunks(ctx, ref, 2, 0)
+	after, err := store.ReadLogChunks(ctx, ref, 2, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks(after the notice): %v", err)
 	}

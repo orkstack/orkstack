@@ -6,6 +6,7 @@
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import {
 		UNAVAILABLE,
+		finishedRuns,
 		fmtAge,
 		fmtCount,
 		fmtDuration,
@@ -44,23 +45,25 @@
 	// Saying so is the difference between "the last three days of latency" and
 	// a month of it (proto/orkstack/v1/stats.proto, duration_coverage_since).
 	//
-	// The count is stated as a SHARE of the window's runs, not as a bare number
-	// of finished runs, because that is what it is: every card on this row is
-	// about the runs the window created, and the percentiles cover the ones
-	// that have ended. Printed alone beside a success rate over a different
-	// set, it read as a second, contradictory total — `no run finished` next to
-	// `p50 58m over 12 finished runs` was a real answer this page could render.
-	const windowRuns = $derived(
-		Number(counts['running'] ?? 0n) +
-			Number(counts['succeeded'] ?? 0n) +
-			Number(counts['failed'] ?? 0n) +
-			Number(counts['canceled'] ?? 0n)
-	);
+	// The count is stated as a SHARE of the runs it is drawn from — the
+	// window's runs that have FINISHED — not as a bare number. Printed alone
+	// beside a success rate over a different set, it read as a second,
+	// contradictory total: `no run finished` next to `p50 58m over 12 finished
+	// runs` was a real answer this page could render.
+	//
+	// The denominator excludes `running`, and that is the whole point of
+	// naming it here. `running` is the one key that is NOT about the window —
+	// it is a fact about now (stats.proto), so a namespace with one long-lived
+	// run started last week would inflate the total and make the samples a
+	// share of a set they are not drawn from. `orkctl stats` counts the same
+	// three keys (cmd/orkctl/stats.go), and one number must not have two
+	// denominators.
+	const finished = $derived(finishedRuns(counts));
 	const coverageNote = $derived.by(() => {
 		if (!stats || durationSamples === 0) return 'no run finished in this window';
 		const since = timestampMs(stats.durationCoverageSince);
 		const windowSince = timestampMs(stats.windowSince);
-		const base = `${durationSamples} of ${windowRuns} runs this window started`;
+		const base = `${durationSamples} of the window's ${finished} finished runs`;
 		if (since !== null && windowSince !== null && since > windowSince + 60_000) {
 			return `${base}, covering only since ${fmtInstant(stats.durationCoverageSince)}`;
 		}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { followTaskLogs, type LogLine, type LogSocketState } from '$lib/taskLogs';
 
@@ -37,6 +38,10 @@
 	let truncated = $state(false);
 	let ended = $state(false);
 	let socketState = $state<LogSocketState>('connecting');
+	// failure is set only by the TERMINAL state: the follow gave up, and this
+	// is what it says went wrong. A view that cannot say why it stopped leaves
+	// a reader watching a spinner for ever.
+	let failure = $state('');
 	let following = $state(true);
 	let box: HTMLDivElement | undefined = $state(undefined);
 	// The try being shown, as the ENGINE resolved it — 0 until the first chunk
@@ -45,6 +50,11 @@
 	// expects the output of the try that is actually running.
 	let shownAttempt = $state(0);
 	let retried = $state(false);
+	// retryNonce is the reader asking again after a failure. It is part of the
+	// subscription's identity below, so bumping it tears the dead follow down
+	// and starts a fresh one — the same recovery ErrorPanel gives every other
+	// view on this site, without reloading the page.
+	let retryNonce = $state(0);
 
 	// A task with no attempt on record has no log prefix to read, and the
 	// engine answers NotFound for it rather than an empty pane. Wait for it to
@@ -68,6 +78,8 @@
 				return 'LIVE';
 			case 'ended':
 				return 'ENDED';
+			case 'failed':
+				return 'FAILED';
 			case 'error':
 			case 'closed':
 				return 'RECONNECTING';
@@ -95,7 +107,7 @@
 	// replaced by an equal one stops here. The run page also patches its tasks
 	// in place rather than replacing them; either one alone closes this, and a
 	// log socket is worth both.
-	const coordinates = $derived([runId, taskId, namespace, attempt].join('\u0000'));
+	const coordinates = $derived([runId, taskId, namespace, attempt, retryNonce].join('\u0000'));
 
 	$effect(() => {
 		if (!open || !dispatched) return;
@@ -116,9 +128,14 @@
 		following = true;
 		shownAttempt = 0;
 		retried = false;
+		failure = '';
+		socketState = 'connecting';
 		return followTaskLogs({
 			...target,
-			onState: (s) => (socketState = s),
+			onState: (s, detail) => {
+				socketState = s;
+				if (s === 'failed') failure = detail ?? 'The log stream stopped.';
+			},
 			onLines: (delivery) => {
 				if (delivery.restarted) {
 					// The task retried, and the engine moved this same socket
@@ -179,6 +196,14 @@
 		if (box) box.scrollTop = box.scrollHeight;
 	}
 
+	// retry re-opens the stream after it gave up. The follow starts again from
+	// the beginning of the attempt, so the pane is cleared with it — a resume
+	// is what the socket does by itself, and this is the case where there is
+	// no socket left to resume.
+	function retry() {
+		retryNonce += 1;
+	}
+
 	function toggle() {
 		open = !open;
 		if (open) following = true;
@@ -206,7 +231,9 @@
 						? 'text-emerald-300'
 						: stateLabel === 'ENDED'
 							? 'text-zinc-400'
-							: 'text-amber-300'}>{stateLabel}</span
+							: stateLabel === 'FAILED'
+								? 'text-rose-300'
+								: 'text-amber-300'}>{stateLabel}</span
 				>
 				<span data-testid="task-log-follow-{taskId}" class="text-zinc-500">
 					{following ? 'FOLLOWING' : 'PAUSED'}
@@ -255,6 +282,19 @@
 				</p>
 			{/if}
 
+			{#if socketState === 'failed'}
+				<div class="border-b border-zinc-800 px-3 py-2">
+					<ErrorPanel
+						testid="task-log-error-{taskId}"
+						retryTestid="task-log-retry-{taskId}"
+						retryLabel="Reconnect"
+						subject="the output of task {taskId}"
+						message={failure}
+						onretry={retry}
+					/>
+				</div>
+			{/if}
+
 			<div
 				bind:this={box}
 				onscroll={onScroll}
@@ -267,7 +307,13 @@
 					</p>
 				{:else if lines.length === 0}
 					<p data-testid="task-log-empty-{taskId}" class="text-zinc-500">
-						{ended ? 'This task wrote nothing.' : 'Waiting for output…'}
+						{#if ended}
+							This task wrote nothing.
+						{:else if socketState === 'failed'}
+							Nothing was received. The stream stopped for the reason above.
+						{:else}
+							Waiting for output…
+						{/if}
 					</p>
 				{:else}
 					{#each lines as line (line.n)}

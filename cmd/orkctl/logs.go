@@ -18,10 +18,11 @@ import (
 // newRunLogsCommand builds `orkctl run logs`.
 func newRunLogsCommand(g *globalFlags) *cobra.Command {
 	var (
-		taskID  string
-		follow  bool
-		attempt int32
-		fromSeq int64
+		taskID      string
+		follow      bool
+		attempt     int32
+		fromSeq     int64
+		fromAttempt int32
 	)
 	cmd := &cobra.Command{
 		Use:   "logs <run-id>",
@@ -37,17 +38,22 @@ func newRunLogsCommand(g *globalFlags) *cobra.Command {
 			"any replica answers — including one that never started the run, one whose\n" +
 			"Orker has exited, and a run that finished before this command was typed.\n\n" +
 			"--from-seq resumes after a chunk sequence already seen, which is what a\n" +
-			"reconnecting client hands back.\n\n" +
+			"reconnecting client hands back. A sequence is dense PER ATTEMPT and starts\n" +
+			"again at 1 on a retry, so a cursor has to say which attempt it counted:\n" +
+			"pin the try with --attempt, or name it with --from-attempt. A cursor with\n" +
+			"no attempt is refused rather than applied to whichever try happens to be\n" +
+			"latest, which would silently skip that try's first chunks.\n\n" +
 			"The exit code reports whether the log could be read, not how the run\n" +
 			"ended; `orkctl run watch` is the command whose exit code is the outcome.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogs(cmd, g, logsRequest{
-				runID:   args[0],
-				taskID:  taskID,
-				follow:  follow,
-				attempt: attempt,
-				fromSeq: fromSeq,
+				runID:       args[0],
+				taskID:      taskID,
+				follow:      follow,
+				attempt:     attempt,
+				fromSeq:     fromSeq,
+				fromAttempt: fromAttempt,
 			})
 		},
 	}
@@ -58,6 +64,8 @@ func newRunLogsCommand(g *globalFlags) *cobra.Command {
 		"print this attempt of the task (0 = the latest attempt that produced output)")
 	cmd.Flags().Int64Var(&fromSeq, "from-seq", 0,
 		"resume after this chunk sequence (0 = from the start of the task's output)")
+	cmd.Flags().Int32Var(&fromAttempt, "from-attempt", 0,
+		"the attempt --from-seq counts chunks of (0 = the attempt --attempt pins)")
 	return cmd
 }
 
@@ -68,10 +76,48 @@ type logsRequest struct {
 	follow  bool
 	attempt int32
 	fromSeq int64
+	// fromAttempt is the other half of the cursor: which attempt fromSeq
+	// counted chunks of. The engine drops a cursor from a different attempt
+	// and delivers the resolved one from its first chunk; it can only do that
+	// if it is told (proto StreamTaskLogsRequest.from_attempt).
+	fromAttempt int32
+}
+
+// cursorAttempt is the attempt this command's --from-seq belongs to, or an
+// error when nothing says.
+//
+// A sequence is dense PER ATTEMPT and restarts at 1 on a retry, so a cursor
+// without an attempt is not a resume — it is a number applied to whichever try
+// happens to be latest when the request lands. Against a task that retried
+// since the caller last read it, that skips the new try's first chunks, and
+// since a retry is usually shorter than the try that failed it usually
+// delivers nothing at all while reporting a live stream. The CLI cannot
+// recover the missing half — the attempt the run reports NOW is not the one
+// the caller read — so it asks for it instead of guessing.
+func (r logsRequest) cursorAttempt() (int32, error) {
+	switch {
+	case r.fromSeq == 0:
+		// No cursor, nothing to misapply: 0 means "the attempt this request
+		// resolves to", which is what a first read means.
+		return r.fromAttempt, nil
+	case r.fromAttempt > 0:
+		return r.fromAttempt, nil
+	case r.attempt > 0:
+		// A pinned attempt is the attempt, so the cursor's half is known.
+		return r.attempt, nil
+	default:
+		return 0, fmt.Errorf(
+			"--from-seq %d is a cursor into one attempt's chunks, and a chunk sequence "+
+				"starts again at 1 on every retry: say which attempt it counted with "+
+				"--from-attempt N, or pin one try with --attempt N", r.fromSeq)
+	}
 }
 
 // runLogs prints one task's output, or every task's.
 func runLogs(cmd *cobra.Command, g *globalFlags, req logsRequest) error {
+	if _, err := req.cursorAttempt(); err != nil {
+		return err
+	}
 	client := g.runClient()
 
 	// The run is resolved once, before anything streams, so a bad id or a run
@@ -119,14 +165,19 @@ func streamOneTaskLog(
 	writer *logWriter,
 	prefixed bool,
 ) error {
+	fromAttempt, err := req.cursorAttempt()
+	if err != nil {
+		return err
+	}
 	stream, err := g.runClient().StreamTaskLogs(ctx, connect.NewRequest(
 		&orkstackv1.StreamTaskLogsRequest{
-			RunId:     req.runID,
-			TaskId:    taskID,
-			Attempt:   req.attempt,
-			FromSeq:   req.fromSeq,
-			Follow:    req.follow,
-			Namespace: g.namespace,
+			RunId:       req.runID,
+			TaskId:      taskID,
+			Attempt:     req.attempt,
+			FromSeq:     req.fromSeq,
+			FromAttempt: fromAttempt,
+			Follow:      req.follow,
+			Namespace:   g.namespace,
 		}))
 	if err != nil {
 		return rpcError("read task logs", err)

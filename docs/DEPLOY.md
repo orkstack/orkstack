@@ -377,6 +377,14 @@ usually shorter than the try that failed, so applying the old cursor would
 deliver nothing at all. An explicit `--attempt N` is pinned and never moves:
 it is a request for one try's transcript.
 
+Every client sends both halves: the browser's pane
+(`ui/src/lib/taskLogs.ts`), the WebSocket bridge that parses them
+(`internal/api/ws.go`), and `orkctl run logs`, which takes `--from-attempt N`
+beside `--from-seq N`. A cursor that names no attempt is **refused** by the
+CLI rather than applied to whichever try happens to be latest: the CLI cannot
+recover the missing half, and guessing it is how a resume silently skips a
+retry's first chunks.
+
 Two bounds decide when a chunk is written, and a deployment tunes both:
 
 - `ORK_ORKER_LOG_FLUSH_BYTES` (64 KiB) batches a chatty task, so a hundred
@@ -392,6 +400,18 @@ stores nothing more. **Truncation is visible in the stream**, never silent —
 Orker's own memory is one flush buffer per running task, and a single
 over-long line is split rather than accumulated, so neither a chatty task nor
 one that never prints a newline can exhaust it.
+
+**What one reader costs the engine is bounded in bytes, not in chunks.** A
+replica reads the store one page at a time and holds one page per open
+subscriber: at most **4 MiB of chunk data, plus the one chunk that crossed
+that budget** (`logChunkPage` and `logChunkPageBytes`, `internal/api/logs.go`).
+Both bounds are needed, because a count is not a size — one chunk is whatever
+the Orker flushed, so raising `ORK_ORKER_LOG_FLUSH_BYTES` raises what a page of
+32 chunks weighs and nothing else would notice. Paging costs nothing in
+completeness: a page cut by the budget is followed by another read from the
+sequence it ended on, so a replay of a 16 MiB attempt is whole. Size a replica
+for this per concurrently open pane or `orkctl run logs`, remembering that a
+run detail page opens one per expanded task.
 
 **Retention is the bucket's.** Nothing in OrkStack deletes a log chunk; the run
 archive never embeds one, so expiring them cannot damage a run's record. The

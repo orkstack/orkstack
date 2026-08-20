@@ -21,5 +21,10 @@ declare module 'bun:test' {
 	export function expect<T>(value: T): {
 		toBe(expected: T): void;
 		toEqual(expected: unknown): void;
+		toContain(expected: unknown): void;
+		toHaveLength(expected: number): void;
+		not: {
+			toContain(expected: unknown): void;
+		};
 	};
 }

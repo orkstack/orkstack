@@ -37,16 +37,23 @@ func (s *recordingLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogCh
 }
 
 func (s *recordingLogStore) ReadLogChunks(
-	_ context.Context, ref artifacts.LogRef, afterSeq int64, limit int,
+	_ context.Context, ref artifacts.LogRef, afterSeq int64, limit int, maxBytes int64,
 ) ([]artifacts.LogChunk, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []artifacts.LogChunk
+	read := int64(0)
 	for _, chunk := range s.chunks {
 		if chunk.LogRef == ref && chunk.Seq > afterSeq {
 			out = append(out, chunk)
+			read += int64(len(chunk.Data))
 		}
 		if limit > 0 && len(out) == limit {
+			break
+		}
+		// The first chunk is always whole; the budget is spent after it
+		// (pkg/artifacts/logs.go).
+		if maxBytes > 0 && read >= maxBytes {
 			break
 		}
 	}
@@ -347,6 +354,98 @@ func TestLogChunkSink_AFailedUploadKeepsSequencesDenseAndSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(store.body(), "dropped") {
 		t.Errorf("the stream reads %q; a dropped chunk must be visible, not silent", store.body())
+	}
+}
+
+// THE LAST FLUSH IS THE ONE WITH NO NEXT CHUNK. A loss is reported on the
+// front of the following chunk, so the failure above is visible; the one that
+// hits the FINAL upload has nowhere to be carried, and a stream that ended
+// with an ordinary terminator would leave the reader unable to tell a
+// complete log from a cut one. The Orker's own warn log is not the stream: the
+// person reading the task's output is the one who has to be told.
+func TestLogChunkSink_ALossOnTheLastFlushIsStillReportedInTheStream(t *testing.T) {
+	store := &recordingLogStore{}
+	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+		FlushBytes:    1 << 20, // nothing flushes until Close
+		FlushInterval: time.Hour,
+		MaxBytes:      1 << 20,
+	})
+	var reported []error
+	sink.withErrorReporter(func(err error) { reported = append(reported, err) })
+	sink.Write("the only line this task wrote")
+
+	// Every try of the buffer's one and only upload fails, and it is Close
+	// that performs it.
+	failed := 0
+	store.fail = func(int64) error {
+		failed++
+		if failed <= logChunkUploadTries {
+			return errors.New("bucket unavailable")
+		}
+		return nil
+	}
+	sink.Close()
+
+	if len(reported) == 0 {
+		t.Fatal("the failed upload was not reported to the Orker's logger either")
+	}
+	body := store.body()
+	if !strings.Contains(body, "dropped") {
+		t.Fatalf("the attempt's stored stream reads %q; a reader is told nothing about "+
+			"the bytes that never landed", body)
+	}
+	// And the sequences that landed are still dense, which is what a resume
+	// rests on.
+	for i, chunk := range store.stored() {
+		if want := int64(i + 1); chunk.Seq != want {
+			t.Fatalf("chunk %d has seq %d, want %d", i, chunk.Seq, want)
+		}
+	}
+}
+
+// The same loss, at the other end that has no next chunk: the truncation
+// notice is the last thing an attempt stores, so it carries the loss rather
+// than leaving it for a chunk that will never be written.
+func TestLogChunkSink_ALossBeforeTruncationRidesTheTruncationNotice(t *testing.T) {
+	store := &recordingLogStore{}
+	// The cap is reached by the flush that FAILS, so the truncation notice is
+	// the very next thing stored — and the only thing that can carry the loss.
+	failed := 0
+	store.fail = func(int64) error {
+		failed++
+		if failed <= logChunkUploadTries {
+			return errors.New("bucket unavailable")
+		}
+		return nil
+	}
+	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+		FlushBytes:    1 << 20, // only the cap decides when a chunk is written
+		FlushInterval: time.Hour,
+		MaxBytes:      32,
+		MaxLineBytes:  16,
+	})
+	sink.Write(strings.Repeat("x", 40))
+	sink.Close()
+
+	var notice string
+	for _, chunk := range store.stored() {
+		if chunk.Truncated {
+			notice = string(chunk.Data)
+		}
+	}
+	if notice == "" {
+		t.Fatal("no truncation notice was stored")
+	}
+	if !strings.Contains(notice, "dropped") {
+		t.Fatalf("the truncation notice reads %q, and the bytes lost before it are "+
+			"reported nowhere in the stream", notice)
+	}
+	// Nothing follows the notice: it says the rest was not stored, and a chunk
+	// after it would contradict its own words.
+	stored := store.stored()
+	if last := stored[len(stored)-1]; !last.Truncated {
+		t.Fatalf("chunk %d (seq %d) was stored after the truncation notice",
+			len(stored)-1, last.Seq)
 	}
 }
 

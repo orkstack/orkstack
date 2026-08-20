@@ -33,6 +33,11 @@ type memoryLogStore struct {
 	// BOUNDED replay from a follow — against a store that is never silent, a
 	// stream that ends only on a sweep finding nothing never ends at all.
 	grow *artifacts.LogRef
+	// reads counts the calls served, and widestPage is the most chunk data any
+	// one of them returned: what the engine holds at once is one page, so the
+	// page is what a memory claim is measured on.
+	reads      int
+	widestPage int64
 }
 
 // quietGap is a silence long enough to outlast many poll cycles of the
@@ -51,25 +56,45 @@ func (s *memoryLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogChunk
 	return nil
 }
 
+// ReadLogChunks answers with the two bounds the contract states: at most
+// `limit` chunks and at most `maxBytes` of data, with the first chunk always
+// returned whole (pkg/artifacts/logs.go). A fake that honoured only the count
+// would let a byte budget pass every test while bounding nothing.
 func (s *memoryLogStore) ReadLogChunks(
-	_ context.Context, ref artifacts.LogRef, afterSeq int64, limit int,
+	_ context.Context, ref artifacts.LogRef, afterSeq int64, limit int, maxBytes int64,
 ) ([]artifacts.LogChunk, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []artifacts.LogChunk
+	read := int64(0)
 	for _, chunk := range s.chunks {
 		if chunk.LogRef != ref || chunk.Seq <= afterSeq {
 			continue
 		}
 		out = append(out, chunk)
+		read += int64(len(chunk.Data))
 		if limit > 0 && len(out) == limit {
 			break
 		}
+		if maxBytes > 0 && read >= maxBytes {
+			break
+		}
+	}
+	s.reads++
+	if read > s.widestPage {
+		s.widestPage = read
 	}
 	if s.grow != nil {
 		s.appendLocked(*s.grow)
 	}
 	return out, nil
+}
+
+// widest reports the biggest page this store ever handed back.
+func (s *memoryLogStore) widest() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.widestPage
 }
 
 func (s *memoryLogStore) LatestLogAttempt(_ context.Context, runID, taskID string) (int32, error) {
@@ -320,6 +345,53 @@ func TestStreamTaskLogs_WithoutFollowReplaysWhatIsStoredWhileTheTaskKeepsWriting
 		if following.Msg().GetLast() {
 			t.Fatal("the follower ended while the task was still RUNNING and still writing")
 		}
+	}
+}
+
+// WHAT ONE SUBSCRIBER COSTS THE ENGINE, measured rather than asserted in a
+// comment. The read is paged, and a page bounded only in CHUNKS is not a
+// bound: one chunk is whatever the Orker flushed — ORK_ORKER_LOG_FLUSH_BYTES
+// plus one over-long line, both of which a deployment sets — so 32 of them is
+// anywhere between a few hundred bytes and tens of megabytes, per open pane,
+// per tab.
+//
+// The attempt below is 6 MiB in 1 MiB chunks: six chunks, far inside the
+// count bound, so a count-only page reads the whole thing into memory at once.
+// Both halves are claimed here, because either alone is easy to pass — a
+// smaller page that stopped early would bound the memory by losing the log.
+func TestStreamTaskLogs_APageIsBoundedInBytesNotOnlyInChunks(t *testing.T) {
+	run := finish(runningRun("ork-logs-fat", "chatty"), orkstackv1.Status_STATUS_SUCCEEDED)
+	fixture := newLogFixture(t, run)
+	ref := artifacts.LogRef{RunID: run.GetId(), TaskID: "chatty", Attempt: 1}
+
+	const (
+		chunkBytes = 1 << 20
+		chunkCount = 6
+	)
+	for seq := int64(1); seq <= chunkCount; seq++ {
+		fixture.logs.write(ref, seq, strings.Repeat("x", chunkBytes-1)+"\n")
+	}
+
+	chunks := collectLogChunks(t, fixture, &orkstackv1.StreamTaskLogsRequest{
+		RunId: run.GetId(), TaskId: "chatty",
+	})
+	delivered := 0
+	for _, chunk := range chunks {
+		delivered += len(chunk.GetData())
+	}
+	if want := chunkBytes * chunkCount; delivered != want {
+		t.Fatalf("the replay delivered %d bytes, want %d: a bounded page must page, "+
+			"never truncate", delivered, want)
+	}
+
+	// The engine's stated cap is 4 MiB of chunk data per read plus the one
+	// chunk that crossed it (logChunkPageBytes, internal/api/logs.go), which
+	// with 1 MiB chunks is at most 5 MiB. 6 MiB in one page is the whole
+	// attempt resident at once — the number this bound exists to refuse.
+	const ceiling = 5 << 20
+	if widest := fixture.logs.widest(); widest > ceiling {
+		t.Fatalf("one read handed the engine %d bytes (%.1f MiB); the page bound is stated "+
+			"as %d bytes plus the chunk that crossed it", widest, float64(widest)/(1<<20), ceiling)
 	}
 }
 

@@ -71,3 +71,28 @@ export function fmtAge(ts: Timestamp | undefined, now: number): string {
 	if (minutes < 60) return `${minutes}m ago`;
 	return `${Math.round(minutes / 60)}h ago`;
 }
+
+/**
+ * finishedRuns counts the window's runs that have ENDED: succeeded, failed or
+ * canceled.
+ *
+ * It is deliberately not `every key added up`. Three of the four keys are
+ * about the window's population — the runs it created — but `running` is a
+ * fact about NOW (proto/orkstack/v1/stats.proto: "The one exception is
+ * `running` ... it is a fact about NOW rather than about the window", and
+ * internal/engine/stats.go: "a run that started last week and is still going
+ * is running"). Adding it to a denominator mixes two populations: one
+ * long-lived run started before the window inflates the total, and a count
+ * drawn only from runs the window created becomes a share of a set it is not
+ * drawn from.
+ *
+ * It is the same set `success_rate` is a rate over and the same one the
+ * percentiles are sampled from, and the same arithmetic `orkctl stats` does
+ * (cmd/orkctl/stats.go, successRateLabel). One number, one population, in one
+ * place — a second spelling is how the CLI and the UI came to disagree about
+ * the denominator of the same number.
+ */
+export function finishedRuns(counts: Record<string, bigint> | undefined): number {
+	const at = (key: string) => Number(counts?.[key] ?? 0n);
+	return at('succeeded') + at('failed') + at('canceled');
+}

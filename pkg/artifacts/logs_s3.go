@@ -64,7 +64,7 @@ func (s *S3LogStore) PutLogChunk(ctx context.Context, chunk LogChunk) error {
 }
 
 // ReadLogChunks lists the attempt's prefix from afterSeq and fetches the
-// bodies in key order.
+// bodies in key order, bounded by both limit and maxBytes.
 //
 // StartAfter carries the resume, so a follower re-listing every few hundred
 // milliseconds pays for the keys it has not seen rather than for the whole
@@ -72,11 +72,17 @@ func (s *S3LogStore) PutLogChunk(ctx context.Context, chunk LogChunk) error {
 // poll is what would make a long run expensive. The bound is the truncation
 // spelling of afterSeq, which is the highest key that sequence can occupy, so
 // neither an ordinary chunk nor a notice is ever delivered twice.
+//
+// maxBytes stops the GETs, not the listing: how big a chunk is, is known only
+// once it has been downloaded — object sizes on a page are a listing's word,
+// and this store fetches what it lists. So the budget is checked after each
+// body, which bounds what one call holds to the budget plus the last chunk.
 func (s *S3LogStore) ReadLogChunks(
 	ctx context.Context,
 	ref LogRef,
 	afterSeq int64,
 	limit int,
+	maxBytes int64,
 ) ([]LogChunk, error) {
 	prefix, err := LogAttemptPrefix(ref)
 	if err != nil {
@@ -122,6 +128,7 @@ func (s *S3LogStore) ReadLogChunks(
 	if limit > 0 && limit < len(found) {
 		found = found[:limit]
 	}
+	read := int64(0)
 	for i := range found {
 		key, err := LogChunkKey(found[i].LogRef, found[i].Seq, found[i].Truncated)
 		if err != nil {
@@ -146,6 +153,12 @@ func (s *S3LogStore) ReadLogChunks(
 			return nil, fmt.Errorf("artifacts: get log chunk %q: read body: %w", s.uri(key), err)
 		}
 		found[i].Data = data
+		// After the chunk, never before it: the first is always returned
+		// whole, so no chunk is too big to be delivered.
+		read += int64(len(data))
+		if maxBytes > 0 && read >= maxBytes {
+			return found[:i+1], nil
+		}
 	}
 	return found, nil
 }

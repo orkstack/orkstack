@@ -145,7 +145,7 @@ func TestLocalLogStore_ReadsChunksInOrderAndResumesWithoutRepeating(t *testing.T
 		}
 	}
 
-	all, err := store.ReadLogChunks(ctx, ref, 0, 0)
+	all, err := store.ReadLogChunks(ctx, ref, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestLocalLogStore_ReadsChunksInOrderAndResumesWithoutRepeating(t *testing.T
 	}
 
 	// Resume: everything after the 5th, nothing repeated, nothing skipped.
-	resumed, err := store.ReadLogChunks(ctx, ref, 5, 0)
+	resumed, err := store.ReadLogChunks(ctx, ref, 5, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks(after 5): %v", err)
 	}
@@ -174,12 +174,74 @@ func TestLocalLogStore_ReadsChunksInOrderAndResumesWithoutRepeating(t *testing.T
 
 	// A limit bounds one read, and the next resume continues exactly where it
 	// stopped. That is what keeps an engine's memory to one page.
-	page, err := store.ReadLogChunks(ctx, ref, 0, 3)
+	page, err := store.ReadLogChunks(ctx, ref, 0, 3, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks(limit 3): %v", err)
 	}
 	if len(page) != 3 || page[2].Seq != 3 {
 		t.Fatalf("limited read returned %d chunks ending at %d, want 3 ending at 3", len(page), page[2].Seq)
+	}
+}
+
+// A COUNT IS NOT A SIZE. A chunk is whatever the Orker flushed, so a page of
+// N chunks is a page of an amount of memory the reader does not decide. The
+// byte budget is the bound that holds whatever the writer's flush bounds are,
+// and it stops a read WITHOUT losing anything: the next read resumes at the
+// sequence the last one ended on.
+func TestLocalLogStore_AReadStopsAtItsByteBudgetAndResumesWhereItStopped(t *testing.T) {
+	store := newLocalLogStore(t)
+	ctx := context.Background()
+	ref := artifacts.LogRef{RunID: "ork-1-1", TaskID: "fat", Attempt: 1}
+
+	const (
+		chunkBytes = 1000
+		chunks     = 6
+	)
+	for seq := int64(1); seq <= chunks; seq++ {
+		if err := store.PutLogChunk(ctx, artifacts.LogChunk{
+			LogRef: ref, Seq: seq, Data: bytes.Repeat([]byte("x"), chunkBytes),
+		}); err != nil {
+			t.Fatalf("PutLogChunk(%d): %v", seq, err)
+		}
+	}
+
+	// 2500 bytes of budget over 1000-byte chunks: three chunks, because the
+	// third is the one that crosses it and a chunk is never returned in half.
+	page, err := store.ReadLogChunks(ctx, ref, 0, 0, 2500)
+	if err != nil {
+		t.Fatalf("ReadLogChunks(maxBytes 2500): %v", err)
+	}
+	if len(page) != 3 {
+		t.Fatalf("a 2500-byte budget returned %d chunks of %d bytes, want 3",
+			len(page), chunkBytes)
+	}
+
+	// Nothing was lost: the rest is there, from the sequence the page ended on.
+	rest, err := store.ReadLogChunks(ctx, ref, page[len(page)-1].Seq, 0, 2500)
+	if err != nil {
+		t.Fatalf("ReadLogChunks(resume): %v", err)
+	}
+	if len(rest) != 3 || rest[0].Seq != 4 {
+		t.Fatalf("the resumed read returned %d chunks starting at %d, want 3 starting at 4",
+			len(rest), rest[0].Seq)
+	}
+
+	// A chunk larger than the whole budget is still delivered WHOLE. A page
+	// that could come back empty would stall a reader on a chunk it can never
+	// receive.
+	big := artifacts.LogRef{RunID: "ork-1-1", TaskID: "one-big-line", Attempt: 1}
+	if err := store.PutLogChunk(ctx, artifacts.LogChunk{
+		LogRef: big, Seq: 1, Data: bytes.Repeat([]byte("y"), 4096),
+	}); err != nil {
+		t.Fatalf("PutLogChunk(big): %v", err)
+	}
+	only, err := store.ReadLogChunks(ctx, big, 0, 0, 16)
+	if err != nil {
+		t.Fatalf("ReadLogChunks(tiny budget): %v", err)
+	}
+	if len(only) != 1 || len(only[0].Data) != 4096 {
+		t.Fatalf("a 16-byte budget returned %d chunks; the first chunk must arrive whole",
+			len(only))
 	}
 }
 
@@ -199,7 +261,7 @@ func TestLocalLogStore_TruncationNoticeIsReadBackAsTruncated(t *testing.T) {
 		t.Fatalf("PutLogChunk(truncated): %v", err)
 	}
 
-	chunks, err := store.ReadLogChunks(ctx, ref, 0, 0)
+	chunks, err := store.ReadLogChunks(ctx, ref, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks: %v", err)
 	}
@@ -266,7 +328,7 @@ func TestLocalLogStore_KeepsAttemptsAndTasksApart(t *testing.T) {
 	write("ork-11", "build", 1, "other run\n")
 
 	chunks, err := store.ReadLogChunks(ctx,
-		artifacts.LogRef{RunID: "ork-1", TaskID: "build", Attempt: 1}, 0, 0)
+		artifacts.LogRef{RunID: "ork-1", TaskID: "build", Attempt: 1}, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks: %v", err)
 	}
@@ -281,7 +343,7 @@ func TestLocalLogStore_KeepsAttemptsAndTasksApart(t *testing.T) {
 func TestLocalLogStore_UnknownAttemptReadsEmpty(t *testing.T) {
 	store := newLocalLogStore(t)
 	chunks, err := store.ReadLogChunks(context.Background(),
-		artifacts.LogRef{RunID: "nothing", TaskID: "here", Attempt: 1}, 0, 0)
+		artifacts.LogRef{RunID: "nothing", TaskID: "here", Attempt: 1}, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("ReadLogChunks on an unknown attempt: %v", err)
 	}

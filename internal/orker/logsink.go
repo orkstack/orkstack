@@ -241,11 +241,11 @@ func (s *logChunkSink) Sequence() int64 {
 	return s.seq
 }
 
-// Close flushes what is buffered and stops the timer. It is the durability
-// barrier the reader's termination rule rests on: ExecuteTask closes the sink
-// BEFORE it returns, so every chunk is in the store before the task's terminal
-// event exists, and "terminal event observed → one final sweep → end" cannot
-// miss anything.
+// Close flushes what is buffered, reports any loss that no later chunk can
+// carry, and stops the timer. It is the durability barrier the reader's
+// termination rule rests on: ExecuteTask closes the sink BEFORE it returns, so
+// every chunk is in the store before the task's terminal event exists, and
+// "terminal event observed → one final sweep → end" cannot miss anything.
 //
 // It is idempotent, so a deferred close and an explicit one are the same close.
 func (s *logChunkSink) Close() {
@@ -258,6 +258,15 @@ func (s *logChunkSink) Close() {
 		return
 	}
 	s.flushLocked()
+	// THE LAST FLUSH IS THE ONE WHOSE LOSS HAS NOWHERE TO GO. Loss is
+	// otherwise reported on the front of the NEXT chunk (flushLocked), which
+	// is a chunk that no longer exists once this returns: a stream whose final
+	// upload failed would end with an ordinary terminator and a reader would
+	// have no way to tell a complete log from a cut one. So the notice goes
+	// out on its own, as the last thing this attempt stores.
+	if notice := s.dropNoticeLocked(); notice != nil {
+		s.putLocked(notice, false)
+	}
 	s.disarmLocked()
 	s.closed = true
 }
@@ -288,27 +297,42 @@ func (s *logChunkSink) flushLocked() {
 	if s.buf.Len() == 0 {
 		return
 	}
-	data := make([]byte, 0, s.buf.Len()+64)
-	if s.dropped > 0 {
-		// Loss is reported in the stream rather than only in the Orker's own
-		// log, because the person reading the task's output is the one who
-		// needs to know a piece of it is missing.
-		data = append(data, []byte(fmt.Sprintf(
-			"[ork] %d log byte(s) dropped: the log store rejected a chunk\n", s.dropped))...)
-		s.dropped = 0
-	}
+	notice := s.dropNoticeLocked()
+	data := make([]byte, 0, s.buf.Len()+len(notice))
+	data = append(data, notice...)
 	data = append(data, s.buf.Bytes()...)
 	s.buf.Reset()
 	s.putLocked(data, false)
 }
 
+// dropNoticeLocked returns the loss owed to the reader, clearing the counter,
+// or nil when nothing was lost.
+//
+// Loss is reported in the stream rather than only in the Orker's own log,
+// because the person reading the task's output is the one who needs to know a
+// piece of it is missing.
+func (s *logChunkSink) dropNoticeLocked() []byte {
+	if s.dropped == 0 {
+		return nil
+	}
+	notice := fmt.Sprintf(
+		"[ork] %d log byte(s) dropped: the log store rejected a chunk\n", s.dropped)
+	s.dropped = 0
+	return []byte(notice)
+}
+
 // noticeLocked writes the single truncation chunk and latches the sink shut.
+//
+// It carries any outstanding loss with it, because it is the LAST chunk this
+// attempt stores: a notice written after it would contradict its own words,
+// and one left for a chunk that never comes is a loss the reader never hears
+// about.
 func (s *logChunkSink) noticeLocked() {
 	if s.truncated {
 		return
 	}
 	s.truncated = true
-	notice := fmt.Sprintf(
+	notice := string(s.dropNoticeLocked()) + fmt.Sprintf(
 		"[ork] log truncated: this task attempt passed its %d-byte limit (%s); "+
 			"the rest was not stored\n", s.opts.MaxBytes, LogMaxBytesVar)
 	s.putLocked([]byte(notice), true)
