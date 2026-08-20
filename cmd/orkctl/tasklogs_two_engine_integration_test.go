@@ -55,6 +55,7 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	binDir := t.TempDir()
 	enginePath := buildBinary(t, root, binDir, "ork")
 	orkerPath := buildBinary(t, root, binDir, "orker")
+	cliPath := buildBinary(t, root, binDir, "orkctl")
 
 	queue := idempotencyTaskQueue()
 	startIdempotencyOrker(ctx, t, orkerPath, address, namespace, queue)
@@ -93,6 +94,31 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	liveLines := awaitLinesWhileRunning(ctx, t, temporalClient, runID, follower, 3)
 	t.Logf("replica B held %d ordered lines while the cluster reported RUNNING: %q",
 		len(liveLines), liveLines)
+
+	// ---- acceptance 7, against the real binaries ---------------------------
+	// `orkctl run logs -f` is started HERE, against replica B, while the
+	// cluster still reports the run RUNNING. It must print the task's output
+	// and return on its own when the run reaches a terminal state — with no
+	// deadline of the test's making, so a command that never returned would
+	// hang the suite rather than pass it quietly.
+	cliStartedAt := time.Now()
+	if status := executionStatus(ctx, t, temporalClient, runID); status !=
+		enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		t.Fatalf("the run reached %s before `orkctl run logs -f` was started; "+
+			"this test cannot tell a live follow from a replay", status)
+	}
+	type cliResult struct {
+		stdout string
+		stderr string
+		code   int
+	}
+	cliDone := make(chan cliResult, 1)
+	go func() {
+		stdout, stderr, code := runBinary(ctx, t, cliPath, root,
+			"run", "logs", runID, "--task", "emit", "-f",
+			"--server", "http://"+replicaB.addr)
+		cliDone <- cliResult{stdout: stdout, stderr: stderr, code: code}
+	}()
 
 	// ---- the stream must end on its own when the task finishes -------------
 	select {
@@ -150,7 +176,31 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 		t.Fatalf("resuming after seq %d replayed the first chunk's body", resumeAt)
 	}
 
-	writeTaskLogTranscript(t, namespace, runID, orkflowName, liveLines, follower, postMortem)
+	// ---- acceptance 7: the CLI returned on its own, with the whole log -----
+	var cli cliResult
+	select {
+	case cli = <-cliDone:
+	case <-time.After(4 * time.Minute):
+		t.Fatalf("`orkctl run logs -f` never returned after the run finished")
+	}
+	cliRanFor := time.Since(cliStartedAt)
+	if cli.code != 0 {
+		t.Fatalf("`orkctl run logs -f` exited %d\nstderr:\n%s", cli.code, cli.stderr)
+	}
+	for line := 1; line <= 10; line++ {
+		if !strings.Contains(cli.stdout, fmt.Sprintf("emit-%02d", line)) {
+			t.Fatalf("`orkctl run logs -f` did not print emit-%02d; it printed:\n%s",
+				line, cli.stdout)
+		}
+	}
+	if got := lineOrder(cli.stdout); !isAscending(got) {
+		t.Fatalf("`orkctl run logs -f` printed the lines out of order: %v", got)
+	}
+	t.Logf("`orkctl run logs -f` followed replica B for %s and exited %d with %d lines",
+		cliRanFor.Round(time.Millisecond), cli.code, len(lineOrder(cli.stdout)))
+
+	writeTaskLogTranscript(t, namespace, runID, orkflowName, liveLines, follower, postMortem,
+		cli.stdout, cliRanFor)
 }
 
 // TestIntegration_TaskLogBytesNeverEnterRunHistory is the invariant test for
@@ -656,6 +706,8 @@ func writeTaskLogTranscript(
 	namespace, runID, orkflowName string,
 	liveLines []string,
 	live, postMortem *logFollower,
+	cliOutput string,
+	cliRanFor time.Duration,
 ) {
 	t.Helper()
 	chunks := live.chunks()
@@ -699,6 +751,17 @@ func writeTaskLogTranscript(
 	fmt.Fprintf(&out, "verdict: the lines arrived DURING the run, not after it.\n")
 	fmt.Fprintf(&out, "post-mortem read from the same replica: %d chunk(s), %d bytes.\n",
 		postMortem.count(), len(postMortem.body()))
+
+	// The CLI session, started against replica B while the run was still
+	// RUNNING and left to end on its own.
+	fmt.Fprintf(&out, "\n$ orkctl run logs %s --task emit -f --server <replica B>\n", runID)
+	for _, line := range strings.Split(strings.TrimRight(cliOutput, "\n"), "\n") {
+		fmt.Fprintf(&out, "  %s\n", line)
+	}
+	fmt.Fprintf(&out, "(it followed for %s and returned by itself when the run reached a "+
+		"terminal state; exit 0)\n", cliRanFor.Round(time.Millisecond))
+	fmt.Fprintf(&out, "verdict: `orkctl run logs -f` follows live and exits on the run's "+
+		"terminal state.\n")
 	appendProofArtifact(t, "live-follow.txt", out.String())
 }
 
