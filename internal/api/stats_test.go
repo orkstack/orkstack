@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -474,32 +475,106 @@ func TestGetStats_CoverageNamesWhatThePercentilesActuallyCover(t *testing.T) {
 	}
 }
 
+// TestGetStats_AWarmCacheStillRefusesAWindowThatStoppedBeingOne.
+//
+// A cached answer must not outlive the validity of the question. Pinning
+// `since` and leaving `until` unset makes the window's end the clock, so a
+// clock that steps BACKWARDS — an NTP correction, which happens — turns a
+// perfectly good question into a window that ends before it starts. The
+// request is byte-identical, so it has the same cache key, and a cache
+// consulted before the request is validated hands back numbers for a window
+// that no longer exists.
+//
+// This is why the order is resolve-and-validate, then look up.
+func TestGetStats_AWarmCacheStillRefusesAWindowThatStoppedBeingOne(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	fixture := newStatsFixture(t, now, "alpha")
+	fixture.archiveRun(t, "alpha", "deploy", orkstackv1.Status_STATUS_SUCCEEDED,
+		now.Add(-time.Hour))
+	handler := api.NewStatsHandler(fixture.svc, time.Hour)
+
+	request := &orkstackv1.GetStatsRequest{
+		Namespace: "alpha",
+		Since:     timestamppb.New(now.Add(-time.Hour)),
+	}
+	if _, err := handler.GetStats(context.Background(), connect.NewRequest(request)); err != nil {
+		t.Fatalf("the window was refused while it was still a window: %v", err)
+	}
+
+	// The clock steps back behind the window's own start.
+	fixture.clock.advance(-2 * time.Hour)
+
+	got, err := handler.GetStats(context.Background(), connect.NewRequest(request))
+	if err == nil {
+		t.Fatalf("a warm cache answered a window that ends before it starts: %v", got.Msg)
+	}
+	if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+		t.Errorf("refused with %v, want InvalidArgument", code)
+	}
+}
+
+// TestGetStats_AnEpochWindowIsNotAnUnsetOne. A key that stored a bound as a
+// bare integer cannot tell "not sent" from 1970, and the two resolve to
+// different windows.
+func TestGetStats_AnEpochWindowIsNotAnUnsetOne(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	fixture := newStatsFixture(t, now, "alpha")
+	fixture.archiveRun(t, "alpha", "deploy", orkstackv1.Status_STATUS_SUCCEEDED,
+		now.Add(-time.Hour))
+	handler := api.NewStatsHandler(fixture.svc, time.Minute)
+
+	unset := fixture.stats(t, handler, "alpha", time.Time{}, time.Time{})
+	if want := now.Add(-api.DefaultStatsWindow); !unset.GetWindowSince().AsTime().Equal(want) {
+		t.Fatalf("the unset window starts at %s, want %s", unset.GetWindowSince().AsTime(), want)
+	}
+	epoch := fixture.stats(t, handler, "alpha", time.Unix(0, 0).UTC(), time.Time{})
+	if !epoch.GetWindowSince().AsTime().Equal(time.Unix(0, 0).UTC()) {
+		t.Errorf("an explicit epoch window was answered from the unset one's entry: %s",
+			epoch.GetWindowSince().AsTime())
+	}
+}
+
 // TestGetStats_RefusesAWindowWithNoTimeInIt. Answering it with zeros would
 // hand back numbers that read exactly like a healthy, idle namespace.
+//
+// Both spellings of a window are covered, because both can name nothing: a
+// pair of instants that do not straddle any time, and a lookback that is zero
+// or reaches forwards.
 func TestGetStats_RefusesAWindowWithNoTimeInIt(t *testing.T) {
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	fixture := newStatsFixture(t, now, "alpha")
 	handler := api.NewStatsHandler(fixture.svc, 0)
 
-	for _, window := range []struct {
-		name         string
-		since, until time.Time
+	for _, testCase := range []struct {
+		name string
+		req  *orkstackv1.GetStatsRequest
 	}{
-		{"equal", now, now},
-		{"reversed", now, now.Add(-time.Hour)},
+		{"equal instants", &orkstackv1.GetStatsRequest{
+			Namespace: "alpha",
+			Since:     timestamppb.New(now),
+			Until:     timestamppb.New(now),
+		}},
+		{"reversed instants", &orkstackv1.GetStatsRequest{
+			Namespace: "alpha",
+			Since:     timestamppb.New(now),
+			Until:     timestamppb.New(now.Add(-time.Hour)),
+		}},
+		{"a lookback of no time at all", &orkstackv1.GetStatsRequest{
+			Namespace: "alpha", Lookback: durationpb.New(0),
+		}},
+		{"a lookback that reaches forwards", &orkstackv1.GetStatsRequest{
+			Namespace: "alpha", Lookback: durationpb.New(-time.Hour),
+		}},
 	} {
-		_, err := handler.GetStats(context.Background(),
-			connect.NewRequest(&orkstackv1.GetStatsRequest{
-				Namespace: "alpha",
-				Since:     timestamppb.New(window.since),
-				Until:     timestamppb.New(window.until),
-			}))
-		if err == nil {
-			t.Fatalf("a %s window was answered", window.name)
-		}
-		if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
-			t.Errorf("a %s window refused with %v, want InvalidArgument", window.name, code)
-		}
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := handler.GetStats(context.Background(), connect.NewRequest(testCase.req))
+			if err == nil {
+				t.Fatalf("a window of %s was answered: %v", testCase.name, got.Msg)
+			}
+			if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+				t.Errorf("refused with %v, want InvalidArgument", code)
+			}
+		})
 	}
 }
 

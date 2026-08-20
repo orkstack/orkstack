@@ -98,15 +98,38 @@ func StatsCacheTTLFromEnv() time.Duration {
 // A request that PINS both bounds is keyed by those exact instants, so what it
 // gets back is the same answer to the same question, not a nearby one. The
 // cache never widens, narrows or rounds a window a caller stated.
+// Each bound carries whether it was SENT as well as what it was. A bare
+// integer cannot tell an absent timestamp from the epoch, and the two resolve
+// to different windows — one to "a day before now", the other to 1970 — so a
+// key that folded them together would answer one with the other.
 type statsKey struct {
 	namespace string
 	since     int64
+	sinceSet  bool
 	until     int64
+	untilSet  bool
 	// lookback is part of the key for the same reason the other two are: it is
 	// half of what was asked. "The last hour" and "the last day" are two
 	// questions, and a key that dropped the duration would answer the second
 	// with the first.
-	lookback int64
+	lookback    int64
+	lookbackSet bool
+}
+
+// statsKeyFor is the key of one request, in one place, so the lookup and the
+// store can never disagree about what was asked.
+func statsKeyFor(namespace string, req *orkstackv1.GetStatsRequest) statsKey {
+	key := statsKey{namespace: namespace}
+	if ts := req.GetSince(); ts != nil {
+		key.since, key.sinceSet = ts.AsTime().UnixNano(), true
+	}
+	if ts := req.GetUntil(); ts != nil {
+		key.until, key.untilSet = ts.AsTime().UnixNano(), true
+	}
+	if d := req.GetLookback(); d != nil {
+		key.lookback, key.lookbackSet = int64(d.AsDuration()), true
+	}
+	return key
 }
 
 type statsEntry struct {
@@ -156,19 +179,18 @@ func (h *StatsHandler) GetStats(
 	if err != nil {
 		return nil, err
 	}
-	key := statsKey{
-		namespace: ns.GetName(),
-		since:     stampNanos(req.Msg.GetSince()),
-		until:     stampNanos(req.Msg.GetUntil()),
-		lookback:  int64(req.Msg.GetLookback().AsDuration()),
-	}
-	if cached, ok := h.lookup(key); ok {
-		return connect.NewResponse(cached), nil
-	}
-
+	// The window is resolved — and therefore VALIDATED — before the cache is
+	// consulted, for the same reason. A cache that answered first would let a
+	// refused window collect the previous caller's numbers: the two requests
+	// differ in a field the answer does not carry, and one of them is not a
+	// question.
 	window, err := h.window(ns.GetName(), req.Msg)
 	if err != nil {
 		return nil, err
+	}
+	key := statsKeyFor(ns.GetName(), req.Msg)
+	if cached, ok := h.lookup(key); ok {
+		return connect.NewResponse(cached), nil
 	}
 	computed, err := h.compute(ctx, ns, window)
 	if err != nil {
@@ -443,14 +465,4 @@ func (h *StatsHandler) now() time.Time { return h.svc.now().UTC() }
 
 func cloneStats(response *orkstackv1.GetStatsResponse) *orkstackv1.GetStatsResponse {
 	return proto.Clone(response).(*orkstackv1.GetStatsResponse)
-}
-
-// stampNanos renders a request timestamp as a cache-key component. A field
-// that was not sent is zero, which is the sentinel for "resolve it from the
-// clock" — an epoch-0 window is not a question anybody asks.
-func stampNanos(ts *timestamppb.Timestamp) int64 {
-	if ts == nil {
-		return 0
-	}
-	return ts.AsTime().UnixNano()
 }

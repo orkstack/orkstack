@@ -118,8 +118,10 @@ The cache **cannot change an answer**:
   request that pins both bounds gets the answer to exactly those instants.
 - `computed_at` travels on the wire, so how old an answer is never has to be
   guessed.
-- A namespace that does not exist is still `NotFound`, however warm the cache
-  is: the name is resolved before anything is looked up.
+- A namespace that does not exist is still `NotFound`, and a window that ends
+  before it starts is still `InvalidArgument`, however warm the cache is: the
+  request is resolved and validated before anything is looked up. A cache that
+  answered first could turn a refused request into somebody else's numbers.
 
 `TestGetStats_ACachedAnswerEqualsTheUncachedOne` recomputes the same question
 at the same instant with the cache switched off and asserts the two responses
