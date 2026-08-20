@@ -1,15 +1,9 @@
-import { env } from '$env/dynamic/public';
 import { fromJson, type JsonObject, type JsonValue } from '@bufbuild/protobuf';
 import { EventSchema, type Event } from './gen/orkstack/v1/run_pb';
 import { isTerminalEventType } from './status';
+import { wsBaseUrl } from './ws';
 
 export type RunSocketState = 'connecting' | 'open' | 'closed' | 'error';
-
-function wsBaseUrl(): string {
-	if (env.PUBLIC_ENGINE_WS_URL) return env.PUBLIC_ENGINE_WS_URL.replace(/\/$/, '');
-	const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-	return `${scheme}://${location.hostname}:8080`;
-}
 
 // The bridge writes enum values without their proto prefix ("RUNNING"), while
 // the generated decoder only knows the declared names. Restore the prefix on

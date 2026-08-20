@@ -3,6 +3,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
+	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
@@ -130,6 +131,12 @@
 				});
 				break;
 			case EventType.TASK_LOG:
+				// A run event, not the task's output. EVENT_TYPE_TASK_LOG carries
+				// the engine's own notes about a task — a skip and why — and the
+				// run's history is deliberately not where output lives. Bytes
+				// travel from the Orker to the artifact store and reach this page
+				// over the log socket instead (TaskLogPane), which is what keeps
+				// a chatty task out of Temporal history for ever.
 				if (event.message) upsertTask(event.taskId, { message: event.message });
 				break;
 		}
@@ -252,23 +259,32 @@
 		</div>
 	</div>
 
-	<div class="grid gap-6 lg:grid-cols-2">
+	<div class="space-y-6">
 		<section>
 			<h2 class="mb-3 text-lg font-semibold">Tasks</h2>
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
 					<div
-						class="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3"
+						class="rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3"
 						data-testid="task-{task.id}"
 					>
-						<div>
-							<div class="font-medium text-zinc-100">{task.id}</div>
-							<div class="text-xs text-zinc-500">
-								plugin: {task.plugin}{#if task.message}
-									· <span class="text-zinc-400">{task.message}</span>{/if}
+						<div class="flex items-center justify-between gap-4">
+							<div>
+								<div class="font-medium text-zinc-100">{task.id}</div>
+								<div class="text-xs text-zinc-500">
+									plugin: {task.plugin}{#if task.message}
+										· <span class="text-zinc-400">{task.message}</span>{/if}
+								</div>
 							</div>
+							<StatusPill status={task.status} testid="task-{task.id}-status" />
 						</div>
-						<StatusPill status={task.status} testid="task-{task.id}-status" />
+						<TaskLogPane
+							runId={run.id}
+							taskId={task.id}
+							namespace={data.namespace}
+							status={task.status}
+							attempt={0}
+						/>
 					</div>
 				{/each}
 			</div>

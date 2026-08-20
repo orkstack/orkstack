@@ -7,6 +7,7 @@ import {
 	PluginService,
 	NamespaceService
 } from './gen/orkstack/v1/service_pb';
+import { StatsService } from './gen/orkstack/v1/stats_pb';
 
 // All platform access goes through the clients generated from
 // proto/orkstack/v1 (see ui/src/lib/gen). The browser uses same-origin URLs;
@@ -17,7 +18,8 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 		orkflows: createClient(OrkflowService, transport),
 		runs: createClient(RunService, transport),
 		plugins: createClient(PluginService, transport),
-		namespaces: createClient(NamespaceService, transport)
+		namespaces: createClient(NamespaceService, transport),
+		stats: createClient(StatsService, transport)
 	};
 }
 

@@ -1,0 +1,745 @@
+import { expect, test, type Page } from '@playwright/test';
+import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
+import { appendFileSync, createWriteStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// M10.8 — the whole v0.0.3 story, in one browser session against the real
+// stack.
+//
+// The milestone's claim is a COMPOSITION, which is why the per-slice proofs
+// are not enough for it (design §2, M10.8): two ork namespaces, two Orker
+// pools, an orkflow edited and promoted, a task's output followed live, and a
+// dashboard — all read through a replica that started nothing.
+//
+// The topology is the point:
+//
+//   engine A (:18082)  every write that starts a run. Nothing reads it.
+//   engine B (:18083)  every read the browser makes, and the log socket. It
+//                      accepted no submission and holds nothing about these
+//                      runs in memory: it answers from Temporal and the
+//                      bucket, which are the only shared records there are.
+//   UI      (:14175)   the production build, proxying Connect to B and
+//                      pointing the browser's WebSockets at B.
+//   orker main         the default pool
+//   orker gpu          ORK_ORKER_POOL=gpu
+//
+// Isolation (AGENTS.md §6): one Temporal namespace of this milestone's own.
+// BOTH engines and BOTH Orkers share it — the deliberate exception the rule
+// names, because "any replica answers for any run" is the condition under
+// test and splitting the namespace would make it fail for an unrelated reason.
+
+const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.resolve(uiDir, '..');
+
+// Ports of this spec's own, so one `playwright test` can run every spec in the
+// directory without two of them fighting over a listener.
+const ENGINE_A = 'http://127.0.0.1:18082';
+const ENGINE_B = 'http://127.0.0.1:18083';
+const ENGINE_B_WS = 'ws://127.0.0.1:18083';
+const UI_ORIGIN = 'http://127.0.0.1:14175';
+const B_PORT = '18083';
+
+const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m10-8-ui-logs-dashboard';
+
+const ALPHA = 'm10-8-alpha';
+const BETA = 'm10-8-beta';
+const STAMP = Date.now().toString(36);
+const ORKFLOW = `chatty-${STAMP}`;
+const FAILING = `flaky-${STAMP}`;
+
+const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m10-8');
+const TRANSCRIPT = 'live-composition.txt';
+
+// The lines the slow task writes, and the burst the chatty one writes. 40
+// immediate lines make the pane scrollable (so scrolling up is a real
+// gesture); the 15 that follow arrive one a second, which is slower than any
+// flush interval — a reader that only saw the end would see nothing.
+const TALK_BURST = 40;
+const TALK_TOTAL = 55;
+const CHATTER_LINES = 5000;
+// The pane keeps and renders this many lines (TaskLogPane's default).
+const SCROLLBACK = 2000;
+
+// These tests are sequential and stateful ON PURPOSE: each builds on what the
+// last one left in the cluster and the bucket, which is the only way to prove
+// a composition rather than five fixtures. Serial mode is the declaration of
+// that — without it one failure restarts the worker and re-enters beforeAll,
+// minting a new STAMP, and the survivors go looking for a run nobody started.
+test.describe.configure({ mode: 'serial' });
+
+const children: ChildProcess[] = [];
+let run1 = '';
+let run2 = '';
+
+function outPath(name: string): string {
+	mkdirSync(PROOF_DIR, { recursive: true });
+	return path.join(PROOF_DIR, name);
+}
+
+function shot(page: Page, name: string) {
+	return page.screenshot({ path: outPath(name), fullPage: true });
+}
+
+/** note appends one stamped line to this run's live transcript. */
+function note(line: string): void {
+	appendFileSync(outPath(TRANSCRIPT), `${new Date().toISOString()}  ${line}\n`);
+}
+
+function spawnLogged(
+	name: string,
+	command: string,
+	args: string[],
+	env: NodeJS.ProcessEnv,
+	cwd: string = repoRoot
+): ChildProcess {
+	const out = createWriteStream(outPath(name), { flags: 'w' });
+	const child = spawn(command, args, {
+		cwd,
+		env: { ...process.env, ...env },
+		stdio: ['ignore', 'pipe', 'pipe']
+	});
+	child.stdout?.pipe(out);
+	child.stderr?.pipe(out);
+	children.push(child);
+	return child;
+}
+
+async function waitFor(
+	label: string,
+	probe: () => Promise<boolean>,
+	timeoutMs = 120_000
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			if (await probe()) return;
+		} catch {
+			// not ready yet
+		}
+		if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+		await new Promise((r) => setTimeout(r, 250));
+	}
+}
+
+function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
+	return new Promise((resolve) => {
+		const sock = net.connect({ port, host });
+		sock.once('connect', () => {
+			sock.destroy();
+			resolve(true);
+		});
+		sock.once('error', () => resolve(false));
+		sock.setTimeout(1500, () => {
+			sock.destroy();
+			resolve(false);
+		});
+	});
+}
+
+async function killAll(): Promise<void> {
+	const survivors = children.splice(0);
+	for (const child of survivors) {
+		if (child.exitCode === null && !child.signalCode) child.kill('SIGTERM');
+	}
+	const deadline = Date.now() + 10_000;
+	for (const child of survivors) {
+		while (child.exitCode === null && !child.signalCode && Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 100));
+		}
+		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
+	}
+	// AGENTS.md §6: never leave a stray engine or Orker behind, and anchor both
+	// patterns — unanchored, `bin/ork` also matches `bin/orkctl`.
+	try {
+		execSync("pkill -f '/bin/orker$' || true; pkill -f '/bin/ork$' || true", { timeout: 5_000 });
+	} catch {
+		// pkill exit status is informational only
+	}
+}
+
+/** rpc calls one named engine directly, so a test can say WHICH replica. */
+async function rpc<T>(base: string, method: string, body: unknown): Promise<T> {
+	const res = await fetch(`${base}/orkstack.v1.${method}`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	const text = await res.text();
+	if (!res.ok) throw new Error(`${method} on ${base} failed: ${res.status} ${text}`);
+	return JSON.parse(text) as T;
+}
+
+interface RunAnswer {
+	run?: {
+		id: string;
+		status: string;
+		orkflowVersion?: string;
+		taskRuns?: { taskId: string; pool?: string; status: string }[];
+	};
+}
+
+const getRunFrom = (base: string, runId: string) =>
+	rpc<RunAnswer>(base, 'RunService/GetRun', { runId, namespace: ALPHA });
+
+// The wire spells an enum with its declared proto name. `orkctl --json` prints
+// the short one, which is a rendering; this is the contract.
+const STATUS_FAILED = 'STATUS_FAILED';
+
+/**
+ * chattyOrkflow: one task that talks slowly on the `gpu` pool, and one that
+ * floods on the default pool. Two pools in one run, so routing is observable
+ * in the same document the log pane is proven against.
+ */
+function chattyOrkflow(version: string, description: string): string {
+	return `name: ${ORKFLOW}
+version: "${version}"
+description: ${description}
+namespace: ${ALPHA}
+
+tasks:
+  - id: talk
+    plugin: shell
+    pool: gpu
+    timeout_seconds: 300
+    with:
+      op: exec
+      command: |
+        i=1
+        while [ $i -le ${TALK_BURST} ]; do
+          echo "talk line $i"
+          i=$((i+1))
+        done
+        while [ $i -le ${TALK_TOTAL} ]; do
+          echo "talk line $i"
+          i=$((i+1))
+          sleep 1
+        done
+  - id: chatter
+    plugin: shell
+    pool: main
+    needs: [talk]
+    timeout_seconds: 300
+    with:
+      op: exec
+      command: |
+        i=1
+        while [ $i -le ${CHATTER_LINES} ]; do
+          echo "chatter line $i"
+          i=$((i+1))
+        done
+`;
+}
+
+const failingOrkflow = () => `name: ${FAILING}
+version: "0.1.0"
+description: a task that fails, so the dashboard has a failure to report
+namespace: ${ALPHA}
+
+tasks:
+  - id: boom
+    plugin: shell
+    timeout_seconds: 60
+    with:
+      op: exec
+      command: echo "about to fail"; exit 3
+`;
+
+/** lineNumbers reads the numbers off a pane's rendered lines, in DOM order. */
+async function lineNumbers(page: Page, taskId: string, prefix: string): Promise<number[]> {
+	const texts = await page.getByTestId(`task-log-${taskId}`).getByTestId('task-log-line').allInnerTexts();
+	const numbers: number[] = [];
+	for (const text of texts) {
+		const match = text.trim().match(new RegExp(`^${prefix} line (\\d+)$`));
+		if (match) numbers.push(Number(match[1]));
+	}
+	return numbers;
+}
+
+test.beforeAll(async () => {
+	mkdirSync(PROOF_DIR, { recursive: true });
+	writeFileSync(
+		outPath(TRANSCRIPT),
+		[
+			'# M10.8 — one live composition: two namespaces, two pools, an edit and a',
+			'# promotion, a followed log and a dashboard, read through a replica that',
+			'# started nothing.',
+			'#',
+			'# Written by ui/e2e/logs-dashboard.spec.ts. Every line below was produced',
+			'# by the run that wrote this file.',
+			`# temporal namespace: ${TEMPORAL_NAMESPACE}`,
+			`# ork namespaces:     ${ALPHA} (used), ${BETA} (empty on purpose)`,
+			`# orkflows:           ${ORKFLOW}, ${FAILING}`,
+			`# engine A (writes):  ${ENGINE_A}`,
+			`# engine B (reads):   ${ENGINE_B}`,
+			''
+		].join('\n')
+	);
+
+	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
+	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
+	for (const port of [18082, 18083, 14175]) {
+		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
+	}
+
+	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
+	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
+	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
+	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
+		throw new Error('UI build output missing: ui/build/index.js');
+	}
+
+	// Both replicas and both Orkers read and write the SAME bucket: orkflow
+	// definitions, the version pointer, the namespace registry, the run archive
+	// and every log chunk live there, which is what lets B answer for a run A
+	// started (AGENTS.md §1.7).
+	const store = {
+		ORK_ARTIFACT_BACKEND: 's3',
+		ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
+		ORK_S3_REGION: 'us-east-1',
+		ORK_S3_BUCKET: 'orkstack-artifacts',
+		ORK_S3_ACCESS_KEY: 'orkstack',
+		ORK_S3_SECRET_KEY: 'orkstack-secret',
+		ORK_S3_PATH_STYLE: 'true'
+	};
+	const cluster = {
+		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
+		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE
+	};
+
+	spawnLogged('engine-a.log', './bin/ork', [], {
+		...cluster,
+		...store,
+		ORK_HTTP_ADDR: '127.0.0.1:18082'
+	});
+	spawnLogged('engine-b.log', './bin/ork', [], {
+		...cluster,
+		...store,
+		ORK_HTTP_ADDR: '127.0.0.1:18083',
+		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+	});
+	spawnLogged('orker-main.log', './bin/orker', [], { ...cluster, ...store });
+	spawnLogged('orker-gpu.log', './bin/orker', [], {
+		...cluster,
+		...store,
+		ORK_ORKER_POOL: 'gpu'
+	});
+
+	for (const [label, base] of [
+		['engine A', ENGINE_A],
+		['engine B', ENGINE_B]
+	] as const) {
+		await waitFor(`${label} connect api`, async () => {
+			const res = await fetch(`${base}/orkstack.v1.OrkflowService/ListOrkflows`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{}'
+			});
+			return res.ok;
+		});
+	}
+
+	spawnLogged(
+		'ui.log',
+		'node',
+		['build'],
+		{
+			HOST: '127.0.0.1',
+			PORT: '14175',
+			// Every read the browser makes goes to B — the RPC proxy and the
+			// WebSockets both.
+			ENGINE_API_URL: ENGINE_B,
+			PUBLIC_ENGINE_WS_URL: ENGINE_B_WS
+		},
+		uiDir
+	);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+
+	// Two namespaces. Alpha names the two pools it may dispatch onto, which is
+	// also the authoring gate a disallowed pool would hit; beta is deliberately
+	// left empty, because "unavailable, not zero" needs a namespace with
+	// nothing in it to be falsifiable at all.
+	await rpc(ENGINE_A, 'NamespaceService/CreateNamespace', {
+		namespace: {
+			name: ALPHA,
+			description: 'M10.8 live composition',
+			defaultPool: 'main',
+			allowedPools: ['main', 'gpu']
+		}
+	});
+	await rpc(ENGINE_A, 'NamespaceService/CreateNamespace', {
+		namespace: { name: BETA, description: 'M10.8 empty namespace' }
+	});
+	note(`namespaces created on engine A: ${ALPHA} (pools main,gpu), ${BETA} (empty)`);
+
+	// Both pools must have live Orkers before a submit: the engine refuses to
+	// start a run whose pool has nobody serving it (design §1.3).
+	await waitFor('both pools report live Orkers', async () => {
+		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
+			ENGINE_B,
+			'NamespaceService/ListPools',
+			{ namespace: ALPHA }
+		);
+		const live = new Map((answer.pools ?? []).map((p) => [p.name, p.liveOrkerCount ?? 0]));
+		return (live.get('main') ?? 0) > 0 && (live.get('gpu') ?? 0) > 0;
+	});
+	note('engine B reports live Orkers on both pools: main, gpu');
+
+	await rpc(ENGINE_A, 'OrkflowService/ApplyOrkflow', {
+		yaml: chattyOrkflow('0.1.0', 'first revision'),
+		namespace: ALPHA
+	});
+	await rpc(ENGINE_A, 'OrkflowService/ApplyOrkflow', {
+		yaml: failingOrkflow(),
+		namespace: ALPHA
+	});
+	note(`engine A applied ${ORKFLOW}@0.1.0 and ${FAILING}@0.1.0 in ${ALPHA}`);
+});
+
+test.afterAll(async () => {
+	await killAll();
+});
+
+// Acceptance 1, the live half: the pane follows while the task runs, keeps the
+// engine's order, and every byte of it arrived over a socket served by the
+// replica that started nothing.
+test('a task log follows live in the browser, in order, from the replica that started nothing', async ({
+	page
+}) => {
+	const sockets: string[] = [];
+	page.on('websocket', (ws) => sockets.push(ws.url()));
+	// A browser exception during a proof belongs in the record, not in a
+	// developer's console: without this a page that threw looks exactly like a
+	// page that was slow.
+	page.on('pageerror', (err) => note(`BROWSER ERROR: ${err.message}`));
+	page.on('console', (msg) => {
+		if (msg.type() === 'error') note(`BROWSER CONSOLE ERROR: ${msg.text()}`);
+	});
+
+	const submitted = await rpc<{ run: { id: string } }>(ENGINE_A, 'RunService/SubmitRun', {
+		orkflowName: ORKFLOW,
+		namespace: ALPHA
+	});
+	run1 = submitted.run.id;
+	note(`engine A started run ${run1} (${ORKFLOW}@0.1.0); engine B was not asked`);
+
+	await page.goto(`${UI_ORIGIN}/runs/${run1}?ns=${ALPHA}`);
+	await expect(page.getByTestId('run-id')).toHaveText(run1);
+
+	// The pane is collapsed until it is asked for: thirty tasks must not mean
+	// thirty sockets.
+	await expect(page.getByTestId('task-log-talk')).toHaveCount(0);
+	await page.getByTestId('task-log-toggle-talk').click();
+
+	// FOLLOWS WHILE THE TASK RUNS. This is the assertion a post-mortem read
+	// cannot pass: lines are on screen while the run's own status pill still
+	// says RUNNING, so nothing here came from an artifact published at the end.
+	//
+	// The threshold is the task's opening burst, which is also what makes the
+	// pane taller than its box — a scroll gesture below needs something to
+	// scroll.
+	await expect
+		.poll(async () => (await lineNumbers(page, 'talk', 'talk')).length, { timeout: 120_000 })
+		.toBeGreaterThanOrEqual(TALK_BURST);
+	const runStatusWhenLive = (await page.getByTestId('run-status').innerText()).trim();
+	const taskStatusWhenLive = (await page.getByTestId('task-talk-status').innerText()).trim();
+	const linesWhenLive = await lineNumbers(page, 'talk', 'talk');
+	note(
+		`browser saw ${linesWhenLive.length} lines of task talk at B while the run read ` +
+			`${runStatusWhenLive} and the task read ${taskStatusWhenLive}`
+	);
+	expect(runStatusWhenLive).toBe('RUNNING');
+	expect(taskStatusWhenLive).toBe('RUNNING');
+	await expect(page.getByTestId('task-log-state-talk')).toHaveText('LIVE');
+	await shot(page, 'screenshot-log-following.png');
+
+	// ORDER. The engine's sequence is the order; the pane only ever appends.
+	expect(linesWhenLive).toEqual([...linesWhenLive].sort((a, b) => a - b));
+	expect(linesWhenLive[0]).toBe(1);
+
+	// SCROLLBACK AND PAUSE. Scrolling up stops the follow, and output arriving
+	// afterwards does not yank the reader back down.
+	const box = page.getByTestId('task-log-talk');
+	await box.evaluate((el) => el.scrollTo({ top: 0 }));
+	await expect(page.getByTestId('task-log-follow-talk')).toHaveText('PAUSED');
+	const parkedAt = await box.evaluate((el) => el.scrollTop);
+	const before = (await lineNumbers(page, 'talk', 'talk')).length;
+	await expect
+		.poll(async () => (await lineNumbers(page, 'talk', 'talk')).length, { timeout: 60_000 })
+		.toBeGreaterThan(before);
+	expect(await box.evaluate((el) => el.scrollTop)).toBe(parkedAt);
+	note(`follow paused at scrollTop=${parkedAt}; ${before} lines grew while the view stayed put`);
+	await shot(page, 'screenshot-log-paused.png');
+
+	// RESUME. Jump-to-bottom follows again, and lands at the bottom.
+	await page.getByTestId('task-log-jump-talk').click();
+	await expect(page.getByTestId('task-log-follow-talk')).toHaveText('FOLLOWING');
+	await expect
+		.poll(async () =>
+			box.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight <= 8)
+		)
+		.toBe(true);
+
+	// The stream ends on the task's terminal state, and what it delivered is
+	// the whole output: dense 1..N, no repeats, no gaps.
+	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 180_000 });
+	const all = await lineNumbers(page, 'talk', 'talk');
+	expect(all).toEqual(Array.from({ length: TALK_TOTAL }, (_, i) => i + 1));
+	note(`task talk ended with ${all.length} lines, dense 1..${TALK_TOTAL}, no repeats`);
+	await shot(page, 'screenshot-log-ended.png');
+
+	// Every socket this page opened was served by B, the replica that started
+	// nothing — including the log socket the lines above came down.
+	expect(sockets.length).toBeGreaterThan(0);
+	for (const url of sockets) expect(url).toContain(`:${B_PORT}`);
+	const logSockets = sockets.filter((u) => u.includes('/tasks/talk/logs'));
+	expect(logSockets.length).toBeGreaterThan(0);
+	note(`sockets opened by the browser, all on engine B:\n    ${sockets.join('\n    ')}`);
+
+	// Two pools, one run: the engine recorded where each task actually went,
+	// and B is the replica saying so.
+	const answer = await getRunFrom(ENGINE_B, run1);
+	const pools = new Map((answer.run?.taskRuns ?? []).map((t) => [t.taskId, t.pool ?? '']));
+	expect(pools.get('talk')).toBe('gpu');
+	note(`engine B reports run ${run1}: task talk ran on pool ${pools.get('talk')}`);
+});
+
+// Acceptance 1, the half a slow task cannot prove: a chatty task must not
+// freeze the tab, and its scrollback must be bounded — visibly, never in
+// silence.
+test('a chatty task keeps a bounded scrollback and leaves the tab responsive', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/runs/${run1}?ns=${ALPHA}`);
+
+	// The probe is a tight loop of main-thread round trips started the instant
+	// the pane opens, and it does NOT stop when the burst is over: five
+	// thousand lines are delivered and rendered inside its first few
+	// iterations, so what it records is what the page could do WHILE that
+	// happened. A pane that appended one DOM node per delivered line would be
+	// inside one long task for that whole window and could answer nothing.
+	const openedAt = Date.now();
+	await page.getByTestId('task-log-toggle-chatter').click();
+	const latencies: number[] = [];
+	for (let probe = 0; probe < 25; probe += 1) {
+		const started = Date.now();
+		await page.evaluate(() => document.querySelectorAll('[data-testid="task-log-line"]').length);
+		latencies.push(Date.now() - started);
+	}
+	await expect(page.getByTestId('task-log-state-chatter')).toHaveText('ENDED', {
+		timeout: 180_000
+	});
+	const renderedIn = Date.now() - openedAt;
+
+	// Bounded: the pane holds the tail, says how much it dropped, and points at
+	// the command that still has all of it.
+	const rendered = await page
+		.getByTestId('task-log-chatter')
+		.getByTestId('task-log-line')
+		.count();
+	expect(rendered).toBeLessThanOrEqual(SCROLLBACK);
+	const dropped = page.getByTestId('task-log-dropped-chatter');
+	await expect(dropped).toBeVisible();
+	await expect(dropped).toContainText('orkctl run logs');
+
+	// The tail is the END of the output, not the beginning: a cap that kept the
+	// first 2000 lines would leave a reader watching a task's opening titles.
+	const numbers = await lineNumbers(page, 'chatter', 'chatter');
+	expect(numbers[numbers.length - 1]).toBe(CHATTER_LINES);
+	expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
+
+	const worst = Math.max(...latencies);
+	note(
+		`chatty task: ${CHATTER_LINES} lines written, ${rendered} rendered (cap ${SCROLLBACK}), ` +
+			`tail is line ${numbers[numbers.length - 1]}, whole burst on screen ${renderedIn}ms after ` +
+			`the pane opened, worst main-thread round trip ${worst}ms over ${latencies.length} probes`
+	);
+	// A frozen tab cannot answer at all; this is the bound that a per-line
+	// render blew through and a per-frame batch does not.
+	expect(worst).toBeLessThan(5000);
+	await shot(page, 'screenshot-log-chatty.png');
+});
+
+// Acceptance 5: an orkflow edited and promoted, in the browser, against the
+// replica that started nothing — and then executed by the one that starts runs.
+test('an orkflow is edited and promoted in the browser, and the next run executes the promoted version', async ({
+	page
+}) => {
+	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${ALPHA}&tab=edit`);
+	await expect(page.getByTestId('editor-form')).toBeVisible();
+	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
+
+	await page.getByTestId('editor-yaml').fill(chattyOrkflow('0.2.0', 'second revision'));
+	await page.getByTestId('editor-apply').click();
+	await page.waitForURL(/tab=versions/);
+	await expect(page.getByTestId('version-row-0.2.0')).toBeVisible();
+	await expect(page.getByTestId('version-head-0.2.0')).toBeVisible();
+	note(`browser (engine B) applied ${ORKFLOW}@0.2.0; head is now 0.2.0`);
+	await shot(page, 'screenshot-edit-applied.png');
+
+	// Promote the OLDER version. A promotion that only ever moved forward would
+	// be indistinguishable from "the newest wins", and this is the assertion
+	// that tells them apart: current and head part company.
+	await page.getByTestId('promote-0.1.0').click();
+	await expect(page.getByTestId('promote-confirm')).toContainText('0.1.0');
+	await page.getByTestId('promote-accept').click();
+	await expect(page.getByTestId('version-current-0.1.0')).toBeVisible();
+	await expect(page.getByTestId('version-head-0.2.0')).toBeVisible();
+	await shot(page, 'screenshot-promoted.png');
+
+	const listed = await rpc<{ currentVersion: string; headVersion: string }>(
+		ENGINE_B,
+		'OrkflowService/ListOrkflowVersions',
+		{ name: ORKFLOW, namespace: ALPHA }
+	);
+	expect(listed.currentVersion).toBe('0.1.0');
+	expect(listed.headVersion).toBe('0.2.0');
+	note(`engine B: ${ORKFLOW} current=0.1.0 head=0.2.0 (promoted in the browser)`);
+
+	// Engine A, which never saw the edit, starts a run that names no version —
+	// and gets the promoted one, from the pointer in the shared bucket.
+	const submitted = await rpc<{ run: { id: string; orkflowVersion: string } }>(
+		ENGINE_A,
+		'RunService/SubmitRun',
+		{ orkflowName: ORKFLOW, namespace: ALPHA }
+	);
+	run2 = submitted.run.id;
+	expect(submitted.run.orkflowVersion).toBe('0.1.0');
+	note(`engine A started run ${run2} with no version and pinned 0.1.0, the promoted one`);
+});
+
+// Acceptance 1, the property a reconnect is for: a dropped socket resumes with
+// from_seq. Nothing is replayed twice and nothing is missed — over a socket
+// Playwright drops mid-follow, which is the failure a wifi handover is.
+test('a dropped log socket resumes from the last sequence, repeating and losing nothing', async ({
+	page
+}) => {
+	const socketUrls: string[] = [];
+	let dropped = false;
+
+	await page.routeWebSocket(/\/tasks\/talk\/logs/, (ws) => {
+		socketUrls.push(ws.url());
+		const server = ws.connectToServer();
+		server.onMessage((message) => {
+			ws.send(message);
+			if (!dropped) {
+				dropped = true;
+				// The page's socket dies with everything the engine has already
+				// sent still on screen. The client's only way back is from_seq.
+				void ws.close({ code: 1011, reason: 'M10.8 injected drop' });
+			}
+		});
+	});
+
+	await page.goto(`${UI_ORIGIN}/runs/${run2}?ns=${ALPHA}`);
+	await expect(page.getByTestId('run-id')).toHaveText(run2);
+	await page.getByTestId('task-log-toggle-talk').click();
+
+	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 180_000 });
+
+	const all = await lineNumbers(page, 'talk', 'talk');
+	expect(all).toEqual(Array.from({ length: TALK_TOTAL }, (_, i) => i + 1));
+
+	// The drop really happened, and the second socket really resumed: its
+	// from_seq is the last sequence the first one delivered, not 0.
+	expect(dropped).toBe(true);
+	expect(socketUrls.length).toBeGreaterThanOrEqual(2);
+	expect(new URL(socketUrls[0]).searchParams.get('from_seq')).toBe('0');
+	const resumed = Number(new URL(socketUrls[1]).searchParams.get('from_seq'));
+	expect(resumed).toBeGreaterThan(0);
+	note(
+		`socket dropped mid-follow on run ${run2}; reconnected with from_seq=${resumed} and the ` +
+			`pane still holds a dense 1..${TALK_TOTAL} with no repeats`
+	);
+	note(`    sockets: ${socketUrls.join('\n             ')}`);
+	await shot(page, 'screenshot-log-resumed.png');
+});
+
+// Acceptance 2: the dashboard, scoped to the selected namespace, with pool
+// health and recent failures — and the honesty clause, which needs a namespace
+// where the numbers genuinely cannot be answered.
+test('the dashboard scopes to a namespace, shows pool health and failures, and says unavailable rather than zero', async ({
+	page
+}) => {
+	// A failure to report. Started on A, read on B, like everything else.
+	const failed = await rpc<{ run: { id: string } }>(ENGINE_A, 'RunService/SubmitRun', {
+		orkflowName: FAILING,
+		namespace: ALPHA
+	});
+	note(`engine A started run ${failed.run.id} (${FAILING}), which is meant to fail`);
+	await waitFor(
+		'the failing run reaches a terminal state',
+		async () => (await getRunFrom(ENGINE_B, failed.run.id)).run?.status === STATUS_FAILED,
+		180_000
+	);
+
+	// ---- alpha: a namespace with real numbers ------------------------------
+	await page.goto(`${UI_ORIGIN}/?ns=${ALPHA}`);
+	await expect(page.getByTestId('dashboard-heading')).toBeVisible();
+	await expect(page.getByTestId('dashboard-namespace')).toContainText(ALPHA);
+
+	// Pool health: both pools, both with an Orker. This is the same answer
+	// ListPools gives, from a replica that started nothing. The `gpu` pool is
+	// the falsifiable half — it exists only because an Orker was started with
+	// ORK_ORKER_POOL=gpu and this namespace allows it.
+	await expect(page.getByTestId('pool-main')).toBeVisible();
+	await expect(page.getByTestId('pool-gpu')).toBeVisible();
+	await expect(page.getByTestId('pool-default-main')).toBeVisible();
+	const gpuOrkers = (await page.getByTestId('pool-orkers-gpu').innerText()).trim();
+	expect(Number(gpuOrkers.split(' ')[0])).toBeGreaterThanOrEqual(1);
+	note(`dashboard pool health for ${ALPHA}: gpu has ${gpuOrkers}`);
+
+	// Recent failures: the orkflow that failed, named, with its tally.
+	await expect
+		.poll(async () => page.getByTestId(`failure-${FAILING}`).count(), { timeout: 60_000 })
+		.toBe(1);
+	await expect(page.getByTestId(`failure-${FAILING}`)).toContainText('1');
+
+	// Counts that ARE answerable are answered. A real zero is a zero; the
+	// unavailable state below is reserved for numbers that do not exist.
+	await expect(page.getByTestId('stat-succeeded')).toHaveAttribute('data-unavailable', 'false');
+	await expect(page.getByTestId('stat-failed')).toHaveAttribute('data-unavailable', 'false');
+	await expect(page.getByTestId('stat-success-rate')).toHaveAttribute('data-unavailable', 'false');
+	const alphaNumbers = {
+		succeeded: await page.getByTestId('stat-succeeded').innerText(),
+		failed: await page.getByTestId('stat-failed').innerText(),
+		running: await page.getByTestId('stat-running').innerText(),
+		rate: await page.getByTestId('stat-success-rate').innerText(),
+		p50: await page.getByTestId('stat-p50').innerText(),
+		p95: await page.getByTestId('stat-p95').innerText()
+	};
+	note(`dashboard for ${ALPHA}, served by engine B: ${JSON.stringify(alphaNumbers)}`);
+	expect(Number(alphaNumbers.failed)).toBeGreaterThanOrEqual(1);
+	await shot(page, 'screenshot-dashboard.png');
+
+	// ---- beta: a namespace where the numbers cannot be answered ------------
+	// The switcher is the way in, so the scoping proven here is the one a user
+	// gets.
+	await page.getByTestId('namespace-picker').selectOption(BETA);
+	await page.waitForURL(new RegExp(`ns=${BETA}`));
+	await expect(page.getByTestId('dashboard-namespace')).toContainText(BETA);
+
+	// Nothing of alpha's leaks in.
+	await expect(page.getByTestId(`failure-${FAILING}`)).toHaveCount(0);
+	await expect(page.getByTestId('failures-empty')).toBeVisible();
+
+	// THE HONESTY CLAUSE. A success rate over no finished runs is unanswerable,
+	// and 0% is the most alarming number a dashboard can show. Percentiles over
+	// no samples are the same. Both say so, in words, and neither reads 0.
+	const rate = page.getByTestId('stat-success-rate');
+	await expect(rate).toHaveAttribute('data-unavailable', 'true');
+	await expect(rate).toHaveText('unavailable');
+	await expect(page.getByTestId('stat-success-rate-note')).toContainText('no run finished');
+	for (const id of ['stat-p50', 'stat-p95']) {
+		await expect(page.getByTestId(id)).toHaveAttribute('data-unavailable', 'true');
+		await expect(page.getByTestId(id)).toHaveText('unavailable');
+	}
+	// A count of nothing IS zero, and is shown as zero: the two states are
+	// different answers and the dashboard tells them apart.
+	await expect(page.getByTestId('stat-succeeded')).toHaveText('0');
+	await expect(page.getByTestId('stat-succeeded')).toHaveAttribute('data-unavailable', 'false');
+	note(
+		`dashboard for ${BETA} (empty): success rate and percentiles render "unavailable", ` +
+			'while the run counts render a real 0'
+	);
+	await shot(page, 'screenshot-dashboard-unavailable.png');
+});
