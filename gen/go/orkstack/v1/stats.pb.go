@@ -174,6 +174,23 @@ func (x *OrkflowFailures) GetTotal() int64 {
 
 type GetStatsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// ONE WINDOW, ONE POPULATION. Every number below is about the same set of
+	// runs: the runs this namespace CREATED between window_since (inclusive) and
+	// window_until (exclusive). A run is counted in the window it was submitted
+	// in, whenever it happens to end, because that is the only instant both
+	// sources agree on — the archive index stamps a run by its creation time
+	// (internal/engine/archive.go, RunIndexTime) and the cluster's execution
+	// index carries its start.
+	//
+	// The alternative — counting a run in the window it FINISHED in — was what
+	// the percentiles used to do, and one answer carrying both is a lie no
+	// field could correct: `orkctl stats --since 15m` over hour-long runs
+	// reported `succeeded 0 / failed 0 / rate unavailable` beside
+	// `p50 58m over 12 finished runs`, two populations printed as one.
+	//
+	// The one exception is `running`, and it is stated where it is declared: it
+	// is a fact about NOW rather than about the window.
+	//
 	// runs_by_status counts the window's runs. Keys are the lowercase, unprefixed
 	// status names: "running", "succeeded", "failed", "canceled". All four are
 	// always present, so a client renders a real zero rather than a blank.
@@ -186,9 +203,10 @@ type GetStatsResponse struct {
 	// `running` list below is exactly the same set. A key that could only ever
 	// be answered by guessing is not reported at all.
 	RunsByStatus map[string]int64 `protobuf:"bytes,1,rep,name=runs_by_status,json=runsByStatus,proto3" json:"runs_by_status,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	// success_rate is succeeded / finished, between 0 and 1. Canceled runs count
-	// as finished: a client that cancels half its runs has not succeeded at
-	// them, and hiding them would make the rate rise when things go wrong.
+	// success_rate is succeeded / finished, between 0 and 1, over the window's
+	// runs that have finished. Canceled runs count as finished: a client that
+	// cancels half its runs has not succeeded at them, and hiding them would
+	// make the rate rise when things go wrong.
 	SuccessRate float64 `protobuf:"fixed64,2,opt,name=success_rate,json=successRate,proto3" json:"success_rate,omitempty"`
 	// success_rate_defined is false when the window finished no runs at all.
 	// A rate over nothing is not 0 — it is unanswerable, and 0 is the most
@@ -197,6 +215,12 @@ type GetStatsResponse struct {
 	// p50_duration and p95_duration are the median and 95th percentile of how
 	// long the window's finished runs took, by nearest rank over the samples
 	// duration_sample_count reports.
+	//
+	// "The window's finished runs" is the SAME set success_rate is a rate over:
+	// runs created inside the window that have since ended. A run created before
+	// the window and closed inside it is neither counted nor sampled, and one
+	// created inside it and still going is counted as running and sampled by
+	// neither.
 	P50Duration *durationpb.Duration `protobuf:"bytes,4,opt,name=p50_duration,json=p50Duration,proto3" json:"p50_duration,omitempty"`
 	P95Duration *durationpb.Duration `protobuf:"bytes,5,opt,name=p95_duration,json=p95Duration,proto3" json:"p95_duration,omitempty"`
 	// duration_coverage_since is the instant the percentiles actually cover,
@@ -206,11 +230,17 @@ type GetStatsResponse struct {
 	// to recover one is the cost this service refuses.
 	//
 	// So a 30-day window over a 3-day record answers for 3 days AND SAYS SO
-	// here, instead of quietly presenting three days of latency as thirty.
+	// here, instead of quietly presenting three days of latency as thirty. It is
+	// also the one place the two sources can legitimately disagree about the
+	// one population: a run created before this instant is still counted from
+	// the archive, which keeps every run for ever, and can no longer be sampled
+	// from the cluster, which does not.
 	DurationCoverageSince *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=duration_coverage_since,json=durationCoverageSince,proto3" json:"duration_coverage_since,omitempty"`
-	// duration_sample_count is how many runs the percentiles were computed from.
-	// Zero means they are unavailable and the two durations above are unset —
-	// a client shows "unavailable", never "0s", which reads as instant success.
+	// duration_sample_count is how many runs the percentiles were computed from:
+	// the window's runs that have finished and whose execution record the
+	// cluster still holds. Zero means they are unavailable and the two durations
+	// above are unset — a client shows "unavailable", never "0s", which reads as
+	// instant success.
 	DurationSampleCount int64 `protobuf:"varint,7,opt,name=duration_sample_count,json=durationSampleCount,proto3" json:"duration_sample_count,omitempty"`
 	// most_failing lists the orkflows with the most failed runs in the window,
 	// worst first, and only those that failed at least once.

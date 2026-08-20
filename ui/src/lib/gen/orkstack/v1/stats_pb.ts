@@ -109,6 +109,23 @@ export const OrkflowFailuresSchema: GenMessage<OrkflowFailures> = /*@__PURE__*/
  */
 export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
   /**
+   * ONE WINDOW, ONE POPULATION. Every number below is about the same set of
+   * runs: the runs this namespace CREATED between window_since (inclusive) and
+   * window_until (exclusive). A run is counted in the window it was submitted
+   * in, whenever it happens to end, because that is the only instant both
+   * sources agree on — the archive index stamps a run by its creation time
+   * (internal/engine/archive.go, RunIndexTime) and the cluster's execution
+   * index carries its start.
+   *
+   * The alternative — counting a run in the window it FINISHED in — was what
+   * the percentiles used to do, and one answer carrying both is a lie no
+   * field could correct: `orkctl stats --since 15m` over hour-long runs
+   * reported `succeeded 0 / failed 0 / rate unavailable` beside
+   * `p50 58m over 12 finished runs`, two populations printed as one.
+   *
+   * The one exception is `running`, and it is stated where it is declared: it
+   * is a fact about NOW rather than about the window.
+   *
    * runs_by_status counts the window's runs. Keys are the lowercase, unprefixed
    * status names: "running", "succeeded", "failed", "canceled". All four are
    * always present, so a client renders a real zero rather than a blank.
@@ -126,9 +143,10 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
   runsByStatus: { [key: string]: bigint };
 
   /**
-   * success_rate is succeeded / finished, between 0 and 1. Canceled runs count
-   * as finished: a client that cancels half its runs has not succeeded at
-   * them, and hiding them would make the rate rise when things go wrong.
+   * success_rate is succeeded / finished, between 0 and 1, over the window's
+   * runs that have finished. Canceled runs count as finished: a client that
+   * cancels half its runs has not succeeded at them, and hiding them would
+   * make the rate rise when things go wrong.
    *
    * @generated from field: double success_rate = 2;
    */
@@ -148,6 +166,12 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
    * long the window's finished runs took, by nearest rank over the samples
    * duration_sample_count reports.
    *
+   * "The window's finished runs" is the SAME set success_rate is a rate over:
+   * runs created inside the window that have since ended. A run created before
+   * the window and closed inside it is neither counted nor sampled, and one
+   * created inside it and still going is counted as running and sampled by
+   * neither.
+   *
    * @generated from field: google.protobuf.Duration p50_duration = 4;
    */
   p50Duration?: Duration | undefined;
@@ -165,16 +189,22 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
    * to recover one is the cost this service refuses.
    *
    * So a 30-day window over a 3-day record answers for 3 days AND SAYS SO
-   * here, instead of quietly presenting three days of latency as thirty.
+   * here, instead of quietly presenting three days of latency as thirty. It is
+   * also the one place the two sources can legitimately disagree about the
+   * one population: a run created before this instant is still counted from
+   * the archive, which keeps every run for ever, and can no longer be sampled
+   * from the cluster, which does not.
    *
    * @generated from field: google.protobuf.Timestamp duration_coverage_since = 6;
    */
   durationCoverageSince?: Timestamp | undefined;
 
   /**
-   * duration_sample_count is how many runs the percentiles were computed from.
-   * Zero means they are unavailable and the two durations above are unset —
-   * a client shows "unavailable", never "0s", which reads as instant success.
+   * duration_sample_count is how many runs the percentiles were computed from:
+   * the window's runs that have finished and whose execution record the
+   * cluster still holds. Zero means they are unavailable and the two durations
+   * above are unset — a client shows "unavailable", never "0s", which reads as
+   * instant success.
    *
    * @generated from field: int64 duration_sample_count = 7;
    */

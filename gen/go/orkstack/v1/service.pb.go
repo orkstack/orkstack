@@ -1380,6 +1380,17 @@ type StreamTaskLogsRequest struct {
 	// attempt selects one try of the task. 0 means the latest attempt that has
 	// written anything, so a caller that never saw a retry does not have to
 	// know retries exist.
+	//
+	// With `follow`, 0 keeps meaning THE LATEST for as long as the stream is
+	// open, not merely when it opened. A Temporal activity retry is invisible in
+	// a task's status — the task stays RUNNING while try 2 starts under a new
+	// key prefix — so a stream that resolved the attempt once would sit on a
+	// dead attempt, delivering nothing, for the rest of the task's life, and say
+	// it was live. When a later attempt appears the stream moves to it and
+	// delivers that attempt from its FIRST chunk; every chunk names the attempt
+	// it belongs to, and its seq restarts at 1, so a client can tell a new
+	// attempt from more of the old one. A non-zero attempt is pinned and never
+	// moves.
 	Attempt int32 `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	// from_seq resumes AFTER this sequence: it is the LAST chunk sequence the
 	// client already received, and the stream continues with the next one. 0
@@ -1389,6 +1400,18 @@ type StreamTaskLogsRequest struct {
 	// the last chunk it saw replays nothing twice and misses nothing, even when
 	// it reconnects to a DIFFERENT replica.
 	FromSeq int64 `protobuf:"varint,4,opt,name=from_seq,json=fromSeq,proto3" json:"from_seq,omitempty"`
+	// from_attempt says which attempt from_seq counts chunks of. It is what
+	// makes a resume safe across a retry: seq is dense per ATTEMPT, so a cursor
+	// of 500 handed back after try 1 would silently skip try 2's first 500
+	// chunks — or, since try 2 is usually shorter, would deliver nothing at all
+	// while the pane read LIVE.
+	//
+	// 0 means "the attempt this request resolves to", which is what a first
+	// connection means and what a client pinning `attempt` means. When it names
+	// a DIFFERENT attempt from the one resolved, from_seq is dropped and the
+	// resolved attempt is delivered from its first chunk: a new attempt is a new
+	// read, not a continuation of the old one.
+	FromAttempt int32 `protobuf:"varint,7,opt,name=from_attempt,json=fromAttempt,proto3" json:"from_attempt,omitempty"`
 	// follow keeps the stream open for chunks that do not exist yet, ending
 	// when the task reaches a terminal state. False makes it a replay: the
 	// chunks the store holds when the request is served, then the end — whether
@@ -1453,6 +1476,13 @@ func (x *StreamTaskLogsRequest) GetAttempt() int32 {
 func (x *StreamTaskLogsRequest) GetFromSeq() int64 {
 	if x != nil {
 		return x.FromSeq
+	}
+	return 0
+}
+
+func (x *StreamTaskLogsRequest) GetFromAttempt() int32 {
+	if x != nil {
+		return x.FromAttempt
 	}
 	return 0
 }
@@ -2367,12 +2397,13 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x13StreamEventsRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rfrom_sequence\x18\x02 \x01(\x03R\ffromSequence\x12\x1c\n" +
-	"\tnamespace\x18\x03 \x01(\tR\tnamespace\"\xb2\x01\n" +
+	"\tnamespace\x18\x03 \x01(\tR\tnamespace\"\xd5\x01\n" +
 	"\x15StreamTaskLogsRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x18\n" +
 	"\aattempt\x18\x03 \x01(\x05R\aattempt\x12\x19\n" +
-	"\bfrom_seq\x18\x04 \x01(\x03R\afromSeq\x12\x16\n" +
+	"\bfrom_seq\x18\x04 \x01(\x03R\afromSeq\x12!\n" +
+	"\ffrom_attempt\x18\a \x01(\x05R\vfromAttempt\x12\x16\n" +
 	"\x06follow\x18\x05 \x01(\bR\x06follow\x12\x1c\n" +
 	"\tnamespace\x18\x06 \x01(\tR\tnamespace\"\xb0\x01\n" +
 	"\fTaskLogChunk\x12\x15\n" +
