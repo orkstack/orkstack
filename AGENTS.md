@@ -92,6 +92,65 @@ DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch�
    landed at M9 with no shim and no dual-read, because nothing was deployed;
    `proof/M9/naming-sweep.sh` is what holds the tree to it.
 
+   **The same rule for where a task runs: the word is `pool`.** A **pool** is
+   a set of Orkers, and it is what a user names — `pool:` in the DSL, the
+   `Pool` message, `TaskRun.pool`, `ListPools`, `orkctl namespace create
+   --default-pool/--allow-pool`, `ORK_ORKER_POOL`, the pool cards on the
+   dashboard. A **queue** is a Temporal task queue and
+   means nothing else in this repo; it appears on **no user-facing surface**:
+   not in `proto/`, not in the DSL, not in an `orkctl` flag or its help text,
+   not in `ui/src` outside `gen/`, not in `docs/DSL.md`, not in a shipped
+   example. `queue:` was removed from the DSL at M10.1 with no alias — a
+   document that still writes it fails to compile with a message naming
+   `pool:` (`internal/dsl/removed.go`). `proof/M10.1/naming-sweep.sh` is what
+   holds the tree to it, and it bans the substring, so `task_queue`,
+   `queueName` and `ORK_TEMPORAL_NAMESPACE` cannot walk through the door a
+   word boundary would leave open.
+
+   **The translation lives in `internal/task/pool.go` and nowhere else.**
+   `QueueForPool` / `RouteForPool` / `PoolForQueue` are the whole mapping, and
+   the prefix `ork-pool-` is constructed in exactly one place —
+   `poolQueuePrefix`, `internal/task/pool.go`. Elsewhere the string appears
+   only inside prose.
+   `""` and `"main"` both resolve to the deployment's *configured* default
+   channel, so `pool: main` and no pool are one route by construction under
+   every `ORK_ORKER_QUEUE` override — which is why a document cannot escape an
+   agent's isolation by naming the default pool (§6). Any other valid pool is
+   `ork-pool-<slug>`; `ork-engine-events` as the bound default is refused
+   (`ErrReservedQueue`). Write a second mapping anywhere and the two spellings
+   of one pool stop being one pool.
+10. **A namespace is the tenancy coordinate, and `default` is a name like any
+    other.** An orkflow name is unique WITHIN a namespace, and every read and
+    write that carries a run or an orkflow carries the namespace it belongs to.
+    Three invariants hold it up:
+    - **One slug rule, stated where each boundary needs it, over shared test
+      vectors.** `^[a-z][a-z0-9-]*$`, ≤200 bytes, for a namespace, an orkflow
+      name, a task id and a pool: `internal/dsl/compile.go` (`slugPattern`,
+      `MaxSlug`), `pkg/artifacts/namespace_store.go` (`namespaceNamePattern`,
+      `maxPoolName`) and `internal/task/pool.go` (`poolPattern`,
+      `MaxPoolName`) — restated at each boundary because a hand-built request
+      never went through the compiler, and held to ONE rule by a shared corpus
+      (`TestNamespaceName_RegistryAndCompilerAgree`,
+      `pkg/artifacts/namespace_name_test.go`, the only place that package names
+      `internal/dsl`). Names are **validated, never sanitized** — a name that
+      has to be repaired to be stored is a name that can be spelled two ways,
+      and a key built from it then addresses somebody else's tenant.
+    - **`default` always resolves, and is never stored or deleted.** A request
+      naming no namespace means `default` on the wire (the empty string), and
+      reading it answers a synthesized document
+      (`artifacts.DefaultNamespaceDocument`) whether or not anything was ever
+      written. Creating it writes nothing — an identical spec is the no-op it
+      looks like, a different one is the conflict any collision is — and
+      deleting it is refused unconditionally: it holds every orkflow that names
+      none (`internal/api/namespaces.go`).
+    - **The archive index is namespace-first.**
+      `metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{run-id}` —
+      eight segments, `runIndexSegments = 8`, `pkg/artifacts/archive.go`. The
+      namespace is the first thing after the prefix so that listing one
+      tenant's runs narrows in the LIST call, not in a filter afterwards: a
+      post-filter would make one tenant's page scan every tenant's keys, and a
+      run's namespace would be recoverable only by reading its body.
+
 ## 2. Repository layout
 
 ```
