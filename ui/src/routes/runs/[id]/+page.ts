@@ -24,8 +24,14 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 				orkflow = null; // orkflow may have been superseded; statuses still render
 			}
 		}
-		return { run, orkflow, namespace, error: null as string | null };
+		return { runId: params.id, run, orkflow, namespace, error: null as string | null };
 	} catch (err) {
-		return { run: null, orkflow: null, namespace, error: errorMessage(err) };
+		return {
+			runId: params.id,
+			run: null,
+			orkflow: null,
+			namespace,
+			error: errorMessage(err)
+		};
 	}
 };

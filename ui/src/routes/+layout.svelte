@@ -1,8 +1,16 @@
 <script lang="ts">
 	import '../app.css';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
-	import { DEFAULT_NAMESPACE, namespaceLabel, withNamespace } from '$lib/namespace';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import {
+		DEFAULT_NAMESPACE,
+		hasNamespaceParam,
+		namespaceLabel,
+		rememberNamespace,
+		rememberedNamespace,
+		withNamespace
+	} from '$lib/namespace';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -18,8 +26,48 @@
 	// namespace you left: an orkflow name is unique WITHIN a namespace, so
 	// carrying `?orkflow=deploy` across names a different orkflow or none.
 	function switchTo(name: string) {
+		// Remembered BEFORE the navigation, and remembered under its label, so
+		// that choosing `default` — which carries no parameter — is a choice the
+		// restore below honours rather than an absence it overrides.
+		rememberNamespace(name);
 		const next = name === DEFAULT_NAMESPACE ? '' : name;
 		void goto(withNamespace(page.url.pathname, next), { invalidateAll: true });
+	}
+
+	// A URL that names no namespace is answered by the last one CHOSEN in this
+	// browser, and the choice is written back into the address bar (design
+	// §1.9). Without this, opening a bookmarked `/orkflows` drops somebody
+	// working in `payments` back into `default` with no error and no hint.
+	//
+	// goto(..., { replaceState: true }) rather than the shallow replaceState
+	// helper: the URL is the loaders' input, so rewriting it without re-running
+	// them would leave the address bar saying `payments` over `default`'s data,
+	// which is the same lie with better manners. It replaces rather than pushes
+	// so the back button still leaves the app.
+	$effect(() => {
+		const url = page.url;
+		if (hasNamespaceParam(url)) {
+			rememberNamespace(data.namespace);
+			return;
+		}
+		const remembered = rememberedNamespace();
+		if (!remembered) return;
+		void goto(withNamespace(url.pathname + url.search, remembered), {
+			replaceState: true,
+			invalidateAll: true,
+			noScroll: true,
+			keepFocus: true
+		});
+	});
+
+	let retryingNamespaces = $state(false);
+	async function retryNamespaces() {
+		retryingNamespaces = true;
+		try {
+			await invalidateAll();
+		} finally {
+			retryingNamespaces = false;
+		}
 	}
 
 	const link = (path: string) => withNamespace(path, data.namespace);
@@ -50,10 +98,16 @@
 			</label>
 		</nav>
 		{#if data.namespaceError}
-			<p data-testid="namespace-error" class="mx-auto max-w-6xl px-6 pb-2 text-xs text-amber-300/80">
-				Showing namespace {namespaceLabel(data.namespace)}; the other namespaces could not be listed:
-				{data.namespaceError}
-			</p>
+			<div class="mx-auto max-w-6xl px-6 pb-3">
+				<ErrorPanel
+					testid="namespace-error"
+					retryTestid="namespace-retry"
+					subject="the other namespaces (showing {namespaceLabel(data.namespace)})"
+					message={data.namespaceError}
+					busy={retryingNamespaces}
+					onretry={retryNamespaces}
+				/>
+			</div>
 		{/if}
 	</header>
 	<main class="mx-auto max-w-6xl px-6 py-8">

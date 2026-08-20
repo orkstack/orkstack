@@ -1,10 +1,22 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { fmtTimestamp } from '$lib/status';
-	import { withNamespace } from '$lib/namespace';
+	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	let retrying = $state(false);
+	async function retry() {
+		retrying = true;
+		try {
+			await invalidateAll();
+		} finally {
+			retrying = false;
+		}
+	}
 </script>
 
 <svelte:head><title>Runs — OrkStack</title></svelte:head>
@@ -24,14 +36,20 @@
 </div>
 
 {#if data.error}
-	<div
-		data-testid="engine-error"
-		class="rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-	>
-		Could not reach the engine: {data.error}
-	</div>
+	<ErrorPanel
+		testid="engine-error"
+		retryTestid="runs-retry"
+		subject="the runs in namespace {namespaceLabel(data.namespace)}"
+		message={data.error}
+		busy={retrying}
+		onretry={retry}
+	/>
+{:else if retrying}
+	<p class="text-sm text-zinc-400" data-testid="runs-loading">Loading runs…</p>
 {:else if data.runs.length === 0}
-	<p class="text-sm text-zinc-400" data-testid="runs-empty">No runs yet.</p>
+	<p class="text-sm text-zinc-400" data-testid="runs-empty">
+		No runs in namespace {namespaceLabel(data.namespace)} yet.
+	</p>
 {:else}
 	<div class="overflow-hidden rounded-lg border border-zinc-800">
 		<table class="w-full text-left text-sm" data-testid="run-list">

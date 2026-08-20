@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { errorMessage, orkstack } from '$lib/client';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
@@ -84,12 +85,7 @@ tasks:
 	</div>
 
 	{#if formError}
-		<div
-			data-testid="apply-error"
-			class="rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-		>
-			{formError}
-		</div>
+		<ErrorPanel testid="apply-error" message={formError} />
 	{/if}
 	{#each warnings as warning, i (i)}
 		<div

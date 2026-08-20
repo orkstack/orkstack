@@ -1,14 +1,25 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { create } from '@bufbuild/protobuf';
 	import type { JsonObject } from '@bufbuild/protobuf';
 	import { errorMessage, orkstack } from '$lib/client';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { PayloadSchema } from '$lib/gen/orkstack/v1/common_pb';
-	import { withNamespace } from '$lib/namespace';
+	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	let retrying = $state(false);
+	async function retry() {
+		retrying = true;
+		try {
+			await invalidateAll();
+		} finally {
+			retrying = false;
+		}
+	}
 
 	// One-shot seed of the picker from the loaded page data.
 	let selected = $state(untrack(() => data.preselect || data.orkflows[0]?.name || ''));
@@ -77,15 +88,20 @@
 <h1 class="mb-6 text-2xl font-bold">Submit a run</h1>
 
 {#if data.error}
-	<div
-		data-testid="engine-error"
-		class="rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-	>
-		Could not reach the engine: {data.error}
-	</div>
+	<ErrorPanel
+		testid="engine-error"
+		retryTestid="submit-retry"
+		subject="the orkflows in namespace {namespaceLabel(data.namespace)}"
+		message={data.error}
+		busy={retrying}
+		onretry={retry}
+	/>
+{:else if retrying}
+	<p class="text-sm text-zinc-400" data-testid="submit-loading">Loading orkflows…</p>
 {:else if data.orkflows.length === 0}
-	<p class="text-sm text-zinc-400">
-		No orkflows applied yet. <a href={withNamespace('/apply', data.namespace)} class="text-emerald-300 hover:underline"
+	<p class="text-sm text-zinc-400" data-testid="submit-empty">
+		No orkflows in namespace {namespaceLabel(data.namespace)} yet.
+		<a href={withNamespace('/apply', data.namespace)} class="text-emerald-300 hover:underline"
 			>Apply one first.</a
 		>
 	</p>
@@ -132,12 +148,7 @@
 		</div>
 
 		{#if formError}
-			<div
-				data-testid="submit-error"
-				class="rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-			>
-				{formError}
-			</div>
+			<ErrorPanel testid="submit-error" message={formError} />
 		{/if}
 
 		<button

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
@@ -9,6 +11,18 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	// A run that could not be read is a failed request. The retry re-issues it;
+	// nothing here waits forever on a spinner.
+	let retrying = $state(false);
+	async function retry() {
+		retrying = true;
+		try {
+			await invalidateAll();
+		} finally {
+			retrying = false;
+		}
+	}
 
 	interface TaskView {
 		id: string;
@@ -153,12 +167,16 @@
 <svelte:head><title>Run {run?.id ?? ''} — OrkStack</title></svelte:head>
 
 {#if data.error}
-	<div
-		data-testid="engine-error"
-		class="rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-	>
-		{data.error}
-	</div>
+	<ErrorPanel
+		testid="engine-error"
+		retryTestid="run-retry"
+		subject="run {data.runId}"
+		message={data.error}
+		busy={retrying}
+		onretry={retry}
+	/>
+{:else if retrying}
+	<p class="text-sm text-zinc-400" data-testid="run-loading">Loading the run…</p>
 {:else if run}
 	<div class="mb-6 flex flex-wrap items-center gap-4">
 		<div>
