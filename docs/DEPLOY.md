@@ -98,6 +98,13 @@ needs `ORK_S3_*` either way.
   continue after an event number, and the number is the producer's — the
   workflow assigns it — so resuming against a *different* replica yields the
   same stream with nothing repeated and nothing skipped.
+- **Task logs are the same claim, over the bucket.** `StreamTaskLogs` and
+  `/ws/runs/{id}/tasks/{task}/logs` read the chunks an Orker wrote and the
+  task's state from the cluster, so any replica follows any task — one whose
+  Orker has already exited, and one whose run finished before the reader
+  connected. They resume the same way, on `from_seq` instead of
+  `from_sequence`, over a sequence the single Orker executing that attempt
+  assigned (§1, "Live task logs").
 - **Readiness: there is no `/healthz` yet.** Probe with a cheap unary call —
   `OrkflowService.ListOrkflows`, i.e. `orkctl --server … orkflow list`. Every
   script under `proof/` that starts today's engine binary gates on exactly

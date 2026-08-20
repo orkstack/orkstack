@@ -797,7 +797,12 @@ func writeMarkerTranscript(
 	fmt.Fprintf(&out, "  log-only marker      ABSENT   — the log path adds nothing to history\n")
 	fmt.Fprintf(&out, "event stream           %d bytes scanned\n", archivedBytes)
 	fmt.Fprintf(&out, "  control marker       ABSENT\n")
-	fmt.Fprintf(&out, "  log-only marker      ABSENT   — events announce, they do not carry\n\n")
+	fmt.Fprintf(&out, "  log-only marker      ABSENT   — events announce, they do not carry\n")
+	// A verdict with no measurement in it, so a README can quote the CLAIM
+	// while the lines above carry the numbers. A quote whose byte count
+	// changed on every run could not be held to anything.
+	fmt.Fprintf(&out, "verdict: the whole log is in the stream; only the payload echo is "+
+		"in history, and neither marker is on the event stream.\n\n")
 	fmt.Fprintf(&out, "the log's own boundaries, as StreamTaskLogs delivered them:\n")
 	for _, line := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
 		if strings.Contains(line, headMarker) || strings.Contains(line, tailMarker) ||
