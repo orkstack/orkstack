@@ -692,7 +692,11 @@ func writeTaskLogTranscript(
 	if len(stamps) > 1 {
 		span = stamps[len(stamps)-1].Sub(stamps[0])
 	}
-	fmt.Fprintf(&out, "\nthe follow spanned %s: the lines arrived DURING the run, not after it.\n", span)
+	fmt.Fprintf(&out, "\nthe follow spanned %s of the run's own lifetime.\n", span)
+	// A verdict with no clock in it, so a README can quote the CLAIM while the
+	// table above carries the measurement. A quote that changed on every run
+	// could not be held to anything.
+	fmt.Fprintf(&out, "verdict: the lines arrived DURING the run, not after it.\n")
 	fmt.Fprintf(&out, "post-mortem read from the same replica: %d chunk(s), %d bytes.\n",
 		postMortem.count(), len(postMortem.body()))
 	appendProofArtifact(t, "live-follow.txt", out.String())
