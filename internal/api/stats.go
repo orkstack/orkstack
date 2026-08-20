@@ -44,6 +44,12 @@ const (
 	// (internal/task/namespace.go); a shorter real retention only makes
 	// duration_coverage_since optimistic by the difference, which is why the
 	// coverage is reported rather than assumed.
+	//
+	// Retention is counted from when a run CLOSED, and a run closes no earlier
+	// than it was created, so every run created inside the last
+	// StatsDurationRetention that has finished is still in the index. That is
+	// what makes the coverage instant below a sound bound on a population
+	// selected by creation time.
 	StatsDurationRetention = 72 * time.Hour
 
 	// MostFailingLimit caps the most-failing table. A dashboard row a reader
@@ -237,6 +243,14 @@ func (h *StatsHandler) window(
 }
 
 // compute derives one whole answer from the two shared records.
+//
+// The two records answer about ONE population: the runs the window created.
+// The archive is asked for the ones that ended (its index key is stamped with
+// a run's creation time, engine.RunIndexTime) and the cluster for the ones
+// still going and for how long the ended ones took
+// (engine.windowRunDurations). A handler that merged a count of the window's
+// runs with a percentile over the window's CLOSURES would produce one screen
+// holding two different sets of runs, and nothing on it would say so.
 func (h *StatsHandler) compute(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
@@ -408,6 +422,13 @@ func errNoArchive() error {
 // durationCoverageSince is the instant the percentiles actually cover: the
 // window's start, or the edge of what the cluster still remembers, whichever
 // is later.
+//
+// It is the one place the answer's two sources may legitimately disagree about
+// the one population they share. The archive counts a run created inside the
+// window for ever; the cluster can sample it only while it holds its execution
+// record. Before this instant a window's counts are complete and its
+// percentiles are not, and saying so is the difference between three days of
+// latency and a month of it.
 func durationCoverageSince(since, now time.Time) time.Time {
 	edge := now.Add(-StatsDurationRetention)
 	if edge.After(since) {

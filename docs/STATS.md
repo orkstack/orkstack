@@ -14,15 +14,15 @@ orkctl -n payments stats --json    # the same answer, for a machine
 
 ## 1. Two sources, and no third
 
-| Field | Where it comes from |
-|---|---|
-| `runs_by_status["running"]`, `running[]` | the cluster's index of executions |
-| `runs_by_status["succeeded"/"failed"/"canceled"]` | the run archive's INDEX KEYS |
-| `success_rate`, `success_rate_defined` | the same index keys |
-| `most_failing[]` | the same index keys |
-| `p50_duration`, `p95_duration`, `duration_sample_count` | the cluster's index of executions |
-| `duration_coverage_since` | the window, held against how long executions are kept |
-| `pools[]` | the Orkers polling for each pool's work, live |
+| Field | Where it comes from | Over which runs |
+|---|---|---|
+| `runs_by_status["running"]`, `running[]` | the cluster's index of executions | created in the window and not finished |
+| `runs_by_status["succeeded"/"failed"/"canceled"]` | the run archive's INDEX KEYS | created in the window and finished |
+| `success_rate`, `success_rate_defined` | the same index keys | the same |
+| `most_failing[]` | the same index keys | the same |
+| `p50_duration`, `p95_duration`, `duration_sample_count` | the cluster's index of executions | the same |
+| `duration_coverage_since` | the window, held against how long executions are kept | — |
+| `pools[]` | the Orkers polling for each pool's work, live | — |
 
 **There is no counter and no write path.** Every number is derived when it is
 asked for. A stored counter would be a third record of facts two records
@@ -50,6 +50,30 @@ counting a run twice.
 - Empty `since` means `lookback` before that, and `lookback` defaults to 24h.
 - A window that ends at or before it starts is refused. Answering it with zeros
   would hand back numbers that read exactly like a healthy, idle namespace.
+
+**One window, one population.** Every number in an answer is about the same set
+of runs: the ones this namespace CREATED inside the window, whenever they
+happen to end. A run is counted in the window that submitted it, and the
+percentiles are taken over those of its runs that have since finished — so
+`p50` is the median of runs the success rate beside it is a rate over.
+
+Creation is the coordinate because it is the only instant both records agree
+on: the archive index stamps a run by `created_at`
+(`internal/engine/archive.go`, `RunIndexTime`) and the cluster's execution
+index carries its start. The percentiles used to be selected by CLOSE time
+instead, and one answer then held two different sets of runs with nothing
+saying so — `orkctl stats --since 15m` over hour-long runs reported
+`succeeded 0 / failed 0 / rate unavailable` beside `p50 58m over 12 finished
+runs`. `TestExecutions_SamplesTheSameRunsTheArchiveCounts` puts one corpus
+through both records and requires the two counts to match.
+
+Two consequences follow, and both are the point:
+
+- A run created inside the window and still going is counted as `running` and
+  sampled by nothing. It has no duration yet.
+- A window in the past keeps filling in as its runs end — its counts and its
+  percentiles together. A pinned window is a question about a set of runs, not
+  a photograph of an instant.
 
 The response echoes what it answered: `namespace`, `window_since` and
 `window_until`, all resolved. A client that asked for "the default namespace,
@@ -82,7 +106,9 @@ things.
   long a run took is known only while the cluster still holds its execution
   record — 72 hours by default (`internal/task/namespace.go`) — and the archive
   index carries no duration. A 30-day window over a 3-day record answers for 3
-  days and says so here.
+  days and says so here. It is the one place the two records may legitimately
+  disagree about the one population they share: before this instant the
+  window's counts are still complete and its percentiles are not.
 - `runs_by_status` always carries all four keys, so a real zero is a zero.
 
 There is no `pending` key. Telling an accepted run from a started one means
@@ -132,9 +158,9 @@ are equal field for field.
 - One prefix scan of `metadata/index/runs/{namespace}/` per answer — keys only,
   one listing page per 1000 archived runs in the namespace.
 - One page-walk of the cluster's execution index for the runs still going, and
-  one bounded by close time for the finished ones. If a walk runs out of pages
-  the request FAILS rather than answering from a subset: a percentile over a
-  truncated sample looks like an answer and is not one.
+  one bounded by START time for the window's own runs. If a walk runs out of
+  pages the request FAILS rather than answering from a subset: a percentile
+  over a truncated sample looks like an answer and is not one.
 - One liveness probe per pool in scope — typically two or three.
 - All of it divided by the cache TTL, per namespace and window.
 

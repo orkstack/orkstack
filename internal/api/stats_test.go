@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -82,6 +83,24 @@ type statsFixture struct {
 	// orkflow at one instant do not collide on an index key. It is a counter,
 	// not an ordering: nothing here reads meaning out of a run id.
 	seeded int
+	// corpus is every run this fixture has seeded, so the CLUSTER half of an
+	// answer can be derived from the same runs the ARCHIVE half counts.
+	//
+	// It exists because the two halves are one population (stats.proto,
+	// GetStatsResponse) and a double that invented its own durations could
+	// not fail when they part company — which is exactly what happened: the
+	// counts were over the runs a window created and the percentiles over the
+	// runs it closed, and this file archived seven runs, handed the reader ten
+	// durations and asserted nothing that related the two.
+	corpus []seededRun
+}
+
+// seededRun is what the fixture remembers about a run it archived: when it was
+// created, and how long it took.
+type seededRun struct {
+	namespace string
+	createdAt time.Time
+	took      time.Duration
 }
 
 // newStatsFixture wires a service the way `ork` does: a durable archive, a
@@ -115,12 +134,27 @@ func newStatsFixture(t *testing.T, at time.Time, namespaces ...string) *statsFix
 }
 
 // archiveRun writes one finished run through the production archiver, which is
-// what puts a real index key in the tree.
+// what puts a real index key in the tree. The run took a minute.
 func (f *statsFixture) archiveRun(
 	t *testing.T,
 	namespace, orkflow string,
 	status orkstackv1.Status,
 	at time.Time,
+) string {
+	t.Helper()
+	return f.archiveRunTaking(t, namespace, orkflow, status, at, time.Minute)
+}
+
+// archiveRunTaking is archiveRun with the run's duration named, for a test
+// that asserts a percentile. The duration is remembered here as well as
+// written to the archive, so the cluster half of the answer can be derived
+// from the same run rather than invented beside it.
+func (f *statsFixture) archiveRunTaking(
+	t *testing.T,
+	namespace, orkflow string,
+	status orkstackv1.Status,
+	at time.Time,
+	took time.Duration,
 ) string {
 	t.Helper()
 	f.seeded++
@@ -131,12 +165,38 @@ func (f *statsFixture) archiveRun(
 		OrkflowName: orkflow,
 		Status:      status,
 		CreatedAt:   timestamppb.New(at),
-		FinishedAt:  timestamppb.New(at.Add(time.Minute)),
+		FinishedAt:  timestamppb.New(at.Add(took)),
 	}
 	if err := engine.NewRunArchiver(f.archive).Archive(context.Background(), run, nil); err != nil {
 		t.Fatalf("archive run %s: %v", id, err)
 	}
+	f.corpus = append(f.corpus, seededRun{namespace: namespace, createdAt: at, took: took})
 	return id
+}
+
+// executionsIn is what the cluster's index says about one window, DERIVED FROM
+// THE SAME RUNS the archive holds.
+//
+// It applies the production rule and no other (engine.windowRunDurations): a
+// duration is sampled for a run the window CREATED and that has finished. A
+// fixture that listed durations by hand could not fail when the two halves of
+// an answer stopped being about one set of runs, which is the defect this
+// models away.
+func (f *statsFixture) executionsIn(
+	namespace string,
+	since, until time.Time,
+	running ...*orkstackv1.Run,
+) engine.Executions {
+	sampled := []time.Duration{}
+	for _, run := range f.corpus {
+		if run.namespace != namespace ||
+			run.createdAt.Before(since) || !run.createdAt.Before(until) {
+			continue
+		}
+		sampled = append(sampled, run.took)
+	}
+	sort.Slice(sampled, func(i, j int) bool { return sampled[i] < sampled[j] })
+	return engine.Executions{Running: running, Durations: sampled}
 }
 
 func (f *statsFixture) stats(
@@ -180,48 +240,54 @@ func liveRun(id, namespace, orkflow string, at time.Time) *orkstackv1.Run {
 // case a namespace-blind scan would get wrong. Every number below is asserted
 // exactly, and each namespace's numbers are asserted to exclude the other's
 // entirely rather than merely to differ.
+//
+// The percentiles are asserted over the SAME runs the counts count. Both
+// halves of the answer are derived from one seeded corpus (executionsIn), so a
+// build whose two sources drew from two populations fails here — as one did:
+// the counts were over the runs the window created, the percentiles over the
+// runs it closed, and the two were rendered side by side as one set.
 func TestGetStats_TwoSeededNamespacesReportExactCountsRateAndPercentiles(t *testing.T) {
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	fixture := newStatsFixture(t, now, "alpha", "beta")
 	since, until := now.Add(-24*time.Hour), now
 	inWindow := now.Add(-3 * time.Hour)
 
-	// alpha: 7 finished runs — 4 succeeded, 2 failed, 1 canceled.
+	// alpha: 7 finished runs — 4 succeeded, 2 failed, 1 canceled — taking one
+	// to seven minutes, so a percentile over them is a value one of them took.
+	minutes := func(n int) time.Duration { return time.Duration(n) * time.Minute }
 	for i := 0; i < 3; i++ {
-		fixture.archiveRun(t, "alpha", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, inWindow)
+		fixture.archiveRunTaking(t, "alpha", "deploy",
+			orkstackv1.Status_STATUS_SUCCEEDED, inWindow, minutes(i+1))
 	}
 	for i := 0; i < 2; i++ {
-		fixture.archiveRun(t, "alpha", "deploy", orkstackv1.Status_STATUS_FAILED, inWindow)
+		fixture.archiveRunTaking(t, "alpha", "deploy",
+			orkstackv1.Status_STATUS_FAILED, inWindow, minutes(i+4))
 	}
-	fixture.archiveRun(t, "alpha", "nightly", orkstackv1.Status_STATUS_SUCCEEDED, inWindow)
-	fixture.archiveRun(t, "alpha", "nightly", orkstackv1.Status_STATUS_CANCELED, inWindow)
+	fixture.archiveRunTaking(t, "alpha", "nightly",
+		orkstackv1.Status_STATUS_SUCCEEDED, inWindow, minutes(6))
+	fixture.archiveRunTaking(t, "alpha", "nightly",
+		orkstackv1.Status_STATUS_CANCELED, inWindow, minutes(7))
 	// One alpha run OUTSIDE the window. It must not be counted: a window that
-	// is really a filter over everything is not a window.
-	fixture.archiveRun(t, "alpha", "deploy", orkstackv1.Status_STATUS_FAILED,
-		since.Add(-time.Hour))
+	// is really a filter over everything is not a window. Nor may it be
+	// SAMPLED — it took an hour, which would move both percentiles.
+	fixture.archiveRunTaking(t, "alpha", "deploy", orkstackv1.Status_STATUS_FAILED,
+		since.Add(-time.Hour), time.Hour)
 
 	// beta: 6 finished runs — 1 succeeded, 5 failed — under the SAME orkflow
 	// name alpha uses.
-	fixture.archiveRun(t, "beta", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, inWindow)
-	for i := 0; i < 5; i++ {
-		fixture.archiveRun(t, "beta", "deploy", orkstackv1.Status_STATUS_FAILED, inWindow)
+	for i := 0; i < 6; i++ {
+		status := orkstackv1.Status_STATUS_FAILED
+		if i == 0 {
+			status = orkstackv1.Status_STATUS_SUCCEEDED
+		}
+		fixture.archiveRunTaking(t, "beta", "deploy", status, inWindow, minutes(i+1))
 	}
 
-	fixture.reader.executions["alpha"] = engine.Executions{
-		Running: []*orkstackv1.Run{
-			liveRun("ork-alpha-live-1", "alpha", "deploy", inWindow),
-			liveRun("ork-alpha-live-2", "alpha", "nightly", inWindow),
-		},
-		Durations: durations(
-			1*time.Second, 2*time.Second, 3*time.Second, 4*time.Second, 5*time.Second,
-			6*time.Second, 7*time.Second, 8*time.Second, 9*time.Second, 10*time.Second),
-	}
-	fixture.reader.executions["beta"] = engine.Executions{
-		Running: []*orkstackv1.Run{
-			liveRun("ork-beta-live-1", "beta", "deploy", inWindow),
-		},
-		Durations: durations(2*time.Second, 4*time.Second, 6*time.Second, 8*time.Second),
-	}
+	fixture.reader.executions["alpha"] = fixture.executionsIn("alpha", since, until,
+		liveRun("ork-alpha-live-1", "alpha", "deploy", inWindow),
+		liveRun("ork-alpha-live-2", "alpha", "nightly", inWindow))
+	fixture.reader.executions["beta"] = fixture.executionsIn("beta", since, until,
+		liveRun("ork-beta-live-1", "beta", "deploy", inWindow))
 
 	handler := api.NewStatsHandler(fixture.svc, api.DefaultStatsCacheTTL)
 
@@ -230,7 +296,9 @@ func TestGetStats_TwoSeededNamespacesReportExactCountsRateAndPercentiles(t *test
 		"running": 2, "succeeded": 4, "failed": 2, "canceled": 1,
 	})
 	assertRate(t, "alpha", alpha, 4.0/7.0)
-	assertPercentiles(t, "alpha", alpha, 10, 5*time.Second, 10*time.Second)
+	// Nearest rank over the seven the window created: p50 is the 4th, p95 the
+	// 7th. The hour-long run outside the window is in neither.
+	assertPercentiles(t, "alpha", alpha, 7, 4*time.Minute, 7*time.Minute)
 	assertMostFailing(t, "alpha", alpha, []failure{{"deploy", 2, 5}})
 	assertRunning(t, "alpha", alpha, []string{"ork-alpha-live-1", "ork-alpha-live-2"})
 
@@ -239,10 +307,27 @@ func TestGetStats_TwoSeededNamespacesReportExactCountsRateAndPercentiles(t *test
 		"running": 1, "succeeded": 1, "failed": 5, "canceled": 0,
 	})
 	assertRate(t, "beta", beta, 1.0/6.0)
-	// Nearest rank over 4 samples: p50 is the 2nd, p95 the 4th.
-	assertPercentiles(t, "beta", beta, 4, 4*time.Second, 8*time.Second)
+	// Nearest rank over 6 samples: p50 is the 3rd, p95 the 6th.
+	assertPercentiles(t, "beta", beta, 6, 3*time.Minute, 6*time.Minute)
 	assertMostFailing(t, "beta", beta, []failure{{"deploy", 5, 6}})
 	assertRunning(t, "beta", beta, []string{"ork-beta-live-1"})
+
+	// ONE WINDOW, ONE POPULATION, stated as a relation between two numbers a
+	// dashboard prints beside each other: the runs the percentiles were taken
+	// over are the runs the rate is a rate over. Nothing here can be read off
+	// one source alone, which is why the fixture derives both from one corpus.
+	for _, answer := range []struct {
+		namespace string
+		stats     *orkstackv1.GetStatsResponse
+	}{{"alpha", alpha}, {"beta", beta}} {
+		counts := answer.stats.GetRunsByStatus()
+		finished := counts["succeeded"] + counts["failed"] + counts["canceled"]
+		if got := answer.stats.GetDurationSampleCount(); got != finished {
+			t.Errorf("%s: the percentiles are over %d runs and the success rate over "+
+				"%d; one answer is carrying two populations",
+				answer.namespace, got, finished)
+		}
+	}
 
 	// The exclusion, stated as its own claim. Both namespaces hold an orkflow
 	// called "deploy"; if the scan were namespace-blind, alpha's deploy row

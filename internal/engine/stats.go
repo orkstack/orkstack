@@ -76,8 +76,10 @@ type StatsWindow struct {
 // still applies as an upper bound, so a window that ends in the past cannot
 // report a run that had not started by then.
 //
-// Durations holds one sample per run that FINISHED inside the window, sorted
-// ascending, ready for a percentile.
+// Durations holds one sample per run the window CREATED and that has since
+// finished, sorted ascending, ready for a percentile. Created, not closed:
+// that is the same population the archive counts, and the two halves of one
+// answer must be about one set of runs (see stats.proto, GetStatsResponse).
 type Executions struct {
 	Running   []*orkstackv1.Run
 	Durations []time.Duration
@@ -99,8 +101,8 @@ type ExecutionReader interface {
 	Executions(ctx context.Context, w StatsWindow) (Executions, error)
 }
 
-// Executions reports the runs executing now and how long the window's finished
-// runs took, both from the cluster's execution index.
+// Executions reports the runs executing now and how long the window's own
+// finished runs took, both from the cluster's execution index.
 //
 // Nothing here reads a run's history: a page of the index carries the status,
 // the times and the memo this needs, and reading history would cost one call
@@ -114,7 +116,7 @@ func (r *TemporalRunReader) Executions(ctx context.Context, w StatsWindow) (Exec
 	if err != nil {
 		return Executions{}, err
 	}
-	durations, err := r.finishedDurations(ctx, w)
+	durations, err := r.windowRunDurations(ctx, w)
 	if err != nil {
 		return Executions{}, err
 	}
@@ -156,26 +158,59 @@ func (r *TemporalRunReader) runningExecutions(
 	return out, nil
 }
 
-// finishedDurations samples how long each run that finished inside the window
-// took, ascending.
+// windowRunDurations samples how long each run the window CREATED took, for
+// the ones that have finished, ascending.
+//
+// The population is the window's own runs — those whose START falls inside it
+// — and not those that happened to CLOSE inside it. That was the defect: the
+// archive's index stamps a run by its creation time (RunIndexTime), so
+// runs_by_status, success_rate and most_failing count the runs a window
+// created, while these percentiles counted the runs it closed. One answer
+// carried two populations and said nothing about the difference:
+// `orkctl stats --since 15m` over hour-long runs reported no finished runs at
+// all beside a p50 of 58 minutes over twelve of them.
+//
+// Two consequences, both deliberate:
+//
+//   - A run created inside the window and still going is sampled by nothing
+//     and counted as running, which is what runs_by_status says about it too.
+//   - A window in the past keeps filling in as its runs end, exactly as its
+//     archive counts do. A pinned window is a question about a set of runs,
+//     not a photograph of an instant.
 //
 // The time bound is pushed into the query, so the cluster reads its own index
-// by close time instead of handing over every execution it holds. The
-// duration is the record's own ExecutionDuration where it has one, and close
-// minus start otherwise — the same record either way, never a second call.
-func (r *TemporalRunReader) finishedDurations(
+// by start time instead of handing over every execution it holds. The duration
+// is the record's own ExecutionDuration where it has one, and close minus
+// start otherwise — the same record either way, never a second call.
+//
+// A run's creation time and the cluster's StartTime are the two ends of one
+// StartRun call, so they differ by the milliseconds that call took: a run
+// submitted within that skew of a boundary can be counted on one side of it by
+// the archive and sampled on the other by the cluster. Nothing closer exists —
+// the cluster does not store the engine's created_at — and the alternative
+// (two different populations) is what this replaced.
+func (r *TemporalRunReader) windowRunDurations(
 	ctx context.Context,
 	w StatsWindow,
 ) ([]time.Duration, error) {
-	query := fmt.Sprintf("WorkflowType = %q AND CloseTime >= %q AND CloseTime < %q",
+	query := fmt.Sprintf("WorkflowType = %q AND StartTime >= %q AND StartTime < %q",
 		RunWorkflowType, statsTime(w.Since), statsTime(w.Until))
 	out := []time.Duration{}
 	err := r.walkExecutions(ctx, w, query, func(info *workflowpb.WorkflowExecutionInfo) {
 		if !inNamespace(r.memoString(info.GetMemo(), MemoNamespace), w.Namespace) {
 			return
 		}
-		if closed := info.GetCloseTime(); closed == nil ||
-			closed.AsTime().Before(w.Since) || !closed.AsTime().Before(w.Until) {
+		// The bound is checked here as well as in the query. A cluster that
+		// answered a predicate loosely would otherwise widen the population
+		// silently, and this is the half of the answer that has no visible
+		// length.
+		if started := info.GetStartTime(); started == nil ||
+			started.AsTime().Before(w.Since) || !started.AsTime().Before(w.Until) {
+			return
+		}
+		// Unfinished runs come back from this query too — the window's own
+		// runs are a mix — and one has no duration to sample.
+		if info.GetCloseTime() == nil {
 			return
 		}
 		if sample := executionDuration(info); sample > 0 {

@@ -29,6 +29,10 @@ func newStatsCommand(g *globalFlags) *cobra.Command {
 		Long: "stats reports how a namespace is doing over a time window: how many runs\n" +
 			"are running and how the finished ones ended, the success rate, how long\n" +
 			"runs take, which orkflows fail most, and which pools have Orkers.\n\n" +
+			"Every number is about the runs the window CREATED, whenever they end, so\n" +
+			"the percentiles are over the same runs the success rate is a rate over.\n" +
+			"A run started inside the window and still going is counted as running and\n" +
+			"has no duration yet.\n\n" +
 			"Every number is derived when it is asked for, from the same records\n" +
 			"`orkctl run list` and `orkctl namespace get` read, so any engine replica\n" +
 			"gives the same answer. Nothing here is a stored counter.",
@@ -200,14 +204,19 @@ func successRateLabel(stats *orkstackv1.GetStatsResponse) string {
 
 // durationLabel renders the percentiles with the coverage they were measured
 // over, because a percentile without its window is a number with no meaning.
+//
+// The samples are the window's OWN runs that have finished — the same set
+// successRateLabel counts — so the two lines beside each other describe one
+// population.
 func durationLabel(stats *orkstackv1.GetStatsResponse) string {
 	if stats.GetDurationSampleCount() == 0 {
-		return unavailable + " (no finished run inside the recorded window)"
+		return unavailable + " (no run of this window has finished inside the recorded window)"
 	}
 	parts := []string{
 		"p50 " + stats.GetP50Duration().AsDuration().String(),
 		"p95 " + stats.GetP95Duration().AsDuration().String(),
 	}
-	return fmt.Sprintf("%s (%d runs since %s)", strings.Join(parts, "  "),
+	return fmt.Sprintf("%s (%d of the window's finished runs, since %s)",
+		strings.Join(parts, "  "),
 		stats.GetDurationSampleCount(), formatTime(stats.GetDurationCoverageSince()))
 }
