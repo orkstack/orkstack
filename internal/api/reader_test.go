@@ -42,6 +42,8 @@ type fakeReader struct {
 	// listErr and getErr make the record unreachable rather than empty.
 	listErr error
 	getErr  error
+	// runReadCount counts GetRun, which is one whole-history replay apiece.
+	runReadCount int
 	// executions is the aggregate half of the same record: what the cluster's
 	// index says about a whole namespace rather than about one run. It is
 	// keyed by namespace, because a namespace is a tenancy boundary and a
@@ -94,11 +96,22 @@ func (f *fakeReader) GetRun(_ context.Context, runID string) (*orkstackv1.Run, e
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Counted, because reading a run is the expensive answer in this system:
+	// engine.TemporalRunReader.GetRun replays the run's whole history. A poll
+	// loop that asks it per tick is a cost no test would otherwise see.
+	f.runReadCount++
 	run, ok := f.runs[runID]
 	if !ok {
 		return nil, fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)
 	}
 	return run, nil
+}
+
+// runReads is how many whole-run reads this reader has served.
+func (f *fakeReader) runReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runReadCount
 }
 
 func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstackv1.Run, error) {

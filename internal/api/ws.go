@@ -180,13 +180,18 @@ func originAllowed(r *http.Request, patterns []string) bool {
 
 // TaskLogSocketPath is the browser's spelling of StreamTaskLogs:
 //
-//	/ws/runs/{id}/tasks/{task}/logs?attempt=&from_seq=&follow=&namespace=
+//	/ws/runs/{id}/tasks/{task}/logs?attempt=&from_seq=&from_attempt=&follow=&namespace=
 //
 // It exists beside the run's event socket rather than inside it because the
 // two carry different things at different rates: a run emits a handful of
 // events, a chatty task emits megabytes. Keeping them apart is also what lets
 // a UI open a log pane per task and close it again without disturbing the run
 // stream the page is built on.
+//
+// from_attempt is half of the resume token: a chunk's seq is dense per
+// ATTEMPT, so a client reconnecting after a retry has to say which attempt its
+// from_seq counted, or the engine would apply a dead attempt's cursor to a
+// live one (proto StreamTaskLogsRequest.from_attempt).
 const TaskLogSocketPath = "/ws/runs/{id}/tasks/{task}/logs"
 
 // NewTaskLogSocket returns the TaskLogSocketPath handler. It forwards the same
@@ -226,6 +231,14 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 				return
 			}
 			query.FromSeq = parsed
+		}
+		if raw := r.URL.Query().Get("from_attempt"); raw != "" {
+			parsed, err := strconv.ParseInt(raw, 10, 32)
+			if err != nil || parsed < 0 {
+				http.Error(w, "from_attempt must be a non-negative integer", http.StatusBadRequest)
+				return
+			}
+			query.FromAttempt = int32(parsed)
 		}
 		if raw := r.URL.Query().Get("follow"); raw != "" {
 			parsed, err := strconv.ParseBool(raw)

@@ -1,0 +1,4 @@
+[test]
+# SvelteKit's virtual modules do not exist outside Vite, and one of them is
+# reachable from the code these unit tests exercise. See ui/test/preload.ts.
+preload = ["./test/preload.ts"]

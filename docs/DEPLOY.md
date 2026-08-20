@@ -360,6 +360,23 @@ Both resume on `from_seq`, which is the last sequence already received: the
 stream continues **after** it, so a reconnect replays nothing and skips
 nothing.
 
+**A follow moves with the task's retries.** The key above is per ATTEMPT, and
+a Temporal activity retry changes nothing a task's status shows — the task
+stays RUNNING while try 2 starts writing under a new prefix. So a follow that
+named no attempt (`attempt=0`, which is the default and what the UI's pane
+sends) re-reads which attempt is latest while the one it is on is silent, and
+moves onto a later one, delivering it from its first chunk. A stream that
+resolved the attempt once sat on a dead prefix, delivering nothing, until the
+task ended — while reporting itself live.
+
+That makes `from_seq` half a cursor: sequences are dense **per attempt**, so a
+client that reconnects sends `from_attempt` beside it, naming the attempt its
+cursor counted. A cursor from another attempt is dropped and the new attempt
+is delivered from its start, which is the only safe reading — a retry is
+usually shorter than the try that failed, so applying the old cursor would
+deliver nothing at all. An explicit `--attempt N` is pinned and never moves:
+it is a request for one try's transcript.
+
 Two bounds decide when a chunk is written, and a deployment tunes both:
 
 - `ORK_ORKER_LOG_FLUSH_BYTES` (64 KiB) batches a chatty task, so a hundred

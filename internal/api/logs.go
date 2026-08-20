@@ -58,6 +58,30 @@ func (o LogPollOptions) withDefaults() LogPollOptions {
 	return o
 }
 
+// What one follower costs, per poll:
+//
+//	a LIST of the attempt's chunk prefix        every tick
+//	a read of the run (its whole history)       only on a tick that swept
+//	                                            nothing, and then at most one
+//	                                            per backoff step
+//	a LIST of the task's attempt index          the same ticks
+//
+// The two cluster-side reads are on the QUIET path deliberately. A task that
+// is writing is a task that is not finished and has not retried, so neither
+// question needs asking while chunks are arriving — and while they are
+// arriving the poll is pinned at Min, which is exactly when asking is most
+// expensive. Reading the run means replaying its history
+// (engine.TemporalRunReader.GetRun), so a follower that asked on every tick
+// cost five whole-history reads a second per open pane: ten panes over two
+// tabs on one run were a hundred history reads a second, for a run nobody had
+// touched. Now a chatty task costs none at all, and a silent one costs one per
+// backoff step, ending at one per Max.
+//
+// What it costs in latency is one poll interval: a task that finishes while
+// talking is noticed on the first tick that finds nothing new, which is the
+// tick after its last chunk. Nothing is lost — the sweep that follows the
+// terminal observation is what delivers the tail (see StreamRunTaskLogs).
+
 // logChunkPage bounds how many chunks one read pulls into memory. The engine's
 // log memory is therefore one page per subscriber, whatever the task wrote.
 const logChunkPage = 32
@@ -69,24 +93,31 @@ func (s *Service) StreamTaskLogs(
 	stream *connect.ServerStream[orkstackv1.TaskLogChunk],
 ) error {
 	return s.StreamRunTaskLogs(ctx, TaskLogQuery{
-		RunID:     req.Msg.GetRunId(),
-		TaskID:    req.Msg.GetTaskId(),
-		Attempt:   req.Msg.GetAttempt(),
-		FromSeq:   req.Msg.GetFromSeq(),
-		Follow:    req.Msg.GetFollow(),
-		Namespace: req.Msg.GetNamespace(),
+		RunID:       req.Msg.GetRunId(),
+		TaskID:      req.Msg.GetTaskId(),
+		Attempt:     req.Msg.GetAttempt(),
+		FromSeq:     req.Msg.GetFromSeq(),
+		FromAttempt: req.Msg.GetFromAttempt(),
+		Follow:      req.Msg.GetFollow(),
+		Namespace:   req.Msg.GetNamespace(),
 	}, stream.Send)
 }
 
 // TaskLogQuery is what both entry points — the Connect handler and the
 // WebSocket bridge — hand to the one streaming implementation.
 type TaskLogQuery struct {
-	RunID     string
-	TaskID    string
-	Attempt   int32
-	FromSeq   int64
-	Follow    bool
-	Namespace string
+	RunID  string
+	TaskID string
+	// Attempt pins one try, or 0 for "whichever is latest", re-read for as
+	// long as a follow is open.
+	Attempt int32
+	FromSeq int64
+	// FromAttempt is the attempt FromSeq counts chunks of. A cursor from
+	// another attempt is dropped rather than applied: seq is dense per
+	// attempt, so applying it would skip the new attempt's first chunks.
+	FromAttempt int32
+	Follow      bool
+	Namespace   string
 }
 
 // StreamRunTaskLogs delivers a task attempt's chunks after FromSeq to send,
@@ -111,6 +142,16 @@ type TaskLogQuery struct {
 // terminal state exists. This loop therefore reads the state first, sweeps the
 // prefix after, and only then ends: anything written in the last instant of the
 // task is picked up by that final sweep.
+//
+// A FOLLOW OF ATTEMPT 0 FOLLOWS THE RETRY. The Orker keys chunks by the
+// Temporal activity attempt (internal/orker/activity.go), and a retry is
+// invisible in the task's state — the task stays RUNNING while try 2 starts
+// under a new prefix. A stream that resolved "the latest attempt" once would
+// therefore sit on the dead attempt, deliver nothing and stay open until the
+// task ended, reporting itself live the whole time. That is the failure on
+// exactly the tasks whose output a reader most wants. So while the current
+// attempt is silent the latest is re-read, and a later one is switched to and
+// delivered from its first chunk.
 func (s *Service) StreamRunTaskLogs(
 	ctx context.Context,
 	q TaskLogQuery,
@@ -148,12 +189,40 @@ func (s *Service) StreamRunTaskLogs(
 	poll := s.logPoll.withDefaults()
 	wait := poll.Min
 	cursor := q.FromSeq
+	if q.FromAttempt > 0 && q.FromAttempt != ref.Attempt {
+		// The cursor belongs to another attempt. seq is dense PER ATTEMPT, so
+		// honouring it here would skip this attempt's first chunks — and since
+		// a retry is usually shorter than the try that failed, would usually
+		// deliver nothing at all while the client showed a live stream.
+		cursor = 0
+	}
+	// consult says whether this pass asks the two shared records anything
+	// before it sweeps: is the task finished, and has it started a later
+	// attempt? It is true on the first pass and then only after a sweep that
+	// found nothing, which is what keeps a chatty task from costing a
+	// whole-history read five times a second (see the cost note above).
+	consult, first := true, true
 	for {
-		// The state is read BEFORE the sweep, so a task that finishes between
-		// the two is still swept once more with the terminal answer in hand.
-		terminal, err := s.taskIsTerminal(ctx, q)
-		if err != nil {
-			return err
+		if consult && !first && q.Follow && q.Attempt == 0 {
+			// The attempt is re-read BEFORE the state and the sweep, so a task
+			// that retried and then finished is switched to its last attempt
+			// and swept there — not ended on the attempt it abandoned.
+			latest, err := s.resolveLogAttempt(ctx, q)
+			if err != nil {
+				return err
+			}
+			if latest > ref.Attempt {
+				ref.Attempt, cursor, wait = latest, 0, poll.Min
+			}
+		}
+		terminal := false
+		if consult {
+			// The state is read BEFORE the sweep, so a task that finishes
+			// between the two is still swept once more with the terminal
+			// answer in hand.
+			if terminal, err = s.taskIsTerminal(ctx, q); err != nil {
+				return err
+			}
 		}
 		delivered, err := s.drainLogChunks(ctx, ref, &cursor, send)
 		if err != nil {
@@ -169,6 +238,11 @@ func (s *Service) StreamRunTaskLogs(
 			// to what existed, whether or not the task is still writing.
 			return sendTerminator(send, ref, cursor)
 		}
+		first = false
+		// A sweep that delivered is a task that is running and has not
+		// retried: both questions are answered by the chunks themselves, so
+		// the next pass asks nobody and comes back promptly.
+		consult = !delivered
 		if delivered {
 			wait = poll.Min
 		} else if wait = wait * 2; wait > poll.Max {

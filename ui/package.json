@@ -10,7 +10,8 @@
 		"start": "node build",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"test": "playwright test"
+		"test": "playwright test",
+		"test:unit": "bun test test/"
 	},
 	"devDependencies": {
 		"@bufbuild/buf": "^1.72.0",

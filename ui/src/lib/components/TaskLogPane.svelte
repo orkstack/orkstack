@@ -39,6 +39,12 @@
 	let socketState = $state<LogSocketState>('connecting');
 	let following = $state(true);
 	let box: HTMLDivElement | undefined = $state(undefined);
+	// The try being shown, as the ENGINE resolved it — 0 until the first chunk
+	// says. A task that retries is followed onto its new attempt, and a pane
+	// that did not say so would show an empty live stream where the reader
+	// expects the output of the try that is actually running.
+	let shownAttempt = $state(0);
+	let retried = $state(false);
 
 	// A task with no attempt on record has no log prefix to read, and the
 	// engine answers NotFound for it rather than an empty pane. Wait for it to
@@ -108,10 +114,25 @@
 		truncated = false;
 		ended = false;
 		following = true;
+		shownAttempt = 0;
+		retried = false;
 		return followTaskLogs({
 			...target,
 			onState: (s) => (socketState = s),
 			onLines: (delivery) => {
+				if (delivery.restarted) {
+					// The task retried, and the engine moved this same socket
+					// onto the new try. Its numbering starts again at 1, so
+					// what is on screen cannot be kept: two attempts appended
+					// would repeat every key and read as one impossible run.
+					// The output of the try that failed is still in the
+					// artifact store; the notice below says how to read it.
+					lines = [];
+					dropped = 0;
+					truncated = false;
+					retried = true;
+				}
+				if (delivery.attempt > 0) shownAttempt = delivery.attempt;
 				if (delivery.lines.length > 0) {
 					const next = lines.concat(delivery.lines);
 					if (next.length > scrollback) {
@@ -190,6 +211,13 @@
 				<span data-testid="task-log-follow-{taskId}" class="text-zinc-500">
 					{following ? 'FOLLOWING' : 'PAUSED'}
 				</span>
+				{#if shownAttempt > 1}
+					<span
+						data-testid="task-log-attempt-{taskId}"
+						class="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300 ring-1 ring-amber-400/40"
+						>attempt {shownAttempt}</span
+					>
+				{/if}
 				{#if !following}
 					<button
 						type="button"
@@ -210,6 +238,19 @@
 					{dropped} earlier lines are no longer shown here (scrollback is {scrollback} lines).
 					The whole output is in the artifact store: <code class="text-amber-200"
 						>orkctl run logs {runId} --task {taskId}</code
+					>
+				</p>
+			{/if}
+
+			{#if retried}
+				<p
+					data-testid="task-log-retried-{taskId}"
+					class="border-b border-zinc-800 px-3 py-1.5 text-xs text-amber-300"
+				>
+					This task retried, and this pane is now following attempt {shownAttempt}. The
+					earlier attempt's output is still in the artifact store:
+					<code class="text-amber-200"
+						>orkctl run logs {runId} --task {taskId} --attempt {shownAttempt - 1}</code
 					>
 				</p>
 			{/if}

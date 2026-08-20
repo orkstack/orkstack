@@ -383,6 +383,221 @@ func TestStreamTaskLogs_AttemptZeroSelectsTheLatestAttempt(t *testing.T) {
 	}
 }
 
+// A RETRY is the case a follower is most needed for and the one that used to
+// break it. The Orker keys chunks by the Temporal activity attempt
+// (internal/orker/activity.go), and a retry changes nothing a task's STATUS
+// shows: it stays RUNNING while try 2 starts under a new prefix. A stream that
+// resolved "the latest attempt" once therefore followed a dead attempt —
+// delivering nothing, and reporting itself live — for the rest of the task's
+// life.
+func TestStreamTaskLogs_FollowsTheTaskOntoItsNextAttempt(t *testing.T) {
+	run := runningRun("ork-logs-retry-live", "flaky") // RUNNING throughout
+	fixture := newLogFixture(t, run)
+	first := artifacts.LogRef{RunID: run.GetId(), TaskID: "flaky", Attempt: 1}
+	second := artifacts.LogRef{RunID: run.GetId(), TaskID: "flaky", Attempt: 2}
+	fixture.logs.write(first, 1, "try one\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(
+		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "flaky", Follow: true}))
+	if err != nil {
+		t.Fatalf("StreamTaskLogs: %v", err)
+	}
+	defer stream.Close()
+
+	if !stream.Receive() {
+		t.Fatalf("no first chunk: %v", stream.Err())
+	}
+	if got := string(stream.Msg().GetData()); got != "try one\n" {
+		t.Fatalf("first chunk = %q, want the first attempt's line", got)
+	}
+
+	// Attempt 1 dies. The task does not: Temporal retries the activity, and
+	// the run's state does not move at all. The quiet gap is what makes this
+	// the real shape — the follower has settled onto attempt 1 and backed off
+	// before attempt 2 exists.
+	time.Sleep(quietGap)
+	fixture.logs.write(second, 1, "try two\n")
+
+	var got []*orkstackv1.TaskLogChunk
+	for stream.Receive() {
+		msg := stream.Msg()
+		if len(msg.GetData()) == 0 {
+			continue
+		}
+		got = append(got, msg)
+		break
+	}
+	if len(got) == 0 {
+		t.Fatalf("the retry's output never arrived (%v): the stream is still following "+
+			"an attempt that is over, and telling the reader it is live", stream.Err())
+	}
+	if body := string(got[0].GetData()); body != "try two\n" {
+		t.Fatalf("after the retry the stream delivered %q, want the second attempt's line", body)
+	}
+	if got[0].GetAttempt() != 2 {
+		t.Errorf("the retry's chunk reports attempt %d, want 2 — a client cannot tell a "+
+			"new attempt from more of the old one without it", got[0].GetAttempt())
+	}
+	if got[0].GetSeq() != 1 {
+		t.Errorf("the retry's first chunk carries seq %d, want 1: seq is dense per "+
+			"attempt and the new attempt is delivered from its start", got[0].GetSeq())
+	}
+
+	// And the stream still ends where it always did: on the task's terminal
+	// state, having swept the attempt it is now on.
+	fixture.logs.write(second, 2, "try two done\n")
+	fixture.reader.setRun(finish(runningRun(run.GetId(), "flaky"),
+		orkstackv1.Status_STATUS_SUCCEEDED))
+	var tail []string
+	for stream.Receive() {
+		msg := stream.Msg()
+		if len(msg.GetData()) > 0 {
+			tail = append(tail, string(msg.GetData()))
+		}
+		if msg.GetLast() {
+			if msg.GetAttempt() != 2 {
+				t.Errorf("the terminator names attempt %d, want the attempt the stream "+
+					"ended on", msg.GetAttempt())
+			}
+			break
+		}
+	}
+	if strings.Join(tail, "") != "try two done\n" {
+		t.Fatalf("the chunks after the terminal state were %q, want the retry's last line", tail)
+	}
+}
+
+// A PINNED attempt never moves. `orkctl run logs --attempt 1` is a request for
+// one try's transcript, and a stream that wandered onto attempt 2 would answer
+// a question nobody asked.
+func TestStreamTaskLogs_APinnedAttemptDoesNotFollowARetry(t *testing.T) {
+	run := runningRun("ork-logs-retry-pinned", "flaky")
+	fixture := newLogFixture(t, run)
+	first := artifacts.LogRef{RunID: run.GetId(), TaskID: "flaky", Attempt: 1}
+	second := artifacts.LogRef{RunID: run.GetId(), TaskID: "flaky", Attempt: 2}
+	fixture.logs.write(first, 1, "try one\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(
+		&orkstackv1.StreamTaskLogsRequest{
+			RunId: run.GetId(), TaskId: "flaky", Attempt: 1, Follow: true,
+		}))
+	if err != nil {
+		t.Fatalf("StreamTaskLogs: %v", err)
+	}
+	defer stream.Close()
+	if !stream.Receive() {
+		t.Fatalf("no first chunk: %v", stream.Err())
+	}
+
+	time.Sleep(quietGap)
+	fixture.logs.write(second, 1, "try two\n")
+	time.Sleep(quietGap)
+	// Attempt 1 writes one more line, and that is what a pinned stream owes.
+	fixture.logs.write(first, 2, "try one again\n")
+	for stream.Receive() {
+		msg := stream.Msg()
+		if len(msg.GetData()) == 0 {
+			continue
+		}
+		if msg.GetAttempt() != 1 {
+			t.Fatalf("a stream pinned to attempt 1 delivered attempt %d (%q)",
+				msg.GetAttempt(), msg.GetData())
+		}
+		if got := string(msg.GetData()); got == "try one again\n" {
+			return
+		}
+	}
+	t.Fatalf("the pinned stream ended before its own attempt's next line: %v", stream.Err())
+}
+
+// A RESUME ACROSS A RETRY. seq is dense per attempt, so a cursor handed back
+// from attempt 1 says nothing about attempt 2 — and a browser that reconnects
+// after a wifi handover, mid-retry, hands back exactly that. from_attempt is
+// what tells the engine which attempt the cursor counted.
+func TestStreamTaskLogs_ResumeFromAnotherAttemptStartsTheNewOneAtItsFirstChunk(t *testing.T) {
+	run := finish(runningRun("ork-logs-retry-resume", "flaky"),
+		orkstackv1.Status_STATUS_SUCCEEDED)
+	fixture := newLogFixture(t, run)
+	first := artifacts.LogRef{RunID: run.GetId(), TaskID: "flaky", Attempt: 1}
+	second := artifacts.LogRef{RunID: run.GetId(), TaskID: "flaky", Attempt: 2}
+	// A long first try and a short retry: the shape that loses everything.
+	for seq := int64(1); seq <= 20; seq++ {
+		fixture.logs.write(first, seq, fmt.Sprintf("try one line %d\n", seq))
+	}
+	fixture.logs.write(second, 1, "try two line 1\n")
+	fixture.logs.write(second, 2, "try two line 2\n")
+
+	resumed := collectLogChunks(t, fixture, &orkstackv1.StreamTaskLogsRequest{
+		RunId: run.GetId(), TaskId: "flaky", FromSeq: 20, FromAttempt: 1,
+	})
+	if body := chunkBody(resumed); body != "try two line 1\ntry two line 2\n" {
+		t.Fatalf("resuming at seq 20 of attempt 1 read %q; the cursor of a dead attempt "+
+			"was applied to the live one, which reads as a silent task", body)
+	}
+
+	// Without from_attempt the cursor is taken at face value, which is what a
+	// caller who typed --from-seq means: it is the attempt this request
+	// resolves to.
+	same := collectLogChunks(t, fixture, &orkstackv1.StreamTaskLogsRequest{
+		RunId: run.GetId(), TaskId: "flaky", FromSeq: 1, FromAttempt: 2,
+	})
+	if body := chunkBody(same); body != "try two line 2\n" {
+		t.Fatalf("resuming at seq 1 of attempt 2 read %q, want its second line", body)
+	}
+}
+
+// The COST of following, measured. Each poll of a live task lists the store;
+// asking the CLUSTER as well — which means replaying the run's whole history
+// (engine.TemporalRunReader.GetRun) — is what a chatty task must not pay for on
+// every tick, per pane, per tab.
+//
+// The bound below is deliberately loose: it is the shape that is wrong, not a
+// number. A per-tick read of a store that never goes quiet grows without limit
+// with the length of the follow; a read taken only when a sweep finds nothing
+// does not grow at all.
+func TestStreamTaskLogs_AChattyTaskDoesNotReplayItsRunsHistoryPerPoll(t *testing.T) {
+	run := runningRun("ork-logs-cost", "chatter")
+	fixture := newLogFixture(t, run)
+	ref := artifacts.LogRef{RunID: run.GetId(), TaskID: "chatter", Attempt: 1}
+	fixture.logs.write(ref, 1, "line 1\n")
+	// The task never goes quiet: the store appends another chunk after every
+	// read it serves.
+	fixture.logs.keepWriting(ref)
+
+	// The fixture polls every 5ms (newLogReaderFixture), so a follow held for
+	// this long is ~60 ticks. Reading the run on each of them is the defect.
+	const follow = 300 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), follow)
+	defer cancel()
+	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(
+		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "chatter", Follow: true}))
+	if err != nil {
+		t.Fatalf("StreamTaskLogs: %v", err)
+	}
+	defer stream.Close()
+
+	chunks := 0
+	for stream.Receive() {
+		chunks++
+	}
+	if chunks < 10 {
+		t.Fatalf("the follow delivered %d chunks in %s; it was not busy enough to "+
+			"measure anything", chunks, follow)
+	}
+	// One read to resolve the run before the stream opened (LookupRunIn), one
+	// for the first pass's state, and nothing per tick after that.
+	if reads := fixture.reader.runReads(); reads > 4 {
+		t.Errorf("a %s follow of a task that never stopped writing replayed the run's "+
+			"history %d times (%d chunks delivered); a talking task is a task that is "+
+			"neither finished nor retried, so no tick of it needs the cluster",
+			follow, reads, chunks)
+	}
+}
+
 // A task that wrote nothing is normal — the pane is opened unconditionally —
 // so it reads empty and ends, not an error.
 func TestStreamTaskLogs_ATaskThatWroteNothingEndsCleanly(t *testing.T) {

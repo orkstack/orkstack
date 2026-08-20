@@ -612,14 +612,33 @@ test('a chatty task keeps a bounded scrollback and leaves the tab responsive', a
 	expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
 
 	const worst = Math.max(...latencies);
+	const ordered = [...latencies].sort((a, b) => a - b);
+	const median = ordered[Math.floor(ordered.length / 2)];
 	note(
 		`chatty task: ${CHATTER_LINES} lines written, ${rendered} rendered (cap ${SCROLLBACK}), ` +
 			`tail is line ${numbers[numbers.length - 1]}, whole burst on screen ${renderedIn}ms after ` +
-			`the pane opened, worst main-thread round trip ${worst}ms over ${latencies.length} probes`
+			`the pane opened, worst main-thread round trip ${worst}ms and median ${median}ms ` +
+			`over ${latencies.length} probes`
 	);
-	// A frozen tab cannot answer at all; this is the bound that a per-line
-	// render blew through and a per-frame batch does not.
-	expect(worst).toBeLessThan(5000);
+	// THE BOUND IS THE CLAIM, so it is set against the claim rather than
+	// against the implementation that failed it.
+	//
+	// "The tab is not frozen" means the main thread comes back between frames,
+	// not merely that it comes back eventually. This bound was 5000ms — chosen
+	// because a per-line render blew through it — and a regression that blocked
+	// the main thread for four seconds passed it: four seconds is a frozen tab
+	// by any reader's definition, and it was the only gate standing for this
+	// acceptance.
+	//
+	// 750ms is a fifth of that and still five times the worst this tree has
+	// measured on a machine running two engines, two Orkers, a browser and the
+	// whole 5000-line burst at once (124ms and 138ms in two runs, recorded in
+	// proof/M10.8/live-composition.txt). The median is bounded separately,
+	// because a single unlucky probe on a busy machine is not the property:
+	// a page that answered 24 probes in 5ms and one in 700ms is responsive,
+	// and one whose typical answer is a quarter of a second is not.
+	expect(worst).toBeLessThan(750);
+	expect(median).toBeLessThan(250);
 	await shot(page, 'screenshot-log-chatty.png');
 });
 
@@ -779,6 +798,26 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 	};
 	note(`dashboard for ${ALPHA}, served by engine B: ${JSON.stringify(alphaNumbers)}`);
 	expect(Number(alphaNumbers.failed)).toBeGreaterThanOrEqual(1);
+
+	// ONE WINDOW, ONE POPULATION. Every card on this row is about the runs the
+	// window CREATED, and the note under the percentiles says so as a SHARE of
+	// them. It used to be a bare count of runs that had CLOSED in the window —
+	// a different set from the one the rate beside it was a rate over, with
+	// nothing on the screen to say so.
+	const coverage = (await page.getByTestId('stat-p50-note').innerText()).trim();
+	const share = coverage.match(/^(\d+) of (\d+) runs this window started/);
+	if (!share) throw new Error(`the p50 note reads ${JSON.stringify(coverage)}`);
+	const windowRuns =
+		Number(alphaNumbers.running) +
+		Number(alphaNumbers.succeeded) +
+		Number(alphaNumbers.failed) +
+		Number(await page.getByTestId('stat-canceled').innerText());
+	expect(Number(share[2])).toBe(windowRuns);
+	// The samples are drawn from the finished ones, so they cannot outnumber
+	// them: a bigger number would be the two populations parting company again.
+	expect(Number(share[1])).toBeLessThanOrEqual(windowRuns - Number(alphaNumbers.running));
+	note(`dashboard for ${ALPHA}: percentiles cover ${coverage}, over the same runs the ` +
+		`rate ${alphaNumbers.rate} is a rate over`);
 	await shot(page, 'screenshot-dashboard.png');
 
 	// ---- beta: a namespace where the numbers cannot be answered ------------

@@ -44,6 +44,19 @@ export interface LogDelivery {
 	truncated: boolean;
 	/** The stream ended because the task reached a terminal state. */
 	ended: boolean;
+	/**
+	 * attempt is the try these lines belong to, as the engine resolved it. It
+	 * is 0 until the first chunk arrives, because "which attempt" is the
+	 * store's answer and not the client's.
+	 */
+	attempt: number;
+	/**
+	 * restarted marks the first delivery of a LATER attempt: the task retried,
+	 * the engine moved the follow onto the new try, and its numbering begins
+	 * again at 1. A pane that appended these to what it already had would
+	 * interleave two runs of the same task and repeat every line number.
+	 */
+	restarted: boolean;
 }
 
 export interface FollowTaskLogsOptions {
@@ -103,33 +116,42 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 	let scheduled = false;
 	let retries = 0;
 
-	// The resume cursor, and the only state a reconnect carries.
+	// The resume cursor, and the only state a reconnect carries — BOTH halves
+	// of it. A chunk's seq is dense per ATTEMPT, so a cursor without the
+	// attempt it counted is meaningless the moment a task retries: handed back
+	// alone after a long first try, it would skip the whole of a shorter
+	// second one and the pane would sit empty, live and wrong.
 	let lastSeq = 0n;
+	let attempt = 0;
 	// Bytes decoded but not yet terminated by a newline. A chunk ends on a
 	// line boundary EXCEPT where one line exceeded the chunk limit and was
 	// split, so the tail of a chunk is not always a whole line.
 	let carry = '';
-	const decoder = new TextDecoder();
+	let decoder = new TextDecoder();
 	let numbered = 0;
 
 	let pending: LogLine[] = [];
 	let pendingTruncated = false;
 	let pendingEnded = false;
+	let pendingRestart = false;
 
 	const setState = (s: LogSocketState) => opts.onState?.(s);
 
 	const flush = () => {
 		scheduled = false;
 		cancelBatch = undefined;
-		if (pending.length === 0 && !pendingTruncated && !pendingEnded) return;
+		if (pending.length === 0 && !pendingTruncated && !pendingEnded && !pendingRestart) return;
 		const delivery: LogDelivery = {
 			lines: pending,
 			truncated: pendingTruncated,
-			ended: pendingEnded
+			ended: pendingEnded,
+			attempt,
+			restarted: pendingRestart
 		};
 		pending = [];
 		pendingTruncated = false;
 		pendingEnded = false;
+		pendingRestart = false;
 		opts.onLines(delivery);
 	};
 
@@ -159,7 +181,39 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 		dirty();
 	};
 
+	// startAttempt moves the reader onto a later try of the same task.
+	//
+	// The engine's follow does this on its own when the task retries: a
+	// Temporal activity retry is invisible in the task's status, so the pane
+	// would otherwise watch a dead attempt for the rest of the task's life.
+	// What arrives is a chunk of attempt N+1 whose seq starts again at 1.
+	//
+	// Everything the old attempt left is delivered FIRST, on its own, and only
+	// then does the restart go out — so a pane clears once, at a known point,
+	// rather than losing the tail of the try that failed inside the batch that
+	// replaced it.
+	const startAttempt = (next: number) => {
+		if (carry !== '') {
+			emit(carry, false);
+			carry = '';
+		}
+		flushNow();
+		attempt = next;
+		lastSeq = 0n;
+		numbered = 0;
+		// A fresh decoder: a multi-byte character half-decoded by the attempt
+		// that died is not the first character of the one that replaced it.
+		decoder = new TextDecoder();
+		pendingRestart = true;
+		dirty();
+	};
+
 	const consume = (chunk: TaskLogChunk) => {
+		// A stream only ever moves FORWARD through a task's attempts. Anything
+		// older is a frame from a socket this reader has already left behind.
+		if (attempt !== 0 && chunk.attempt < attempt) return;
+		if (chunk.attempt > attempt && attempt !== 0) startAttempt(chunk.attempt);
+		attempt = chunk.attempt;
 		if (chunk.seq > lastSeq) lastSeq = chunk.seq;
 		if (chunk.data.length > 0) {
 			// stream: true so a multi-byte character split across two chunks is
@@ -193,6 +247,10 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 		if (stopped) return;
 		setState('connecting');
 		const query = new URLSearchParams({ follow: 'true', from_seq: lastSeq.toString() });
+		// The cursor's other half. Without it the engine cannot tell a resume
+		// of THIS attempt from a cursor left over from the one before it
+		// (proto StreamTaskLogsRequest.from_attempt).
+		if (attempt > 0) query.set('from_attempt', String(attempt));
 		if (opts.namespace) query.set('namespace', opts.namespace);
 		if (opts.attempt) query.set('attempt', String(opts.attempt));
 		const url =
@@ -217,7 +275,7 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 			// duplicate lines the reader has already seen. The terminator is
 			// exempt: it repeats the cursor's own seq by contract and carries
 			// no data, so it is the end of the stream, not a duplicate of it.
-			if (!chunk.last && chunk.seq <= lastSeq) return;
+			if (!chunk.last && chunk.attempt === attempt && chunk.seq <= lastSeq) return;
 			consume(chunk);
 			if (chunk.last) {
 				// Everything first, then the news that there is no more.
