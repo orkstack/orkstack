@@ -12,6 +12,8 @@
 #     catalogue itself — an applied orkflow lives in the bucket (M7.5), so
 #     after this the engine boots with nothing to run.
 #   - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results.
+#   - .data/: the local artifact store AND the Orker's work directory
+#     (.data/work), which `make up` recreates on the next start.
 #
 # It does NOT touch the repository: committed proof artifacts, research notes
 # and source stay exactly as they are.

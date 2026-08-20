@@ -5,9 +5,12 @@
 #
 # Needs a reachable Docker daemon on the Orker's host. The Orker's work
 # directory must be a path that daemon can bind-mount: on Linux that is
-# automatic, on macOS (colima, Lima, Rancher, Docker Desktop) set
-# ORK_ORKER_WORKDIR to a directory the VM shares — the container plugin says so
-# explicitly if it is not.
+# automatic; when the daemon runs in a VM (colima, Lima, Rancher, Docker
+# Desktop) it shares the user's home and NOT the macOS temp directories, so
+# neither /var/folders nor /tmp will work. `make up` handles this by pointing
+# ORK_ORKER_WORKDIR at .data/work. Running the Orker by hand, set it yourself
+# to a path the VM shares, or this orkflow's `build` task fails with
+# "bind source path does not exist" on a path that is plainly there.
 name: container-example
 version: "0.1.0"
 description: Run a task inside a container with mounted inputs and captured output.

@@ -172,9 +172,22 @@ cancellation:
 - **The Orker's work directory must be bind-mountable by the daemon.** It holds
   both the materialized artifacts and the ephemeral mounts. On Linux this is
   automatic. When the daemon lives in a VM (colima, Lima, Rancher Desktop,
-  Docker Desktop) it sees only the paths that VM shares — on macOS the default
-  share is the user's home, not `/var/folders`, so set `ORK_ORKER_WORKDIR` to a
-  shared path. The plugin says exactly this if it happens.
+  Docker Desktop) it sees only the paths that VM shares, and it reports an
+  unshared path as `bind source path does not exist` — which reads like a
+  missing file and sends you hunting in the wrong place. The path is there; the
+  VM simply has no window onto it.
+
+  Neither macOS temp location is shared: not `/var/folders/...`, which is the
+  Orker's own default, and not `/tmp`. What these VMs do share is the user's
+  home. `make up` therefore sets `ORK_ORKER_WORKDIR` to `.data/work` inside the
+  repository and probes the daemon before starting the Orker, so a bad path is
+  a warning at startup instead of a failed task later. Running the Orker by
+  hand, set it yourself:
+
+  ```sh
+  export ORK_ORKER_WORKDIR="$HOME/.ork/work"     # any path the VM shares
+  colima ssh -- mount | grep virtiofs            # colima: what it shares
+  ```
 
 ## Security
 
