@@ -23,11 +23,16 @@ import (
 // TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces is M10.6's
 // central claim, measured on two real `ork` processes.
 //
-// Every run below is submitted to replica A. Replica B started nothing, holds
-// no run in its RunStore and executed none of the projection activities it
-// happens not to have polled — and it has to answer with the SAME numbers,
-// because both replicas derive them from the two shared records rather than
-// from anything either of them remembers (AGENTS.md §1.7).
+// Every run below is submitted to replica A: replica B accepts no submission
+// and starts no run. What replica B holds in its own RunStore is deliberately
+// NOT controlled — both replicas poll the projection channel, and a projection
+// activity applies the run it carries to whichever replica happened to execute
+// it (EventActivities.PublishEvent). That is the point rather than a gap:
+// neither replica's memory is consulted, so what is in it cannot matter, and
+// both answer with the SAME numbers because both derive them from the two
+// shared records (AGENTS.md §1.7). The stronger claim — that a run present
+// ONLY in a replica's memory is not counted — is proven where it can be
+// controlled, in TestGetStats_IgnoresTheRunsThisProcessRemembers.
 //
 // The window is PINNED for the comparison. An unpinned one ends at each
 // replica's own `now`, so a run finishing between the two calls would make
@@ -154,8 +159,13 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 		return got.Msg
 	}
 
+	// Each reading is named for the replica that PRODUCED it, and the order is
+	// deliberately opposite between the two namespaces: alpha is asked of A
+	// first, beta of B first. An answer that was really the other replica's —
+	// a warmed cache, a result carried across — would have to survive both
+	// orders to go unnoticed.
 	alphaA, alphaB := read(statsA, alpha), read(statsB, alpha)
-	betaA, betaB := read(statsB, beta), read(statsA, beta)
+	betaB, betaA := read(statsB, beta), read(statsA, beta)
 
 	// The readings were taken while the slow run was still executing, so the
 	// live half above is a live half.
@@ -450,9 +460,16 @@ func writeStatsTranscript(
 
 	for _, section := range []struct {
 		namespace string
+		order     string
 		a, b      *orkstackv1.GetStatsResponse
-	}{{alpha, alphaA, alphaB}, {beta, betaA, betaB}} {
+	}{
+		{alpha, "A first, then B", alphaA, alphaB},
+		{beta, "B first, then A", betaA, betaB},
+	} {
 		fmt.Fprintf(&out, "namespace %s\n", section.namespace)
+		// Which replica was asked first, so that the two lines below are read
+		// as what each process said rather than as the order they were said in.
+		fmt.Fprintf(&out, "  read order %s\n", section.order)
 		fmt.Fprintf(&out, "  replica A  %s\n", statsDigest(section.a))
 		fmt.Fprintf(&out, "  replica B  %s\n", statsDigest(section.b))
 		fmt.Fprintf(&out, "  identical  %t\n",
