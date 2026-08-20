@@ -36,33 +36,33 @@ import (
 // webhookOrkflowName is the orkflow the acceptance test runs.
 const webhookOrkflowName = "webhook-ork"
 
-// webhookOrkflowYAML is a three-task orkflow pinned to one private task
-// queue. Pinning matters: the shared queue is polled by every other worker on
-// the machine, and a stolen activity would look like a webhook bug
+// webhookOrkflowYAML is a three-task orkflow assigned to one private pool.
+// Pinning matters: the shared execution channel is polled by every other worker
+// on the machine, and a stolen activity would look like a webhook bug
 // (AGENTS.md §6).
-func webhookOrkflowYAML(queue string) string {
+func webhookOrkflowYAML(pool string) string {
 	return fmt.Sprintf(`name: %s
 version: "1.0.0"
 description: Three tasks whose run transitions must reach a registered webhook.
 tasks:
   - id: fetch
     plugin: http
-    queue: %q
+    pool: %q
     with:
       op: get
   - id: transform
     plugin: shell
     needs: [fetch]
-    queue: %q
+    pool: %q
     with:
       op: exec
   - id: save
     plugin: file
     needs: [transform]
-    queue: %q
+    pool: %q
     with:
       op: write
-`, webhookOrkflowName, queue, queue, queue)
+`, webhookOrkflowName, pool, pool, pool)
 }
 
 // deliveryOrder ranks a delivery by the transition it reports, so the
@@ -107,7 +107,11 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 
 	// A private task queue keeps this run's activities away from any other
 	// worker polling the shared queue (AGENTS.md §6).
-	runQueue := fmt.Sprintf("ork-tasks-webhook-%d", time.Now().UnixNano())
+	pool := fmt.Sprintf("webhook-%d", time.Now().UnixNano())
+	runQueue, err := task.QueueForPool(pool, "")
+	if err != nil {
+		t.Fatalf("map webhook pool: %v", err)
+	}
 
 	subscriber := newWebhookSubscriber(t)
 
@@ -210,7 +214,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, origin)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, origin)
 	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
-		&orkstackv1.ApplyOrkflowRequest{Yaml: webhookOrkflowYAML(runQueue)})); err != nil {
+		&orkstackv1.ApplyOrkflowRequest{Yaml: webhookOrkflowYAML(pool)})); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(

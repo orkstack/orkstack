@@ -12,7 +12,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/orkflow.proto.
  */
 export const file_orkstack_v1_orkflow: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUivAEKBFRhc2sSCgoCaWQYASABKAkSDgoGcGx1Z2luGAIgASgJEiUKBHdpdGgYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Eg0KBW5lZWRzGAQgAygJEhEKCWNvbmRpdGlvbhgFIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYBiABKAUSJwoFcmV0cnkYByABKAsyGC5vcmtzdGFjay52MS5SZXRyeVBvbGljeRINCgVxdWV1ZRgIIAEoCSKuAgoHT3JrZmxvdxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSMAoGbGFiZWxzGAQgAygLMiAub3Jrc3RhY2sudjEuT3JrZmxvdy5MYWJlbHNFbnRyeRInCgZpbnB1dHMYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXRhc2tzGAYgAygLMhEub3Jrc3RhY2sudjEuVGFzaxITCgtzb3VyY2VfeWFtbBgHIAEoCRIuCgpjcmVhdGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQqgBCg9jb20ub3Jrc3RhY2sudjFCDE9ya2Zsb3dQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp]);
+  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiyAEKBFRhc2sSCgoCaWQYASABKAkSDgoGcGx1Z2luGAIgASgJEiUKBHdpdGgYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Eg0KBW5lZWRzGAQgAygJEhEKCWNvbmRpdGlvbhgFIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYBiABKAUSJwoFcmV0cnkYByABKAsyGC5vcmtzdGFjay52MS5SZXRyeVBvbGljeRIMCgRwb29sGAkgASgJSgQICBAJUgVxdWV1ZSLBAgoHT3JrZmxvdxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSMAoGbGFiZWxzGAQgAygLMiAub3Jrc3RhY2sudjEuT3JrZmxvdy5MYWJlbHNFbnRyeRInCgZpbnB1dHMYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXRhc2tzGAYgAygLMhEub3Jrc3RhY2sudjEuVGFzaxITCgtzb3VyY2VfeWFtbBgHIAEoCRIuCgpjcmVhdGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYCSABKAkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUKoAQoPY29tLm9ya3N0YWNrLnYxQgxPcmtmbG93UHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct, file_google_protobuf_timestamp]);
 
 /**
  * RetryPolicy mirrors Temporal retry semantics for a task.
@@ -112,11 +112,21 @@ export type Task = Message<"orkstack.v1.Task"> & {
   retry?: RetryPolicy | undefined;
 
   /**
-   * optional task queue / orker pool override
+   * pool names the set of Orkers this task runs on. Empty means the
+   * deployment's default pool, which answers to the name "main";
+   * Namespace.default_pool joins that resolution in M10.2, which is the slice
+   * that reads it.
    *
-   * @generated from field: string queue = 8;
+   * Writing "main" and writing nothing are ONE route, always: "main" is a name
+   * for the deployment's default pool and not for one fixed set of Orkers, so
+   * wherever an operator has pointed the default, both spellings go there and
+   * both are reported on the pool that answers for it. Within a run, one pool
+   * name means one set of Orkers, in both directions. The engine maps a pool
+   * to its internal execution channel and nowhere else.
+   *
+   * @generated from field: string pool = 9;
    */
-  queue: string;
+  pool: string;
 };
 
 /**
@@ -179,6 +189,16 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
    * @generated from field: google.protobuf.Timestamp created_at = 8;
    */
   createdAt?: Timestamp | undefined;
+
+  /**
+   * namespace scopes this orkflow. Empty means the built-in "default"
+   * namespace. A name is unique WITHIN a namespace, never globally: two
+   * namespaces may both hold an orkflow called "deploy", and they are two
+   * different orkflows stored under two different keys.
+   *
+   * @generated from field: string namespace = 9;
+   */
+  namespace: string;
 };
 
 /**

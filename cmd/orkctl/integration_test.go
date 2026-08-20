@@ -21,6 +21,8 @@ import (
 
 	"go.temporal.io/sdk/client"
 	"gopkg.in/yaml.v3"
+
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 const (
@@ -72,7 +74,11 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	taskQueue := privateTaskQueue()
+	pool := privateTaskPool()
+	taskQueue, err := task.QueueForPool(pool, "")
+	if err != nil {
+		t.Fatalf("map test pool: %v", err)
+	}
 	repoRoot := repoRoot(t)
 	binDir := t.TempDir()
 	orkctlPath := buildBinary(t, repoRoot, binDir, "orkctl")
@@ -109,7 +115,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	}
 
 	// Runs use a copy of that example pinned to this test's private task queue.
-	successPath := writeQueuePinnedOrkflow(t, repoRoot, successOrkflowName, taskQueue)
+	successPath := writePoolPinnedOrkflow(t, repoRoot, successOrkflowName, pool)
 	if _, stderr, code = cli("apply", successPath); code != 0 {
 		t.Fatalf("apply of the pinned orkflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
@@ -138,7 +144,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	}
 
 	// The same path for a run whose task exits non-zero: the CLI must too.
-	failingPath := writeQueuePinnedOrkflow(t, repoRoot, failingOrkflowName, taskQueue)
+	failingPath := writePoolPinnedOrkflow(t, repoRoot, failingOrkflowName, pool)
 	if _, stderr, code = cli("apply", failingPath); code != 0 {
 		t.Fatalf("apply of the failing orkflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
@@ -254,9 +260,10 @@ func temporalAddress() string {
 	return client.DefaultHostPort
 }
 
-// privateTaskQueue names a task queue unique to this test process, so the
-// Orker started here is the only worker that can execute its tasks.
-func privateTaskQueue() string {
+// privateTaskPool names a pool unique to this test process. Its queue is
+// derived by internal/task.QueueForPool; the test never writes an engine term
+// into the DSL.
+func privateTaskPool() string {
 	return fmt.Sprintf("orkctl-m4-%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
@@ -360,10 +367,21 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 	return "", "", -1
 }
 
-// writeQueuePinnedOrkflow rewrites examples/hello.ork.yaml under a new name
-// with every task pinned to queue, and returns the file's path. The failing
+// writePoolPinnedOrkflow rewrites examples/hello.ork.yaml under a new name
+// with every task assigned to pool, and returns the file's path. The failing
 // variant keeps the same shape but runs one command that exits non-zero.
-func writeQueuePinnedOrkflow(t *testing.T, repoRoot, name, queue string) string {
+//
+// The example's pinned `version:` is dropped, which is what keeps this
+// repeatable against the dev bucket. The pool carries a per-process stamp, so
+// every run of this test produces a DIFFERENT document under one name — and
+// since M10.4 a stored version is immutable, so re-applying that document
+// under the example's `0.1.0` would be refused, not written. Unpinning the
+// version hands the job to the DSL's own rule: an unpinned document's version
+// is the sha256 of its source (internal/dsl.sourceHash), so changed source
+// lands on a new version and identical source re-applies as a no-op.
+// `run submit <name>` then resolves the empty version to it, being the most
+// recently applied.
+func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {
 	t.Helper()
 	source, err := os.ReadFile(filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
 	if err != nil {
@@ -374,6 +392,7 @@ func writeQueuePinnedOrkflow(t *testing.T, repoRoot, name, queue string) string 
 		t.Fatalf("parse example: %v", err)
 	}
 	doc["name"] = name
+	delete(doc, "version")
 
 	if name == failingOrkflowName {
 		doc["tasks"] = []any{map[string]any{
@@ -391,7 +410,7 @@ func writeQueuePinnedOrkflow(t *testing.T, repoRoot, name, queue string) string 
 		if !ok {
 			t.Fatalf("unexpected task shape: %#v", raw)
 		}
-		task["queue"] = queue
+		task["pool"] = pool
 	}
 
 	encoded, err := yaml.Marshal(doc)

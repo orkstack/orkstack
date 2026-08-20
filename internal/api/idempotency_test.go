@@ -13,7 +13,21 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
+
+// claimKeyIn is the coordinate one idempotency key occupies at the claim
+// authority: the caller's key, scoped by the namespace the submission resolved
+// to (api.submission.claimKey). Two tenants use the same words for their own
+// submissions, so the key alone names no single run.
+//
+// Every replica below submits without naming a namespace, which resolves to
+// the default one. A binding another replica made is therefore written under
+// that coordinate: writing it under the bare key would bind something the
+// service never asks about, and the test would pass while proving nothing.
+func claimKeyIn(namespace, key string) string {
+	return namespace + "/" + key
+}
 
 // sharedClaimer stands in for the cluster: one binding per key, visible to
 // every Service wired to it. Two Services sharing one of these are two engine
@@ -175,7 +189,7 @@ func TestSubmitRun_LosingReplicaReportsTheWinnersRunNotItsOwnRequest(t *testing.
 		OrkflowVersion: "9.9.9-claimed-elsewhere",
 		Status:         orkstackv1.Status_STATUS_PENDING,
 	}
-	claimer.bind("order-42", winner)
+	claimer.bind(claimKeyIn(artifacts.DefaultNamespace, "order-42"), winner)
 
 	loser := newReplica(t, claimer, nil, &fakeStarter{})
 	got, err := loser.submit(t, "order-42")
@@ -276,7 +290,7 @@ func TestSubmitRun_AClaimWhoseWinnerDiedHoldsTheKeyUntilItsTTL(t *testing.T) {
 		OrkflowName: "hello-ork",
 		Status:      orkstackv1.Status_STATUS_PENDING,
 	}
-	claimer.bind("order-42", stranded)
+	claimer.bind(claimKeyIn(artifacts.DefaultNamespace, "order-42"), stranded)
 
 	survivor := newReplica(t, claimer, newArchiver(t), &fakeStarter{})
 	got, err := survivor.submit(t, "order-42")
@@ -375,7 +389,8 @@ func TestSubmitRun_ReissueMovesTheClaimToTheRunThatStarted(t *testing.T) {
 	}
 
 	_, rebinds := claimer.counts()
-	want := fmt.Sprintf("order-42:%s->%s", rejected[0], started[0])
+	want := fmt.Sprintf("%s:%s->%s",
+		claimKeyIn(artifacts.DefaultNamespace, "order-42"), rejected[0], started[0])
 	if len(rebinds) != 1 || rebinds[0] != want {
 		t.Errorf("claim moves = %v, want exactly [%s]", rebinds, want)
 	}

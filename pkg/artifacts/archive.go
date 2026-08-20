@@ -15,21 +15,22 @@ import (
 // source of truth while a run executes; the archive is what survives an engine
 // restart and what answers "which runs of this orkflow succeeded last week".
 //
-// Two object families, both under one namespace:
+// Two object families, both under one prefix:
 //
-//	metadata/runs/{run-id}.jsonl                              the immutable body
-//	metadata/index/runs/{orkflow}/{status}/{stamp}/{run-id}    the query index
+//	metadata/runs/{run-id}.jsonl                                  the immutable body
+//	metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{run-id}
 //
 // The body holds the run and every one of its events, one JSON record per line.
 // It is written once, when the run reaches a terminal state, and never
 // rewritten.
 //
 // The index holds no bytes at all: the *key* carries every field a query
-// filters on, so listing by orkflow, status and time range is one prefix scan
-// that reads keys only. Segment order matches how queries narrow — orkflow,
-// then status, then a lexicographically sortable UTC timestamp — so a query
-// that pins the first segments scans only its own subtree, and a time range
-// starts the scan at its lower bound instead of at the first key.
+// filters on, so listing by namespace, orkflow, status and time range is one
+// prefix scan that reads keys only. Segment order matches how queries narrow —
+// namespace, then orkflow, then status, then a lexicographically sortable UTC
+// timestamp — so a query that pins the first segments scans only its own
+// subtree, and a time range starts the scan at its lower bound instead of at
+// the first key.
 const (
 	// RunArchiveNamespace prefixes every archived run body.
 	RunArchiveNamespace = "metadata/runs"
@@ -43,8 +44,8 @@ const (
 	// the same lexicographically as chronologically.
 	RunStampLayout = "20060102T150405.000000000Z"
 	// runIndexSegments is the fixed segment count of an index key:
-	// metadata, index, runs, orkflow, status, stamp, run-id.
-	runIndexSegments = 7
+	// metadata, index, runs, namespace, orkflow, status, stamp, run-id.
+	runIndexSegments = 8
 	// archiveMaxComponent bounds one generated segment. Orkflow names and task
 	// ids are DSL slugs and run ids are ork-{timestamp}-{sequence}, so a real
 	// segment is far shorter; the bound only rejects abuse.
@@ -64,6 +65,9 @@ var ErrInvalidRunKey = errors.New("invalid run archive key")
 type RunRecord struct {
 	// RunID identifies the run, e.g. "ork-1786856120616785000-1".
 	RunID string
+	// Namespace is the namespace the run's orkflow belongs to. Empty means
+	// DefaultNamespace, resolved where the key is built.
+	Namespace string
 	// Orkflow is the orkflow name the run executed.
 	Orkflow string
 	// Status is the run's terminal status, lowercase and unprefixed
@@ -79,15 +83,22 @@ type RunRecord struct {
 // RunIndexEntry is one row of a prefix scan. It is built from the index key
 // alone, so a query answers without reading a single object body.
 type RunIndexEntry struct {
-	RunID   string
-	Orkflow string
-	Status  string
-	Time    time.Time
+	RunID     string
+	Namespace string
+	Orkflow   string
+	Status    string
+	Time      time.Time
 }
 
 // RunQuery narrows a prefix scan. Zero values mean "no filter".
 type RunQuery struct {
-	// Orkflow selects one orkflow by name.
+	// Namespace selects one namespace. It is the outermost segment, so
+	// selecting one is a narrower scan rather than a filter over every
+	// namespace's keys.
+	Namespace string
+	// Orkflow selects one orkflow by name. It narrows only within a
+	// namespace: an orkflow name is unique inside one, not across the
+	// deployment.
 	Orkflow string
 	// Status selects one status; matching is case-insensitive and accepts the
 	// short form ("succeeded").
@@ -125,6 +136,10 @@ func RunArchiveKey(runID string) (string, error) {
 
 // RunIndexKey renders the index key for a record.
 func RunIndexKey(rec RunRecord) (string, error) {
+	namespace, err := encodeArchiveSegment(ResolveNamespace(rec.Namespace))
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run index key: namespace: %w", err)
+	}
 	orkflow, err := encodeArchiveSegment(rec.Orkflow)
 	if err != nil {
 		return "", fmt.Errorf("artifacts: run index key: orkflow: %w", err)
@@ -137,7 +152,8 @@ func RunIndexKey(rec RunRecord) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("artifacts: run index key: run id: %w", err)
 	}
-	return path.Join(RunIndexNamespace, orkflow, status, RunStamp(rec.Time), runID), nil
+	return path.Join(RunIndexNamespace, namespace, orkflow, status,
+		RunStamp(rec.Time), runID), nil
 }
 
 // ParseRunIndexKey reverses RunIndexKey. A key this package did not generate
@@ -147,23 +163,33 @@ func ParseRunIndexKey(key string) (RunIndexEntry, bool) {
 	if len(parts) != runIndexSegments || !strings.HasPrefix(key, RunIndexNamespace+"/") {
 		return RunIndexEntry{}, false
 	}
-	orkflow, ok := decodeArchiveSegment(parts[3])
+	namespace, ok := decodeArchiveSegment(parts[3])
 	if !ok {
 		return RunIndexEntry{}, false
 	}
-	status, ok := decodeArchiveSegment(parts[4])
+	orkflow, ok := decodeArchiveSegment(parts[4])
 	if !ok {
 		return RunIndexEntry{}, false
 	}
-	stamp, err := time.Parse(RunStampLayout, parts[5])
+	status, ok := decodeArchiveSegment(parts[5])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	stamp, err := time.Parse(RunStampLayout, parts[6])
 	if err != nil {
 		return RunIndexEntry{}, false
 	}
-	runID, ok := decodeArchiveSegment(parts[6])
+	runID, ok := decodeArchiveSegment(parts[7])
 	if !ok {
 		return RunIndexEntry{}, false
 	}
-	return RunIndexEntry{RunID: runID, Orkflow: orkflow, Status: status, Time: stamp}, true
+	return RunIndexEntry{
+		RunID:     runID,
+		Namespace: namespace,
+		Orkflow:   orkflow,
+		Status:    status,
+		Time:      stamp,
+	}, true
 }
 
 // RunStamp renders t as an index segment: UTC, fixed width, sortable.
@@ -177,11 +203,24 @@ func NormalizeRunStatus(raw string) string {
 }
 
 // ScanPrefix is the narrowest index prefix that still contains every key q can
-// match, and the key to start the scan after. Pinning orkflow and status makes
-// the remaining segments start with the sortable timestamp, so a lower time
-// bound skips everything older without reading it.
+// match, and the key to start the scan after. Narrowing follows the key's own
+// order — namespace, orkflow, status — and pinning all three makes the
+// remaining segments start with the sortable timestamp, so a lower time bound
+// skips everything older without reading it.
+//
+// A query that names an orkflow but no namespace cannot narrow past the root:
+// an orkflow name is unique within a namespace, so the same name may exist in
+// several, and the scan must see them all and filter with Matches.
 func (q RunQuery) ScanPrefix() (prefix, startAfter string, err error) {
 	prefix = RunIndexNamespace + "/"
+	if q.Namespace == "" {
+		return prefix, "", nil
+	}
+	namespace, err := encodeArchiveSegment(ResolveNamespace(q.Namespace))
+	if err != nil {
+		return "", "", fmt.Errorf("artifacts: run query: namespace: %w", err)
+	}
+	prefix += namespace + "/"
 	if q.Orkflow == "" {
 		return prefix, "", nil
 	}
@@ -208,6 +247,9 @@ func (q RunQuery) ScanPrefix() (prefix, startAfter string, err error) {
 
 // Matches reports whether an entry satisfies every filter in q.
 func (q RunQuery) Matches(entry RunIndexEntry) bool {
+	if q.Namespace != "" && entry.Namespace != ResolveNamespace(q.Namespace) {
+		return false
+	}
 	if q.Orkflow != "" && entry.Orkflow != q.Orkflow {
 		return false
 	}

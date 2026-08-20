@@ -32,7 +32,15 @@ type ArtifactResolver interface {
 	Resolve(ctx context.Context, ref string) (localPath string, err error)
 }
 
-// Logger streams a log line to the run event bus.
+// Logger streams one line of a task's live output.
+//
+// The line goes to the task's LOG stream — numbered chunks in the artifact
+// store, readable while the task runs through RunService.StreamTaskLogs — and
+// never onto the run's event stream: task output is bytes, and bytes travel as
+// stored objects rather than through Temporal (AGENTS.md §1.4).
+//
+// It is printf-shaped, so a caller streaming a line it did not compose passes
+// it as data: Log("%s", line), never Log(line).
 type Logger func(format string, args ...any)
 
 // ExecContext carries everything a plugin needs to run one task.

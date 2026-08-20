@@ -23,7 +23,19 @@ import (
 type config struct {
 	temporalAddress   string
 	temporalNamespace string
-	queue             string
+	// pool is the OrkStack name for the set of Orkers this process joins
+	// (ORK_ORKER_POOL); queue is the raw execution channel it polls, which an
+	// operator can pin directly with ORK_ORKER_QUEUE. The five ways the two
+	// combine, and the one that is refused, live in task.ResolvePoolBinding —
+	// both binaries resolve them there, or an Orker listens to one channel
+	// while the engine dispatches to another and every run strands in RUNNING.
+	pool  string
+	queue string
+	// rawOverride reports that queue was pinned by hand rather than derived
+	// from pool, so the boot log can say which of the two was believed.
+	rawOverride bool
+	// poolErr is a refused pool/channel pair, reported at boot.
+	poolErr error
 	// deployment is this release's Worker Deployment identity. It MUST match
 	// the engine's, or a pinned run's tasks are not routed to this Orker's
 	// version at all — see workerOptions.
@@ -31,10 +43,14 @@ type config struct {
 }
 
 func loadConfig() config {
+	binding, err := task.ResolvePoolBinding(env("ORK_ORKER_POOL", ""), env("ORK_ORKER_QUEUE", ""))
 	return config{
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
-		queue:             env("ORK_ORKER_QUEUE", task.DefaultQueue),
+		pool:              binding.Pool,
+		queue:             binding.Queue,
+		rawOverride:       binding.RawOverride,
+		poolErr:           err,
 		deployment:        task.DeploymentFromEnv(),
 	}
 }
@@ -80,11 +96,26 @@ func run(logger *slog.Logger, cfg config) error {
 	if err := cfg.deployment.Validate(); err != nil {
 		return err
 	}
+	// Fail on a pool and a raw channel that disagree, before this Orker starts
+	// polling somewhere the engine does not dispatch to.
+	if cfg.poolErr != nil {
+		return cfg.poolErr
+	}
 
 	store, err := artifacts.NewFromEnv()
 	if err != nil {
 		return err
 	}
+
+	// The live log sink's destination. It is the SAME backend the artifacts go
+	// to, so an engine replica reading a task's log reads the bucket this
+	// process wrote it into — no side channel between the two, and therefore
+	// no run whose logs only one replica can serve.
+	logStore, err := artifacts.NewLogStoreFromEnv()
+	if err != nil {
+		return err
+	}
+	logOptions := orker.LogOptionsFromEnv()
 
 	temporalClient, err := client.DialContext(ctx, client.Options{
 		HostPort:  cfg.temporalAddress,
@@ -102,7 +133,10 @@ func run(logger *slog.Logger, cfg config) error {
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
 
 	registry := orker.BuiltinRegistry()
-	activities := orker.NewActivities(registry, store)
+	activities := orker.NewActivitiesWithOptions(registry, store, orker.Options{
+		Logs: logStore,
+		Log:  logOptions,
+	})
 	taskWorker := worker.New(temporalClient, cfg.queue, workerOptions(cfg))
 	taskWorker.RegisterActivityWithOptions(
 		activities.ExecuteTask,
@@ -123,7 +157,19 @@ func run(logger *slog.Logger, cfg config) error {
 		names = append(names, descriptor.Name)
 	}
 	logger.Info("orker started",
-		"task_queue", cfg.queue, "activity", task.ActivityExecuteTask, "plugins", names)
+		"pool", cfg.pool, "task_queue", cfg.queue,
+		"activity", task.ActivityExecuteTask, "plugins", names)
+	logger.Info("task log streaming ready",
+		"flush_bytes", logOptions.FlushBytes,
+		"flush_interval", logOptions.FlushInterval,
+		"max_bytes_per_attempt", logOptions.MaxBytes)
+	if cfg.rawOverride {
+		// The channel was pinned by hand. Say so, because a raw channel this
+		// process did not derive from a pool name is not necessarily any
+		// pool's, and "pool" above is then a label rather than an answer.
+		logger.Info("execution channel pinned by ORK_ORKER_QUEUE",
+			"task_queue", cfg.queue, "reported_pool", cfg.pool)
+	}
 	// The engine prints the same pair. They must match, or this Orker is not
 	// in a pinned run's deployment version and its tasks are routed elsewhere.
 	logger.Info("worker deployment versioning",

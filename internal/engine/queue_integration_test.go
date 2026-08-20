@@ -31,12 +31,77 @@ func privateOrkerQueue() string {
 	return fmt.Sprintf("ork-tasks-engine-%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
+// routingNamespace names a Temporal namespace this test run alone uses.
+//
+// A private orker queue is NOT enough isolation on its own, and this test used
+// to have only that: it hosts RunWorkflow on the shared task.DefaultQueue, so
+// in the cluster's default namespace a parallel agent polling `ork-tasks` can
+// take its workflow tasks and its PASS becomes a fact about who else was on
+// the cluster. ORK_ORKER_QUEUE partitions task EXECUTION only; a namespace is
+// the hard partition, and the one AGENTS.md §6 tells a parallel agent to use.
+// The operator's ORK_TEMPORAL_NAMESPACE stays as the prefix so the choice is
+// visible in `temporal workflow list`.
+func routingNamespace() string {
+	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
+	if base == "" {
+		base = task.DefaultNamespace
+	}
+	return fmt.Sprintf("%s-routing-%d-%d", base, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
+}
+
+// dialRoutingCluster provisions that namespace and returns a client bound to
+// it, skipping cleanly when no cluster is there.
+func dialRoutingCluster(t *testing.T, ctx context.Context, address, namespace string) client.Client {
+	t.Helper()
+	bootstrap, err := client.DialContext(ctx, client.Options{
+		HostPort:  address,
+		Namespace: client.DefaultNamespace,
+	})
+	if err != nil {
+		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
+	}
+	if err := task.EnsureNamespace(ctx, bootstrap, namespace); err != nil {
+		bootstrap.Close()
+		t.Fatalf("provision namespace %q: %v", namespace, err)
+	}
+	bootstrap.Close()
+
+	// A freshly registered namespace is not immediately visible to the
+	// frontend's namespace cache, so the first dial is retried rather than
+	// failed.
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
+		if err == nil {
+			if _, probe := c.DescribeTaskQueue(ctx, privateOrkerQueue(), 0); probe == nil {
+				t.Cleanup(c.Close)
+				return c
+			}
+			c.Close()
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("namespace %q did not become usable: %v", namespace, err)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
 // TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll is the end of the
 // ORK_ORKER_QUEUE story: an engine configured for a private orker queue must
 // dispatch an ordinary orkflow's tasks there. The orkflow (examples/hello.ork.yaml)
 // names no queue, and nothing in this test polls the shared default queue for
 // activities — so if dispatch ignored the engine's configuration, every task
 // would sit unassigned and the run would never leave RUNNING.
+//
+// The same configuration is where dispatch and reporting can drift apart, so
+// both are asserted against this one engine: the submit is accepted because
+// the private channel is served, and ListPools must answer for the default
+// pool with the Orkers on that same channel. An engine that looked for them
+// on the pool's own channel instead would call a pool deserted while running
+// its work.
+//
+// It runs in a namespace of its own (routingNamespace), because the run worker
+// below polls the shared task.DefaultQueue exactly as `ork` does.
 func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
@@ -45,17 +110,11 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	temporalClient, err := client.DialContext(ctx, client.Options{
-		HostPort:  address,
-		Namespace: client.DefaultNamespace,
-	})
-	if err != nil {
-		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
-	}
-	defer temporalClient.Close()
+	namespace := routingNamespace()
+	temporalClient := dialRoutingCluster(t, ctx, address, namespace)
 
 	orkerQueue := privateOrkerQueue()
 	bus := engine.NewEventBus()
@@ -91,6 +150,17 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
+	// A real Orker answers plugin discovery on its own channel too
+	// (cmd/orker registers this), which is what ListPools asks a served pool.
+	orkerWorker.RegisterActivityWithOptions(
+		func(context.Context) ([]plugin.Descriptor, error) {
+			return []plugin.Descriptor{
+				{Name: "http", Version: "0.1.0"},
+				{Name: "shell", Version: "0.1.0"},
+			}, nil
+		},
+		activity.RegisterOptions{Name: task.ActivityListPlugins},
+	)
 
 	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
 		DisableRegistrationAliasing: true,
@@ -110,12 +180,25 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		defer w.Stop()
 	}
 
+	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, orkerQueue)
 	svc := api.NewService(api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(),
 		Runs:     runs,
 		Bus:      bus,
-		Starter: engine.NewTemporalStarterWithOrkerQueue(
-			temporalClient, task.DefaultQueue, orkerQueue),
+		Starter:  starter,
+		// RawQueue is the operator escape hatch, and it is what pins this
+		// engine's DEFAULT route — where a task that names no pool goes. The
+		// starter's own orker queue above is plugin discovery only; since
+		// M10.2 dispatch comes from the plan the submission builds, and this
+		// is the field that puts the private channel into it. `cmd/ork` sets
+		// the same value from ORK_ORKER_QUEUE (or ORK_ORKER_POOL).
+		RawQueue: orkerQueue,
+		// The real probe and the real plugin lister, as `cmd/ork` wires them.
+		// With RawQueue set they are the pair that can disagree: the submit
+		// below is checked against the private channel, and ListPools at the
+		// end has to report the same pool from the same channel.
+		Pools:       engine.NewTemporalPoolProbe(temporalClient),
+		PoolPlugins: starter,
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -141,77 +224,166 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}
-	if strings.Contains(string(source), "queue:") {
-		t.Fatalf("the example now pins a queue; this test needs an orkflow that names none")
+	if strings.Contains(string(source), "pool:") {
+		t.Fatalf("the example now pins a pool; this test needs an orkflow that names none")
 	}
 
 	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
+	namespaceClient := orkstackv1connect.NewNamespaceServiceClient(httpClient, baseURL)
 
-	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml: string(source),
-	})); err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
-	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		OrkflowName: "hello-ork",
-	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
-	runID := submitted.Msg.GetRun().GetId()
+	// The submission below is checked for live Orkers against the private
+	// channel, so wait until the cluster can see the one this test started.
+	// Nothing else has ever polled this channel, so exactly one is exact.
+	awaitPoolServedBy(t, ctx, engine.NewTemporalPoolProbe(temporalClient),
+		task.DefaultPool, orkerQueue, 1)
 
-	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
-		RunId: runID,
-	}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
-	defer stream.Close()
-
-	var scheduled []string
-	var last *orkstackv1.Event
-	for stream.Receive() {
-		event := stream.Msg()
-		if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED {
-			scheduled = append(scheduled, event.GetMessage())
+	// runOrkflow applies a document, submits it, drains its event stream to a
+	// terminal event and returns the TASK_SCHEDULED messages a client read.
+	runOrkflow := func(label, source, orkflowName string) []string {
+		t.Helper()
+		if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+			Yaml: source,
+		})); err != nil {
+			t.Fatalf("%s: Apply: %v", label, err)
 		}
-		last = event
-	}
-	if err := stream.Err(); err != nil {
-		// A deadline here is the symptom this test exists for: the tasks were
-		// scheduled onto a queue no worker polls, so the run never terminated
-		// and the stream stayed open until the context expired.
-		observedMu.Lock()
-		reached := fmt.Sprintf("%v", observedQueues)
-		observedMu.Unlock()
-		t.Fatalf("event stream error: %v. Run %s never reached a terminal state; "+
-			"the orker on %q executed %s, so check that dispatch follows the engine's orker queue",
-			err, runID, orkerQueue, reached)
+		submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+			OrkflowName: orkflowName,
+		}))
+		if err != nil {
+			t.Fatalf("%s: SubmitRun: %v", label, err)
+		}
+		runID := submitted.Msg.GetRun().GetId()
+
+		stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
+			RunId: runID,
+		}))
+		if err != nil {
+			t.Fatalf("%s: StreamEvents: %v", label, err)
+		}
+		defer stream.Close()
+
+		var scheduled []string
+		var last *orkstackv1.Event
+		for stream.Receive() {
+			event := stream.Msg()
+			if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED {
+				scheduled = append(scheduled, event.GetMessage())
+			}
+			last = event
+		}
+		if err := stream.Err(); err != nil {
+			// A deadline here is the symptom this test exists for: the tasks
+			// were scheduled onto a queue no worker polls, so the run never
+			// terminated and the stream stayed open until the context expired.
+			observedMu.Lock()
+			reached := fmt.Sprintf("%v", observedQueues)
+			observedMu.Unlock()
+			t.Fatalf("%s: event stream error: %v. Run %s never reached a terminal state; "+
+				"the orker on %q executed %s, so check that dispatch follows the engine's orker queue",
+				label, err, runID, orkerQueue, reached)
+		}
+		if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
+			t.Fatalf("%s: run %s ended on %v (%s), want RUN_SUCCEEDED. Tasks reached the queues %v; "+
+				"an unassigned run means dispatch ignored the engine's orker queue %q",
+				label, runID, last.GetType(), last.GetMessage(), observedQueues, orkerQueue)
+		}
+		return scheduled
 	}
 
-	if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
-		t.Fatalf("run %s ended on %v (%s), want RUN_SUCCEEDED. Tasks reached the queues %v; "+
-			"an unassigned run means dispatch ignored the engine's orker queue %q",
-			runID, last.GetType(), last.GetMessage(), observedQueues, orkerQueue)
-	}
+	scheduled := runOrkflow("no pool", string(source), "hello-ork")
+
+	// The same pool, written out. The stream above reports an orkflow that
+	// named no pool as running on the built-in default; a document that names
+	// that default must therefore reach the SAME Orkers — the ones on the
+	// private queue — or the word the client read named a pool the task never
+	// ran on. It is also the isolation guarantee: `pool: main` may not escape
+	// ORK_ORKER_QUEUE onto the shared queue (AGENTS.md §6).
+	pinnedSource := fmt.Sprintf(`
+name: pool-main-pinned
+version: "0.1.0"
+tasks:
+  - id: pinned-echo
+    plugin: shell
+    pool: %s
+    with:
+      op: exec
+      command: "echo pinned"
+`, task.DefaultPool)
+	pinnedScheduled := runOrkflow("pool: "+task.DefaultPool, pinnedSource, "pool-main-pinned")
 
 	observedMu.Lock()
 	defer observedMu.Unlock()
-	if len(observedQueues) != 3 {
-		t.Fatalf("orker executed %d tasks (%v), want the example's 3", len(observedQueues), observedQueues)
+	if len(observedQueues) != 4 {
+		t.Fatalf("orker executed %d tasks (%v), want the example's 3 plus the pinned one",
+			len(observedQueues), observedQueues)
 	}
 	for taskID, queue := range observedQueues {
 		if queue != orkerQueue {
 			t.Errorf("task %q ran on queue %q, want the engine's orker queue %q", taskID, queue, orkerQueue)
 		}
 	}
+	if queue := observedQueues["pinned-echo"]; queue != orkerQueue {
+		t.Errorf("`pool: %s` ran on %q, want the engine's orker queue %q. The stream tells a client "+
+			"the task ran on pool %s; resubmitting to that pool must reach these Orkers, and must not "+
+			"reach the shared queue %q",
+			task.DefaultPool, queue, orkerQueue, task.DefaultPool, task.DefaultQueue)
+	}
 
-	// The run's own event stream names the queue too, so an operator can see
-	// where a task went without reading Temporal.
-	for _, message := range scheduled {
-		if !strings.Contains(message, orkerQueue) {
-			t.Errorf("TASK_SCHEDULED event says %q, want it to name queue %q", message, orkerQueue)
+	// The run's own event stream reports where a task went — in pools, the
+	// word an author types. The queue this test proves the dispatch reached
+	// (above, from Temporal's own activity info) is a raw isolation queue and
+	// therefore nobody's pool, so both orkflows — the one that named no pool
+	// and the one that named the built-in default — are reported on that
+	// default. A client reads this string: `orkctl watch` prints it and the
+	// run page renders it, so a queue name here would be Temporal's word plus
+	// an internal name the author never typed. The naming gate exempts
+	// internal/engine and cannot see it; this can.
+	if len(pinnedScheduled) != 1 {
+		t.Fatalf("the pinned run carries %d TASK_SCHEDULED events (%v), want one", len(pinnedScheduled), pinnedScheduled)
+	}
+	for _, message := range append(scheduled, pinnedScheduled...) {
+		if !strings.Contains(message, "pool "+task.DefaultPool) {
+			t.Errorf("TASK_SCHEDULED event says %q, want it to name pool %q",
+				message, task.DefaultPool)
+		}
+		if strings.Contains(strings.ToLower(message), "queue") || strings.Contains(message, orkerQueue) {
+			t.Errorf("TASK_SCHEDULED event says %q; the engine word and the queue name %q "+
+				"must not reach a client", message, orkerQueue)
 		}
 	}
+
+	// The other half of the same configuration: an operator asking which pools
+	// exist must be told about the Orker that just ran this run's three tasks.
+	// Reported from the pool's own channel instead, the answer would be "0
+	// Orkers, no plugins" about a pool this engine dispatches to and accepts
+	// submissions into — one process, one second, two answers.
+	pools, err := namespaceClient.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPools: %v", err)
+	}
+	var main *orkstackv1.Pool
+	for _, pool := range pools.Msg.GetPools() {
+		if pool.GetName() == task.DefaultPool {
+			main = pool
+		}
+	}
+	if main == nil {
+		t.Fatalf("ListPools returned %v, without the default pool", pools.Msg.GetPools())
+	}
+	if got := main.GetLiveOrkerCount(); got != 1 {
+		t.Errorf("ListPools reports %d Orkers on pool %q; the one Orker this test started "+
+			"is on the engine's own orker queue %q and just executed %d tasks",
+			got, task.DefaultPool, orkerQueue, len(observedQueues))
+	}
+	if got := strings.Join(main.GetPlugins(), ","); got != "http,shell" {
+		t.Errorf("ListPools reports plugins %q on pool %q, want http,shell — the answer "+
+			"has to come from the Orkers actually serving the pool", got, task.DefaultPool)
+	}
+	// On the record, for proof/M10.2: one engine, one configuration, both
+	// answers.
+	t.Logf("ORK_ORKER_QUEUE=%s: %d task(s) executed there, and ListPools reports "+
+		"pool %q with %d Orker(s) and plugins %v",
+		orkerQueue, len(observedQueues), task.DefaultPool,
+		main.GetLiveOrkerCount(), main.GetPlugins())
 }

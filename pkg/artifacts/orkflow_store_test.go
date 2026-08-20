@@ -52,84 +52,124 @@ func helloOrkflow(t *testing.T, version string) *orkstackv1.Orkflow {
 	}
 }
 
-func TestOrkflowKey_AddressesOneVersionUnderMetadataOrkflows(t *testing.T) {
-	key, err := OrkflowKey("hello-ork", "0.1.0")
+func TestOrkflowKey_AddressesOneVersionUnderItsNamespace(t *testing.T) {
+	key, err := OrkflowKey("payments", "hello-ork", "0.1.0")
 	if err != nil {
 		t.Fatalf("OrkflowKey: %v", err)
 	}
-	if want := "metadata/orkflows/hello-ork/0.1.0.json"; key != want {
+	if want := "metadata/orkflows/payments/hello-ork/0.1.0.json"; key != want {
 		t.Fatalf("OrkflowKey = %q, want %q", key, want)
 	}
 
+	// An absent namespace is the default one, and it is a real key segment:
+	// there is no unnamespaced shelf that a later namespace could shadow.
+	fallback, err := OrkflowKey("", "hello-ork", "0.1.0")
+	if err != nil {
+		t.Fatalf("OrkflowKey(default): %v", err)
+	}
+	if want := "metadata/orkflows/default/hello-ork/0.1.0.json"; fallback != want {
+		t.Fatalf("OrkflowKey(\"\") = %q, want %q", fallback, want)
+	}
+	if explicit, err := OrkflowKey(DefaultNamespace, "hello-ork", "0.1.0"); err != nil || explicit != fallback {
+		t.Fatalf("OrkflowKey(%q) = %q, %v; want the same key as the empty namespace",
+			DefaultNamespace, explicit, err)
+	}
+
+	// The same name in another namespace is another object.
+	other, err := OrkflowKey("billing", "hello-ork", "0.1.0")
+	if err != nil {
+		t.Fatalf("OrkflowKey: %v", err)
+	}
+	if other == key {
+		t.Fatal("two namespaces share one key for the same orkflow name")
+	}
+
 	// A second version is a second object; the first one's key is untouched.
-	next, err := OrkflowKey("hello-ork", "0.2.0")
+	next, err := OrkflowKey("payments", "hello-ork", "0.2.0")
 	if err != nil {
 		t.Fatalf("OrkflowKey: %v", err)
 	}
 	if next == key {
 		t.Fatal("two versions share one key")
 	}
-	if !strings.HasPrefix(next, OrkflowPrefix+"/hello-ork/") {
+	if !strings.HasPrefix(next, OrkflowPrefix+"/payments/hello-ork/") {
 		t.Fatalf("version key %q is not under the orkflow's prefix", next)
 	}
 }
 
 func TestOrkflowKey_RejectsCoordinatesThatCouldEscapeThePrefix(t *testing.T) {
-	cases := []struct{ name, version string }{
-		{"", "0.1.0"},
-		{"hello-ork", ""},
-		{"..", "0.1.0"},
-		{"hello-ork", ".."},
-		{"../../etc/passwd", "0.1.0"},
-		{"hello/ork", "0.1.0"},
-		{"hello-ork", "0.1.0/../../secret"},
-		{"hello-ork", "0.1.0\n"},
-		{".hidden", "0.1.0"},
-		{"hello ork", "0.1.0"},
-		{strings.Repeat("a", maxOrkflowComponent+1), "0.1.0"},
+	cases := []struct{ namespace, name, version string }{
+		{"payments", "", "0.1.0"},
+		{"payments", "hello-ork", ""},
+		{"payments", "..", "0.1.0"},
+		{"payments", "hello-ork", ".."},
+		{"payments", "../../etc/passwd", "0.1.0"},
+		{"payments", "hello/ork", "0.1.0"},
+		{"payments", "hello-ork", "0.1.0/../../secret"},
+		{"payments", "hello-ork", "0.1.0\n"},
+		{"payments", ".hidden", "0.1.0"},
+		{"payments", "hello ork", "0.1.0"},
+		{"payments", strings.Repeat("a", maxOrkflowComponent+1), "0.1.0"},
+		// The namespace is validated exactly as the other two are: it is a
+		// path component like any other, and a component that could climb out
+		// of it would make namespace isolation decorative.
+		{"..", "hello-ork", "0.1.0"},
+		{"../billing", "hello-ork", "0.1.0"},
+		{"payments/../billing", "hello-ork", "0.1.0"},
+		{".hidden", "hello-ork", "0.1.0"},
+		{"pay ments", "hello-ork", "0.1.0"},
+		{"payments\n", "hello-ork", "0.1.0"},
+		{strings.Repeat("n", maxOrkflowComponent+1), "hello-ork", "0.1.0"},
 	}
 	for _, tc := range cases {
-		key, err := OrkflowKey(tc.name, tc.version)
+		key, err := OrkflowKey(tc.namespace, tc.name, tc.version)
 		if !errors.Is(err, ErrInvalidOrkflow) {
-			t.Errorf("OrkflowKey(%q, %q) = %q, %v; want ErrInvalidOrkflow", tc.name, tc.version, key, err)
+			t.Errorf("OrkflowKey(%q, %q, %q) = %q, %v; want ErrInvalidOrkflow",
+				tc.namespace, tc.name, tc.version, key, err)
 		}
 		if key != "" {
-			t.Errorf("OrkflowKey(%q, %q) returned key %q on error", tc.name, tc.version, key)
+			t.Errorf("OrkflowKey(%q, %q, %q) returned key %q on error",
+				tc.namespace, tc.name, tc.version, key)
 		}
 	}
 }
 
 func TestParseOrkflowKey_RoundTripsGeneratedKeysAndSkipsForeignOnes(t *testing.T) {
-	for _, want := range []struct{ name, version string }{
-		{"hello-ork", "0.1.0"},
-		{"a", "1"},
-		{"hello-ork-m4", "2026.08.16-rc1"},
+	for _, want := range []struct{ namespace, name, version string }{
+		{"default", "hello-ork", "0.1.0"},
+		{"payments", "hello-ork", "0.1.0"},
+		{"a", "a", "1"},
+		{"team-42", "hello-ork-m4", "2026.08.16-rc1"},
 	} {
-		key, err := OrkflowKey(want.name, want.version)
+		key, err := OrkflowKey(want.namespace, want.name, want.version)
 		if err != nil {
-			t.Fatalf("OrkflowKey(%q, %q): %v", want.name, want.version, err)
+			t.Fatalf("OrkflowKey(%q, %q, %q): %v", want.namespace, want.name, want.version, err)
 		}
-		name, version, ok := parseOrkflowKey(key)
-		if !ok || name != want.name || version != want.version {
-			t.Errorf("parseOrkflowKey(%q) = %q, %q, %v; want %q, %q, true",
-				key, name, version, ok, want.name, want.version)
+		namespace, name, version, ok := parseOrkflowKey(key)
+		if !ok || namespace != want.namespace || name != want.name || version != want.version {
+			t.Errorf("parseOrkflowKey(%q) = %q, %q, %q, %v; want %q, %q, %q, true",
+				key, namespace, name, version, ok, want.namespace, want.name, want.version)
 		}
 	}
 
 	// Nothing else in the bucket is an orkflow definition: run artifacts, their
-	// name manifests, and anything nested deeper are ignored, not decoded.
+	// name manifests, the pre-namespace layout, and anything nested deeper are
+	// ignored, not decoded.
 	foreign := []string{
 		"orkflows/hello-ork/fetch/ork-1755302400123456789-1/body",
 		"manifests/orkflows/hello-ork/fetch/ork-1/body",
-		"metadata/orkflows/hello-ork/0.1.0.txt",
-		"metadata/orkflows/hello-ork",
-		"metadata/orkflows/hello-ork/nested/0.1.0.json",
+		"metadata/orkflows/default/hello-ork/0.1.0.txt",
+		"metadata/orkflows/default/hello-ork",
+		"metadata/orkflows/hello-ork/0.1.0.json",
+		"metadata/orkflows/default/hello-ork/nested/0.1.0.json",
+		"metadata/namespaces/default.json",
 		"metadata/runs/ork-1/run.json",
 		"",
 	}
 	for _, key := range foreign {
-		if name, version, ok := parseOrkflowKey(key); ok {
-			t.Errorf("parseOrkflowKey(%q) = %q, %q, true; want false", key, name, version)
+		if namespace, name, version, ok := parseOrkflowKey(key); ok {
+			t.Errorf("parseOrkflowKey(%q) = %q, %q, %q, true; want false",
+				key, namespace, name, version)
 		}
 	}
 }
@@ -222,7 +262,7 @@ func TestLatestOrkflow_IsTheMostRecentlyApplied(t *testing.T) {
 	}
 }
 
-func TestLatestByName_ReturnsOneVersionPerNameOrderedByName(t *testing.T) {
+func TestResolveByName_ReturnsOneVersionPerNameOrderedByName(t *testing.T) {
 	stamp := func(name, version string, seconds int) *orkstackv1.Orkflow {
 		return &orkstackv1.Orkflow{
 			Name:      name,
@@ -230,19 +270,36 @@ func TestLatestByName_ReturnsOneVersionPerNameOrderedByName(t *testing.T) {
 			CreatedAt: timestamppb.New(time.Date(2026, 8, 16, 12, 0, seconds, 0, time.UTC)),
 		}
 	}
-	got := latestByName([]*orkstackv1.Orkflow{
+	all := []*orkstackv1.Orkflow{
 		stamp("zeta", "1.0.0", 1),
 		stamp("alpha", "0.1.0", 2),
 		stamp("alpha", "0.2.0", 3),
 		stamp("mid", "9.9.9", 0),
-	})
-
-	want := []string{"alpha@0.2.0", "mid@9.9.9", "zeta@1.0.0"}
-	rendered := make([]string, 0, len(got))
-	for _, wf := range got {
-		rendered = append(rendered, wf.GetName()+"@"+wf.GetVersion())
 	}
-	if strings.Join(rendered, ",") != strings.Join(want, ",") {
-		t.Errorf("latestByName = %v, want %v", rendered, want)
+	render := func(got []*orkstackv1.Orkflow) string {
+		rendered := make([]string, 0, len(got))
+		for _, wf := range got {
+			rendered = append(rendered, wf.GetName()+"@"+wf.GetVersion())
+		}
+		return strings.Join(rendered, ",")
+	}
+
+	// Nobody promoted anything: the most recently applied version of each.
+	if got, want := render(resolveByName(all, nil)),
+		"alpha@0.2.0,mid@9.9.9,zeta@1.0.0"; got != want {
+		t.Errorf("resolveByName(no pointers) = %v, want %v", got, want)
+	}
+
+	// A promotion decides what that name resolves to, and only that name.
+	if got, want := render(resolveByName(all, map[string]string{"alpha": "0.1.0"})),
+		"alpha@0.1.0,mid@9.9.9,zeta@1.0.0"; got != want {
+		t.Errorf("resolveByName(alpha promoted) = %v, want %v", got, want)
+	}
+
+	// A pointer naming a version this scan did not see falls back to the head
+	// rather than dropping the orkflow out of the listing.
+	if got, want := render(resolveByName(all, map[string]string{"alpha": "7.7.7"})),
+		"alpha@0.2.0,mid@9.9.9,zeta@1.0.0"; got != want {
+		t.Errorf("resolveByName(dangling pointer) = %v, want %v", got, want)
 	}
 }

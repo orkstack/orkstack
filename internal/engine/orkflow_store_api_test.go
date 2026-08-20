@@ -29,30 +29,63 @@ func newRecordingStore() *recordingStore {
 	return &recordingStore{inner: engine.NewMemoryOrkflowStore()}
 }
 
-func (r *recordingStore) Put(ctx context.Context, wf *orkstackv1.Orkflow) error {
+func (r *recordingStore) Put(
+	ctx context.Context,
+	wf *orkstackv1.Orkflow,
+) (*orkstackv1.Orkflow, bool, error) {
 	r.puts = append(r.puts, wf)
 	return r.inner.Put(ctx, wf)
 }
 
-func (r *recordingStore) Get(ctx context.Context, name, version string) (*orkstackv1.Orkflow, error) {
-	return r.inner.Get(ctx, name, version)
+func (r *recordingStore) Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error) {
+	return r.inner.Get(ctx, namespace, name, version)
 }
 
-func (r *recordingStore) List(ctx context.Context) ([]*orkstackv1.Orkflow, error) {
-	return r.inner.List(ctx)
+func (r *recordingStore) List(ctx context.Context, namespace string) ([]*orkstackv1.Orkflow, error) {
+	return r.inner.List(ctx, namespace)
+}
+
+func (r *recordingStore) Versions(
+	ctx context.Context,
+	namespace, name string,
+) (artifacts.OrkflowVersions, error) {
+	return r.inner.Versions(ctx, namespace, name)
+}
+
+func (r *recordingStore) SetCurrentVersion(
+	ctx context.Context,
+	namespace, name, version string,
+) (string, error) {
+	return r.inner.SetCurrentVersion(ctx, namespace, name, version)
 }
 
 // unreachableStore is a durable store that is down.
 type unreachableStore struct{ err error }
 
-func (u unreachableStore) Put(context.Context, *orkstackv1.Orkflow) error { return u.err }
+func (u unreachableStore) Put(
+	context.Context,
+	*orkstackv1.Orkflow,
+) (*orkstackv1.Orkflow, bool, error) {
+	return nil, false, u.err
+}
 
-func (u unreachableStore) Get(context.Context, string, string) (*orkstackv1.Orkflow, error) {
+func (u unreachableStore) Get(context.Context, string, string, string) (*orkstackv1.Orkflow, error) {
 	return nil, u.err
 }
 
-func (u unreachableStore) List(context.Context) ([]*orkstackv1.Orkflow, error) {
+func (u unreachableStore) List(context.Context, string) ([]*orkstackv1.Orkflow, error) {
 	return nil, u.err
+}
+
+func (u unreachableStore) Versions(
+	context.Context,
+	string, string,
+) (artifacts.OrkflowVersions, error) {
+	return artifacts.OrkflowVersions{}, u.err
+}
+
+func (u unreachableStore) SetCurrentVersion(context.Context, string, string, string) (string, error) {
+	return "", u.err
 }
 
 func exampleYAML(t *testing.T) string {
@@ -149,10 +182,105 @@ func TestOrkflowPaths_ReportAMissingOrkflowAsNotFound(t *testing.T) {
 	}
 }
 
+// TestApplyOrkflow_StoresTheNamespaceTheDocumentNames replaces M10.1's interim
+// guard.
+//
+// That guard refused every namespace but the default, because the API's read
+// paths could not honour one and a stored `namespace: payments` would have
+// been an object nothing could read. M10.3 made the reads namespace-aware and
+// deleted the guard; what has to hold now is that a document naming a
+// namespace is written INTO it, which is what this asserts at the store seam.
+//
+// The end-to-end half — apply, list, get and submit in a non-default namespace,
+// invisible from the default — is
+// TestTwoNamespaces_SameOrkflowName_ListsAndRunsStayDisjoint and
+// TestApplyOrkflow_AppliesIntoANonDefaultNamespaceAndReadsItBack, both in
+// internal/api, and against real Temporal and MinIO in
+// TestIntegration_TwoNamespacesStayDisjointThroughTheCLI.
+func TestApplyOrkflow_StoresTheNamespaceTheDocumentNames(t *testing.T) {
+	const document = `
+namespace: payments
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo settle"}
+`
+	store := newRecordingStore()
+	svc := api.NewService(api.Config{
+		Orkflows:   store,
+		Namespaces: everyNamespace{},
+		Starter:    noopStarter{},
+	})
+	ctx := context.Background()
+
+	applied, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+		Yaml: document,
+	}))
+	if err != nil {
+		t.Fatalf("ApplyOrkflow(namespace: payments): %v", err)
+	}
+	if got := applied.Msg.GetOrkflow().GetNamespace(); got != "payments" {
+		t.Errorf("applied namespace = %q, want payments", got)
+	}
+	if len(store.puts) != 1 {
+		t.Fatalf("the store received %d write(s), want 1", len(store.puts))
+	}
+	if got := store.puts[0].GetNamespace(); got != "payments" {
+		t.Errorf("stored namespace = %q, want payments: the document would be "+
+			"written where its author cannot find it", got)
+	}
+
+	// The default namespace, named explicitly or left out, still applies.
+	for _, accepted := range []string{
+		"namespace: " + artifacts.DefaultNamespace + "\nname: nightly-close\ntasks:\n  - id: settle\n    plugin: shell\n",
+		"name: nightly-close\ntasks:\n  - id: settle\n    plugin: shell\n",
+	} {
+		if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+			Yaml: accepted,
+		})); err != nil {
+			t.Errorf("ApplyOrkflow(%q) = %v, want the default namespace to still apply", accepted, err)
+		}
+	}
+	if len(store.puts) != 3 {
+		t.Errorf("the store received %d write(s), want 3", len(store.puts))
+	}
+	for _, stored := range store.puts[1:] {
+		if got := stored.GetNamespace(); got != artifacts.DefaultNamespace {
+			t.Errorf("stored namespace = %q, want %q", got, artifacts.DefaultNamespace)
+		}
+	}
+}
+
+// everyNamespace is a registry in which every name exists with no allow-list.
+// These tests are about the orkflow store seam, not about the registry, and a
+// nil registry would refuse a non-default name before the store was reached.
+type everyNamespace struct{}
+
+func (everyNamespace) Get(_ context.Context, name string) (*orkstackv1.Namespace, error) {
+	return &orkstackv1.Namespace{Name: artifacts.ResolveNamespace(name)}, nil
+}
+
+func (everyNamespace) List(context.Context) ([]*orkstackv1.Namespace, error) {
+	return []*orkstackv1.Namespace{artifacts.DefaultNamespaceDocument()}, nil
+}
+
+func (everyNamespace) Put(
+	context.Context,
+	*orkstackv1.Namespace,
+	artifacts.PutConditions,
+) (*orkstackv1.Namespace, error) {
+	return nil, errors.New("everyNamespace: this double answers reads only")
+}
+
+func (everyNamespace) Delete(context.Context, string) error {
+	return errors.New("everyNamespace: this double answers reads only")
+}
+
 // noopStarter satisfies the API's Temporal seam; these tests never reach it.
 type noopStarter struct{}
 
-func (noopStarter) StartRun(context.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload) error {
+func (noopStarter) StartRun(context.Context, string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) error {
 	return nil
 }
 

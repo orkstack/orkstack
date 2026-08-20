@@ -119,7 +119,7 @@ func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 
 	runID := fmt.Sprintf("ork-golden-%d", time.Now().UnixNano())
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, runQueue, orkerQueue)
-	if err := starter.StartRun(ctx, runID, goldenOrkflow(), nil); err != nil {
+	if err := starter.StartRun(ctx, runID, goldenOrkflow(), nil, rawPlan(orkerQueue)); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {

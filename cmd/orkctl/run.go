@@ -20,6 +20,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunGetCommand(g),
 		newRunListCommand(g),
 		newRunWatchCommand(g),
+		newRunLogsCommand(g),
 		newRunCancelCommand(g),
 	)
 	return cmd
@@ -54,6 +55,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 				OrkflowVersion: version,
 				Input:          payload,
 				IdempotencyKey: idempotencyKey,
+				Namespace:      g.namespace,
 			}))
 			if err != nil {
 				return rpcError("submit run", err)
@@ -80,8 +82,9 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 		"run input as key=value (repeatable); values that parse as JSON keep their JSON type")
 	cmd.Flags().StringVar(&inputJSON, "input-json", "",
 		"run input as a JSON object; merged under --input values")
-	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: latest applied)")
-	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "dedupe key for repeated submissions")
+	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: the current one)")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "",
+		"dedupe key for repeated submissions, scoped to this namespace")
 	cmd.Flags().BoolVar(&watch, "watch", false, "stream events until the run reaches a terminal state")
 	return cmd
 }
@@ -90,13 +93,16 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <run-id>",
 		Short: "Show one run",
-		Args:  cobra.ExactArgs(1),
+		Long: "get shows one run of the namespace this command acts in. A run id\n" +
+			"addresses a run inside a namespace, so a run of another one is not found\n" +
+			"here even when its id is known.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.runClient().GetRun(ctx, connect.NewRequest(
-				&orkstackv1.GetRunRequest{RunId: args[0]},
+				&orkstackv1.GetRunRequest{RunId: args[0], Namespace: g.namespace},
 			))
 			if err != nil {
 				return rpcError("get run", err)
@@ -131,6 +137,7 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 				OrkflowName: orkflowName,
 				Status:      status,
 				PageSize:    limit,
+				Namespace:   g.namespace,
 			}))
 			if err != nil {
 				return rpcError("list runs", err)
@@ -153,13 +160,16 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cancel <run-id>",
 		Short: "Request cancellation of a run",
-		Args:  cobra.ExactArgs(1),
+		Long: "cancel requests cancellation of a run of the namespace this command acts\n" +
+			"in. A run of another namespace is not found here: cancelling is a write,\n" +
+			"and holding an id is not authority over somebody else's tenant.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.runClient().CancelRun(ctx, connect.NewRequest(
-				&orkstackv1.CancelRunRequest{RunId: args[0], Reason: reason},
+				&orkstackv1.CancelRunRequest{RunId: args[0], Reason: reason, Namespace: g.namespace},
 			))
 			if err != nil {
 				return rpcError("cancel run", err)

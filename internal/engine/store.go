@@ -6,6 +6,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // RunStore is the in-process read model for runs. Temporal remains the source
@@ -58,6 +59,11 @@ func (s *RunStore) Delete(runID string) {
 // Apply merges a workflow-produced snapshot into the store. Fields the
 // run workflow does not own (CreatedAt, and Input when the snapshot omits it) are
 // preserved from the existing record.
+//
+// So is the namespace, and for a reason the other two do not carry: List
+// filters on it, so a snapshot that omits it does not blank a column — it
+// moves the run into another tenant's listing. Same fold, same rule, as
+// mergeRunSnapshot on the read path.
 func (s *RunStore) Apply(run *orkstackv1.Run) {
 	if run == nil || run.GetId() == "" {
 		return
@@ -71,6 +77,9 @@ func (s *RunStore) Apply(run *orkstackv1.Run) {
 		}
 		if next.GetInput() == nil {
 			next.Input = existing.GetInput()
+		}
+		if next.GetNamespace() == "" {
+			next.Namespace = existing.GetNamespace()
 		}
 	} else {
 		s.order = append(s.order, run.GetId())
@@ -91,6 +100,7 @@ func (s *RunStore) Get(runID string) (*orkstackv1.Run, bool) {
 
 // ListFilter narrows List results. Zero values mean "no filter".
 type ListFilter struct {
+	Namespace   string
 	OrkflowName string
 	Status      orkstackv1.Status
 }
@@ -103,6 +113,9 @@ func (s *RunStore) List(filter ListFilter) []*orkstackv1.Run {
 	for i := len(s.order) - 1; i >= 0; i-- {
 		run := s.runs[s.order[i]]
 		if run == nil {
+			continue
+		}
+		if filter.Namespace != "" && artifacts.ResolveNamespace(run.GetNamespace()) != artifacts.ResolveNamespace(filter.Namespace) {
 			continue
 		}
 		if filter.OrkflowName != "" && run.GetOrkflowName() != filter.OrkflowName {

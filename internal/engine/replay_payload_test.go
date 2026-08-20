@@ -46,7 +46,7 @@ import (
 // Ordering is what the replayer already holds; content is what this holds.
 func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	recorded := loadGoldenHistory(t)
-	runID, wf, runInput := goldenWorkflowArgs(t, recorded)
+	runID, wf, runInput, plan := goldenWorkflowArgs(t, recorded)
 	recordedTaskInputs, recordedEvents, recordedResults, recordedRun := goldenActivityPayloads(t, recorded)
 
 	var (
@@ -87,7 +87,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
-	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput)
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan)
 
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the fixture's own input did not complete the workflow")
@@ -221,7 +221,7 @@ func loadGoldenHistory(t *testing.T) *historypb.History {
 
 // goldenWorkflowArgs reads the run's own input back out of the fixture, so the
 // re-execution is the recorded run and not a test-authored imitation of it.
-func goldenWorkflowArgs(t *testing.T, recorded *historypb.History) (string, *orkstackv1.Orkflow, *orkstackv1.Payload) {
+func goldenWorkflowArgs(t *testing.T, recorded *historypb.History) (string, *orkstackv1.Orkflow, *orkstackv1.Payload, engine.RunPlan) {
 	t.Helper()
 	for _, event := range recorded.GetEvents() {
 		attrs := event.GetWorkflowExecutionStartedEventAttributes()
@@ -232,15 +232,16 @@ func goldenWorkflowArgs(t *testing.T, recorded *historypb.History) (string, *ork
 			runID string
 			wf    *orkstackv1.Orkflow
 			input *orkstackv1.Payload
+			plan  engine.RunPlan
 		)
 		if err := converter.GetDefaultDataConverter().
-			FromPayloads(attrs.GetInput(), &runID, &wf, &input); err != nil {
+			FromPayloads(attrs.GetInput(), &runID, &wf, &input, &plan); err != nil {
 			t.Fatalf("decode the recorded run's workflow input: %v", err)
 		}
-		return runID, wf, input
+		return runID, wf, input, plan
 	}
 	t.Fatal("the fixture has no WorkflowExecutionStarted event")
-	return "", nil, nil
+	return "", nil, nil, engine.RunPlan{}
 }
 
 // goldenActivityPayloads reads, from the fixture: the ExecuteTask input the

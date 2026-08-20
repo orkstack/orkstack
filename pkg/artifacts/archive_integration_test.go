@@ -276,7 +276,7 @@ func TestS3RunArchive_PrefixScanFiltersByOrkflowStatusAndDateRange(t *testing.T)
 
 	// The index holds no bytes: everything a query filters on is in the key.
 	client := newRawS3Client(t, cfg)
-	indexKeys := listKeys(t, ctx, client, cfg.S3Bucket, artifacts.RunIndexNamespace+"/"+orkflow+"/")
+	indexKeys := listKeys(t, ctx, client, cfg.S3Bucket, artifacts.RunIndexNamespace+"/"+artifacts.DefaultNamespace+"/"+orkflow+"/")
 	if len(indexKeys) != 4 {
 		t.Fatalf("index keys for %s = %v, want 4", orkflow, indexKeys)
 	}

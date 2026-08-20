@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,9 @@ import (
 // fakeReader stands in for engine.TemporalRunReader: the run and the ordered
 // stream that Temporal holds for it, with nothing of either in this process.
 type fakeReader struct {
+	// mu guards runs, so a test can move a run to a terminal state while a
+	// stream is following it — which is the whole shape of a live log follow.
+	mu     sync.Mutex
 	runs   map[string]*orkstackv1.Run
 	events map[string][]*orkstackv1.Event
 	// live blocks the stream after the events already recorded, so a test can
@@ -38,12 +42,64 @@ type fakeReader struct {
 	// listErr and getErr make the record unreachable rather than empty.
 	listErr error
 	getErr  error
+	// runReadCount counts GetRun, which is one whole-history replay apiece.
+	runReadCount int
+	// executions is the aggregate half of the same record: what the cluster's
+	// index says about a whole namespace rather than about one run. It is
+	// keyed by namespace, because a namespace is a tenancy boundary and a
+	// double that answered the same thing for every name could not fail the
+	// test that says one namespace's numbers exclude another's.
+	executions    map[string]engine.Executions
+	executionsErr error
+	// executionWindows records every window the aggregate half was asked
+	// about, so a test can prove that an answer served from the cache
+	// consulted the record no further.
+	executionWindows []engine.StatsWindow
+}
+
+// Executions answers the aggregate question. It records the window first, so
+// a call that fails is still a call that happened.
+func (f *fakeReader) Executions(
+	_ context.Context,
+	w engine.StatsWindow,
+) (engine.Executions, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.executionWindows = append(f.executionWindows, w)
+	if f.executionsErr != nil {
+		return engine.Executions{}, f.executionsErr
+	}
+	return f.executions[w.Namespace], nil
+}
+
+// executionCalls is how many times the aggregate half was consulted.
+func (f *fakeReader) executionCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.executionWindows)
+}
+
+// setRun replaces what the record answers for a run, as the cluster would when
+// the run moves on.
+func (f *fakeReader) setRun(run *orkstackv1.Run) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.runs == nil {
+		f.runs = map[string]*orkstackv1.Run{}
+	}
+	f.runs[run.GetId()] = run
 }
 
 func (f *fakeReader) GetRun(_ context.Context, runID string) (*orkstackv1.Run, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// Counted, because reading a run is the expensive answer in this system:
+	// engine.TemporalRunReader.GetRun replays the run's whole history. A poll
+	// loop that asks it per tick is a cost no test would otherwise see.
+	f.runReadCount++
 	run, ok := f.runs[runID]
 	if !ok {
 		return nil, fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)
@@ -51,10 +107,19 @@ func (f *fakeReader) GetRun(_ context.Context, runID string) (*orkstackv1.Run, e
 	return run, nil
 }
 
+// runReads is how many whole-run reads this reader has served.
+func (f *fakeReader) runReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runReadCount
+}
+
 func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstackv1.Run, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []*orkstackv1.Run
 	for _, run := range f.runs {
 		if q.OrkflowName != "" && run.GetOrkflowName() != q.OrkflowName {
@@ -111,14 +176,30 @@ type readerFixture struct {
 
 func newReaderFixture(t *testing.T, reader *fakeReader) *readerFixture {
 	t.Helper()
+	return newReaderFixtureWith(t, reader, nil)
+}
+
+// newReaderFixtureWith is newReaderFixture with the config left open for one
+// more seam, so a test about logs does not need a second copy of the server
+// wiring.
+func newReaderFixtureWith(
+	t *testing.T,
+	reader *fakeReader,
+	configure func(*api.Config),
+) *readerFixture {
+	t.Helper()
 	runs := engine.NewRunStore()
-	svc := api.NewService(api.Config{
+	cfg := api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(),
 		Reader:   reader,
 		Runs:     runs,
 		Bus:      engine.NewEventBus(),
 		Starter:  &fakeStarter{},
-	})
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	svc := api.NewService(cfg)
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

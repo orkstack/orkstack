@@ -1,13 +1,29 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
+	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
+	import { withNamespace } from '$lib/namespace';
 	import { eventTypeLabel, fmtTime, fmtTimestamp, isTerminal, statusLabel } from '$lib/status';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	// A run that could not be read is a failed request. The retry re-issues it;
+	// nothing here waits forever on a spinner.
+	let retrying = $state(false);
+	async function retry() {
+		retrying = true;
+		try {
+			await invalidateAll();
+		} finally {
+			retrying = false;
+		}
+	}
 
 	interface TaskView {
 		id: string;
@@ -66,13 +82,20 @@
 		return [...views.values()];
 	}
 
+	// Patch the view IN PLACE. Replacing `tasks[idx]` carries the same data,
+	// but a keyed `{#each}` hands each item to its block as ONE value: replace
+	// it and every reader of `task.id` is invalidated, including the props
+	// that carry a log pane's subscription coordinates. Measured: a task
+	// turning SUCCEEDED tore that pane's socket down and replayed the whole
+	// attempt from its first chunk, emptying the pane under a reader who had
+	// scrolled up. A field-by-field patch touches only the fields that moved.
 	function upsertTask(taskId: string, patch: Partial<TaskView>) {
-		const idx = tasks.findIndex((t) => t.id === taskId);
-		if (idx >= 0) {
-			tasks[idx] = { ...tasks[idx], ...patch };
-		} else {
-			tasks.push({ id: taskId, plugin: '', status: Status.PENDING, attempt: 0, message: '', ...patch });
+		const existing = tasks.find((t) => t.id === taskId);
+		if (existing) {
+			Object.assign(existing, patch);
+			return;
 		}
+		tasks.push({ id: taskId, plugin: '', status: Status.PENDING, attempt: 0, message: '', ...patch });
 	}
 
 	function onEvent(event: Event) {
@@ -115,6 +138,12 @@
 				});
 				break;
 			case EventType.TASK_LOG:
+				// A run event, not the task's output. EVENT_TYPE_TASK_LOG carries
+				// the engine's own notes about a task — a skip and why — and the
+				// run's history is deliberately not where output lives. Bytes
+				// travel from the Orker to the artifact store and reach this page
+				// over the log socket instead (TaskLogPane), which is what keeps
+				// a chatty task out of Temporal history for ever.
 				if (event.message) upsertTask(event.taskId, { message: event.message });
 				break;
 		}
@@ -132,6 +161,7 @@
 		if (!run) return;
 		const stop = watchRunEvents(
 			run.id,
+			data.namespace,
 			(event) => {
 				streamDelivered = true;
 				onEvent(event);
@@ -151,18 +181,22 @@
 <svelte:head><title>Run {run?.id ?? ''} — OrkStack</title></svelte:head>
 
 {#if data.error}
-	<div
-		data-testid="engine-error"
-		class="rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-	>
-		{data.error}
-	</div>
+	<ErrorPanel
+		testid="engine-error"
+		retryTestid="run-retry"
+		subject="run {data.runId}"
+		message={data.error}
+		busy={retrying}
+		onretry={retry}
+	/>
+{:else if retrying}
+	<p class="text-sm text-zinc-400" data-testid="run-loading">Loading the run…</p>
 {:else if run}
 	<div class="mb-6 flex flex-wrap items-center gap-4">
 		<div>
 			<h1 class="font-mono text-xl font-bold" data-testid="run-id">{run.id}</h1>
 			<p class="text-sm text-zinc-400">
-				<a href="/orkflows/{run.orkflowName}" class="text-emerald-300 hover:underline"
+				<a href={withNamespace(`/orkflows/${run.orkflowName}`, data.namespace)} class="text-emerald-300 hover:underline"
 					>{run.orkflowName}</a
 				>@{run.orkflowVersion}
 			</p>
@@ -232,23 +266,32 @@
 		</div>
 	</div>
 
-	<div class="grid gap-6 lg:grid-cols-2">
+	<div class="space-y-6">
 		<section>
 			<h2 class="mb-3 text-lg font-semibold">Tasks</h2>
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
 					<div
-						class="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3"
+						class="rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3"
 						data-testid="task-{task.id}"
 					>
-						<div>
-							<div class="font-medium text-zinc-100">{task.id}</div>
-							<div class="text-xs text-zinc-500">
-								plugin: {task.plugin}{#if task.message}
-									· <span class="text-zinc-400">{task.message}</span>{/if}
+						<div class="flex items-center justify-between gap-4">
+							<div>
+								<div class="font-medium text-zinc-100">{task.id}</div>
+								<div class="text-xs text-zinc-500">
+									plugin: {task.plugin}{#if task.message}
+										· <span class="text-zinc-400">{task.message}</span>{/if}
+								</div>
 							</div>
+							<StatusPill status={task.status} testid="task-{task.id}-status" />
 						</div>
-						<StatusPill status={task.status} testid="task-{task.id}-status" />
+						<TaskLogPane
+							runId={run.id}
+							taskId={task.id}
+							namespace={data.namespace}
+							status={task.status}
+							attempt={0}
+						/>
 					</div>
 				{/each}
 			</div>

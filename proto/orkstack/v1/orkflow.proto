@@ -29,7 +29,26 @@ message Task {
   string condition = 5;
   int32 timeout_seconds = 6;             // default 300
   RetryPolicy retry = 7;
-  string queue = 8;                      // optional task queue / orker pool override
+
+  // 8 held a removed execution-routing field. It is reserved rather than
+  // reused, so a stale document cannot silently become a pool selection.
+  // The name stays reserved for the clean cut; the old key is rejected by
+  // the DSL and discarded by store decoding.
+  reserved 8;
+  reserved "queue";
+
+  // pool names the set of Orkers this task runs on. Empty means the
+  // deployment's default pool, which answers to the name "main";
+  // Namespace.default_pool joins that resolution in M10.2, which is the slice
+  // that reads it.
+  //
+  // Writing "main" and writing nothing are ONE route, always: "main" is a name
+  // for the deployment's default pool and not for one fixed set of Orkers, so
+  // wherever an operator has pointed the default, both spellings go there and
+  // both are reported on the pool that answers for it. Within a run, one pool
+  // name means one set of Orkers, in both directions. The engine maps a pool
+  // to its internal execution channel and nowhere else.
+  string pool = 9;
 }
 
 // Orkflow is the compiled, validated form of a DSL document.
@@ -43,4 +62,9 @@ message Orkflow {
   repeated Task tasks = 6;
   string source_yaml = 7;                // original DSL for round-trip/audit
   google.protobuf.Timestamp created_at = 8;
+  // namespace scopes this orkflow. Empty means the built-in "default"
+  // namespace. A name is unique WITHIN a namespace, never globally: two
+  // namespaces may both hold an orkflow called "deploy", and they are two
+  // different orkflows stored under two different keys.
+  string namespace = 9;
 }

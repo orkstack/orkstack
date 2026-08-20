@@ -15,11 +15,48 @@ import (
 // DefaultTimeoutSeconds is applied when a task omits timeout_seconds.
 const DefaultTimeoutSeconds = 300
 
-// slugPattern is the identifier rule for orkflow names and task ids
-// (docs/DSL.md validation rules 1 and 2).
+// slugPattern is the identifier rule for namespaces, orkflow names, task ids
+// and pools (docs/DSL.md validation rules 1, 2, 3 and 7). "default" and "main"
+// are ordinary slugs, so the built-in namespace and pool need no special case.
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-// KnownPlugins is the default set of plugin names accepted by rule 5. There is
+// MaxSlug bounds every identifier the DSL accepts, and it is half of the slug
+// rule, not a detail of it.
+//
+// A name is written here and stored somewhere else: a namespace, an orkflow
+// name and a version are path components of an object key
+// (pkg/artifacts.maxOrkflowComponent, the same 200), and a pool becomes an
+// execution channel name (internal/task.MaxPoolName, also 200). Without the
+// bound here the pattern alone let a 201-character namespace compile and then
+// fail at the registry with "exceeds 200 bytes" — a name a document can
+// reference and nothing can store, which is the same "one rule, two answers"
+// defect the pattern itself closed, measured in the one class the corpus had
+// no member of. The two bounds are not one constant, and the reason is
+// layering rather than the compiler: the artifact store is a public package
+// and this one is not, so the store does not import this package and a
+// program that only stores artifacts never builds the YAML front end. They
+// are held together by measurement instead —
+// TestNamespaceName_RegistryAndCompilerAgree and
+// TestNamespacePools_AreExactlyThePoolsDispatchCanReach both carry a name at
+// the bound and a name one byte over. Both are tests inside pkg/artifacts
+// that import this package, which is free: a test dependency is not part of
+// an importer's build.
+const MaxSlug = 200
+
+// checkSlug reports why value cannot be used as an identifier, naming the kind
+// of identifier so the message says which field is wrong.
+func checkSlug(kind, value string) error {
+	if len(value) > MaxSlug {
+		return fmt.Errorf("%s of %d bytes exceeds the %d-byte limit (%.32q…)",
+			kind, len(value), MaxSlug, value)
+	}
+	if !slugPattern.MatchString(value) {
+		return fmt.Errorf("%s %q is not a slug (%s)", kind, value, slugPattern.String())
+	}
+	return nil
+}
+
+// KnownPlugins is the default set of plugin names accepted by rule 6. There is
 // no runtime plugin registry in M2, so the compiler validates against the
 // documented builtins (docs/PLUGINS.md).
 var KnownPlugins = []string{"container", "file", "http", "shell"}
@@ -33,6 +70,10 @@ type Options struct {
 
 // document is the YAML shape of a *.ork.yaml file.
 type document struct {
+	// Namespace scopes the orkflow. Absent means the built-in "default"
+	// namespace, and it stays empty in the compiled message: "empty means
+	// default" is one rule, resolved once, where the name becomes a key.
+	Namespace   string            `yaml:"namespace"`
 	Name        string            `yaml:"name"`
 	Version     string            `yaml:"version"`
 	Description string            `yaml:"description"`
@@ -48,8 +89,13 @@ type taskDocument struct {
 	Condition      string         `yaml:"condition"`
 	TimeoutSeconds *int32         `yaml:"timeout_seconds"`
 	Retry          *retryDocument `yaml:"retry"`
-	Queue          string         `yaml:"queue"`
-	With           map[string]any `yaml:"with"`
+	// Pool is the set of Orkers this task runs on. Absent means the
+	// namespace's default pool, then the built-in pool "main".
+	Pool string         `yaml:"pool"`
+	With map[string]any `yaml:"with"`
+	// Removed carries keys this document may no longer use, decoded only so
+	// the compiler can refuse them by name (removed.go).
+	Removed removedTaskFields `yaml:",inline"`
 }
 
 type retryDocument struct {
@@ -74,7 +120,8 @@ func CompileFile(path string) (*orkstackv1.Orkflow, error) {
 
 // Compile parses, validates, and compiles a DSL document. The returned
 // Orkflow carries the original source bytes in SourceYaml; when the document
-// does not pin `version`, Version is a stable content hash of the document.
+// does not pin `version`, Version is the sha256 of those same bytes, so a
+// version always names the source it is stored with (sourceHash).
 func Compile(source []byte) (*orkstackv1.Orkflow, error) {
 	return CompileWithOptions(source, Options{})
 }
@@ -87,6 +134,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	wf := &orkstackv1.Orkflow{
+		Namespace:   doc.Namespace,
 		Name:        doc.Name,
 		Version:     doc.Version,
 		Description: doc.Description,
@@ -103,13 +151,16 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	for _, td := range doc.Tasks {
+		if err := td.Removed.check(td.ID); err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
 			Id:             td.ID,
 			Plugin:         td.Plugin,
 			Needs:          td.Needs,
 			Condition:      td.Condition,
 			TimeoutSeconds: DefaultTimeoutSeconds,
-			Queue:          td.Queue,
+			Pool:           td.Pool,
 		}
 		if td.TimeoutSeconds != nil {
 			task.TimeoutSeconds = *td.TimeoutSeconds
@@ -137,11 +188,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	if wf.GetVersion() == "" {
-		version, err := contentHash(source)
-		if err != nil {
-			return nil, err
-		}
-		wf.Version = version
+		wf.Version = sourceHash(source)
 	}
 	return wf, nil
 }
@@ -164,8 +211,12 @@ func normalizeValue(v any) any {
 		// YAML permits non-string keys, while JSON/Struct do not. Distinct YAML
 		// keys can stringify to the same value (for example null and "<nil>").
 		// Sort by both the normalized key and a typed identity before applying
-		// the unavoidable last-value-wins conversion so the result, and thus an
-		// unpinned content hash, is stable across map iteration order.
+		// the unavoidable last-value-wins conversion, so one document always
+		// compiles to one message. A version no longer depends on this — it is
+		// the source's hash — but the STORE compares the compiled document, so
+		// a compilation that varied with map iteration order would make
+		// re-applying an unchanged file a different document under a stored
+		// version (pkg/artifacts.sameStoredOrkflow).
 		type entry struct {
 			key      string
 			identity string

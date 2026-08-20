@@ -8,16 +8,19 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // fixedNow is the injected clock. Every timestamp the API stamps is therefore
@@ -47,6 +50,7 @@ func (s *stubStarter) StartRun(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	_ engine.RunPlan,
 ) error {
 	s.mu.Lock()
 	s.started = append(s.started, runID)
@@ -90,40 +94,156 @@ func (s *stubStarter) canceledRuns() []string {
 	return append([]string(nil), s.canceled...)
 }
 
+// memoryRegistry is the namespace registry the CLI fixture talks to: the
+// durable store's semantics in a map, including the conditional writes an
+// update compare-and-swaps on.
+//
+// The clock is the fixture's fixed one, so a namespace's created/updated
+// columns are stable and the human golden files can hold them.
+type memoryRegistry struct {
+	mu   sync.Mutex
+	docs map[string]*orkstackv1.Namespace
+	seq  int
+}
+
+func newMemoryRegistry() *memoryRegistry {
+	return &memoryRegistry{docs: map[string]*orkstackv1.Namespace{}}
+}
+
+func (r *memoryRegistry) Get(_ context.Context, name string) (*orkstackv1.Namespace, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	name = artifacts.ResolveNamespace(name)
+	if ns, ok := r.docs[name]; ok {
+		return proto.Clone(ns).(*orkstackv1.Namespace), nil
+	}
+	if name == artifacts.DefaultNamespace {
+		return artifacts.DefaultNamespaceDocument(), nil
+	}
+	return nil, fmt.Errorf("namespace %q: %w", name, artifacts.ErrNotFound)
+}
+
+func (r *memoryRegistry) List(_ context.Context) ([]*orkstackv1.Namespace, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	byName := map[string]*orkstackv1.Namespace{
+		artifacts.DefaultNamespace: artifacts.DefaultNamespaceDocument(),
+	}
+	for name, ns := range r.docs {
+		byName[name] = proto.Clone(ns).(*orkstackv1.Namespace)
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]*orkstackv1.Namespace, 0, len(names))
+	for _, name := range names {
+		out = append(out, byName[name])
+	}
+	return out, nil
+}
+
+func (r *memoryRegistry) Put(
+	_ context.Context,
+	ns *orkstackv1.Namespace,
+	cond artifacts.PutConditions,
+) (*orkstackv1.Namespace, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	name := artifacts.ResolveNamespace(ns.GetName())
+	existing, exists := r.docs[name]
+	if cond.IfAbsent && exists {
+		return nil, fmt.Errorf("put %q: %w", name, artifacts.ErrPreconditionFailed)
+	}
+	if cond.IfMatch != "" && (!exists || existing.GetEtag() != cond.IfMatch) {
+		return nil, fmt.Errorf("put %q: %w", name, artifacts.ErrPreconditionFailed)
+	}
+	r.seq++
+	stored := proto.Clone(ns).(*orkstackv1.Namespace)
+	stored.Name = name
+	stored.Etag = fmt.Sprintf("etag-%d", r.seq)
+	stored.UpdatedAt = timestamppb.New(fixedNow)
+	stored.CreatedAt = timestamppb.New(fixedNow)
+	if exists && existing.GetCreatedAt() != nil {
+		stored.CreatedAt = existing.GetCreatedAt()
+	}
+	r.docs[name] = stored
+	return proto.Clone(stored).(*orkstackv1.Namespace), nil
+}
+
+func (r *memoryRegistry) Delete(_ context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	name = artifacts.ResolveNamespace(name)
+	if _, ok := r.docs[name]; !ok {
+		return fmt.Errorf("namespace %q: %w", name, artifacts.ErrNotFound)
+	}
+	delete(r.docs, name)
+	return nil
+}
+
 // fixture is the real API server (the same one ork serves) listening on
 // a loopback port, plus the stores behind it.
 type fixture struct {
-	t       *testing.T
-	baseURL string
-	bus     *engine.EventBus
-	runs    *engine.RunStore
-	starter *stubStarter
+	t          *testing.T
+	baseURL    string
+	bus        *engine.EventBus
+	runs       *engine.RunStore
+	starter    *stubStarter
+	namespaces *memoryRegistry
+	// configPath is where this fixture's orkctl config file lives. Every
+	// invocation is pointed at it, so a test never reads or writes the
+	// developer's real one.
+	configPath string
 }
 
 // newFixture starts the real h2c Connect server in-process, mirroring
 // internal/api/service_test.go's harness.
 func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
 	t.Helper()
-	// A stray ORK_SERVER in the developer's environment must not reach the
-	// commands under test.
+	return newFixtureWith(t, nil, plugins...)
+}
+
+// newFixtureWith is newFixture with the service config left open for one more
+// seam, so a test about task logs does not need a second copy of this wiring.
+func newFixtureWith(
+	t *testing.T,
+	configure func(*api.Config),
+	plugins ...*orkstackv1.PluginInfo,
+) *fixture {
+	t.Helper()
+	// A stray ORK_SERVER or ORK_NAMESPACE in the developer's environment must
+	// not reach the commands under test, and neither must a config file they
+	// saved with `orkctl namespace use`: both would silently move every
+	// command in this package into another namespace.
 	t.Setenv(serverEnvVar, "")
+	t.Setenv(namespaceEnvVar, "")
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv(configEnvVar, configPath)
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
 	starter := &stubStarter{bus: bus}
+	namespaces := newMemoryRegistry()
 	counter := 0
-	svc := api.NewService(api.Config{
-		Orkflows: engine.NewMemoryOrkflowStore(),
-		Runs:     runs,
-		Bus:      bus,
-		Starter:  starter,
-		Plugins:  plugins,
-		Now:      func() time.Time { return fixedNow },
+	cfg := api.Config{
+		Orkflows:   engine.NewMemoryOrkflowStore(),
+		Namespaces: namespaces,
+		Runs:       runs,
+		Bus:        bus,
+		Starter:    starter,
+		Plugins:    plugins,
+		Now:        func() time.Time { return fixedNow },
 		NewRunID: func() string {
 			counter++
 			return fmt.Sprintf("run-%03d", counter)
 		},
-	})
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	svc := api.NewService(cfg)
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -138,11 +258,13 @@ func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
 	})
 
 	return &fixture{
-		t:       t,
-		baseURL: "http://" + listener.Addr().String(),
-		bus:     bus,
-		runs:    runs,
-		starter: starter,
+		t:          t,
+		baseURL:    "http://" + listener.Addr().String(),
+		bus:        bus,
+		runs:       runs,
+		starter:    starter,
+		namespaces: namespaces,
+		configPath: configPath,
 	}
 }
 

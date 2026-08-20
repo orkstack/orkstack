@@ -4,20 +4,23 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import { file_google_protobuf_struct } from "@bufbuild/protobuf/wkt";
+import type { Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_struct, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Payload, Status } from "./common_pb";
 import { file_orkstack_v1_common } from "./common_pb";
 import type { EventSchema, Run } from "./run_pb";
 import { file_orkstack_v1_run } from "./run_pb";
 import type { Orkflow } from "./orkflow_pb";
 import { file_orkstack_v1_orkflow } from "./orkflow_pb";
+import type { Namespace, Pool } from "./namespace_pb";
+import { file_orkstack_v1_namespace } from "./namespace_pb";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file orkstack/v1/service.proto.
  */
 export const file_orkstack_v1_service: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSIjChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkiTwoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkiMgoRR2V0T3JrZmxvd1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyI8ChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJIlcKFExpc3RPcmtmbG93c1Jlc3BvbnNlEiYKCG9ya2Zsb3dzGAEgAygLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkifwoQU3VibWl0UnVuUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAIgASgJEiMKBWlucHV0GAMgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIXCg9pZGVtcG90ZW5jeV9rZXkYBCABKAkiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIh8KDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJIi8KDkdldFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biJzCg9MaXN0UnVuc1JlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEiMKBnN0YXR1cxgCIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIRCglwYWdlX3NpemUYAyABKAUSEgoKcGFnZV90b2tlbhgEIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIjIKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSIyChFDYW5jZWxSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iPAoTU3RyZWFtRXZlbnRzUmVxdWVzdBIOCgZydW5faWQYASABKAkSFQoNZnJvbV9zZXF1ZW5jZRgCIAEoAyIUChJMaXN0UGx1Z2luc1JlcXVlc3QinwEKClBsdWdpbkluZm8SDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEi0KDGlucHV0X3NjaGVtYRgEIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSLgoNb3V0cHV0X3NjaGVtYRgFIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QiPwoTTGlzdFBsdWdpbnNSZXNwb25zZRIoCgdwbHVnaW5zGAEgAygLMhcub3Jrc3RhY2sudjEuUGx1Z2luSW5mbzKJAgoOT3JrZmxvd1NlcnZpY2USUwoMQXBwbHlPcmtmbG93EiAub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVxdWVzdBohLm9ya3N0YWNrLnYxLkFwcGx5T3JrZmxvd1Jlc3BvbnNlEk0KCkdldE9ya2Zsb3cSHi5vcmtzdGFjay52MS5HZXRPcmtmbG93UmVxdWVzdBofLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXNwb25zZRJTCgxMaXN0T3JrZmxvd3MSIC5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXF1ZXN0GiEub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dzUmVzcG9uc2Uy+AIKClJ1blNlcnZpY2USSgoJU3VibWl0UnVuEh0ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlc3BvbnNlEkEKBkdldFJ1bhIaLm9ya3N0YWNrLnYxLkdldFJ1blJlcXVlc3QaGy5vcmtzdGFjay52MS5HZXRSdW5SZXNwb25zZRJHCghMaXN0UnVucxIcLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVxdWVzdBodLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVzcG9uc2USSgoJQ2FuY2VsUnVuEh0ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlc3BvbnNlEkYKDFN0cmVhbUV2ZW50cxIgLm9ya3N0YWNrLnYxLlN0cmVhbUV2ZW50c1JlcXVlc3QaEi5vcmtzdGFjay52MS5FdmVudDABMmEKDVBsdWdpblNlcnZpY2USUAoLTGlzdFBsdWdpbnMSHy5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1JlcXVlc3QaIC5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1Jlc3BvbnNlQqgBCg9jb20ub3Jrc3RhY2sudjFCDFNlcnZpY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow]);
+  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSJMChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEhQKDGJhc2VfdmVyc2lvbhgDIAEoCSJgChRBcHBseU9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIQCgh3YXJuaW5ncxgCIAMoCRIPCgdjcmVhdGVkGAMgASgIIkUKEUdldE9ya2Zsb3dSZXF1ZXN0EgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkiOwoSR2V0T3JrZmxvd1Jlc3BvbnNlEiUKB29ya2Zsb3cYASABKAsyFC5vcmtzdGFjay52MS5PcmtmbG93Ik8KE0xpc3RPcmtmbG93c1JlcXVlc3QSEQoJcGFnZV9zaXplGAEgASgFEhIKCnBhZ2VfdG9rZW4YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIlcKFExpc3RPcmtmbG93c1Jlc3BvbnNlEiYKCG9ya2Zsb3dzGAEgAygLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkiegoOT3JrZmxvd1ZlcnNpb24SDwoHdmVyc2lvbhgBIAEoCRIuCgphcHBsaWVkX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgppc19jdXJyZW50GAMgASgIEhMKC2Rlc2NyaXB0aW9uGAQgASgJIj0KGkxpc3RPcmtmbG93VmVyc2lvbnNSZXF1ZXN0EgwKBG5hbWUYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJInsKG0xpc3RPcmtmbG93VmVyc2lvbnNSZXNwb25zZRItCgh2ZXJzaW9ucxgBIAMoCzIbLm9ya3N0YWNrLnYxLk9ya2Zsb3dWZXJzaW9uEhcKD2N1cnJlbnRfdmVyc2lvbhgCIAEoCRIUCgxoZWFkX3ZlcnNpb24YAyABKAkiUwofU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVxdWVzdBIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIqYBCiBTZXRDdXJyZW50T3JrZmxvd1ZlcnNpb25SZXNwb25zZRIMCgRuYW1lGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCRIXCg9jdXJyZW50X3ZlcnNpb24YAyABKAkSGAoQcHJldmlvdXNfdmVyc2lvbhgEIAEoCRIuCgp1cGRhdGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJnChpEaWZmT3JrZmxvd1ZlcnNpb25zUmVxdWVzdBIMCgRuYW1lGAEgASgJEhQKDGZyb21fdmVyc2lvbhgCIAEoCRISCgp0b192ZXJzaW9uGAMgASgJEhEKCW5hbWVzcGFjZRgEIAEoCSJdChtEaWZmT3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USFAoMdW5pZmllZF9kaWZmGAEgASgJEhQKDGZyb21fdmVyc2lvbhgCIAEoCRISCgp0b192ZXJzaW9uGAMgASgJIqwBChBTdWJtaXRSdW5SZXF1ZXN0EhQKDG9ya2Zsb3dfbmFtZRgBIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YAiABKAkSIwoFaW5wdXQYAyABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEhcKD2lkZW1wb3RlbmN5X2tleRgEIAEoCRIRCgluYW1lc3BhY2UYBSABKAkSGAoQYWxsb3dfZW1wdHlfcG9vbBgGIAEoCCIyChFTdWJtaXRSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iMgoNR2V0UnVuUmVxdWVzdBIOCgZydW5faWQYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJIi8KDkdldFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biKGAQoPTGlzdFJ1bnNSZXF1ZXN0EhQKDG9ya2Zsb3dfbmFtZRgBIAEoCRIjCgZzdGF0dXMYAiABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSEQoJcGFnZV9zaXplGAMgASgFEhIKCnBhZ2VfdG9rZW4YBCABKAkSEQoJbmFtZXNwYWNlGAUgASgJIksKEExpc3RSdW5zUmVzcG9uc2USHgoEcnVucxgBIAMoCzIQLm9ya3N0YWNrLnYxLlJ1bhIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkiRQoQQ2FuY2VsUnVuUmVxdWVzdBIOCgZydW5faWQYASABKAkSDgoGcmVhc29uGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSIyChFDYW5jZWxSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iTwoTU3RyZWFtRXZlbnRzUmVxdWVzdBIOCgZydW5faWQYASABKAkSFQoNZnJvbV9zZXF1ZW5jZRgCIAEoAxIRCgluYW1lc3BhY2UYAyABKAkilAEKFVN0cmVhbVRhc2tMb2dzUmVxdWVzdBIOCgZydW5faWQYASABKAkSDwoHdGFza19pZBgCIAEoCRIPCgdhdHRlbXB0GAMgASgFEhAKCGZyb21fc2VxGAQgASgDEhQKDGZyb21fYXR0ZW1wdBgHIAEoBRIOCgZmb2xsb3cYBSABKAgSEQoJbmFtZXNwYWNlGAYgASgJInwKDFRhc2tMb2dDaHVuaxIOCgZydW5faWQYASABKAkSDwoHdGFza19pZBgCIAEoCRIPCgdhdHRlbXB0GAMgASgFEgsKA3NlcRgEIAEoAxIMCgRkYXRhGAUgASgMEhEKCXRydW5jYXRlZBgGIAEoCBIMCgRsYXN0GAcgASgIIkMKFkNyZWF0ZU5hbWVzcGFjZVJlcXVlc3QSKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIlUKF0NyZWF0ZU5hbWVzcGFjZVJlc3BvbnNlEikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZRIPCgdjcmVhdGVkGAIgASgIIiMKE0dldE5hbWVzcGFjZVJlcXVlc3QSDAoEbmFtZRgBIAEoCSJBChRHZXROYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiFwoVTGlzdE5hbWVzcGFjZXNSZXF1ZXN0IkQKFkxpc3ROYW1lc3BhY2VzUmVzcG9uc2USKgoKbmFtZXNwYWNlcxgBIAMoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJDChZVcGRhdGVOYW1lc3BhY2VSZXF1ZXN0EikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJEChdVcGRhdGVOYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiJgoWRGVsZXRlTmFtZXNwYWNlUmVxdWVzdBIMCgRuYW1lGAEgASgJIhkKF0RlbGV0ZU5hbWVzcGFjZVJlc3BvbnNlIiUKEExpc3RQb29sc1JlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJIksKEUxpc3RQb29sc1Jlc3BvbnNlEiAKBXBvb2xzGAEgAygLMhEub3Jrc3RhY2sudjEuUG9vbBIUCgxkZWZhdWx0X3Bvb2wYAiABKAkiFAoSTGlzdFBsdWdpbnNSZXF1ZXN0Ip8BCgpQbHVnaW5JbmZvEgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCRITCgtkZXNjcmlwdGlvbhgDIAEoCRItCgxpbnB1dF9zY2hlbWEYBCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Ei4KDW91dHB1dF9zY2hlbWEYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Ij8KE0xpc3RQbHVnaW5zUmVzcG9uc2USKAoHcGx1Z2lucxgBIAMoCzIXLm9ya3N0YWNrLnYxLlBsdWdpbkluZm8y1gQKDk9ya2Zsb3dTZXJ2aWNlElMKDEFwcGx5T3JrZmxvdxIgLm9ya3N0YWNrLnYxLkFwcGx5T3JrZmxvd1JlcXVlc3QaIS5vcmtzdGFjay52MS5BcHBseU9ya2Zsb3dSZXNwb25zZRJNCgpHZXRPcmtmbG93Eh4ub3Jrc3RhY2sudjEuR2V0T3JrZmxvd1JlcXVlc3QaHy5vcmtzdGFjay52MS5HZXRPcmtmbG93UmVzcG9uc2USUwoMTGlzdE9ya2Zsb3dzEiAub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dzUmVxdWVzdBohLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93c1Jlc3BvbnNlEmgKE0xpc3RPcmtmbG93VmVyc2lvbnMSJy5vcmtzdGFjay52MS5MaXN0T3JrZmxvd1ZlcnNpb25zUmVxdWVzdBooLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93VmVyc2lvbnNSZXNwb25zZRJ3ChhTZXRDdXJyZW50T3JrZmxvd1ZlcnNpb24SLC5vcmtzdGFjay52MS5TZXRDdXJyZW50T3JrZmxvd1ZlcnNpb25SZXF1ZXN0Gi0ub3Jrc3RhY2sudjEuU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVzcG9uc2USaAoTRGlmZk9ya2Zsb3dWZXJzaW9ucxInLm9ya3N0YWNrLnYxLkRpZmZPcmtmbG93VmVyc2lvbnNSZXF1ZXN0Gigub3Jrc3RhY2sudjEuRGlmZk9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlMssDCgpSdW5TZXJ2aWNlEkoKCVN1Ym1pdFJ1bhIdLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlcXVlc3QaHi5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXNwb25zZRJBCgZHZXRSdW4SGi5vcmtzdGFjay52MS5HZXRSdW5SZXF1ZXN0Ghsub3Jrc3RhY2sudjEuR2V0UnVuUmVzcG9uc2USRwoITGlzdFJ1bnMSHC5vcmtzdGFjay52MS5MaXN0UnVuc1JlcXVlc3QaHS5vcmtzdGFjay52MS5MaXN0UnVuc1Jlc3BvbnNlEkoKCUNhbmNlbFJ1bhIdLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlcXVlc3QaHi5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXNwb25zZRJGCgxTdHJlYW1FdmVudHMSIC5vcmtzdGFjay52MS5TdHJlYW1FdmVudHNSZXF1ZXN0GhIub3Jrc3RhY2sudjEuRXZlbnQwARJRCg5TdHJlYW1UYXNrTG9ncxIiLm9ya3N0YWNrLnYxLlN0cmVhbVRhc2tMb2dzUmVxdWVzdBoZLm9ya3N0YWNrLnYxLlRhc2tMb2dDaHVuazABMqgEChBOYW1lc3BhY2VTZXJ2aWNlElwKD0NyZWF0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLkNyZWF0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5DcmVhdGVOYW1lc3BhY2VSZXNwb25zZRJTCgxHZXROYW1lc3BhY2USIC5vcmtzdGFjay52MS5HZXROYW1lc3BhY2VSZXF1ZXN0GiEub3Jrc3RhY2sudjEuR2V0TmFtZXNwYWNlUmVzcG9uc2USWQoOTGlzdE5hbWVzcGFjZXMSIi5vcmtzdGFjay52MS5MaXN0TmFtZXNwYWNlc1JlcXVlc3QaIy5vcmtzdGFjay52MS5MaXN0TmFtZXNwYWNlc1Jlc3BvbnNlElwKD1VwZGF0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLlVwZGF0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5VcGRhdGVOYW1lc3BhY2VSZXNwb25zZRJcCg9EZWxldGVOYW1lc3BhY2USIy5vcmtzdGFjay52MS5EZWxldGVOYW1lc3BhY2VSZXF1ZXN0GiQub3Jrc3RhY2sudjEuRGVsZXRlTmFtZXNwYWNlUmVzcG9uc2USSgoJTGlzdFBvb2xzEh0ub3Jrc3RhY2sudjEuTGlzdFBvb2xzUmVxdWVzdBoeLm9ya3N0YWNrLnYxLkxpc3RQb29sc1Jlc3BvbnNlMmEKDVBsdWdpblNlcnZpY2USUAoLTGlzdFBsdWdpbnMSHy5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1JlcXVlc3QaIC5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1Jlc3BvbnNlQqgBCg9jb20ub3Jrc3RhY2sudjFCDFNlcnZpY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
 
 /**
  * @generated from message orkstack.v1.ApplyOrkflowRequest
@@ -29,6 +32,37 @@ export type ApplyOrkflowRequest = Message<"orkstack.v1.ApplyOrkflowRequest"> & {
    * @generated from field: string yaml = 1;
    */
   yaml: string;
+
+  /**
+   * namespace selects where the document is applied. Empty honours the
+   * document's own `namespace:` (itself empty = "default"); a non-empty value
+   * must EQUAL the document's namespace, or the document names none and is
+   * applied INTO this one. The two are never allowed to disagree silently: a
+   * file that says `namespace: payments` applied with -n staging is a mistake
+   * one of the two made, and guessing which would store the definition
+   * somewhere its author cannot find it.
+   *
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
+
+  /**
+   * base_version is the optimistic-concurrency token: the version this edit
+   * was derived from. The server compares it against the HEAD version (the
+   * most recently applied one, which is what an editor last read) and refuses
+   * with FailedPrecondition when they differ, naming both — so an edit made
+   * from a stale copy is reported instead of landing beside a newer one
+   * nobody looked at. Empty means unchecked, which is what a plain
+   * `orkctl apply file.yaml` sends.
+   *
+   * It is a VERSION token rather than a content hash. Both detect the same
+   * staleness; only the token names something the user can act on —
+   * `orkctl orkflow diff <name> <base_version> <head>` shows exactly what
+   * arrived underneath the edit. A hash names nothing.
+   *
+   * @generated from field: string base_version = 3;
+   */
+  baseVersion: string;
 };
 
 /**
@@ -51,6 +85,16 @@ export type ApplyOrkflowResponse = Message<"orkstack.v1.ApplyOrkflowResponse"> &
    * @generated from field: repeated string warnings = 2;
    */
   warnings: string[];
+
+  /**
+   * created is false when this apply stored nothing because the version was
+   * already there with byte-identical source YAML. The orkflow above is then
+   * the STORED document, created_at and all, not the one this request would
+   * have written.
+   *
+   * @generated from field: bool created = 3;
+   */
+  created: boolean;
 };
 
 /**
@@ -70,11 +114,20 @@ export type GetOrkflowRequest = Message<"orkstack.v1.GetOrkflowRequest"> & {
   name: string;
 
   /**
-   * empty = latest
+   * version selects one stored version. Empty resolves through the current
+   * pointer when one has been set, and to the most recently applied version
+   * when none ever was.
    *
    * @generated from field: string version = 2;
    */
   version: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 3;
+   */
+  namespace: string;
 };
 
 /**
@@ -114,6 +167,13 @@ export type ListOrkflowsRequest = Message<"orkstack.v1.ListOrkflowsRequest"> & {
    * @generated from field: string page_token = 2;
    */
   pageToken: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 3;
+   */
+  namespace: string;
 };
 
 /**
@@ -146,6 +206,247 @@ export const ListOrkflowsResponseSchema: GenMessage<ListOrkflowsResponse> = /*@_
   messageDesc(file_orkstack_v1_service, 5);
 
 /**
+ * OrkflowVersion is one stored version in a version listing: the document's
+ * coordinates, not the document.
+ *
+ * @generated from message orkstack.v1.OrkflowVersion
+ */
+export type OrkflowVersion = Message<"orkstack.v1.OrkflowVersion"> & {
+  /**
+   * @generated from field: string version = 1;
+   */
+  version: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp applied_at = 2;
+   */
+  appliedAt?: Timestamp | undefined;
+
+  /**
+   * is_current marks the version an empty version resolves to — the pointer's
+   * target when one is set, otherwise the most recently applied version.
+   *
+   * @generated from field: bool is_current = 3;
+   */
+  isCurrent: boolean;
+
+  /**
+   * @generated from field: string description = 4;
+   */
+  description: string;
+};
+
+/**
+ * Describes the message orkstack.v1.OrkflowVersion.
+ * Use `create(OrkflowVersionSchema)` to create a new message.
+ */
+export const OrkflowVersionSchema: GenMessage<OrkflowVersion> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 6);
+
+/**
+ * @generated from message orkstack.v1.ListOrkflowVersionsRequest
+ */
+export type ListOrkflowVersionsRequest = Message<"orkstack.v1.ListOrkflowVersionsRequest"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
+};
+
+/**
+ * Describes the message orkstack.v1.ListOrkflowVersionsRequest.
+ * Use `create(ListOrkflowVersionsRequestSchema)` to create a new message.
+ */
+export const ListOrkflowVersionsRequestSchema: GenMessage<ListOrkflowVersionsRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 7);
+
+/**
+ * @generated from message orkstack.v1.ListOrkflowVersionsResponse
+ */
+export type ListOrkflowVersionsResponse = Message<"orkstack.v1.ListOrkflowVersionsResponse"> & {
+  /**
+   * newest applied first
+   *
+   * @generated from field: repeated orkstack.v1.OrkflowVersion versions = 1;
+   */
+  versions: OrkflowVersion[];
+
+  /**
+   * current_version is the pointer's target, empty when nobody ever promoted
+   * this orkflow. Empty does NOT mean "nothing runs": resolution then falls
+   * back to head_version.
+   *
+   * @generated from field: string current_version = 2;
+   */
+  currentVersion: string;
+
+  /**
+   * head_version is the most recently applied version — the edit lineage's
+   * tip, and the base_version an editor should send back.
+   *
+   * @generated from field: string head_version = 3;
+   */
+  headVersion: string;
+};
+
+/**
+ * Describes the message orkstack.v1.ListOrkflowVersionsResponse.
+ * Use `create(ListOrkflowVersionsResponseSchema)` to create a new message.
+ */
+export const ListOrkflowVersionsResponseSchema: GenMessage<ListOrkflowVersionsResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 8);
+
+/**
+ * @generated from message orkstack.v1.SetCurrentOrkflowVersionRequest
+ */
+export type SetCurrentOrkflowVersionRequest = Message<"orkstack.v1.SetCurrentOrkflowVersionRequest"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * must already exist
+   *
+   * @generated from field: string version = 2;
+   */
+  version: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 3;
+   */
+  namespace: string;
+};
+
+/**
+ * Describes the message orkstack.v1.SetCurrentOrkflowVersionRequest.
+ * Use `create(SetCurrentOrkflowVersionRequestSchema)` to create a new message.
+ */
+export const SetCurrentOrkflowVersionRequestSchema: GenMessage<SetCurrentOrkflowVersionRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 9);
+
+/**
+ * @generated from message orkstack.v1.SetCurrentOrkflowVersionResponse
+ */
+export type SetCurrentOrkflowVersionResponse = Message<"orkstack.v1.SetCurrentOrkflowVersionResponse"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: string current_version = 3;
+   */
+  currentVersion: string;
+
+  /**
+   * previous_version is what the pointer named before, empty when it was
+   * never set. It is what a rollback promotes back to.
+   *
+   * @generated from field: string previous_version = 4;
+   */
+  previousVersion: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp updated_at = 5;
+   */
+  updatedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.SetCurrentOrkflowVersionResponse.
+ * Use `create(SetCurrentOrkflowVersionResponseSchema)` to create a new message.
+ */
+export const SetCurrentOrkflowVersionResponseSchema: GenMessage<SetCurrentOrkflowVersionResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 10);
+
+/**
+ * @generated from message orkstack.v1.DiffOrkflowVersionsRequest
+ */
+export type DiffOrkflowVersionsRequest = Message<"orkstack.v1.DiffOrkflowVersionsRequest"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * empty = the resolved current version
+   *
+   * @generated from field: string from_version = 2;
+   */
+  fromVersion: string;
+
+  /**
+   * empty = the resolved current version
+   *
+   * @generated from field: string to_version = 3;
+   */
+  toVersion: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 4;
+   */
+  namespace: string;
+};
+
+/**
+ * Describes the message orkstack.v1.DiffOrkflowVersionsRequest.
+ * Use `create(DiffOrkflowVersionsRequestSchema)` to create a new message.
+ */
+export const DiffOrkflowVersionsRequestSchema: GenMessage<DiffOrkflowVersionsRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 11);
+
+/**
+ * @generated from message orkstack.v1.DiffOrkflowVersionsResponse
+ */
+export type DiffOrkflowVersionsResponse = Message<"orkstack.v1.DiffOrkflowVersionsResponse"> & {
+  /**
+   * unified_diff is standard unified-diff text, empty when the two versions'
+   * source YAML is identical.
+   *
+   * @generated from field: string unified_diff = 1;
+   */
+  unifiedDiff: string;
+
+  /**
+   * resolved
+   *
+   * @generated from field: string from_version = 2;
+   */
+  fromVersion: string;
+
+  /**
+   * resolved
+   *
+   * @generated from field: string to_version = 3;
+   */
+  toVersion: string;
+};
+
+/**
+ * Describes the message orkstack.v1.DiffOrkflowVersionsResponse.
+ * Use `create(DiffOrkflowVersionsResponseSchema)` to create a new message.
+ */
+export const DiffOrkflowVersionsResponseSchema: GenMessage<DiffOrkflowVersionsResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 12);
+
+/**
  * @generated from message orkstack.v1.SubmitRunRequest
  */
 export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
@@ -174,6 +475,26 @@ export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
    * @generated from field: string idempotency_key = 4;
    */
   idempotencyKey: string;
+
+  /**
+   * namespace selects which namespace's orkflow_name is submitted. Empty is
+   * the default namespace. A name is unique WITHIN a namespace, so this is
+   * half of the orkflow's address, not a filter.
+   *
+   * @generated from field: string namespace = 5;
+   */
+  namespace: string;
+
+  /**
+   *
+   * allow_empty_pool submits even when a task's resolved pool has no live
+   * Orkers. Default false: an empty pool is an error at submit, not a run
+   * that reaches RUNNING and stays there because nothing will ever pick its
+   * tasks up. Setting it is logged with the pool it overrode.
+   *
+   * @generated from field: bool allow_empty_pool = 6;
+   */
+  allowEmptyPool: boolean;
 };
 
 /**
@@ -181,7 +502,7 @@ export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
  * Use `create(SubmitRunRequestSchema)` to create a new message.
  */
 export const SubmitRunRequestSchema: GenMessage<SubmitRunRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 6);
+  messageDesc(file_orkstack_v1_service, 13);
 
 /**
  * @generated from message orkstack.v1.SubmitRunResponse
@@ -198,9 +519,18 @@ export type SubmitRunResponse = Message<"orkstack.v1.SubmitRunResponse"> & {
  * Use `create(SubmitRunResponseSchema)` to create a new message.
  */
 export const SubmitRunResponseSchema: GenMessage<SubmitRunResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 7);
+  messageDesc(file_orkstack_v1_service, 14);
 
 /**
+ * A run id addresses a run INSIDE a namespace, exactly as an orkflow name
+ * does. It is unguessable, but unguessable is not a tenancy boundary: an id
+ * travels into logs, tickets and CI transcripts, and CancelRun is a write. So
+ * every request that carries one carries the namespace it is addressed in, on
+ * the same rule as every other namespace field — empty is the default
+ * namespace, never "any of them". A run of another namespace is NotFound, not
+ * PermissionDenied: telling the two apart would confirm to a caller who may
+ * not name the namespace that the id exists.
+ *
  * @generated from message orkstack.v1.GetRunRequest
  */
 export type GetRunRequest = Message<"orkstack.v1.GetRunRequest"> & {
@@ -208,6 +538,13 @@ export type GetRunRequest = Message<"orkstack.v1.GetRunRequest"> & {
    * @generated from field: string run_id = 1;
    */
   runId: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
 };
 
 /**
@@ -215,7 +552,7 @@ export type GetRunRequest = Message<"orkstack.v1.GetRunRequest"> & {
  * Use `create(GetRunRequestSchema)` to create a new message.
  */
 export const GetRunRequestSchema: GenMessage<GetRunRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 8);
+  messageDesc(file_orkstack_v1_service, 15);
 
 /**
  * @generated from message orkstack.v1.GetRunResponse
@@ -232,7 +569,7 @@ export type GetRunResponse = Message<"orkstack.v1.GetRunResponse"> & {
  * Use `create(GetRunResponseSchema)` to create a new message.
  */
 export const GetRunResponseSchema: GenMessage<GetRunResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 9);
+  messageDesc(file_orkstack_v1_service, 16);
 
 /**
  * @generated from message orkstack.v1.ListRunsRequest
@@ -261,6 +598,13 @@ export type ListRunsRequest = Message<"orkstack.v1.ListRunsRequest"> & {
    * @generated from field: string page_token = 4;
    */
   pageToken: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 5;
+   */
+  namespace: string;
 };
 
 /**
@@ -268,7 +612,7 @@ export type ListRunsRequest = Message<"orkstack.v1.ListRunsRequest"> & {
  * Use `create(ListRunsRequestSchema)` to create a new message.
  */
 export const ListRunsRequestSchema: GenMessage<ListRunsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 10);
+  messageDesc(file_orkstack_v1_service, 17);
 
 /**
  * @generated from message orkstack.v1.ListRunsResponse
@@ -290,7 +634,7 @@ export type ListRunsResponse = Message<"orkstack.v1.ListRunsResponse"> & {
  * Use `create(ListRunsResponseSchema)` to create a new message.
  */
 export const ListRunsResponseSchema: GenMessage<ListRunsResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 11);
+  messageDesc(file_orkstack_v1_service, 18);
 
 /**
  * @generated from message orkstack.v1.CancelRunRequest
@@ -305,6 +649,13 @@ export type CancelRunRequest = Message<"orkstack.v1.CancelRunRequest"> & {
    * @generated from field: string reason = 2;
    */
   reason: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 3;
+   */
+  namespace: string;
 };
 
 /**
@@ -312,7 +663,7 @@ export type CancelRunRequest = Message<"orkstack.v1.CancelRunRequest"> & {
  * Use `create(CancelRunRequestSchema)` to create a new message.
  */
 export const CancelRunRequestSchema: GenMessage<CancelRunRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 12);
+  messageDesc(file_orkstack_v1_service, 19);
 
 /**
  * @generated from message orkstack.v1.CancelRunResponse
@@ -329,7 +680,7 @@ export type CancelRunResponse = Message<"orkstack.v1.CancelRunResponse"> & {
  * Use `create(CancelRunResponseSchema)` to create a new message.
  */
 export const CancelRunResponseSchema: GenMessage<CancelRunResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 13);
+  messageDesc(file_orkstack_v1_service, 20);
 
 /**
  * @generated from message orkstack.v1.StreamEventsRequest
@@ -344,6 +695,13 @@ export type StreamEventsRequest = Message<"orkstack.v1.StreamEventsRequest"> & {
    * @generated from field: int64 from_sequence = 2;
    */
   fromSequence: bigint;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 3;
+   */
+  namespace: string;
 };
 
 /**
@@ -351,7 +709,388 @@ export type StreamEventsRequest = Message<"orkstack.v1.StreamEventsRequest"> & {
  * Use `create(StreamEventsRequestSchema)` to create a new message.
  */
 export const StreamEventsRequestSchema: GenMessage<StreamEventsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 14);
+  messageDesc(file_orkstack_v1_service, 21);
+
+/**
+ * @generated from message orkstack.v1.StreamTaskLogsRequest
+ */
+export type StreamTaskLogsRequest = Message<"orkstack.v1.StreamTaskLogsRequest"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: string task_id = 2;
+   */
+  taskId: string;
+
+  /**
+   * attempt selects one try of the task. 0 means the latest attempt that has
+   * written anything, so a caller that never saw a retry does not have to
+   * know retries exist.
+   *
+   * With `follow`, 0 keeps meaning THE LATEST for as long as the stream is
+   * open, not merely when it opened. A Temporal activity retry is invisible in
+   * a task's status — the task stays RUNNING while try 2 starts under a new
+   * key prefix — so a stream that resolved the attempt once would sit on a
+   * dead attempt, delivering nothing, for the rest of the task's life, and say
+   * it was live. When a later attempt appears the stream moves to it and
+   * delivers that attempt from its FIRST chunk; every chunk names the attempt
+   * it belongs to, and its seq restarts at 1, so a client can tell a new
+   * attempt from more of the old one. A non-zero attempt is pinned and never
+   * moves.
+   *
+   * @generated from field: int32 attempt = 3;
+   */
+  attempt: number;
+
+  /**
+   * from_seq resumes AFTER this sequence: it is the LAST chunk sequence the
+   * client already received, and the stream continues with the next one. 0
+   * starts at the beginning. It is the same contract
+   * StreamEvents.from_sequence has, over the log's own numbering — dense and
+   * 1-based per (run, task, attempt) — so a client that hands back the seq of
+   * the last chunk it saw replays nothing twice and misses nothing, even when
+   * it reconnects to a DIFFERENT replica.
+   *
+   * @generated from field: int64 from_seq = 4;
+   */
+  fromSeq: bigint;
+
+  /**
+   * from_attempt says which attempt from_seq counts chunks of. It is what
+   * makes a resume safe across a retry: seq is dense per ATTEMPT, so a cursor
+   * of 500 handed back after try 1 would silently skip try 2's first 500
+   * chunks — or, since try 2 is usually shorter, would deliver nothing at all
+   * while the pane read LIVE.
+   *
+   * 0 means "the attempt this request resolves to", which is what a first
+   * connection means and what a client pinning `attempt` means. When it names
+   * a DIFFERENT attempt from the one resolved, from_seq is dropped and the
+   * resolved attempt is delivered from its first chunk: a new attempt is a new
+   * read, not a continuation of the old one.
+   *
+   * @generated from field: int32 from_attempt = 7;
+   */
+  fromAttempt: number;
+
+  /**
+   * follow keeps the stream open for chunks that do not exist yet, ending
+   * when the task reaches a terminal state. False makes it a replay: the
+   * chunks the store holds when the request is served, then the end — whether
+   * or not the task is still writing, so a replay never turns into a follow.
+   *
+   * @generated from field: bool follow = 5;
+   */
+  follow: boolean;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 6;
+   */
+  namespace: string;
+};
+
+/**
+ * Describes the message orkstack.v1.StreamTaskLogsRequest.
+ * Use `create(StreamTaskLogsRequestSchema)` to create a new message.
+ */
+export const StreamTaskLogsRequestSchema: GenMessage<StreamTaskLogsRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 22);
+
+/**
+ * TaskLogChunk is one slice of a task attempt's output, exactly as the Orker
+ * flushed it.
+ *
+ * @generated from message orkstack.v1.TaskLogChunk
+ */
+export type TaskLogChunk = Message<"orkstack.v1.TaskLogChunk"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: string task_id = 2;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: int32 attempt = 3;
+   */
+  attempt: number;
+
+  /**
+   * seq orders the chunk within (run_id, task_id, attempt): dense, starting
+   * at 1. It is assigned by the single Orker executing the attempt, so it is
+   * total and gap-free without any coordination, and it is what a client
+   * hands back as from_seq.
+   *
+   * @generated from field: int64 seq = 4;
+   */
+  seq: bigint;
+
+  /**
+   * data is UTF-8 log bytes ending on a line boundary, except where one line
+   * exceeded the chunk limit and was split.
+   *
+   * @generated from field: bytes data = 5;
+   */
+  data: Uint8Array;
+
+  /**
+   * truncated marks the notice chunk the Orker writes when a task's output
+   * passed its cap. Its data says so in words; no further output was stored.
+   * Truncation is visible in the stream, never silent.
+   *
+   * @generated from field: bool truncated = 6;
+   */
+  truncated: boolean;
+
+  /**
+   * last marks the end of the stream: everything this stream will deliver has
+   * been delivered, and its seq is the last sequence sent, so a client resumes
+   * from it. With follow that means the task reached a terminal state; without
+   * follow it means the replay is complete. It carries no data.
+   *
+   * @generated from field: bool last = 7;
+   */
+  last: boolean;
+};
+
+/**
+ * Describes the message orkstack.v1.TaskLogChunk.
+ * Use `create(TaskLogChunkSchema)` to create a new message.
+ */
+export const TaskLogChunkSchema: GenMessage<TaskLogChunk> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 23);
+
+/**
+ * @generated from message orkstack.v1.CreateNamespaceRequest
+ */
+export type CreateNamespaceRequest = Message<"orkstack.v1.CreateNamespaceRequest"> & {
+  /**
+   * name is required; times are the registry's
+   *
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.CreateNamespaceRequest.
+ * Use `create(CreateNamespaceRequestSchema)` to create a new message.
+ */
+export const CreateNamespaceRequestSchema: GenMessage<CreateNamespaceRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 24);
+
+/**
+ * @generated from message orkstack.v1.CreateNamespaceResponse
+ */
+export type CreateNamespaceResponse = Message<"orkstack.v1.CreateNamespaceResponse"> & {
+  /**
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+
+  /**
+   * created is false when an identical namespace already existed, so an
+   * idempotent repeat is distinguishable from the write that did it.
+   *
+   * @generated from field: bool created = 2;
+   */
+  created: boolean;
+};
+
+/**
+ * Describes the message orkstack.v1.CreateNamespaceResponse.
+ * Use `create(CreateNamespaceResponseSchema)` to create a new message.
+ */
+export const CreateNamespaceResponseSchema: GenMessage<CreateNamespaceResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 25);
+
+/**
+ * @generated from message orkstack.v1.GetNamespaceRequest
+ */
+export type GetNamespaceRequest = Message<"orkstack.v1.GetNamespaceRequest"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message orkstack.v1.GetNamespaceRequest.
+ * Use `create(GetNamespaceRequestSchema)` to create a new message.
+ */
+export const GetNamespaceRequestSchema: GenMessage<GetNamespaceRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 26);
+
+/**
+ * @generated from message orkstack.v1.GetNamespaceResponse
+ */
+export type GetNamespaceResponse = Message<"orkstack.v1.GetNamespaceResponse"> & {
+  /**
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.GetNamespaceResponse.
+ * Use `create(GetNamespaceResponseSchema)` to create a new message.
+ */
+export const GetNamespaceResponseSchema: GenMessage<GetNamespaceResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 27);
+
+/**
+ * @generated from message orkstack.v1.ListNamespacesRequest
+ */
+export type ListNamespacesRequest = Message<"orkstack.v1.ListNamespacesRequest"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.ListNamespacesRequest.
+ * Use `create(ListNamespacesRequestSchema)` to create a new message.
+ */
+export const ListNamespacesRequestSchema: GenMessage<ListNamespacesRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 28);
+
+/**
+ * @generated from message orkstack.v1.ListNamespacesResponse
+ */
+export type ListNamespacesResponse = Message<"orkstack.v1.ListNamespacesResponse"> & {
+  /**
+   * @generated from field: repeated orkstack.v1.Namespace namespaces = 1;
+   */
+  namespaces: Namespace[];
+};
+
+/**
+ * Describes the message orkstack.v1.ListNamespacesResponse.
+ * Use `create(ListNamespacesResponseSchema)` to create a new message.
+ */
+export const ListNamespacesResponseSchema: GenMessage<ListNamespacesResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 29);
+
+/**
+ * @generated from message orkstack.v1.UpdateNamespaceRequest
+ */
+export type UpdateNamespaceRequest = Message<"orkstack.v1.UpdateNamespaceRequest"> & {
+  /**
+   * namespace carries the new spec and the etag it was read at. Every update
+   * is conditional: the etag names the stored version this edit replaces, and
+   * an empty etag says the version it edited had no stored bytes at all —
+   * which is what a read of the synthesized `default` namespace hands back.
+   * Both are compare-and-swaps, and a write whose condition no longer holds
+   * is FAILED_PRECONDITION: re-read and re-apply. There is no unconditional
+   * mode; see Namespace.etag for why an empty token cannot be one.
+   *
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.UpdateNamespaceRequest.
+ * Use `create(UpdateNamespaceRequestSchema)` to create a new message.
+ */
+export const UpdateNamespaceRequestSchema: GenMessage<UpdateNamespaceRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 30);
+
+/**
+ * @generated from message orkstack.v1.UpdateNamespaceResponse
+ */
+export type UpdateNamespaceResponse = Message<"orkstack.v1.UpdateNamespaceResponse"> & {
+  /**
+   * @generated from field: orkstack.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.UpdateNamespaceResponse.
+ * Use `create(UpdateNamespaceResponseSchema)` to create a new message.
+ */
+export const UpdateNamespaceResponseSchema: GenMessage<UpdateNamespaceResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 31);
+
+/**
+ * @generated from message orkstack.v1.DeleteNamespaceRequest
+ */
+export type DeleteNamespaceRequest = Message<"orkstack.v1.DeleteNamespaceRequest"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message orkstack.v1.DeleteNamespaceRequest.
+ * Use `create(DeleteNamespaceRequestSchema)` to create a new message.
+ */
+export const DeleteNamespaceRequestSchema: GenMessage<DeleteNamespaceRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 32);
+
+/**
+ * @generated from message orkstack.v1.DeleteNamespaceResponse
+ */
+export type DeleteNamespaceResponse = Message<"orkstack.v1.DeleteNamespaceResponse"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.DeleteNamespaceResponse.
+ * Use `create(DeleteNamespaceResponseSchema)` to create a new message.
+ */
+export const DeleteNamespaceResponseSchema: GenMessage<DeleteNamespaceResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 33);
+
+/**
+ * @generated from message orkstack.v1.ListPoolsRequest
+ */
+export type ListPoolsRequest = Message<"orkstack.v1.ListPoolsRequest"> & {
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+};
+
+/**
+ * Describes the message orkstack.v1.ListPoolsRequest.
+ * Use `create(ListPoolsRequestSchema)` to create a new message.
+ */
+export const ListPoolsRequestSchema: GenMessage<ListPoolsRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 34);
+
+/**
+ * @generated from message orkstack.v1.ListPoolsResponse
+ */
+export type ListPoolsResponse = Message<"orkstack.v1.ListPoolsResponse"> & {
+  /**
+   * ordered by name
+   *
+   * @generated from field: repeated orkstack.v1.Pool pools = 1;
+   */
+  pools: Pool[];
+
+  /**
+   * where a task naming no pool runs
+   *
+   * @generated from field: string default_pool = 2;
+   */
+  defaultPool: string;
+};
+
+/**
+ * Describes the message orkstack.v1.ListPoolsResponse.
+ * Use `create(ListPoolsResponseSchema)` to create a new message.
+ */
+export const ListPoolsResponseSchema: GenMessage<ListPoolsResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 35);
 
 /**
  * @generated from message orkstack.v1.ListPluginsRequest
@@ -364,7 +1103,7 @@ export type ListPluginsRequest = Message<"orkstack.v1.ListPluginsRequest"> & {
  * Use `create(ListPluginsRequestSchema)` to create a new message.
  */
 export const ListPluginsRequestSchema: GenMessage<ListPluginsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 15);
+  messageDesc(file_orkstack_v1_service, 36);
 
 /**
  * @generated from message orkstack.v1.PluginInfo
@@ -401,7 +1140,7 @@ export type PluginInfo = Message<"orkstack.v1.PluginInfo"> & {
  * Use `create(PluginInfoSchema)` to create a new message.
  */
 export const PluginInfoSchema: GenMessage<PluginInfo> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 16);
+  messageDesc(file_orkstack_v1_service, 37);
 
 /**
  * @generated from message orkstack.v1.ListPluginsResponse
@@ -418,16 +1157,28 @@ export type ListPluginsResponse = Message<"orkstack.v1.ListPluginsResponse"> & {
  * Use `create(ListPluginsResponseSchema)` to create a new message.
  */
 export const ListPluginsResponseSchema: GenMessage<ListPluginsResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 17);
+  messageDesc(file_orkstack_v1_service, 38);
 
 /**
  * OrkflowService manages orkflow definitions (the compiled DSL).
+ *
+ * A version is immutable and a name is unique within a namespace, so the three
+ * coordinates (namespace, name, version) address one document for all time.
+ * What moves is a per-orkflow POINTER: `current` decides which version an
+ * empty version resolves to, and moving it is the only mutation this service
+ * performs on an existing orkflow.
  *
  * @generated from service orkstack.v1.OrkflowService
  */
 export const OrkflowService: GenService<{
   /**
-   * ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+   * ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+   *
+   * It never rewrites a stored version: identical YAML under an existing
+   * version is a no-op that writes nothing, and DIFFERENT YAML under an
+   * existing version is refused (AlreadyExists). An edit therefore always
+   * arrives as a new version — which is what lets a run pinned to a version
+   * keep reading the bytes it pinned.
    *
    * @generated from rpc orkstack.v1.OrkflowService.ApplyOrkflow
    */
@@ -451,6 +1202,50 @@ export const OrkflowService: GenService<{
     methodKind: "unary";
     input: typeof ListOrkflowsRequestSchema;
     output: typeof ListOrkflowsResponseSchema;
+  },
+  /**
+   * ListOrkflowVersions lists every stored version of one orkflow, newest
+   * applied first, marking the one an empty version resolves to.
+   *
+   * @generated from rpc orkstack.v1.OrkflowService.ListOrkflowVersions
+   */
+  listOrkflowVersions: {
+    methodKind: "unary";
+    input: typeof ListOrkflowVersionsRequestSchema;
+    output: typeof ListOrkflowVersionsResponseSchema;
+  },
+  /**
+   * SetCurrentOrkflowVersion moves the orkflow's current pointer.
+   *
+   * The target must already exist: promoting to an unknown version is
+   * NotFound, so a reader can never observe a pointer to a version that is not
+   * there. Two replicas promoting at once are arbitrated by the store's
+   * compare-and-swap — one value wins, and it is one of the two asked for.
+   *
+   * @generated from rpc orkstack.v1.OrkflowService.SetCurrentOrkflowVersion
+   */
+  setCurrentOrkflowVersion: {
+    methodKind: "unary";
+    input: typeof SetCurrentOrkflowVersionRequestSchema;
+    output: typeof SetCurrentOrkflowVersionResponseSchema;
+  },
+  /**
+   * DiffOrkflowVersions renders the unified diff between two versions'
+   * source_yaml.
+   *
+   * The diff is computed SERVER-side, deliberately. Two clients read it (the
+   * CLI and the UI) and a third will follow; a client-side diff would put a
+   * diff dependency in each of them and let their renderings drift, so that
+   * `orkctl orkflow diff` and the version page could disagree about what
+   * changed. One implementation, golden-tested once, rendered verbatim by
+   * every client.
+   *
+   * @generated from rpc orkstack.v1.OrkflowService.DiffOrkflowVersions
+   */
+  diffOrkflowVersions: {
+    methodKind: "unary";
+    input: typeof DiffOrkflowVersionsRequestSchema;
+    output: typeof DiffOrkflowVersionsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_orkstack_v1_service, 0);
@@ -504,8 +1299,125 @@ export const RunService: GenService<{
     input: typeof StreamEventsRequestSchema;
     output: typeof EventSchema;
   },
+  /**
+   * StreamTaskLogs server-streams one task attempt's output: every chunk
+   * already written, in order, then each new one as it lands.
+   *
+   * Logs are a SEPARATE stream from Event on purpose. Task output is bytes,
+   * and bytes never enter a Temporal payload or the event stream (a run's
+   * history is replayed forever, and a chatty task would bloat it forever
+   * too). The Orker writes numbered chunks to the artifact store while the
+   * task runs; this RPC reads them back from there. EventType gains nothing:
+   * EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no
+   * task output in it.
+   *
+   * Any replica answers for any run, on the same terms as StreamEvents: the
+   * chunks are in the shared store and the task's state comes from the shared
+   * cluster, so a replica that started nothing serves a run to completion.
+   *
+   * @generated from rpc orkstack.v1.RunService.StreamTaskLogs
+   */
+  streamTaskLogs: {
+    methodKind: "server_streaming";
+    input: typeof StreamTaskLogsRequestSchema;
+    output: typeof TaskLogChunkSchema;
+  },
 }> = /*@__PURE__*/
   serviceDesc(file_orkstack_v1_service, 1);
+
+/**
+ * NamespaceService manages namespaces and reports the pools they may dispatch
+ * onto.
+ *
+ * A namespace is a scope that owns orkflow names, runs and pool defaults. The
+ * registry is durable (the artifact store), so any replica answers for any
+ * namespace, including one it never created.
+ *
+ * @generated from service orkstack.v1.NamespaceService
+ */
+export const NamespaceService: GenService<{
+  /**
+   * CreateNamespace registers a namespace.
+   *
+   * It is idempotent for an identical spec: creating the same namespace twice
+   * with the same description, labels, default pool and allowed pools returns
+   * the existing document rather than an error, so a provisioning script is
+   * safe to re-run. A second create that differs is AlreadyExists, naming what
+   * differs — that one is a collision, not a repeat.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.CreateNamespace
+   */
+  createNamespace: {
+    methodKind: "unary";
+    input: typeof CreateNamespaceRequestSchema;
+    output: typeof CreateNamespaceResponseSchema;
+  },
+  /**
+   * GetNamespace reads one namespace. The default namespace always resolves,
+   * whether or not anyone created it.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.GetNamespace
+   */
+  getNamespace: {
+    methodKind: "unary";
+    input: typeof GetNamespaceRequestSchema;
+    output: typeof GetNamespaceResponseSchema;
+  },
+  /**
+   * ListNamespaces returns every registered namespace, ordered by name.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.ListNamespaces
+   */
+  listNamespaces: {
+    methodKind: "unary";
+    input: typeof ListNamespacesRequestSchema;
+    output: typeof ListNamespacesResponseSchema;
+  },
+  /**
+   * UpdateNamespace replaces a namespace's mutable fields.
+   *
+   * It is a compare-and-swap on Namespace.etag: the token a read handed back.
+   * A stale token is FailedPrecondition, so two operators editing at once
+   * cannot silently clobber each other — the loser re-reads and re-applies.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.UpdateNamespace
+   */
+  updateNamespace: {
+    methodKind: "unary";
+    input: typeof UpdateNamespaceRequestSchema;
+    output: typeof UpdateNamespaceResponseSchema;
+  },
+  /**
+   * DeleteNamespace removes a namespace that holds no orkflows.
+   *
+   * It refuses while any orkflow is still stored in it, and says how many:
+   * deleting the registry entry would not delete the definitions, so they
+   * would survive under a namespace nothing lists. The default namespace is
+   * refused unconditionally — every orkflow that names none is in it.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.DeleteNamespace
+   */
+  deleteNamespace: {
+    methodKind: "unary";
+    input: typeof DeleteNamespaceRequestSchema;
+    output: typeof DeleteNamespaceResponseSchema;
+  },
+  /**
+   * ListPools reports every pool a namespace may dispatch onto, each with the
+   * number of Orkers serving it right now and the plugins those Orkers run.
+   *
+   * The answer is read from the cluster, never from process memory, so any
+   * replica answers — including one that started nothing.
+   *
+   * @generated from rpc orkstack.v1.NamespaceService.ListPools
+   */
+  listPools: {
+    methodKind: "unary";
+    input: typeof ListPoolsRequestSchema;
+    output: typeof ListPoolsResponseSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_orkstack_v1_service, 2);
 
 /**
  * PluginService exposes the plugins registered across connected Orkers.
@@ -522,5 +1434,5 @@ export const PluginService: GenService<{
     output: typeof ListPluginsResponseSchema;
   },
 }> = /*@__PURE__*/
-  serviceDesc(file_orkstack_v1_service, 2);
+  serviceDesc(file_orkstack_v1_service, 3);
 

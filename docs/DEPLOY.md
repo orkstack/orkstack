@@ -57,7 +57,7 @@ adding processes and both survive losing one.
 | state | where it lives | code |
 |---|---|---|
 | orkflow definitions | the bucket | `artifacts.S3OrkflowStore`, opened at boot by `openOrkflowStore` (`cmd/ork/main.go`). It keeps no cache, so an `apply` on one replica is visible to every other |
-| live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), wired as the API's `RunReader` |
+| live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), handed to the API as `Binding.Reader` by `engine.NamespaceRouter` (`internal/engine/router.go`) |
 | finished runs, past retention | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `engine.NewRunArchiver` over `artifacts.NewRunArchive`, written by the terminal `PublishEvent`. The default backend is `local`: a directory on each host, so replicated it is one archive per replica (§1) |
 | idempotency keys | Temporal | `engine.IdempotencyClaimWorkflow` (`internal/engine/claim.go`), held for `ORK_IDEMPOTENCY_TTL` |
 | artifacts | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `pkg/artifacts`; events and payloads carry refs, never bytes. Same default, same consequence: on `local` an Orker writes to its own disk and no other host can read the bytes back |
@@ -88,12 +88,23 @@ needs `ORK_S3_*` either way.
 - **`ORK_HTTP_ADDR` is the one variable that must differ** when replicas share
   a host. On separate hosts it does not have to.
 - **No sticky sessions, no leader.** `GetRun`, `ListRuns`, `StreamEvents` and
-  `/ws/runs/{id}` are answered from Temporal, so any replica serves any run.
+  `/ws/runs/{id}` are answered from Temporal, so any replica serves any run —
+  inside the namespace the request names. A run id addresses a run within a
+  namespace, not across the deployment: every one of those four carries the
+  namespace (`/ws/runs/{id}?namespace=…`), an absent one is `default`, and a
+  run of another namespace is `NotFound`.
 - **Reconnects resume rather than replay.** `StreamEvents.from_sequence`
   (`orkctl run watch --from-sequence`) and `/ws/runs/{id}?from_sequence=N`
   continue after an event number, and the number is the producer's — the
   workflow assigns it — so resuming against a *different* replica yields the
   same stream with nothing repeated and nothing skipped.
+- **Task logs are the same claim, over the bucket.** `StreamTaskLogs` and
+  `/ws/runs/{id}/tasks/{task}/logs` read the chunks an Orker wrote and the
+  task's state from the cluster, so any replica follows any task — one whose
+  Orker has already exited, and one whose run finished before the reader
+  connected. They resume the same way, on `from_seq` instead of
+  `from_sequence`, over a sequence the single Orker executing that attempt
+  assigned (§1, "Live task logs").
 - **Readiness: there is no `/healthz` yet.** Probe with a cheap unary call —
   `OrkflowService.ListOrkflows`, i.e. `orkctl --server … orkflow list`. Every
   script under `proof/` that starts today's engine binary gates on exactly
@@ -118,14 +129,119 @@ needs `ORK_S3_*` either way.
 
 ### Running M Orker pools
 
-- **One pool = one queue = one set of Orker processes** sharing an
-  `ORK_ORKER_QUEUE`. Add processes to a pool for throughput; add a pool for
-  isolation — a GPU host, a pool with different plugins, a pool near some data.
-- **The engine's default pool must match.** The engine dispatches every task
-  that names no `queue:` to its own `ORK_ORKER_QUEUE`, so the variable is set
-  on both binaries or runs strand in `RUNNING` (§2, §5). A task's own `queue:`
-  in the DSL outranks it, and is how one step reaches a dedicated pool
-  (`docs/DSL.md`).
+- **A pool is a set of Orkers, and `ORK_ORKER_POOL` is how a process joins
+  one.** Start Orkers with `ORK_ORKER_POOL=gpu` and they serve the pool a task
+  reaches by writing `pool: gpu` (`docs/DSL.md`). Add processes to a pool for
+  throughput; add a pool for isolation — a GPU host, a pool with different
+  plugins, a pool near some data. `main` is the built-in pool and needs no
+  configuration: `make run-ork` + `make run-orker` with nothing set is one
+  Orker serving `main`.
+- **`ORK_ORKER_QUEUE` is the operator escape hatch underneath it**, naming the
+  raw Temporal task queue directly. It exists for the test harnesses, which
+  isolate concurrent runs by pinning a queue no other agent polls (AGENTS.md
+  §6). Prefer `ORK_ORKER_POOL`: a pool is a name the whole system speaks, a
+  raw queue is nobody's pool and is reported as `main` with a boot log saying
+  so.
+- **Set both and they must agree, or the process refuses to boot.** The check
+  is `task.ResolvePoolBinding`, and both binaries run it:
+
+  | set | channel polled / dispatched to | pool reported |
+  |---|---|---|
+  | neither | `ork-tasks` | `main` |
+  | `ORK_ORKER_POOL=gpu` | `ork-pool-gpu` | `gpu` |
+  | `ORK_ORKER_QUEUE=ork-tasks-m7-9` | that queue, verbatim | `main`, with a boot log naming the raw queue |
+  | both, agreeing | that queue | that pool |
+  | both, disagreeing | **boot fails** | `ORK_ORKER_POOL=gpu resolves to "ork-pool-gpu" but ORK_ORKER_QUEUE="ork-tasks-m7-9"` |
+
+  Refusing is the point. Silently picking a winner is how an Orker ends up
+  polling one channel while the engine dispatches to another, which strands
+  every run in `RUNNING` with nothing to say why.
+- **The engine's default route must match its Orkers.** A task that names no
+  `pool:` runs on its namespace's `default_pool`, then on `main`. Setting
+  `ORK_ORKER_POOL` (or `ORK_ORKER_QUEUE`) on the engine pins that default
+  route to the same channel its Orkers poll, so the variable goes on **both**
+  binaries. A task that names a pool of its own goes to that pool's channel
+  instead, which is how one step reaches a dedicated pool (`docs/DSL.md`) —
+  with one exception that is not an exception: `pool: main` names *this
+  deployment's default pool*, not the channel `ork-tasks`, so it follows
+  whatever you bound here, exactly as an omitted `pool:` does. `main` is a
+  word for the default, never an override of it, so no document can escape an
+  operator's isolation by naming it (`task.RouteForPool`,
+  `runState.routeForTask`,
+  `TestPoolResolver_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute`).
+- **One set of Orkers has exactly one name.** With `ORK_ORKER_POOL=gpu` on both
+  binaries the deployment's default channel *is* gpu's channel, so `main` and
+  `gpu` are two words for the same machines. Everything reports the second:
+  `ListPools` returns one pool, named `gpu`, marked default; a task that named
+  no pool is scheduled, projected and logged on `gpu`. The collapse happens in
+  one function (`task.RouteForPool`) and nowhere else. Reporting both would
+  give an operator two pools to size and two to drain when there is one, and
+  tell a client a task ran on `main` while gpu's Orkers ran it.
+- **A submit into a pool with no live Orkers is refused, at submit.** The
+  engine asks Temporal which workers are polling the pool's channel and
+  refuses the submission when the answer is none, naming the pool, the tasks
+  and the fix:
+
+  ```
+  pool "gpu" (namespace "payments", tasks: settle) has no live Orkers, so nothing
+  would pick these tasks up. Start one with ORK_ORKER_POOL=gpu, or submit with
+  allow_empty_pool to wait for one
+  ```
+
+  The window is 60 seconds of poller freshness, applied to each poller
+  separately: a worker that stopped polling more than 60 seconds ago is not
+  counted, however busy its neighbours are. Temporal remembers a poller for
+  minutes after its worker died, so a pool you scaled from three Orkers to one
+  would otherwise report three for as long as the survivor kept the newest
+  record fresh. Two workers of one release can also be described twice while a
+  version is being promoted, so the count is per worker identity, not per
+  record.
+
+  The residue is bounded and deliberate: inside those 60 seconds a stale record
+  can still say "live" just after an Orker stopped. That degrades to the old
+  behaviour — a run that waits — never to a false rejection of a healthy
+  submit. `SubmitRunRequest.allow_empty_pool` submits anyway; it is off by
+  default and taking it logs `WARN submit into empty pool` with the pool and
+  the tasks.
+
+  A cluster that cannot be asked is a third answer, and it is kept apart from
+  the other two. "No Orkers" is `failed_precondition` — start one, or take the
+  override. A probe that got no reply at all (Temporal unreachable, or slower
+  than its five-second bound) measured nothing, and the submission it refuses
+  may be perfectly good, so it is `unavailable`: ask again. Reported as
+  `invalid_argument` it would send every client off to fix a request with
+  nothing wrong with it for as long as the cluster was unwell.
+- **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
+  enforced on the server at both apply and submit, so no client can skip it.
+  An empty list means no restriction.
+
+  The list is read in the same vocabulary as the dispatch — the collapsed name
+  of the bullet above. With `ORK_ORKER_POOL=gpu` on the engine, a task that
+  names no pool is dispatched to, stamped as and reported on `gpu`, so a
+  namespace whose list is `[main]` is refused there and one whose list is
+  `[gpu]` accepts `pool: main`:
+
+  ```
+  namespace "payments" does not allow pool "gpu" for task "settle" (allowed: main);
+  this deployment dispatches pool "main" onto "gpu"'s Orkers, so allow "gpu" or
+  drop the override
+  ```
+
+  Every pool a run reports is therefore one its namespace allows. Bind an
+  execution channel to a pool's own queue and the namespaces on that
+  deployment must allow that pool by name; `main` there names Orkers this
+  deployment does not have.
+- **"Is anything serving my pools?" has an answer.**
+  `NamespaceService.ListPools` reports each pool's name, its live Orker count
+  and the plugins those Orkers run. The count is the one described above — the
+  Orkers polling now, one per worker — so scaling a pool down shows up in it
+  within the window rather than minutes later. Every number is read from the
+  cluster, so any replica answers, including one that started nothing. It
+  reports each pool from the same channel a submit dispatches it to, so an
+  engine using the `ORK_ORKER_QUEUE` escape hatch reports its default pool
+  from that raw queue — the Orkers it accepts runs onto are the Orkers it
+  says the pool has. A `orkctl` command for it arrives with the namespace
+  CLI; until then it is one Connect call.
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
@@ -150,19 +266,23 @@ deployment cares about.
 |---|---|---|---|
 | `ORK_TEMPORAL_ADDRESS` | `localhost:7233` | both | Temporal frontend. The default is the SDK's `client.DefaultHostPort` |
 | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
-| `ORK_ORKER_QUEUE` | `ork-tasks` | **both** | queue Orkers poll and the engine dispatches **task activities** to. It does not move the engine's own queues (§2) |
+| `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
+| `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §6). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
 | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory |
+| `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
+| `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
+| `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
 | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
-| `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` |
+| `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
 | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
-| `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts and the run archive live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
+| `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts, the run archive and task logs live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
 | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `ORK_S3_REGION` | `us-east-1` | both | |
-| `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts and archived runs |
+| `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts, archived runs and task logs |
 | `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
 | `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
 | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
@@ -185,17 +305,136 @@ export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
 ```
 
-One bucket, three key families (`pkg/artifacts`):
+One bucket, six key families (`pkg/artifacts`):
 
 | keys | what |
 |---|---|
-| `metadata/orkflows/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot |
-| `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/…` | archived runs: the body, and the key-only index `ListRuns` scans |
+| `metadata/orkflows/{namespace}/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot; immutable once written |
+| `metadata/orkflows/{namespace}/{name}/@current.json` | which version that orkflow runs: `{"version":…,"updated_at":…}` and nothing else. Moved by `orkctl orkflow promote`; absent means "the newest applied version" |
+| `metadata/namespaces/{name}.json` | namespace registry documents; `default` is synthesized when absent |
+| `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/{namespace}/…` | archived runs: the body, and the key-only index `ListRuns` scans |
+| `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` | task output, one chunk per object, written while the task runs (below) |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{name}` | artifacts, addressed by provenance |
+
+A basename beginning `@` is reserved for per-orkflow metadata stored beside the
+versions, so a pointer can never be read as a version. Two replicas promoting
+at once are arbitrated by the object store's own conditional PUT — the loser is
+told it lost and swaps again against the winner's etag — so promotion needs no
+lock, no lease and nothing in Temporal. The pointer holds only a version
+string: a copy of the document there could drift from the document.
 
 `proof/M8.5/ha-deploy.sh` exports exactly that block, and phase 7 of
 `proof/M8.5/ha-transcript.txt` reads a finished run back out of the bucket —
 with a control showing nothing was written to local disk.
+
+### Live task logs: where they are, what bounds them, how long they stay
+
+A task's output is bytes, so it travels as stored objects and never through a
+Temporal payload or the event stream (AGENTS.md §1.4). The Orker executing an
+attempt buffers its lines and flushes them as numbered chunks **while the task
+runs**; `orkctl run logs -f`, `RunService.StreamTaskLogs` and the
+`/ws/runs/{id}/tasks/{task}/logs` socket read them back.
+
+```
+metadata/logs/{run-id}/{task-id}/{attempt}/{seq}         one chunk
+metadata/logs/{run-id}/{task-id}/{attempt}/{seq}.trunc   the truncation notice
+```
+
+Both counters are zero-padded to a fixed width, so a lexicographic listing is
+numeric order: **the key carries the order**, and no reader sorts by
+modification time, which two clocks and a retry would make a lie.
+
+Because the chunks are in the bucket rather than in the process that produced
+them, **any replica serves any run's logs** — one it never started, one whose
+Orker has exited, one that finished before the reader connected. Under
+`ORK_ARTIFACT_BACKEND=local` that stops being true for the same reason the run
+archive does: each process reads its own directory.
+
+**Following and replaying are two different reads, and the flag decides which
+— never the task.** `orkctl run logs -f` (`follow=true` on the RPC and the
+socket) waits for chunks that do not exist yet and returns when the task
+reaches a terminal state. Without `-f` the command prints the chunks the store
+holds when it runs and returns, even against a task that is still writing, so
+a script that wants a transcript is not left tailing a chatty task forever.
+Both resume on `from_seq`, which is the last sequence already received: the
+stream continues **after** it, so a reconnect replays nothing and skips
+nothing.
+
+**A follow moves with the task's retries.** The key above is per ATTEMPT, and
+a Temporal activity retry changes nothing a task's status shows — the task
+stays RUNNING while try 2 starts writing under a new prefix. So a follow that
+named no attempt (`attempt=0`, which is the default and what the UI's pane
+sends) re-reads which attempt is latest while the one it is on is silent, and
+moves onto a later one, delivering it from its first chunk. A stream that
+resolved the attempt once sat on a dead prefix, delivering nothing, until the
+task ended — while reporting itself live.
+
+That makes `from_seq` half a cursor: sequences are dense **per attempt**, so a
+client that reconnects sends `from_attempt` beside it, naming the attempt its
+cursor counted. A cursor from another attempt is dropped and the new attempt
+is delivered from its start, which is the only safe reading — a retry is
+usually shorter than the try that failed, so applying the old cursor would
+deliver nothing at all. An explicit `--attempt N` is pinned and never moves:
+it is a request for one try's transcript.
+
+Every client sends both halves: the browser's pane
+(`ui/src/lib/taskLogs.ts`), the WebSocket bridge that parses them
+(`internal/api/ws.go`), and `orkctl run logs`, which takes `--from-attempt N`
+beside `--from-seq N`. A cursor that names no attempt is **refused** by the
+CLI rather than applied to whichever try happens to be latest: the CLI cannot
+recover the missing half, and guessing it is how a resume silently skips a
+retry's first chunks.
+
+Two bounds decide when a chunk is written, and a deployment tunes both:
+
+- `ORK_ORKER_LOG_FLUSH_BYTES` (64 KiB) batches a chatty task, so a hundred
+  thousand lines cost a few hundred objects rather than a hundred thousand.
+- `ORK_ORKER_LOG_FLUSH_INTERVAL` (500 ms) bounds the wait for a slow one, so a
+  task printing a line a minute is visible in half a second rather than when it
+  eventually reaches 64 KiB.
+
+A third bounds the damage. `ORK_ORKER_LOG_MAX_BYTES` (16 MiB) caps ONE task
+attempt: at the cap the Orker writes a final chunk saying so, in words, and
+stores nothing more. **Truncation is visible in the stream**, never silent —
+`orkctl run logs` prints the notice and the RPC sets `truncated` on it. The
+Orker's own memory is one flush buffer per running task, and a single
+over-long line is split rather than accumulated, so neither a chatty task nor
+one that never prints a newline can exhaust it.
+
+**What one reader costs the engine is bounded in bytes, not in chunks.** A
+replica reads the store one page at a time and holds one page per open
+subscriber: at most **4 MiB of chunk data, plus the one chunk that crossed
+that budget** (`logChunkPage` and `logChunkPageBytes`, `internal/api/logs.go`).
+Both bounds are needed, because a count is not a size — one chunk is whatever
+the Orker flushed, so raising `ORK_ORKER_LOG_FLUSH_BYTES` raises what a page of
+32 chunks weighs and nothing else would notice. Paging costs nothing in
+completeness: a page cut by the budget is followed by another read from the
+sequence it ended on, so a replay of a 16 MiB attempt is whole. Size a replica
+for this per concurrently open pane or `orkctl run logs`, remembering that a
+run detail page opens one per expanded task.
+
+**Retention is the bucket's.** Nothing in OrkStack deletes a log chunk; the run
+archive never embeds one, so expiring them cannot damage a run's record. The
+default is to keep them forever, which is rarely what an operator wants for
+16 MiB per attempt. One lifecycle rule on the prefix:
+
+```bash
+# MinIO: expire task logs after 30 days, leaving definitions, artifacts and
+# archived runs alone.
+mc ilm rule add local/orkstack-artifacts \
+  --prefix "metadata/logs/" --expire-days 30
+```
+
+```bash
+# AWS S3: the same rule.
+aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
+  --lifecycle-configuration '{"Rules":[{"ID":"ork-task-logs","Status":"Enabled",
+    "Filter":{"Prefix":"metadata/logs/"},"Expiration":{"Days":30}}]}'
+```
+
+A reader that meets an expired chunk mid-stream stops at the gap rather than
+skipping it, so a resumed read continues from the last sequence it actually
+received.
 
 ### Versioning is off until you set a build id
 
@@ -306,6 +545,14 @@ one release polls two queues:
 msg="temporal workers started" task_queue=ork-tasks event_queue=ork-engine-events \
   orker_queue=ork-tasks-gpu-pool
 ```
+
+One value is refused: `ORK_ORKER_QUEUE=ork-engine-events` is the projection
+worker's own queue, so every task activity would be dispatched to it and the
+pool a document names would resolve to the engine's internals. Both binaries
+report it and exit at boot rather than starting — `task.ResolvePoolBinding`
+refuses the channel wherever it came from, and `ork` checks it again against
+its own queues (`cmd/ork/main.go`, `queues.validate`;
+`TestQueues_RefuseAnExecutionChannelThatIsTheEnginesOwnEventQueue`).
 
 Under versioning both appear, separately, in that version's poller list — the
 engine's queue as a **workflow** poller and the Orker's as an **activity**
@@ -653,16 +900,50 @@ Runs already pinned to a version still need that version's workers.
   past Temporal retention. Nothing durable lives in a process, so a read does
   not need to reach the replica that started the run — or that replica to
   still exist.
+- **Listing one namespace's runs is a question the cluster answers.** Each
+  engine registers the `OrkflowNamespace` search attribute on its Temporal
+  namespace at boot (`task.EnsureRunSearchAttributes`, beside the namespace
+  itself) and stamps every run it starts with the namespace that run belongs
+  to, so `run list -n payments` is a visibility predicate rather than a filter
+  over a page of everyone's runs. That distinction is a tenancy one: filtered
+  afterwards, how far the list could see was set by how busy the OTHER
+  namespaces were, and a namespace with one live run behind a neighbour's
+  hundred was told it had none.
+
+  A cluster that refuses the registration — the operator API behind an
+  authorizer, a visibility store without custom attributes — still boots, and
+  says so once:
+
+  ```
+  WARN visibility does not index a run's orkflow namespace
+       search_attribute=OrkflowNamespace
+       consequence="listing a namespace's live runs scans the whole index"
+  ```
+
+  The reader then reads the index to the end instead of trusting a predicate
+  the cluster cannot apply, which is slower and still the tenant's own answer;
+  a list that cannot finish even that walk fails rather than returning a short
+  one. Runs started *before* the attribute existed carry the namespace in
+  their memo but not in the index, so they are listed by id and, once
+  finished, from the archive — whose key already begins with the namespace.
 - **A double submit is settled by the cluster, not by a replica.** One
   `--idempotency-key` sent to two replicas at once returns one run id, because
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not
   process memory. Retries are safe from any address behind the load balancer.
+  A key is scoped to the ork namespace it was submitted into, so two tenants
+  can both submit `nightly` and get their own run
+  (`api.submission.claimKey`); unscoped, the second would be answered with the
+  first tenant's run id and its work would never start.
 - **`ORK_ORKER_QUEUE` must be set on both binaries.** Set it on only one and
   runs strand in `RUNNING`: the Orker polls one queue while the engine
   dispatches to another. It moves **task execution only** — the engine's own
   workers stay on `ork-tasks` and `ork-engine-events` (§2). A task's own
-  `queue:` in the DSL outranks the engine default and is how a step reaches a
-  dedicated Orker pool (`docs/DSL.md`).
+  `pool:` in the DSL is how a step reaches a dedicated Orker pool
+  (`docs/DSL.md`), and it cannot be used to escape this setting: `pool: main`
+  is the name of whatever queue you bound here, so it follows the override
+  rather than outranking it, and no document can route itself back onto
+  `ork-tasks` by naming the default pool
+  (`TestPoolResolver_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute`).
 - **One namespace, one deployment.** The engine's queue name is fixed, so two
   OrkStack deployments in one namespace would fight over the current version of
   `ork-tasks`. Give each environment its own namespace, as above.

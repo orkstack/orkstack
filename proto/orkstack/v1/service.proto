@@ -3,38 +3,155 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 import "orkstack/v1/common.proto";
 import "orkstack/v1/run.proto";
 import "orkstack/v1/orkflow.proto";
+import "orkstack/v1/namespace.proto";
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
 // OrkflowService manages orkflow definitions (the compiled DSL).
+//
+// A version is immutable and a name is unique within a namespace, so the three
+// coordinates (namespace, name, version) address one document for all time.
+// What moves is a per-orkflow POINTER: `current` decides which version an
+// empty version resolves to, and moving it is the only mutation this service
+// performs on an existing orkflow.
 service OrkflowService {
-  // ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+  // ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+  //
+  // It never rewrites a stored version: identical YAML under an existing
+  // version is a no-op that writes nothing, and DIFFERENT YAML under an
+  // existing version is refused (AlreadyExists). An edit therefore always
+  // arrives as a new version — which is what lets a run pinned to a version
+  // keep reading the bytes it pinned.
   rpc ApplyOrkflow(ApplyOrkflowRequest) returns (ApplyOrkflowResponse);
   rpc GetOrkflow(GetOrkflowRequest) returns (GetOrkflowResponse);
   rpc ListOrkflows(ListOrkflowsRequest) returns (ListOrkflowsResponse);
+  // ListOrkflowVersions lists every stored version of one orkflow, newest
+  // applied first, marking the one an empty version resolves to.
+  rpc ListOrkflowVersions(ListOrkflowVersionsRequest) returns (ListOrkflowVersionsResponse);
+  // SetCurrentOrkflowVersion moves the orkflow's current pointer.
+  //
+  // The target must already exist: promoting to an unknown version is
+  // NotFound, so a reader can never observe a pointer to a version that is not
+  // there. Two replicas promoting at once are arbitrated by the store's
+  // compare-and-swap — one value wins, and it is one of the two asked for.
+  rpc SetCurrentOrkflowVersion(SetCurrentOrkflowVersionRequest) returns (SetCurrentOrkflowVersionResponse);
+  // DiffOrkflowVersions renders the unified diff between two versions'
+  // source_yaml.
+  //
+  // The diff is computed SERVER-side, deliberately. Two clients read it (the
+  // CLI and the UI) and a third will follow; a client-side diff would put a
+  // diff dependency in each of them and let their renderings drift, so that
+  // `orkctl orkflow diff` and the version page could disagree about what
+  // changed. One implementation, golden-tested once, rendered verbatim by
+  // every client.
+  rpc DiffOrkflowVersions(DiffOrkflowVersionsRequest) returns (DiffOrkflowVersionsResponse);
 }
 
 message ApplyOrkflowRequest {
   string yaml = 1;                       // raw DSL document
+  // namespace selects where the document is applied. Empty honours the
+  // document's own `namespace:` (itself empty = "default"); a non-empty value
+  // must EQUAL the document's namespace, or the document names none and is
+  // applied INTO this one. The two are never allowed to disagree silently: a
+  // file that says `namespace: payments` applied with -n staging is a mistake
+  // one of the two made, and guessing which would store the definition
+  // somewhere its author cannot find it.
+  string namespace = 2;
+  // base_version is the optimistic-concurrency token: the version this edit
+  // was derived from. The server compares it against the HEAD version (the
+  // most recently applied one, which is what an editor last read) and refuses
+  // with FailedPrecondition when they differ, naming both — so an edit made
+  // from a stale copy is reported instead of landing beside a newer one
+  // nobody looked at. Empty means unchecked, which is what a plain
+  // `orkctl apply file.yaml` sends.
+  //
+  // It is a VERSION token rather than a content hash. Both detect the same
+  // staleness; only the token names something the user can act on —
+  // `orkctl orkflow diff <name> <base_version> <head>` shows exactly what
+  // arrived underneath the edit. A hash names nothing.
+  string base_version = 3;
 }
 message ApplyOrkflowResponse {
   Orkflow orkflow = 1;
   repeated string warnings = 2;
+  // created is false when this apply stored nothing because the version was
+  // already there with byte-identical source YAML. The orkflow above is then
+  // the STORED document, created_at and all, not the one this request would
+  // have written.
+  bool created = 3;
 }
 message GetOrkflowRequest {
   string name = 1;
-  string version = 2;                    // empty = latest
+  // version selects one stored version. Empty resolves through the current
+  // pointer when one has been set, and to the most recently applied version
+  // when none ever was.
+  string version = 2;
+  string namespace = 3;                  // empty = the default namespace
 }
 message GetOrkflowResponse { Orkflow orkflow = 1; }
 message ListOrkflowsRequest {
   int32 page_size = 1;
   string page_token = 2;
+  string namespace = 3;                  // empty = the default namespace
 }
 message ListOrkflowsResponse {
   repeated Orkflow orkflows = 1;
   string next_page_token = 2;
+}
+
+// OrkflowVersion is one stored version in a version listing: the document's
+// coordinates, not the document.
+message OrkflowVersion {
+  string version = 1;
+  google.protobuf.Timestamp applied_at = 2;
+  // is_current marks the version an empty version resolves to — the pointer's
+  // target when one is set, otherwise the most recently applied version.
+  bool is_current = 3;
+  string description = 4;
+}
+message ListOrkflowVersionsRequest {
+  string name = 1;
+  string namespace = 2;                  // empty = the default namespace
+}
+message ListOrkflowVersionsResponse {
+  repeated OrkflowVersion versions = 1;  // newest applied first
+  // current_version is the pointer's target, empty when nobody ever promoted
+  // this orkflow. Empty does NOT mean "nothing runs": resolution then falls
+  // back to head_version.
+  string current_version = 2;
+  // head_version is the most recently applied version — the edit lineage's
+  // tip, and the base_version an editor should send back.
+  string head_version = 3;
+}
+message SetCurrentOrkflowVersionRequest {
+  string name = 1;
+  string version = 2;                    // must already exist
+  string namespace = 3;                  // empty = the default namespace
+}
+message SetCurrentOrkflowVersionResponse {
+  string name = 1;
+  string namespace = 2;
+  string current_version = 3;
+  // previous_version is what the pointer named before, empty when it was
+  // never set. It is what a rollback promotes back to.
+  string previous_version = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+message DiffOrkflowVersionsRequest {
+  string name = 1;
+  string from_version = 2;               // empty = the resolved current version
+  string to_version = 3;                 // empty = the resolved current version
+  string namespace = 4;                  // empty = the default namespace
+}
+message DiffOrkflowVersionsResponse {
+  // unified_diff is standard unified-diff text, empty when the two versions'
+  // source YAML is identical.
+  string unified_diff = 1;
+  string from_version = 2;               // resolved
+  string to_version = 3;                 // resolved
 }
 
 // RunService submits and observes orkflow executions.
@@ -46,6 +163,21 @@ service RunService {
   // StreamEvents server-streams realtime events for a run. from_sequence
   // allows resuming after a disconnect (0 = from start).
   rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+  // StreamTaskLogs server-streams one task attempt's output: every chunk
+  // already written, in order, then each new one as it lands.
+  //
+  // Logs are a SEPARATE stream from Event on purpose. Task output is bytes,
+  // and bytes never enter a Temporal payload or the event stream (a run's
+  // history is replayed forever, and a chatty task would bloat it forever
+  // too). The Orker writes numbered chunks to the artifact store while the
+  // task runs; this RPC reads them back from there. EventType gains nothing:
+  // EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no
+  // task output in it.
+  //
+  // Any replica answers for any run, on the same terms as StreamEvents: the
+  // chunks are in the shared store and the task's state comes from the shared
+  // cluster, so a replica that started nothing serves a run to completion.
+  rpc StreamTaskLogs(StreamTaskLogsRequest) returns (stream TaskLogChunk);
 }
 
 message SubmitRunRequest {
@@ -53,25 +185,195 @@ message SubmitRunRequest {
   string orkflow_version = 2;            // orkflow version; empty = latest
   Payload input = 3;
   string idempotency_key = 4;            // optional dedupe
+  // namespace selects which namespace's orkflow_name is submitted. Empty is
+  // the default namespace. A name is unique WITHIN a namespace, so this is
+  // half of the orkflow's address, not a filter.
+  string namespace = 5;
+  //
+  // allow_empty_pool submits even when a task's resolved pool has no live
+  // Orkers. Default false: an empty pool is an error at submit, not a run
+  // that reaches RUNNING and stays there because nothing will ever pick its
+  // tasks up. Setting it is logged with the pool it overrode.
+  bool allow_empty_pool = 6;
 }
 message SubmitRunResponse { Run run = 1; }
-message GetRunRequest { string run_id = 1; }
+// A run id addresses a run INSIDE a namespace, exactly as an orkflow name
+// does. It is unguessable, but unguessable is not a tenancy boundary: an id
+// travels into logs, tickets and CI transcripts, and CancelRun is a write. So
+// every request that carries one carries the namespace it is addressed in, on
+// the same rule as every other namespace field — empty is the default
+// namespace, never "any of them". A run of another namespace is NotFound, not
+// PermissionDenied: telling the two apart would confirm to a caller who may
+// not name the namespace that the id exists.
+message GetRunRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+}
 message GetRunResponse { Run run = 1; }
 message ListRunsRequest {
   string orkflow_name = 1;               // optional orkflow name filter
   Status status = 2;                     // optional filter
   int32 page_size = 3;
   string page_token = 4;
+  string namespace = 5;                  // empty = the default namespace
 }
 message ListRunsResponse {
   repeated Run runs = 1;
   string next_page_token = 2;
 }
-message CancelRunRequest { string run_id = 1; string reason = 2; }
+message CancelRunRequest {
+  string run_id = 1;
+  string reason = 2;
+  string namespace = 3;                  // empty = the default namespace
+}
 message CancelRunResponse { Run run = 1; }
 message StreamEventsRequest {
   string run_id = 1;
   int64 from_sequence = 2;
+  string namespace = 3;                  // empty = the default namespace
+}
+message StreamTaskLogsRequest {
+  string run_id = 1;
+  string task_id = 2;
+  // attempt selects one try of the task. 0 means the latest attempt that has
+  // written anything, so a caller that never saw a retry does not have to
+  // know retries exist.
+  //
+  // With `follow`, 0 keeps meaning THE LATEST for as long as the stream is
+  // open, not merely when it opened. A Temporal activity retry is invisible in
+  // a task's status — the task stays RUNNING while try 2 starts under a new
+  // key prefix — so a stream that resolved the attempt once would sit on a
+  // dead attempt, delivering nothing, for the rest of the task's life, and say
+  // it was live. When a later attempt appears the stream moves to it and
+  // delivers that attempt from its FIRST chunk; every chunk names the attempt
+  // it belongs to, and its seq restarts at 1, so a client can tell a new
+  // attempt from more of the old one. A non-zero attempt is pinned and never
+  // moves.
+  int32 attempt = 3;
+  // from_seq resumes AFTER this sequence: it is the LAST chunk sequence the
+  // client already received, and the stream continues with the next one. 0
+  // starts at the beginning. It is the same contract
+  // StreamEvents.from_sequence has, over the log's own numbering — dense and
+  // 1-based per (run, task, attempt) — so a client that hands back the seq of
+  // the last chunk it saw replays nothing twice and misses nothing, even when
+  // it reconnects to a DIFFERENT replica.
+  int64 from_seq = 4;
+  // from_attempt says which attempt from_seq counts chunks of. It is what
+  // makes a resume safe across a retry: seq is dense per ATTEMPT, so a cursor
+  // of 500 handed back after try 1 would silently skip try 2's first 500
+  // chunks — or, since try 2 is usually shorter, would deliver nothing at all
+  // while the pane read LIVE.
+  //
+  // 0 means "the attempt this request resolves to", which is what a first
+  // connection means and what a client pinning `attempt` means. When it names
+  // a DIFFERENT attempt from the one resolved, from_seq is dropped and the
+  // resolved attempt is delivered from its first chunk: a new attempt is a new
+  // read, not a continuation of the old one.
+  int32 from_attempt = 7;
+  // follow keeps the stream open for chunks that do not exist yet, ending
+  // when the task reaches a terminal state. False makes it a replay: the
+  // chunks the store holds when the request is served, then the end — whether
+  // or not the task is still writing, so a replay never turns into a follow.
+  bool follow = 5;
+  string namespace = 6;                  // empty = the default namespace
+}
+// TaskLogChunk is one slice of a task attempt's output, exactly as the Orker
+// flushed it.
+message TaskLogChunk {
+  string run_id = 1;
+  string task_id = 2;
+  int32 attempt = 3;
+  // seq orders the chunk within (run_id, task_id, attempt): dense, starting
+  // at 1. It is assigned by the single Orker executing the attempt, so it is
+  // total and gap-free without any coordination, and it is what a client
+  // hands back as from_seq.
+  int64 seq = 4;
+  // data is UTF-8 log bytes ending on a line boundary, except where one line
+  // exceeded the chunk limit and was split.
+  bytes data = 5;
+  // truncated marks the notice chunk the Orker writes when a task's output
+  // passed its cap. Its data says so in words; no further output was stored.
+  // Truncation is visible in the stream, never silent.
+  bool truncated = 6;
+  // last marks the end of the stream: everything this stream will deliver has
+  // been delivered, and its seq is the last sequence sent, so a client resumes
+  // from it. With follow that means the task reached a terminal state; without
+  // follow it means the replay is complete. It carries no data.
+  bool last = 7;
+}
+
+// NamespaceService manages namespaces and reports the pools they may dispatch
+// onto.
+//
+// A namespace is a scope that owns orkflow names, runs and pool defaults. The
+// registry is durable (the artifact store), so any replica answers for any
+// namespace, including one it never created.
+service NamespaceService {
+  // CreateNamespace registers a namespace.
+  //
+  // It is idempotent for an identical spec: creating the same namespace twice
+  // with the same description, labels, default pool and allowed pools returns
+  // the existing document rather than an error, so a provisioning script is
+  // safe to re-run. A second create that differs is AlreadyExists, naming what
+  // differs — that one is a collision, not a repeat.
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+  // GetNamespace reads one namespace. The default namespace always resolves,
+  // whether or not anyone created it.
+  rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
+  // ListNamespaces returns every registered namespace, ordered by name.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  // UpdateNamespace replaces a namespace's mutable fields.
+  //
+  // It is a compare-and-swap on Namespace.etag: the token a read handed back.
+  // A stale token is FailedPrecondition, so two operators editing at once
+  // cannot silently clobber each other — the loser re-reads and re-applies.
+  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse);
+  // DeleteNamespace removes a namespace that holds no orkflows.
+  //
+  // It refuses while any orkflow is still stored in it, and says how many:
+  // deleting the registry entry would not delete the definitions, so they
+  // would survive under a namespace nothing lists. The default namespace is
+  // refused unconditionally — every orkflow that names none is in it.
+  rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
+  // ListPools reports every pool a namespace may dispatch onto, each with the
+  // number of Orkers serving it right now and the plugins those Orkers run.
+  //
+  // The answer is read from the cluster, never from process memory, so any
+  // replica answers — including one that started nothing.
+  rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
+}
+message CreateNamespaceRequest {
+  Namespace namespace = 1;               // name is required; times are the registry's
+}
+message CreateNamespaceResponse {
+  Namespace namespace = 1;
+  // created is false when an identical namespace already existed, so an
+  // idempotent repeat is distinguishable from the write that did it.
+  bool created = 2;
+}
+message GetNamespaceRequest { string name = 1; }
+message GetNamespaceResponse { Namespace namespace = 1; }
+message ListNamespacesRequest {}
+message ListNamespacesResponse { repeated Namespace namespaces = 1; }
+message UpdateNamespaceRequest {
+  // namespace carries the new spec and the etag it was read at. Every update
+  // is conditional: the etag names the stored version this edit replaces, and
+  // an empty etag says the version it edited had no stored bytes at all —
+  // which is what a read of the synthesized `default` namespace hands back.
+  // Both are compare-and-swaps, and a write whose condition no longer holds
+  // is FAILED_PRECONDITION: re-read and re-apply. There is no unconditional
+  // mode; see Namespace.etag for why an empty token cannot be one.
+  Namespace namespace = 1;
+}
+message UpdateNamespaceResponse { Namespace namespace = 1; }
+message DeleteNamespaceRequest { string name = 1; }
+message DeleteNamespaceResponse {}
+message ListPoolsRequest {
+  string namespace = 1;                  // empty = the default namespace
+}
+message ListPoolsResponse {
+  repeated Pool pools = 1;               // ordered by name
+  string default_pool = 2;               // where a task naming no pool runs
 }
 
 // PluginService exposes the plugins registered across connected Orkers.

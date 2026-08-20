@@ -1,0 +1,7 @@
+Name:           payments
+Description:    the payments tenant
+Default pool:   batch
+Allowed pools:  batch,main
+Labels:         team=money
+Created:        2026-01-02T03:04:05Z
+Updated:        2026-01-02T03:04:05Z

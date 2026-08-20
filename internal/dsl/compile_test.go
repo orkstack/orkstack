@@ -1,12 +1,17 @@
 package dsl_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
@@ -333,7 +338,20 @@ tasks:
 	}
 }
 
-func TestCompile_UnpinnedVersionIsStableContentHash(t *testing.T) {
+// TestCompile_UnpinnedVersionNamesTheBytesItStores is the derived version's
+// whole contract: it is the sha256 of the source the document is stored with.
+//
+// The second half is not decoration. A version names ONE stored document, and
+// the store decides "this apply is what is already there" by comparing what it
+// holds — source bytes included (pkg/artifacts.sameStoredOrkflow). A
+// derivation covering LESS than those bytes names two different documents: a
+// comment-only edit compiled to the same version carrying different source,
+// and the store then refused it as an attempt to rewrite an immutable version
+// — with advice ("publish a new version") its author could not follow, because
+// a derived version is not theirs to choose. So the derivation covers exactly
+// the bytes that are stored, and the two notions of "the same document" cannot
+// disagree.
+func TestCompile_UnpinnedVersionNamesTheBytesItStores(t *testing.T) {
 	const doc = `
 name: unpinned
 description: hash me
@@ -350,6 +368,8 @@ tasks:
 		t.Fatalf("version = %q, want a 64-char sha256 hex hash", first.GetVersion())
 	}
 
+	// The same bytes are the same version. This is what makes re-applying an
+	// unchanged file a no-op rather than a second version of the same thing.
 	second, err := dsl.Compile([]byte(doc))
 	if err != nil {
 		t.Fatalf("Compile (repeat): %v", err)
@@ -358,24 +378,36 @@ tasks:
 		t.Errorf("version is not stable: %q vs %q", first.GetVersion(), second.GetVersion())
 	}
 
-	// Comments and formatting must not change the version.
-	reformatted := "# a comment\n" + strings.ReplaceAll(doc, "description: hash me", "description:   hash me")
-	third, err := dsl.Compile([]byte(reformatted))
-	if err != nil {
-		t.Fatalf("Compile (reformatted): %v", err)
-	}
-	if third.GetVersion() != first.GetVersion() {
-		t.Errorf("cosmetic change altered the version: %q vs %q", third.GetVersion(), first.GetVersion())
+	// And the version IS those bytes' hash, so nothing else has to agree with
+	// the compiler about what "the same document" means — it can measure it.
+	sum := sha256.Sum256([]byte(first.GetSourceYaml()))
+	if want := hex.EncodeToString(sum[:]); first.GetVersion() != want {
+		t.Errorf("version %q does not name the stored source (sha256 %q)",
+			first.GetVersion(), want)
 	}
 
-	// A semantic change must change the version.
-	changed := strings.ReplaceAll(doc, "echo 1", "echo 2")
-	fourth, err := dsl.Compile([]byte(changed))
-	if err != nil {
-		t.Fatalf("Compile (changed): %v", err)
-	}
-	if fourth.GetVersion() == first.GetVersion() {
-		t.Errorf("semantic change did not alter the version %q", fourth.GetVersion())
+	// Every change to those bytes is a new version, including the ones a
+	// compiler could dismiss as cosmetic: a comment is part of the document
+	// its author reads, and an edit that adds one has to be storable.
+	for what, edited := range map[string]string{
+		"a comment":         "# remind me why this exists\n" + doc,
+		"whitespace":        strings.ReplaceAll(doc, "description: hash me", "description:   hash me"),
+		"an edited command": strings.ReplaceAll(doc, "echo 1", "echo 2"),
+		"a reordered mapping": strings.Replace(doc, "name: unpinned\ndescription: hash me",
+			"description: hash me\nname: unpinned", 1),
+	} {
+		changed, err := dsl.Compile([]byte(edited))
+		if err != nil {
+			t.Fatalf("Compile (%s): %v", what, err)
+		}
+		if changed.GetVersion() == first.GetVersion() {
+			t.Errorf("%s did not change the version %q", what, first.GetVersion())
+		}
+		sum := sha256.Sum256([]byte(changed.GetSourceYaml()))
+		if want := hex.EncodeToString(sum[:]); changed.GetVersion() != want {
+			t.Errorf("%s: version %q does not name the stored source (sha256 %q)",
+				what, changed.GetVersion(), want)
+		}
 	}
 }
 
@@ -397,13 +429,13 @@ tasks:
 	}
 }
 
-func TestCompile_CompilesRetryTimeoutAndQueue(t *testing.T) {
+func TestCompile_CompilesRetryTimeoutAndPool(t *testing.T) {
 	const doc = `
 name: options
 tasks:
   - id: a
     plugin: shell
-    queue: special-queue
+    pool: gpu
     timeout_seconds: 42
     retry:
       maximum_attempts: 3
@@ -417,8 +449,8 @@ tasks:
 		t.Fatalf("Compile: %v", err)
 	}
 	task := wf.GetTasks()[0]
-	if task.GetQueue() != "special-queue" {
-		t.Errorf("queue = %q", task.GetQueue())
+	if task.GetPool() != "gpu" {
+		t.Errorf("pool = %q, want gpu", task.GetPool())
 	}
 	if task.GetTimeoutSeconds() != 42 {
 		t.Errorf("timeout_seconds = %d, want 42", task.GetTimeoutSeconds())
@@ -427,6 +459,83 @@ tasks:
 	if retry.GetMaximumAttempts() != 3 || retry.GetInitialIntervalSeconds() != 2 ||
 		retry.GetBackoffCoefficient() != 1.5 || retry.GetMaximumIntervalSeconds() != 10 {
 		t.Errorf("retry = %+v, want the DSL values", retry)
+	}
+}
+
+// TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty pins the two halves of
+// rule 1's namespace: an author who names one gets it verbatim, and an author
+// who names none gets an empty field — "empty means default" is resolved once,
+// where the name becomes a storage key, and never guessed twice.
+func TestCompile_CarriesTheNamespaceAndLeavesAbsenceEmpty(t *testing.T) {
+	const named = `
+namespace: payments
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo 1"}
+`
+	wf, err := dsl.Compile([]byte(named))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetNamespace() != "payments" {
+		t.Errorf("namespace = %q, want payments", wf.GetNamespace())
+	}
+
+	const anonymous = `
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo 1"}
+`
+	wf, err = dsl.Compile([]byte(anonymous))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetNamespace() != "" {
+		t.Errorf("namespace = %q, want empty (meaning the default namespace)", wf.GetNamespace())
+	}
+}
+
+func TestCompile_RejectsANamespaceOrPoolThatIsNotASlug(t *testing.T) {
+	cases := []struct{ name, doc, want string }{
+		{
+			name: "namespace",
+			doc: `
+namespace: Payments Team
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    with: {command: "echo 1"}
+`,
+			want: "namespace",
+		},
+		{
+			name: "pool",
+			doc: `
+name: nightly-close
+tasks:
+  - id: settle
+    plugin: shell
+    pool: GPU_Large
+    with: {command: "echo 1"}
+`,
+			want: "pool",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := dsl.Compile([]byte(tc.doc))
+			if err == nil {
+				t.Fatalf("Compile accepted a %s that is not a slug", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not name %q", err.Error(), tc.want)
+			}
+		})
 	}
 }
 
@@ -652,7 +761,19 @@ tasks:
 	}
 }
 
-func TestCompile_UnpinnedHashIsStableWhenNormalizedKeysCollide(t *testing.T) {
+// TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime guards the other
+// half of "one version, one document".
+//
+// YAML lets two distinct keys stringify to one JSON key (`null` and
+// `"<nil>"`), so the conversion loses one of them — and which one it loses
+// must not depend on map iteration order. The version cannot notice any more:
+// it is the source's hash, and the source does not change. The STORE notices,
+// because it compares the whole compiled document, so a compilation that
+// varied would make re-applying an unchanged file a "different document under
+// a stored version" every few tries (pkg/artifacts.sameStoredOrkflow). The
+// assertion is therefore on the compiled message, not only on the version it
+// used to be derived through.
+func TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime(t *testing.T) {
 	const document = `
 name: colliding-keys
 tasks:
@@ -663,18 +784,23 @@ tasks:
         null: one
         "<nil>": two
 `
-	var first string
+	var first *orkstackv1.Orkflow
 	for i := 0; i < 5_000; i++ {
 		wf, err := dsl.Compile([]byte(document))
 		if err != nil {
 			t.Fatalf("Compile() iteration %d: %v", i, err)
 		}
 		if i == 0 {
-			first = wf.GetVersion()
+			first = wf
 			continue
 		}
-		if wf.GetVersion() != first {
-			t.Fatalf("version changed at iteration %d: %q vs %q", i, wf.GetVersion(), first)
+		if wf.GetVersion() != first.GetVersion() {
+			t.Fatalf("version changed at iteration %d: %q vs %q",
+				i, wf.GetVersion(), first.GetVersion())
+		}
+		if !proto.Equal(wf, first) {
+			t.Fatalf("the same bytes compiled differently at iteration %d:\n%v\nvs\n%v",
+				i, wf, first)
 		}
 	}
 }

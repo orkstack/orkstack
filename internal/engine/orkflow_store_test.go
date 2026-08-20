@@ -27,15 +27,22 @@ func orkflowFixture(name, version string, appliedAt time.Time) *orkstackv1.Orkfl
 	}
 }
 
+// inNamespace places a fixture in one namespace, so a test can say which
+// namespace it means without repeating the message literal.
+func inNamespace(wf *orkstackv1.Orkflow, namespace string) *orkstackv1.Orkflow {
+	wf.Namespace = namespace
+	return wf
+}
+
 func TestMemoryOrkflowStore_ReadsBackWhatWasApplied(t *testing.T) {
 	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 	applied := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 
-	if err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", applied)); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", applied)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, err := store.Get(ctx, "hello-ork", "0.1.0")
+	got, err := store.Get(ctx, "", "hello-ork", "0.1.0")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -45,7 +52,7 @@ func TestMemoryOrkflowStore_ReadsBackWhatWasApplied(t *testing.T) {
 
 	// The store hands out copies: a caller mutating a result cannot corrupt it.
 	got.Tasks[0].Id = "mutated"
-	again, err := store.Get(ctx, "hello-ork", "0.1.0")
+	again, err := store.Get(ctx, "", "hello-ork", "0.1.0")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -59,14 +66,14 @@ func TestMemoryOrkflowStore_EmptyVersionIsTheMostRecentlyApplied(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 
-	if err := store.Put(ctx, orkflowFixture("hello-ork", "0.2.0", base)); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.2.0", base)); err != nil {
 		t.Fatalf("Put(0.2.0): %v", err)
 	}
-	if err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", base.Add(time.Second))); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", base.Add(time.Second))); err != nil {
 		t.Fatalf("Put(0.1.0): %v", err)
 	}
 
-	latest, err := store.Get(ctx, "hello-ork", "")
+	latest, err := store.Get(ctx, "", "hello-ork", "")
 	if err != nil {
 		t.Fatalf("Get(latest): %v", err)
 	}
@@ -75,7 +82,7 @@ func TestMemoryOrkflowStore_EmptyVersionIsTheMostRecentlyApplied(t *testing.T) {
 	}
 
 	// The earlier version is still addressable: versions are independent.
-	pinned, err := store.Get(ctx, "hello-ork", "0.2.0")
+	pinned, err := store.Get(ctx, "", "hello-ork", "0.2.0")
 	if err != nil {
 		t.Fatalf("Get(0.2.0): %v", err)
 	}
@@ -94,12 +101,12 @@ func TestMemoryOrkflowStore_ListsTheLatestVersionOfEveryOrkflowByName(t *testing
 		orkflowFixture("alpha", "0.1.0", base.Add(time.Second)),
 		orkflowFixture("alpha", "0.2.0", base.Add(2*time.Second)),
 	} {
-		if err := store.Put(ctx, wf); err != nil {
+		if _, _, err := store.Put(ctx, wf); err != nil {
 			t.Fatalf("Put(%s@%s): %v", wf.GetName(), wf.GetVersion(), err)
 		}
 	}
 
-	listed, err := store.List(ctx)
+	listed, err := store.List(ctx, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -118,16 +125,16 @@ func TestMemoryOrkflowStore_MissingOrkflowIsNotFound(t *testing.T) {
 	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 
-	if _, err := store.Get(ctx, "ghost", ""); !errors.Is(err, artifacts.ErrNotFound) {
+	if _, err := store.Get(ctx, "", "ghost", ""); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Get(ghost) = %v, want artifacts.ErrNotFound", err)
 	}
-	if err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", time.Now())); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", time.Now())); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if _, err := store.Get(ctx, "hello-ork", "9.9.9"); !errors.Is(err, artifacts.ErrNotFound) {
+	if _, err := store.Get(ctx, "", "hello-ork", "9.9.9"); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Get(unknown version) = %v, want artifacts.ErrNotFound", err)
 	}
-	empty, err := engine.NewMemoryOrkflowStore().List(ctx)
+	empty, err := engine.NewMemoryOrkflowStore().List(ctx, "")
 	if err != nil || len(empty) != 0 {
 		t.Errorf("List(empty store) = %v, %v; want no orkflows", empty, err)
 	}
@@ -141,8 +148,79 @@ func TestMemoryOrkflowStore_RejectsAnOrkflowItCannotAddress(t *testing.T) {
 		{Version: "0.1.0"},
 		{Name: "hello-ork"},
 	} {
-		if err := store.Put(ctx, wf); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
+		if _, _, err := store.Put(ctx, wf); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 			t.Errorf("Put(%q@%q) = %v, want artifacts.ErrInvalidOrkflow", wf.GetName(), wf.GetVersion(), err)
 		}
+	}
+}
+
+// TestMemoryOrkflowStore_TwoNamespacesHoldTheSameNameIndependently is the
+// isolation property, checked against the store every unit test runs on so a
+// test cannot pass here for a reason the bucket would not reproduce
+// (pkg/artifacts holds the same property against the durable store).
+func TestMemoryOrkflowStore_TwoNamespacesHoldTheSameNameIndependently(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	ctx := context.Background()
+	base := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+
+	payments := inNamespace(orkflowFixture("deploy", "1.0.0", base), "payments")
+	payments.Tasks[0].Id = "charge"
+	shipping := inNamespace(orkflowFixture("deploy", "2.0.0", base.Add(time.Second)), "shipping")
+	shipping.Tasks[0].Id = "pack"
+	for _, wf := range []*orkstackv1.Orkflow{payments, shipping} {
+		if _, _, err := store.Put(ctx, wf); err != nil {
+			t.Fatalf("Put(%s/%s): %v", wf.GetNamespace(), wf.GetName(), err)
+		}
+	}
+
+	// Same name, different namespace, different document.
+	for _, tc := range []struct{ namespace, version, task string }{
+		{"payments", "1.0.0", "charge"},
+		{"shipping", "2.0.0", "pack"},
+	} {
+		got, err := store.Get(ctx, tc.namespace, "deploy", "")
+		if err != nil {
+			t.Fatalf("Get(%s/deploy): %v", tc.namespace, err)
+		}
+		if got.GetVersion() != tc.version || got.GetTasks()[0].GetId() != tc.task {
+			t.Errorf("%s/deploy = %s task %q, want %s task %q",
+				tc.namespace, got.GetVersion(), got.GetTasks()[0].GetId(), tc.version, tc.task)
+		}
+		listed, err := store.List(ctx, tc.namespace)
+		if err != nil {
+			t.Fatalf("List(%s): %v", tc.namespace, err)
+		}
+		if len(listed) != 1 || listed[0].GetVersion() != tc.version {
+			t.Errorf("List(%s) = %v, want only %s", tc.namespace, listed, tc.version)
+		}
+	}
+
+	// Neither is visible from the namespace that holds neither.
+	if _, err := store.Get(ctx, "", "deploy", ""); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("Get(default/deploy) = %v, want ErrNotFound", err)
+	}
+	if listed, err := store.List(ctx, ""); err != nil || len(listed) != 0 {
+		t.Errorf("List(default) = %v, %v; want nothing", listed, err)
+	}
+}
+
+// TestMemoryOrkflowStore_AnUnnamedNamespaceIsTheDefaultOne pins the one rule
+// that makes "empty means default" safe: the two spellings are the same
+// namespace, so a document written without one is readable with it.
+func TestMemoryOrkflowStore_AnUnnamedNamespaceIsTheDefaultOne(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	ctx := context.Background()
+
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", time.Now())); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := store.Get(ctx, artifacts.DefaultNamespace, "hello-ork", "0.1.0")
+	if err != nil {
+		t.Fatalf("Get(default/hello-ork): %v", err)
+	}
+	// The stored document names the namespace it lives in, so a reader never
+	// has to reconstruct it from the key it read.
+	if got.GetNamespace() != artifacts.DefaultNamespace {
+		t.Errorf("stored namespace = %q, want %q", got.GetNamespace(), artifacts.DefaultNamespace)
 	}
 }

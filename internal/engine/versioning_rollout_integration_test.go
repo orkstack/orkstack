@@ -360,7 +360,7 @@ func TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn(t *testi
 
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
 	pinnedRun := "ork-rollout-pinned-" + suffix
-	if err := starter.StartRun(ctx, pinnedRun, gatedOrkflow(), nil); err != nil {
+	if err := starter.StartRun(ctx, pinnedRun, gatedOrkflow(), nil, rawPlan(orkerQueue)); err != nil {
 		t.Fatalf("start the run that must stay on v1: %v", err)
 	}
 	transcript.step("submitted run " + pinnedRun + " while v1 was current")
@@ -385,7 +385,7 @@ func TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn(t *testi
 	transcript.step("stopped v1's projection worker; only v2's remains")
 
 	newRun := "ork-rollout-current-" + suffix
-	if err := starter.StartRun(ctx, newRun, plainOrkflow(), nil); err != nil {
+	if err := starter.StartRun(ctx, newRun, plainOrkflow(), nil, rawPlan(orkerQueue)); err != nil {
 		t.Fatalf("start the run that must use v2: %v", err)
 	}
 	transcript.step("submitted run " + newRun + " after the switch")

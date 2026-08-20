@@ -61,7 +61,10 @@ DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch�
 7. **Temporal is the read model for live runs.** `GetRun`, `ListRuns`,
    `StreamEvents` and `/ws/runs/{id}` are answered from the run's Temporal
    history through `engine.TemporalRunReader` (`internal/engine/reader.go`),
-   wired as the API's `RunReader` seam (`internal/api/service.go`); finished
+   handed to the API as `Binding.Reader` by the namespace router
+   (`internal/engine/router.go`) — the `RunReader` seam is declared there
+   because a `Binding` cannot name the API's type without a cycle, and it is
+   consumed in `internal/api/service.go`; finished
    runs past retention come from the run archive, which is the bucket in any
    replicated deployment — `ORK_ARTIFACT_BACKEND` defaults to a directory per
    process, so `s3` stops being optional at the second replica
@@ -88,6 +91,65 @@ DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch�
    orkflow, or a Temporal workflow TYPE, and it must say which. The rename
    landed at M9 with no shim and no dual-read, because nothing was deployed;
    `proof/M9/naming-sweep.sh` is what holds the tree to it.
+
+   **The same rule for where a task runs: the word is `pool`.** A **pool** is
+   a set of Orkers, and it is what a user names — `pool:` in the DSL, the
+   `Pool` message, `TaskRun.pool`, `ListPools`, `orkctl namespace create
+   --default-pool/--allow-pool`, `ORK_ORKER_POOL`, the pool cards on the
+   dashboard. A **queue** is a Temporal task queue and
+   means nothing else in this repo; it appears on **no user-facing surface**:
+   not in `proto/`, not in the DSL, not in an `orkctl` flag or its help text,
+   not in `ui/src` outside `gen/`, not in `docs/DSL.md`, not in a shipped
+   example. `queue:` was removed from the DSL at M10.1 with no alias — a
+   document that still writes it fails to compile with a message naming
+   `pool:` (`internal/dsl/removed.go`). `proof/M10.1/naming-sweep.sh` is what
+   holds the tree to it, and it bans the substring, so `task_queue`,
+   `queueName` and `ORK_TEMPORAL_NAMESPACE` cannot walk through the door a
+   word boundary would leave open.
+
+   **The translation lives in `internal/task/pool.go` and nowhere else.**
+   `QueueForPool` / `RouteForPool` / `PoolForQueue` are the whole mapping, and
+   the prefix `ork-pool-` is constructed in exactly one place —
+   `poolQueuePrefix`, `internal/task/pool.go`. Elsewhere the string appears
+   only inside prose.
+   `""` and `"main"` both resolve to the deployment's *configured* default
+   channel, so `pool: main` and no pool are one route by construction under
+   every `ORK_ORKER_QUEUE` override — which is why a document cannot escape an
+   agent's isolation by naming the default pool (§6). Any other valid pool is
+   `ork-pool-<slug>`; `ork-engine-events` as the bound default is refused
+   (`ErrReservedQueue`). Write a second mapping anywhere and the two spellings
+   of one pool stop being one pool.
+10. **A namespace is the tenancy coordinate, and `default` is a name like any
+    other.** An orkflow name is unique WITHIN a namespace, and every read and
+    write that carries a run or an orkflow carries the namespace it belongs to.
+    Three invariants hold it up:
+    - **One slug rule, stated where each boundary needs it, over shared test
+      vectors.** `^[a-z][a-z0-9-]*$`, ≤200 bytes, for a namespace, an orkflow
+      name, a task id and a pool: `internal/dsl/compile.go` (`slugPattern`,
+      `MaxSlug`), `pkg/artifacts/namespace_store.go` (`namespaceNamePattern`,
+      `maxPoolName`) and `internal/task/pool.go` (`poolPattern`,
+      `MaxPoolName`) — restated at each boundary because a hand-built request
+      never went through the compiler, and held to ONE rule by a shared corpus
+      (`TestNamespaceName_RegistryAndCompilerAgree`,
+      `pkg/artifacts/namespace_name_test.go`, the only place that package names
+      `internal/dsl`). Names are **validated, never sanitized** — a name that
+      has to be repaired to be stored is a name that can be spelled two ways,
+      and a key built from it then addresses somebody else's tenant.
+    - **`default` always resolves, and is never stored or deleted.** A request
+      naming no namespace means `default` on the wire (the empty string), and
+      reading it answers a synthesized document
+      (`artifacts.DefaultNamespaceDocument`) whether or not anything was ever
+      written. Creating it writes nothing — an identical spec is the no-op it
+      looks like, a different one is the conflict any collision is — and
+      deleting it is refused unconditionally: it holds every orkflow that names
+      none (`internal/api/namespaces.go`).
+    - **The archive index is namespace-first.**
+      `metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{run-id}` —
+      eight segments, `runIndexSegments = 8`, `pkg/artifacts/archive.go`. The
+      namespace is the first thing after the prefix so that listing one
+      tenant's runs narrows in the LIST call, not in a filter afterwards: a
+      post-filter would make one tenant's page scan every tenant's keys, and a
+      run's namespace would be recoverable only by reading its body.
 
 ## 2. Repository layout
 
@@ -119,12 +181,14 @@ scripts/               Dev helper scripts
   `make lint` (go vet + gofmt) must pass. Prefer `context.Context` first arg,
   wrapped errors (`fmt.Errorf("...: %w", err)`), no panics in library code.
 - **Temporal Go SDK** (`go.temporal.io/sdk`). Namespace: `ORK_TEMPORAL_NAMESPACE`,
-  default `ork-main` (auto-provisioned at binary boot). Task queues: the engine
-  dispatches task activities to `ORK_ORKER_QUEUE`, default `ork-tasks`, set on
-  both binaries; a task may override via `queue`. The engine's own workflows
-  always live on the fixed `ork-tasks` and `ork-engine-events`, whatever
-  `ORK_ORKER_QUEUE` says (`cmd/ork/main.go`, `queuesFor`). **For parallel agent
-  runs, give each agent its own namespace (see §6 below).**
+  default `ork-main` (auto-provisioned at binary boot). Task activities resolve
+  a user-facing pool to an internal Temporal task queue; the engine's raw
+  default is `ORK_ORKER_QUEUE`, default `ork-tasks`, set on both binaries. A
+  task's `pool:` is resolved inside the engine and never exposes that queue.
+  The engine's own workflows always live on the fixed `ork-tasks` and
+  `ork-engine-events`, whatever `ORK_ORKER_QUEUE` says (`cmd/ork/main.go`,
+  `queuesFor`). **For parallel agent runs, give each agent its own namespace
+  (see §6 below).**
 - **Connect** (`connectrpc.com/connect`) for RPC. Server serves h2c on
   `:8080` (configurable). WebSocket event bridge on the same server at
   `/ws/runs/{id}`.
@@ -233,10 +297,16 @@ next reader will "fix" it.
 
 **`ORK_ORKER_QUEUE` isolates task execution.** Set it on both binaries and the
 Orker polls that queue while the engine dispatches every task that names no
-`queue:` of its own to it (`TemporalStarter.StartRun` binds the name into the
+`pool:` of its own to it (`TemporalStarter.StartRun` binds the name into the
 run's workflow input; workflow code is deterministic and cannot read the
-environment itself). Set it on only one of the two and the run strands in
-RUNNING: the Orker listens to one queue while the engine dispatches to another.
+environment itself). A task that writes `pool: main` goes there too, whatever
+shape the override has: `main` names this deployment's default pool, not the
+queue `ork-tasks`, so the override moves it, and one pool name means one set
+of Orkers. A document cannot escape the isolation onto the shared queue by
+naming the default pool, nor by naming the pool it was already reported on
+(`runState.routeForTask`). Set it on only one of the two and the run strands
+in RUNNING: the Orker listens to one queue while the engine dispatches to
+another.
 
 ```bash
 # Both processes, same value.
@@ -245,14 +315,17 @@ export ORK_ORKER_QUEUE="ork-tasks-m7-9"
 
 A queue partitions task execution only — run workflows and engine events still
 share their queues, so a namespace is the stronger boundary and the one to use
-for parallel agents. A task's own `queue:` in the DSL still outranks the
-engine's default, which is how a step reaches a dedicated Orker pool
-(`docs/DSL.md`). Proof for both: `proof/queue-routing/`.
+for parallel agents. A task's own `pool:` in the DSL resolves to its dedicated
+Orker pool, which is how one step reaches a separate worker group
+(`docs/DSL.md`). Proof for both: `proof/queue-routing/`, which
+`proof/M10.1/proof-claims.sh` holds to this tree — a proof this file points a
+reader at is a claim about the tree, and M10.1 renamed five symbols that proof
+argued from before anything noticed.
 
 **In test harnesses** that start their own engine and orker, give the pair a
 unique namespace, and a private queue when the test needs one
-(`cmd/orkctl/integration_test.go` does both — it also pins the queue onto each
-task through `writeQueuePinnedOrkflow`, which is still the way to prove
+(`cmd/orkctl/integration_test.go` does both — it also assigns a pool to each
+task through `writePoolPinnedOrkflow`, which is still the way to prove
 per-task routing):
 
 ```go

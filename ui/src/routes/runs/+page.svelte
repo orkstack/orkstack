@@ -1,9 +1,22 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { fmtTimestamp } from '$lib/status';
+	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	let retrying = $state(false);
+	async function retry() {
+		retrying = true;
+		try {
+			await invalidateAll();
+		} finally {
+			retrying = false;
+		}
+	}
 </script>
 
 <svelte:head><title>Runs — OrkStack</title></svelte:head>
@@ -15,7 +28,7 @@
 		{/if}
 	</h1>
 	<a
-		href="/submit"
+		href={withNamespace('/submit', data.namespace)}
 		class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
 	>
 		Submit run
@@ -23,14 +36,20 @@
 </div>
 
 {#if data.error}
-	<div
-		data-testid="engine-error"
-		class="rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-	>
-		Could not reach the engine: {data.error}
-	</div>
+	<ErrorPanel
+		testid="engine-error"
+		retryTestid="runs-retry"
+		subject="the runs in namespace {namespaceLabel(data.namespace)}"
+		message={data.error}
+		busy={retrying}
+		onretry={retry}
+	/>
+{:else if retrying}
+	<p class="text-sm text-zinc-400" data-testid="runs-loading">Loading runs…</p>
 {:else if data.runs.length === 0}
-	<p class="text-sm text-zinc-400" data-testid="runs-empty">No runs yet.</p>
+	<p class="text-sm text-zinc-400" data-testid="runs-empty">
+		No runs in namespace {namespaceLabel(data.namespace)} yet.
+	</p>
 {:else}
 	<div class="overflow-hidden rounded-lg border border-zinc-800">
 		<table class="w-full text-left text-sm" data-testid="run-list">
@@ -46,7 +65,7 @@
 				{#each data.runs as run (run.id)}
 					<tr class="hover:bg-zinc-900/60" data-testid="run-row-{run.id}">
 						<td class="px-4 py-3 font-medium">
-							<a href="/runs/{run.id}" class="text-emerald-300 hover:underline">{run.id}</a>
+							<a href={withNamespace(`/runs/${run.id}`, data.namespace)} class="text-emerald-300 hover:underline">{run.id}</a>
 						</td>
 						<td class="px-4 py-3 text-zinc-300">{run.orkflowName}@{run.orkflowVersion}</td>
 						<td class="px-4 py-3"><StatusPill status={run.status} /></td>

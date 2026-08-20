@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/run.proto.
  */
 export const file_orkstack_v1_run: GenFile = /*@__PURE__*/
-  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIrcCCgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSDgoGcGx1Z2luGAIgASgJEiMKBnN0YXR1cxgDIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdhdHRlbXB0GAQgASgFEiQKBm91dHB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKwoJYXJ0aWZhY3RzGAYgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchIuCgpzdGFydGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAijQMKA1J1bhIKCgJpZBgBIAEoCRIUCgxvcmtmbG93X25hbWUYAiABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAMgASgJEiMKBnN0YXR1cxgEIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIjCgVpbnB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSJAoGb3V0cHV0GAYgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEicKCXRhc2tfcnVucxgIIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SLgoKY3JlYXRlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIukBCgVFdmVudBIOCgZydW5faWQYASABKAkSEAoIc2VxdWVuY2UYAiABKAMSJAoEdHlwZRgDIAEoDjIWLm9ya3N0YWNrLnYxLkV2ZW50VHlwZRIPCgd0YXNrX2lkGAQgASgJEiMKBnN0YXR1cxgFIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdtZXNzYWdlGAYgASgJEiIKBGRhdGEYByABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEi0KCXRpbWVzdGFtcBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqxQIKCUV2ZW50VHlwZRIaChZFVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRVZFTlRfVFlQRV9SVU5fQ1JFQVRFRBABEhoKFkVWRU5UX1RZUEVfUlVOX1NUQVJURUQQAhIdChlFVkVOVF9UWVBFX1RBU0tfU0NIRURVTEVEEAMSGwoXRVZFTlRfVFlQRV9UQVNLX1NUQVJURUQQBBIXChNFVkVOVF9UWVBFX1RBU0tfTE9HEAUSHQoZRVZFTlRfVFlQRV9UQVNLX1NVQ0NFRURFRBAGEhoKFkVWRU5UX1RZUEVfVEFTS19GQUlMRUQQBxIcChhFVkVOVF9UWVBFX1JVTl9TVUNDRUVERUQQCBIZChVFVkVOVF9UWVBFX1JVTl9GQUlMRUQQCRIbChdFVkVOVF9UWVBFX1JVTl9DQU5DRUxFRBAKQqQBCg9jb20ub3Jrc3RhY2sudjFCCFJ1blByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_common]);
+  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIsUCCgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSDgoGcGx1Z2luGAIgASgJEiMKBnN0YXR1cxgDIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdhdHRlbXB0GAQgASgFEiQKBm91dHB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKwoJYXJ0aWZhY3RzGAYgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchIuCgpzdGFydGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEcG9vbBgKIAEoCSKgAwoDUnVuEgoKAmlkGAEgASgJEhQKDG9ya2Zsb3dfbmFtZRgCIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YAyABKAkSIwoGc3RhdHVzGAQgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEiMKBWlucHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIkCgZvdXRwdXQYBiABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEiEKBWVycm9yGAcgASgLMhIub3Jrc3RhY2sudjEuRXJyb3ISJwoJdGFza19ydW5zGAggAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIuCgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAwgASgJIukBCgVFdmVudBIOCgZydW5faWQYASABKAkSEAoIc2VxdWVuY2UYAiABKAMSJAoEdHlwZRgDIAEoDjIWLm9ya3N0YWNrLnYxLkV2ZW50VHlwZRIPCgd0YXNrX2lkGAQgASgJEiMKBnN0YXR1cxgFIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdtZXNzYWdlGAYgASgJEiIKBGRhdGEYByABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEi0KCXRpbWVzdGFtcBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqxQIKCUV2ZW50VHlwZRIaChZFVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRVZFTlRfVFlQRV9SVU5fQ1JFQVRFRBABEhoKFkVWRU5UX1RZUEVfUlVOX1NUQVJURUQQAhIdChlFVkVOVF9UWVBFX1RBU0tfU0NIRURVTEVEEAMSGwoXRVZFTlRfVFlQRV9UQVNLX1NUQVJURUQQBBIXChNFVkVOVF9UWVBFX1RBU0tfTE9HEAUSHQoZRVZFTlRfVFlQRV9UQVNLX1NVQ0NFRURFRBAGEhoKFkVWRU5UX1RZUEVfVEFTS19GQUlMRUQQBxIcChhFVkVOVF9UWVBFX1JVTl9TVUNDRUVERUQQCBIZChVFVkVOVF9UWVBFX1JVTl9GQUlMRUQQCRIbChdFVkVOVF9UWVBFX1JVTl9DQU5DRUxFRBAKQqQBCg9jb20ub3Jrc3RhY2sudjFCCFJ1blByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_common]);
 
 /**
  * TaskRun is the execution record of a single Task within a Run.
@@ -66,6 +66,28 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    * @generated from field: google.protobuf.Timestamp finished_at = 9;
    */
   finishedAt?: Timestamp | undefined;
+
+  /**
+   * pool names the set of Orkers this attempt was dispatched to, in the word
+   * its author typed: the task's own `pool:`, or the pool this run's default
+   * route resolves to when the task named none.
+   *
+   * Within a run, one pool name means one set of Orkers, so naming this pool
+   * on a task reaches exactly the Orkers this attempt reached. That holds
+   * under the per-deployment route override operators use to keep two stacks
+   * apart: an execution channel belonging to no pool reports as the built-in
+   * "main", and a task that writes "main" follows the same override instead
+   * of escaping it. The override is an operator concern this contract does
+   * not expose, so this name is the routing request rather than a measurement
+   * of the host that answered, and another deployment resolves it against its
+   * own Orkers.
+   *
+   * Empty means the task never reached an Orker (skipped, or terminal before
+   * dispatch).
+   *
+   * @generated from field: string pool = 10;
+   */
+  pool: string;
 };
 
 /**
@@ -139,6 +161,16 @@ export type Run = Message<"orkstack.v1.Run"> & {
    * @generated from field: google.protobuf.Timestamp finished_at = 11;
    */
   finishedAt?: Timestamp | undefined;
+
+  /**
+   * namespace is the namespace of the orkflow this run executed. Empty means
+   * the built-in "default" namespace. It is a coordinate of the run, not a
+   * lookup: the archive indexes runs under it, so listing one namespace's runs
+   * is a single prefix scan.
+   *
+   * @generated from field: string namespace = 12;
+   */
+  namespace: string;
 };
 
 /**

@@ -1,15 +1,9 @@
-import { env } from '$env/dynamic/public';
 import { fromJson, type JsonObject, type JsonValue } from '@bufbuild/protobuf';
 import { EventSchema, type Event } from './gen/orkstack/v1/run_pb';
 import { isTerminalEventType } from './status';
+import { wsBaseUrl } from './ws';
 
 export type RunSocketState = 'connecting' | 'open' | 'closed' | 'error';
-
-function wsBaseUrl(): string {
-	if (env.PUBLIC_ENGINE_WS_URL) return env.PUBLIC_ENGINE_WS_URL.replace(/\/$/, '');
-	const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-	return `${scheme}://${location.hostname}:8080`;
-}
 
 // The bridge writes enum values without their proto prefix ("RUNNING"), while
 // the generated decoder only knows the declared names. Restore the prefix on
@@ -30,8 +24,14 @@ function withProtoEnumNames(frame: JsonValue): JsonValue {
 // replays the backlog (from_sequence=0), delivers every event in order,
 // dedupes by sequence, and reconnects with a resume cursor until the run
 // reaches a terminal event. Returns an unsubscribe function.
+//
+// namespace is where the run is addressed. It travels as a query parameter
+// because the path is the run's address and a socket has no request body; the
+// bridge answers 404 for a run of another namespace, on the same rule as the
+// RPC, and an empty value means the default namespace.
 export function watchRunEvents(
 	runId: string,
+	namespace: string,
 	onEvent: (event: Event) => void,
 	onState?: (state: RunSocketState) => void
 ): () => void {
@@ -45,7 +45,9 @@ export function watchRunEvents(
 	const connect = () => {
 		if (stopped) return;
 		setState('connecting');
-		const url = `${wsBaseUrl()}/ws/runs/${encodeURIComponent(runId)}?from_sequence=${lastSequence.toString()}`;
+		const query = new URLSearchParams({ from_sequence: lastSequence.toString() });
+		if (namespace) query.set('namespace', namespace);
+		const url = `${wsBaseUrl()}/ws/runs/${encodeURIComponent(runId)}?${query.toString()}`;
 		socket = new WebSocket(url);
 
 		socket.onopen = () => {

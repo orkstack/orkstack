@@ -25,6 +25,8 @@ const (
 	OrkflowServiceName = "orkstack.v1.OrkflowService"
 	// RunServiceName is the fully-qualified name of the RunService service.
 	RunServiceName = "orkstack.v1.RunService"
+	// NamespaceServiceName is the fully-qualified name of the NamespaceService service.
+	NamespaceServiceName = "orkstack.v1.NamespaceService"
 	// PluginServiceName is the fully-qualified name of the PluginService service.
 	PluginServiceName = "orkstack.v1.PluginService"
 )
@@ -46,6 +48,15 @@ const (
 	// OrkflowServiceListOrkflowsProcedure is the fully-qualified name of the OrkflowService's
 	// ListOrkflows RPC.
 	OrkflowServiceListOrkflowsProcedure = "/orkstack.v1.OrkflowService/ListOrkflows"
+	// OrkflowServiceListOrkflowVersionsProcedure is the fully-qualified name of the OrkflowService's
+	// ListOrkflowVersions RPC.
+	OrkflowServiceListOrkflowVersionsProcedure = "/orkstack.v1.OrkflowService/ListOrkflowVersions"
+	// OrkflowServiceSetCurrentOrkflowVersionProcedure is the fully-qualified name of the
+	// OrkflowService's SetCurrentOrkflowVersion RPC.
+	OrkflowServiceSetCurrentOrkflowVersionProcedure = "/orkstack.v1.OrkflowService/SetCurrentOrkflowVersion"
+	// OrkflowServiceDiffOrkflowVersionsProcedure is the fully-qualified name of the OrkflowService's
+	// DiffOrkflowVersions RPC.
+	OrkflowServiceDiffOrkflowVersionsProcedure = "/orkstack.v1.OrkflowService/DiffOrkflowVersions"
 	// RunServiceSubmitRunProcedure is the fully-qualified name of the RunService's SubmitRun RPC.
 	RunServiceSubmitRunProcedure = "/orkstack.v1.RunService/SubmitRun"
 	// RunServiceGetRunProcedure is the fully-qualified name of the RunService's GetRun RPC.
@@ -56,6 +67,27 @@ const (
 	RunServiceCancelRunProcedure = "/orkstack.v1.RunService/CancelRun"
 	// RunServiceStreamEventsProcedure is the fully-qualified name of the RunService's StreamEvents RPC.
 	RunServiceStreamEventsProcedure = "/orkstack.v1.RunService/StreamEvents"
+	// RunServiceStreamTaskLogsProcedure is the fully-qualified name of the RunService's StreamTaskLogs
+	// RPC.
+	RunServiceStreamTaskLogsProcedure = "/orkstack.v1.RunService/StreamTaskLogs"
+	// NamespaceServiceCreateNamespaceProcedure is the fully-qualified name of the NamespaceService's
+	// CreateNamespace RPC.
+	NamespaceServiceCreateNamespaceProcedure = "/orkstack.v1.NamespaceService/CreateNamespace"
+	// NamespaceServiceGetNamespaceProcedure is the fully-qualified name of the NamespaceService's
+	// GetNamespace RPC.
+	NamespaceServiceGetNamespaceProcedure = "/orkstack.v1.NamespaceService/GetNamespace"
+	// NamespaceServiceListNamespacesProcedure is the fully-qualified name of the NamespaceService's
+	// ListNamespaces RPC.
+	NamespaceServiceListNamespacesProcedure = "/orkstack.v1.NamespaceService/ListNamespaces"
+	// NamespaceServiceUpdateNamespaceProcedure is the fully-qualified name of the NamespaceService's
+	// UpdateNamespace RPC.
+	NamespaceServiceUpdateNamespaceProcedure = "/orkstack.v1.NamespaceService/UpdateNamespace"
+	// NamespaceServiceDeleteNamespaceProcedure is the fully-qualified name of the NamespaceService's
+	// DeleteNamespace RPC.
+	NamespaceServiceDeleteNamespaceProcedure = "/orkstack.v1.NamespaceService/DeleteNamespace"
+	// NamespaceServiceListPoolsProcedure is the fully-qualified name of the NamespaceService's
+	// ListPools RPC.
+	NamespaceServiceListPoolsProcedure = "/orkstack.v1.NamespaceService/ListPools"
 	// PluginServiceListPluginsProcedure is the fully-qualified name of the PluginService's ListPlugins
 	// RPC.
 	PluginServiceListPluginsProcedure = "/orkstack.v1.PluginService/ListPlugins"
@@ -63,10 +95,36 @@ const (
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
 type OrkflowServiceClient interface {
-	// ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+	// ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+	//
+	// It never rewrites a stored version: identical YAML under an existing
+	// version is a no-op that writes nothing, and DIFFERENT YAML under an
+	// existing version is refused (AlreadyExists). An edit therefore always
+	// arrives as a new version — which is what lets a run pinned to a version
+	// keep reading the bytes it pinned.
 	ApplyOrkflow(context.Context, *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error)
 	GetOrkflow(context.Context, *connect.Request[v1.GetOrkflowRequest]) (*connect.Response[v1.GetOrkflowResponse], error)
 	ListOrkflows(context.Context, *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error)
+	// ListOrkflowVersions lists every stored version of one orkflow, newest
+	// applied first, marking the one an empty version resolves to.
+	ListOrkflowVersions(context.Context, *connect.Request[v1.ListOrkflowVersionsRequest]) (*connect.Response[v1.ListOrkflowVersionsResponse], error)
+	// SetCurrentOrkflowVersion moves the orkflow's current pointer.
+	//
+	// The target must already exist: promoting to an unknown version is
+	// NotFound, so a reader can never observe a pointer to a version that is not
+	// there. Two replicas promoting at once are arbitrated by the store's
+	// compare-and-swap — one value wins, and it is one of the two asked for.
+	SetCurrentOrkflowVersion(context.Context, *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error)
+	// DiffOrkflowVersions renders the unified diff between two versions'
+	// source_yaml.
+	//
+	// The diff is computed SERVER-side, deliberately. Two clients read it (the
+	// CLI and the UI) and a third will follow; a client-side diff would put a
+	// diff dependency in each of them and let their renderings drift, so that
+	// `orkctl orkflow diff` and the version page could disagree about what
+	// changed. One implementation, golden-tested once, rendered verbatim by
+	// every client.
+	DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error)
 }
 
 // NewOrkflowServiceClient constructs a client for the orkstack.v1.OrkflowService service. By
@@ -98,14 +156,35 @@ func NewOrkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflows")),
 			connect.WithClientOptions(opts...),
 		),
+		listOrkflowVersions: connect.NewClient[v1.ListOrkflowVersionsRequest, v1.ListOrkflowVersionsResponse](
+			httpClient,
+			baseURL+OrkflowServiceListOrkflowVersionsProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflowVersions")),
+			connect.WithClientOptions(opts...),
+		),
+		setCurrentOrkflowVersion: connect.NewClient[v1.SetCurrentOrkflowVersionRequest, v1.SetCurrentOrkflowVersionResponse](
+			httpClient,
+			baseURL+OrkflowServiceSetCurrentOrkflowVersionProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("SetCurrentOrkflowVersion")),
+			connect.WithClientOptions(opts...),
+		),
+		diffOrkflowVersions: connect.NewClient[v1.DiffOrkflowVersionsRequest, v1.DiffOrkflowVersionsResponse](
+			httpClient,
+			baseURL+OrkflowServiceDiffOrkflowVersionsProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("DiffOrkflowVersions")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // orkflowServiceClient implements OrkflowServiceClient.
 type orkflowServiceClient struct {
-	applyOrkflow *connect.Client[v1.ApplyOrkflowRequest, v1.ApplyOrkflowResponse]
-	getOrkflow   *connect.Client[v1.GetOrkflowRequest, v1.GetOrkflowResponse]
-	listOrkflows *connect.Client[v1.ListOrkflowsRequest, v1.ListOrkflowsResponse]
+	applyOrkflow             *connect.Client[v1.ApplyOrkflowRequest, v1.ApplyOrkflowResponse]
+	getOrkflow               *connect.Client[v1.GetOrkflowRequest, v1.GetOrkflowResponse]
+	listOrkflows             *connect.Client[v1.ListOrkflowsRequest, v1.ListOrkflowsResponse]
+	listOrkflowVersions      *connect.Client[v1.ListOrkflowVersionsRequest, v1.ListOrkflowVersionsResponse]
+	setCurrentOrkflowVersion *connect.Client[v1.SetCurrentOrkflowVersionRequest, v1.SetCurrentOrkflowVersionResponse]
+	diffOrkflowVersions      *connect.Client[v1.DiffOrkflowVersionsRequest, v1.DiffOrkflowVersionsResponse]
 }
 
 // ApplyOrkflow calls orkstack.v1.OrkflowService.ApplyOrkflow.
@@ -123,12 +202,53 @@ func (c *orkflowServiceClient) ListOrkflows(ctx context.Context, req *connect.Re
 	return c.listOrkflows.CallUnary(ctx, req)
 }
 
+// ListOrkflowVersions calls orkstack.v1.OrkflowService.ListOrkflowVersions.
+func (c *orkflowServiceClient) ListOrkflowVersions(ctx context.Context, req *connect.Request[v1.ListOrkflowVersionsRequest]) (*connect.Response[v1.ListOrkflowVersionsResponse], error) {
+	return c.listOrkflowVersions.CallUnary(ctx, req)
+}
+
+// SetCurrentOrkflowVersion calls orkstack.v1.OrkflowService.SetCurrentOrkflowVersion.
+func (c *orkflowServiceClient) SetCurrentOrkflowVersion(ctx context.Context, req *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error) {
+	return c.setCurrentOrkflowVersion.CallUnary(ctx, req)
+}
+
+// DiffOrkflowVersions calls orkstack.v1.OrkflowService.DiffOrkflowVersions.
+func (c *orkflowServiceClient) DiffOrkflowVersions(ctx context.Context, req *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error) {
+	return c.diffOrkflowVersions.CallUnary(ctx, req)
+}
+
 // OrkflowServiceHandler is an implementation of the orkstack.v1.OrkflowService service.
 type OrkflowServiceHandler interface {
-	// ApplyOrkflow validates and upserts an orkflow from raw DSL YAML.
+	// ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+	//
+	// It never rewrites a stored version: identical YAML under an existing
+	// version is a no-op that writes nothing, and DIFFERENT YAML under an
+	// existing version is refused (AlreadyExists). An edit therefore always
+	// arrives as a new version — which is what lets a run pinned to a version
+	// keep reading the bytes it pinned.
 	ApplyOrkflow(context.Context, *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error)
 	GetOrkflow(context.Context, *connect.Request[v1.GetOrkflowRequest]) (*connect.Response[v1.GetOrkflowResponse], error)
 	ListOrkflows(context.Context, *connect.Request[v1.ListOrkflowsRequest]) (*connect.Response[v1.ListOrkflowsResponse], error)
+	// ListOrkflowVersions lists every stored version of one orkflow, newest
+	// applied first, marking the one an empty version resolves to.
+	ListOrkflowVersions(context.Context, *connect.Request[v1.ListOrkflowVersionsRequest]) (*connect.Response[v1.ListOrkflowVersionsResponse], error)
+	// SetCurrentOrkflowVersion moves the orkflow's current pointer.
+	//
+	// The target must already exist: promoting to an unknown version is
+	// NotFound, so a reader can never observe a pointer to a version that is not
+	// there. Two replicas promoting at once are arbitrated by the store's
+	// compare-and-swap — one value wins, and it is one of the two asked for.
+	SetCurrentOrkflowVersion(context.Context, *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error)
+	// DiffOrkflowVersions renders the unified diff between two versions'
+	// source_yaml.
+	//
+	// The diff is computed SERVER-side, deliberately. Two clients read it (the
+	// CLI and the UI) and a third will follow; a client-side diff would put a
+	// diff dependency in each of them and let their renderings drift, so that
+	// `orkctl orkflow diff` and the version page could disagree about what
+	// changed. One implementation, golden-tested once, rendered verbatim by
+	// every client.
+	DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error)
 }
 
 // NewOrkflowServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -156,6 +276,24 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 		connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflows")),
 		connect.WithHandlerOptions(opts...),
 	)
+	orkflowServiceListOrkflowVersionsHandler := connect.NewUnaryHandler(
+		OrkflowServiceListOrkflowVersionsProcedure,
+		svc.ListOrkflowVersions,
+		connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflowVersions")),
+		connect.WithHandlerOptions(opts...),
+	)
+	orkflowServiceSetCurrentOrkflowVersionHandler := connect.NewUnaryHandler(
+		OrkflowServiceSetCurrentOrkflowVersionProcedure,
+		svc.SetCurrentOrkflowVersion,
+		connect.WithSchema(orkflowServiceMethods.ByName("SetCurrentOrkflowVersion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	orkflowServiceDiffOrkflowVersionsHandler := connect.NewUnaryHandler(
+		OrkflowServiceDiffOrkflowVersionsProcedure,
+		svc.DiffOrkflowVersions,
+		connect.WithSchema(orkflowServiceMethods.ByName("DiffOrkflowVersions")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.OrkflowService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case OrkflowServiceApplyOrkflowProcedure:
@@ -164,6 +302,12 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 			orkflowServiceGetOrkflowHandler.ServeHTTP(w, r)
 		case OrkflowServiceListOrkflowsProcedure:
 			orkflowServiceListOrkflowsHandler.ServeHTTP(w, r)
+		case OrkflowServiceListOrkflowVersionsProcedure:
+			orkflowServiceListOrkflowVersionsHandler.ServeHTTP(w, r)
+		case OrkflowServiceSetCurrentOrkflowVersionProcedure:
+			orkflowServiceSetCurrentOrkflowVersionHandler.ServeHTTP(w, r)
+		case OrkflowServiceDiffOrkflowVersionsProcedure:
+			orkflowServiceDiffOrkflowVersionsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -185,6 +329,18 @@ func (UnimplementedOrkflowServiceHandler) ListOrkflows(context.Context, *connect
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ListOrkflows is not implemented"))
 }
 
+func (UnimplementedOrkflowServiceHandler) ListOrkflowVersions(context.Context, *connect.Request[v1.ListOrkflowVersionsRequest]) (*connect.Response[v1.ListOrkflowVersionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ListOrkflowVersions is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) SetCurrentOrkflowVersion(context.Context, *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.SetCurrentOrkflowVersion is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.DiffOrkflowVersions is not implemented"))
+}
+
 // RunServiceClient is a client for the orkstack.v1.RunService service.
 type RunServiceClient interface {
 	SubmitRun(context.Context, *connect.Request[v1.SubmitRunRequest]) (*connect.Response[v1.SubmitRunResponse], error)
@@ -194,6 +350,21 @@ type RunServiceClient interface {
 	// StreamEvents server-streams realtime events for a run. from_sequence
 	// allows resuming after a disconnect (0 = from start).
 	StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest]) (*connect.ServerStreamForClient[v1.Event], error)
+	// StreamTaskLogs server-streams one task attempt's output: every chunk
+	// already written, in order, then each new one as it lands.
+	//
+	// Logs are a SEPARATE stream from Event on purpose. Task output is bytes,
+	// and bytes never enter a Temporal payload or the event stream (a run's
+	// history is replayed forever, and a chatty task would bloat it forever
+	// too). The Orker writes numbered chunks to the artifact store while the
+	// task runs; this RPC reads them back from there. EventType gains nothing:
+	// EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no
+	// task output in it.
+	//
+	// Any replica answers for any run, on the same terms as StreamEvents: the
+	// chunks are in the shared store and the task's state comes from the shared
+	// cluster, so a replica that started nothing serves a run to completion.
+	StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest]) (*connect.ServerStreamForClient[v1.TaskLogChunk], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -237,16 +408,23 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("StreamEvents")),
 			connect.WithClientOptions(opts...),
 		),
+		streamTaskLogs: connect.NewClient[v1.StreamTaskLogsRequest, v1.TaskLogChunk](
+			httpClient,
+			baseURL+RunServiceStreamTaskLogsProcedure,
+			connect.WithSchema(runServiceMethods.ByName("StreamTaskLogs")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // runServiceClient implements RunServiceClient.
 type runServiceClient struct {
-	submitRun    *connect.Client[v1.SubmitRunRequest, v1.SubmitRunResponse]
-	getRun       *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
-	listRuns     *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
-	cancelRun    *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
-	streamEvents *connect.Client[v1.StreamEventsRequest, v1.Event]
+	submitRun      *connect.Client[v1.SubmitRunRequest, v1.SubmitRunResponse]
+	getRun         *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
+	listRuns       *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	cancelRun      *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
+	streamEvents   *connect.Client[v1.StreamEventsRequest, v1.Event]
+	streamTaskLogs *connect.Client[v1.StreamTaskLogsRequest, v1.TaskLogChunk]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -274,6 +452,11 @@ func (c *runServiceClient) StreamEvents(ctx context.Context, req *connect.Reques
 	return c.streamEvents.CallServerStream(ctx, req)
 }
 
+// StreamTaskLogs calls orkstack.v1.RunService.StreamTaskLogs.
+func (c *runServiceClient) StreamTaskLogs(ctx context.Context, req *connect.Request[v1.StreamTaskLogsRequest]) (*connect.ServerStreamForClient[v1.TaskLogChunk], error) {
+	return c.streamTaskLogs.CallServerStream(ctx, req)
+}
+
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
 type RunServiceHandler interface {
 	SubmitRun(context.Context, *connect.Request[v1.SubmitRunRequest]) (*connect.Response[v1.SubmitRunResponse], error)
@@ -283,6 +466,21 @@ type RunServiceHandler interface {
 	// StreamEvents server-streams realtime events for a run. from_sequence
 	// allows resuming after a disconnect (0 = from start).
 	StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest], *connect.ServerStream[v1.Event]) error
+	// StreamTaskLogs server-streams one task attempt's output: every chunk
+	// already written, in order, then each new one as it lands.
+	//
+	// Logs are a SEPARATE stream from Event on purpose. Task output is bytes,
+	// and bytes never enter a Temporal payload or the event stream (a run's
+	// history is replayed forever, and a chatty task would bloat it forever
+	// too). The Orker writes numbered chunks to the artifact store while the
+	// task runs; this RPC reads them back from there. EventType gains nothing:
+	// EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no
+	// task output in it.
+	//
+	// Any replica answers for any run, on the same terms as StreamEvents: the
+	// chunks are in the shared store and the task's state comes from the shared
+	// cluster, so a replica that started nothing serves a run to completion.
+	StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest], *connect.ServerStream[v1.TaskLogChunk]) error
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -322,6 +520,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("StreamEvents")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceStreamTaskLogsHandler := connect.NewServerStreamHandler(
+		RunServiceStreamTaskLogsProcedure,
+		svc.StreamTaskLogs,
+		connect.WithSchema(runServiceMethods.ByName("StreamTaskLogs")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -334,6 +538,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceCancelRunHandler.ServeHTTP(w, r)
 		case RunServiceStreamEventsProcedure:
 			runServiceStreamEventsHandler.ServeHTTP(w, r)
+		case RunServiceStreamTaskLogsProcedure:
+			runServiceStreamTaskLogsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -361,6 +567,262 @@ func (UnimplementedRunServiceHandler) CancelRun(context.Context, *connect.Reques
 
 func (UnimplementedRunServiceHandler) StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest], *connect.ServerStream[v1.Event]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.StreamEvents is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest], *connect.ServerStream[v1.TaskLogChunk]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.StreamTaskLogs is not implemented"))
+}
+
+// NamespaceServiceClient is a client for the orkstack.v1.NamespaceService service.
+type NamespaceServiceClient interface {
+	// CreateNamespace registers a namespace.
+	//
+	// It is idempotent for an identical spec: creating the same namespace twice
+	// with the same description, labels, default pool and allowed pools returns
+	// the existing document rather than an error, so a provisioning script is
+	// safe to re-run. A second create that differs is AlreadyExists, naming what
+	// differs — that one is a collision, not a repeat.
+	CreateNamespace(context.Context, *connect.Request[v1.CreateNamespaceRequest]) (*connect.Response[v1.CreateNamespaceResponse], error)
+	// GetNamespace reads one namespace. The default namespace always resolves,
+	// whether or not anyone created it.
+	GetNamespace(context.Context, *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error)
+	// ListNamespaces returns every registered namespace, ordered by name.
+	ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error)
+	// UpdateNamespace replaces a namespace's mutable fields.
+	//
+	// It is a compare-and-swap on Namespace.etag: the token a read handed back.
+	// A stale token is FailedPrecondition, so two operators editing at once
+	// cannot silently clobber each other — the loser re-reads and re-applies.
+	UpdateNamespace(context.Context, *connect.Request[v1.UpdateNamespaceRequest]) (*connect.Response[v1.UpdateNamespaceResponse], error)
+	// DeleteNamespace removes a namespace that holds no orkflows.
+	//
+	// It refuses while any orkflow is still stored in it, and says how many:
+	// deleting the registry entry would not delete the definitions, so they
+	// would survive under a namespace nothing lists. The default namespace is
+	// refused unconditionally — every orkflow that names none is in it.
+	DeleteNamespace(context.Context, *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error)
+	// ListPools reports every pool a namespace may dispatch onto, each with the
+	// number of Orkers serving it right now and the plugins those Orkers run.
+	//
+	// The answer is read from the cluster, never from process memory, so any
+	// replica answers — including one that started nothing.
+	ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error)
+}
+
+// NewNamespaceServiceClient constructs a client for the orkstack.v1.NamespaceService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewNamespaceServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) NamespaceServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	namespaceServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("NamespaceService").Methods()
+	return &namespaceServiceClient{
+		createNamespace: connect.NewClient[v1.CreateNamespaceRequest, v1.CreateNamespaceResponse](
+			httpClient,
+			baseURL+NamespaceServiceCreateNamespaceProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("CreateNamespace")),
+			connect.WithClientOptions(opts...),
+		),
+		getNamespace: connect.NewClient[v1.GetNamespaceRequest, v1.GetNamespaceResponse](
+			httpClient,
+			baseURL+NamespaceServiceGetNamespaceProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("GetNamespace")),
+			connect.WithClientOptions(opts...),
+		),
+		listNamespaces: connect.NewClient[v1.ListNamespacesRequest, v1.ListNamespacesResponse](
+			httpClient,
+			baseURL+NamespaceServiceListNamespacesProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("ListNamespaces")),
+			connect.WithClientOptions(opts...),
+		),
+		updateNamespace: connect.NewClient[v1.UpdateNamespaceRequest, v1.UpdateNamespaceResponse](
+			httpClient,
+			baseURL+NamespaceServiceUpdateNamespaceProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("UpdateNamespace")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteNamespace: connect.NewClient[v1.DeleteNamespaceRequest, v1.DeleteNamespaceResponse](
+			httpClient,
+			baseURL+NamespaceServiceDeleteNamespaceProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("DeleteNamespace")),
+			connect.WithClientOptions(opts...),
+		),
+		listPools: connect.NewClient[v1.ListPoolsRequest, v1.ListPoolsResponse](
+			httpClient,
+			baseURL+NamespaceServiceListPoolsProcedure,
+			connect.WithSchema(namespaceServiceMethods.ByName("ListPools")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// namespaceServiceClient implements NamespaceServiceClient.
+type namespaceServiceClient struct {
+	createNamespace *connect.Client[v1.CreateNamespaceRequest, v1.CreateNamespaceResponse]
+	getNamespace    *connect.Client[v1.GetNamespaceRequest, v1.GetNamespaceResponse]
+	listNamespaces  *connect.Client[v1.ListNamespacesRequest, v1.ListNamespacesResponse]
+	updateNamespace *connect.Client[v1.UpdateNamespaceRequest, v1.UpdateNamespaceResponse]
+	deleteNamespace *connect.Client[v1.DeleteNamespaceRequest, v1.DeleteNamespaceResponse]
+	listPools       *connect.Client[v1.ListPoolsRequest, v1.ListPoolsResponse]
+}
+
+// CreateNamespace calls orkstack.v1.NamespaceService.CreateNamespace.
+func (c *namespaceServiceClient) CreateNamespace(ctx context.Context, req *connect.Request[v1.CreateNamespaceRequest]) (*connect.Response[v1.CreateNamespaceResponse], error) {
+	return c.createNamespace.CallUnary(ctx, req)
+}
+
+// GetNamespace calls orkstack.v1.NamespaceService.GetNamespace.
+func (c *namespaceServiceClient) GetNamespace(ctx context.Context, req *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error) {
+	return c.getNamespace.CallUnary(ctx, req)
+}
+
+// ListNamespaces calls orkstack.v1.NamespaceService.ListNamespaces.
+func (c *namespaceServiceClient) ListNamespaces(ctx context.Context, req *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error) {
+	return c.listNamespaces.CallUnary(ctx, req)
+}
+
+// UpdateNamespace calls orkstack.v1.NamespaceService.UpdateNamespace.
+func (c *namespaceServiceClient) UpdateNamespace(ctx context.Context, req *connect.Request[v1.UpdateNamespaceRequest]) (*connect.Response[v1.UpdateNamespaceResponse], error) {
+	return c.updateNamespace.CallUnary(ctx, req)
+}
+
+// DeleteNamespace calls orkstack.v1.NamespaceService.DeleteNamespace.
+func (c *namespaceServiceClient) DeleteNamespace(ctx context.Context, req *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error) {
+	return c.deleteNamespace.CallUnary(ctx, req)
+}
+
+// ListPools calls orkstack.v1.NamespaceService.ListPools.
+func (c *namespaceServiceClient) ListPools(ctx context.Context, req *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error) {
+	return c.listPools.CallUnary(ctx, req)
+}
+
+// NamespaceServiceHandler is an implementation of the orkstack.v1.NamespaceService service.
+type NamespaceServiceHandler interface {
+	// CreateNamespace registers a namespace.
+	//
+	// It is idempotent for an identical spec: creating the same namespace twice
+	// with the same description, labels, default pool and allowed pools returns
+	// the existing document rather than an error, so a provisioning script is
+	// safe to re-run. A second create that differs is AlreadyExists, naming what
+	// differs — that one is a collision, not a repeat.
+	CreateNamespace(context.Context, *connect.Request[v1.CreateNamespaceRequest]) (*connect.Response[v1.CreateNamespaceResponse], error)
+	// GetNamespace reads one namespace. The default namespace always resolves,
+	// whether or not anyone created it.
+	GetNamespace(context.Context, *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error)
+	// ListNamespaces returns every registered namespace, ordered by name.
+	ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error)
+	// UpdateNamespace replaces a namespace's mutable fields.
+	//
+	// It is a compare-and-swap on Namespace.etag: the token a read handed back.
+	// A stale token is FailedPrecondition, so two operators editing at once
+	// cannot silently clobber each other — the loser re-reads and re-applies.
+	UpdateNamespace(context.Context, *connect.Request[v1.UpdateNamespaceRequest]) (*connect.Response[v1.UpdateNamespaceResponse], error)
+	// DeleteNamespace removes a namespace that holds no orkflows.
+	//
+	// It refuses while any orkflow is still stored in it, and says how many:
+	// deleting the registry entry would not delete the definitions, so they
+	// would survive under a namespace nothing lists. The default namespace is
+	// refused unconditionally — every orkflow that names none is in it.
+	DeleteNamespace(context.Context, *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error)
+	// ListPools reports every pool a namespace may dispatch onto, each with the
+	// number of Orkers serving it right now and the plugins those Orkers run.
+	//
+	// The answer is read from the cluster, never from process memory, so any
+	// replica answers — including one that started nothing.
+	ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error)
+}
+
+// NewNamespaceServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewNamespaceServiceHandler(svc NamespaceServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	namespaceServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("NamespaceService").Methods()
+	namespaceServiceCreateNamespaceHandler := connect.NewUnaryHandler(
+		NamespaceServiceCreateNamespaceProcedure,
+		svc.CreateNamespace,
+		connect.WithSchema(namespaceServiceMethods.ByName("CreateNamespace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceGetNamespaceHandler := connect.NewUnaryHandler(
+		NamespaceServiceGetNamespaceProcedure,
+		svc.GetNamespace,
+		connect.WithSchema(namespaceServiceMethods.ByName("GetNamespace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceListNamespacesHandler := connect.NewUnaryHandler(
+		NamespaceServiceListNamespacesProcedure,
+		svc.ListNamespaces,
+		connect.WithSchema(namespaceServiceMethods.ByName("ListNamespaces")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceUpdateNamespaceHandler := connect.NewUnaryHandler(
+		NamespaceServiceUpdateNamespaceProcedure,
+		svc.UpdateNamespace,
+		connect.WithSchema(namespaceServiceMethods.ByName("UpdateNamespace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceDeleteNamespaceHandler := connect.NewUnaryHandler(
+		NamespaceServiceDeleteNamespaceProcedure,
+		svc.DeleteNamespace,
+		connect.WithSchema(namespaceServiceMethods.ByName("DeleteNamespace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	namespaceServiceListPoolsHandler := connect.NewUnaryHandler(
+		NamespaceServiceListPoolsProcedure,
+		svc.ListPools,
+		connect.WithSchema(namespaceServiceMethods.ByName("ListPools")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/orkstack.v1.NamespaceService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case NamespaceServiceCreateNamespaceProcedure:
+			namespaceServiceCreateNamespaceHandler.ServeHTTP(w, r)
+		case NamespaceServiceGetNamespaceProcedure:
+			namespaceServiceGetNamespaceHandler.ServeHTTP(w, r)
+		case NamespaceServiceListNamespacesProcedure:
+			namespaceServiceListNamespacesHandler.ServeHTTP(w, r)
+		case NamespaceServiceUpdateNamespaceProcedure:
+			namespaceServiceUpdateNamespaceHandler.ServeHTTP(w, r)
+		case NamespaceServiceDeleteNamespaceProcedure:
+			namespaceServiceDeleteNamespaceHandler.ServeHTTP(w, r)
+		case NamespaceServiceListPoolsProcedure:
+			namespaceServiceListPoolsHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedNamespaceServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedNamespaceServiceHandler struct{}
+
+func (UnimplementedNamespaceServiceHandler) CreateNamespace(context.Context, *connect.Request[v1.CreateNamespaceRequest]) (*connect.Response[v1.CreateNamespaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.CreateNamespace is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) GetNamespace(context.Context, *connect.Request[v1.GetNamespaceRequest]) (*connect.Response[v1.GetNamespaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.GetNamespace is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) ListNamespaces(context.Context, *connect.Request[v1.ListNamespacesRequest]) (*connect.Response[v1.ListNamespacesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.ListNamespaces is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) UpdateNamespace(context.Context, *connect.Request[v1.UpdateNamespaceRequest]) (*connect.Response[v1.UpdateNamespaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.UpdateNamespace is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) DeleteNamespace(context.Context, *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.DeleteNamespace is not implemented"))
+}
+
+func (UnimplementedNamespaceServiceHandler) ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.ListPools is not implemented"))
 }
 
 // PluginServiceClient is a client for the orkstack.v1.PluginService service.

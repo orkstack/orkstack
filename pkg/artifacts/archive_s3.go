@@ -132,7 +132,7 @@ func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntr
 
 	// With orkflow and status pinned, the remaining keys sort by timestamp, so
 	// an upper bound ends the scan instead of filtering the rest of the subtree.
-	stopAfterUntil := q.Orkflow != "" && q.Status != "" && !q.Until.IsZero()
+	stopAfterUntil := q.Namespace != "" && q.Orkflow != "" && q.Status != "" && !q.Until.IsZero()
 	stopKey := prefix + RunStamp(q.Until)
 
 	var entries []RunIndexEntry

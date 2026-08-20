@@ -98,16 +98,33 @@ func (EventType) EnumDescriptor() ([]byte, []int) {
 
 // TaskRun is the execution record of a single Task within a Run.
 type TaskRun struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	Plugin        string                 `protobuf:"bytes,2,opt,name=plugin,proto3" json:"plugin,omitempty"`
-	Status        Status                 `protobuf:"varint,3,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
-	Attempt       int32                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	Output        *Payload               `protobuf:"bytes,5,opt,name=output,proto3" json:"output,omitempty"`
-	Artifacts     []*ArtifactRef         `protobuf:"bytes,6,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
-	Error         *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
-	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	TaskId     string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Plugin     string                 `protobuf:"bytes,2,opt,name=plugin,proto3" json:"plugin,omitempty"`
+	Status     Status                 `protobuf:"varint,3,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
+	Attempt    int32                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Output     *Payload               `protobuf:"bytes,5,opt,name=output,proto3" json:"output,omitempty"`
+	Artifacts  []*ArtifactRef         `protobuf:"bytes,6,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
+	Error      *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	StartedAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	// pool names the set of Orkers this attempt was dispatched to, in the word
+	// its author typed: the task's own `pool:`, or the pool this run's default
+	// route resolves to when the task named none.
+	//
+	// Within a run, one pool name means one set of Orkers, so naming this pool
+	// on a task reaches exactly the Orkers this attempt reached. That holds
+	// under the per-deployment route override operators use to keep two stacks
+	// apart: an execution channel belonging to no pool reports as the built-in
+	// "main", and a task that writes "main" follows the same override instead
+	// of escaping it. The override is an operator concern this contract does
+	// not expose, so this name is the routing request rather than a measurement
+	// of the host that answered, and another deployment resolves it against its
+	// own Orkers.
+	//
+	// Empty means the task never reached an Orker (skipped, or terminal before
+	// dispatch).
+	Pool          string `protobuf:"bytes,10,opt,name=pool,proto3" json:"pool,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -205,6 +222,13 @@ func (x *TaskRun) GetFinishedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *TaskRun) GetPool() string {
+	if x != nil {
+		return x.Pool
+	}
+	return ""
+}
+
 // Run is one execution of an Orkflow.
 type Run struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -219,8 +243,13 @@ type Run struct {
 	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	StartedAt      *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	FinishedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// namespace is the namespace of the orkflow this run executed. Empty means
+	// the built-in "default" namespace. It is a coordinate of the run, not a
+	// lookup: the archive indexes runs under it, so listing one namespace's runs
+	// is a single prefix scan.
+	Namespace     string `protobuf:"bytes,12,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Run) Reset() {
@@ -330,6 +359,13 @@ func (x *Run) GetFinishedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Run) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
 // Event is a single realtime update for a run, delivered over the
 // server-streaming RPC and the WebSocket bridge.
 type Event struct {
@@ -436,7 +472,7 @@ var File_orkstack_v1_run_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
-	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\"\x89\x03\n" +
+	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\"\x9d\x03\n" +
 	"\aTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x16\n" +
 	"\x06plugin\x18\x02 \x01(\tR\x06plugin\x12+\n" +
@@ -448,7 +484,9 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"finishedAt\"\xf8\x03\n" +
+	"finishedAt\x12\x12\n" +
+	"\x04pool\x18\n" +
+	" \x01(\tR\x04pool\"\x96\x04\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
@@ -464,7 +502,8 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"started_at\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"finishedAt\"\xaa\x02\n" +
+	"finishedAt\x12\x1c\n" +
+	"\tnamespace\x18\f \x01(\tR\tnamespace\"\xaa\x02\n" +
 	"\x05Event\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12*\n" +

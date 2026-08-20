@@ -27,7 +27,7 @@ func newApplyCommand(g *globalFlags) *cobra.Command {
 			defer cancel()
 
 			resp, err := g.orkflowClient().ApplyOrkflow(ctx, connect.NewRequest(
-				&orkstackv1.ApplyOrkflowRequest{Yaml: string(source)},
+				&orkstackv1.ApplyOrkflowRequest{Yaml: string(source), Namespace: g.namespace},
 			))
 			if err != nil {
 				return rpcError("apply", err)

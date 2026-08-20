@@ -31,11 +31,19 @@ type fakeStarter struct {
 	mu       sync.Mutex
 	started  []string
 	inputs   []map[string]any
+	plans    []engine.RunPlan
+	orkflows []*orkstackv1.Orkflow
 	canceled []string
 	err      error
 }
 
-func (f *fakeStarter) StartRun(_ context.Context, runID string, _ *orkstackv1.Orkflow, input *orkstackv1.Payload) error {
+func (f *fakeStarter) StartRun(
+	_ context.Context,
+	runID string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	plan engine.RunPlan,
+) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -43,6 +51,8 @@ func (f *fakeStarter) StartRun(_ context.Context, runID string, _ *orkstackv1.Or
 	}
 	f.started = append(f.started, runID)
 	f.inputs = append(f.inputs, input.GetData().AsMap())
+	f.plans = append(f.plans, plan)
+	f.orkflows = append(f.orkflows, wf)
 	return nil
 }
 
@@ -57,6 +67,12 @@ func (f *fakeStarter) startedRuns() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.started...)
+}
+
+func (f *fakeStarter) canceledRuns() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.canceled...)
 }
 
 func (f *fakeStarter) startedInputs() []map[string]any {
@@ -1020,4 +1036,20 @@ func TestWebSocketBridge_TerminalCursorClosesNormally(t *testing.T) {
 		t.Fatalf("websocket read error = %v (status %v), want normal closure",
 			err, websocket.CloseStatus(err))
 	}
+}
+
+// startedOrkflows returns the definitions StartRun was handed, in order. They
+// are the PLANNED ones — every task carrying the pool it resolved to — which
+// is what a routing test needs to read.
+func (f *fakeStarter) startedOrkflows() []*orkstackv1.Orkflow {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*orkstackv1.Orkflow(nil), f.orkflows...)
+}
+
+// startedPlans returns the routing bound into each started run.
+func (f *fakeStarter) startedPlans() []engine.RunPlan {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]engine.RunPlan(nil), f.plans...)
 }

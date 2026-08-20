@@ -3,8 +3,8 @@
 // WebSocket event bridge.
 //
 // State lives outside the process. Runs live in Temporal; orkflow definitions
-// live in the S3 bucket (metadata/orkflows/{name}/{version}.json), read on
-// every call. Restarting ork therefore loses nothing.
+// live in the S3 bucket (metadata/orkflows/{namespace}/{name}/{version}.json),
+// read on every call. Restarting ork therefore loses nothing.
 package main
 
 import (
@@ -45,8 +45,21 @@ type config struct {
 	temporalNamespace string
 	httpAddr          string
 	allowedOrigins    []string
-	orkerQueue        string
-	idempotencyTTL    time.Duration
+	// pool is the OrkStack name for where this engine dispatches a task that
+	// names no pool of its own; orkerQueue is the raw execution channel that
+	// pool resolves to. See task.ResolvePoolBinding for the five ways the two
+	// environment variables combine, and for the one that is refused.
+	pool       string
+	orkerQueue string
+	// defaultRouteOverride is the channel an operator pinned the default route
+	// to, or empty when neither variable was set. Empty is what keeps a
+	// namespace's own default_pool meaningful: with no override, the default
+	// pool resolves to its own channel like every other pool.
+	defaultRouteOverride string
+	// poolErr is a refused ORK_ORKER_POOL/ORK_ORKER_QUEUE pair, reported at
+	// boot rather than resolved by picking a winner.
+	poolErr        error
+	idempotencyTTL time.Duration
 	// deployment is this release's Worker Deployment identity. It carries no
 	// build id unless an operator configures one, which leaves versioning off
 	// and the workers exactly as they were before M8.4.
@@ -58,9 +71,15 @@ func loadConfig() config {
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		httpAddr:          env("ORK_HTTP_ADDR", api.DefaultHTTPAddr),
-		orkerQueue:        env("ORK_ORKER_QUEUE", task.DefaultQueue),
 		idempotencyTTL:    envDuration("ORK_IDEMPOTENCY_TTL", engine.DefaultClaimTTL),
 		deployment:        task.DeploymentFromEnv(),
+	}
+	rawPool := env("ORK_ORKER_POOL", "")
+	rawQueue := env("ORK_ORKER_QUEUE", "")
+	binding, err := task.ResolvePoolBinding(rawPool, rawQueue)
+	cfg.pool, cfg.orkerQueue, cfg.poolErr = binding.Pool, binding.Queue, err
+	if err == nil && (rawPool != "" || rawQueue != "") {
+		cfg.defaultRouteOverride = binding.Queue
 	}
 	if origins := env("ORK_WS_ALLOWED_ORIGINS", ""); origins != "" {
 		cfg.allowedOrigins = strings.Split(origins, ",")
@@ -98,6 +117,14 @@ func archiveLocation(cfg artifacts.Config) string {
 	return cfg.LocalDir + "/" + artifacts.RunArchiveNamespace
 }
 
+// logLocation renders where task log chunks land, for the boot log.
+func logLocation(cfg artifacts.Config) string {
+	if cfg.Backend == artifacts.BackendS3 {
+		return "s3://" + cfg.S3Bucket + "/" + artifacts.LogPrefix
+	}
+	return cfg.LocalDir + "/" + artifacts.LogPrefix
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(logger, loadConfig()); err != nil {
@@ -121,10 +148,47 @@ type queues struct {
 	// orker is where task activities are dispatched — the one an operator
 	// moves with ORK_ORKER_QUEUE to reach a dedicated Orker pool.
 	orker string
+	// binding is a refused ORK_ORKER_POOL/ORK_ORKER_QUEUE pair, carried here
+	// so one call answers "may this process boot on these channels".
+	binding error
 }
 
 func queuesFor(cfg config) queues {
-	return queues{run: task.DefaultQueue, events: engine.EventQueue, orker: cfg.orkerQueue}
+	return queues{
+		run:     task.DefaultQueue,
+		events:  engine.EventQueue,
+		orker:   cfg.orkerQueue,
+		binding: cfg.poolErr,
+	}
+}
+
+// validate refuses a configuration whose task execution channel is a queue the
+// engine keeps for itself, or whose two variables disagree about which channel
+// that is.
+//
+// Only the event queue qualifies as reserved. ORK_ORKER_QUEUE=ork-tasks is the
+// ordinary default, where one queue carries the engine's workflows and its
+// tasks; but ORK_ORKER_QUEUE=ork-engine-events points every task activity at
+// the queue that carries PublishEvent, so tasks would be dispatched to the
+// projection worker and `pool: main` would name the engine's own internals.
+// Refusing at boot is what makes task.QueueForPool's promise — no pool reaches
+// the event queue — true of a running deployment and not just of a named pool:
+// the function is handed the channel, it does not choose it.
+//
+// task.ResolvePoolBinding refuses the same channel one layer earlier, which is
+// what catches it when ORK_ORKER_POOL is how the operator spelled it. Both are
+// kept: the resolution refuses what it can name, and this refuses the channel
+// whatever produced it.
+func (q queues) validate() error {
+	if q.binding != nil {
+		return q.binding
+	}
+	if q.orker == q.events {
+		return fmt.Errorf("ORK_ORKER_QUEUE=%q is the engine's own event queue, "+
+			"which carries %s; point it at a queue Orkers poll for task execution",
+			q.orker, engine.ActivityPublishEvent)
+	}
+	return nil
 }
 
 // runWorkerOptions configures the worker that hosts RunWorkflow and the
@@ -181,14 +245,18 @@ func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3Or
 	if err != nil {
 		return nil, fmt.Errorf("open orkflow store: %w", err)
 	}
-	stored, err := store.List(ctx)
+	stored, err := store.List(ctx, artifacts.DefaultNamespace)
 	if err != nil {
 		return nil, fmt.Errorf("reload orkflows from %s (endpoint %s): %w",
 			store.Location(), cfg.S3Endpoint, err)
 	}
+	// The boot log names the default namespace's catalog. It is a reachability
+	// check and a human breadcrumb, not an inventory: listing every namespace
+	// at boot would scan the whole prefix to log something nobody reads.
 	logger.Info("reloaded orkflows from durable store",
 		"store", store.Location(),
 		"endpoint", cfg.S3Endpoint,
+		"namespace", artifacts.DefaultNamespace,
 		"orkflows", len(stored),
 		"names", orkflowNames(stored))
 	return store, nil
@@ -203,6 +271,34 @@ func orkflowNames(stored []*orkstackv1.Orkflow) []string {
 	return names
 }
 
+// openNamespaceStore connects the engine to the registry that holds namespace
+// documents: pool defaults and allow-lists.
+//
+// It is opened at boot for the same reason the orkflow store is — an engine
+// that cannot read a namespace cannot decide where a task runs, and answering
+// from a built-in default would silently ignore an operator's allow-list. The
+// default namespace resolves whether or not a document was ever written, so a
+// fresh deployment needs no bootstrap step.
+func openNamespaceStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3NamespaceStore, error) {
+	cfg := artifacts.ConfigFromEnv()
+	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open namespace registry: %w", err)
+	}
+	registered, err := store.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read namespaces from %s (endpoint %s): %w",
+			store.Location(), cfg.S3Endpoint, err)
+	}
+	names := make([]string, 0, len(registered))
+	for _, ns := range registered {
+		names = append(names, ns.GetName())
+	}
+	logger.Info("namespace registry ready",
+		"store", store.Location(), "namespaces", len(registered), "names", names)
+	return store, nil
+}
+
 func run(logger *slog.Logger, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -210,6 +306,25 @@ func run(logger *slog.Logger, cfg config) error {
 	// Fail on a deployment identity the cluster would reject later, while the
 	// error can still name the variable that caused it.
 	if err := cfg.deployment.Validate(); err != nil {
+		return err
+	}
+	// Fail on a pool and a raw execution channel that disagree, for the same
+	// reason: an engine dispatching to one channel while its Orkers poll
+	// another strands every run in RUNNING with nothing to say why
+	// (AGENTS.md §6).
+	if cfg.poolErr != nil {
+		return cfg.poolErr
+	}
+
+	namespaces, err := openNamespaceStore(ctx, logger)
+	if err != nil {
+		return err
+	}
+
+	// Same reason: an execution channel that is one of the engine's own queues
+	// is refused here, where the error can name the variable, rather than at
+	// the first task dispatch.
+	if err := queuesFor(cfg).validate(); err != nil {
 		return err
 	}
 
@@ -230,8 +345,23 @@ func run(logger *slog.Logger, cfg config) error {
 	if err := task.EnsureNamespace(ctx, temporalClient, cfg.temporalNamespace); err != nil {
 		return err
 	}
+	// The run index, provisioned beside the namespace: it is what makes "list
+	// this namespace's runs" a question the cluster answers, instead of a
+	// filter over whatever page walk another tenant's traffic left room for.
+	// A cluster that will not register it is not a reason to refuse to boot —
+	// everything else works, and the reader falls back to reading the whole
+	// index — but it IS worth a line, because that fallback is slow and its
+	// limit is an error a client would otherwise have to explain.
+	namespaceIndexed, err := task.EnsureRunSearchAttributes(ctx, temporalClient, cfg.temporalNamespace)
+	if err != nil {
+		logger.Warn("visibility does not index a run's orkflow namespace",
+			"search_attribute", task.SearchAttrOrkflowNamespace,
+			"consequence", "listing a namespace's live runs scans the whole index",
+			"error", err)
+	}
 	logger.Info("connected to temporal",
-		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
+		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace,
+		"run_namespace_index", namespaceIndexed)
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
@@ -265,10 +395,21 @@ func run(logger *slog.Logger, cfg config) error {
 	logger.Info("run archive ready",
 		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
 
+	// Task logs: the chunks an Orker wrote while a task ran. They live in the
+	// same bucket, so this engine serves the logs of a run it never started
+	// and of one whose Orker has long exited — the same reason the archive is
+	// not in this process either.
+	logStore, err := artifacts.NewLogStore(archiveConfig)
+	if err != nil {
+		return err
+	}
+	logger.Info("task log store ready",
+		"backend", archiveConfig.Backend, "location", logLocation(archiveConfig))
+
 	// The read model. Every run read leaves this process: a run's history is
 	// its event log, and Temporal hands the same answer to every replica, for
 	// runs this one neither started nor projected.
-	reader := engine.NewTemporalRunReader(temporalClient)
+	reader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(namespaceIndexed)
 
 	// Workflow worker: hosts RunWorkflow and the idempotency claims on the
 	// engine's own queue — NOT ORK_ORKER_QUEUE, which moves task execution
@@ -302,7 +443,7 @@ func run(logger *slog.Logger, cfg config) error {
 	defer eventWorker.Stop()
 	logger.Info("temporal workers started",
 		"task_queue", q.run, "event_queue", q.events,
-		"orker_queue", q.orker)
+		"orker_queue", q.orker, "pool", cfg.pool)
 	// The versioning line is separate and always printed, because "which
 	// version am I" is the first question of any rollout. The Orker must
 	// report the same pair, or a pinned run's tasks fall through to the task
@@ -315,7 +456,17 @@ func run(logger *slog.Logger, cfg config) error {
 		"run_workflow_behavior", "Pinned",
 		"claim_workflow_behavior", "AutoUpgrade",
 		"event_worker", "unversioned")
-	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker)
+	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker).
+		WithNamespaceIndex(namespaceIndexed)
+
+	// Pool routing: the cluster answers whether a pool has Orkers, so a submit
+	// onto a pool nothing serves fails at submit rather than leaving a run in
+	// RUNNING forever. The engine never guesses this — it asks.
+	pools := engine.NewTemporalPoolProbe(temporalClient)
+	if cfg.defaultRouteOverride != "" {
+		logger.Info("default pool route overridden",
+			"pool", cfg.pool, "orker_queue", cfg.defaultRouteOverride)
+	}
 
 	// Idempotency: the cluster decides which run a key names, so every replica
 	// behind this address gets the same answer. Nothing about dedupe lives in
@@ -326,15 +477,21 @@ func run(logger *slog.Logger, cfg config) error {
 
 	svc := api.NewService(api.Config{
 		Orkflows:    orkflows,
+		Namespaces:  namespaces,
 		Reader:      reader,
 		Runs:        runs,
 		Bus:         bus,
 		Starter:     starter,
 		Lister:      starter,
+		Pools:       pools,
+		PoolPlugins: starter,
+		RawQueue:    cfg.defaultRouteOverride,
 		Archive:     archive,
+		Logs:        logStore,
 		Idempotency: idempotency,
 		Webhooks:    webhookRegistry,
 		Notifier:    runNotifier,
+		Logger:      logger,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,

@@ -32,14 +32,20 @@ type harness struct {
 
 	mu    sync.Mutex
 	calls []task.ExecuteTaskInput
+	// queues records the task queue each task's activity actually arrived on,
+	// read from Temporal's own activity info rather than from the engine. It
+	// is what lets a test check the pool a client is TOLD against the Orkers
+	// the task was dispatched to.
+	queues map[string]string
 }
 
 func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(task.ExecuteTaskInput) (task.ExecuteTaskResult, error)) *harness {
 	t.Helper()
 	h := &harness{
-		env:   suite.NewTestWorkflowEnvironment(),
-		bus:   engine.NewEventBus(),
-		store: engine.NewRunStore(),
+		env:    suite.NewTestWorkflowEnvironment(),
+		bus:    engine.NewEventBus(),
+		store:  engine.NewRunStore(),
+		queues: map[string]string{},
 	}
 	h.env.SetTestTimeout(60 * time.Second)
 	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
@@ -48,9 +54,10 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	h.env.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		func(actCtx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
 			h.mu.Lock()
 			h.calls = append(h.calls, in)
+			h.queues[in.TaskID] = activity.GetInfo(actCtx).TaskQueue
 			h.mu.Unlock()
 			return behavior(in)
 		},
@@ -81,6 +88,14 @@ func (h *harness) inputFor(taskID string) (task.ExecuteTaskInput, bool) {
 		}
 	}
 	return task.ExecuteTaskInput{}, false
+}
+
+// queueFor is the task queue taskID's activity arrived on.
+func (h *harness) queueFor(taskID string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	queue, ok := h.queues[taskID]
+	return queue, ok
 }
 
 func compile(t *testing.T, document string) *orkstackv1.Orkflow {
@@ -139,7 +154,7 @@ func TestRunWorkflow_RejectsAnOrkflowWithNoTasks(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-1-1",
-		&orkstackv1.Orkflow{Name: "empty", Version: "0.1.0"}, payload(t, nil))
+		&orkstackv1.Orkflow{Name: "empty", Version: "0.1.0"}, payload(t, nil), defaultPlan())
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -162,7 +177,7 @@ func TestRunWorkflow_ExecutesLinearNeedsInOrder(t *testing.T) {
 		}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-linear", compile(t, linearDocument), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-linear", compile(t, linearDocument), payload(t, nil), defaultPlan())
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -269,7 +284,7 @@ func TestRunWorkflow_FansOutIndependentTasks(t *testing.T) {
 		return task.ExecuteTaskResult{TaskID: in.TaskID, Output: plugin.Payload{"stdout": in.TaskID}}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fanout", compile(t, fanOutDocument), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fanout", compile(t, fanOutDocument), payload(t, nil), defaultPlan())
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -325,7 +340,7 @@ func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 		}
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-upstream", compile(t, upstreamDocument), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-upstream", compile(t, upstreamDocument), payload(t, nil), defaultPlan())
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -407,7 +422,7 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition",
-		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}))
+		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}), defaultPlan())
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -448,7 +463,7 @@ func TestRunWorkflow_RunsTaskWithMetCondition(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition-true",
-		compile(t, conditionDocument), payload(t, map[string]any{"enabled": true}))
+		compile(t, conditionDocument), payload(t, map[string]any{"enabled": true}), defaultPlan())
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
@@ -493,7 +508,7 @@ func TestRunWorkflow_RetriesPerPolicyThenFailsRun(t *testing.T) {
 			return task.ExecuteTaskResult{}, errors.New("plugin exited 1")
 		}).Times(3)
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil), defaultPlan())
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -554,7 +569,7 @@ tasks:
 		return task.ExecuteTaskResult{}, errors.New("boom")
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-retry", compile(t, document), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-retry", compile(t, document), payload(t, nil), defaultPlan())
 
 	if h.env.GetWorkflowError() == nil {
 		t.Fatal("workflow error = nil, want failure")
@@ -584,7 +599,7 @@ tasks:
 		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil), defaultPlan())
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
@@ -628,7 +643,7 @@ tasks:
 		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil), defaultPlan())
 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)

@@ -18,6 +18,23 @@ message TaskRun {
   Error error = 7;
   google.protobuf.Timestamp started_at = 8;
   google.protobuf.Timestamp finished_at = 9;
+  // pool names the set of Orkers this attempt was dispatched to, in the word
+  // its author typed: the task's own `pool:`, or the pool this run's default
+  // route resolves to when the task named none.
+  //
+  // Within a run, one pool name means one set of Orkers, so naming this pool
+  // on a task reaches exactly the Orkers this attempt reached. That holds
+  // under the per-deployment route override operators use to keep two stacks
+  // apart: an execution channel belonging to no pool reports as the built-in
+  // "main", and a task that writes "main" follows the same override instead
+  // of escaping it. The override is an operator concern this contract does
+  // not expose, so this name is the routing request rather than a measurement
+  // of the host that answered, and another deployment resolves it against its
+  // own Orkers.
+  //
+  // Empty means the task never reached an Orker (skipped, or terminal before
+  // dispatch).
+  string pool = 10;
 }
 
 // Run is one execution of an Orkflow.
@@ -33,6 +50,11 @@ message Run {
   google.protobuf.Timestamp created_at = 9;
   google.protobuf.Timestamp started_at = 10;
   google.protobuf.Timestamp finished_at = 11;
+  // namespace is the namespace of the orkflow this run executed. Empty means
+  // the built-in "default" namespace. It is a coordinate of the run, not a
+  // lookup: the archive indexes runs under it, so listing one namespace's runs
+  // is a single prefix scan.
+  string namespace = 12;
 }
 
 // EventType classifies a run event on the realtime stream.

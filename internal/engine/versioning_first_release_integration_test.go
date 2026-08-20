@@ -83,7 +83,7 @@ func TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent(t *testing.
 
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
 	runID := "ork-firstrelease-run-" + suffix
-	if err := starter.StartRun(ctx, runID, plainOrkflow(), nil); err != nil {
+	if err := starter.StartRun(ctx, runID, plainOrkflow(), nil, rawPlan(orkerQueue)); err != nil {
 		t.Fatalf("submit the run: %v", err)
 	}
 

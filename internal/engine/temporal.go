@@ -10,10 +10,10 @@ import (
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
-	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
@@ -33,6 +33,12 @@ type TemporalStarter struct {
 	// queue (normally task.DefaultQueue) and can be overridden so both plugin
 	// discovery and task dispatch follow Orkers on a custom queue.
 	orkerQueue string
+
+	// namespaceIndexed reports that this cluster has the OrkflowNamespace
+	// search attribute, so a run may be stamped with the namespace it belongs
+	// to and listed by it. Stamping an attribute a cluster does not have fails
+	// the start, so it is off until a boot says otherwise.
+	namespaceIndexed bool
 }
 
 // NewTemporalStarter returns a starter that dispatches RunWorkflow onto queue.
@@ -54,15 +60,28 @@ func NewTemporalStarterWithOrkerQueue(c client.Client, runQueue, orkerQueue stri
 	return s
 }
 
+// WithNamespaceIndex records whether the cluster indexes a run's OrkStack
+// namespace (task.EnsureRunSearchAttributes). The engine's boot is what knows,
+// because it is what registered it.
+func (s *TemporalStarter) WithNamespaceIndex(indexed bool) *TemporalStarter {
+	s.namespaceIndexed = indexed
+	return s
+}
+
 // StartRun starts RunWorkflow with the run id as the Temporal workflow id.
 //
-// The run's tasks are bound to this engine's orker queue here, before the
-// workflow starts, because this is the last place that may read process
-// configuration: workflow code must be deterministic, so it cannot consult the
-// environment for a queue name. Binding it into the workflow input records the
-// queue in the run's history, which makes every replay dispatch where the
-// original run did — and lets a second engine execute a workflow this one
-// started without redirecting its tasks.
+// The run's routing is bound into the workflow input here, before the workflow
+// starts, because this is the last place that may read process configuration:
+// workflow code must be deterministic, so it cannot consult a namespace
+// document, the environment, or the cluster for where a task should run. The
+// plan carries the answer — every pool this run uses, mapped to the channel
+// that carries it — so the routing is recorded in the run's history. Every
+// replay dispatches where the original run did, and a second engine can finish
+// a run this one started without redirecting its tasks onto its own defaults.
+//
+// The orkflow travels as the plan resolved it: a clone of the stored document
+// with every task's pool filled in (its own, its namespace's default, or the
+// built-in "main"). The stored document is untouched.
 //
 // The three start policies make the run id single use for all time, which is
 // the half of run identity that entropy cannot provide (see RunIDGenerator):
@@ -81,8 +100,9 @@ func (s *TemporalStarter) StartRun(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	plan RunPlan,
 ) error {
-	_, err := s.client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+	options := client.StartWorkflowOptions{
 		ID:                                       runID,
 		TaskQueue:                                s.queue,
 		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
@@ -95,8 +115,22 @@ func (s *TemporalStarter) StartRun(
 		Memo: map[string]any{
 			MemoOrkflowName:    wf.GetName(),
 			MemoOrkflowVersion: wf.GetVersion(),
+			MemoNamespace:      wf.GetNamespace(),
 		},
-	}, RunWorkflowType, runID, pinTaskQueues(wf, s.orkerQueue), input)
+	}
+	// The namespace is stamped a second time, as a search attribute, because a
+	// memo is returned with a record and cannot select one. A tenant listing
+	// its runs needs the cluster to do the selecting — see ListRuns — and this
+	// is the value it selects on. It is resolved, so the built-in default is
+	// spelled one way whether the document named it or left it empty.
+	if s.namespaceIndexed {
+		options.TypedSearchAttributes = temporal.NewSearchAttributes(
+			task.SearchKeyOrkflowNamespace.ValueSet(
+				artifacts.ResolveNamespace(wf.GetNamespace())),
+		)
+	}
+	_, err := s.client.ExecuteWorkflow(ctx, options,
+		RunWorkflowType, runID, wf, input, plan)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if errors.As(err, &alreadyStarted) {
@@ -110,36 +144,6 @@ func (s *TemporalStarter) StartRun(
 	return nil
 }
 
-// pinTaskQueues returns wf with every task that names no queue of its own
-// bound to queue. A task that names one keeps it: an explicit `queue:` in the
-// DSL routes to a dedicated Orker pool and outranks the engine's default.
-//
-// The result is a copy. The stored definition is immutable and shared by every
-// engine pointed at the same bucket, so the queue one process happens to be
-// configured with belongs to that run's input, never to the orkflow.
-func pinTaskQueues(wf *orkstackv1.Orkflow, queue string) *orkstackv1.Orkflow {
-	if wf == nil || queue == "" {
-		return wf
-	}
-	unpinned := false
-	for _, t := range wf.GetTasks() {
-		if t.GetQueue() == "" {
-			unpinned = true
-			break
-		}
-	}
-	if !unpinned {
-		return wf
-	}
-	pinned := proto.Clone(wf).(*orkstackv1.Orkflow)
-	for _, t := range pinned.GetTasks() {
-		if t.GetQueue() == "" {
-			t.Queue = queue
-		}
-	}
-	return pinned
-}
-
 // CancelRun requests cancellation of a running workflow.
 func (s *TemporalStarter) CancelRun(ctx context.Context, runID, _ string) error {
 	if err := s.client.CancelWorkflow(ctx, runID, ""); err != nil {
@@ -148,14 +152,26 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID, _ string) error 
 	return nil
 }
 
-// ListPlugins executes the Orker's ListPlugins activity and returns the
-// descriptors of every plugin the connected Orker can run.
+// ListPlugins executes the Orker's ListPlugins activity on this engine's
+// default execution channel and returns the descriptors of every plugin the
+// Orkers there can run.
 func (s *TemporalStarter) ListPlugins(ctx context.Context) ([]plugin.Descriptor, error) {
+	return s.listPluginsOn(ctx, s.orkerQueue, 10*time.Second)
+}
+
+// listPluginsOn asks one execution channel's Orkers what they can run. It is
+// the shared half of ListPlugins and the per-pool report (PluginsOnPool): the
+// question is the same activity, the channel is what differs.
+func (s *TemporalStarter) listPluginsOn(
+	ctx context.Context,
+	queue string,
+	within time.Duration,
+) ([]plugin.Descriptor, error) {
 	var descriptors []plugin.Descriptor
 	handle, err := s.client.ExecuteActivity(ctx, client.StartActivityOptions{
 		ID:                     "list-plugins-" + fmt.Sprint(time.Now().UnixNano()),
-		TaskQueue:              s.orkerQueue,
-		ScheduleToCloseTimeout: 10 * time.Second,
+		TaskQueue:              queue,
+		ScheduleToCloseTimeout: within,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 2,
 		},

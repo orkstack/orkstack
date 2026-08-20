@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 )
@@ -14,6 +15,14 @@ type MuxOptions struct {
 	// AllowedOrigins lists Origin header patterns accepted by the WebSocket
 	// bridge. Empty means same-origin requests only (coder/websocket default).
 	AllowedOrigins []string
+
+	// StatsCacheTTL is how long one stats answer is reused. The zero value
+	// takes the documented default (ORK_STATS_CACHE_TTL, else
+	// DefaultStatsCacheTTL); a negative value switches the cache off.
+	//
+	// This is the one place an unset TTL becomes a number, so nothing further
+	// down can quietly re-enable an optimisation an operator turned off.
+	StatsCacheTTL time.Duration
 }
 
 // NewMux mounts the Connect handlers and the WebSocket bridge.
@@ -27,13 +36,29 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	runPath, runHandler := orkstackv1connect.NewRunServiceHandler(svc, handlerOptions...)
 	mux.Handle(runPath, runHandler)
 
+	namespacePath, namespaceHandler := orkstackv1connect.NewNamespaceServiceHandler(svc, handlerOptions...)
+	mux.Handle(namespacePath, namespaceHandler)
+
 	pluginPath, pluginHandler := orkstackv1connect.NewPluginServiceHandler(svc, handlerOptions...)
 	mux.Handle(pluginPath, pluginHandler)
+
+	// The stats surface is its own handler because it owns a cache. The TTL is
+	// resolved HERE — the zero value means "the documented default" and only
+	// this line knows that, so a handler built anywhere else takes what it is
+	// given and cannot re-enable a switched-off cache.
+	statsTTL := opts.StatsCacheTTL
+	if statsTTL == 0 {
+		statsTTL = StatsCacheTTLFromEnv()
+	}
+	statsPath, statsHandler := orkstackv1connect.NewStatsServiceHandler(
+		NewStatsHandler(svc, statsTTL), handlerOptions...)
+	mux.Handle(statsPath, statsHandler)
 
 	mux.Handle(WebhookCollectionPath, NewWebhookHandler(svc.Webhooks()))
 	mux.Handle(WebhookItemPath, NewWebhookHandler(svc.Webhooks()))
 
 	mux.Handle("/ws/runs/{id}", NewWebSocketBridge(svc, opts.AllowedOrigins))
+	mux.Handle(TaskLogSocketPath, NewTaskLogSocket(svc, opts.AllowedOrigins))
 	return mux
 }
 

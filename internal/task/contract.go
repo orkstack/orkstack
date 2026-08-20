@@ -19,6 +19,13 @@ const (
 	// DefaultQueue is the Temporal task queue Orkers poll for task execution.
 	DefaultQueue = "ork-tasks"
 
+	// EngineEventQueue is the Temporal task queue that carries the engine's
+	// own projection activities, and the one queue no task may be dispatched
+	// to. It is declared here, beside DefaultQueue, because the two places
+	// that must refuse it — QueueForPool and `ork` at boot — cannot import
+	// internal/engine. engine.EventQueue is this literal, not a second one.
+	EngineEventQueue = "ork-engine-events"
+
 	// DefaultNamespace is the Temporal namespace OrkStack runs in when
 	// ORK_TEMPORAL_NAMESPACE is unset. Binaries provision it on startup when
 	// the cluster does not have it yet (see EnsureNamespace).
@@ -44,6 +51,18 @@ type ExecuteTaskInput struct {
 	RunID          string `json:"run_id"`
 	OrkflowName    string `json:"orkflow_name"`
 	OrkflowVersion string `json:"orkflow_version"`
+
+	// Namespace is the orkflow's namespace; empty means the built-in default.
+	// Pool is where this task runs, resolved by the engine: the task's own
+	// `pool:` or the built-in default. Both are coordinates of the work, not
+	// instructions — the activity already arrived on the pool's queue by the
+	// time an Orker decodes this. They travel so the Orker can key what it
+	// writes (a run's logs, M10.5) by the same coordinates the rest of the
+	// system uses, and they are added in M10.1 because this is the slice that
+	// re-records the replay fixture: adding them later would force a second
+	// reset (.atomic/v003-design.md §2.5).
+	Namespace string `json:"namespace"`
+	Pool      string `json:"pool"`
 
 	TaskID string `json:"task_id"`
 	Plugin string `json:"plugin"`

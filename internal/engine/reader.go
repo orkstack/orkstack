@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -27,23 +28,42 @@ import (
 var ErrRunNotFound = fmt.Errorf("engine: run not found: %w", artifacts.ErrNotFound)
 
 const (
-	// MemoOrkflowName and MemoOrkflowVersion are the memo keys StartRun writes
-	// onto a run's execution. Visibility returns a memo with the execution, so
-	// a list can name the orkflow without reading a single history.
+	// MemoOrkflowName, MemoOrkflowVersion and MemoNamespace are the memo keys
+	// StartRun writes onto an execution. Visibility returns them with the
+	// execution, so a list can scope by namespace without reading history.
+	//
+	// All three carry the orkflow_ prefix, and the third one needs it most: an
+	// unqualified `namespace` sitting beside a Temporal client would read as
+	// the Temporal namespace, which is exactly the ambiguity AGENTS.md §1.9
+	// forbids. The key is written into history, so it is chosen once.
 	MemoOrkflowName    = "orkflow_name"
 	MemoOrkflowVersion = "orkflow_version"
-
+	MemoNamespace      = "orkflow_namespace"
 	// DefaultRunPageSize bounds an unlimited ListRuns.
 	DefaultRunPageSize = 200
 
 	// maxRunListPages bounds how far ListRuns pages through visibility looking
 	// for matches, so a narrow filter over a large namespace cannot turn one
-	// request into an unbounded scan.
+	// request into an unbounded scan. It applies when every record the walk
+	// reads already belongs to the namespace that asked — the filters left are
+	// then the caller's own orkflow name and status, and how far its own
+	// traffic lets it see is its own business.
 	maxRunListPages = 20
+
+	// maxRunScanPages bounds the walk taken when the namespace could NOT be
+	// pushed into the query, which is the one filter that must not be answered
+	// by "as far as the budget got": another tenant's traffic would decide
+	// whether this one can see its own runs. That walk reads the index to the
+	// end, and this is only the stop that keeps a request finite; hitting it
+	// is reported as a failure rather than as a short list.
+	maxRunScanPages = 2000
 )
 
 // RunQuery selects runs. Zero values mean "no filter".
 type RunQuery struct {
+	// Namespace narrows the list to one OrkStack namespace. Empty means no
+	// namespace filter; callers that mean the built-in default pass "default".
+	Namespace   string
 	OrkflowName string
 	Status      orkstackv1.Status
 	// Limit caps the runs returned, newest first. 0 means DefaultRunPageSize.
@@ -87,6 +107,12 @@ type runReadClient interface {
 type TemporalRunReader struct {
 	client    runReadClient
 	converter converter.DataConverter
+
+	// namespaceIndexed reports that this cluster has the OrkflowNamespace
+	// search attribute (task.EnsureRunSearchAttributes), so a namespace is a
+	// predicate the cluster applies rather than a filter this reader applies
+	// afterwards. It is told, at boot, by the process that registered it.
+	namespaceIndexed bool
 }
 
 // The reader is the archive writer's event source too: PublishEvent assembles
@@ -99,6 +125,16 @@ var _ RunEventSource = (*TemporalRunReader)(nil)
 // part of the engine already respects.
 func NewTemporalRunReader(c client.Client) *TemporalRunReader {
 	return newRunReader(c, converter.GetDefaultDataConverter())
+}
+
+// WithNamespaceIndex records whether the cluster indexes a run's OrkStack
+// namespace. It defaults to off, which is the safe half: the reader then
+// reads the whole index rather than trusting a predicate the cluster would
+// reject, and a caller who forgot to say so gets a slower answer, never a
+// wrong one.
+func (r *TemporalRunReader) WithNamespaceIndex(indexed bool) *TemporalRunReader {
+	r.namespaceIndexed = indexed
+	return r
 }
 
 func newRunReader(c runReadClient, dc converter.DataConverter) *TemporalRunReader {
@@ -169,20 +205,39 @@ func (r *TemporalRunReader) StreamEvents(
 // (from the memo StartRun writes), status and times. Task runs, input and
 // output live in history and in the archive, and GetRun reads them from there.
 //
-// Filters are applied over the page rather than pushed into the query, because
-// the orkflow name lives in a memo and memos are not searchable; making them
-// searchable means registering custom search attributes, which is a cluster
-// provisioning step this milestone deliberately does not require.
+// The NAMESPACE is a predicate the cluster applies, and the other filters are
+// applied over the page. The difference is not convenience, it is what the
+// namespace is: a tenancy boundary. Filtered here, over a walk bounded at
+// maxRunListPages, the answer to "list my runs" depended on how many runs
+// everyone ELSE had — a namespace with one live run behind two hundred of a
+// neighbour's was told it had none, and the threshold was set by a stranger.
+// An orkflow name inside one namespace is not that, so it stays a filter, and
+// its memo stays unindexed.
+//
+// A cluster without the index (task.EnsureRunSearchAttributes could not
+// register it) is answered by reading the index to the end instead — slower,
+// and still the tenant's own answer. If even that walk runs out of pages the
+// list FAILS rather than returning what it happened to reach: a short list a
+// caller cannot tell from a complete one is the defect this paragraph exists
+// to close.
 func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orkstackv1.Run, error) {
 	limit := q.Limit
 	if limit <= 0 {
 		limit = DefaultRunPageSize
 	}
+	query, scoped := r.listQuery(q)
+	// The exhaustive walk is taken only when a namespace was asked for and the
+	// cluster could not answer it: nothing else here is a tenancy boundary.
+	exhaustive := q.Namespace != "" && !scoped
+	pages := maxRunListPages
+	if exhaustive {
+		pages = maxRunScanPages
+	}
 	out := make([]*orkstackv1.Run, 0, limit)
 	var token []byte
-	for page := 0; page < maxRunListPages; page++ {
+	for page := 0; page < pages; page++ {
 		response, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
-			Query:         fmt.Sprintf("WorkflowType = %q", RunWorkflowType),
+			Query:         query,
 			PageSize:      int32(limit),
 			NextPageToken: token,
 		})
@@ -204,7 +259,31 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 			return out, nil
 		}
 	}
+	if exhaustive {
+		return nil, fmt.Errorf(
+			"engine: list runs in namespace %q: visibility does not index %s, so every "+
+				"other namespace's runs had to be read and discarded, and %d pages were "+
+				"not enough. Register the search attribute (it is provisioned at engine "+
+				"boot) and the namespace becomes a query predicate",
+			q.Namespace, task.SearchAttrOrkflowNamespace, pages)
+	}
 	return out, nil
+}
+
+// listQuery is the visibility query for one RunQuery, and whether the
+// namespace went into it.
+//
+// Only the namespace is pushed down, and only when the cluster has the index.
+// A run started before the index existed carries the memo and no attribute, so
+// it is not listed by namespace; it is still readable by id, and once it
+// finishes the archive — whose key begins with the namespace — holds it.
+func (r *TemporalRunReader) listQuery(q RunQuery) (string, bool) {
+	query := fmt.Sprintf("WorkflowType = %q", RunWorkflowType)
+	if q.Namespace == "" || !r.namespaceIndexed {
+		return query, false
+	}
+	return fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowNamespace,
+		artifacts.ResolveNamespace(q.Namespace)), true
 }
 
 // runProjection is one run's history, decoded.
@@ -407,6 +486,7 @@ func (r *TemporalRunReader) startedRun(
 		if err := r.converter.FromPayload(payloads[1], &wf); err == nil && wf != nil {
 			run.OrkflowName = wf.GetName()
 			run.OrkflowVersion = wf.GetVersion()
+			run.Namespace = wf.GetNamespace()
 		}
 	}
 	if len(payloads) > 2 {
@@ -430,6 +510,7 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 	}
 	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
 	run.OrkflowVersion = r.memoString(info.GetMemo(), MemoOrkflowVersion)
+	run.Namespace = r.memoString(info.GetMemo(), MemoNamespace)
 	return run
 }
 
@@ -449,6 +530,9 @@ func (r *TemporalRunReader) memoString(memo *commonpb.Memo, key string) string {
 
 // matchesRunQuery applies the client-side half of a list query.
 func matchesRunQuery(run *orkstackv1.Run, q RunQuery) bool {
+	if q.Namespace != "" && artifacts.ResolveNamespace(run.GetNamespace()) != artifacts.ResolveNamespace(q.Namespace) {
+		return false
+	}
 	if q.OrkflowName != "" && run.GetOrkflowName() != q.OrkflowName {
 		return false
 	}
@@ -528,6 +612,12 @@ func terminalEventFor(status orkstackv1.Status) orkstackv1.EventType {
 // mergeRunSnapshot folds a newer snapshot over an older one. The workflow owns
 // everything it publishes; the fields it can omit are filled from what came
 // before, so a late snapshot never erases the run's identity.
+//
+// The namespace is carried for a harder reason than the rest. internal/api
+// resolves a run id INSIDE the namespace the caller named and refuses it in
+// any other, so a projection that lost the field resolves to `default` and
+// hands one tenant's run to another to read, watch and cancel. A dropped
+// namespace is a tenancy boundary failing open, not a blank column.
 func mergeRunSnapshot(base, next *orkstackv1.Run) *orkstackv1.Run {
 	if next == nil {
 		return base
@@ -540,6 +630,9 @@ func mergeRunSnapshot(base, next *orkstackv1.Run) *orkstackv1.Run {
 	}
 	if next.GetInput() == nil {
 		next.Input = base.GetInput()
+	}
+	if next.GetNamespace() == "" {
+		next.Namespace = base.GetNamespace()
 	}
 	if next.GetOrkflowName() == "" {
 		next.OrkflowName = base.GetOrkflowName()
