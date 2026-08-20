@@ -18,26 +18,30 @@
 // the contract with the engine, this is the address of a page.
 export const NAMESPACE_PARAM = "ns";
 
-// DEFAULT_NAMESPACE is what the engine resolves an unnamed namespace to. The
-// UI keeps the wire value empty in that case rather than spelling it out, so
-// one name is never sent as two different things.
+// DEFAULT_NAMESPACE is what the engine resolves an unnamed namespace to. It is
+// a name like any other on the PAGE — `?ns=default` is spelled out, see
+// withNamespace — and never on the wire, where the default namespace is the
+// empty string. One namespace, one wire value.
 export const DEFAULT_NAMESPACE = "default";
 
-// NAMESPACE_STORAGE_KEY remembers the last namespace CHOSEN, so that opening a
-// bare `/orkflows` in the browser that made the choice reopens the work the
-// user was doing instead of resetting them to `default` in silence.
+// NAMESPACE_STORAGE_KEY remembers the last namespace this browser LOOKED AT —
+// written by the switcher, and by the layout on any URL that names one — so
+// that opening a bare `/orkflows` reopens the work the user was doing instead
+// of resetting them to `default` in silence.
 //
-// It remembers a choice, never a page: what is stored is written by the
-// switcher, so a pasted link cannot overwrite somebody else's preference by
-// being followed once, and `default` is stored explicitly when it is picked —
-// otherwise choosing `default` would be undone by the restore on the next
-// bare URL.
+// It stores the LABEL, so `default` is remembered as a name when it is chosen.
+// Storing the wire value would make "chose `default`" and "chose nothing" the
+// same empty string, and the restore would then drag somebody who deliberately
+// picked `default` back into the namespace they had just left.
 export const NAMESPACE_STORAGE_KEY = "orkstack.namespace";
 
-// namespaceFrom reads the namespace a page was asked for. Empty means the
-// default namespace, which is exactly what the request carries.
+// namespaceFrom reads the namespace a page was asked for, as a WIRE value:
+// empty for the default namespace, which is exactly what a request carries for
+// it. The address bar spells `default` out; the request never does, so one
+// namespace is never sent to the engine as two different strings.
 export function namespaceFrom(url: URL): string {
-  return url.searchParams.get(NAMESPACE_PARAM) ?? "";
+  const asked = url.searchParams.get(NAMESPACE_PARAM) ?? "";
+  return asked === DEFAULT_NAMESPACE ? "" : asked;
 }
 
 // hasNamespaceParam distinguishes "this URL says default" from "this URL says
@@ -52,14 +56,20 @@ export function namespaceLabel(namespace: string): string {
   return namespace || DEFAULT_NAMESPACE;
 }
 
-// withNamespace carries the namespace onto an internal link, so following one
-// does not silently drop back to `default`. The default namespace adds no
-// parameter: it is the answer to an absent one.
+// withNamespace carries the namespace onto an internal link — including the
+// default one, spelled out as `?ns=default`.
+//
+// Naming it by SILENCE is the bug this replaces. A URL with no `?ns=` does not
+// say "the default namespace"; it says "no choice recorded", and the restore
+// in +layout.svelte then answers it with whatever the READER last chose. One
+// address opened `payments` for one colleague and `default` for another —
+// precisely what a pasted link must never do. So every internal link states
+// the namespace it belongs to, and the design's "selection is canonical in the
+// URL on every route" (v003-design.md §1.9) holds for `default` too.
 export function withNamespace(path: string, namespace: string): string {
-  if (!namespace || namespace === DEFAULT_NAMESPACE) return path;
   const [base, query] = path.split("?");
   const params = new URLSearchParams(query ?? "");
-  params.set(NAMESPACE_PARAM, namespace);
+  params.set(NAMESPACE_PARAM, namespaceLabel(namespace));
   return `${base}?${params.toString()}`;
 }
 
@@ -75,14 +85,16 @@ export function rememberNamespace(namespace: string): void {
   }
 }
 
-// rememberedNamespace reads the last chosen namespace, as a wire value: empty
-// for `default`, for nothing stored, and on a server render where there is no
-// storage to read.
-export function rememberedNamespace(): string {
+// rememberedNamespace reads the last namespace this browser was in, as its
+// LABEL, or null when it has never been in one — including on a server render,
+// where there is no storage to read. Null and `default` are different answers:
+// null means a bare URL has nothing to restore and is simply made to say
+// `default`, while `default` is a namespace to restore like any other.
+export function rememberedNamespace(): string | null {
   try {
-    const stored = globalThis.localStorage?.getItem(NAMESPACE_STORAGE_KEY) ?? "";
-    return stored === DEFAULT_NAMESPACE ? "" : stored;
+    return globalThis.localStorage?.getItem(NAMESPACE_STORAGE_KEY) ?? null;
   } catch {
-    return "";
+    // Private-mode browsers throw on read.
+    return null;
   }
 }

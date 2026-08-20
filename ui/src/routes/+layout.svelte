@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../app.css';
-	import { goto, invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import {
@@ -27,23 +27,33 @@
 	// carrying `?orkflow=deploy` across names a different orkflow or none.
 	function switchTo(name: string) {
 		// Remembered BEFORE the navigation, and remembered under its label, so
-		// that choosing `default` — which carries no parameter — is a choice the
-		// restore below honours rather than an absence it overrides.
+		// that a later bare URL restores this choice rather than overriding it.
 		rememberNamespace(name);
-		const next = name === DEFAULT_NAMESPACE ? '' : name;
-		void goto(withNamespace(page.url.pathname, next), { invalidateAll: true });
+		// `default` is written into the URL like any other name. A choice the
+		// address bar does not state is a choice the next reader's browser
+		// answers for them, and then one link opens two different namespaces.
+		void goto(withNamespace(page.url.pathname, name), { invalidateAll: true });
 	}
 
-	// A URL that names no namespace is answered by the last one CHOSEN in this
-	// browser, and the choice is written back into the address bar (design
-	// §1.9). Without this, opening a bookmarked `/orkflows` drops somebody
-	// working in `payments` back into `default` with no error and no hint.
+	// Every page states the namespace it is showing, and a URL that names none
+	// is answered here (design §1.9).
 	//
-	// goto(..., { replaceState: true }) rather than the shallow replaceState
-	// helper: the URL is the loaders' input, so rewriting it without re-running
-	// them would leave the address bar saying `payments` over `default`'s data,
-	// which is the same lie with better manners. It replaces rather than pushes
-	// so the back button still leaves the app.
+	// Two different answers, because they are two different situations:
+	//
+	//   - this browser HAS chosen a namespace: that choice is restored, which
+	//     is a real change of what the page shows, so it is a navigation.
+	//     goto(..., { replaceState: true }) rather than the shallow
+	//     replaceState helper, because the URL is the loaders' input: rewriting
+	//     it without re-running them would leave the address bar saying
+	//     `payments` over `default`'s data, the same lie with better manners.
+	//     It replaces rather than pushes, so the back button still leaves.
+	//
+	//   - this browser has chosen NOTHING: the page is in `default` and only
+	//     the address bar is wrong. It is rewritten shallowly — an absent `ns`
+	//     and `ns=default` are the same wire value, so there is nothing to
+	//     re-read — and then a link copied out of it names the namespace the
+	//     sender was looking at instead of leaving the reader's own browser to
+	//     answer for them.
 	$effect(() => {
 		const url = page.url;
 		if (hasNamespaceParam(url)) {
@@ -51,7 +61,16 @@
 			return;
 		}
 		const remembered = rememberedNamespace();
-		if (!remembered) return;
+		if (remembered === null) {
+			try {
+				replaceState(withNamespace(url.pathname + url.search, DEFAULT_NAMESPACE), page.state);
+			} catch {
+				// replaceState throws before the router is initialised. The URL
+				// then stays bare, which still reads `default`; the next
+				// navigation writes it.
+			}
+			return;
+		}
 		void goto(withNamespace(url.pathname + url.search, remembered), {
 			replaceState: true,
 			invalidateAll: true,

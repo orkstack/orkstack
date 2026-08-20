@@ -33,11 +33,24 @@ const TEMPORAL_NAMESPACE =
 // run, plus a per-run orkflow name so the version lineage is always fresh.
 const ALPHA = 'm10-7-alpha';
 const BETA = 'm10-7-beta';
+const DEFAULT_NS = 'default';
 const STAMP = Date.now().toString(36);
 const ORKFLOW = `editable-${STAMP}`;
 const BETA_ORKFLOW = `beta-only-${STAMP}`;
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m10-7');
+
+// The tests below are sequential and stateful ON PURPOSE: each builds on the
+// versions the last one applied, which is the only way to prove promote,
+// rollback and a diff against a real lineage rather than a fixture.
+//
+// Serial mode is the declaration of that. Without it Playwright answers one
+// failure by restarting the worker and running the REST of the file in it —
+// re-entering beforeAll, which mints a new STAMP and applies a new orkflow, so
+// the survivors go looking for versions nobody ever applied. One defect then
+// reports as four failures and names none of them. In serial mode a failure
+// skips what depended on it, and the report has one line.
+test.describe.configure({ mode: 'serial' });
 
 const children: ChildProcess[] = [];
 
@@ -150,6 +163,35 @@ tasks:
 `;
 }
 
+// settle waits for a tab to reach one of its two end states and FAILS NAMING
+// THE CAUSE when it reached the error one.
+//
+// A bare `expect(getByTestId('editor-base-version')).toHaveText('0.1.0')`
+// cannot tell "the head version could not be read" from "not painted yet":
+// both are an absent element, so a proof run that hits the first reports the
+// second and the transcript names no cause at all. A review of this milestone
+// found exactly that, once in thirteen runs, with nothing in the log to say
+// why. Nothing here retries and nothing here relaxes an assertion; the wait is
+// the same wait, and the failure is legible.
+//
+// An error panel whose own retry is in flight is NOT an end state: it still
+// shows the failure it is busy replacing, and its button is disabled and reads
+// "Retrying…". So the failure this waits for is an idle one.
+async function settle(page: Page, ready: string, failed: string, what: string): Promise<void> {
+	const ok = page.getByTestId(ready);
+	const panel = page.getByTestId(failed);
+	const idleFailure = panel.locator('button:not([disabled])');
+	await expect(ok.or(idleFailure).first()).toBeVisible();
+	if (await idleFailure.isVisible()) {
+		const said = (await panel.innerText()).replace(/\s+/g, ' ').trim();
+		throw new Error(`${what} reported a failed read instead of loading: ${said}`);
+	}
+}
+
+const openEditor = (page: Page) => settle(page, 'editor-form', 'editor-error-load', 'the Edit tab');
+const openVersions = (page: Page) =>
+	settle(page, 'version-list', 'versions-error', 'the Versions tab');
+
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 
@@ -232,9 +274,13 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	page,
 	browser
 }) => {
-	// The default namespace holds neither orkflow.
+	// The default namespace holds neither orkflow — and the address bar says
+	// which namespace it is showing even before anybody chooses one, so a URL
+	// copied out of it carries the sender's namespace rather than leaving the
+	// reader's browser to answer for them.
 	await page.goto(`${UI_ORIGIN}/orkflows`);
-	await expect(page.getByTestId('namespace-picker')).toHaveValue('default');
+	await expect(page.getByTestId('namespace-picker')).toHaveValue(DEFAULT_NS);
+	await expect(page).toHaveURL(/[?&]ns=default(&|$)/);
 	await expect(page.getByTestId(`orkflow-row-${ORKFLOW}`)).toHaveCount(0);
 
 	// Switching scopes the list and writes the choice into the URL.
@@ -282,16 +328,42 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await page.waitForURL(new RegExp(`ns=${ALPHA}`));
 	await expect(page.getByTestId(`orkflow-row-${ORKFLOW}`)).toBeVisible();
 
-	// The other namespace is scoped too, and choosing `default` sticks — the
-	// restore must not drag the user back to the namespace they just left.
+	// The other namespace is scoped too, and `default` is a choice like any
+	// other: it is written into the URL, so the link a user copies out of the
+	// address bar says which namespace they were looking at.
 	await page.getByTestId('namespace-picker').selectOption(BETA);
 	await page.waitForURL(new RegExp(`ns=${BETA}`));
 	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toBeVisible();
 	await expect(page.getByTestId(`orkflow-row-${ORKFLOW}`)).toHaveCount(0);
-	await page.getByTestId('namespace-picker').selectOption('default');
-	await page.waitForURL((url) => !url.searchParams.has('ns'));
+
+	await page.getByTestId('namespace-picker').selectOption(DEFAULT_NS);
+	await page.waitForURL(/[?&]ns=default(&|$)/);
+	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
+	const senderLink = page.url();
+
+	// The colleague case for `default` — the one an absent parameter breaks.
+	// A second browser whose last choice was BETA opens the sender's link and
+	// must land in DEFAULT. When `default` travelled as silence, this URL was
+	// bare, the reader's restore answered it with `m10-7-beta`, and the same
+	// address showed two people two different namespaces' data.
+	const other = await browser.newContext();
+	const otherPage = await other.newPage();
+	await otherPage.goto(`${UI_ORIGIN}/orkflows`);
+	await otherPage.getByTestId('namespace-picker').selectOption(BETA);
+	await otherPage.waitForURL(new RegExp(`ns=${BETA}`));
+	await expect(otherPage.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toBeVisible();
+	await otherPage.goto(senderLink);
+	await expect(otherPage.getByTestId('namespace-picker')).toHaveValue(DEFAULT_NS);
+	await expect(otherPage.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
+	await expect(otherPage).toHaveURL(/[?&]ns=default(&|$)/);
+	await other.close();
+
+	// And the choice sticks in the browser that made it: a bare URL restores
+	// `default` rather than dragging the user back to the namespace they left.
 	await page.goto(`${UI_ORIGIN}/orkflows`);
-	await expect(page.getByTestId('namespace-picker')).toHaveValue('default');
+	await expect(page.getByTestId('namespace-picker')).toHaveValue(DEFAULT_NS);
+	await expect(page).toHaveURL(/[?&]ns=default(&|$)/);
+	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
 });
 
 // Acceptance 2 (editor + validation from the real ApplyOrkflow response) and
@@ -301,6 +373,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${ALPHA}&tab=edit`);
+	await openEditor(page);
 
 	// The editor opens on the head version's stored YAML and says which version
 	// the edit is derived from — that value is the base_version it sends.
@@ -325,12 +398,14 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	await page.getByTestId('editor-yaml').fill(orkflowYaml(ORKFLOW, '0.2.0', 'second revision'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
+	await openVersions(page);
 	await expect(page.getByTestId('version-row-0.2.0')).toBeVisible();
 	await expect(page.getByTestId('version-row-0.1.0')).toBeVisible();
 	await expect(page.getByTestId('version-head-0.2.0')).toBeVisible();
 
 	// 3. Stale edit: a colleague applies 0.3.0 while this editor holds 0.2.0.
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${ALPHA}&tab=edit`);
+	await openEditor(page);
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.2.0');
 	await rpc('OrkflowService/ApplyOrkflow', {
 		yaml: orkflowYaml(ORKFLOW, '0.3.0', 'applied by somebody else'),
@@ -362,6 +437,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.3.0');
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
+	await openVersions(page);
 	await expect(page.getByTestId('version-row-0.2.5')).toBeVisible();
 });
 
@@ -372,6 +448,7 @@ test('promoting and rolling back moves the current version, behind a confirmatio
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${ALPHA}&tab=versions`);
+	await openVersions(page);
 	await expect(page.getByTestId('version-current-0.2.5')).toBeVisible();
 	await shot(page, 'screenshot-versions.png');
 
@@ -412,6 +489,7 @@ test('promoting and rolling back moves the current version, behind a confirmatio
 // unified diff — one implementation, so the CLI and the UI cannot drift.
 test('diffing two versions renders the engine unified diff', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${ALPHA}&tab=versions`);
+	await openVersions(page);
 	await page.getByTestId('diff-from-0.1.0').check();
 	await page.getByTestId('diff-to-0.3.0').check();
 	await page.getByTestId('diff-run').click();
@@ -458,4 +536,49 @@ test('a failed load reports the failure and retries, instead of spinning', async
 	await page.getByTestId('versions-retry').click();
 	await expect(page.getByTestId('version-row-0.3.0')).toBeVisible();
 	await expect(page.getByTestId('versions-error')).toHaveCount(0);
+});
+
+// Acceptance 5, the half a retry has to actually deliver: the Edit tab must
+// COME BACK, not merely repaint.
+//
+// The editor is built out of the head version's document, so an instance built
+// while that read was failing holds nothing — and because it keeps its place in
+// the template, a SUCCESSFUL retry re-renders that same instance. An empty box
+// over an empty base version is a retry in name only: the browser's reload
+// button is then the real recovery, which is the state acceptance 5 forbids.
+test('the Edit tab recovers its document and its base version on retry', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/orkflows?ns=${ALPHA}`);
+
+	// Break the read the editor is seeded from, then navigate client-side, so
+	// the loader really runs in the browser and really fails.
+	await page.route('**/orkstack.v1.OrkflowService/ListOrkflowVersions', (route) => route.abort());
+	await page.getByTestId(`orkflow-row-${ORKFLOW}`).getByRole('link').click();
+	await page.getByTestId('tab-edit').click();
+
+	await expect(page.getByTestId('editor-error-load')).toBeVisible();
+	await expect(page.getByTestId('editor-form')).toHaveCount(0);
+	await expect(page.getByTestId('editor-loading')).toHaveCount(0);
+
+	// Heal the route and use the view's own retry — not the browser's reload.
+	await page.unroute('**/orkstack.v1.OrkflowService/ListOrkflowVersions');
+	await page.getByTestId('editor-retry-load').click();
+	await openEditor(page);
+
+	// Recovered means the editor holds what a first successful load would have
+	// given it: the head version as its base_version token, and the stored
+	// document in the box.
+	await expect(page.getByTestId('editor-base-version')).toHaveText('0.2.5');
+	await expect(page.getByTestId('editor-yaml')).toHaveValue(new RegExp(`name: ${ORKFLOW}`));
+	await shot(page, 'screenshot-editor-retry.png');
+
+	// And it applies, which is what proves the token came back: without one the
+	// editor refuses itself with "reload before applying" and stores nothing.
+	await page
+		.getByTestId('editor-yaml')
+		.fill(orkflowYaml(ORKFLOW, '0.4.0', 'applied after a retry'));
+	await page.getByTestId('editor-apply').click();
+	await page.waitForURL(/tab=versions/);
+	await openVersions(page);
+	await expect(page.getByTestId('version-row-0.4.0')).toBeVisible();
+	await expect(page.getByTestId('version-head-0.4.0')).toBeVisible();
 });

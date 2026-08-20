@@ -4,7 +4,7 @@
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import OrkflowEditor from '$lib/components/OrkflowEditor.svelte';
 	import OrkflowVersions from '$lib/components/OrkflowVersions.svelte';
-	import { NAMESPACE_PARAM, withNamespace } from '$lib/namespace';
+	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
 	import type { PageProps } from './$types';
 
@@ -13,14 +13,15 @@
 
 	// The tab is a coordinate of the page, so it lives in the URL beside the
 	// namespace and the version: a link to "the versions of deploy in payments"
-	// is a link, not an instruction to click twice.
+	// is a link, not an instruction to click twice. The namespace is always
+	// stated, `default` included — a tab link that dropped it would hand the
+	// next reader's remembered namespace a page about somebody else's orkflow.
 	function tabHref(tab: string): string {
 		const params = new URLSearchParams();
-		if (data.namespace) params.set(NAMESPACE_PARAM, data.namespace);
+		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
 		if (data.version) params.set('version', data.version);
 		if (tab !== 'overview') params.set('tab', tab);
-		const query = params.toString();
-		return `/orkflows/${data.name}${query ? `?${query}` : ''}`;
+		return `/orkflows/${data.name}?${params.toString()}`;
 	}
 
 	const tabs = [

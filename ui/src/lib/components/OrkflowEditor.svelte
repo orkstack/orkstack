@@ -39,10 +39,32 @@
 	let { name, namespace, sourceYaml, headVersion, error, versionsHref, onreload }: Props =
 		$props();
 
-	// Seeded once. A later reload of the page data must not overwrite what
-	// somebody is typing — that is the loss this whole tab exists to prevent.
+	// Seeded from the first read that SUCCEEDS, whenever that is.
+	//
+	// It has to be seeded once and not again: a later reload of the page data
+	// must not overwrite what somebody is typing — that is the loss this whole
+	// tab exists to prevent. But "once" cannot mean "at construction". When the
+	// first read FAILS this component is still built, with `''` for both, and it
+	// keeps its place in the template, so a SUCCESSFUL retry re-renders the same
+	// instance holding the same two empty strings: an empty box over a base
+	// version it does not have, and an apply that answers "reload before
+	// applying". That is a retry in name only, and it leaves the browser's
+	// reload button as the real recovery — the state the retry exists to
+	// replace.
+	//
+	// So the seed waits for a document to exist, and then closes.
 	let yaml = $state(untrack(() => sourceYaml));
 	let base = $state(untrack(() => headVersion));
+	let seeded = $state(untrack(() => error === null && headVersion !== ''));
+
+	$effect(() => {
+		// Tracked: the two things that say a real document has arrived.
+		if (error !== null || headVersion === '') return;
+		if (untrack(() => seeded)) return;
+		yaml = sourceYaml;
+		base = headVersion;
+		seeded = true;
+	});
 
 	let applying = $state(false);
 	let reloading = $state(false);
