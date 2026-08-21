@@ -350,16 +350,28 @@ func TestIntegration_ContainerTimeoutKillsTheContainerAndFailsTheTask(t *testing
 	assertNoLeftoverContainers(t, taskID)
 }
 
-func TestIntegration_ContainerFailsTheTaskWithTheContainerExitCode(t *testing.T) {
+// A real container's non-zero exit fails the task with its code, and the error
+// carries none of what the container printed — that output is in the task's
+// log stream, and the error is a Temporal payload (AGENTS.md §1.4). The
+// assertion about "boom" is inverted from its first version on purpose; the
+// same line is demanded of the LOG instead, so nothing about the failure got
+// quieter.
+func TestIntegration_ContainerFailsTheTaskWithTheContainerExitCodeAndNoneOfItsOutput(t *testing.T) {
 	requireDocker(t)
 	image := testImage()
 	requireImage(t, image)
 
 	const taskID = "exit-code"
+	logs := &logCapture{}
 	ec := newIntegrationContext(t, taskID, map[string]any{
 		"image":   image,
 		"command": `echo "boom" >&2; exit 17`,
 	})
+	ec.Log = func(format string, args ...any) {
+		line := fmt.Sprintf(format, args...)
+		t.Log(line)
+		logs.add(line)
+	}
 
 	_, err := New().Execute(context.Background(), ec)
 	if err == nil {
@@ -368,8 +380,17 @@ func TestIntegration_ContainerFailsTheTaskWithTheContainerExitCode(t *testing.T)
 	if !strings.Contains(err.Error(), "exited with code 17") {
 		t.Errorf("error %q does not carry the container's exit code", err)
 	}
-	if !strings.Contains(err.Error(), "boom") {
-		t.Errorf("error %q does not carry the container's stderr", err)
+	if strings.Contains(err.Error(), "boom") {
+		t.Errorf("error %q carries the container's stderr; the error is recorded in "+
+			"Temporal history and on the run's event stream, where a task's output "+
+			"may not go", err)
+	}
+	if !strings.Contains(err.Error(), "orkctl run logs") {
+		t.Errorf("error %q does not say where the container's output is", err)
+	}
+	if !logs.holds(plugin.StderrMarker + "boom") {
+		t.Errorf("the container's stderr line is neither in the error nor in the log: %q",
+			logs.all())
 	}
 	assertNoLeftoverContainers(t, taskID)
 }

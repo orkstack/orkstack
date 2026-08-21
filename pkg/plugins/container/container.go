@@ -39,6 +39,11 @@
 // docs/PLUGINS.md). The capture artifacts are unaffected — they remain the
 // byte-exact copy.
 //
+// A FAILURE carries no payload and quotes nothing the container wrote: an
+// error travels into Temporal history and onto the event stream, once per
+// attempt, and a task's output is not something to put there (AGENTS.md §1.4).
+// It names the exit code and where the output is instead (runFailure).
+//
 // Security (AGENTS.md §9): the plugin drives the Docker CLI through an argv
 // slice and never builds a shell command line, so no config value can inject a
 // flag or a second command. `command` given as a string is the one place a
@@ -315,47 +320,68 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 // runFailure explains a non-zero exit and decides whether retrying could ever
 // change it. Docker reserves three codes for its own failures; everything else
 // is the container's own status.
+//
+// IT QUOTES NOTHING THE CONTAINER WROTE. The error this returns is the one
+// thing here that leaves the Orker: Temporal records it as the activity's
+// failure, the workflow copies it onto TaskRun.Error and the TASK_FAILED
+// event, and the run's own failure copies it again onto Run.Error and
+// RUN_FAILED (internal/engine/workflow.go) — history and the event stream
+// both, once per attempt. A task's output is bytes, and bytes travel as stored
+// objects (AGENTS.md §1.4): the whole of both streams is in the task's log
+// stream, live and afterwards, and byte-exact in the capture artifacts. So a
+// failure names what only it knows — the image, the exit code, the kill, the
+// one daemon-level cause worth translating — and says where the output is.
+//
+// That is not less actionable than quoting a head of stderr was: the docker
+// CLI's own diagnostics are written to the same stderr the plugin streams, so
+// "docker could not start it" and the daemon's sentence about why are one
+// `orkctl run logs` apart, and the artifacts hold every byte rather than the
+// first 8 KiB.
 func (p *Plugin) runFailure(req runRequest, outcome runOutcome, streams *streamSet) error {
-	tail := strings.TrimSpace(streams.stderrHead.String())
-	if tail == "" {
-		tail = strings.TrimSpace(streams.stdoutHead.String())
-	}
-	if tail == "" {
-		tail = "(no output)"
-	}
+	// The head buffers are READ here and never quoted: the daemon-level cause
+	// below is recognized from them, and what leaves this function is the
+	// plugin's own sentence about it.
+	said := streams.stderrHead.String() + streams.stdoutHead.String()
 
 	if outcome.timedOut {
 		// A budget the container blew once it will blow again: the task is the
 		// author's to fix, not the scheduler's to retry.
 		return plugin.Permanent(fmt.Errorf(
-			"container: %s exceeded its timeout after %s and was killed (exit code %d): %s",
-			req.image, outcome.duration.Round(time.Millisecond), outcome.exitCode, tail))
+			"container: %s exceeded its timeout after %s and was killed (exit code %d). %s",
+			req.image, outcome.duration.Round(time.Millisecond), outcome.exitCode, whereTheOutputIs))
 	}
 	switch outcome.exitCode {
 	case exitDockerFailed:
-		if strings.Contains(tail, invisibleBindSource) {
+		if strings.Contains(said, invisibleBindSource) {
 			// The daemon runs somewhere that cannot see the Orker's workdir —
 			// a VM sharing only part of the host, or a remote daemon. No retry
 			// fixes that, and the operator needs to hear which knob moves it.
 			return plugin.Permanent(fmt.Errorf(
 				"container: the docker daemon cannot see a path this task mounts, so it refused to start %s. "+
 					"The Orker's work directory must be on a filesystem the daemon shares; "+
-					"point %s at one. Docker said: %s",
-				req.image, workDirHint, tail))
+					"point %s at one. %s",
+				req.image, workDirHint, whereTheOutputIs))
 		}
 		// The container never started: the daemon is down, the image is
 		// unreachable, or the host is out of resources. Leave it retryable.
-		return fmt.Errorf("container: docker could not start %s (exit code %d): %s",
-			req.image, outcome.exitCode, tail)
+		return fmt.Errorf("container: docker could not start %s (exit code %d). %s",
+			req.image, outcome.exitCode, whereTheOutputIs)
 	case exitCommandNotExecutable, exitCommandNotFound:
 		return plugin.Permanent(fmt.Errorf(
-			"container: %s cannot run the requested command (exit code %d): %s",
-			req.image, outcome.exitCode, tail))
+			"container: %s cannot run the requested command (exit code %d). %s",
+			req.image, outcome.exitCode, whereTheOutputIs))
 	default:
-		return plugin.Permanent(fmt.Errorf("container: %s exited with code %d: %s",
-			req.image, outcome.exitCode, tail))
+		return plugin.Permanent(fmt.Errorf("container: %s exited with code %d. %s",
+			req.image, outcome.exitCode, whereTheOutputIs))
 	}
 }
+
+// whereTheOutputIs ends every failure message. A failure a person cannot act
+// on is no better than one that carries the bytes it must not carry, so the
+// sentence that replaces the quote is the one that says where to look.
+const whereTheOutputIs = "What it printed is in the task's log " +
+	"(`orkctl run logs <run-id> --task <task-id>`; stderr lines carry the `[stderr] ` marker), " +
+	"and byte-exact in its capture_stdout_as / capture_stderr_as artifacts when the task names them."
 
 // acquireImage applies the pull policy and reports whether a pull happened.
 func (p *Plugin) acquireImage(

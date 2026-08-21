@@ -2,10 +2,12 @@ package plugin
 
 import (
 	"bytes"
+	"strings"
 	"sync"
 )
 
-// StderrMarker prefixes every line a plugin streams from a task's STDERR.
+// StderrMarker prefixes every line a plugin streams from a task's STDERR, and
+// StdoutMarker is the escape that keeps that marker unambiguous.
 //
 // One task attempt has ONE log stream — one Logger, one sink, one dense
 // sequence — because that is what makes a resume cursor a single number and
@@ -15,14 +17,56 @@ import (
 // interleaving stream) or a sequence space per fd (two cursors, and every
 // reader merging them).
 //
-// stdout travels bare. The plugin's own lifecycle lines also travel bare —
-// they are the plugin's voice, like the Orker's `[ork] ` notices.
+// stdout travels bare — UNLESS the line would read as a marked one. A stdout
+// line that itself begins with "[stderr] " or "[stdout] " is emitted behind
+// "[stdout] ", and that one escape is what makes the encoding invertible:
 //
-// The accepted cost, documented in docs/PLUGINS.md: an application line that
-// itself begins with "[stderr] " on stdout renders as stderr. That is
-// cosmetic. The byte-exact separation of the two streams is the pair of
-// capture artifacts, which this does not touch.
-const StderrMarker = "[stderr] "
+//	stream  line the application wrote  line on the wire
+//	------  -------------------------   ----------------
+//	stdout  hello                       hello
+//	stdout  [stderr] hello              [stdout] [stderr] hello
+//	stdout  [stdout] hello              [stdout] [stdout] hello
+//	stderr  hello                       [stderr] hello
+//	stderr  [stderr] hello              [stderr] [stderr] hello
+//
+// DecodeStreamLine is the inverse, and no two (stream, line) pairs produce the
+// same wire line — which is the whole property: an application that prints
+// "[stderr] same text" on stdout while another writes "same text" on stderr
+// used to render identically, and no reader, CLI or UI, could tell their
+// origins apart. The cost is one prefix on a line that was already going to be
+// confusing, and stdout that does not collide is untouched.
+//
+// The plugin's own lifecycle lines travel bare — they are the plugin's voice,
+// like the Orker's `[ork] ` notices — and a plugin does not write itself a
+// line beginning with either marker.
+//
+// The byte-exact separation of the two streams is, as ever, the pair of
+// capture artifacts, which this does not touch: an escape belongs to the
+// rendered log, never to the file.
+const (
+	StderrMarker = "[stderr] "
+	StdoutMarker = "[stdout] "
+)
+
+// DecodeStreamLine reverses the wire shape above: it reports which of a task's
+// file descriptors a streamed line came from, and the line the application
+// actually wrote.
+//
+// It is exported because every reader of a task log needs the same answer — a
+// pane that tints stderr, a CLI that filters it, a test that counts it — and a
+// second implementation of this rule is a second place for it to be wrong. A
+// line no plugin framed (the Orker's own `[ork] ` notices, a plugin's
+// lifecycle line) carries no marker and reads as stdout, which is where an
+// unmarked line has always belonged.
+func DecodeStreamLine(line string) (text string, stderr bool) {
+	if rest, found := strings.CutPrefix(line, StderrMarker); found {
+		return rest, true
+	}
+	if rest, found := strings.CutPrefix(line, StdoutMarker); found {
+		return rest, false
+	}
+	return line, false
+}
 
 // MaxStreamedLine bounds one streamed piece.
 //
@@ -94,6 +138,11 @@ type LineWriter struct {
 // NewLineWriter builds a LineWriter that emits every line to log, each carrying
 // prefix (use StderrMarker for a task's stderr, "" for its stdout). A nil log
 // yields a writer that accepts and discards.
+//
+// A writer with no prefix is the one that ESCAPES: a bare line that would read
+// as a marked one is emitted behind StdoutMarker (see the wire shape above).
+// A writer that already prefixes every line it emits needs no escape — its
+// prefix claims the line, and DecodeStreamLine strips exactly one.
 func NewLineWriter(log Logger, prefix string) *LineWriter {
 	return &LineWriter{log: log, prefix: prefix}
 }
@@ -175,7 +224,21 @@ func (w *LineWriter) drainLocked() {
 // a line carrying a percent sign must go through %s or a task printing "100%"
 // streams "100%!(NOVERB)".
 func (w *LineWriter) emitLocked(line []byte) {
-	w.log("%s", w.prefix+string(line))
+	w.log("%s", w.prefix+w.escape(string(line)))
+}
+
+// escape keeps a bare line from reading as a marked one. It applies only to
+// the writer that emits bare lines, and only to a line that begins with a
+// marker — every other line, which is every line a normal application writes,
+// travels byte for byte as it always did.
+func (w *LineWriter) escape(line string) string {
+	if w.prefix != "" {
+		return line
+	}
+	if strings.HasPrefix(line, StderrMarker) || strings.HasPrefix(line, StdoutMarker) {
+		return StdoutMarker + line
+	}
+	return line
 }
 
 // indexTerminator reports the first '\n' or '\r' in b, and which it is.

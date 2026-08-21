@@ -359,11 +359,12 @@ func resolveByName(scan orkflowScan) []*orkstackv1.Orkflow {
 // nil when the pointer is unset or names a version this scan did not see.
 //
 // A pointer that names nothing present cannot happen through this store —
-// SetCurrentVersion validates the target and nothing deletes a version — so
-// falling back to the head here is not a policy about dangling pointers; it is
-// what keeps a listing answerable when a version arrives between the LIST and
-// the pointer's write. Get is stricter, because Get is the read a run is
-// started from.
+// SetCurrentVersion validates the target, and the one path that deletes a
+// version object (Put, rolling back a version it wrote and could not commit)
+// deletes a version nobody was ever handed — so falling back to the head here
+// is not a policy about dangling pointers; it is what keeps a listing
+// answerable when a version arrives between the LIST and the pointer's write.
+// Get is stricter, because Get is the read a run is started from.
 func pinnedOrkflow(versions []*orkstackv1.Orkflow, version string) *orkstackv1.Orkflow {
 	if version == "" {
 		return nil
@@ -481,12 +482,22 @@ func (s *S3OrkflowStore) uri(key string) string {
 //     winner wrote and swaps against that.
 //
 // The document is written BEFORE the head moves, so no reader ever sees a
-// head naming a version that is not in the bucket. The reverse residue is
-// possible and is the honest cost of committing two objects without a
-// transaction: a process that dies between the two leaves a stored version
-// that never became the head. It is inert — immutable, addressable, listed,
-// and promotable — and the apply that wrote it returned an error, so nobody
-// was told it landed.
+// head naming a version that is not in the bucket. That order leaves a window
+// in the other direction — a version object whose head swap then fails — and
+// **a Put that returns an error removes what it wrote**: the object it
+// created in this call is deleted before the refusal is returned. Without
+// that, a refused edit left its version addressable, listed and promotable
+// though nobody was ever told it landed, and — worse — un-retryable: the
+// user's retargeted retry of the same edit would find its own bytes already
+// stored, take the identical-document no-op above, and never move the head.
+// The compensation is the whole reason this is the ONE code path that deletes
+// a version object, and it only ever deletes the object this call created,
+// under a version nobody has been handed.
+//
+// Two objects without a transaction cannot be made atomic against a process
+// that dies mid-apply, and that residue stays honest rather than hidden: a
+// killed writer leaves a stored version that never became the head, inert and
+// addressable, and the apply it belonged to answered nobody.
 func (s *S3OrkflowStore) Put(
 	ctx context.Context,
 	wf *orkstackv1.Orkflow,
@@ -499,17 +510,46 @@ func (s *S3OrkflowStore) Put(
 	incoming := namespacedOrkflow(wf)
 	namespace, name := incoming.GetNamespace(), incoming.GetName()
 
+	stored, created, err := s.commitVersion(ctx, key, namespace, name, incoming, expected)
+	if err == nil {
+		return stored, created, nil
+	}
+	if !created {
+		return nil, false, err
+	}
+	if removeErr := s.removeVersion(ctx, key); removeErr != nil {
+		// The refusal is still the caller's answer — it is what happened —
+		// but the residue it was supposed to clean up is back, so say so.
+		return nil, false, fmt.Errorf(
+			"%w (and the version this apply wrote could not be removed from %s: %v)",
+			err, s.uri(key), removeErr)
+	}
+	return nil, false, err
+}
+
+// commitVersion is Put's body: write the version object, then move the head
+// onto it under the condition the apply named.
+//
+// It reports whether THIS call created the version object on every path,
+// error paths included, because that is what tells Put whether there is
+// anything to remove.
+func (s *S3OrkflowStore) commitVersion(
+	ctx context.Context,
+	key, namespace, name string,
+	incoming *orkstackv1.Orkflow,
+	expected HeadExpectation,
+) (*orkstackv1.Orkflow, bool, error) {
 	var (
 		stored  *orkstackv1.Orkflow
 		created bool
 	)
 	for range headSwapAttempts {
-		pointer, etag, err := s.readHead(ctx, namespace, name)
+		pointer, etag, err := s.effectiveHead(ctx, namespace, name)
 		if err != nil {
-			return nil, false, err
+			return nil, created, err
 		}
 		if !expected.SatisfiedBy(pointer.Version) {
-			return nil, false, headMoved(namespace, name, expected, pointer.Version)
+			return nil, created, headMoved(namespace, name, expected, pointer.Version)
 		}
 		if stored == nil {
 			if stored, created, err = s.writeVersion(ctx, key,
@@ -536,20 +576,33 @@ func (s *S3OrkflowStore) Put(
 			return stored, created, nil
 		case errors.Is(err, ErrPreconditionFailed):
 			if expected.Stated() {
-				head, _, readErr := s.readHead(ctx, namespace, name)
+				head, _, readErr := s.effectiveHead(ctx, namespace, name)
 				if readErr != nil {
-					return nil, false, readErr
+					return nil, created, readErr
 				}
-				return nil, false, headMoved(namespace, name, expected, head.Version)
+				return nil, created, headMoved(namespace, name, expected, head.Version)
 			}
 		default:
-			return nil, false, err
+			return nil, created, err
 		}
 	}
-	return nil, false, fmt.Errorf(
+	return nil, created, fmt.Errorf(
 		"artifacts: orkflow %q in namespace %q: another apply moved the head on each of "+
 			"%d attempts to publish version %q: %w",
-		name, namespace, headSwapAttempts, wf.GetVersion(), ErrPreconditionFailed)
+		name, namespace, headSwapAttempts, incoming.GetVersion(), ErrPreconditionFailed)
+}
+
+// removeVersion deletes one version object. It is called on exactly one path —
+// Put rolling back the object it just created and could not commit — and the
+// comment on Put is where the reasoning lives.
+func (s *S3OrkflowStore) removeVersion(ctx context.Context, key string) error {
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}); err != nil {
+		return fmt.Errorf("artifacts: remove orkflow %q: %w", s.uri(key), err)
+	}
+	return nil
 }
 
 // stampedOrkflow returns wf carrying the stamp its apply lands with: its own,
@@ -636,10 +689,12 @@ func (s *S3OrkflowStore) settle(
 //
 // A pointer naming a version that is not stored is an ERROR here, not a quiet
 // fall back to the head. Nothing in this store can produce that state
-// (SetCurrentVersion validates its target, and no code path deletes a
-// version), so reaching it means the bucket was edited underneath the engine —
-// and silently running a different version than the pointer names is the one
-// answer nobody could debug.
+// (SetCurrentVersion validates its target, and the only path that deletes a
+// version — Put rolling back a version it could not commit — deletes one that
+// was never promotable because nobody was told it existed), so reaching it
+// means the bucket was edited underneath the engine — and silently running a
+// different version than the pointer names is the one answer nobody could
+// debug.
 func (s *S3OrkflowStore) Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error) {
 	if version == "" {
 		current, err := s.CurrentVersion(ctx, namespace, name)
@@ -753,7 +808,8 @@ type orkflowScan struct {
 	head     map[string]string
 }
 
-// headOf is the version one orkflow's head names.
+// headOf is the version one orkflow's head names, and derivedHeadOf is the
+// document it is.
 //
 // The pointer decides, because moving the pointer is what an apply commits.
 // The documents' own stamps answer only when the pointer cannot: an orkflow
@@ -763,20 +819,37 @@ type orkflowScan struct {
 // moves the pointer, so that state should be unreachable; falling back rather
 // than reporting a head nothing holds is what keeps a listing answerable if it
 // ever is, exactly as pinnedOrkflow does for the current pointer.
+//
+// The derived answer is not a listing's private convenience: S3OrkflowStore.Put
+// checks an apply's expected head against the SAME rule (effectiveHead), or a
+// catalog stored before @head.json existed would be readable and not editable
+// — an editor shown 1.0.0 as the head, and an apply naming 1.0.0 refused
+// against a head of "".
 func (scan orkflowScan) headOf(name string) string {
+	if head := scan.derivedHeadOf(name); head != nil {
+		return head.GetVersion()
+	}
+	return ""
+}
+
+func (scan orkflowScan) derivedHeadOf(name string) *orkstackv1.Orkflow {
+	versions := scan.versionsOf(name)
+	if head := pinnedOrkflow(versions, scan.head[name]); head != nil {
+		return head
+	}
+	return latestOrkflow(versions)
+}
+
+// versionsOf narrows a scan to one orkflow's versions. A per-name scan holds
+// only one orkflow's documents; a namespace-wide one holds every orkflow's.
+func (scan orkflowScan) versionsOf(name string) []*orkstackv1.Orkflow {
 	versions := make([]*orkstackv1.Orkflow, 0, len(scan.versions))
 	for _, wf := range scan.versions {
 		if wf.GetName() == name {
 			versions = append(versions, wf)
 		}
 	}
-	if head := pinnedOrkflow(versions, scan.head[name]); head != nil {
-		return head.GetVersion()
-	}
-	if latest := latestOrkflow(versions); latest != nil {
-		return latest.GetVersion()
-	}
-	return ""
+	return versions
 }
 
 // readPrefix lists a prefix once and reads what is under it: every definition,

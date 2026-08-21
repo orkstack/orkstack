@@ -253,6 +253,55 @@ func (s *S3OrkflowStore) readHead(
 	return pointer, aws.ToString(object.ETag), nil
 }
 
+// effectiveHead is the head an apply is checked against and swaps against: the
+// committed POINTER when there is one, and the head DERIVED from the stored
+// documents when there is not.
+//
+// The derived answer exists for one state, and it is a state real buckets are
+// in: an orkflow whose versions were applied by an engine built before
+// @head.json, so the documents are there and the pointer is not. A listing
+// already answers "head 1.0.0" for it (orkflowScan.headOf). Reading the absent
+// pointer as a head of "" HERE — while the listing says 1.0.0 — is what made
+// such a catalog readable and not editable: the service checked the derived
+// head, accepted the edit, and the store then refused it for expecting 1.0.0
+// of a head it called "". One rule, in both places, or the two disagree
+// exactly where a user is trying to work.
+//
+// The etag is empty in the derived case, which is the honest thing to swap
+// against: no pointer object exists yet, so the swap is IfAbsent and the first
+// apply to install the pointer wins. The stamp comes from the derived head's
+// own document, so the version this apply publishes is stamped after it
+// (AppliedStamp) and the catalog's order still reads as the order applies
+// committed in.
+//
+// It costs a prefix scan only while the pointer is missing: the first apply
+// writes one, and every apply after that is the single GetObject readHead
+// makes.
+func (s *S3OrkflowStore) effectiveHead(
+	ctx context.Context,
+	namespace, name string,
+) (headPointer, string, error) {
+	pointer, etag, err := s.readHead(ctx, namespace, name)
+	if err != nil || etag != "" {
+		return pointer, etag, err
+	}
+	scan, err := s.scan(ctx, namespace, name)
+	if err != nil {
+		return headPointer{}, "", err
+	}
+	derived := scan.derivedHeadOf(name)
+	if derived == nil {
+		// Nothing is stored at all: an orkflow's first apply. The zero
+		// pointer is the truthful answer, and the zero stamp is what
+		// AppliedStamp reads as "no head to be after".
+		return headPointer{}, "", nil
+	}
+	return headPointer{
+		Version:   derived.GetVersion(),
+		AppliedAt: derived.GetCreatedAt().AsTime(),
+	}, "", nil
+}
+
 // swapHead moves the head pointer, conditional on the bytes the caller read.
 // A caller holding no etag is claiming the pointer does not exist yet, which
 // IfAbsent is the object store's word for.

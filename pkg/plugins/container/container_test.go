@@ -568,13 +568,23 @@ func TestContainerPlugin_AlwaysRemovesTheContainerItStarted(t *testing.T) {
 	}
 }
 
-func TestContainerPlugin_FailsTheTaskWithTheContainerExitCode(t *testing.T) {
+// A failing container fails the task with ITS exit code, and with none of its
+// output.
+//
+// The stderr assertion is inverted from what it was before M11.1's repair
+// round, and deliberately: the error crosses into Temporal history and onto
+// the run's event stream (internal/engine/workflow.go copies it onto
+// TaskRun.Error, TASK_FAILED, Run.Error and RUN_FAILED), and a task's output
+// does not go there (AGENTS.md §1.4). What replaces the quote is a pointer to
+// the log stream, which carries every byte of both streams, live and
+// afterwards.
+func TestContainerPlugin_FailsTheTaskWithTheContainerExitCodeAndNoneOfItsOutput(t *testing.T) {
 	docker := newFakeDocker(t)
 	p := &Plugin{DockerBin: docker.bin}
 	t.Setenv("FAKE_DOCKER_RUN_EXIT", "42")
 	t.Setenv("FAKE_DOCKER_STDERR", "compilation failed\n")
 
-	ec, _ := newExecContext(t, map[string]any{"image": "alpine:3.20", "command": "false"})
+	ec, logs := newExecContext(t, map[string]any{"image": "alpine:3.20", "command": "false"})
 	_, err := p.Execute(context.Background(), ec)
 	if err == nil {
 		t.Fatalf("Execute succeeded, want a failure carrying the exit code")
@@ -582,8 +592,16 @@ func TestContainerPlugin_FailsTheTaskWithTheContainerExitCode(t *testing.T) {
 	if !strings.Contains(err.Error(), "exited with code 42") {
 		t.Errorf("error %q does not report the exit code", err)
 	}
-	if !strings.Contains(err.Error(), "compilation failed") {
-		t.Errorf("error %q does not carry the container's stderr", err)
+	if strings.Contains(err.Error(), "compilation failed") {
+		t.Errorf("error %q carries the container's stderr; that error is written into "+
+			"Temporal history and onto the event stream, where a task's output may not go", err)
+	}
+	if !strings.Contains(err.Error(), "orkctl run logs") {
+		t.Errorf("error %q does not say where the container's output is", err)
+	}
+	// And it is there: the log stream carries what the error no longer quotes.
+	if !logs.holds(plugin.StderrMarker + "compilation failed") {
+		t.Errorf("the container's stderr is neither in the error nor in the log: %q", logs.all())
 	}
 	assertPermanent(t, err)
 }

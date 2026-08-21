@@ -177,6 +177,108 @@ func TestLineWriter_PrefixesEveryLineItEmits(t *testing.T) {
 	}
 }
 
+// The property the marker exists for, stated as the case that used to break
+// it: an application printing "[stderr] same text" on STDOUT while another
+// writes "same text" on STDERR. Both used to render as "[stderr] same text",
+// so no reader — orkctl, the UI pane, or a test — could tell their origins
+// apart. They must not render alike, and each must decode back to the stream
+// and the text it came from.
+func TestLineWriter_StdoutThatLooksLikeStderrStaysDistinguishable(t *testing.T) {
+	rec := &recorder{}
+	out := NewLineWriter(rec.logger(), "")
+	errs := NewLineWriter(rec.logger(), StderrMarker)
+
+	if _, err := out.Write([]byte(StderrMarker + "same text\n")); err != nil {
+		t.Fatalf("Write(stdout): %v", err)
+	}
+	if _, err := errs.Write([]byte("same text\n")); err != nil {
+		t.Fatalf("Write(stderr): %v", err)
+	}
+	out.Close()
+	errs.Close()
+
+	lines := rec.got()
+	if len(lines) != 2 {
+		t.Fatalf("emitted %q, want two lines", lines)
+	}
+	if lines[0] == lines[1] {
+		t.Fatalf("stdout and stderr both render as %q; a log reader cannot tell "+
+			"their origins apart", lines[0])
+	}
+
+	text, stderr := DecodeStreamLine(lines[0])
+	if stderr || text != StderrMarker+"same text" {
+		t.Errorf("the stdout line decodes as (%q, stderr=%v), want (%q, false)",
+			text, stderr, StderrMarker+"same text")
+	}
+	text, stderr = DecodeStreamLine(lines[1])
+	if !stderr || text != "same text" {
+		t.Errorf("the stderr line decodes as (%q, stderr=%v), want (%q, true)",
+			text, stderr, "same text")
+	}
+}
+
+// The encoding is invertible for EVERY line, not only the colliding one: what
+// a reader decodes is the stream the bytes came from and the bytes themselves.
+// A table of the lines that could confuse it, each written on each stream.
+func TestLineWriter_EveryLineDecodesBackToItsStreamAndItsText(t *testing.T) {
+	for _, line := range []string{
+		"plain",
+		"",
+		StderrMarker + "looks like stderr",
+		StdoutMarker + "looks like stdout",
+		StderrMarker + StderrMarker + "doubly so",
+		StdoutMarker + StderrMarker + "one of each",
+		"[stderr]no space, so not the marker",
+		"trailing " + StderrMarker,
+	} {
+		for _, stream := range []struct {
+			name   string
+			prefix string
+			stderr bool
+		}{
+			{name: "stdout", prefix: "", stderr: false},
+			{name: "stderr", prefix: StderrMarker, stderr: true},
+		} {
+			t.Run(fmt.Sprintf("%s/%q", stream.name, line), func(t *testing.T) {
+				rec := &recorder{}
+				w := NewLineWriter(rec.logger(), stream.prefix)
+				if _, err := w.Write([]byte(line + "\n")); err != nil {
+					t.Fatalf("Write: %v", err)
+				}
+				w.Close()
+
+				got := rec.got()
+				if len(got) != 1 {
+					t.Fatalf("emitted %q, want one line", got)
+				}
+				text, stderr := DecodeStreamLine(got[0])
+				if stderr != stream.stderr || text != line {
+					t.Errorf("%q on %s went out as %q and decodes as (%q, stderr=%v)",
+						line, stream.name, got[0], text, stderr)
+				}
+			})
+		}
+	}
+}
+
+// An ordinary stdout line pays nothing for the escape: the bytes on the wire
+// are the bytes the application wrote. The escape is for lines that would
+// otherwise be ambiguous, and for no others.
+func TestLineWriter_LeavesOrdinaryStdoutLinesBare(t *testing.T) {
+	rec := &recorder{}
+	w := NewLineWriter(rec.logger(), "")
+	if _, err := w.Write([]byte("out-1\n[ork] a notice\n  [stderr] indented\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	w.Close()
+
+	want := []string{"out-1", "[ork] a notice", "  [stderr] indented"}
+	if got := rec.got(); !equalLines(got, want) {
+		t.Errorf("emitted %q, want %q", got, want)
+	}
+}
+
 // A log line is DATA. A task printing a percent sign must not have it read as
 // a verb — that is how "100%" becomes "100%!(NOVERB)".
 func TestLineWriter_EmitsLinesAsDataNotFormatStrings(t *testing.T) {
