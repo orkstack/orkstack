@@ -119,11 +119,12 @@ The two bounds hold TOGETHER, which is what makes the second number a rate:
 a size-triggered flush waits until the interval has passed since the last
 upload, so the store is written at most twice a second however small
 `ORK_ORKER_LOG_FLUSH_BYTES` is set. Below the default the size bound buys
-smaller chunks, never more of them. (Memory outranks the pace: past 64 KiB
-buffered the chunk goes out whatever the clock says.)
+smaller chunks, never more of them. When the buffer reaches the ceiling before
+the interval permits a flush, the writer waits with backpressure rather than
+breaking either bound.
 
 A chatty task therefore costs a few hundred uploads rather than a million. The
-flush runs under the sink's lock, so a writer BLOCKS while a chunk uploads; the
+flush runs under the sink's lock, and a writer also waits at the ceiling; that
 block reaches the process's pipe and the process blocks on `write(2)`. That
 chain is the memory bound. **Capture artifacts are files and ignore the log
 cap** — a truncated log never means a truncated artifact.

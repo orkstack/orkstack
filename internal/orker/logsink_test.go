@@ -19,6 +19,7 @@ import (
 type recordingLogStore struct {
 	mu     sync.Mutex
 	chunks []artifacts.LogChunk
+	stamps []time.Time
 	fail   func(seq int64) error
 }
 
@@ -33,6 +34,7 @@ func (s *recordingLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogCh
 	stored := chunk
 	stored.Data = append([]byte(nil), chunk.Data...)
 	s.chunks = append(s.chunks, stored)
+	s.stamps = append(s.stamps, time.Now())
 	return nil
 }
 
@@ -70,6 +72,12 @@ func (s *recordingLogStore) stored() []artifacts.LogChunk {
 	return append([]artifacts.LogChunk(nil), s.chunks...)
 }
 
+func (s *recordingLogStore) uploadTimes() []time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]time.Time(nil), s.stamps...)
+}
+
 func (s *recordingLogStore) body() string {
 	var b strings.Builder
 	for _, chunk := range s.stored() {
@@ -104,11 +112,11 @@ func unpaced(sink *logChunkSink) *logChunkSink {
 // keeps a 100k-line task to a few hundred uploads instead of 100k.
 func TestLogChunkSink_FlushesOnSize(t *testing.T) {
 	store := &recordingLogStore{}
-	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+	sink := unpaced(newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes:    64,
 		FlushInterval: time.Hour, // only the size bound may fire
 		MaxBytes:      1 << 20,
-	})
+	}))
 	defer sink.Close()
 
 	// Ten 10-byte lines: 100 bytes, so the 64-byte bound trips once during the
@@ -231,36 +239,43 @@ func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
 }
 
 // TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace is the
-// other side of the pace: it may never become a memory leak.
+// other side of the pace: it may never become a memory leak or a write storm.
 //
-// A size-triggered flush that has no budget defers to the timer, so a fast
-// writer accumulates. The ceiling is where that stops: the default flush size,
-// or the operator's own when it is larger. Past it the chunk goes out whatever
-// the clock says.
+// Traffic well past the ceiling must apply backpressure until the interval
+// permits the next upload. The timestamps make the failure visible: the old
+// ceiling escape produced several immediate uploads even with a one-hour
+// interval.
 func TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace(t *testing.T) {
+	const interval = 20 * time.Millisecond
 	store := &recordingLogStore{}
 	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes:    1,
-		FlushInterval: time.Hour, // the timer can never rescue this test
+		FlushInterval: interval,
 		MaxBytes:      64 << 20,
 		MaxLineBytes:  1 << 20,
 	})
-	defer sink.Close()
 
 	line := strings.Repeat("y", 1023) // 1 KiB with the newline
 	for i := 0; i < 400; i++ {        // 400 KiB, well past a 64 KiB ceiling
 		sink.Write(line)
 	}
-	chunks := store.stored()
-	if len(chunks) < 5 {
-		t.Fatalf("400 KiB produced %d chunks with the timer disabled; the sink is "+
-			"holding everything in memory while it waits out the pace", len(chunks))
+	beforeClose := store.stored()
+	stamps := store.uploadTimes()
+	if len(beforeClose) < 5 {
+		t.Fatalf("400 KiB produced %d chunks before Close; traffic past the ceiling was not uploaded while it ran", len(beforeClose))
 	}
-	for i, chunk := range chunks {
-		if len(chunk.Data) > DefaultLogFlushBytes+(1<<20) {
+	for i := 1; i < len(stamps); i++ {
+		gap := stamps[i].Sub(stamps[i-1])
+		if gap+2*time.Millisecond < interval {
+			t.Fatalf("uploads %d and %d were only %s apart, want at least %s: the ceiling bypassed pacing", i, i+1, gap, interval)
+		}
+	}
+	for i, chunk := range beforeClose {
+		if len(chunk.Data) > DefaultLogFlushBytes+len(line)+1 {
 			t.Errorf("chunk %d is %d bytes, above the ceiling plus one line", i, len(chunk.Data))
 		}
 	}
+	sink.Close()
 }
 
 // Sequences are dense and 1-based, because that is the resume contract the

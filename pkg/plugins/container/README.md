@@ -181,13 +181,14 @@ recognize one daemon-level failure and never quotes.
   line. Ordinary stdout is untouched.
 - **A chatty container is bounded.** The framer holds under 64 KiB per stream;
   the Orker uploads a chunk when 64 KiB has accumulated AND 500 ms has passed
-  since the last upload, and in any case within 500 ms
+  since the last upload, and in any case within 500 ms. If the ceiling arrives
+  first, the writer waits for that interval instead of bypassing the pace
   (`ORK_ORKER_LOG_FLUSH_BYTES`, `ORK_ORKER_LOG_FLUSH_INTERVAL`) — the two
   bounds together cap the write rate at one object per interval however small
-  the size bound is set — and stops at
-  16 MiB per attempt (`ORK_ORKER_LOG_MAX_BYTES`) with a visible
-  `[ork] log truncated…` notice. Backpressure is real: a blocked upload blocks
-  the writer, which fills the pipe, which blocks the container on `write(2)`.
+  the size bound is set — and stops at 16 MiB per attempt
+  (`ORK_ORKER_LOG_MAX_BYTES`) with a visible `[ork] log truncated…` notice.
+  Backpressure is real: a blocked upload or ceiling wait blocks the writer,
+  which fills the pipe, which blocks the container on `write(2)`.
   **The cap never truncates an artifact** — those are files.
 
 No log byte enters a Temporal payload or the run's event stream (AGENTS.md

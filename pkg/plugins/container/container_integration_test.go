@@ -33,11 +33,18 @@ func testImage() string {
 	return "alpine:3.20"
 }
 
+func dockerBinForIntegration() string {
+	if bin := strings.TrimSpace(os.Getenv(DockerBinVar)); bin != "" {
+		return bin
+	}
+	return "docker"
+}
+
 func requireDocker(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
+	out, err := exec.CommandContext(ctx, dockerBinForIntegration(), "version", "--format", "{{.Server.Version}}").CombinedOutput()
 	if err != nil {
 		infraAbsent(t, "docker daemon is not reachable: %v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -62,7 +69,7 @@ func docker(t *testing.T, timeout time.Duration, args ...string) (int, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var combined bytes.Buffer
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, dockerBinForIntegration(), args...)
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
 	err := cmd.Run()

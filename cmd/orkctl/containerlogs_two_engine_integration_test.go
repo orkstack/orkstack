@@ -574,6 +574,13 @@ func containerTestImage() string {
 	return "alpine:3.20"
 }
 
+func dockerBinForIntegration() string {
+	if bin := strings.TrimSpace(os.Getenv("ORK_DOCKER_BIN")); bin != "" {
+		return bin
+	}
+	return "docker"
+}
+
 // requireDockerDaemon gates these tests on a reachable daemon through the
 // package's infraAbsent helper, so a proof run with ORK_REQUIRE_INFRA=1 turns
 // an absent daemon into a failure rather than a quiet skip (AGENTS.md §6).
@@ -581,7 +588,7 @@ func requireDockerDaemon(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "version",
+	out, err := exec.CommandContext(ctx, dockerBinForIntegration(), "version",
 		"--format", "{{.Server.Version}}").CombinedOutput()
 	if err != nil {
 		infraAbsent(t, "docker daemon is not reachable: %v: %s", err, strings.TrimSpace(string(out)))
@@ -598,11 +605,11 @@ func requireContainerImage(t *testing.T, image string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := exec.CommandContext(ctx, "docker", "image", "inspect",
+	if err := exec.CommandContext(ctx, dockerBinForIntegration(), "image", "inspect",
 		"--format", "{{.Id}}", image).Run(); err == nil {
 		return
 	}
-	if out, err := exec.CommandContext(ctx, "docker", "pull", image).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, dockerBinForIntegration(), "pull", image).CombinedOutput(); err != nil {
 		infraAbsent(t, "cannot pull %s (no registry access?): %s",
 			image, strings.TrimSpace(string(out)))
 	}

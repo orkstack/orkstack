@@ -39,12 +39,15 @@ import (
 // therefore 1/FlushInterval at EVERY setting, and the size bound decides how
 // big a chunk is rather than how often the store is written.
 //
-// A third bound is the memory guarantee, and it outranks the pace. The buffer
-// never exceeds flushCeiling plus one line, a single over-long line is split
-// rather than accumulated, and the attempt as a whole stops at MaxBytes with a
-// notice chunk that says so. A runaway task therefore costs one bounded buffer
-// in the Orker and one bounded object count in the bucket, and its reader is
-// told the output was cut instead of quietly receiving a prefix.
+// A third bound is the memory guarantee. Once the buffer reaches the ceiling
+// before the pace allows a size-triggered flush, the writer waits with the
+// sink unlocked until the interval permits the upload. The buffer therefore
+// never exceeds flushCeiling plus one line, and the store still sees no two
+// uploads closer together than FlushInterval. A single over-long line is split
+// rather than accumulated, and the attempt as a whole stops at MaxBytes with
+// a notice chunk that says so. A runaway task therefore costs one bounded
+// buffer in the Orker and one bounded object count in the bucket, and its
+// reader is told the output was cut instead of quietly receiving a prefix.
 const (
 	// DefaultLogFlushBytes is the size bound: buffered bytes that trip a flush.
 	DefaultLogFlushBytes = 64 << 10
@@ -166,7 +169,8 @@ type logChunkSink struct {
 	// dropped counts bytes lost to failed uploads, reported in the next chunk.
 	dropped int64
 	// timer is the elapsed-time bound, armed at the first unflushed byte.
-	timer *time.Timer
+	timer      *time.Timer
+	timerEpoch uint64
 	// lastFlush is when this sink last wrote to the store, and the anchor the
 	// minimum gap is measured from. Zero means nothing has been written yet,
 	// which is why a task's FIRST chunk is never delayed by the pace: the
@@ -214,11 +218,6 @@ func (s *logChunkSink) Write(line string) {
 	if s == nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || s.truncated {
-		return
-	}
 	data := []byte(line)
 	if len(data) == 0 || data[len(data)-1] != '\n' {
 		data = append(data, '\n')
@@ -229,29 +228,51 @@ func (s *logChunkSink) Write(line string) {
 			piece = piece[:s.opts.MaxLineBytes]
 		}
 		data = data[len(piece):]
-		if s.stored+int64(s.buf.Len())+int64(len(piece)) > s.opts.MaxBytes {
-			// Everything up to the cap is made durable first, so the notice is
-			// the LAST chunk and a reader sees the prefix it actually got.
-			s.flushLocked()
-			s.noticeLocked()
-			return
+
+		for {
+			s.mu.Lock()
+			if s.closed || s.truncated {
+				s.mu.Unlock()
+				return
+			}
+			if s.stored+int64(s.buf.Len())+int64(len(piece)) > s.opts.MaxBytes {
+				// The truncation notice is the terminal chunk. Wait for the same
+				// pace as every other upload, then combine the buffered prefix and
+				// notice so the cap path cannot make two back-to-back PUTs.
+				if !s.pacedLocked() {
+					wait := s.paceWaitLocked()
+					s.mu.Unlock()
+					if !s.waitForPace(wait) {
+						return
+					}
+					continue
+				}
+				s.noticeLocked()
+				s.mu.Unlock()
+				return
+			}
+			if s.buf.Len() >= s.flushCeiling() && !s.pacedLocked() {
+				// Do not let a chatty producer bypass the minimum upload gap. The
+				// timer can flush while we wait, so never sleep with s.mu held.
+				wait := s.paceWaitLocked()
+				s.mu.Unlock()
+				if !s.waitForPace(wait) {
+					return
+				}
+				continue
+			}
+			if s.buf.Len() == 0 {
+				s.armLocked()
+			}
+			s.buf.Write(piece)
+			if s.buf.Len() >= s.flushCeiling() && s.pacedLocked() {
+				s.flushLocked()
+			} else if s.buf.Len() >= s.opts.FlushBytes && s.pacedLocked() {
+				s.flushLocked()
+			}
+			s.mu.Unlock()
+			break
 		}
-		if s.buf.Len() == 0 {
-			s.armLocked()
-		}
-		s.buf.Write(piece)
-		switch {
-		case s.buf.Len() >= s.flushCeiling():
-			// The memory guarantee is a guarantee and outranks the pace: a
-			// writer this fast is one the ceiling exists for.
-			s.flushLocked()
-		case s.buf.Len() >= s.opts.FlushBytes && s.pacedLocked():
-			s.flushLocked()
-		}
-		// Neither: the buffer keeps filling and the timer armed at the first
-		// unflushed byte writes it at the deadline. That deferral IS the
-		// batching — without it a small FlushBytes turns every line into a
-		// PUT (see the package comment above).
 	}
 }
 
@@ -299,23 +320,53 @@ func (s *logChunkSink) Close() {
 	// have no way to tell a complete log from a cut one. So the notice goes
 	// out on its own, as the last thing this attempt stores.
 	if notice := s.dropNoticeLocked(); notice != nil {
-		s.putLocked(notice, false)
+		s.putLocked(notice, s.truncated)
 	}
 	s.disarmLocked()
 	s.closed = true
 }
 
 // pacedLocked reports whether enough time has passed since the last upload for
-// a size-triggered flush to be taken.
+// a size-triggered or terminal cap flush to be taken.
 //
-// It gates ONLY the size trigger. The timer, the cap and Close all flush
-// unconditionally: the timer IS the pace, and the other two are the moments
-// where holding bytes back would lose them rather than batch them.
+// The timer is armed for the remaining pace. Close still flushes
+// unconditionally because it is the durability barrier; normal and cap writes
+// wait before calling their upload path.
 func (s *logChunkSink) pacedLocked() bool {
 	if s.lastFlush.IsZero() {
 		return true
 	}
 	return s.clock().Sub(s.lastFlush) >= s.opts.FlushInterval
+}
+
+// paceWaitLocked returns the remaining minimum gap. The caller must hold s.mu.
+func (s *logChunkSink) paceWaitLocked() time.Duration {
+	remaining := s.opts.FlushInterval - s.clock().Sub(s.lastFlush)
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining
+}
+
+// waitForPace blocks a producer at the ceiling without holding s.mu. A
+// cancelled activity does not need to keep accepting output; ExecuteTask's
+// deferred Close still performs the bounded final upload.
+func (s *logChunkSink) waitForPace(wait time.Duration) bool {
+	if wait <= 0 {
+		return true
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	base := s.ctx
+	if base == nil {
+		base = context.Background()
+	}
+	select {
+	case <-timer.C:
+		return true
+	case <-base.Done():
+		return false
+	}
 }
 
 // flushCeiling is the most this sink holds while a size-triggered flush waits
@@ -343,17 +394,29 @@ func (s *logChunkSink) clock() time.Time {
 }
 
 // armLocked starts the elapsed-time bound for the buffer that is about to
-// receive its first byte.
+// receive its first byte. It never schedules an upload before the minimum gap
+// from the previous upload has elapsed.
 func (s *logChunkSink) armLocked() {
 	s.disarmLocked()
-	s.timer = time.AfterFunc(s.opts.FlushInterval, func() {
+	delay := s.opts.FlushInterval
+	if !s.lastFlush.IsZero() {
+		if remaining := s.paceWaitLocked(); remaining > 0 {
+			delay = remaining
+		}
+	}
+	epoch := s.timerEpoch
+	s.timer = time.AfterFunc(delay, func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if epoch != s.timerEpoch {
+			return
+		}
 		s.flushLocked()
 	})
 }
 
 func (s *logChunkSink) disarmLocked() {
+	s.timerEpoch++
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil
@@ -394,19 +457,24 @@ func (s *logChunkSink) dropNoticeLocked() []byte {
 
 // noticeLocked writes the single truncation chunk and latches the sink shut.
 //
-// It carries any outstanding loss with it, because it is the LAST chunk this
-// attempt stores: a notice written after it would contradict its own words,
-// and one left for a chunk that never comes is a loss the reader never hears
-// about.
+// It carries the buffered prefix and any outstanding loss in the same final
+// chunk. Keeping the prefix here avoids a flush immediately followed by the
+// notice, which would defeat the upload pace at the cap boundary.
 func (s *logChunkSink) noticeLocked() {
 	if s.truncated {
 		return
 	}
 	s.truncated = true
-	notice := string(s.dropNoticeLocked()) + fmt.Sprintf(
+	notice := []byte(fmt.Sprintf(
 		"[ork] log truncated: this task attempt passed its %d-byte limit (%s); "+
-			"the rest was not stored\n", s.opts.MaxBytes, LogMaxBytesVar)
-	s.putLocked([]byte(notice), true)
+			"the rest was not stored\n", s.opts.MaxBytes, LogMaxBytesVar))
+	loss := s.dropNoticeLocked()
+	data := make([]byte, 0, len(loss)+s.buf.Len()+len(notice))
+	data = append(data, loss...)
+	data = append(data, s.buf.Bytes()...)
+	data = append(data, notice...)
+	s.buf.Reset()
+	s.putLocked(data, true)
 }
 
 // putLocked uploads one chunk, advancing the sequence only on success.
@@ -453,16 +521,17 @@ func (s *logChunkSink) putLocked(data []byte, truncated bool) {
 // uploadContext is the context a chunk is uploaded under.
 //
 // A cancelled task must still get its buffered output stored — the log of a
-// cancelled run is exactly what somebody reads afterwards — so the final flush
-// does not inherit the cancellation that caused it. The replacement is bounded
-// by time instead, so a dead store cannot hold the activity open either.
+// cancelled run is exactly what somebody reads afterwards — so the final
+// flush does not inherit the cancellation that caused it. The replacement is
+// bounded by time, and active uploads have the same bound so a dead store
+// cannot hold the activity open either.
 func (s *logChunkSink) uploadContext() (context.Context, context.CancelFunc) {
 	base := s.ctx
 	if base == nil {
 		base = context.Background()
 	}
 	if base.Err() == nil {
-		return context.WithCancel(base)
+		return context.WithTimeout(base, logChunkFinalFlushTimeout)
 	}
 	return context.WithTimeout(context.WithoutCancel(base), logChunkFinalFlushTimeout)
 }

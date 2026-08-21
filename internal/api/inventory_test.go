@@ -366,37 +366,49 @@ func TestListPlugins_StillAnswersWhenTheDurableSourcesCannotBeRead(t *testing.T)
 	}
 }
 
-// TestListPlugins_KeepsThePoolsItLearnedBeforeANamespaceCatalogFailed — F3.
+// TestListPlugins_KeepsCatalogPoolsOnBothSidesOfANamespaceCatalogFailure — F3.
 //
-// The catalog is read namespace by namespace, and it used to return on the
-// FIRST failure — throwing away every pool already learned from the namespaces
-// scanned before it. One unreadable tenant cost the inventory every other
-// tenant's pools, and an operator reading it concluded a plugin was not
-// installed while a run using it was succeeding on the pool that holds it.
-//
-// The namespaces here are named so the loop meets them in that order: `aaa`
-// reads cleanly and contributes `gpu`, `zzz` fails. The gpu-only plugin must
-// still be in the inventory, and the failure must still be logged with the
-// namespace it belongs to — a narrowed answer that says nothing is
-// indistinguishable from a complete one.
-func TestListPlugins_KeepsThePoolsItLearnedBeforeANamespaceCatalogFailed(t *testing.T) {
+// A namespace's allow-list is not the source this read is proving: these pool
+// names exist only in the successful orkflow catalogs. The scan must retain
+// the catalog-derived pool before a failing namespace, continue past that
+// namespace, and retain the catalog-derived pool after it. The loss is logged
+// so the narrowed inventory cannot look complete.
+func TestListPlugins_KeepsCatalogPoolsOnBothSidesOfANamespaceCatalogFailure(t *testing.T) {
 	gpu := poolQueue(t, "gpu")
+	fpga := poolQueue(t, "fpga")
 	logs := &bytes.Buffer{}
 	svc := api.NewService(api.Config{
 		Namespaces: registry{
-			"aaa": {Name: "aaa", AllowedPools: []string{"gpu"}},
+			"aaa": {Name: "aaa"},
+			"mmm": {Name: "mmm"},
 			"zzz": {Name: "zzz"},
 		},
 		Orkflows: catalogDownFor{
-			namespace: "zzz",
+			namespace: "mmm",
 			err:       errors.New("catalog unavailable"),
+			heads: map[string][]*orkstackv1.Orkflow{
+				"aaa": {{
+					Name:    "aaa-flow",
+					Version: "0.1.0",
+					Tasks:   []*orkstackv1.Task{{Id: "gpu", Pool: "gpu"}},
+				}},
+				"zzz": {{
+					Name:    "zzz-flow",
+					Version: "0.1.0",
+					Tasks:   []*orkstackv1.Task{{Id: "fpga", Pool: "fpga"}},
+				}},
+			},
 		},
-		Pools: livePools{task.DefaultQueue: 1, gpu: 1},
+		Pools: livePools{task.DefaultQueue: 1, gpu: 1, fpga: 1},
 		Lister: describedPlugins{descriptors: []plugin.Descriptor{
 			{Name: "shell", Version: "0.1.0"},
 		}},
-		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}, gpu: {"container"}},
-		Logger:      slog.New(slog.NewTextHandler(logs, nil)),
+		PoolPlugins: poolPlugins{
+			task.DefaultQueue: {"shell"},
+			gpu:               {"gpu-plugin"},
+			fpga:              {"fpga-plugin"},
+		},
+		Logger: slog.New(slog.NewTextHandler(logs, nil)),
 	})
 
 	resp, err := svc.ListPlugins(context.Background(),
@@ -404,13 +416,13 @@ func TestListPlugins_KeepsThePoolsItLearnedBeforeANamespaceCatalogFailed(t *test
 	if err != nil {
 		t.Fatalf("ListPlugins refused after one namespace's catalog failed: %v", err)
 	}
-	if got := fmt.Sprint(pluginNames(resp.Msg.GetPlugins())); got != "[container shell]" {
-		t.Fatalf("inventory = %s, want [container shell]: `container` is on the gpu "+
-			"pool, which namespace aaa named BEFORE zzz's catalog failed", got)
+	if got := fmt.Sprint(pluginNames(resp.Msg.GetPlugins())); got !=
+		"[fpga-plugin gpu-plugin shell]" {
+		t.Fatalf("inventory = %s, want both catalog-derived pools and the default pool", got)
 	}
-	for _, want := range []string{"zzz", "catalog unavailable"} {
+	for _, want := range []string{"mmm", "catalog unavailable"} {
 		if !strings.Contains(logs.String(), want) {
-			t.Errorf("the degradation log does not name %q: %s", want, logs.String())
+			t.Errorf("the degradation log does not carry %q: %s", want, logs.String())
 		}
 	}
 }
@@ -421,6 +433,7 @@ func TestListPlugins_KeepsThePoolsItLearnedBeforeANamespaceCatalogFailed(t *test
 type catalogDownFor struct {
 	namespace string
 	err       error
+	heads     map[string][]*orkstackv1.Orkflow
 }
 
 func (c catalogDownFor) Put(
@@ -437,14 +450,19 @@ func (c catalogDownFor) List(_ context.Context, namespace string) ([]*orkstackv1
 	if namespace == c.namespace {
 		return nil, c.err
 	}
-	return nil, nil
+	return append([]*orkstackv1.Orkflow(nil), c.heads[namespace]...), nil
 }
 
 func (c catalogDownFor) Versions(
-	_ context.Context, namespace, _ string,
+	_ context.Context, namespace, name string,
 ) (artifacts.OrkflowVersions, error) {
 	if namespace == c.namespace {
 		return artifacts.OrkflowVersions{}, c.err
+	}
+	for _, head := range c.heads[namespace] {
+		if head.GetName() == name {
+			return artifacts.OrkflowVersions{All: []*orkstackv1.Orkflow{head}}, nil
+		}
 	}
 	return artifacts.OrkflowVersions{}, artifacts.ErrNotFound
 }

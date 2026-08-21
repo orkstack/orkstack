@@ -604,20 +604,10 @@ func decodedPayloads(rendered string) string {
 
 // awaitArchivedEventText waits for the run archive and renders its events.
 //
-// THE TERMINAL ERROR IS CHECKED, and that is the whole point of this helper
-// being a helper. Every caller uses what it returns to assert that some marker
-// is ABSENT from the event stream, so a stream that stopped early is a stream
-// that agrees with every such assertion for the wrong reason: `Receive`
-// returning false says "no more messages" whether the run ended or the
-// connection dropped mid-way. Without `Err()` a truncated read is
-// indistinguishable from a complete one, and every assertion above it means
-// nothing.
-//
-// A drop is not fatal here, because this function's job is to WAIT: the
-// archive may not be written yet, and a broken attempt is retried until the
-// deadline. What must never happen is a broken attempt being RETURNED, which
-// is why the partial text is discarded rather than accepted. Reaching the
-// deadline names the last error.
+// Opening a stream may race the archive projection, so an open failure or a
+// clean empty stream is retried. Once a stream has delivered bytes, however,
+// its terminal Err is fatal. A dropped prefix is not an archive and must not
+// be silently discarded so a later healthy attempt can make the test pass.
 func awaitArchivedEventText(
 	ctx context.Context,
 	t *testing.T,
@@ -635,29 +625,15 @@ func awaitArchivedEventText(
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
-		var out strings.Builder
-		marshaler := protojson.MarshalOptions{Multiline: false}
-		for stream.Receive() {
-			rendered, err := marshaler.Marshal(stream.Msg())
-			if err != nil {
-				t.Fatalf("render archived event: %v", err)
-			}
-			out.Write(rendered)
-			out.WriteByte('\n')
+		text, err := readArchivedEventText(stream)
+		if err == nil {
+			return text
 		}
-		streamErr := stream.Err()
-		_ = stream.Close()
-		switch {
-		case streamErr != nil:
-			// Truncated. Whatever arrived is thrown away: a prefix would
-			// satisfy every "the marker is absent" assertion by not having
-			// reached the part that carries it.
-			lastErr = fmt.Errorf("the stream ended after %d byte(s): %w", out.Len(), streamErr)
-		case out.Len() > 0:
-			return out.String()
-		default:
-			lastErr = errors.New("the stream completed with no events")
+		var terminal *archivedEventStreamError
+		if errors.As(err, &terminal) {
+			t.Fatalf("read archived event stream: %v", err)
 		}
+		lastErr = err
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("run %s never produced a COMPLETE event stream to scan (last: %v)", runID, lastErr)
