@@ -52,7 +52,7 @@ func requireImage(t *testing.T, image string) {
 	}
 	code, out := docker(t, 5*time.Minute, "pull", image)
 	if code != 0 {
-		t.Skipf("cannot pull %s (no registry access?): %s", image, out)
+		infraAbsent(t, "cannot pull %s (no registry access?): %s", image, out)
 	}
 }
 
@@ -116,7 +116,7 @@ func bindableTempDir(t *testing.T) string {
 	t.Helper()
 	root := bindableRoot(t)
 	if root == "" {
-		t.Skipf("no directory on this host can be bind-mounted by the docker daemon; " +
+		infraAbsent(t, "no directory on this host can be bind-mounted by the docker daemon; "+
 			"set ORK_TEST_CONTAINER_TMPDIR to one the daemon shares")
 	}
 	dir, err := os.MkdirTemp(root, "ork-container-test-*")
@@ -383,7 +383,7 @@ func TestIntegration_ContainerPullsAMissingImageThenReusesTheLocalOne(t *testing
 	requireImage(t, image)
 
 	if code, out := docker(t, 60*time.Second, "image", "rm", "--force", image); code != 0 {
-		t.Skipf("cannot remove %s to prove a pull (in use?): %s", image, out)
+		infraAbsent(t, "cannot remove %s to prove a pull (in use?): %s", image, out)
 	}
 	// Whatever happens next, leave the host with the image it started with.
 	t.Cleanup(func() { requireImage(t, image) })
@@ -395,7 +395,7 @@ func TestIntegration_ContainerPullsAMissingImageThenReusesTheLocalOne(t *testing
 		"command": "echo pulled",
 	}))
 	if err != nil {
-		t.Skipf("cannot pull %s from its registry: %v", image, err)
+		infraAbsent(t, "cannot pull %s from its registry: %v", image, err)
 	}
 	if first.Output["image_pulled"] != true {
 		t.Errorf("first run image_pulled = %v, want true", first.Output["image_pulled"])

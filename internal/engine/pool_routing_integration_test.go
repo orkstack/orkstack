@@ -375,7 +375,7 @@ tasks:
 		Tasks: []*orkstackv1.Task{
 			{Id: "sneak", Plugin: "shell", Pool: "forbidden"},
 		},
-	}); err != nil {
+	}, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("seed the stored definition: %v", err)
 	}
 	_, submitErr := runClient.SubmitRun(ctx, connect.NewRequest(

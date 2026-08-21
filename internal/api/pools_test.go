@@ -625,7 +625,9 @@ func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 // refusing a list would describe a store that cannot exist.
 type downOrkflowStore struct{ err error }
 
-func (d downOrkflowStore) Put(context.Context, *orkstackv1.Orkflow) (*orkstackv1.Orkflow, bool, error) {
+func (d downOrkflowStore) Put(
+	context.Context, *orkstackv1.Orkflow, artifacts.HeadExpectation,
+) (*orkstackv1.Orkflow, bool, error) {
 	return nil, false, d.err
 }
 

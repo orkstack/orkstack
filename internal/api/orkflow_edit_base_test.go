@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // Editing an old version: the two tokens an apply carries and what each one
@@ -383,5 +386,99 @@ func TestOrkflowReadPath_AnyVersionAnswersWithItsSourceAndTheListingMarksHeadAnd
 		&orkstackv1.GetOrkflowRequest{Name: "deploy", Version: "9.9.9"},
 	)); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Errorf("GetOrkflow(9.9.9) = %v, want NotFound", err)
+	}
+}
+
+// gatedOrkflowStore holds one apply still, between the moment the service hands
+// it to the store and the moment the store answers.
+//
+// That instant is the whole of the race: it is where the service used to have
+// already checked the head and not yet written, and where a competing apply
+// therefore landed unseen. Gating it is how the interleaving becomes a test
+// rather than a description of one.
+type gatedOrkflowStore struct {
+	*engine.MemoryOrkflowStore
+	version string
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newGatedOrkflowStore(version string) *gatedOrkflowStore {
+	return &gatedOrkflowStore{
+		MemoryOrkflowStore: engine.NewMemoryOrkflowStore(),
+		version:            version,
+		reached:            make(chan struct{}),
+		release:            make(chan struct{}),
+	}
+}
+
+func (g *gatedOrkflowStore) Put(
+	ctx context.Context,
+	wf *orkstackv1.Orkflow,
+	expected artifacts.HeadExpectation,
+) (*orkstackv1.Orkflow, bool, error) {
+	if wf.GetVersion() == g.version {
+		g.once.Do(func() { close(g.reached) })
+		<-g.release
+	}
+	return g.MemoryOrkflowStore.Put(ctx, wf, expected)
+}
+
+// TestApplyOrkflow_AnEditWhoseHeadMovedDuringTheWriteIsRefused is the claim
+// above made atomic: an edit is refused for a head that moved WHILE it was
+// being written, not only for one that had already moved when it arrived.
+//
+// The difference is the whole of the concurrency guarantee. Reading the head in
+// the service and writing in the store are two operations, and between them a
+// competing apply fits: it did, and the stale edit was stored and reported as
+// created, having "checked" a head that was two versions old by the time its
+// own bytes landed. The expected head is therefore a condition ON THE WRITE —
+// the store commits against it or refuses — and this test holds the edit inside
+// the store while the competitor lands to prove it.
+func TestApplyOrkflow_AnEditWhoseHeadMovedDuringTheWriteIsRefused(t *testing.T) {
+	store := newGatedOrkflowStore("4.0.0")
+	svc := api.NewService(api.Config{
+		Orkflows: store,
+		Runs:     engine.NewRunStore(),
+		Bus:      engine.NewEventBus(),
+		Starter:  &fakeStarter{},
+	})
+	apply(t, svc, versionedDocument("deploy", "1.0.0", "one"))
+	apply(t, svc, versionedDocument("deploy", "2.0.0", "two"))
+
+	edit := make(chan error, 1)
+	go func() {
+		_, err := applyEdit(t, svc,
+			versionedDocument("deploy", "4.0.0", "stale-edit"), "1.0.0", "2.0.0")
+		edit <- err
+	}()
+
+	select {
+	case <-store.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the edit never reached the store")
+	}
+	// The competing apply lands entirely inside the edit's write.
+	apply(t, svc, versionedDocument("deploy", "3.0.0", "competitor"))
+	close(store.release)
+
+	err := <-edit
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("the edit that lost the race = %v (code %s), want FailedPrecondition",
+			err, connect.CodeOf(err))
+	}
+	for _, want := range []string{"1.0.0", "2.0.0", "3.0.0", "orkctl orkflow diff"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q: %v", want, err)
+		}
+	}
+
+	// A refusal is a refusal wherever it was decided: the store holds the three
+	// versions that were really applied, and the head is the competitor's.
+	list, head, _ := storedVersions(t, store.MemoryOrkflowStore, "deploy")
+	if list != "3.0.0,2.0.0,1.0.0" || head != "3.0.0" {
+		t.Errorf("after the refused edit the store holds %s (head %s), "+
+			"want 3.0.0,2.0.0,1.0.0 with head 3.0.0", list, head)
 	}
 }

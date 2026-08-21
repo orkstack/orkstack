@@ -10,11 +10,13 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -40,11 +42,18 @@ type OrkflowStore interface {
 	// and returns the stored document plus whether this call created it.
 	//
 	// A version is written once: re-applying the identical document is a
-	// no-op that writes nothing and returns what is stored (created=false),
-	// and a DIFFERENT document under an existing version is refused with an
-	// error matching ErrVersionExists. Other versions, and every other
-	// namespace, are never touched.
-	Put(ctx context.Context, wf *orkstackv1.Orkflow) (*orkstackv1.Orkflow, bool, error)
+	// no-op that writes nothing, moves nothing and returns what is stored
+	// (created=false), and a DIFFERENT document under an existing version is
+	// refused with an error matching ErrVersionExists. Other versions, and
+	// every other namespace, are never touched.
+	//
+	// expected is what this apply claims about the HEAD it extends. A stated
+	// expectation is a compare-and-SET, not a check: the version lands only
+	// while the head is still the version named, and an apply that loses that
+	// race is refused with an error matching ErrHeadMoved. Passing
+	// NoHeadExpectation() is the unchecked apply — `orkctl apply file.yaml`,
+	// which claims nothing and so cannot be told it was wrong.
+	Put(ctx context.Context, wf *orkstackv1.Orkflow, expected HeadExpectation) (*orkstackv1.Orkflow, bool, error)
 	// Get returns one orkflow version from one namespace. An empty version
 	// resolves through the current pointer when one has been set, and to the
 	// most recently applied version when none ever was; an empty namespace
@@ -315,18 +324,18 @@ func moreRecentOrkflow(candidate, incumbent *orkstackv1.Orkflow) bool {
 	return a.After(b)
 }
 
-// resolveByName reduces a flat set of versions to the one version each name
+// resolveByName reduces one prefix scan to the one version each name
 // currently resolves to, ordered by name.
 //
 // It is the pointer's rule applied to a whole namespace: a name somebody
 // promoted resolves to the promoted version, and a name nobody promoted
-// resolves to its most recently applied one. Listing had to learn this too —
-// a list that showed the head while `run submit` executed the promoted
-// version would report a version the deployment does not run.
-func resolveByName(all []*orkstackv1.Orkflow, current map[string]string) []*orkstackv1.Orkflow {
+// resolves to its head. Listing had to learn this too — a list that showed
+// the head while `run submit` executed the promoted version would report a
+// version the deployment does not run.
+func resolveByName(scan orkflowScan) []*orkstackv1.Orkflow {
 	byName := map[string][]*orkstackv1.Orkflow{}
-	names := make([]string, 0, len(all))
-	for _, wf := range all {
+	names := make([]string, 0, len(scan.versions))
+	for _, wf := range scan.versions {
 		if _, seen := byName[wf.GetName()]; !seen {
 			names = append(names, wf.GetName())
 		}
@@ -335,12 +344,12 @@ func resolveByName(all []*orkstackv1.Orkflow, current map[string]string) []*orks
 	sort.Strings(names)
 	out := make([]*orkstackv1.Orkflow, 0, len(names))
 	for _, name := range names {
-		if pinned := pinnedOrkflow(byName[name], current[name]); pinned != nil {
+		if pinned := pinnedOrkflow(byName[name], scan.current[name]); pinned != nil {
 			out = append(out, pinned)
 			continue
 		}
-		if latest := latestOrkflow(byName[name]); latest != nil {
-			out = append(out, latest)
+		if head := pinnedOrkflow(byName[name], scan.headOf(name)); head != nil {
+			out = append(out, head)
 		}
 	}
 	return out
@@ -443,8 +452,8 @@ func (s *S3OrkflowStore) uri(key string) string {
 	return (&url.URL{Scheme: "s3", Host: s.bucket, Path: "/" + key}).String()
 }
 
-// Put writes one orkflow version's document, and returns the stored document
-// with whether this call created it.
+// Put writes one orkflow version's document, moves the head onto it, and
+// returns the stored document with whether this call created it.
 //
 // The version is part of the key, so publishing a new version adds an object
 // and leaves every earlier version byte for byte as it was: a run pinned to a
@@ -453,24 +462,121 @@ func (s *S3OrkflowStore) uri(key string) string {
 // A version already stored is never rewritten. Re-applying the identical
 // document writes NOTHING and hands back what is there — the object keeps its
 // original created_at, which is what makes "compare the stored bytes before
-// and after" a real check rather than a comparison of two fresh timestamps.
+// and after" a real check rather than a comparison of two fresh timestamps —
+// and it moves nothing either: a no-op is a no-op, the head included.
 // A different document under the same version is ErrVersionExists: the fix is
 // a new version, because rewriting this one would change what a pinned run
 // reads.
 //
-// The create is conditional (IfAbsent), so two replicas applying the same new
-// version at the same instant produce one write and one refusal, and the
-// refusal is answered on the terms above rather than by overwriting the
-// winner.
+// Both writes are conditional, and each condition answers a different race:
+//
+//   - the version object is created IfAbsent, so two replicas applying the
+//     same new version at one instant produce one write and one refusal,
+//     settled on the immutability rule above rather than by overwriting;
+//   - the head pointer is compare-and-SWAPPED against the bytes this call
+//     read, and THAT swap is the apply's commit point. An apply that stated
+//     an expected head and loses the swap is refused with ErrHeadMoved — the
+//     window a check before the write leaves open, closed. An apply that
+//     stated nothing cannot be told it was wrong, so it re-reads what the
+//     winner wrote and swaps against that.
+//
+// The document is written BEFORE the head moves, so no reader ever sees a
+// head naming a version that is not in the bucket. The reverse residue is
+// possible and is the honest cost of committing two objects without a
+// transaction: a process that dies between the two leaves a stored version
+// that never became the head. It is inert — immutable, addressable, listed,
+// and promotable — and the apply that wrote it returned an error, so nobody
+// was told it landed.
 func (s *S3OrkflowStore) Put(
 	ctx context.Context,
 	wf *orkstackv1.Orkflow,
+	expected HeadExpectation,
 ) (*orkstackv1.Orkflow, bool, error) {
 	key, err := OrkflowKey(wf.GetNamespace(), wf.GetName(), wf.GetVersion())
 	if err != nil {
 		return nil, false, err
 	}
 	incoming := namespacedOrkflow(wf)
+	namespace, name := incoming.GetNamespace(), incoming.GetName()
+
+	var (
+		stored  *orkstackv1.Orkflow
+		created bool
+	)
+	for range headSwapAttempts {
+		pointer, etag, err := s.readHead(ctx, namespace, name)
+		if err != nil {
+			return nil, false, err
+		}
+		if !expected.SatisfiedBy(pointer.Version) {
+			return nil, false, headMoved(namespace, name, expected, pointer.Version)
+		}
+		if stored == nil {
+			if stored, created, err = s.writeVersion(ctx, key,
+				stampedOrkflow(incoming, pointer.AppliedAt)); err != nil {
+				return nil, false, err
+			}
+			if !created {
+				return stored, false, nil
+			}
+		}
+		applied := stored.GetCreatedAt().AsTime()
+		if !applied.After(pointer.AppliedAt) {
+			// Somebody else's apply is stamped after ours and is already the
+			// head. Theirs IS the newer apply; leaving the pointer where they
+			// put it is what keeps the head and the catalog's order one
+			// answer.
+			return stored, created, nil
+		}
+		switch err := s.swapHead(ctx, namespace, name, etag, headPointer{
+			Version:   stored.GetVersion(),
+			AppliedAt: applied,
+		}); {
+		case err == nil:
+			return stored, created, nil
+		case errors.Is(err, ErrPreconditionFailed):
+			if expected.Stated() {
+				head, _, readErr := s.readHead(ctx, namespace, name)
+				if readErr != nil {
+					return nil, false, readErr
+				}
+				return nil, false, headMoved(namespace, name, expected, head.Version)
+			}
+		default:
+			return nil, false, err
+		}
+	}
+	return nil, false, fmt.Errorf(
+		"artifacts: orkflow %q in namespace %q: another apply moved the head on each of "+
+			"%d attempts to publish version %q: %w",
+		name, namespace, headSwapAttempts, wf.GetVersion(), ErrPreconditionFailed)
+}
+
+// stampedOrkflow returns wf carrying the stamp its apply lands with: its own,
+// unless that is not after the head's (AppliedStamp). The caller's message is
+// never mutated — it belongs to the caller — and an unchanged stamp costs no
+// copy.
+func stampedOrkflow(wf *orkstackv1.Orkflow, head time.Time) *orkstackv1.Orkflow {
+	var caller time.Time
+	if ts := wf.GetCreatedAt(); ts != nil {
+		caller = ts.AsTime()
+	}
+	applied := AppliedStamp(caller, head)
+	if applied.Equal(caller) {
+		return wf
+	}
+	stamped := proto.Clone(wf).(*orkstackv1.Orkflow)
+	stamped.CreatedAt = timestamppb.New(applied)
+	return stamped
+}
+
+// writeVersion creates one version's object and reports whether this call
+// created it. A version already stored is settled on the immutability rule.
+func (s *S3OrkflowStore) writeVersion(
+	ctx context.Context,
+	key string,
+	incoming *orkstackv1.Orkflow,
+) (*orkstackv1.Orkflow, bool, error) {
 	document, err := marshalOrkflow(incoming)
 	if err != nil {
 		return nil, false, err
@@ -554,16 +660,22 @@ func (s *S3OrkflowStore) Get(ctx context.Context, namespace, name, version strin
 			}
 			return wf, err
 		}
-		versions, err := s.versions(ctx, namespace, name)
+		scan, err := s.scan(ctx, namespace, name)
 		if err != nil {
 			return nil, err
 		}
-		latest := latestOrkflow(versions)
-		if latest == nil {
+		head := scan.headOf(name)
+		if head == "" {
 			return nil, fmt.Errorf("artifacts: get orkflow %q in namespace %q: %w",
 				name, ResolveNamespace(namespace), ErrNotFound)
 		}
-		return latest, nil
+		wf := pinnedOrkflow(scan.versions, head)
+		if wf == nil {
+			return nil, fmt.Errorf(
+				"artifacts: orkflow %q in namespace %q has head %q, which is not stored: %w",
+				name, ResolveNamespace(namespace), head, ErrNotFound)
+		}
+		return wf, nil
 	}
 	key, err := OrkflowKey(namespace, name, version)
 	if err != nil {
@@ -581,88 +693,128 @@ func (s *S3OrkflowStore) List(ctx context.Context, namespace string) ([]*orkstac
 	if err != nil {
 		return nil, err
 	}
-	all, current, err := s.readPrefix(ctx, prefix)
+	scan, err := s.readPrefix(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
-	return resolveByName(all, current), nil
+	return resolveByName(scan), nil
 }
 
 // Versions returns one orkflow's whole version catalog in one prefix scan.
 //
-// The pointer object lives under the same prefix as the versions, so Current
-// comes back from the listing this call already makes; Head is computed from
-// the documents rather than from object timestamps, exactly as Get's fallback
-// is, so the two can never disagree about which version is newest.
+// Both pointers live under the same prefix as the versions, so Current and
+// Head come back from the listing this call already makes: neither costs an
+// extra round trip, and neither is guessed from a timestamp.
 func (s *S3OrkflowStore) Versions(
 	ctx context.Context,
 	namespace, name string,
 ) (OrkflowVersions, error) {
-	prefix, err := orkflowNamePrefix(namespace, name)
+	scan, err := s.scan(ctx, namespace, name)
 	if err != nil {
 		return OrkflowVersions{}, err
 	}
-	all, current, err := s.readPrefix(ctx, prefix)
-	if err != nil {
-		return OrkflowVersions{}, err
-	}
-	sortOrkflowsNewestFirst(all)
-	out := OrkflowVersions{All: all, Current: current[name]}
-	if head := latestOrkflow(all); head != nil {
-		out.Head = head.GetVersion()
-	}
-	return out, nil
+	sortOrkflowsNewestFirst(scan.versions)
+	return OrkflowVersions{
+		All:     scan.versions,
+		Current: scan.current[name],
+		Head:    scan.headOf(name),
+	}, nil
 }
 
 // sortOrkflowsNewestFirst orders a version catalog by application time, newest
-// first, with the same tie-break latestOrkflow uses so the first element and
-// "the latest" are always the same document.
+// first, with the same tie-break latestOrkflow uses.
+//
+// The stamps are safe to order by because the store, not the caller, has the
+// last word on them: an apply never stamps its version earlier than the head
+// it extends (AppliedStamp), so the order here is the order applies committed
+// in even when the replicas that made them disagree about the time. The head
+// itself is still the pointer's, never this order's first element — the two
+// agree, and where they could not, the pointer is the one that was committed.
 func sortOrkflowsNewestFirst(versions []*orkstackv1.Orkflow) {
 	sort.SliceStable(versions, func(i, j int) bool {
 		return moreRecentOrkflow(versions[i], versions[j])
 	})
 }
 
-// versions reads every stored version of one orkflow in one namespace.
-func (s *S3OrkflowStore) versions(ctx context.Context, namespace, name string) ([]*orkstackv1.Orkflow, error) {
+// scan reads everything stored for one orkflow in one namespace.
+func (s *S3OrkflowStore) scan(ctx context.Context, namespace, name string) (orkflowScan, error) {
 	prefix, err := orkflowNamePrefix(namespace, name)
 	if err != nil {
-		return nil, err
+		return orkflowScan{}, err
 	}
-	all, _, err := s.readPrefix(ctx, prefix)
-	return all, err
+	return s.readPrefix(ctx, prefix)
+}
+
+// orkflowScan is what one prefix scan found: every definition under it, and
+// the two pointers that live beside them, each keyed by orkflow name.
+type orkflowScan struct {
+	versions []*orkstackv1.Orkflow
+	current  map[string]string
+	head     map[string]string
+}
+
+// headOf is the version one orkflow's head names.
+//
+// The pointer decides, because moving the pointer is what an apply commits.
+// The documents' own stamps answer only when the pointer cannot: an orkflow
+// last applied by an engine built before the head became a pointer, or — and
+// this is why the check is on membership rather than on emptiness — a pointer
+// naming a version this scan did not see. Put writes the document BEFORE it
+// moves the pointer, so that state should be unreachable; falling back rather
+// than reporting a head nothing holds is what keeps a listing answerable if it
+// ever is, exactly as pinnedOrkflow does for the current pointer.
+func (scan orkflowScan) headOf(name string) string {
+	versions := make([]*orkstackv1.Orkflow, 0, len(scan.versions))
+	for _, wf := range scan.versions {
+		if wf.GetName() == name {
+			versions = append(versions, wf)
+		}
+	}
+	if head := pinnedOrkflow(versions, scan.head[name]); head != nil {
+		return head.GetVersion()
+	}
+	if latest := latestOrkflow(versions); latest != nil {
+		return latest.GetVersion()
+	}
+	return ""
 }
 
 // readPrefix lists a prefix once and reads what is under it: every definition,
-// and every current pointer beside them (name -> version).
+// and both pointers beside them (name -> version).
 //
-// One scan answers both because they share the prefix. Orkflow catalogs are
-// small (one document per version), and reading the documents is what makes
-// "most recently applied" exact rather than a guess from S3 timestamps.
-func (s *S3OrkflowStore) readPrefix(
-	ctx context.Context,
-	prefix string,
-) ([]*orkstackv1.Orkflow, map[string]string, error) {
+// One scan answers all three because they share the prefix. Orkflow catalogs
+// are small (one document per version), and reading the documents is what
+// makes a listing exact rather than a guess from S3 timestamps.
+func (s *S3OrkflowStore) readPrefix(ctx context.Context, prefix string) (orkflowScan, error) {
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(s.bucket),
 		Prefix: aws.String(prefix),
 	})
-	var out []*orkstackv1.Orkflow
-	current := map[string]string{}
+	scan := orkflowScan{current: map[string]string{}, head: map[string]string{}}
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return nil, nil, fmt.Errorf("artifacts: list orkflows %q: %w", s.uri(prefix), err)
+			return orkflowScan{}, fmt.Errorf("artifacts: list orkflows %q: %w", s.uri(prefix), err)
 		}
 		for _, object := range page.Contents {
 			key := aws.ToString(object.Key)
 			if namespace, name, ok := ParseOrkflowCurrentKey(key); ok {
 				pointer, _, err := s.readCurrent(ctx, namespace, name)
 				if err != nil {
-					return nil, nil, err
+					return orkflowScan{}, err
 				}
 				if pointer.Version != "" {
-					current[name] = pointer.Version
+					scan.current[name] = pointer.Version
+				}
+				continue
+			}
+			if namespace, name, ok := ParseOrkflowHeadKey(key); ok {
+				pointer, _, err := s.readHead(ctx, namespace, name)
+				if err != nil {
+					return orkflowScan{}, err
+				}
+				if pointer.Version != "" {
+					scan.head[name] = pointer.Version
 				}
 				continue
 			}
@@ -674,12 +826,12 @@ func (s *S3OrkflowStore) readPrefix(
 				if errors.Is(err, ErrNotFound) {
 					continue // deleted between the listing and the read
 				}
-				return nil, nil, err
+				return orkflowScan{}, err
 			}
-			out = append(out, wf)
+			scan.versions = append(scan.versions, wf)
 		}
 	}
-	return out, current, nil
+	return scan, nil
 }
 
 func (s *S3OrkflowStore) read(ctx context.Context, key string) (*orkstackv1.Orkflow, error) {

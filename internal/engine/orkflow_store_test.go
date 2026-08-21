@@ -39,7 +39,7 @@ func TestMemoryOrkflowStore_ReadsBackWhatWasApplied(t *testing.T) {
 	ctx := context.Background()
 	applied := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 
-	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", applied)); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", applied), artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	got, err := store.Get(ctx, "", "hello-ork", "0.1.0")
@@ -66,10 +66,10 @@ func TestMemoryOrkflowStore_EmptyVersionIsTheMostRecentlyApplied(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 
-	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.2.0", base)); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.2.0", base), artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put(0.2.0): %v", err)
 	}
-	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", base.Add(time.Second))); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", base.Add(time.Second)), artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put(0.1.0): %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestMemoryOrkflowStore_ListsTheLatestVersionOfEveryOrkflowByName(t *testing
 		orkflowFixture("alpha", "0.1.0", base.Add(time.Second)),
 		orkflowFixture("alpha", "0.2.0", base.Add(2*time.Second)),
 	} {
-		if _, _, err := store.Put(ctx, wf); err != nil {
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 			t.Fatalf("Put(%s@%s): %v", wf.GetName(), wf.GetVersion(), err)
 		}
 	}
@@ -128,7 +128,7 @@ func TestMemoryOrkflowStore_MissingOrkflowIsNotFound(t *testing.T) {
 	if _, err := store.Get(ctx, "", "ghost", ""); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Get(ghost) = %v, want artifacts.ErrNotFound", err)
 	}
-	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", time.Now())); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", time.Now()), artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if _, err := store.Get(ctx, "", "hello-ork", "9.9.9"); !errors.Is(err, artifacts.ErrNotFound) {
@@ -148,7 +148,7 @@ func TestMemoryOrkflowStore_RejectsAnOrkflowItCannotAddress(t *testing.T) {
 		{Version: "0.1.0"},
 		{Name: "hello-ork"},
 	} {
-		if _, _, err := store.Put(ctx, wf); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 			t.Errorf("Put(%q@%q) = %v, want artifacts.ErrInvalidOrkflow", wf.GetName(), wf.GetVersion(), err)
 		}
 	}
@@ -168,7 +168,7 @@ func TestMemoryOrkflowStore_TwoNamespacesHoldTheSameNameIndependently(t *testing
 	shipping := inNamespace(orkflowFixture("deploy", "2.0.0", base.Add(time.Second)), "shipping")
 	shipping.Tasks[0].Id = "pack"
 	for _, wf := range []*orkstackv1.Orkflow{payments, shipping} {
-		if _, _, err := store.Put(ctx, wf); err != nil {
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 			t.Fatalf("Put(%s/%s): %v", wf.GetNamespace(), wf.GetName(), err)
 		}
 	}
@@ -211,7 +211,7 @@ func TestMemoryOrkflowStore_AnUnnamedNamespaceIsTheDefaultOne(t *testing.T) {
 	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 
-	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", time.Now())); err != nil {
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", time.Now()), artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	got, err := store.Get(ctx, artifacts.DefaultNamespace, "hello-ork", "0.1.0")
@@ -222,5 +222,54 @@ func TestMemoryOrkflowStore_AnUnnamedNamespaceIsTheDefaultOne(t *testing.T) {
 	// has to reconstruct it from the key it read.
 	if got.GetNamespace() != artifacts.DefaultNamespace {
 		t.Errorf("stored namespace = %q, want %q", got.GetNamespace(), artifacts.DefaultNamespace)
+	}
+}
+
+// TestMemoryOrkflowStore_AnApplyCommitsAgainstTheHeadItNamed holds the memory
+// store to the durable store's edit contract, which is the reason it exists: a
+// unit test that passes here must not pass for a reason the bucket would not
+// reproduce.
+//
+// The head an apply names is a condition on the WRITE. Naming the head that is
+// there commits; naming one that has moved is refused and stores nothing; and
+// an apply that names no head at all is never refused, because it claimed
+// nothing that could turn out to be false.
+func TestMemoryOrkflowStore_AnApplyCommitsAgainstTheHeadItNamed(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	ctx := context.Background()
+	base := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", base),
+		artifacts.NoHeadExpectation()); err != nil {
+		t.Fatalf("Put(0.1.0): %v", err)
+	}
+	if _, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.2.0", base.Add(time.Second)),
+		artifacts.NoHeadExpectation()); err != nil {
+		t.Fatalf("Put(0.2.0): %v", err)
+	}
+
+	stale := orkflowFixture("hello-ork", "0.9.0", base.Add(time.Minute))
+	_, _, err := store.Put(ctx, stale, artifacts.ExpectHead("0.1.0"))
+	if !errors.Is(err, artifacts.ErrHeadMoved) {
+		t.Fatalf("Put naming a head that moved = %v, want artifacts.ErrHeadMoved", err)
+	}
+	var moved *artifacts.HeadMovedError
+	if !errors.As(err, &moved) || moved.Expected != "0.1.0" || moved.Head != "0.2.0" {
+		t.Fatalf("the refusal = %v, want one naming expected 0.1.0 and head 0.2.0", err)
+	}
+	if _, err := store.Get(ctx, "", "hello-ork", "0.9.0"); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("a refused apply stored its version anyway: %v", err)
+	}
+
+	if _, created, err := store.Put(ctx, stale, artifacts.ExpectHead("0.2.0")); err != nil || !created {
+		t.Fatalf("Put naming the head that is there = created %v, %v; want created", created, err)
+	}
+	versions, err := store.Versions(ctx, "", "hello-ork")
+	if err != nil {
+		t.Fatalf("Versions: %v", err)
+	}
+	if versions.Head != "0.9.0" || len(versions.All) != 3 {
+		t.Errorf("after the retargeted apply the store holds %d versions with head %q, "+
+			"want 3 and 0.9.0", len(versions.All), versions.Head)
 	}
 }

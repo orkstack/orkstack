@@ -191,7 +191,7 @@ func TestIntegration_ListOrkflowsReadsTheBucketNotTheProcess(t *testing.T) {
 		Name:    name,
 		Version: "0.1.0",
 		Tasks:   []*orkstackv1.Task{{Id: "fetch", Plugin: "http"}},
-	}); err != nil {
+	}, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 

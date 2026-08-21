@@ -380,9 +380,10 @@ func requireDockerDaemon(t *testing.T) {
 }
 
 // requireContainerImage makes sure the image is on the host before the run, so
-// a registry download is not mistaken for a slow log. No route to a public
-// registry is a host capability that starting the infrastructure would not
-// fix, so it stays an ordinary skip (see infra_required_test.go).
+// a registry download is not mistaken for a slow log. An image that cannot be
+// obtained is an absent prerequisite like any other: under ORK_REQUIRE_INFRA
+// it fails, because a proof that could not get the image measured nothing
+// (see infra_required_test.go).
 func requireContainerImage(t *testing.T, image string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -392,7 +393,8 @@ func requireContainerImage(t *testing.T, image string) {
 		return
 	}
 	if out, err := exec.CommandContext(ctx, "docker", "pull", image).CombinedOutput(); err != nil {
-		t.Skipf("cannot pull %s (no registry access?): %s", image, strings.TrimSpace(string(out)))
+		infraAbsent(t, "cannot pull %s (no registry access?): %s",
+			image, strings.TrimSpace(string(out)))
 	}
 }
 
