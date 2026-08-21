@@ -17,6 +17,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // registry is a namespace registry in a map: the documents an operator wrote,
@@ -78,10 +79,20 @@ func (l livePools) ObservePool(_ context.Context, queue string) (engine.PoolLive
 	return live, nil
 }
 
+// poolPlugins names what one channel's Orkers can run. The seam answers with
+// descriptors — pool health renders their names, the inventory their schemas —
+// so the names a test states are widened here rather than at every call site.
 type poolPlugins map[string][]string
 
-func (p poolPlugins) PluginsOnPool(_ context.Context, queue string) ([]string, error) {
-	return p[queue], nil
+func (p poolPlugins) PluginsOnPool(
+	_ context.Context,
+	queue string,
+) ([]plugin.Descriptor, error) {
+	descriptors := make([]plugin.Descriptor, 0, len(p[queue]))
+	for _, name := range p[queue] {
+		descriptors = append(descriptors, plugin.Descriptor{Name: name})
+	}
+	return descriptors, nil
 }
 
 // gpuOrkflow names a pool on one of its two tasks.

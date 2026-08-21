@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/client"
+
+	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // TemporalPoolProbe answers "is anything serving this pool" from the cluster
@@ -142,16 +144,15 @@ func (p *TemporalPoolProbe) now() time.Time {
 // It is asked of a pool with live Orkers only. The activity has nowhere else
 // to run, so a pool with none would hold the request open until the timeout
 // and answer nothing.
-func (s *TemporalStarter) PluginsOnPool(ctx context.Context, queue string) ([]string, error) {
-	descriptors, err := s.listPluginsOn(ctx, queue, poolPluginTimeout)
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(descriptors))
-	for _, descriptor := range descriptors {
-		names = append(names, descriptor.Name)
-	}
-	return names, nil
+//
+// The descriptors are returned whole: pool health renders their names, the
+// plugin inventory renders their versions, descriptions and schemas, and
+// discarding either half here would mean asking the same Orkers twice.
+func (s *TemporalStarter) PluginsOnPool(
+	ctx context.Context,
+	queue string,
+) ([]plugin.Descriptor, error) {
+	return s.listPluginsOn(ctx, queue, poolPluginTimeout)
 }
 
 var _ PoolPluginLister = (*TemporalStarter)(nil)

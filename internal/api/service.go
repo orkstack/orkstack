@@ -16,6 +16,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/plugin"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -142,6 +143,13 @@ type Config struct {
 	// default pool to its own channel, which is the zero-config behaviour.
 	RawQueue string
 
+	// System is what this replica was built and configured as, for
+	// SystemService.GetSystemInfo. `ork` fills it at boot from the
+	// configuration it already loaded; the zero value answers with empty
+	// fields, which is what an unconfigured Service honestly knows about
+	// itself.
+	System SystemInfo
+
 	// Router resolves an ork namespace to the cluster serving it. Nil builds
 	// the one-binding router from Reader, Starter and Pools above, which is
 	// every deployment there is today.
@@ -157,8 +165,8 @@ type Config struct {
 	NewRunID func() string
 }
 
-// Service implements OrkflowService, RunService, NamespaceService and
-// PluginService.
+// Service implements OrkflowService, RunService, NamespaceService,
+// PluginService and SystemService.
 type Service struct {
 	orkflows engine.OrkflowStore
 	// namespaces is the durable registry. Nil means no registry is wired:
@@ -186,9 +194,12 @@ type Service struct {
 	webhooks    *webhooks.Registry
 	notifier    engine.RunNotifier
 	plugins     []*orkstackv1.PluginInfo
-	logger      *slog.Logger
-	now         func() time.Time
-	newRunID    func() string
+	// system is this replica's own build and configuration, echoed by
+	// GetSystemInfo. Injected once, never read from the environment here.
+	system   SystemInfo
+	logger   *slog.Logger
+	now      func() time.Time
+	newRunID func() string
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
@@ -199,6 +210,7 @@ func NewService(cfg Config) *Service {
 		runs:        cfg.Runs,
 		bus:         cfg.Bus,
 		lister:      cfg.Lister,
+		system:      cfg.System,
 		router:      cfg.Router,
 		archive:     cfg.Archive,
 		logs:        cfg.Logs,
@@ -1360,9 +1372,23 @@ func IsTerminalEvent(event *orkstackv1.Event) bool {
 	}
 }
 
-// ListPlugins returns the plugins a live Orker can run, discovered through the
-// PluginLister seam (an ExecuteTask-queue activity). When no lister is wired
-// (tests, or no Orker), it falls back to the configured static set.
+// ListPlugins reports the plugins the connected Orkers of this deployment can
+// run — the inventory the Admin surface shows.
+//
+// It is assembled from two reads, both of which leave the process:
+//
+//   - the deployment's default execution channel, through the PluginLister
+//     seam (an activity the Orkers answer). Every deployment has this one,
+//     and it is the whole inventory of a single-pool deployment.
+//   - every OTHER pool this deployment knows of that has live Orkers
+//     (inventoryPools below, engine.PoolResolver.Inventory). Without it the
+//     answer describes one pool while claiming to describe the deployment,
+//     so a plugin only the gpu Orkers carry reads as "not installed" while a
+//     run using it succeeds.
+//
+// With no lister wired the configured static set answers, which is a unit-test
+// convenience and never a fallback for a configured Orker: a lister that fails
+// is Unavailable, not an empty inventory.
 func (s *Service) ListPlugins(
 	ctx context.Context,
 	_ *connect.Request[orkstackv1.ListPluginsRequest],
@@ -1375,14 +1401,138 @@ func (s *Service) ListPlugins(
 				fmt.Errorf("discover plugins: %w", err))
 		}
 		plugins = plugins[:0]
-		for _, d := range descriptors {
-			plugins = append(plugins, &orkstackv1.PluginInfo{
-				Name:        d.Name,
-				Version:     d.Version,
-				Description: d.Description,
-			})
+		plugins = appendPluginInfo(plugins, descriptors)
+	}
+
+	binding, err := s.binding(artifacts.DefaultNamespace)
+	if err != nil {
+		return nil, err
+	}
+	descriptors, err := s.resolverFor(binding).Inventory(ctx, s.inventoryPools(ctx))
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("discover plugins across pools: %w", err))
+	}
+	plugins = appendPluginInfo(plugins, descriptors)
+
+	plugins = dedupePlugins(plugins)
+	sort.Slice(plugins, func(i, j int) bool {
+		if plugins[i].GetName() != plugins[j].GetName() {
+			return plugins[i].GetName() < plugins[j].GetName()
+		}
+		return plugins[i].GetVersion() < plugins[j].GetVersion()
+	})
+	return connect.NewResponse(&orkstackv1.ListPluginsResponse{Plugins: plugins}), nil
+}
+
+// inventoryPools names every pool this deployment might have Orkers on: each
+// registered namespace's default and allow-list, plus the pools an
+// unrestricted namespace's own orkflows name.
+//
+// It is the same scope rule ListPools answers with, taken over every namespace
+// instead of one, because the inventory is deployment-wide. There is no
+// cheaper source: Temporal has no "list every task queue" call, so the pools
+// that can be asked are exactly the ones something in the store names.
+//
+// It never fails. A registry or catalog that cannot be read narrows WHICH
+// pools are asked, and the default channel — the one every deployment has —
+// is read by the caller regardless; refusing the whole inventory because a
+// second namespace's catalog was briefly unreadable would take the admin view
+// away at exactly the moment it is being looked at. The narrowing is logged.
+func (s *Service) inventoryPools(ctx context.Context) []string {
+	if s.namespaces == nil {
+		return nil
+	}
+	registered, err := s.namespaces.List(ctx)
+	if err != nil {
+		s.logger.Warn("plugin inventory: the namespace registry could not be read, so only "+
+			"the default pool's Orkers were asked", "error", err)
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var pools []string
+	add := func(pool string) {
+		if pool == "" {
+			return
+		}
+		if _, ok := seen[pool]; ok {
+			return
+		}
+		seen[pool] = struct{}{}
+		pools = append(pools, pool)
+	}
+	for _, ns := range registered {
+		add(engine.DefaultPoolFor(ns))
+		for _, pool := range ns.GetAllowedPools() {
+			add(pool)
+		}
+		named, err := s.poolsNamedByOrkflows(ctx, ns)
+		if err != nil {
+			s.logger.Warn("plugin inventory: the orkflow store could not be read, so the pools "+
+				"only this namespace's documents name were not asked",
+				"namespace", ns.GetName(), "error", err)
+			continue
+		}
+		for _, pool := range named {
+			add(pool)
 		}
 	}
-	sort.Slice(plugins, func(i, j int) bool { return plugins[i].GetName() < plugins[j].GetName() })
-	return connect.NewResponse(&orkstackv1.ListPluginsResponse{Plugins: plugins}), nil
+	sort.Strings(pools)
+	return pools
+}
+
+// appendPluginInfo maps Orker descriptors onto the wire message, schemas
+// included.
+//
+// A schema that cannot be represented as a protobuf Struct is dropped rather
+// than failing the inventory: the plugin is still installed, its name and
+// version are still the answer to "what can this deployment run", and a
+// discovery view that refuses to render because one plugin declared an
+// unencodable schema would be the wrong trade.
+func appendPluginInfo(
+	into []*orkstackv1.PluginInfo,
+	descriptors []plugin.Descriptor,
+) []*orkstackv1.PluginInfo {
+	for _, d := range descriptors {
+		into = append(into, &orkstackv1.PluginInfo{
+			Name:         d.Name,
+			Version:      d.Version,
+			Description:  d.Description,
+			InputSchema:  schemaStruct(d.InputSchema),
+			OutputSchema: schemaStruct(d.OutputSchema),
+		})
+	}
+	return into
+}
+
+func schemaStruct(doc plugin.SchemaDoc) *structpb.Struct {
+	if len(doc) == 0 {
+		return nil
+	}
+	encoded, err := structpb.NewStruct(doc)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+// dedupePlugins collapses one plugin reported by several pools.
+//
+// The key is (name, version), not name: mid-rollout two pools genuinely do run
+// two versions of one plugin, and collapsing those would hide the fact an
+// operator opened this view to find. The first report of a pair wins, and the
+// pools are asked in a fixed order, so the answer does not move between calls.
+func dedupePlugins(plugins []*orkstackv1.PluginInfo) []*orkstackv1.PluginInfo {
+	type key struct{ name, version string }
+	seen := map[key]struct{}{}
+	out := plugins[:0]
+	for _, info := range plugins {
+		k := key{info.GetName(), info.GetVersion()}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, info)
+	}
+	return out
 }
