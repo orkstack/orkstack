@@ -306,6 +306,45 @@ func TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters(t *testing.T
 	}
 }
 
+func TestNamespaceStore_OperationLockArbitratesBetweenReplicas(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	first, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore(first): %v", err)
+	}
+	second, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore(second): %v", err)
+	}
+	raw := newRawS3Client(t, cfg)
+	name := "m113-lock-" + uniqueToken(t)
+	lockKey := "metadata/namespace-operations/" + name + ".lock"
+	t.Cleanup(func() {
+		_, _ = raw.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+			Bucket: aws.String(cfg.S3Bucket),
+			Key:    aws.String(lockKey),
+		})
+	})
+
+	release, err := first.LockNamespaceOperation(ctx, name)
+	if err != nil {
+		t.Fatalf("first LockNamespaceOperation: %v", err)
+	}
+	if _, err := second.LockNamespaceOperation(ctx, name); !errors.Is(err, artifacts.ErrNamespaceOperationBusy) {
+		release()
+		t.Fatalf("second LockNamespaceOperation = %v, want ErrNamespaceOperationBusy", err)
+	}
+	release()
+
+	secondRelease, err := second.LockNamespaceOperation(ctx, name)
+	if err != nil {
+		t.Fatalf("second LockNamespaceOperation after release: %v", err)
+	}
+	secondRelease()
+}
+
 // getObject reads one object's bytes through the raw client, so an assertion
 // about what was STORED is made against the bucket rather than against what
 // the store hands back.

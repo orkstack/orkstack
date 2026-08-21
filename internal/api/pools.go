@@ -8,9 +8,11 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -83,11 +85,10 @@ func (s *Service) existingNamespaces(ctx context.Context) string {
 // ListPools reports the pools a namespace may dispatch onto, with the Orkers
 // serving each right now and the plugins those Orkers run.
 //
-// Everything in the answer comes from the cluster: the Orker count from what
-// is polling for the pool's work, the plugin set from the Orkers themselves.
-// Nothing is read from this process's memory, so any replica answers — one
-// that started nothing gives the same reply as the one that started
-// everything, which is the property AGENTS.md §1.7 asks of every read.
+// The pool scope comes from the durable namespace and orkflow stores. Live
+// counts and plugin names come from the cluster; this handler never answers
+// those parts from process memory, so a replica that started nothing can read
+// the same view.
 func (s *Service) ListPools(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListPoolsRequest],
@@ -101,58 +102,142 @@ func (s *Service) ListPools(
 		return nil, err
 	}
 
-	// An unrestricted namespace has no list to enumerate, so the pools its own
-	// orkflows name are what "the pools in scope" can honestly mean. A
-	// namespace with an allow-list uses that instead, and the resolver ignores
-	// this.
-	//
-	// A store that cannot be read narrows this report rather than replacing it
-	// with an error. The answer has two halves from two sources — which pools
-	// are in scope (the namespace document plus this) and who is serving them
-	// (the cluster) — and only this half needs the store. Pool health during a
-	// bucket wobble is precisely when an operator is looking, so what remains
-	// is the pools the namespace itself defines.
-	//
-	// A narrowed answer that says nothing is indistinguishable from a complete
-	// one, so the degradation is logged with the namespace and the failure.
-	// There is no field on the wire for it: this is a report whose other half
-	// is a liveness snapshot that was already stale when it was taken.
+	// A pool list is a complete answer only when the durable orkflow catalog
+	// was readable. Every stored version is a possible explicit-version submit
+	// input, so looking only at the current version can hide a durable route;
+	// the submit path applies the namespace policy again before dispatch.
 	named, err := s.poolsNamedByOrkflows(ctx, ns)
-	if err != nil {
-		s.logger.Warn("list pools: the orkflow store could not be read, so only the "+
-			"namespace's own pools are reported",
-			"namespace", ns.GetName(), "error", err)
-		named = nil
-	}
-
-	resolver := s.resolverFor(binding)
-	pools, err := resolver.Pools(ctx, ns, named)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("list pools for namespace %q: %w", ns.GetName(), err))
 	}
-	// The default pool comes from the resolver, not from the document: it is
-	// where THIS deployment sends a task that names none, which is the only
-	// answer a client can act on.
+
+	pools, err := s.listPoolsFromCluster(ctx, binding, ns, named)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("list pools for namespace %q: %w", ns.GetName(), err))
+	}
 	return connect.NewResponse(&orkstackv1.ListPoolsResponse{
 		Pools:       pools,
-		DefaultPool: resolver.DefaultPool(ns),
+		DefaultPool: s.pools.DefaultPool(ns),
 	}), nil
 }
 
+// listPoolsFromCluster builds the admin health view directly from the pool
+// probe. The engine resolver is the submit path; its report used to discard a
+// stale observation's LastSeen. Keeping this read here lets a dead pool retain
+// its last observed time while still reporting zero live Orkers.
+func (s *Service) listPoolsFromCluster(
+	ctx context.Context,
+	binding engine.Binding,
+	ns *orkstackv1.Namespace,
+	extra []string,
+) ([]*orkstackv1.Pool, error) {
+	if binding.Pools == nil {
+		return nil, fmt.Errorf("pool liveness is not configured")
+	}
+	candidates := []string{engine.DefaultPoolFor(ns)}
+	candidates = append(candidates, ns.GetAllowedPools()...)
+	// Explicit-version submissions can still run any stored version, so named
+	// pools stay in scope even when the namespace also has an allow-list. The
+	// submit path re-checks that policy; this read must not hide a durable route
+	// merely because the current policy changed after it was stored.
+	candidates = append(candidates, extra...)
+
+	routes := map[string]task.Route{}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		route, err := task.RouteForPool(candidate, s.rawQueue)
+		if err != nil {
+			return nil, fmt.Errorf("route pool %q: %w", candidate, err)
+		}
+		routes[route.Queue] = route
+	}
+	ordered := make([]task.Route, 0, len(routes))
+	for _, route := range routes {
+		ordered = append(ordered, route)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Pool < ordered[j].Pool })
+
+	defaultPool := s.pools.DefaultPool(ns)
+	out := make([]*orkstackv1.Pool, 0, len(ordered))
+	for _, route := range ordered {
+		observed, err := binding.Pools.ObservePool(ctx, route.Queue)
+		if err != nil {
+			return nil, &engine.PoolUnreachableError{Pool: route.Pool, Err: err}
+		}
+		pool := &orkstackv1.Pool{
+			Name:      route.Pool,
+			IsDefault: route.Pool == defaultPool,
+		}
+		if !observed.LastSeen.IsZero() {
+			pool.LastSeen = timestamppb.New(observed.LastSeen.UTC())
+		}
+		if !observed.Fresh(s.now(), engine.DefaultPollerFreshness) {
+			out = append(out, pool)
+			continue
+		}
+		pool.LiveOrkerCount = int32(observed.Orkers)
+		if observed.Orkers > 0 {
+			plugins, err := s.listPoolPluginNames(ctx, route, observed.Orkers)
+			if err != nil {
+				return nil, &engine.PoolUnreachableError{Pool: route.Pool, Err: err}
+			}
+			pool.Plugins = plugins
+		}
+		out = append(out, pool)
+	}
+	return out, nil
+}
+
+func (s *Service) listPoolPluginNames(
+	ctx context.Context,
+	route task.Route,
+	orkers int,
+) ([]string, error) {
+	if orkers > 1 && s.poolInventory == nil {
+		return nil, fmt.Errorf(
+			"pool %q has %d live Orkers but complete plugin inventory is not configured",
+			route.Pool, orkers)
+	}
+	if s.poolInventory != nil {
+		descriptors, err := s.poolInventory.PluginsOnPool(ctx, route.Queue)
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(descriptors))
+		for _, descriptor := range descriptors {
+			names = append(names, descriptor.Name)
+		}
+		sort.Strings(names)
+		return names, nil
+	}
+	if s.pools == nil || s.pools.Plugins == nil {
+		return nil, fmt.Errorf("pool %q has live Orkers but plugin discovery is not configured", route.Pool)
+	}
+	names, err := s.pools.Plugins.PluginsOnPool(ctx, route.Queue)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 // poolsNamedByOrkflows collects every pool the namespace's stored definitions
-// mention. A namespace with an allow-list needs none of them, and a namespace
-// nothing was ever applied into has none, which is not a failure.
+// mention, across every stored version. A namespace with no definitions has no
+// extra pools, which is not a failure.
 //
-// What a store failure MEANS is ListPools' decision, not this one's: the
-// caller degrades, and this reports.
+// A store failure is returned to the caller. A complete-looking pool list must
+// never silently omit a pool because the durable catalog was unavailable.
 func (s *Service) poolsNamedByOrkflows(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
 ) ([]string, error) {
-	if len(ns.GetAllowedPools()) > 0 {
-		return nil, nil
-	}
+	// List returns one resolved version per orkflow name. That is not enough:
+	// an explicit-version submit can still run any stored version, so every
+	// version catalog must be scanned before the pool set is complete.
 	orkflows, err := s.orkflows.List(ctx, ns.GetName())
 	if err != nil {
 		if errors.Is(err, artifacts.ErrNotFound) {
@@ -161,11 +246,30 @@ func (s *Service) poolsNamedByOrkflows(
 		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
 	}
 	seen := map[string]struct{}{}
-	for _, wf := range orkflows {
+	add := func(wf *orkstackv1.Orkflow) {
 		for _, t := range wf.GetTasks() {
 			if pool := t.GetPool(); pool != "" {
 				seen[pool] = struct{}{}
 			}
+		}
+	}
+	for _, head := range orkflows {
+		catalog, err := s.orkflows.Versions(ctx, ns.GetName(), head.GetName())
+		if err != nil {
+			if errors.Is(err, artifacts.ErrNotFound) {
+				add(head)
+				continue
+			}
+			return nil, orkflowStoreError(err,
+				"list versions of orkflow %q in namespace %q",
+				head.GetName(), ns.GetName())
+		}
+		if len(catalog.All) == 0 {
+			add(head)
+			continue
+		}
+		for _, wf := range catalog.All {
+			add(wf)
 		}
 	}
 	named := make([]string, 0, len(seen))

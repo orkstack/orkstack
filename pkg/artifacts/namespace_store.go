@@ -3,6 +3,8 @@ package artifacts
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +56,16 @@ type NamespaceStore interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// NamespaceOperationLocker serializes namespace deletion with orkflow writes.
+// Both operations touch different prefixes, so a conditional namespace PUT
+// alone cannot close the gap between counting definitions and deleting the
+// namespace document. A durable store implements this lock with a shared
+// conditional object; replicas that cannot acquire it must retry rather than
+// proceed with a partial view.
+type NamespaceOperationLocker interface {
+	LockNamespaceOperation(ctx context.Context, name string) (unlock func(), err error)
+}
+
 // PutConditions is the compare-and-swap a registry write may demand.
 //
 // It exists because two engine replicas share one bucket and neither
@@ -85,12 +97,27 @@ const (
 	// document.
 	NamespacePrefix = "metadata/namespaces"
 
+	// namespaceOperationPrefix holds one lock object per namespace. It is
+	// separate from registry and orkflow documents so neither can masquerade
+	// as an operation marker.
+	namespaceOperationPrefix = "metadata/namespace-operations"
+
 	// namespaceSuffix ends every registry object.
 	namespaceSuffix = ".json"
 
 	// namespaceContentType is what a registry object is served as.
 	namespaceContentType = "application/json"
 )
+
+// namespaceOperationLeaseTTL bounds how long a crashed replica can block
+// namespace writes. Normal operations release their marker; the lease is only
+// recovery for a process that died before its defer ran.
+const namespaceOperationLeaseTTL = 10 * time.Minute
+
+type namespaceOperationLease struct {
+	Token      string    `json:"token"`
+	AcquiredAt time.Time `json:"acquired_at"`
+}
 
 // ErrInvalidNamespace reports a namespace name this store cannot address.
 var ErrInvalidNamespace = errors.New("invalid namespace")
@@ -105,6 +132,12 @@ var ErrNamespaceNotEmpty = errors.New("namespace is not empty")
 // It is never "the write failed": the write did not happen, and the reason is
 // that somebody else got there first. A caller re-reads and decides again.
 var ErrPreconditionFailed = errors.New("precondition failed")
+
+// ErrNamespaceOperationBusy reports that another replica is changing or
+// deleting the same namespace. It is separate from a stale etag: retrying
+// after this short operation completes is safe, while replaying a stale update
+// is not.
+var ErrNamespaceOperationBusy = errors.New("namespace operation in progress")
 
 // NamespaceKey renders the object key holding one namespace document:
 // metadata/namespaces/{name}.json.
@@ -214,8 +247,9 @@ type S3NamespaceStore struct {
 	now func() time.Time
 }
 
-// compile-time contract check.
+// compile-time contract checks.
 var _ NamespaceStore = (*S3NamespaceStore)(nil)
+var _ NamespaceOperationLocker = (*S3NamespaceStore)(nil)
 
 // NewS3NamespaceStore builds the namespace registry from the same ORK_S3_*
 // config the artifact and orkflow stores use.
@@ -239,6 +273,116 @@ func (s *S3NamespaceStore) Location() string { return s.uri(NamespacePrefix + "/
 
 func (s *S3NamespaceStore) uri(key string) string {
 	return "s3://" + s.bucket + "/" + key
+}
+
+// LockNamespaceOperation claims a durable per-namespace operation marker.
+// Apply and delete both hold it across their registry and orkflow-store calls,
+// so they cannot observe an empty catalog at the same time and then leave an
+// orkflow behind a deleted namespace. S3's If-None-Match condition arbitrates
+// the claim across replicas. A lease permits recovery after a crashed holder;
+// a fresh marker remains busy.
+func (s *S3NamespaceStore) LockNamespaceOperation(
+	ctx context.Context,
+	name string,
+) (func(), error) {
+	name = ResolveNamespace(name)
+	if _, err := NamespaceKey(name); err != nil {
+		return nil, err
+	}
+	lockKey := namespaceOperationPrefix + "/" + name + ".lock"
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		return nil, fmt.Errorf("artifacts: create namespace operation token: %w", err)
+	}
+	body, err := json.Marshal(namespaceOperationLease{
+		Token:      hex.EncodeToString(token),
+		AcquiredAt: s.clock().UTC(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: encode namespace operation token: %w", err)
+	}
+	for {
+		put, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(s.bucket),
+			Key:           aws.String(lockKey),
+			Body:          bytes.NewReader(body),
+			ContentLength: aws.Int64(int64(len(body))),
+			ContentType:   aws.String("application/json"),
+			IfNoneMatch:   aws.String("*"),
+		})
+		if err == nil {
+			etag := aws.ToString(put.ETag)
+			return func() {
+				// An absent ETag cannot prove ownership. Leaving the marker is
+				// safer than deleting a marker a later holder may own.
+				if etag == "" {
+					return
+				}
+				_, _ = s.client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+					Bucket:  aws.String(s.bucket),
+					Key:     aws.String(lockKey),
+					IfMatch: aws.String(etag),
+				})
+			}, nil
+		}
+		if !isPreconditionFailed(err) {
+			return nil, fmt.Errorf("artifacts: lock namespace %q: %w", name, err)
+		}
+
+		stale, etag, inspectErr := s.staleOperationLease(ctx, lockKey)
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		if !stale {
+			return nil, fmt.Errorf("artifacts: namespace %q is busy: %w",
+				name, ErrNamespaceOperationBusy)
+		}
+		if etag == "" {
+			// The marker disappeared between the failed PUT and GET. Try
+			// the conditional create again instead of reporting a false busy.
+			continue
+		}
+		_, deleteErr := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket:  aws.String(s.bucket),
+			Key:     aws.String(lockKey),
+			IfMatch: aws.String(etag),
+		})
+		if deleteErr != nil {
+			if isPreconditionFailed(deleteErr) || isNotFound(deleteErr) {
+				continue
+			}
+			return nil, fmt.Errorf("artifacts: recover namespace lock %q: %w", name, deleteErr)
+		}
+	}
+}
+
+func (s *S3NamespaceStore) staleOperationLease(
+	ctx context.Context,
+	key string,
+) (bool, string, error) {
+	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return true, "", nil
+		}
+		return false, "", fmt.Errorf("artifacts: inspect namespace lock %q: %w", s.uri(key), err)
+	}
+	defer object.Body.Close()
+	leaseBody, err := io.ReadAll(object.Body)
+	if err != nil {
+		return false, "", fmt.Errorf("artifacts: read namespace lock %q: %w", s.uri(key), err)
+	}
+	var lease namespaceOperationLease
+	if err := json.Unmarshal(leaseBody, &lease); err != nil || lease.AcquiredAt.IsZero() {
+		// A marker from an older build has no safe age to prove. Do not steal
+		// it; an operator can remove it after verifying no mutation is active.
+		return false, aws.ToString(object.ETag), nil
+	}
+	return s.clock().UTC().Sub(lease.AcquiredAt) > namespaceOperationLeaseTTL,
+		aws.ToString(object.ETag), nil
 }
 
 // Put writes one namespace document and returns what it stored.

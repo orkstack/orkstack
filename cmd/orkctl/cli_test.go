@@ -15,6 +15,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // ---------------------------------------------------------------------------
@@ -491,7 +493,14 @@ func TestCLITransport_SpeaksUnencryptedHTTP2ToTheEngine(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
-	f := newFixture(t, &orkstackv1.PluginInfo{Name: "http", Version: "0.1.0"})
+	f := newFixtureWith(t, func(cfg *api.Config) {
+		cfg.Pools = adminLivePools{
+			Orkers:   map[string]int{task.DefaultPool: 1},
+			LastSeen: fixedNow,
+		}
+		cfg.PoolPlugins = adminPoolPlugins{task.DefaultPool: {"http"}}
+		cfg.PoolInventory = adminPoolInventory{"ork-tasks": {{Name: "http", Version: "0.1.0"}}}
+	}, &orkstackv1.PluginInfo{Name: "http", Version: "0.1.0"})
 	f.applyExample().requireExit(t, exitOK)
 
 	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {

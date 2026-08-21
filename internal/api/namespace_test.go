@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -32,8 +33,14 @@ import (
 // TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters.
 type fakeRegistry struct {
 	mu   sync.Mutex
+	opMu sync.Mutex
 	docs map[string]*orkstackv1.Namespace
 	seq  int
+	// The optional hooks let the race test hold a delete at the durable
+	// registry boundary and prove apply cannot write behind it.
+	deleteEntered chan struct{}
+	deleteRelease <-chan struct{}
+	deleteOnce    sync.Once
 }
 
 func newFakeRegistry(names ...*orkstackv1.Namespace) *fakeRegistry {
@@ -44,6 +51,11 @@ func newFakeRegistry(names ...*orkstackv1.Namespace) *fakeRegistry {
 		}
 	}
 	return r
+}
+
+func (r *fakeRegistry) LockNamespaceOperation(context.Context, string) (func(), error) {
+	r.opMu.Lock()
+	return r.opMu.Unlock, nil
 }
 
 func (r *fakeRegistry) Get(_ context.Context, name string) (*orkstackv1.Namespace, error) {
@@ -109,6 +121,12 @@ func (r *fakeRegistry) Put(
 // is exactly why the API performs that check itself, and why a test of the
 // refusal here measures the API's check rather than the double's.
 func (r *fakeRegistry) Delete(_ context.Context, name string) error {
+	if r.deleteEntered != nil {
+		r.deleteOnce.Do(func() { close(r.deleteEntered) })
+		if r.deleteRelease != nil {
+			<-r.deleteRelease
+		}
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	name = artifacts.ResolveNamespace(name)
@@ -121,6 +139,127 @@ func (r *fakeRegistry) Delete(_ context.Context, name string) error {
 	}
 	delete(r.docs, name)
 	return nil
+}
+
+type blockingPutStore struct {
+	inner   *engine.MemoryOrkflowStore
+	entered chan struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingPutStore) Put(ctx context.Context, wf *orkstackv1.Orkflow) (*orkstackv1.Orkflow, bool, error) {
+	s.once.Do(func() { close(s.entered) })
+	<-s.release
+	return s.inner.Put(ctx, wf)
+}
+
+func (s *blockingPutStore) Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error) {
+	return s.inner.Get(ctx, namespace, name, version)
+}
+
+func (s *blockingPutStore) List(ctx context.Context, namespace string) ([]*orkstackv1.Orkflow, error) {
+	return s.inner.List(ctx, namespace)
+}
+
+func (s *blockingPutStore) Versions(ctx context.Context, namespace, name string) (artifacts.OrkflowVersions, error) {
+	return s.inner.Versions(ctx, namespace, name)
+}
+
+func (s *blockingPutStore) SetCurrentVersion(ctx context.Context, namespace, name, version string) (string, error) {
+	return s.inner.SetCurrentVersion(ctx, namespace, name, version)
+}
+
+func TestNamespaceDeleteAndApplySerializeAcrossReplicas(t *testing.T) {
+	reg := newFakeRegistry(&orkstackv1.Namespace{Name: "race"})
+	putEntered := make(chan struct{})
+	putRelease := make(chan struct{})
+	deleteEntered := make(chan struct{})
+	deleteRelease := make(chan struct{})
+	var releasePutOnce sync.Once
+	releasePut := func() { releasePutOnce.Do(func() { close(putRelease) }) }
+	defer releasePut()
+	var releaseDeleteOnce sync.Once
+	releaseDelete := func() { releaseDeleteOnce.Do(func() { close(deleteRelease) }) }
+	defer releaseDelete()
+	catalog := &blockingPutStore{
+		inner:   engine.NewMemoryOrkflowStore(),
+		entered: putEntered,
+		release: putRelease,
+	}
+	reg.deleteEntered = deleteEntered
+	reg.deleteRelease = deleteRelease
+	newService := func() *api.Service {
+		return api.NewService(api.Config{
+			Orkflows:   catalog,
+			Namespaces: reg,
+			Starter:    &fakeStarter{},
+		})
+	}
+	svcA, svcB := newService(), newService()
+	document := `
+name: race-job
+version: 1.0.0
+tasks:
+  - id: run
+    plugin: shell
+    with: {command: "echo race"}
+`
+	applyDone := make(chan error, 1)
+	go func() {
+		_, err := svcA.ApplyOrkflow(context.Background(),
+			connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+				Yaml: document, Namespace: "race",
+			}))
+		applyDone <- err
+	}()
+	select {
+	case <-putEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("apply did not reach the catalog write")
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		_, err := svcB.DeleteNamespace(context.Background(),
+			connect.NewRequest(&orkstackv1.DeleteNamespaceRequest{Name: "race"}))
+		deleteDone <- err
+	}()
+
+	// The second replica must still be behind the durable namespace lock while
+	// the first replica's catalog write is pending. Without that lock it would
+	// count zero, delete the registry document, and leave an orphaned orkflow.
+	select {
+	case <-deleteEntered:
+		releasePut()
+		releaseDelete()
+		t.Fatal("delete reached the registry while apply still held the namespace operation")
+	case <-time.After(250 * time.Millisecond):
+	}
+	releasePut()
+	applyErr := <-applyDone
+	if applyErr != nil {
+		t.Fatalf("ApplyOrkflow: %v", applyErr)
+	}
+	deleteErr := <-deleteDone
+	if deleteErr == nil {
+		t.Fatal("DeleteNamespace succeeded after the apply committed")
+	}
+	if code := connect.CodeOf(deleteErr); code != connect.CodeFailedPrecondition {
+		t.Fatalf("DeleteNamespace failed with %v, want FailedPrecondition: %v",
+			code, deleteErr)
+	}
+	if !strings.Contains(deleteErr.Error(), "1 orkflow") {
+		t.Fatalf("DeleteNamespace did not report the held orkflow: %v", deleteErr)
+	}
+
+	stored, err := catalog.List(context.Background(), "race")
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("catalog after the race = %v, %v; want one stored orkflow", stored, err)
+	}
+	if _, err := reg.Get(context.Background(), "race"); err != nil {
+		t.Fatalf("namespace vanished after the race: %v", err)
+	}
 }
 
 // namespacedService wires a Service over an in-memory catalog and registry.

@@ -13,6 +13,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
@@ -49,6 +50,28 @@ func (u unreachablePool) PluginsOnPool(
 ) ([]plugin.Descriptor, error) {
 	return nil, u.err
 }
+
+type unreachableNames struct{ err error }
+
+func (u unreachableNames) PluginsOnPool(context.Context, string) ([]string, error) {
+	return nil, u.err
+}
+
+type downNamespaceRegistry struct{ err error }
+
+func (d downNamespaceRegistry) Get(context.Context, string) (*orkstackv1.Namespace, error) {
+	return nil, d.err
+}
+
+func (d downNamespaceRegistry) List(context.Context) ([]*orkstackv1.Namespace, error) {
+	return nil, d.err
+}
+
+func (d downNamespaceRegistry) Put(context.Context, *orkstackv1.Namespace, artifacts.PutConditions) (*orkstackv1.Namespace, error) {
+	return nil, d.err
+}
+
+func (d downNamespaceRegistry) Delete(context.Context, string) error { return d.err }
 
 // TestListPlugins_CarriesTheInputAndOutputSchemasTheOrkersDeclare is the
 // inventory's declared shape.
@@ -124,8 +147,8 @@ func TestListPlugins_ReportsPluginsOnlyACustomPoolsOrkersRun(t *testing.T) {
 			{Name: "shell", Version: "0.1.0"},
 		}},
 		Pools: livePools{task.DefaultQueue: 2, gpu: 1},
-		PoolPlugins: poolInventory{
-			task.DefaultQueue: {{Name: "shell", Version: "0.1.0"}},
+		PoolInventory: poolInventory{
+			task.DefaultQueue: {{Name: "file", Version: "0.3.0"}, {Name: "shell", Version: "0.1.0"}},
 			gpu:               {{Name: "container", Version: "0.2.0", Description: "runs a container"}},
 		},
 	})
@@ -139,8 +162,8 @@ func TestListPlugins_ReportsPluginsOnlyACustomPoolsOrkersRun(t *testing.T) {
 	for _, info := range resp.Msg.GetPlugins() {
 		names = append(names, info.GetName())
 	}
-	if fmt.Sprint(names) != fmt.Sprint([]string{"container", "shell"}) {
-		t.Errorf("inventory = %v, want [container shell] — every connected Orker's plugins", names)
+	if fmt.Sprint(names) != fmt.Sprint([]string{"container", "file", "shell"}) {
+		t.Errorf("inventory = %v, want [container file shell] — heterogeneous Orkers and the custom pool", names)
 	}
 	// One entry per plugin: the default pool and the deployment's default
 	// channel are the same Orkers, and reporting them twice would make the
@@ -170,7 +193,7 @@ func TestListPlugins_SkipsAPoolWithNoLiveOrkers(t *testing.T) {
 		}},
 		Lister: describedPlugins{descriptors: []plugin.Descriptor{{Name: "shell"}}},
 		Pools:  livePools{task.DefaultQueue: 1},
-		PoolPlugins: countingInventory{
+		PoolInventory: countingInventory{
 			counts: asked,
 			byQueue: poolInventory{
 				task.DefaultQueue: {{Name: "shell"}},
@@ -218,9 +241,9 @@ func TestListPlugins_SurfacesAPoolThatCannotBeAsked(t *testing.T) {
 			Name:         "default",
 			AllowedPools: []string{"main", "gpu"},
 		}},
-		Lister:      describedPlugins{descriptors: []plugin.Descriptor{{Name: "shell"}}},
-		Pools:       livePools{task.DefaultQueue: 1, gpu: 1},
-		PoolPlugins: unreachablePool{err: errors.New("activity timed out")},
+		Lister:        describedPlugins{descriptors: []plugin.Descriptor{{Name: "shell"}}},
+		Pools:         livePools{task.DefaultQueue: 1, gpu: 1},
+		PoolInventory: unreachablePool{err: errors.New("activity timed out")},
 	})
 
 	_, err := svc.ListPlugins(context.Background(),
@@ -241,13 +264,13 @@ func TestListPlugins_SurfacesAPoolThatCannotBeAsked(t *testing.T) {
 //
 // A pool with live Orkers whose plugin read failed used to be reported as a
 // live pool with no plugins — the same bytes on the wire as "these Orkers run
-// nothing", which is a fact an operator would act on. The two states must stay
-// distinguishable: the failure is reported, and the caller retries.
+// nothing". The two states must stay distinguishable: the failure is reported,
+// and the caller retries.
 func TestListPools_ReportsAFailedPluginReadInsteadOfAnEmptyPluginSet(t *testing.T) {
 	svc := api.NewService(api.Config{
 		Namespaces:  registry{"default": {Name: "default"}},
-		Pools:       livePools{task.DefaultQueue: 2},
-		PoolPlugins: unreachablePool{err: errors.New("no worker answered")},
+		Pools:       livePools{task.DefaultQueue: 1},
+		PoolPlugins: unreachableNames{err: errors.New("no worker answered")},
 	})
 
 	resp, err := svc.ListPools(context.Background(),
@@ -267,5 +290,136 @@ func TestListPools_ReportsAFailedPluginReadInsteadOfAnEmptyPluginSet(t *testing.
 	}
 	if !strings.Contains(err.Error(), task.DefaultPool) {
 		t.Errorf("the failure does not name the pool it could not read: %v", err)
+	}
+}
+
+func TestListPlugins_ReportsKnownCustomPoolWhenTheDefaultPoolIsEmpty(t *testing.T) {
+	gpu := poolQueue(t, "gpu")
+	svc := api.NewService(api.Config{
+		Namespaces: registry{"default": {
+			Name:         "default",
+			AllowedPools: []string{"gpu"},
+		}},
+		Lister:        failingLister{},
+		Pools:         livePools{gpu: 1},
+		PoolInventory: poolInventory{gpu: {{Name: "container", Version: "0.2.0", Description: "runs containers"}}},
+	})
+
+	resp, err := svc.ListPlugins(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPlugins with only a custom pool alive: %v", err)
+	}
+	if len(resp.Msg.GetPlugins()) != 1 || resp.Msg.GetPlugins()[0].GetName() != "container" {
+		t.Fatalf("plugins = %v, want the custom pool's container plugin", resp.Msg.GetPlugins())
+	}
+}
+
+func TestListPlugins_FailsClosedForCustomPoolWithoutDescriptorInventory(t *testing.T) {
+	gpu := poolQueue(t, "gpu")
+	svc := api.NewService(api.Config{
+		Namespaces: registry{"default": {
+			Name:         "default",
+			AllowedPools: []string{"gpu"},
+		}},
+		Pools:       livePools{gpu: 1},
+		PoolPlugins: poolPlugins{gpu: {"container"}},
+	})
+
+	_, err := svc.ListPlugins(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
+	if err == nil {
+		t.Fatal("ListPlugins presented name-only metadata for a custom pool")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeUnavailable {
+		t.Errorf("ListPlugins failed with %v, want Unavailable", code)
+	}
+	if !strings.Contains(err.Error(), "gpu") || !strings.Contains(err.Error(), "descriptors") {
+		t.Errorf("ListPlugins error = %v, want pool and descriptor limitation", err)
+	}
+}
+
+func TestListPlugins_FailsClosedWhenNamespaceRegistryCannotBeRead(t *testing.T) {
+	svc := api.NewService(api.Config{
+		Namespaces: downNamespaceRegistry{err: errors.New("bucket unavailable")},
+		Pools:      livePools{task.DefaultQueue: 1},
+		Lister:     describedPlugins{descriptors: []plugin.Descriptor{{Name: "shell"}}},
+	})
+
+	_, err := svc.ListPlugins(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
+	if err == nil {
+		t.Fatal("ListPlugins answered after losing the durable namespace registry")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeUnavailable {
+		t.Errorf("ListPlugins failed with %v, want Unavailable", code)
+	}
+	if !strings.Contains(err.Error(), "namespace registry") {
+		t.Errorf("ListPlugins error = %v, want the failed durable source named", err)
+	}
+}
+
+func TestListPlugins_FailsClosedWhenOrkflowCatalogCannotBeRead(t *testing.T) {
+	svc := api.NewService(api.Config{
+		Orkflows:   downOrkflowStore{err: errors.New("catalog unavailable")},
+		Namespaces: registry{"default": {Name: "default"}},
+		Pools:      livePools{task.DefaultQueue: 1},
+		Lister:     describedPlugins{descriptors: []plugin.Descriptor{{Name: "shell"}}},
+	})
+
+	_, err := svc.ListPlugins(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
+	if err == nil {
+		t.Fatal("ListPlugins answered after losing the durable orkflow catalog")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeUnavailable {
+		t.Errorf("ListPlugins failed with %v, want Unavailable", code)
+	}
+	if !strings.Contains(err.Error(), "orkflows") {
+		t.Errorf("ListPlugins error = %v, want the failed durable source named", err)
+	}
+}
+
+func TestListPlugins_FailsClosedForMultipleOrkersWithoutCompleteInventory(t *testing.T) {
+	gpu := poolQueue(t, "gpu")
+	svc := api.NewService(api.Config{
+		Namespaces: registry{"default": {
+			Name:         "default",
+			AllowedPools: []string{"gpu"},
+		}},
+		Pools:       livePools{gpu: 2},
+		PoolPlugins: poolPlugins{gpu: {"shell"}},
+	})
+
+	_, err := svc.ListPlugins(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
+	if err == nil {
+		t.Fatal("ListPlugins presented one pool activity result as a complete multi-Orker inventory")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeUnavailable {
+		t.Errorf("ListPlugins failed with %v, want Unavailable", code)
+	}
+	if !strings.Contains(err.Error(), "gpu") || !strings.Contains(err.Error(), "2 live Orkers") {
+		t.Errorf("ListPlugins error = %v, want pool and Orker count", err)
+	}
+}
+
+func TestListPools_FailsClosedForMultipleOrkersWithoutCompleteInventory(t *testing.T) {
+	svc := api.NewService(api.Config{
+		Namespaces:  registry{"default": {Name: "default"}},
+		Pools:       livePools{task.DefaultQueue: 2},
+		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}},
+	})
+
+	_, err := svc.ListPools(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	if err == nil {
+		t.Fatal("ListPools presented one Orker's plugin names as a complete multi-Orker pool")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeUnavailable {
+		t.Errorf("ListPools failed with %v, want Unavailable", code)
+	}
+	if !strings.Contains(err.Error(), task.DefaultPool) || !strings.Contains(err.Error(), "2 live Orkers") {
+		t.Errorf("ListPools error = %v, want pool and count", err)
 	}
 }

@@ -1025,6 +1025,18 @@ state, and it is reported as a failure rather than as an empty plugin list:
 "we could not ask" and "they run nothing" are the same bytes on the wire
 otherwise, and only the second is a fact to act on.
 
+For `plugin list`, a non-default pool also needs a complete descriptor reader:
+the one-worker name-only reader cannot supply version, description or schemas.
+If that reader is all the deployment has, the API returns `Unavailable` rather
+than presenting partial metadata. The same fail-closed rule covers a pool with
+multiple live Orkers, whose registries cannot be represented by one sample.
+The inventory's pool scope is the durable state the replica can read: the
+deployment's default route, namespace allow-lists, and pools named by any
+stored orkflow version. A pool that no namespace or stored version names cannot
+be inferred from this API. Temporal's task-queue description call requires a
+queue name; it has no read that lists every task queue, and those names stay
+below this user-facing pool surface.
+
 The whole surface, answered by a second replica that started nothing — no
 namespace registered, no orkflow applied, no run — is proven live in
 `TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`

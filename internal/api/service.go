@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -33,6 +35,15 @@ type RunStarter = engine.RunStarter
 // substitute a fake; production uses engine.TemporalStarter.
 type PluginLister interface {
 	ListPlugins(ctx context.Context) ([]plugin.Descriptor, error)
+}
+
+// PoolPluginInventory is the complete live descriptor inventory for one pool.
+// PoolPluginLister below remains the name-only health seam; it cannot answer
+// ListPlugins for a non-default pool because the wire also carries version,
+// description and schemas. When this seam is absent, admin reads fail closed
+// instead of presenting partial metadata or one sample as a whole pool.
+type PoolPluginInventory interface {
+	PluginsOnPool(ctx context.Context, queue string) ([]plugin.Descriptor, error)
 }
 
 // RunArchive is the seam between the API and durable run history. Temporal is
@@ -135,8 +146,13 @@ type Config struct {
 	// answer would either refuse every submit or vouch for every pool.
 	Pools engine.PoolProbe
 
-	// PoolPlugins reports what one pool's Orkers can run, for ListPools.
+	// PoolPlugins reports the names a pool's Orkers can run, for ListPools.
 	PoolPlugins engine.PoolPluginLister
+
+	// PoolInventory is a complete descriptor reader for a pool. It is required
+	// for ListPlugins on non-default pools and for any pool with more than one
+	// live Orker; PoolPlugins remains the name-only health seam.
+	PoolInventory PoolPluginInventory
 
 	// RawQueue is the operator escape hatch (ORK_ORKER_QUEUE): the execution
 	// channel a task that names no pool is dispatched to. Empty routes the
@@ -173,10 +189,11 @@ type Service struct {
 	// reads answer for the built-in default only and writes are refused,
 	// because a namespace this process invented would be gone at the next
 	// restart and absent from every other replica.
-	namespaces engine.NamespaceRegistry
-	runs       *engine.RunStore
-	bus        *engine.EventBus
-	lister     PluginLister
+	poolInventory PoolPluginInventory
+	namespaces    engine.NamespaceRegistry
+	runs          *engine.RunStore
+	bus           *engine.EventBus
+	lister        PluginLister
 	// router resolves which cluster answers for a namespace or a run. It
 	// holds one binding today; every read and write path goes through it, so
 	// partitioning namespaces across clusters later is configuration rather
@@ -184,8 +201,14 @@ type Service struct {
 	router engine.NamespaceRouter
 	// pools is the routing decision: pool resolution, allow-list enforcement
 	// and the liveness check, all of which happen at submit.
-	pools   *engine.PoolResolver
-	archive RunArchive
+	pools    *engine.PoolResolver
+	rawQueue string
+	// namespaceOps is a test-only fallback for registries that do not expose
+	// the durable lock. Production S3NamespaceStore implements the durable
+	// seam; this keeps small in-process fixtures usable without claiming
+	// cross-replica safety for them.
+	namespaceOps sync.Mutex
+	archive      RunArchive
 	// logs is the durable task-log store, read by StreamTaskLogs. It is the
 	// same bucket the Orker wrote into and belongs to no process.
 	logs        artifacts.LogStore
@@ -205,23 +228,25 @@ type Service struct {
 // NewService builds a Service, filling in defaults for anything omitted.
 func NewService(cfg Config) *Service {
 	svc := &Service{
-		orkflows:    cfg.Orkflows,
-		namespaces:  cfg.Namespaces,
-		runs:        cfg.Runs,
-		bus:         cfg.Bus,
-		lister:      cfg.Lister,
-		system:      cfg.System,
-		router:      cfg.Router,
-		archive:     cfg.Archive,
-		logs:        cfg.Logs,
-		logPoll:     cfg.LogPoll,
-		idempotency: cfg.Idempotency,
-		webhooks:    cfg.Webhooks,
-		notifier:    cfg.Notifier,
-		plugins:     cfg.Plugins,
-		logger:      cfg.Logger,
-		now:         cfg.Now,
-		newRunID:    cfg.NewRunID,
+		orkflows:      cfg.Orkflows,
+		namespaces:    cfg.Namespaces,
+		rawQueue:      cfg.RawQueue,
+		runs:          cfg.Runs,
+		bus:           cfg.Bus,
+		lister:        cfg.Lister,
+		poolInventory: cfg.PoolInventory,
+		system:        cfg.System,
+		router:        cfg.Router,
+		archive:       cfg.Archive,
+		logs:          cfg.Logs,
+		logPoll:       cfg.LogPoll,
+		idempotency:   cfg.Idempotency,
+		webhooks:      cfg.Webhooks,
+		notifier:      cfg.Notifier,
+		plugins:       cfg.Plugins,
+		logger:        cfg.Logger,
+		now:           cfg.Now,
+		newRunID:      cfg.NewRunID,
 	}
 	if svc.router == nil {
 		// One binding: this cluster, every namespace. Reader, Starter and
@@ -348,6 +373,11 @@ func (s *Service) ApplyOrkflow(
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := s.lockNamespaceOperation(ctx, selected)
+	if err != nil {
+		return nil, namespaceStoreError(err, "lock namespace %q", artifacts.ResolveNamespace(selected))
+	}
+	defer unlock()
 	// Gate one of two on allowed_pools: the authoring gate, with the file in
 	// hand, so an author is told now rather than at the first submit. It is
 	// deliberately not the only gate — SubmitRun enforces the same rule again
@@ -1380,47 +1410,103 @@ func IsTerminalEvent(event *orkstackv1.Event) bool {
 
 // ListPlugins reports the plugins the connected Orkers of this deployment can
 // run — the inventory the Admin surface shows.
-//
-// It is assembled from two reads, both of which leave the process:
-//
-//   - the deployment's default execution channel, through the PluginLister
-//     seam (an activity the Orkers answer). Every deployment has this one,
-//     and it is the whole inventory of a single-pool deployment.
-//   - every OTHER pool this deployment knows of that has live Orkers
-//     (inventoryPools below, engine.PoolResolver.Inventory). Without it the
-//     answer describes one pool while claiming to describe the deployment,
-//     so a plugin only the gpu Orkers carry reads as "not installed" while a
-//     run using it succeeds.
-//
-// With no lister wired the configured static set answers, which is a unit-test
-// convenience and never a fallback for a configured Orker: a lister that fails
-// is Unavailable, not an empty inventory.
 func (s *Service) ListPlugins(
 	ctx context.Context,
 	_ *connect.Request[orkstackv1.ListPluginsRequest],
 ) (*connect.Response[orkstackv1.ListPluginsResponse], error) {
-	plugins := append([]*orkstackv1.PluginInfo(nil), s.plugins...)
-	if s.lister != nil {
-		descriptors, err := s.lister.ListPlugins(ctx)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeUnavailable,
-				fmt.Errorf("discover plugins: %w", err))
-		}
-		plugins = plugins[:0]
-		plugins = appendPluginInfo(plugins, descriptors)
-	}
-
+	var plugins []*orkstackv1.PluginInfo
 	binding, err := s.binding(artifacts.DefaultNamespace)
 	if err != nil {
 		return nil, err
 	}
-	descriptors, err := s.resolverFor(binding).Inventory(ctx, s.inventoryPools(ctx))
+	// A Service without a live pool probe is the small, static unit-test shape.
+	// Keep its old configured-lister behavior; production always wires the
+	// Temporal probe and therefore takes the complete known-pool path below.
+	if binding.Pools == nil {
+		if s.lister != nil {
+			descriptors, err := s.lister.ListPlugins(ctx)
+			if err != nil {
+				return nil, connect.NewError(connect.CodeUnavailable,
+					fmt.Errorf("discover plugins: %w", err))
+			}
+			plugins = appendPluginInfo(nil, descriptors)
+		} else {
+			plugins = append(plugins, s.plugins...)
+		}
+		return pluginResponse(plugins), nil
+	}
+
+	pools, err := s.inventoryPools(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("discover plugins across pools: %w", err))
+			fmt.Errorf("discover plugin pools: %w", err))
 	}
-	plugins = appendPluginInfo(plugins, descriptors)
+	// The deployment's configured default route is known even when no stored
+	// namespace or orkflow names it. It is the only route the legacy lister can
+	// answer, so include it in the candidate set before the durable names.
+	pools = append([]string{task.DefaultPool}, pools...)
+	routes := map[string]task.Route{}
+	for _, pool := range pools {
+		route, err := task.RouteForPool(pool, s.rawQueue)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("route plugin pool %q: %w", pool, err))
+		}
+		routes[route.Queue] = route
+	}
+	ordered := make([]task.Route, 0, len(routes))
+	for _, route := range routes {
+		ordered = append(ordered, route)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Pool < ordered[j].Pool })
 
+	defaultRoute, err := task.DefaultRoute(s.rawQueue)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable, err)
+	}
+	for _, route := range ordered {
+		live, err := binding.Pools.ObservePool(ctx, route.Queue)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("discover plugins on pool %q: %w", route.Pool, err))
+		}
+		if !live.Fresh(s.now(), engine.DefaultPollerFreshness) {
+			continue
+		}
+		if live.Orkers > 1 && s.poolInventory == nil {
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+				"pool %q has %d live Orkers but complete plugin inventory is not configured",
+				route.Pool, live.Orkers))
+		}
+		if route.Queue != defaultRoute.Queue && s.poolInventory == nil {
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+				"pool %q has live Orkers but complete plugin descriptors are not configured",
+				route.Pool))
+		}
+		var descriptors []plugin.Descriptor
+		switch {
+		case s.poolInventory != nil:
+			descriptors, err = s.poolInventory.PluginsOnPool(ctx, route.Queue)
+		case route.Queue == defaultRoute.Queue && s.lister != nil:
+			// This call is made only after the probe says the default route is
+			// live. A custom-only deployment therefore never fails because no
+			// Orker polls the default route.
+			descriptors, err = s.lister.ListPlugins(ctx)
+		default:
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+				"pool %q has live Orkers but complete plugin descriptors are not configured",
+				route.Pool))
+		}
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("discover plugins on pool %q: %w", route.Pool, err))
+		}
+		plugins = appendPluginInfo(plugins, descriptors)
+	}
+	return pluginResponse(plugins), nil
+}
+
+func pluginResponse(plugins []*orkstackv1.PluginInfo) *connect.Response[orkstackv1.ListPluginsResponse] {
 	plugins = dedupePlugins(plugins)
 	sort.Slice(plugins, func(i, j int) bool {
 		if plugins[i].GetName() != plugins[j].GetName() {
@@ -1428,32 +1514,19 @@ func (s *Service) ListPlugins(
 		}
 		return plugins[i].GetVersion() < plugins[j].GetVersion()
 	})
-	return connect.NewResponse(&orkstackv1.ListPluginsResponse{Plugins: plugins}), nil
+	return connect.NewResponse(&orkstackv1.ListPluginsResponse{Plugins: plugins})
 }
 
-// inventoryPools names every pool this deployment might have Orkers on: each
-// registered namespace's default and allow-list, plus the pools an
-// unrestricted namespace's own orkflows name.
-//
-// It is the same scope rule ListPools answers with, taken over every namespace
-// instead of one, because the inventory is deployment-wide. There is no
-// cheaper source: Temporal has no "list every task queue" call, so the pools
-// that can be asked are exactly the ones something in the store names.
-//
-// It never fails. A registry or catalog that cannot be read narrows WHICH
-// pools are asked, and the default channel — the one every deployment has —
-// is read by the caller regardless; refusing the whole inventory because a
-// second namespace's catalog was briefly unreadable would take the admin view
-// away at exactly the moment it is being looked at. The narrowing is logged.
-func (s *Service) inventoryPools(ctx context.Context) []string {
+// inventoryPools names every pool this deployment may have Orkers on from
+// durable namespace and orkflow state. The state is read completely: a
+// registry or catalog error is returned rather than narrowing the inventory.
+func (s *Service) inventoryPools(ctx context.Context) ([]string, error) {
 	if s.namespaces == nil {
-		return nil
+		return nil, nil
 	}
 	registered, err := s.namespaces.List(ctx)
 	if err != nil {
-		s.logger.Warn("plugin inventory: the namespace registry could not be read, so only "+
-			"the default pool's Orkers were asked", "error", err)
-		return nil
+		return nil, fmt.Errorf("read namespace registry: %w", err)
 	}
 	seen := map[string]struct{}{}
 	var pools []string
@@ -1474,27 +1547,19 @@ func (s *Service) inventoryPools(ctx context.Context) []string {
 		}
 		named, err := s.poolsNamedByOrkflows(ctx, ns)
 		if err != nil {
-			s.logger.Warn("plugin inventory: the orkflow store could not be read, so the pools "+
-				"only this namespace's documents name were not asked",
-				"namespace", ns.GetName(), "error", err)
-			continue
+			return nil, fmt.Errorf("read orkflows for namespace %q: %w", ns.GetName(), err)
 		}
 		for _, pool := range named {
 			add(pool)
 		}
 	}
 	sort.Strings(pools)
-	return pools
+	return pools, nil
 }
 
 // appendPluginInfo maps Orker descriptors onto the wire message, schemas
-// included.
-//
-// A schema that cannot be represented as a protobuf Struct is dropped rather
-// than failing the inventory: the plugin is still installed, its name and
-// version are still the answer to "what can this deployment run", and a
-// discovery view that refuses to render because one plugin declared an
-// unencodable schema would be the wrong trade.
+// included. A schema that cannot be represented as a protobuf Struct is
+// omitted while the plugin identity remains visible.
 func appendPluginInfo(
 	into []*orkstackv1.PluginInfo,
 	descriptors []plugin.Descriptor,

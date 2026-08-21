@@ -1,19 +1,64 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/api"
-	"github.com/orkstack/orkstack/internal/engine/enginetest"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // ---------------------------------------------------------------------------
 // admin info / pool list: golden human and --json output
 // ---------------------------------------------------------------------------
+type adminLivePools struct {
+	Orkers   map[string]int
+	LastSeen time.Time
+}
+
+func (p adminLivePools) ObservePool(_ context.Context, channel string) (engine.PoolLiveness, error) {
+	var pool string
+	switch channel {
+	case "ork-tasks":
+		pool = task.DefaultPool
+	case "ork-pool-gpu":
+		pool = "gpu"
+	default:
+		return engine.PoolLiveness{}, nil
+	}
+	orkers := p.Orkers[pool]
+	live := engine.PoolLiveness{Orkers: orkers}
+	if orkers > 0 {
+		live.LastSeen = p.LastSeen
+	}
+	return live, nil
+}
+
+type adminPoolPlugins map[string][]string
+
+func (p adminPoolPlugins) PluginsOnPool(_ context.Context, channel string) ([]string, error) {
+	var pool string
+	switch channel {
+	case "ork-tasks":
+		pool = task.DefaultPool
+	case "ork-pool-gpu":
+		pool = "gpu"
+	default:
+		return nil, nil
+	}
+	return append([]string(nil), p[pool]...), nil
+}
+
+type adminPoolInventory map[string][]plugin.Descriptor
+
+func (p adminPoolInventory) PluginsOnPool(_ context.Context, channel string) ([]plugin.Descriptor, error) {
+	return append([]plugin.Descriptor(nil), p[channel]...), nil
+}
 
 // adminFixture is a CLI fixture wired the way a real deployment is: system
 // information injected as `ork` injects it, and a cluster reporting Orkers on
@@ -36,13 +81,17 @@ func adminFixture(t *testing.T) *fixture {
 			ArtifactLocation: "s3://orkstack-artifacts",
 			TemporalAddress:  "localhost:7233",
 		}
-		cfg.Pools = enginetest.LivePools{
+		cfg.Pools = adminLivePools{
 			Orkers:   map[string]int{task.DefaultPool: 2, "gpu": 1},
 			LastSeen: fixedNow,
 		}
-		cfg.PoolPlugins = enginetest.PoolPlugins{
+		cfg.PoolPlugins = adminPoolPlugins{
 			task.DefaultPool: {"file", "http", "shell"},
 			"gpu":            {"container"},
+		}
+		cfg.PoolInventory = adminPoolInventory{
+			"ork-tasks":    {{Name: "file", Version: "0.1.0"}, {Name: "http", Version: "0.1.0"}, {Name: "shell", Version: "0.1.0"}},
+			"ork-pool-gpu": {{Name: "container", Version: "0.2.0"}},
 		}
 	})
 }

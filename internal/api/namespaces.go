@@ -32,6 +32,24 @@ func (s *Service) registry() (engine.NamespaceRegistry, error) {
 	return s.namespaces, nil
 }
 
+// lockNamespaceOperation serializes a namespace mutation with every other
+// mutation that can create or remove its orkflows. The durable registry owns
+// the cross-replica lock; the local fallback exists only for in-process test
+// doubles that have no durable object to arbitrate.
+func (s *Service) lockNamespaceOperation(
+	ctx context.Context,
+	name string,
+) (func(), error) {
+	if locker, ok := s.namespaces.(artifacts.NamespaceOperationLocker); ok {
+		return locker.LockNamespaceOperation(ctx, name)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.namespaceOps.Lock()
+	return s.namespaceOps.Unlock, nil
+}
+
 // validNamespaceName holds a client-supplied name to the registry's own rule
 // before anything is written.
 //
@@ -87,6 +105,11 @@ func (s *Service) CreateNamespace(
 	if err := validNamespaceName(spec.GetName()); err != nil {
 		return nil, err
 	}
+	unlock, err := s.lockNamespaceOperation(ctx, spec.GetName())
+	if err != nil {
+		return nil, namespaceStoreError(err, "lock namespace %q", spec.GetName())
+	}
+	defer unlock()
 	if artifacts.ResolveNamespace(spec.GetName()) == artifacts.DefaultNamespace {
 		// Wanting the default namespace is not an error; it is already there.
 		// An identical spec is the no-op it looks like, and a different one is
@@ -276,6 +299,11 @@ func (s *Service) UpdateNamespace(
 	if err := validNamespaceName(spec.GetName()); err != nil {
 		return nil, err
 	}
+	unlock, err := s.lockNamespaceOperation(ctx, spec.GetName())
+	if err != nil {
+		return nil, namespaceStoreError(err, "lock namespace %q", spec.GetName())
+	}
+	defer unlock()
 	// An update is not a create: a name nobody registered is NotFound, naming
 	// the ones that do exist, rather than a namespace quietly brought into
 	// being by a typo.
@@ -324,6 +352,11 @@ func (s *Service) DeleteNamespace(
 			"namespace %q cannot be deleted: every orkflow that names no namespace is in it",
 			name))
 	}
+	unlock, err := s.lockNamespaceOperation(ctx, name)
+	if err != nil {
+		return nil, namespaceStoreError(err, "lock namespace %q", name)
+	}
+	defer unlock()
 	// A name nobody registered is NotFound, and says which names exist.
 	if _, err := s.namespace(ctx, name); err != nil {
 		return nil, err
@@ -362,7 +395,8 @@ func namespaceStoreError(err error, format string, args ...any) error {
 	case errors.Is(err, artifacts.ErrNotFound):
 		return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s: not found", subject))
 	case errors.Is(err, artifacts.ErrNamespaceNotEmpty),
-		errors.Is(err, artifacts.ErrPreconditionFailed):
+		errors.Is(err, artifacts.ErrPreconditionFailed),
+		errors.Is(err, artifacts.ErrNamespaceOperationBusy):
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%s: %w", subject, err))
 	default:
 		return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s: %w", subject, err))
