@@ -34,21 +34,35 @@ type ApplyOrkflowRequest struct {
 	// one of the two made, and guessing which would store the definition
 	// somewhere its author cannot find it.
 	Namespace string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	// base_version is the optimistic-concurrency token: the version this edit
-	// was derived from. The server compares it against the HEAD version (the
-	// most recently applied one, which is what an editor last read) and refuses
-	// with FailedPrecondition when they differ, naming both — so an edit made
-	// from a stale copy is reported instead of landing beside a newer one
-	// nobody looked at. Empty means unchecked, which is what a plain
-	// `orkctl apply file.yaml` sends.
+	// base_version is the stored version this edit was derived from — its
+	// PROVENANCE and the anchor a diff is taken against, not the concurrency
+	// token. ANY stored version is a valid base: editing an old one is how a
+	// user forks forward from it, and the apply lands as the new head with the
+	// `current` pointer untouched. A non-empty value that names no stored
+	// version is NotFound, naming it.
 	//
-	// It is a VERSION token rather than a content hash. Both detect the same
-	// staleness; only the token names something the user can act on —
+	// It is a VERSION token rather than a content hash. Both name where an edit
+	// came from; only the token names something the user can act on —
 	// `orkctl orkflow diff <name> <base_version> <head>` shows exactly what
 	// arrived underneath the edit. A hash names nothing.
-	BaseVersion   string `protobuf:"bytes,3,opt,name=base_version,json=baseVersion,proto3" json:"base_version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	BaseVersion string `protobuf:"bytes,3,opt,name=base_version,json=baseVersion,proto3" json:"base_version,omitempty"`
+	// expected_head_version is the optimistic-concurrency token: the head
+	// version the editor observed when it fetched. Non-empty and different from
+	// the stored head is refused (FailedPrecondition) naming both, WHATEVER
+	// base was chosen — so an edit made while somebody else applied is reported
+	// instead of landing beside a newer version nobody looked at.
+	//
+	// Empty with a non-empty base_version keeps the pre-M11.2 rule, base must
+	// equal head, so every caller written against that contract keeps exactly
+	// the check it had. Empty with an empty base_version is unchecked, which is
+	// what a plain `orkctl apply file.yaml` sends.
+	//
+	// Two fields because there are two facts. With one, the server cannot tell
+	// "derived from an old version on purpose" from "derived from a head that
+	// has since moved", and the first is the whole point of this contract.
+	ExpectedHeadVersion string `protobuf:"bytes,4,opt,name=expected_head_version,json=expectedHeadVersion,proto3" json:"expected_head_version,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ApplyOrkflowRequest) Reset() {
@@ -98,6 +112,13 @@ func (x *ApplyOrkflowRequest) GetNamespace() string {
 func (x *ApplyOrkflowRequest) GetBaseVersion() string {
 	if x != nil {
 		return x.BaseVersion
+	}
+	return ""
+}
+
+func (x *ApplyOrkflowRequest) GetExpectedHeadVersion() string {
+	if x != nil {
+		return x.ExpectedHeadVersion
 	}
 	return ""
 }
@@ -169,9 +190,11 @@ func (x *ApplyOrkflowResponse) GetCreated() bool {
 type GetOrkflowRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// version selects one stored version. Empty resolves through the current
-	// pointer when one has been set, and to the most recently applied version
-	// when none ever was.
+	// version selects one stored version, and ANY stored version answers with
+	// its own source_yaml — that is the read an editor starts from, whether it
+	// is editing the head, the current version, or one older than both. Empty
+	// resolves through the current pointer when one has been set, and to the
+	// most recently applied version when none ever was.
 	Version       string `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
 	Namespace     string `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
 	unknownFields protoimpl.UnknownFields
@@ -517,7 +540,14 @@ type ListOrkflowVersionsResponse struct {
 	// back to head_version.
 	CurrentVersion string `protobuf:"bytes,2,opt,name=current_version,json=currentVersion,proto3" json:"current_version,omitempty"`
 	// head_version is the most recently applied version — the edit lineage's
-	// tip, and the base_version an editor should send back.
+	// tip, and the expected_head_version an editor sends back with its apply.
+	// The base an editor sends is whichever version it actually READ, which
+	// need not be this one.
+	//
+	// A client renders "is head" as `version == head_version`, exactly as it
+	// renders "is current" from is_current: head is a property of the listing,
+	// not of a version, so a per-row flag would be a second place to keep the
+	// same fact.
 	HeadVersion   string `protobuf:"bytes,3,opt,name=head_version,json=headVersion,proto3" json:"head_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2305,11 +2335,12 @@ var File_orkstack_v1_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x19orkstack/v1/service.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\x1a\x19orkstack/v1/orkflow.proto\x1a\x1borkstack/v1/namespace.proto\"j\n" +
+	"\x19orkstack/v1/service.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\x1a\x19orkstack/v1/orkflow.proto\x1a\x1borkstack/v1/namespace.proto\"\x9e\x01\n" +
 	"\x13ApplyOrkflowRequest\x12\x12\n" +
 	"\x04yaml\x18\x01 \x01(\tR\x04yaml\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12!\n" +
-	"\fbase_version\x18\x03 \x01(\tR\vbaseVersion\"|\n" +
+	"\fbase_version\x18\x03 \x01(\tR\vbaseVersion\x122\n" +
+	"\x15expected_head_version\x18\x04 \x01(\tR\x13expectedHeadVersion\"|\n" +
 	"\x14ApplyOrkflowResponse\x12.\n" +
 	"\aorkflow\x18\x01 \x01(\v2\x14.orkstack.v1.OrkflowR\aorkflow\x12\x1a\n" +
 	"\bwarnings\x18\x02 \x03(\tR\bwarnings\x12\x18\n" +

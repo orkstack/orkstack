@@ -60,19 +60,33 @@ message ApplyOrkflowRequest {
   // one of the two made, and guessing which would store the definition
   // somewhere its author cannot find it.
   string namespace = 2;
-  // base_version is the optimistic-concurrency token: the version this edit
-  // was derived from. The server compares it against the HEAD version (the
-  // most recently applied one, which is what an editor last read) and refuses
-  // with FailedPrecondition when they differ, naming both — so an edit made
-  // from a stale copy is reported instead of landing beside a newer one
-  // nobody looked at. Empty means unchecked, which is what a plain
-  // `orkctl apply file.yaml` sends.
+  // base_version is the stored version this edit was derived from — its
+  // PROVENANCE and the anchor a diff is taken against, not the concurrency
+  // token. ANY stored version is a valid base: editing an old one is how a
+  // user forks forward from it, and the apply lands as the new head with the
+  // `current` pointer untouched. A non-empty value that names no stored
+  // version is NotFound, naming it.
   //
-  // It is a VERSION token rather than a content hash. Both detect the same
-  // staleness; only the token names something the user can act on —
+  // It is a VERSION token rather than a content hash. Both name where an edit
+  // came from; only the token names something the user can act on —
   // `orkctl orkflow diff <name> <base_version> <head>` shows exactly what
   // arrived underneath the edit. A hash names nothing.
   string base_version = 3;
+  // expected_head_version is the optimistic-concurrency token: the head
+  // version the editor observed when it fetched. Non-empty and different from
+  // the stored head is refused (FailedPrecondition) naming both, WHATEVER
+  // base was chosen — so an edit made while somebody else applied is reported
+  // instead of landing beside a newer version nobody looked at.
+  //
+  // Empty with a non-empty base_version keeps the pre-M11.2 rule, base must
+  // equal head, so every caller written against that contract keeps exactly
+  // the check it had. Empty with an empty base_version is unchecked, which is
+  // what a plain `orkctl apply file.yaml` sends.
+  //
+  // Two fields because there are two facts. With one, the server cannot tell
+  // "derived from an old version on purpose" from "derived from a head that
+  // has since moved", and the first is the whole point of this contract.
+  string expected_head_version = 4;
 }
 message ApplyOrkflowResponse {
   Orkflow orkflow = 1;
@@ -85,9 +99,11 @@ message ApplyOrkflowResponse {
 }
 message GetOrkflowRequest {
   string name = 1;
-  // version selects one stored version. Empty resolves through the current
-  // pointer when one has been set, and to the most recently applied version
-  // when none ever was.
+  // version selects one stored version, and ANY stored version answers with
+  // its own source_yaml — that is the read an editor starts from, whether it
+  // is editing the head, the current version, or one older than both. Empty
+  // resolves through the current pointer when one has been set, and to the
+  // most recently applied version when none ever was.
   string version = 2;
   string namespace = 3;                  // empty = the default namespace
 }
@@ -123,7 +139,14 @@ message ListOrkflowVersionsResponse {
   // back to head_version.
   string current_version = 2;
   // head_version is the most recently applied version — the edit lineage's
-  // tip, and the base_version an editor should send back.
+  // tip, and the expected_head_version an editor sends back with its apply.
+  // The base an editor sends is whichever version it actually READ, which
+  // need not be this one.
+  //
+  // A client renders "is head" as `version == head_version`, exactly as it
+  // renders "is current" from is_current: head is a property of the listing,
+  // not of a version, so a per-row flag would be a second place to keep the
+  // same fact.
   string head_version = 3;
 }
 message SetCurrentOrkflowVersionRequest {
