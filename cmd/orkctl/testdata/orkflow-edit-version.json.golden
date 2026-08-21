@@ -1,0 +1,22 @@
+{
+  "orkflow": {
+    "name": "deploy",
+    "version": "1.1.0",
+    "description": "the 1.1.0 version",
+    "tasks": [
+      {
+        "id": "build",
+        "plugin": "shell",
+        "with": {
+          "command": "echo forked",
+          "op": "exec"
+        },
+        "timeoutSeconds": 300
+      }
+    ],
+    "sourceYaml": "name: deploy\nversion: \"1.1.0\"\ndescription: the 1.1.0 version\ntasks:\n  - id: build\n    plugin: shell\n    with:\n      op: exec\n      command: echo forked\n",
+    "createdAt": "2026-01-02T03:04:05Z",
+    "namespace": "default"
+  },
+  "created": true
+}
