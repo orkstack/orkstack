@@ -72,11 +72,14 @@ can never fail a task.
 logger, one sink, one dense sequence — which is what makes a resume cursor a
 single number and the ordering total and gap-free. stdout and stderr are told
 apart IN BAND: stderr lines carry `[stderr] `, stdout lines are bare, and so
-are the plugin's own lifecycle lines. `orkctl run logs` prints the marker
-verbatim; the UI pane recognizes it, tints the line and strips it.
+are the plugin's own lifecycle lines. Both readers show the marker verbatim
+today: `orkctl run logs` prints the stored line, and so does the UI pane
+(`ui/src/lib/components/TaskLogPane.svelte`), which colours a line only by
+whether the Orker wrote it. A pane that recognizes the marker, tints the line
+and strips it is M11.4's work; the CLI keeps the verbatim marker either way.
 
 > The accepted cost: an application line that itself begins with `[stderr] ` on
-> stdout renders as stderr. That is cosmetic. The byte-exact separation of the
+> stdout reads as stderr. That is cosmetic. The byte-exact separation of the
 > two streams is the pair of capture artifacts, which streaming does not touch.
 
 **Bounds.** Nothing here is per-line or per-byte to the store, and nothing
