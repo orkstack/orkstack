@@ -122,6 +122,7 @@ func TestOrkflowEdit_RefusesAVersionThatWasNeverApplied(t *testing.T) {
 	if outcome.code == exitOK {
 		t.Fatalf("editing a version nobody applied succeeded:\n%s", outcome.stdout)
 	}
+	requireGolden(t, "orkflow-edit-unknown-version.golden", outcome.stderr)
 	for _, want := range []string{"get orkflow", "not_found", "9.9.9"} {
 		if !strings.Contains(outcome.stderr, want) {
 			t.Errorf("the refusal does not mention %q:\n%s", want, outcome.stderr)
