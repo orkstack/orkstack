@@ -412,3 +412,59 @@ message PluginInfo {
   google.protobuf.Struct output_schema = 5;
 }
 message ListPluginsResponse { repeated PluginInfo plugins = 1; }
+
+// SystemService reports what this deployment is made of.
+service SystemService {
+  // GetSystemInfo describes THE REPLICA THAT ANSWERED. Every field is
+  // configuration- or build-derived — read from the process's own
+  // configuration, not observed from the cluster — except server_time.
+  // Replicas of one release answer identically by construction; mid-rollout,
+  // build_id is exactly the field that differs, which is the point of it.
+  //
+  // It is the one admin read that does not leave the process, and it is the
+  // one question only the process can answer: everything else an operator
+  // asks — which namespaces exist, which pools have Orkers, what those
+  // Orkers run — comes from the store or the cluster, so any replica gives
+  // the same reply. This one describes the replica in front of you, on
+  // purpose, because that is what an operator behind a load balancer needs
+  // to know during a rollout.
+  rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse);
+}
+message GetSystemInfoRequest {}
+message GetSystemInfoResponse {
+  // engine_version is the release this binary was built as: the value
+  // -ldflags stamped in, falling back to the module's own build version and
+  // then to the source revision the build was stamped with, and finally to
+  // "dev" for a plain `go build`. BUILD-DERIVED.
+  string engine_version = 1;
+  // go_version is the toolchain the binary was compiled with. BUILD-DERIVED.
+  string go_version = 2;
+  // deployment_name is the Worker Deployment both binaries of a release join.
+  // CONFIGURATION-DERIVED.
+  string deployment_name = 3;
+  // build_id names this release inside that deployment; empty means the
+  // deployment is unversioned. CONFIGURATION-DERIVED, and the field that
+  // differs between two replicas mid-rollout.
+  string build_id = 4;
+  // versioning_active reports whether Worker Deployment Versioning is on for
+  // this process, which is exactly "both of the two fields above are set".
+  // DERIVED from configuration, not asked of the cluster: it says what this
+  // replica registered as, not what the cluster currently routes.
+  bool versioning_active = 5;
+  // artifact_backend is where artifacts, run archives and task logs live:
+  // "local" or "s3". CONFIGURATION-DERIVED.
+  string artifact_backend = 6;
+  // artifact_location is the bucket or directory that backend addresses,
+  // never a credential. CONFIGURATION-DERIVED.
+  string artifact_location = 7;
+  // temporal_address is the cluster endpoint this replica dials.
+  // CONFIGURATION-DERIVED — that the address is configured is not a claim
+  // that it answers; pool health is the read that proves the cluster is
+  // reachable, and a connectivity flag here would be stale the moment it was
+  // sent.
+  string temporal_address = 8;
+  // server_time is the answering replica's own clock, and is the ONLY
+  // observed field in this message. A client comparing it with its own clock
+  // is comparing two clocks, which is what makes a skewed replica visible.
+  google.protobuf.Timestamp server_time = 9;
+}
