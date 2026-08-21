@@ -33,6 +33,12 @@
 // MaxCapturedOutput bytes; the full streams are available as artifacts through
 // capture_stdout_as / capture_stderr_as.
 //
+// Live output: both streams also reach the task's log stream WHILE the
+// container runs, framed into lines, with stderr carrying
+// plugin.StderrMarker so the two stay apart in one stream (see streamSet and
+// docs/PLUGINS.md). The capture artifacts are unaffected — they remain the
+// byte-exact copy.
+//
 // Security (AGENTS.md §9): the plugin drives the Docker CLI through an argv
 // slice and never builds a shell command line, so no config value can inject a
 // flag or a second command. `command` given as a string is the one place a
@@ -243,7 +249,7 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		return nil, err
 	}
 
-	streams, err := newStreams(ec.WorkDir)
+	streams, err := newStreams(ec.WorkDir, ec.Log)
 	if err != nil {
 		return nil, err
 	}
@@ -268,6 +274,10 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 	log("container: running %s as %s", image, req.name)
 
 	outcome, err := p.runContainer(ctx, req, streams.stdout(), streams.stderr(), timeout, log)
+	// Flush each stream's final unterminated line BEFORE the exit code is
+	// interpreted, so a failing container's last words are in the log stream
+	// whatever the plugin decides about the failure.
+	streams.closeLive()
 	if flushErr := streams.flush(); flushErr != nil && err == nil {
 		return nil, flushErr
 	}
@@ -414,8 +424,19 @@ func logger(ec *plugin.ExecContext) plugin.Logger {
 	return func(string, ...any) {}
 }
 
-// streamSet holds the container's output streams: a file each, so the captured
-// artifact is the exact bytes, plus a bounded head for the output payload.
+// streamSet holds the container's output streams. Each is written three ways,
+// and every one of them is load-bearing:
+//
+//   - a FILE, so the captured artifact is the container's exact bytes;
+//   - a bounded HEAD, for the strings on the output payload;
+//   - a LINE WRITER, so the application's own output reaches the task's live
+//     log stream WHILE the container runs rather than only afterwards (M11.1).
+//
+// The live writer is a third reader of the same bytes, never a replacement for
+// either of the other two. Both fds feed ONE logger — the live view is the
+// interleaved console a person expects — and stderr carries
+// plugin.StderrMarker per line so the two are still told apart. The byte-exact
+// separation callers rely on stays where it always was: the two artifacts.
 type streamSet struct {
 	stdoutPath string
 	stderrPath string
@@ -423,9 +444,13 @@ type streamSet struct {
 	stderrFile *os.File
 	stdoutHead *headBuffer
 	stderrHead *headBuffer
+	stdoutLive *plugin.LineWriter
+	stderrLive *plugin.LineWriter
 }
 
-func newStreams(workDir string) (*streamSet, error) {
+// newStreams opens the capture files and builds the live writers. A nil log is
+// a plugin with nowhere to stream to, which the writers accept and discard.
+func newStreams(workDir string, log plugin.Logger) (*streamSet, error) {
 	dir := filepath.Join(workDir, internalDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("container: create stream dir: %w", err)
@@ -435,6 +460,8 @@ func newStreams(workDir string) (*streamSet, error) {
 		stderrPath: filepath.Join(dir, "stderr"),
 		stdoutHead: &headBuffer{limit: MaxCapturedOutput},
 		stderrHead: &headBuffer{limit: MaxCapturedOutput},
+		stdoutLive: plugin.NewLineWriter(log, ""),
+		stderrLive: plugin.NewLineWriter(log, plugin.StderrMarker),
 	}
 	var err error
 	if set.stdoutFile, err = os.Create(set.stdoutPath); err != nil {
@@ -447,8 +474,21 @@ func newStreams(workDir string) (*streamSet, error) {
 	return set, nil
 }
 
-func (s *streamSet) stdout() io.Writer { return io.MultiWriter(s.stdoutFile, s.stdoutHead) }
-func (s *streamSet) stderr() io.Writer { return io.MultiWriter(s.stderrFile, s.stderrHead) }
+func (s *streamSet) stdout() io.Writer {
+	return io.MultiWriter(s.stdoutFile, s.stdoutHead, s.stdoutLive)
+}
+
+func (s *streamSet) stderr() io.Writer {
+	return io.MultiWriter(s.stderrFile, s.stderrHead, s.stderrLive)
+}
+
+// closeLive emits each stream's final line, the one an application ended
+// without a terminator. It is idempotent, so the explicit call before the exit
+// code is read and the one on the way out are the same call.
+func (s *streamSet) closeLive() {
+	s.stdoutLive.Close()
+	s.stderrLive.Close()
+}
 
 func (s *streamSet) flush() error {
 	if err := s.stdoutFile.Sync(); err != nil {
@@ -461,6 +501,7 @@ func (s *streamSet) flush() error {
 }
 
 func (s *streamSet) close() {
+	s.closeLive()
 	_ = s.stdoutFile.Close()
 	_ = s.stderrFile.Close()
 }

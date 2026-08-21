@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,21 +142,66 @@ func withResolver(r plugin.ArtifactResolver) execOption {
 	return func(ec *plugin.ExecContext) { ec.Artifacts = r }
 }
 
-func newExecContext(t *testing.T, config map[string]any, opts ...execOption) (*plugin.ExecContext, *[]string) {
+// logCapture records what a plugin streamed.
+//
+// It locks because a container's stdout and stderr reach plugin.Logger from
+// the two goroutines exec.Cmd runs to drain the pipes (M11.1), so concurrent
+// lines are the normal case rather than an edge one.
+type logCapture struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (c *logCapture) add(line string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lines = append(c.lines, line)
+}
+
+func (c *logCapture) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.lines...)
+}
+
+func (c *logCapture) text() string { return strings.Join(c.all(), "\n") }
+
+// count reports how many streamed lines are EXACTLY want. Exactness is what
+// makes a drop and a duplicate both visible.
+func (c *logCapture) count(want string) int {
+	n := 0
+	for _, line := range c.all() {
+		if line == want {
+			n++
+		}
+	}
+	return n
+}
+
+func (c *logCapture) holds(want string) bool {
+	for _, line := range c.all() {
+		if strings.Contains(line, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func newExecContext(t *testing.T, config map[string]any, opts ...execOption) (*plugin.ExecContext, *logCapture) {
 	t.Helper()
-	var logs []string
+	logs := &logCapture{}
 	ec := &plugin.ExecContext{
 		TaskID:  "build",
 		Config:  config,
 		WorkDir: t.TempDir(),
 		Log: func(format string, args ...any) {
-			logs = append(logs, fmt.Sprintf(format, args...))
+			logs.add(fmt.Sprintf(format, args...))
 		},
 	}
 	for _, opt := range opts {
 		opt(ec)
 	}
-	return ec, &logs
+	return ec, logs
 }
 
 func argvAfter(t *testing.T, argv []string, flag string) []string {
@@ -480,8 +526,8 @@ func TestContainerPlugin_CreatesEphemeralMountsBeforeTheRunAndRemovesThemAfter(t
 	if _, err := os.Stat(scratch); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("ephemeral mount %s still exists after the run (stat err = %v)", scratch, err)
 	}
-	if !strings.Contains(strings.Join(*logs, "\n"), `removed ephemeral "scratch"`) {
-		t.Errorf("the run did not report removing the ephemeral mount: %v", *logs)
+	if !strings.Contains(logs.text(), `removed ephemeral "scratch"`) {
+		t.Errorf("the run did not report removing the ephemeral mount: %v", logs.all())
 	}
 }
 
@@ -614,8 +660,8 @@ func TestContainerPlugin_KillsAContainerThatOutlivesItsTimeout(t *testing.T) {
 	if docker.count("rm") != 1 {
 		t.Errorf("a killed container was removed %d time(s), want 1", docker.count("rm"))
 	}
-	if !strings.Contains(strings.Join(*logs, "\n"), "exceeded its 200ms budget") {
-		t.Errorf("the run did not log the expired budget: %v", *logs)
+	if !strings.Contains(logs.text(), "exceeded its 200ms budget") {
+		t.Errorf("the run did not log the expired budget: %v", logs.all())
 	}
 }
 

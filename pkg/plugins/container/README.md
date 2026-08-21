@@ -140,6 +140,42 @@ own budget is what expires first and the failure names the container.
 exact streams are the artifacts named by `capture_stdout_as` /
 `capture_stderr_as`.
 
+## Live output
+
+The application's stdout and stderr reach the task's **live log stream** while
+the container runs — through `StreamTaskLogs`, `orkctl run logs -f` and the UI
+log pane — not only as capture artifacts after it exits:
+
+```sh
+orkctl run logs <run-id> --task build -f
+```
+
+Three writers see each stream, and none of them replaces another: the capture
+file (byte-exact), the 8 KiB payload head, and the live log.
+
+- **Lines, not reads.** Bytes are framed into whole lines by
+  `plugin.LineWriter`. A line split across two docker reads arrives once; a
+  final line with no newline is flushed when the container exits, including
+  when it exits non-zero; `\n` and a bare `\r` both end a line and `\r\n`
+  counts once, so a progress redraw streams instead of piling up.
+- **stdout and stderr stay apart.** One attempt has one log stream, so stderr
+  lines carry the in-band marker `[stderr] ` and stdout lines are bare. The
+  plugin's own lifecycle lines (`container: running …`) are bare too. The
+  caveat: an application line that itself starts with `[stderr] ` on stdout
+  reads as stderr — cosmetic only, and the capture artifacts remain the
+  authoritative, byte-exact separation.
+- **A chatty container is bounded.** The framer holds under 64 KiB per stream;
+  the Orker uploads a chunk every 64 KiB or 500 ms
+  (`ORK_ORKER_LOG_FLUSH_BYTES`, `ORK_ORKER_LOG_FLUSH_INTERVAL`) and stops at
+  16 MiB per attempt (`ORK_ORKER_LOG_MAX_BYTES`) with a visible
+  `[ork] log truncated…` notice. Backpressure is real: a blocked upload blocks
+  the writer, which fills the pipe, which blocks the container on `write(2)`.
+  **The cap never truncates an artifact** — those are files.
+
+No log byte enters a Temporal payload or the run's event stream (AGENTS.md
+§1.4); the whole rule is in
+[docs/PLUGINS.md](../../../docs/PLUGINS.md#streaming-a-tasks-output-pluginlinewriter).
+
 ## Failure and retry
 
 A failure is retried only when retrying could plausibly change the answer.
