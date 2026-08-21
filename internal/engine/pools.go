@@ -14,7 +14,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // ErrNoNamespaceRegistry reports a namespace asked of a process that has no
@@ -86,15 +85,8 @@ type PoolProbe interface {
 // PoolPluginLister reports what the Orkers of one pool can run. It is asked
 // only of a pool that has live Orkers — a pool with none has nobody to answer,
 // and asking would only time out.
-//
-// It answers with the Orkers' own DESCRIPTORS rather than a list of names,
-// because two callers ask this one question and they need different halves of
-// the answer: pool health renders the names, and the plugin inventory renders
-// the version, the description and the input/output schemas. One seam, asked
-// once per pool; a second seam for the same activity would be a second thing
-// to keep true (AGENTS.md §7, the duplicated-helper lesson).
 type PoolPluginLister interface {
-	PluginsOnPool(ctx context.Context, queue string) ([]plugin.Descriptor, error)
+	PluginsOnPool(ctx context.Context, queue string) ([]string, error)
 }
 
 // NamespaceReader is the engine's view of the namespace registry: the one
@@ -577,106 +569,15 @@ func (r *PoolResolver) Pools(
 			}
 		}
 		if pool.GetLiveOrkerCount() > 0 && r.Plugins != nil {
-			// A failed read is REPORTED, never zero-filled. A live pool with
-			// an empty plugin list is a fact — those Orkers run nothing — and
-			// it is the same bytes on the wire as "we could not ask them".
-			// An operator reading the second as the first goes looking for a
-			// missing plugin that is installed, so the two states stay apart
-			// even though keeping them apart costs the whole report.
-			descriptors, err := r.Plugins.PluginsOnPool(ctx, queue)
-			if err != nil {
-				return nil, &PoolUnreachableError{Pool: name, Err: err}
+			plugins, err := r.Plugins.PluginsOnPool(ctx, queue)
+			if err == nil {
+				sort.Strings(plugins)
+				pool.Plugins = plugins
 			}
-			pool.Plugins = descriptorNames(descriptors)
 		}
 		pools = append(pools, pool)
 	}
 	return pools, nil
-}
-
-// descriptorNames renders a pool's descriptors as the sorted plugin names the
-// Pool message carries.
-func descriptorNames(descriptors []plugin.Descriptor) []string {
-	names := make([]string, 0, len(descriptors))
-	for _, descriptor := range descriptors {
-		names = append(names, descriptor.Name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// Inventory reports what the Orkers of these pools can run, for the
-// deployment-wide plugin inventory.
-//
-// Three rules, and each is a claim the inventory would otherwise get wrong:
-//
-//   - ONE ask per execution channel. Two pool names that resolve to one
-//     channel are one set of Orkers (see routeFor), and every namespace has a
-//     default pool, so a naive loop would run the discovery activity once per
-//     namespace against the same machines.
-//   - The deployment's DEFAULT channel is never asked here. PluginService
-//     reads that one through its own lister — the seam that exists whether or
-//     not a cluster is wired — and asking it twice would execute one
-//     activity twice for one report.
-//   - LIVE pools only, and a live pool that cannot be asked is an ERROR. A
-//     pool with no Orkers has nobody to answer and would cost the activity's
-//     whole timeout to learn nothing; a pool with Orkers that does not answer
-//     is a hole in the inventory, and an inventory quietly missing a plugin
-//     is what sends an operator to install one that is already there.
-//
-// A pool name this engine cannot route is skipped: a namespace document can
-// hold one, and it names no channel to ask.
-func (r *PoolResolver) Inventory(
-	ctx context.Context,
-	pools []string,
-) ([]plugin.Descriptor, error) {
-	if r.Plugins == nil || r.Probe == nil {
-		// Nothing to ask, or no way to tell who is live. Either way this is
-		// not a narrowed answer to be logged: the caller's own lister is the
-		// whole inventory such a deployment has.
-		return nil, nil
-	}
-	deploymentDefault, err := r.routeFor(task.DefaultPool)
-	if err != nil {
-		return nil, err
-	}
-
-	asked := map[string]struct{}{deploymentDefault.Queue: {}}
-	var order []string
-	byQueue := map[string]string{}
-	for _, pool := range pools {
-		if pool == "" {
-			continue
-		}
-		route, err := r.routeFor(pool)
-		if err != nil {
-			continue
-		}
-		if _, seen := asked[route.Queue]; seen {
-			continue
-		}
-		asked[route.Queue] = struct{}{}
-		byQueue[route.Queue] = route.Pool
-		order = append(order, route.Queue)
-	}
-	sort.Slice(order, func(i, j int) bool { return byQueue[order[i]] < byQueue[order[j]] })
-
-	var found []plugin.Descriptor
-	for _, queue := range order {
-		live, err := r.Probe.ObservePool(ctx, queue)
-		if err != nil {
-			return nil, &PoolUnreachableError{Pool: byQueue[queue], Err: err}
-		}
-		if !live.Fresh(r.now(), r.freshness()) {
-			continue
-		}
-		descriptors, err := r.Plugins.PluginsOnPool(ctx, queue)
-		if err != nil {
-			return nil, &PoolUnreachableError{Pool: byQueue[queue], Err: err}
-		}
-		found = append(found, descriptors...)
-	}
-	return found, nil
 }
 
 func namespaceName(ns *orkstackv1.Namespace) string {

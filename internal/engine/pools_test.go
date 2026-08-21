@@ -11,7 +11,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // livePools is a stand-in for the cluster's answer to "who is serving this
@@ -569,17 +568,8 @@ func TestPoolResolver_ReportsPoolsWithTheirOrkersAndPlugins(t *testing.T) {
 	}
 }
 
-// fakePoolPlugins is one channel's Orkers, stating what they can run by name.
-// The seam carries descriptors, so the names are widened here.
 type fakePoolPlugins map[string][]string
 
-func (f fakePoolPlugins) PluginsOnPool(
-	_ context.Context,
-	queue string,
-) ([]plugin.Descriptor, error) {
-	descriptors := make([]plugin.Descriptor, 0, len(f[queue]))
-	for _, name := range f[queue] {
-		descriptors = append(descriptors, plugin.Descriptor{Name: name})
-	}
-	return descriptors, nil
+func (f fakePoolPlugins) PluginsOnPool(_ context.Context, queue string) ([]string, error) {
+	return f[queue], nil
 }
