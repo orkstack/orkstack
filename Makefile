@@ -28,12 +28,25 @@ tools: ## Install codegen + lint tooling
 	go install connectrpc.com/connect/cmd/protoc-gen-connect-go@latest
 
 ## ---- build ----
+#
+# VERSION is what a built binary calls itself: `orkctl version` and the admin
+# surface's engine_version both report it. It is derived from the tree rather
+# than hand-maintained — a release tag when the commit has one, the short
+# revision otherwise, `-dirty` when the working tree is not clean — so two
+# builds of two different trees can never claim the same identity. A tree
+# with no git at all falls back to "dev", which is exactly what the source
+# default in cmd/ork and cmd/orkctl already says.
+#
+# Override it for a release build: `make build VERSION=v0.0.4`.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GO_LDFLAGS := -X main.version=$(VERSION)
+
 .PHONY: build
 build: ## Build all binaries into ./bin
 	@mkdir -p bin
-	go build -o bin/ork      ./cmd/ork
-	go build -o bin/orker    ./cmd/orker
-	go build -o bin/orkctl   ./cmd/orkctl
+	go build -ldflags '$(GO_LDFLAGS)' -o bin/ork      ./cmd/ork
+	go build -ldflags '$(GO_LDFLAGS)' -o bin/orker    ./cmd/orker
+	go build -ldflags '$(GO_LDFLAGS)' -o bin/orkctl   ./cmd/orkctl
 
 .PHONY: tidy
 tidy: ## go mod tidy

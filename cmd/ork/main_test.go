@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *testing.T) {
@@ -391,5 +393,79 @@ func TestLoadConfig_RefusesAPoolAndAChannelThatDisagree(t *testing.T) {
 	}
 	if err := run(nil, cfg); err == nil {
 		t.Fatal("run() started with a disagreeing pool and channel")
+	}
+}
+
+// TestSystemInfo_CarriesTheProcessConfigurationAndNoCredential is the wiring
+// half of the admin surface's system read: the handler is a pure echo
+// (internal/api/system.go), so what an operator sees is decided HERE.
+//
+// Two claims, and the second is the one worth a test. The values come from
+// the configuration this process loaded — not from a second read of the
+// environment, which is what would let the answer drift from what the engine
+// is actually doing. And nothing secret travels: the artifact location names
+// the bucket, never the access key that opens it.
+func TestSystemInfo_CarriesTheProcessConfigurationAndNoCredential(t *testing.T) {
+	t.Setenv(task.EnvDeploymentName, "orkstack-m11-3")
+	t.Setenv(task.EnvBuildID, "build-7")
+	t.Setenv("ORK_TEMPORAL_ADDRESS", "cluster.internal:7233")
+
+	artifactCfg := artifacts.Config{
+		Backend:     artifacts.BackendS3,
+		S3Bucket:    "orkstack-artifacts",
+		S3Endpoint:  "http://minio.internal:9000",
+		S3AccessKey: "AKIA-NOT-FOR-OPERATORS",
+		S3SecretKey: "s3cr3t",
+	}
+	info := systemInfo(loadConfig(), artifactCfg)
+
+	if info.DeploymentName != "orkstack-m11-3" || info.BuildID != "build-7" {
+		t.Errorf("deployment identity = %q/%q, want orkstack-m11-3/build-7",
+			info.DeploymentName, info.BuildID)
+	}
+	if !info.VersioningActive() {
+		t.Error("versioning_active is false while ORK_DEPLOYMENT_NAME and ORK_BUILD_ID are both set")
+	}
+	if info.TemporalAddress != "cluster.internal:7233" {
+		t.Errorf("temporal address = %q, want the configured one", info.TemporalAddress)
+	}
+	if info.ArtifactBackend != artifacts.BackendS3 {
+		t.Errorf("artifact backend = %q, want s3", info.ArtifactBackend)
+	}
+	if info.ArtifactLocation != "s3://orkstack-artifacts" {
+		t.Errorf("artifact location = %q, want s3://orkstack-artifacts", info.ArtifactLocation)
+	}
+	if info.EngineVersion == "" || info.GoVersion == "" {
+		t.Errorf("build identity is empty (%q, %q); an operator cannot tell two builds apart",
+			info.EngineVersion, info.GoVersion)
+	}
+	// The credential check, over the whole struct rather than one field: a
+	// value added later must not reintroduce it.
+	rendered := fmt.Sprintf("%+v", info)
+	for _, secret := range []string{artifactCfg.S3AccessKey, artifactCfg.S3SecretKey} {
+		if strings.Contains(rendered, secret) {
+			t.Errorf("system information carries the credential %q: %s", secret, rendered)
+		}
+	}
+}
+
+// TestSystemInfo_LeavesVersioningOffWhenNoBuildIDIsConfigured pins the
+// documented default: one variable turns versioning on, and with neither set
+// `make run-ork` reports an unversioned deployment rather than a fabricated
+// version (AGENTS.md §10).
+func TestSystemInfo_LeavesVersioningOffWhenNoBuildIDIsConfigured(t *testing.T) {
+	t.Setenv(task.EnvDeploymentName, "")
+	t.Setenv(task.EnvBuildID, "")
+
+	info := systemInfo(loadConfig(), artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: "./.data/artifacts"})
+
+	if info.VersioningActive() {
+		t.Error("versioning_active is true with no build id configured")
+	}
+	if info.DeploymentName != task.DefaultDeploymentName {
+		t.Errorf("deployment name = %q, want the default %q", info.DeploymentName, task.DefaultDeploymentName)
+	}
+	if info.ArtifactLocation != "./.data/artifacts" {
+		t.Errorf("artifact location = %q, want the configured directory", info.ArtifactLocation)
 	}
 }

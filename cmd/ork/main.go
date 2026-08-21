@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -123,6 +125,75 @@ func logLocation(cfg artifacts.Config) string {
 		return "s3://" + cfg.S3Bucket + "/" + artifacts.LogPrefix
 	}
 	return cfg.LocalDir + "/" + artifacts.LogPrefix
+}
+
+// artifactLocation renders the root of the artifact backend — the bucket or
+// the directory, and never a credential.
+//
+// It is what the admin surface reports (api.SystemInfo.ArtifactLocation), so
+// it names the store itself rather than one of its prefixes: archiveLocation
+// and logLocation above answer "where does THIS kind of object land", which
+// is a different question and one an operator asks of a log line, not of a
+// deployment summary.
+func artifactLocation(cfg artifacts.Config) string {
+	if cfg.Backend == artifacts.BackendS3 {
+		return "s3://" + cfg.S3Bucket
+	}
+	return cfg.LocalDir
+}
+
+// version is the ork release. Release builds override it with
+// -ldflags "-X main.version=vX.Y.Z" (see the Makefile's build target); a
+// plain `go build ./cmd/ork` reports "dev". Same pattern, and the same
+// variable name, as cmd/orkctl/version.go.
+var version = "dev"
+
+// engineVersion resolves what this binary calls itself, most deliberate
+// first: the ldflags stamp, then the version the module was built as (set for
+// `go install module@version`), then the source revision a VCS-stamped build
+// carries, and finally "dev".
+//
+// The fallbacks matter because the admin surface reports this to an operator
+// judging a rollout: "dev" for a binary that WAS built from a known commit
+// would make two different builds look like the same one.
+func engineVersion() string {
+	if version != "" && version != "dev" {
+		return version
+	}
+	build, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	if main := build.Main.Version; main != "" && main != "(devel)" {
+		return main
+	}
+	for _, setting := range build.Settings {
+		if setting.Key == "vcs.revision" && setting.Value != "" {
+			return setting.Value
+		}
+	}
+	return version
+}
+
+// systemInfo is the admin surface's view of this process: what it was built
+// as, and what it was configured with.
+//
+// It is assembled ONCE, here, from configuration that is already loaded — the
+// API handler then reads no environment of its own and is a pure function of
+// this struct (internal/api/system.go). Nothing in it is observed from the
+// cluster: an operator reading `deployment` or `artifacts` is reading what
+// this replica was told, which is exactly what they need when two replicas
+// disagree.
+func systemInfo(cfg config, artifactCfg artifacts.Config) api.SystemInfo {
+	return api.SystemInfo{
+		EngineVersion:    engineVersion(),
+		GoVersion:        runtime.Version(),
+		DeploymentName:   cfg.deployment.Name,
+		BuildID:          cfg.deployment.BuildID,
+		ArtifactBackend:  artifactCfg.Backend,
+		ArtifactLocation: artifactLocation(artifactCfg),
+		TemporalAddress:  cfg.temporalAddress,
+	}
 }
 
 func main() {
@@ -475,6 +546,18 @@ func run(logger *slog.Logger, cfg config) error {
 	logger.Info("idempotency claims ready",
 		"workflow", engine.ClaimWorkflowType, "ttl", cfg.idempotencyTTL)
 
+	// The admin surface's view of this replica: assembled from configuration
+	// that is already loaded, so the handler reads no environment of its own.
+	system := systemInfo(cfg, archiveConfig)
+	logger.Info("system information ready",
+		"engine_version", system.EngineVersion,
+		"go", system.GoVersion,
+		"deployment", system.DeploymentName,
+		"build_id", system.BuildID,
+		"versioning_active", system.VersioningActive(),
+		"artifact_backend", system.ArtifactBackend,
+		"artifact_location", system.ArtifactLocation)
+
 	svc := api.NewService(api.Config{
 		Orkflows:    orkflows,
 		Namespaces:  namespaces,
@@ -492,6 +575,7 @@ func run(logger *slog.Logger, cfg config) error {
 		Webhooks:    webhookRegistry,
 		Notifier:    runNotifier,
 		Logger:      logger,
+		System:      system,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,
