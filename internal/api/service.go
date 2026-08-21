@@ -352,7 +352,8 @@ func (s *Service) ApplyOrkflow(
 	// The stored document names the namespace it lives in, whichever of the
 	// two said so, so a reader needs no key to know where it came from.
 	wf.Namespace = ns.GetName()
-	if err := s.checkBaseVersion(ctx, ns.GetName(), wf.GetName(), req.Msg.GetBaseVersion()); err != nil {
+	if err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
+		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion()); err != nil {
 		return nil, err
 	}
 	// The stamp is applied here, but it does NOT decide whether this apply is a
@@ -372,22 +373,39 @@ func (s *Service) ApplyOrkflow(
 	}), nil
 }
 
-// checkBaseVersion is the optimistic-concurrency gate: an edit derived from a
-// version that is no longer the head is refused instead of landing beside a
-// newer one nobody has seen.
+// checkEditTokens gates an apply on the two things an edit says about itself:
+// which stored version it was DERIVED from (base) and which head the editor
+// SAW when it fetched (expectedHead).
 //
-// The comparison is against the HEAD version (most recently applied), not
-// against the current pointer: head is edit lineage — what an editor read and
-// changed — while the pointer is execution policy, and an operator promoting an
-// older version must not make every open editor stale.
+// They are two facts, so they are two tokens. Any stored version is a valid
+// base — editing an old one is how a user forks forward from it, and the fork
+// lands as the new head with the `current` pointer untouched — while the head
+// the editor saw is the only thing a competing apply can invalidate. Under one
+// token the server could not tell an edit derived from an old version on
+// purpose from one derived from a head that has since moved, so the first was
+// refused to catch the second.
 //
-// An empty token means unchecked, which is what a plain `orkctl apply file.yaml`
-// sends. The window between this check and the write is deliberately left
-// open: closing it would mean holding a lock across a user's editor session,
-// and the cost of losing the race is nil — both versions are stored, both are
-// listed, and nothing is overwritten.
-func (s *Service) checkBaseVersion(ctx context.Context, namespace, name, base string) error {
-	if base == "" {
+//	base    expected  check
+//	----    --------  -----
+//	""      ""        none — a plain `orkctl apply file.yaml`
+//	set     ""        base == head, or FailedPrecondition (the pre-M11.2 rule)
+//	any     set       expected == head, or FailedPrecondition naming both and
+//	                  the base; base, when set, must name a stored version
+//
+// Row two is back-compatibility and nothing else: a caller written before this
+// slice sends only a base, and its base IS its concurrency token because
+// nothing else says which head it read. Keeping that row is what lets the two
+// contracts coexist with no version negotiation.
+//
+// The window between this check and the write is deliberately left open:
+// closing it would mean holding a lock across a user's editor session, and the
+// cost of losing the race is nil — both versions are stored, both are listed,
+// and nothing is overwritten.
+func (s *Service) checkEditTokens(
+	ctx context.Context,
+	namespace, name, base, expectedHead string,
+) error {
+	if base == "" && expectedHead == "" {
 		return nil
 	}
 	versions, err := s.orkflows.Versions(ctx, namespace, name)
@@ -395,19 +413,66 @@ func (s *Service) checkBaseVersion(ctx context.Context, namespace, name, base st
 		return orkflowStoreError(err, "read versions of orkflow %q in namespace %q", name, namespace)
 	}
 	if versions.Head == "" {
+		// Nothing is stored, so neither token can be true of anything. Say
+		// which claim failed rather than inventing a version to name.
+		claim := fmt.Sprintf("says it was derived from version %q", base)
+		if base == "" {
+			claim = fmt.Sprintf("expected version %q to be the newest applied one", expectedHead)
+		}
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"this edit says it was derived from version %q of orkflow %q, "+
+			"this edit %s of orkflow %q, "+
 				"but that orkflow has no stored version in namespace %q",
+			claim, name, namespace))
+	}
+	if expectedHead == "" {
+		// Pre-M11.2 caller: the base is the token, compared against head.
+		if versions.Head != base {
+			return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"orkflow %q in namespace %q changed underneath this edit: it was derived from "+
+					"version %q but the newest applied version is now %q; "+
+					"run `orkctl orkflow diff %s %s %s` and re-apply",
+				name, namespace, base, versions.Head, name, base, versions.Head))
+		}
+		return nil
+	}
+	// Provenance is a claim about the store, so it is checked against the
+	// store: a base nobody applied is a typo, answered where it was made
+	// rather than recorded as the ancestry of a version that never existed.
+	if base != "" && !storesVersion(versions, base) {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf(
+			"this edit says it was derived from version %q of orkflow %q, "+
+				"but no such version is stored in namespace %q",
 			base, name, namespace))
 	}
-	if versions.Head != base {
+	if versions.Head != expectedHead {
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"orkflow %q in namespace %q changed underneath this edit: it was derived from "+
-				"version %q but the newest applied version is now %q; "+
-				"run `orkctl orkflow diff %s %s %s` and re-apply",
-			name, namespace, base, versions.Head, name, base, versions.Head))
+			"orkflow %q in namespace %q changed while this edit was open: %s"+
+				"the newest applied version was %q when the document was fetched "+
+				"and is now %q; run `orkctl orkflow diff %s %s %s` and re-apply",
+			name, namespace, derivedFrom(base), expectedHead, versions.Head,
+			name, expectedHead, versions.Head))
 	}
 	return nil
+}
+
+// storesVersion reports whether one version is among the stored ones.
+func storesVersion(versions artifacts.OrkflowVersions, version string) bool {
+	for _, wf := range versions.All {
+		if wf.GetVersion() == version {
+			return true
+		}
+	}
+	return false
+}
+
+// derivedFrom names the edit's base in a refusal, so a user who deliberately
+// forked from an old version is not told their base is the problem. It is
+// silent when there is no base to name.
+func derivedFrom(base string) string {
+	if base == "" {
+		return ""
+	}
+	return fmt.Sprintf("it was derived from version %q, and ", base)
 }
 
 // applyNamespace reconciles the two ways a request names a namespace.
