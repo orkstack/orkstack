@@ -499,7 +499,6 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 			LastSeen: fixedNow,
 		}
 		cfg.PoolPlugins = adminPoolPlugins{task.DefaultPool: {"http"}}
-		cfg.PoolInventory = adminPoolInventory{"ork-tasks": {{Name: "http", Version: "0.1.0"}}}
 	}, &orkstackv1.PluginInfo{Name: "http", Version: "0.1.0"})
 	f.applyExample().requireExit(t, exitOK)
 

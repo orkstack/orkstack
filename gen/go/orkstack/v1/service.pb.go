@@ -2211,13 +2211,27 @@ func (*ListPluginsRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{36}
 }
 
+// PluginInfo is one plugin, as the pool that answered described it.
+//
+// Entries are keyed by (name, version): two pools mid-rollout genuinely do run
+// two versions of one plugin, and collapsing them would hide the fact an
+// operator opened this view to find.
 type PluginInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
-	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
-	InputSchema   *structpb.Struct       `protobuf:"bytes,4,opt,name=input_schema,json=inputSchema,proto3" json:"input_schema,omitempty"`
-	OutputSchema  *structpb.Struct       `protobuf:"bytes,5,opt,name=output_schema,json=outputSchema,proto3" json:"output_schema,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is always present, whichever pool reported it.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// version, description and the two schemas are reported by the deployment's
+	// DEFAULT pool, whose Orkers answer the plugin-descriptor activity directly.
+	//
+	// A plugin visible only on another pool arrives as a bare name and these
+	// fields are EMPTY: the per-pool question that found it reports names. Empty
+	// means "not reported by the pool that has it", never "this plugin declares
+	// none" — a version invented for a plugin nobody described would be worse
+	// than the gap.
+	Version       string           `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	Description   string           `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	InputSchema   *structpb.Struct `protobuf:"bytes,4,opt,name=input_schema,json=inputSchema,proto3" json:"input_schema,omitempty"`
+	OutputSchema  *structpb.Struct `protobuf:"bytes,5,opt,name=output_schema,json=outputSchema,proto3" json:"output_schema,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

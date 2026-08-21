@@ -28,7 +28,12 @@ func newPoolListCommand(g *globalFlags) *cobra.Command {
 			"A pool is a set of Orkers. The counts come from the cluster — who is polling\n" +
 			"for the pool's work right now — and the plugins from the Orkers themselves, so\n" +
 			"any replica answers the same. A pool with no live Orkers is listed, and says\n" +
-			"so: a task sent there waits for a worker that is not running.",
+			"so: a task sent there waits for a worker that is not running.\n\n" +
+			"PLUGINS is a sample: one of the pool's Orkers answers for the pool, and an\n" +
+			"empty column means nobody was asked or nobody answered — never that these\n" +
+			"Orkers run nothing. LAST SEEN is how fresh the count beside it is; a pool\n" +
+			"whose Orkers have all gone quiet shows no time at all rather than the moment\n" +
+			"the last one was heard.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := g.unaryContext(cmd)

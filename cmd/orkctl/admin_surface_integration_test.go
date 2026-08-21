@@ -40,11 +40,22 @@ import (
 //     reported as empty rather than omitted.
 //   - plugin inventory: asked of the connected Orkers.
 //
+// The topology covers the two shapes an earlier round of this slice broke, so
+// that neither can regress unnoticed:
+//
+//   - a pool with SEVERAL live Orkers. A pool IS a set of Orkers, so two of
+//     them is the ordinary case and the one an operator scales into. Two real
+//     `orker` processes poll this run's default pool.
+//   - a live NON-DEFAULT pool. A third `orker` polls a second pool, which the
+//     namespace allow-lists. It must appear in pool health, and it must not
+//     cost the inventory its answer.
+//
 // Then the write-safety rules, exercised against B because a write refused only
 // by the replica that happens to hold state is not a rule (acceptance 5): the
 // slug validated and never repaired, `default` undeletable, the etag
 // compare-and-swap, and a delete refused while the namespace still holds
-// orkflows, saying how many.
+// orkflows, saying how many. Those refusals are the only writes B issues; it
+// registered no namespace and applied no orkflow before the reads above.
 //
 // Isolation (AGENTS.md §6): a Temporal namespace unique to this run, and a
 // pool unique to this process. Note the deliberate inversion of the usual rule
@@ -73,21 +84,37 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	if err != nil {
 		t.Fatalf("map test pool: %v", err)
 	}
+	// A second pool this deployment does NOT route by default. Its Orker is
+	// reachable only by naming the pool, which is the case the admin reads
+	// have to cover: an inventory that fails, or a pool list that refuses,
+	// because one pool is not the default route would be useless in every
+	// deployment that has more than one pool.
+	auxPool := pool + "-aux"
+	auxChannel, err := task.QueueForPool(auxPool, "")
+	if err != nil {
+		t.Fatalf("map aux test pool: %v", err)
+	}
 	root := repoRoot(t)
 	binDir := t.TempDir()
 	orkctlPath := buildBinary(t, root, binDir, "orkctl")
 	enginePath := buildBinary(t, root, binDir, "ork")
 	orkerPath := buildBinary(t, root, binDir, "orker")
 
-	// One Orker, on this run's own pool. It is what makes pool health and the
-	// plugin inventory real answers rather than empty ones.
-	startProcess(ctx, t, "orker", orkerPath,
-		"ORK_TEMPORAL_ADDRESS="+address,
-		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
-		"ORK_ORKER_QUEUE="+channel,
-		"ORK_ORKER_WORKDIR="+filepath.Join(t.TempDir(), "work"),
-		"ORK_ARTIFACT_BACKEND=s3",
-	)
+	// TWO Orkers on this run's default pool, and one on the aux pool. Two is
+	// the point: a pool is a set of Orkers, and an admin read that works only
+	// while a pool has exactly one is broken for every pool anybody scales.
+	startOrkerOn := func(name, queue string) {
+		startProcess(ctx, t, name, orkerPath,
+			"ORK_TEMPORAL_ADDRESS="+address,
+			"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
+			"ORK_ORKER_QUEUE="+queue,
+			"ORK_ORKER_WORKDIR="+filepath.Join(t.TempDir(), "work"),
+			"ORK_ARTIFACT_BACKEND=s3",
+		)
+	}
+	startOrkerOn("orker-1", channel)
+	startOrkerOn("orker-2", channel)
+	startOrkerOn("orker-aux", auxChannel)
 
 	// The two replicas: identical configuration, different ports. The
 	// deployment name is this run's, so `admin info` reporting it proves the
@@ -147,15 +174,18 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 		publishAdminTranscript(t, session.transcript.String())
 	})
 
-	// ---- every write, on A only -------------------------------------------
+	// ---- the setup writes, on A only --------------------------------------
 	//
 	// `cold` is a pool this deployment has no Orkers for. It is in the
 	// allow-list on purpose: an empty pool must be REPORTED, because "nobody
-	// is serving this" is the answer pool health exists to give.
+	// is serving this" is the answer pool health exists to give. The aux pool
+	// is allow-listed too, so pool health has a LIVE non-default pool to
+	// report beside the empty one.
 	requireCLI(t, onA, "A registers the namespace", "namespace", "create", namespace,
 		"--description", "M11.3 admin surface probe",
 		"--default-pool", pool,
 		"--allow-pool", pool,
+		"--allow-pool", auxPool,
 		"--allow-pool", "cold")
 	requireCLI(t, onA, "A applies an orkflow into it", "apply",
 		writeAdminProbeOrkflow(t, orkflowName, pool), "-n", namespace)
@@ -227,8 +257,8 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	if described.Namespace.DefaultPool != pool {
 		t.Errorf("default pool = %q, want %q", described.Namespace.DefaultPool, pool)
 	}
-	if len(described.Namespace.AllowedPools) != 2 {
-		t.Errorf("allowed pools = %v, want the two A registered", described.Namespace.AllowedPools)
+	if len(described.Namespace.AllowedPools) != 3 {
+		t.Errorf("allowed pools = %v, want the three A registered", described.Namespace.AllowedPools)
 	}
 	if described.Namespace.Etag == "" {
 		t.Error("a stored namespace read back with no etag; an update could not be conditional")
@@ -237,19 +267,35 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// ---- pool health, from B ----------------------------------------------
 	//
 	// Poller information reaches the cluster a moment after a worker starts,
-	// so the live count is awaited. What must NOT be awaited is B knowing
-	// anything about it: B started no Orker and dispatched no task.
-	pools := awaitLivePoolOnB(t, onB, namespace, pool)
-	if pools.byName(pool).LiveOrkerCount < 1 {
-		t.Fatalf("pool %q reports no Orkers on B: %+v", pool, pools)
-	}
-	if len(pools.byName(pool).Plugins) == 0 {
+	// so the live counts are awaited. What must NOT be awaited is B knowing
+	// anything about them: B started no Orker and dispatched no task.
+	//
+	// Two Orkers on the default pool and one on the aux pool. Both numbers are
+	// asserted, because both were a refusal one round ago.
+	pools := awaitLivePoolsOnB(t, onB, namespace, map[string]int{pool: 2, auxPool: 1})
+	if got := pools.byName(pool); got == nil || got.LiveOrkerCount < 2 {
+		t.Fatalf("pool %q does not report its two Orkers on B: %+v", pool, pools)
+	} else if len(got.Plugins) == 0 {
 		t.Errorf("pool %q reports no plugins; the Orkers serving it were never asked", pool)
+	}
+	if got := pools.byName(auxPool); got == nil || got.LiveOrkerCount < 1 {
+		t.Fatalf("the live non-default pool %q is missing from B's report: %+v", auxPool, pools)
+	} else {
+		if got.IsDefault {
+			t.Errorf("pool %q is marked default; %q is", auxPool, pool)
+		}
+		if len(got.Plugins) == 0 {
+			t.Errorf("pool %q reports no plugins; its Orker was never asked", auxPool)
+		}
 	}
 	if cold := pools.byName("cold"); cold == nil {
 		t.Error("the allow-listed pool nothing serves is missing; an empty pool must be reported")
 	} else if cold.LiveOrkerCount != 0 || len(cold.Plugins) != 0 {
 		t.Errorf("pool cold = %+v, want no Orkers and no plugins", cold)
+	} else if cold.LastSeen != "" {
+		// A pool nothing polls has no fresh observation, so it has no time to
+		// report. See Pool.last_seen: this column never dates a dead pool.
+		t.Errorf("pool cold reports last_seen %q with no live Orker", cold.LastSeen)
 	}
 	if pools.DefaultPool != pool {
 		t.Errorf("default pool = %q, want %q — where a task naming none runs",
@@ -268,11 +314,21 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	}
 
 	// ---- the plugin inventory, from B --------------------------------------
+	//
+	// A live non-default pool is in scope while this runs, which is the shape
+	// that used to make this RPC refuse. It answers, and it carries the whole
+	// descriptor for the deployment's own pool.
 	inventory := requireCLI(t, onB, "B lists the plugins the Orkers run", "plugin", "list")
 	for _, want := range []string{"shell", "http", "file"} {
 		if !strings.Contains(inventory, want) {
 			t.Errorf("the inventory does not report the %q plugin:\n%s", want, inventory)
 		}
+	}
+	inventoryJSON := decodePluginList(t, requireCLI(t, onB, "B reads the inventory as JSON",
+		"--json", "plugin", "list"))
+	if shell := inventoryJSON.byName("shell"); shell == nil || shell.Version == "" {
+		t.Errorf("the deployment's own pool did not answer with a whole descriptor: %+v",
+			inventoryJSON.Plugins)
 	}
 
 	// ---- write safety, on B ------------------------------------------------
@@ -441,19 +497,57 @@ func decodeNamespaceDocument(t *testing.T, stdout string) adminNamespaceDocument
 	return document
 }
 
-// awaitLivePoolOnB polls B's pool health until the Orker appears.
+// adminPluginList is `orkctl plugin list --json`, decoded.
+type adminPluginList struct {
+	Plugins []struct {
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description"`
+	} `json:"plugins"`
+}
+
+func (l adminPluginList) byName(name string) *struct {
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+} {
+	for i := range l.Plugins {
+		if l.Plugins[i].Name == name {
+			return &l.Plugins[i]
+		}
+	}
+	return nil
+}
+
+func decodePluginList(t *testing.T, stdout string) adminPluginList {
+	t.Helper()
+	var listing adminPluginList
+	if err := json.Unmarshal([]byte(stdout), &listing); err != nil {
+		t.Fatalf("plugin list --json is not valid JSON: %v\n%s", err, stdout)
+	}
+	return listing
+}
+
+// awaitLivePoolsOnB polls B's pool health until every named pool reports at
+// least the Orkers it was given.
 //
 // The wait is for the CLUSTER, not for B: Temporal records a poller a moment
 // after a worker starts, and until it does, "no Orkers" is the honest answer.
-// B is asked from the first attempt, and every attempt is B answering for a
-// pool it never dispatched to.
-func awaitLivePoolOnB(
+// B is asked from the first attempt, and every attempt is B answering for
+// pools it never dispatched to.
+//
+// It waits for a COUNT, not merely for presence, because "at least one Orker"
+// is the case that already worked. Two Orkers on one pool is the case this
+// test exists to hold, and a poll that stopped at the first would report green
+// while the second Orker was still registering.
+func awaitLivePoolsOnB(
 	t *testing.T,
 	onB func(args ...string) (string, string, int),
-	namespace, pool string,
+	namespace string,
+	want map[string]int,
 ) adminPoolList {
 	t.Helper()
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	var last adminPoolList
 	for time.Now().Before(deadline) {
 		stdout, stderr, code := onB("--json", "pool", "list", "-n", namespace)
@@ -461,12 +555,20 @@ func awaitLivePoolOnB(
 			t.Fatalf("pool list on B exited %d:\n%s\n%s", code, stdout, stderr)
 		}
 		last = decodePoolList(t, stdout)
-		if found := last.byName(pool); found != nil && found.LiveOrkerCount > 0 {
+		ready := true
+		for pool, orkers := range want {
+			found := last.byName(pool)
+			if found == nil || found.LiveOrkerCount < orkers {
+				ready = false
+				break
+			}
+		}
+		if ready {
 			return last
 		}
 		time.Sleep(time.Second)
 	}
-	t.Fatalf("pool %q never reported a live Orker on B: %+v", pool, last)
+	t.Fatalf("B never reported %v: %+v", want, last)
 	return last
 }
 
@@ -511,12 +613,21 @@ func publishAdminTranscript(t *testing.T, body string) {
 		"# M11.3: the admin surface answered by a replica that started nothing (%s)\n"+
 			"#\n"+
 			"# Two real `ork` processes share one Temporal namespace, one execution\n"+
-			"# channel and one MinIO bucket. Lines marked #A are issued against replica\n"+
-			"# A, which performed every write; lines marked #B are issued against\n"+
-			"# replica B, which registered no namespace, applied no orkflow and started\n"+
-			"# no run. Everything B answers therefore comes from the cluster or the\n"+
-			"# bucket (AGENTS.md §1.7) — except `admin info`, which describes B itself\n"+
-			"# and says so.\n"+
+			"# channel and one MinIO bucket. Three real `orker` processes serve two\n"+
+			"# pools: two Orkers on the deployment's default pool, one on a second\n"+
+			"# pool it does not route to by default.\n"+
+			"#\n"+
+			"# Lines marked #A are issued against replica A, which performed every\n"+
+			"# SETUP write: it registered the namespace and applied the orkflow. Lines\n"+
+			"# marked #B are issued against replica B, which registered no namespace,\n"+
+			"# applied no orkflow and started no run, so every READ it answers comes\n"+
+			"# from the cluster or the bucket (AGENTS.md §1.7) — except `admin info`,\n"+
+			"# which describes B itself and says so.\n"+
+			"#\n"+
+			"# B does issue writes, on purpose, in the write-safety section below: a\n"+
+			"# rule enforced only by the replica that happens to hold state is not a\n"+
+			"# rule. Three of those are refusals; the last is the re-read-and-reapply\n"+
+			"# round trip that IS the etag compare-and-swap.\n"+
 			"# generated by: go test -tags=integration -p 1 ./cmd/orkctl/ \\\n"+
 			"#                 -run TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface\n\n",
 		time.Now().UTC().Format(time.RFC3339))

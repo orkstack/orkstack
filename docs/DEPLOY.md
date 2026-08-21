@@ -1020,16 +1020,40 @@ gpu      1                   container,file,http,shell  yes      2026-01-02T03:0
 
 A pool with no Orkers is **listed**, because "nobody is serving this" is the
 answer the question was asked for — a task sent there waits for a worker that
-is not running. A pool whose Orkers cannot be ASKED what they run is a third
-state, and it is reported as a failure rather than as an empty plugin list:
-"we could not ask" and "they run nothing" are the same bytes on the wire
-otherwise, and only the second is a fact to act on.
+is not running.
 
-For `plugin list`, a non-default pool also needs a complete descriptor reader:
-the one-worker name-only reader cannot supply version, description or schemas.
-If that reader is all the deployment has, the API returns `Unavailable` rather
-than presenting partial metadata. The same fail-closed rule covers a pool with
-multiple live Orkers, whose registries cannot be represented by one sample.
+**Both admin reads answer; neither refuses.** A source that cannot be reached
+costs the answer the part that source held, is logged with the pool or the
+store it lost, and costs nothing else. That rule is not a preference: an
+operator opens pool health and the plugin inventory when something is already
+wrong, and an `Unavailable` there hides every pool that IS healthy in order to
+report one that is not.
+
+What that costs, stated so nobody has to discover it:
+
+- **`PLUGINS` is a sample, not a census.** The question is one activity
+  executed on the pool's own channel, so whichever of the pool's Orkers picks
+  it up answers for the pool. The Orkers of one pool are one release
+  (`AGENTS.md` §10), which is what makes the sample worth showing; mid-rollout
+  two of them can differ and the column shows one of the two.
+- **An empty `PLUGINS` means "nobody was asked, or nobody answered".** A pool
+  with no live Orkers has nobody to ask; a pool whose Orkers did not answer in
+  time keeps its `ORKERS` count and loses its plugin list. It never means
+  "these Orkers run no plugins". The two are the same bytes on the wire, and
+  telling them apart would cost the whole report — so the report is kept and
+  the ambiguity is written down here instead.
+- **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
+  minutes after its worker died, so a record older than the freshness window is
+  dropped before anything is counted or timestamped. A pool whose Orkers have
+  all gone quiet shows `-`, not the moment the last one was heard. The column
+  says how fresh the number beside it is, and nothing else.
+- **`orkctl plugin list` carries versions and schemas only for the
+  deployment's default pool**, whose Orkers answer the descriptor activity
+  directly. A plugin found only on another pool appears as a bare NAME with an
+  empty version — the per-pool question that found it reports names. Listing
+  it is still worth it: without it an operator hunting `container` concludes it
+  is not installed while a run using it succeeds.
+
 The inventory's pool scope is the durable state the replica can read: the
 deployment's default route, namespace allow-lists, and pools named by any
 stored orkflow version. A pool that no namespace or stored version names cannot

@@ -187,13 +187,33 @@ type Pool struct {
 	// was computed. Zero means a task sent here would wait for an Orker that is
 	// not there, which is what a submit refuses.
 	LiveOrkerCount int32 `protobuf:"varint,2,opt,name=live_orker_count,json=liveOrkerCount,proto3" json:"live_orker_count,omitempty"`
-	// plugins are the plugins those Orkers can run, asked of the pool itself. It
-	// is empty when the pool has no live Orkers: there is nobody to ask.
+	// plugins are the plugins those Orkers can run, asked of the pool itself.
+	//
+	// It is a SAMPLE, and the caption a reader is owed says so: the question is
+	// one activity executed on the pool's own channel, so whichever of the
+	// pool's Orkers picks it up is the one that answers. The Orkers of one pool
+	// run one release by construction, which is what makes a sample worth
+	// showing; mid-rollout two of them can differ, and this field will show one
+	// of the two.
+	//
+	// Empty means "nobody was asked, or nobody answered" — a pool with no live
+	// Orkers has nobody to ask, and a pool whose Orkers did not answer in time
+	// keeps its count and loses its plugin list. It never means "these Orkers
+	// run no plugins".
 	Plugins []string `protobuf:"bytes,3,rep,name=plugins,proto3" json:"plugins,omitempty"`
 	// is_default marks the pool a task of this namespace runs on when it names
 	// none.
 	IsDefault bool `protobuf:"varint,4,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
-	// last_seen is the most recent moment an Orker of this pool was observed.
+	// last_seen is the most recent moment an Orker of this pool was observed
+	// STILL POLLING.
+	//
+	// Temporal remembers a poller for minutes after its worker died, so the
+	// probe drops a record older than the freshness window before counting or
+	// timestamping anything (internal/engine/pool_probe.go). One consequence is
+	// load-bearing and stated here rather than discovered: a pool whose Orkers
+	// have all gone quiet reports NO last_seen at all, not the moment the last
+	// of them was heard. This field answers "how fresh is the number beside
+	// it", never "when did this pool die".
 	LastSeen      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

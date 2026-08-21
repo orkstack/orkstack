@@ -1134,15 +1134,32 @@ export const ListPluginsRequestSchema: GenMessage<ListPluginsRequest> = /*@__PUR
   messageDesc(file_orkstack_v1_service, 36);
 
 /**
+ * PluginInfo is one plugin, as the pool that answered described it.
+ *
+ * Entries are keyed by (name, version): two pools mid-rollout genuinely do run
+ * two versions of one plugin, and collapsing them would hide the fact an
+ * operator opened this view to find.
+ *
  * @generated from message orkstack.v1.PluginInfo
  */
 export type PluginInfo = Message<"orkstack.v1.PluginInfo"> & {
   /**
+   * name is always present, whichever pool reported it.
+   *
    * @generated from field: string name = 1;
    */
   name: string;
 
   /**
+   * version, description and the two schemas are reported by the deployment's
+   * DEFAULT pool, whose Orkers answer the plugin-descriptor activity directly.
+   *
+   * A plugin visible only on another pool arrives as a bare name and these
+   * fields are EMPTY: the per-pool question that found it reports names. Empty
+   * means "not reported by the pool that has it", never "this plugin declares
+   * none" — a version invented for a plugin nobody described would be worse
+   * than the gap.
+   *
    * @generated from field: string version = 2;
    */
   version: string;
@@ -1559,6 +1576,18 @@ export const NamespaceService: GenService<{
  */
 export const PluginService: GenService<{
   /**
+   * ListPlugins reports what this deployment can run.
+   *
+   * It answers even when part of the deployment cannot be reached. Each live
+   * pool contributes what it can, an unreachable source contributes nothing
+   * and is logged, and only one failure remains: the deployment's own Orkers
+   * asked and silent, where an empty list would read as "no plugins are
+   * installed". An inventory is opened when something is already wrong, and a
+   * refusal hides the plugins that ARE reachable.
+   *
+   * How complete each entry is depends on which pool reported it — see
+   * PluginInfo.
+   *
    * @generated from rpc orkstack.v1.PluginService.ListPlugins
    */
   listPlugins: {

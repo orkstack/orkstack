@@ -832,6 +832,17 @@ func (UnimplementedNamespaceServiceHandler) ListPools(context.Context, *connect.
 
 // PluginServiceClient is a client for the orkstack.v1.PluginService service.
 type PluginServiceClient interface {
+	// ListPlugins reports what this deployment can run.
+	//
+	// It answers even when part of the deployment cannot be reached. Each live
+	// pool contributes what it can, an unreachable source contributes nothing
+	// and is logged, and only one failure remains: the deployment's own Orkers
+	// asked and silent, where an empty list would read as "no plugins are
+	// installed". An inventory is opened when something is already wrong, and a
+	// refusal hides the plugins that ARE reachable.
+	//
+	// How complete each entry is depends on which pool reported it — see
+	// PluginInfo.
 	ListPlugins(context.Context, *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error)
 }
 
@@ -867,6 +878,17 @@ func (c *pluginServiceClient) ListPlugins(ctx context.Context, req *connect.Requ
 
 // PluginServiceHandler is an implementation of the orkstack.v1.PluginService service.
 type PluginServiceHandler interface {
+	// ListPlugins reports what this deployment can run.
+	//
+	// It answers even when part of the deployment cannot be reached. Each live
+	// pool contributes what it can, an unreachable source contributes nothing
+	// and is logged, and only one failure remains: the deployment's own Orkers
+	// asked and silent, where an empty list would read as "no plugins are
+	// installed". An inventory is opened when something is already wrong, and a
+	// refusal hides the plugins that ARE reachable.
+	//
+	// How complete each entry is depends on which pool reported it — see
+	// PluginInfo.
 	ListPlugins(context.Context, *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error)
 }
 

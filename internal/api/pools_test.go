@@ -472,10 +472,6 @@ func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
 		}},
 		Pools:       livePools{task.DefaultQueue: 2, gpu: 1},
 		PoolPlugins: poolPlugins{task.DefaultQueue: {"http", "shell"}, gpu: {"shell"}},
-		PoolInventory: poolInventory{
-			task.DefaultQueue: {{Name: "http"}, {Name: "shell"}},
-			gpu:               {{Name: "shell"}},
-		},
 	})
 
 	resp, err := svc.ListPools(context.Background(),
@@ -512,7 +508,16 @@ func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
 	}
 }
 
-func TestListPools_PreservesLastSeenForAStalePool(t *testing.T) {
+// TestListPools_ReportsAStalePoolAsEmpty pins what a pool whose Orkers have
+// stopped looks like on the wire.
+//
+// Temporal remembers a poller for minutes after its worker died, so "the
+// cluster still lists someone" is not "someone is serving this pool". Past the
+// freshness window the count is zero, and last_seen is absent — the production
+// probe drops a stale poller record before it can contribute a timestamp
+// (internal/engine/pool_probe.go, livePollers), so a last_seen for a dead pool
+// is a value nothing observed. The wire contract says exactly this.
+func TestListPools_ReportsAStalePoolAsEmpty(t *testing.T) {
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	lastSeen := now.Add(-2 * engine.DefaultPollerFreshness)
 	queue := poolQueue(t, task.DefaultPool)
@@ -533,11 +538,19 @@ func TestListPools_PreservesLastSeenForAStalePool(t *testing.T) {
 	if pool.GetLiveOrkerCount() != 0 {
 		t.Errorf("stale pool count = %d, want zero", pool.GetLiveOrkerCount())
 	}
-	if got := pool.GetLastSeen().AsTime(); !got.Equal(lastSeen) {
-		t.Errorf("stale pool last_seen = %v, want %v", got, lastSeen)
+	if pool.GetLastSeen() != nil {
+		t.Errorf("stale pool last_seen = %v, want none: no fresh poller was observed",
+			pool.GetLastSeen().AsTime())
 	}
 }
 
+// TestListPools_IncludesPoolsFromEveryStoredVersion holds the scope of the
+// report to every version that can still be submitted.
+//
+// An explicit-version submit can run ANY stored version, so a pool named only
+// by an older one is a route this deployment still dispatches to. Reading the
+// current version alone would drop `gpu` here, and an operator would size a
+// pool they were told does not exist.
 func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 	store := engine.NewMemoryOrkflowStore()
 	gpu := poolQueue(t, "gpu")
@@ -556,9 +569,11 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: mainVersion})); err != nil {
 		t.Fatalf("apply current main version: %v", err)
 	}
+	// No allow-list, so the pools its stored definitions name are what "in
+	// scope" means — which is the set this test is about.
 	reader := api.NewService(api.Config{
 		Orkflows:    store,
-		Namespaces:  registry{"default": {Name: "default", AllowedPools: []string{"main", "gpu"}}},
+		Namespaces:  registry{"default": {Name: "default"}},
 		Pools:       livePools{task.DefaultQueue: 1, gpu: 1},
 		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}, gpu: {"container"}},
 	})
@@ -591,9 +606,6 @@ func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
 		RawQueue:    raw,
 		Pools:       livePools{raw: 3},
 		PoolPlugins: poolPlugins{raw: {"http", "shell"}},
-		PoolInventory: poolInventory{
-			raw: {{Name: "http"}, {Name: "shell"}},
-		},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -655,9 +667,6 @@ func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 		RawQueue:    gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
 		Pools:       livePools{gpuQueue: 2},
 		PoolPlugins: poolPlugins{gpuQueue: {"shell"}},
-		PoolInventory: poolInventory{
-			gpuQueue: {{Name: "shell"}},
-		},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -726,29 +735,30 @@ func (d downOrkflowStore) SetCurrentVersion(context.Context, string, string, str
 	return "", d.err
 }
 
-// TestListPools_RefusesWhenTheOrkflowStoreIsDown keeps an unreadable durable
-// catalog from looking like a complete, smaller pool set.
+// TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown is
+// the degradation the code promises, measured.
 //
-// The current namespace document is not enough to answer which stored
-// versions remain runnable, so the read fails closed and names the source.
-func TestListPools_RefusesWhenTheOrkflowStoreIsDown(t *testing.T) {
+// ListPools answers two questions from two sources: WHICH pools are in scope
+// (the namespace document, plus — for a namespace with no allow-list — the
+// pools its stored definitions name) and WHO is serving them (the cluster).
+// Only the first needs the orkflow store, and it is the less important half.
+// Pool health during a bucket wobble is precisely when an operator is looking,
+// so a store that cannot be listed narrows the answer instead of replacing it
+// with an error, and says so in the log.
+func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *testing.T) {
 	batch := poolQueue(t, "batch")
 	gpu := poolQueue(t, "gpu")
 	payments := registry{"payments": {Name: "payments", DefaultPool: "batch"}}
 	live := livePools{batch: 2, gpu: 1}
 	plugins := poolPlugins{batch: {"shell"}, gpu: {"shell"}}
 
-	// Control: with the store up, the pool an orkflow names is in scope.
+	// The control: with the store up, the pool an orkflow names is in scope.
 	healthy := engine.NewMemoryOrkflowStore()
 	up := api.NewService(api.Config{
 		Orkflows:    healthy,
 		Namespaces:  payments,
 		Pools:       live,
 		PoolPlugins: plugins,
-		PoolInventory: poolInventory{
-			batch: {{Name: "shell"}},
-			gpu:   {{Name: "shell"}},
-		},
 	})
 	if _, err := up.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
@@ -763,28 +773,64 @@ func TestListPools_RefusesWhenTheOrkflowStoreIsDown(t *testing.T) {
 		t.Fatalf("ListPools with a healthy store: %v", err)
 	}
 	if got := poolNames(upResp.Msg.GetPools()); strings.Join(got, ",") != "batch,gpu" {
-		t.Fatalf("ListPools with a healthy store = %v, want [batch gpu]", got)
+		t.Fatalf("ListPools with a healthy store = %v, want [batch gpu]: the fallback below "+
+			"is only meaningful if the store contributes gpu here", got)
 	}
 
+	// The degradation.
+	logs := &bytes.Buffer{}
 	refused := errors.New("dial tcp 127.0.0.1:9000: connect: connection refused")
 	down := api.NewService(api.Config{
 		Orkflows:    downOrkflowStore{err: refused},
 		Namespaces:  payments,
 		Pools:       live,
 		PoolPlugins: plugins,
+		Logger:      slog.New(slog.NewTextHandler(logs, nil)),
 	})
-	_, err = down.ListPools(context.Background(),
+
+	resp, err := down.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{Namespace: "payments"}))
-	if err == nil {
-		t.Fatal("ListPools answered while the durable orkflow store was down")
+	if err != nil {
+		t.Fatalf("ListPools with an unreachable orkflow store: %v — a store failure must "+
+			"narrow the report, not replace it", err)
 	}
-	if code := connect.CodeOf(err); code != connect.CodeUnavailable {
-		t.Errorf("ListPools failed with %v, want Unavailable", code)
+	if got := poolNames(resp.Msg.GetPools()); strings.Join(got, ",") != "batch" {
+		t.Fatalf("ListPools = %v, want [batch]: the namespace's own pools are what is left "+
+			"when the definitions cannot be read", got)
 	}
-	for _, want := range []string{"payments", "list orkflows", "connection refused"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("ListPools error %q does not name %q", err, want)
+	// The half that never needed the store still has to be right: liveness
+	// comes from the cluster.
+	only := resp.Msg.GetPools()[0]
+	if only.GetLiveOrkerCount() != 2 || !only.GetIsDefault() {
+		t.Errorf("pool batch = %v, want 2 live Orkers and the default mark", only)
+	}
+	if got := strings.Join(only.GetPlugins(), ","); got != "shell" {
+		t.Errorf("pool batch reports plugins %q, want shell", got)
+	}
+	if got := resp.Msg.GetDefaultPool(); got != "batch" {
+		t.Errorf("default pool = %q, want batch", got)
+	}
+	// A narrowed answer that says nothing is indistinguishable from a complete
+	// one, so the degradation is logged with what could not be read. The
+	// namespace is asserted as its own ATTRIBUTE rather than as a substring of
+	// the record: the wrapped error names it too, so a substring passes for a
+	// log that dropped the field an operator filters on.
+	for _, want := range []string{
+		"namespace=payments",
+		"orkflow store could not be read",
+		"connection refused",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			// The assertion names the missing attribute and nothing else. The
+			// record itself is evidence for a human, and it goes on its own
+			// line: it carries a wall clock and its own `level=`, so a failure
+			// line containing it can be neither quoted by a proof that
+			// survives a rerun nor told apart from a subprocess's log.
+			t.Errorf("the degradation log does not carry %q", want)
 		}
+	}
+	if t.Failed() {
+		t.Logf("the log said: %s", logs.String())
 	}
 }
 

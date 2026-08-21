@@ -10,7 +10,6 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,15 +53,10 @@ func (p adminPoolPlugins) PluginsOnPool(_ context.Context, channel string) ([]st
 	return append([]string(nil), p[pool]...), nil
 }
 
-type adminPoolInventory map[string][]plugin.Descriptor
-
-func (p adminPoolInventory) PluginsOnPool(_ context.Context, channel string) ([]plugin.Descriptor, error) {
-	return append([]plugin.Descriptor(nil), p[channel]...), nil
-}
-
-// adminFixture is a CLI fixture wired the way a real deployment is: system
-// information injected as `ork` injects it, and a cluster reporting Orkers on
-// two pools.
+// adminFixture is a CLI fixture wired with the Config fields `cmd/ork` wires
+// and no others: system information injected as `ork` injects it, the pool
+// probe, and the per-pool plugin lister. A fixture that configured a seam no
+// shipped binary sets would golden a deployment nobody can run.
 //
 // The values are fixed rather than read from the machine, which is what lets
 // the goldens hold: a golden carrying this host's Go version or clock would
@@ -88,10 +82,6 @@ func adminFixture(t *testing.T) *fixture {
 		cfg.PoolPlugins = adminPoolPlugins{
 			task.DefaultPool: {"file", "http", "shell"},
 			"gpu":            {"container"},
-		}
-		cfg.PoolInventory = adminPoolInventory{
-			"ork-tasks":    {{Name: "file", Version: "0.1.0"}, {Name: "http", Version: "0.1.0"}, {Name: "shell", Version: "0.1.0"}},
-			"ork-pool-gpu": {{Name: "container", Version: "0.2.0"}},
 		}
 	})
 }
