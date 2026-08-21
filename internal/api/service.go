@@ -241,6 +241,12 @@ func NewService(cfg Config) *Service {
 		Plugins:    cfg.PoolPlugins,
 		RawQueue:   cfg.RawQueue,
 		Logger:     svc.logger,
+		// The same clock the rest of the Service stamps with. Pool liveness
+		// is judged against it — an observation is live only if it is recent
+		// — so a test that fixes the clock and states an observation at that
+		// instant gets a live pool, instead of one that went stale between
+		// the fixture and time.Now(). Nil is time.Now, which is production.
+		Now: cfg.Now,
 	}
 	// Only an unconfigured Service gets the in-memory store, and only so a
 	// unit test can exercise runs without a bucket. A configured store is

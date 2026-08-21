@@ -513,6 +513,8 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 		"run watch":    {"run", "watch", "run-001"},
 		"run cancel":   {"run", "cancel", "run-001"},
 		"plugin list":  {"plugin", "list"},
+		"admin info":   {"admin", "info"},
+		"pool list":    {"pool", "list"},
 		"version":      {"version"},
 	}
 
