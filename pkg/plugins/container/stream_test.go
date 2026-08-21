@@ -236,7 +236,8 @@ printf 'late-marker\n'
 
 // Nothing the plugin already does may regress because a third consumer of the
 // same bytes appeared: the capture artifacts are still the byte-exact streams,
-// and the output payload still carries every field it carried.
+// and the output payload still carries every field it carries — which, since
+// M11.3, is every field EXCEPT the two that were the container's own bytes.
 func TestContainerPlugin_StreamingLeavesTheArtifactsAndPayloadUnchanged(t *testing.T) {
 	rec := &logCapture{}
 	p := newStreamingDocker(t, `
@@ -266,14 +267,21 @@ printf 'err-1\nerr-2' >&2
 
 	for field, want := range map[string]any{
 		"exit_code":    float64(0),
-		"stdout":       "out-1\nout-2\r\nout-3",
-		"stderr":       "err-1\nerr-2",
 		"image":        "alpine:3.20",
 		"image_pulled": false,
 		"timed_out":    false,
 	} {
 		if got := result.Output[field]; got != want {
 			t.Errorf("output[%q] = %#v, want %#v", field, got, want)
+		}
+	}
+	// And the two the payload must never carry: a payload is a Temporal
+	// payload, and a task's output travels as artifacts (AGENTS.md §1.2).
+	// Both copies the reader actually uses were just checked above — the
+	// byte-exact artifacts, and the log stream below.
+	for _, field := range []string{"stdout", "stderr"} {
+		if got, ok := result.Output[field]; ok {
+			t.Errorf("output[%q] = %#v is on the payload", field, got)
 		}
 	}
 	for _, field := range []string{"container", "duration_ms"} {

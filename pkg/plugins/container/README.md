@@ -128,17 +128,30 @@ own budget is what expires first and the failure names the container.
 | field          | description                                                    |
 |----------------|----------------------------------------------------------------|
 | `exit_code`    | the container's exit status                                    |
-| `stdout`       | first 8 KiB of stdout                                          |
-| `stderr`       | first 8 KiB of stderr                                          |
 | `image`        | the image that ran                                             |
 | `image_pulled` | whether this run fetched the image                             |
 | `container`    | the container name, for correlating with `docker` on the host  |
 | `timed_out`    | whether the budget expired                                     |
 | `duration_ms`  | wall-clock run duration                                        |
 
-`stdout`/`stderr` are truncated on the payload — bytes never travel inline. The
-exact streams are the artifacts named by `capture_stdout_as` /
-`capture_stderr_as`.
+**No `stdout`, no `stderr`.** An output payload is a Temporal payload — the
+activity result, the workflow's state, the run's stored task output — and a
+task's output is bytes, which travel as artifacts and never inline
+(AGENTS.md §1.2). Every field above is something only the plugin knows.
+
+What the container printed has two readers, and both are complete where a
+truncated string never was:
+
+| you want | read |
+|---|---|
+| to watch it, or read it afterwards | `orkctl run logs <run-id> --task <id>` (add `-f` to follow) |
+| a downstream task to consume it | name it with `capture_stdout_as` / `capture_stderr_as`, then `{{ artifact "<task>/<name>" }}` |
+
+A downstream task that used to interpolate `{{ .tasks.build.output.stdout }}`
+mounts or reads the capture artifact instead —
+[`examples/container-example.ork.yaml`](../../../examples/container-example.ork.yaml)
+is the worked example. There is no shim: nothing was deployed, and the field is
+simply gone.
 
 ## Live output
 
@@ -151,7 +164,8 @@ orkctl run logs <run-id> --task build -f
 ```
 
 Three writers see each stream, and none of them replaces another: the capture
-file (byte-exact), the 8 KiB payload head, and the live log.
+file (byte-exact), the live log, and a small in-memory head the plugin reads to
+recognize one daemon-level failure and never quotes.
 
 - **Lines, not reads.** Bytes are framed into whole lines by
   `plugin.LineWriter`. A line split across two docker reads arrives once; a
@@ -166,8 +180,11 @@ file (byte-exact), the 8 KiB payload head, and the live log.
   confusable and `plugin.DecodeStreamLine` recovers the origin and the original
   line. Ordinary stdout is untouched.
 - **A chatty container is bounded.** The framer holds under 64 KiB per stream;
-  the Orker uploads a chunk every 64 KiB or 500 ms
-  (`ORK_ORKER_LOG_FLUSH_BYTES`, `ORK_ORKER_LOG_FLUSH_INTERVAL`) and stops at
+  the Orker uploads a chunk when 64 KiB has accumulated AND 500 ms has passed
+  since the last upload, and in any case within 500 ms
+  (`ORK_ORKER_LOG_FLUSH_BYTES`, `ORK_ORKER_LOG_FLUSH_INTERVAL`) — the two
+  bounds together cap the write rate at one object per interval however small
+  the size bound is set — and stops at
   16 MiB per attempt (`ORK_ORKER_LOG_MAX_BYTES`) with a visible
   `[ork] log truncated…` notice. Backpressure is real: a blocked upload blocks
   the writer, which fills the pipe, which blocks the container on `write(2)`.

@@ -28,21 +28,25 @@
 //	  - ephemeral: scratch       # a fresh directory, created before the run
 //	    path: /scratch           # and removed after it
 //
-// `output`: exit_code, stdout, stderr, image, image_pulled, container,
-// timed_out, duration_ms. The stdout/stderr strings are truncated to
-// MaxCapturedOutput bytes; the full streams are available as artifacts through
+// `output`: exit_code, image, image_pulled, container, timed_out, duration_ms.
+// IT CARRIES NO BYTES THE CONTAINER WROTE. An output payload is a Temporal
+// payload — the activity result, the workflow's own state, the run's stored
+// task output — and a task's output travels as artifacts, never inline
+// (AGENTS.md §1.2). What the container printed reaches a reader two other
+// ways, both of them complete where a truncated string never was: the live
+// log stream, and the byte-exact capture artifacts named by
 // capture_stdout_as / capture_stderr_as.
 //
-// Live output: both streams also reach the task's log stream WHILE the
-// container runs, framed into lines, with stderr carrying
-// plugin.StderrMarker so the two stay apart in one stream (see streamSet and
-// docs/PLUGINS.md). The capture artifacts are unaffected — they remain the
-// byte-exact copy.
+// Live output: both streams reach the task's log stream WHILE the container
+// runs, framed into lines, with stderr carrying plugin.StderrMarker so the two
+// stay apart in one stream (see streamSet and docs/PLUGINS.md).
 //
-// A FAILURE carries no payload and quotes nothing the container wrote: an
-// error travels into Temporal history and onto the event stream, once per
-// attempt, and a task's output is not something to put there (AGENTS.md §1.4).
-// It names the exit code and where the output is instead (runFailure).
+// A FAILURE carries no payload and quotes nothing the container wrote, for the
+// same reason and one worse: an error travels into Temporal history AND onto
+// the event stream, once per attempt. It names the exit code and where the
+// output is instead (runFailure). It DOES carry the captures the run produced
+// — the output of a failing container is exactly what an engineer opens the
+// run to read, and the Orker uploads them before it fails the task.
 //
 // Security (AGENTS.md §9): the plugin drives the Docker CLI through an argv
 // slice and never builds a shell command line, so no config value can inject a
@@ -64,10 +68,15 @@ import (
 )
 
 const (
-	// MaxCapturedOutput bounds the stdout/stderr strings placed on the task
-	// output payload. Bytes never belong inline, so the full streams are only
-	// available as artifacts.
-	MaxCapturedOutput = 8 << 10
+	// MaxDiagnosticHead bounds the head of each stream the plugin keeps in
+	// memory.
+	//
+	// It is NOT a payload field and never leaves this package: the only reader
+	// is runFailure, which recognizes one daemon-level cause from it
+	// (invisibleBindSource) and quotes none of it. The bytes themselves go to
+	// the capture files and the log stream, which is where a task's output
+	// belongs (AGENTS.md §1.2).
+	MaxDiagnosticHead = 8 << 10
 
 	// DefaultKillGrace is how long a container killed for exceeding its budget
 	// may take to disappear before the Docker client is dropped too.
@@ -147,12 +156,15 @@ func (p *Plugin) Describe() plugin.Descriptor {
 			},
 			"required": []any{"image"},
 		},
+		// No stdout / stderr here, and none on the payload: an output payload
+		// is a Temporal payload, and a task's output travels as artifacts
+		// (AGENTS.md §1.2). A downstream task reads a container's output
+		// through `artifact "<task>/<capture-name>"`, and a person reads it
+		// with `orkctl run logs`.
 		OutputSchema: plugin.SchemaDoc{
 			"type": "object",
 			"properties": map[string]any{
 				"exit_code":    map[string]any{"type": "number"},
-				"stdout":       map[string]any{"type": "string"},
-				"stderr":       map[string]any{"type": "string"},
 				"image":        map[string]any{"type": "string"},
 				"image_pulled": map[string]any{"type": "boolean"},
 				"container":    map[string]any{"type": "string"},
@@ -290,21 +302,11 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		return nil, err
 	}
 
-	output := plugin.Payload{
-		"exit_code":    float64(outcome.exitCode),
-		"stdout":       streams.stdoutHead.String(),
-		"stderr":       streams.stderrHead.String(),
-		"image":        image,
-		"image_pulled": pulled,
-		"container":    req.name,
-		"timed_out":    outcome.timedOut,
-		"duration_ms":  float64(outcome.duration.Milliseconds()),
-	}
-
-	if outcome.exitCode != 0 {
-		return nil, p.runFailure(req, outcome, streams)
-	}
-
+	// The captures are named BEFORE the exit code is interpreted, because a
+	// failing container's output is exactly the output somebody opens the run
+	// to read. Building them after the failure returned is what lost them:
+	// the files existed, the author had named them, and the Orker's deferred
+	// workdir cleanup removed them unread.
 	produced := make([]plugin.ProducedArtifact, 0, 2)
 	if name := strings.TrimSpace(configString(ec.Config, "capture_stdout_as")); name != "" {
 		produced = append(produced, plugin.ProducedArtifact{Name: name, LocalPath: streams.stdoutPath})
@@ -313,6 +315,27 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		produced = append(produced, plugin.ProducedArtifact{Name: name, LocalPath: streams.stderrPath})
 	}
 
+	if outcome.exitCode != 0 {
+		// A result AND an error: the error fails the task and is all that
+		// reaches history, while the captures still reach the store. The
+		// Orker uploads them before it returns the failure
+		// (internal/orker/activity.go).
+		log("container: %s exited %d in %s with %d artifact(s)",
+			req.name, outcome.exitCode, outcome.duration, len(produced))
+		return &plugin.Result{Artifacts: produced}, p.runFailure(req, outcome, streams)
+	}
+
+	// No stdout / stderr: this payload is a Temporal payload, and a task's
+	// output travels as artifacts (AGENTS.md §1.2). Everything here is
+	// something only the plugin knows.
+	output := plugin.Payload{
+		"exit_code":    float64(outcome.exitCode),
+		"image":        image,
+		"image_pulled": pulled,
+		"container":    req.name,
+		"timed_out":    outcome.timedOut,
+		"duration_ms":  float64(outcome.duration.Milliseconds()),
+	}
 	log("container: %s exited 0 in %s with %d artifact(s)", req.name, outcome.duration, len(produced))
 	return &plugin.Result{Output: output, Artifacts: produced}, nil
 }
@@ -454,7 +477,8 @@ func logger(ec *plugin.ExecContext) plugin.Logger {
 // and every one of them is load-bearing:
 //
 //   - a FILE, so the captured artifact is the container's exact bytes;
-//   - a bounded HEAD, for the strings on the output payload;
+//   - a bounded HEAD, which the plugin reads to recognize one daemon-level
+//     failure and never puts on a payload or in an error (MaxDiagnosticHead);
 //   - a LINE WRITER, so the application's own output reaches the task's live
 //     log stream WHILE the container runs rather than only afterwards (M11.1).
 //
@@ -484,8 +508,8 @@ func newStreams(workDir string, log plugin.Logger) (*streamSet, error) {
 	set := &streamSet{
 		stdoutPath: filepath.Join(dir, "stdout"),
 		stderrPath: filepath.Join(dir, "stderr"),
-		stdoutHead: &headBuffer{limit: MaxCapturedOutput},
-		stderrHead: &headBuffer{limit: MaxCapturedOutput},
+		stdoutHead: &headBuffer{limit: MaxDiagnosticHead},
+		stderrHead: &headBuffer{limit: MaxDiagnosticHead},
 		stdoutLive: plugin.NewLineWriter(log, ""),
 		stderrLive: plugin.NewLineWriter(log, plugin.StderrMarker),
 	}

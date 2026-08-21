@@ -213,7 +213,13 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 		t.Errorf("build reported a timeout it did not have")
 	}
 
-	stdout := build["stdout"].GetStringValue()
+	// The container's own output is read from its CAPTURE ARTIFACT, because
+	// that is where it is: the payload above holds what only the plugin knows
+	// and none of what the container wrote (AGENTS.md §1.2). The artifact is
+	// also the stronger observation — it is the whole stream rather than a
+	// truncated head.
+	stdout := readArtifact(t, ctx, store,
+		artifactNamed(t, taskRuns["build"], "build-log").GetUri())
 	// 2. `env` was templated by the engine and $-expanded by the plugin.
 	if !strings.Contains(stdout, "release=v1.4.2 archive=orkstack-v1.4.2.tar.gz") {
 		t.Errorf("container stdout %q does not show the expanded environment", stdout)
@@ -228,10 +234,12 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 		t.Errorf("container stdout %q does not show the file written to the ephemeral mount", stdout)
 	}
 
-	// 5. Both streams came back as artifacts holding the exact bytes.
-	logArtifact := artifactNamed(t, taskRuns["build"], "build-log")
-	if got := readArtifact(t, ctx, store, logArtifact.GetUri()); got != stdout {
-		t.Errorf("build-log artifact = %q, want the container's stdout %q", got, stdout)
+	// 5. And the payload carries NO part of it, however short.
+	for _, field := range []string{"stdout", "stderr"} {
+		if _, ok := build[field]; ok {
+			t.Errorf("the build task's stored output carries %q; a task's output is "+
+				"bytes and travels as artifacts (AGENTS.md §1.2)", field)
+		}
 	}
 	diagnostics := readArtifact(t, ctx, store,
 		artifactNamed(t, taskRuns["build"], "build-diagnostics").GetUri())
@@ -239,10 +247,11 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 		t.Errorf("build-diagnostics artifact = %q, want the container's stderr", diagnostics)
 	}
 
-	// 6. The container's output crossed the task boundary like any other.
+	// 6. The container's output crossed the task boundary like any other:
+	//    the payload fields by template, the bytes by artifact reference.
 	report := readArtifact(t, ctx, store,
 		artifactNamed(t, taskRuns["record"], "container-report.txt").GetUri())
-	for _, want := range []string{"image: alpine:3.20", "exit_code: 0", "release=v1.4.2"} {
+	for _, want := range []string{"image: alpine:3.20", "exit_code: 0", "build log: "} {
 		if !strings.Contains(report, want) {
 			t.Errorf("container-report.txt = %q, want it to contain %q", report, want)
 		}

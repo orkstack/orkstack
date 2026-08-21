@@ -461,24 +461,50 @@ func TestContainerPlugin_CapturesStdoutAndStderrAsArtifacts(t *testing.T) {
 		}
 	}
 
-	if result.Output["stdout"] != "line one\nline two\n" {
-		t.Errorf("output.stdout = %q, want the stream head", result.Output["stdout"])
+	// F4: the payload carries NO application bytes.
+	//
+	// An activity result is a Temporal payload and a task's output is bytes,
+	// so the two never meet (AGENTS.md §1.2). The container's own output
+	// reaches a reader two ways, both of which this test just checked: the
+	// live log stream, and the byte-exact capture artifacts above.
+	for _, field := range []string{"stdout", "stderr"} {
+		if _, ok := result.Output[field]; ok {
+			t.Errorf("output.%s = %q is on the task payload; a payload is Temporal "+
+				"history and a task's output travels as artifacts, never inline "+
+				"(AGENTS.md §1.2)", field, result.Output[field])
+		}
 	}
-	if result.Output["stderr"] != "a warning\n" {
-		t.Errorf("output.stderr = %q, want the stream head", result.Output["stderr"])
+	// What the payload DOES carry is what only the plugin knows.
+	for field, want := range map[string]any{
+		"exit_code":    float64(0),
+		"image":        "alpine:3.20",
+		"image_pulled": false,
+		"timed_out":    false,
+	} {
+		if result.Output[field] != want {
+			t.Errorf("output.%s = %v, want %v", field, result.Output[field], want)
+		}
 	}
-	if result.Output["exit_code"] != float64(0) {
-		t.Errorf("output.exit_code = %v, want 0", result.Output["exit_code"])
+	if _, ok := result.Output["duration_ms"].(float64); !ok {
+		t.Errorf("output.duration_ms = %v, want a number", result.Output["duration_ms"])
 	}
-	if result.Output["timed_out"] != false {
-		t.Errorf("output.timed_out = %v, want false", result.Output["timed_out"])
+	if name, _ := result.Output["container"].(string); name == "" {
+		t.Errorf("output.container = %q, want the container's name", name)
 	}
 }
 
-func TestContainerPlugin_TruncatesTheOutputPayloadButNotTheArtifact(t *testing.T) {
+// TestContainerPlugin_KeepsTheWholeStreamInTheArtifactAndNoneOfItInThePayload
+// is what the payload-truncation test became once the payload stopped
+// carrying the streams at all.
+//
+// Truncation existed to bound bytes that should never have been inline. With
+// the fields gone there is nothing to bound, and the guarantee that replaces
+// it is stronger and simpler: however much a container prints, the artifact
+// holds every byte of it and the payload holds none.
+func TestContainerPlugin_KeepsTheWholeStreamInTheArtifactAndNoneOfItInThePayload(t *testing.T) {
 	docker := newFakeDocker(t)
 	p := &Plugin{DockerBin: docker.bin}
-	full := strings.Repeat("x", MaxCapturedOutput+512)
+	full := strings.Repeat("x", 16<<10)
 	t.Setenv("FAKE_DOCKER_STDOUT", full)
 
 	ec, _ := newExecContext(t, map[string]any{
@@ -489,8 +515,11 @@ func TestContainerPlugin_TruncatesTheOutputPayloadButNotTheArtifact(t *testing.T
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if got := result.Output["stdout"].(string); len(got) != MaxCapturedOutput {
-		t.Errorf("output.stdout is %d bytes, want it truncated to %d", len(got), MaxCapturedOutput)
+	for key, value := range result.Output {
+		text, ok := value.(string)
+		if ok && strings.Contains(text, "xxxxxxxx") {
+			t.Errorf("output.%s carries the container's own bytes", key)
+		}
 	}
 	raw, err := os.ReadFile(result.Artifacts[0].LocalPath)
 	if err != nil {
@@ -499,6 +528,63 @@ func TestContainerPlugin_TruncatesTheOutputPayloadButNotTheArtifact(t *testing.T
 	if len(raw) != len(full) {
 		t.Errorf("artifact is %d bytes, want the full %d-byte stream", len(raw), len(full))
 	}
+}
+
+// TestContainerPlugin_NamedCapturesRemainAvailableOnFailure — F5.
+//
+// The output of a FAILING container is exactly what an engineer opens the run
+// to read, and it is the case the plugin used to lose: the non-zero exit
+// returned before capture_stdout_as / capture_stderr_as were turned into
+// produced artifacts, and the Orker then removed the workdir holding the
+// files. The bytes existed, were named by the author, and were deleted
+// unread.
+//
+// So a failure now returns BOTH: the error that fails the task, and the
+// captures the run produced. Nothing about the failure changes — it is the
+// same error, still permanent, still quoting nothing.
+func TestContainerPlugin_NamedCapturesRemainAvailableOnFailure(t *testing.T) {
+	docker := newFakeDocker(t)
+	p := &Plugin{DockerBin: docker.bin}
+	t.Setenv("FAKE_DOCKER_RUN_EXIT", "42")
+	t.Setenv("FAKE_DOCKER_STDOUT", "step 1\nstep 2\n")
+	t.Setenv("FAKE_DOCKER_STDERR", "compilation failed\n")
+
+	ec, _ := newExecContext(t, map[string]any{
+		"image":             "alpine:3.20",
+		"command":           "make",
+		"capture_stdout_as": "build-log",
+		"capture_stderr_as": "build-errors",
+	})
+	result, err := p.Execute(context.Background(), ec)
+	if err == nil {
+		t.Fatalf("Execute succeeded, want the exit-42 failure")
+	}
+	if result == nil {
+		t.Fatalf("a failing container returned no result, so the captures it "+
+			"produced are lost: %v", err)
+	}
+	if result.Output != nil {
+		t.Errorf("a failure carries a payload %v; a failed task has no output, and "+
+			"the error is what travels", result.Output)
+	}
+	byName := map[string]string{}
+	for _, a := range result.Artifacts {
+		raw, readErr := os.ReadFile(a.LocalPath)
+		if readErr != nil {
+			t.Fatalf("read capture %q: %v", a.Name, readErr)
+		}
+		byName[a.Name] = string(raw)
+	}
+	for name, want := range map[string]string{
+		"build-log":    "step 1\nstep 2\n",
+		"build-errors": "compilation failed\n",
+	} {
+		if byName[name] != want {
+			t.Errorf("capture %q = %q, want the failing container's exact stream %q",
+				name, byName[name], want)
+		}
+	}
+	assertPermanent(t, err)
 }
 
 func TestContainerPlugin_CreatesEphemeralMountsBeforeTheRunAndRemovesThemAfter(t *testing.T) {
@@ -520,8 +606,14 @@ func TestContainerPlugin_CreatesEphemeralMountsBeforeTheRunAndRemovesThemAfter(t
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if stdout := result.Output["stdout"].(string); !strings.Contains(stdout, "scratch:present") {
-		t.Errorf("the container did not see the ephemeral mount: stdout = %q", stdout)
+	// What the container saw is read from the LOG STREAM, which is where a
+	// container's output goes: the payload carries none of it (AGENTS.md
+	// §1.2), and `result` here is only proof the task succeeded.
+	if result == nil {
+		t.Fatal("Execute returned no result")
+	}
+	if !strings.Contains(logs.text(), "scratch:present") {
+		t.Errorf("the container did not see the ephemeral mount: log = %q", logs.text())
 	}
 	if _, err := os.Stat(scratch); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("ephemeral mount %s still exists after the run (stat err = %v)", scratch, err)

@@ -111,9 +111,16 @@ grows without limit:
 |---|---|---|---|
 | line framing buffer | < 64 KiB per stream | — | a longer run is emitted as pieces |
 | flush size | 64 KiB | `ORK_ORKER_LOG_FLUSH_BYTES` | the buffer is uploaded as one chunk |
-| flush interval | 500 ms | `ORK_ORKER_LOG_FLUSH_INTERVAL` | a slow task is still visible promptly |
+| flush interval | 500 ms | `ORK_ORKER_LOG_FLUSH_INTERVAL` | a slow task is still visible promptly, and no two uploads are closer together than this |
 | one stored line | 1 MiB | — | split across chunks |
 | one attempt | 16 MiB | `ORK_ORKER_LOG_MAX_BYTES` | a final `[ork] log truncated…` chunk, then nothing |
+
+The two bounds hold TOGETHER, which is what makes the second number a rate:
+a size-triggered flush waits until the interval has passed since the last
+upload, so the store is written at most twice a second however small
+`ORK_ORKER_LOG_FLUSH_BYTES` is set. Below the default the size bound buys
+smaller chunks, never more of them. (Memory outranks the pace: past 64 KiB
+buffered the chunk goes out whatever the clock says.)
 
 A chatty task therefore costs a few hundred uploads rather than a million. The
 flush runs under the sink's lock, so a writer BLOCKS while a chunk uploads; the
@@ -153,14 +160,25 @@ run by the image's `sh -c`, or a list used as argv), `workdir`, `env` (map),
 `mounts` (list of `artifact:`/`ephemeral:` binds), `pull`
 (`missing|always|never`), `capture_stdout_as`, `capture_stderr_as`,
 `timeout_seconds`.
-`output`: `exit_code`, `stdout` (truncated), `stderr` (truncated), `image`,
-`image_pulled`, `container`, `timed_out`, `duration_ms`. A non-zero exit fails
-the task.
+`output`: `exit_code`, `image`, `image_pulled`, `container`, `timed_out`,
+`duration_ms` — and **no `stdout` or `stderr`**. A non-zero exit fails the task.
+
+An output payload is a Temporal payload, and a task's output is bytes, which
+travel as artifacts (AGENTS.md §1.2). The container's own output has two
+readers instead, both of them whole where a truncated string never was: the
+live log stream, and the capture artifacts named by `capture_stdout_as` /
+`capture_stderr_as`. A downstream task reads the second with
+`{{ artifact "<task>/<name>" }}`.
 
 The application's stdout and stderr **stream live** while the container runs,
 under the rules above: framed lines, stderr marked `[stderr] `, the capture
 artifacts still byte-exact. So `orkctl run logs <run> --task <id> -f` follows a
 long-lived container instead of waiting for it.
+
+A failing container publishes its captures too. The task fails with the
+plugin's error, and the artifacts it produced are uploaded before that error is
+returned — the output of a failing build is the output somebody opens the run
+to read.
 
 ### `file` — [reference](../pkg/plugins/file/README.md)
 File manipulation.

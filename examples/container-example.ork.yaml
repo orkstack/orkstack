@@ -76,6 +76,13 @@ tasks:
 
   # 3. The container's output payload crosses the task boundary like any
   #    other: the file plugin persists it as a new artifact.
+  #
+  #    The payload holds what only the plugin knows — the image, the exit
+  #    code, how long it took. It holds NONE of the container's own bytes: a
+  #    payload is a Temporal payload, and a task's output travels as
+  #    artifacts (AGENTS.md §1.2). To read the output itself, mount the
+  #    capture: `artifact "build/build-log"` gives the whole stream,
+  #    byte-exact, however long it is.
   - id: record
     plugin: file
     needs: [build]
@@ -85,5 +92,5 @@ tasks:
       content: |
         image: {{ .tasks.build.output.image }}
         exit_code: {{ .tasks.build.output.exit_code }}
-        stdout:
-        {{ .tasks.build.output.stdout }}
+        duration_ms: {{ .tasks.build.output.duration_ms }}
+        build log: {{ artifact "build/build-log" }}

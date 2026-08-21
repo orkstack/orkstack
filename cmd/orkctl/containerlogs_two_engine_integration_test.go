@@ -230,21 +230,23 @@ func TestIntegration_ContainerApplicationOutputIsReadableBeforeTheRunEnds(t *tes
 // invariant it must not cross is that the LOG PATH puts no bytes into
 // Temporal's history and none onto the run's event stream.
 //
-// Three markers from one container, and the three are what make "absent" a
-// measurement rather than a limitation of the scanner:
+// Since M11.3 the container payload carries no stream bytes either, so the
+// standard this test holds the run to is the strongest one available: NOT ONE
+// of its markers is in history, by any path. Three markers and one control:
 //
-//   - headMarker is printed FIRST on stdout. It reaches history — not through
-//     the log path, but through the container plugin's own documented payload
-//     echo: output.stdout carries the first MaxCapturedOutput (8 KiB) of the
-//     stream. That predates this milestone. Here it is the POSITIVE CONTROL:
-//     the same scan that reports the others absent finds this one.
-//   - tailMarker is printed on stdout after 15 KiB of filler, so the payload
-//     echo cannot reach it. Everything that could carry it to history is the
-//     log path — and it must be absent.
-//   - errMarker is printed on STDERR after 15 KiB of stderr filler, so the
-//     output.stderr echo cannot reach it either. It is the marker this
-//     milestone newly streams, and it must be absent from history exactly as
-//     the stdout one is.
+//   - the CONTROL is `image_pulled`, a KEY of the container plugin's output
+//     payload and of nothing else in the system. Finding it proves the scan
+//     reached and decoded the activity result — the payload a leak would be
+//     in — so "the markers are absent" is a measurement rather than a
+//     limitation of the scanner. It is a schema key, not a byte the container
+//     wrote, which is exactly the distinction under test.
+//   - headMarker is printed FIRST on stdout, inside every buffer the plugin
+//     holds. It is the marker a regression would put back, and it must be
+//     absent.
+//   - tailMarker is printed on stdout after 15 KiB of filler, past every
+//     buffer, so only the log path could ever carry it. Absent.
+//   - errMarker is the same on STDERR: the stream this milestone newly
+//     streams, absent from history exactly as the stdout one is.
 func TestIntegration_ContainerTaskLogBytesNeverEnterRunHistory(t *testing.T) {
 	address := temporalAddress()
 	requireTemporal(t, address)
@@ -320,20 +322,22 @@ func TestIntegration_ContainerTaskLogBytesNeverEnterRunHistory(t *testing.T) {
 
 	// ---- the history scan, with its control --------------------------------
 	events, size := historyText(ctx, t, temporalClient, runID)
-	if !strings.Contains(events, headMarker) {
-		t.Fatalf("the history scan cannot even find %s, which the container plugin's own "+
-			"documented stdout echo puts there; its verdict about the log path means nothing",
-			headMarker)
+	const payloadControl = "image_pulled"
+	if !strings.Contains(events, payloadControl) {
+		t.Fatalf("the history scan cannot even find %q, a key of the container plugin's "+
+			"own output payload; it is not reaching the activity result, so its "+
+			"verdict about the markers means nothing", payloadControl)
 	}
-	for _, marker := range []string{tailMarker, errMarker} {
+	for _, marker := range []string{headMarker, tailMarker, errMarker} {
 		if strings.Contains(events, marker) {
-			t.Fatalf("%s is in run %s's Temporal history; the log path must put no bytes "+
-				"there (AGENTS.md §1.4)", marker, runID)
+			t.Fatalf("%s is in run %s's Temporal history; neither the log path nor the "+
+				"output payload may put a task's bytes there (AGENTS.md §1.2, §1.4)",
+				marker, runID)
 		}
 	}
-	t.Logf("scanned %d bytes of run %s's Temporal history: it carries the payload echo "+
-		"(%s) and NOT the log lines beyond it (%s, %s)",
-		size, runID, headMarker, tailMarker, errMarker)
+	t.Logf("scanned %d bytes of run %s's Temporal history: it carries the payload's own "+
+		"keys (%s) and NONE of the container's bytes (%s, %s, %s)",
+		size, runID, payloadControl, headMarker, tailMarker, errMarker)
 
 	// ---- the event stream carries NONE of them ------------------------------
 	archived := awaitArchivedEventText(ctx, t, engine, runID)
@@ -701,7 +705,7 @@ func assertContainerRunOutput(
 			continue
 		}
 		output := taskRun.GetOutput().GetData().AsMap()
-		for _, field := range []string{"exit_code", "stdout", "stderr", "image", "duration_ms"} {
+		for _, field := range []string{"exit_code", "image", "image_pulled", "duration_ms"} {
 			if _, ok := output[field]; !ok {
 				t.Errorf("the container task's output payload has no %q; it holds %v",
 					field, output)
@@ -710,11 +714,13 @@ func assertContainerRunOutput(
 		if code, _ := output["exit_code"].(float64); code != 0 {
 			t.Errorf("output.exit_code = %v, want 0", output["exit_code"])
 		}
-		if head, _ := output["stdout"].(string); !strings.Contains(head, "cout-01") {
-			t.Errorf("output.stdout = %q, want the captured head of the stream", head)
-		}
-		if head, _ := output["stderr"].(string); !strings.Contains(head, "cerr-01") {
-			t.Errorf("output.stderr = %q, want the captured head of the stream", head)
+		// And it carries none of what the container wrote: the payload is a
+		// Temporal payload (AGENTS.md §1.2). The bytes are in the log stream
+		// this test just followed, and in the two artifacts below.
+		for _, field := range []string{"stdout", "stderr"} {
+			if _, ok := output[field]; ok {
+				t.Errorf("the container task's output payload carries %q", field)
+			}
 		}
 		names := map[string]bool{}
 		for _, ref := range taskRun.GetArtifacts() {
@@ -759,13 +765,15 @@ tasks:
 }
 
 // containerMarkerOrkflowYAML prints three unmistakable strings from one
-// container, each separated from the payload echo by more than the 8 KiB the
-// plugin puts on output.stdout / output.stderr.
+// container: one at the very start of stdout, and one at the end of each
+// stream behind 200 lines of ~76-byte filler (~15 KiB).
 //
-// The filler is 200 lines of ~76 bytes (~15 KiB) per stream, so the tail
-// markers cannot be on the task payload — and therefore cannot be in history —
-// by any path except the log one. The head marker is inside the cap, and is
-// the scan's positive control.
+// The head marker sits inside every buffer the plugin holds — the diagnostic
+// head it reads to recognize a daemon failure, and the payload echo it used to
+// carry. It is the marker a regression puts back. The tail markers sit past
+// all of them, so the log path is the only thing that could ever carry them.
+// Since M11.3 all three must be absent from history; the scan's control is a
+// payload KEY rather than a marker (see the test).
 func containerMarkerOrkflowYAML(name, image, tag string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
@@ -917,21 +925,25 @@ func writeContainerMarkerTranscript(
 	fmt.Fprintf(&out, "image                  %s\n", image)
 	fmt.Fprintf(&out, "task                   marker — a marker, 15 KiB of filler per stream,\n")
 	fmt.Fprintf(&out, "                       then a marker on each stream\n\n")
-	fmt.Fprintf(&out, "control marker         %s   (printed first, inside the 8 KiB the\n", headMarker)
-	fmt.Fprintf(&out, "                       container plugin echoes onto output.stdout)\n")
-	fmt.Fprintf(&out, "log-only stdout marker %s   (printed after the filler, so no payload\n", tailMarker)
-	fmt.Fprintf(&out, "                       can carry it)\n")
+	fmt.Fprintf(&out, "scan control           image_pulled   (a KEY of the container plugin's\n")
+	fmt.Fprintf(&out, "                       output payload, so finding it proves the scan\n")
+	fmt.Fprintf(&out, "                       decodes activity results — where a leak would be)\n")
+	fmt.Fprintf(&out, "head marker            %s   (printed first, inside every buffer the\n", headMarker)
+	fmt.Fprintf(&out, "                       plugin holds; the one a regression puts back)\n")
+	fmt.Fprintf(&out, "log-only stdout marker %s   (printed after the filler, past every\n", tailMarker)
+	fmt.Fprintf(&out, "                       buffer)\n")
 	fmt.Fprintf(&out, "log-only stderr marker %s   (the stream this milestone newly carries)\n\n", errMarker)
 	fmt.Fprintf(&out, "StreamTaskLogs         %d chunk(s), %d bytes: ALL THREE markers present,\n",
 		logged.count(), len(body))
 	fmt.Fprintf(&out, "                       the stderr one prefixed %q\n", plugin.StderrMarker)
 	fmt.Fprintf(&out, "Temporal history       %d bytes scanned (payloads base64-decoded)\n", historyBytes)
-	fmt.Fprintf(&out, "  control marker       PRESENT  — so the scan reads payloads\n")
-	fmt.Fprintf(&out, "  log-only markers     ABSENT   — the log path adds nothing to history\n")
+	fmt.Fprintf(&out, "  image_pulled         PRESENT  — so the scan reads payloads\n")
+	fmt.Fprintf(&out, "  every marker         ABSENT   — neither the log path nor the payload\n")
+	fmt.Fprintf(&out, "                                  carries a byte the container wrote\n")
 	fmt.Fprintf(&out, "event stream           %d bytes scanned\n", archivedBytes)
 	fmt.Fprintf(&out, "  every marker         ABSENT   — events announce, they do not carry\n")
-	fmt.Fprintf(&out, "verdict: the whole container log is in the stream; only the payload echo "+
-		"is in history, and no marker is on the event stream.\n\n")
+	fmt.Fprintf(&out, "verdict: the whole container log is in the stream, and not one of its "+
+		"bytes is in history or on the event stream.\n\n")
 	fmt.Fprintf(&out, "the log's own boundaries, as StreamTaskLogs delivered them:\n")
 	for _, line := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
 		if strings.Contains(line, headMarker) || strings.Contains(line, tailMarker) ||
@@ -941,9 +953,9 @@ func writeContainerMarkerTranscript(
 		}
 	}
 	fmt.Fprintf(&out, "  (%d lines in all)\n", strings.Count(body, "\n"))
-	fmt.Fprintf(&out, "\nand the history, at the point the control marker appears in it:\n")
+	fmt.Fprintf(&out, "\nand the history, at the point the payload's own keys appear in it:\n")
 	for _, line := range strings.Split(history, "\n") {
-		if strings.Contains(line, headMarker) {
+		if strings.Contains(line, "image_pulled") {
 			fmt.Fprintf(&out, "  %.200s…\n", strings.TrimSpace(line))
 			break
 		}

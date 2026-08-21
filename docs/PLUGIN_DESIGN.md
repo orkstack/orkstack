@@ -151,13 +151,35 @@ others; omitting `op` is an error.
 
 Full example: [`examples/file-read.ork.yaml`](../examples/file-read.ork.yaml).
 
-### Container plugins
+### `container` — the op is what to do with the image
 
-There is **no container plugin in the tree yet** — the builtin registry holds
-exactly `http`, `shell` and `file`
-(`internal/orker/registry.go`). When one lands it is bound by the rules above
-like any other plugin; nothing in the engine, DSL or proto needs to change for
-it, because `op` lives entirely inside `with:`.
+```yaml
+- id: build
+  plugin: container
+  with:
+    op: run               # run | pull
+    image: alpine:3.20
+    command: ./build.sh
+    capture_stdout_as: build-log
+```
+
+| op     | meaning                                                             |
+|--------|---------------------------------------------------------------------|
+| `run`  | The container **is the work**. A non-zero exit fails the task.       |
+| `pull` | Only fetch the image, so a later task starts without the download.   |
+
+`output` carries what only the plugin knows — `exit_code`, `image`,
+`image_pulled`, `container`, `timed_out`, `duration_ms` — and **none of the
+container's own bytes**: a payload is a Temporal payload, and a task's output
+travels as artifacts (AGENTS.md §1.2). Read the output with `orkctl run logs`,
+or name it with `capture_stdout_as` and consume it downstream as
+`{{ artifact "build/build-log" }}`.
+
+`op` lived entirely inside `with:` when this plugin landed, so nothing in the
+engine, DSL or proto changed for it — which is the point of the convention.
+
+Full example: [`examples/container-example.ork.yaml`](../examples/container-example.ork.yaml)
+and [the plugin reference](../pkg/plugins/container/README.md).
 
 ## Unknown ops in practice
 

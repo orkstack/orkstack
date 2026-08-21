@@ -82,6 +82,24 @@ func testRef() artifacts.LogRef {
 	return artifacts.LogRef{RunID: "ork-1-1", TaskID: "emit", Attempt: 1}
 }
 
+// unpaced makes every size-triggered flush eligible, by reading a clock that
+// has always just advanced a full interval.
+//
+// It is for tests about how a chunk is COMPOSED — where its boundaries fall,
+// how the sequences run, what happens at the cap — which need the size bound
+// to fire on demand and say nothing about pacing. The pace itself is what
+// TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask measures, on the
+// real clock.
+func unpaced(sink *logChunkSink) *logChunkSink {
+	base := time.Now()
+	var ticks int64
+	sink.now = func() time.Time {
+		ticks++
+		return base.Add(time.Duration(ticks) * time.Hour)
+	}
+	return sink
+}
+
 // A chatty task must not write one object per line: the size bound is what
 // keeps a 100k-line task to a few hundred uploads instead of 100k.
 func TestLogChunkSink_FlushesOnSize(t *testing.T) {
@@ -153,13 +171,105 @@ func TestLogChunkSink_FlushesOnElapsedTime(t *testing.T) {
 	}
 }
 
+// TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask — F6.
+//
+// The two bounds have to hold TOGETHER, and this is the case where asking the
+// size bound alone gave the wrong answer: `ORK_ORKER_LOG_FLUSH_BYTES=1` is
+// what a test sets to force chunk boundaries, and it used to mean one PUT per
+// line. Two thousand lines were two thousand objects — the write storm M11.1
+// acceptance 4 forbids, produced by a knob an operator or a proof script may
+// legitimately turn.
+//
+// The rule that replaces it: however small the size bound, the store is
+// written at most once per FlushInterval (plus the one immediate first chunk,
+// which nothing should wait for, and the one final chunk Close writes). What
+// arrives is unchanged — every byte, in order.
+func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
+	store := &recordingLogStore{}
+	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+		FlushBytes:    1, // "flush every byte"
+		FlushInterval: 500 * time.Millisecond,
+		MaxBytes:      1 << 20,
+	})
+
+	const lines = 2000
+	start := time.Now()
+	var want strings.Builder
+	for i := 0; i < lines; i++ {
+		line := fmt.Sprintf("line-%06d", i)
+		sink.Write(line)
+		want.WriteString(line)
+		want.WriteByte('\n')
+	}
+	sink.Close()
+	elapsed := time.Since(start)
+
+	chunks := store.stored()
+	// One immediate chunk, one per elapsed interval, one from Close, and one
+	// of slack for a scheduler that stalled this goroutine.
+	budget := 3 + int(elapsed/(500*time.Millisecond))
+	if len(chunks) > budget {
+		t.Fatalf("%d lines in %s produced %d chunks, want at most %d: the size bound "+
+			"is writing per line and the elapsed-time bound is not pacing it",
+			lines, elapsed.Round(time.Millisecond), len(chunks), budget)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("nothing was written at all; batching is not silence")
+	}
+	// Batching may not lose or reorder a byte.
+	if got := store.body(); got != want.String() {
+		t.Fatalf("the reassembled log is %d bytes, want %d: batching changed what "+
+			"the reader gets", len(got), want.Len())
+	}
+	for i, chunk := range chunks {
+		if want := int64(i + 1); chunk.Seq != want {
+			t.Fatalf("chunk %d has seq %d, want %d", i, chunk.Seq, want)
+		}
+	}
+	t.Logf("%d lines (%d bytes) in %s cost %d upload(s)",
+		lines, want.Len(), elapsed.Round(time.Millisecond), len(chunks))
+}
+
+// TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace is the
+// other side of the pace: it may never become a memory leak.
+//
+// A size-triggered flush that has no budget defers to the timer, so a fast
+// writer accumulates. The ceiling is where that stops: the default flush size,
+// or the operator's own when it is larger. Past it the chunk goes out whatever
+// the clock says.
+func TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace(t *testing.T) {
+	store := &recordingLogStore{}
+	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+		FlushBytes:    1,
+		FlushInterval: time.Hour, // the timer can never rescue this test
+		MaxBytes:      64 << 20,
+		MaxLineBytes:  1 << 20,
+	})
+	defer sink.Close()
+
+	line := strings.Repeat("y", 1023) // 1 KiB with the newline
+	for i := 0; i < 400; i++ {        // 400 KiB, well past a 64 KiB ceiling
+		sink.Write(line)
+	}
+	chunks := store.stored()
+	if len(chunks) < 5 {
+		t.Fatalf("400 KiB produced %d chunks with the timer disabled; the sink is "+
+			"holding everything in memory while it waits out the pace", len(chunks))
+	}
+	for i, chunk := range chunks {
+		if len(chunk.Data) > DefaultLogFlushBytes+(1<<20) {
+			t.Errorf("chunk %d is %d bytes, above the ceiling plus one line", i, len(chunk.Data))
+		}
+	}
+}
+
 // Sequences are dense and 1-based, because that is the resume contract the
 // reader hands clients back as from_seq.
 func TestLogChunkSink_NumbersChunksDenselyFromOne(t *testing.T) {
 	store := &recordingLogStore{}
-	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+	sink := unpaced(newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes: 8, FlushInterval: time.Hour, MaxBytes: 1 << 20,
-	})
+	}))
 	for i := 0; i < 20; i++ {
 		sink.Write(fmt.Sprintf("%08d", i))
 	}
@@ -183,9 +293,9 @@ func TestLogChunkSink_NumbersChunksDenselyFromOne(t *testing.T) {
 // whole one.
 func TestLogChunkSink_ChunksEndOnLineBoundaries(t *testing.T) {
 	store := &recordingLogStore{}
-	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+	sink := unpaced(newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes: 16, FlushInterval: time.Hour, MaxBytes: 1 << 20, MaxLineBytes: 1 << 20,
-	})
+	}))
 	for i := 0; i < 12; i++ {
 		sink.Write(fmt.Sprintf("line %d", i))
 	}
@@ -208,11 +318,11 @@ func TestLogChunkSink_ChunksEndOnLineBoundaries(t *testing.T) {
 // a single unbounded line is the other way a task exhausts the Orker's memory.
 func TestLogChunkSink_SplitsAnOverlongLine(t *testing.T) {
 	store := &recordingLogStore{}
-	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+	sink := unpaced(newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes:   32,
 		MaxLineBytes: 32,
 		MaxBytes:     1 << 20, FlushInterval: time.Hour,
-	})
+	}))
 	long := strings.Repeat("x", 200)
 	sink.Write(long)
 	sink.Close()
@@ -235,9 +345,9 @@ func TestLogChunkSink_SplitsAnOverlongLine(t *testing.T) {
 // cut says so in its own stream, in words, once.
 func TestLogChunkSink_TruncatesAtTheCapWithAVisibleNotice(t *testing.T) {
 	store := &recordingLogStore{}
-	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+	sink := unpaced(newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes: 16, FlushInterval: time.Hour, MaxBytes: 64, MaxLineBytes: 1 << 20,
-	})
+	}))
 	for i := 0; i < 100; i++ {
 		sink.Write(fmt.Sprintf("line %03d", i)) // 9 bytes each
 	}
@@ -282,9 +392,9 @@ func TestLogChunkSink_TruncatesAtTheCapWithAVisibleNotice(t *testing.T) {
 // busy uploading notices.
 func TestLogChunkSink_StopsUploadingAfterTheCap(t *testing.T) {
 	store := &recordingLogStore{}
-	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+	sink := unpaced(newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes: 8, FlushInterval: time.Hour, MaxBytes: 32,
-	})
+	}))
 	for i := 0; i < 20; i++ {
 		sink.Write("aaaaaaaaaaaaaaaa") // 17 bytes with the newline
 	}
@@ -335,9 +445,9 @@ func TestLogChunkSink_AFailedUploadKeepsSequencesDenseAndSaysSo(t *testing.T) {
 		}
 		return nil
 	}
-	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+	sink := unpaced(newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes: 8, FlushInterval: time.Hour, MaxBytes: 1 << 20,
-	})
+	}))
 	sink.Write("first one")
 	sink.Write("second one")
 	sink.Close()
@@ -418,12 +528,12 @@ func TestLogChunkSink_ALossBeforeTruncationRidesTheTruncationNotice(t *testing.T
 		}
 		return nil
 	}
-	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
+	sink := unpaced(newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes:    1 << 20, // only the cap decides when a chunk is written
 		FlushInterval: time.Hour,
 		MaxBytes:      32,
 		MaxLineBytes:  16,
-	})
+	}))
 	sink.Write(strings.Repeat("x", 40))
 	sink.Close()
 

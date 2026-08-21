@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -602,6 +603,21 @@ func decodedPayloads(rendered string) string {
 }
 
 // awaitArchivedEventText waits for the run archive and renders its events.
+//
+// THE TERMINAL ERROR IS CHECKED, and that is the whole point of this helper
+// being a helper. Every caller uses what it returns to assert that some marker
+// is ABSENT from the event stream, so a stream that stopped early is a stream
+// that agrees with every such assertion for the wrong reason: `Receive`
+// returning false says "no more messages" whether the run ended or the
+// connection dropped mid-way. Without `Err()` a truncated read is
+// indistinguishable from a complete one, and every assertion above it means
+// nothing.
+//
+// A drop is not fatal here, because this function's job is to WAIT: the
+// archive may not be written yet, and a broken attempt is retried until the
+// deadline. What must never happen is a broken attempt being RETURNED, which
+// is why the partial text is discarded rather than accepted. Reaching the
+// deadline names the last error.
 func awaitArchivedEventText(
 	ctx context.Context,
 	t *testing.T,
@@ -610,28 +626,41 @@ func awaitArchivedEventText(
 ) string {
 	t.Helper()
 	deadline := time.Now().Add(90 * time.Second)
+	var lastErr error
 	for time.Now().Before(deadline) {
 		stream, err := replica.runs.StreamEvents(ctx, connect.NewRequest(
 			&orkstackv1.StreamEventsRequest{RunId: runID}))
-		if err == nil {
-			var out strings.Builder
-			marshaler := protojson.MarshalOptions{Multiline: false}
-			for stream.Receive() {
-				rendered, err := marshaler.Marshal(stream.Msg())
-				if err != nil {
-					t.Fatalf("render archived event: %v", err)
-				}
-				out.Write(rendered)
-				out.WriteByte('\n')
+		if err != nil {
+			lastErr = fmt.Errorf("open the stream: %w", err)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		var out strings.Builder
+		marshaler := protojson.MarshalOptions{Multiline: false}
+		for stream.Receive() {
+			rendered, err := marshaler.Marshal(stream.Msg())
+			if err != nil {
+				t.Fatalf("render archived event: %v", err)
 			}
-			_ = stream.Close()
-			if out.Len() > 0 {
-				return out.String()
-			}
+			out.Write(rendered)
+			out.WriteByte('\n')
+		}
+		streamErr := stream.Err()
+		_ = stream.Close()
+		switch {
+		case streamErr != nil:
+			// Truncated. Whatever arrived is thrown away: a prefix would
+			// satisfy every "the marker is absent" assertion by not having
+			// reached the part that carries it.
+			lastErr = fmt.Errorf("the stream ended after %d byte(s): %w", out.Len(), streamErr)
+		case out.Len() > 0:
+			return out.String()
+		default:
+			lastErr = errors.New("the stream completed with no events")
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("run %s never produced a readable event stream to scan", runID)
+	t.Fatalf("run %s never produced a COMPLETE event stream to scan (last: %v)", runID, lastErr)
 	return ""
 }
 

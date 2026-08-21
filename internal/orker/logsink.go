@@ -19,26 +19,37 @@ import (
 // The sink buffers lines and flushes them as numbered chunks WHILE the task
 // runs, which is the whole difference between a log you can watch and an
 // artifact you can read afterwards.
+// Two bounds decide when a flush happens, and they decide it TOGETHER:
 //
-// Two bounds decide when a flush happens, and both are needed:
+//   - SIZE says how much may accumulate before a chunk goes out, so a task
+//     printing a hundred thousand lines writes a few hundred objects rather
+//     than a hundred thousand.
+//   - ELAPSED TIME says how long anything may wait before it is visible, so a
+//     task printing one line a minute appears within half a second rather
+//     than when it finally reaches 64 KiB — which for most tasks is never.
 //
-//   - SIZE, so a task printing a hundred thousand lines writes a few hundred
-//     objects rather than a hundred thousand.
-//   - ELAPSED TIME, so a task printing one line a minute is visible within
-//     half a second rather than when it finally reaches 64 KiB — which for
-//     most tasks is never.
+// The elapsed-time bound is ALSO the minimum gap between two uploads, and that
+// is what makes the pair a pair. Asked alone, the size bound bounds the
+// upload count by throughput ÷ FlushBytes, which is not a rate at all: with
+// ORK_ORKER_LOG_FLUSH_BYTES=1 every line met the threshold and every line
+// became a PUT, so the setting a test uses to force chunk boundaries turned
+// batching off completely. A size-triggered flush now waits until
+// FlushInterval has passed since the last upload; below that the buffer keeps
+// filling and the armed timer writes it at the deadline. The upload rate is
+// therefore 1/FlushInterval at EVERY setting, and the size bound decides how
+// big a chunk is rather than how often the store is written.
 //
-// A third bound is the memory guarantee. The buffer never exceeds one flush
-// worth plus one line, a single over-long line is split rather than
-// accumulated, and the attempt as a whole stops at MaxBytes with a notice
-// chunk that says so. A runaway task therefore costs one bounded buffer in the
-// Orker and one bounded object count in the bucket, and its reader is told the
-// output was cut instead of quietly receiving a prefix.
+// A third bound is the memory guarantee, and it outranks the pace. The buffer
+// never exceeds flushCeiling plus one line, a single over-long line is split
+// rather than accumulated, and the attempt as a whole stops at MaxBytes with a
+// notice chunk that says so. A runaway task therefore costs one bounded buffer
+// in the Orker and one bounded object count in the bucket, and its reader is
+// told the output was cut instead of quietly receiving a prefix.
 const (
 	// DefaultLogFlushBytes is the size bound: buffered bytes that trip a flush.
 	DefaultLogFlushBytes = 64 << 10
-	// DefaultLogFlushInterval is the elapsed-time bound, measured from the
-	// first unflushed byte.
+	// DefaultLogFlushInterval is the elapsed-time bound: the longest anything
+	// waits unflushed, and the shortest gap between two uploads.
 	DefaultLogFlushInterval = 500 * time.Millisecond
 	// DefaultLogMaxBytes caps one (run, task, attempt). Past it the sink writes
 	// one truncation notice and stops uploading.
@@ -70,9 +81,13 @@ const (
 // LogOptions bounds the live log sink. The zero value is the documented
 // default in every field.
 type LogOptions struct {
-	// FlushBytes is the size bound.
+	// FlushBytes is the size bound: how much may accumulate before a chunk is
+	// written. It decides how BIG a chunk is; FlushInterval decides how often
+	// one is written.
 	FlushBytes int
-	// FlushInterval is the elapsed-time bound.
+	// FlushInterval is the elapsed-time bound, and does double duty: nothing
+	// waits unflushed longer than this, and no two uploads are closer
+	// together than this.
 	FlushInterval time.Duration
 	// MaxBytes caps one attempt's stored output.
 	MaxBytes int64
@@ -134,9 +149,12 @@ type logChunkSink struct {
 	// onError reports an upload that could not be completed. It exists so the
 	// Orker's own logger can say so; a nil value discards.
 	onError func(error)
+	// now reads the clock the minimum-gap bound is measured on. Tests replace
+	// it; nothing else does.
+	now func() time.Time
 
 	mu sync.Mutex
-	// buf holds bytes not yet uploaded. It never exceeds FlushBytes plus one
+	// buf holds bytes not yet uploaded. It never exceeds flushCeiling plus one
 	// MaxLineBytes piece.
 	buf bytes.Buffer
 	// seq is the sequence of the LAST chunk stored. It advances only on a
@@ -149,6 +167,12 @@ type logChunkSink struct {
 	dropped int64
 	// timer is the elapsed-time bound, armed at the first unflushed byte.
 	timer *time.Timer
+	// lastFlush is when this sink last wrote to the store, and the anchor the
+	// minimum gap is measured from. Zero means nothing has been written yet,
+	// which is why a task's FIRST chunk is never delayed by the pace: the
+	// person watching a task start is waiting on that one chunk and on
+	// nothing else.
+	lastFlush time.Time
 	// truncated latches once the cap is hit; nothing is written afterwards.
 	truncated bool
 	closed    bool
@@ -171,6 +195,7 @@ func newLogChunkSink(
 		store: store,
 		ref:   ref,
 		opts:  opts.withDefaults(),
+		now:   time.Now,
 	}
 }
 
@@ -215,9 +240,18 @@ func (s *logChunkSink) Write(line string) {
 			s.armLocked()
 		}
 		s.buf.Write(piece)
-		if s.buf.Len() >= s.opts.FlushBytes {
+		switch {
+		case s.buf.Len() >= s.flushCeiling():
+			// The memory guarantee is a guarantee and outranks the pace: a
+			// writer this fast is one the ceiling exists for.
+			s.flushLocked()
+		case s.buf.Len() >= s.opts.FlushBytes && s.pacedLocked():
 			s.flushLocked()
 		}
+		// Neither: the buffer keeps filling and the timer armed at the first
+		// unflushed byte writes it at the deadline. That deferral IS the
+		// batching — without it a small FlushBytes turns every line into a
+		// PUT (see the package comment above).
 	}
 }
 
@@ -269,6 +303,43 @@ func (s *logChunkSink) Close() {
 	}
 	s.disarmLocked()
 	s.closed = true
+}
+
+// pacedLocked reports whether enough time has passed since the last upload for
+// a size-triggered flush to be taken.
+//
+// It gates ONLY the size trigger. The timer, the cap and Close all flush
+// unconditionally: the timer IS the pace, and the other two are the moments
+// where holding bytes back would lose them rather than batch them.
+func (s *logChunkSink) pacedLocked() bool {
+	if s.lastFlush.IsZero() {
+		return true
+	}
+	return s.clock().Sub(s.lastFlush) >= s.opts.FlushInterval
+}
+
+// flushCeiling is the most this sink holds while a size-triggered flush waits
+// out the pace.
+//
+// It is the operator's size bound, or the default when that is smaller. The
+// two numbers answer different questions: FlushBytes is how big a chunk this
+// deployment WANTS, and the ceiling is how much this process is willing to
+// hold. They are the same until someone tunes FlushBytes below the default —
+// which is what a test does to force chunk boundaries, and what used to turn
+// batching off. Below the default, shrinking FlushBytes buys smaller chunks
+// and never more uploads per second.
+func (s *logChunkSink) flushCeiling() int {
+	if s.opts.FlushBytes > DefaultLogFlushBytes {
+		return s.opts.FlushBytes
+	}
+	return DefaultLogFlushBytes
+}
+
+func (s *logChunkSink) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 // armLocked starts the elapsed-time bound for the buffer that is about to
@@ -349,6 +420,10 @@ func (s *logChunkSink) putLocked(data []byte, truncated bool) {
 	if len(data) == 0 {
 		return
 	}
+	// The pace is anchored on every ATTEMPTED write, not on every successful
+	// one. A store that is refusing chunks is the last thing to hammer at the
+	// writer's own pace, and each try here already costs the retry loop below.
+	s.lastFlush = s.clock()
 	chunk := artifacts.LogChunk{
 		LogRef:    s.ref,
 		Seq:       s.seq + 1,
