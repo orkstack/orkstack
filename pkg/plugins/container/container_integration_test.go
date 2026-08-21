@@ -219,8 +219,13 @@ func TestIntegration_ContainerRunsAndCapturesBothStreamsAsArtifacts(t *testing.T
 	if got := result.Output["exit_code"]; got != float64(0) {
 		t.Errorf("exit_code = %v, want 0", got)
 	}
-	if got := result.Output["stdout"]; got != "archive=orkstack-v1.4.2.tar.gz\n" {
-		t.Errorf("stdout = %q, want the expanded environment variable", got)
+	// The container's own output is read from its CAPTURE ARTIFACT below, not
+	// from the payload: a payload is a Temporal payload, and a task's output
+	// travels as artifacts (AGENTS.md §1.2).
+	for _, field := range []string{"stdout", "stderr"} {
+		if got, ok := result.Output[field]; ok {
+			t.Errorf("output.%s = %q is on the payload", field, got)
+		}
 	}
 	if got := result.Output["timed_out"]; got != false {
 		t.Errorf("timed_out = %v, want false", got)
@@ -265,6 +270,10 @@ func TestIntegration_ContainerMountsAnUpstreamArtifactReadOnly(t *testing.T) {
 		// Reading must work; writing must not.
 		"command": `cat /input/body.txt; if echo tampered > /input/body.txt 2>/dev/null; ` +
 			`then echo "WRITABLE"; else echo "read-only confirmed"; fi`,
+		// What the container printed is read from the capture, because that is
+		// where a task's output is (AGENTS.md §1.2): the payload carries none
+		// of it, and the capture is the whole stream rather than a head.
+		"capture_stdout_as": "out",
 	})
 	ec.Artifacts = hostResolver{paths: map[string]string{"fetch/body": upstream}}
 
@@ -272,7 +281,7 @@ func TestIntegration_ContainerMountsAnUpstreamArtifactReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	stdout, _ := result.Output["stdout"].(string)
+	stdout := readStreamArtifact(t, result.Artifacts, "out")
 	if !strings.Contains(stdout, contents) {
 		t.Errorf("the container did not read the mounted artifact: stdout = %q", stdout)
 	}
@@ -296,7 +305,8 @@ func TestIntegration_ContainerGetsAWritableEphemeralMountThatIsRemovedAfterwards
 		"mounts": []any{
 			map[string]any{"ephemeral": "scratch", "path": "/scratch"},
 		},
-		"command": `echo built > /scratch/report.txt && cat /scratch/report.txt && ls /scratch`,
+		"command":           `echo built > /scratch/report.txt && cat /scratch/report.txt && ls /scratch`,
+		"capture_stdout_as": "out",
 	})
 	scratch := filepath.Join(ec.WorkDir, internalDir, ephemeralDir, "scratch")
 
@@ -304,7 +314,7 @@ func TestIntegration_ContainerGetsAWritableEphemeralMountThatIsRemovedAfterwards
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	stdout, _ := result.Output["stdout"].(string)
+	stdout := readStreamArtifact(t, result.Artifacts, "out")
 	if !strings.Contains(stdout, "built") || !strings.Contains(stdout, "report.txt") {
 		t.Errorf("the container could not use the ephemeral mount: stdout = %q", stdout)
 	}
@@ -411,9 +421,10 @@ func TestIntegration_ContainerPullsAMissingImageThenReusesTheLocalOne(t *testing
 
 	const taskID = "pull-missing"
 	first, err := New().Execute(context.Background(), newIntegrationContext(t, taskID, map[string]any{
-		"image":   image,
-		"pull":    "missing",
-		"command": "echo pulled",
+		"image":             image,
+		"pull":              "missing",
+		"command":           "echo pulled",
+		"capture_stdout_as": "out",
 	}))
 	if err != nil {
 		infraAbsent(t, "cannot pull %s from its registry: %v", image, err)
@@ -421,7 +432,9 @@ func TestIntegration_ContainerPullsAMissingImageThenReusesTheLocalOne(t *testing
 	if first.Output["image_pulled"] != true {
 		t.Errorf("first run image_pulled = %v, want true", first.Output["image_pulled"])
 	}
-	if got := first.Output["stdout"]; got != "pulled\n" {
+	// The pulled image really ran: its output is in the capture, which is
+	// where a task's output goes (AGENTS.md §1.2).
+	if got := readStreamArtifact(t, first.Artifacts, "out"); got != "pulled\n" {
 		t.Errorf("first run stdout = %q, want the container's output", got)
 	}
 
