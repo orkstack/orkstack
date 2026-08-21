@@ -966,6 +966,69 @@ Runs already pinned to a version still need that version's workers.
   `bin/ork` also matches `bin/orkctl` — the cleanup then kills the CLI you are
   about to drive the deploy with.
 
+### The admin surface: what a deployment is made of, and who is serving it
+
+Four reads answer every operational question about a deployment, and each is
+available from the CLI and over Connect. Three of them are answered from the
+cluster or the bucket, so **any replica answers them and they all answer the
+same** (`AGENTS.md` §1.7). The fourth is deliberately not.
+
+| read | CLI | where the answer comes from |
+|---|---|---|
+| system information | `orkctl admin info` | **this replica's own build and configuration** |
+| pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
+| namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket |
+| plugin inventory | `orkctl plugin list` | the connected Orkers, asked pool by pool |
+
+`orkctl admin info` describes **the replica that answered**, and it says so in
+its own output. Behind a load balancer that is whichever replica took the
+request:
+
+```
+engine:       v0.0.4
+go:           go1.25.6
+deployment:   orkstack
+versioning:   off
+artifacts:    s3://orkstack-artifacts (s3)
+temporal:     localhost:7233
+server time:  2026-01-02T03:04:05Z
+```
+
+Every line except `server time` is configuration- or build-derived — read from
+the process, never measured. That is the point of it: replicas of one release
+answer identically by construction, so a field that DIFFERS between two
+addresses is information. Mid-rollout the field that differs is the build id,
+which is why `versioning:` prints the state rather than the raw value:
+`off` when no `ORK_BUILD_ID` is set (the documented off switch, §1), and
+`on (build <id>)` when one is. `engine:` is stamped at build time by the
+Makefile's `-ldflags`; a plain `go build ./cmd/ork` reports `dev`.
+
+Deliberately **not** in it: whether the cluster is reachable. Pool health is
+that read — it cannot answer at all without the cluster — and a connectivity
+flag would be stale the moment it was sent, while looking like a measurement.
+Deliberately not in it either: any credential. The artifact line names the
+bucket or directory, never the key that opens it.
+
+`orkctl pool list` is the health read, and it distinguishes two states a
+single number cannot:
+
+```
+NAME     ORKERS              PLUGINS                    DEFAULT  LAST SEEN
+cold     0 (no live orkers)  -                          -        -
+gpu      1                   container,file,http,shell  yes      2026-01-02T03:04:05Z
+```
+
+A pool with no Orkers is **listed**, because "nobody is serving this" is the
+answer the question was asked for — a task sent there waits for a worker that
+is not running. A pool whose Orkers cannot be ASKED what they run is a third
+state, and it is reported as a failure rather than as an empty plugin list:
+"we could not ask" and "they run nothing" are the same bytes on the wire
+otherwise, and only the second is a fact to act on.
+
+The whole surface, answered by a second replica that started nothing — no
+namespace registered, no orkflow applied, no run — is proven live in
+`TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`
+(`proof/M11.3/`).
 ---
 
 ## 6. Replay safety across versions
