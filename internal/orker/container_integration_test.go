@@ -326,7 +326,11 @@ func bindableWorkRoot(t *testing.T) string {
 		}
 		t.Logf("the docker daemon cannot bind-mount %s: %s", candidate, strings.TrimSpace(out))
 	}
-	t.Skipf("no work root on this host can be bind-mounted by the docker daemon; set %s",
+	// infraAbsent, not t.Skip: under ORK_REQUIRE_INFRA a proof has already
+	// probed this host and found a bind-mountable directory, so reaching here
+	// is the test opting out of a measurement the proof was told it could
+	// make (AGENTS.md §6).
+	infraAbsent(t, "no work root on this host can be bind-mounted by the docker daemon; set %s",
 		orker.WorkRootVar)
 	return ""
 }
