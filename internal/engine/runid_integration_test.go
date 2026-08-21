@@ -18,6 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // runIDNamespace is the Temporal namespace these tests use. AGENTS.md §6: a
@@ -232,7 +233,7 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 	}
 
 	orkflows := engine.NewMemoryOrkflowStore()
-	if _, _, err := orkflows.Put(ctx, wf); err != nil {
+	if _, _, err := orkflows.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("store orkflow: %v", err)
 	}
 	candidates := []string{taken, reissued}

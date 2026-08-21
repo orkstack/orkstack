@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -62,22 +61,7 @@ func OrkflowCurrentKey(namespace, name string) (string, error) {
 // pointer reports ok=false, so one prefix scan can sort definitions from
 // pointers without a second request.
 func ParseOrkflowCurrentKey(key string) (namespace, name string, ok bool) {
-	rest, found := strings.CutPrefix(key, OrkflowPrefix+"/")
-	if !found {
-		return "", "", false
-	}
-	namespace, rest, found = strings.Cut(rest, "/")
-	if !found {
-		return "", "", false
-	}
-	name, file, found := strings.Cut(rest, "/")
-	if !found || file != currentPointerBasename {
-		return "", "", false
-	}
-	if validOrkflowNamespace(namespace) != nil || validOrkflowComponent("name", name) != nil {
-		return "", "", false
-	}
-	return namespace, name, true
+	return parseOrkflowMetaKey(key, currentPointerBasename)
 }
 
 // currentPointer is the pointer document's body.

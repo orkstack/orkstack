@@ -285,20 +285,20 @@ func TestResolveByName_ReturnsOneVersionPerNameOrderedByName(t *testing.T) {
 	}
 
 	// Nobody promoted anything: the most recently applied version of each.
-	if got, want := render(resolveByName(all, nil)),
+	if got, want := render(resolveByName(orkflowScan{versions: all})),
 		"alpha@0.2.0,mid@9.9.9,zeta@1.0.0"; got != want {
 		t.Errorf("resolveByName(no pointers) = %v, want %v", got, want)
 	}
 
 	// A promotion decides what that name resolves to, and only that name.
-	if got, want := render(resolveByName(all, map[string]string{"alpha": "0.1.0"})),
+	if got, want := render(resolveByName(orkflowScan{versions: all, current: map[string]string{"alpha": "0.1.0"}})),
 		"alpha@0.1.0,mid@9.9.9,zeta@1.0.0"; got != want {
 		t.Errorf("resolveByName(alpha promoted) = %v, want %v", got, want)
 	}
 
 	// A pointer naming a version this scan did not see falls back to the head
 	// rather than dropping the orkflow out of the listing.
-	if got, want := render(resolveByName(all, map[string]string{"alpha": "7.7.7"})),
+	if got, want := render(resolveByName(orkflowScan{versions: all, current: map[string]string{"alpha": "7.7.7"}})),
 		"alpha@0.2.0,mid@9.9.9,zeta@1.0.0"; got != want {
 		t.Errorf("resolveByName(dangling pointer) = %v, want %v", got, want)
 	}

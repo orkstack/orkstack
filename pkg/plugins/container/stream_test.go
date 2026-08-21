@@ -132,6 +132,58 @@ printf 'err-no-newline-at-end' >&2
 	}
 }
 
+// The two streams share one log, so the marker is the only thing that says
+// which is which — and it has to hold for the line that imitates it. A
+// container printing "[stderr] same text" on stdout while writing "same text"
+// on stderr produced two identical log lines before this was fixed, and no
+// reader could tell the application's stdout from its stderr.
+func TestContainerPlugin_StdoutThatLooksLikeStderrIsStillToldApart(t *testing.T) {
+	rec := &logCapture{}
+	p := newStreamingDocker(t, `
+printf '[stderr] same text\n'
+printf 'same text\n' >&2
+`, 0)
+	ec := newStreamingContext(t, map[string]any{
+		"image":   "alpine:3.20",
+		"command": "irrelevant",
+	}, rec)
+
+	if _, err := p.Execute(context.Background(), ec); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Every line the application produced, by the stream a reader decodes it
+	// as. The plugin's own lifecycle lines are not the application's.
+	got := map[bool][]string{}
+	for _, line := range rec.all() {
+		if strings.HasPrefix(line, "container: ") {
+			continue
+		}
+		text, stderr := plugin.DecodeStreamLine(line)
+		got[stderr] = append(got[stderr], text)
+	}
+	if want := []string{plugin.StderrMarker + "same text"}; !equalStrings(got[false], want) {
+		t.Errorf("the log decodes %q as the container's stdout, want %q; the stream was:\n  %s",
+			got[false], want, strings.Join(rec.all(), "\n  "))
+	}
+	if want := []string{"same text"}; !equalStrings(got[true], want) {
+		t.Errorf("the log decodes %q as the container's stderr, want %q; the stream was:\n  %s",
+			got[true], want, strings.Join(rec.all(), "\n  "))
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // The claim a post-mortem read cannot satisfy: a line written early by a
 // long-lived application is readable BEFORE the container exits.
 func TestContainerPlugin_StreamsWhileTheContainerIsStillRunning(t *testing.T) {
@@ -260,6 +312,99 @@ printf 'dying-words-on-stderr' >&2
 	if rec.count(plugin.StderrMarker+"dying-words-on-stderr") != 1 {
 		t.Errorf("the failing container's stderr line was not streamed exactly once: %q",
 			rec.all())
+	}
+}
+
+// What a failing container says goes to the log stream in full and into the
+// ERROR not at all.
+//
+// The error is the one thing here that leaves the Orker: Temporal records it
+// in the run's history, the workflow copies it onto TaskRun.Error and
+// TASK_FAILED, and the run's failure copies it again onto Run.Error and
+// RUN_FAILED. A plugin that quoted a failing container's output into it would
+// be piping a task's output stream through Temporal payloads and the event
+// stream, which is what AGENTS.md §1.4 forbids — on the path a chatty
+// container is most likely to take. The log and the artifacts keep every byte;
+// the error names the exit code and says where to read them.
+func TestContainerPlugin_FailureCarriesNoneOfTheContainersOutput(t *testing.T) {
+	rec := &logCapture{}
+	p := newStreamingDocker(t, `
+printf 'application-byte-on-stdout\n'
+printf 'application-byte-on-stderr\n' >&2
+`, 9)
+	ec := newStreamingContext(t, map[string]any{
+		"image":   "alpine:3.20",
+		"command": "irrelevant",
+	}, rec)
+
+	_, err := p.Execute(context.Background(), ec)
+	if err == nil {
+		t.Fatal("Execute succeeded; a container exiting 9 must fail the task")
+	}
+
+	message := err.Error()
+	for _, byteOfOutput := range []string{
+		"application-byte-on-stdout",
+		"application-byte-on-stderr",
+	} {
+		if strings.Contains(message, byteOfOutput) {
+			t.Errorf("the failure message carries %q, which the container wrote; "+
+				"the error crosses into Temporal history and the event stream, "+
+				"where a task's output may not go (AGENTS.md §1.4): %q",
+				byteOfOutput, message)
+		}
+	}
+	// And it is still actionable: what failed, how, and where the output is.
+	for _, want := range []string{"alpine:3.20", "exited with code 9", "orkctl run logs"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the failure message does not mention %q: %q", want, message)
+		}
+	}
+	// Nothing was lost: both lines are in the log the message points at.
+	if got := rec.count("application-byte-on-stdout"); got != 1 {
+		t.Errorf("the container's stdout line reached the log %d time(s), want 1", got)
+	}
+	if got := rec.count(plugin.StderrMarker + "application-byte-on-stderr"); got != 1 {
+		t.Errorf("the container's stderr line reached the log %d time(s), want 1", got)
+	}
+}
+
+// A chatty container that fails costs a bounded message, whatever it printed:
+// the message is the plugin's own sentence, so its size is a property of the
+// plugin and not of the task.
+func TestContainerPlugin_AChattyFailureCostsABoundedMessage(t *testing.T) {
+	const lines = 600 // ~40 KiB of stderr, far past every buffer here
+	rec := &logCapture{}
+	p := newStreamingDocker(t, fmt.Sprintf(`
+i=0
+while [ $i -lt %d ]; do
+  printf 'noise-%%d-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' "$i" >&2
+  i=$((i + 1))
+done
+printf 'last-words-on-stderr\n' >&2
+`, lines), 9)
+	ec := newStreamingContext(t, map[string]any{
+		"image":   "alpine:3.20",
+		"command": "irrelevant",
+	}, rec)
+
+	_, err := p.Execute(context.Background(), ec)
+	if err == nil {
+		t.Fatal("Execute succeeded; a container exiting 9 must fail the task")
+	}
+	if got := len(err.Error()); got > 1024 {
+		t.Errorf("a container that printed ~40 KiB failed with a %d-byte message; "+
+			"the message must not grow with the output: %q", got, err)
+	}
+	if strings.Contains(err.Error(), "noise-") {
+		t.Errorf("the failure message quotes the container's output: %q", err)
+	}
+	// The log has all of it, first line and last.
+	if got := rec.count(plugin.StderrMarker + "last-words-on-stderr"); got != 1 {
+		t.Errorf("the container's last line reached the log %d time(s), want 1", got)
+	}
+	if got := rec.count(plugin.StderrMarker + "noise-0-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); got != 1 {
+		t.Errorf("the container's first line reached the log %d time(s), want 1", got)
 	}
 }
 

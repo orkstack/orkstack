@@ -305,12 +305,13 @@ export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
 ```
 
-One bucket, six key families (`pkg/artifacts`):
+One bucket, seven key families (`pkg/artifacts`):
 
 | keys | what |
 |---|---|
 | `metadata/orkflows/{namespace}/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot; immutable once written |
-| `metadata/orkflows/{namespace}/{name}/@current.json` | which version that orkflow runs: `{"version":…,"updated_at":…}` and nothing else. Moved by `orkctl orkflow promote`; absent means "the newest applied version" |
+| `metadata/orkflows/{namespace}/{name}/@current.json` | which version that orkflow runs: `{"version":…,"updated_at":…}` and nothing else. Moved by `orkctl orkflow promote`; absent means "the head" |
+| `metadata/orkflows/{namespace}/{name}/@head.json` | which version was applied last: `{"version":…,"applied_at":…}`. Moved by `apply`, and moving it IS the apply's commit point |
 | `metadata/namespaces/{name}.json` | namespace registry documents; `default` is synthesized when absent |
 | `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/{namespace}/…` | archived runs: the body, and the key-only index `ListRuns` scans |
 | `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` | task output, one chunk per object, written while the task runs (below) |
@@ -320,8 +321,18 @@ A basename beginning `@` is reserved for per-orkflow metadata stored beside the
 versions, so a pointer can never be read as a version. Two replicas promoting
 at once are arbitrated by the object store's own conditional PUT — the loser is
 told it lost and swaps again against the winner's etag — so promotion needs no
-lock, no lease and nothing in Temporal. The pointer holds only a version
-string: a copy of the document there could drift from the document.
+lock, no lease and nothing in Temporal. Neither pointer holds a copy of the
+document: a second place for it is a second place for it to be wrong.
+
+The head is a pointer for the same reason, and for one more. Each replica
+stamps `created_at` from its own clock, so a head read as "the greatest stamp"
+is decided by whichever replica's clock runs fastest; and an edit's
+`expected_head_version` has to be checked by the write itself, or a competing
+apply lands between the check and the write and the stale edit succeeds
+anyway. Both are settled by the swap. `applied_at` is monotonic — an apply
+never stamps its version earlier than the head it extends — so `orkctl orkflow
+versions` lists them in the order they were applied on a deployment whose
+clocks disagree.
 
 `proof/M8.5/ha-deploy.sh` exports exactly that block, and phase 7 of
 `proof/M8.5/ha-transcript.txt` reads a finished run back out of the bucket —

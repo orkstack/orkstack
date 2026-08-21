@@ -373,8 +373,9 @@ func (s *Service) ApplyOrkflow(
 	// The stored document names the namespace it lives in, whichever of the
 	// two said so, so a reader needs no key to know where it came from.
 	wf.Namespace = ns.GetName()
-	if err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
-		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion()); err != nil {
+	expected, err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
+		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion())
+	if err != nil {
 		return nil, err
 	}
 	// The stamp is applied here, but it does NOT decide whether this apply is a
@@ -382,9 +383,24 @@ func (s *Service) ApplyOrkflow(
 	// the stored document untouched when they match, so a re-apply cannot
 	// churn the object merely by arriving at a different time. Stamping first
 	// and comparing bytes afterwards is what made every apply a rewrite.
+	//
+	// Nor does it decide which version is the head. This clock is one
+	// replica's, and the head is a fact about the deployment: the store owns
+	// it, and holds the stamp above it (artifacts.AppliedStamp) so a slow
+	// replica cannot publish a version that reads as older than the one it
+	// just extended.
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
-	stored, created, err := s.orkflows.Put(ctx, wf)
+	stored, created, err := s.orkflows.Put(ctx, wf, expected)
 	if err != nil {
+		var moved *artifacts.HeadMovedError
+		if errors.As(err, &moved) {
+			// The edit lost the commit, not the check: a competing apply
+			// landed between the read above and the write. Same refusal, in
+			// the same words — the caller cannot tell the two apart, and
+			// should not have to.
+			return nil, editRaceRefusal(ns.GetName(), wf.GetName(),
+				req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion(), moved.Head)
+		}
 		return nil, orkflowStoreError(err, "store orkflow %s@%s in namespace %q",
 			wf.GetName(), wf.GetVersion(), ns.GetName())
 	}
@@ -394,9 +410,10 @@ func (s *Service) ApplyOrkflow(
 	}), nil
 }
 
-// checkEditTokens gates an apply on the two things an edit says about itself:
-// which stored version it was DERIVED from (base) and which head the editor
-// SAW when it fetched (expectedHead).
+// checkEditTokens reads the two things an edit says about itself — which
+// stored version it was DERIVED from (base) and which head the editor SAW when
+// it fetched (expectedHead) — and returns the head condition the write is made
+// under.
 //
 // They are two facts, so they are two tokens. Any stored version is a valid
 // base — editing an old one is how a user forks forward from it, and the fork
@@ -406,32 +423,44 @@ func (s *Service) ApplyOrkflow(
 // purpose from one derived from a head that has since moved, so the first was
 // refused to catch the second.
 //
-//	base    expected  check
-//	----    --------  -----
+//	base    expected  condition
+//	----    --------  ---------
 //	""      ""        none — a plain `orkctl apply file.yaml`
-//	set     ""        base == head, or FailedPrecondition (the pre-M11.2 rule)
-//	any     set       expected == head, or FailedPrecondition naming both and
-//	                  the base; base, when set, must name a stored version
+//	set     ""        head must be base (the pre-M11.2 rule)
+//	any     set       head must be expected; base, when set, must name a
+//	                  stored version (NotFound if not)
 //
 // Row two is back-compatibility and nothing else: a caller written before this
 // slice sends only a base, and its base IS its concurrency token because
 // nothing else says which head it read. Keeping that row is what lets the two
 // contracts coexist with no version negotiation.
 //
-// The window between this check and the write is deliberately left open:
-// closing it would mean holding a lock across a user's editor session, and the
-// cost of losing the race is nil — both versions are stored, both are listed,
-// and nothing is overwritten.
+// What this function does NOT do is decide the race. It reads the store to
+// answer the questions a read can answer — is there anything stored at all,
+// does the base exist, what should the refusal say — and hands the condition
+// to the store, which applies it in the same operation that writes. A check
+// here followed by a write there is a window, and the loser of that window
+// used to succeed: it checked head=2.0.0, a competing 3.0.0 landed, and its
+// own version was stored anyway with nothing refused.
 func (s *Service) checkEditTokens(
 	ctx context.Context,
 	namespace, name, base, expectedHead string,
-) error {
+) (artifacts.HeadExpectation, error) {
 	if base == "" && expectedHead == "" {
-		return nil
+		return artifacts.NoHeadExpectation(), nil
 	}
+	// Which version the head must be for this apply to commit. Row two spends
+	// its base on the question; row three has a field for it.
+	required := expectedHead
+	if required == "" {
+		required = base
+	}
+	expected := artifacts.ExpectHead(required)
+
 	versions, err := s.orkflows.Versions(ctx, namespace, name)
 	if err != nil {
-		return orkflowStoreError(err, "read versions of orkflow %q in namespace %q", name, namespace)
+		return expected, orkflowStoreError(err,
+			"read versions of orkflow %q in namespace %q", name, namespace)
 	}
 	if versions.Head == "" {
 		// Nothing is stored, so neither token can be true of anything. Say
@@ -440,40 +469,50 @@ func (s *Service) checkEditTokens(
 		if base == "" {
 			claim = fmt.Sprintf("expected version %q to be the newest applied one", expectedHead)
 		}
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		return expected, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"this edit %s of orkflow %q, "+
 				"but that orkflow has no stored version in namespace %q",
 			claim, name, namespace))
 	}
-	if expectedHead == "" {
-		// Pre-M11.2 caller: the base is the token, compared against head.
-		if versions.Head != base {
-			return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-				"orkflow %q in namespace %q changed underneath this edit: it was derived from "+
-					"version %q but the newest applied version is now %q; "+
-					"run `orkctl orkflow diff %s %s %s` and re-apply",
-				name, namespace, base, versions.Head, name, base, versions.Head))
-		}
-		return nil
-	}
 	// Provenance is a claim about the store, so it is checked against the
 	// store: a base nobody applied is a typo, answered where it was made
 	// rather than recorded as the ancestry of a version that never existed.
-	if base != "" && !storesVersion(versions, base) {
-		return connect.NewError(connect.CodeNotFound, fmt.Errorf(
+	// Row two's base is checked as a head below, not as provenance here.
+	if expectedHead != "" && base != "" && !storesVersion(versions, base) {
+		return expected, connect.NewError(connect.CodeNotFound, fmt.Errorf(
 			"this edit says it was derived from version %q of orkflow %q, "+
 				"but no such version is stored in namespace %q",
 			base, name, namespace))
 	}
-	if versions.Head != expectedHead {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"orkflow %q in namespace %q changed while this edit was open: %s"+
-				"the newest applied version was %q when the document was fetched "+
-				"and is now %q; run `orkctl orkflow diff %s %s %s` and re-apply",
-			name, namespace, derivedFrom(base), expectedHead, versions.Head,
-			name, expectedHead, versions.Head))
+	if versions.Head != required {
+		return expected, editRaceRefusal(namespace, name, base, expectedHead, versions.Head)
 	}
-	return nil
+	return expected, nil
+}
+
+// editRaceRefusal is the one refusal an edit gets when the head is not the one
+// it was written against, wherever that was discovered — reading the store
+// before the write, or losing the store's own compare-and-set.
+//
+// Two wordings, because there are two contracts. A caller that sent only a
+// base is told its base is stale, which is what its base meant. A caller that
+// sent an expected head is told three things — where the edit came from, the
+// head it was fetched at, and the head that is there now — because the base is
+// not the problem and must not read as one.
+func editRaceRefusal(namespace, name, base, expectedHead, head string) error {
+	if expectedHead == "" {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"orkflow %q in namespace %q changed underneath this edit: it was derived from "+
+				"version %q but the newest applied version is now %q; "+
+				"run `orkctl orkflow diff %s %s %s` and re-apply",
+			name, namespace, base, head, name, base, head))
+	}
+	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		"orkflow %q in namespace %q changed while this edit was open: %s"+
+			"the newest applied version was %q when the document was fetched "+
+			"and is now %q; run `orkctl orkflow diff %s %s %s` and re-apply",
+		name, namespace, derivedFrom(base), expectedHead, head,
+		name, expectedHead, head))
 }
 
 // storesVersion reports whether one version is among the stored ones.

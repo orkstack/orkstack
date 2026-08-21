@@ -23,8 +23,9 @@
 // without one, so nothing must be created before the first apply.
 //
 //	orkflows, err := artifacts.NewS3OrkflowStore(ctx, artifacts.ConfigFromEnv())
-//	err = orkflows.Put(ctx, compiled)             // apply
-//	catalog, err := orkflows.List(ctx, "default") // latest version of each
+//	_, _, err = orkflows.Put(ctx, compiled, artifacts.NoHeadExpectation())
+//	_, _, err = orkflows.Put(ctx, edited, artifacts.ExpectHead("2.0.0")) // an edit
+//	catalog, err := orkflows.List(ctx, "default")                       // what each name runs
 //
 // Selecting a backend:
 //

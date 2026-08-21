@@ -32,9 +32,10 @@ func newRecordingStore() *recordingStore {
 func (r *recordingStore) Put(
 	ctx context.Context,
 	wf *orkstackv1.Orkflow,
+	expected artifacts.HeadExpectation,
 ) (*orkstackv1.Orkflow, bool, error) {
 	r.puts = append(r.puts, wf)
-	return r.inner.Put(ctx, wf)
+	return r.inner.Put(ctx, wf, expected)
 }
 
 func (r *recordingStore) Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error) {
@@ -65,6 +66,7 @@ type unreachableStore struct{ err error }
 func (u unreachableStore) Put(
 	context.Context,
 	*orkstackv1.Orkflow,
+	artifacts.HeadExpectation,
 ) (*orkstackv1.Orkflow, bool, error) {
 	return nil, false, u.err
 }

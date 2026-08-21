@@ -78,9 +78,31 @@ today: `orkctl run logs` prints the stored line, and so does the UI pane
 whether the Orker wrote it. A pane that recognizes the marker, tints the line
 and strips it is M11.4's work; the CLI keeps the verbatim marker either way.
 
-> The accepted cost: an application line that itself begins with `[stderr] ` on
-> stdout reads as stderr. That is cosmetic. The byte-exact separation of the
-> two streams is the pair of capture artifacts, which streaming does not touch.
+**The tag is unambiguous, because the writer escapes what would imitate it.**
+A stdout line that itself begins with `[stderr] ` (or with `[stdout] `) is
+emitted behind `[stdout] `, and nothing else is:
+
+| stream | what the application wrote | what the log carries |
+|---|---|---|
+| stdout | `hello` | `hello` |
+| stdout | `[stderr] hello` | `[stdout] [stderr] hello` |
+| stderr | `hello` | `[stderr] hello` |
+| stderr | `[stderr] hello` | `[stderr] [stderr] hello` |
+
+`plugin.DecodeStreamLine` is the inverse and the one place the rule lives, so
+every reader gets the same answer: strip a leading `[stderr] ` and the line is
+stderr, strip a leading `[stdout] ` and it is stdout, and anything else is
+stdout as it always was. Without the escape, a container printing
+`[stderr] same text` on stdout while another wrote `same text` on stderr
+produced two identical log lines, and no reader could tell their origins apart.
+
+**A failure's error carries no output.** A plugin that fails a task returns an
+error, and that error is not a log line: Temporal records it, the workflow
+copies it onto `TaskRun.Error` and `TASK_FAILED`, and the run's failure copies
+it again onto `Run.Error` and `RUN_FAILED`. So a plugin's failure names what
+only it knows — the exit code, the kill, the daemon-level cause — and points at
+the log stream and the capture artifacts, which hold every byte (AGENTS.md
+§1.4). The container plugin is the worked example (`runFailure`).
 
 **Bounds.** Nothing here is per-line or per-byte to the store, and nothing
 grows without limit:

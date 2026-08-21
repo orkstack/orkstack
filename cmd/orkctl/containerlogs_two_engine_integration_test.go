@@ -353,6 +353,212 @@ func TestIntegration_ContainerTaskLogBytesNeverEnterRunHistory(t *testing.T) {
 		headMarker, tailMarker, errMarker, logged, events, size, len(archived))
 }
 
+// TestIntegration_AFailingContainerPutsNoOutputInRunHistory is the arm the
+// test above cannot reach: it runs a container that SUCCEEDS, and a successful
+// container returns a payload while a failing one returns an ERROR.
+//
+// That error is copied further than any payload ever is. Temporal records it
+// as the activity's failure, the workflow copies it onto TaskRun.Error and the
+// TASK_FAILED event, and the run's own failure copies it again onto Run.Error
+// and RUN_FAILED (internal/engine/workflow.go) — history and the event stream
+// both, once per attempt. So a plugin that quoted a failing container's output
+// into its error would be piping a task's output stream through exactly the
+// two places AGENTS.md §1.4 forbids, on the path a chatty container is most
+// likely to take. It used to: the plugin quoted the head of stderr.
+//
+// The rule this measures: a failing container's output reaches history and the
+// event stream NOWHERE and by NO path, while the whole of it is in the task's
+// log. Four markers and one control:
+//
+//   - the CONTROL is the failure's own sentence, "exited with code 42". It is
+//     in history and on the event stream by construction, so a scan that
+//     cannot find it is reading nothing and its verdict about the markers
+//     would mean nothing.
+//   - outHeadMarker and errHeadMarker are printed FIRST on each stream, inside
+//     every buffer the plugin holds — the 8 KiB payload echo and the head the
+//     error used to quote. They are the ones a regression would put back.
+//   - tailMarker and errMarker are printed after 15 KiB of filler per stream,
+//     past every buffer, so only the log path could ever carry them.
+func TestIntegration_AFailingContainerPutsNoOutputInRunHistory(t *testing.T) {
+	address := temporalAddress()
+	requireTemporal(t, address)
+	requireDockerDaemon(t)
+	image := containerTestImage()
+	requireContainerImage(t, image)
+
+	artifactCfg := artifacts.ConfigFromEnv()
+	artifactCfg.Backend = artifacts.BackendS3
+	requireMinIOForIdempotency(t, artifactCfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+
+	namespace := isolatedNamespace()
+	t.Logf("namespace %s", namespace)
+	temporalClient := dialIsolatedNamespace(ctx, t, address, namespace)
+
+	root := repoRoot(t)
+	binDir := t.TempDir()
+	enginePath := buildBinary(t, root, binDir, "ork")
+	orkerPath := buildBinary(t, root, binDir, "orker")
+
+	queue := idempotencyTaskQueue()
+	startIdempotencyOrker(ctx, t, orkerPath, address, namespace, queue)
+	engine := startReplica(ctx, t, "ork-failure", enginePath, address, namespace, queue)
+	engine.awaitReady(ctx, t)
+
+	tag := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+	errHeadMarker := "ORKFERRHEAD" + tag
+	outHeadMarker := "ORKFOUTHEAD" + tag
+	tailMarker := "ORKFTAIL" + tag
+	errMarker := "ORKFERR" + tag
+	orkflowName := fmt.Sprintf("containerfail-%s", tag)
+	if _, err := engine.flows.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+		Yaml: failingContainerOrkflowYAML(orkflowName, image, tag),
+	})); err != nil {
+		t.Fatalf("ApplyOrkflow: %v", err)
+	}
+	submitted, err := engine.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+		OrkflowName: orkflowName,
+	}))
+	if err != nil {
+		t.Fatalf("SubmitRun: %v", err)
+	}
+	runID := submitted.Msg.GetRun().GetId()
+	awaitWorkflowFailed(ctx, t, temporalClient, runID)
+
+	// ---- every marker is in the log stream ---------------------------------
+	logged := newLogFollower()
+	if err := replayTaskLog(ctx, engine, runID, "boom", logged); err != nil {
+		t.Fatalf("read task logs: %v", err)
+	}
+	for _, marker := range []string{outHeadMarker, tailMarker} {
+		if !strings.Contains(logged.body(), marker) {
+			t.Fatalf("the log stream does not carry %s; it holds %d bytes",
+				marker, len(logged.body()))
+		}
+	}
+	for _, marker := range []string{errHeadMarker, errMarker} {
+		if !strings.Contains(logged.body(), plugin.StderrMarker+marker) {
+			t.Fatalf("the log stream does not carry %q; it holds %d bytes",
+				plugin.StderrMarker+marker, len(logged.body()))
+		}
+	}
+	t.Logf("StreamTaskLogs delivered all four markers of the FAILED task in %d chunk(s), %d bytes",
+		logged.count(), len(logged.body()))
+
+	// ---- the failure is reported, and carries none of the output -----------
+	const control = "exited with code 42"
+	taskError, runError := runFailureMessages(ctx, t, engine, runID, "boom")
+	for label, message := range map[string]string{
+		"the task's error": taskError,
+		"the run's error":  runError,
+	} {
+		if !strings.Contains(message, control) {
+			t.Fatalf("%s does not name the container's exit code: %q", label, message)
+		}
+		if !strings.Contains(message, "orkctl run logs") {
+			t.Errorf("%s does not say where the container's output is: %q", label, message)
+		}
+		for _, marker := range []string{outHeadMarker, errHeadMarker, tailMarker, errMarker} {
+			if strings.Contains(message, marker) {
+				t.Errorf("%s quotes %s, which the container printed: %q", label, marker, message)
+			}
+		}
+	}
+
+	// ---- the history scan, with its control --------------------------------
+	events, size := historyText(ctx, t, temporalClient, runID)
+	if !strings.Contains(events, control) {
+		t.Fatalf("the history scan cannot find the failure's own sentence (%q), which the "+
+			"activity error puts there; its verdict about the markers means nothing", control)
+	}
+	for _, marker := range []string{outHeadMarker, errHeadMarker, tailMarker, errMarker} {
+		if strings.Contains(events, marker) {
+			t.Fatalf("%s is in failed run %s's Temporal history; a failing container's "+
+				"output belongs to the log stream and the artifacts (AGENTS.md §1.4)",
+				marker, runID)
+		}
+	}
+	t.Logf("scanned %d bytes of failed run %s's Temporal history: it carries the failure's "+
+		"own sentence (%q) and not one byte the container wrote (%s, %s, %s, %s)",
+		size, runID, control, outHeadMarker, errHeadMarker, tailMarker, errMarker)
+
+	// ---- the event stream announces the reason, and carries no output ------
+	archived := awaitArchivedEventText(ctx, t, engine, runID)
+	if !strings.Contains(archived, control) {
+		t.Fatalf("the event scan does not carry the run's failure reason (%q); it is "+
+			"reading nothing, or a failed run announces nothing", control)
+	}
+	for _, marker := range []string{outHeadMarker, errHeadMarker, tailMarker, errMarker} {
+		if strings.Contains(archived, marker) {
+			t.Fatalf("%s is on failed run %s's event stream; events announce a REASON "+
+				"and never a task's output", marker, runID)
+		}
+	}
+	t.Logf("scanned %d bytes of failed run %s's event stream: the reason, and none of "+
+		"the output", len(archived), runID)
+
+	writeFailedContainerTranscript(t, namespace, runID, image,
+		outHeadMarker, errHeadMarker, tailMarker, errMarker,
+		logged, taskError, size, len(archived))
+}
+
+// awaitWorkflowFailed is awaitWorkflowCompleted's opposite: this run is
+// EXPECTED to fail, and a run that succeeded would make every assertion below
+// it vacuous.
+func awaitWorkflowFailed(ctx context.Context, t *testing.T, c client.Client, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(4 * time.Minute)
+	var last enumspb.WorkflowExecutionStatus
+	for time.Now().Before(deadline) {
+		described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+		if err == nil {
+			last = described.GetWorkflowExecutionInfo().GetStatus()
+			switch last {
+			case enumspb.WORKFLOW_EXECUTION_STATUS_FAILED:
+				t.Logf("run %s failed on the cluster, as this test requires", runID)
+				return
+			case enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING:
+			default:
+				t.Fatalf("run %s closed as %s, want FAILED", runID, last)
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("run %s did not fail within the deadline (last status %s)", runID, last)
+}
+
+// runFailureMessages reads back what the finished run says about its failure:
+// the task's error and the run's, which are the two copies the workflow makes
+// of the plugin's message.
+func runFailureMessages(
+	ctx context.Context,
+	t *testing.T,
+	replica *engineReplica,
+	runID, taskID string,
+) (taskError, runError string) {
+	t.Helper()
+	got, err := replica.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	run := got.Msg.GetRun()
+	for _, taskRun := range run.GetTaskRuns() {
+		if taskRun.GetTaskId() == taskID {
+			taskError = taskRun.GetError().GetMessage()
+		}
+	}
+	if taskError == "" {
+		t.Fatalf("run %s has no error on task %q", runID, taskID)
+	}
+	runError = run.GetError().GetMessage()
+	if runError == "" {
+		t.Fatalf("run %s failed with no run-level error", runID)
+	}
+	return taskError, runError
+}
+
 // ---- docker gating ------------------------------------------------------------
 
 // containerTestImage is small, has a shell, and is stable.
@@ -380,9 +586,10 @@ func requireDockerDaemon(t *testing.T) {
 }
 
 // requireContainerImage makes sure the image is on the host before the run, so
-// a registry download is not mistaken for a slow log. No route to a public
-// registry is a host capability that starting the infrastructure would not
-// fix, so it stays an ordinary skip (see infra_required_test.go).
+// a registry download is not mistaken for a slow log. An image that cannot be
+// obtained is an absent prerequisite like any other: under ORK_REQUIRE_INFRA
+// it fails, because a proof that could not get the image measured nothing
+// (see infra_required_test.go).
 func requireContainerImage(t *testing.T, image string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -392,7 +599,8 @@ func requireContainerImage(t *testing.T, image string) {
 		return
 	}
 	if out, err := exec.CommandContext(ctx, "docker", "pull", image).CombinedOutput(); err != nil {
-		t.Skipf("cannot pull %s (no registry access?): %s", image, strings.TrimSpace(string(out)))
+		infraAbsent(t, "cannot pull %s (no registry access?): %s",
+			image, strings.TrimSpace(string(out)))
 	}
 }
 
@@ -585,6 +793,40 @@ tasks:
 `, name, image, tag)
 }
 
+// failingContainerOrkflowYAML is containerMarkerOrkflowYAML's failing twin: a
+// marker first on each stream, 15 KiB of filler per stream, a marker last on
+// each — and then a non-zero exit, which is the whole point. It fails the run,
+// so the plugin's error is what reaches history and the event stream, and none
+// of these four markers may travel with it.
+func failingContainerOrkflowYAML(name, image, tag string) string {
+	return fmt.Sprintf(`name: %s
+version: "0.1.0"
+description: M11.1 failing container, for the no-output-in-history invariant.
+tasks:
+  - id: boom
+    plugin: container
+    timeout_seconds: 300
+    with:
+      image: %s
+      command: |
+        tag=%s
+        echo "ORKFOUTHEAD${tag}"
+        echo "ORKFERRHEAD${tag}" 1>&2
+        i=0
+        while [ $i -lt 200 ]; do
+          echo "filler-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          echo "efill-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" 1>&2
+          i=$((i + 1))
+        done
+        echo "ORKFTAIL${tag}"
+        echo "ORKFERR${tag}" 1>&2
+        exit 42
+      capture_stdout_as: out
+      capture_stderr_as: err
+      timeout_seconds: 240
+`, name, image, tag)
+}
+
 // ---- proof transcripts ---------------------------------------------------------
 
 // writeContainerLogTranscript records the live-follow transcript the milestone's
@@ -707,4 +949,59 @@ func writeContainerMarkerTranscript(
 		}
 	}
 	appendProofArtifact(t, "no-bytes-in-history-container.txt", out.String())
+}
+
+// writeFailedContainerTranscript records the failing arm of the same
+// invariant, with the control that makes "absent" a measurement: the failure's
+// own sentence is IN history and on the event stream, and not one byte of the
+// container's output is in either.
+func writeFailedContainerTranscript(
+	t *testing.T,
+	namespace, runID, image string,
+	outHeadMarker, errHeadMarker, tailMarker, errMarker string,
+	logged *logFollower,
+	taskError string,
+	historyBytes, archivedBytes int,
+) {
+	t.Helper()
+	body := logged.body()
+	var out strings.Builder
+	fmt.Fprintf(&out, "# a FAILING container's output stays out of run history and the event "+
+		"stream (AGENTS.md 1.4) — %s\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(&out, "temporal namespace     %s\n", namespace)
+	fmt.Fprintf(&out, "run                    %s   (FAILED, as this test requires)\n", runID)
+	fmt.Fprintf(&out, "image                  %s\n", image)
+	fmt.Fprintf(&out, "task                   boom — a marker on each stream, 15 KiB of filler\n")
+	fmt.Fprintf(&out, "                       per stream, a marker on each stream, exit 42\n\n")
+	fmt.Fprintf(&out, "why this arm exists    a success returns a PAYLOAD; a failure returns an\n")
+	fmt.Fprintf(&out, "                       ERROR, which Temporal records and the workflow\n")
+	fmt.Fprintf(&out, "                       copies onto TaskRun.Error, TASK_FAILED, Run.Error\n")
+	fmt.Fprintf(&out, "                       and RUN_FAILED. The plugin used to quote the head\n")
+	fmt.Fprintf(&out, "                       of stderr into it.\n\n")
+	fmt.Fprintf(&out, "control                \"exited with code 42\" — the failure's own sentence,\n")
+	fmt.Fprintf(&out, "                       in history and on the event stream by construction\n")
+	fmt.Fprintf(&out, "head markers           %s (stdout), %s (stderr)\n", outHeadMarker, errHeadMarker)
+	fmt.Fprintf(&out, "                       printed FIRST, inside every buffer the plugin holds\n")
+	fmt.Fprintf(&out, "tail markers           %s (stdout), %s (stderr)\n", tailMarker, errMarker)
+	fmt.Fprintf(&out, "                       printed after the filler, past every buffer\n\n")
+	fmt.Fprintf(&out, "StreamTaskLogs         %d chunk(s), %d bytes: ALL FOUR markers present\n",
+		logged.count(), len(body))
+	fmt.Fprintf(&out, "Temporal history       %d bytes scanned (payloads base64-decoded)\n", historyBytes)
+	fmt.Fprintf(&out, "  control              PRESENT  — so the scan reads the error payloads\n")
+	fmt.Fprintf(&out, "  every marker         ABSENT   — no output rides the failure\n")
+	fmt.Fprintf(&out, "event stream           %d bytes scanned\n", archivedBytes)
+	fmt.Fprintf(&out, "  control              PRESENT  — the run announces why it failed\n")
+	fmt.Fprintf(&out, "  every marker         ABSENT   — events announce, they do not carry\n\n")
+	fmt.Fprintf(&out, "the error the run reports, in full:\n  %s\n\n", taskError)
+	fmt.Fprintf(&out, "verdict: the whole of a failed container's output is in its log stream, "+
+		"and none of it is in run history or on the event stream.\n\n")
+	fmt.Fprintf(&out, "the markers, as StreamTaskLogs delivered them:\n")
+	for _, line := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
+		if strings.Contains(line, outHeadMarker) || strings.Contains(line, errHeadMarker) ||
+			strings.Contains(line, tailMarker) || strings.Contains(line, errMarker) {
+			fmt.Fprintf(&out, "  %s\n", line)
+		}
+	}
+	fmt.Fprintf(&out, "  (%d lines in all)\n", strings.Count(body, "\n"))
+	appendProofArtifact(t, "no-output-in-history-failed-container.txt", out.String())
 }

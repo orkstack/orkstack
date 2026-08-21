@@ -160,10 +160,11 @@ file (byte-exact), the 8 KiB payload head, and the live log.
   counts once, so a progress redraw streams instead of piling up.
 - **stdout and stderr stay apart.** One attempt has one log stream, so stderr
   lines carry the in-band marker `[stderr] ` and stdout lines are bare. The
-  plugin's own lifecycle lines (`container: running …`) are bare too. The
-  caveat: an application line that itself starts with `[stderr] ` on stdout
-  reads as stderr — cosmetic only, and the capture artifacts remain the
-  authoritative, byte-exact separation.
+  plugin's own lifecycle lines (`container: running …`) are bare too. A stdout
+  line that would IMITATE the marker — one that itself starts with `[stderr] `
+  or `[stdout] ` — is emitted behind `[stdout] `, so the two streams are never
+  confusable and `plugin.DecodeStreamLine` recovers the origin and the original
+  line. Ordinary stdout is untouched.
 - **A chatty container is bounded.** The framer holds under 64 KiB per stream;
   the Orker uploads a chunk every 64 KiB or 500 ms
   (`ORK_ORKER_LOG_FLUSH_BYTES`, `ORK_ORKER_LOG_FLUSH_INTERVAL`) and stops at
@@ -190,6 +191,24 @@ A failure is retried only when retrying could plausibly change the answer.
 | `pull: never` and the image is absent      | permanent                     |
 | unknown `op`, bad mount, malformed `env`   | permanent, before any side effect |
 | daemon cannot see a mounted host path      | permanent, naming `ORK_ORKER_WORKDIR` |
+
+**A failure quotes nothing the container wrote.** A success carries an 8 KiB
+head of each stream on its output payload; a failure carries no payload at all,
+and its error names the image, the exit code and where the output is:
+
+```
+container: alpine:3.20 exited with code 42. What it printed is in the task's
+log (`orkctl run logs <run-id> --task <task-id>`; stderr lines carry the
+`[stderr] ` marker), and byte-exact in its capture_stdout_as /
+capture_stderr_as artifacts when the task names them.
+```
+
+The error is the one thing here that crosses into Temporal: it is recorded as
+the activity's failure and copied onto `TaskRun.Error`, `TASK_FAILED`,
+`Run.Error` and `RUN_FAILED`. Quoting output into it would put a task's stream
+into run history and onto the event stream, which is what AGENTS.md §1.4
+forbids — and the daemon's own diagnostics are on the container's stderr, so
+they are in the log with everything else.
 
 ## Cleanup
 

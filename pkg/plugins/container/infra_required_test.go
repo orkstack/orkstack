@@ -22,11 +22,18 @@ import (
 // From then on a skip is not a fact about the environment; it is a test
 // opting out of the proof, and it turns the run red.
 //
-// Only the reachability of infrastructure goes through here. A host
-// capability that starting the infrastructure would not fix — no directory
-// the docker daemon can bind-mount, no route to a public registry — stays an
-// ordinary t.Skip, because failing there would report a fault in the tree
-// that is not in the tree.
+// EVERY prerequisite goes through here, and the container tests are why the
+// rule had to be stated that way. Their first version reasoned that a host
+// capability starting the infrastructure would not fix — no route to a public
+// registry, no directory the docker daemon can bind-mount — should stay an
+// ordinary t.Skip, so as not to report a fault in the tree that is not in the
+// tree. That is exactly the hole the switch exists to close: with
+// ORK_REQUIRE_INFRA set and an image that cannot be pulled, the required test
+// printed `--- SKIP`, the package exited 0, and the proof reported PASS having
+// measured nothing. Which prerequisite was missing is the PROOF SCRIPT's
+// question, and it answers it the same way for all of them: it probes before
+// it requires, and reports 77 (INCOMPLETE) for what it could not find. Past
+// that point nothing may opt out.
 func infraAbsent(t *testing.T, format string, args ...any) {
 	t.Helper()
 	if required, _ := strconv.ParseBool(os.Getenv("ORK_REQUIRE_INFRA")); required {

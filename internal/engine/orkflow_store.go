@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -40,9 +41,17 @@ import (
 // such, never answered from memory.
 type OrkflowStore interface {
 	// Put stores one version and reports whether it created it. Re-applying
-	// an identical document writes nothing; a different document under a
-	// stored version is artifacts.ErrVersionExists.
-	Put(ctx context.Context, wf *orkstackv1.Orkflow) (*orkstackv1.Orkflow, bool, error)
+	// an identical document writes nothing and moves nothing; a different
+	// document under a stored version is artifacts.ErrVersionExists.
+	//
+	// expected is what this apply claims about the head it extends, and a
+	// stated claim is a compare-and-SET rather than a check: the version
+	// lands only while the head is still the version named, and an apply that
+	// loses that race is artifacts.ErrHeadMoved. The check and the write are
+	// one operation here because they cannot be two — a check in the caller
+	// followed by a write in the store leaves a window a competing apply
+	// fits through, which is exactly the bug this parameter closes.
+	Put(ctx context.Context, wf *orkstackv1.Orkflow, expected artifacts.HeadExpectation) (*orkstackv1.Orkflow, bool, error)
 	Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error)
 	List(ctx context.Context, namespace string) ([]*orkstackv1.Orkflow, error)
 	// Versions returns one orkflow's version catalog: every stored version,
@@ -85,12 +94,24 @@ func NewMemoryOrkflowStore() *MemoryOrkflowStore {
 // reports whether this call created it.
 //
 // A version is written once. Re-applying an identical document is a no-op that
-// returns the stored one (created=false, original created_at intact); a
-// different document under a stored version is refused with
+// returns the stored one (created=false, original created_at intact, head
+// where it was); a different document under a stored version is refused with
 // artifacts.ErrVersionExists, exactly as the bucket refuses it.
+//
+// The head is assigned here, under the same lock that writes the version, so
+// an apply that states an expected head either commits against that head or is
+// refused — never both checked and overtaken. The durable store reaches the
+// same property with a compare-and-swap on a pointer object
+// (artifacts.S3OrkflowStore.Put); a test that passes here therefore cannot
+// pass for a reason the bucket would not reproduce.
+//
+// created_at is held above the head's for the same reason and by the same
+// rule (artifacts.AppliedStamp): a catalog ordered by stamp must come out in
+// the order applies committed in, whatever clock stamped them.
 func (s *MemoryOrkflowStore) Put(
 	_ context.Context,
 	wf *orkstackv1.Orkflow,
+	expected artifacts.HeadExpectation,
 ) (*orkstackv1.Orkflow, bool, error) {
 	if wf.GetName() == "" || wf.GetVersion() == "" {
 		return nil, false, fmt.Errorf("engine: put orkflow %q version %q: %w",
@@ -102,6 +123,24 @@ func (s *MemoryOrkflowStore) Put(
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	head := s.latest[namespace][wf.GetName()]
+	if !expected.SatisfiedBy(head) {
+		return nil, false, &artifacts.HeadMovedError{
+			Namespace: namespace,
+			Name:      wf.GetName(),
+			Expected:  expected.Version(),
+			Head:      head,
+		}
+	}
+	var headStamp time.Time
+	if previous, ok := s.byNamespace[namespace][wf.GetName()][head]; ok {
+		headStamp = appliedAt(previous)
+	}
+	var callerStamp time.Time
+	if ts := wf.GetCreatedAt(); ts != nil {
+		callerStamp = ts.AsTime()
+	}
+	stored.CreatedAt = timestamppb.New(artifacts.AppliedStamp(callerStamp, headStamp))
 	byName, ok := s.byNamespace[namespace]
 	if !ok {
 		byName = map[string]map[string]*orkstackv1.Orkflow{}
