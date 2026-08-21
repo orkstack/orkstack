@@ -188,20 +188,20 @@ func TestLogChunkSink_FlushesOnElapsedTime(t *testing.T) {
 // acceptance 4 forbids, produced by a knob an operator or a proof script may
 // legitimately turn.
 //
-// The rule that replaces it: however small the size bound, the store is
-// written at most once per FlushInterval (plus the one immediate first chunk,
-// which nothing should wait for, and the one final chunk Close writes). What
-// arrives is unchanged — every byte, in order.
+// The rule that replaces it: however small the size bound, normal writes cost
+// at most once per FlushInterval (plus the one immediate first chunk, which
+// nothing should wait for, and the one final chunk Close writes). What arrives
+// is unchanged — every byte, in order.
 func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
 	store := &recordingLogStore{}
+	const interval = time.Millisecond
 	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes:    1, // "flush every byte"
-		FlushInterval: 500 * time.Millisecond,
+		FlushInterval: interval,
 		MaxBytes:      1 << 20,
 	})
 
 	const lines = 2000
-	start := time.Now()
 	var want strings.Builder
 	for i := 0; i < lines; i++ {
 		line := fmt.Sprintf("line-%06d", i)
@@ -210,16 +210,16 @@ func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
 		want.WriteByte('\n')
 	}
 	sink.Close()
-	elapsed := time.Since(start)
 
 	chunks := store.stored()
-	// One immediate chunk, one per elapsed interval, one from Close, and one
-	// of slack for a scheduler that stalled this goroutine.
-	budget := 3 + int(elapsed/(500*time.Millisecond))
-	if len(chunks) > budget {
-		t.Fatalf("%d lines in %s produced %d chunks, want at most %d: the size bound "+
-			"is writing per line and the elapsed-time bound is not pacing it",
-			lines, elapsed.Round(time.Millisecond), len(chunks), budget)
+	// This is deliberately a fixed bound, not a budget that grows with the
+	// test's elapsed time. The initial upload and Close's terminal upload may
+	// be immediate, but a per-line implementation must still fail this test.
+	const maxChunks = 3
+	if len(chunks) > maxChunks {
+		t.Fatalf("%d lines produced %d chunks, want at most %d: the size bound "+
+			"is writing per line instead of batching under the elapsed-time bound",
+			lines, len(chunks), maxChunks)
 	}
 	if len(chunks) == 0 {
 		t.Fatal("nothing was written at all; batching is not silence")
@@ -234,8 +234,8 @@ func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
 			t.Fatalf("chunk %d has seq %d, want %d", i, chunk.Seq, want)
 		}
 	}
-	t.Logf("%d lines (%d bytes) in %s cost %d upload(s)",
-		lines, want.Len(), elapsed.Round(time.Millisecond), len(chunks))
+	t.Logf("%d lines (%d bytes) cost %d upload(s)",
+		lines, want.Len(), len(chunks))
 }
 
 // TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace is the

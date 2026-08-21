@@ -111,17 +111,20 @@ grows without limit:
 |---|---|---|---|
 | line framing buffer | < 64 KiB per stream | — | a longer run is emitted as pieces |
 | flush size | 64 KiB | `ORK_ORKER_LOG_FLUSH_BYTES` | the buffer is uploaded as one chunk |
-| flush interval | 500 ms | `ORK_ORKER_LOG_FLUSH_INTERVAL` | a slow task is still visible promptly, and no two uploads are closer together than this |
+| flush interval | 500 ms | `ORK_ORKER_LOG_FLUSH_INTERVAL` | a slow task is visible promptly; normal size-triggered uploads are paced at this interval |
 | one stored line | 1 MiB | — | split across chunks |
 | one attempt | 16 MiB | `ORK_ORKER_LOG_MAX_BYTES` | a final `[ork] log truncated…` chunk, then nothing |
 
-The two bounds hold TOGETHER, which is what makes the second number a rate:
-a size-triggered flush waits until the interval has passed since the last
-upload, so the store is written at most twice a second however small
-`ORK_ORKER_LOG_FLUSH_BYTES` is set. Below the default the size bound buys
-smaller chunks, never more of them. When the buffer reaches the ceiling before
-the interval permits a flush, the writer waits with backpressure rather than
-breaking either bound.
+The first upload may be immediate so a task's first output is visible without
+waiting. After that, a size-triggered flush waits until the interval has
+passed since the previous normal upload, so normal writes cost at most two
+uploads a second however small `ORK_ORKER_LOG_FLUSH_BYTES` is set. `Close` is
+the durability barrier and flushes buffered bytes without waiting; its terminal
+upload (and, when needed, a final loss notice) is an intentional exception to
+the minimum gap. Below the default the size bound buys smaller chunks, never
+more normal uploads. When the buffer reaches the ceiling before the interval
+permits a flush, the writer waits with backpressure rather than breaking either
+bound.
 
 A chatty task therefore costs a few hundred uploads rather than a million. The
 flush runs under the sink's lock, and a writer also waits at the ceiling; that

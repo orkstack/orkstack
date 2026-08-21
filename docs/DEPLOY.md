@@ -1047,9 +1047,12 @@ answer the question was asked for. A pool that could not be asked about is
 listed too, and never as a zero: reporting "not measured" as "measured zero"
 sends an operator to scale a pool that may need nothing.
 
-**Both admin reads answer; neither refuses.** A source that cannot be reached
+**Both admin reads answer as much as they can.** A source that cannot be reached
 costs the answer the part that source held, is logged with the pool or the
-store it lost, and costs nothing else:
+store it lost, and costs nothing else. `ListPlugins` has one deliberate
+all-or-nothing exception: when the deployment's **own** Orkers do not answer,
+it returns `Unavailable` rather than making an empty inventory look like proof
+that no plugins are installed. The partial-source rules are:
 
 | what is lost | what the answer loses | where it is recorded |
 |---|---|---|

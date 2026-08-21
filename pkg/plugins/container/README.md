@@ -180,13 +180,17 @@ recognize one daemon-level failure and never quotes.
   confusable and `plugin.DecodeStreamLine` recovers the origin and the original
   line. Ordinary stdout is untouched.
 - **A chatty container is bounded.** The framer holds under 64 KiB per stream;
-  the Orker uploads a chunk when 64 KiB has accumulated AND 500 ms has passed
-  since the last upload, and in any case within 500 ms. If the ceiling arrives
-  first, the writer waits for that interval instead of bypassing the pace
-  (`ORK_ORKER_LOG_FLUSH_BYTES`, `ORK_ORKER_LOG_FLUSH_INTERVAL`) — the two
-  bounds together cap the write rate at one object per interval however small
-  the size bound is set — and stops at 16 MiB per attempt
-  (`ORK_ORKER_LOG_MAX_BYTES`) with a visible `[ork] log truncated…` notice.
+  the Orker uploads a chunk when 64 KiB has accumulated and the pace allows it,
+  and the timer makes slow output visible within 500 ms. The first chunk may be
+  immediate. After that, normal size-triggered uploads wait 500 ms from the
+  previous normal upload, and if the ceiling arrives first the writer waits
+  instead of bypassing the pace (`ORK_ORKER_LOG_FLUSH_BYTES`,
+  `ORK_ORKER_LOG_FLUSH_INTERVAL`). `Close` is the durability barrier and may
+  upload the terminal remainder (and a loss notice) immediately, so the first
+  and terminal uploads are deliberate exceptions to that gap. Normal writes
+  still batch rather than becoming one object per line, and the attempt stops
+  at 16 MiB (`ORK_ORKER_LOG_MAX_BYTES`) with a visible `[ork] log truncated…`
+  notice.
   Backpressure is real: a blocked upload or ceiling wait blocks the writer,
   which fills the pipe, which blocks the container on `write(2)`.
   **The cap never truncates an artifact** — those are files.
@@ -210,9 +214,9 @@ A failure is retried only when retrying could plausibly change the answer.
 | unknown `op`, bad mount, malformed `env`   | permanent, before any side effect |
 | daemon cannot see a mounted host path      | permanent, naming `ORK_ORKER_WORKDIR` |
 
-**A failure quotes nothing the container wrote.** A success carries an 8 KiB
-head of each stream on its output payload; a failure carries no payload at all,
-and its error names the image, the exit code and where the output is:
+**A failure quotes nothing the container wrote.** A successful run carries metadata
+only — no stdout or stderr — and a failure carries no output payload either. Its
+error names the image, the exit code and where the output is:
 
 ```
 container: alpine:3.20 exited with code 42. What it printed is in the task's

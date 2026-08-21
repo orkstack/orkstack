@@ -28,23 +28,26 @@ import (
 //     task printing one line a minute appears within half a second rather
 //     than when it finally reaches 64 KiB — which for most tasks is never.
 //
-// The elapsed-time bound is ALSO the minimum gap between two uploads, and that
-// is what makes the pair a pair. Asked alone, the size bound bounds the
-// upload count by throughput ÷ FlushBytes, which is not a rate at all: with
-// ORK_ORKER_LOG_FLUSH_BYTES=1 every line met the threshold and every line
-// became a PUT, so the setting a test uses to force chunk boundaries turned
-// batching off completely. A size-triggered flush now waits until
-// FlushInterval has passed since the last upload; below that the buffer keeps
-// filling and the armed timer writes it at the deadline. The upload rate is
-// therefore 1/FlushInterval at EVERY setting, and the size bound decides how
-// big a chunk is rather than how often the store is written.
+// The elapsed-time bound is ALSO the minimum gap between normal uploads, and
+// that is what makes the pair a pair. The first upload is intentionally
+// immediate, and Close is a durability barrier that may write the terminal
+// buffered bytes without waiting; those are the only deliberate exceptions.
+// Asked alone, the size bound bounds the upload count by throughput ÷
+// FlushBytes, which is not a rate at all: with ORK_ORKER_LOG_FLUSH_BYTES=1
+// every line met the threshold and every line became a PUT, so the setting a
+// test uses to force chunk boundaries turned batching off completely. A
+// size-triggered flush now waits until FlushInterval has passed since the last
+// normal upload; below that the buffer keeps filling and the armed timer writes
+// it at the deadline. Normal upload rate is therefore 1/FlushInterval at EVERY
+// setting, and the size bound decides how big a chunk is rather than how often
+// the store is written.
 //
 // A third bound is the memory guarantee. Once the buffer reaches the ceiling
 // before the pace allows a size-triggered flush, the writer waits with the
 // sink unlocked until the interval permits the upload. The buffer therefore
-// never exceeds flushCeiling plus one line, and the store still sees no two
-// uploads closer together than FlushInterval. A single over-long line is split
-// rather than accumulated, and the attempt as a whole stops at MaxBytes with
+// never exceeds flushCeiling plus one line, and normal size-triggered uploads
+// stay at least FlushInterval apart. A single over-long line is split rather
+// than accumulated, and the attempt as a whole stops at MaxBytes with
 // a notice chunk that says so. A runaway task therefore costs one bounded
 // buffer in the Orker and one bounded object count in the bucket, and its
 // reader is told the output was cut instead of quietly receiving a prefix.
@@ -88,9 +91,9 @@ type LogOptions struct {
 	// written. It decides how BIG a chunk is; FlushInterval decides how often
 	// one is written.
 	FlushBytes int
-	// FlushInterval is the elapsed-time bound, and does double duty: nothing
-	// waits unflushed longer than this, and no two uploads are closer
-	// together than this.
+	// FlushInterval is the elapsed-time bound. It limits how long normal
+	// buffered output waits and sets the minimum gap between normal uploads;
+	// the first and terminal Close uploads are deliberate exceptions.
 	FlushInterval time.Duration
 	// MaxBytes caps one attempt's stored output.
 	MaxBytes int64
