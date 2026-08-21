@@ -93,6 +93,15 @@ func (s *Service) existingNamespaces(ctx context.Context) string {
 // the same resolver, degrading the same way. Two paths to one question drift,
 // and the drift shows up as an Admin page and a dashboard disagreeing about
 // whether a pool is healthy.
+//
+// It NARROWS and does not refuse. Every source is best-effort and each one's
+// loss costs exactly what that source knew: a pool the cluster did not answer
+// for keeps its row and carries Pool.unavailable_reason; a pool whose Orkers
+// did not answer keeps its count and loses its plugin list; an unreadable
+// orkflow store narrows the scope to the pools the namespace document itself
+// names. The one error left is the one that leaves nothing to report — a
+// namespace that cannot be resolved, or a default pool this deployment cannot
+// route, under which no task of this namespace could run at all.
 func (s *Service) ListPools(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListPoolsRequest],
@@ -120,8 +129,10 @@ func (s *Service) ListPools(
 	//
 	// A narrowed answer that says nothing is indistinguishable from a complete
 	// one, so the degradation is logged with the namespace and the failure.
-	// There is no field on the wire for it: this is a report whose other half
-	// is a liveness snapshot that was already stale when it was taken.
+	// There is no field on the wire for THIS half: which pools are in scope is
+	// a set, and a set has no room to say "and possibly others". The other
+	// half — a pool that could not be probed — does have one, because a row
+	// exists to carry it (Pool.unavailable_reason).
 	named, err := s.poolsNamedByOrkflows(ctx, ns)
 	if err != nil {
 		s.logger.Warn("list pools: the orkflow store could not be read, so only the "+

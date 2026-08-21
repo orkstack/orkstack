@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -189,4 +190,68 @@ func TestPoolList_DefaultNamespaceIsTheDeploymentsOwnDefault(t *testing.T) {
 		t.Errorf("the default namespace's pool listing does not name %q:\n%s",
 			task.DefaultPool, listed.stdout)
 	}
+}
+
+// TestPoolList_AnswersWithTheReachablePoolsAndMarksTheRest — F1, at the
+// surface an operator actually reads.
+//
+// One pool the cluster cannot answer for used to fail the command outright:
+// `orkctl pool list` printed an Unavailable error and NO pools, hiding the
+// healthy ones beside the broken one on exactly the surface somebody opens
+// during an incident.
+//
+// It answers now, and the unreachable row says what it is. The distinction
+// this pins is the one that decides what an operator does next: `0 (no live
+// orkers)` means start an Orker, `unknown (unreachable)` means the cluster did
+// not answer and the pool may be perfectly healthy. A blank or a zero would
+// collapse the two and send them to scale a pool that needs nothing.
+func TestPoolList_AnswersWithTheReachablePoolsAndMarksTheRest(t *testing.T) {
+	f := newFixtureWith(t, func(cfg *api.Config) {
+		cfg.Pools = partlyReachableAdminPools{
+			live:      adminLivePools{Orkers: map[string]int{task.DefaultPool: 2}, LastSeen: fixedNow},
+			unreached: map[string]string{"ork-pool-gpu": "context deadline exceeded"},
+		}
+		cfg.PoolPlugins = adminPoolPlugins{task.DefaultPool: {"file", "http", "shell"}}
+	})
+	f.run("namespace", "create", "vision",
+		"--allow-pool", task.DefaultPool,
+		"--allow-pool", "gpu",
+	).requireExit(t, exitOK)
+
+	human := f.run("pool", "list", "--namespace", "vision").requireExit(t, exitOK)
+	requireGolden(t, "pool-list-unreachable.golden", human.stdout)
+
+	machine := f.run("--json", "pool", "list", "--namespace", "vision").requireExit(t, exitOK)
+	requireGolden(t, "pool-list-unreachable.json.golden", machine.stdout)
+
+	if !strings.Contains(human.stdout, task.DefaultPool) {
+		t.Errorf("the pool that ANSWERED is missing; one unreachable pool must not "+
+			"hide the rest:\n%s", human.stdout)
+	}
+	if !strings.Contains(human.stdout, "unreachable") {
+		t.Errorf("the unreachable pool is not marked, so its 0 reads as 'no Orkers' "+
+			"— the opposite instruction:\n%s", human.stdout)
+	}
+	if !strings.Contains(human.stdout, "context deadline exceeded") {
+		t.Errorf("the reason is not printed, so an operator cannot tell a timeout "+
+			"from a dead cluster:\n%s", human.stdout)
+	}
+}
+
+// partlyReachableAdminPools answers for one channel and times out on another,
+// which is what a cluster under load looks like: not "down", but "this
+// question did not come back".
+type partlyReachableAdminPools struct {
+	live      adminLivePools
+	unreached map[string]string
+}
+
+func (p partlyReachableAdminPools) ObservePool(
+	ctx context.Context,
+	channel string,
+) (engine.PoolLiveness, error) {
+	if reason, ok := p.unreached[channel]; ok {
+		return engine.PoolLiveness{}, errors.New(reason)
+	}
+	return p.live.ObservePool(ctx, channel)
 }

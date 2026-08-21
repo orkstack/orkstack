@@ -1514,12 +1514,17 @@ func (s *Service) appendOtherPoolPlugins(
 	if s.pools == nil || s.pools.Plugins == nil {
 		return plugins
 	}
+	// inventoryPools returns BOTH: the pools it learned, and what it could not
+	// read. The two are not exclusive — a registry with ten namespaces and one
+	// unreadable catalog knows nine namespaces' pools — and treating an error
+	// as "nothing was learned" is what made one bad tenant cost every other
+	// tenant's pools. So the failure is logged and the names are used.
 	pools, err := s.inventoryPools(ctx)
 	if err != nil {
-		s.logger.Warn("list plugins: the durable pool names could not be read, so only "+
-			"the deployment's default pool is reported",
+		s.logger.Warn("list plugins: part of the durable pool catalogue could not be "+
+			"read, so the pools only it names are missing from this inventory",
+			"pools_still_known", len(pools),
 			"error", err)
-		return plugins
 	}
 	routes := map[string]task.Route{}
 	for _, pool := range pools {
@@ -1583,8 +1588,18 @@ func pluginResponse(plugins []*orkstackv1.PluginInfo) *connect.Response[orkstack
 // inventoryPools names every pool this deployment may have Orkers on from
 // durable namespace and orkflow state.
 //
-// A read failure is reported to the caller, which degrades: see
-// appendOtherPoolPlugins.
+// IT RETURNS BOTH HALVES: the pools it learned, and what it could not read.
+// Not one or the other — the two are independent, and a catalog that fails on
+// the eighth of ten namespaces has still told this function about seven. It
+// used to return on the first failure and discard them, which cost the
+// inventory every OTHER tenant's pools; the reader then concluded a plugin was
+// not installed while a run using it was succeeding on the pool that holds it.
+//
+// So one namespace's failure is recorded and the scan continues, and the
+// caller decides what a partial answer means (appendOtherPoolPlugins logs it
+// and uses the names). The registry listing is the one exception: without it
+// there are no namespaces to scan, so nothing was learned and there is nothing
+// to keep.
 func (s *Service) inventoryPools(ctx context.Context) ([]string, error) {
 	if s.namespaces == nil {
 		return nil, nil
@@ -1605,21 +1620,26 @@ func (s *Service) inventoryPools(ctx context.Context) ([]string, error) {
 		seen[pool] = struct{}{}
 		pools = append(pools, pool)
 	}
+	var lost []error
 	for _, ns := range registered {
+		// The namespace document's own pools come from the registry listing
+		// that already succeeded, so they are kept whatever the catalog does.
 		add(engine.DefaultPoolFor(ns))
 		for _, pool := range ns.GetAllowedPools() {
 			add(pool)
 		}
 		named, err := s.poolsNamedByOrkflows(ctx, ns)
 		if err != nil {
-			return nil, fmt.Errorf("read orkflows for namespace %q: %w", ns.GetName(), err)
+			lost = append(lost,
+				fmt.Errorf("read orkflows for namespace %q: %w", ns.GetName(), err))
+			continue
 		}
 		for _, pool := range named {
 			add(pool)
 		}
 	}
 	sort.Strings(pools)
-	return pools, nil
+	return pools, errors.Join(lost...)
 }
 
 // appendPluginInfo maps Orker descriptors onto the wire message, schemas

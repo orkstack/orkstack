@@ -214,7 +214,10 @@ type PoolResolver struct {
 	// Freshness overrides DefaultPollerFreshness.
 	Freshness time.Duration
 
-	// Logger records an empty-pool override. Nil uses the process default.
+	// Logger records the two things this type does quietly: an empty-pool
+	// override taken at submit, and each source a report could not reach
+	// (Pools). Both narrow an answer without failing it, so the log is the
+	// only place the narrowing is recorded. Nil uses the process default.
 	Logger *slog.Logger
 
 	// Now is injectable for tests.
@@ -507,6 +510,20 @@ func (r *PoolResolver) routeFor(pool string) (task.Route, error) {
 // before anything is counted: reporting `main` and `gpu` each with the same
 // two Orkers would be a report a client cannot act on — two pools to size, two
 // pools to drain, one set of machines.
+//
+// IT NARROWS RATHER THAN REFUSING. A pool the cluster does not answer for
+// keeps its row and carries UnavailableReason instead of a count; a pool whose
+// Orkers do not answer keeps its count and loses its plugin list. Both are
+// logged with the pool and the cause, because a narrowed answer that says
+// nothing is indistinguishable from a complete one.
+//
+// The alternative was one error for the whole call, and it was wrong twice
+// over. An operator opens pool health BECAUSE part of the deployment is
+// misbehaving, and a refusal hid every healthy pool beside the broken one. And
+// the two states need opposite reactions: "no Orkers" is fixed by starting
+// one, "could not be asked" by asking again. Reporting the second as a zero
+// would send an operator to scale a pool that may be perfectly healthy, which
+// is the same distinction PoolUnreachableError keeps on the submit path.
 func (r *PoolResolver) Pools(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
@@ -558,10 +575,20 @@ func (r *PoolResolver) Pools(
 		}
 		if r.Probe != nil {
 			live, err := r.Probe.ObservePool(ctx, queue)
-			if err != nil {
-				return nil, &PoolUnreachableError{Pool: name, Err: err}
-			}
-			if live.Fresh(r.now(), r.freshness()) {
+			switch {
+			case err != nil:
+				// NOT a zero count: nothing was measured. The row survives
+				// carrying the reason, so a reader is told "could not ask"
+				// rather than "nobody is there" — one is fixed by waiting,
+				// the other by starting an Orker.
+				unreachable := &PoolUnreachableError{Pool: name, Err: err}
+				pool.UnavailableReason = unreachable.Error()
+				r.logger().Warn("list pools: a pool could not be probed, so it is "+
+					"reported unavailable rather than empty",
+					"namespace", namespaceName(ns),
+					"pool", name,
+					"error", err)
+			case live.Fresh(r.now(), r.freshness()):
 				pool.LiveOrkerCount = int32(live.Orkers)
 				if !live.LastSeen.IsZero() {
 					pool.LastSeen = timestamppb.New(live.LastSeen.UTC())
@@ -570,7 +597,17 @@ func (r *PoolResolver) Pools(
 		}
 		if pool.GetLiveOrkerCount() > 0 && r.Plugins != nil {
 			plugins, err := r.Plugins.PluginsOnPool(ctx, queue)
-			if err == nil {
+			if err != nil {
+				// The pool's liveness was measured and stands; only what its
+				// Orkers run was lost, which the wire contract already reads
+				// as "nobody answered". Logged, because an empty plugin list
+				// looks exactly like a complete one.
+				r.logger().Warn("list pools: a live pool did not answer, so its "+
+					"plugin list is missing from this report",
+					"namespace", namespaceName(ns),
+					"pool", name,
+					"error", err)
+			} else {
 				sort.Strings(plugins)
 				pool.Plugins = plugins
 			}

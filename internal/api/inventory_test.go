@@ -13,6 +13,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
@@ -365,6 +366,93 @@ func TestListPlugins_StillAnswersWhenTheDurableSourcesCannotBeRead(t *testing.T)
 	}
 }
 
+// TestListPlugins_KeepsThePoolsItLearnedBeforeANamespaceCatalogFailed — F3.
+//
+// The catalog is read namespace by namespace, and it used to return on the
+// FIRST failure — throwing away every pool already learned from the namespaces
+// scanned before it. One unreadable tenant cost the inventory every other
+// tenant's pools, and an operator reading it concluded a plugin was not
+// installed while a run using it was succeeding on the pool that holds it.
+//
+// The namespaces here are named so the loop meets them in that order: `aaa`
+// reads cleanly and contributes `gpu`, `zzz` fails. The gpu-only plugin must
+// still be in the inventory, and the failure must still be logged with the
+// namespace it belongs to — a narrowed answer that says nothing is
+// indistinguishable from a complete one.
+func TestListPlugins_KeepsThePoolsItLearnedBeforeANamespaceCatalogFailed(t *testing.T) {
+	gpu := poolQueue(t, "gpu")
+	logs := &bytes.Buffer{}
+	svc := api.NewService(api.Config{
+		Namespaces: registry{
+			"aaa": {Name: "aaa", AllowedPools: []string{"gpu"}},
+			"zzz": {Name: "zzz"},
+		},
+		Orkflows: catalogDownFor{
+			namespace: "zzz",
+			err:       errors.New("catalog unavailable"),
+		},
+		Pools: livePools{task.DefaultQueue: 1, gpu: 1},
+		Lister: describedPlugins{descriptors: []plugin.Descriptor{
+			{Name: "shell", Version: "0.1.0"},
+		}},
+		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}, gpu: {"container"}},
+		Logger:      slog.New(slog.NewTextHandler(logs, nil)),
+	})
+
+	resp, err := svc.ListPlugins(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPlugins refused after one namespace's catalog failed: %v", err)
+	}
+	if got := fmt.Sprint(pluginNames(resp.Msg.GetPlugins())); got != "[container shell]" {
+		t.Fatalf("inventory = %s, want [container shell]: `container` is on the gpu "+
+			"pool, which namespace aaa named BEFORE zzz's catalog failed", got)
+	}
+	for _, want := range []string{"zzz", "catalog unavailable"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("the degradation log does not name %q: %s", want, logs.String())
+		}
+	}
+}
+
+// catalogDownFor is an orkflow store that has lost exactly one namespace,
+// which is what a partial outage looks like from here: not "the bucket is
+// gone", but "this prefix does not answer".
+type catalogDownFor struct {
+	namespace string
+	err       error
+}
+
+func (c catalogDownFor) Put(
+	context.Context, *orkstackv1.Orkflow, artifacts.HeadExpectation,
+) (*orkstackv1.Orkflow, bool, error) {
+	return nil, false, c.err
+}
+
+func (c catalogDownFor) Get(context.Context, string, string, string) (*orkstackv1.Orkflow, error) {
+	return nil, artifacts.ErrNotFound
+}
+
+func (c catalogDownFor) List(_ context.Context, namespace string) ([]*orkstackv1.Orkflow, error) {
+	if namespace == c.namespace {
+		return nil, c.err
+	}
+	return nil, nil
+}
+
+func (c catalogDownFor) Versions(
+	_ context.Context, namespace, _ string,
+) (artifacts.OrkflowVersions, error) {
+	if namespace == c.namespace {
+		return artifacts.OrkflowVersions{}, c.err
+	}
+	return artifacts.OrkflowVersions{}, artifacts.ErrNotFound
+}
+
+func (c catalogDownFor) SetCurrentVersion(context.Context, string, string, string) (string, error) {
+	return "", c.err
+}
+
 // TestListPlugins_FailsWhenTheDeploymentsOwnOrkersDoNotAnswer is the one
 // failure this RPC has ever had, kept.
 //
@@ -424,11 +512,19 @@ func TestListPlugins_ReportsKnownCustomPoolWhenTheDefaultPoolIsEmpty(t *testing.
 // half that was measured is reported. `plugins` is empty here — which the wire
 // contract says means "nobody was asked, or nobody answered", never "these
 // Orkers run nothing".
+//
+// F2: AND IT IS LOGGED, which is what this test did not check before. A
+// narrowed answer that says nothing is indistinguishable from a complete one,
+// so the log is the only place the loss is recorded — and a claim no test
+// exercises is not evidence. The line names both coordinates an operator
+// needs: which pool went quiet, and what it said.
 func TestListPools_StillReportsAPoolWhosePluginReadFailed(t *testing.T) {
+	logs := &bytes.Buffer{}
 	svc := api.NewService(api.Config{
 		Namespaces:  registry{"default": {Name: "default"}},
 		Pools:       livePools{task.DefaultQueue: 1},
 		PoolPlugins: unreachableNames{err: errors.New("no worker answered")},
+		Logger:      slog.New(slog.NewTextHandler(logs, nil)),
 	})
 
 	resp, err := svc.ListPools(context.Background(),
@@ -446,6 +542,118 @@ func TestListPools_StillReportsAPoolWhosePluginReadFailed(t *testing.T) {
 	if len(pool.GetPlugins()) != 0 {
 		t.Errorf("plugins = %v, want empty: nobody answered", pool.GetPlugins())
 	}
+	// Losing the plugin list is not losing the pool: the count stands, so the
+	// row is not marked unavailable.
+	if reason := pool.GetUnavailableReason(); reason != "" {
+		t.Errorf("unavailable_reason = %q; liveness WAS measured, only the plugin "+
+			"list was lost", reason)
+	}
+	for _, want := range []string{task.DefaultPool, "no worker answered"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("the degradation log does not name %q: %s", want, logs.String())
+		}
+	}
+}
+
+// TestListPools_ReportsTheReachablePoolsWhenOneCannotBeProbed — F1.
+//
+// This is the rule proof/M11.3/README.md and docs/DEPLOY.md both state and
+// the code did not have: one pool the cluster cannot answer for used to abort
+// the whole read, and the RPC returned Unavailable with NO pools at all. A
+// deployment with a healthy default pool and one unreachable `gpu` reported
+// nothing — and an admin read is opened precisely when part of a deployment is
+// already broken.
+//
+// The reachable part is reported. The rest is MARKED, not dropped and not
+// silently zeroed: `unavailable_reason` says nothing was measured, so a reader
+// cannot mistake it for "no Orkers are serving this pool" and go scale a pool
+// that may be perfectly healthy. And the loss is logged, with the pool and the
+// error.
+func TestListPools_ReportsTheReachablePoolsWhenOneCannotBeProbed(t *testing.T) {
+	gpuQueue := poolQueue(t, "gpu")
+	logs := &bytes.Buffer{}
+	svc := api.NewService(api.Config{
+		Namespaces: registry{"default": {
+			Name:         "default",
+			AllowedPools: []string{task.DefaultPool, "gpu"},
+		}},
+		Pools: partiallyReachablePools{
+			live: livePools{task.DefaultQueue: 2},
+			err:  map[string]error{gpuQueue: errors.New("dial tcp 127.0.0.1:7233: connection refused")},
+		},
+		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}},
+		Logger:      slog.New(slog.NewTextHandler(logs, nil)),
+	})
+
+	resp, err := svc.ListPools(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPools refused because ONE pool could not be probed: %v.\n"+
+			"proof/M11.3/README.md and docs/DEPLOY.md both say an unreachable source "+
+			"only narrows this answer", err)
+	}
+	byName := map[string]*orkstackv1.Pool{}
+	for _, pool := range resp.Msg.GetPools() {
+		byName[pool.GetName()] = pool
+	}
+	if len(byName) != 2 {
+		t.Fatalf("pools = %v, want both %q and gpu", resp.Msg.GetPools(), task.DefaultPool)
+	}
+
+	healthy := byName[task.DefaultPool]
+	if healthy.GetLiveOrkerCount() != 2 {
+		t.Errorf("%s live_orker_count = %d, want 2: it was reachable and it was measured",
+			task.DefaultPool, healthy.GetLiveOrkerCount())
+	}
+	if healthy.GetUnavailableReason() != "" {
+		t.Errorf("%s carries unavailable_reason %q; it answered",
+			task.DefaultPool, healthy.GetUnavailableReason())
+	}
+	if len(healthy.GetPlugins()) != 1 || healthy.GetPlugins()[0] != "shell" {
+		t.Errorf("%s plugins = %v, want [shell]", task.DefaultPool, healthy.GetPlugins())
+	}
+
+	lost := byName["gpu"]
+	if lost == nil {
+		t.Fatalf("the unreachable pool is missing from %v; it is in the namespace's "+
+			"allow-list and dropping it would read as 'this pool does not exist'",
+			resp.Msg.GetPools())
+	}
+	if lost.GetUnavailableReason() == "" {
+		t.Fatalf("gpu reports live_orker_count=%d with no unavailable_reason; a count "+
+			"nothing measured reads as 'nobody is serving this pool', which is a "+
+			"different fact needing the opposite fix", lost.GetLiveOrkerCount())
+	}
+	if !strings.Contains(lost.GetUnavailableReason(), "connection refused") {
+		t.Errorf("gpu unavailable_reason = %q, want the cause", lost.GetUnavailableReason())
+	}
+	if lost.GetLiveOrkerCount() != 0 || lost.GetLastSeen() != nil {
+		t.Errorf("gpu carries a count (%d) or a last_seen (%v) nothing measured",
+			lost.GetLiveOrkerCount(), lost.GetLastSeen())
+	}
+	for _, want := range []string{"gpu", "connection refused"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("the degradation log does not name %q: %s", want, logs.String())
+		}
+	}
+}
+
+// partiallyReachablePools answers for some channels and fails for others,
+// which is what a real cluster partition looks like: not "the cluster is
+// down", but "this question timed out".
+type partiallyReachablePools struct {
+	live livePools
+	err  map[string]error
+}
+
+func (p partiallyReachablePools) ObservePool(
+	ctx context.Context,
+	queue string,
+) (engine.PoolLiveness, error) {
+	if err, ok := p.err[queue]; ok {
+		return engine.PoolLiveness{}, err
+	}
+	return p.live.ObservePool(ctx, queue)
 }
 
 // TestListPools_ReportsAPoolWithSeveralOrkers is the regression this round

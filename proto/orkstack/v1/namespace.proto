@@ -109,4 +109,19 @@ message Pool {
   // of them was heard. This field answers "how fresh is the number beside
   // it", never "when did this pool die".
   google.protobuf.Timestamp last_seen = 5;
+  // unavailable_reason says that this pool COULD NOT BE ASKED, and why.
+  //
+  // Empty is the normal case: live_orker_count is a measurement. Non-empty
+  // means nothing was measured — the cluster did not answer for this pool —
+  // and live_orker_count is 0 because there is no number to report, NOT
+  // because nobody is serving it. The two need opposite reactions: an empty
+  // pool is fixed by starting an Orker, an unreachable one by asking again,
+  // and a renderer that showed them alike would tell an operator to scale a
+  // pool that may be perfectly healthy.
+  //
+  // It exists so that ListPools can NARROW instead of refusing. One pool the
+  // cluster could not answer for used to fail the whole call, hiding every
+  // healthy pool beside it — and an admin read is opened precisely when
+  // something is already wrong. Each pool carries its own verdict now.
+  string unavailable_reason = 6;
 }

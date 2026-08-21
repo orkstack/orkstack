@@ -214,9 +214,24 @@ type Pool struct {
 	// have all gone quiet reports NO last_seen at all, not the moment the last
 	// of them was heard. This field answers "how fresh is the number beside
 	// it", never "when did this pool die".
-	LastSeen      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	LastSeen *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	// unavailable_reason says that this pool COULD NOT BE ASKED, and why.
+	//
+	// Empty is the normal case: live_orker_count is a measurement. Non-empty
+	// means nothing was measured — the cluster did not answer for this pool —
+	// and live_orker_count is 0 because there is no number to report, NOT
+	// because nobody is serving it. The two need opposite reactions: an empty
+	// pool is fixed by starting an Orker, an unreachable one by asking again,
+	// and a renderer that showed them alike would tell an operator to scale a
+	// pool that may be perfectly healthy.
+	//
+	// It exists so that ListPools can NARROW instead of refusing. One pool the
+	// cluster could not answer for used to fail the whole call, hiding every
+	// healthy pool beside it — and an admin read is opened precisely when
+	// something is already wrong. Each pool carries its own verdict now.
+	UnavailableReason string `protobuf:"bytes,6,opt,name=unavailable_reason,json=unavailableReason,proto3" json:"unavailable_reason,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Pool) Reset() {
@@ -284,6 +299,13 @@ func (x *Pool) GetLastSeen() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Pool) GetUnavailableReason() string {
+	if x != nil {
+		return x.UnavailableReason
+	}
+	return ""
+}
+
 var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
@@ -302,14 +324,15 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\x04etag\x18\b \x01(\tR\x04etag\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb6\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe5\x01\n" +
 	"\x04Pool\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12(\n" +
 	"\x10live_orker_count\x18\x02 \x01(\x05R\x0eliveOrkerCount\x12\x18\n" +
 	"\aplugins\x18\x03 \x03(\tR\aplugins\x12\x1d\n" +
 	"\n" +
 	"is_default\x18\x04 \x01(\bR\tisDefault\x127\n" +
-	"\tlast_seen\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeenB\xaa\x01\n" +
+	"\tlast_seen\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12-\n" +
+	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonB\xaa\x01\n" +
 	"\x0fcom.orkstack.v1B\x0eNamespaceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (

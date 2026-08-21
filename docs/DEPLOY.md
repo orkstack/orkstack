@@ -1024,21 +1024,51 @@ bucket or directory, never the key that opens it.
 single number cannot:
 
 ```
-NAME     ORKERS              PLUGINS                    DEFAULT  LAST SEEN
-cold     0 (no live orkers)  -                          -        -
-gpu      1                   container,file,http,shell  yes      2026-01-02T03:04:05Z
+NAME     ORKERS                 PLUGINS                    DEFAULT  LAST SEEN
+cold     0 (no live orkers)     -                          -        -
+gpu      1                      container,file,http,shell  yes      2026-01-02T03:04:05Z
+remote   unknown (unreachable)  -                          -        -
+
+1 pool could not be reached, so its Orkers are unknown rather than zero:
+  remote: cannot tell whether pool "remote" has live Orkers: context deadline exceeded
 ```
 
+Three states, and the column keeps them apart because they need three different
+actions:
+
+| ORKERS | what it says | what to do |
+|---|---|---|
+| `1`, `2`, … | that many Orkers are polling for this pool's work right now | nothing |
+| `0 (no live orkers)` | **measured**: nobody is serving this pool, and a task sent there waits | start an Orker with `ORK_ORKER_POOL=<pool>` |
+| `unknown (unreachable)` | **not measured**: the cluster did not answer for this pool | ask again; the pool may be perfectly healthy |
+
 A pool with no Orkers is **listed**, because "nobody is serving this" is the
-answer the question was asked for — a task sent there waits for a worker that
-is not running.
+answer the question was asked for. A pool that could not be asked about is
+listed too, and never as a zero: reporting "not measured" as "measured zero"
+sends an operator to scale a pool that may need nothing.
 
 **Both admin reads answer; neither refuses.** A source that cannot be reached
 costs the answer the part that source held, is logged with the pool or the
-store it lost, and costs nothing else. That rule is not a preference: an
-operator opens pool health and the plugin inventory when something is already
-wrong, and an `Unavailable` there hides every pool that IS healthy in order to
-report one that is not.
+store it lost, and costs nothing else:
+
+| what is lost | what the answer loses | where it is recorded |
+|---|---|---|
+| the cluster, for one pool | that pool's count and `LAST SEEN` | `Pool.unavailable_reason` on the wire, printed under the table, and a warning log |
+| a live pool's Orkers, not answering | that pool's `PLUGINS` column | the log; the empty column already means "nobody answered" |
+| the orkflow store, for one namespace | the pools only that namespace's stored definitions name | the log |
+| the namespace registry | every non-default pool | the log; the deployment's own Orkers still answer |
+
+That rule is not a preference: an operator opens pool health and the plugin
+inventory when something is already wrong, and an `Unavailable` there hides
+every pool that IS healthy in order to report one that is not. One namespace's
+unreadable catalog likewise costs the inventory that namespace's pools and no
+other's.
+
+The one refusal left on each read is the one that leaves nothing to report:
+`orkctl pool list` on a namespace that cannot be resolved or whose default pool
+this deployment cannot route (under which no task of it could run at all), and
+`orkctl plugin list` when the deployment's OWN Orkers are asked and do not
+answer (where an empty list would read as "no plugins are installed").
 
 What that costs, stated so nobody has to discover it:
 

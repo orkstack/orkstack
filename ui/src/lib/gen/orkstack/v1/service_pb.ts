@@ -1559,6 +1559,15 @@ export const NamespaceService: GenService<{
    * The answer is read from the cluster, never from process memory, so any
    * replica answers — including one that started nothing.
    *
+   * It NARROWS rather than refusing. A source that cannot be reached costs
+   * this read what that source knew and nothing else: a pool the cluster did
+   * not answer for is still listed, carrying Pool.unavailable_reason instead
+   * of a count; a pool whose Orkers did not answer keeps its count and loses
+   * its plugin list; an orkflow store that cannot be read narrows the answer
+   * to the pools the namespace document itself names. An admin read is opened
+   * when something is already wrong, and a refusal hides the healthy pools
+   * beside the broken one.
+   *
    * @generated from rpc orkstack.v1.NamespaceService.ListPools
    */
   listPools: {
