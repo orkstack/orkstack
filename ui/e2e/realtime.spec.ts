@@ -256,6 +256,15 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 
 	// 7. The event log holds the ordered lifecycle: proof the
 	//    PENDING -> RUNNING -> SUCCEEDED transition streamed live.
+	//
+	//    Since M11.4 the event list is an inspection view rather than part of
+	//    the page, so it is asked for first. What it renders is the buffer the
+	//    socket has been filling since the page loaded — every event below
+	//    arrived long before this click, which is the property that lets the
+	//    list be on demand at all.
+	await expect(page.getByTestId('event-log')).toHaveCount(0);
+	await page.getByTestId('events-toggle').click();
+	await expect(page.getByTestId('event-inspector')).toBeVisible();
 	await expect(page.getByTestId('event-entry').filter({ hasText: 'RUN_SUCCEEDED' })).toHaveCount(
 		1
 	);
