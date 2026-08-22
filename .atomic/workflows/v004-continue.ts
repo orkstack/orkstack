@@ -179,20 +179,20 @@ const SLICES: Slice[] = [
     branch: "m11-3-admin-surface",
     dir: "m11-3-admin-surface",
     objective:
-      "Close every outstanding finding on the Admin surface and the code beneath it, so the UI slices are built on reads that tell the truth.",
+      "Close the two remaining review findings on the Admin surface branch. Nothing else.",
     acceptance: [
-      "This slice already exists and passes both gates on branch m11-3-admin-surface (SystemService.GetSystemInfo, orkctl admin info, orkctl pool list, the two-replica test, DEPLOY docs and proof/M11.3/). It was NOT approved. Your job is to close the eight findings below, keep everything that already works, and leave the branch approvable.",
+      "This branch is FINISHED except for two findings. It passes `make merge-check` and the full integration suite with a clean tree, and eight earlier findings were closed and independently re-verified across six review rounds. Do NOT re-open, re-audit, refactor, restructure or re-prove anything else. Two items, then stop.",
       "",
-      "THE EIGHT FINDINGS. Each one is closed by a code change AND a test that fails before it and passes after. Where a finding says a document overclaims, you may fix the code or the document — but they must agree when you are done.",
+      "R1 — a test was weakened until it cannot fail. `internal/orker/container_integration_test.go:254` asserts the generated report contains the literal `\"build log: \"`. That prefix matches even when the interpolated artifact reference is empty or wrong, so the assertion cannot fail for the reason it exists. Restore its power: assert the report names the real capture artifact AND that reading that artifact back yields the container's actual stdout (the test already fetches `build-log` at line 222 and asserts real content at lines 224-233 — hold the report to the same standard). The test must fail if the artifact reference is empty, malformed, or points at nothing.",
       "",
-      M113_FINDINGS,
+      "R2 — the container README and its worked example do not tell the same story. `pkg/plugins/container/README.md:148-153` says a downstream task \"mounts or reads the capture artifact instead\" of interpolating `.output.stdout`, and `examples/container-example.ork.yaml:84-85` claims `artifact \"build/build-log\"` \"gives the whole stream, byte-exact, however long it is\". In a `content:` field that helper interpolates an artifact REFERENCE, not the bytes — so the example writes a URI into container-report.txt and the prose describes something the example does not do. Make them agree: either change the example so a downstream task genuinely reads the captured bytes, or correct both the README sentence and the example comment to describe what `artifact` actually yields and where the bytes are read. Whichever you choose, the example must run green in the integration test above.",
       "",
-      "ALSO, because F1/F2 and F6 reach outside the original slice lock, this slice's scope is DEFINED BY THE FINDINGS, not by paths alone: you may change internal/engine/ ONLY for the pool-probe error handling in F1/F2, and internal/orker/ ONLY for the flush policy in F6. No new subsystem, no durable Orker lease registry, no cross-Orker aggregation — that was refused in the last run and is still refused.",
+      "SCOPE: internal/orker/container_integration_test.go, pkg/plugins/container/README.md, examples/container-example.ork.yaml, and — only if R2's choice requires it — the example's own tasks. Regenerate proof/M11.1/ or proof/M11.3/ ONLY if your change alters what they measure. Touch nothing else. A diff that reaches further than these files is a failed slice, however good the extra work is.",
       "",
-      "Finish with: both gates green, a clean worktree, proof/M11.3/ and proof/M11.1/ regenerated from the tree they measure, and a final message listing each finding with the commit that closed it.",
+      "DONE means: both gates green, clean worktree, and a final message naming the two commits and quoting the assertion that now fails when the artifact reference is wrong.",
     ].join("\n"),
     scopeLock:
-      "internal/api/, internal/engine/ (F1/F2 pool-probe error handling only), internal/orker/ (F6 flush policy only), pkg/plugins/container/, pkg/plugin/, cmd/orkctl/, proto/ + gen/ (regenerated only, if a field must move), docs/, examples/, proof/M11.1/, proof/M11.3/",
+      "internal/orker/container_integration_test.go, pkg/plugins/container/README.md, examples/container-example.ork.yaml, proof/M11.1/ and proof/M11.3/ (only if measurements changed)",
     checks: GO_CHECKS,
   },
   {
