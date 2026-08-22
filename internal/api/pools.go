@@ -166,47 +166,131 @@ func (s *Service) poolsNamedByOrkflows(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
 ) ([]string, error) {
+	named, errs := s.poolsNamedByOrkflowsAcross(ctx, []*orkstackv1.Namespace{ns})
+	return named[0], errs[0]
+}
+
+// poolsNamedByOrkflowsAcross is that same scan over several namespaces, and
+// the only implementation of it: ListPools asks about one namespace and the
+// deployment-wide plugin inventory asks about all of them, so a second scan
+// would be a second answer to one question.
+//
+// It reports POSITIONALLY — named[i] and errs[i] belong to nss[i] — which is
+// what preserves per-namespace degradation: one tenant's unreadable catalog
+// costs that tenant's pools and no other's.
+//
+// The round-trips go out in two bounded waves rather than one at a time (see
+// storeFanout). Nothing nests: the version catalogs of EVERY namespace are
+// flattened into the second wave, so no goroutine ever holds a slot while
+// waiting for one.
+func (s *Service) poolsNamedByOrkflowsAcross(
+	ctx context.Context,
+	nss []*orkstackv1.Namespace,
+) ([][]string, []error) {
+	named := make([][]string, len(nss))
+	errs := make([]error, len(nss))
+
+	// Wave 1: one List per namespace.
+	heads := make([][]*orkstackv1.Orkflow, len(nss))
+	inParallel(len(nss), func(i int) {
+		list, err := s.orkflows.List(ctx, nss[i].GetName())
+		if err != nil {
+			if errors.Is(err, artifacts.ErrNotFound) {
+				return
+			}
+			errs[i] = orkflowStoreError(err,
+				"list orkflows in namespace %q", nss[i].GetName())
+			return
+		}
+		heads[i] = list
+	})
+
+	// Wave 2: one Versions per stored orkflow, across every namespace that
+	// survived wave 1.
+	//
 	// List returns one resolved version per orkflow name. That is not enough:
 	// an explicit-version submit can still run any stored version, so every
 	// version catalog must be scanned before the pool set is complete.
-	orkflows, err := s.orkflows.List(ctx, ns.GetName())
-	if err != nil {
-		if errors.Is(err, artifacts.ErrNotFound) {
-			return nil, nil
-		}
-		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
+	type lookup struct {
+		ns   int
+		head *orkstackv1.Orkflow
 	}
-	seen := map[string]struct{}{}
-	add := func(wf *orkstackv1.Orkflow) {
-		for _, t := range wf.GetTasks() {
-			if pool := t.GetPool(); pool != "" {
-				seen[pool] = struct{}{}
-			}
-		}
-	}
-	for _, head := range orkflows {
-		catalog, err := s.orkflows.Versions(ctx, ns.GetName(), head.GetName())
-		if err != nil {
-			if errors.Is(err, artifacts.ErrNotFound) {
-				add(head)
-				continue
-			}
-			return nil, orkflowStoreError(err,
-				"list versions of orkflow %q in namespace %q",
-				head.GetName(), ns.GetName())
-		}
-		if len(catalog.All) == 0 {
-			add(head)
+	var lookups []lookup
+	for i := range nss {
+		if errs[i] != nil {
 			continue
 		}
-		for _, wf := range catalog.All {
-			add(wf)
+		for _, head := range heads[i] {
+			lookups = append(lookups, lookup{ns: i, head: head})
 		}
 	}
-	named := make([]string, 0, len(seen))
-	for pool := range seen {
-		named = append(named, pool)
+	found := make([][]string, len(lookups))
+	failed := make([]error, len(lookups))
+	inParallel(len(lookups), func(i int) {
+		l := lookups[i]
+		catalog, err := s.orkflows.Versions(ctx, nss[l.ns].GetName(), l.head.GetName())
+		if err != nil {
+			if errors.Is(err, artifacts.ErrNotFound) {
+				found[i] = poolsNamedByTasks(l.head)
+				return
+			}
+			failed[i] = orkflowStoreError(err,
+				"list versions of orkflow %q in namespace %q",
+				l.head.GetName(), nss[l.ns].GetName())
+			return
+		}
+		if len(catalog.All) == 0 {
+			found[i] = poolsNamedByTasks(l.head)
+			return
+		}
+		for _, wf := range catalog.All {
+			found[i] = append(found[i], poolsNamedByTasks(wf)...)
+		}
+	})
+
+	// Reduce in index order. Lookups were built namespace by namespace, so
+	// the first failure this reaches for a namespace is the one the serial
+	// scan stopped at, and the error a caller logs does not move between
+	// calls because the round-trips finished in a different order.
+	seen := make([]map[string]struct{}, len(nss))
+	for i, l := range lookups {
+		if errs[l.ns] != nil {
+			continue
+		}
+		if failed[i] != nil {
+			errs[l.ns] = failed[i]
+			seen[l.ns] = nil
+			continue
+		}
+		if seen[l.ns] == nil {
+			seen[l.ns] = map[string]struct{}{}
+		}
+		for _, pool := range found[i] {
+			seen[l.ns][pool] = struct{}{}
+		}
 	}
-	sort.Strings(named)
-	return named, nil
+	for i := range nss {
+		if errs[i] != nil {
+			named[i] = nil
+			continue
+		}
+		list := make([]string, 0, len(seen[i]))
+		for pool := range seen[i] {
+			list = append(list, pool)
+		}
+		sort.Strings(list)
+		named[i] = list
+	}
+	return named, errs
+}
+
+// poolsNamedByTasks is the pools one stored definition's tasks name.
+func poolsNamedByTasks(wf *orkstackv1.Orkflow) []string {
+	var pools []string
+	for _, t := range wf.GetTasks() {
+		if pool := t.GetPool(); pool != "" {
+			pools = append(pools, pool)
+		}
+	}
+	return pools
 }
