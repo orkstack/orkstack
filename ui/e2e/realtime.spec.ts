@@ -299,8 +299,18 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	await page.screenshot({ path: logPath('screenshot-run-succeeded.png'), fullPage: true });
 
 	// 9. The runs list reflects the finished run (fresh navigation is fine here).
+	//
+	//    The row is found by THIS RUN'S ID, not by `hello-ork@<version>`. The
+	//    version a run pins is the orkflow's CURRENT version, which lives in
+	//    the shared bucket and is moved by any promotion any other proof runs
+	//    — so a hard-coded `@0.1.0` asserts something this spec does not
+	//    control and did not measure: on a bucket where something had promoted
+	//    hello-ork@0.1.1, the row was there, correct, and unmatched. The id is
+	//    the run this test started, and nothing else can produce it.
+	const runId = new URL(runUrl).pathname.split('/').pop() ?? '';
+	expect(runId).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/runs`);
-	const row = page.locator('[data-testid^="run-row-"]', { hasText: 'hello-ork@0.1.0' }).first();
+	const row = page.getByTestId(`run-row-${runId}`);
 	await expect(row).toBeVisible();
 	await expect(row.getByText('SUCCEEDED')).toBeVisible();
 });
