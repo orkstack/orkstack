@@ -24,6 +24,7 @@ declare module 'bun:test' {
 		toContain(expected: unknown): void;
 		toHaveLength(expected: number): void;
 		not: {
+			toBe(expected: T): void;
 			toContain(expected: unknown): void;
 		};
 	};

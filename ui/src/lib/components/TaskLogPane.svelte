@@ -16,7 +16,19 @@
 		/** Wire value: empty is the default namespace. */
 		namespace: string;
 		status: Status;
+		/**
+		 * attempt is the try to SHOW, and 0 means "the latest that wrote
+		 * anything" — which follows the task onto its retries. It is the
+		 * pane's initial coordinate; the selector below pins it from here on.
+		 */
 		attempt?: number;
+		/**
+		 * taskAttempt is how many tries the RUN has recorded for this task, as
+		 * the page knows it. It exists so the selector can appear on a task
+		 * that retried before this pane was ever opened: the pane's own answer
+		 * arrives with the first chunk, and until then only the run has one.
+		 */
+		taskAttempt?: number;
 		/**
 		 * scrollback caps the lines KEPT AND RENDERED. A task may write far
 		 * more than a browser can hold as DOM; past this many lines the oldest
@@ -27,7 +39,15 @@
 		scrollback?: number;
 	}
 
-	let { runId, taskId, namespace, status, attempt = 0, scrollback = 2000 }: Props = $props();
+	let {
+		runId,
+		taskId,
+		namespace,
+		status,
+		attempt = 0,
+		taskAttempt = 0,
+		scrollback = 2000
+	}: Props = $props();
 
 	let open = $state(false);
 	// $state.raw: this array is replaced wholesale on every batch and can hold
@@ -55,6 +75,30 @@
 	// and starts a fresh one — the same recovery ErrorPanel gives every other
 	// view on this site, without reloading the page.
 	let retryNonce = $state(0);
+
+	// pinned is the reader's CHOICE of attempt, and null means they have not
+	// made one: the pane shows whatever `attempt` says, which is the latest
+	// try and follows the task onto its retries. A number pins the pane to
+	// that try — the engine serves a finished attempt from the store, so the
+	// output of the try that failed is readable while the one that replaced it
+	// is still running.
+	let pinned = $state<number | null>(null);
+	const viewedAttempt = $derived(pinned ?? attempt);
+
+	// maxAttempt LATCHES the highest try anybody has named: the run's record
+	// of the task, the engine's answer on this stream, and the reader's own
+	// selection. It only grows, and the subscription below deliberately does
+	// not reset it — pinning attempt 1 must not make the control that pinned
+	// it disappear, and a task that retried does not un-retry.
+	let maxAttempt = $state(0);
+	$effect(() => {
+		const seen = Math.max(taskAttempt, shownAttempt, pinned ?? 0);
+		if (seen > maxAttempt) maxAttempt = seen;
+	});
+
+	// stderr is shown in red, and the legend appears only once a red line has
+	// actually arrived: a colour nobody can see needs no key.
+	const hasStderr = $derived(lines.some((line) => line.stream === 'stderr'));
 
 	// A task with no attempt on record has no log prefix to read, and the
 	// engine answers NotFound for it rather than an empty pane. Wait for it to
@@ -107,14 +151,16 @@
 	// replaced by an equal one stops here. The run page also patches its tasks
 	// in place rather than replacing them; either one alone closes this, and a
 	// log socket is worth both.
-	const coordinates = $derived([runId, taskId, namespace, attempt, retryNonce].join('\u0000'));
+	const coordinates = $derived(
+		[runId, taskId, namespace, viewedAttempt, retryNonce].join('\u0000')
+	);
 
 	$effect(() => {
 		if (!open || !dispatched) return;
 		coordinates; // the ONE reactive dependency of this subscription
 		// Untracked on purpose: reading a prop here would put the each-item
 		// back in the dependency set and undo the paragraph above.
-		const target = untrack(() => ({ runId, taskId, namespace, attempt }));
+		const target = untrack(() => ({ runId, taskId, namespace, attempt: viewedAttempt }));
 		// A subscription replays this attempt from its first chunk, so the pane
 		// it feeds starts empty. Keeping what a previous subscription left
 		// would double every line, and the numbering it is keyed by would
@@ -204,6 +250,17 @@
 		retryNonce += 1;
 	}
 
+	// selectAttempt pins the pane to one try, or hands it back to `latest`.
+	//
+	// It needs no socket mechanics of its own: the selection is part of this
+	// pane's coordinates, so changing it tears the follow down and opens a new
+	// one on the try that was chosen, with an empty pane — which is the same
+	// teardown a different run or task already got.
+	function selectAttempt(value: string) {
+		const next = Number(value);
+		pinned = Number.isFinite(next) && next > 0 ? next : null;
+	}
+
 	function toggle() {
 		open = !open;
 		if (open) following = true;
@@ -238,12 +295,40 @@
 				<span data-testid="task-log-follow-{taskId}" class="text-zinc-500">
 					{following ? 'FOLLOWING' : 'PAUSED'}
 				</span>
-				{#if shownAttempt > 1}
+				{#if maxAttempt > 1}
+					<!--
+						The task retried, so WHICH try is a question the reader
+						can now answer. `latest` (0) is the default and today's
+						behavior: it follows the task onto its next attempt.
+						A number pins the pane to a finished try, which the
+						engine serves from the store.
+					-->
+					<label class="flex items-center gap-1.5 text-zinc-500">
+						Attempt:
+						<select
+							data-testid="task-log-attempt-select-{taskId}"
+							value={String(pinned ?? 0)}
+							onchange={(e) => selectAttempt(e.currentTarget.value)}
+							class="rounded-md border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-zinc-200"
+						>
+							<option value="0">latest</option>
+							{#each Array.from({ length: maxAttempt }, (_, i) => i + 1) as n (n)}
+								<option value={String(n)}>{n}</option>
+							{/each}
+						</select>
+					</label>
+				{/if}
+				{#if shownAttempt > 1 || pinned !== null}
 					<span
 						data-testid="task-log-attempt-{taskId}"
 						class="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300 ring-1 ring-amber-400/40"
-						>attempt {shownAttempt}</span
+						>attempt {shownAttempt || pinned}</span
 					>
+				{/if}
+				{#if hasStderr}
+					<span data-testid="task-log-stderr-legend-{taskId}" class="text-rose-300/90">
+						stderr shown in red
+					</span>
 				{/if}
 				{#if !following}
 					<button
@@ -317,12 +402,23 @@
 					</p>
 				{:else}
 					{#each lines as line (line.n)}
+						<!--
+							Three renderings, in priority order: an ORKER notice
+							(amber) is about the log rather than in it, stderr
+							(red) is the task's other file descriptor as the
+							plugin marked it, and everything else is stdout.
+							data-stream carries the decoded origin, so a test
+							asserts the fact rather than the colour.
+						-->
 						<div
 							data-testid="task-log-line"
 							data-line={line.n}
+							data-stream={line.stream}
 							class="whitespace-pre-wrap break-all {line.notice
 								? 'text-amber-300'
-								: 'text-zinc-300'}"
+								: line.stream === 'stderr'
+									? 'text-rose-300/90'
+									: 'text-zinc-300'}"
 						>
 							{line.text}
 						</div>

@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import EventInspector from '$lib/components/EventInspector.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
+	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
-	import { withNamespace } from '$lib/namespace';
-	import { eventTypeLabel, fmtTime, fmtTimestamp, isTerminal, statusLabel } from '$lib/status';
+	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
+	import { fmtTimestamp, isTerminal, statusLabel } from '$lib/status';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -46,7 +49,13 @@
 	// 'error' or a reconnect loop that never delivers means the browser is
 	// not receiving this run, whatever the run itself is doing.
 	const streamBroken = $derived(!streamDelivered && (socketState === 'error' || socketState === 'closed'));
-	let events = $state<Event[]>([]);
+	// The event stream, BOUNDED. The socket delivers every event whether or
+	// not the inspector is open — the backlog has to be there when it opens —
+	// so this is what a long run grows, and appendEvent caps it at
+	// EVENT_BUFFER_CAP and counts what it drops. $state.raw because the buffer
+	// is replaced wholesale and a deeply reactive proxy per event is what made
+	// a chatty run's page heavy.
+	let buffer = $state.raw(emptyEventBuffer());
 	let tasks = $state<TaskView[]>(untrack(seedTasks));
 	let finishedAt = $state(untrack(() => data.run?.finishedAt));
 	let startedAt = $state(untrack(() => data.run?.startedAt));
@@ -99,7 +108,7 @@
 	}
 
 	function onEvent(event: Event) {
-		events.push(event);
+		buffer = appendEvent(buffer, event);
 		const status = event.status === Status.UNSPECIFIED ? undefined : event.status;
 		switch (event.type) {
 			case EventType.RUN_CREATED:
@@ -152,16 +161,45 @@
 		}
 	}
 
+	// ONE SOCKET, TWO CONSUMERS, AND ONLY THE RENDERING IS ON DEMAND.
+	//
+	// This is the page's single subscription to the run's event stream, and
+	// its callback feeds two things that are NOT the same thing:
+	//
+	//   1. the reducer above (`onEvent`'s switch) — the run's status, its
+	//      status trail, and every task's status and message. It runs on every
+	//      event, always, whatever the page is showing.
+	//   2. the capped event buffer — what the inspector renders when it is
+	//      open. It is filled always too, so opening the inspector later shows
+	//      the backlog rather than only what arrived after the click.
+	//
+	// Only the LIST RENDERING is conditional (`?events=1`, below). Closing the
+	// inspector removes rows from the DOM and nothing else: the socket is not
+	// touched, so task cards keep updating with it closed, and reopening it
+	// needs no second replay path. Subscribing only while it was open was
+	// rejected for exactly that — the reducer needs these events anyway.
+	//
+	// The effect's dependencies are two DERIVED PRIMITIVES rather than `data`
+	// or `run`: a $derived propagates only when its value changes, so a
+	// re-render or a loader that hands back an equal run cannot tear this
+	// socket down. A teardown here is not free — the stream replays from
+	// sequence 0, and a replay into a buffer that already holds those events
+	// would duplicate every row the inspector renders.
+	//
 	// A socket that never opens is the failure this page must not hide. It
 	// looked identical to a quiet run: an amber CONNECTING badge and an empty
 	// event log reading "Waiting for events…", while the run had in fact
 	// finished. Track whether the stream ever delivered anything so the page
 	// can say "not connected" instead of implying "nothing has happened".
+	const socketRunId = $derived(data.run?.id ?? '');
+	const socketNamespace = $derived(data.namespace);
 	$effect(() => {
-		if (!run) return;
+		const runId = socketRunId;
+		const namespace = socketNamespace;
+		if (!runId) return;
 		const stop = watchRunEvents(
-			run.id,
-			data.namespace,
+			runId,
+			namespace,
 			(event) => {
 				streamDelivered = true;
 				onEvent(event);
@@ -171,11 +209,25 @@
 		return stop;
 	});
 
-	let logEl: HTMLDivElement | undefined = $state(undefined);
-	$effect(() => {
-		events.length; // track
-		if (logEl) logEl.scrollTop = logEl.scrollHeight;
-	});
+	// The inspector's open/closed state is a coordinate of the page, so it
+	// lives in the URL beside the namespace — the doctrine this repo's other
+	// pages already follow. A pasted link to "this run with the inspector
+	// open" works, a reload keeps it, the back button closes it, and a test
+	// can deep-link it. A local `let open = $state(false)` has none of those.
+	//
+	// The navigation is a plain link on the same route. The loader reads only
+	// `?ns`, and SvelteKit re-runs a load only for the search params it
+	// actually read, so toggling `?events` re-fetches nothing and rebuilds no
+	// component: the socket above, the task panes and their own sockets all
+	// survive the toggle.
+	const EVENTS_PARAM = 'events';
+	const eventsOpen = $derived(page.url.searchParams.get(EVENTS_PARAM) === '1');
+	function eventsHref(open: boolean): string {
+		const params = new URLSearchParams();
+		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
+		if (open) params.set(EVENTS_PARAM, '1');
+		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
+	}
 </script>
 
 <svelte:head><title>Run {run?.id ?? ''} — OrkStack</title></svelte:head>
@@ -291,48 +343,52 @@
 							namespace={data.namespace}
 							status={task.status}
 							attempt={0}
+							taskAttempt={task.attempt}
 						/>
 					</div>
 				{/each}
 			</div>
 		</section>
 
+		<!--
+			THE EVENT STREAM IS AN INSPECTION VIEW, NOT THE PAGE.
+
+			What a reader comes here for is the tasks and their output, so the
+			page loads with no event list in the DOM at all. This link is the
+			way in, and its `?events=1` is the whole of the state: see the
+			socket effect above for why opening and closing it cannot cost a
+			live update.
+		-->
 		<section>
-			<h2 class="mb-3 text-lg font-semibold">Event log</h2>
-			<div
-				bind:this={logEl}
-				data-testid="event-log"
-				class="max-h-[28rem] overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 font-mono text-xs"
-			>
-				{#if events.length === 0 && streamBroken}
-					<p data-testid="event-log-offline" class="text-amber-300">
-						Not receiving events. The engine refused or dropped this page's
-						websocket, so this run cannot update live — reload to see its current
-						state. If the engine serves the UI from another origin, it needs
-						<code class="text-amber-200">ORK_WS_ALLOWED_ORIGINS</code> to include it.
-					</p>
-				{:else if events.length === 0}
-					<p class="text-zinc-500">Waiting for events…</p>
-				{:else}
-					{#each events as event (event.sequence.toString())}
-						<div class="flex gap-2 py-0.5" data-testid="event-entry">
-							<span class="shrink-0 text-zinc-600">{fmtTime(event.timestamp)}</span>
-							<span class="shrink-0 text-zinc-500">#{event.sequence.toString()}</span>
-							<span
-								class="shrink-0 {event.type === EventType.RUN_FAILED ||
-								event.type === EventType.TASK_FAILED
-									? 'text-rose-400'
-									: event.type === EventType.RUN_SUCCEEDED ||
-										  event.type === EventType.TASK_SUCCEEDED
-										? 'text-emerald-400'
-										: 'text-sky-300'}">{eventTypeLabel(event.type)}</span
-							>
-							{#if event.taskId}<span class="shrink-0 text-zinc-400">[{event.taskId}]</span>{/if}
-							<span class="break-all text-zinc-300">{event.message}</span>
-						</div>
-					{/each}
+			<div class="mb-3 flex flex-wrap items-center gap-3">
+				<a
+					href={eventsHref(!eventsOpen)}
+					data-testid="events-toggle"
+					data-sveltekit-noscroll
+					aria-expanded={eventsOpen}
+					class="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1 text-sm text-zinc-300 hover:bg-zinc-800"
+				>
+					<span class="text-zinc-500">{eventsOpen ? '▾' : '▸'}</span>
+					{eventsOpen ? 'Hide events' : 'Inspect events'}
+				</a>
+				{#if !eventsOpen}
+					<span class="text-xs text-zinc-600" data-testid="events-teaser">
+						{buffer.total}
+						{buffer.total === 1 ? 'event' : 'events'} received on this page
+					</span>
 				{/if}
 			</div>
+
+			{#if eventsOpen}
+				<EventInspector
+					events={buffer.events}
+					dropped={buffer.dropped}
+					total={buffer.total}
+					{streamBroken}
+					runId={run.id}
+					cap={EVENT_BUFFER_CAP}
+				/>
+			{/if}
 		</section>
 	</div>
 {/if}
