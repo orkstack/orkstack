@@ -74,18 +74,34 @@ tasks:
       capture_stdout_as: build-log
       capture_stderr_as: build-diagnostics
 
-  # 3. The container's output payload crosses the task boundary like any
+  # 3. Read the captured stream. `artifact "build/build-log"` renders the
+  #    LOCAL PATH of the file the Orker materialized in this task's work
+  #    directory before the task ran — not the bytes, and not a durable
+  #    address. So a task READS that path (the file plugin's `from:` opens
+  #    it) or MOUNTS it (`mounts: - artifact:`, as `build` does above with
+  #    seed/manifest). Interpolated into a `content:` or `command:` string it
+  #    would store the path itself, and a work directory is per-attempt
+  #    scratch that is removed when the task returns.
+  - id: collect
+    plugin: file
+    needs: [build]
+    with:
+      op: copy
+      from: '{{ artifact "build/build-log" }}'
+      to: build-output.txt
+
+  # 4. The container's output payload crosses the task boundary like any
   #    other: the file plugin persists it as a new artifact.
   #
   #    The payload holds what only the plugin knows — the image, the exit
   #    code, how long it took. It holds NONE of the container's own bytes: a
   #    payload is a Temporal payload, and a task's output travels as
-  #    artifacts (AGENTS.md §1.2). To read the output itself, mount the
-  #    capture: `artifact "build/build-log"` gives the whole stream,
-  #    byte-exact, however long it is.
+  #    artifacts (AGENTS.md §1.2). So the report points at the copy `collect`
+  #    read and says how long it was; the stream itself is in that artifact
+  #    and in build/build-log, byte-exact, however long it is.
   - id: record
     plugin: file
-    needs: [build]
+    needs: [build, collect]
     with:
       op: write
       path: container-report.txt
@@ -93,4 +109,4 @@ tasks:
         image: {{ .tasks.build.output.image }}
         exit_code: {{ .tasks.build.output.exit_code }}
         duration_ms: {{ .tasks.build.output.duration_ms }}
-        build log: {{ artifact "build/build-log" }}
+        build log: {{ .tasks.collect.output.path }} ({{ .tasks.collect.output.size_bytes }} bytes)
