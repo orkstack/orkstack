@@ -1547,26 +1547,39 @@ func (s *Service) appendOtherPoolPlugins(
 	}
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Pool < ordered[j].Pool })
 
-	for _, route := range ordered {
+	// One instant judges every pool, and the probes go out together rather
+	// than one at a time (storeFanout). A deployment with hundreds of stored
+	// pools is the ordinary case for a long-lived bucket, and a probe apiece
+	// in series is what spent this read's whole deadline before it had asked
+	// a single live pool what it runs.
+	now := s.now()
+	found := make([][]string, len(ordered))
+	inParallel(len(ordered), func(i int) {
+		route := ordered[i]
 		live, err := binding.Pools.ObservePool(ctx, route.Queue)
 		if err != nil {
 			s.logger.Warn("list plugins: a pool could not be probed, so its plugins "+
 				"are missing from this inventory",
 				"pool", route.Pool, "error", err)
-			continue
+			return
 		}
-		if !live.Fresh(s.now(), engine.DefaultPollerFreshness) {
+		if !live.Fresh(now, engine.DefaultPollerFreshness) {
 			// Nobody is there to ask, and asking would hold the request open
 			// for the activity's whole timeout to learn nothing.
-			continue
+			return
 		}
 		names, err := s.pools.Plugins.PluginsOnPool(ctx, route.Queue)
 		if err != nil {
 			s.logger.Warn("list plugins: a live pool did not answer, so its plugins "+
 				"are missing from this inventory",
 				"pool", route.Pool, "error", err)
-			continue
+			return
 		}
+		found[i] = names
+	})
+	// Reduced in pool order, which is what keeps one plugin reported by two
+	// pools deduplicating to the same entry on every call.
+	for _, names := range found {
 		for _, name := range names {
 			plugins = append(plugins, &orkstackv1.PluginInfo{Name: name})
 		}
@@ -1620,21 +1633,24 @@ func (s *Service) inventoryPools(ctx context.Context) ([]string, error) {
 		seen[pool] = struct{}{}
 		pools = append(pools, pool)
 	}
+	// Every namespace's catalog is scanned in one batch, not one namespace
+	// after another: this is the deployment-wide read, so the serial form
+	// cost a round-trip per stored orkflow of every tenant.
+	named, scanned := s.poolsNamedByOrkflowsAcross(ctx, registered)
 	var lost []error
-	for _, ns := range registered {
+	for i, ns := range registered {
 		// The namespace document's own pools come from the registry listing
 		// that already succeeded, so they are kept whatever the catalog does.
 		add(engine.DefaultPoolFor(ns))
 		for _, pool := range ns.GetAllowedPools() {
 			add(pool)
 		}
-		named, err := s.poolsNamedByOrkflows(ctx, ns)
-		if err != nil {
+		if err := scanned[i]; err != nil {
 			lost = append(lost,
 				fmt.Errorf("read orkflows for namespace %q: %w", ns.GetName(), err))
 			continue
 		}
-		for _, pool := range named {
+		for _, pool := range named[i] {
 			add(pool)
 		}
 	}

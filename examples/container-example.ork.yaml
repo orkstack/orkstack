@@ -78,10 +78,14 @@ tasks:
   #    LOCAL PATH of the file the Orker materialized in this task's work
   #    directory before the task ran — not the bytes, and not a durable
   #    address. So a task READS that path (the file plugin's `from:` opens
-  #    it) or MOUNTS it (`mounts: - artifact:`, as `build` does above with
-  #    seed/manifest). Interpolated into a `content:` or `command:` string it
-  #    would store the path itself, and a work directory is per-attempt
-  #    scratch that is removed when the task returns.
+  #    it, below; a shell `command:` can `cat` it, because it runs while the
+  #    work directory is still alive) or MOUNTS it (`mounts: - artifact:`,
+  #    as `build` does above with seed/manifest). Interpolated into a
+  #    `content:` string it would store the path itself, and a work
+  #    directory is per-attempt scratch that is removed when the task
+  #    returns. A container's own `command:` cannot read it either, for a
+  #    different reason: that path is on the Orker host, which the container
+  #    does not see.
   - id: collect
     plugin: file
     needs: [build]

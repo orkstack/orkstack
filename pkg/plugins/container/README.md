@@ -152,9 +152,14 @@ reads the capture artifact instead. `{{ artifact "<task>/<name>" }}` renders the
 **local path** of the file the Orker materialized in that task's work directory
 before it ran — not the bytes, and not a durable address — so the task opens
 that path (`file` with `op: copy` and `from:`) or mounts it (`mounts:` with
-`artifact:`, above). Interpolate it into a `content:` or `command:` string and
-what you store is the path, which is per-attempt scratch removed when the task
-returns.
+`artifact:`, above). Interpolate it into a `content:` string and what you store
+is the path itself, which is per-attempt scratch removed when the task returns.
+A `shell` `command:` is different: it runs *inside* the task, while the work
+directory is still alive, so `cat "{{ artifact "fetch/body" }}"` reads the bytes
+— [`examples/hello.ork.yaml`](../../../examples/hello.ork.yaml) does exactly
+that. A **container's own** `command:` cannot, for an unrelated reason: the path
+names a directory on the Orker host, and the container does not see it. Mount it
+instead.
 [`examples/container-example.ork.yaml`](../../../examples/container-example.ork.yaml)
 is the worked example: its `collect` task copies `build/build-log` into an
 artifact of its own, and the report names that copy and how long it was. There
