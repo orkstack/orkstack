@@ -23,13 +23,6 @@
 		 */
 		attempt?: number;
 		/**
-		 * taskAttempt is how many tries the RUN has recorded for this task, as
-		 * the page knows it. It exists so the selector can appear on a task
-		 * that retried before this pane was ever opened: the pane's own answer
-		 * arrives with the first chunk, and until then only the run has one.
-		 */
-		taskAttempt?: number;
-		/**
 		 * scrollback caps the lines KEPT AND RENDERED. A task may write far
 		 * more than a browser can hold as DOM; past this many lines the oldest
 		 * are dropped from the pane and counted, and the count is shown — the
@@ -45,7 +38,6 @@
 		namespace,
 		status,
 		attempt = 0,
-		taskAttempt = 0,
 		scrollback = 2000
 	}: Props = $props();
 
@@ -85,14 +77,20 @@
 	let pinned = $state<number | null>(null);
 	const viewedAttempt = $derived(pinned ?? attempt);
 
-	// maxAttempt LATCHES the highest try anybody has named: the run's record
-	// of the task, the engine's answer on this stream, and the reader's own
-	// selection. It only grows, and the subscription below deliberately does
-	// not reset it — pinning attempt 1 must not make the control that pinned
-	// it disappear, and a task that retried does not un-retry.
+	// maxAttempt LATCHES the highest try anybody has named, and in this tree
+	// exactly two can name one: the engine's answer on THIS pane's stream,
+	// which arrives with the first chunk and is the only source of the attempt
+	// count, and the reader's own selection. `TaskRun.attempt`
+	// (proto/orkstack/v1/run.proto) is not a third — nothing assigns it:
+	// internal/engine/workflow.go builds every TaskRun without it and no later
+	// write touches it, so a pane that read the run's record would be reading
+	// 0 and calling it a count of tries. maxAttempt only grows, and the
+	// subscription below deliberately does not reset it — pinning attempt 1
+	// must not make the control that pinned it disappear, and a task that
+	// retried does not un-retry.
 	let maxAttempt = $state(0);
 	$effect(() => {
-		const seen = Math.max(taskAttempt, shownAttempt, pinned ?? 0);
+		const seen = Math.max(shownAttempt, pinned ?? 0);
 		if (seen > maxAttempt) maxAttempt = seen;
 	});
 

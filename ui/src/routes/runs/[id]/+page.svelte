@@ -343,7 +343,6 @@
 							namespace={data.namespace}
 							status={task.status}
 							attempt={0}
-							taskAttempt={task.attempt}
 						/>
 					</div>
 				{/each}
