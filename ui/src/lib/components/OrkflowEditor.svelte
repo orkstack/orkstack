@@ -270,12 +270,11 @@
 				The newest applied version is
 				<span class="font-medium text-zinc-300" data-testid="editor-head-version"
 					>{expectedHead}</span
-				>{#if base === expectedHead}, which is what this edit is derived from.{:else}
-					<span data-testid="editor-fork-notice"
-						>— applying forks forward from {base} and becomes the new head. The version that runs
-						is unchanged until somebody promotes.</span
-					>
-				{/if}
+				>{#if base === expectedHead}, which is what this edit is derived from.{:else}<span
+						data-testid="editor-fork-notice"
+					>&nbsp;— applying forks forward from {base} and becomes the new head. The version that
+						runs is unchanged until somebody promotes.</span
+					>{/if}
 			</span>
 			<span class="text-xs text-zinc-500">
 				Applying stores a NEW version — change <code>version:</code> before you apply. Re-applying
