@@ -169,7 +169,10 @@ func (s *TemporalStarter) listPluginsOn(
 ) ([]plugin.Descriptor, error) {
 	var descriptors []plugin.Descriptor
 	handle, err := s.client.ExecuteActivity(ctx, client.StartActivityOptions{
-		ID:                     "list-plugins-" + fmt.Sprint(time.Now().UnixNano()),
+		// The id is a collision-free token, not a clock reading: this call is
+		// made concurrently by the admin inventory's pool fan-out
+		// (`activityid.go`).
+		ID:                     newActivityID("list-plugins"),
 		TaskQueue:              queue,
 		ScheduleToCloseTimeout: within,
 		RetryPolicy: &temporal.RetryPolicy{
