@@ -174,27 +174,13 @@ type Slice = {
 };
 
 const SLICES: Slice[] = [
-  {
-    id: "M11.3",
-    branch: "m11-3-admin-surface",
-    dir: "m11-3-admin-surface",
-    objective:
-      "Close the two remaining review findings on the Admin surface branch. Nothing else.",
-    acceptance: [
-      "This branch is FINISHED except for two findings. It passes `make merge-check` and the full integration suite with a clean tree, and eight earlier findings were closed and independently re-verified across six review rounds. Do NOT re-open, re-audit, refactor, restructure or re-prove anything else. Two items, then stop.",
-      "",
-      "R1 — a test was weakened until it cannot fail. `internal/orker/container_integration_test.go:254` asserts the generated report contains the literal `\"build log: \"`. That prefix matches even when the interpolated artifact reference is empty or wrong, so the assertion cannot fail for the reason it exists. Restore its power: assert the report names the real capture artifact AND that reading that artifact back yields the container's actual stdout (the test already fetches `build-log` at line 222 and asserts real content at lines 224-233 — hold the report to the same standard). The test must fail if the artifact reference is empty, malformed, or points at nothing.",
-      "",
-      "R2 — the container README and its worked example do not tell the same story. `pkg/plugins/container/README.md:148-153` says a downstream task \"mounts or reads the capture artifact instead\" of interpolating `.output.stdout`, and `examples/container-example.ork.yaml:84-85` claims `artifact \"build/build-log\"` \"gives the whole stream, byte-exact, however long it is\". In a `content:` field that helper interpolates an artifact REFERENCE, not the bytes — so the example writes a URI into container-report.txt and the prose describes something the example does not do. Make them agree: either change the example so a downstream task genuinely reads the captured bytes, or correct both the README sentence and the example comment to describe what `artifact` actually yields and where the bytes are read. Whichever you choose, the example must run green in the integration test above.",
-      "",
-      "SCOPE: internal/orker/container_integration_test.go, pkg/plugins/container/README.md, examples/container-example.ork.yaml, and — only if R2's choice requires it — the example's own tasks. Regenerate proof/M11.1/ or proof/M11.3/ ONLY if your change alters what they measure. Touch nothing else. A diff that reaches further than these files is a failed slice, however good the extra work is.",
-      "",
-      "DONE means: both gates green, clean worktree, and a final message naming the two commits and quoting the assertion that now fails when the artifact reference is wrong.",
-    ].join("\n"),
-    scopeLock:
-      "internal/orker/container_integration_test.go, pkg/plugins/container/README.md, examples/container-example.ork.yaml, proof/M11.1/ and proof/M11.3/ (only if measurements changed)",
-    checks: GO_CHECKS,
-  },
+  // M11.3 is VERIFIED and no longer part of this stack. Its branch head
+  // (2b2006b) carries the adversarial repairs that landed after verification:
+  // the bounded-wave pool catalogue scan and the activity id that no longer
+  // spells itself with a clock. M11.4 was cut from that branch BEFORE those
+  // repairs, which is why its parent gate failed on a pool probe timing out
+  // under load — restacking onto the repaired head is the first thing its
+  // child does.
   {
     id: "M11.4",
     branch: "m11-4-run-page-logs-events",
@@ -202,6 +188,7 @@ const SLICES: Slice[] = [
     objective:
       "Rework the run detail page: task logs live in their own scoped panels, and the event stream becomes a visual, on-demand view.",
     acceptance: [
+      "0. THIS SLICE IS ALREADY BUILT AND ALREADY APPROVED. Its features, browser tests and proof are committed on m11-4-run-page-logs-events, and two reviewers approved them with zero findings. It failed ONE thing: the parent's independent `go test -tags=integration -p 1 ./...` run, in cmd/orkctl, with `list pools: a pool could not be probed ... namespace=vision pool=gpu error=\"context deadline exceeded\"` — a live probe timing out on a loaded host, not an assertion failure. This branch was cut from m11-3-admin-surface BEFORE the two adversarial repairs that address exactly that (the bounded-wave pool catalogue scan, and the activity id that no longer spells itself with a clock), so STEP 0 is the restack, and the first thing to do after it is run the full integration suite and see whether the timeout is gone. If it is gone, do nothing else: re-prove, commit, stop. If it persists, fix it at the source — a probe deadline that cannot survive a loaded machine is too tight — WITHOUT weakening the distinction between a pool reported unavailable and a pool reported empty, which is the property the test exists to prove. Do not rewrite the UI work that already passed review.",
       "1. Task logs are isolated from events and scoped per task: each task keeps its own log panel (M10.5's TaskLogPane is the base), a task with retries scopes by attempt with a selector, and the container application's own stdout/stderr — streamed since M11.1 — is visible live, with stderr visually distinct from stdout (the design's in-band marker is the source of that distinction; render it, do not re-derive it).",
       "2. The event stream is shown on request: the page loads WITHOUT the event log occupying it, and an explicit control (the design picks expand vs tab vs URL state and says why) opens a redesigned event view. Closing it must not break live task updates — one socket keeps feeding the task-state reducer and the capped event buffer; only the event LIST rendering is on demand. State that split in a comment where the page wires the socket.",
       "3. The redesigned event view is legible at a glance: grouped or styled by kind (run lifecycle vs task lifecycle vs failures), timestamps and sequence aligned, failures visually distinct. Keep the existing dark zinc/Tailwind conventions; no new framework or component library.",
@@ -306,7 +293,7 @@ export default workflow({
     stack_base: Type.String({
       description:
         "Branch the stack builds on: the last VERIFIED slice of the previous run, including its adversarial repairs.",
-      default: "m11-2-version-scoped-editing",
+      default: "m11-3-admin-surface",
     }),
     merge_target: Type.String({
       description: "Branch the finished stack merges into, gated on the merged tree.",
