@@ -272,3 +272,88 @@ test('a socket that opens and then dies without a chunk reports the close it saw
 	expect(f.failures[0]).toContain('without delivering anything');
 	f.stop();
 });
+
+// THE TWO FILE DESCRIPTORS, TOLD APART IN BAND.
+//
+// One task attempt has one log stream — one Logger, one sink, one dense
+// sequence — so a plugin marks a stderr line with a fixed prefix rather than
+// carrying a field the chunk has no room for (pkg/plugin/linewriter.go).
+// The browser is one of the readers that has to invert it: a pane that showed
+// the marker verbatim would be showing the wire, and a pane that guessed at
+// the origin would be re-deriving what the producer already stated.
+test('a stderr line is marked and its marker never reaches the reader', () => {
+	const f = follower();
+	f.socket().deliver({
+		attempt: 1,
+		seq: 1n,
+		data: 'building\n[stderr] warning: no such file\ndone\n'
+	});
+	f.frame();
+
+	const lines = f.deliveries.flatMap((delivery) => delivery.lines);
+	expect(lines.map((line) => line.text)).toEqual([
+		'building',
+		'warning: no such file',
+		'done'
+	]);
+	expect(lines.map((line) => line.stream)).toEqual(['stdout', 'stderr', 'stdout']);
+	f.stop();
+});
+
+// The escape is what makes the encoding invertible, and it is the producer's,
+// not this module's guess: an application that prints "[stderr] ..." on STDOUT
+// travels behind "[stdout] ", so the two cases that used to render
+// identically no longer do.
+test('stdout that imitates the marker is unescaped and stays stdout', () => {
+	const f = follower();
+	f.socket().deliver({
+		attempt: 1,
+		seq: 1n,
+		data: '[stdout] [stderr] not really stderr\n[stderr] [stderr] really stderr\n'
+	});
+	f.frame();
+
+	const lines = f.deliveries.flatMap((delivery) => delivery.lines);
+	expect(lines.map((line) => `${line.stream}:${line.text}`)).toEqual([
+		'stdout:[stderr] not really stderr',
+		'stderr:[stderr] really stderr'
+	]);
+	f.stop();
+});
+
+// A chunk ends on a line boundary, but a LINE does not end on a chunk
+// boundary: the marker is decoded where whole lines are made, not where bytes
+// arrive, or a marker split across two frames would be shown as text.
+test('a marker split across two chunks is still recognised', () => {
+	const f = follower();
+	f.socket().deliver({ attempt: 1, seq: 1n, data: '[std' });
+	f.socket().deliver({ attempt: 1, seq: 2n, data: 'err] split across frames\n' });
+	f.frame();
+
+	const lines = f.deliveries.flatMap((delivery) => delivery.lines);
+	expect(lines).toHaveLength(1);
+	expect(lines[0].text).toBe('split across frames');
+	expect(lines[0].stream).toBe('stderr');
+	f.stop();
+});
+
+// The Orker's own notices are the Orker's voice and carry no marker, so they
+// read as stdout and stay notices: a cap must never be dressed up as the
+// task's stderr.
+test('the truncation notice is a notice, not stderr', () => {
+	const f = follower();
+	f.socket().deliver({
+		attempt: 1,
+		seq: 1n,
+		data: '[ork] log truncated at 16 MiB\n',
+		truncated: true
+	});
+	f.frame();
+
+	const lines = f.deliveries.flatMap((delivery) => delivery.lines);
+	expect(lines).toHaveLength(1);
+	expect(lines[0].notice).toBe(true);
+	expect(lines[0].stream).toBe('stdout');
+	expect(lines[0].text).toBe('[ork] log truncated at 16 MiB');
+	f.stop();
+});
