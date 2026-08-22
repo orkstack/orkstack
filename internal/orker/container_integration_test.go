@@ -195,7 +195,7 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 				taskRun.GetTaskId(), taskRun.GetStatus(), taskRun.GetError())
 		}
 	}
-	for _, id := range []string{"seed", "build", "record"} {
+	for _, id := range []string{"seed", "build", "collect", "record"} {
 		if taskRuns[id] == nil {
 			t.Fatalf("run has no task %q (has %v)", id, run.GetTaskRuns())
 		}
@@ -247,17 +247,34 @@ func TestIntegration_ContainerExampleRunsOnTheLiveEngine(t *testing.T) {
 		t.Errorf("build-diagnostics artifact = %q, want the container's stderr", diagnostics)
 	}
 
-	// 6. The container's output crossed the task boundary like any other:
-	//    the payload fields by template, the bytes by artifact reference.
+	// 6. The container's output crossed the task boundary like any other: the
+	//    payload fields by template, the bytes by artifact. `collect` READ the
+	//    capture — `artifact "build/build-log"` renders the local path the
+	//    Orker materialized before the task ran, and the file plugin opens
+	//    that path — so its artifact is the container's stdout, byte for byte.
+	captured := artifactNamed(t, taskRuns["collect"], "build-output.txt")
+	capturedBytes := readArtifact(t, ctx, store, captured.GetUri())
+	if capturedBytes != stdout {
+		t.Errorf("collect artifact %q = %q, want the container's stdout %q",
+			captured.GetName(), capturedBytes, stdout)
+	}
+
+	// 7. And the report names THAT artifact and the number of bytes it holds.
+	//    Both halves are read back from the run rather than matched as a
+	//    prefix, so the line cannot pass on its own literal text: an empty or
+	//    malformed reference fails `collect` permanently and the run never
+	//    reaches SUCCEEDED, and a reference to another artifact renders
+	//    neither this name nor this length.
 	report := readArtifact(t, ctx, store,
 		artifactNamed(t, taskRuns["record"], "container-report.txt").GetUri())
-	for _, want := range []string{"image: alpine:3.20", "exit_code: 0", "build log: "} {
+	wantCapture := fmt.Sprintf("build log: %s (%d bytes)", captured.GetName(), len(stdout))
+	for _, want := range []string{"image: alpine:3.20", "exit_code: 0", wantCapture} {
 		if !strings.Contains(report, want) {
 			t.Errorf("container-report.txt = %q, want it to contain %q", report, want)
 		}
 	}
 
-	// 7. Nothing the run created is still on the host.
+	// 8. Nothing the run created is still on the host.
 	assertNoOrkContainers(t, "build")
 
 	writeContainerProof(t, runID, eventLog, taskRuns, stdout, diagnostics, report)
@@ -375,7 +392,7 @@ func writeContainerProof(
 		fmt.Fprintf(&transcript, "  %s\n", line)
 	}
 	fmt.Fprintf(&transcript, "\ntasks\n")
-	for _, id := range []string{"seed", "build", "record"} {
+	for _, id := range []string{"seed", "build", "collect", "record"} {
 		taskRun := taskRuns[id]
 		fmt.Fprintf(&transcript, "  %s (%s) plugin=%s\n", id, taskRun.GetStatus(), taskRun.GetPlugin())
 		fmt.Fprintf(&transcript, "    output: %s\n", taskRun.GetOutput().GetData())
