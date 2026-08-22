@@ -152,7 +152,7 @@
 		// stores nothing is not a failure and must not read as a success: no
 		// RPC, no navigation, and a sentence naming the version.
 		if (yaml === sourceYaml) {
-			noop = `No change to ${name}@${base}; nothing applied.`;
+			noop = `The document is unchanged from ${name}@${base}.`;
 			return;
 		}
 		applying = true;
@@ -170,7 +170,7 @@
 			if (!res.created) {
 				noop =
 					`${name}@${res.orkflow?.version ?? base} is already stored with this exact ` +
-					'source; nothing applied.';
+					'source.';
 				return;
 			}
 			await goto(versionsHref, { invalidateAll: true });
@@ -302,7 +302,7 @@
 				role="status"
 				class="rounded-md border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-300"
 			>
-				{noop} Nothing was stored, so no version was created.
+				{noop} Nothing was applied, and no new version was created.
 			</p>
 		{/if}
 		{#each warnings as warning, i (i)}
