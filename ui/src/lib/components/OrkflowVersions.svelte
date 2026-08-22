@@ -13,7 +13,7 @@
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
 	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/service_pb';
-	import { namespaceLabel } from '$lib/namespace';
+	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
 
 	interface Props {
@@ -36,6 +36,15 @@
 
 	// resolved is that version's name, for the sentences that have to say it.
 	const resolved = $derived(versions.find(runsNow)?.version ?? '');
+
+	// editHref makes this table the entry point to editing: a row's Edit opens
+	// THAT row's document, because the editor reads the version the link names.
+	// Before M11.5 there was no such link and the Edit tab always opened the
+	// head — so the one edit an operator most often wants, changing the version
+	// that RUNS, showed somebody else's text. The namespace is stated like on
+	// every other internal link.
+	const editHref = (version: string) =>
+		withNamespace(`/orkflows/${name}?version=${version}&tab=edit`, namespace);
 
 	let reloading = $state(false);
 	async function reload() {
@@ -219,18 +228,28 @@
 							/>
 						</td>
 						<td class="px-4 py-3 text-right">
-							{#if runsNow(version)}
-								<span class="text-xs text-zinc-500">running</span>
-							{:else}
-								<button
-									type="button"
-									data-testid="promote-{version.version}"
-									onclick={() => askToPromote(version.version)}
+							<div class="flex items-center justify-end gap-2">
+								<a
+									href={editHref(version.version)}
+									data-testid="version-edit-{version.version}"
+									title="edit this version's source and apply it as a new version"
 									class="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
 								>
-									Promote
-								</button>
-							{/if}
+									Edit
+								</a>
+								{#if runsNow(version)}
+									<span class="text-xs text-zinc-500">running</span>
+								{:else}
+									<button
+										type="button"
+										data-testid="promote-{version.version}"
+										onclick={() => askToPromote(version.version)}
+										class="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
+									>
+										Promote
+									</button>
+								{/if}
+							</div>
 						</td>
 					</tr>
 				{/each}

@@ -51,30 +51,47 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			}))
 	]);
 
-	// The editor is seeded from the HEAD version, not from whatever is current:
-	// head is the edit lineage's tip and the base_version an apply must carry,
-	// so editing anything else would send a token for a document the box is not
-	// showing. When head cannot be established the editor says so and refuses to
-	// apply — an apply with no token is an apply that can bury a newer version.
-	let head: Orkflow | null = null;
-	let headError: string | null = null;
+	// The editor is seeded from the SELECTED version — `?version=` when the URL
+	// names one, and the head when it does not.
+	//
+	// It used to be seeded from head unconditionally, which made the one edit an
+	// operator most often wants impossible to perform: opening Edit on the
+	// version that RUNS showed head's document, and applying it published text
+	// nobody had looked at under a base nobody had chosen. Head stays the
+	// DEFAULT — it is the lineage's tip, and selecting is explicit — but a
+	// selection is now honoured.
+	//
+	// Two versions travel from here, because an apply carries two tokens
+	// (proto/orkstack/v1/service.proto, M11.2): `editVersion` is the edit's
+	// PROVENANCE, and `headVersion` is the optimistic-concurrency token — the
+	// head this page observed when it fetched. When head cannot be established
+	// the editor says so and refuses to apply: an apply with no token is an
+	// apply that can bury a newer version.
+	const editVersion = version || catalog.headVersion;
+	// A version the engine will not answer is reported AS ITSELF. Falling back
+	// to head here is the bug this milestone exists to kill, in its quietest
+	// form: the box would hold a document the URL does not name.
+	let editYaml = '';
+	let editError: string | null = null;
+	// The Overview's read answers this one when it asked the same question —
+	// which it did whenever the URL named a version, and otherwise only if the
+	// version it resolved through the current pointer happens to be the head.
+	const alreadyRead = version === editVersion || detail.orkflow?.version === editVersion;
 	if (catalog.error) {
-		headError = catalog.error;
+		editError = catalog.error;
 	} else if (!catalog.headVersion) {
-		headError = `orkflow ${name} has no stored version in this namespace`;
-	} else if (detail.orkflow && detail.orkflow.version === catalog.headVersion) {
-		head = detail.orkflow;
+		editError = `orkflow ${name} has no stored version in this namespace`;
+	} else if (alreadyRead) {
+		if (detail.orkflow) editYaml = detail.orkflow.sourceYaml;
+		else editError = detail.error ?? `the engine returned no document for ${name}@${editVersion}`;
 	} else {
 		try {
-			const res = await client.orkflows.getOrkflow({
-				name,
-				version: catalog.headVersion,
-				namespace
-			});
-			head = res.orkflow ?? null;
-			if (!head) headError = `the engine returned no document for ${name}@${catalog.headVersion}`;
+			const res = await client.orkflows.getOrkflow({ name, version: editVersion, namespace });
+			const doc = res.orkflow ?? null;
+			if (doc) editYaml = doc.sourceYaml;
+			else editError = `the engine returned no document for ${name}@${editVersion}`;
 		} catch (err) {
-			headError = errorMessage(err);
+			editError = errorMessage(err);
 		}
 	}
 
@@ -89,7 +106,8 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		currentVersion: catalog.currentVersion,
 		headVersion: catalog.headVersion,
 		versionsError: catalog.error,
-		headYaml: head?.sourceYaml ?? '',
-		headError
+		editVersion,
+		editYaml,
+		editError
 	};
 };
