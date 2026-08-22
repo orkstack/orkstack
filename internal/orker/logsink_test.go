@@ -96,8 +96,8 @@ func testRef() artifacts.LogRef {
 // It is for tests about how a chunk is COMPOSED — where its boundaries fall,
 // how the sequences run, what happens at the cap — which need the size bound
 // to fire on demand and say nothing about pacing. The pace itself is what
-// TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask measures, on the
-// real clock.
+// TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask measures, on a
+// clock it moves a step at a time.
 func unpaced(sink *logChunkSink) *logChunkSink {
 	base := time.Now()
 	var ticks int64
@@ -106,6 +106,28 @@ func unpaced(sink *logChunkSink) *logChunkSink {
 		return base.Add(time.Duration(ticks) * time.Hour)
 	}
 	return sink
+}
+
+// testClock is a clock the test moves and the sink reads. The sink reads it
+// under its own lock, from whichever goroutine is writing; the test advances
+// it from the test goroutine. So it carries a lock of its own.
+type testClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func newTestClock() *testClock { return &testClock{at: time.Now()} }
+
+func (c *testClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *testClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
 }
 
 // A chatty task must not write one object per line: the size bound is what
@@ -192,34 +214,79 @@ func TestLogChunkSink_FlushesOnElapsedTime(t *testing.T) {
 // at most once per FlushInterval (plus the one immediate first chunk, which
 // nothing should wait for, and the one final chunk Close writes). What arrives
 // is unchanged — every byte, in order.
+//
+// THE PACE IS MEASURED ON THE SINK'S CLOCK, SO THIS TEST MOVES THAT CLOCK
+// RATHER THAN RACING IT. Written against the real one with a one-millisecond
+// interval, the assertion was "my write loop finished inside three
+// milliseconds": the same policy cost 2 uploads on an idle machine and 9 to 10
+// under `-race`, which is a fact about the machine and not about the flush
+// policy. Every upload below is one the clock was moved for, and none of the
+// discriminating power is lost — a per-line sink writes four thousand and one.
 func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
 	store := &recordingLogStore{}
-	const interval = time.Millisecond
+	// An hour, so no armed timer can fire while the test runs. What is being
+	// measured is which writes the POLICY lets through, not when a timer lands.
+	const interval = time.Hour
 	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes:    1, // "flush every byte"
 		FlushInterval: interval,
 		MaxBytes:      1 << 20,
 	})
+	clock := newTestClock()
+	sink.now = clock.now
 
 	const lines = 2000
 	var want strings.Builder
-	for i := 0; i < lines; i++ {
-		line := fmt.Sprintf("line-%06d", i)
-		sink.Write(line)
-		want.WriteString(line)
-		want.WriteByte('\n')
+	write := func(prefix string) {
+		for i := 0; i < lines; i++ {
+			line := fmt.Sprintf("%s-%06d", prefix, i)
+			sink.Write(line)
+			want.WriteString(line)
+			want.WriteByte('\n')
+		}
 	}
+
+	// The first upload is the deliberate exception — whoever is watching a
+	// task start waits on that one chunk and on nothing else. Every line after
+	// it is buffered, at a size bound of ONE byte, because the pace has not
+	// elapsed.
+	write("first")
+	if got := len(store.stored()); got != 1 {
+		t.Fatalf("%d lines cost %d upload(s) inside one interval, want exactly 1 "+
+			"(the immediate first chunk): the size bound is writing per line "+
+			"instead of batching under the elapsed-time bound", lines, got)
+	}
+
+	// Batching is not silence. One interval on, the next write goes out and
+	// carries everything that accumulated — without waiting for Close.
+	clock.advance(interval)
+	sink.Write("after-the-pace")
+	want.WriteString("after-the-pace\n")
+	if got := len(store.stored()); got != 2 {
+		t.Fatalf("a full interval after the first chunk the sink had made %d "+
+			"upload(s), want 2: buffered output must go out at the pace, not "+
+			"only at Close", got)
+	}
+
+	// And the pace re-anchors on that upload: two thousand more lines inside
+	// the same interval are two thousand more buffered lines, not 2000 PUTs.
+	write("second")
+	if got := len(store.stored()); got != 2 {
+		t.Fatalf("%d further lines inside one interval cost %d uploads, want 2",
+			lines, got)
+	}
+
 	sink.Close()
 
 	chunks := store.stored()
-	// This is deliberately a fixed bound, not a budget that grows with the
-	// test's elapsed time. The initial upload and Close's terminal upload may
-	// be immediate, but a per-line implementation must still fail this test.
+	// A fixed bound, not a budget that grows with the test's elapsed time:
+	// the immediate first chunk, the one the clock was advanced for, and the
+	// terminal one Close writes.
 	const maxChunks = 3
 	if len(chunks) > maxChunks {
 		t.Fatalf("%d lines produced %d chunks, want at most %d: the size bound "+
 			"is writing per line instead of batching under the elapsed-time bound",
-			lines, len(chunks), maxChunks)
+			2*lines+1, len(chunks), maxChunks)
 	}
 	if len(chunks) == 0 {
 		t.Fatal("nothing was written at all; batching is not silence")
@@ -235,7 +302,7 @@ func TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask(t *testing.T) {
 		}
 	}
 	t.Logf("%d lines (%d bytes) cost %d upload(s)",
-		lines, want.Len(), len(chunks))
+		2*lines+1, want.Len(), len(chunks))
 }
 
 // TestLogChunkSink_HoldsNoMoreThanTheCeilingWhileItWaitsOutThePace is the
