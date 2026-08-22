@@ -326,15 +326,31 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	await expect(page.getByTestId('task-log-flaky')).toHaveCount(0);
 
 	await page.getByTestId('task-log-toggle-talk').click();
+	// Poll for the LINE THIS TEST ASSERTS ON, not for a non-empty pane. Three
+	// lines reach a `talk` pane before the application writes a byte — the
+	// Orker's `workdir …` (internal/orker/activity.go:133) and the plugin's
+	// `container: using local image …` and `container: running … as …`
+	// (pkg/plugins/container/container.go:429,291). A `length > 0` poll is
+	// satisfied by those three, and the scoping assertion below then reads a
+	// pane whose task has not started talking yet: one failure in four runs.
 	await expect
-		.poll(async () => (await paneLines(page, 'talk')).length, { timeout: 120_000 })
-		.toBeGreaterThan(0);
+		.poll(
+			async () =>
+				(await paneLines(page, 'talk')).some((l) => l.text.startsWith('container stdout line')),
+			{ timeout: 120_000 }
+		)
+		.toBe(true);
 	await expect(page.getByTestId('task-log-flaky')).toHaveCount(0);
 
 	await page.getByTestId('task-log-toggle-flaky').click();
+	// The same shape on the sibling: the http plugin's attempt also opens with
+	// the Orker's `workdir …` line, before any request is made.
 	await expect
-		.poll(async () => (await paneLines(page, 'flaky')).length, { timeout: 120_000 })
-		.toBeGreaterThan(0);
+		.poll(
+			async () => (await paneLines(page, 'flaky')).some((l) => l.text.startsWith('http GET ')),
+			{ timeout: 120_000 }
+		)
+		.toBe(true);
 
 	const talkTexts = (await paneLines(page, 'talk')).map((l) => l.text);
 	const flakyTexts = (await paneLines(page, 'flaky')).map((l) => l.text);
@@ -364,10 +380,24 @@ test("a container application's stdout and stderr arrive live and render apart",
 	await page.getByTestId('task-log-toggle-talk').click();
 
 	// LIVE: lines are on screen while the run itself still reads RUNNING, so
-	// nothing here came from an artifact published at the end.
+	// nothing here came from an artifact published at the end. The poll carries
+	// EVERY condition the block below asserts — six lines in the pane and at
+	// least one of each of the application's own two streams — because the
+	// plugin's three lifecycle lines can satisfy a bare count while the
+	// application is still silent.
 	await expect
-		.poll(async () => (await paneLines(page, 'talk')).length, { timeout: 120_000 })
-		.toBeGreaterThanOrEqual(6);
+		.poll(
+			async () => {
+				const lines = await paneLines(page, 'talk');
+				return {
+					six: lines.length >= 6,
+					stdout: lines.some((l) => l.text.startsWith('container stdout line')),
+					stderr: lines.some((l) => l.text.startsWith('container stderr line'))
+				};
+			},
+			{ timeout: 120_000 }
+		)
+		.toEqual({ six: true, stdout: true, stderr: true });
 	const runStatusWhenLive = (await page.getByTestId('run-status').innerText()).trim();
 	const taskStatusWhenLive = (await page.getByTestId('task-talk-status').innerText()).trim();
 	expect(runStatusWhenLive).toBe('RUNNING');
@@ -541,12 +571,29 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await expect(page.getByTestId('event-last-seq')).toContainText('#');
 	const allRows = await page.getByTestId('event-entry').count();
 	await page.getByTestId('event-filter-run').click();
+	// A filter click repaints the list on Svelte's schedule, so wait for the
+	// repaint the assertions describe instead of reading whatever the DOM holds
+	// one tick after the click. The wait also refuses an EMPTY list, which an
+	// `every()` would have called a pass.
+	await expect
+		.poll(async () => {
+			const rows = await page.getByTestId('event-entry').allTextContents();
+			return rows.length > 0 && rows.every((row) => row.includes('RUN_'));
+		})
+		.toBe(true);
 	const runRows = await page.getByTestId('event-entry').allTextContents();
 	expect(runRows.length).toBeGreaterThan(0);
 	expect(runRows.length).toBeLessThan(allRows);
 	expect(runRows.every((row) => row.includes('RUN_'))).toBe(true);
 	await page.getByTestId('event-filter-tasks').click();
+	await expect
+		.poll(async () => {
+			const rows = await page.getByTestId('event-entry').allTextContents();
+			return rows.length > 0 && rows.every((row) => row.includes('TASK_'));
+		})
+		.toBe(true);
 	const taskRows = await page.getByTestId('event-entry').allTextContents();
+	expect(taskRows.length).toBeGreaterThan(0);
 	expect(taskRows.every((row) => row.includes('TASK_'))).toBe(true);
 	await page.getByTestId('event-filter-all').click();
 
@@ -594,6 +641,13 @@ test('the event view opens and closes while task state keeps updating', async ({
 	note(`failure rows tinted ${tint} against ${plain} for the rest`);
 
 	await page.getByTestId('event-filter-failures').click();
+	// Same as the chips above: wait for the repaint that is asserted.
+	await expect
+		.poll(async () => {
+			const rows = await page.getByTestId('event-entry').allTextContents();
+			return rows.length >= 2 && rows.every((row) => row.includes('FAILED'));
+		})
+		.toBe(true);
 	const onlyFailures = await page.getByTestId('event-entry').allTextContents();
 	expect(onlyFailures.length).toBeGreaterThanOrEqual(2);
 	expect(onlyFailures.every((row) => row.includes('FAILED'))).toBe(true);

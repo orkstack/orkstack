@@ -187,6 +187,10 @@ test('the page before this milestone: an event log on load, a marker in the pane
 	await page.getByTestId('task-log-toggle-talk').click();
 	const lines = page.getByTestId('task-log-talk').getByTestId('task-log-line');
 	await expect(lines.first()).toBeVisible({ timeout: 60_000 });
+	// The run is FINISHED, so its whole log replays and the stream then ends.
+	// Wait for that end before reading the pane: a first visible line is not
+	// the last one, and every assertion below is about the SET of lines.
+	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 60_000 });
 	const texts = await lines.allInnerTexts();
 	// The wire, rendered as text: a reader sees the marker and both streams in
 	// one colour.
@@ -220,6 +224,7 @@ test('the page after it: tasks first, the marker decoded, the events one click a
 	await page.getByTestId('task-log-toggle-talk').click();
 	const lines = page.getByTestId('task-log-talk').getByTestId('task-log-line');
 	await expect(lines.first()).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 60_000 });
 	const rows = await lines.evaluateAll((nodes) =>
 		nodes.map((n) => ({
 			stream: n.getAttribute('data-stream'),
