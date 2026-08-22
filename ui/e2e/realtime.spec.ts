@@ -279,12 +279,22 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 		expect(logText).toContain(`[${taskId}]`);
 	}
 
-	// 8. The page never reloaded during the transitions.
+	// 8. The page never reloaded during the transitions, and never left this
+	//    run. The URL gained `?events=1` above, because that is where the
+	//    event view's state lives since M11.4 and step 7 asked for it — a
+	//    same-route navigation whose loader was never re-entered, which is
+	//    what the marker says. Everything else about the address is
+	//    unchanged: same page, same namespace, one parameter this test set
+	//    itself.
 	const marker = await page.evaluate(
 		() => (window as unknown as { __orkLiveMarker?: string }).__orkLiveMarker
 	);
 	expect(marker).toBe('alive');
-	expect(page.url()).toBe(runUrl);
+	const now = new URL(page.url());
+	const landed = new URL(runUrl);
+	expect(now.origin + now.pathname).toBe(landed.origin + landed.pathname);
+	expect(now.searchParams.get('ns')).toBe(landed.searchParams.get('ns'));
+	expect(now.searchParams.get('events')).toBe('1');
 
 	await page.screenshot({ path: logPath('screenshot-run-succeeded.png'), fullPage: true });
 
