@@ -47,46 +47,24 @@ import { workflow } from "@bastani/workflows";
 import { Type, type Static } from "typebox";
 
 import milestoneFinish from "./milestone-finish.js";
+import {
+  ADVERSARY_ROUTE,
+  ARCHITECTURE_ROUTE,
+  REPORT_ROUTE,
+  implementationRoute,
+} from "./support/model-policy.js";
 
-// ---------------------------------------------------------------------------
-// Models. Roles per docs/MODEL_SELECTION.md; every id and thinking level below
-// was checked against the configured catalog before launch (2026-08-20).
-//   design (ARCHITECT) -> contract-setting architecture              => max
-//   adversarial probe  -> high cost of error (silent contract break) => max
-//   repair             -> triage/repair                              => high
-//   report             -> final reporting                            => medium
-// Slice children pin their own cross-provider chains; they are not overridden.
-//
-// The design stage is the one place a single call is worth `max` twice over:
-// it fixes the log-stream wire format, the editing semantics and the Admin
-// surface that all seven slices inherit, and a slice cannot cheaply revise a
-// decision it was handed. So the level does NOT decay down the chain
-// (docs/MODEL_SELECTION.md rule 6). claude-fable-5 leads and claude-opus-5
-// backs it because the first fallback should preserve reasoning depth, not
-// provider spread; the chain still spans all three subscriptions from its
-// third entry. Same chain v0.0.3 ran to completion.
-// ---------------------------------------------------------------------------
-const DESIGN_MODEL = "anthropic/claude-fable-5:max";
-const DESIGN_FALLBACKS = [
-  "anthropic/claude-opus-5:max",
-  "openai-codex/gpt-5.6-sol:max",
-  "opencode-go/kimi-k3:max",
-];
+// Routes follow risk and evidence. This milestone has a cross-process design,
+// but Fable is reserved for an explicit unresolved architectural block. Sonnet
+// implements approved slices, Luna reviews first, and OpenCode Go attacks the
+// finished stack with executable probes.
+const DESIGN_ROUTE = ARCHITECTURE_ROUTE;
+const ADVERSARY_ROUTE_DEFAULT = ADVERSARY_ROUTE;
+const REPORT_ROUTE_DEFAULT = REPORT_ROUTE;
 
-const ADVERSARY_MODEL = "openai-codex/gpt-5.6-sol:max";
-const ADVERSARY_FALLBACKS = [
-  "anthropic/claude-opus-5:max",
-  "openai-codex/gpt-5.6-terra:max",
-];
-
-const REPAIR_MODEL = "anthropic/claude-opus-5:high";
-const REPAIR_FALLBACKS = [
-  "openai-codex/gpt-5.6-luna:high",
-  "opencode-go/kimi-k3:max",
-];
-
-const REPORT_MODEL = "anthropic/claude-sonnet-5:medium";
-const REPORT_FALLBACKS = ["anthropic/claude-opus-5:medium"];
+function repairRoute(escalated = false) {
+  return implementationRoute(escalated);
+}
 
 // ---------------------------------------------------------------------------
 // Command execution. Everything deterministic goes through these.
@@ -451,8 +429,8 @@ export default workflow({
     const designPath = join(repo, ".atomic", "v004-design.md");
     const design = await ctx.task("design", {
       context: "fresh",
-      model: DESIGN_MODEL,
-      fallbackModels: DESIGN_FALLBACKS,
+      model: DESIGN_ROUTE.model,
+      fallbackModels: DESIGN_ROUTE.fallbackModels,
       prompt: [
         "<keepContext>",
         "You are the ARCHITECT for OrkStack v0.0.4. You are designing, NOT implementing.",
@@ -774,18 +752,21 @@ export default workflow({
     // opinion selects the probes, the shell decides the verdict.
     // -----------------------------------------------------------------------
     let probeSummary = "no slices verified; adversarial pass skipped";
+    let adversarialApproved = false;
+    let previousAdversarialKey = "";
     if (verified > 0) {
       for (let round = 1; round <= maxRepairs + 1; round += 1) {
         const adversary = await ctx.task(`adversary-${round}`, {
           context: "fresh",
           schema: probePlan,
-          model: ADVERSARY_MODEL,
-          fallbackModels: ADVERSARY_FALLBACKS,
+          model: ADVERSARY_ROUTE_DEFAULT.model,
+          fallbackModels: ADVERSARY_ROUTE_DEFAULT.fallbackModels,
           prompt: [
             "<keepContext>",
             "You are a grumpy but fair distributed-systems and frontend reviewer with fresh context.",
             `Working tree: ${lastGoodDir} (branch ${lastGoodBranch}).`,
             "Your job is to FALSIFY the claims below with executable probes, not to restate them.",
+            "Do NOT modify implementation code. Return only evidence-backed findings and probes.",
             "Do NOT invent requirements beyond these claims. Every finding needs file:line evidence.",
             "Every probe must be non-interactive, terminate on its own, and be written so that",
             "EXIT 0 MEANS THE PROPERTY HOLDS. Prefer `go test -run ...` over shell pipelines.",
@@ -841,19 +822,32 @@ export default workflow({
         const failed = results.filter((r) => !r.ok);
         const findings = plan?.findings ?? [];
 
-        if (failed.length === 0 && findings.length === 0) break;
+        if (failed.length === 0 && findings.length === 0) {
+          adversarialApproved = true;
+          break;
+        }
         if (round === maxRepairs + 1) break;
 
+        const repairKey = [
+          ...findings,
+          ...failed.map((result) => `${result.label}:${result.stdout}:${result.stderr}`),
+        ].join("\n");
+        const escalate = repairKey !== "" && repairKey === previousAdversarialKey;
+        previousAdversarialKey = repairKey;
+        const route = repairRoute(escalate);
         await ctx.task(`repair-${round}`, {
           context: "fork",
-          model: REPAIR_MODEL,
-          fallbackModels: REPAIR_FALLBACKS,
+          model: route.model,
+          fallbackModels: route.fallbackModels,
           cwd: lastGoodDir,
           prompt: [
             "<keepContext>",
             `Repair round ${round}. Work in ${lastGoodDir} on branch ${lastGoodBranch}.`,
-            "Fix ROOT CAUSES. Do not weaken, skip or delete tests, and do not edit outside the",
-            "scope of the slices already implemented. Commit on this branch when done.",
+            "You are the original slice implementer repairing your own scope. First classify each",
+            "finding as confirmed, probable, ambiguity, test deficiency, style, duplicate or false",
+            "positive. Fix confirmed defects and required test gaps only; resolve material ambiguity",
+            "against the acceptance contract. Do not weaken, skip or delete tests, and do not edit",
+            "outside the scope of the slices already implemented. Commit on this branch when done.",
             "If a finding is factually wrong, disprove it with file:line evidence instead of ignoring it.",
             "</keepContext>",
             "",
@@ -892,7 +886,7 @@ export default workflow({
     // -----------------------------------------------------------------------
     let merged = false;
     let mergeSummary = "skipped";
-    if (mergeToBase && verified === SLICES.length) {
+    if (mergeToBase && verified === SLICES.length && adversarialApproved) {
       const mergeResult = (await ctx.tool(
         "merge-and-gate",
         { branch: lastGoodBranch, into: baseBranch },
@@ -948,8 +942,8 @@ export default workflow({
 
     const report = await ctx.task("report", {
       context: "fresh",
-      model: REPORT_MODEL,
-      fallbackModels: REPORT_FALLBACKS,
+      model: REPORT_ROUTE_DEFAULT.model,
+      fallbackModels: REPORT_ROUTE_DEFAULT.fallbackModels,
       prompt: [
         "Write a short, factual completion report for an engineer who was away.",
         "No preamble, no restating the task, no praise. State what is now true, what is not,",

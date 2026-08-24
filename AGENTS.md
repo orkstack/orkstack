@@ -211,6 +211,56 @@ scripts/               Dev helper scripts
 6. Commit with a Conventional Commit message (§7). Update the relevant milestone
    todo.
 
+### 4A. Agent/model routing and review discipline
+
+Agent capability is selected per task, not assigned permanently to a role. Score
+architectural novelty, cross-module coupling, blast radius, concurrency or
+distributed-state complexity, requirement ambiguity, deterministic-verification
+difficulty, security or data-integrity impact, and migration or compatibility
+risk from 0 to 2 each. Use `docs/MODEL_SELECTION.md` for the risk bands and
+catalog-checked model routes.
+
+- Use the least costly model that can meet the engineering bar. Sonnet is the
+  default implementer once the design, contracts and acceptance criteria are
+  explicit. Use Opus for difficult implementation, non-local debugging, subtle
+  state or concurrency, security-sensitive work, or evidence that Sonnet is
+  insufficient. Reserve Fable for unresolved high-impact architecture,
+  irreversible choices, severe ambiguity, or arbitration.
+- Run deterministic checks before expensive review: compile, type, unit,
+  integration, schema, lint, security, migration, fuzz, property and runtime
+  checks that apply. A model's claim that a check passed is never evidence.
+- Reviewers get fresh context and inspect the specification, diff, contracts,
+  tests and runtime evidence rather than the implementer's reasoning history.
+  Start with Luna; use Terra for non-trivial semantic or invariant review; use
+  Sol only for critical changes, disagreement or unresolved severe findings.
+- OpenCode Go agents are adversaries by default. They try to falsify the change
+  and report evidence-backed findings and executable probes; they do not edit
+  implementation code unless explicitly assigned repair ownership.
+- Classify and consolidate findings before repair: confirmed defect, probable
+  defect, ambiguity, architectural concern, test deficiency, style preference,
+  duplicate or false positive. Do not create churn from style-only findings.
+- Repairs normally return to the original implementer with the smallest useful
+  packet: the confirmed finding, failing evidence, acceptance item, affected
+  region and violated invariant. If the same model fails to fix a materially
+  identical issue twice, escalate Sonnet to Opus and unresolved Opus reasoning
+  to Fable or an arbiter. All loops have a fixed iteration limit.
+- Preserve provider diversity where it lowers correlated error, but do not
+  force every fallback chain to use every provider. A fallback handles
+  availability failure; it does not replace evidence-based escalation.
+- Treat subscriptions as finite budgets. Below 60% use normal routing; at
+  60–80% avoid Fable; at 80–90% reserve Fable, Opus and Sol for blocking or
+  high-risk work; above 90% use frontier capacity only for project-blocking or
+  high-risk work. Prefer cheap adversaries for routine analysis.
+- Record useful routing metrics when available: first-pass acceptance, repair
+  rounds, defects and false positives by reviewer tier, escalations, tokens,
+  cost, latency, escaped defects, post-acceptance test failures, frontier use
+  and reviewer disagreement. Adjust task-class routing from evidence.
+
+The workflow graph must keep architecture, implementation, deterministic gates,
+independent review, adversarial analysis, repair and final evidence as separate
+steps. Acceptance requires executable evidence and independent review; model
+consensus is supporting evidence only.
+
 ## 5. Testing standards (behavior first)
 
 - **Unit**: pure logic (DSL compile, template rendering, plugin logic) with table

@@ -54,26 +54,22 @@ import { workflow } from "@bastani/workflows";
 import { Type, type Static } from "typebox";
 
 import milestoneFinish from "./milestone-finish.js";
+import {
+  ADVERSARY_ROUTE,
+  REPORT_ROUTE,
+  implementationRoute,
+} from "./support/model-policy.js";
 
-// ---------------------------------------------------------------------------
-// Models. Same roles and the same catalog-verified chains the first run used.
-// There is no design stage here — the contract is already written — so the
-// adversary is the one place `max` is spent on judgement.
-// ---------------------------------------------------------------------------
-const ADVERSARY_MODEL = "openai-codex/gpt-5.6-sol:max";
-const ADVERSARY_FALLBACKS = [
-  "anthropic/claude-opus-5:max",
-  "openai-codex/gpt-5.6-terra:max",
-];
+// The contract already exists, so this continuation starts with cheap
+// OpenCode Go falsification. Repairs stay with the slice implementer: Sonnet
+// first, then Opus only after repeated failure. Reporting uses a cheap factual
+// route. See docs/MODEL_SELECTION.md.
+const ADVERSARY_ROUTE_DEFAULT = ADVERSARY_ROUTE;
+const REPORT_ROUTE_DEFAULT = REPORT_ROUTE;
 
-const REPAIR_MODEL = "anthropic/claude-opus-5:high";
-const REPAIR_FALLBACKS = [
-  "openai-codex/gpt-5.6-luna:high",
-  "opencode-go/kimi-k3:max",
-];
-
-const REPORT_MODEL = "anthropic/claude-sonnet-5:medium";
-const REPORT_FALLBACKS = ["anthropic/claude-opus-5:medium"];
+function repairRoute(escalated = false) {
+  return implementationRoute(escalated);
+}
 
 // ---------------------------------------------------------------------------
 // Command execution.
@@ -615,18 +611,21 @@ export default workflow({
     // Adversarial pass over the finished stack.
     // -----------------------------------------------------------------------
     let probeSummary = "no slices verified; adversarial pass skipped";
+    let adversarialApproved = false;
+    let previousAdversarialKey = "";
     if (verified > 0) {
       for (let round = 1; round <= maxRepairs + 1; round += 1) {
         const adversary = await ctx.task(`adversary-${round}`, {
           context: "fresh",
           schema: probePlan,
-          model: ADVERSARY_MODEL,
-          fallbackModels: ADVERSARY_FALLBACKS,
+          model: ADVERSARY_ROUTE_DEFAULT.model,
+          fallbackModels: ADVERSARY_ROUTE_DEFAULT.fallbackModels,
           prompt: [
             "<keepContext>",
             "You are a grumpy but fair distributed-systems and frontend reviewer with fresh context.",
             `Working tree: ${lastGoodDir} (branch ${lastGoodBranch}).`,
             "Your job is to FALSIFY the claims below with executable probes, not to restate them.",
+            "Do NOT modify implementation code. Return only evidence-backed findings and probes.",
             "Do NOT invent requirements beyond these claims. Every finding needs file:line evidence.",
             "Every probe must be non-interactive, terminate on its own, and be written so that",
             "EXIT 0 MEANS THE PROPERTY HOLDS. Prefer `go test -run ...` over shell pipelines.",
@@ -676,20 +675,33 @@ export default workflow({
         const failed = results.filter((r) => !r.ok);
         const findings = plan?.findings ?? [];
 
-        if (failed.length === 0 && findings.length === 0) break;
+        if (failed.length === 0 && findings.length === 0) {
+          adversarialApproved = true;
+          break;
+        }
         if (round === maxRepairs + 1) break;
 
+        const repairKey = [
+          ...findings,
+          ...failed.map((result) => `${result.label}:${result.stdout}:${result.stderr}`),
+        ].join("\n");
+        const escalate = repairKey !== "" && repairKey === previousAdversarialKey;
+        previousAdversarialKey = repairKey;
+        const route = repairRoute(escalate);
         await ctx.task(`repair-${round}`, {
           context: "fork",
-          model: REPAIR_MODEL,
-          fallbackModels: REPAIR_FALLBACKS,
+          model: route.model,
+          fallbackModels: route.fallbackModels,
           cwd: lastGoodDir,
           prompt: [
             "<keepContext>",
             `Repair round ${round}. Work in ${lastGoodDir} on branch ${lastGoodBranch}.`,
-            "Fix ROOT CAUSES. Do not weaken, skip or delete tests. Do not add a failure mode to a",
-            "read that worked before. Do not touch internal/orker, cmd/orker or internal/engine",
-            "beyond what a specific finding strictly requires. Commit on this branch when done.",
+            "You are the original slice implementer repairing your own scope. First classify each",
+            "finding as confirmed, probable, ambiguity, test deficiency, style, duplicate or false",
+            "positive. Fix confirmed defects and required test gaps only; resolve material ambiguity",
+            "against the acceptance contract. Do not weaken, skip or delete tests. Do not add a failure",
+            "mode to a read that worked before. Do not touch other subsystems beyond the finding's",
+            "scope. Commit on this branch when done.",
             "If a finding is factually wrong, disprove it with file:line evidence instead of ignoring it.",
             "</keepContext>",
             "",
@@ -726,7 +738,7 @@ export default workflow({
     // -----------------------------------------------------------------------
     let merged = false;
     let mergeSummary = "skipped";
-    if (mergeToTarget && verified === SLICES.length) {
+    if (mergeToTarget && verified === SLICES.length && adversarialApproved) {
       const mergeResult = (await ctx.tool(
         "merge-and-gate",
         { branch: lastGoodBranch, into: mergeTarget },
@@ -782,8 +794,8 @@ export default workflow({
 
     const report = await ctx.task("report", {
       context: "fresh",
-      model: REPORT_MODEL,
-      fallbackModels: REPORT_FALLBACKS,
+      model: REPORT_ROUTE_DEFAULT.model,
+      fallbackModels: REPORT_ROUTE_DEFAULT.fallbackModels,
       prompt: [
         "Write a short, factual completion report for an engineer who was away.",
         "No preamble, no restating the task, no praise. State what is now true, what is not,",

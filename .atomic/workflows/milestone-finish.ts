@@ -4,18 +4,10 @@
 // CURRENT worktree state (it does not restart work from scratch).
 //
 // Why this exists: the builtin `ralph`/`goal` workflows route models
-// internally, so a provider-wide 429 blocks the whole run. This workflow pins
-// an explicit model per ROLE with CROSS-PROVIDER fallback chains, so a rate
-// limit or usage-limit exhaustion on one provider advances to the other
-// instead of blocking. Primaries are deliberately spread across OpenAI and
-// Anthropic to balance subscription burn.
-//
-// Model roles follow docs/models/model-selection.md:
-//   worker/orchestrator -> gpt-5.6-luna  (frontier, best value workhorse)
-//   judgment gate       -> gpt-5.6-sol   (accuracy ceiling; a wrong verdict
-//                                         discards a whole loop)
-//   second reviewer     -> claude-opus-5 (different family => decorrelated
-//                                         review errors, per the guide)
+// internally. This workflow keeps deterministic gates authoritative, starts
+// implementation with the least costly capable route, uses fresh independent
+// review, and escalates only when evidence requires it. Provider diversity is
+// deliberate but no quota-spanning chain is mandatory.
 //
 // Verification is authoritative: every check runs through a durable
 // ctx.tool(...) node and the REAL exit status feeds review/repair. Models
@@ -26,54 +18,22 @@ import { spawnSync } from "node:child_process";
 import { workflow } from "@bastani/workflows";
 import { Type, type Static } from "typebox";
 
-// ---------------------------------------------------------------------------
-// Model chains. User has Claude Max plan with 5x more quota.
-// Prioritize Claude Opus 5 as primary; OpenAI/OpenCode Go as fallbacks.
-// Capability policy (docs/models/model-selection.md):
-//   - claude-opus-5: top anthropic, primary (Max plan active)
-//   - gpt-5.6-luna: frontier openai workhorse (secondary)
-//   - kimi-k3:      frontier opencode-go, near-top accuracy at low cost
-//   - gpt-5.6-sol:  accuracy ceiling for judgment gates
-//   - grok-4.5:     budget capability
-// ---------------------------------------------------------------------------
-const WORKER_CHAIN_CLAUDE_PRIMARY = {
-  model: "anthropic/claude-opus-5:max",
-  fallbacks: [
-    "openai-codex/gpt-5.6-luna:max",
-    "opencode-go/kimi-k3:max",
-    "opencode-go/gpt-5.6-luna:max",
-    "opencode-go/grok-4.5:high",
-  ],
-};
+import {
+  DEEP_REVIEW_ROUTE,
+  FIRST_REVIEW_ROUTE,
+  implementationRoute,
+} from "./support/model-policy.js";
 
-const WORKER_CHAIN_OPENAI_FALLBACK = {
-  model: "openai-codex/gpt-5.6-luna:max",
-  fallbacks: [
-    "anthropic/claude-opus-5:max",
-    "opencode-go/kimi-k3:max",
-    "opencode-go/gpt-5.6-luna:max",
-  ],
-};
-
-// Round 1, 3, ... lead with Claude (primary); round 2, 4, ... lead with OpenAI (fallback).
-function workerChain(round: number): { model: string; fallbacks: readonly string[] } {
-  return round % 2 === 1 ? WORKER_CHAIN_CLAUDE_PRIMARY : WORKER_CHAIN_OPENAI_FALLBACK;
+// Routes are risk-based defaults, not permanent role assignments. Sonnet owns
+// implementation after the contract is clear; Opus is selected only after
+// repeated repair failure. Luna is the cheap first review and Terra provides
+// the deeper review for non-trivial slices. See docs/MODEL_SELECTION.md.
+function workerRoute(escalated = false) {
+  return implementationRoute(escalated);
 }
 
-const JUDGE_MODEL = "anthropic/claude-opus-5:max";
-const JUDGE_FALLBACKS = [
-  "openai-codex/gpt-5.6-sol:max",
-  "opencode-go/kimi-k3:max",
-  "opencode-go/gpt-5.6-luna:max",
-];
-
-// Second reviewer intentionally leads with OpenAI to decorrelate review errors.
-const JUDGE_B_MODEL = "openai-codex/gpt-5.6-sol:max";
-const JUDGE_B_FALLBACKS = [
-  "anthropic/claude-opus-5:max",
-  "opencode-go/kimi-k3:max",
-  "opencode-go/glm-5.2:max",
-];
+const JUDGE_ROUTE = FIRST_REVIEW_ROUTE;
+const DEEP_JUDGE_ROUTE = DEEP_REVIEW_ROUTE;
 
 const reviewDecision = Type.Object(
   {
@@ -162,7 +122,7 @@ function failureDetail(outcomes: readonly CheckOutcome[]): string {
 export default workflow({
   name: "milestone-finish",
   description:
-    "Finish a partially-built milestone in its worktree: deterministic gates, cross-provider model chains, skeptical review, bounded repair.",
+    "Finish a partially-built milestone in its worktree: deterministic gates, risk-based model routing, fresh independent review, skeptical adversarial checks and bounded repair.",
   inputs: {
     milestone: Type.String({ description: "Milestone id, e.g. M3." }),
     objective: Type.String({ description: "What this milestone must deliver." }),
@@ -236,9 +196,30 @@ export default workflow({
       return { branch, action: argv.join(" ") };
     });
 
+    // Implementation always precedes review. This stage continues partial work
+    // when present, but never lets a green baseline turn into a review-only
+    // pass with no agent responsible for the requested change.
     let approved = false;
     let roundsUsed = 0;
     let gateSummary = "";
+    let previousRepairKey = "";
+    await ctx.task("implement", {
+      context: "fork",
+      model: workerRoute(false).model,
+      fallbackModels: workerRoute(false).fallbackModels,
+      prompt: [
+        contract,
+        "",
+        "You own implementation for this slice. Read the existing code and the acceptance",
+        "contract, then WRITE the missing behavior and behavior tests. Continue partial work",
+        "without restarting or reverting it. Do not spend this stage only auditing or reporting",
+        "that the branch is incomplete. Run the applicable checks, keep tests strong, and commit",
+        "your implementation on the branch. If the acceptance is already fully implemented,",
+        "prove that with the existing code and tests, make no unnecessary changes, and commit only",
+        "if the worktree is already clean.",
+      ].join("\n"),
+    });
+
 
     for (let round = 1; round <= maxRounds; round += 1) {
       roundsUsed = round;
@@ -260,10 +241,14 @@ export default workflow({
       // ---- Gates red: repair against real failure output, then re-gate. ----
       if (!gatesGreen) {
         if (round === maxRounds) break;
+        const repairKey = failureDetail(outcomes);
+        const escalate = repairKey !== "" && repairKey === previousRepairKey;
+        previousRepairKey = repairKey;
+        const route = workerRoute(escalate);
         await ctx.task(`repair-gates-${round}`, {
           context: "fork",
-          model: workerChain(round).model,
-          fallbackModels: workerChain(round).fallbacks,
+          model: route.model,
+          fallbackModels: route.fallbackModels,
           prompt: [
             contract,
             "",
@@ -297,49 +282,59 @@ export default workflow({
         "get green. Inspect the real code and the committed proof artifacts.",
         "",
         "Do NOT invent requirements beyond the acceptance contract. Report only",
-        "specific, actionable, evidence-backed defects with file:line references.",
+        "specific, actionable, evidence-backed findings with file:line references.",
+        "Classify each finding as confirmed, probable, ambiguity, test deficiency, style,",
+        "duplicate or false positive. Do not report style-only preferences as defects.",
         "Approve only when every acceptance item is verifiably met.",
         "Return structured_output with approved and findings.",
       ].join("\n");
 
-      const reviews = await ctx.parallel(
-        [
-          {
-            name: `review-a-${round}`,
-            context: "fresh",
-            schema: reviewDecision,
-            model: JUDGE_MODEL,
-            fallbackModels: JUDGE_FALLBACKS,
-            prompt: reviewPrompt,
-          },
-          {
-            name: `review-b-${round}`,
-            context: "fresh",
-            schema: reviewDecision,
-            model: JUDGE_B_MODEL,
-            fallbackModels: JUDGE_B_FALLBACKS,
-            prompt: reviewPrompt,
-          },
-        ],
-        { concurrency: 2 },
-      );
+      const firstReview = await ctx.task(`review-luna-${round}`, {
+        context: "fresh",
+        schema: reviewDecision,
+        model: JUDGE_ROUTE.model,
+        fallbackModels: JUDGE_ROUTE.fallbackModels,
+        prompt: reviewPrompt,
+      });
 
-      const decisions = reviews.map((r) => r.structured as ReviewDecision);
+      const decisions = [firstReview.structured as ReviewDecision];
+      // Every non-trivial slice gets Terra semantic review after Luna. This
+      // also escalates meaningful Luna findings instead of bypassing them.
+      const deepReview = await ctx.task(`review-terra-${round}`, {
+        context: "fresh",
+        schema: reviewDecision,
+        model: DEEP_JUDGE_ROUTE.model,
+        fallbackModels: DEEP_JUDGE_ROUTE.fallbackModels,
+        prompt: [
+          reviewPrompt,
+          "",
+          `Luna's first-pass result was ${decisions[0]?.approved === true ? "approved" : "not approved"}.`,
+          "Perform the deeper semantic review now: check invariants, architecture fit,",
+          "concurrency/state behavior and migration risk. Confirm or reject Luna's findings",
+          "with evidence, and report only defects within the acceptance contract.",
+        ].join("\n"),
+      });
+      decisions.push(deepReview.structured as ReviewDecision);
+
       const findings = decisions.flatMap((d) => d?.findings ?? []);
-      // Both reviewers must approve. Either one objecting sends it back.
+      // Every review that ran must approve. Any objection sends the same
+      // implementer to repair with a minimal evidence packet.
       approved = decisions.every((d) => d?.approved === true);
-
       if (approved) break;
       if (round === maxRounds) break;
 
+      const repairKey = findings.join("\n") || decisions.map((d) => String(d?.approved)).join("|");
+      const escalate = repairKey !== "" && repairKey === previousRepairKey;
+      previousRepairKey = repairKey;
+      const route = workerRoute(escalate);
       await ctx.task(`repair-review-${round}`, {
         context: "fork",
-        model: workerChain(round).model,
-        fallbackModels: workerChain(round).fallbacks,
+        model: route.model,
+        fallbackModels: route.fallbackModels,
         prompt: [
           contract,
           "",
-          `Round ${round} review did NOT approve. Fix every finding below, then`,
+          `Round ${round} review did NOT approve. Fix every confirmed finding below, then`,
           "re-run the relevant checks yourself and commit. Do not weaken tests.",
           "If a finding is factually wrong, prove it with file:line evidence in",
           "your final message instead of silently ignoring it.",
