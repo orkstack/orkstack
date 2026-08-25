@@ -233,6 +233,10 @@ catalog-checked model routes.
   tests and runtime evidence rather than the implementer's reasoning history.
   Start with Luna; use Terra for non-trivial semantic or invariant review; use
   Sol only for critical changes, disagreement or unresolved severe findings.
+- `openai-codex/gpt-5.4-mini:high` is the inexpensive high-thinking adversary,
+  with `anthropic/claude-haiku-4-5:high` as its provider-diverse fallback. They
+  propose evidence-backed falsification probes and findings but do not own
+  repairs.
 - Classify and consolidate findings before repair: confirmed defect, probable
   defect, ambiguity, architectural concern, test deficiency, style preference,
   duplicate or false positive. Do not create churn from style-only findings.
