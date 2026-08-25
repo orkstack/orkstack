@@ -58,7 +58,7 @@ suffix listed for that model. An empty catalog means stages stay unpinned.
 | First review | `openai-codex/gpt-5.6-luna:medium` | Compliance, obvious regressions, test and API gaps |
 | Deep review | `openai-codex/gpt-5.6-terra:high` | Invariants, architecture, concurrency, migration and semantic risk |
 | Review escalation | `openai-codex/gpt-5.6-sol:max` | Critical changes, disagreement or unresolved severe findings |
-| Adversary | `opencode-go/deepseek-v4-flash:high`, `opencode-go/qwen3.7-plus:high`, `opencode-go/mimo-v2.5:high` | Falsification, edge cases and hidden failure modes; no code edits |
+| Adversary | `openai-codex/gpt-5.4-mini:high`, `anthropic/claude-haiku-4-5:high` | Inexpensive high-thinking falsification, edge cases and hidden failure modes with OpenAI/Anthropic provider diversity; no code edits |
 | Reporting | `anthropic/claude-sonnet-5:medium` | Short factual reports; use a cheaper catalog model when suitable |
 
 Thinking level follows role and failure cost: `max` is reserved for security,
@@ -79,10 +79,12 @@ wins only when the catalog supports it.
   meaningful Luna findings. Reserve Sol for critical changes, disagreement or
   unresolved severe findings. Reviewers use fresh context and do not modify
   implementation code.
-- **Adversarial work:** Prefer inexpensive OpenCode Go models. Require each
-  finding to cite evidence and each probe to name its command, input, expected
-  result and risk. Execute selected probes deterministically; do not treat the
-  adversary's report as proof.
+- **Adversarial work:** Prefer `openai-codex/gpt-5.4-mini:high`, with
+  `anthropic/claude-haiku-4-5:high` as its provider-diverse fallback, for
+  inexpensive high-thinking analysis. Require each finding to cite evidence
+  and each probe to name its command, input, expected result and risk. Execute
+  selected probes deterministically; do not treat the adversary's report as
+  proof.
 - **Consolidation:** Classify findings as confirmed, probable, ambiguity,
   architectural concern, test deficiency, style, duplicate or false positive.
   Repair only confirmed defects, accepted architecture concerns, required test
@@ -106,6 +108,7 @@ wins only when the catalog supports it.
 `.atomic/workflows/support/model-policy.ts` is the shared source for current
 routes. It uses Opus/high for the established high-risk architecture stages,
 Sonnet/high for implementation, Luna/medium for first review, Terra/high for
-non-trivial deep review, OpenCode Go for adversarial probes, and Sonnet/medium
-for reporting. Fable and Sol are not routine workflow stages; pass them only
-when the risk evidence meets the escalation rules above.
+non-trivial deep review, GPT-5.4 Mini/high with Haiku/high fallback for
+inexpensive provider-diverse adversarial probes, and Sonnet/medium for
+reporting. Fable and Sol are not routine workflow stages; pass them only when
+the risk evidence meets the escalation rules above.

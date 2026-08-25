@@ -25,10 +25,7 @@ export const ARCHITECTURE_ROUTE: ModelRoute = {
 // availability failures; it is not a substitute for evidence-based escalation.
 const IMPLEMENTATION_ROUTE: ModelRoute = {
   model: "anthropic/claude-sonnet-5:high",
-  fallbackModels: [
-    "openai-codex/gpt-5.6-luna:high",
-    "opencode-go/deepseek-v4-flash:high",
-  ],
+  fallbackModels: ["openai-codex/gpt-5.6-luna:high"],
 };
 
 const ESCALATED_IMPLEMENTATION_ROUTE: ModelRoute = {
@@ -58,14 +55,11 @@ export const DEEP_REVIEW_ROUTE: ModelRoute = {
   ],
 };
 
-// OpenCode Go models act as adversaries. They propose falsification probes and
-// findings but do not own repairs.
+// GPT-5.4 Mini is the inexpensive high-thinking adversary. Haiku preserves
+// provider diversity as its fallback; neither model owns repairs.
 export const ADVERSARY_ROUTE: ModelRoute = {
-  model: "opencode-go/deepseek-v4-flash:high",
-  fallbackModels: [
-    "opencode-go/qwen3.7-plus:high",
-    "opencode-go/mimo-v2.5:high",
-  ],
+  model: "openai-codex/gpt-5.4-mini:high",
+  fallbackModels: ["anthropic/claude-haiku-4-5:high"],
 };
 
 export const REPORT_ROUTE: ModelRoute = {

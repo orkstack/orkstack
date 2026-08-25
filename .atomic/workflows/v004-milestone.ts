@@ -56,8 +56,8 @@ import {
 
 // Routes follow risk and evidence. This milestone has a cross-process design,
 // but Fable is reserved for an explicit unresolved architectural block. Sonnet
-// implements approved slices, Luna reviews first, and OpenCode Go attacks the
-// finished stack with executable probes.
+// implements approved slices, Luna reviews first, and GPT-5.4 Mini/high attacks
+// the finished stack with executable probes, with Haiku/high as fallback.
 const DESIGN_ROUTE = ARCHITECTURE_ROUTE;
 const ADVERSARY_ROUTE_DEFAULT = ADVERSARY_ROUTE;
 const REPORT_ROUTE_DEFAULT = REPORT_ROUTE;

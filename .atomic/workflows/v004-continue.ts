@@ -60,10 +60,10 @@ import {
   implementationRoute,
 } from "./support/model-policy.js";
 
-// The contract already exists, so this continuation starts with cheap
-// OpenCode Go falsification. Repairs stay with the slice implementer: Sonnet
-// first, then Opus only after repeated failure. Reporting uses a cheap factual
-// route. See docs/MODEL_SELECTION.md.
+// The contract already exists, so this continuation starts with inexpensive
+// GPT-5.4 Mini/high falsification and Haiku/high as fallback. Repairs stay with
+// the slice implementer: Sonnet first, then Opus only after repeated failure.
+// Reporting uses a cheap factual route. See docs/MODEL_SELECTION.md.
 const ADVERSARY_ROUTE_DEFAULT = ADVERSARY_ROUTE;
 const REPORT_ROUTE_DEFAULT = REPORT_ROUTE;
 

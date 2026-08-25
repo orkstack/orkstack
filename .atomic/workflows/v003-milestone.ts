@@ -50,8 +50,8 @@ import {
 
 // Routes follow evidence and task risk. This milestone changes several
 // cross-process contracts, so architecture uses Opus/high. Fable is reserved
-// for an explicit unresolved architectural block; OpenCode Go handles the
-// adversarial pass; Sonnet owns implementation and repair.
+// for an explicit unresolved architectural block; GPT-5.4 Mini/high handles
+// the adversarial pass with Haiku/high as fallback; Sonnet owns repairs.
 const DESIGN_ROUTE = ARCHITECTURE_ROUTE;
 const ADVERSARY_ROUTE_DEFAULT = ADVERSARY_ROUTE;
 const REPORT_ROUTE_DEFAULT = REPORT_ROUTE;
