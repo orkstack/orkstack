@@ -233,9 +233,6 @@ catalog-checked model routes.
   tests and runtime evidence rather than the implementer's reasoning history.
   Start with Luna; use Terra for non-trivial semantic or invariant review; use
   Sol only for critical changes, disagreement or unresolved severe findings.
-- OpenCode Go agents are adversaries by default. They try to falsify the change
-  and report evidence-backed findings and executable probes; they do not edit
-  implementation code unless explicitly assigned repair ownership.
 - Classify and consolidate findings before repair: confirmed defect, probable
   defect, ambiguity, architectural concern, test deficiency, style preference,
   duplicate or false positive. Do not create churn from style-only findings.
