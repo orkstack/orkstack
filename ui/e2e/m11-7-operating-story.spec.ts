@@ -62,9 +62,12 @@ const OPS_NS = `m11-7-ops-${STAMP}`;
 
 // One line per second on each of stdout/stderr — long enough that both the
 // CLI follow and the browser pane are certainly watching before the last
-// line lands, short enough that the whole consolidated proof stays minutes,
-// not tens of minutes.
-const CONTAINER_LINES = 12;
+// line lands, AND long enough for the browser's own growth check (a second
+// application line must arrive while the run still reads RUNNING) to have
+// margin after page navigation and the earlier CLI assertions have already
+// spent a few seconds of the container's run — short enough that the whole
+// consolidated proof stays minutes, not tens of minutes.
+const CONTAINER_LINES = 18;
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m11-7');
 const TRANSCRIPT = 'operating-story.txt';
@@ -301,15 +304,58 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 		(window as unknown as { __orkLiveMarker: string }).__orkLiveMarker = 'alive';
 	});
 	await page.getByTestId('task-log-toggle-talk').click();
-	await expect
-		.poll(async () => (await page.getByTestId('task-log-talk').getByTestId('task-log-line').count()) > 0, {
-			timeout: 30_000
-		})
-		.toBe(true);
+	const logPane = page.getByTestId('task-log-talk');
+	const logLines = logPane.getByTestId('task-log-line');
+	const appLines = logLines.filter({ hasText: /^m11-7 (?:stdout|stderr) line \d+$/ });
+	// `data-stream` is an attribute on the SAME element `data-testid` names —
+	// there is no child to descend into — so it must be part of one CSS
+	// selector, not chained via `.locator()` (which searches descendants and
+	// would silently match nothing, timing every wait out at 30s regardless
+	// of what actually rendered).
+	const stderrLines = logPane.locator('[data-testid="task-log-line"][data-stream="stderr"]');
+
+	// The first chunk a container task streams is its own lifecycle chatter
+	// (`workdir`, `container: using`, `container: running` —
+	// cli-follow-transcript.txt:1-3 shows exactly this on the CLI side of the
+	// same run), so a pane with ANY line already passes a check that never
+	// required application output. Require BOTH file descriptors, decoded
+	// the way taskLogs.ts promises: stdout bare text, stderr on its own
+	// data-stream row with the wire "[stderr] " marker stripped for display.
+	// The two streams are independent pipes read by independent goroutines
+	// (pkg/plugins/container/container.go streamSet), so stderr's first line
+	// can legitimately land before stdout's — the assertions below check
+	// EXISTENCE, never relative order.
+	const firstStdout = appLines.filter({ hasText: /^m11-7 stdout line 1$/ }).first();
+	const firstStderr = stderrLines.filter({ hasText: /^m11-7 stderr line 1$/ }).first();
+	await expect(firstStdout).toBeVisible({ timeout: 30_000 });
+	await expect(firstStderr).toBeVisible({ timeout: 30_000 });
+	await expect(firstStderr).not.toContainText('[stderr]');
 	const runStatusWhileLive = (await page.getByTestId('run-status').innerText()).trim();
 	expect(runStatusWhileLive).toBe('RUNNING');
+	note(
+		`browser pane shows a decoded stdout application line ("m11-7 stdout line 1") ` +
+			`AND a decoded stderr application line ("m11-7 stderr line 1", wire marker ` +
+			`stripped, data-stream="stderr") while run reads ${runStatusWhileLive}`
+	);
+
+	// GROWTH while RUNNING: the container writes one pair a second for
+	// CONTAINER_LINES seconds. A pane that showed the first pair and then
+	// stalled (lost its subscription, e.g.) must fail this — counting only
+	// MATCHED application lines, not the pane's total (which a lifecycle
+	// notice could also grow), proves the socket kept delivering rather than
+	// having delivered once.
+	const countAfterFirstPair = await appLines.count();
+	await expect.poll(async () => appLines.count(), { timeout: 15_000 }).toBeGreaterThan(countAfterFirstPair);
+	const runStatusStillLive = (await page.getByTestId('run-status').innerText()).trim();
+	expect(runStatusStillLive).toBe('RUNNING');
+	const countAfterGrowth = await appLines.count();
+	note(
+		`application line count grew from ${countAfterFirstPair} to ${countAfterGrowth} while run ` +
+			`STILL reads ${runStatusStillLive} — the browser pane is receiving live application ` +
+			`output, not stalled after the first chunk`
+	);
+
 	await shot(page, 'screenshot-live-log-in-browser.png');
-	note(`browser pane shows lines while run reads ${runStatusWhileLive}`);
 
 	// The event inspector: opened while the container may still be writing,
 	// closed once the task is done — task status keeps updating through both.

@@ -72,11 +72,16 @@ can never fail a task.
 logger, one sink, one dense sequence — which is what makes a resume cursor a
 single number and the ordering total and gap-free. stdout and stderr are told
 apart IN BAND: stderr lines carry `[stderr] `, stdout lines are bare, and so
-are the plugin's own lifecycle lines. Both readers show the marker verbatim
-today: `orkctl run logs` prints the stored line, and so does the UI pane
-(`ui/src/lib/components/TaskLogPane.svelte`), which colours a line only by
-whether the Orker wrote it. A pane that recognizes the marker, tints the line
-and strips it is M11.4's work; the CLI keeps the verbatim marker either way.
+are the plugin's own lifecycle lines. The two readers now render this
+differently, on purpose: `orkctl run logs` prints the stored line verbatim —
+the marker is already legible text, and a CLI that rewrote it would stop
+matching the bytes an operator could `grep` in the store. The UI pane
+(`ui/src/lib/taskLogs.ts`'s `decodeStreamLine`, rendered by
+`ui/src/lib/components/TaskLogPane.svelte`) decodes the marker at line-emit
+time, strips it, tints a decoded stderr line red, and carries the decoded
+origin on `data-stream` for anything that needs the fact rather than the
+colour. Same information, two renderings — the CLI keeps the wire shape, the
+pane keeps the reader from parsing it by eye.
 
 **The tag is unambiguous, because the writer escapes what would imitate it.**
 A stdout line that itself begins with `[stderr] ` (or with `[stdout] `) is
