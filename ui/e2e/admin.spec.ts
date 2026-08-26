@@ -78,7 +78,18 @@ const ENGINE = 'http://127.0.0.1:18085';
 const ENGINE_WS = 'ws://127.0.0.1:18085';
 const UI_ORIGIN = 'http://127.0.0.1:14177';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m11-6-admin-ui';
+// FORCED, never taken from the environment: this spec deletes this exact
+// namespace outright in its last-but-one test (a genuine Temporal outage,
+// see that test's own comment) to prove pool health renders every pool as
+// unavailable rather than zero. An inherited `ORK_TEMPORAL_NAMESPACE`
+// naming something else would move BOTH what this spec's own engine and
+// Orkers run against AND what that test destroys onto whatever the caller's
+// environment happened to name — reading it here would make this spec's
+// most destructive step only as safe as everything that ever set that
+// variable in a shell it might inherit from. AGENTS.md's own per-milestone
+// isolation already assigned this namespace to M11.6; this is the one
+// caller that must not let a different assignment override it.
+const TEMPORAL_NAMESPACE = 'ork-m11-6-admin-ui';
 const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? 'alpine:3.20';
 
 const STAMP = Date.now().toString(36);
@@ -86,11 +97,28 @@ const OPS_NS = `m11-6-ops-${STAMP}`;
 const HOLDS_NS = `m11-6-holds-${STAMP}`;
 const HOLDS_ORKFLOW = `m11-6-holds-orkflow-${STAMP}`;
 const LABELLED_NS = `m11-6-labelled-${STAMP}`;
+const LABEL_CONFLICT_NS = `m11-6-label-conflict-${STAMP}`;
 const DOOMED_NS = `m11-6-doomed-${STAMP}`;
 // This run's own bucket (see the topology note above): created fresh by
 // proof/M11.6/tools/bucket-ensure before either binary boots, and never
 // shared with another run of this spec.
 const BUCKET = process.env.ORK_S3_BUCKET_OVERRIDE ?? `orkstack-admin-m11-6-${STAMP}`;
+
+// bucketEnv builds the environment `proof/M11.6/tools/bucket-ensure` needs
+// for one action against THIS run's own bucket — shared between the create
+// call in beforeAll and the cleanup call in afterAll so the two can never
+// drift onto different credentials or a different bucket name.
+function bucketEnv(action: 'ensure' | 'cleanup'): NodeJS.ProcessEnv {
+	return {
+		...process.env,
+		ORK_BUCKET_ACTION: action,
+		ORK_S3_BUCKET: BUCKET,
+		ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
+		ORK_S3_REGION: s3Env.ORK_S3_REGION,
+		ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
+		ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
+	};
+}
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m11-6');
 const TRANSCRIPT = 'admin-session.txt';
@@ -180,7 +208,7 @@ test.beforeAll(async () => {
 			'# real Temporal + MinIO + Docker.',
 			`# temporal namespace: ${TEMPORAL_NAMESPACE}`,
 			`# artifact bucket:    ${BUCKET} (created fresh by this run alone)`,
-			`# ork namespaces:     ${OPS_NS}, ${HOLDS_NS}, ${LABELLED_NS}, ${DOOMED_NS}, default`,
+			`# ork namespaces:     ${OPS_NS}, ${HOLDS_NS}, ${LABELLED_NS}, ${LABEL_CONFLICT_NS}, ${DOOMED_NS}, default`,
 			`# pools:              main (this run's first Orker), gpu (this run's second)`,
 			`# container image:    ${IMAGE}`,
 			`# engine:             ${ENGINE}`,
@@ -229,14 +257,7 @@ test.beforeAll(async () => {
 	// them open has never held anything but `default`.
 	execFileSync('go', ['run', './proof/M11.6/tools/bucket-ensure'], {
 		cwd: repoRoot,
-		env: {
-			...process.env,
-			ORK_S3_BUCKET: BUCKET,
-			ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
-			ORK_S3_REGION: s3Env.ORK_S3_REGION,
-			ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
-			ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
-		}
+		env: bucketEnv('ensure')
 	});
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
@@ -301,6 +322,22 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killAll();
+	// The symmetric half of the `bucket-ensure` call in beforeAll: this
+	// run's own bucket is removed once nothing needs it any more, rather
+	// than left to accumulate the way the shared `orkstack-artifacts`
+	// bucket does (see the topology note at the top of this file). Best
+	// effort and non-fatal — a cleanup failure here is a leaked resource to
+	// clean up by hand, never a reason to fail a suite that already proved
+	// everything it set out to prove.
+	try {
+		execFileSync('go', ['run', './proof/M11.6/tools/bucket-ensure'], {
+			cwd: repoRoot,
+			env: bucketEnv('cleanup')
+		});
+		note(`removed this run's own bucket ${BUCKET}`);
+	} catch (err) {
+		note(`bucket cleanup for ${BUCKET} failed (leaked, not fatal): ${err}`);
+	}
 });
 
 // Acceptance 2: `default`'s delete control is disabled with the reason
@@ -520,6 +557,82 @@ test('editing a namespace through the Admin UI does not erase its labels', async
 	note(`namespace ${LABELLED_NS} still carries its labels after a UI edit of the description`);
 });
 
+// Acceptance 2 (round-2 review): the stale-etag "reload and re-apply"
+// recovery must not clobber a field a CONCURRENT write changed — the
+// earlier version of this fix re-read only the etag and replayed the
+// `editLabels` this form captured at the ORIGINAL open, so a label change
+// made by the very write that caused the conflict was silently reverted by
+// the retry. This namespace starts with one label; the out-of-band write
+// that produces the conflict ALSO adds a second one, and the assertion is
+// that both survive the UI's retry, not just the one present when the form
+// was first opened.
+test('a stale-etag retry re-reads labels too, so a concurrent label change survives it', async ({
+	page
+}) => {
+	await rpc('NamespaceService/CreateNamespace', {
+		namespace: { name: LABEL_CONFLICT_NS, description: 'before any edit', labels: { team: 'payments' } }
+	});
+	note(`namespace ${LABEL_CONFLICT_NS} created with labels team=payments`);
+
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	const row = page.getByTestId(`namespace-row-${LABEL_CONFLICT_NS}`);
+	await expect(row).toBeVisible();
+	await row.getByTestId(`namespace-edit-${LABEL_CONFLICT_NS}`).click();
+	const editForm = page.getByTestId(`namespace-edit-form-${LABEL_CONFLICT_NS}`);
+	await expect(editForm).toBeVisible();
+	// This form's `openEdit` has now captured labels {team: payments} — the
+	// value the fix under test must NOT replay verbatim into the retry.
+
+	// Somebody else changes BOTH the description and the labels underneath
+	// this open edit, using the etag this form is no longer holding.
+	const current = await rpc<{ namespace: NamespaceWire }>('NamespaceService/GetNamespace', {
+		name: LABEL_CONFLICT_NS
+	});
+	await rpc('NamespaceService/UpdateNamespace', {
+		namespace: {
+			name: LABEL_CONFLICT_NS,
+			description: 'changed out from underneath, with a new label too',
+			defaultPool: current.namespace.defaultPool,
+			allowedPools: current.namespace.allowedPools,
+			labels: { team: 'payments', tier: 'gold' },
+			etag: current.namespace.etag
+		}
+	});
+	note(
+		`namespace ${LABEL_CONFLICT_NS} updated out-of-band: description changed AND ` +
+			`a label (tier=gold) added, underneath the UI's open edit`
+	);
+
+	await editForm
+		.getByTestId(`ns-edit-description-${LABEL_CONFLICT_NS}`)
+		.fill('my UI edit, unrelated to labels');
+	await editForm.getByTestId(`ns-edit-save-${LABEL_CONFLICT_NS}`).click();
+
+	const conflict = page.getByTestId(`namespace-edit-conflict-${LABEL_CONFLICT_NS}`);
+	await expect(conflict).toBeVisible();
+	await shot(page, 'screenshot-admin-namespace-conflict-labels.png');
+
+	await page.getByTestId(`namespace-edit-conflict-retry-${LABEL_CONFLICT_NS}`).click();
+	await expect(page.getByTestId(`namespace-edit-form-${LABEL_CONFLICT_NS}`)).toHaveCount(0);
+	await expect(page.getByTestId(`namespace-row-${LABEL_CONFLICT_NS}`)).toContainText(
+		'my UI edit, unrelated to labels'
+	);
+
+	const after = await rpc<{ namespace: NamespaceWire }>('NamespaceService/GetNamespace', {
+		name: LABEL_CONFLICT_NS
+	});
+	// Both labels survive: the ORIGINAL one this form captured at open, and
+	// the one added by the write that caused the conflict — which the retry
+	// only sees by re-reading, not by replaying what this form opened with.
+	expect(after.namespace.labels).toMatchObject({ team: 'payments', tier: 'gold' });
+	expect(after.namespace.description).toBe('my UI edit, unrelated to labels');
+	note(
+		`namespace ${LABEL_CONFLICT_NS}: after the conflict retry, labels are ` +
+			`${JSON.stringify(after.namespace.labels)} — the concurrent label change survived`
+	);
+	await shot(page, 'screenshot-admin-namespace-conflict-labels-resolved.png');
+});
+
 // Acceptance 2: a delete refused by the engine names the orkflow count it was
 // refused with, verbatim, and `default`'s delete control remains disabled
 // with more than one namespace in the list too — not just when it is alone
@@ -625,6 +738,14 @@ test('pool health is namespace-scoped, and reports live Orker counts and per-poo
 	await expect(cpuCard).toBeVisible();
 	await expect(cpuCard.getByTestId('pool-orker-count-cpu')).toHaveText('0');
 	await expect(cpuCard.getByTestId('pool-no-orkers-cpu')).toContainText('no live Orkers');
+	// Round-2 review: a pool with zero live Orkers is never asked for
+	// plugins at all (internal/engine/pools.go only calls PluginsOnPool
+	// when live_orker_count > 0), so its plugin caption must say "unknown",
+	// never "sampled" — this is a DIFFERENT reason than the amber
+	// unavailable-pool caption below, and gets its own testid.
+	await expect(cpuCard.getByTestId('pool-plugins-no-live-orkers-cpu')).toContainText('unknown');
+	await expect(cpuCard.getByTestId('pool-plugins-cpu')).toHaveCount(0);
+	await expect(cpuCard.getByTestId('pool-plugins-unknown-cpu')).toHaveCount(0);
 
 	// gpu: a SECOND, genuinely live, NON-default pool — this spec's own
 	// Orker, started in beforeAll — with its own real plugin list. This is
@@ -639,6 +760,89 @@ test('pool health is namespace-scoped, and reports live Orker counts and per-poo
 	await expect(gpuCard.getByTestId('pool-plugins-gpu')).toContainText('shell');
 	await expect(gpuCard.getByTestId('pool-plugins-gpu')).toContainText('container');
 	await shot(page, 'screenshot-admin-pools.png');
+});
+
+// Acceptance 5 (round-2 review): loading states are not just something
+// `retrying` (a manual click) turns on — an ordinary CLIENT-SIDE navigation
+// stalled on a slow RPC must show one too, both for a navigation BETWEEN
+// Admin tabs (the destination route's own `+page.svelte` does not exist
+// until its `load` resolves, so this layout's own indicator is what a
+// reader sees) and for a navigation that STAYS on the same route (the
+// namespace switcher on Pools, which reruns `load` without changing the
+// component SvelteKit has mounted).
+//
+// The delay is injected on the BROWSER's own fetch (`page.route`), exactly
+// as the existing "a failed Admin read…" test at the bottom of this file
+// does, and for the identical reason: a client-side navigation's `load`
+// runs in the browser, unlike the first request of a `page.goto`, which
+// runs on the Node SSR server where `page.route` cannot see it.
+test('a client-side navigation between Admin tabs shows a loading state until the destination is ready', async ({
+	page
+}) => {
+	await page.goto(`${UI_ORIGIN}/admin?ns=default`);
+	await expect(page.getByTestId('system-info')).toBeVisible();
+	await expect(page.getByTestId('admin-nav-loading')).toHaveCount(0);
+
+	let release: () => void = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route('**/orkstack.v1.NamespaceService/ListNamespaces', async (route) => {
+		await gate;
+		await route.continue();
+	});
+
+	await page.getByTestId('admin-tab-namespaces').click();
+	await expect(page.getByTestId('admin-nav-loading')).toBeVisible();
+	// SvelteKit does not swap the mounted page until the destination's
+	// `load` resolves: Overview's own content is still what is on screen.
+	await expect(page.getByTestId('system-info')).toBeVisible();
+	await shot(page, 'screenshot-admin-nav-loading.png');
+
+	release();
+	await expect(page.getByTestId('admin-nav-loading')).toHaveCount(0);
+	await expect(page.getByTestId('namespace-list')).toBeVisible();
+	await page.unroute('**/orkstack.v1.NamespaceService/ListNamespaces');
+});
+
+// The same requirement, for a navigation that does NOT change route: the
+// namespace switcher re-navigates `/admin/pools?ns=…` in place, and this
+// page's own `pools-loading` text — driven by its own `navigatingHere`, not
+// by the manual `retrying` flag `Retry` sets — is what a reader sees, in
+// place of its now-stale cards, for the span the fetch is gated.
+test('switching namespace while on Pools shows this page\'s own loading state, not the manual Retry flag', async ({
+	page
+}) => {
+	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${OPS_NS}`);
+	await expect(page.getByTestId('pool-card-main')).toBeVisible();
+	await expect(page.getByTestId('pools-loading')).toHaveCount(0);
+
+	let release: () => void = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route('**/orkstack.v1.NamespaceService/ListPools', async (route) => {
+		await gate;
+		await route.continue();
+	});
+
+	await page.getByTestId('namespace-picker').selectOption('default');
+	await expect(page.getByTestId('pools-loading')).toBeVisible();
+	// This page's OWN loading branch takes over, exactly as the manual
+	// Retry path already did before this fix — SvelteKit itself does not
+	// swap `data` until the destination `load` resolves, but this
+	// component's `busy` branch pre-empts the stale card render the moment
+	// the same kind of re-navigation Retry causes is ALSO in flight for a
+	// reason other than the Retry click.
+	await shot(page, 'screenshot-admin-pools-loading.png');
+
+	release();
+	await page.waitForURL(/ns=default/);
+	await expect(page.getByTestId('pools-loading')).toHaveCount(0);
+	await expect(
+		page.getByTestId('pool-list').or(page.getByTestId('pools-empty'))
+	).toBeVisible();
+	await page.unroute('**/orkstack.v1.NamespaceService/ListPools');
 });
 
 // Acceptance 1 & 3: the plugin inventory is global (no namespace scoping in
@@ -795,6 +999,11 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 		// The number itself is never drawn as zero for an unreachable pool:
 		// there is no pool-orker-count testid on the card at all.
 		await expect(card.getByTestId(`pool-orker-count-${pool}`)).toHaveCount(0);
+		// Round-2 review: an unavailable pool's plugin caption must say it
+		// was never asked, not that it was "sampled" — there was no live
+		// count to gate a plugin request on in the first place.
+		await expect(card.getByTestId(`pool-plugins-unavailable-${pool}`)).toContainText('unknown');
+		await expect(card.getByTestId(`pool-plugins-${pool}`)).toHaveCount(0);
 	}
 	await shot(page, 'screenshot-admin-pools-unavailable.png');
 });

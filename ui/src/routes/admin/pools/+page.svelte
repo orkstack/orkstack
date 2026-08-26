@@ -5,6 +5,7 @@
 	// from both "healthy" and "empty" — Pool.unavailable_reason — and it is
 	// rendered as its own state rather than folded into a zero.
 	import { invalidateAll } from '$app/navigation';
+	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import type { Pool } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { namespaceLabel } from '$lib/namespace';
@@ -22,6 +23,19 @@
 			retrying = false;
 		}
 	}
+
+	// navigatingHere is true while a navigation IN FLIGHT targets this same
+	// route — the namespace switcher re-navigating `/admin/pools?ns=…`
+	// while this page stays mounted, its stale data still on screen, is
+	// otherwise indistinguishable from a page that finished loading. The
+	// explicit Retry click above sets `retrying` itself (it calls
+	// `invalidateAll` directly, not `goto`, so SvelteKit's own `navigating`
+	// never turns true for it); this covers every OTHER re-entry into this
+	// same URL a delayed RPC could stall on.
+	const navigatingHere = $derived(
+		navigating.to !== null && navigating.to.url.pathname === page.url.pathname
+	);
+	const busy = $derived(retrying || navigatingHere);
 
 	// Nothing unavailable is ever drawn as zero (acceptance 3): a pool the
 	// cluster could not answer for has NO number at all, only the reason.
@@ -48,7 +62,7 @@
 		busy={retrying}
 		onretry={retry}
 	/>
-{:else if retrying}
+{:else if busy}
 	<p class="text-sm text-zinc-400" data-testid="pools-loading">Loading pool health…</p>
 {:else if data.pools.length === 0}
 	<p class="text-sm text-zinc-400" data-testid="pools-empty">
@@ -102,16 +116,24 @@
 					</p>
 				{/if}
 
-				<div class="mt-2 text-xs text-zinc-400">
-					<span class="text-zinc-500">Plugins:</span>
-					{#if pool.plugins.length > 0}
-						<span data-testid="pool-plugins-{pool.name}">{pool.plugins.join(', ')}</span>
-					{:else}
-						<span class="text-zinc-600" data-testid="pool-plugins-unknown-{pool.name}"
-							>none reported (sampled from one Orker; may be silent, not empty)</span
-						>
-					{/if}
-				</div>
+			<div class="mt-2 text-xs text-zinc-400">
+				<span class="text-zinc-500">Plugins:</span>
+				{#if pool.unavailableReason}
+					<span class="text-zinc-600" data-testid="pool-plugins-unavailable-{pool.name}"
+						>unknown — this pool could not be reached, so it was never asked</span
+					>
+				{:else if pool.plugins.length > 0}
+					<span data-testid="pool-plugins-{pool.name}">{pool.plugins.join(', ')}</span>
+				{:else if pool.liveOrkerCount === 0}
+					<span class="text-zinc-600" data-testid="pool-plugins-no-live-orkers-{pool.name}"
+						>unknown — no live Orker to ask</span
+					>
+				{:else}
+					<span class="text-zinc-600" data-testid="pool-plugins-unknown-{pool.name}"
+						>none reported (sampled from one Orker; may be silent, not empty)</span
+					>
+				{/if}
+			</div>
 
 				<p class="mt-2 text-xs text-zinc-500">
 					Last seen: <span data-testid="pool-last-seen-{pool.name}"

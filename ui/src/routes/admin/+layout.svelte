@@ -8,13 +8,27 @@
 	// chrome per route was reviewed and rejected (design §6.3) because a
 	// switcher that disappears on some pages and not others is one more thing
 	// to notice, where a sentence in the page is read once and settles it.
-	import { page } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import { withNamespace } from '$lib/namespace';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
 
 	const link = (path: string) => withNamespace(path, data.namespace);
+
+	// navigatingWithinAdmin is true for the whole span between clicking a
+	// tab (or switching the namespace, or landing here from outside Admin
+	// entirely) and the destination route's `load` resolving. This layout
+	// is the shared ancestor across all four sub-routes, so it is the one
+	// place that stays mounted through a CROSS-tab transition — the
+	// destination `+page.svelte` does not exist yet, and the SOURCE page's
+	// own loading state (see its own `navigatingHere`) only fires for a
+	// re-navigation into ITSELF, not into a sibling tab. Without this, a
+	// slow `load` for e.g. Pools left Overview's stale content on screen
+	// with nothing on the page saying a navigation was in flight.
+	const navigatingWithinAdmin = $derived(
+		navigating.to !== null && navigating.to.url.pathname.startsWith('/admin')
+	);
 
 	const tabs = [
 		{ id: 'overview', href: '/admin', label: 'Overview' },
@@ -60,4 +74,9 @@
 	{/each}
 </nav>
 
+{#if navigatingWithinAdmin}
+	<p class="mb-4 text-sm text-zinc-400" data-testid="admin-nav-loading">Loading…</p>
+{/if}
+
 {@render children()}
+

@@ -22,6 +22,7 @@
 	// test, which is a collision this page can have every time a deployment
 	// runs more than one pool.
 	import { invalidateAll } from '$app/navigation';
+	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import type { PluginInfo } from '$lib/gen/orkstack/v1/service_pb';
 	import type { PageProps } from './$types';
@@ -37,6 +38,15 @@
 			retrying = false;
 		}
 	}
+
+	// navigatingHere covers a re-entry into this same URL a delayed RPC
+	// could stall on (the Retry click above sets `retrying` itself, since it
+	// calls `invalidateAll` directly rather than `goto`).
+	const navigatingHere = $derived(
+		navigating.to !== null && navigating.to.url.pathname === page.url.pathname
+	);
+	const busy = $derived(retrying || navigatingHere);
+
 
 	// pluginKey is this page's identity for one inventory row: the same
 	// (name, version) pair the wire keys entries by, joined into one string
@@ -78,7 +88,7 @@
 		busy={retrying}
 		onretry={retry}
 	/>
-{:else if retrying}
+{:else if busy}
 	<p class="text-sm text-zinc-400" data-testid="plugins-loading">Loading plugins…</p>
 {:else if data.plugins.length === 0}
 	<p class="text-sm text-zinc-400" data-testid="plugins-empty">

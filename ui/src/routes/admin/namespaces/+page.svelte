@@ -9,10 +9,10 @@
 	// and `default`'s delete control is disabled BEFORE any click, with the
 	// reason inline.
 	import { goto, invalidateAll } from '$app/navigation';
-	import { page } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { ConnectError, Code } from '@connectrpc/connect';
+	import { isStaleEtagConflict } from '$lib/adminErrors';
 	import { errorMessage, orkstack } from '$lib/client';
 	import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { DEFAULT_NAMESPACE, namespaceLabel, rememberNamespace, withNamespace } from '$lib/namespace';
@@ -36,6 +36,17 @@
 			retrying = false;
 		}
 	}
+
+	// navigatingHere covers every re-entry into this same URL that isn't the
+	// explicit Retry click above (which calls `invalidateAll` directly, never
+	// `goto`, so `navigating` never turns true for it) — chiefly the
+	// namespace switcher re-navigating `/admin/namespaces?ns=…` while this
+	// page stays mounted with its stale list still on screen.
+	const navigatingHere = $derived(
+		navigating.to !== null && navigating.to.url.pathname === page.url.pathname
+	);
+	const busy = $derived(retrying || navigatingHere);
+
 
 	// ── create ─────────────────────────────────────────────────────────────
 	let createName = $state('');
@@ -153,11 +164,15 @@
 			closeEdit();
 			await invalidateAll();
 		} catch (err) {
-			// UpdateNamespace's compare-and-swap is FailedPrecondition when the
-			// etag this form holds is no longer the stored one — a stale read,
-			// shown as one. The form's values are left exactly where the user
-			// left them: a conflict must never discard an edit.
-			if (err instanceof ConnectError && err.code === Code.FailedPrecondition) {
+			// UpdateNamespace's compare-and-swap is FailedPrecondition for TWO
+			// unrelated reasons — a stale etag, and this engine having no
+			// namespace registry at all (internal/api/namespaces.go's own
+			// `registry()`) — and only the first is fixed by "reload and
+			// re-apply". isStaleEtagConflict tells them apart by the server's
+			// own words (see $lib/adminErrors.ts): a FailedPrecondition that
+			// is NOT a stale etag is shown as an ordinary write error, with no
+			// conflict-recovery button that would just repeat the failure.
+			if (isStaleEtagConflict(err)) {
 				editConflict = true;
 				editServerError = errorMessage(err);
 			} else {
@@ -170,14 +185,23 @@
 
 	// reloadEtagAndRetry re-reads the namespace for its CURRENT etag and
 	// re-submits this same edit against it — "the loser re-reads and
-	// re-applies" (UpdateNamespace's own doc comment). The description/pool
-	// fields are untouched: only the concurrency token moves.
+	// re-applies" (UpdateNamespace's own doc comment). The FORM's own
+	// fields (description/pool) are left exactly as the user typed them —
+	// that is the edit being re-applied. Everything this form does NOT
+	// expose is instead refreshed from this fresh read, not just the etag:
+	// the earlier version of this fix moved the concurrency token forward
+	// while replaying `editLabels` captured at the ORIGINAL open, so a
+	// concurrent label change made underneath this edit (the same kind of
+	// out-of-band write the conflict itself proves happened) was silently
+	// overwritten by the retry. Labels are the one such field this page
+	// carries today; a future hidden field belongs here too.
 	async function reloadEtagAndRetry() {
 		editBusy = true;
 		editServerError = '';
 		try {
 			const res = await orkstack(fetch).namespaces.getNamespace({ name: editingName });
 			editEtag = res.namespace?.etag ?? '';
+			editLabels = { ...res.namespace?.labels };
 			editConflict = false;
 			await submitEdit();
 		} catch (err) {
@@ -331,7 +355,7 @@
 		{/if}
 	</section>
 
-	{#if retrying}
+	{#if busy}
 		<p class="text-sm text-zinc-400" data-testid="namespaces-loading">Loading namespaces…</p>
 	{:else}
 		{#if data.namespacesList.length <= 1}

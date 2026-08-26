@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
@@ -16,6 +17,14 @@
 			retrying = false;
 		}
 	}
+
+	// navigatingHere covers a re-entry into this same URL a delayed RPC
+	// could stall on (the Retry click above sets `retrying` itself, since it
+	// calls `invalidateAll` directly rather than `goto`).
+	const navigatingHere = $derived(
+		navigating.to !== null && navigating.to.url.pathname === page.url.pathname
+	);
+	const busy = $derived(retrying || navigatingHere);
 
 	const cards = [
 		{
@@ -50,7 +59,7 @@
 		busy={retrying}
 		onretry={retry}
 	/>
-{:else if retrying}
+{:else if busy}
 	<p class="text-sm text-zinc-400" data-testid="system-loading">Loading system information…</p>
 {:else if !data.system}
 	<p class="text-sm text-zinc-400" data-testid="system-empty">
