@@ -1,529 +1,611 @@
 # AGENTS.md — OrkStack engineering contract
 
 This file is authoritative for every human and AI agent working in this repo.
-Read it fully before changing code. It encodes the invariants that let many
-agents build independently without breaking each other.
+It defines the product boundary, runtime contracts, invariants, and evidence
+required for a change to be done.
 
-## 0. What OrkStack is
+## 1. Mission and product boundary
 
-An orkflow engine: users author **orkflows** in a YAML **DSL**; the **engine**
-(`ork`) compiles them and runs them on **Temporal**; **Orkers** are generic
-Temporal workers that execute **plugins** (containerizable task implementations);
-a **CLI** (`orkctl`) and a **SvelteKit UI** drive and observe runs in realtime; an
-**artifact store** (local FS or S3/MinIO) carries files between tasks.
+OrkStack is a thin, opinionated durable execution platform. It owns the
+contract between three boring primitives:
 
-```
-DSL (yaml) ──apply──> ork ──compile──> Temporal ──dispatch──> Orker ──run──> Plugin
-                       │  ▲                                                    │
-                  Connect API                                            artifacts
-                   + WS events  <──────────── events ─────────────────────────┘
-                       ▲
-             CLI (orkctl) / UI (SvelteKit)
+```text
+Temporal        execution and durable workflow state
+Object storage  artifacts, large data, and immutable records
+OCI containers  computation
 ```
 
-## 1. Non-negotiable invariants (the contracts)
+The north star is:
 
-1. **Proto is the single source of truth.** All cross-process types live in
-   `proto/orkstack/v1/*.proto`. Never hand-edit files under `gen/`. Change proto,
-   run `make proto`, commit both.
-2. **The task contract is fixed:** a plugin receives `(input Payload, inputArtifacts []ArtifactRef)`
-   and returns `(output Payload, outputArtifacts []ArtifactRef, error)`. See
-   `pkg/plugin`. Payloads are JSON-compatible structs; bytes travel only as
-   artifacts, never inline in a Payload.
-3. **Determinism boundary:** Temporal *workflow* code (in `internal/engine`) must
-   be deterministic — no clocks, no network, no randomness, no direct IO. All
-   side effects happen in *activities* or in Orker plugins. Violating this
-   corrupts replay.
-4. **Artifacts are references, not bytes.** Tasks exchange `ArtifactRef`s; the
-   Orker materializes/uploads through `pkg/artifacts`. Never pipe large bytes
-   through Temporal payloads or the event stream.
-5. **Everything is versioned.** An `Orkflow` has a `name` + `version`. Runs pin
-   the version they executed, and are identified as `ork-{timestamp}-{sequence}`.
-   That shape is the whole of the contract, and the parts are not:
-   - `sequence` is `nonce<<32 | counter` — 32 bits of `crypto/rand` drawn once
-     per process, over a per-process counter (`internal/engine/runid.go`). It is
-     monotonic *within* one replica and meaningless across two, which is what
-     stops two replicas issuing the same id in one clock tick.
-   - a run id is the Temporal workflow id and is **single-use for all time**:
-     `StartRun` sets `REJECT_DUPLICATE` + `CONFLICT_POLICY_FAIL` +
-     `WorkflowExecutionErrorWhenAlreadyStarted` (`internal/engine/temporal.go`),
-     so a reused id is an error, never a silent attach to someone else's run.
-   - **nothing may parse a run id or derive meaning from its parts.** Order
-     runs by time (`created_at`). Exactly two places compare ids, both only to
-     break a tie between two equal timestamps, and both on the `ListRuns` read
-     path: `mergeRuns` (`internal/api/service.go`, guarded by
-     `TestListRuns_OrdersRunsByTimeNotByRunID`) and `RunQuery.finish`, which
-     orders one page of the archive index (`pkg/artifacts/archive.go`). Those
-     two are the whole list, and `proof/M8.5/docs-claims.sh` holds the tree to
-     it. A tie-break is not a licence to order by id.
-6. **DONE means proven.** A change is done only when behavior tests pass and a
-   proof artifact exists under `proof/` (see §6). No proof, not done.
-7. **Temporal is the read model for live runs.** `GetRun`, `ListRuns`,
-   `StreamEvents` and `/ws/runs/{id}` are answered from the run's Temporal
-   history through `engine.TemporalRunReader` (`internal/engine/reader.go`),
-   handed to the API as `Binding.Reader` by the namespace router
-   (`internal/engine/router.go`) — the `RunReader` seam is declared there
-   because a `Binding` cannot name the API's type without a cycle, and it is
-   consumed in `internal/api/service.go`; finished
-   runs past retention come from the run archive, which is the bucket in any
-   replicated deployment — `ORK_ARTIFACT_BACKEND` defaults to a directory per
-   process, so `s3` stops being optional at the second replica
-   (`docs/DEPLOY.md` §0). The in-process `RunStore`/`EventBus` are
-   **write-side** helpers — the candidate run a submission creates, the archive
-   and webhook write path, and the one stream that never reaches Temporal (a
-   run whose start failed). Never answer a read from process memory behind a
-   wired reader: any replica must answer for any run, including one it never
-   started and one whose replica is gone.
-8. **Event sequence is producer-assigned.** `RunWorkflow` numbers every event
-   it emits (`internal/engine/workflow.go`); the bus honours that number and
-   assigns one only when given none (`internal/engine/bus.go`). That is what
-   makes the three streams — Temporal history, the in-process log, the archived
-   JSON — identical, and what lets a client resume with `from_sequence` against
-   a different replica.
-9. **One word, one thing: the entity is an Orkflow.** What a user authors, the
-   engine stores and a run executes is an **orkflow** — `orkflow_name`,
-   `orkflow_version`, `OrkflowService`, `--orkflow`, `orkctl orkflow list`.
-   The word *workflow* in this repo means a **Temporal** workflow and nothing
-   else: `workflow.Context`, `StartWorkflowOptions`, `WorkflowReplayer`, the
-   registered type `RunWorkflowType = "RunWorkflow"`, `ClaimWorkflowType`, a
-   workflow id, a workflow task. So an identifier pairing *workflow* with
-   *name* or *version* is always wrong: the thing it names is either an
-   orkflow, or a Temporal workflow TYPE, and it must say which. The rename
-   landed at M9 with no shim and no dual-read, because nothing was deployed;
-   `proof/M9/naming-sweep.sh` is what holds the tree to it.
+> Any OCI image can become a durable production activity without linking
+> against an OrkStack SDK or running a custom worker service.
 
-   **The same rule for where a task runs: the word is `pool`.** A **pool** is
-   a set of Orkers, and it is what a user names — `pool:` in the DSL, the
-   `Pool` message, `TaskRun.pool`, `ListPools`, `orkctl namespace create
-   --default-pool/--allow-pool`, `ORK_ORKER_POOL`, the pool cards on the
-   dashboard. A **queue** is a Temporal task queue and
-   means nothing else in this repo; it appears on **no user-facing surface**:
-   not in `proto/`, not in the DSL, not in an `orkctl` flag or its help text,
-   not in `ui/src` outside `gen/`, not in `docs/DSL.md`, not in a shipped
-   example. `queue:` was removed from the DSL at M10.1 with no alias — a
-   document that still writes it fails to compile with a message naming
-   `pool:` (`internal/dsl/removed.go`). `proof/M10.1/naming-sweep.sh` is what
-   holds the tree to it, and it bans the substring, so `task_queue`,
-   `queueName` and `ORK_TEMPORAL_NAMESPACE` cannot walk through the door a
-   word boundary would leave open.
+The activity model is Unix-like: it receives files, writes files, emits
+stdout/stderr, and exits. The filesystem is the canonical activity API.
 
-   **The translation lives in `internal/task/pool.go` and nowhere else.**
-   `QueueForPool` / `RouteForPool` / `PoolForQueue` are the whole mapping, and
-   the prefix `ork-pool-` is constructed in exactly one place —
-   `poolQueuePrefix`, `internal/task/pool.go`. Elsewhere the string appears
-   only inside prose.
-   `""` and `"main"` both resolve to the deployment's *configured* default
-   channel, so `pool: main` and no pool are one route by construction under
-   every `ORK_ORKER_QUEUE` override — which is why a document cannot escape an
-   agent's isolation by naming the default pool (§6). Any other valid pool is
-   `ork-pool-<slug>`; `ork-engine-events` as the bound default is refused
-   (`ErrReservedQueue`). Write a second mapping anywhere and the two spellings
-   of one pool stop being one pool.
-10. **A namespace is the tenancy coordinate, and `default` is a name like any
-    other.** An orkflow name is unique WITHIN a namespace, and every read and
-    write that carries a run or an orkflow carries the namespace it belongs to.
-    Three invariants hold it up:
-    - **One slug rule, stated where each boundary needs it, over shared test
-      vectors.** `^[a-z][a-z0-9-]*$`, ≤200 bytes, for a namespace, an orkflow
-      name, a task id and a pool: `internal/dsl/compile.go` (`slugPattern`,
-      `MaxSlug`), `pkg/artifacts/namespace_store.go` (`namespaceNamePattern`,
-      `maxPoolName`) and `internal/task/pool.go` (`poolPattern`,
-      `MaxPoolName`) — restated at each boundary because a hand-built request
-      never went through the compiler, and held to ONE rule by a shared corpus
-      (`TestNamespaceName_RegistryAndCompilerAgree`,
-      `pkg/artifacts/namespace_name_test.go`, the only place that package names
-      `internal/dsl`). Names are **validated, never sanitized** — a name that
-      has to be repaired to be stored is a name that can be spelled two ways,
-      and a key built from it then addresses somebody else's tenant.
-    - **`default` always resolves, and is never stored or deleted.** A request
-      naming no namespace means `default` on the wire (the empty string), and
-      reading it answers a synthesized document
-      (`artifacts.DefaultNamespaceDocument`) whether or not anything was ever
-      written. Creating it writes nothing — an identical spec is the no-op it
-      looks like, a different one is the conflict any collision is — and
-      deleting it is refused unconditionally: it holds every orkflow that names
-      none (`internal/api/namespaces.go`).
-    - **The archive index is namespace-first.**
-      `metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{run-id}` —
-      eight segments, `runIndexSegments = 8`, `pkg/artifacts/archive.go`. The
-      namespace is the first thing after the prefix so that listing one
-      tenant's runs narrows in the LIST call, not in a filter afterwards: a
-      post-filter would make one tenant's page scan every tenant's keys, and a
-      run's namespace would be recoverable only by reading its body.
+OrkStack must not become a generic workflow engine, another state machine, or
+another plugin framework. Workloads must not need a required gRPC or HTTP
+callback, SDK, sidecar protocol, message queue, custom RPC framework, or
+application-specific worker daemon.
 
-## 2. Repository layout
-
-```
-proto/orkstack/v1/     Proto contract (edit here)
-gen/go/                Generated Go (do not edit)
-cmd/ork/               Engine binary entrypoint (bin/ork)
-cmd/orker/             Orker binary entrypoint
-cmd/orkctl/            CLI binary entrypoint
-internal/engine/       Temporal workflows + activities + run store
-internal/api/          Connect service implementations + WS bridge
-internal/dsl/          YAML DSL parse → validate → compile to Orkflow proto
-internal/orker/        Orker runtime: worker wiring, plugin dispatch
-internal/task/         Temporal plumbing: namespace, queue names, deployment identity
-pkg/plugin/            Public plugin SDK + task contract (imported by plugins)
-pkg/plugins/{http,shell,file}/  Builtin plugins
-pkg/artifacts/         Artifact storage providers (local FS, S3/MinIO)
-ui/                    SvelteKit + Vite + Tailwind app
-deploy/                docker-compose (Temporal + MinIO)
-examples/              Example orkflows (*.ork.yaml)
-docs/                  Design + reference docs
-proof/                 Committed proof artifacts (logs, traces, recordings)
-scripts/               Dev helper scripts
+```text
+YAML Orkflow ──apply──> ork ──compile──> Temporal ──dispatch──> Orker
+                                                                    │
+                                                               OCI image
+                                                                    │
+                                                              object storage
 ```
 
-## 3. Toolchain & conventions
+The `ork` engine, `orkctl` CLI, SvelteKit UI, Connect API, WebSocket bridge,
+Orkers, and artifact store support this contract. They must not add another
+durable execution authority.
 
-- **Go 1.25**, single module `github.com/orkstack/orkstack`. Format with `gofmt`;
-  `make lint` (go vet + gofmt) must pass. Prefer `context.Context` first arg,
-  wrapped errors (`fmt.Errorf("...: %w", err)`), no panics in library code.
-- **Temporal Go SDK** (`go.temporal.io/sdk`). Namespace: `ORK_TEMPORAL_NAMESPACE`,
-  default `ork-main` (auto-provisioned at binary boot). Task activities resolve
-  a user-facing pool to an internal Temporal task queue; the engine's raw
-  default is `ORK_ORKER_QUEUE`, default `ork-tasks`, set on both binaries. A
-  task's `pool:` is resolved inside the engine and never exposes that queue.
-  The engine's own workflows always live on the fixed `ork-tasks` and
-  `ork-engine-events`, whatever `ORK_ORKER_QUEUE` says (`cmd/ork/main.go`,
-  `queuesFor`). **For parallel agent runs, give each agent its own namespace
-  (see §6 below).**
-- **Connect** (`connectrpc.com/connect`) for RPC. Server serves h2c on
-  `:8080` (configurable). WebSocket event bridge on the same server at
-  `/ws/runs/{id}`.
-- **UI**: Bun + SvelteKit (Svelte 5 runes) + Vite + Tailwind. Generated TS
-  clients live in `ui/src/lib/gen`.
-- **CLI**: Cobra. Human output by default, `--json` for machine output.
-- **Config**: environment variables prefixed `ORK_` (e.g. `ORK_TEMPORAL_ADDRESS`,
-  `ORK_ARTIFACT_BACKEND`, `ORK_S3_ENDPOINT`). Provide sane localhost defaults.
+## 2. Core architecture and ownership
 
-## 4. The development workflow (every change follows this)
+### 2.1 Temporal owns execution
 
-1. If the change crosses a process boundary, update `proto/` first and run
-   `make proto`.
-2. Write a **behavior test** that fails for the right reason (test observable
-   behavior, not implementation detail).
-3. Implement until the test passes.
-4. `make lint test` must be green. For anything touching Temporal or storage,
-   run the integration test against `make infra-up`.
-5. Produce/refresh the proof artifact (§6).
-6. Commit with a Conventional Commit message (§7). Update the relevant milestone
-   todo.
+Temporal is the sole source of durable execution truth. It owns:
 
-### 4A. Agent/model routing and review discipline
+- Temporal workflow lifecycle and state;
+- activity scheduling, retries, timers, cancellation, and signals;
+- durable waiting and recovery;
+- workflow history and execution status.
 
-Agent capability is selected per task, not assigned permanently to a role. Score
-architectural novelty, cross-module coupling, blast radius, concurrency or
-distributed-state complexity, requirement ambiguity, deterministic-verification
-difficulty, security or data-integrity impact, and migration or compatibility
-risk from 0 to 2 each. Use `docs/MODEL_SELECTION.md` for the risk bands and
-catalog-checked model routes.
+Temporal *workflow* code in `internal/engine` must be deterministic: no clocks,
+network, randomness, or direct IO. Side effects belong in activities or the
+Orker. Do not create an OrkStack-owned execution-state database, Orkflow-state
+database, scheduler, task-queue implementation, distributed lock service,
+retry subsystem, timer subsystem, or state-transition engine. Cron scheduling
+must use Temporal Schedules. Interaction with a running Temporal workflow must
+use Temporal Signals, including approval, external completion, resume, and abort.
 
-- Use the least costly model that can meet the engineering bar. Sonnet is the
-  default implementer once the design, contracts and acceptance criteria are
-  explicit. Use Opus for difficult implementation, non-local debugging, subtle
-  state or concurrency, security-sensitive work, or evidence that Sonnet is
-  insufficient. Reserve Fable for unresolved high-impact architecture,
-  irreversible choices, severe ambiguity, or arbitration.
-- Run deterministic checks before expensive review: compile, type, unit,
-  integration, schema, lint, security, migration, fuzz, property and runtime
-  checks that apply. A model's claim that a check passed is never evidence.
-- Reviewers get fresh context and inspect the specification, diff, contracts,
-  tests and runtime evidence rather than the implementer's reasoning history.
-  Start with Luna; use Terra for non-trivial semantic or invariant review; use
-  Sol only for critical changes, disagreement or unresolved severe findings.
-- `openai-codex/gpt-5.4-mini:high` is the inexpensive high-thinking adversary,
-  with `anthropic/claude-haiku-4-5:high` as its provider-diverse fallback. They
-  propose evidence-backed falsification probes and findings but do not own
-  repairs.
-- Classify and consolidate findings before repair: confirmed defect, probable
-  defect, ambiguity, architectural concern, test deficiency, style preference,
-  duplicate or false positive. Do not create churn from style-only findings.
-- Repairs normally return to the original implementer with the smallest useful
-  packet: the confirmed finding, failing evidence, acceptance item, affected
-  region and violated invariant. If the same model fails to fix a materially
-  identical issue twice, escalate Sonnet to Opus and unresolved Opus reasoning
-  to Fable or an arbiter. All loops have a fixed iteration limit.
-- Preserve provider diversity where it lowers correlated error, but do not
-  force every fallback chain to use every provider. A fallback handles
-  availability failure; it does not replace evidence-based escalation.
-- Treat subscriptions as finite budgets. Below 60% use normal routing; at
-  60–80% avoid Fable; at 80–90% reserve Fable, Opus and Sol for blocking or
-  high-risk work; above 90% use frontier capacity only for project-blocking or
-  high-risk work. Prefer cheap adversaries for routine analysis.
-- Record useful routing metrics when available: first-pass acceptance, repair
-  rounds, defects and false positives by reviewer tier, escalations, tokens,
-  cost, latency, escaped defects, post-acceptance test failures, frontier use
-  and reviewer disagreement. Adjust task-class routing from evidence.
+### 2.2 Object storage owns data and artifacts
 
-The workflow graph must keep architecture, implementation, deterministic gates,
-independent review, adversarial analysis, repair and final evidence as separate
-steps. Acceptance requires executable evidence and independent review; model
-consensus is supporting evidence only.
+Temporal history and payloads contain only small structured metadata and
+references. The hard maximum serialized payload size is **256 KiB**. Anything
+larger must be an Artifact. Never put large bytes in Temporal payloads or the
+event stream.
 
-## 5. Testing standards (behavior first)
+Object storage holds artifacts, logs, immutable Orkflow-definition snapshots,
+and immutable activity completion records. Object-store data is not mutable
+workflow execution state (Temporal workflow state) and must never become a second
+state machine. Temporal remains authoritative for execution state.
 
-- **Unit**: pure logic (DSL compile, template rendering, plugin logic) with table
-  tests. Fast, no network.
-- **Workflow tests**: use Temporal's `testsuite.WorkflowTestSuite` /
-  `TestWorkflowEnvironment` to test engine workflows with mocked activities.
-- **Integration**: gated behind `-tags=integration` and a running
-  `make infra-up`; exercise real Temporal + MinIO. Skip cleanly when infra is
-  absent — through the package's `infraAbsent` helper, never a bare `t.Skip`,
-  so that a proof run can set `ORK_REQUIRE_INFRA=1` and turn the same absence
-  into a failure (§6).
-- **E2E**: full stack — CLI submits, Orker executes, artifacts land in MinIO, UI
-  reflects it. Lives in `test/e2e` and drives real binaries.
-- Name tests for behavior, after one from the tree:
-  `TestShellPlugin_CapturesStdoutAndStderrAsArtifacts`,
-  `TestIntegration_SecondReplicaServesARunItNeverStarted`.
-- No sleeps for synchronization; poll with deadlines or use test env helpers.
+An Orkflow keeps its existing user-facing `name` and `version` identity, but
+its canonical definition also has a SHA-256 digest. The immutable definition is
+addressed by that digest, and every execution records both the pinned version
+and the definition digest.
 
-## 6. Proof artifacts & integration test isolation (definition of DONE)
+Artifacts are references, not bytes. The Orker materializes and uploads them
+through `pkg/artifacts`. The production artifact backend is shared object
+storage (S3-compatible storage); local filesystem storage is for local use.
+Production infrastructure should consist primarily of Temporal, S3-compatible
+object storage, OrkStack services, and Orkers. Additional durable systems are
+not OrkStack requirements.
 
-Every milestone writes evidence under `proof/<milestone>/`:
-- `test.log` — full `go test -v` (or Playwright) output.
-- `coverage.out` / coverage summary where meaningful.
-- A behavior trace: e.g. a run's event stream JSON, an artifact roundtrip
-  transcript, a CLI session recording, or UI screenshots/video.
-- A short `README.md` stating what was proven and how to reproduce.
+### 2.3 OCI owns computation
 
-### A skipped prerequisite is not a pass
+The OCI image is the computation ABI. An activity is not a Python, Go, or Java
+plugin, a Temporal Activity SDK integration, an OrkStack SDK integration, or a
+custom worker service. Any OCI-compatible image should be executable. An image
+may know about OrkStack but must not need to know about it.
 
-`go test` exits 0 for a package whose every test called `t.Skip`, and a proof
-script that reads only an exit code cannot tell *proved* from *declined to
-run*. M8.5 was caught doing exactly that: on a machine with no cluster its
-`ha-deploy.sh` skipped, exited 0, and `reproduce.sh` printed
-`M8.5 PROOF: PASS` over artifacts left by an earlier execution. Three rules
-close it, and every script under `proof/` obeys them:
+The Orker bridges Temporal activities and OCI execution. Activity containers
+must not receive Temporal credentials or APIs, object-storage credentials, or
+OrkStack control-plane credentials unless a user explicitly supplies them as
+workload secrets. The Orker is the security boundary.
 
-- **Exit 0 = PASS, 1 = FAIL, 77 = SKIPPED/INCOMPLETE.** 77 is automake's skip
-  code: a prerequisite was absent, so nothing was measured. A caller
-  propagates it and never records it as green.
-- **Probe, then require.** A script that finds the cluster up exports
-  `ORK_REQUIRE_INFRA=1`, which makes every "infrastructure is absent" skip in
-  the module a failure instead. A skip is then not a fact about the
-  environment; it is a test opting out of the proof.
-- **An artifact counts only if this run wrote it.** Existence proves nothing —
-  yesterday's file exists too. `proof/M8.5/reproduce.sh` compares every
-  artifact against a marker stamped at startup and reports the rest as STALE.
+## 3. OCI Activity Contract
 
-A skipped run must also leave the last real transcript alone: `ha-deploy.sh`
-decides its prerequisites *before* it opens the file it writes.
+Treat the OCI Activity Contract as a versioned ABI. Do not communicate required
+platform state through environment variables. The stable `idempotencyKey` must
+remain unchanged across retries of one logical activity.
 
-### Integration tests share one Temporal namespace — isolate parallel runs by namespace
+### 3.1 Files, values, and artifacts
 
-Integration tests and real binaries default to the **same Temporal namespace**
-(`ork-main`) and queue (`ork-tasks`). When **multiple agents run in parallel**
-(e.g. concurrent milestone worktrees), they **steal activities from each other's
-runs** — the failure looks like a code bug but is not: you get missing lifecycle
-events, `observed 1 task inputs, want 3`, or a run that hangs until the stream
-deadline. **Both M7.7 and M7.8 experienced this collision mid-milestone.**
+The activity receives its inputs through files and writes its results to files.
+The completion protocol validates `values.json` as the compact structured result.
+Artifacts are regular files only. Reject directories, symlinks, devices,
+sockets, and FIFOs. A directory hierarchy must be archived by the workload,
+for example as `workspace.tar.gz`; the artifact layer has no directory
+semantics. Artifacts remain opaque.
 
-**Prevention: give each concurrent agent its own Temporal namespace.**
+### 3.2 Exit status and logs
+
+Exit code `0` means computation succeeded; the Orker then validates and commits
+outputs. Any non-zero exit means the activity failed. Retry behavior belongs to
+Temporal workflow policy, not magic exit codes such as 42, 43, or 44.
+
+stdout and stderr are independent logs. Capture them independently, stream them
+when possible, retain them in object storage, and associate them with the
+activity attempt. Plain text must work without a logging SDK. Structured JSON
+may be enhanced later, but is not part of the required ABI.
+
+### 3.3 Cancellation and heartbeats
+
+Temporal cancellation must reach the container:
+
+```text
+Temporal cancellation → Orker receives it → SIGTERM
+                     → wait 30 seconds → SIGKILL if still alive
+```
+
+The 30-second cancellation grace period is the default. Ordinary Unix signal
+handling must be enough for cleanup; no custom cancellation API is required.
+
+The Orker should heartbeat the Temporal Activity while the container exists.
+The container must not implement Temporal heartbeats or a heartbeat IPC
+protocol. Application hangs are handled by the activity timeout. A structured
+progress mechanism is a possible later extension, not a current requirement.
+
+## 4. Durability, retries, and completion commits
+
+Activities are **at-least-once**. Never claim exactly-once execution for
+arbitrary external side effects. The stable `idempotencyKey` lets external
+systems implement idempotency when they need it.
+
+The suggested default retry policy is:
+
+```text
+maxAttempts:        3
+initialInterval:    1s
+backoffCoefficient: 2.0
+maxInterval:        1m
+```
+
+Activities may override the policy. Keep these failure categories distinct:
+
+```text
+ActivityFailed
+InfrastructureError
+ContractViolation
+TimedOut
+Cancelled
+```
+
+Suggested defaults are:
+
+```text
+ActivityFailed       retry according to policy
+InfrastructureError  retry
+ContractViolation    do not retry
+TimedOut             retry according to policy
+Cancelled            never retry automatically
+```
+
+These are policy defaults, not exactly-once guarantees. An activity
+implementation must not silently collapse the categories.
+
+### 4.1 Durable output commit
+
+The Orker must use an object-storage commit protocol for activity completion:
+
+```text
+container succeeds → upload outputs → Orker crashes
+                   → Temporal does not receive completion
+                   → Temporal retries the activity
+```
+
+Successful completion conceptually does this, in order:
+
+1. validate `values.json`;
+2. calculate artifact hashes;
+3. upload artifacts;
+4. upload `values.json`;
+5. write an immutable `commit.json` completion manifest;
+6. report Activity success to Temporal.
+
+Use a deterministic commit key. At retry start, if a valid `commit.json` exists,
+return its committed result and do not execute the container again. This only
+prevents duplicate container execution after OrkStack has durably committed the
+result; it does not make arbitrary external side effects exactly once.
+
+An accepted execution must not disappear. A durably committed activity result
+must not become pending again. Object-storage failures must not silently produce
+success. Every terminal failure must have a machine-readable reason and a
+human-readable explanation.
+
+## 5. Image resolution and Orker runtime boundary
+
+Image tags may be accepted as input, but the Orker must resolve each image to a
+digest before execution and record the immutable reference, for example:
+
+```text
+ghcr.io/acme/migrate@sha256:...
+```
+
+A running execution must never silently switch images because a tag moved.
+Leave room for later policies such as `requireDigest`, signed-image checks, and
+allowed registries; do not build that policy system unless current work needs
+it.
+
+The Orker should be stateless and disposable. Persistent local state is limited
+to an OCI image cache, ephemeral execution directories, and optional transient
+download cache. If an Orker disappears, Temporal must be able to retry elsewhere.
+
+The Orker is responsible for:
+
+```text
+poll Temporal
+resolve the activity specification
+check the completion commit
+resolve the OCI image and digest
+create an isolated workspace
+materialize input artifacts
+resolve secret files
+create and mount `/orkstack` workspace
+capture stdout/stderr
+heartbeat Temporal
+handle cancellation
+wait for the process
+validate outputs
+upload artifacts
+write the completion manifest
+return a compact ActivityResult
+cleanup
+```
+
+Do not spread Docker-specific details through unrelated OrkStack components.
+Keep the OCI runtime boundary clean enough for future Podman, containerd,
+Kubernetes Jobs, ECS Tasks, or Nomad implementations. Do not implement all of
+those runtimes now; portability is a boundary, not a mandate for a framework.
+
+## 6. Security and resource controls
+
+Executing arbitrary production activities is dangerous. Do not permit:
+
+```text
+--privileged
+host PID namespace
+host network
+arbitrary host path mounts
+Docker-socket mounts
+Orker-credential mounts
+```
+
+Prefer `no-new-privileges`, default seccomp, resource limits, isolated working
+directories, and rootless execution when supported. Initially support only
+network modes `default` and `none`. Leave named, Orker-defined network profiles
+for later; an Orkflow must not define arbitrary host-network configuration.
+
+Activities may request resources such as:
+
+```yaml
+resources:
+  cpu: "2"
+  memory: 4Gi
+```
+
+Support activity-level `timeout` and `cancellationGracePeriod`. Orker policy
+may cap requested resources. Workflows must not receive unlimited resources by
+default. Put complicated execution logic in a container instead of adding
+platform primitives.
+
+Secrets come from secret references or explicitly supplied workload secrets,
+never committed source. `.env` is gitignored. Shell commands must not
+interpolate untrusted input without the templating layer's escaping.
+
+## 7. Orkflow execution model
+
+Compile each Orkflow into an immutable internal representation and execute it
+through one generic deterministic Temporal Workflow interpreter. Do not generate
+bespoke Temporal source code for each Orkflow. The interpreter resolves
+ dependencies, schedules activities, waits on Temporal timers and Signals,
+applies retry policies, handles cancellation, and records compact outputs.
+
+A definition limit such as 256 KiB is a proposal, not a current hard invariant.
+Do not turn that proposal into a hard limit without a separate accepted
+contract.
+
+Steps execute sequentially in declaration order by default. Explicit `needs`
+dependencies create DAG edges and enable parallel execution. `needs: []` may
+start immediately. Detect missing references and dependency cycles during
+validation; do not discover malformed DAGs during runtime.
+
+The repository vocabulary is deliberate:
+
+- **Orkflow** means the user-authored YAML entity, its name, version, and
+  compiled definition.
+- **Temporal workflow** means Temporal's workflow context, history, workflow
+  type, workflow ID, or workflow task.
+- **Pool** means the user-facing set of Orkers.
+- **Queue** means only an internal Temporal task queue and never a user-facing
+  OrkStack concept.
+
+An Orkflow name is unique within a namespace. Names are validated, never
+sanitized, by the same rule at each boundary:
+`^[a-z][a-z0-9-]*$`, at most 200 bytes, for namespaces, Orkflow names, task IDs,
+and pools. The built-in `default` namespace always resolves, is never stored,
+and cannot be deleted. Archive indexes are namespace-first.
+
+Creating `default` writes nothing: an identical namespace specification is a
+no-op, a different specification is a conflict, and deleting `default` is
+always refused. A request with no namespace uses `default` on the wire.
+
+
+Runs use IDs shaped `ork-{timestamp}-{sequence}`. The sequence is
+`nonce<<32 | counter`, with one 32-bit cryptographic nonce per process and a
+per-process counter. It is monotonic only within one replica. A run ID is the
+single-use Temporal workflow ID; starting a duplicate must fail, never attach
+to another run. Nothing may parse a run ID or derive meaning from its parts.
+Order runs by `created_at`; compare IDs only as the documented tie-break on the
+ListRuns read path.
+
+Temporal is the read model for live runs. Finished runs past retention come from
+the shared run archive. `RunStore` and `EventBus` are write-side helpers only:
+they support candidate submission, archive/webhook writes, and the stream for a
+run whose start failed. Never answer a read from process memory behind a wired
+reader. Any replica must answer for a run it did not start and for a run whose
+original replica is gone.
+
+RunWorkflow assigns event sequence numbers. The bus honors supplied numbers and
+assigns one only when none is supplied. Temporal history, the in-process log,
+and archived event JSON must therefore remain identical, and clients can resume
+by sequence from another replica.
+
+### 7.1 Pools and Temporal task queues
+
+`pool:` is the only user-facing execution selector. No user-facing surface may
+expose `queue:` or a queue name. The translation is centralized in
+`internal/task/pool.go`: `QueueForPool`, `RouteForPool`, `PoolForQueue`, and the
+single `ork-pool-` prefix construction are the complete mapping.
+
+An empty pool and `main` both mean the deployment's configured default pool.
+Other valid pools resolve to `ork-pool-<slug>`. The reserved
+`ork-engine-events` channel cannot be a bound default. A task's pool must be
+resolved inside the engine; Temporal queue names must not leak into the user
+contract.
+
+The deployment's engine workflows use fixed internal channels: `RunWorkflow`
+uses `ork-tasks` and engine events use `ork-engine-events`, regardless of the
+`ORK_ORKER_QUEUE` override used for the default activity pool.
+
+
+### 7.2 Versioning
+
+An Orkflow version is immutable. Applying an edit creates a new version; runs
+pin the version and its definition digest. A run continues on the definition it
+started with even if the current pointer moves. The current pointer controls
+new runs only.
+
+One Worker Deployment spans `ork` and `orker` for a release. They share
+`ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` and are released together. With
+versioning enabled, `RunWorkflow` is Pinned, `IdempotencyClaimWorkflow` is
+AutoUpgrade, and the projection worker on `ork-engine-events` is unversioned.
+Versioning is off unless `ORK_BUILD_ID` is set; leave
+`DefaultVersioningBehavior` unset when it is off. A version must drain before
+its workers are decommissioned. A pinned workflow uses its own activity-worker
+version only while that version has workers polling its activity channel;
+otherwise Temporal falls through to that channel's current version. Old
+histories must replay against new code; `internal/engine/replay_test.go`
+protects this contract.
+
+
+## 8. Workflow-native primitives
+
+Use Temporal directly for orchestration:
+
+```text
+wait / sleep
+Signal wait
+manual approval
+parallel dependencies
+retry
+timeout
+cancellation
+```
+
+Do not start a container merely to sleep, wait for approval, or wait until a
+future time. Do not add a custom scheduler, event bus, task queue, state
+machine, or expression runtime for these operations.
+
+## 9. First-party activities
+
+First-party activities must use exactly the same OCI contract as third-party
+activities. Do not create a privileged internal plugin system. They should be
+reference implementations of the public OCI contract.
+
+The file activity remains intentionally small and Unix-like. Its basic
+operations may include `copy`, `checksum`, `gzip`, `gunzip`, `tar`, `untar`, and
+`concat`. Do not turn it into a general file-processing framework.
+
+## 10. Developer experience and contract testing
+
+Local development should be excellent. The intended command is:
 
 ```bash
-# Unique per milestone worktree. Both binaries provision it at boot.
-export ORK_TEMPORAL_NAMESPACE="ork-m7-7"
-export ORK_TEMPORAL_NAMESPACE="ork-m7-8"
+orkstack dev
 ```
 
-`ork` and `orker` both read `ORK_TEMPORAL_NAMESPACE` and call
-`task.EnsureNamespace` at startup (`cmd/ork/main.go`, `cmd/orker/main.go`), so
-an unused name is registered on first boot. A namespace is a hard partition:
-no workflow, activity or queue crosses it, so no cross-agent theft is possible.
+It starts the minimum local environment. OrkStack itself must not require an
+additional external database. Developers must be able to test an OCI activity
+without running a complete Orkflow.
 
-**The deliberate exception: a two-replica test needs ONE namespace for BOTH
-replicas.** Isolation is per agent, not per process. A test that proves any
-replica answers for any run, or that one idempotency key survives two
-replicas, must run its engines in the *same* namespace on the *same* queues —
-that sharing is the condition under test, and splitting it would make the test
-fail for a reason unrelated to the property
-(`cmd/orkctl/tworeplica_read_integration_test.go`,
-`cmd/orkctl/idempotency_two_engine_integration_test.go`). Both keep the rule
-above by suffixing a per-run namespace that the pair shares and no other agent
-is inside (`isolatedNamespace`). Say so in a comment when you do it, or the
-next reader will "fix" it.
-
-**`ORK_ORKER_QUEUE` isolates task execution.** Set it on both binaries and the
-Orker polls that queue while the engine dispatches every task that names no
-`pool:` of its own to it (`TemporalStarter.StartRun` binds the name into the
-run's workflow input; workflow code is deterministic and cannot read the
-environment itself). A task that writes `pool: main` goes there too, whatever
-shape the override has: `main` names this deployment's default pool, not the
-queue `ork-tasks`, so the override moves it, and one pool name means one set
-of Orkers. A document cannot escape the isolation onto the shared queue by
-naming the default pool, nor by naming the pool it was already reported on
-(`runState.routeForTask`). Set it on only one of the two and the run strands
-in RUNNING: the Orker listens to one queue while the engine dispatches to
-another.
+Maintain a reusable Activity Contract Test Suite with the intended UX:
 
 ```bash
-# Both processes, same value.
-export ORK_ORKER_QUEUE="ork-tasks-m7-9"
+orkstack activity test my-image
 ```
 
-A queue partitions task execution only — run workflows and engine events still
-share their queues, so a namespace is the stronger boundary and the one to use
-for parallel agents. A task's own `pool:` in the DSL resolves to its dedicated
-Orker pool, which is how one step reaches a separate worker group
-(`docs/DSL.md`). Proof for both: `proof/queue-routing/`, which
-`proof/M10.1/proof-claims.sh` holds to this tree — a proof this file points a
-reader at is a claim about the tree, and M10.1 renamed five symbols that proof
-argued from before anything noticed.
+It should check container startup, input filesystem and permissions, valid
+context, valid output, artifact-name rules, output-size limits, SIGTERM,
+exit-code handling, and activity timeout. Keep Bash, Go, and Python fixtures;
+the Bash fixture is mandatory. If Bash needs an SDK, the architecture has
+failed.
 
-**In test harnesses** that start their own engine and orker, give the pair a
-unique namespace, and a private queue when the test needs one
-(`cmd/orkctl/integration_test.go` does both — it also assigns a pool to each
-task through `writePoolPinnedOrkflow`, which is still the way to prove
-per-task routing):
+## 11. Reliability, observability, and evidence
 
-```go
-// Before starting the engine and orker:
-os.Setenv("ORK_TEMPORAL_NAMESPACE", "ork-test-"+uniqueSuffix)
-```
+Reliability is a product property. Required integration and chaos coverage
+includes:
 
-### A namespace holds 100 Worker Deployments, and versioning tests spend them
+- Orker termination while a container runs, after it exits, during artifact
+  upload, and after `commit.json` but before Temporal completion;
+- Orker restart, temporary object-storage failure, and temporary Temporal
+  failure;
+- exit `1`, exit `0` without `values.json`, malformed JSON, output-size excess,
+  timeout, cancellation, ignored SIGTERM, unavailable input artifact, failed
+  image pull, and a tag changing between executions.
 
-`TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn` and
-`TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent` register a
-**new deployment per execution** in one fixed namespace
-(`internal/engine/versioning_rollout_integration_test.go`, `ork-m8-4-worker-versioning`
-unless `ORK_TEMPORAL_NAMESPACE` says otherwise), and Temporal caps a namespace
-at 100. Run the suite fifty times and the fifty-first fails like this:
+Every execution must eventually reach either a correct durable state or an
+explicit actionable failure. There is no documented third state such as stuck,
+half-completed, unknown, or needing database surgery. Do not call OrkStack
+production-ready until required failure and recovery scenarios are proven.
 
-```
-WARN  Failed to poll for task … Error reached maximum deployments in namespace (100)
---- FAIL: … never reported pollers on … (last error: Worker Deployment Version not found)
-```
+Use OpenTelemetry internally. Instrument workflow start, activity scheduling,
+artifact staging, image pull, container start and completion, artifact upload,
+commit, and Temporal completion. Activity authors need no observability SDK;
+activity logs remain stdout/stderr.
 
-Another failure that looks like a code bug and is not. A deployment cannot be
-deleted while it holds versions, and its current version cannot be deleted at
-all, so the cheap reset is the namespace — the tests provision it again at the
-next boot (`task.EnsureNamespace`):
+### 11.1 Development workflow
 
-```bash
-temporal operator namespace delete --namespace ork-m8-4-worker-versioning \
-  --address 127.0.0.1:7233 --yes
-```
+Every code change follows this order:
 
-**Process cleanup remains mandatory** even with isolation. Before any new
-run, kill all stray processes:
+1. For a process-boundary change, edit `proto/` first and run `make proto`.
+2. Write a behavior test that fails for the right reason.
+3. Implement until it passes.
+4. Run `make lint test`; for Temporal or storage changes, run integration tests
+   against `make infra-up`.
+5. Produce or refresh the proof artifact.
+6. Commit with a Conventional Commit and update the relevant milestone todo.
+
+Unit tests are pure and table-driven. Temporal workflow tests use
+`WorkflowTestSuite` / `TestWorkflowEnvironment` with mocked activities.
+Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
+missing prerequisite skips by returning 77 and becomes a failure under
+`ORK_REQUIRE_INFRA=1`. E2E tests live in `test/e2e`. Do not use sleeps for
+synchronization; use deadlines or test helpers.
+
+Every milestone proof under `proof/<milestone>/` contains full test output,
+coverage where useful, a behavior trace, and a README with one reproduction
+command. Exit codes are 0 pass, 1 fail, and 77 skipped/incomplete. Proof scripts
+must probe prerequisites before opening output files, set `ORK_REQUIRE_INFRA=1`
+when infrastructure is present, and reject stale artifacts.
+No proof, no done.
+
+
+Parallel integration runs need a unique `ORK_TEMPORAL_NAMESPACE`; set the same
+namespace and queues only for a deliberate two-replica test. Set
+`ORK_ORKER_QUEUE` consistently on both binaries when a private task channel is
+needed. Kill stray `/bin/orker` and `/bin/ork` processes before manual runs,
+never kill `orkctl` by using an unanchored pattern, clean up processes afterward,
+and run integration packages with `-p 1`.
+
+For manual cleanup, use anchored patterns so `orkctl` is not killed:
 
 ```bash
 pkill -f '/bin/orker$'; pkill -f '/bin/ork$'; sleep 2
-ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep   # must be empty
+ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep
 ```
 
-The engine binary is `bin/ork` (§2). Anchor both patterns with `/` and `$`:
-unanchored, `bin/ork` also matches `bin/orkctl` and kills the CLI you are
-running the proof with.
 
-Never leave a backgrounded engine/orker running after a manual e2e; always kill
-what you start. Run integration suites with `-p 1` to stop packages from polling
-concurrently.
+Before finalizing a merge, run `make merge-check` (`make build`, `make lint`,
+`make test`, and `go vet -tags=integration ./...`) on the merged tree. When both
+sides changed a file, resolve the union of behaviors against the merge base;
+do not take one side wholesale. Rerun affected proof scripts after a merge.
 
-Proof must be reproducible via a single documented command.
+## 12. Repository layout and engineering conventions
 
-## 7. Commits & branches
-
-- Conventional Commits: `feat(engine): ...`, `fix(orker): ...`, `test(dsl): ...`,
-  `docs: ...`, `chore(proto): ...`.
-- Keep commits scoped to one concern; keep `main` buildable (`make build test`).
-- Tag releases `vMAJOR.MINOR.PATCH`. First target: `v0.0.1`.
-
-### Gate every merge on the merged tree, not on the branch
-
-A green branch proves nothing about the merge. Two milestones can each pass
-every test and still produce a broken `main`, because the conflict is created
-by the merge itself and no branch CI ever compiles that combination.
-
-**This already happened twice, in one merge:**
-
-| what broke | how | found by |
-|---|---|---|
-| `internal/api/service.go` | M7.8's merge took the branch side whole, reverting M7.5's durable orkflow store. `Config.Orkflows` went back to the in-memory type while `cmd/ork` still wired `artifacts.S3OrkflowStore` | `make build` — but only after both milestones were declared done |
-| `requireMinIO` in `internal/engine` | M7.5 and M7.6 each added the helper to their own `_integration_test.go`; merged, the package has it twice | nothing — hidden behind `//go:build integration` until the M7.5 proof was rerun |
-
-**Before finalizing any merge** (after resolving conflicts, before the merge
-commit is final — `git merge --no-commit`, or amend/reset if it is already
-written):
-
-```bash
-make merge-check
+```text
+proto/orkstack/v1/     Proto contract; edit here first
+ gen/go/               Generated Go; never hand-edit
+cmd/ork/               Engine entrypoint (`bin/ork`)
+cmd/orker/             Orker entrypoint
+cmd/orkctl/            CLI entrypoint
+internal/engine/       Temporal workflows and activities
+internal/api/          Connect services and WebSocket bridge
+internal/dsl/          YAML parse, validation, and Orkflow compilation
+internal/orker/        Orker runtime and OCI activity dispatch
+internal/task/         Temporal namespace, pool routing, and deployment identity
+pkg/plugin/            Existing activity implementation area; it must not define a required workload SDK
+pkg/plugins/*/         First-party activity implementations
+pkg/artifacts/         Local and S3-compatible artifact storage
+ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
+deploy/                Temporal and object-storage development stack
+examples/              Example Orkflows
+docs/                  Design and reference material
+proof/                 Committed evidence
+scripts/               Development helpers
 ```
 
-which is `make build` + `make lint` + `make test` + `go vet -tags=integration
-./...`. The last one is not optional: build-tagged files are invisible to
-`make build` and `make test`, so a duplicate helper or a stale signature there
-survives every default check and only surfaces when someone reruns a proof.
+Use Go 1.25, one module `github.com/orkstack/orkstack`, `gofmt`, `go vet`, and
+wrapped errors. Prefer `context.Context` first and no panics in library code.
+Connect serves h2c on `:8080` by default and the WebSocket bridge serves
+`/ws/runs/{id}`. The UI uses Bun and Svelte 5 runes; generated clients live in
+`ui/src/lib/gen`. The CLI uses Cobra and human output by default, with `--json`
+for machine output. Configuration uses `ORK_` variables and sane localhost
+defaults, including `ORK_TEMPORAL_NAMESPACE` (default `ork-main`),
+`ORK_ORKER_QUEUE` (default `ork-tasks`), `ORK_ARTIFACT_BACKEND`, and
+`ORK_S3_ENDPOINT`.
 
-**When a merge conflicts in a file both sides changed**, resolve it as a union
-of the two behaviors, and verify against the base:
+Proto is the single source of truth for cross-process types. Never hand-edit
+generated files. Regenerate Go and UI clients when the proto changes.
 
-```bash
-git merge-file -p ours.go base.go theirs.go     # base = git merge-base A B
-```
+Agent ownership is split as follows:
 
-Never resolve by taking one side whole unless that file is untouched on the
-other. Afterwards, list what the resolution dropped:
+- engine agents: `internal/engine`, `internal/api`, `cmd/ork`;
+- Orker/activity agents: `internal/orker`, `pkg/plugin`, `pkg/plugins/*`,
+  `cmd/orker`;
+- CLI agents: `cmd/orkctl`;
+- UI agents: `ui/`;
+- artifact agents: `pkg/artifacts`;
+- coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, and this file.
 
-```bash
-# for each file differing between the parents, compare the result to both
-git diff --name-only $MERGE^1 $MERGE^2
-```
+Use Conventional Commits such as `feat(engine): ...`, `fix(orker): ...`,
+`test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. Keep commits scoped and
+keep `main` buildable. Release tags use `vMAJOR.MINOR.PATCH`.
 
-**Rerun the affected milestones' `proof/*/reproduce.sh` after a merge that
-touched their code.** A proof taken on a branch describes that branch. Once
-merged, the proof is a claim about `main` that nothing has checked.
+## 13. Explicit non-goals
 
-## 8. Boundaries between agents (avoid collisions)
+Do not build:
 
-- Engine agents own `internal/engine`, `internal/api`, `cmd/ork`.
-- Orker/plugin agents own `internal/orker`, `pkg/plugin`, `pkg/plugins/*`,
-  `cmd/orker`.
-- CLI agents own `cmd/orkctl`.
-- UI agents own `ui/`.
-- Artifact agents own `pkg/artifacts`.
-- **Shared/coordinated** (change deliberately, announce in commit): `proto/`,
-  `go.mod`, `deploy/`, `Makefile`, this file. If you must change proto, do it in
-  a dedicated commit and regenerate.
+- a visual workflow designer;
+- an AI agent builder;
+- a plugin marketplace;
+- a business-process forms platform;
+- hundreds of SaaS connectors;
+- a custom scripting language;
+- an embedded Python or JavaScript runtime;
+- a custom event bus, state machine, scheduler, task queue, or Orkflow-state database;
+- a complex expression language;
+- a Kubernetes operator;
+- a multi-cloud abstraction framework;
+- PostgreSQL, MySQL, Redis, Kafka, NATS, RabbitMQ, Elasticsearch, ZooKeeper,
+  etcd, SQLite, or another required durable system.
 
-## 9. Security & safety
+Temporal's own external requirements and a user's deployment requirements are
+not OrkStack dependencies. Disposable caches and in-memory caches are allowed.
+Focus on the smallest durable execution substrate.
 
-- The `shell` plugin executes commands — it runs only inside an Orker's sandbox
-  boundary and never interpolates untrusted input without the templating layer's
-  escaping. Document any command construction.
-- Secrets come from env/secret refs, never committed. `.env` is gitignored.
+## 14. Engineering decision hierarchy
 
-## 10. Deployment & versioning
+Prioritize, in order:
 
-How to operate this lives in `docs/DEPLOY.md`. These are the invariants a code
-change must not break.
+1. correctness;
+2. simplicity;
+3. explicitness;
+4. debuggability;
+5. portability;
+6. performance;
+7. convenience.
 
-- **One Worker Deployment spans both binaries.** `ork` and `orker` of one
-  release share `ORK_DEPLOYMENT_NAME` + `ORK_BUILD_ID`
-  (`internal/task/versioning.go`) and are released in lockstep. Temporal routes
-  a pinned workflow's activities to its own version only while that version has
-  workers on the activity queue; without them they fall through to that queue's
-  current version — new plugin code, mid-run.
-- **The three registered behaviours** (`cmd/ork/main.go`): `RunWorkflow` is
-  **Pinned**, `IdempotencyClaimWorkflow` is **AutoUpgrade**, the projection
-  worker on `ork-engine-events` is **unversioned**. Each is load-bearing.
-  Pinning the claim workflow strands a 24h key holder on a version that then
-  never drains; versioning the projection worker takes the read model away from
-  replicas of every other version; AutoUpgrading `RunWorkflow` hands a
-  half-finished history to a new build.
-- **Versioning is off unless `ORK_BUILD_ID` is set** (`Deployment.Versioned`),
-  which is what keeps `make run-ork` + `make run-orker` working with no
-  configuration. Keep the default off, and keep `DefaultVersioningBehavior`
-  unset while `UseVersioning` is false — the SDK panics on that combination.
-- **A version must drain before it is decommissioned.** Runs pinned to it still
-  need its workers; `temporal worker deployment describe-version` reports
-  `DrainageStatus`.
-- **Old histories must replay against new code.** `internal/engine/replay_test.go`
-  replays a committed history in `make test`. Re-record the fixture
-  deliberately, never to turn a red test green.
-- Proof: `proof/M8.4/` (versioning, rollout, runbook) and `proof/M8.5/` (two
-  engine replicas and two Orker builds, live, in one command).
+Prefer files over protocols, processes over frameworks, immutable references
+over mutable state, content hashes over implicit identity, boring APIs over
+magical APIs, explicit failure over recovery magic, and standard OCI behavior
+over proprietary runtime behavior. Avoid clever abstractions, premature
+extensibility, and unnecessary infrastructure.
+
+## 15. Product invariants
+
+Unless an accepted contract explicitly changes one, these are non-negotiable:
+
+- an accepted execution cannot disappear;
+- a durably committed activity result cannot become pending again;
+- an Orker crash or activity crash cannot corrupt Temporal workflow state;
+- object-storage failure cannot silently produce successful execution;
+- no activity needs an OrkStack SDK or control-plane network access;
+- no Temporal workflow state exists exclusively inside an OrkStack process;
+- every terminal failure has machine-readable and human-readable reasons;
+- an engineer must never edit a database record to unstick an execution.
+
+The objective is not feature count. It is the smallest durable execution
+substrate engineers can trust with consequential production operations.
