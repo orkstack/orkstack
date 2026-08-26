@@ -1,0 +1,136 @@
+<script lang="ts">
+	import { invalidateAll } from '$app/navigation';
+	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import { withNamespace } from '$lib/namespace';
+	import { fmtTimestamp } from '$lib/status';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
+
+	let retrying = $state(false);
+	async function retry() {
+		retrying = true;
+		try {
+			await invalidateAll();
+		} finally {
+			retrying = false;
+		}
+	}
+
+	const cards = [
+		{
+			href: '/admin/namespaces',
+			testid: 'admin-card-namespaces',
+			title: 'Namespaces',
+			body: 'Create, edit and delete namespaces — every one this deployment has, not just the one selected above.'
+		},
+		{
+			href: '/admin/pools',
+			testid: 'admin-card-pools',
+			title: 'Pools',
+			body: 'Live Orker counts and plugins for the pools the SELECTED namespace may dispatch onto.'
+		},
+		{
+			href: '/admin/plugins',
+			testid: 'admin-card-plugins',
+			title: 'Plugins',
+			body: 'What every connected Orker can run, with input/output schemas.'
+		}
+	];
+</script>
+
+<svelte:head><title>Admin overview — OrkStack</title></svelte:head>
+
+{#if data.systemError}
+	<ErrorPanel
+		testid="system-error"
+		retryTestid="system-retry"
+		subject="this deployment's system information"
+		message={data.systemError}
+		busy={retrying}
+		onretry={retry}
+	/>
+{:else if retrying}
+	<p class="text-sm text-zinc-400" data-testid="system-loading">Loading system information…</p>
+{:else if !data.system}
+	<p class="text-sm text-zinc-400" data-testid="system-empty">
+		The engine returned no system information.
+	</p>
+{:else}
+	<section class="mb-8" data-testid="system-info">
+		<div class="mb-3 flex items-baseline justify-between">
+			<h2 class="text-lg font-semibold text-zinc-100">This deployment</h2>
+			<span class="text-xs text-zinc-500">describes the replica that answered</span>
+		</div>
+		<div class="overflow-hidden rounded-lg border border-zinc-800">
+			<dl class="divide-y divide-zinc-800 text-sm">
+				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
+					<dt class="text-zinc-400">Engine version</dt>
+					<dd class="text-zinc-100" data-testid="system-engine-version">
+						{data.system.engineVersion || '—'}
+					</dd>
+				</div>
+				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
+					<dt class="text-zinc-400">Go version</dt>
+					<dd class="text-zinc-100" data-testid="system-go-version">
+						{data.system.goVersion || '—'}
+					</dd>
+				</div>
+				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
+					<dt class="text-zinc-400">Deployment</dt>
+					<dd class="text-zinc-100" data-testid="system-deployment">
+						{data.system.deploymentName || '—'}
+					</dd>
+				</div>
+				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
+					<dt class="text-zinc-400">Versioning</dt>
+					<dd class="text-zinc-100" data-testid="system-versioning">
+						{#if data.system.versioningActive}
+							on (build {data.system.buildId})
+						{:else}
+							off
+						{/if}
+					</dd>
+				</div>
+				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
+					<dt class="text-zinc-400">Artifacts</dt>
+					<dd class="text-zinc-100" data-testid="system-artifact-backend">
+						{data.system.artifactLocation || '—'} ({data.system.artifactBackend || '—'})
+					</dd>
+				</div>
+				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
+					<dt class="text-zinc-400">Temporal address</dt>
+					<dd class="text-zinc-100" data-testid="system-temporal-address">
+						{data.system.temporalAddress || '—'}
+					</dd>
+				</div>
+				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
+					<dt class="text-zinc-400">Server time</dt>
+					<dd class="text-zinc-100" data-testid="system-server-time">
+						{fmtTimestamp(data.system.serverTime)}
+					</dd>
+				</div>
+			</dl>
+		</div>
+		<p class="mt-2 text-xs text-zinc-500">
+			Everything above except the server time is this replica's own configuration and build, not a
+			measurement of the cluster — see <code class="text-zinc-400">orkctl admin info</code>.
+		</p>
+	</section>
+{/if}
+
+<section>
+	<h2 class="mb-3 text-lg font-semibold text-zinc-100">Manage</h2>
+	<div class="grid gap-4 sm:grid-cols-3">
+		{#each cards as card (card.testid)}
+			<a
+				href={withNamespace(card.href, data.namespace)}
+				data-testid={card.testid}
+				class="rounded-lg border border-zinc-800 p-4 hover:border-emerald-500/50 hover:bg-zinc-900/60"
+			>
+				<h3 class="font-medium text-zinc-100">{card.title}</h3>
+				<p class="mt-1 text-sm text-zinc-400">{card.body}</p>
+			</a>
+		{/each}
+	</div>
+</section>

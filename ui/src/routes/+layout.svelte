@@ -103,6 +103,9 @@
 			<a href={link('/runs')} class="text-sm text-zinc-300 hover:text-white">Runs</a>
 			<a href={link('/submit')} class="text-sm text-zinc-300 hover:text-white">Submit run</a>
 			<a href={link('/apply')} class="text-sm text-zinc-300 hover:text-white">Apply orkflow</a>
+			<a href={link('/admin')} data-testid="nav-admin" class="text-sm text-zinc-300 hover:text-white"
+				>Admin</a
+			>
 			<label class="ml-auto flex items-center gap-2 text-sm text-zinc-400">
 				<span>Namespace</span>
 				<select
