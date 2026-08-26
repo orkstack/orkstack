@@ -8,12 +8,14 @@
 	// server already names them, so nothing here re-derives that sentence),
 	// and `default`'s delete control is disabled BEFORE any click, with the
 	// reason inline.
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { ConnectError, Code } from '@connectrpc/connect';
 	import { errorMessage, orkstack } from '$lib/client';
 	import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
+	import { DEFAULT_NAMESPACE, namespaceLabel, rememberNamespace, withNamespace } from '$lib/namespace';
 	import {
 		DEFAULT_POOL_NAME,
 		parsePoolList,
@@ -106,6 +108,7 @@
 		editDefaultPool = ns.defaultPool;
 		editAllowedPools = ns.allowedPools.join(', ');
 		editEtag = ns.etag;
+		editLabels = { ...ns.labels };
 		editErrors = {};
 		editServerError = '';
 		editConflict = false;
@@ -116,6 +119,14 @@
 		editConflict = false;
 		editServerError = '';
 	}
+	// editLabels carries a namespace's labels UNTOUCHED through an edit. This
+	// form has no control for them — design §6.1's Admin feature list does
+	// not ask for one — but UpdateNamespace is a full replace of the mutable
+	// document (internal/api/namespaces.go), so a submit that omitted them
+	// would silently erase whatever labels were there. They are read here and
+	// sent back exactly as read; only the fields this form DOES expose can
+	// change.
+	let editLabels: Record<string, string> = {};
 
 	async function submitEdit() {
 		editServerError = '';
@@ -135,6 +146,7 @@
 					description: editDescription.trim(),
 					defaultPool: editDefaultPool.trim(),
 					allowedPools: allowed,
+					labels: editLabels,
 					etag: editEtag
 				}
 			});
@@ -188,10 +200,26 @@
 	async function confirmDelete() {
 		deleteBusy = true;
 		deleteError = '';
+		const deletedName = pendingDelete;
 		try {
-			await orkstack(fetch).namespaces.deleteNamespace({ name: pendingDelete });
+			await orkstack(fetch).namespaces.deleteNamespace({ name: deletedName });
 			pendingDelete = '';
-			await invalidateAll();
+			// The namespace this page/app is currently SCOPED TO no longer
+			// exists. Leaving `?ns=` pointed at it would carry a coordinate the
+			// registry no longer answers for onto Pools, onto Orkflows, onto
+			// every link this page's own layout builds — the exact confusion
+			// acceptance 4 asks this area not to cause. Reset to `default`,
+			// which always resolves (AGENTS.md §1.10), rather than leaving a
+			// dangling selection for the next click to discover.
+			if (namespaceLabel(data.namespace) === deletedName) {
+				rememberNamespace(DEFAULT_NAMESPACE);
+				await goto(withNamespace(page.url.pathname + page.url.search, DEFAULT_NAMESPACE), {
+					replaceState: true,
+					invalidateAll: true
+				});
+			} else {
+				await invalidateAll();
+			}
 		} catch (err) {
 			// The refusal is the server's own sentence, verbatim: it already
 			// names the orkflow count and the orkflows in the way
@@ -305,11 +333,13 @@
 
 	{#if retrying}
 		<p class="text-sm text-zinc-400" data-testid="namespaces-loading">Loading namespaces…</p>
-	{:else if data.namespacesList.length <= 1}
-		<p class="text-sm text-zinc-400" data-testid="namespaces-empty">
-			No namespaces beyond <code class="text-zinc-300">default</code> yet. Create one above.
-		</p>
 	{:else}
+		{#if data.namespacesList.length <= 1}
+			<p class="mb-3 text-sm text-zinc-400" data-testid="namespaces-empty">
+				No namespaces beyond <code class="text-zinc-300">default</code> yet — it is undeletable
+				below because every orkflow that names no namespace is in it. Create one above.
+			</p>
+		{/if}
 		<div class="overflow-hidden rounded-lg border border-zinc-800">
 			<table class="w-full text-left text-sm" data-testid="namespace-list">
 				<thead class="bg-zinc-900 text-xs uppercase tracking-wide text-zinc-400">

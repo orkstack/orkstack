@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -25,40 +25,82 @@ import {
 //   1. /admin is reachable from the main nav, deep-linkable, and its four
 //      routes implement the design's feature list on real M11.3 RPCs;
 //   2. writes are HONEST: a create is blocked locally before any RPC for a
-//      bad slug, an update sends the etag it read, a stale etag is shown as a
-//      conflict (never silently clobbered or silently retried), a refused
-//      delete names the orkflow count it was refused with, and `default` is
-//      visibly undeletable before any click;
-//   3. a partial answer is shown as partial: a pool the cluster could not
-//      reach reports "unknown", never "0" — the two mean opposite things;
+//      bad slug, an update sends the etag it read AND preserves fields the
+//      form does not expose (labels), a stale etag is shown as a conflict
+//      (never silently clobbered or silently retried), a refused delete
+//      names the orkflow count it was refused with, `default` is visibly
+//      undeletable BEFORE any other namespace exists (not merely among
+//      others), and deleting the namespace the app is currently scoped to
+//      resets that scope rather than stranding it;
+//   3. a partial answer is shown as partial, in BOTH shapes this milestone
+//      has: a pool's own per-pool inventory (Pool.plugins, asserted for
+//      every live pool including a NON-default one this spec starts
+//      itself) and the deployment-wide inventory's name-only entries
+//      (PluginInfo with no version — proto/orkstack/v1/service.proto),
+//      produced HERE by a genuine default-pool outage, not fabricated;
 //   4. the namespace switcher and the two global views coexist without
 //      confusion — the URL still carries `?ns=`, and the page says whether
 //      that selection scopes what it shows;
 //   5. loading, empty and error states throughout.
 //
-// Topology: one engine, one Orker (so the default pool has a live count to
-// show), the production UI build. Isolation per AGENTS.md §6: this
-// milestone's own Temporal namespace, which is a hard partition, so no
-// queue-level isolation is additionally required.
+// Topology: one engine, TWO Orkers — one on the built-in `main` pool, one on
+// a `gpu` pool this spec creates — so pool health has a genuinely non-default
+// live pool to report on, and the plugin inventory has a genuine source for
+// name-only entries once `main` goes quiet (see the last two tests). Both
+// binaries run against a bucket this run creates and this run alone has ever
+// written to (proof/M11.6/tools/bucket-ensure) — the shared
+// `orkstack-artifacts` bucket every other e2e spec in this module writes to
+// has accumulated a stamped namespace from every earlier run of THIS spec
+// too, and "default is the only namespace this deployment has" cannot occur
+// there a second time. Isolation per AGENTS.md §6: this milestone's own
+// Temporal namespace, which is a hard partition, so no queue-level isolation
+// is additionally required.
+//
+// Two things here are genuinely destructive, and both are placed LAST among
+// the tests that need the thing they destroy, in a suite that is `serial`
+// specifically so that ordering is the safety rail:
+//   - the `main` pool's Orker is killed to prove the plugin inventory's
+//     name-only state for real (a pool answered by NAME ONLY is what a
+//     non-default pool reports for a plugin the default pool is NOT
+//     currently reachable to describe in full — internal/api/service.go's
+//     own dedupePlugins deliberately drops a name-only report for a plugin
+//     the default pool already described in full, so this state cannot be
+//     produced by running a second Orker of the SAME build alongside a
+//     healthy default pool; it requires the default pool to have gone
+//     quiet, which is what this does, for real, waiting out the real
+//     freshness window (internal/engine/pools.go DefaultPollerFreshness)
+//     rather than asserting on a race);
+//   - this run's OWN Temporal namespace is deleted outright to prove a pool
+//     health read that cannot reach the cluster at all — no other black-box
+//     lever reproduces that failure (see the comment on that test).
 
 const ENGINE = 'http://127.0.0.1:18085';
 const ENGINE_WS = 'ws://127.0.0.1:18085';
 const UI_ORIGIN = 'http://127.0.0.1:14177';
 
 const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m11-6-admin-ui';
+const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? 'alpine:3.20';
 
 const STAMP = Date.now().toString(36);
 const OPS_NS = `m11-6-ops-${STAMP}`;
 const HOLDS_NS = `m11-6-holds-${STAMP}`;
 const HOLDS_ORKFLOW = `m11-6-holds-orkflow-${STAMP}`;
+const LABELLED_NS = `m11-6-labelled-${STAMP}`;
+const DOOMED_NS = `m11-6-doomed-${STAMP}`;
+// This run's own bucket (see the topology note above): created fresh by
+// proof/M11.6/tools/bucket-ensure before either binary boots, and never
+// shared with another run of this spec.
+const BUCKET = process.env.ORK_S3_BUCKET_OVERRIDE ?? `orkstack-admin-m11-6-${STAMP}`;
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m11-6');
 const TRANSCRIPT = 'admin-session.txt';
 
-// These tests share a live registry and build on each other's namespaces, so
-// a fresh worker restart after one failure must not re-enter beforeAll with a
-// new stamp while the others still expect the old one (namespaces-editor.spec.ts
-// carries the identical reasoning).
+// These tests share a live registry and build on each other's namespaces (and
+// the second one to run — "Admin is reachable…" — must run AFTER the first
+// one, which needs `default` to be the ONLY namespace this bucket has ever
+// held), so a fresh worker restart after one failure must not re-enter
+// beforeAll with a new stamp while the others still expect the old one
+// (namespaces-editor.spec.ts carries the identical reasoning).
 test.describe.configure({ mode: 'serial' });
 
 const outPath = proofOut(PROOF_DIR);
@@ -70,6 +112,63 @@ function shot(page: Page, name: string) {
 
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
+// containerOrkflowYaml is a genuinely Docker-backed task: the container
+// plugin, run for real (pkg/plugins/container), not merely named in a stored
+// definition nobody executes. AGENTS.md's integration-test rule ("genuinely
+// exercise real Temporal, MinIO and docker") is not satisfied by a document
+// sitting in the catalog — ApplyOrkflow only validates and stores YAML, it
+// never runs a task — so this orkflow is APPLIED *and submitted*, and the
+// test that does so waits for the run to actually succeed before this
+// namespace is used to prove a delete refusal.
+function containerOrkflowYaml(name: string): string {
+	return `name: ${name}
+version: "0.1.0"
+description: M11.6 admin proof — a real docker container, run for real.
+tasks:
+  - id: probe
+    plugin: container
+    timeout_seconds: 120
+    with:
+      image: ${IMAGE}
+      pull: missing
+      command: echo "m11-6 admin proof - real Temporal, real MinIO, real docker"
+      timeout_seconds: 60
+`;
+}
+
+type NamespaceWire = {
+	name: string;
+	description: string;
+	defaultPool: string;
+	allowedPools: string[];
+	labels?: Record<string, string>;
+	etag: string;
+};
+
+// addPoolToNamespace widens an existing namespace's allow-list by one pool,
+// preserving every other field exactly as read — the same round trip the
+// Admin UI's own edit form now does for labels (ui/src/routes/admin/namespaces/+page.svelte),
+// done here through the raw RPC because this is test scaffolding, not the
+// behavior under test.
+async function addPoolToNamespace(name: string, pool: string): Promise<void> {
+	const current = await rpc<{ namespace: NamespaceWire }>('NamespaceService/GetNamespace', {
+		name
+	});
+	const ns = current.namespace;
+	await rpc('NamespaceService/UpdateNamespace', {
+		namespace: {
+			name: ns.name,
+			description: ns.description,
+			defaultPool: ns.defaultPool,
+			allowedPools: [...new Set([...(ns.allowedPools ?? []), pool])],
+			labels: ns.labels ?? {},
+			etag: ns.etag
+		}
+	});
+}
+
+let mainOrkerProc: ChildProcess | undefined;
+
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
@@ -77,10 +176,13 @@ test.beforeAll(async () => {
 		[
 			'# M11.6 — the Admin section: namespaces, pool health, plugins, system info.',
 			'#',
-			'# Written by ui/e2e/admin.spec.ts against a real engine + Orker on real',
-			'# Temporal + MinIO.',
+			'# Written by ui/e2e/admin.spec.ts against a real engine + two real Orkers on',
+			'# real Temporal + MinIO + Docker.',
 			`# temporal namespace: ${TEMPORAL_NAMESPACE}`,
-			`# ork namespaces:     ${OPS_NS}, ${HOLDS_NS}, default`,
+			`# artifact bucket:    ${BUCKET} (created fresh by this run alone)`,
+			`# ork namespaces:     ${OPS_NS}, ${HOLDS_NS}, ${LABELLED_NS}, ${DOOMED_NS}, default`,
+			`# pools:              main (this run's first Orker), gpu (this run's second)`,
+			`# container image:    ${IMAGE}`,
 			`# engine:             ${ENGINE}`,
 			''
 		].join('\n')
@@ -91,6 +193,28 @@ test.beforeAll(async () => {
 	for (const port of [18085, 14177]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
+	// A genuine pool-unavailable proof (the last test below) deletes this
+	// run's OWN Temporal namespace through the `temporal` CLI's operator
+	// commands — the same tool proof/M8.4 and proof/M8.5 already depend on
+	// (AGENTS.md), so this is not a novel prerequisite for this module.
+	try {
+		execFileSync('temporal', ['--version'], { stdio: 'ignore' });
+	} catch {
+		throw new Error(
+			'the temporal CLI is not on PATH — it is required to induce a genuine ' +
+				'pool-unavailable failure (see the last test in this file)'
+		);
+	}
+	// A genuinely Docker-backed task (containerOrkflowYaml above) needs a
+	// reachable daemon and the image on this host, the same check
+	// ui/e2e/run-page.spec.ts makes for the identical reason.
+	try {
+		execFileSync(process.env.ORK_DOCKER_BIN ?? 'docker', ['image', 'inspect', IMAGE], {
+			stdio: 'ignore'
+		});
+	} catch {
+		throw new Error(`the container image ${IMAGE} is not on this host`);
+	}
 
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
@@ -99,17 +223,51 @@ test.beforeAll(async () => {
 		throw new Error('UI build output missing: ui/build/index.js');
 	}
 
+	// This run's own bucket (see the topology note at the top of this file):
+	// idempotent, so a re-run against the same stamp is a no-op, and it is
+	// created BEFORE either binary boots so the namespace registry both of
+	// them open has never held anything but `default`.
+	execFileSync('go', ['run', './proof/M11.6/tools/bucket-ensure'], {
+		cwd: repoRoot,
+		env: {
+			...process.env,
+			ORK_S3_BUCKET: BUCKET,
+			ORK_S3_ENDPOINT: s3Env.ORK_S3_ENDPOINT,
+			ORK_S3_REGION: s3Env.ORK_S3_REGION,
+			ORK_S3_ACCESS_KEY: s3Env.ORK_S3_ACCESS_KEY,
+			ORK_S3_SECRET_KEY: s3Env.ORK_S3_SECRET_KEY
+		}
+	});
+
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
+	const store = { ...s3Env, ORK_S3_BUCKET: BUCKET };
 
 	spawnLogged(outPath('engine.log'), './bin/ork', [], {
 		...cluster,
-		...s3Env,
+		...store,
 		ORK_HTTP_ADDR: '127.0.0.1:18085',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(outPath('orker.log'), './bin/orker', [], { ...cluster, ...s3Env });
+	// The default pool's Orker — captured so the last-but-one test can kill
+	// THIS process alone, not the `gpu` one, and not through killAll's
+	// shared list (which still cleans it up harmlessly in afterAll: killing
+	// an already-dead child is a no-op there).
+	mainOrkerProc = spawnLogged(outPath('orker-main.log'), './bin/orker', [], {
+		...cluster,
+		...store
+	});
+	// A second Orker, on a pool NOTHING in this deployment names by default:
+	// pool health's per-pool plugin list is asserted against it (a NON
+	// -default live pool, not just `main`), and the deployment-wide plugin
+	// inventory's name-only state (the last-but-one test) needs a pool that
+	// is still live and reachable once `main` is not.
+	spawnLogged(outPath('orker-gpu.log'), './bin/orker', [], {
+		...cluster,
+		...store,
+		ORK_ORKER_POOL: 'gpu'
+	});
 	await waitForEngine(ENGINE);
-	note(`engine up at ${ENGINE}, temporal namespace ${TEMPORAL_NAMESPACE}`);
+	note(`engine up at ${ENGINE}, temporal namespace ${TEMPORAL_NAMESPACE}, bucket ${BUCKET}`);
 
 	spawnLogged(
 		outPath('ui.log'),
@@ -125,35 +283,46 @@ test.beforeAll(async () => {
 	);
 	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
 
-	// The Orker has to be polling before pool health can show a live count.
-	await waitFor('the default pool reports a live Orker', async () => {
+	// Both Orkers have to be polling before pool health can show live counts.
+	await waitFor('the main pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
 			'NamespaceService/ListPools',
 			{}
 		);
-		return (
-			answer.pools?.some((p) => p.name === 'main' && (p.liveOrkerCount ?? 0) > 0) ?? false
-		);
+		return answer.pools?.some((p) => p.name === 'main' && (p.liveOrkerCount ?? 0) > 0) ?? false;
 	});
 	note('the default pool "main" reports a live Orker');
 
-	// The namespace this milestone's delete-refusal test needs is created up
-	// front and given one stored orkflow, through the API directly: the UI's
-	// OWN create form is exercised in the test below, on a different namespace,
-	// so both paths (a namespace created by this spec's RPC fixture, and one
-	// created through the form under test) are real.
-	await rpc('NamespaceService/CreateNamespace', {
-		namespace: { name: HOLDS_NS, description: 'M11.6 admin proof — holds an orkflow' }
-	});
-	await rpc('OrkflowService/ApplyOrkflow', {
-		yaml: `name: ${HOLDS_ORKFLOW}\nversion: "0.1.0"\ndescription: exists only to block a delete\ntasks:\n  - id: noop\n    plugin: shell\n    with:\n      op: exec\n      command: "true"\n`,
-		namespace: HOLDS_NS
-	});
-	note(`namespace ${HOLDS_NS} created and holds orkflow ${HOLDS_ORKFLOW}`);
+	// This deployment does not yet have a namespace naming `gpu` — ListPools
+	// only reports a pool a namespace's own default/allow-list names — so the
+	// live check for it is deferred to the pool-health test below, once OPS_NS
+	// has been widened to include it. Nothing else in beforeAll depends on it.
 });
 
 test.afterAll(async () => {
 	await killAll();
+});
+
+// Acceptance 2: `default`'s delete control is disabled with the reason
+// inline BEFORE any click, and this is the one moment this bucket will ever
+// again have JUST `default` in it — every later test in this file adds a
+// namespace that outlives it. If this state is never proven here it is never
+// proven at all: the shared `orkstack-artifacts` bucket every other spec
+// writes to already carries a stamped namespace from an earlier run of THIS
+// spec, so the same check there would find the table non-empty from the very
+// first load.
+test('default is undeletable when it is the only namespace this deployment has', async ({
+	page
+}) => {
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	await expect(page.getByTestId('namespaces-empty')).toBeVisible();
+	const list = page.getByTestId('namespace-list');
+	await expect(list).toBeVisible();
+	await expect(list.getByTestId(/^namespace-row-/)).toHaveCount(1);
+	await expect(page.getByTestId('namespace-row-default')).toBeVisible();
+	await expect(page.getByTestId('namespace-delete-default')).toBeDisabled();
+	await expect(page.getByTestId('namespace-delete-default-reason')).toBeVisible();
+	await shot(page, 'screenshot-admin-default-undeletable.png');
 });
 
 // Acceptance 1 & 4: Admin joins the main nav, is deep-linkable, and the
@@ -170,7 +339,7 @@ test('Admin is reachable from the nav, deep-linkable, and shows this replica\'s 
 	// Configuration-derived fields, verbatim from the injected SystemInfo
 	// (cmd/ork/main.go) — the same reply `orkctl admin info` renders.
 	await expect(page.getByTestId('system-temporal-address')).toHaveText('127.0.0.1:7233');
-	await expect(page.getByTestId('system-artifact-backend')).toContainText('orkstack-artifacts');
+	await expect(page.getByTestId('system-artifact-backend')).toContainText(BUCKET);
 	await expect(page.getByTestId('system-artifact-backend')).toContainText('s3');
 	await expect(page.getByTestId('system-versioning')).toHaveText('off');
 	await expect(page.getByTestId('system-server-time')).not.toHaveText('—');
@@ -181,6 +350,39 @@ test('Admin is reachable from the nav, deep-linkable, and shows this replica\'s 
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${OPS_NS}`);
 	await expect(page.getByTestId('admin-tab-namespaces')).toHaveAttribute('aria-current', 'page');
 	await expect(page).toHaveURL(new RegExp(`ns=${OPS_NS}`));
+});
+
+// AGENTS.md's integration rule, satisfied for real: a namespace this proof
+// later refuses to delete holds an orkflow that genuinely RAN, on a genuine
+// Docker container, through the real engine and the real Orker started
+// above — not merely a YAML document ApplyOrkflow validated and stored.
+test('a docker-backed orkflow this proof holds runs for real, before it is used to refuse a delete', async ({}) => {
+	await rpc('NamespaceService/CreateNamespace', {
+		namespace: { name: HOLDS_NS, description: 'M11.6 admin proof — holds an orkflow' }
+	});
+	await rpc('OrkflowService/ApplyOrkflow', {
+		yaml: containerOrkflowYaml(HOLDS_ORKFLOW),
+		namespace: HOLDS_NS
+	});
+	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', {
+		orkflowName: HOLDS_ORKFLOW,
+		namespace: HOLDS_NS
+	});
+	const runId = submitted.run.id;
+	note(`namespace ${HOLDS_NS} created, holds ${HOLDS_ORKFLOW}, submitted run ${runId}`);
+
+	await waitFor(
+		'the docker-backed run succeeds',
+		async () => {
+			const answer = await rpc<{ run?: { status?: string } }>('RunService/GetRun', {
+				runId,
+				namespace: HOLDS_NS
+			});
+			return answer.run?.status === 'STATUS_SUCCEEDED';
+		},
+		120_000
+	);
+	note(`run ${runId} (container plugin, image ${IMAGE}) succeeded — a real docker container ran`);
 });
 
 // Acceptance 2 & 6: local validation blocks a bad slug before any RPC, a good
@@ -279,17 +481,57 @@ test('creating a namespace validates locally, updates round-trip the etag, and a
 	await shot(page, 'screenshot-admin-namespace-conflict-resolved.png');
 });
 
+// Acceptance 2: UpdateNamespace replaces the whole mutable document
+// (internal/api/namespaces.go), so a form that omits a field silently
+// erases it. This namespace's labels are created through the raw RPC — the
+// Admin create form exposes no labels control (design §6.1's feature list
+// does not ask for one) — and then a description-only edit through the UI
+// is proven NOT to have erased them.
+test('editing a namespace through the Admin UI does not erase its labels', async ({ page }) => {
+	await rpc('NamespaceService/CreateNamespace', {
+		namespace: {
+			name: LABELLED_NS,
+			description: 'has labels the UI form does not expose',
+			labels: { team: 'payments', tier: 'gold' }
+		}
+	});
+	note(`namespace ${LABELLED_NS} created with labels team=payments tier=gold`);
+
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	const row = page.getByTestId(`namespace-row-${LABELLED_NS}`);
+	await expect(row).toBeVisible();
+	await row.getByTestId(`namespace-edit-${LABELLED_NS}`).click();
+	const editForm = page.getByTestId(`namespace-edit-form-${LABELLED_NS}`);
+	await expect(editForm).toBeVisible();
+	await editForm
+		.getByTestId(`ns-edit-description-${LABELLED_NS}`)
+		.fill('edited through the UI — labels were never in this form');
+	await editForm.getByTestId(`ns-edit-save-${LABELLED_NS}`).click();
+	await expect(editForm).toHaveCount(0);
+	await expect(page.getByTestId(`namespace-row-${LABELLED_NS}`)).toContainText(
+		'edited through the UI'
+	);
+	await shot(page, 'screenshot-admin-namespace-labels-preserved.png');
+
+	const after = await rpc<{ namespace: NamespaceWire }>('NamespaceService/GetNamespace', {
+		name: LABELLED_NS
+	});
+	expect(after.namespace.labels).toMatchObject({ team: 'payments', tier: 'gold' });
+	note(`namespace ${LABELLED_NS} still carries its labels after a UI edit of the description`);
+});
+
 // Acceptance 2: a delete refused by the engine names the orkflow count it was
-// refused with, verbatim, and `default`'s delete control is disabled BEFORE
-// any click, with the reason inline — not merely refused after one.
-test('a delete holding an orkflow is refused naming the count, and default is visibly undeletable', async ({
+// refused with, verbatim, and `default`'s delete control remains disabled
+// with more than one namespace in the list too — not just when it is alone
+// (the previous test above proves the alone case, which this bucket can only
+// ever be in once).
+test('a delete holding an orkflow is refused naming the count, and default remains undeletable among others', async ({
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
 
 	await expect(page.getByTestId('namespace-delete-default')).toBeDisabled();
 	await expect(page.getByTestId('namespace-delete-default-reason')).toBeVisible();
-	await shot(page, 'screenshot-admin-default-undeletable.png');
 
 	const row = page.getByTestId(`namespace-row-${HOLDS_NS}`);
 	await expect(row).toBeVisible();
@@ -311,22 +553,70 @@ test('a delete holding an orkflow is refused naming the count, and default is vi
 	await expect(page.getByTestId(`namespace-row-${HOLDS_NS}`)).toBeVisible();
 });
 
-// Acceptance 1 & 3: pool health respects the namespace switcher, a pool with
-// zero live Orkers is drawn as zero WITH the warning ("no live Orkers", never
-// silently healthy-looking), and a pool the cluster could not answer for is
-// drawn as UNKNOWN — never as zero, because the two mean opposite things.
-test('pool health is namespace-scoped, and narrows rather than flattens an unreachable pool to zero', async ({
+// Acceptance 4: the namespace this whole app is scoped to (`?ns=` on every
+// route, the picker in the header) cannot survive its own deletion. Before
+// this fix, a successful delete only invalidated data — the URL, the
+// picker's selection and every link built from it kept naming a namespace
+// the registry no longer had.
+test('deleting the currently-selected namespace resets the selection to default', async ({
 	page
 }) => {
+	await rpc('NamespaceService/CreateNamespace', { namespace: { name: DOOMED_NS } });
+	note(`namespace ${DOOMED_NS} created, holding no orkflow, to prove the self-delete reset`);
+
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${DOOMED_NS}`);
+	await expect(page.getByTestId('namespace-picker')).toHaveValue(DOOMED_NS);
+
+	const row = page.getByTestId(`namespace-row-${DOOMED_NS}`);
+	await expect(row).toBeVisible();
+	await row.getByTestId(`namespace-delete-${DOOMED_NS}`).click();
+	await page.getByTestId('namespace-delete-confirm-accept').click();
+	await expect(page.getByTestId('namespace-delete-confirm')).toHaveCount(0);
+
+	// The registry no longer has an opinion, and neither does this page: the
+	// URL and the picker both move to `default` rather than stranding the
+	// selection on a name that no longer resolves.
+	await expect(page).toHaveURL(/ns=default/);
+	await expect(page.getByTestId('namespace-picker')).toHaveValue('default');
+	await expect(page.getByTestId(`namespace-row-${DOOMED_NS}`)).toHaveCount(0);
+	await shot(page, 'screenshot-admin-namespace-selection-reset.png');
+});
+
+// Acceptance 1 & 3: pool health respects the namespace switcher, a pool with
+// zero live Orkers is drawn as zero WITH the warning (never silently
+// healthy-looking), and every LIVE pool's per-pool plugin list is reported —
+// including a pool that is not this deployment's default, which is the
+// state acceptance 1's "per-pool plugins" clause actually names and the
+// version of this spec before this fix never asserted.
+test('pool health is namespace-scoped, and reports live Orker counts and per-pool plugins for every pool', async ({
+	page
+}) => {
+	// OPS_NS is widened to include `gpu` — the second Orker this file's
+	// beforeAll started — through the raw RPC (test scaffolding), not the
+	// UI: the UI round trip for allowed_pools is already proven by the
+	// "creating a namespace…" test above.
+	await addPoolToNamespace(OPS_NS, 'gpu');
+	await waitFor('the gpu pool reports a live Orker', async () => {
+		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
+			'NamespaceService/ListPools',
+			{ namespace: OPS_NS }
+		);
+		return answer.pools?.some((p) => p.name === 'gpu' && (p.liveOrkerCount ?? 0) > 0) ?? false;
+	});
+	note(`namespace ${OPS_NS} widened to allow gpu, which reports a live Orker`);
+
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${OPS_NS}`);
 	await expect(page.getByTestId('pools-scope-caption')).toContainText(OPS_NS);
 	await expect(page.getByTestId('pools-scope-caption')).toContainText('honours the namespace');
 
-	// main: a live Orker really is polling for it.
+	// main: a live Orker really is polling for it, and it reports the real
+	// plugin set that Orker was built with.
 	const mainCard = page.getByTestId('pool-card-main');
 	await expect(mainCard).toBeVisible();
 	await expect(mainCard.getByTestId('pool-orker-count-main')).not.toHaveText('0');
 	await expect(mainCard.getByTestId('pool-default-main')).toBeVisible();
+	await expect(mainCard.getByTestId('pool-plugins-main')).toContainText('shell');
+	await expect(mainCard.getByTestId('pool-plugins-main')).toContainText('container');
 
 	// cpu: named in this namespace's allow-list, genuinely nobody serves it.
 	// Rendered as a real zero, tinted, with the words that say what to do
@@ -335,71 +625,184 @@ test('pool health is namespace-scoped, and narrows rather than flattens an unrea
 	await expect(cpuCard).toBeVisible();
 	await expect(cpuCard.getByTestId('pool-orker-count-cpu')).toHaveText('0');
 	await expect(cpuCard.getByTestId('pool-no-orkers-cpu')).toContainText('no live Orkers');
-	await shot(page, 'screenshot-admin-pools.png');
 
-	// Fault injection: the cluster could not be asked about a pool at all —
-	// distinct from "asked, and it is empty". Content-type is JSON because
-	// createConnectTransport defaults to useBinaryFormat: false, exactly the
-	// wire format the real engine answers with (verified against s.pools.Pools
-	// answering NamespaceService.ListPools).
-	//
-	// Getting a re-fetch under the fault route needs TWO things: a browser
-	// fetch (page.route sees the browser's own fetch, never the Node SSR
-	// server's — this is why the earlier `page.reload()` attempt here saw
-	// nothing at all), and a navigation SvelteKit will not just serve from
-	// its own cached load result for a URL already visited. The namespace
-	// PICKER'S switch handler already asks for both — `goto(..., {
-	// invalidateAll: true })` in +layout.svelte — so it is used here instead
-	// of a plain link click, which SvelteKit is free to treat as a no-op
-	// revisit of a URL already loaded once above.
-	await page.route('**/orkstack.v1.NamespaceService/ListPools', (route) =>
-		route.fulfill({
-			contentType: 'application/json',
-			body: JSON.stringify({
-				pools: [
-					{
-						name: 'gpu',
-						unavailableReason: 'fault injected by admin.spec.ts: the task queue could not be described'
-					}
-				],
-				defaultPool: 'main'
-			})
-		})
-	);
-	await page.getByTestId('namespace-picker').selectOption('default');
-	await page.waitForURL(/ns=default/);
-	await page.getByTestId('namespace-picker').selectOption(OPS_NS);
-	await page.waitForURL(new RegExp(`ns=${OPS_NS}`));
+	// gpu: a SECOND, genuinely live, NON-default pool — this spec's own
+	// Orker, started in beforeAll — with its own real plugin list. This is
+	// the per-pool plugin assertion the acceptance's "pool health with …
+	// per-pool plugins" clause names and an earlier version of this file
+	// never made: main and cpu alone cannot distinguish "this page shows
+	// SOME pool's plugins" from "this page shows the RIGHT pool's plugins".
 	const gpuCard = page.getByTestId('pool-card-gpu');
 	await expect(gpuCard).toBeVisible();
-	await expect(gpuCard.getByTestId('pool-unavailable-gpu')).toBeVisible();
-	await expect(gpuCard.getByTestId('pool-unavailable-gpu')).toContainText('unknown');
-	// The number itself is never drawn as zero for this pool: there IS no
-	// pool-orker-count testid on an unavailable card.
-	await expect(gpuCard.getByTestId('pool-orker-count-gpu')).toHaveCount(0);
-	await shot(page, 'screenshot-admin-pools-unavailable.png');
-	await page.unroute('**/orkstack.v1.NamespaceService/ListPools');
+	await expect(gpuCard.getByTestId('pool-orker-count-gpu')).not.toHaveText('0');
+	await expect(gpuCard.getByTestId('pool-default-gpu')).toHaveCount(0);
+	await expect(gpuCard.getByTestId('pool-plugins-gpu')).toContainText('shell');
+	await expect(gpuCard.getByTestId('pool-plugins-gpu')).toContainText('container');
+	await shot(page, 'screenshot-admin-pools.png');
 });
 
-// Acceptance 1: the plugin inventory is global (no namespace scoping in the
-// caption), lists what the Orker reports, and discloses a schema on request.
-test('the plugin inventory is global and discloses schemas on request', async ({ page }) => {
+// Acceptance 1 & 3: the plugin inventory is global (no namespace scoping in
+// the caption), lists what the default pool's Orker reports IN FULL, and
+// discloses a schema on request. Then, once the default pool genuinely goes
+// quiet, the SAME inventory narrows to name-only entries — a real partial
+// answer, produced by killing this spec's own `main` Orker and waiting out
+// the real freshness window, not by injecting a response at the network
+// layer. See the file-level comment for why this is the only way to produce
+// this state without a code change outside SCOPE LOCK: a second Orker of the
+// same build running ALONGSIDE a healthy default pool cannot produce it,
+// because internal/api/service.go's dedupePlugins deliberately drops a
+// name-only report for a plugin the default pool already described in full
+// (verified against this exact build before this test was written).
+test('the plugin inventory is global, discloses schemas on request, and narrows to name-only entries once the default pool goes quiet', async ({
+	page
+}) => {
+	test.setTimeout(240_000);
+
 	await page.goto(`${UI_ORIGIN}/admin/plugins?ns=${OPS_NS}`);
 	await expect(page.getByTestId('plugins-scope-caption')).toContainText('across this whole deployment');
 
-	const shellRow = page.getByTestId('plugin-row-shell');
+	const shellKey = 'shell@0.1.0';
+	const shellRow = page.getByTestId(`plugin-row-${shellKey}`);
 	await expect(shellRow).toBeVisible();
 	await expect(shellRow).toContainText('shell');
+	await expect(shellRow).toContainText('0.1.0');
+	await expect(page.getByTestId(`plugin-partial-${shellKey}`)).toHaveCount(0);
 
-	await page.getByTestId('plugin-schema-toggle-shell').click();
-	const schema = page.getByTestId('plugin-schema-shell');
+	await page.getByTestId(`plugin-schema-toggle-${shellKey}`).click();
+	const schema = page.getByTestId(`plugin-schema-${shellKey}`);
 	await expect(schema).toBeVisible();
-	await expect(page.getByTestId('plugin-input-schema-shell')).toContainText('op');
+	await expect(page.getByTestId(`plugin-input-schema-${shellKey}`)).toContainText('op');
 	await shot(page, 'screenshot-admin-plugins.png');
+
+	// Kill THIS spec's own `main` Orker (captured in beforeAll) — `gpu`
+	// stays up. Once the real freshness window (60s,
+	// internal/engine/pools.go DefaultPollerFreshness) elapses, ListPlugins
+	// stops asking the default pool at all (it is no longer fresh) and
+	// reports only what `gpu` answers, by name — genuinely partial, because
+	// nothing but a real outage of the default pool produces it.
+	mainOrkerProc?.kill('SIGTERM');
+	note('killed this spec\'s own main-pool Orker to let the default pool go stale for real');
+
+	await waitFor(
+		'the plugin inventory narrows to name-only entries once main is stale',
+		async () => {
+			const answer = await rpc<{ plugins?: { name: string; version?: string }[] }>(
+				'PluginService/ListPlugins',
+				{}
+			);
+			const shell = answer.plugins?.find((p) => p.name === 'shell');
+			return shell !== undefined && (shell.version ?? '') === '';
+		},
+		150_000
+	);
+	note('the deployment-wide plugin inventory now reports name-only entries from gpu alone');
+
+	// A client-side navigation (not page.goto/page.reload) so the browser's
+	// own fetch is the one re-running `load` — the identical reasoning the
+	// "A note on Playwright and SSR" section of proof/M11.6/README.md gives
+	// for the pool-health test below.
+	await page.getByTestId('admin-tab-namespaces').click();
+	await page.getByTestId('admin-tab-plugins').click();
+
+	const partialKey = 'shell@unreported';
+	const partialRow = page.getByTestId(`plugin-row-${partialKey}`);
+	await expect(partialRow).toBeVisible();
+	await expect(page.getByTestId(`plugin-partial-${partialKey}`)).toBeVisible();
+	await expect(page.getByTestId(`plugin-unreported-${partialKey}`)).toContainText('not reported');
+	await expect(page.getByTestId(`plugin-description-unreported-${partialKey}`)).toContainText(
+		'not reported'
+	);
+	await expect(page.getByTestId(`plugin-schema-unreported-${partialKey}`)).toContainText(
+		'not reported'
+	);
+	// The fully-described row is gone: the default pool that reported it is
+	// the one that just went quiet.
+	await expect(page.getByTestId(`plugin-row-${shellKey}`)).toHaveCount(0);
+	await shot(page, 'screenshot-admin-plugins-partial.png');
+});
+
+// Acceptance 1 & 3: a pool health read that cannot reach the cluster AT ALL
+// renders every pool it asked about as UNKNOWN, never as a zero — proven
+// against a REAL Temporal outage, not a fabricated response.
+//
+// WHY A REAL TEMPORAL NAMESPACE DELETION, AND NOT SOMETHING NARROWER: the
+// probe this page depends on (TemporalPoolProbe.ObservePool,
+// internal/engine/pool_probe.go) calls DescribeTaskQueueEnhanced, which
+// fails only for a cluster-level reason — an unreachable server or an
+// invalid/missing Temporal namespace — never for a PER-POOL reason a
+// black-box test could aim at one queue and not another: a pool name valid
+// under this deployment's own slug rule always resolves to a syntactically
+// valid Temporal task queue name (internal/task/pool.go), so nothing about
+// an individual pool's name can make the cluster refuse to answer for it
+// while answering for its neighbour. Deleting this run's OWN Temporal
+// namespace (verified interactively against this SDK version before this
+// test was written: DescribeTaskQueueEnhanced returns
+// "Namespace ... is not found" immediately after deletion) is a real
+// backend failure, produced with the same `temporal` CLI proof/M8.4 and
+// proof/M8.5 already depend on, and it is scoped to a namespace nothing but
+// this run's own two Orkers and this run's own engine were ever inside —
+// AGENTS.md §6's isolation, which is exactly what makes this namespace safe
+// to destroy without touching any other agent's cluster state.
+//
+// Placed last among the tests that need Temporal: nothing after this one
+// reads a pool or a plugin, so nothing here strands a later assertion.
+test('a pool health read that cannot reach the cluster reports every pool as unknown, never as zero — proven by a real Temporal outage', async ({
+	page
+}) => {
+	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${OPS_NS}`);
+	await expect(page.getByTestId('pool-card-main')).toBeVisible();
+
+	execFileSync(
+		'temporal',
+		[
+			'operator',
+			'namespace',
+			'delete',
+			'--namespace',
+			TEMPORAL_NAMESPACE,
+			'--address',
+			'127.0.0.1:7233',
+			'--yes'
+		],
+		{ stdio: 'pipe' }
+	);
+	note(`deleted this run's own Temporal namespace ${TEMPORAL_NAMESPACE} — a real cluster outage`);
+
+	// A client-side navigation forces the re-fetch this assertion depends
+	// on: SvelteKit does not always re-run `load` for a URL already visited
+	// in this session, and page.route (unused here) would not see the Node
+	// SSR server's first fetch of a page.goto anyway. The namespace picker's
+	// switch handler already calls goto(..., { invalidateAll: true }).
+	await waitFor(
+		'pool health reports every pool as unavailable once Temporal is gone',
+		async () => {
+			await page.getByTestId('namespace-picker').selectOption('default');
+			await page.waitForURL(/ns=default/);
+			await page.getByTestId('namespace-picker').selectOption(OPS_NS);
+			await page.waitForURL(new RegExp(`ns=${OPS_NS}`));
+			const unavailable = page.getByTestId('pool-unavailable-main');
+			return (await unavailable.count()) > 0;
+		},
+		60_000
+	);
+
+	for (const pool of ['main', 'cpu', 'gpu']) {
+		const card = page.getByTestId(`pool-card-${pool}`);
+		await expect(card).toBeVisible();
+		const unavailable = card.getByTestId(`pool-unavailable-${pool}`);
+		await expect(unavailable).toBeVisible();
+		await expect(unavailable).toContainText('unknown');
+		// The number itself is never drawn as zero for an unreachable pool:
+		// there is no pool-orker-count testid on the card at all.
+		await expect(card.getByTestId(`pool-orker-count-${pool}`)).toHaveCount(0);
+	}
+	await shot(page, 'screenshot-admin-pools-unavailable.png');
 });
 
 // Acceptance 5: a failed read reports the failure and offers a retry, on an
-// Admin route exactly as everywhere else in the app.
+// Admin route exactly as everywhere else in the app. ListNamespaces never
+// touches Temporal (internal/api/namespaces.go reads only the durable
+// registry), so this still works after the real outage above.
 test('a failed Admin read reports the failure and retries', async ({ page }) => {
 	// Navigate to a neutral page on a normal fetch first, THEN break the read
 	// and go client-side (a link click): `load` for the FIRST request of a
