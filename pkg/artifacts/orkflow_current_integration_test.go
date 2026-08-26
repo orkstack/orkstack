@@ -46,7 +46,7 @@ func TestS3OrkflowStore_CurrentPointerDecidesWhatAnEmptyVersionMeans(t *testing.
 	second := testOrkflow(t, name, "2.0.0", applied.Add(time.Second))
 	second.Description = "the second version"
 	for _, wf := range []*orkstackv1.Orkflow{first, second} {
-		if _, _, err := store.Put(ctx, wf); err != nil {
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 			t.Fatalf("Put(%s): %v", wf.GetVersion(), err)
 		}
 	}
@@ -146,7 +146,7 @@ func TestS3OrkflowStore_ReApplyingIdenticalYAMLChurnsNothing(t *testing.T) {
 	t.Cleanup(func() { deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, prefix) })
 
 	wf := testOrkflow(t, name, "1.0.0", time.Now().UTC().Truncate(time.Millisecond))
-	if _, created, err := store.Put(ctx, wf); err != nil || !created {
+	if _, created, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil || !created {
 		t.Fatalf("Put(first) = created %v, %v; want created, nil", created, err)
 	}
 	key := prefix + "1.0.0.json"
@@ -158,7 +158,7 @@ func TestS3OrkflowStore_ReApplyingIdenticalYAMLChurnsNothing(t *testing.T) {
 	// sends, because the API stamps the time of the apply.
 	time.Sleep(1100 * time.Millisecond) // S3 LastModified has second resolution
 	again := testOrkflow(t, name, "1.0.0", time.Now().UTC().Truncate(time.Millisecond))
-	stored, created, err := store.Put(ctx, again)
+	stored, created, err := store.Put(ctx, again, artifacts.NoHeadExpectation())
 	if err != nil {
 		t.Fatalf("Put(repeat): %v", err)
 	}
@@ -179,9 +179,18 @@ func TestS3OrkflowStore_ReApplyingIdenticalYAMLChurnsNothing(t *testing.T) {
 		t.Fatalf("re-applying identical YAML touched the object: LastModified moved %s -> %s",
 			beforeStamp, afterStamp)
 	}
-	// And no second object appeared: a repeat creates no version.
-	if keys := listKeys(t, ctx, raw, cfg.S3Bucket, prefix); len(keys) != 1 {
-		t.Fatalf("a repeat left %v under the orkflow's prefix, want one object", keys)
+	// And no second version appeared: a repeat creates none. The head pointer
+	// beside it is metadata, not a version, and a repeat does not move it
+	// either — a no-op is a no-op (pkg/artifacts/orkflow_head.go).
+	versions := 0
+	for _, listed := range listKeys(t, ctx, raw, cfg.S3Bucket, prefix) {
+		if !strings.Contains(listed, "/@") {
+			versions++
+		}
+	}
+	if versions != 1 {
+		t.Fatalf("a repeat left %d version objects under the orkflow's prefix, want one",
+			versions)
 	}
 }
 
@@ -206,7 +215,7 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 	for i, version := range []string{"1.0.0", "2.0.0"} {
 		wf := testOrkflow(t, name, version, applied.Add(time.Duration(i)*time.Second))
 		wf.Description = "version " + version
-		if _, _, err := store.Put(ctx, wf); err != nil {
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 			t.Fatalf("Put(%s): %v", version, err)
 		}
 		stored[version] = true

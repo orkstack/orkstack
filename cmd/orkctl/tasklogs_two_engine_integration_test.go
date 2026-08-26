@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -602,6 +603,11 @@ func decodedPayloads(rendered string) string {
 }
 
 // awaitArchivedEventText waits for the run archive and renders its events.
+//
+// Opening a stream may race the archive projection, so an open failure or a
+// clean empty stream is retried. Once a stream has delivered bytes, however,
+// its terminal Err is fatal. A dropped prefix is not an archive and must not
+// be silently discarded so a later healthy attempt can make the test pass.
 func awaitArchivedEventText(
 	ctx context.Context,
 	t *testing.T,
@@ -610,28 +616,27 @@ func awaitArchivedEventText(
 ) string {
 	t.Helper()
 	deadline := time.Now().Add(90 * time.Second)
+	var lastErr error
 	for time.Now().Before(deadline) {
 		stream, err := replica.runs.StreamEvents(ctx, connect.NewRequest(
 			&orkstackv1.StreamEventsRequest{RunId: runID}))
-		if err == nil {
-			var out strings.Builder
-			marshaler := protojson.MarshalOptions{Multiline: false}
-			for stream.Receive() {
-				rendered, err := marshaler.Marshal(stream.Msg())
-				if err != nil {
-					t.Fatalf("render archived event: %v", err)
-				}
-				out.Write(rendered)
-				out.WriteByte('\n')
-			}
-			_ = stream.Close()
-			if out.Len() > 0 {
-				return out.String()
-			}
+		if err != nil {
+			lastErr = fmt.Errorf("open the stream: %w", err)
+			time.Sleep(500 * time.Millisecond)
+			continue
 		}
+		text, err := readArchivedEventText(stream)
+		if err == nil {
+			return text
+		}
+		var terminal *archivedEventStreamError
+		if errors.As(err, &terminal) {
+			t.Fatalf("read archived event stream: %v", err)
+		}
+		lastErr = err
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("run %s never produced a readable event stream to scan", runID)
+	t.Fatalf("run %s never produced a COMPLETE event stream to scan (last: %v)", runID, lastErr)
 	return ""
 }
 

@@ -28,10 +28,25 @@
 //	  - ephemeral: scratch       # a fresh directory, created before the run
 //	    path: /scratch           # and removed after it
 //
-// `output`: exit_code, stdout, stderr, image, image_pulled, container,
-// timed_out, duration_ms. The stdout/stderr strings are truncated to
-// MaxCapturedOutput bytes; the full streams are available as artifacts through
+// `output`: exit_code, image, image_pulled, container, timed_out, duration_ms.
+// IT CARRIES NO BYTES THE CONTAINER WROTE. An output payload is a Temporal
+// payload — the activity result, the workflow's own state, the run's stored
+// task output — and a task's output travels as artifacts, never inline
+// (AGENTS.md §1.2). What the container printed reaches a reader two other
+// ways, both of them complete where a truncated string never was: the live
+// log stream, and the byte-exact capture artifacts named by
 // capture_stdout_as / capture_stderr_as.
+//
+// Live output: both streams reach the task's log stream WHILE the container
+// runs, framed into lines, with stderr carrying plugin.StderrMarker so the two
+// stay apart in one stream (see streamSet and docs/PLUGINS.md).
+//
+// A FAILURE carries no payload and quotes nothing the container wrote, for the
+// same reason and one worse: an error travels into Temporal history AND onto
+// the event stream, once per attempt. It names the exit code and where the
+// output is instead (runFailure). It DOES carry the captures the run produced
+// — the output of a failing container is exactly what an engineer opens the
+// run to read, and the Orker uploads them before it fails the task.
 //
 // Security (AGENTS.md §9): the plugin drives the Docker CLI through an argv
 // slice and never builds a shell command line, so no config value can inject a
@@ -53,10 +68,15 @@ import (
 )
 
 const (
-	// MaxCapturedOutput bounds the stdout/stderr strings placed on the task
-	// output payload. Bytes never belong inline, so the full streams are only
-	// available as artifacts.
-	MaxCapturedOutput = 8 << 10
+	// MaxDiagnosticHead bounds the head of each stream the plugin keeps in
+	// memory.
+	//
+	// It is NOT a payload field and never leaves this package: the only reader
+	// is runFailure, which recognizes one daemon-level cause from it
+	// (invisibleBindSource) and quotes none of it. The bytes themselves go to
+	// the capture files and the log stream, which is where a task's output
+	// belongs (AGENTS.md §1.2).
+	MaxDiagnosticHead = 8 << 10
 
 	// DefaultKillGrace is how long a container killed for exceeding its budget
 	// may take to disappear before the Docker client is dropped too.
@@ -136,12 +156,15 @@ func (p *Plugin) Describe() plugin.Descriptor {
 			},
 			"required": []any{"image"},
 		},
+		// No stdout / stderr here, and none on the payload: an output payload
+		// is a Temporal payload, and a task's output travels as artifacts
+		// (AGENTS.md §1.2). A downstream task reads a container's output
+		// through `artifact "<task>/<capture-name>"`, and a person reads it
+		// with `orkctl run logs`.
 		OutputSchema: plugin.SchemaDoc{
 			"type": "object",
 			"properties": map[string]any{
 				"exit_code":    map[string]any{"type": "number"},
-				"stdout":       map[string]any{"type": "string"},
-				"stderr":       map[string]any{"type": "string"},
 				"image":        map[string]any{"type": "string"},
 				"image_pulled": map[string]any{"type": "boolean"},
 				"container":    map[string]any{"type": "string"},
@@ -243,7 +266,7 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		return nil, err
 	}
 
-	streams, err := newStreams(ec.WorkDir)
+	streams, err := newStreams(ec.WorkDir, ec.Log)
 	if err != nil {
 		return nil, err
 	}
@@ -268,6 +291,10 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 	log("container: running %s as %s", image, req.name)
 
 	outcome, err := p.runContainer(ctx, req, streams.stdout(), streams.stderr(), timeout, log)
+	// Flush each stream's final unterminated line BEFORE the exit code is
+	// interpreted, so a failing container's last words are in the log stream
+	// whatever the plugin decides about the failure.
+	streams.closeLive()
 	if flushErr := streams.flush(); flushErr != nil && err == nil {
 		return nil, flushErr
 	}
@@ -275,21 +302,11 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		return nil, err
 	}
 
-	output := plugin.Payload{
-		"exit_code":    float64(outcome.exitCode),
-		"stdout":       streams.stdoutHead.String(),
-		"stderr":       streams.stderrHead.String(),
-		"image":        image,
-		"image_pulled": pulled,
-		"container":    req.name,
-		"timed_out":    outcome.timedOut,
-		"duration_ms":  float64(outcome.duration.Milliseconds()),
-	}
-
-	if outcome.exitCode != 0 {
-		return nil, p.runFailure(req, outcome, streams)
-	}
-
+	// The captures are named BEFORE the exit code is interpreted, because a
+	// failing container's output is exactly the output somebody opens the run
+	// to read. Building them after the failure returned is what lost them:
+	// the files existed, the author had named them, and the Orker's deferred
+	// workdir cleanup removed them unread.
 	produced := make([]plugin.ProducedArtifact, 0, 2)
 	if name := strings.TrimSpace(configString(ec.Config, "capture_stdout_as")); name != "" {
 		produced = append(produced, plugin.ProducedArtifact{Name: name, LocalPath: streams.stdoutPath})
@@ -298,6 +315,27 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 		produced = append(produced, plugin.ProducedArtifact{Name: name, LocalPath: streams.stderrPath})
 	}
 
+	if outcome.exitCode != 0 {
+		// A result AND an error: the error fails the task and is all that
+		// reaches history, while the captures still reach the store. The
+		// Orker uploads them before it returns the failure
+		// (internal/orker/activity.go).
+		log("container: %s exited %d in %s with %d artifact(s)",
+			req.name, outcome.exitCode, outcome.duration, len(produced))
+		return &plugin.Result{Artifacts: produced}, p.runFailure(req, outcome, streams)
+	}
+
+	// No stdout / stderr: this payload is a Temporal payload, and a task's
+	// output travels as artifacts (AGENTS.md §1.2). Everything here is
+	// something only the plugin knows.
+	output := plugin.Payload{
+		"exit_code":    float64(outcome.exitCode),
+		"image":        image,
+		"image_pulled": pulled,
+		"container":    req.name,
+		"timed_out":    outcome.timedOut,
+		"duration_ms":  float64(outcome.duration.Milliseconds()),
+	}
 	log("container: %s exited 0 in %s with %d artifact(s)", req.name, outcome.duration, len(produced))
 	return &plugin.Result{Output: output, Artifacts: produced}, nil
 }
@@ -305,47 +343,68 @@ func (p *Plugin) execRun(ctx context.Context, ec *plugin.ExecContext) (*plugin.R
 // runFailure explains a non-zero exit and decides whether retrying could ever
 // change it. Docker reserves three codes for its own failures; everything else
 // is the container's own status.
+//
+// IT QUOTES NOTHING THE CONTAINER WROTE. The error this returns is the one
+// thing here that leaves the Orker: Temporal records it as the activity's
+// failure, the workflow copies it onto TaskRun.Error and the TASK_FAILED
+// event, and the run's own failure copies it again onto Run.Error and
+// RUN_FAILED (internal/engine/workflow.go) — history and the event stream
+// both, once per attempt. A task's output is bytes, and bytes travel as stored
+// objects (AGENTS.md §1.4): the whole of both streams is in the task's log
+// stream, live and afterwards, and byte-exact in the capture artifacts. So a
+// failure names what only it knows — the image, the exit code, the kill, the
+// one daemon-level cause worth translating — and says where the output is.
+//
+// That is not less actionable than quoting a head of stderr was: the docker
+// CLI's own diagnostics are written to the same stderr the plugin streams, so
+// "docker could not start it" and the daemon's sentence about why are one
+// `orkctl run logs` apart, and the artifacts hold every byte rather than the
+// first 8 KiB.
 func (p *Plugin) runFailure(req runRequest, outcome runOutcome, streams *streamSet) error {
-	tail := strings.TrimSpace(streams.stderrHead.String())
-	if tail == "" {
-		tail = strings.TrimSpace(streams.stdoutHead.String())
-	}
-	if tail == "" {
-		tail = "(no output)"
-	}
+	// The head buffers are READ here and never quoted: the daemon-level cause
+	// below is recognized from them, and what leaves this function is the
+	// plugin's own sentence about it.
+	said := streams.stderrHead.String() + streams.stdoutHead.String()
 
 	if outcome.timedOut {
 		// A budget the container blew once it will blow again: the task is the
 		// author's to fix, not the scheduler's to retry.
 		return plugin.Permanent(fmt.Errorf(
-			"container: %s exceeded its timeout after %s and was killed (exit code %d): %s",
-			req.image, outcome.duration.Round(time.Millisecond), outcome.exitCode, tail))
+			"container: %s exceeded its timeout after %s and was killed (exit code %d). %s",
+			req.image, outcome.duration.Round(time.Millisecond), outcome.exitCode, whereTheOutputIs))
 	}
 	switch outcome.exitCode {
 	case exitDockerFailed:
-		if strings.Contains(tail, invisibleBindSource) {
+		if strings.Contains(said, invisibleBindSource) {
 			// The daemon runs somewhere that cannot see the Orker's workdir —
 			// a VM sharing only part of the host, or a remote daemon. No retry
 			// fixes that, and the operator needs to hear which knob moves it.
 			return plugin.Permanent(fmt.Errorf(
 				"container: the docker daemon cannot see a path this task mounts, so it refused to start %s. "+
 					"The Orker's work directory must be on a filesystem the daemon shares; "+
-					"point %s at one. Docker said: %s",
-				req.image, workDirHint, tail))
+					"point %s at one. %s",
+				req.image, workDirHint, whereTheOutputIs))
 		}
 		// The container never started: the daemon is down, the image is
 		// unreachable, or the host is out of resources. Leave it retryable.
-		return fmt.Errorf("container: docker could not start %s (exit code %d): %s",
-			req.image, outcome.exitCode, tail)
+		return fmt.Errorf("container: docker could not start %s (exit code %d). %s",
+			req.image, outcome.exitCode, whereTheOutputIs)
 	case exitCommandNotExecutable, exitCommandNotFound:
 		return plugin.Permanent(fmt.Errorf(
-			"container: %s cannot run the requested command (exit code %d): %s",
-			req.image, outcome.exitCode, tail))
+			"container: %s cannot run the requested command (exit code %d). %s",
+			req.image, outcome.exitCode, whereTheOutputIs))
 	default:
-		return plugin.Permanent(fmt.Errorf("container: %s exited with code %d: %s",
-			req.image, outcome.exitCode, tail))
+		return plugin.Permanent(fmt.Errorf("container: %s exited with code %d. %s",
+			req.image, outcome.exitCode, whereTheOutputIs))
 	}
 }
+
+// whereTheOutputIs ends every failure message. A failure a person cannot act
+// on is no better than one that carries the bytes it must not carry, so the
+// sentence that replaces the quote is the one that says where to look.
+const whereTheOutputIs = "What it printed is in the task's log " +
+	"(`orkctl run logs <run-id> --task <task-id>`; stderr lines carry the `[stderr] ` marker), " +
+	"and byte-exact in its capture_stdout_as / capture_stderr_as artifacts when the task names them."
 
 // acquireImage applies the pull policy and reports whether a pull happened.
 func (p *Plugin) acquireImage(
@@ -414,8 +473,20 @@ func logger(ec *plugin.ExecContext) plugin.Logger {
 	return func(string, ...any) {}
 }
 
-// streamSet holds the container's output streams: a file each, so the captured
-// artifact is the exact bytes, plus a bounded head for the output payload.
+// streamSet holds the container's output streams. Each is written three ways,
+// and every one of them is load-bearing:
+//
+//   - a FILE, so the captured artifact is the container's exact bytes;
+//   - a bounded HEAD, which the plugin reads to recognize one daemon-level
+//     failure and never puts on a payload or in an error (MaxDiagnosticHead);
+//   - a LINE WRITER, so the application's own output reaches the task's live
+//     log stream WHILE the container runs rather than only afterwards (M11.1).
+//
+// The live writer is a third reader of the same bytes, never a replacement for
+// either of the other two. Both fds feed ONE logger — the live view is the
+// interleaved console a person expects — and stderr carries
+// plugin.StderrMarker per line so the two are still told apart. The byte-exact
+// separation callers rely on stays where it always was: the two artifacts.
 type streamSet struct {
 	stdoutPath string
 	stderrPath string
@@ -423,9 +494,13 @@ type streamSet struct {
 	stderrFile *os.File
 	stdoutHead *headBuffer
 	stderrHead *headBuffer
+	stdoutLive *plugin.LineWriter
+	stderrLive *plugin.LineWriter
 }
 
-func newStreams(workDir string) (*streamSet, error) {
+// newStreams opens the capture files and builds the live writers. A nil log is
+// a plugin with nowhere to stream to, which the writers accept and discard.
+func newStreams(workDir string, log plugin.Logger) (*streamSet, error) {
 	dir := filepath.Join(workDir, internalDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("container: create stream dir: %w", err)
@@ -433,8 +508,10 @@ func newStreams(workDir string) (*streamSet, error) {
 	set := &streamSet{
 		stdoutPath: filepath.Join(dir, "stdout"),
 		stderrPath: filepath.Join(dir, "stderr"),
-		stdoutHead: &headBuffer{limit: MaxCapturedOutput},
-		stderrHead: &headBuffer{limit: MaxCapturedOutput},
+		stdoutHead: &headBuffer{limit: MaxDiagnosticHead},
+		stderrHead: &headBuffer{limit: MaxDiagnosticHead},
+		stdoutLive: plugin.NewLineWriter(log, ""),
+		stderrLive: plugin.NewLineWriter(log, plugin.StderrMarker),
 	}
 	var err error
 	if set.stdoutFile, err = os.Create(set.stdoutPath); err != nil {
@@ -447,8 +524,21 @@ func newStreams(workDir string) (*streamSet, error) {
 	return set, nil
 }
 
-func (s *streamSet) stdout() io.Writer { return io.MultiWriter(s.stdoutFile, s.stdoutHead) }
-func (s *streamSet) stderr() io.Writer { return io.MultiWriter(s.stderrFile, s.stderrHead) }
+func (s *streamSet) stdout() io.Writer {
+	return io.MultiWriter(s.stdoutFile, s.stdoutHead, s.stdoutLive)
+}
+
+func (s *streamSet) stderr() io.Writer {
+	return io.MultiWriter(s.stderrFile, s.stderrHead, s.stderrLive)
+}
+
+// closeLive emits each stream's final line, the one an application ended
+// without a terminator. It is idempotent, so the explicit call before the exit
+// code is read and the one on the way out are the same call.
+func (s *streamSet) closeLive() {
+	s.stdoutLive.Close()
+	s.stderrLive.Close()
+}
 
 func (s *streamSet) flush() error {
 	if err := s.stdoutFile.Sync(); err != nil {
@@ -461,6 +551,7 @@ func (s *streamSet) flush() error {
 }
 
 func (s *streamSet) close() {
+	s.closeLive()
 	_ = s.stdoutFile.Close()
 	_ = s.stderrFile.Close()
 }

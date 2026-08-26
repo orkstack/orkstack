@@ -1,0 +1,3 @@
+editing deploy@1.0.0 in <editor>
+Error: apply: failed_precondition: orkflow "deploy" in namespace "default" changed while this edit was open: it was derived from version "1.0.0", and the newest applied version was "2.0.0" when the document was fetched and is now "3.0.0"; run `orkctl orkflow diff deploy 2.0.0 3.0.0` and re-apply
+your edit was kept at <kept-edit-path>

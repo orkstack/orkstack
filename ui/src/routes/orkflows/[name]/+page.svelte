@@ -16,10 +16,16 @@
 	// is a link, not an instruction to click twice. The namespace is always
 	// stated, `default` included — a tab link that dropped it would hand the
 	// next reader's remembered namespace a page about somebody else's orkflow.
+	//
+	// The VERSION travels with the two tabs that render one version — the
+	// Overview's DAG and the editor's document — and not with the Versions tab,
+	// which lists them all. Carrying it there would also carry it back out: the
+	// Edit link after an apply would reopen the version the fork came FROM
+	// rather than the head it just created.
 	function tabHref(tab: string): string {
 		const params = new URLSearchParams();
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
-		if (data.version) params.set('version', data.version);
+		if (data.version && tab !== 'versions') params.set('version', data.version);
 		if (tab !== 'overview') params.set('tab', tab);
 		return `/orkflows/${data.name}?${params.toString()}`;
 	}
@@ -157,9 +163,10 @@
 	<OrkflowEditor
 		name={data.name}
 		namespace={data.namespace}
-		sourceYaml={data.headYaml}
+		sourceYaml={data.editYaml}
+		baseVersion={data.editVersion}
 		headVersion={data.headVersion}
-		error={data.headError}
+		error={data.editError}
 		versionsHref={tabHref('versions')}
 		onreload={reload}
 	/>

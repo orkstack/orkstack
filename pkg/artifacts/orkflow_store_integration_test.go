@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -79,6 +80,15 @@ func testOrkflowName(t *testing.T) string {
 	return "m75-" + uniqueToken(t)
 }
 
+// sortedKeys is every key under one prefix, in a stable order, so an assertion
+// can name the whole set an operation is expected to have left behind.
+func sortedKeys(t *testing.T, ctx context.Context, client *s3.Client, bucket, prefix string) []string {
+	t.Helper()
+	keys := listKeys(t, ctx, client, bucket, prefix)
+	sort.Strings(keys)
+	return keys
+}
+
 func readKey(t *testing.T, ctx context.Context, client *s3.Client, bucket, key string) []byte {
 	t.Helper()
 	object, err := client.GetObject(ctx, &s3.GetObjectInput{
@@ -110,14 +120,18 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 
 	applied := time.Now().UTC().Truncate(time.Millisecond)
 	first := testOrkflow(t, name, "0.1.0", applied)
-	if _, _, err := store.Put(ctx, first); err != nil {
+	if _, _, err := store.Put(ctx, first, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put(0.1.0): %v", err)
 	}
 
-	// The key is the documented path, and the URI names it exactly.
+	// The key is the documented path, and the URI names it exactly. The head
+	// pointer sits beside it: the head is a committed pointer, not a comparison
+	// of the documents' own timestamps (pkg/artifacts/orkflow_head.go).
 	firstKey := fmt.Sprintf("metadata/orkflows/%s/%s/0.1.0.json", artifacts.DefaultNamespace, name)
-	if got := listKeys(t, ctx, raw, cfg.S3Bucket, prefix); len(got) != 1 || got[0] != firstKey {
-		t.Fatalf("bucket keys = %v, want [%s]", got, firstKey)
+	headKey := fmt.Sprintf("metadata/orkflows/%s/%s/@head.json", artifacts.DefaultNamespace, name)
+	if got, want := sortedKeys(t, ctx, raw, cfg.S3Bucket, prefix),
+		[]string{firstKey, headKey}; !slices.Equal(got, want) {
+		t.Fatalf("bucket keys = %v, want %v", got, want)
 	}
 	wantURI := "s3://" + cfg.S3Bucket + "/" + firstKey
 	gotURI, err := store.URI(artifacts.DefaultNamespace, name, "0.1.0")
@@ -142,14 +156,13 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	// exactly as they were.
 	second := testOrkflow(t, name, "0.2.0", applied.Add(time.Second))
 	second.Description = "second version, different content"
-	if _, _, err := store.Put(ctx, second); err != nil {
+	if _, _, err := store.Put(ctx, second, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put(0.2.0): %v", err)
 	}
 	secondKey := fmt.Sprintf("metadata/orkflows/%s/%s/0.2.0.json", artifacts.DefaultNamespace, name)
-	keys := listKeys(t, ctx, raw, cfg.S3Bucket, prefix)
-	sort.Strings(keys)
-	if len(keys) != 2 || keys[0] != firstKey || keys[1] != secondKey {
-		t.Fatalf("bucket keys = %v, want [%s %s]", keys, firstKey, secondKey)
+	if got, want := sortedKeys(t, ctx, raw, cfg.S3Bucket, prefix),
+		[]string{firstKey, secondKey, headKey}; !slices.Equal(got, want) {
+		t.Fatalf("bucket keys = %v, want %v", got, want)
 	}
 	if after := readKey(t, ctx, raw, cfg.S3Bucket, firstKey); !bytes.Equal(document, after) {
 		t.Fatalf("publishing 0.2.0 rewrote 0.1.0:\nbefore:\n%s\nafter:\n%s", document, after)
@@ -157,7 +170,7 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 
 	// Re-applying the SAME definition writes nothing: same object, same bytes,
 	// same created_at, and the call says it created nothing.
-	restored, created, err := store.Put(ctx, first)
+	restored, created, err := store.Put(ctx, first, artifacts.NoHeadExpectation())
 	if err != nil {
 		t.Fatalf("Put(0.1.0) again: %v", err)
 	}
@@ -178,7 +191,7 @@ func TestS3OrkflowStore_WritesEachVersionToItsOwnImmutableObject(t *testing.T) {
 	// so rewriting it would change what an already-started run executes.
 	amended := testOrkflow(t, name, "0.1.0", applied)
 	amended.Description = "amended in place"
-	if _, _, err := store.Put(ctx, amended); !errors.Is(err, artifacts.ErrVersionExists) {
+	if _, _, err := store.Put(ctx, amended, artifacts.NoHeadExpectation()); !errors.Is(err, artifacts.ErrVersionExists) {
 		t.Fatalf("Put(0.1.0) amended = %v, want artifacts.ErrVersionExists", err)
 	}
 	if got := readKey(t, ctx, raw, cfg.S3Bucket, firstKey); !bytes.Equal(document, got) {
@@ -247,7 +260,7 @@ func TestS3OrkflowStore_OutlivesTheStoreThatWroteIt(t *testing.T) {
 	})
 
 	wf := testOrkflow(t, name, "1.0.0", time.Now().UTC())
-	if _, _, err := writer.Put(ctx, wf); err != nil {
+	if _, _, err := writer.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
@@ -295,7 +308,7 @@ func TestS3OrkflowStore_ReportsAMissingOrkflowAsNotFound(t *testing.T) {
 	if _, err := store.Get(ctx, artifacts.DefaultNamespace, "../../etc/passwd", "0.1.0"); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 		t.Errorf("Get(traversal) = %v, want ErrInvalidOrkflow", err)
 	}
-	if _, _, err := store.Put(ctx, &orkstackv1.Orkflow{Name: "no-version"}); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
+	if _, _, err := store.Put(ctx, &orkstackv1.Orkflow{Name: "no-version"}, artifacts.NoHeadExpectation()); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 		t.Errorf("Put(no version) = %v, want ErrInvalidOrkflow", err)
 	}
 }
@@ -324,7 +337,7 @@ func TestOrkflowStore_TwoNamespacesHoldTheSameNameIndependently(t *testing.T) {
 	inB.Namespace = nsB
 	inB.SourceYaml = "namespace: " + nsB + "\nname: " + name + "\n# B\n"
 	for _, wf := range []*orkstackv1.Orkflow{inA, inB} {
-		if _, _, err := store.Put(ctx, wf); err != nil {
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 			t.Fatalf("Put(%s): %v", wf.GetNamespace(), err)
 		}
 	}
@@ -334,9 +347,11 @@ func TestOrkflowStore_TwoNamespacesHoldTheSameNameIndependently(t *testing.T) {
 		want      *orkstackv1.Orkflow
 	}{{nsA, inA}, {nsB, inB}} {
 		key := fmt.Sprintf("metadata/orkflows/%s/%s/1.0.0.json", tc.namespace, name)
-		keys := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.OrkflowPrefix+"/"+tc.namespace+"/")
-		if len(keys) != 1 || keys[0] != key {
-			t.Fatalf("keys for %s = %v, want [%s]", tc.namespace, keys, key)
+		head := fmt.Sprintf("metadata/orkflows/%s/%s/@head.json", tc.namespace, name)
+		keys := sortedKeys(t, ctx, raw, cfg.S3Bucket,
+			artifacts.OrkflowPrefix+"/"+tc.namespace+"/")
+		if want := []string{key, head}; !slices.Equal(keys, want) {
+			t.Fatalf("keys for %s = %v, want %v", tc.namespace, keys, want)
 		}
 		got, err := store.Get(ctx, tc.namespace, name, "")
 		if err != nil {
@@ -390,4 +405,128 @@ func writeOrkflowStoreProof(t *testing.T, bucket string, documents map[string][]
 		t.Fatalf("write proof index: %v", err)
 	}
 	t.Logf("wrote orkflow store proof to %s", dir)
+}
+
+// TestS3OrkflowStore_TheLastApplyIsTheHeadWhateverTheWriterClocksSay is the
+// property a derived head cannot have.
+//
+// Every API replica stamps created_at from its own clock
+// (internal/api.Service.now), so a head chosen as "the greatest stamp" is
+// chosen by whichever replica's clock runs fastest. Here a replica an HOUR
+// behind applies last, exactly as a machine with a drifting clock would: the
+// version it applied is the head, its stamp reads after the head it extended,
+// and the catalog's "newest first" order agrees with both.
+//
+// The two stores are two clients on one bucket, which is what two replicas are.
+func TestS3OrkflowStore_TheLastApplyIsTheHeadWhateverTheWriterClocksSay(t *testing.T) {
+	ahead, cfg := newS3OrkflowStore(t)
+	behind, err := artifacts.NewS3OrkflowStore(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewS3OrkflowStore (second replica): %v", err)
+	}
+	ctx := context.Background()
+	raw := newRawS3Client(t, cfg)
+	name := testOrkflowName(t)
+	prefix := artifacts.OrkflowPrefix + "/" + artifacts.DefaultNamespace + "/" + name + "/"
+	t.Cleanup(func() { deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, prefix) })
+
+	fast := time.Now().UTC().Add(time.Hour).Truncate(time.Millisecond)
+	slow := fast.Add(-time.Hour)
+	for _, version := range []string{"1.0.0", "2.0.0"} {
+		if _, _, err := ahead.Put(ctx, testOrkflow(t, name, version, fast),
+			artifacts.NoHeadExpectation()); err != nil {
+			t.Fatalf("Put(%s) from the fast replica: %v", version, err)
+		}
+	}
+
+	// The lagging replica applies last, believing it is an hour earlier.
+	fork := testOrkflow(t, name, "1.1.0", slow)
+	fork.Description = "applied by a replica whose clock is an hour behind"
+	if _, _, err := behind.Put(ctx, fork, artifacts.ExpectHead("2.0.0")); err != nil {
+		t.Fatalf("Put(1.1.0) from the lagging replica: %v", err)
+	}
+
+	// Read through the OTHER store, so the answer is the bucket's and not one
+	// client's memory of what it wrote.
+	versions, err := ahead.Versions(ctx, artifacts.DefaultNamespace, name)
+	if err != nil {
+		t.Fatalf("Versions: %v", err)
+	}
+	if versions.Head != "1.1.0" {
+		t.Errorf("head = %q, want 1.1.0 — the version applied last", versions.Head)
+	}
+	if len(versions.All) != 3 || versions.All[0].GetVersion() != "1.1.0" {
+		t.Errorf("versions newest-first = %v, want 1.1.0 first", versionNumbers(versions.All))
+	}
+	if stamp := versions.All[0].GetCreatedAt().AsTime(); !stamp.After(fast) {
+		t.Errorf("the last apply is stamped %s, which is not after the head it extended (%s); "+
+			"a catalog ordered by stamp would put it in the wrong place", stamp, fast)
+	}
+	// And what an empty version resolves to follows the head, because nobody
+	// promoted anything.
+	resolved, err := ahead.Get(ctx, artifacts.DefaultNamespace, name, "")
+	if err != nil {
+		t.Fatalf("Get(latest): %v", err)
+	}
+	if resolved.GetVersion() != "1.1.0" {
+		t.Errorf("Get(latest) = %q, want 1.1.0", resolved.GetVersion())
+	}
+}
+
+// TestS3OrkflowStore_AnApplyWhoseExpectedHeadMovedIsRefused is the durable half
+// of the edit contract: the expected head is a condition ON THE WRITE, arbitrated
+// by the object store's own conditional PUT, so an edit written against a head
+// that has since moved stores nothing at all.
+func TestS3OrkflowStore_AnApplyWhoseExpectedHeadMovedIsRefused(t *testing.T) {
+	store, cfg := newS3OrkflowStore(t)
+	ctx := context.Background()
+	raw := newRawS3Client(t, cfg)
+	name := testOrkflowName(t)
+	prefix := artifacts.OrkflowPrefix + "/" + artifacts.DefaultNamespace + "/" + name + "/"
+	t.Cleanup(func() { deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, prefix) })
+
+	applied := time.Now().UTC().Truncate(time.Millisecond)
+	for i, version := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		if _, _, err := store.Put(ctx, testOrkflow(t, name, version, applied.Add(time.Duration(i)*time.Second)),
+			artifacts.NoHeadExpectation()); err != nil {
+			t.Fatalf("Put(%s): %v", version, err)
+		}
+	}
+
+	stale := testOrkflow(t, name, "9.0.0", applied.Add(time.Minute))
+	_, _, err := store.Put(ctx, stale, artifacts.ExpectHead("2.0.0"))
+	if !errors.Is(err, artifacts.ErrHeadMoved) {
+		t.Fatalf("Put with a stale expected head = %v, want artifacts.ErrHeadMoved", err)
+	}
+	var moved *artifacts.HeadMovedError
+	if !errors.As(err, &moved) || moved.Expected != "2.0.0" || moved.Head != "3.0.0" {
+		t.Fatalf("the refusal = %v, want one naming expected 2.0.0 and head 3.0.0", err)
+	}
+	if _, err := store.Get(ctx, artifacts.DefaultNamespace, name, "9.0.0"); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("a refused apply stored its version anyway: %v", err)
+	}
+
+	// Re-read the head and the same document lands, with nothing else changed.
+	if _, created, err := store.Put(ctx, stale, artifacts.ExpectHead("3.0.0")); err != nil || !created {
+		t.Fatalf("the retargeted apply = created %v, %v; want created and no error", created, err)
+	}
+	versions, err := store.Versions(ctx, artifacts.DefaultNamespace, name)
+	if err != nil {
+		t.Fatalf("Versions: %v", err)
+	}
+	if got, want := versionNumbers(versions.All), "9.0.0,3.0.0,2.0.0,1.0.0"; got != want {
+		t.Errorf("versions = %s, want %s", got, want)
+	}
+	if versions.Head != "9.0.0" {
+		t.Errorf("head = %q, want 9.0.0", versions.Head)
+	}
+}
+
+// versionNumbers renders a catalog's versions in the order it is in.
+func versionNumbers(versions []*orkstackv1.Orkflow) string {
+	numbers := make([]string, 0, len(versions))
+	for _, wf := range versions {
+		numbers = append(numbers, wf.GetVersion())
+	}
+	return strings.Join(numbers, ",")
 }

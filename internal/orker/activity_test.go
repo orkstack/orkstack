@@ -162,6 +162,120 @@ func TestExecuteTask_DispatchesByPluginNameAndUploadsProducedArtifacts(t *testin
 	}
 }
 
+// TestExecuteTask_UploadsProducedArtifactsBeforeReturningPluginFailure — F5.
+//
+// A task that FAILS is the one whose output somebody actually opens the run
+// to read, and it was the one the Orker threw away: the plugin failure
+// returned before the upload step, and the deferred RemoveAll then deleted
+// the workdir holding the files. Every byte a failing build produced —
+// compiler errors, a test report, a core dump the author named with
+// capture_paths — existed on disk for the length of one function and was
+// removed unread.
+//
+// So the order is now upload, THEN fail. The failure is unchanged: same
+// error, same type, same retryability. What changes is that the artifacts it
+// produced survive it.
+//
+// The upload's own failure is deliberately NOT allowed to replace the plugin's
+// error. The plugin's error is why the task failed; a store that also refused
+// the captures is a second problem, and reporting it instead would tell the
+// author their build failed because of the bucket.
+func TestExecuteTask_UploadsProducedArtifactsBeforeReturningPluginFailure(t *testing.T) {
+	store := newTestStore(t)
+	report := []byte("FAIL TestThing\n  want 2, got 3\n")
+	stub := &stubPlugin{
+		name: "builder",
+		run: func(_ context.Context, ec *plugin.ExecContext) (*plugin.Result, error) {
+			path := filepath.Join(ec.WorkDir, "report.txt")
+			if err := os.WriteFile(path, report, 0o644); err != nil {
+				return nil, err
+			}
+			return &plugin.Result{
+					Artifacts: []plugin.ProducedArtifact{{
+						Name:      "test-report",
+						LocalPath: "report.txt",
+					}},
+				}, plugin.Permanent(
+					errors.New("builder: the build exited with code 1"))
+		},
+	}
+	activities := NewActivitiesWithOptions(registryWith(stub), store, Options{})
+
+	_, err := runActivity(t, activities, task.ExecuteTaskInput{
+		RunID:       "run-fail",
+		OrkflowName: "build-ork",
+		TaskID:      "compile",
+		Plugin:      "builder",
+	})
+	if err == nil {
+		t.Fatal("ExecuteTask succeeded; the plugin failed and the task must fail with it")
+	}
+	if !strings.Contains(err.Error(), "exited with code 1") {
+		t.Errorf("error %q is not the plugin's own failure; uploading the captures "+
+			"must not change why the task failed", err)
+	}
+	assertNonRetryable(t, err, ErrTypePluginFailed)
+
+	stored, listErr := store.List(context.Background(), "")
+	if listErr != nil {
+		t.Fatalf("list the store: %v", listErr)
+	}
+	var found *plugin.ArtifactRef
+	for i, ref := range stored {
+		if ref.Name == "test-report" {
+			found = &stored[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the failing task's captures are not in the store (it holds %d "+
+			"artifact(s)); a failing task's output is what an engineer opens the "+
+			"run to read, and the workdir holding it is removed on the way out", len(stored))
+	}
+	reader, err := store.Get(context.Background(), found.URI)
+	if err != nil {
+		t.Fatalf("get the stored capture: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+	raw, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read the stored capture: %v", err)
+	}
+	if string(raw) != string(report) {
+		t.Errorf("stored capture = %q, want the failing task's exact bytes %q", raw, report)
+	}
+}
+
+// TestExecuteTask_APluginFailureSurvivesAnUploadThatAlsoFails is the other
+// half of the rule above: the store is the second problem, never the reported
+// one.
+func TestExecuteTask_APluginFailureSurvivesAnUploadThatAlsoFails(t *testing.T) {
+	stub := &stubPlugin{
+		name: "builder",
+		run: func(_ context.Context, _ *plugin.ExecContext) (*plugin.Result, error) {
+			return &plugin.Result{
+					// A path that was never written: the upload cannot open it.
+					Artifacts: []plugin.ProducedArtifact{{
+						Name:      "test-report",
+						LocalPath: "never-written.txt",
+					}},
+				}, plugin.Permanent(
+					errors.New("builder: the build exited with code 1"))
+		},
+	}
+	activities := NewActivitiesWithOptions(registryWith(stub), newTestStore(t), Options{})
+
+	_, err := runActivity(t, activities, task.ExecuteTaskInput{
+		RunID: "run-fail", OrkflowName: "build-ork", TaskID: "compile", Plugin: "builder",
+	})
+	if err == nil {
+		t.Fatal("ExecuteTask succeeded, want the plugin's failure")
+	}
+	if !strings.Contains(err.Error(), "exited with code 1") {
+		t.Errorf("error %q reports the upload rather than the plugin; the author "+
+			"would read it as their build failing because of the store", err)
+	}
+}
+
 func TestExecuteTask_UnknownPluginFailsWithClearNonRetryableError(t *testing.T) {
 	activities := NewActivitiesWithOptions(registryWith(&stubPlugin{name: "http"}), newTestStore(t), Options{})
 

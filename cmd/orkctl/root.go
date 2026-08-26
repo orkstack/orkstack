@@ -122,9 +122,11 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		"timeout for each API request (0 disables it)")
 
 	root.AddCommand(
+		newAdminCommand(g),
 		newApplyCommand(g),
 		newNamespaceCommand(g),
 		newOrkflowCommand(g),
+		newPoolCommand(g),
 		newRunCommand(g),
 		newPluginCommand(g),
 		newStatsCommand(g),
@@ -223,6 +225,10 @@ func (g *globalFlags) pluginClient() orkstackv1connect.PluginServiceClient {
 
 func (g *globalFlags) namespaceClient() orkstackv1connect.NamespaceServiceClient {
 	return orkstackv1connect.NewNamespaceServiceClient(g.httpClient(), g.baseURL())
+}
+
+func (g *globalFlags) systemClient() orkstackv1connect.SystemServiceClient {
+	return orkstackv1connect.NewSystemServiceClient(g.httpClient(), g.baseURL())
 }
 
 func (g *globalFlags) statsClient() orkstackv1connect.StatsServiceClient {

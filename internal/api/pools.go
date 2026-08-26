@@ -83,11 +83,25 @@ func (s *Service) existingNamespaces(ctx context.Context) string {
 // ListPools reports the pools a namespace may dispatch onto, with the Orkers
 // serving each right now and the plugins those Orkers run.
 //
-// Everything in the answer comes from the cluster: the Orker count from what
-// is polling for the pool's work, the plugin set from the Orkers themselves.
+// Liveness and plugins come from the cluster: the Orker count from what is
+// polling for the pool's work, the plugin names from the Orkers themselves.
 // Nothing is read from this process's memory, so any replica answers — one
 // that started nothing gives the same reply as the one that started
 // everything, which is the property AGENTS.md §1.7 asks of every read.
+//
+// It is the SAME report the dashboard renders (StatsHandler.pools), through
+// the same resolver, degrading the same way. Two paths to one question drift,
+// and the drift shows up as an Admin page and a dashboard disagreeing about
+// whether a pool is healthy.
+//
+// It NARROWS and does not refuse. Every source is best-effort and each one's
+// loss costs exactly what that source knew: a pool the cluster did not answer
+// for keeps its row and carries Pool.unavailable_reason; a pool whose Orkers
+// did not answer keeps its count and loses its plugin list; an unreadable
+// orkflow store narrows the scope to the pools the namespace document itself
+// names. The one error left is the one that leaves nothing to report — a
+// namespace that cannot be resolved, or a default pool this deployment cannot
+// route, under which no task of this namespace could run at all.
 func (s *Service) ListPools(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListPoolsRequest],
@@ -115,8 +129,10 @@ func (s *Service) ListPools(
 	//
 	// A narrowed answer that says nothing is indistinguishable from a complete
 	// one, so the degradation is logged with the namespace and the failure.
-	// There is no field on the wire for it: this is a report whose other half
-	// is a liveness snapshot that was already stale when it was taken.
+	// There is no field on the wire for THIS half: which pools are in scope is
+	// a set, and a set has no room to say "and possibly others". The other
+	// half — a pool that could not be probed — does have one, because a row
+	// exists to carry it (Pool.unavailable_reason).
 	named, err := s.poolsNamedByOrkflows(ctx, ns)
 	if err != nil {
 		s.logger.Warn("list pools: the orkflow store could not be read, so only the "+
@@ -141,37 +157,140 @@ func (s *Service) ListPools(
 }
 
 // poolsNamedByOrkflows collects every pool the namespace's stored definitions
-// mention. A namespace with an allow-list needs none of them, and a namespace
-// nothing was ever applied into has none, which is not a failure.
+// mention, across every stored version. A namespace with no definitions has no
+// extra pools, which is not a failure.
 //
-// What a store failure MEANS is ListPools' decision, not this one's: the
+// What a store failure MEANS is the caller's decision, not this one's: the
 // caller degrades, and this reports.
 func (s *Service) poolsNamedByOrkflows(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
 ) ([]string, error) {
-	if len(ns.GetAllowedPools()) > 0 {
-		return nil, nil
-	}
-	orkflows, err := s.orkflows.List(ctx, ns.GetName())
-	if err != nil {
-		if errors.Is(err, artifacts.ErrNotFound) {
-			return nil, nil
-		}
-		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
-	}
-	seen := map[string]struct{}{}
-	for _, wf := range orkflows {
-		for _, t := range wf.GetTasks() {
-			if pool := t.GetPool(); pool != "" {
-				seen[pool] = struct{}{}
+	named, errs := s.poolsNamedByOrkflowsAcross(ctx, []*orkstackv1.Namespace{ns})
+	return named[0], errs[0]
+}
+
+// poolsNamedByOrkflowsAcross is that same scan over several namespaces, and
+// the only implementation of it: ListPools asks about one namespace and the
+// deployment-wide plugin inventory asks about all of them, so a second scan
+// would be a second answer to one question.
+//
+// It reports POSITIONALLY — named[i] and errs[i] belong to nss[i] — which is
+// what preserves per-namespace degradation: one tenant's unreadable catalog
+// costs that tenant's pools and no other's.
+//
+// The round-trips go out in two bounded waves rather than one at a time (see
+// storeFanout). Nothing nests: the version catalogs of EVERY namespace are
+// flattened into the second wave, so no goroutine ever holds a slot while
+// waiting for one.
+func (s *Service) poolsNamedByOrkflowsAcross(
+	ctx context.Context,
+	nss []*orkstackv1.Namespace,
+) ([][]string, []error) {
+	named := make([][]string, len(nss))
+	errs := make([]error, len(nss))
+
+	// Wave 1: one List per namespace.
+	heads := make([][]*orkstackv1.Orkflow, len(nss))
+	inParallel(len(nss), func(i int) {
+		list, err := s.orkflows.List(ctx, nss[i].GetName())
+		if err != nil {
+			if errors.Is(err, artifacts.ErrNotFound) {
+				return
 			}
+			errs[i] = orkflowStoreError(err,
+				"list orkflows in namespace %q", nss[i].GetName())
+			return
+		}
+		heads[i] = list
+	})
+
+	// Wave 2: one Versions per stored orkflow, across every namespace that
+	// survived wave 1.
+	//
+	// List returns one resolved version per orkflow name. That is not enough:
+	// an explicit-version submit can still run any stored version, so every
+	// version catalog must be scanned before the pool set is complete.
+	type lookup struct {
+		ns   int
+		head *orkstackv1.Orkflow
+	}
+	var lookups []lookup
+	for i := range nss {
+		if errs[i] != nil {
+			continue
+		}
+		for _, head := range heads[i] {
+			lookups = append(lookups, lookup{ns: i, head: head})
 		}
 	}
-	named := make([]string, 0, len(seen))
-	for pool := range seen {
-		named = append(named, pool)
+	found := make([][]string, len(lookups))
+	failed := make([]error, len(lookups))
+	inParallel(len(lookups), func(i int) {
+		l := lookups[i]
+		catalog, err := s.orkflows.Versions(ctx, nss[l.ns].GetName(), l.head.GetName())
+		if err != nil {
+			if errors.Is(err, artifacts.ErrNotFound) {
+				found[i] = poolsNamedByTasks(l.head)
+				return
+			}
+			failed[i] = orkflowStoreError(err,
+				"list versions of orkflow %q in namespace %q",
+				l.head.GetName(), nss[l.ns].GetName())
+			return
+		}
+		if len(catalog.All) == 0 {
+			found[i] = poolsNamedByTasks(l.head)
+			return
+		}
+		for _, wf := range catalog.All {
+			found[i] = append(found[i], poolsNamedByTasks(wf)...)
+		}
+	})
+
+	// Reduce in index order. Lookups were built namespace by namespace, so
+	// the first failure this reaches for a namespace is the one the serial
+	// scan stopped at, and the error a caller logs does not move between
+	// calls because the round-trips finished in a different order.
+	seen := make([]map[string]struct{}, len(nss))
+	for i, l := range lookups {
+		if errs[l.ns] != nil {
+			continue
+		}
+		if failed[i] != nil {
+			errs[l.ns] = failed[i]
+			seen[l.ns] = nil
+			continue
+		}
+		if seen[l.ns] == nil {
+			seen[l.ns] = map[string]struct{}{}
+		}
+		for _, pool := range found[i] {
+			seen[l.ns][pool] = struct{}{}
+		}
 	}
-	sort.Strings(named)
-	return named, nil
+	for i := range nss {
+		if errs[i] != nil {
+			named[i] = nil
+			continue
+		}
+		list := make([]string, 0, len(seen[i]))
+		for pool := range seen[i] {
+			list = append(list, pool)
+		}
+		sort.Strings(list)
+		named[i] = list
+	}
+	return named, errs
+}
+
+// poolsNamedByTasks is the pools one stored definition's tasks name.
+func poolsNamedByTasks(wf *orkstackv1.Orkflow) []string {
+	var pools []string
+	for _, t := range wf.GetTasks() {
+		if pool := t.GetPool(); pool != "" {
+			pools = append(pools, pool)
+		}
+	}
+	return pools
 }

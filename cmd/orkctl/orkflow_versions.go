@@ -16,7 +16,7 @@ import (
 )
 
 // The version surface: see the versions, move the pointer, compare two of
-// them, and edit the newest one in $EDITOR. Every command is scoped by the
+// them, and edit any one of them in $EDITOR. Every command is scoped by the
 // global --namespace, and every one that produces data has --json.
 
 func newOrkflowVersionsCommand(g *globalFlags) *cobra.Command {
@@ -109,33 +109,50 @@ func newOrkflowDiffCommand(g *globalFlags) *cobra.Command {
 	}
 }
 
-// newOrkflowEditCommand is the round trip an editor needs: fetch the newest
-// version's source, open it, and apply what comes back.
+// newOrkflowEditCommand is the round trip an editor needs: fetch a version's
+// source, open it, and apply what comes back.
 //
-// The apply carries base_version — the version the text was fetched at — so an
-// edit made while somebody else applied is REPORTED rather than landing beside
-// a newer version nobody looked at. Nothing is locked while the editor is
-// open: a lock across a human's editing session is a lock nobody can bound,
-// and losing the race costs nothing because both versions are stored.
+// ANY stored version is a valid base. `--version` picks one; without it the
+// base is the head, the newest applied version, which is what this command
+// always did. Editing an old version is not a mistake to be prevented — it is
+// how a user forks forward from it: the apply lands as a NEW version, becomes
+// the newest applied one, and moves nothing else. What RUNS is still whatever
+// was promoted, until somebody promotes again.
+//
+// The apply carries two tokens, because there are two facts. base_version says
+// which version this text came from — provenance, and the anchor of any diff
+// that follows. expected_head_version says which version was the newest when
+// the document was fetched, and it is the only one a competing apply can
+// invalidate: if somebody applies while the editor is open, the apply is
+// REFUSED naming both, whatever base was chosen. Nothing is locked meanwhile —
+// a lock across a human's editing session is a lock nobody can bound, and
+// losing the race costs nothing because the edit is kept on disk.
 func newOrkflowEditCommand(g *globalFlags) *cobra.Command {
-	var editor string
+	var (
+		editor  string
+		version string
+	)
 	cmd := &cobra.Command{
 		Use:   "edit <name>",
 		Short: "Edit an orkflow in $EDITOR and apply the result",
-		Long: "edit fetches the newest version's source YAML, opens it in $EDITOR, and\n" +
-			"applies what you save as a NEW version — a stored version is never\n" +
-			"rewritten. Saving without changing anything applies nothing.\n\n" +
-			"If somebody else applies a version while your editor is open, the apply is\n" +
-			"refused and names both versions so you can diff them.",
+		Long: "edit fetches a version's source YAML, opens it in $EDITOR, and applies\n" +
+			"what you save as a NEW version — a stored version is never rewritten.\n" +
+			"Saving without changing anything applies nothing.\n\n" +
+			"--version picks the version to start from. ANY stored version is a valid\n" +
+			"base, and editing an old one is how you fork forward from it: the result\n" +
+			"becomes the newest applied version, and what runs does not change until\n" +
+			"you promote it. Without --version the base is the newest applied version.\n\n" +
+			"If somebody applies a version while your editor is open, the apply is\n" +
+			"refused and names both versions so you can diff them — whichever version\n" +
+			"you started from. Your edit is kept in a file the refusal names.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			// The HEAD version, not the current one: editing is lineage, and
-			// starting from a rolled-back version would silently discard
-			// whatever was applied after it.
+			// Two questions, one listing: which version to edit (when the user
+			// named none) and which head this edit is racing.
 			versions, err := g.orkflowClient().ListOrkflowVersions(ctx, connect.NewRequest(
 				&orkstackv1.ListOrkflowVersionsRequest{Name: name, Namespace: g.namespace},
 			))
@@ -143,25 +160,33 @@ func newOrkflowEditCommand(g *globalFlags) *cobra.Command {
 				return rpcError("read orkflow versions", err)
 			}
 			head := versions.Msg.GetHeadVersion()
+			base := version
+			if base == "" {
+				base = head
+			}
 			fetched, err := g.orkflowClient().GetOrkflow(ctx, connect.NewRequest(
-				&orkstackv1.GetOrkflowRequest{Name: name, Version: head, Namespace: g.namespace},
+				&orkstackv1.GetOrkflowRequest{Name: name, Version: base, Namespace: g.namespace},
 			))
 			if err != nil {
 				return rpcError("get orkflow", err)
 			}
+			// The version the server answered with, not the one asked for: an
+			// empty --version on an orkflow with no head resolves server-side,
+			// and the base sent back has to be the version actually read.
+			base = fetched.Msg.GetOrkflow().GetVersion()
 			source := fetched.Msg.GetOrkflow().GetSourceYaml()
 			if source == "" {
 				return fmt.Errorf(
 					"orkflow %s@%s was stored without its source YAML, so there is nothing to edit",
-					name, head)
+					name, base)
 			}
 
-			edited, err := editInEditor(cmd, editor, name, head, source)
+			edited, err := editInEditor(cmd, editor, name, base, source)
 			if err != nil {
 				return err
 			}
 			if edited == source {
-				fmt.Fprintf(cmd.OutOrStdout(), "No change to %s@%s; nothing applied.\n", name, head)
+				fmt.Fprintf(cmd.OutOrStdout(), "No change to %s@%s; nothing applied.\n", name, base)
 				return nil
 			}
 
@@ -169,9 +194,10 @@ func newOrkflowEditCommand(g *globalFlags) *cobra.Command {
 			defer applyCancel()
 			applied, err := g.orkflowClient().ApplyOrkflow(applyCtx, connect.NewRequest(
 				&orkstackv1.ApplyOrkflowRequest{
-					Yaml:        edited,
-					Namespace:   g.namespace,
-					BaseVersion: head,
+					Yaml:                edited,
+					Namespace:           g.namespace,
+					BaseVersion:         base,
+					ExpectedHeadVersion: head,
 				},
 			))
 			if err != nil {
@@ -184,12 +210,40 @@ func newOrkflowEditCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), applied.Msg)
 			}
-			return renderApply(cmd.OutOrStdout(), applied.Msg)
+			return renderEditedApply(cmd.OutOrStdout(), base, head, applied.Msg)
 		},
 	}
 	cmd.Flags().StringVar(&editor, "editor", "",
 		"editor command to open the document with (default: $ORK_EDITOR, $VISUAL, $EDITOR)")
+	cmd.Flags().StringVar(&version, "version", "",
+		"version to edit; any stored version is a valid base (default: the newest applied)")
 	return cmd
+}
+
+// renderEditedApply prints what an edit applied, and says so twice when the
+// base was not the newest applied version: a fork is a thing a user can do by
+// accident (a stale `--version` in shell history), and the two versions it
+// happened between are the only way to see it did.
+func renderEditedApply(
+	out io.Writer,
+	base, head string,
+	resp *orkstackv1.ApplyOrkflowResponse,
+) error {
+	if err := renderApply(out, resp); err != nil {
+		return err
+	}
+	if base == head || head == "" {
+		return nil
+	}
+	name := resp.GetOrkflow().GetName()
+	fmt.Fprintf(out,
+		"\nForked from %s@%s, which was not the newest applied version (%s was).\n",
+		name, base, head)
+	fmt.Fprintf(out,
+		"%s@%s is now the newest applied version; what runs is unchanged until you\n"+
+			"promote it (orkctl orkflow promote %s %s).\n",
+		name, resp.GetOrkflow().GetVersion(), name, resp.GetOrkflow().GetVersion())
+	return nil
 }
 
 // editInEditor writes source to a temporary file, opens it, and returns what

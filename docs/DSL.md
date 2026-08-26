@@ -85,6 +85,7 @@ orkctl orkflow promote deploy 1.4.0     # move the pointer
 orkctl orkflow promote deploy 1.3.0     # roll back: the same command
 orkctl orkflow diff deploy 1.3.0 1.4.0  # what changed between two versions
 orkctl orkflow edit deploy              # $EDITOR round trip, applied as a new version
+orkctl orkflow edit deploy --version 1.3.0   # start from an older version
 ```
 
 Until somebody promotes, an orkflow runs its **most recently applied** version,
@@ -98,11 +99,21 @@ whichever way the pointer moves under it. `--version` on `orkctl run submit`
 pins one run explicitly and ignores the pointer.
 
 Two questions are reported separately, because they are two questions: the
-**current** version is what runs, and the **newest applied** version is where
-editing continues from. `orkctl orkflow edit` starts from the newest applied one
-and sends it back as the edit's base, so an edit made while somebody else
-applied is refused (`failed_precondition`, naming both versions) instead of
-landing beside a newer version nobody looked at.
+**current** version is what runs, and the **newest applied** version — the
+head — is where the edit lineage tips. `orkctl orkflow edit` starts from the
+head by default; `--version` starts from any stored version instead.
+
+Editing an old version is not a mistake to be prevented: it is how you fork
+forward from it. The result is applied as a NEW version and becomes the newest
+applied one — a stored version is never rewritten — and the **current** pointer
+does not move, so what runs is unchanged until you promote. That is the whole
+of it: applying is authoring, promoting is releasing.
+
+Whichever version you start from, the apply carries the head your editor saw.
+If somebody applies while your editor is open, the apply is refused
+(`failed_precondition`, naming the head that was fetched and the head that
+replaced it) instead of landing beside a version nobody looked at, and your
+edit is kept in a file the refusal names. Re-read, diff, re-apply.
 
 ## Inputs
 

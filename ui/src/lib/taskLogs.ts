@@ -25,6 +25,40 @@ import { wsBaseUrl } from './ws';
 
 export type LogSocketState = 'connecting' | 'open' | 'closed' | 'error' | 'ended' | 'failed';
 
+/** Which of a task's two file descriptors a line came out of. */
+export type LogStream = 'stdout' | 'stderr';
+
+// The in-band markers a plugin frames a task's output with
+// (pkg/plugin/linewriter.go). One task attempt has ONE log stream — one
+// logger, one sink, one dense sequence — so the two file descriptors are told
+// apart per line rather than by a field the chunk has no room for.
+const STDERR_MARKER = '[stderr] ';
+const STDOUT_MARKER = '[stdout] ';
+
+/**
+ * decodeStreamLine inverts that wire shape: it reports which descriptor a
+ * streamed line came from, and the line the application actually wrote.
+ *
+ * It is the exact counterpart of `plugin.DecodeStreamLine`, and it is a
+ * DECODE rather than a guess — the producer already stated the origin, and a
+ * reader that re-derived it from the text would disagree with the CLI reading
+ * the same bytes. `[stdout] ` is the escape that makes the encoding
+ * invertible: a stdout line that itself begins with a marker travels behind
+ * it, so "[stderr] x" printed on stdout and "x" printed on stderr no longer
+ * render as the same line. A line no plugin framed — the Orker's `[ork] `
+ * notices, a plugin's own lifecycle lines — carries no marker and reads as
+ * stdout, which is where an unmarked line has always belonged.
+ */
+export function decodeStreamLine(line: string): { text: string; stream: LogStream } {
+	if (line.startsWith(STDERR_MARKER)) {
+		return { text: line.slice(STDERR_MARKER.length), stream: 'stderr' };
+	}
+	if (line.startsWith(STDOUT_MARKER)) {
+		return { text: line.slice(STDOUT_MARKER.length), stream: 'stdout' };
+	}
+	return { text: line, stream: 'stdout' };
+}
+
 /** One line of a task's output, numbered in the order the engine sent it. */
 export interface LogLine {
 	/** 1-based position in this task attempt's whole output. Dense. */
@@ -36,6 +70,12 @@ export interface LogLine {
 	 * cap is never mistaken for output.
 	 */
 	notice: boolean;
+	/**
+	 * stream is the file descriptor the task wrote this line to, as the plugin
+	 * marked it — not as this module inferred it. A pane tints stderr; the CLI
+	 * prints the marker verbatim. Same information, two renderings.
+	 */
+	stream: LogStream;
 }
 
 export interface LogDelivery {
@@ -211,9 +251,14 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 		flush();
 	};
 
-	const emit = (text: string, notice: boolean) => {
+	// Every line the reader will ever see passes through here, which is why
+	// the marker is decoded here: a chunk ends on a line boundary but a LINE
+	// does not end on a chunk boundary, so a marker split across two frames is
+	// only whole once the carry has been joined.
+	const emit = (line: string, notice: boolean) => {
 		numbered += 1;
-		pending.push({ n: numbered, text, notice });
+		const { text, stream } = decodeStreamLine(line);
+		pending.push({ n: numbered, text, notice, stream });
 		dirty();
 	};
 

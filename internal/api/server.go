@@ -42,6 +42,13 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	pluginPath, pluginHandler := orkstackv1connect.NewPluginServiceHandler(svc, handlerOptions...)
 	mux.Handle(pluginPath, pluginHandler)
 
+	// System information: what this replica was built and configured as. It
+	// is mounted like every other read surface — an operator behind a load
+	// balancer asks whichever replica answers, and that is the point of the
+	// RPC (see system.go).
+	systemPath, systemHandler := orkstackv1connect.NewSystemServiceHandler(svc, handlerOptions...)
+	mux.Handle(systemPath, systemHandler)
+
 	// The stats surface is its own handler because it owns a cache. The TTL is
 	// resolved HERE — the zero value means "the documented default" and only
 	// this line knows that, so a handler built anywhere else takes what it is

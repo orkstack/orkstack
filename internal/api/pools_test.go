@@ -78,10 +78,21 @@ func (l livePools) ObservePool(_ context.Context, queue string) (engine.PoolLive
 	return live, nil
 }
 
+type observedPools map[string]engine.PoolLiveness
+
+func (p observedPools) ObservePool(_ context.Context, queue string) (engine.PoolLiveness, error) {
+	return p[queue], nil
+}
+
+// poolPlugins names what one channel's Orkers can run. Pool health exposes
+// names; the global inventory uses the separate descriptor seam.
 type poolPlugins map[string][]string
 
-func (p poolPlugins) PluginsOnPool(_ context.Context, queue string) ([]string, error) {
-	return p[queue], nil
+func (p poolPlugins) PluginsOnPool(
+	_ context.Context,
+	queue string,
+) ([]string, error) {
+	return append([]string(nil), p[queue]...), nil
 }
 
 // gpuOrkflow names a pool on one of its two tasks.
@@ -497,6 +508,85 @@ func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
 	}
 }
 
+// TestListPools_ReportsAStalePoolAsEmpty pins what a pool whose Orkers have
+// stopped looks like on the wire.
+//
+// Temporal remembers a poller for minutes after its worker died, so "the
+// cluster still lists someone" is not "someone is serving this pool". Past the
+// freshness window the count is zero, and last_seen is absent — the production
+// probe drops a stale poller record before it can contribute a timestamp
+// (internal/engine/pool_probe.go, livePollers), so a last_seen for a dead pool
+// is a value nothing observed. The wire contract says exactly this.
+func TestListPools_ReportsAStalePoolAsEmpty(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	lastSeen := now.Add(-2 * engine.DefaultPollerFreshness)
+	queue := poolQueue(t, task.DefaultPool)
+	svc := api.NewService(api.Config{
+		Namespaces: registry{"default": {Name: "default"}},
+		Pools:      observedPools{queue: {Orkers: 1, LastSeen: lastSeen}},
+		Now:        func() time.Time { return now },
+	})
+	resp, err := svc.ListPools(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPools: %v", err)
+	}
+	if len(resp.Msg.GetPools()) != 1 {
+		t.Fatalf("pools = %v, want one default pool", resp.Msg.GetPools())
+	}
+	pool := resp.Msg.GetPools()[0]
+	if pool.GetLiveOrkerCount() != 0 {
+		t.Errorf("stale pool count = %d, want zero", pool.GetLiveOrkerCount())
+	}
+	if pool.GetLastSeen() != nil {
+		t.Errorf("stale pool last_seen = %v, want none: no fresh poller was observed",
+			pool.GetLastSeen().AsTime())
+	}
+}
+
+// TestListPools_IncludesPoolsFromEveryStoredVersion holds the scope of the
+// report to every version that can still be submitted.
+//
+// An explicit-version submit can run ANY stored version, so a pool named only
+// by an older one is a route this deployment still dispatches to. Reading the
+// current version alone would drop `gpu` here, and an operator would size a
+// pool they were told does not exist.
+func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	gpu := poolQueue(t, "gpu")
+	mainVersion := strings.Replace(gpuOrkflow, "version: 0.1.0", "version: 0.2.0", 1)
+	mainVersion = strings.Replace(mainVersion, "    pool: gpu\n", "", 1)
+	svc := api.NewService(api.Config{
+		Orkflows:    store,
+		Pools:       livePools{task.DefaultQueue: 1, gpu: 1},
+		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}, gpu: {"container"}},
+	})
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: gpuOrkflow})); err != nil {
+		t.Fatalf("apply old gpu version: %v", err)
+	}
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: mainVersion})); err != nil {
+		t.Fatalf("apply current main version: %v", err)
+	}
+	// No allow-list, so the pools its stored definitions name are what "in
+	// scope" means — which is the set this test is about.
+	reader := api.NewService(api.Config{
+		Orkflows:    store,
+		Namespaces:  registry{"default": {Name: "default"}},
+		Pools:       livePools{task.DefaultQueue: 1, gpu: 1},
+		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}, gpu: {"container"}},
+	})
+	resp, err := reader.ListPools(context.Background(),
+		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
+	if err != nil {
+		t.Fatalf("ListPools: %v", err)
+	}
+	if got := strings.Join(poolNames(resp.Msg.GetPools()), ","); got != "gpu,main" {
+		t.Fatalf("pools = %q, want gpu,main from both stored versions", got)
+	}
+}
+
 // TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo covers the
 // configuration AGENTS.md §6 mandates for every parallel agent and
 // docs/DEPLOY.md documents for a single-pool deployment: an engine started
@@ -625,7 +715,9 @@ func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 // refusing a list would describe a store that cannot exist.
 type downOrkflowStore struct{ err error }
 
-func (d downOrkflowStore) Put(context.Context, *orkstackv1.Orkflow) (*orkstackv1.Orkflow, bool, error) {
+func (d downOrkflowStore) Put(
+	context.Context, *orkstackv1.Orkflow, artifacts.HeadExpectation,
+) (*orkstackv1.Orkflow, bool, error) {
 	return nil, false, d.err
 }
 

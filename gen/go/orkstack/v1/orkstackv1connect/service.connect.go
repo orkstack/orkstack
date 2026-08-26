@@ -29,6 +29,8 @@ const (
 	NamespaceServiceName = "orkstack.v1.NamespaceService"
 	// PluginServiceName is the fully-qualified name of the PluginService service.
 	PluginServiceName = "orkstack.v1.PluginService"
+	// SystemServiceName is the fully-qualified name of the SystemService service.
+	SystemServiceName = "orkstack.v1.SystemService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -91,6 +93,9 @@ const (
 	// PluginServiceListPluginsProcedure is the fully-qualified name of the PluginService's ListPlugins
 	// RPC.
 	PluginServiceListPluginsProcedure = "/orkstack.v1.PluginService/ListPlugins"
+	// SystemServiceGetSystemInfoProcedure is the fully-qualified name of the SystemService's
+	// GetSystemInfo RPC.
+	SystemServiceGetSystemInfoProcedure = "/orkstack.v1.SystemService/GetSystemInfo"
 )
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
@@ -606,6 +611,15 @@ type NamespaceServiceClient interface {
 	//
 	// The answer is read from the cluster, never from process memory, so any
 	// replica answers — including one that started nothing.
+	//
+	// It NARROWS rather than refusing. A source that cannot be reached costs
+	// this read what that source knew and nothing else: a pool the cluster did
+	// not answer for is still listed, carrying Pool.unavailable_reason instead
+	// of a count; a pool whose Orkers did not answer keeps its count and loses
+	// its plugin list; an orkflow store that cannot be read narrows the answer
+	// to the pools the namespace document itself names. An admin read is opened
+	// when something is already wrong, and a refusal hides the healthy pools
+	// beside the broken one.
 	ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error)
 }
 
@@ -732,6 +746,15 @@ type NamespaceServiceHandler interface {
 	//
 	// The answer is read from the cluster, never from process memory, so any
 	// replica answers — including one that started nothing.
+	//
+	// It NARROWS rather than refusing. A source that cannot be reached costs
+	// this read what that source knew and nothing else: a pool the cluster did
+	// not answer for is still listed, carrying Pool.unavailable_reason instead
+	// of a count; a pool whose Orkers did not answer keeps its count and loses
+	// its plugin list; an orkflow store that cannot be read narrows the answer
+	// to the pools the namespace document itself names. An admin read is opened
+	// when something is already wrong, and a refusal hides the healthy pools
+	// beside the broken one.
 	ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error)
 }
 
@@ -827,6 +850,17 @@ func (UnimplementedNamespaceServiceHandler) ListPools(context.Context, *connect.
 
 // PluginServiceClient is a client for the orkstack.v1.PluginService service.
 type PluginServiceClient interface {
+	// ListPlugins reports what this deployment can run.
+	//
+	// It answers even when part of the deployment cannot be reached. Each live
+	// pool contributes what it can, an unreachable source contributes nothing
+	// and is logged, and only one failure remains: the deployment's own Orkers
+	// asked and silent, where an empty list would read as "no plugins are
+	// installed". An inventory is opened when something is already wrong, and a
+	// refusal hides the plugins that ARE reachable.
+	//
+	// How complete each entry is depends on which pool reported it — see
+	// PluginInfo.
 	ListPlugins(context.Context, *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error)
 }
 
@@ -862,6 +896,17 @@ func (c *pluginServiceClient) ListPlugins(ctx context.Context, req *connect.Requ
 
 // PluginServiceHandler is an implementation of the orkstack.v1.PluginService service.
 type PluginServiceHandler interface {
+	// ListPlugins reports what this deployment can run.
+	//
+	// It answers even when part of the deployment cannot be reached. Each live
+	// pool contributes what it can, an unreachable source contributes nothing
+	// and is logged, and only one failure remains: the deployment's own Orkers
+	// asked and silent, where an empty list would read as "no plugins are
+	// installed". An inventory is opened when something is already wrong, and a
+	// refusal hides the plugins that ARE reachable.
+	//
+	// How complete each entry is depends on which pool reported it — see
+	// PluginInfo.
 	ListPlugins(context.Context, *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error)
 }
 
@@ -893,4 +938,100 @@ type UnimplementedPluginServiceHandler struct{}
 
 func (UnimplementedPluginServiceHandler) ListPlugins(context.Context, *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.PluginService.ListPlugins is not implemented"))
+}
+
+// SystemServiceClient is a client for the orkstack.v1.SystemService service.
+type SystemServiceClient interface {
+	// GetSystemInfo describes THE REPLICA THAT ANSWERED. Every field is
+	// configuration- or build-derived — read from the process's own
+	// configuration, not observed from the cluster — except server_time.
+	// Replicas of one release answer identically by construction; mid-rollout,
+	// build_id is exactly the field that differs, which is the point of it.
+	//
+	// It is the one admin read that does not leave the process, and it is the
+	// one question only the process can answer: everything else an operator
+	// asks — which namespaces exist, which pools have Orkers, what those
+	// Orkers run — comes from the store or the cluster, so any replica gives
+	// the same reply. This one describes the replica in front of you, on
+	// purpose, because that is what an operator behind a load balancer needs
+	// to know during a rollout.
+	GetSystemInfo(context.Context, *connect.Request[v1.GetSystemInfoRequest]) (*connect.Response[v1.GetSystemInfoResponse], error)
+}
+
+// NewSystemServiceClient constructs a client for the orkstack.v1.SystemService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) SystemServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	systemServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("SystemService").Methods()
+	return &systemServiceClient{
+		getSystemInfo: connect.NewClient[v1.GetSystemInfoRequest, v1.GetSystemInfoResponse](
+			httpClient,
+			baseURL+SystemServiceGetSystemInfoProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("GetSystemInfo")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// systemServiceClient implements SystemServiceClient.
+type systemServiceClient struct {
+	getSystemInfo *connect.Client[v1.GetSystemInfoRequest, v1.GetSystemInfoResponse]
+}
+
+// GetSystemInfo calls orkstack.v1.SystemService.GetSystemInfo.
+func (c *systemServiceClient) GetSystemInfo(ctx context.Context, req *connect.Request[v1.GetSystemInfoRequest]) (*connect.Response[v1.GetSystemInfoResponse], error) {
+	return c.getSystemInfo.CallUnary(ctx, req)
+}
+
+// SystemServiceHandler is an implementation of the orkstack.v1.SystemService service.
+type SystemServiceHandler interface {
+	// GetSystemInfo describes THE REPLICA THAT ANSWERED. Every field is
+	// configuration- or build-derived — read from the process's own
+	// configuration, not observed from the cluster — except server_time.
+	// Replicas of one release answer identically by construction; mid-rollout,
+	// build_id is exactly the field that differs, which is the point of it.
+	//
+	// It is the one admin read that does not leave the process, and it is the
+	// one question only the process can answer: everything else an operator
+	// asks — which namespaces exist, which pools have Orkers, what those
+	// Orkers run — comes from the store or the cluster, so any replica gives
+	// the same reply. This one describes the replica in front of you, on
+	// purpose, because that is what an operator behind a load balancer needs
+	// to know during a rollout.
+	GetSystemInfo(context.Context, *connect.Request[v1.GetSystemInfoRequest]) (*connect.Response[v1.GetSystemInfoResponse], error)
+}
+
+// NewSystemServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	systemServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("SystemService").Methods()
+	systemServiceGetSystemInfoHandler := connect.NewUnaryHandler(
+		SystemServiceGetSystemInfoProcedure,
+		svc.GetSystemInfo,
+		connect.WithSchema(systemServiceMethods.ByName("GetSystemInfo")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/orkstack.v1.SystemService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case SystemServiceGetSystemInfoProcedure:
+			systemServiceGetSystemInfoHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedSystemServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedSystemServiceHandler struct{}
+
+func (UnimplementedSystemServiceHandler) GetSystemInfo(context.Context, *connect.Request[v1.GetSystemInfoRequest]) (*connect.Response[v1.GetSystemInfoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.GetSystemInfo is not implemented"))
 }

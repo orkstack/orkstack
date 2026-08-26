@@ -12,10 +12,12 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/plugin"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -134,13 +136,20 @@ type Config struct {
 	// answer would either refuse every submit or vouch for every pool.
 	Pools engine.PoolProbe
 
-	// PoolPlugins reports what one pool's Orkers can run, for ListPools.
+	// PoolPlugins reports the names a pool's Orkers can run, for ListPools.
 	PoolPlugins engine.PoolPluginLister
 
 	// RawQueue is the operator escape hatch (ORK_ORKER_QUEUE): the execution
 	// channel a task that names no pool is dispatched to. Empty routes the
 	// default pool to its own channel, which is the zero-config behaviour.
 	RawQueue string
+
+	// System is what this replica was built and configured as, for
+	// SystemService.GetSystemInfo. `ork` fills it at boot from the
+	// configuration it already loaded; the zero value answers with empty
+	// fields, which is what an unconfigured Service honestly knows about
+	// itself.
+	System SystemInfo
 
 	// Router resolves an ork namespace to the cluster serving it. Nil builds
 	// the one-binding router from Reader, Starter and Pools above, which is
@@ -157,8 +166,8 @@ type Config struct {
 	NewRunID func() string
 }
 
-// Service implements OrkflowService, RunService, NamespaceService and
-// PluginService.
+// Service implements OrkflowService, RunService, NamespaceService,
+// PluginService and SystemService.
 type Service struct {
 	orkflows engine.OrkflowStore
 	// namespaces is the durable registry. Nil means no registry is wired:
@@ -176,8 +185,9 @@ type Service struct {
 	router engine.NamespaceRouter
 	// pools is the routing decision: pool resolution, allow-list enforcement
 	// and the liveness check, all of which happen at submit.
-	pools   *engine.PoolResolver
-	archive RunArchive
+	pools    *engine.PoolResolver
+	rawQueue string
+	archive  RunArchive
 	// logs is the durable task-log store, read by StreamTaskLogs. It is the
 	// same bucket the Orker wrote into and belongs to no process.
 	logs        artifacts.LogStore
@@ -186,9 +196,12 @@ type Service struct {
 	webhooks    *webhooks.Registry
 	notifier    engine.RunNotifier
 	plugins     []*orkstackv1.PluginInfo
-	logger      *slog.Logger
-	now         func() time.Time
-	newRunID    func() string
+	// system is this replica's own build and configuration, echoed by
+	// GetSystemInfo. Injected once, never read from the environment here.
+	system   SystemInfo
+	logger   *slog.Logger
+	now      func() time.Time
+	newRunID func() string
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
@@ -196,9 +209,11 @@ func NewService(cfg Config) *Service {
 	svc := &Service{
 		orkflows:    cfg.Orkflows,
 		namespaces:  cfg.Namespaces,
+		rawQueue:    cfg.RawQueue,
 		runs:        cfg.Runs,
 		bus:         cfg.Bus,
 		lister:      cfg.Lister,
+		system:      cfg.System,
 		router:      cfg.Router,
 		archive:     cfg.Archive,
 		logs:        cfg.Logs,
@@ -229,6 +244,12 @@ func NewService(cfg Config) *Service {
 		Plugins:    cfg.PoolPlugins,
 		RawQueue:   cfg.RawQueue,
 		Logger:     svc.logger,
+		// The same clock the rest of the Service stamps with. Pool liveness
+		// is judged against it — an observation is live only if it is recent
+		// — so a test that fixes the clock and states an observation at that
+		// instant gets a live pool, instead of one that went stale between
+		// the fixture and time.Now(). Nil is time.Now, which is production.
+		Now: cfg.Now,
 	}
 	// Only an unconfigured Service gets the in-memory store, and only so a
 	// unit test can exercise runs without a bucket. A configured store is
@@ -352,7 +373,9 @@ func (s *Service) ApplyOrkflow(
 	// The stored document names the namespace it lives in, whichever of the
 	// two said so, so a reader needs no key to know where it came from.
 	wf.Namespace = ns.GetName()
-	if err := s.checkBaseVersion(ctx, ns.GetName(), wf.GetName(), req.Msg.GetBaseVersion()); err != nil {
+	expected, err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
+		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion())
+	if err != nil {
 		return nil, err
 	}
 	// The stamp is applied here, but it does NOT decide whether this apply is a
@@ -360,9 +383,24 @@ func (s *Service) ApplyOrkflow(
 	// the stored document untouched when they match, so a re-apply cannot
 	// churn the object merely by arriving at a different time. Stamping first
 	// and comparing bytes afterwards is what made every apply a rewrite.
+	//
+	// Nor does it decide which version is the head. This clock is one
+	// replica's, and the head is a fact about the deployment: the store owns
+	// it, and holds the stamp above it (artifacts.AppliedStamp) so a slow
+	// replica cannot publish a version that reads as older than the one it
+	// just extended.
 	wf.CreatedAt = timestamppb.New(s.now().UTC())
-	stored, created, err := s.orkflows.Put(ctx, wf)
+	stored, created, err := s.orkflows.Put(ctx, wf, expected)
 	if err != nil {
+		var moved *artifacts.HeadMovedError
+		if errors.As(err, &moved) {
+			// The edit lost the commit, not the check: a competing apply
+			// landed between the read above and the write. Same refusal, in
+			// the same words — the caller cannot tell the two apart, and
+			// should not have to.
+			return nil, editRaceRefusal(ns.GetName(), wf.GetName(),
+				req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion(), moved.Head)
+		}
 		return nil, orkflowStoreError(err, "store orkflow %s@%s in namespace %q",
 			wf.GetName(), wf.GetVersion(), ns.GetName())
 	}
@@ -372,42 +410,129 @@ func (s *Service) ApplyOrkflow(
 	}), nil
 }
 
-// checkBaseVersion is the optimistic-concurrency gate: an edit derived from a
-// version that is no longer the head is refused instead of landing beside a
-// newer one nobody has seen.
+// checkEditTokens reads the two things an edit says about itself — which
+// stored version it was DERIVED from (base) and which head the editor SAW when
+// it fetched (expectedHead) — and returns the head condition the write is made
+// under.
 //
-// The comparison is against the HEAD version (most recently applied), not
-// against the current pointer: head is edit lineage — what an editor read and
-// changed — while the pointer is execution policy, and an operator promoting an
-// older version must not make every open editor stale.
+// They are two facts, so they are two tokens. Any stored version is a valid
+// base — editing an old one is how a user forks forward from it, and the fork
+// lands as the new head with the `current` pointer untouched — while the head
+// the editor saw is the only thing a competing apply can invalidate. Under one
+// token the server could not tell an edit derived from an old version on
+// purpose from one derived from a head that has since moved, so the first was
+// refused to catch the second.
 //
-// An empty token means unchecked, which is what a plain `orkctl apply file.yaml`
-// sends. The window between this check and the write is deliberately left
-// open: closing it would mean holding a lock across a user's editor session,
-// and the cost of losing the race is nil — both versions are stored, both are
-// listed, and nothing is overwritten.
-func (s *Service) checkBaseVersion(ctx context.Context, namespace, name, base string) error {
-	if base == "" {
-		return nil
+//	base    expected  condition
+//	----    --------  ---------
+//	""      ""        none — a plain `orkctl apply file.yaml`
+//	set     ""        head must be base (the pre-M11.2 rule)
+//	any     set       head must be expected; base, when set, must name a
+//	                  stored version (NotFound if not)
+//
+// Row two is back-compatibility and nothing else: a caller written before this
+// slice sends only a base, and its base IS its concurrency token because
+// nothing else says which head it read. Keeping that row is what lets the two
+// contracts coexist with no version negotiation.
+//
+// What this function does NOT do is decide the race. It reads the store to
+// answer the questions a read can answer — is there anything stored at all,
+// does the base exist, what should the refusal say — and hands the condition
+// to the store, which applies it in the same operation that writes. A check
+// here followed by a write there is a window, and the loser of that window
+// used to succeed: it checked head=2.0.0, a competing 3.0.0 landed, and its
+// own version was stored anyway with nothing refused.
+func (s *Service) checkEditTokens(
+	ctx context.Context,
+	namespace, name, base, expectedHead string,
+) (artifacts.HeadExpectation, error) {
+	if base == "" && expectedHead == "" {
+		return artifacts.NoHeadExpectation(), nil
 	}
+	// Which version the head must be for this apply to commit. Row two spends
+	// its base on the question; row three has a field for it.
+	required := expectedHead
+	if required == "" {
+		required = base
+	}
+	expected := artifacts.ExpectHead(required)
+
 	versions, err := s.orkflows.Versions(ctx, namespace, name)
 	if err != nil {
-		return orkflowStoreError(err, "read versions of orkflow %q in namespace %q", name, namespace)
+		return expected, orkflowStoreError(err,
+			"read versions of orkflow %q in namespace %q", name, namespace)
 	}
 	if versions.Head == "" {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"this edit says it was derived from version %q of orkflow %q, "+
+		// Nothing is stored, so neither token can be true of anything. Say
+		// which claim failed rather than inventing a version to name.
+		claim := fmt.Sprintf("says it was derived from version %q", base)
+		if base == "" {
+			claim = fmt.Sprintf("expected version %q to be the newest applied one", expectedHead)
+		}
+		return expected, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"this edit %s of orkflow %q, "+
 				"but that orkflow has no stored version in namespace %q",
+			claim, name, namespace))
+	}
+	// Provenance is a claim about the store, so it is checked against the
+	// store: a base nobody applied is a typo, answered where it was made
+	// rather than recorded as the ancestry of a version that never existed.
+	// Row two's base is checked as a head below, not as provenance here.
+	if expectedHead != "" && base != "" && !storesVersion(versions, base) {
+		return expected, connect.NewError(connect.CodeNotFound, fmt.Errorf(
+			"this edit says it was derived from version %q of orkflow %q, "+
+				"but no such version is stored in namespace %q",
 			base, name, namespace))
 	}
-	if versions.Head != base {
+	if versions.Head != required {
+		return expected, editRaceRefusal(namespace, name, base, expectedHead, versions.Head)
+	}
+	return expected, nil
+}
+
+// editRaceRefusal is the one refusal an edit gets when the head is not the one
+// it was written against, wherever that was discovered — reading the store
+// before the write, or losing the store's own compare-and-set.
+//
+// Two wordings, because there are two contracts. A caller that sent only a
+// base is told its base is stale, which is what its base meant. A caller that
+// sent an expected head is told three things — where the edit came from, the
+// head it was fetched at, and the head that is there now — because the base is
+// not the problem and must not read as one.
+func editRaceRefusal(namespace, name, base, expectedHead, head string) error {
+	if expectedHead == "" {
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"orkflow %q in namespace %q changed underneath this edit: it was derived from "+
 				"version %q but the newest applied version is now %q; "+
 				"run `orkctl orkflow diff %s %s %s` and re-apply",
-			name, namespace, base, versions.Head, name, base, versions.Head))
+			name, namespace, base, head, name, base, head))
 	}
-	return nil
+	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		"orkflow %q in namespace %q changed while this edit was open: %s"+
+			"the newest applied version was %q when the document was fetched "+
+			"and is now %q; run `orkctl orkflow diff %s %s %s` and re-apply",
+		name, namespace, derivedFrom(base), expectedHead, head,
+		name, expectedHead, head))
+}
+
+// storesVersion reports whether one version is among the stored ones.
+func storesVersion(versions artifacts.OrkflowVersions, version string) bool {
+	for _, wf := range versions.All {
+		if wf.GetVersion() == version {
+			return true
+		}
+	}
+	return false
+}
+
+// derivedFrom names the edit's base in a refusal, so a user who deliberately
+// forked from an old version is not told their base is the problem. It is
+// silent when there is no base to name.
+func derivedFrom(base string) string {
+	if base == "" {
+		return ""
+	}
+	return fmt.Sprintf("it was derived from version %q, and ", base)
 }
 
 // applyNamespace reconciles the two ways a request names a namespace.
@@ -1295,29 +1420,309 @@ func IsTerminalEvent(event *orkstackv1.Event) bool {
 	}
 }
 
-// ListPlugins returns the plugins a live Orker can run, discovered through the
-// PluginLister seam (an ExecuteTask-queue activity). When no lister is wired
-// (tests, or no Orker), it falls back to the configured static set.
+// ListPlugins reports the plugins the connected Orkers of this deployment can
+// run — the inventory the Admin surface shows.
+//
+// It answers, always. Every source below is best-effort ON TOP of the answer
+// this RPC gave before the Admin surface existed (the deployment's own Orkers,
+// through the PluginLister seam), and a source that cannot be reached is
+// logged and skipped rather than failing the read. A plugin inventory is what
+// an operator opens when something is already wrong; a refusal there tells
+// them nothing they can act on, and hides the plugins that ARE reachable.
+//
+// Completeness, stated exactly: the deployment's default pool reports full
+// descriptors — version, description and both schemas — because its Orkers
+// answer the ListPlugins activity directly. Any OTHER live pool contributes
+// the plugin NAMES its Orkers report and nothing else, because the seam this
+// process is wired with for a per-pool question (engine.PoolPluginLister)
+// carries names. A pool with several Orkers is answered by whichever of them
+// picks the activity up; the Orkers of one pool are one release by
+// construction (AGENTS.md §10), so that is a sample, and it is labelled as one
+// on the wire (proto/orkstack/v1/service.proto) and in docs/DEPLOY.md.
 func (s *Service) ListPlugins(
 	ctx context.Context,
 	_ *connect.Request[orkstackv1.ListPluginsRequest],
 ) (*connect.Response[orkstackv1.ListPluginsResponse], error) {
-	plugins := append([]*orkstackv1.PluginInfo(nil), s.plugins...)
-	if s.lister != nil {
-		descriptors, err := s.lister.ListPlugins(ctx)
+	binding, err := s.binding(artifacts.DefaultNamespace)
+	if err != nil {
+		return nil, err
+	}
+	defaultRoute, routeErr := task.DefaultRoute(s.rawQueue)
+
+	// The probe is an optimization and nothing more: it lets a deployment
+	// whose default pool has no Orkers skip a question that would only time
+	// out. When it cannot answer — no probe wired, an unroutable override, a
+	// cluster hiccup — the Orkers are asked anyway, which is what this RPC
+	// did before the probe existed.
+	askDefault := true
+	if binding.Pools != nil && routeErr == nil {
+		if live, err := binding.Pools.ObservePool(ctx, defaultRoute.Queue); err == nil {
+			askDefault = live.Fresh(s.now(), engine.DefaultPollerFreshness)
+		} else {
+			s.logger.Warn("list plugins: the default pool could not be probed, "+
+				"so its Orkers are asked directly",
+				"pool", defaultRoute.Pool, "error", err)
+		}
+	}
+	var plugins []*orkstackv1.PluginInfo
+	if askDefault {
+		plugins, err = s.deploymentPlugins(ctx)
 		if err != nil {
+			// The one failure this RPC has always had, kept exactly: the
+			// deployment's own Orkers were asked and did not answer.
 			return nil, connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("discover plugins: %w", err))
 		}
-		plugins = plugins[:0]
-		for _, d := range descriptors {
-			plugins = append(plugins, &orkstackv1.PluginInfo{
-				Name:        d.Name,
-				Version:     d.Version,
-				Description: d.Description,
-			})
+	}
+	if binding.Pools != nil && routeErr == nil {
+		plugins = s.appendOtherPoolPlugins(ctx, binding, defaultRoute, plugins)
+	}
+	return pluginResponse(plugins), nil
+}
+
+// deploymentPlugins is what this deployment's own Orkers report: the whole
+// descriptor, schemas included. It is the pre-Admin body of ListPlugins, kept
+// as it was including its one Unavailable.
+func (s *Service) deploymentPlugins(ctx context.Context) ([]*orkstackv1.PluginInfo, error) {
+	if s.lister == nil {
+		return append([]*orkstackv1.PluginInfo(nil), s.plugins...), nil
+	}
+	descriptors, err := s.lister.ListPlugins(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return appendPluginInfo(nil, descriptors), nil
+}
+
+// appendOtherPoolPlugins widens the inventory with every OTHER live pool this
+// deployment knows about, by name.
+//
+// Without it a plugin that only a `gpu` pool's Orkers run is absent from the
+// deployment's inventory, and an operator concludes it is not installed while
+// a run using it succeeds. With it the plugin is visible; what it cannot carry
+// is the version and the schemas, because the per-pool seam reports names.
+//
+// Nothing here can fail the read. Each step that cannot be taken is logged and
+// skipped: a narrower inventory is a worse answer, and a refused one is not an
+// answer at all.
+func (s *Service) appendOtherPoolPlugins(
+	ctx context.Context,
+	binding engine.Binding,
+	defaultRoute task.Route,
+	plugins []*orkstackv1.PluginInfo,
+) []*orkstackv1.PluginInfo {
+	if s.pools == nil || s.pools.Plugins == nil {
+		return plugins
+	}
+	// inventoryPools returns BOTH: the pools it learned, and what it could not
+	// read. The two are not exclusive — a registry with ten namespaces and one
+	// unreadable catalog knows nine namespaces' pools — and treating an error
+	// as "nothing was learned" is what made one bad tenant cost every other
+	// tenant's pools. So the failure is logged and the names are used.
+	pools, err := s.inventoryPools(ctx)
+	if err != nil {
+		s.logger.Warn("list plugins: part of the durable pool catalogue could not be "+
+			"read, so the pools only it names are missing from this inventory",
+			"pools_still_known", len(pools),
+			"error", err)
+	}
+	routes := map[string]task.Route{}
+	for _, pool := range pools {
+		route, err := task.RouteForPool(pool, s.rawQueue)
+		if err != nil {
+			// A stored document can hold a pool this engine cannot route.
+			// It has no Orkers to ask by definition.
+			s.logger.Warn("list plugins: a stored pool cannot be routed by this engine",
+				"pool", pool, "error", err)
+			continue
+		}
+		if route.Queue == defaultRoute.Queue {
+			continue
+		}
+		routes[route.Queue] = route
+	}
+	ordered := make([]task.Route, 0, len(routes))
+	for _, route := range routes {
+		ordered = append(ordered, route)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Pool < ordered[j].Pool })
+
+	// One instant judges every pool, and the probes go out together rather
+	// than one at a time (storeFanout). A deployment with hundreds of stored
+	// pools is the ordinary case for a long-lived bucket, and a probe apiece
+	// in series is what spent this read's whole deadline before it had asked
+	// a single live pool what it runs.
+	now := s.now()
+	found := make([][]string, len(ordered))
+	inParallel(len(ordered), func(i int) {
+		route := ordered[i]
+		live, err := binding.Pools.ObservePool(ctx, route.Queue)
+		if err != nil {
+			s.logger.Warn("list plugins: a pool could not be probed, so its plugins "+
+				"are missing from this inventory",
+				"pool", route.Pool, "error", err)
+			return
+		}
+		if !live.Fresh(now, engine.DefaultPollerFreshness) {
+			// Nobody is there to ask, and asking would hold the request open
+			// for the activity's whole timeout to learn nothing.
+			return
+		}
+		names, err := s.pools.Plugins.PluginsOnPool(ctx, route.Queue)
+		if err != nil {
+			s.logger.Warn("list plugins: a live pool did not answer, so its plugins "+
+				"are missing from this inventory",
+				"pool", route.Pool, "error", err)
+			return
+		}
+		found[i] = names
+	})
+	// Reduced in pool order, which is what keeps one plugin reported by two
+	// pools deduplicating to the same entry on every call.
+	for _, names := range found {
+		for _, name := range names {
+			plugins = append(plugins, &orkstackv1.PluginInfo{Name: name})
 		}
 	}
-	sort.Slice(plugins, func(i, j int) bool { return plugins[i].GetName() < plugins[j].GetName() })
-	return connect.NewResponse(&orkstackv1.ListPluginsResponse{Plugins: plugins}), nil
+	return plugins
+}
+
+func pluginResponse(plugins []*orkstackv1.PluginInfo) *connect.Response[orkstackv1.ListPluginsResponse] {
+	plugins = dedupePlugins(plugins)
+	sort.Slice(plugins, func(i, j int) bool {
+		if plugins[i].GetName() != plugins[j].GetName() {
+			return plugins[i].GetName() < plugins[j].GetName()
+		}
+		return plugins[i].GetVersion() < plugins[j].GetVersion()
+	})
+	return connect.NewResponse(&orkstackv1.ListPluginsResponse{Plugins: plugins})
+}
+
+// inventoryPools names every pool this deployment may have Orkers on from
+// durable namespace and orkflow state.
+//
+// IT RETURNS BOTH HALVES: the pools it learned, and what it could not read.
+// Not one or the other — the two are independent, and a catalog that fails on
+// the eighth of ten namespaces has still told this function about seven. It
+// used to return on the first failure and discard them, which cost the
+// inventory every OTHER tenant's pools; the reader then concluded a plugin was
+// not installed while a run using it was succeeding on the pool that holds it.
+//
+// So one namespace's failure is recorded and the scan continues, and the
+// caller decides what a partial answer means (appendOtherPoolPlugins logs it
+// and uses the names). The registry listing is the one exception: without it
+// there are no namespaces to scan, so nothing was learned and there is nothing
+// to keep.
+func (s *Service) inventoryPools(ctx context.Context) ([]string, error) {
+	if s.namespaces == nil {
+		return nil, nil
+	}
+	registered, err := s.namespaces.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read namespace registry: %w", err)
+	}
+	seen := map[string]struct{}{}
+	var pools []string
+	add := func(pool string) {
+		if pool == "" {
+			return
+		}
+		if _, ok := seen[pool]; ok {
+			return
+		}
+		seen[pool] = struct{}{}
+		pools = append(pools, pool)
+	}
+	// Every namespace's catalog is scanned in one batch, not one namespace
+	// after another: this is the deployment-wide read, so the serial form
+	// cost a round-trip per stored orkflow of every tenant.
+	named, scanned := s.poolsNamedByOrkflowsAcross(ctx, registered)
+	var lost []error
+	for i, ns := range registered {
+		// The namespace document's own pools come from the registry listing
+		// that already succeeded, so they are kept whatever the catalog does.
+		add(engine.DefaultPoolFor(ns))
+		for _, pool := range ns.GetAllowedPools() {
+			add(pool)
+		}
+		if err := scanned[i]; err != nil {
+			lost = append(lost,
+				fmt.Errorf("read orkflows for namespace %q: %w", ns.GetName(), err))
+			continue
+		}
+		for _, pool := range named[i] {
+			add(pool)
+		}
+	}
+	sort.Strings(pools)
+	return pools, errors.Join(lost...)
+}
+
+// appendPluginInfo maps Orker descriptors onto the wire message, schemas
+// included. A schema that cannot be represented as a protobuf Struct is
+// omitted while the plugin identity remains visible.
+func appendPluginInfo(
+	into []*orkstackv1.PluginInfo,
+	descriptors []plugin.Descriptor,
+) []*orkstackv1.PluginInfo {
+	for _, d := range descriptors {
+		into = append(into, &orkstackv1.PluginInfo{
+			Name:         d.Name,
+			Version:      d.Version,
+			Description:  d.Description,
+			InputSchema:  schemaStruct(d.InputSchema),
+			OutputSchema: schemaStruct(d.OutputSchema),
+		})
+	}
+	return into
+}
+
+func schemaStruct(doc plugin.SchemaDoc) *structpb.Struct {
+	if len(doc) == 0 {
+		return nil
+	}
+	encoded, err := structpb.NewStruct(doc)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+// dedupePlugins collapses one plugin reported by several pools.
+//
+// The key is (name, version), not name: mid-rollout two pools genuinely do run
+// two versions of one plugin, and collapsing those would hide the fact an
+// operator opened this view to find. The first report of a pair wins, and the
+// pools are asked in a fixed order, so the answer does not move between calls.
+//
+// One extra rule, and it exists because two seams answer this question with
+// different amounts of detail: a NAME-ONLY entry (a non-default pool, which
+// reports names) is dropped when the same name already arrived with a version.
+// Without it a plugin that both the default pool and a gpu pool run is listed
+// twice — once whole, once as a bare name — and the second row reads as a
+// second, version-less installation.
+func dedupePlugins(plugins []*orkstackv1.PluginInfo) []*orkstackv1.PluginInfo {
+	type key struct{ name, version string }
+	versioned := map[string]struct{}{}
+	for _, info := range plugins {
+		if info.GetVersion() != "" {
+			versioned[info.GetName()] = struct{}{}
+		}
+	}
+	seen := map[key]struct{}{}
+	out := plugins[:0]
+	for _, info := range plugins {
+		if info.GetVersion() == "" {
+			if _, ok := versioned[info.GetName()]; ok {
+				continue
+			}
+		}
+		k := key{info.GetName(), info.GetVersion()}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, info)
+	}
+	return out
 }

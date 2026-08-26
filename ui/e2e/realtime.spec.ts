@@ -256,6 +256,15 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 
 	// 7. The event log holds the ordered lifecycle: proof the
 	//    PENDING -> RUNNING -> SUCCEEDED transition streamed live.
+	//
+	//    Since M11.4 the event list is an inspection view rather than part of
+	//    the page, so it is asked for first. What it renders is the buffer the
+	//    socket has been filling since the page loaded — every event below
+	//    arrived long before this click, which is the property that lets the
+	//    list be on demand at all.
+	await expect(page.getByTestId('event-log')).toHaveCount(0);
+	await page.getByTestId('events-toggle').click();
+	await expect(page.getByTestId('event-inspector')).toBeVisible();
 	await expect(page.getByTestId('event-entry').filter({ hasText: 'RUN_SUCCEEDED' })).toHaveCount(
 		1
 	);
@@ -270,18 +279,38 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 		expect(logText).toContain(`[${taskId}]`);
 	}
 
-	// 8. The page never reloaded during the transitions.
+	// 8. The page never reloaded during the transitions, and never left this
+	//    run. The URL gained `?events=1` above, because that is where the
+	//    event view's state lives since M11.4 and step 7 asked for it — a
+	//    same-route navigation whose loader was never re-entered, which is
+	//    what the marker says. Everything else about the address is
+	//    unchanged: same page, same namespace, one parameter this test set
+	//    itself.
 	const marker = await page.evaluate(
 		() => (window as unknown as { __orkLiveMarker?: string }).__orkLiveMarker
 	);
 	expect(marker).toBe('alive');
-	expect(page.url()).toBe(runUrl);
+	const now = new URL(page.url());
+	const landed = new URL(runUrl);
+	expect(now.origin + now.pathname).toBe(landed.origin + landed.pathname);
+	expect(now.searchParams.get('ns')).toBe(landed.searchParams.get('ns'));
+	expect(now.searchParams.get('events')).toBe('1');
 
 	await page.screenshot({ path: logPath('screenshot-run-succeeded.png'), fullPage: true });
 
 	// 9. The runs list reflects the finished run (fresh navigation is fine here).
+	//
+	//    The row is found by THIS RUN'S ID, not by `hello-ork@<version>`. The
+	//    version a run pins is the orkflow's CURRENT version, which lives in
+	//    the shared bucket and is moved by any promotion any other proof runs
+	//    — so a hard-coded `@0.1.0` asserts something this spec does not
+	//    control and did not measure: on a bucket where something had promoted
+	//    hello-ork@0.1.1, the row was there, correct, and unmatched. The id is
+	//    the run this test started, and nothing else can produce it.
+	const runId = new URL(runUrl).pathname.split('/').pop() ?? '';
+	expect(runId).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/runs`);
-	const row = page.locator('[data-testid^="run-row-"]', { hasText: 'hello-ork@0.1.0' }).first();
+	const row = page.getByTestId(`run-row-${runId}`);
 	await expect(row).toBeVisible();
 	await expect(row.getByText('SUCCEEDED')).toBeVisible();
 });

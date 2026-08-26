@@ -5,7 +5,8 @@ import {
 	OrkflowService,
 	RunService,
 	PluginService,
-	NamespaceService
+	NamespaceService,
+	SystemService
 } from './gen/orkstack/v1/service_pb';
 import { StatsService } from './gen/orkstack/v1/stats_pb';
 
@@ -19,7 +20,12 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 		runs: createClient(RunService, transport),
 		plugins: createClient(PluginService, transport),
 		namespaces: createClient(NamespaceService, transport),
-		stats: createClient(StatsService, transport)
+		stats: createClient(StatsService, transport),
+		// system answers GetSystemInfo — the one admin read that describes the
+		// REPLICA THAT ANSWERED rather than the cluster or the store (M11.3,
+		// design §3.2). It is its own client because it is its own service:
+		// folding it into namespaces or stats would misname what scopes it.
+		system: createClient(SystemService, transport)
 	};
 }
 

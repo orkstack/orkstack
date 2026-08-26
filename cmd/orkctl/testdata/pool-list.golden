@@ -1,0 +1,5 @@
+NAME  ORKERS              PLUGINS    DEFAULT  LAST SEEN
+cold  0 (no live orkers)  -          -        -
+gpu   1                   container  yes      2026-01-02T03:04:05Z
+
+A task naming no pool runs on gpu.

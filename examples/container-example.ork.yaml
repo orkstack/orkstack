@@ -74,16 +74,43 @@ tasks:
       capture_stdout_as: build-log
       capture_stderr_as: build-diagnostics
 
-  # 3. The container's output payload crosses the task boundary like any
-  #    other: the file plugin persists it as a new artifact.
-  - id: record
+  # 3. Read the captured stream. `artifact "build/build-log"` renders the
+  #    LOCAL PATH of the file the Orker materialized in this task's work
+  #    directory before the task ran — not the bytes, and not a durable
+  #    address. So a task READS that path (the file plugin's `from:` opens
+  #    it, below; a shell `command:` can `cat` it, because it runs while the
+  #    work directory is still alive) or MOUNTS it (`mounts: - artifact:`,
+  #    as `build` does above with seed/manifest). Interpolated into a
+  #    `content:` string it would store the path itself, and a work
+  #    directory is per-attempt scratch that is removed when the task
+  #    returns. A container's own `command:` cannot read it either, for a
+  #    different reason: that path is on the Orker host, which the container
+  #    does not see.
+  - id: collect
     plugin: file
     needs: [build]
+    with:
+      op: copy
+      from: '{{ artifact "build/build-log" }}'
+      to: build-output.txt
+
+  # 4. The container's output payload crosses the task boundary like any
+  #    other: the file plugin persists it as a new artifact.
+  #
+  #    The payload holds what only the plugin knows — the image, the exit
+  #    code, how long it took. It holds NONE of the container's own bytes: a
+  #    payload is a Temporal payload, and a task's output travels as
+  #    artifacts (AGENTS.md §1.2). So the report points at the copy `collect`
+  #    read and says how long it was; the stream itself is in that artifact
+  #    and in build/build-log, byte-exact, however long it is.
+  - id: record
+    plugin: file
+    needs: [build, collect]
     with:
       op: write
       path: container-report.txt
       content: |
         image: {{ .tasks.build.output.image }}
         exit_code: {{ .tasks.build.output.exit_code }}
-        stdout:
-        {{ .tasks.build.output.stdout }}
+        duration_ms: {{ .tasks.build.output.duration_ms }}
+        build log: {{ .tasks.collect.output.path }} ({{ .tasks.collect.output.size_bytes }} bytes)

@@ -149,11 +149,25 @@ func (a *Activities) ExecuteTask(ctx context.Context, in task.ExecuteTaskInput) 
 		Log:       logf,
 	}
 	result, err := impl.Execute(ctx, ec)
-	if err != nil {
-		return empty, pluginFailure(in, err)
-	}
 	if result == nil {
 		result = &plugin.Result{}
+	}
+	if err != nil {
+		// A FAILED TASK STILL PUBLISHES WHAT IT PRODUCED. The output of a
+		// failing task — compiler errors, a test report, a core dump the
+		// author named — is exactly what somebody opens the run to read, and
+		// it lives in the workdir the deferred RemoveAll above is about to
+		// delete. So the captures are uploaded first and the failure is
+		// returned after.
+		//
+		// The upload's own failure is swallowed on this path, deliberately.
+		// The plugin's error is WHY the task failed; replacing it with a
+		// storage error would tell the author their build failed because of
+		// the bucket. The loss is reported to the Orker's own log instead.
+		if _, upErr := a.upload(ctx, in, workDir, result.Artifacts); upErr != nil {
+			logf("[ork] a failed task's artifacts could not be stored: %v", upErr)
+		}
+		return empty, pluginFailure(in, err)
 	}
 	heartbeat(ctx, "executed")
 

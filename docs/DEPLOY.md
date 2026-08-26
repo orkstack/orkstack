@@ -305,12 +305,13 @@ export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # MinIO needs path style; AWS S3 does not
 ```
 
-One bucket, six key families (`pkg/artifacts`):
+One bucket, seven key families (`pkg/artifacts`):
 
 | keys | what |
 |---|---|
 | `metadata/orkflows/{namespace}/{name}/{version}.json` | orkflow definitions — written by `apply`, read at every boot; immutable once written |
-| `metadata/orkflows/{namespace}/{name}/@current.json` | which version that orkflow runs: `{"version":…,"updated_at":…}` and nothing else. Moved by `orkctl orkflow promote`; absent means "the newest applied version" |
+| `metadata/orkflows/{namespace}/{name}/@current.json` | which version that orkflow runs: `{"version":…,"updated_at":…}` and nothing else. Moved by `orkctl orkflow promote`; absent means "the head" |
+| `metadata/orkflows/{namespace}/{name}/@head.json` | which version was applied last: `{"version":…,"applied_at":…}`. Moved by `apply`, and moving it IS the apply's commit point |
 | `metadata/namespaces/{name}.json` | namespace registry documents; `default` is synthesized when absent |
 | `metadata/runs/{run-id}.jsonl` and `metadata/index/runs/{namespace}/…` | archived runs: the body, and the key-only index `ListRuns` scans |
 | `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` | task output, one chunk per object, written while the task runs (below) |
@@ -320,8 +321,18 @@ A basename beginning `@` is reserved for per-orkflow metadata stored beside the
 versions, so a pointer can never be read as a version. Two replicas promoting
 at once are arbitrated by the object store's own conditional PUT — the loser is
 told it lost and swaps again against the winner's etag — so promotion needs no
-lock, no lease and nothing in Temporal. The pointer holds only a version
-string: a copy of the document there could drift from the document.
+lock, no lease and nothing in Temporal. Neither pointer holds a copy of the
+document: a second place for it is a second place for it to be wrong.
+
+The head is a pointer for the same reason, and for one more. Each replica
+stamps `created_at` from its own clock, so a head read as "the greatest stamp"
+is decided by whichever replica's clock runs fastest; and an edit's
+`expected_head_version` has to be checked by the write itself, or a competing
+apply lands between the check and the write and the stale edit succeeds
+anyway. Both are settled by the swap. `applied_at` is monotonic — an apply
+never stamps its version earlier than the head it extends — so `orkctl orkflow
+versions` lists them in the order they were applied on a deployment whose
+clocks disagree.
 
 `proof/M8.5/ha-deploy.sh` exports exactly that block, and phase 7 of
 `proof/M8.5/ha-transcript.txt` reads a finished run back out of the bucket —
@@ -966,6 +977,138 @@ Runs already pinned to a version still need that version's workers.
   `bin/ork` also matches `bin/orkctl` — the cleanup then kills the CLI you are
   about to drive the deploy with.
 
+### The admin surface: what a deployment is made of, and who is serving it
+
+Four reads answer every operational question about a deployment, and each is
+available from the CLI and over Connect. Three of them are answered from the
+cluster or the bucket, so **any replica answers them and they all answer the
+same** (`AGENTS.md` §1.7). The fourth is deliberately not.
+
+| read | CLI | where the answer comes from |
+|---|---|---|
+| system information | `orkctl admin info` | **this replica's own build and configuration** |
+| pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
+| namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket |
+| plugin inventory | `orkctl plugin list` | the connected Orkers, asked pool by pool |
+
+`orkctl admin info` describes **the replica that answered**, and it says so in
+its own output. Behind a load balancer that is whichever replica took the
+request:
+
+```
+engine:       v0.0.4
+go:           go1.25.6
+deployment:   orkstack
+versioning:   off
+artifacts:    s3://orkstack-artifacts (s3)
+temporal:     localhost:7233
+server time:  2026-01-02T03:04:05Z
+```
+
+Every line except `server time` is configuration- or build-derived — read from
+the process, never measured. That is the point of it: replicas of one release
+answer identically by construction, so a field that DIFFERS between two
+addresses is information. Mid-rollout the field that differs is the build id,
+which is why `versioning:` prints the state rather than the raw value:
+`off` when no `ORK_BUILD_ID` is set (the documented off switch, §1), and
+`on (build <id>)` when one is. `engine:` is stamped at build time by the
+Makefile's `-ldflags`; a plain `go build ./cmd/ork` reports `dev`.
+
+Deliberately **not** in it: whether the cluster is reachable. Pool health is
+that read — it cannot answer at all without the cluster — and a connectivity
+flag would be stale the moment it was sent, while looking like a measurement.
+Deliberately not in it either: any credential. The artifact line names the
+bucket or directory, never the key that opens it.
+
+`orkctl pool list` is the health read, and it distinguishes two states a
+single number cannot:
+
+```
+NAME     ORKERS                 PLUGINS                    DEFAULT  LAST SEEN
+cold     0 (no live orkers)     -                          -        -
+gpu      1                      container,file,http,shell  yes      2026-01-02T03:04:05Z
+remote   unknown (unreachable)  -                          -        -
+
+1 pool could not be reached, so its Orkers are unknown rather than zero:
+  remote: cannot tell whether pool "remote" has live Orkers: context deadline exceeded
+```
+
+Three states, and the column keeps them apart because they need three different
+actions:
+
+| ORKERS | what it says | what to do |
+|---|---|---|
+| `1`, `2`, … | that many Orkers are polling for this pool's work right now | nothing |
+| `0 (no live orkers)` | **measured**: nobody is serving this pool, and a task sent there waits | start an Orker with `ORK_ORKER_POOL=<pool>` |
+| `unknown (unreachable)` | **not measured**: the cluster did not answer for this pool | ask again; the pool may be perfectly healthy |
+
+A pool with no Orkers is **listed**, because "nobody is serving this" is the
+answer the question was asked for. A pool that could not be asked about is
+listed too, and never as a zero: reporting "not measured" as "measured zero"
+sends an operator to scale a pool that may need nothing.
+
+**Both admin reads answer as much as they can.** A source that cannot be reached
+costs the answer the part that source held, is logged with the pool or the
+store it lost, and costs nothing else. `ListPlugins` has one deliberate
+all-or-nothing exception: when the deployment's **own** Orkers do not answer,
+it returns `Unavailable` rather than making an empty inventory look like proof
+that no plugins are installed. The partial-source rules are:
+
+| what is lost | what the answer loses | where it is recorded |
+|---|---|---|
+| the cluster, for one pool | that pool's count and `LAST SEEN` | `Pool.unavailable_reason` on the wire, printed under the table, and a warning log |
+| a live pool's Orkers, not answering | that pool's `PLUGINS` column | the log; the empty column already means "nobody answered" |
+| the orkflow store, for one namespace | the pools only that namespace's stored definitions name | the log |
+| the namespace registry | every non-default pool | the log; the deployment's own Orkers still answer |
+
+That rule is not a preference: an operator opens pool health and the plugin
+inventory when something is already wrong, and an `Unavailable` there hides
+every pool that IS healthy in order to report one that is not. One namespace's
+unreadable catalog likewise costs the inventory that namespace's pools and no
+other's.
+
+The one refusal left on each read is the one that leaves nothing to report:
+`orkctl pool list` on a namespace that cannot be resolved or whose default pool
+this deployment cannot route (under which no task of it could run at all), and
+`orkctl plugin list` when the deployment's OWN Orkers are asked and do not
+answer (where an empty list would read as "no plugins are installed").
+
+What that costs, stated so nobody has to discover it:
+
+- **`PLUGINS` is a sample, not a census.** The question is one activity
+  executed on the pool's own channel, so whichever of the pool's Orkers picks
+  it up answers for the pool. The Orkers of one pool are one release
+  (`AGENTS.md` §10), which is what makes the sample worth showing; mid-rollout
+  two of them can differ and the column shows one of the two.
+- **An empty `PLUGINS` means "nobody was asked, or nobody answered".** A pool
+  with no live Orkers has nobody to ask; a pool whose Orkers did not answer in
+  time keeps its `ORKERS` count and loses its plugin list. It never means
+  "these Orkers run no plugins". The two are the same bytes on the wire, and
+  telling them apart would cost the whole report — so the report is kept and
+  the ambiguity is written down here instead.
+- **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
+  minutes after its worker died, so a record older than the freshness window is
+  dropped before anything is counted or timestamped. A pool whose Orkers have
+  all gone quiet shows `-`, not the moment the last one was heard. The column
+  says how fresh the number beside it is, and nothing else.
+- **`orkctl plugin list` carries versions and schemas only for the
+  deployment's default pool**, whose Orkers answer the descriptor activity
+  directly. A plugin found only on another pool appears as a bare NAME with an
+  empty version — the per-pool question that found it reports names. Listing
+  it is still worth it: without it an operator hunting `container` concludes it
+  is not installed while a run using it succeeds.
+
+The inventory's pool scope is the durable state the replica can read: the
+deployment's default route, namespace allow-lists, and pools named by any
+stored orkflow version. A pool that no namespace or stored version names cannot
+be inferred from this API. Temporal's task-queue description call requires a
+queue name; it has no read that lists every task queue, and those names stay
+below this user-facing pool surface.
+
+The whole surface, answered by a second replica that started nothing — no
+namespace registered, no orkflow applied, no run — is proven live in
+`TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`
+(`proof/M11.3/`).
 ---
 
 ## 6. Replay safety across versions

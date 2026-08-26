@@ -415,8 +415,11 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	await page.getByTestId('editor-apply').click();
 
 	// The refusal is reported, names both versions, and nothing was written.
+	// This editor was opened with no `?version=`, so its base and its expected
+	// head are the same version (0.2.0) — the default M11.5 keeps.
 	await expect(page.getByTestId('editor-conflict')).toBeVisible();
 	await expect(page.getByTestId('editor-conflict')).toContainText('0.2.0');
+	await expect(page.getByTestId('editor-conflict-expected')).toHaveText('0.2.0');
 	await expect(page.getByTestId('editor-conflict-head')).toHaveText('0.3.0');
 	await shot(page, 'screenshot-editor-stale.png');
 	const afterStale = await rpc<{ versions: { version: string }[] }>(
@@ -432,9 +435,13 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	await expect(page.getByTestId('conflict-diff')).toContainText(`--- a/${ORKFLOW}@0.2.0`);
 	await expect(page.getByTestId('conflict-diff')).toContainText('+description: applied by somebody else');
 
-	// Rebasing is explicit, and then the edit applies onto the new head.
+	// Retargeting is explicit, and it moves the CONCURRENCY TOKEN — the head
+	// this edit is checked against — while the provenance stays where the edit
+	// really came from (M11.5, design §5.2). Then the edit applies onto the new
+	// head.
 	await page.getByTestId('editor-conflict-rebase').click();
-	await expect(page.getByTestId('editor-base-version')).toHaveText('0.3.0');
+	await expect(page.getByTestId('editor-head-version')).toHaveText('0.3.0');
+	await expect(page.getByTestId('editor-base-version')).toHaveText('0.2.0');
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
 	await openVersions(page);

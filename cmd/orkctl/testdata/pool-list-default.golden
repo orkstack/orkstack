@@ -1,0 +1,4 @@
+NAME  ORKERS  PLUGINS          DEFAULT  LAST SEEN
+main  2       file,http,shell  yes      2026-01-02T03:04:05Z
+
+A task naming no pool runs on main.

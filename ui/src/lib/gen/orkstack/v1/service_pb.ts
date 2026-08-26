@@ -20,7 +20,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/service.proto.
  */
 export const file_orkstack_v1_service: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSJMChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEhQKDGJhc2VfdmVyc2lvbhgDIAEoCSJgChRBcHBseU9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIQCgh3YXJuaW5ncxgCIAMoCRIPCgdjcmVhdGVkGAMgASgIIkUKEUdldE9ya2Zsb3dSZXF1ZXN0EgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkiOwoSR2V0T3JrZmxvd1Jlc3BvbnNlEiUKB29ya2Zsb3cYASABKAsyFC5vcmtzdGFjay52MS5PcmtmbG93Ik8KE0xpc3RPcmtmbG93c1JlcXVlc3QSEQoJcGFnZV9zaXplGAEgASgFEhIKCnBhZ2VfdG9rZW4YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIlcKFExpc3RPcmtmbG93c1Jlc3BvbnNlEiYKCG9ya2Zsb3dzGAEgAygLMhQub3Jrc3RhY2sudjEuT3JrZmxvdxIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkiegoOT3JrZmxvd1ZlcnNpb24SDwoHdmVyc2lvbhgBIAEoCRIuCgphcHBsaWVkX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBISCgppc19jdXJyZW50GAMgASgIEhMKC2Rlc2NyaXB0aW9uGAQgASgJIj0KGkxpc3RPcmtmbG93VmVyc2lvbnNSZXF1ZXN0EgwKBG5hbWUYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJInsKG0xpc3RPcmtmbG93VmVyc2lvbnNSZXNwb25zZRItCgh2ZXJzaW9ucxgBIAMoCzIbLm9ya3N0YWNrLnYxLk9ya2Zsb3dWZXJzaW9uEhcKD2N1cnJlbnRfdmVyc2lvbhgCIAEoCRIUCgxoZWFkX3ZlcnNpb24YAyABKAkiUwofU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVxdWVzdBIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIqYBCiBTZXRDdXJyZW50T3JrZmxvd1ZlcnNpb25SZXNwb25zZRIMCgRuYW1lGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCRIXCg9jdXJyZW50X3ZlcnNpb24YAyABKAkSGAoQcHJldmlvdXNfdmVyc2lvbhgEIAEoCRIuCgp1cGRhdGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJnChpEaWZmT3JrZmxvd1ZlcnNpb25zUmVxdWVzdBIMCgRuYW1lGAEgASgJEhQKDGZyb21fdmVyc2lvbhgCIAEoCRISCgp0b192ZXJzaW9uGAMgASgJEhEKCW5hbWVzcGFjZRgEIAEoCSJdChtEaWZmT3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USFAoMdW5pZmllZF9kaWZmGAEgASgJEhQKDGZyb21fdmVyc2lvbhgCIAEoCRISCgp0b192ZXJzaW9uGAMgASgJIqwBChBTdWJtaXRSdW5SZXF1ZXN0EhQKDG9ya2Zsb3dfbmFtZRgBIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YAiABKAkSIwoFaW5wdXQYAyABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEhcKD2lkZW1wb3RlbmN5X2tleRgEIAEoCRIRCgluYW1lc3BhY2UYBSABKAkSGAoQYWxsb3dfZW1wdHlfcG9vbBgGIAEoCCIyChFTdWJtaXRSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iMgoNR2V0UnVuUmVxdWVzdBIOCgZydW5faWQYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJIi8KDkdldFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biKGAQoPTGlzdFJ1bnNSZXF1ZXN0EhQKDG9ya2Zsb3dfbmFtZRgBIAEoCRIjCgZzdGF0dXMYAiABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSEQoJcGFnZV9zaXplGAMgASgFEhIKCnBhZ2VfdG9rZW4YBCABKAkSEQoJbmFtZXNwYWNlGAUgASgJIksKEExpc3RSdW5zUmVzcG9uc2USHgoEcnVucxgBIAMoCzIQLm9ya3N0YWNrLnYxLlJ1bhIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkiRQoQQ2FuY2VsUnVuUmVxdWVzdBIOCgZydW5faWQYASABKAkSDgoGcmVhc29uGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSIyChFDYW5jZWxSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4iTwoTU3RyZWFtRXZlbnRzUmVxdWVzdBIOCgZydW5faWQYASABKAkSFQoNZnJvbV9zZXF1ZW5jZRgCIAEoAxIRCgluYW1lc3BhY2UYAyABKAkilAEKFVN0cmVhbVRhc2tMb2dzUmVxdWVzdBIOCgZydW5faWQYASABKAkSDwoHdGFza19pZBgCIAEoCRIPCgdhdHRlbXB0GAMgASgFEhAKCGZyb21fc2VxGAQgASgDEhQKDGZyb21fYXR0ZW1wdBgHIAEoBRIOCgZmb2xsb3cYBSABKAgSEQoJbmFtZXNwYWNlGAYgASgJInwKDFRhc2tMb2dDaHVuaxIOCgZydW5faWQYASABKAkSDwoHdGFza19pZBgCIAEoCRIPCgdhdHRlbXB0GAMgASgFEgsKA3NlcRgEIAEoAxIMCgRkYXRhGAUgASgMEhEKCXRydW5jYXRlZBgGIAEoCBIMCgRsYXN0GAcgASgIIkMKFkNyZWF0ZU5hbWVzcGFjZVJlcXVlc3QSKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIlUKF0NyZWF0ZU5hbWVzcGFjZVJlc3BvbnNlEikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZRIPCgdjcmVhdGVkGAIgASgIIiMKE0dldE5hbWVzcGFjZVJlcXVlc3QSDAoEbmFtZRgBIAEoCSJBChRHZXROYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiFwoVTGlzdE5hbWVzcGFjZXNSZXF1ZXN0IkQKFkxpc3ROYW1lc3BhY2VzUmVzcG9uc2USKgoKbmFtZXNwYWNlcxgBIAMoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJDChZVcGRhdGVOYW1lc3BhY2VSZXF1ZXN0EikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJEChdVcGRhdGVOYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiJgoWRGVsZXRlTmFtZXNwYWNlUmVxdWVzdBIMCgRuYW1lGAEgASgJIhkKF0RlbGV0ZU5hbWVzcGFjZVJlc3BvbnNlIiUKEExpc3RQb29sc1JlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJIksKEUxpc3RQb29sc1Jlc3BvbnNlEiAKBXBvb2xzGAEgAygLMhEub3Jrc3RhY2sudjEuUG9vbBIUCgxkZWZhdWx0X3Bvb2wYAiABKAkiFAoSTGlzdFBsdWdpbnNSZXF1ZXN0Ip8BCgpQbHVnaW5JbmZvEgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCRITCgtkZXNjcmlwdGlvbhgDIAEoCRItCgxpbnB1dF9zY2hlbWEYBCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Ei4KDW91dHB1dF9zY2hlbWEYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Ij8KE0xpc3RQbHVnaW5zUmVzcG9uc2USKAoHcGx1Z2lucxgBIAMoCzIXLm9ya3N0YWNrLnYxLlBsdWdpbkluZm8y1gQKDk9ya2Zsb3dTZXJ2aWNlElMKDEFwcGx5T3JrZmxvdxIgLm9ya3N0YWNrLnYxLkFwcGx5T3JrZmxvd1JlcXVlc3QaIS5vcmtzdGFjay52MS5BcHBseU9ya2Zsb3dSZXNwb25zZRJNCgpHZXRPcmtmbG93Eh4ub3Jrc3RhY2sudjEuR2V0T3JrZmxvd1JlcXVlc3QaHy5vcmtzdGFjay52MS5HZXRPcmtmbG93UmVzcG9uc2USUwoMTGlzdE9ya2Zsb3dzEiAub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dzUmVxdWVzdBohLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93c1Jlc3BvbnNlEmgKE0xpc3RPcmtmbG93VmVyc2lvbnMSJy5vcmtzdGFjay52MS5MaXN0T3JrZmxvd1ZlcnNpb25zUmVxdWVzdBooLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93VmVyc2lvbnNSZXNwb25zZRJ3ChhTZXRDdXJyZW50T3JrZmxvd1ZlcnNpb24SLC5vcmtzdGFjay52MS5TZXRDdXJyZW50T3JrZmxvd1ZlcnNpb25SZXF1ZXN0Gi0ub3Jrc3RhY2sudjEuU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVzcG9uc2USaAoTRGlmZk9ya2Zsb3dWZXJzaW9ucxInLm9ya3N0YWNrLnYxLkRpZmZPcmtmbG93VmVyc2lvbnNSZXF1ZXN0Gigub3Jrc3RhY2sudjEuRGlmZk9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlMssDCgpSdW5TZXJ2aWNlEkoKCVN1Ym1pdFJ1bhIdLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlcXVlc3QaHi5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXNwb25zZRJBCgZHZXRSdW4SGi5vcmtzdGFjay52MS5HZXRSdW5SZXF1ZXN0Ghsub3Jrc3RhY2sudjEuR2V0UnVuUmVzcG9uc2USRwoITGlzdFJ1bnMSHC5vcmtzdGFjay52MS5MaXN0UnVuc1JlcXVlc3QaHS5vcmtzdGFjay52MS5MaXN0UnVuc1Jlc3BvbnNlEkoKCUNhbmNlbFJ1bhIdLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlcXVlc3QaHi5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXNwb25zZRJGCgxTdHJlYW1FdmVudHMSIC5vcmtzdGFjay52MS5TdHJlYW1FdmVudHNSZXF1ZXN0GhIub3Jrc3RhY2sudjEuRXZlbnQwARJRCg5TdHJlYW1UYXNrTG9ncxIiLm9ya3N0YWNrLnYxLlN0cmVhbVRhc2tMb2dzUmVxdWVzdBoZLm9ya3N0YWNrLnYxLlRhc2tMb2dDaHVuazABMqgEChBOYW1lc3BhY2VTZXJ2aWNlElwKD0NyZWF0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLkNyZWF0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5DcmVhdGVOYW1lc3BhY2VSZXNwb25zZRJTCgxHZXROYW1lc3BhY2USIC5vcmtzdGFjay52MS5HZXROYW1lc3BhY2VSZXF1ZXN0GiEub3Jrc3RhY2sudjEuR2V0TmFtZXNwYWNlUmVzcG9uc2USWQoOTGlzdE5hbWVzcGFjZXMSIi5vcmtzdGFjay52MS5MaXN0TmFtZXNwYWNlc1JlcXVlc3QaIy5vcmtzdGFjay52MS5MaXN0TmFtZXNwYWNlc1Jlc3BvbnNlElwKD1VwZGF0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLlVwZGF0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5VcGRhdGVOYW1lc3BhY2VSZXNwb25zZRJcCg9EZWxldGVOYW1lc3BhY2USIy5vcmtzdGFjay52MS5EZWxldGVOYW1lc3BhY2VSZXF1ZXN0GiQub3Jrc3RhY2sudjEuRGVsZXRlTmFtZXNwYWNlUmVzcG9uc2USSgoJTGlzdFBvb2xzEh0ub3Jrc3RhY2sudjEuTGlzdFBvb2xzUmVxdWVzdBoeLm9ya3N0YWNrLnYxLkxpc3RQb29sc1Jlc3BvbnNlMmEKDVBsdWdpblNlcnZpY2USUAoLTGlzdFBsdWdpbnMSHy5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1JlcXVlc3QaIC5vcmtzdGFjay52MS5MaXN0UGx1Z2luc1Jlc3BvbnNlQqgBCg9jb20ub3Jrc3RhY2sudjFCDFNlcnZpY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
+  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSJrChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEhQKDGJhc2VfdmVyc2lvbhgDIAEoCRIdChVleHBlY3RlZF9oZWFkX3ZlcnNpb24YBCABKAkiYAoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkSDwoHY3JlYXRlZBgDIAEoCCJFChFHZXRPcmtmbG93UmVxdWVzdBIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyJPChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSJXChRMaXN0T3JrZmxvd3NSZXNwb25zZRImCghvcmtmbG93cxgBIAMoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJInoKDk9ya2Zsb3dWZXJzaW9uEg8KB3ZlcnNpb24YASABKAkSLgoKYXBwbGllZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKaXNfY3VycmVudBgDIAEoCBITCgtkZXNjcmlwdGlvbhgEIAEoCSI9ChpMaXN0T3JrZmxvd1ZlcnNpb25zUmVxdWVzdBIMCgRuYW1lGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSJ7ChtMaXN0T3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USLQoIdmVyc2lvbnMYASADKAsyGy5vcmtzdGFjay52MS5PcmtmbG93VmVyc2lvbhIXCg9jdXJyZW50X3ZlcnNpb24YAiABKAkSFAoMaGVhZF92ZXJzaW9uGAMgASgJIlMKH1NldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSKmAQogU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVzcG9uc2USDAoEbmFtZRgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSFwoPY3VycmVudF92ZXJzaW9uGAMgASgJEhgKEHByZXZpb3VzX3ZlcnNpb24YBCABKAkSLgoKdXBkYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiZwoaRGlmZk9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCRIRCgluYW1lc3BhY2UYBCABKAkiXQobRGlmZk9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlEhQKDHVuaWZpZWRfZGlmZhgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCSKsAQoQU3VibWl0UnVuUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAIgASgJEiMKBWlucHV0GAMgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIXCg9pZGVtcG90ZW5jeV9rZXkYBCABKAkSEQoJbmFtZXNwYWNlGAUgASgJEhgKEGFsbG93X2VtcHR5X3Bvb2wYBiABKAgiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIjIKDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSIvCg5HZXRSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4ihgEKD0xpc3RSdW5zUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSIwoGc3RhdHVzGAIgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEhEKCXBhZ2Vfc2l6ZRgDIAEoBRISCgpwYWdlX3Rva2VuGAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIkUKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkiMgoRQ2FuY2VsUnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIk8KE1N0cmVhbUV2ZW50c1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhUKDWZyb21fc2VxdWVuY2UYAiABKAMSEQoJbmFtZXNwYWNlGAMgASgJIpQBChVTdHJlYW1UYXNrTG9nc1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDwoHYXR0ZW1wdBgDIAEoBRIQCghmcm9tX3NlcRgEIAEoAxIUCgxmcm9tX2F0dGVtcHQYByABKAUSDgoGZm9sbG93GAUgASgIEhEKCW5hbWVzcGFjZRgGIAEoCSJ8CgxUYXNrTG9nQ2h1bmsSDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDwoHYXR0ZW1wdBgDIAEoBRILCgNzZXEYBCABKAMSDAoEZGF0YRgFIAEoDBIRCgl0cnVuY2F0ZWQYBiABKAgSDAoEbGFzdBgHIAEoCCJDChZDcmVhdGVOYW1lc3BhY2VSZXF1ZXN0EikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJVChdDcmVhdGVOYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2USDwoHY3JlYXRlZBgCIAEoCCIjChNHZXROYW1lc3BhY2VSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoUR2V0TmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIhcKFUxpc3ROYW1lc3BhY2VzUmVxdWVzdCJEChZMaXN0TmFtZXNwYWNlc1Jlc3BvbnNlEioKCm5hbWVzcGFjZXMYASADKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiQwoWVXBkYXRlTmFtZXNwYWNlUmVxdWVzdBIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiRAoXVXBkYXRlTmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIiYKFkRlbGV0ZU5hbWVzcGFjZVJlcXVlc3QSDAoEbmFtZRgBIAEoCSIZChdEZWxldGVOYW1lc3BhY2VSZXNwb25zZSIlChBMaXN0UG9vbHNSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCSJLChFMaXN0UG9vbHNSZXNwb25zZRIgCgVwb29scxgBIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSFAoMZGVmYXVsdF9wb29sGAIgASgJIhQKEkxpc3RQbHVnaW5zUmVxdWVzdCKfAQoKUGx1Z2luSW5mbxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSLQoMaW5wdXRfc2NoZW1hGAQgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIuCg1vdXRwdXRfc2NoZW1hGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCI/ChNMaXN0UGx1Z2luc1Jlc3BvbnNlEigKB3BsdWdpbnMYASADKAsyFy5vcmtzdGFjay52MS5QbHVnaW5JbmZvIhYKFEdldFN5c3RlbUluZm9SZXF1ZXN0IokCChVHZXRTeXN0ZW1JbmZvUmVzcG9uc2USFgoOZW5naW5lX3ZlcnNpb24YASABKAkSEgoKZ29fdmVyc2lvbhgCIAEoCRIXCg9kZXBsb3ltZW50X25hbWUYAyABKAkSEAoIYnVpbGRfaWQYBCABKAkSGQoRdmVyc2lvbmluZ19hY3RpdmUYBSABKAgSGAoQYXJ0aWZhY3RfYmFja2VuZBgGIAEoCRIZChFhcnRpZmFjdF9sb2NhdGlvbhgHIAEoCRIYChB0ZW1wb3JhbF9hZGRyZXNzGAggASgJEi8KC3NlcnZlcl90aW1lGAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDLWBAoOT3JrZmxvd1NlcnZpY2USUwoMQXBwbHlPcmtmbG93EiAub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVxdWVzdBohLm9ya3N0YWNrLnYxLkFwcGx5T3JrZmxvd1Jlc3BvbnNlEk0KCkdldE9ya2Zsb3cSHi5vcmtzdGFjay52MS5HZXRPcmtmbG93UmVxdWVzdBofLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXNwb25zZRJTCgxMaXN0T3JrZmxvd3MSIC5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXF1ZXN0GiEub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dzUmVzcG9uc2USaAoTTGlzdE9ya2Zsb3dWZXJzaW9ucxInLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93VmVyc2lvbnNSZXF1ZXN0Gigub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlEncKGFNldEN1cnJlbnRPcmtmbG93VmVyc2lvbhIsLm9ya3N0YWNrLnYxLlNldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlcXVlc3QaLS5vcmtzdGFjay52MS5TZXRDdXJyZW50T3JrZmxvd1ZlcnNpb25SZXNwb25zZRJoChNEaWZmT3JrZmxvd1ZlcnNpb25zEicub3Jrc3RhY2sudjEuRGlmZk9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QaKC5vcmtzdGFjay52MS5EaWZmT3JrZmxvd1ZlcnNpb25zUmVzcG9uc2UyywMKClJ1blNlcnZpY2USSgoJU3VibWl0UnVuEh0ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlc3BvbnNlEkEKBkdldFJ1bhIaLm9ya3N0YWNrLnYxLkdldFJ1blJlcXVlc3QaGy5vcmtzdGFjay52MS5HZXRSdW5SZXNwb25zZRJHCghMaXN0UnVucxIcLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVxdWVzdBodLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVzcG9uc2USSgoJQ2FuY2VsUnVuEh0ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlc3BvbnNlEkYKDFN0cmVhbUV2ZW50cxIgLm9ya3N0YWNrLnYxLlN0cmVhbUV2ZW50c1JlcXVlc3QaEi5vcmtzdGFjay52MS5FdmVudDABElEKDlN0cmVhbVRhc2tMb2dzEiIub3Jrc3RhY2sudjEuU3RyZWFtVGFza0xvZ3NSZXF1ZXN0Ghkub3Jrc3RhY2sudjEuVGFza0xvZ0NodW5rMAEyqAQKEE5hbWVzcGFjZVNlcnZpY2USXAoPQ3JlYXRlTmFtZXNwYWNlEiMub3Jrc3RhY2sudjEuQ3JlYXRlTmFtZXNwYWNlUmVxdWVzdBokLm9ya3N0YWNrLnYxLkNyZWF0ZU5hbWVzcGFjZVJlc3BvbnNlElMKDEdldE5hbWVzcGFjZRIgLm9ya3N0YWNrLnYxLkdldE5hbWVzcGFjZVJlcXVlc3QaIS5vcmtzdGFjay52MS5HZXROYW1lc3BhY2VSZXNwb25zZRJZCg5MaXN0TmFtZXNwYWNlcxIiLm9ya3N0YWNrLnYxLkxpc3ROYW1lc3BhY2VzUmVxdWVzdBojLm9ya3N0YWNrLnYxLkxpc3ROYW1lc3BhY2VzUmVzcG9uc2USXAoPVXBkYXRlTmFtZXNwYWNlEiMub3Jrc3RhY2sudjEuVXBkYXRlTmFtZXNwYWNlUmVxdWVzdBokLm9ya3N0YWNrLnYxLlVwZGF0ZU5hbWVzcGFjZVJlc3BvbnNlElwKD0RlbGV0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLkRlbGV0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5EZWxldGVOYW1lc3BhY2VSZXNwb25zZRJKCglMaXN0UG9vbHMSHS5vcmtzdGFjay52MS5MaXN0UG9vbHNSZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuTGlzdFBvb2xzUmVzcG9uc2UyYQoNUGx1Z2luU2VydmljZRJQCgtMaXN0UGx1Z2lucxIfLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVxdWVzdBogLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVzcG9uc2UyZwoNU3lzdGVtU2VydmljZRJWCg1HZXRTeXN0ZW1JbmZvEiEub3Jrc3RhY2sudjEuR2V0U3lzdGVtSW5mb1JlcXVlc3QaIi5vcmtzdGFjay52MS5HZXRTeXN0ZW1JbmZvUmVzcG9uc2VCqAEKD2NvbS5vcmtzdGFjay52MUIMU2VydmljZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
 
 /**
  * @generated from message orkstack.v1.ApplyOrkflowRequest
@@ -47,22 +47,41 @@ export type ApplyOrkflowRequest = Message<"orkstack.v1.ApplyOrkflowRequest"> & {
   namespace: string;
 
   /**
-   * base_version is the optimistic-concurrency token: the version this edit
-   * was derived from. The server compares it against the HEAD version (the
-   * most recently applied one, which is what an editor last read) and refuses
-   * with FailedPrecondition when they differ, naming both — so an edit made
-   * from a stale copy is reported instead of landing beside a newer one
-   * nobody looked at. Empty means unchecked, which is what a plain
-   * `orkctl apply file.yaml` sends.
+   * base_version is the stored version this edit was derived from — its
+   * PROVENANCE and the anchor a diff is taken against, not the concurrency
+   * token. ANY stored version is a valid base: editing an old one is how a
+   * user forks forward from it, and the apply lands as the new head with the
+   * `current` pointer untouched. A non-empty value that names no stored
+   * version is NotFound, naming it.
    *
-   * It is a VERSION token rather than a content hash. Both detect the same
-   * staleness; only the token names something the user can act on —
+   * It is a VERSION token rather than a content hash. Both name where an edit
+   * came from; only the token names something the user can act on —
    * `orkctl orkflow diff <name> <base_version> <head>` shows exactly what
    * arrived underneath the edit. A hash names nothing.
    *
    * @generated from field: string base_version = 3;
    */
   baseVersion: string;
+
+  /**
+   * expected_head_version is the optimistic-concurrency token: the head
+   * version the editor observed when it fetched. Non-empty and different from
+   * the stored head is refused (FailedPrecondition) naming both, WHATEVER
+   * base was chosen — so an edit made while somebody else applied is reported
+   * instead of landing beside a newer version nobody looked at.
+   *
+   * Empty with a non-empty base_version keeps the pre-M11.2 rule, base must
+   * equal head, so every caller written against that contract keeps exactly
+   * the check it had. Empty with an empty base_version is unchecked, which is
+   * what a plain `orkctl apply file.yaml` sends.
+   *
+   * Two fields because there are two facts. With one, the server cannot tell
+   * "derived from an old version on purpose" from "derived from a head that
+   * has since moved", and the first is the whole point of this contract.
+   *
+   * @generated from field: string expected_head_version = 4;
+   */
+  expectedHeadVersion: string;
 };
 
 /**
@@ -114,9 +133,11 @@ export type GetOrkflowRequest = Message<"orkstack.v1.GetOrkflowRequest"> & {
   name: string;
 
   /**
-   * version selects one stored version. Empty resolves through the current
-   * pointer when one has been set, and to the most recently applied version
-   * when none ever was.
+   * version selects one stored version, and ANY stored version answers with
+   * its own source_yaml — that is the read an editor starts from, whether it
+   * is editing the head, the current version, or one older than both. Empty
+   * resolves through the current pointer when one has been set, and to the
+   * most recently applied version when none ever was.
    *
    * @generated from field: string version = 2;
    */
@@ -289,7 +310,14 @@ export type ListOrkflowVersionsResponse = Message<"orkstack.v1.ListOrkflowVersio
 
   /**
    * head_version is the most recently applied version — the edit lineage's
-   * tip, and the base_version an editor should send back.
+   * tip, and the expected_head_version an editor sends back with its apply.
+   * The base an editor sends is whichever version it actually READ, which
+   * need not be this one.
+   *
+   * A client renders "is head" as `version == head_version`, exactly as it
+   * renders "is current" from is_current: head is a property of the listing,
+   * not of a version, so a per-row flag would be a second place to keep the
+   * same fact.
    *
    * @generated from field: string head_version = 3;
    */
@@ -1106,15 +1134,32 @@ export const ListPluginsRequestSchema: GenMessage<ListPluginsRequest> = /*@__PUR
   messageDesc(file_orkstack_v1_service, 36);
 
 /**
+ * PluginInfo is one plugin, as the pool that answered described it.
+ *
+ * Entries are keyed by (name, version): two pools mid-rollout genuinely do run
+ * two versions of one plugin, and collapsing them would hide the fact an
+ * operator opened this view to find.
+ *
  * @generated from message orkstack.v1.PluginInfo
  */
 export type PluginInfo = Message<"orkstack.v1.PluginInfo"> & {
   /**
+   * name is always present, whichever pool reported it.
+   *
    * @generated from field: string name = 1;
    */
   name: string;
 
   /**
+   * version, description and the two schemas are reported by the deployment's
+   * DEFAULT pool, whose Orkers answer the plugin-descriptor activity directly.
+   *
+   * A plugin visible only on another pool arrives as a bare name and these
+   * fields are EMPTY: the per-pool question that found it reports names. Empty
+   * means "not reported by the pool that has it", never "this plugin declares
+   * none" — a version invented for a plugin nobody described would be worse
+   * than the gap.
+   *
    * @generated from field: string version = 2;
    */
   version: string;
@@ -1158,6 +1203,111 @@ export type ListPluginsResponse = Message<"orkstack.v1.ListPluginsResponse"> & {
  */
 export const ListPluginsResponseSchema: GenMessage<ListPluginsResponse> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 38);
+
+/**
+ * @generated from message orkstack.v1.GetSystemInfoRequest
+ */
+export type GetSystemInfoRequest = Message<"orkstack.v1.GetSystemInfoRequest"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.GetSystemInfoRequest.
+ * Use `create(GetSystemInfoRequestSchema)` to create a new message.
+ */
+export const GetSystemInfoRequestSchema: GenMessage<GetSystemInfoRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 39);
+
+/**
+ * @generated from message orkstack.v1.GetSystemInfoResponse
+ */
+export type GetSystemInfoResponse = Message<"orkstack.v1.GetSystemInfoResponse"> & {
+  /**
+   * engine_version is the release this binary was built as: the value
+   * -ldflags stamped in, falling back to the module's own build version and
+   * then to the source revision the build was stamped with, and finally to
+   * "dev" for a plain `go build`. BUILD-DERIVED.
+   *
+   * @generated from field: string engine_version = 1;
+   */
+  engineVersion: string;
+
+  /**
+   * go_version is the toolchain the binary was compiled with. BUILD-DERIVED.
+   *
+   * @generated from field: string go_version = 2;
+   */
+  goVersion: string;
+
+  /**
+   * deployment_name is the Worker Deployment both binaries of a release join.
+   * CONFIGURATION-DERIVED.
+   *
+   * @generated from field: string deployment_name = 3;
+   */
+  deploymentName: string;
+
+  /**
+   * build_id names this release inside that deployment; empty means the
+   * deployment is unversioned. CONFIGURATION-DERIVED, and the field that
+   * differs between two replicas mid-rollout.
+   *
+   * @generated from field: string build_id = 4;
+   */
+  buildId: string;
+
+  /**
+   * versioning_active reports whether Worker Deployment Versioning is on for
+   * this process, which is exactly "both of the two fields above are set".
+   * DERIVED from configuration, not asked of the cluster: it says what this
+   * replica registered as, not what the cluster currently routes.
+   *
+   * @generated from field: bool versioning_active = 5;
+   */
+  versioningActive: boolean;
+
+  /**
+   * artifact_backend is where artifacts, run archives and task logs live:
+   * "local" or "s3". CONFIGURATION-DERIVED.
+   *
+   * @generated from field: string artifact_backend = 6;
+   */
+  artifactBackend: string;
+
+  /**
+   * artifact_location is the bucket or directory that backend addresses,
+   * never a credential. CONFIGURATION-DERIVED.
+   *
+   * @generated from field: string artifact_location = 7;
+   */
+  artifactLocation: string;
+
+  /**
+   * temporal_address is the cluster endpoint this replica dials.
+   * CONFIGURATION-DERIVED — that the address is configured is not a claim
+   * that it answers; pool health is the read that proves the cluster is
+   * reachable, and a connectivity flag here would be stale the moment it was
+   * sent.
+   *
+   * @generated from field: string temporal_address = 8;
+   */
+  temporalAddress: string;
+
+  /**
+   * server_time is the answering replica's own clock, and is the ONLY
+   * observed field in this message. A client comparing it with its own clock
+   * is comparing two clocks, which is what makes a skewed replica visible.
+   *
+   * @generated from field: google.protobuf.Timestamp server_time = 9;
+   */
+  serverTime?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.GetSystemInfoResponse.
+ * Use `create(GetSystemInfoResponseSchema)` to create a new message.
+ */
+export const GetSystemInfoResponseSchema: GenMessage<GetSystemInfoResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 40);
 
 /**
  * OrkflowService manages orkflow definitions (the compiled DSL).
@@ -1409,6 +1559,15 @@ export const NamespaceService: GenService<{
    * The answer is read from the cluster, never from process memory, so any
    * replica answers — including one that started nothing.
    *
+   * It NARROWS rather than refusing. A source that cannot be reached costs
+   * this read what that source knew and nothing else: a pool the cluster did
+   * not answer for is still listed, carrying Pool.unavailable_reason instead
+   * of a count; a pool whose Orkers did not answer keeps its count and loses
+   * its plugin list; an orkflow store that cannot be read narrows the answer
+   * to the pools the namespace document itself names. An admin read is opened
+   * when something is already wrong, and a refusal hides the healthy pools
+   * beside the broken one.
+   *
    * @generated from rpc orkstack.v1.NamespaceService.ListPools
    */
   listPools: {
@@ -1426,6 +1585,18 @@ export const NamespaceService: GenService<{
  */
 export const PluginService: GenService<{
   /**
+   * ListPlugins reports what this deployment can run.
+   *
+   * It answers even when part of the deployment cannot be reached. Each live
+   * pool contributes what it can, an unreachable source contributes nothing
+   * and is logged, and only one failure remains: the deployment's own Orkers
+   * asked and silent, where an empty list would read as "no plugins are
+   * installed". An inventory is opened when something is already wrong, and a
+   * refusal hides the plugins that ARE reachable.
+   *
+   * How complete each entry is depends on which pool reported it — see
+   * PluginInfo.
+   *
    * @generated from rpc orkstack.v1.PluginService.ListPlugins
    */
   listPlugins: {
@@ -1435,4 +1606,35 @@ export const PluginService: GenService<{
   },
 }> = /*@__PURE__*/
   serviceDesc(file_orkstack_v1_service, 3);
+
+/**
+ * SystemService reports what this deployment is made of.
+ *
+ * @generated from service orkstack.v1.SystemService
+ */
+export const SystemService: GenService<{
+  /**
+   * GetSystemInfo describes THE REPLICA THAT ANSWERED. Every field is
+   * configuration- or build-derived — read from the process's own
+   * configuration, not observed from the cluster — except server_time.
+   * Replicas of one release answer identically by construction; mid-rollout,
+   * build_id is exactly the field that differs, which is the point of it.
+   *
+   * It is the one admin read that does not leave the process, and it is the
+   * one question only the process can answer: everything else an operator
+   * asks — which namespaces exist, which pools have Orkers, what those
+   * Orkers run — comes from the store or the cluster, so any replica gives
+   * the same reply. This one describes the replica in front of you, on
+   * purpose, because that is what an operator behind a load balancer needs
+   * to know during a rollout.
+   *
+   * @generated from rpc orkstack.v1.SystemService.GetSystemInfo
+   */
+  getSystemInfo: {
+    methodKind: "unary";
+    input: typeof GetSystemInfoRequestSchema;
+    output: typeof GetSystemInfoResponseSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_orkstack_v1_service, 4);
 

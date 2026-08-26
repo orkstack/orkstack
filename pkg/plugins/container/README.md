@@ -128,17 +128,88 @@ own budget is what expires first and the failure names the container.
 | field          | description                                                    |
 |----------------|----------------------------------------------------------------|
 | `exit_code`    | the container's exit status                                    |
-| `stdout`       | first 8 KiB of stdout                                          |
-| `stderr`       | first 8 KiB of stderr                                          |
 | `image`        | the image that ran                                             |
 | `image_pulled` | whether this run fetched the image                             |
 | `container`    | the container name, for correlating with `docker` on the host  |
 | `timed_out`    | whether the budget expired                                     |
 | `duration_ms`  | wall-clock run duration                                        |
 
-`stdout`/`stderr` are truncated on the payload — bytes never travel inline. The
-exact streams are the artifacts named by `capture_stdout_as` /
-`capture_stderr_as`.
+**No `stdout`, no `stderr`.** An output payload is a Temporal payload — the
+activity result, the workflow's state, the run's stored task output — and a
+task's output is bytes, which travel as artifacts and never inline
+(AGENTS.md §1.2). Every field above is something only the plugin knows.
+
+What the container printed has two readers, and both are complete where a
+truncated string never was:
+
+| you want | read |
+|---|---|
+| to watch it, or read it afterwards | `orkctl run logs <run-id> --task <id>` (add `-f` to follow) |
+| a downstream task to consume it | name it with `capture_stdout_as` / `capture_stderr_as`, then open the path `{{ artifact "<task>/<name>" }}` renders (below) |
+
+A downstream task that used to interpolate `{{ .tasks.build.output.stdout }}`
+reads the capture artifact instead. `{{ artifact "<task>/<name>" }}` renders the
+**local path** of the file the Orker materialized in that task's work directory
+before it ran — not the bytes, and not a durable address — so the task opens
+that path (`file` with `op: copy` and `from:`) or mounts it (`mounts:` with
+`artifact:`, above). Interpolate it into a `content:` string and what you store
+is the path itself, which is per-attempt scratch removed when the task returns.
+A `shell` `command:` is different: it runs *inside* the task, while the work
+directory is still alive, so `cat "{{ artifact "fetch/body" }}"` reads the bytes
+— [`examples/hello.ork.yaml`](../../../examples/hello.ork.yaml) does exactly
+that. A **container's own** `command:` cannot, for an unrelated reason: the path
+names a directory on the Orker host, and the container does not see it. Mount it
+instead.
+[`examples/container-example.ork.yaml`](../../../examples/container-example.ork.yaml)
+is the worked example: its `collect` task copies `build/build-log` into an
+artifact of its own, and the report names that copy and how long it was. There
+is no shim: nothing was deployed, and the field is simply gone.
+
+## Live output
+
+The application's stdout and stderr reach the task's **live log stream** while
+the container runs — through `StreamTaskLogs`, `orkctl run logs -f` and the UI
+log pane — not only as capture artifacts after it exits:
+
+```sh
+orkctl run logs <run-id> --task build -f
+```
+
+Three writers see each stream, and none of them replaces another: the capture
+file (byte-exact), the live log, and a small in-memory head the plugin reads to
+recognize one daemon-level failure and never quotes.
+
+- **Lines, not reads.** Bytes are framed into whole lines by
+  `plugin.LineWriter`. A line split across two docker reads arrives once; a
+  final line with no newline is flushed when the container exits, including
+  when it exits non-zero; `\n` and a bare `\r` both end a line and `\r\n`
+  counts once, so a progress redraw streams instead of piling up.
+- **stdout and stderr stay apart.** One attempt has one log stream, so stderr
+  lines carry the in-band marker `[stderr] ` and stdout lines are bare. The
+  plugin's own lifecycle lines (`container: running …`) are bare too. A stdout
+  line that would IMITATE the marker — one that itself starts with `[stderr] `
+  or `[stdout] ` — is emitted behind `[stdout] `, so the two streams are never
+  confusable and `plugin.DecodeStreamLine` recovers the origin and the original
+  line. Ordinary stdout is untouched.
+- **A chatty container is bounded.** The framer holds under 64 KiB per stream;
+  the Orker uploads a chunk when 64 KiB has accumulated and the pace allows it,
+  and the timer makes slow output visible within 500 ms. The first chunk may be
+  immediate. After that, normal size-triggered uploads wait 500 ms from the
+  previous normal upload, and if the ceiling arrives first the writer waits
+  instead of bypassing the pace (`ORK_ORKER_LOG_FLUSH_BYTES`,
+  `ORK_ORKER_LOG_FLUSH_INTERVAL`). `Close` is the durability barrier and may
+  upload the terminal remainder (and a loss notice) immediately, so the first
+  and terminal uploads are deliberate exceptions to that gap. Normal writes
+  still batch rather than becoming one object per line, and the attempt stops
+  at 16 MiB (`ORK_ORKER_LOG_MAX_BYTES`) with a visible `[ork] log truncated…`
+  notice.
+  Backpressure is real: a blocked upload or ceiling wait blocks the writer,
+  which fills the pipe, which blocks the container on `write(2)`.
+  **The cap never truncates an artifact** — those are files.
+
+No log byte enters a Temporal payload or the run's event stream (AGENTS.md
+§1.4); the whole rule is in
+[docs/PLUGINS.md](../../../docs/PLUGINS.md#streaming-a-tasks-output-pluginlinewriter).
 
 ## Failure and retry
 
@@ -154,6 +225,24 @@ A failure is retried only when retrying could plausibly change the answer.
 | `pull: never` and the image is absent      | permanent                     |
 | unknown `op`, bad mount, malformed `env`   | permanent, before any side effect |
 | daemon cannot see a mounted host path      | permanent, naming `ORK_ORKER_WORKDIR` |
+
+**A failure quotes nothing the container wrote.** A successful run carries metadata
+only — no stdout or stderr — and a failure carries no output payload either. Its
+error names the image, the exit code and where the output is:
+
+```
+container: alpine:3.20 exited with code 42. What it printed is in the task's
+log (`orkctl run logs <run-id> --task <task-id>`; stderr lines carry the
+`[stderr] ` marker), and byte-exact in its capture_stdout_as /
+capture_stderr_as artifacts when the task names them.
+```
+
+The error is the one thing here that crosses into Temporal: it is recorded as
+the activity's failure and copied onto `TaskRun.Error`, `TASK_FAILED`,
+`Run.Error` and `RUN_FAILED`. Quoting output into it would put a task's stream
+into run history and onto the event stream, which is what AGENTS.md §1.4
+forbids — and the daemon's own diagnostics are on the container's stderr, so
+they are in the log with everything else.
 
 ## Cleanup
 

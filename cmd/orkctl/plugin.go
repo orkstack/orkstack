@@ -23,7 +23,12 @@ func newPluginListCommand(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List registered plugins",
-		Args:  cobra.NoArgs,
+		Long: "List the plugins this deployment can run.\n\n" +
+			"The deployment's default pool answers with whole descriptors. A plugin found\n" +
+			"only on another pool is listed by NAME with an empty version, because the\n" +
+			"per-pool question that found it reports names — an empty version means it was\n" +
+			"not reported, never that the plugin declares none.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()

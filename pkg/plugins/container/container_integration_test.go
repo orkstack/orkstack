@@ -33,11 +33,18 @@ func testImage() string {
 	return "alpine:3.20"
 }
 
+func dockerBinForIntegration() string {
+	if bin := strings.TrimSpace(os.Getenv(DockerBinVar)); bin != "" {
+		return bin
+	}
+	return "docker"
+}
+
 func requireDocker(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
+	out, err := exec.CommandContext(ctx, dockerBinForIntegration(), "version", "--format", "{{.Server.Version}}").CombinedOutput()
 	if err != nil {
 		infraAbsent(t, "docker daemon is not reachable: %v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -52,7 +59,7 @@ func requireImage(t *testing.T, image string) {
 	}
 	code, out := docker(t, 5*time.Minute, "pull", image)
 	if code != 0 {
-		t.Skipf("cannot pull %s (no registry access?): %s", image, out)
+		infraAbsent(t, "cannot pull %s (no registry access?): %s", image, out)
 	}
 }
 
@@ -62,7 +69,7 @@ func docker(t *testing.T, timeout time.Duration, args ...string) (int, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var combined bytes.Buffer
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, dockerBinForIntegration(), args...)
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
 	err := cmd.Run()
@@ -116,7 +123,7 @@ func bindableTempDir(t *testing.T) string {
 	t.Helper()
 	root := bindableRoot(t)
 	if root == "" {
-		t.Skipf("no directory on this host can be bind-mounted by the docker daemon; " +
+		infraAbsent(t, "no directory on this host can be bind-mounted by the docker daemon; "+
 			"set ORK_TEST_CONTAINER_TMPDIR to one the daemon shares")
 	}
 	dir, err := os.MkdirTemp(root, "ork-container-test-*")
@@ -219,8 +226,13 @@ func TestIntegration_ContainerRunsAndCapturesBothStreamsAsArtifacts(t *testing.T
 	if got := result.Output["exit_code"]; got != float64(0) {
 		t.Errorf("exit_code = %v, want 0", got)
 	}
-	if got := result.Output["stdout"]; got != "archive=orkstack-v1.4.2.tar.gz\n" {
-		t.Errorf("stdout = %q, want the expanded environment variable", got)
+	// The container's own output is read from its CAPTURE ARTIFACT below, not
+	// from the payload: a payload is a Temporal payload, and a task's output
+	// travels as artifacts (AGENTS.md §1.2).
+	for _, field := range []string{"stdout", "stderr"} {
+		if got, ok := result.Output[field]; ok {
+			t.Errorf("output.%s = %q is on the payload", field, got)
+		}
 	}
 	if got := result.Output["timed_out"]; got != false {
 		t.Errorf("timed_out = %v, want false", got)
@@ -265,6 +277,10 @@ func TestIntegration_ContainerMountsAnUpstreamArtifactReadOnly(t *testing.T) {
 		// Reading must work; writing must not.
 		"command": `cat /input/body.txt; if echo tampered > /input/body.txt 2>/dev/null; ` +
 			`then echo "WRITABLE"; else echo "read-only confirmed"; fi`,
+		// What the container printed is read from the capture, because that is
+		// where a task's output is (AGENTS.md §1.2): the payload carries none
+		// of it, and the capture is the whole stream rather than a head.
+		"capture_stdout_as": "out",
 	})
 	ec.Artifacts = hostResolver{paths: map[string]string{"fetch/body": upstream}}
 
@@ -272,7 +288,7 @@ func TestIntegration_ContainerMountsAnUpstreamArtifactReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	stdout, _ := result.Output["stdout"].(string)
+	stdout := readStreamArtifact(t, result.Artifacts, "out")
 	if !strings.Contains(stdout, contents) {
 		t.Errorf("the container did not read the mounted artifact: stdout = %q", stdout)
 	}
@@ -296,7 +312,8 @@ func TestIntegration_ContainerGetsAWritableEphemeralMountThatIsRemovedAfterwards
 		"mounts": []any{
 			map[string]any{"ephemeral": "scratch", "path": "/scratch"},
 		},
-		"command": `echo built > /scratch/report.txt && cat /scratch/report.txt && ls /scratch`,
+		"command":           `echo built > /scratch/report.txt && cat /scratch/report.txt && ls /scratch`,
+		"capture_stdout_as": "out",
 	})
 	scratch := filepath.Join(ec.WorkDir, internalDir, ephemeralDir, "scratch")
 
@@ -304,7 +321,7 @@ func TestIntegration_ContainerGetsAWritableEphemeralMountThatIsRemovedAfterwards
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	stdout, _ := result.Output["stdout"].(string)
+	stdout := readStreamArtifact(t, result.Artifacts, "out")
 	if !strings.Contains(stdout, "built") || !strings.Contains(stdout, "report.txt") {
 		t.Errorf("the container could not use the ephemeral mount: stdout = %q", stdout)
 	}
@@ -350,16 +367,28 @@ func TestIntegration_ContainerTimeoutKillsTheContainerAndFailsTheTask(t *testing
 	assertNoLeftoverContainers(t, taskID)
 }
 
-func TestIntegration_ContainerFailsTheTaskWithTheContainerExitCode(t *testing.T) {
+// A real container's non-zero exit fails the task with its code, and the error
+// carries none of what the container printed — that output is in the task's
+// log stream, and the error is a Temporal payload (AGENTS.md §1.4). The
+// assertion about "boom" is inverted from its first version on purpose; the
+// same line is demanded of the LOG instead, so nothing about the failure got
+// quieter.
+func TestIntegration_ContainerFailsTheTaskWithTheContainerExitCodeAndNoneOfItsOutput(t *testing.T) {
 	requireDocker(t)
 	image := testImage()
 	requireImage(t, image)
 
 	const taskID = "exit-code"
+	logs := &logCapture{}
 	ec := newIntegrationContext(t, taskID, map[string]any{
 		"image":   image,
 		"command": `echo "boom" >&2; exit 17`,
 	})
+	ec.Log = func(format string, args ...any) {
+		line := fmt.Sprintf(format, args...)
+		t.Log(line)
+		logs.add(line)
+	}
 
 	_, err := New().Execute(context.Background(), ec)
 	if err == nil {
@@ -368,8 +397,17 @@ func TestIntegration_ContainerFailsTheTaskWithTheContainerExitCode(t *testing.T)
 	if !strings.Contains(err.Error(), "exited with code 17") {
 		t.Errorf("error %q does not carry the container's exit code", err)
 	}
-	if !strings.Contains(err.Error(), "boom") {
-		t.Errorf("error %q does not carry the container's stderr", err)
+	if strings.Contains(err.Error(), "boom") {
+		t.Errorf("error %q carries the container's stderr; the error is recorded in "+
+			"Temporal history and on the run's event stream, where a task's output "+
+			"may not go", err)
+	}
+	if !strings.Contains(err.Error(), "orkctl run logs") {
+		t.Errorf("error %q does not say where the container's output is", err)
+	}
+	if !logs.holds(plugin.StderrMarker + "boom") {
+		t.Errorf("the container's stderr line is neither in the error nor in the log: %q",
+			logs.all())
 	}
 	assertNoLeftoverContainers(t, taskID)
 }
@@ -383,24 +421,27 @@ func TestIntegration_ContainerPullsAMissingImageThenReusesTheLocalOne(t *testing
 	requireImage(t, image)
 
 	if code, out := docker(t, 60*time.Second, "image", "rm", "--force", image); code != 0 {
-		t.Skipf("cannot remove %s to prove a pull (in use?): %s", image, out)
+		infraAbsent(t, "cannot remove %s to prove a pull (in use?): %s", image, out)
 	}
 	// Whatever happens next, leave the host with the image it started with.
 	t.Cleanup(func() { requireImage(t, image) })
 
 	const taskID = "pull-missing"
 	first, err := New().Execute(context.Background(), newIntegrationContext(t, taskID, map[string]any{
-		"image":   image,
-		"pull":    "missing",
-		"command": "echo pulled",
+		"image":             image,
+		"pull":              "missing",
+		"command":           "echo pulled",
+		"capture_stdout_as": "out",
 	}))
 	if err != nil {
-		t.Skipf("cannot pull %s from its registry: %v", image, err)
+		infraAbsent(t, "cannot pull %s from its registry: %v", image, err)
 	}
 	if first.Output["image_pulled"] != true {
 		t.Errorf("first run image_pulled = %v, want true", first.Output["image_pulled"])
 	}
-	if got := first.Output["stdout"]; got != "pulled\n" {
+	// The pulled image really ran: its output is in the capture, which is
+	// where a task's output goes (AGENTS.md §1.2).
+	if got := readStreamArtifact(t, first.Artifacts, "out"); got != "pulled\n" {
 		t.Errorf("first run stdout = %q, want the container's output", got)
 	}
 

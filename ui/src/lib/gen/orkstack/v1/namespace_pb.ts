@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIqwCCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIoIBCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRIPCgdwbHVnaW5zGAMgAygJEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEKqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIqwCCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIp4BCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRIPCgdwbHVnaW5zGAMgAygJEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YBiABKAlCqgEKD2NvbS5vcmtzdGFjay52MUIOTmFtZXNwYWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -151,8 +151,19 @@ export type Pool = Message<"orkstack.v1.Pool"> & {
   liveOrkerCount: number;
 
   /**
-   * plugins are the plugins those Orkers can run, asked of the pool itself. It
-   * is empty when the pool has no live Orkers: there is nobody to ask.
+   * plugins are the plugins those Orkers can run, asked of the pool itself.
+   *
+   * It is a SAMPLE, and the caption a reader is owed says so: the question is
+   * one activity executed on the pool's own channel, so whichever of the
+   * pool's Orkers picks it up is the one that answers. The Orkers of one pool
+   * run one release by construction, which is what makes a sample worth
+   * showing; mid-rollout two of them can differ, and this field will show one
+   * of the two.
+   *
+   * Empty means "nobody was asked, or nobody answered" — a pool with no live
+   * Orkers has nobody to ask, and a pool whose Orkers did not answer in time
+   * keeps its count and loses its plugin list. It never means "these Orkers
+   * run no plugins".
    *
    * @generated from field: repeated string plugins = 3;
    */
@@ -167,11 +178,40 @@ export type Pool = Message<"orkstack.v1.Pool"> & {
   isDefault: boolean;
 
   /**
-   * last_seen is the most recent moment an Orker of this pool was observed.
+   * last_seen is the most recent moment an Orker of this pool was observed
+   * STILL POLLING.
+   *
+   * Temporal remembers a poller for minutes after its worker died, so the
+   * probe drops a record older than the freshness window before counting or
+   * timestamping anything (internal/engine/pool_probe.go). One consequence is
+   * load-bearing and stated here rather than discovered: a pool whose Orkers
+   * have all gone quiet reports NO last_seen at all, not the moment the last
+   * of them was heard. This field answers "how fresh is the number beside
+   * it", never "when did this pool die".
    *
    * @generated from field: google.protobuf.Timestamp last_seen = 5;
    */
   lastSeen?: Timestamp | undefined;
+
+  /**
+   * unavailable_reason says that this pool COULD NOT BE ASKED, and why.
+   *
+   * Empty is the normal case: live_orker_count is a measurement. Non-empty
+   * means nothing was measured — the cluster did not answer for this pool —
+   * and live_orker_count is 0 because there is no number to report, NOT
+   * because nobody is serving it. The two need opposite reactions: an empty
+   * pool is fixed by starting an Orker, an unreachable one by asking again,
+   * and a renderer that showed them alike would tell an operator to scale a
+   * pool that may be perfectly healthy.
+   *
+   * It exists so that ListPools can NARROW instead of refusing. One pool the
+   * cluster could not answer for used to fail the whole call, hiding every
+   * healthy pool beside it — and an admin read is opened precisely when
+   * something is already wrong. Each pool carries its own verdict now.
+   *
+   * @generated from field: string unavailable_reason = 6;
+   */
+  unavailableReason: string;
 };
 
 /**
