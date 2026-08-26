@@ -70,6 +70,7 @@ a reproducible proof artifact under `proof/`.
 - [DSL reference](./docs/DSL.md)
 - [Plugin reference](./docs/PLUGINS.md)
 - [Plugin design: the `op` pattern](./docs/PLUGIN_DESIGN.md)
+- [OCI Activity Contract — architecture](./docs/OCI_ACTIVITY_CONTRACT.md) (accepted design, not yet implemented)
 - [Architecture](./ARCHITECTURE.md)
 
 ## Milestones
