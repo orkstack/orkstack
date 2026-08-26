@@ -43,11 +43,15 @@ import {
 //      that selection scopes what it shows;
 //   5. loading, empty and error states throughout.
 //
-// Topology: one engine, TWO Orkers — one on the built-in `main` pool, one on
-// a `gpu` pool this spec creates — so pool health has a genuinely non-default
-// live pool to report on, and the plugin inventory has a genuine source for
-// name-only entries once `main` goes quiet (see the last two tests). Both
-// binaries run against a bucket this run creates and this run alone has ever
+// Topology: one engine, THREE Orker-shaped pollers — one on the built-in
+// `main` pool, one on a `gpu` pool this spec creates, and one on a `deaf`
+// pool that is a real Temporal poller with no activities registered
+// (proof/M11.6/tools/deaf-poller) — so pool health has a genuinely
+// non-default live pool to report on, a genuinely live pool whose plugin
+// question genuinely goes unanswered, and the plugin inventory has a
+// genuine source for name-only entries once `main` goes quiet (see the
+// last two tests). The engine and its two Orkers (`main`, `gpu`) run
+// against a bucket this run creates and this run alone has ever
 // written to (proof/M11.6/tools/bucket-ensure) — the shared
 // `orkstack-artifacts` bucket every other e2e spec in this module writes to
 // has accumulated a stamped namespace from every earlier run of THIS spec
@@ -209,7 +213,7 @@ test.beforeAll(async () => {
 			`# temporal namespace: ${TEMPORAL_NAMESPACE}`,
 			`# artifact bucket:    ${BUCKET} (created fresh by this run alone)`,
 			`# ork namespaces:     ${OPS_NS}, ${HOLDS_NS}, ${LABELLED_NS}, ${LABEL_CONFLICT_NS}, ${DOOMED_NS}, default`,
-			`# pools:              main (this run's first Orker), gpu (this run's second)`,
+			`# pools:              main (this run's first Orker), gpu (this run's second), deaf (a real Temporal poller with no activities registered — proof/M11.6/tools/deaf-poller)`,
 			`# container image:    ${IMAGE}`,
 			`# engine:             ${ENGINE}`,
 			''
@@ -246,6 +250,9 @@ test.beforeAll(async () => {
 
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
+	execFileSync('go', ['build', '-o', 'bin/deaf-poller', './proof/M11.6/tools/deaf-poller'], {
+		cwd: repoRoot
+	});
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
 	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
 		throw new Error('UI build output missing: ui/build/index.js');
@@ -286,6 +293,20 @@ test.beforeAll(async () => {
 		...cluster,
 		...store,
 		ORK_ORKER_POOL: 'gpu'
+	});
+	// A THIRD pool, `deaf`: a real Temporal activity poller with NO activity
+	// registered (proof/M11.6/tools/deaf-poller — see that file's own
+	// comment for why this is the only way to produce this state for real).
+	// ObservePool counts it as a live Orker exactly like the two above; the
+	// ListPlugins activity dispatched to its channel is never answered, so
+	// PluginsOnPool's err is non-nil and internal/engine/pools.go's
+	// `pool.Plugins` stays empty while `pool.LiveOrkerCount` stays real —
+	// the live-count/empty-plugin state acceptance 3 names and that neither
+	// the zero-Orker `cpu` pool nor the wholly-unreachable-cluster test
+	// below can produce.
+	spawnLogged(outPath('deaf-poller.log'), './bin/deaf-poller', [], {
+		...cluster,
+		ORK_DEAF_QUEUE: 'ork-pool-deaf'
 	});
 	await waitForEngine(ENGINE);
 	note(`engine up at ${ENGINE}, temporal namespace ${TEMPORAL_NAMESPACE}, bucket ${BUCKET}`);
@@ -697,10 +718,15 @@ test('deleting the currently-selected namespace resets the selection to default'
 
 // Acceptance 1 & 3: pool health respects the namespace switcher, a pool with
 // zero live Orkers is drawn as zero WITH the warning (never silently
-// healthy-looking), and every LIVE pool's per-pool plugin list is reported —
+// healthy-looking), every LIVE pool's per-pool plugin list is reported —
 // including a pool that is not this deployment's default, which is the
-// state acceptance 1's "per-pool plugins" clause actually names and the
-// version of this spec before this fix never asserted.
+// state acceptance 1's "per-pool plugins" clause actually names — and a
+// LIVE pool whose plugin question genuinely goes unanswered (`deaf`, a real
+// Temporal poller with no activities registered, proof/M11.6/tools/deaf-poller)
+// is shown as unknown/incomplete rather than as a report that came back
+// empty — the third partial shape acceptance 3 requires, distinct from
+// both "zero Orkers" (`cpu`, below) and "the pool could not be reached at
+// all" (the real-outage test near the end of this file).
 test('pool health is namespace-scoped, and reports live Orker counts and per-pool plugins for every pool', async ({
 	page
 }) => {
@@ -717,6 +743,25 @@ test('pool health is namespace-scoped, and reports live Orker counts and per-poo
 		return answer.pools?.some((p) => p.name === 'gpu' && (p.liveOrkerCount ?? 0) > 0) ?? false;
 	});
 	note(`namespace ${OPS_NS} widened to allow gpu, which reports a live Orker`);
+	// `deaf`: a real Temporal poller with NO activities registered
+	// (proof/M11.6/tools/deaf-poller, started in beforeAll) — a genuinely
+	// live Orker count, and a genuinely failed plugin question, both
+	// produced for real rather than by injecting a response at the network
+	// layer. This is the ONLY black-box way to reach
+	// internal/engine/pools.go's `r.Plugins.PluginsOnPool` error branch: a
+	// pool with zero live Orkers is never asked (see the `cpu` assertions
+	// below), and killing a whole Orker only turns its liveness off too
+	// (the real-outage test near the end of this file), which is the OTHER
+	// partial state, not this one.
+	await addPoolToNamespace(OPS_NS, 'deaf');
+	await waitFor('the deaf pool reports a live Orker', async () => {
+		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
+			'NamespaceService/ListPools',
+			{ namespace: OPS_NS }
+		);
+		return answer.pools?.some((p) => p.name === 'deaf' && (p.liveOrkerCount ?? 0) > 0) ?? false;
+	});
+	note(`namespace ${OPS_NS} widened to allow deaf, a live poller that cannot answer ListPlugins`);
 
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${OPS_NS}`);
 	await expect(page.getByTestId('pools-scope-caption')).toContainText(OPS_NS);
@@ -759,6 +804,27 @@ test('pool health is namespace-scoped, and reports live Orker counts and per-poo
 	await expect(gpuCard.getByTestId('pool-default-gpu')).toHaveCount(0);
 	await expect(gpuCard.getByTestId('pool-plugins-gpu')).toContainText('shell');
 	await expect(gpuCard.getByTestId('pool-plugins-gpu')).toContainText('container');
+
+	// deaf: a THIRD, genuinely live, non-default pool whose Orker cannot
+	// answer ListPlugins (proof/M11.6/tools/deaf-poller) — the live-count/
+	// empty-plugin partial state acceptance 3 requires, distinct from `cpu`
+	// (never asked, because there is no live Orker) and from the
+	// wholly-unreachable-cluster state proven near the end of this file
+	// (no live count at all). The Orker count is real and positive; the
+	// caption plainly says the inventory is unknown/incomplete rather than
+	// implying an answer that happened to be empty.
+	const deafCard = page.getByTestId('pool-card-deaf');
+	await expect(deafCard).toBeVisible();
+	await expect(deafCard.getByTestId('pool-orker-count-deaf')).not.toHaveText('0');
+	await expect(deafCard.getByTestId('pool-default-deaf')).toHaveCount(0);
+	await expect(deafCard.getByTestId('pool-plugins-deaf')).toHaveCount(0);
+	const deafUnknown = deafCard.getByTestId('pool-plugins-unknown-deaf');
+	await expect(deafUnknown).toBeVisible();
+	await expect(deafUnknown).toContainText('unknown');
+	await expect(deafUnknown).not.toContainText('sampled');
+	await expect(deafCard.getByTestId('pool-plugins-no-live-orkers-deaf')).toHaveCount(0);
+	await expect(deafCard.getByTestId('pool-plugins-unavailable-deaf')).toHaveCount(0);
+
 	await shot(page, 'screenshot-admin-pools.png');
 });
 
@@ -990,7 +1056,7 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 		60_000
 	);
 
-	for (const pool of ['main', 'cpu', 'gpu']) {
+	for (const pool of ['main', 'cpu', 'gpu', 'deaf']) {
 		const card = page.getByTestId(`pool-card-${pool}`);
 		await expect(card).toBeVisible();
 		const unavailable = card.getByTestId(`pool-unavailable-${pool}`);

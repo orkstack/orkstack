@@ -130,7 +130,8 @@
 					>
 				{:else}
 					<span class="text-zinc-600" data-testid="pool-plugins-unknown-{pool.name}"
-						>none reported (sampled from one Orker; may be silent, not empty)</span
+						>unknown — this pool's Orkers did not answer the plugin inventory question in
+						time; the count above still stands</span
 					>
 				{/if}
 			</div>
