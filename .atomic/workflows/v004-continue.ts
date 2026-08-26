@@ -177,58 +177,32 @@ const SLICES: Slice[] = [
   // repairs, which is why its parent gate failed on a pool probe timing out
   // under load — restacking onto the repaired head is the first thing its
   // child does.
-  {
-    id: "M11.4",
-    branch: "m11-4-run-page-logs-events",
-    dir: "m11-4-run-page-logs-events",
-    objective:
-      "Rework the run detail page: task logs live in their own scoped panels, and the event stream becomes a visual, on-demand view.",
-    acceptance: [
-      "0. THIS SLICE IS ALREADY BUILT AND ALREADY APPROVED. Its features, browser tests and proof are committed on m11-4-run-page-logs-events, and two reviewers approved them with zero findings. It failed ONE thing: the parent's independent `go test -tags=integration -p 1 ./...` run, in cmd/orkctl, with `list pools: a pool could not be probed ... namespace=vision pool=gpu error=\"context deadline exceeded\"` — a live probe timing out on a loaded host, not an assertion failure. This branch was cut from m11-3-admin-surface BEFORE the two adversarial repairs that address exactly that (the bounded-wave pool catalogue scan, and the activity id that no longer spells itself with a clock), so STEP 0 is the restack, and the first thing to do after it is run the full integration suite and see whether the timeout is gone. If it is gone, do nothing else: re-prove, commit, stop. If it persists, fix it at the source — a probe deadline that cannot survive a loaded machine is too tight — WITHOUT weakening the distinction between a pool reported unavailable and a pool reported empty, which is the property the test exists to prove. Do not rewrite the UI work that already passed review.",
-      "1. Task logs are isolated from events and scoped per task: each task keeps its own log panel (M10.5's TaskLogPane is the base), a task with retries scopes by attempt with a selector, and the container application's own stdout/stderr — streamed since M11.1 — is visible live, with stderr visually distinct from stdout (the design's in-band marker is the source of that distinction; render it, do not re-derive it).",
-      "2. The event stream is shown on request: the page loads WITHOUT the event log occupying it, and an explicit control (the design picks expand vs tab vs URL state and says why) opens a redesigned event view. Closing it must not break live task updates — one socket keeps feeding the task-state reducer and the capped event buffer; only the event LIST rendering is on demand. State that split in a comment where the page wires the socket.",
-      "3. The redesigned event view is legible at a glance: grouped or styled by kind (run lifecycle vs task lifecycle vs failures), timestamps and sequence aligned, failures visually distinct. Keep the existing dark zinc/Tailwind conventions; no new framework or component library.",
-      "4. Live behaviors from v0.0.3 survive: a pane follows while the task runs, pauses following on scroll-up, resumes with from_sequence after a dropped socket, and a chatty task does not freeze the tab — bounded rendering, not hope.",
-      "5. Svelte 5 runes and existing conventions; clients regenerated with `make tsgen` if the proto moved, never hand-edited. Loading, empty, error and stream-broken states all handled; nothing spins forever.",
-      "6. Playwright coverage: scoped log view, attempt selection on a retried task, container output arriving live, opening and closing the event view while task state keeps updating. `cd ui && bun run check && bun run build` clean.",
-      "7. proof/M11.4/ with README.md, Playwright output, before/after screenshots, reproduce.sh.",
-    ].join("\n"),
-    scopeLock: "ui/, proof/M11.4/",
-    checks: UI_CHECKS,
-  },
-  {
-    id: "M11.5",
-    branch: "m11-5-version-scoped-editor",
-    dir: "m11-5-version-scoped-editor",
-    objective:
-      "Let the orkflow detail page edit ANY version: select it, see its contents, apply the edit as a new version.",
-    acceptance: [
-      "1. The version list is the entry point to editing. Selecting a version shows THAT version's source — the page never loads head's contents when another version is selected, which is the exact bug this milestone exists to kill. A per-version action starts an edit based on the selected version, pre-filled with its source.",
-      "2. Applying sends base = the selected version and expected_head = the head observed when the source was fetched (M11.2's contract). Success shows the new version and updates the markers: head moves to the new version, current stays where it was promoted to. Applying an unchanged document is a visible no-op, not a new version.",
-      "3. A stale head is reported, never clobbered: the refusal names both versions and offers a way forward (reload the newest and keep the edit) instead of discarding the user's work.",
-      "4. Loading, empty and error states for every version action; validation errors still come from the real ApplyOrkflow response before anything is stored.",
-      "5. Playwright coverage of the owner's scenario verbatim: apply two versions, promote the OLDER one, open Edit on the CURRENT version and assert the editor shows current's contents (not head's), edit, apply, and assert the new version exists with head moved and current untouched.",
-      "6. proof/M11.5/ with README.md, Playwright output, screenshots, reproduce.sh.",
-    ].join("\n"),
-    scopeLock: "ui/, proof/M11.5/",
-    checks: UI_CHECKS,
-  },
+  // M11.4 and M11.5 are VERIFIED. M11.6's branch (m11-6-admin-ui, cut from
+  // M11.5's verified head) is also functionally finished — three repair
+  // rounds closed the section's core features, eight findings, seven more
+  // findings, and the honest-partial-plugin-inventory fix — and its
+  // deterministic gates (merge-check, integration suite, UI check) all pass.
+  // It ran out of its 4-round budget with ONE reviewer approving and the
+  // other rejecting on a single narrow edge case. Same lesson as M11.3: a
+  // slice this close to done converges when the acceptance is the one thing
+  // left, not the whole feature re-audited.
   {
     id: "M11.6",
     branch: "m11-6-admin-ui",
     dir: "m11-6-admin-ui",
-    objective:
-      "Add the Admin section to the UI: manage namespaces, see pool health and plugin inventory, and read system information.",
+    objective: "Close the one remaining review finding on the Admin UI branch. Nothing else.",
     acceptance: [
-      "1. A new Admin area, reachable from the main navigation and deep-linkable, implementing the design document's Admin feature list on M11.3's RPCs: namespace create/update/delete with default_pool and allowed_pools, pool health with live Orker counts and per-pool plugins, plugin inventory, and system information.",
-      "2. Writes are honest: an update sends the etag it read and a conflict is shown as one; a refused delete names the orkflow count it was refused with; the `default` namespace is visibly undeletable; forms validate locally before the server has to repeat itself.",
-      "3. Partial answers are shown as partial. After M11.3, a pool whose plugin inventory could not be read completely still reports its counts and says what is unknown — render that distinction rather than flattening it. Nothing unavailable is ever drawn as zero.",
-      "4. The Admin area and the namespace switcher coexist without confusion: the design states which views are global and which respect the selected namespace, and the UI says so where it matters.",
-      "5. Loading, empty and error states everywhere.",
-      "6. Playwright coverage against the live stack: create a namespace with a pool policy, update it, attempt a delete that is refused, read pool health and system info. `cd ui && bun run check && bun run build` clean.",
-      "7. proof/M11.6/ with README.md, Playwright output, screenshots, reproduce.sh.",
+      "THIS SLICE IS ALREADY BUILT. The Admin section (namespaces, pool health, plugin inventory, system info), its Playwright coverage and its proof are committed on m11-6-admin-ui. Three rounds of review already closed: the initial eight findings (labels, self-delete, the alone state, partial plugins, real docker, real outages), seven more findings in round 2, and the honest unknown-vs-sampled pool-plugin-count fix in round 3. Do NOT re-open, re-audit, refactor or re-prove any of that. One item, then stop.",
+      "",
+      "THE FINDING (reviewer, verbatim): \"Conflict recovery becomes dishonest if the namespace is deleted after the stale-etag refusal. `reloadEtagAndRetry()` leaves `editConflict` true until `GetNamespace` succeeds; its catch only changes `editServerError` (ui/src/routes/admin/namespaces/+page.svelte:198-210). A NotFound then still renders the conflict panel and its 'reload and re-apply' button (ui/src/routes/admin/namespaces/+page.svelte:490-507), though no namespace remains to update. Clear the conflict state on reread failure and show the normal error; add a Playwright case that deletes the namespace between the conflict and retry. Current tests cover only successful retries (ui/e2e/admin.spec.ts:534-539,636-654).\"",
+      "",
+      "FIX: when `reloadEtagAndRetry()`'s `GetNamespace` reread fails for ANY reason, clear `editConflict` (and any state that renders the 'reload and re-apply' panel) and show the ordinary error path instead — a stale conflict UI pointing at a namespace that may no longer exist is worse than a plain failure. Add the Playwright case the reviewer specifies: open the conflict panel, delete the namespace out from under it (via the API or CLI, whichever the existing test harness already uses), then assert the UI shows a normal error, not a dead retry button.",
+      "",
+      "SCOPE: ui/src/routes/admin/namespaces/+page.svelte and ui/e2e/admin.spec.ts only. Regenerate proof/M11.6/ ONLY if this change alters what it measures. A diff that reaches further than these files is a failed slice, however good the extra work is.",
+      "",
+      "DONE means: both gates green (including the UI check), clean worktree, and a final message naming the commit and quoting the new Playwright assertion.",
     ].join("\n"),
-    scopeLock: "ui/, proof/M11.6/",
+    scopeLock: "ui/src/routes/admin/namespaces/+page.svelte, ui/e2e/admin.spec.ts, proof/M11.6/ (only if measurements changed)",
     checks: UI_CHECKS,
   },
   {
@@ -289,7 +263,7 @@ export default workflow({
     stack_base: Type.String({
       description:
         "Branch the stack builds on: the last VERIFIED slice of the previous run, including its adversarial repairs.",
-      default: "m11-3-admin-surface",
+      default: "m11-5-version-scoped-editor",
     }),
     merge_target: Type.String({
       description: "Branch the finished stack merges into, gated on the merged tree.",
