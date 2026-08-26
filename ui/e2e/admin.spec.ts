@@ -103,6 +103,7 @@ const HOLDS_ORKFLOW = `m11-6-holds-orkflow-${STAMP}`;
 const LABELLED_NS = `m11-6-labelled-${STAMP}`;
 const LABEL_CONFLICT_NS = `m11-6-label-conflict-${STAMP}`;
 const DOOMED_NS = `m11-6-doomed-${STAMP}`;
+const DELETED_DURING_CONFLICT_NS = `m11-6-deleted-during-conflict-${STAMP}`;
 // This run's own bucket (see the topology note above): created fresh by
 // proof/M11.6/tools/bucket-ensure before either binary boots, and never
 // shared with another run of this spec.
@@ -212,7 +213,7 @@ test.beforeAll(async () => {
 			'# real Temporal + MinIO + Docker.',
 			`# temporal namespace: ${TEMPORAL_NAMESPACE}`,
 			`# artifact bucket:    ${BUCKET} (created fresh by this run alone)`,
-			`# ork namespaces:     ${OPS_NS}, ${HOLDS_NS}, ${LABELLED_NS}, ${LABEL_CONFLICT_NS}, ${DOOMED_NS}, default`,
+			`# ork namespaces:     ${OPS_NS}, ${HOLDS_NS}, ${LABELLED_NS}, ${LABEL_CONFLICT_NS}, ${DOOMED_NS}, ${DELETED_DURING_CONFLICT_NS}, default`,
 			`# pools:              main (this run's first Orker), gpu (this run's second), deaf (a real Temporal poller with no activities registered — proof/M11.6/tools/deaf-poller)`,
 			`# container image:    ${IMAGE}`,
 			`# engine:             ${ENGINE}`,
@@ -652,6 +653,83 @@ test('a stale-etag retry re-reads labels too, so a concurrent label change survi
 			`${JSON.stringify(after.namespace.labels)} — the concurrent label change survived`
 	);
 	await shot(page, 'screenshot-admin-namespace-conflict-labels-resolved.png');
+});
+
+// Acceptance 2 (round-3 review, the finding this milestone closes): the
+// namespace an open conflict names can be DELETED before "reload and
+// re-apply" is ever clicked. Before this fix `reloadEtagAndRetry()`
+// (ui/src/routes/admin/namespaces/+page.svelte) only set `editServerError`
+// when its own `GetNamespace` reread failed; `editConflict` stayed true, so
+// a NotFound reread still rendered the amber conflict panel and its retry
+// button — pointed at a namespace nothing can reload. This namespace is
+// deleted OUT FROM UNDER the open conflict through the raw RPC, standing in
+// for a second operator exactly as the two conflict tests above stand in
+// for a second browser tab, and the assertion is that the retry click ends
+// on the ordinary error path, never on a dead "reload and re-apply" button.
+test('deleting a namespace between a conflict and its retry shows a normal error, not a dead retry button', async ({
+	page
+}) => {
+	await rpc('NamespaceService/CreateNamespace', {
+		namespace: {
+			name: DELETED_DURING_CONFLICT_NS,
+			description: 'about to be deleted while its own conflict panel is open'
+		}
+	});
+	note(
+		`namespace ${DELETED_DURING_CONFLICT_NS} created, to be deleted while its own conflict panel is open`
+	);
+
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
+	const row = page.getByTestId(`namespace-row-${DELETED_DURING_CONFLICT_NS}`);
+	await expect(row).toBeVisible();
+	await row.getByTestId(`namespace-edit-${DELETED_DURING_CONFLICT_NS}`).click();
+	const editForm = page.getByTestId(`namespace-edit-form-${DELETED_DURING_CONFLICT_NS}`);
+	await expect(editForm).toBeVisible();
+
+	// The same "two tabs" stale-etag setup the tests above use.
+	const current = await rpc<{ namespace: { etag: string } }>('NamespaceService/GetNamespace', {
+		name: DELETED_DURING_CONFLICT_NS
+	});
+	await rpc('NamespaceService/UpdateNamespace', {
+		namespace: {
+			name: DELETED_DURING_CONFLICT_NS,
+			description: 'changed from underneath by somebody else',
+			etag: current.namespace.etag
+		}
+	});
+	note(
+		`namespace ${DELETED_DURING_CONFLICT_NS} updated out-of-band while the UI's edit form held the old etag`
+	);
+
+	await editForm
+		.getByTestId(`ns-edit-description-${DELETED_DURING_CONFLICT_NS}`)
+		.fill('my edit, about to hit a namespace that will be gone');
+	await editForm.getByTestId(`ns-edit-save-${DELETED_DURING_CONFLICT_NS}`).click();
+
+	const conflict = page.getByTestId(`namespace-edit-conflict-${DELETED_DURING_CONFLICT_NS}`);
+	await expect(conflict).toBeVisible();
+	await shot(page, 'screenshot-admin-namespace-conflict-then-deleted.png');
+
+	// The namespace this open conflict names is removed entirely — a real
+	// delete, by another caller, while the conflict panel is still on
+	// screen — so the reread the retry button is about to perform has
+	// nothing left to reread.
+	await rpc('NamespaceService/DeleteNamespace', { name: DELETED_DURING_CONFLICT_NS });
+	note(`namespace ${DELETED_DURING_CONFLICT_NS} deleted out from under its own open conflict panel`);
+
+	await page.getByTestId(`namespace-edit-conflict-retry-${DELETED_DURING_CONFLICT_NS}`).click();
+
+	// The dead "reload and re-apply" panel is gone — both the amber
+	// conflict box and its retry button — and the ordinary error path takes
+	// over, naming the same failure a bare GetNamespace would have.
+	await expect(conflict).toHaveCount(0);
+	await expect(
+		page.getByTestId(`namespace-edit-conflict-retry-${DELETED_DURING_CONFLICT_NS}`)
+	).toHaveCount(0);
+	const normalError = page.getByTestId(`namespace-edit-error-${DELETED_DURING_CONFLICT_NS}`);
+	await expect(normalError).toBeVisible();
+	await expect(normalError).toContainText(/does not exist/i);
+	await shot(page, 'screenshot-admin-namespace-conflict-deleted-normal-error.png');
 });
 
 // Acceptance 2: a delete refused by the engine names the orkflow count it was

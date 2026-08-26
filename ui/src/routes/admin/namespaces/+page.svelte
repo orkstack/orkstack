@@ -205,6 +205,13 @@
 			editConflict = false;
 			await submitEdit();
 		} catch (err) {
+			// The reread itself failed — a NotFound because the namespace was
+			// deleted out from under this conflict, or any other error. Either
+			// way `editConflict` must NOT survive: the "reload and re-apply"
+			// panel promises a namespace to reload, and pointing that button
+			// at one that may no longer exist is worse than the ordinary
+			// error path below (`{:else if editServerError}`).
+			editConflict = false;
 			editServerError = errorMessage(err);
 		} finally {
 			editBusy = false;
