@@ -3,11 +3,11 @@ package orker
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
-
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"log/slog"
+	"os"
+	"strings"
 )
 
 // WorkRootVar overrides the parent directory for per-attempt workspaces.
@@ -63,6 +63,9 @@ type Options struct {
 	MaxConcurrent int32
 	// LayoutRoot is where embedded OCI image layouts live (§4.6).
 	LayoutRoot string
+	// Logger records Orker lifecycle decisions such as durable commit adoption.
+	// Nil uses slog.Default.
+	Logger *slog.Logger
 }
 
 // Activities implements the engine<->Orker activity seam.
@@ -126,6 +129,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			BuildID:      buildID,
 			EnvAllowlist: allowlist,
 			LayoutRoot:   opts.LayoutRoot,
+			Logger:       opts.Logger,
 		},
 		pool:    opts.Pool,
 		maxConc: opts.MaxConcurrent,

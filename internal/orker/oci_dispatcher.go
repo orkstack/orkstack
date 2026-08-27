@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,8 @@ type OCIDispatcher struct {
 	LayoutRoot string
 	// LogSinkObserver is an optional in-process observer of streamed lines.
 	LogSinkObserver func(in *orkstackv1.ExecuteTaskInput, line string)
+	// Logger records lifecycle decisions. Nil uses slog.Default.
+	Logger *slog.Logger
 }
 
 // Execute runs one activity end to end, in the §7.1 order.
@@ -430,6 +433,13 @@ func (d *OCIDispatcher) adopt(
 			"the commit at %s is for a different activity: %s", uri, mismatch)
 	}
 
+	d.logger().Info("adopted durable activity commit",
+		"commit_uri", uri,
+		"run_id", in.GetRunId(),
+		"task_id", in.GetTaskId(),
+		"committing_attempt", commit.GetAttempt(),
+		"retry_attempt", attempt)
+
 	result := &orkstackv1.ExecuteTaskResult{
 		TaskId:          in.GetTaskId(),
 		ExitCode:        commit.GetExitCode(),
@@ -463,6 +473,13 @@ func (d *OCIDispatcher) adopt(
 		result.ValuesInlined = true
 	}
 	return result, nil
+}
+
+func (d *OCIDispatcher) logger() *slog.Logger {
+	if d.Logger != nil {
+		return d.Logger
+	}
+	return slog.Default()
 }
 
 // refetchValues re-reads a small committed values.json so an adopted result

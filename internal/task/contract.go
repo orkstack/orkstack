@@ -143,25 +143,25 @@ const MaxActivityInputBytes = 262144
 // spelling of a reason code is a second place for it to be wrong.
 const ReasonInputTooLarge = "INPUT_TOO_LARGE"
 
-// CheckInputSize enforces the 256 KiB wire bound.
-//
-// It measures the BINARY encoding, which is what Temporal's payload budget
-// applies to, and it measures the message the engine is about to send rather
-// than an estimate of it. A message that is too large is a fact about the
-// definition — a `with:` block or an upstream fan-in that grew — so the error
-// names both the size and the limit, and the caller makes it non-retryable.
-func CheckInputSize(in *orkstackv1.ExecuteTaskInput) error {
+// CheckInputSize enforces the deployment's replay-pinned input bound without
+// ever exceeding Temporal's hard 256 KiB ceiling. A zero or omitted plan limit
+// uses the ceiling, preserving old histories and small test harness plans.
+func CheckInputSize(in *orkstackv1.ExecuteTaskInput, planLimit ...int64) error {
+	limit := int64(MaxActivityInputBytes)
+	if len(planLimit) > 0 && planLimit[0] > 0 && planLimit[0] < limit {
+		limit = planLimit[0]
+	}
 	encoded, err := proto.Marshal(in)
 	if err != nil {
 		return fmt.Errorf("%s: task %q: encode the activity input: %w",
 			ReasonInputTooLarge, in.GetTaskId(), err)
 	}
-	if len(encoded) > MaxActivityInputBytes {
+	if int64(len(encoded)) > limit {
 		return fmt.Errorf(
 			"%s: task %q: the activity input serializes to %d bytes, over the %d-byte limit. "+
 				"Bytes never travel through Temporal — move large `with:` values into an artifact "+
 				"and reference it",
-			ReasonInputTooLarge, in.GetTaskId(), len(encoded), MaxActivityInputBytes)
+			ReasonInputTooLarge, in.GetTaskId(), len(encoded), limit)
 	}
 	return nil
 }

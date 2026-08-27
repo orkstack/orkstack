@@ -155,6 +155,7 @@ func run(logger *slog.Logger, cfg config) error {
 		Refs:    refPredictor,
 		Pool:    cfg.pool,
 		BuildID: cfg.deployment.BuildID,
+		Logger:  logger,
 	})
 	// Refusing to start is the only honest response to an unbindable
 	// workspace root or an orphaned container this Orker cannot account for:

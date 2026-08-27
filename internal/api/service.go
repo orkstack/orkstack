@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"time"
 
@@ -139,6 +140,18 @@ type Config struct {
 	// default pool to its own channel, which is the zero-config behaviour.
 	RawQueue string
 
+	// Artifacts and Limits are deployment configuration pinned into RunPlan at
+	// submit. Workflow code must not read either from the process environment.
+	// Zero values select the documented local backend and contract limits.
+	Artifacts artifacts.Config
+	Limits    engine.WorkspaceLimits
+
+	// TransferBudgetSeconds overrides the derived data-transfer allowance.
+	// When zero, submit derives it from Limits and
+	// FloorThroughputBytesPerSecond (§6.3).
+	TransferBudgetSeconds         int32
+	FloorThroughputBytesPerSecond int64
+
 	// System is what this replica was built and configured as, for
 	// SystemService.GetSystemInfo. `ork` fills it at boot from the
 	// configuration it already loaded; the zero value answers with empty
@@ -193,33 +206,41 @@ type Service struct {
 	notifier    engine.RunNotifier
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
-	system   SystemInfo
-	logger   *slog.Logger
-	now      func() time.Time
-	newRunID func() string
+	system          SystemInfo
+	artifacts       artifacts.Config
+	limits          engine.WorkspaceLimits
+	transferBudget  int32
+	floorThroughput int64
+	logger          *slog.Logger
+	now             func() time.Time
+	newRunID        func() string
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
 func NewService(cfg Config) *Service {
 	svc := &Service{
-		orkflows:    cfg.Orkflows,
-		namespaces:  cfg.Namespaces,
-		rawQueue:    cfg.RawQueue,
-		runs:        cfg.Runs,
-		bus:         cfg.Bus,
-		activities:  cfg.Activities,
-		orkers:      cfg.Orkers,
-		system:      cfg.System,
-		router:      cfg.Router,
-		archive:     cfg.Archive,
-		logs:        cfg.Logs,
-		logPoll:     cfg.LogPoll,
-		idempotency: cfg.Idempotency,
-		webhooks:    cfg.Webhooks,
-		notifier:    cfg.Notifier,
-		logger:      cfg.Logger,
-		now:         cfg.Now,
-		newRunID:    cfg.NewRunID,
+		orkflows:        cfg.Orkflows,
+		namespaces:      cfg.Namespaces,
+		rawQueue:        cfg.RawQueue,
+		runs:            cfg.Runs,
+		bus:             cfg.Bus,
+		activities:      cfg.Activities,
+		orkers:          cfg.Orkers,
+		system:          cfg.System,
+		router:          cfg.Router,
+		archive:         cfg.Archive,
+		logs:            cfg.Logs,
+		logPoll:         cfg.LogPoll,
+		idempotency:     cfg.Idempotency,
+		webhooks:        cfg.Webhooks,
+		notifier:        cfg.Notifier,
+		artifacts:       cfg.Artifacts,
+		limits:          cfg.Limits,
+		transferBudget:  cfg.TransferBudgetSeconds,
+		floorThroughput: cfg.FloorThroughputBytesPerSecond,
+		logger:          cfg.Logger,
+		now:             cfg.Now,
+		newRunID:        cfg.NewRunID,
 	}
 	if svc.router == nil {
 		// One binding: this cluster, every namespace. Reader, Starter and
@@ -733,6 +754,10 @@ func (s *Service) prepare(
 	if err != nil {
 		return submission{}, poolPlanError(err)
 	}
+	if err := s.pinDurabilityPlan(&plan); err != nil {
+		return submission{}, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("resolve durable activity configuration: %w", err))
+	}
 	return submission{
 		binding:   binding,
 		wf:        planned,
@@ -741,6 +766,53 @@ func (s *Service) prepare(
 		namespace: ns.GetName(),
 		key:       msg.GetIdempotencyKey(),
 	}, nil
+}
+
+const (
+	// DefaultFloorThroughputBytesPerSecond is 10 MiB/s (§6.3).
+	DefaultFloorThroughputBytesPerSecond int64 = 10 * 1024 * 1024
+	// MinimumTransferBudgetSeconds prevents a small deployment limit from
+	// making image pull and fixed staging overhead unrealistically short.
+	MinimumTransferBudgetSeconds int64 = 300
+)
+
+// pinDurabilityPlan resolves process configuration once, at submit, onto the
+// replay-pinned workflow argument. No workflow code reads environment or IO.
+func (s *Service) pinDurabilityPlan(plan *engine.RunPlan) error {
+	root, err := artifacts.CommitRoot(s.artifacts)
+	if err != nil {
+		return err
+	}
+	plan.CommitRoot = root
+
+	// Proto applies the contract defaults field-by-field. Copying the result
+	// back keeps the plan self-contained rather than relying on Orker defaults.
+	effective := s.limits.Proto()
+	plan.Limits = engine.WorkspaceLimits{
+		ValuesMaxBytes:   effective.GetValuesMaxBytes(),
+		ArtifactMaxCount: effective.GetArtifactMaxCount(),
+		ArtifactMaxBytes: effective.GetArtifactMaxBytes(),
+		LogMaxBytes:      effective.GetLogMaxBytes(),
+		CommitMaxBytes:   effective.GetCommitMaxBytes(),
+	}
+
+	if s.transferBudget > 0 {
+		plan.TransferBudgetSeconds = s.transferBudget
+		return nil
+	}
+	floor := s.floorThroughput
+	if floor <= 0 {
+		floor = DefaultFloorThroughputBytesPerSecond
+	}
+	seconds := int64(plan.Limits.ArtifactMaxCount) * plan.Limits.ArtifactMaxBytes / floor
+	if seconds < MinimumTransferBudgetSeconds {
+		seconds = MinimumTransferBudgetSeconds
+	}
+	if seconds > math.MaxInt32 {
+		seconds = math.MaxInt32
+	}
+	plan.TransferBudgetSeconds = int32(seconds)
+	return nil
 }
 
 // poolPlanError maps a routing refusal onto a Connect code.

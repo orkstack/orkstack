@@ -14,6 +14,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 const dispatchDocument = `
@@ -75,15 +76,15 @@ func TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask(t *testing.T) {
 		t.Errorf("idempotency_key = %q, want %q", got, want)
 	}
 
-	// The commit URI is composed from the plan's root plus the shared key
-	// renderer, so the Orker uses the value it was SENT rather than
+	// The commit URI is composed exactly from the plan's root plus the shared
+	// key renderer, so the Orker uses the value it was SENT rather than
 	// re-deriving one (§5.2).
-	if !strings.HasPrefix(in.GetCommitUri(), "s3://orkstack-artifacts/metadata/commits/default/") {
-		t.Errorf("commit_uri = %q, want it composed from plan.CommitRoot and CommitKey",
-			in.GetCommitUri())
+	key, err := artifacts.CommitKey("default", "ork-dispatch-1", "build")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.HasSuffix(in.GetCommitUri(), "/build/commit.json") {
-		t.Errorf("commit_uri = %q, want it to end at this task's commit.json", in.GetCommitUri())
+	if got, want := in.GetCommitUri(), "s3://orkstack-artifacts/"+key; got != want {
+		t.Errorf("commit_uri = %q, want exactly %q", got, want)
 	}
 
 	// The `with:` block travels RAW. Rendering is the Orker's job because
@@ -116,6 +117,54 @@ func TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask(t *testing.T) {
 	}
 	if in.GetResources().GetMemory() != "4Gi" {
 		t.Errorf("resources = %v, want the request the author wrote", in.GetResources())
+	}
+}
+
+func TestRunWorkflow_CommitURIIsStableAcrossReplayEquivalentExecutions(t *testing.T) {
+	execute := func() string {
+		var suite testsuite.WorkflowTestSuite
+		h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			return succeeded(in.TaskId, nil), nil
+		})
+		plan := defaultPlan()
+		plan.CommitRoot = "s3://orkstack-artifacts/"
+		h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-stable-uri", compile(t, dispatchDocument), payload(t, nil), plan)
+		if err := h.env.GetWorkflowError(); err != nil {
+			t.Fatalf("workflow error: %v", err)
+		}
+		in, ok := h.inputFor("build")
+		if !ok {
+			t.Fatal("build was never dispatched")
+		}
+		return in.GetCommitUri()
+	}
+
+	first, replayEquivalent := execute(), execute()
+	key, err := artifacts.CommitKey("default", "ork-stable-uri", "build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "s3://orkstack-artifacts/" + key; first != want || replayEquivalent != want {
+		t.Fatalf("commit URIs = %q and %q, want deterministic %q", first, replayEquivalent, want)
+	}
+}
+
+func TestRunWorkflow_UsesThePlansInputLimitBeforeScheduling(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return succeeded(in.TaskId, nil), nil
+	})
+	plan := defaultPlan()
+	plan.Limits = engine.DefaultLimits()
+	plan.Limits.ValuesMaxBytes = 1
+
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-plan-limit", compile(t, dispatchDocument), payload(t, nil), plan)
+	err := h.env.GetWorkflowError()
+	if err == nil || !strings.Contains(err.Error(), task.ReasonInputTooLarge) {
+		t.Fatalf("workflow error = %v, want %s from the plan's one-byte limit", err, task.ReasonInputTooLarge)
+	}
+	if _, ok := h.inputFor("build"); ok {
+		t.Fatal("activity was scheduled even though its input exceeded the replay-pinned plan limit")
 	}
 }
 

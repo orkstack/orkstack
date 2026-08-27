@@ -12,12 +12,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -60,8 +62,11 @@ type config struct {
 	defaultRouteOverride string
 	// poolErr is a refused ORK_ORKER_POOL/ORK_ORKER_QUEUE pair, reported at
 	// boot rather than resolved by picking a winner.
-	poolErr        error
-	idempotencyTTL time.Duration
+	poolErr                       error
+	idempotencyTTL                time.Duration
+	contractLimits                engine.WorkspaceLimits
+	transferBudgetSeconds         int32
+	floorThroughputBytesPerSecond int64
 	// deployment is this release's Worker Deployment identity. It carries no
 	// build id unless an operator configures one, which leaves versioning off
 	// and the workers exactly as they were before M8.4.
@@ -74,7 +79,16 @@ func loadConfig() config {
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		httpAddr:          env("ORK_HTTP_ADDR", api.DefaultHTTPAddr),
 		idempotencyTTL:    envDuration("ORK_IDEMPOTENCY_TTL", engine.DefaultClaimTTL),
-		deployment:        task.DeploymentFromEnv(),
+		contractLimits: engine.WorkspaceLimits{
+			ValuesMaxBytes:   envInt64("ORK_VALUES_MAX_BYTES", engine.DefaultValuesMaxBytes),
+			ArtifactMaxCount: envInt32("ORK_ARTIFACT_MAX_COUNT", engine.DefaultArtifactMaxCount),
+			ArtifactMaxBytes: envInt64("ORK_ARTIFACT_MAX_BYTES", engine.DefaultArtifactMaxBytes),
+			LogMaxBytes:      envInt64("ORK_LOG_MAX_BYTES", engine.DefaultLogMaxBytes),
+			CommitMaxBytes:   envInt64("ORK_COMMIT_MAX_BYTES", engine.DefaultCommitMaxBytes),
+		},
+		transferBudgetSeconds:         envInt32("ORK_TRANSFER_BUDGET_SECONDS", 0),
+		floorThroughputBytesPerSecond: envInt64("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond),
+		deployment:                    task.DeploymentFromEnv(),
 	}
 	rawPool := env("ORK_ORKER_POOL", "")
 	rawQueue := env("ORK_ORKER_QUEUE", "")
@@ -102,6 +116,26 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func envInt64(key string, fallback int64) int64 {
+	raw := env(key, "")
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envInt32(key string, fallback int32) int32 {
+	parsed := envInt64(key, int64(fallback))
+	if parsed > math.MaxInt32 {
+		return fallback
+	}
+	return int32(parsed)
 }
 
 func env(key, fallback string) string {
@@ -559,23 +593,27 @@ func run(logger *slog.Logger, cfg config) error {
 		"artifact_location", system.ArtifactLocation)
 
 	svc := api.NewService(api.Config{
-		Orkflows:    orkflows,
-		Namespaces:  namespaces,
-		Reader:      reader,
-		Runs:        runs,
-		Bus:         bus,
-		Starter:     starter,
-		Pools:       pools,
-		PoolOrkers:  starter,
-		Orkers:      starter,
-		RawQueue:    cfg.defaultRouteOverride,
-		Archive:     archive,
-		Logs:        logStore,
-		Idempotency: idempotency,
-		Webhooks:    webhookRegistry,
-		Notifier:    runNotifier,
-		Logger:      logger,
-		System:      system,
+		Orkflows:                      orkflows,
+		Namespaces:                    namespaces,
+		Reader:                        reader,
+		Runs:                          runs,
+		Bus:                           bus,
+		Starter:                       starter,
+		Pools:                         pools,
+		PoolOrkers:                    starter,
+		Orkers:                        starter,
+		RawQueue:                      cfg.defaultRouteOverride,
+		Archive:                       archive,
+		Logs:                          logStore,
+		Idempotency:                   idempotency,
+		Webhooks:                      webhookRegistry,
+		Notifier:                      runNotifier,
+		Logger:                        logger,
+		System:                        system,
+		Artifacts:                     archiveConfig,
+		Limits:                        cfg.contractLimits,
+		TransferBudgetSeconds:         cfg.transferBudgetSeconds,
+		FloorThroughputBytesPerSecond: cfg.floorThroughputBytesPerSecond,
 	})
 	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,

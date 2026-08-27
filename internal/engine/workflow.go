@@ -493,9 +493,9 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		RunAsOrkerUser: t.GetRunAsOrkerUser(),
 	}
 	// The wire bound is checked HERE, deterministically, before scheduling.
-	// Discovering it Temporal-side would produce an error nobody can
-	// attribute to a task.
-	if err := task.CheckInputSize(input); err != nil {
+	// The deployment's limit is replay-pinned on the plan; the checker also
+	// preserves Temporal's absolute 256 KiB ceiling.
+	if err := task.CheckInputSize(input, s.plan.Limits.Proto().GetValuesMaxBytes()); err != nil {
 		return nil, temporal.NewNonRetryableApplicationError(
 			err.Error(), task.CategoryContractViolation, err)
 	}

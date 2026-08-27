@@ -23,6 +23,51 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
+func TestLoadConfigReadsRunPlanDurabilitySettings(t *testing.T) {
+	t.Setenv("ORK_VALUES_MAX_BYTES", "131072")
+	t.Setenv("ORK_ARTIFACT_MAX_COUNT", "12")
+	t.Setenv("ORK_ARTIFACT_MAX_BYTES", "1048576")
+	t.Setenv("ORK_LOG_MAX_BYTES", "8192")
+	t.Setenv("ORK_COMMIT_MAX_BYTES", "32768")
+	t.Setenv("ORK_TRANSFER_BUDGET_SECONDS", "901")
+	t.Setenv("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", "20971520")
+
+	cfg := loadConfig()
+	want := engine.WorkspaceLimits{
+		ValuesMaxBytes: 131072, ArtifactMaxCount: 12, ArtifactMaxBytes: 1048576,
+		LogMaxBytes: 8192, CommitMaxBytes: 32768,
+	}
+	if cfg.contractLimits != want {
+		t.Errorf("contract limits = %+v, want %+v", cfg.contractLimits, want)
+	}
+	if cfg.transferBudgetSeconds != 901 {
+		t.Errorf("transfer budget = %d, want 901", cfg.transferBudgetSeconds)
+	}
+	if cfg.floorThroughputBytesPerSecond != 20971520 {
+		t.Errorf("floor throughput = %d, want 20971520", cfg.floorThroughputBytesPerSecond)
+	}
+}
+
+func TestLoadConfigUsesDocumentedRunPlanDefaults(t *testing.T) {
+	for _, key := range []string{
+		"ORK_VALUES_MAX_BYTES", "ORK_ARTIFACT_MAX_COUNT", "ORK_ARTIFACT_MAX_BYTES",
+		"ORK_LOG_MAX_BYTES", "ORK_COMMIT_MAX_BYTES", "ORK_TRANSFER_BUDGET_SECONDS",
+		"ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC",
+	} {
+		t.Setenv(key, "")
+	}
+	cfg := loadConfig()
+	if cfg.contractLimits != engine.DefaultLimits() {
+		t.Errorf("default limits = %+v, want %+v", cfg.contractLimits, engine.DefaultLimits())
+	}
+	if cfg.transferBudgetSeconds != 0 {
+		t.Errorf("default explicit transfer budget = %d, want derived (zero)", cfg.transferBudgetSeconds)
+	}
+	if cfg.floorThroughputBytesPerSecond != api.DefaultFloorThroughputBytesPerSecond {
+		t.Errorf("default floor throughput = %d, want %d", cfg.floorThroughputBytesPerSecond, api.DefaultFloorThroughputBytesPerSecond)
+	}
+}
+
 func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *testing.T) {
 	runOptions := runWorkerOptions(config{})
 	if !runOptions.LocalActivityWorkerOnly {
