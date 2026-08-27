@@ -61,8 +61,13 @@ func sampleRun(t *testing.T, id string, status orkstackv1.Status, created time.T
 		StartedAt:      timestamppb.New(created.Add(time.Second)),
 		FinishedAt:     timestamppb.New(created.Add(3 * time.Second)),
 		TaskRuns: []*orkstackv1.TaskRun{{
-			TaskId: "fetch",
-			Status: orkstackv1.Status_STATUS_SUCCEEDED,
+			TaskId:          "fetch",
+			Status:          orkstackv1.Status_STATUS_SUCCEEDED,
+			ExitCode:        0,
+			Error:           &orkstackv1.Error{Code: "CONTAINER_EXIT_NONZERO", Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED},
+			ValuesRef:       &orkstackv1.ArtifactRef{Name: "values.json", Uri: "s3://bucket/values", Sha256: strings.Repeat("a", 64)},
+			Commit:          &orkstackv1.CommitRef{Uri: "s3://bucket/metadata/commits/commit.json", Sha256: strings.Repeat("b", 64), Etag: "etag"},
+			SystemArtifacts: []*orkstackv1.ArtifactRef{{Name: "stdout.log", Uri: "s3://bucket/stdout"}, {Name: "stderr.log", Uri: "s3://bucket/stderr"}},
 			Artifacts: []*orkstackv1.ArtifactRef{{
 				Name: "body",
 				Uri:  "s3://orkstack-artifacts/orkflows/hello-ork/fetch/" + id + "/body",
@@ -254,6 +259,10 @@ func TestPublishEvent_ArchivesTheRunWhenItEnds(t *testing.T) {
 	// merged snapshot, or a date-range query would index the wrong instant.
 	if !loaded.GetCreatedAt().AsTime().Equal(created) {
 		t.Fatalf("archived created_at = %s, want %s", loaded.GetCreatedAt().AsTime(), created)
+	}
+	archivedTask := loaded.GetTaskRuns()[0]
+	if archivedTask.GetValuesRef().GetUri() == "" || archivedTask.GetCommit().GetUri() == "" || len(archivedTask.GetSystemArtifacts()) != 2 || archivedTask.GetError().GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED {
+		t.Fatalf("archive lost durable task fields: %+v", archivedTask)
 	}
 	if len(events) != 3 {
 		t.Fatalf("archived %d events, want the run's whole log (3)", len(events))
