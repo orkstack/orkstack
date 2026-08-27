@@ -6,6 +6,7 @@
 	import OrkflowVersions from '$lib/components/OrkflowVersions.svelte';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
+	import { activityLabel, shortDigest } from '$lib/activity';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -110,7 +111,8 @@
 					<thead class="bg-zinc-900 text-xs uppercase tracking-wide text-zinc-400">
 						<tr>
 							<th class="px-4 py-3">ID</th>
-							<th class="px-4 py-3">Plugin</th>
+							<th class="px-4 py-3">Activity</th>
+							<th class="px-4 py-3">Image digest</th>
 							<th class="px-4 py-3">Pool</th>
 							<th class="px-4 py-3">Needs</th>
 							<th class="px-4 py-3">Timeout</th>
@@ -120,7 +122,32 @@
 						{#each wf.tasks as task (task.id)}
 							<tr data-testid="task-row-{task.id}">
 								<td class="px-4 py-2.5 font-medium text-zinc-100">{task.id}</td>
-								<td class="px-4 py-2.5 text-zinc-300">{task.plugin}</td>
+								<td class="px-4 py-2.5 text-zinc-300" data-testid="task-activity-{task.id}">
+									{activityLabel(task) || '—'}
+								</td>
+								<!--
+									The resolved index digest is what makes this version
+									explainable after a tag moves: the definition pins the
+									image, so the digest belongs beside the name it
+									resolved from, not hidden a click away.
+								-->
+								<td class="px-4 py-2.5">
+									{#if task.image?.indexDigest}
+										<span
+											class="font-mono text-xs text-emerald-300"
+											title={task.image.indexDigest}
+											data-digest={task.image.indexDigest}
+											data-testid="task-image-digest-{task.id}"
+											>{shortDigest(task.image.indexDigest)}</span
+										>
+									{:else}
+										<span
+											class="text-xs text-zinc-600"
+											data-testid="task-image-unpinned-{task.id}"
+											title="this task's image was not resolved to a digest">unpinned</span
+										>
+									{/if}
+								</td>
 								<td class="px-4 py-2.5 text-zinc-400" data-testid="task-pool-{task.id}">
 									{task.pool || 'main'}
 								</td>

@@ -3,7 +3,7 @@
 	//
 	// Every route under here carries `?ns=` like any other page — the
 	// namespace switcher stays visible on all four — but only Pools RESPECTS
-	// it. Namespaces, Plugins and the overview are DEPLOYMENT-WIDE, and each
+	// it. Namespaces, Activities and the overview are DEPLOYMENT-WIDE, and each
 	// says so in its own caption rather than hiding the switcher: hiding
 	// chrome per route was reviewed and rejected (design §6.3) because a
 	// switcher that disappears on some pages and not others is one more thing
@@ -34,7 +34,7 @@
 		{ id: 'overview', href: '/admin', label: 'Overview' },
 		{ id: 'namespaces', href: '/admin/namespaces', label: 'Namespaces' },
 		{ id: 'pools', href: '/admin/pools', label: 'Pools' },
-		{ id: 'plugins', href: '/admin/plugins', label: 'Plugins' }
+		{ id: 'activities', href: '/admin/activities', label: 'Activities' }
 	];
 
 	// "overview" only ever matches the exact `/admin` path: every other tab's

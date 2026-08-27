@@ -185,12 +185,17 @@ cmd_up() {
 	start ork env ORK_ARTIFACT_BACKEND="$backend" ORK_HTTP_ADDR="$ENGINE_ADDR" \
 		ORK_WS_ALLOWED_ORIGINS="$ws_origins" "$REPO/bin/ork"
 	wait_for "engine api" 60 "$REPO/bin/orkctl" --server "$ENGINE_URL" orkflow list
-	# Plugin discovery is an activity the engine schedules onto the Orker's
-	# queue, so this answers only when the Orker is actually polling. A
-	# liveness check on the process alone would pass with an Orker that dialled
-	# Temporal, failed, and is sitting there useless.
-	wait_for "orker (via engine plugin discovery)" 60 \
-		"$REPO/bin/orkctl" --server "$ENGINE_URL" plugin list
+	# DescribeOrker is an activity the engine schedules onto the Orker's queue
+	# (design §6.5), so a live count answers only when the Orker is actually
+	# polling. A liveness check on the process alone would pass with an Orker
+	# that dialled Temporal, failed, and is sitting there useless.
+	#
+	# The COUNT is what is waited on, not the command's exit status: ListPools
+	# narrows rather than refuses, so it exits 0 for a pool with no Orker at
+	# all. This replaces the `orkctl plugin list` probe, which went away with
+	# PluginService.
+	wait_for "orker (via the engine's DescribeOrker probe)" 60 \
+		bash -c "\"$REPO/bin/orkctl\" --server \"$ENGINE_URL\" pool list --json | grep -q '\"liveOrkerCount\": [1-9]'"
 
 	say "== ui =="
 	if [ ! -d "$REPO/ui/node_modules" ]; then

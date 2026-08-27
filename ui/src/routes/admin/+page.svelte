@@ -37,13 +37,13 @@
 			href: '/admin/pools',
 			testid: 'admin-card-pools',
 			title: 'Pools',
-			body: 'Live Orker counts and plugins for the pools the SELECTED namespace may dispatch onto.'
+			body: 'Live Orker counts for the pools the SELECTED namespace may dispatch onto.'
 		},
 		{
-			href: '/admin/plugins',
-			testid: 'admin-card-plugins',
-			title: 'Plugins',
-			body: 'What every connected Orker can run, with input/output schemas.'
+			href: '/admin/activities',
+			testid: 'admin-card-activities',
+			title: 'Activities',
+			body: 'Every activity this deployment can run, each pinned to the image digest it resolved to.'
 		}
 	];
 </script>

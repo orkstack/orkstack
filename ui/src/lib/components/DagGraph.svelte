@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import { DAG_NODE_H, DAG_NODE_W, layoutDag } from '$lib/dag';
+	import { activityLabel } from '$lib/activity';
 
 	let { tasks }: { tasks: Task[] } = $props();
 
@@ -60,7 +61,7 @@
 						{node.task.id}
 					</text>
 					<text x={node.x + 12} y={node.y + 43} fill="#a1a1aa" font-size="11">
-						plugin: {node.task.plugin}
+						{activityLabel(node.task) || '—'}
 					</text>
 				</g>
 			{/each}

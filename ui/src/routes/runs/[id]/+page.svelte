@@ -6,12 +6,16 @@
 	import EventInspector from '$lib/components/EventInspector.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
+	import FailurePanel from '$lib/components/FailurePanel.svelte';
 	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp, isTerminal, statusLabel } from '$lib/status';
+	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
+	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
+	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -30,19 +34,51 @@
 
 	interface TaskView {
 		id: string;
-		plugin: string;
+		// activity is what the task NAMES — its `uses:`, or the reference its
+		// image resolved from. It replaces the plugin name: an activity is an
+		// image, so there is no in-process plugin left to name here.
+		activity: string;
 		status: Status;
 		attempt: number;
 		message: string;
+		// error is the WHOLE terminal error, not a flattened string, so the
+		// page can render its §8.1 category and §8.2 reason code rather than
+		// only the sentence. Absent while a task has not failed.
+		error?: OrkError;
+		// exitCode and commit are per-ATTEMPT facts an Orker reports: the
+		// container's own status, and the durable completion record that makes
+		// the result adoptable on a retry (§5). They arrive on the GetRun
+		// snapshot; no run event carries them.
+		exitCode?: number;
+		commit?: CommitRef;
 	}
 
 	const run = $derived(data.run);
+
+	// runError is the STRUCTURED terminal error from the GetRun snapshot — the
+	// only source that carries a §8.1 category. It is $derived rather than
+	// $state because a reload or a retry should re-read it; the socket's own
+	// message lives separately in runErrorMessage.
+	const runError = $derived(hasError(data.run?.error) ? data.run?.error : undefined);
+
+	// taskDefs is the pinned DEFINITION for each task, keyed by id: what the
+	// version this run pinned says the task runs. It is kept out of TaskView
+	// on purpose — TaskView is patched field-by-field by the event reducer,
+	// and the definition never changes for the life of a run, so folding it
+	// in would churn a value that cannot move.
+	const taskDefs = $derived(
+		new Map((data.orkflow?.tasks ?? []).map((t) => [t.id, t]))
+	);
 
 	// Seed from the GetRun snapshot, then let the WebSocket stream drive every
 	// subsequent change in place (no page refresh). The seed is deliberately a
 	// one-shot read of `data`, hence untrack.
 	let runStatus = $state<Status>(untrack(() => data.run?.status) ?? Status.UNSPECIFIED);
-	let runError = $state<string>(untrack(() => data.run?.error?.message) ?? '');
+	// The streamed RUN_FAILED event carries a message and nothing else, so the
+	// live path and the snapshot path are kept apart: `runErrorMessage` is what
+	// the socket said, and `runError` below is the STRUCTURED error from the
+	// snapshot, which is the only one of the two that carries a category.
+	let runErrorMessage = $state<string>(untrack(() => data.run?.error?.message) ?? '');
 	let socketState = $state<RunSocketState>('connecting');
 	let streamDelivered = $state(false);
 	// The socket is only 'live' once it has actually delivered something.
@@ -76,16 +112,25 @@
 	function seedTasks(): TaskView[] {
 		const views = new Map<string, TaskView>();
 		for (const task of data.orkflow?.tasks ?? []) {
-			views.set(task.id, { id: task.id, plugin: task.plugin, status: Status.PENDING, attempt: 0, message: '' });
+			views.set(task.id, {
+				id: task.id,
+				activity: activityLabel(task),
+				status: Status.PENDING,
+				attempt: 0,
+				message: ''
+			});
 		}
 		for (const tr of data.run?.taskRuns ?? []) {
 			const existing = views.get(tr.taskId);
 			views.set(tr.taskId, {
 				id: tr.taskId,
-				plugin: tr.plugin || existing?.plugin || '',
+				activity: existing?.activity ?? '',
 				status: tr.status,
 				attempt: tr.attempt,
-				message: tr.error?.message ?? ''
+				message: tr.error?.message ?? '',
+				error: hasError(tr.error) ? tr.error : undefined,
+				exitCode: tr.exitCode,
+				commit: tr.commit
 			});
 		}
 		return [...views.values()];
@@ -104,7 +149,14 @@
 			Object.assign(existing, patch);
 			return;
 		}
-		tasks.push({ id: taskId, plugin: '', status: Status.PENDING, attempt: 0, message: '', ...patch });
+		tasks.push({
+			id: taskId,
+			activity: '',
+			status: Status.PENDING,
+			attempt: 0,
+			message: '',
+			...patch
+		});
 	}
 
 	function onEvent(event: Event) {
@@ -125,7 +177,7 @@
 			case EventType.RUN_FAILED:
 				runStatus = status ?? Status.FAILED;
 				finishedAt = event.timestamp;
-				if (event.message) runError = event.message;
+				if (event.message) runErrorMessage = event.message;
 				break;
 			case EventType.RUN_CANCELED:
 				runStatus = status ?? Status.CANCELED;
@@ -288,12 +340,21 @@
 		</div>
 	</div>
 
+	<!--
+		The run's terminal error. The snapshot's Error carries the §8.1
+		category, the §8.2 reason code and the retryable flag, so when it is
+		present it is rendered in full rather than as the bare sentence this
+		panel used to show. A run whose failure arrived only over the socket
+		has a message and no category, and says exactly that much.
+	-->
 	{#if runError}
+		<div class="mb-6"><FailurePanel error={runError} testid="run-error" /></div>
+	{:else if runErrorMessage}
 		<div
 			data-testid="run-error"
 			class="mb-6 rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
 		>
-			{runError}
+			{runErrorMessage}
 		</div>
 	{/if}
 
@@ -323,20 +384,144 @@
 			<h2 class="mb-3 text-lg font-semibold">Tasks</h2>
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
+					{@const def = taskDefs.get(task.id)}
 					<div
 						class="rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3"
 						data-testid="task-{task.id}"
 					>
 						<div class="flex items-center justify-between gap-4">
-							<div>
+							<div class="min-w-0">
 								<div class="font-medium text-zinc-100">{task.id}</div>
 								<div class="text-xs text-zinc-500">
-									plugin: {task.plugin}{#if task.message}
+									<span data-testid="task-{task.id}-activity"
+										>{task.activity || 'activity not yet known'}</span
+									>{#if task.message}
 										· <span class="text-zinc-400">{task.message}</span>{/if}
 								</div>
 							</div>
 							<StatusPill status={task.status} testid="task-{task.id}-status" />
 						</div>
+
+						<!--
+							WHAT RAN, AND WHAT IT PRODUCED.
+
+							The definition half (image, command, env, secret NAMES)
+							comes from the Orkflow this run pinned; the attempt half
+							(exit code, commit) comes from the TaskRun. They are shown
+							together because a reader debugging a task needs both, and
+							the pin — the resolved index digest — is the point: it is
+							what makes this run explainable after a tag moves.
+
+							SECRET VALUES ARE NEVER HERE. A SecretRef carries a name
+							and a SOURCE; the value is resolved on the Orker, into the
+							container, and never travels to the engine or this page.
+							Only names are rendered, and nothing renders `source`.
+						-->
+						{#if def || task.exitCode !== undefined || task.commit}
+							<dl
+								class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-zinc-800 pt-3 text-xs sm:grid-cols-2"
+								data-testid="task-{task.id}-detail"
+							>
+								{#if def?.image}
+									<div class="sm:col-span-2">
+										<dt class="uppercase text-zinc-500">Image</dt>
+										<dd
+											class="mt-0.5 font-mono break-all text-zinc-300"
+											data-testid="task-{task.id}-image"
+										>
+											{pinnedOrReference(def.image) || '—'}
+										</dd>
+										{#if def.image.indexDigest}
+											<dd class="mt-0.5">
+												<span
+													class="font-mono text-emerald-300"
+													title={def.image.indexDigest}
+													data-digest={def.image.indexDigest}
+													data-testid="task-{task.id}-image-digest"
+													>{shortDigest(def.image.indexDigest)}</span
+												>
+											</dd>
+										{/if}
+									</div>
+								{/if}
+								{#if def && def.command.length > 0}
+									<div class="sm:col-span-2">
+										<dt class="uppercase text-zinc-500">Command</dt>
+										<dd
+											class="mt-0.5 font-mono break-all text-zinc-300"
+											data-testid="task-{task.id}-command"
+										>
+											{JSON.stringify(def.command)}
+										</dd>
+									</div>
+								{/if}
+								{#if def && Object.keys(def.env).length > 0}
+									<div class="sm:col-span-2">
+										<dt class="uppercase text-zinc-500">Env</dt>
+										<!--
+											Env is shown as NAME=VALUE. It is
+											workload-supplied, non-secret configuration by
+											construction: the platform puts nothing here
+											(Task.env's own contract), and anything that
+											must not be read travels as a `secrets:` entry,
+											whose value is resolved on the Orker and never
+											reaches the engine at all.
+										-->
+										<dd
+											class="mt-0.5 font-mono break-all text-zinc-300"
+											data-testid="task-{task.id}-env"
+										>
+											{Object.entries(def.env)
+												.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+												.map(([k, v]) => `${k}=${v}`)
+												.join('  ')}
+										</dd>
+									</div>
+								{/if}
+								{#if def && def.secrets.length > 0}
+									<div>
+										<dt class="uppercase text-zinc-500">Secrets</dt>
+										<dd
+											class="mt-0.5 font-mono text-zinc-300"
+											title="names only — a secret's value is resolved on the Orker and never reaches this page"
+											data-testid="task-{task.id}-secrets"
+										>
+											{def.secrets.map((s) => s.name).join(', ')}
+										</dd>
+									</div>
+								{/if}
+								{#if task.exitCode !== undefined}
+									<div>
+										<dt class="uppercase text-zinc-500">Exit code</dt>
+										<dd
+											class="mt-0.5 font-mono {task.exitCode === 0
+												? 'text-zinc-300'
+												: 'text-rose-300'}"
+											data-testid="task-{task.id}-exit-code"
+										>
+											{task.exitCode}
+										</dd>
+									</div>
+								{/if}
+								{#if task.commit?.uri}
+									<div class="sm:col-span-2">
+										<dt class="uppercase text-zinc-500">Commit</dt>
+										<dd
+											class="mt-0.5 font-mono break-all text-zinc-400"
+											data-testid="task-{task.id}-commit"
+										>
+											{task.commit.uri}
+										</dd>
+									</div>
+								{/if}
+							</dl>
+						{/if}
+
+						{#if task.error}
+							<div class="mt-3">
+								<FailurePanel error={task.error} testid="task-{task.id}-error" compact />
+							</div>
+						{/if}
 						<TaskLogPane
 							runId={run.id}
 							taskId={task.id}

@@ -1,9 +1,17 @@
 <script lang="ts">
-	// Pool health (design §6.1, acceptance 3): live Orker counts and per-pool
-	// plugins, narrowed rather than refused (NamespaceService.ListPools,
-	// M11.3). A pool this read could not ask about is a THIRD state, distinct
-	// from both "healthy" and "empty" — Pool.unavailable_reason — and it is
-	// rendered as its own state rather than folded into a zero.
+	// Pool health (design §6.1, acceptance 3): live Orker counts, narrowed
+	// rather than refused (NamespaceService.ListPools, M11.3). A pool this
+	// read could not ask about is a THIRD state, distinct from both "healthy"
+	// and "empty" — Pool.unavailable_reason — and it is rendered as its own
+	// state rather than folded into a zero.
+	//
+	// Pool.plugins is NOT rendered. Under the OCI Activity Contract an
+	// activity is an image, not a Go type compiled into an Orker, so a pool
+	// has no plugin inventory to report and nothing in the engine populates
+	// that field any more. Rendering it produced a permanently-false caption
+	// ("this pool's Orkers did not answer the plugin inventory question")
+	// about a question that is no longer asked. What a deployment can run is
+	// on Admin → Activities; who is serving a pool is the count below.
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -115,26 +123,6 @@
 						{/if}
 					</p>
 				{/if}
-
-			<div class="mt-2 text-xs text-zinc-400">
-				<span class="text-zinc-500">Plugins:</span>
-				{#if pool.unavailableReason}
-					<span class="text-zinc-600" data-testid="pool-plugins-unavailable-{pool.name}"
-						>unknown — this pool could not be reached, so it was never asked</span
-					>
-				{:else if pool.plugins.length > 0}
-					<span data-testid="pool-plugins-{pool.name}">{pool.plugins.join(', ')}</span>
-				{:else if pool.liveOrkerCount === 0}
-					<span class="text-zinc-600" data-testid="pool-plugins-no-live-orkers-{pool.name}"
-						>unknown — no live Orker to ask</span
-					>
-				{:else}
-					<span class="text-zinc-600" data-testid="pool-plugins-unknown-{pool.name}"
-						>unknown — this pool's Orkers did not answer the plugin inventory question in
-						time; the count above still stands</span
-					>
-				{/if}
-			</div>
 
 				<p class="mt-2 text-xs text-zinc-500">
 					Last seen: <span data-testid="pool-last-seen-{pool.name}"

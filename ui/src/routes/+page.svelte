@@ -191,9 +191,16 @@
 									{pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}
 								</span>
 							</div>
-							<div class="mt-1 text-xs text-zinc-500" data-testid="pool-plugins-{pool.name}">
-								{#if pool.plugins.length > 0}
-									plugins: {pool.plugins.join(', ')}
+							<!--
+								Driven by the live Orker COUNT, not by Pool.plugins.
+								Under the OCI Activity Contract nothing populates
+								Pool.plugins any more, so the old `plugins.length > 0`
+								test always fell through and told a reader that a pool
+								with live Orkers had none serving it.
+							-->
+							<div class="mt-1 text-xs text-zinc-500" data-testid="pool-serving-{pool.name}">
+								{#if pool.liveOrkerCount > 0}
+									serving now
 								{:else}
 									no Orker is serving this pool, so a task sent here would wait
 								{/if}

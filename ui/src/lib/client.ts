@@ -4,7 +4,7 @@ import { ConnectError } from '@connectrpc/connect';
 import {
 	OrkflowService,
 	RunService,
-	PluginService,
+	ActivityService,
 	NamespaceService,
 	SystemService
 } from './gen/orkstack/v1/service_pb';
@@ -18,7 +18,12 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 	return {
 		orkflows: createClient(OrkflowService, transport),
 		runs: createClient(RunService, transport),
-		plugins: createClient(PluginService, transport),
+		// ActivityService replaces PluginService: an activity is an image, and
+		// which images this deployment can run is engine configuration
+		// (design §4.2), not something to ask an Orker. The same service also
+		// answers DescribeOrker, the pool-liveness probe that replaced
+		// ListPlugins in that role (§6.5).
+		activities: createClient(ActivityService, transport),
 		namespaces: createClient(NamespaceService, transport),
 		stats: createClient(StatsService, transport),
 		// system answers GetSystemInfo — the one admin read that describes the

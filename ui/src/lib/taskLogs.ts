@@ -28,8 +28,8 @@ export type LogSocketState = 'connecting' | 'open' | 'closed' | 'error' | 'ended
 /** Which of a task's two file descriptors a line came out of. */
 export type LogStream = 'stdout' | 'stderr';
 
-// The in-band markers a plugin frames a task's output with
-// (pkg/plugin/linewriter.go). One task attempt has ONE log stream — one
+// The in-band markers the Orker frames a task's output with
+// (pkg/logstream/linewriter.go). One task attempt has ONE log stream — one
 // logger, one sink, one dense sequence — so the two file descriptors are told
 // apart per line rather than by a field the chunk has no room for.
 const STDERR_MARKER = '[stderr] ';

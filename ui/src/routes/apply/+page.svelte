@@ -5,6 +5,10 @@
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
+	// The placeholder must be a document that actually APPLIES. `plugin:` is
+	// no longer a field — it is a compile error naming its replacement (§13) —
+	// so this sample uses `uses:`, the only image-selecting field in the DSL,
+	// with a first-party activity. It mirrors examples/http-post.ork.yaml.
 	const PLACEHOLDER = `name: my-orkflow
 version: "0.1.0"
 description: Describe what this orkflow does.
@@ -12,15 +16,15 @@ description: Describe what this orkflow does.
 inputs:
   url:
     type: string
-    default: "https://example.com/data.json"
+    default: "https://httpbin.org/get"
 
 tasks:
   - id: fetch
-    plugin: http
+    uses: http
     with:
-      method: GET
+      op: get
       url: "{{ .inputs.url }}"
-      capture_body_as: body
+      captureBodyAs: response
 `;
 
 	let { data }: PageProps = $props();
