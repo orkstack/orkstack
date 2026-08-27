@@ -103,12 +103,19 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// TWO Orkers on this run's default pool, and one on the aux pool. Two is
 	// the point: a pool is a set of Orkers, and an admin read that works only
 	// while a pool has exactly one is broken for every pool anybody scales.
+	// Each Orker gets its OWN work root, because the default Orker identity is
+	// derived from it and one identity may have only one live holder (§5.5):
+	// three Orkers under one root would be one Orker and two refusals.
 	startOrkerOn := func(name, queue string) {
+		workRoot := filepath.Join(bindableOrkerWorkRoot(t), name)
+		if err := os.MkdirAll(workRoot, 0o755); err != nil {
+			t.Fatalf("create work root for %s: %v", name, err)
+		}
 		startProcess(ctx, t, name, orkerPath,
 			"ORK_TEMPORAL_ADDRESS="+address,
 			"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
 			"ORK_ORKER_QUEUE="+queue,
-			"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
+			"ORK_ORKER_WORKDIR="+workRoot,
 			"ORK_ARTIFACT_BACKEND=s3",
 		)
 	}
