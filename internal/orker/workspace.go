@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // The container-side layout. It is fixed, and it is also written into
@@ -752,6 +753,28 @@ func HashFile(path string) (string, int64, error) {
 		return "", 0, err
 	}
 	return hex.EncodeToString(digest.Sum(nil)), size, nil
+}
+
+// sniffFileContentType resolves the content type the artifact store would
+// record for this file, by reading exactly the bytes the store's own sniffer
+// inspects and applying the store's own rule.
+//
+// It exists so §5.4 step 4 can PREDICT a ref whose ContentType matches the one
+// step 5 stores. RefPredictor.RefFor uses its contentType verbatim and cannot
+// sniff bytes it was never handed, so the caller resolves it once here and
+// passes the same value to both sides.
+func sniffFileContentType(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	head := make([]byte, artifacts.SniffLen)
+	n, err := io.ReadFull(file, head)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return "", err
+	}
+	return artifacts.SniffContentType(head[:n]), nil
 }
 
 // HashBytes returns the lowercase hex sha256 of a byte slice.

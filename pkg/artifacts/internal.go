@@ -32,11 +32,27 @@ func resolveContentType(explicit string, head []byte) string {
 	if explicit != "" {
 		return explicit
 	}
+	return SniffContentType(head)
+}
+
+// SniffContentType is the content type a Put would record for a stream whose
+// caller supplied none. It is exported so a caller that must PREDICT a ref can
+// resolve the same answer the store will (§5.4 step 4): RefPredictor.RefFor
+// uses its contentType verbatim and cannot sniff bytes it was never given, so
+// agreement has to come from both sides calling one function rather than from
+// two copies of the same rule.
+//
+// head is the first SniffLen bytes of the content; a shorter slice is fine and
+// is what http.DetectContentType would see anyway.
+func SniffContentType(head []byte) string {
 	if detected := http.DetectContentType(head); detected != "" {
 		return detected
 	}
 	return defaultContentType
 }
+
+// SniffLen is the number of leading bytes SniffContentType inspects.
+const SniffLen = sniffLen
 
 // copyMetadata defensively copies caller metadata so a stored reference cannot
 // be mutated behind the store's back. An empty map becomes nil so references

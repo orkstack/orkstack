@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/activity"
+
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // HeartbeatTimeout is the value the ENGINE must set in ActivityOptions, and
@@ -20,7 +22,7 @@ import (
 // and no HeartbeatTimeout is set anywhere — which means cancellation cannot
 // reach a running container at all. That is the largest correctness gap in the
 // current system (§6.3).
-const HeartbeatTimeout = 30 * time.Second
+const HeartbeatTimeout = task.HeartbeatTimeout
 
 // HeartbeatInterval is how often the loop ticks: HeartbeatTimeout/3.
 //

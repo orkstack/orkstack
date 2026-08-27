@@ -43,9 +43,12 @@
 package task
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"time"
 
-	"google.golang.org/protobuf/proto"
+	"go.temporal.io/sdk/converter"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -143,27 +146,119 @@ const MaxActivityInputBytes = 262144
 // spelling of a reason code is a second place for it to be wrong.
 const ReasonInputTooLarge = "INPUT_TOO_LARGE"
 
+// HeartbeatTimeout is the single number both halves of the heartbeat contract
+// must agree on: the engine sets it in ActivityOptions, and the Orker derives
+// its tick rate from it.
+//
+// It lives HERE, in the engine<->Orker seam, because the two packages cannot
+// share it any other way — internal/orker imports internal/engine, so the
+// engine cannot import the Orker back. It used to be declared twice, once in
+// each package, guarded only by a test asserting the engine's value against
+// itself. Two spellings of one contract is one too many: raising the Orker's
+// constant past three times the engine's would make the Orker tick more slowly
+// than Temporal's timeout and every activity would be declared dead, with
+// nothing in the tree failing first.
+//
+// Temporal delivers cancellation to an activity ONLY through a heartbeat
+// response, so an activity that never heartbeats never observes ctx.Done()
+// (§6.3).
+const HeartbeatTimeout = 30 * time.Second
+
+// HeartbeatInterval is how often the Orker's loop ticks. A third of the
+// timeout leaves room for two missed ticks before Temporal declares the
+// activity dead.
+const HeartbeatInterval = HeartbeatTimeout / 3
+
 // CheckInputSize enforces the deployment's replay-pinned input bound without
 // ever exceeding Temporal's hard 256 KiB ceiling. A zero or omitted plan limit
 // uses the ceiling, preserving old histories and small test harness plans.
+//
+// It measures the encoding TEMPORAL WILL ACTUALLY SEND, which is not the
+// binary one. Temporal's default data converter encodes a top-level protobuf
+// message with protojson (this package's own doc comment says so, and it is
+// why RunPlan is a plain Go struct). This check used to bound proto.Marshal
+// instead. Binary and protojson agree closely for plain ASCII, so the gap hid
+// in every ordinary input — but each quote, newline or backslash in a `with:`
+// value becomes a two-character JSON escape, and a measured input whose binary
+// form was 260174 bytes reached 520337 as a payload: the check returned nil
+// while the real payload was 1.98x a maximum AGENTS.md §2.2 calls HARD. A gate
+// that can pass something Temporal rejects produces exactly the "Temporal-side
+// rejection nobody can attribute" this function exists to prevent.
+//
+// The measurement is taken on the COMPACTED payload plus a worst-case
+// whitespace allowance, rather than on the payload's own length, because
+// protojson injects random whitespace on purpose to deter byte-comparison
+// (§14.10: `if detrand.Bool() { e.out = append(e.out, ' ') }`). That randomness
+// is seeded per BUILD, so a raw length is stable within one binary and can
+// differ in the next one — measured here at ~1 byte per JSON token, 2001 bytes
+// across a 2000-key struct. Bounding a raw length would therefore make this
+// decision build-dependent, and this runs in workflow code, where a decision
+// that flips between builds is a replay divergence. Compacting removes the
+// randomness; adding back one byte per injection site keeps the bound on the
+// safe side of the hard ceiling for any build.
 func CheckInputSize(in *orkstackv1.ExecuteTaskInput, planLimit ...int64) error {
 	limit := int64(MaxActivityInputBytes)
 	if len(planLimit) > 0 && planLimit[0] > 0 && planLimit[0] < limit {
 		limit = planLimit[0]
 	}
-	encoded, err := proto.Marshal(in)
+	size, err := temporalPayloadSize(in)
 	if err != nil {
 		return fmt.Errorf("%s: task %q: encode the activity input: %w",
 			ReasonInputTooLarge, in.GetTaskId(), err)
 	}
-	if int64(len(encoded)) > limit {
+	if size > limit {
 		return fmt.Errorf(
-			"%s: task %q: the activity input serializes to %d bytes, over the %d-byte limit. "+
+			"%s: task %q: the activity input serializes to %d bytes as the protojson payload "+
+				"Temporal records, over the %d-byte limit. "+
 				"Bytes never travel through Temporal — move large `with:` values into an artifact "+
 				"and reference it",
-			ReasonInputTooLarge, in.GetTaskId(), len(encoded), limit)
+			ReasonInputTooLarge, in.GetTaskId(), size, limit)
 	}
 	return nil
+}
+
+// temporalPayloadSize is the deterministic upper bound on the bytes Temporal
+// will carry for in. See CheckInputSize for why it is a bound and not a length.
+func temporalPayloadSize(in *orkstackv1.ExecuteTaskInput) (int64, error) {
+	payload, err := converter.GetDefaultDataConverter().ToPayload(in)
+	if err != nil {
+		return 0, err
+	}
+	raw := payload.GetData()
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err != nil {
+		// Not JSON after all: the converter picked something else. Its own
+		// length is then the honest measure.
+		return int64(len(raw)), nil //nolint:nilerr // the raw length is the answer
+	}
+	return int64(compact.Len() + whitespaceSites(compact.Bytes())), nil
+}
+
+// whitespaceSites counts the structural positions protojson may follow with an
+// injected space. Separators inside string literals are not structural, so the
+// scan tracks quoting and escaping.
+func whitespaceSites(compact []byte) int {
+	var sites, i int
+	inString := false
+	for ; i < len(compact); i++ {
+		c := compact[i]
+		if inString {
+			switch c {
+			case '\\':
+				i++ // skip the escaped byte, which is never structural
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case ':', ',':
+			sites++
+		}
+	}
+	return sites
 }
 
 // IdempotencyKeyFor renders the stable identity of one logical activity.

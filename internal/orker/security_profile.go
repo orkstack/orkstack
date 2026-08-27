@@ -151,6 +151,48 @@ func (p SecurityPolicy) AllowsSecretScheme(scheme string) bool {
 	return false
 }
 
+// Validate refuses a policy an operator cannot have meant.
+//
+// It exists because an unreadable cap used to be indistinguishable from an
+// absent one: ResolveResources guarded each comparison with `parseErr == nil`,
+// so "16GB" — the obvious typo for "16Gi", and a spelling parseMemory has
+// always rejected — did not refuse the request, it REMOVED the ceiling. A
+// workload could then ask for 1024Ti and get it.
+//
+// Boot is the right place to say so. An operator typo should stop the process
+// with a message naming the variable and the value, rather than surviving
+// until the first dispatch and silently over-granting there (AGENTS.md §6:
+// "Workflows must not receive unlimited resources by default").
+func (p SecurityPolicy) Validate() error {
+	capCPU, err := parseCPU(p.MaxCPU)
+	if err != nil {
+		return fmt.Errorf("%s=%q is not a valid cpu quantity (%v); use the Kubernetes "+
+			"spelling, e.g. \"8\" or \"500m\"", MaxCPUVar, p.MaxCPU, err)
+	}
+	capMem, err := parseMemory(p.MaxMemory)
+	if err != nil {
+		return fmt.Errorf("%s=%q is not a valid memory quantity (%v); use the Kubernetes "+
+			"spelling, e.g. \"16Gi\" — note Gi, not GB", MaxMemoryVar, p.MaxMemory, err)
+	}
+	defCPU, err := parseCPU(p.DefaultCPU)
+	if err != nil {
+		return fmt.Errorf("%s=%q is not a valid cpu quantity (%v)", DefaultCPUVar, p.DefaultCPU, err)
+	}
+	defMem, err := parseMemory(p.DefaultMemory)
+	if err != nil {
+		return fmt.Errorf("%s=%q is not a valid memory quantity (%v)", DefaultMemoryVar, p.DefaultMemory, err)
+	}
+	if defCPU > capCPU {
+		return fmt.Errorf("%s=%q exceeds %s=%q; a task that requests nothing would be "+
+			"refused its own default", DefaultCPUVar, p.DefaultCPU, MaxCPUVar, p.MaxCPU)
+	}
+	if defMem > capMem {
+		return fmt.Errorf("%s=%q exceeds %s=%q; a task that requests nothing would be "+
+			"refused its own default", DefaultMemoryVar, p.DefaultMemory, MaxMemoryVar, p.MaxMemory)
+	}
+	return nil
+}
+
 // ResolveResources applies policy to a request and returns the EFFECTIVE
 // values, which are what the container gets and what task.json reports.
 //
@@ -172,7 +214,15 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 		return "", "", Fail(ReasonResourceRefused, "cpu %q is not a valid quantity: %v", cpu, cpuErr)
 	}
 	capCPU, cpuErr := parseCPU(p.MaxCPU)
-	if cpuErr == nil && requestedCPU > capCPU {
+	if cpuErr != nil {
+		// An unreadable cap is a refusal, NOT an absent ceiling. Skipping the
+		// comparison here is what let "8 cores" grant cpu 4096.
+		return "", "", Fail(ReasonResourceRefused,
+			"this orker's cpu cap %q (%s) is not a valid quantity: %v; the request is refused "+
+				"rather than run uncapped, because an operator typo must never widen a limit",
+			p.MaxCPU, MaxCPUVar, cpuErr)
+	}
+	if requestedCPU > capCPU {
 		return "", "", Fail(ReasonResourceRefused,
 			"cpu request %q exceeds this orker's cap of %q (%s); the request is refused rather than "+
 				"silently reduced, because a workload that asked for more and got less fails confusingly later",
@@ -184,7 +234,15 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 		return "", "", Fail(ReasonResourceRefused, "memory %q is not a valid quantity: %v", memory, memErr)
 	}
 	capMem, memErr := parseMemory(p.MaxMemory)
-	if memErr == nil && requestedMem > capMem {
+	if memErr != nil {
+		// Same defect, memory half: "16GB" is the obvious typo for "16Gi" and
+		// used to remove the ceiling instead of refusing.
+		return "", "", Fail(ReasonResourceRefused,
+			"this orker's memory cap %q (%s) is not a valid quantity: %v; the request is refused "+
+				"rather than run uncapped, because an operator typo must never widen a limit",
+			p.MaxMemory, MaxMemoryVar, memErr)
+	}
+	if requestedMem > capMem {
 		return "", "", Fail(ReasonResourceRefused,
 			"memory request %q exceeds this orker's cap of %q (%s); the request is refused rather than "+
 				"silently reduced, because a workload that asked for more and got less fails confusingly later",

@@ -188,3 +188,114 @@ func TestParseMemory_UnderstandsTheKubernetesSpelling(t *testing.T) {
 			"guessing at it would silently change a cap")
 	}
 }
+
+// TestSecurityPolicy_UnreadableCapIsRefusedNotRemoved covers the defect where
+// an operator typo silently DELETED the ceiling instead of refusing.
+//
+// Both cap comparisons were guarded with `if parseErr == nil && requested >
+// cap`, so a cap the parser cannot read simply skipped the comparison. The
+// obvious typo — "16GB", a spelling this package's own parseMemory test
+// already asserts is unreadable — therefore granted a workload any size it
+// asked for, contradicting AGENTS.md §6 ("Workflows must not receive
+// unlimited resources by default") and this file's own "None of them is
+// unlimited".
+func TestSecurityPolicy_UnreadableCapIsRefusedNotRemoved(t *testing.T) {
+	tests := []struct {
+		name      string
+		maxCPU    string
+		maxMemory string
+		reqCPU    string
+		reqMemory string
+		wantVar   string
+	}{
+		{
+			name:      "unreadable memory cap does not grant an enormous request",
+			maxCPU:    "8",
+			maxMemory: "16GB", // the operator typo: GB is not the Kubernetes spelling
+			reqCPU:    "1",
+			reqMemory: "1024Ti",
+			wantVar:   MaxMemoryVar,
+		},
+		{
+			name:      "unreadable cpu cap does not grant an enormous request",
+			maxCPU:    "8 cores", // free text, unparseable
+			maxMemory: "16Gi",
+			reqCPU:    "4096",
+			reqMemory: "1Gi",
+			wantVar:   MaxCPUVar,
+		},
+		{
+			name:      "empty memory cap is not an absent ceiling",
+			maxCPU:    "8",
+			maxMemory: "",
+			reqCPU:    "1",
+			reqMemory: "1024Ti",
+			wantVar:   MaxMemoryVar,
+		},
+		{
+			name:      "empty cpu cap is not an absent ceiling",
+			maxCPU:    "",
+			maxMemory: "16Gi",
+			reqCPU:    "4096",
+			reqMemory: "1Gi",
+			wantVar:   MaxCPUVar,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := DefaultSecurityPolicy()
+			policy.MaxCPU = tc.maxCPU
+			policy.MaxMemory = tc.maxMemory
+
+			cpu, memory, failure := policy.ResolveResources(&orkstackv1.ResourceRequest{
+				Cpu:    tc.reqCPU,
+				Memory: tc.reqMemory,
+			})
+			if failure == nil {
+				t.Fatalf("an unreadable cap granted cpu=%q memory=%q with no failure; "+
+					"a cap the parser cannot read must be a refusal, never a removed ceiling",
+					cpu, memory)
+			}
+			if !strings.Contains(failure.Error(), tc.wantVar) {
+				t.Errorf("failure %q does not name %s; an operator cannot fix a typo "+
+					"they are not told about", failure.Error(), tc.wantVar)
+			}
+		})
+	}
+}
+
+// TestSecurityPolicy_ValidateRefusesAnUnreadableCapAtBoot is the same defect
+// caught one layer earlier. An operator typo should stop the process at boot
+// with a message naming the variable, not wait to over-grant silently on the
+// first dispatch.
+func TestSecurityPolicy_ValidateRefusesAnUnreadableCapAtBoot(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*SecurityPolicy)
+		wantVar string
+	}{
+		{"unreadable max memory", func(p *SecurityPolicy) { p.MaxMemory = "16GB" }, MaxMemoryVar},
+		{"unreadable max cpu", func(p *SecurityPolicy) { p.MaxCPU = "8 cores" }, MaxCPUVar},
+		{"unreadable default memory", func(p *SecurityPolicy) { p.DefaultMemory = "1GB" }, DefaultMemoryVar},
+		{"unreadable default cpu", func(p *SecurityPolicy) { p.DefaultCPU = "one" }, DefaultCPUVar},
+		{"empty max memory", func(p *SecurityPolicy) { p.MaxMemory = "" }, MaxMemoryVar},
+		{"default above the cap", func(p *SecurityPolicy) { p.DefaultMemory = "32Gi" }, MaxMemoryVar},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := DefaultSecurityPolicy()
+			tc.mutate(&policy)
+			err := policy.Validate()
+			if err == nil {
+				t.Fatal("Validate accepted a policy an operator cannot have meant; " +
+					"a bad cap must stop the Orker at boot")
+			}
+			if !strings.Contains(err.Error(), tc.wantVar) {
+				t.Errorf("error %q does not name %s", err.Error(), tc.wantVar)
+			}
+		})
+	}
+	if err := DefaultSecurityPolicy().Validate(); err != nil {
+		t.Fatalf("the default policy must validate: %v", err)
+	}
+}

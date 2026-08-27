@@ -27,7 +27,7 @@ import (
 // Before this, no HeartbeatTimeout was set anywhere in the tree and the Orker
 // heartbeated only between phases, which meant cancellation could not reach a
 // running container at all — the largest correctness gap in the system (§6.3).
-const orkerHeartbeatTimeout = 30 * time.Second
+const orkerHeartbeatTimeout = task.HeartbeatTimeout
 
 const (
 	// RunWorkflowType is the registered Temporal workflow type for a run. It

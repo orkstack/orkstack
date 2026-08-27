@@ -318,9 +318,19 @@ func TestRunWorkflow_SetsTheHeartbeatAndCancellationOptions(t *testing.T) {
 					"heartbeat response, so without it cancellation cannot reach a running container",
 					info.HeartbeatTimeout)
 			}
-			if info.HeartbeatTimeout != 30*time.Second {
-				t.Errorf("HeartbeatTimeout = %v, want the 30s the Orker derives its tick rate from",
-					info.HeartbeatTimeout)
+			// Assert against the SEAM's constant, not a literal. A literal
+			// here asserted the engine's own value against itself, so the two
+			// halves could drift apart without anything failing.
+			if info.HeartbeatTimeout != task.HeartbeatTimeout {
+				t.Errorf("HeartbeatTimeout = %v, want task.HeartbeatTimeout %v, which is the "+
+					"number the Orker derives its tick rate from",
+					info.HeartbeatTimeout, task.HeartbeatTimeout)
+			}
+			// The Orker must tick at least three times inside the window, or
+			// Temporal declares a live activity dead.
+			if task.HeartbeatInterval*3 > task.HeartbeatTimeout {
+				t.Errorf("the Orker ticks every %v inside a %v timeout; a live activity "+
+					"would be declared dead", task.HeartbeatInterval, task.HeartbeatTimeout)
 			}
 			// StartToClose has to leave room for staging, the pull, hashing
 			// and uploads on top of the task's own wall clock (§6.3).

@@ -2,12 +2,16 @@ package orker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // WorkRootVar overrides the parent directory for per-attempt workspaces.
@@ -77,6 +81,9 @@ type Activities struct {
 	dispatcher *OCIDispatcher
 	pool       string
 	maxConc    int32
+	// identityLock is held for the process's lifetime once Boot claims this
+	// Orker's identity, so no second live Orker can reap by the same label.
+	identityLock *os.File
 }
 
 // NewActivities builds the activity set with environment-derived defaults.
@@ -108,7 +115,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	}
 	orkerID := opts.OrkerID
 	if orkerID == "" {
-		orkerID = defaultOrkerID()
+		orkerID = defaultOrkerID(workRoot)
 	}
 	buildID := opts.BuildID
 	if buildID == "" {
@@ -190,12 +197,19 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 
 // Boot performs the checks an Orker must pass before it accepts work.
 //
-// Refusing to start is the only honest response to either failure. An Orker
-// that starts anyway would fail every task later with an error naming the
-// container rather than the cause, or — worse, for the conditional-write
+// Refusing to start is the only honest response to any of these failures. An
+// Orker that starts anyway would fail every task later with an error naming
+// the container rather than the cause, or — worse, for the conditional-write
 // probe — would run a deployment that silently lost the immutability
 // guarantee (§3.1, §5.3).
 func (a *Activities) Boot(ctx context.Context) error {
+	// An operator typo in a resource cap must stop the process here. Left to
+	// dispatch time an unreadable cap used to REMOVE the ceiling rather than
+	// refuse, so a workload could be granted any size it asked for (§9.3,
+	// AGENTS.md §6).
+	if err := a.dispatcher.Policy.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
+	}
 	root := a.dispatcher.WorkRoot
 	if root == "" {
 		root = os.TempDir()
@@ -210,6 +224,20 @@ func (a *Activities) Boot(ctx context.Context) error {
 			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
 	}
+	// Claim the identity before reaping by it.
+	//
+	// The reaper force-removes every container labelled with this Orker's id,
+	// on the premise that they belong to its own dead predecessor. That
+	// premise only holds while no OTHER live process answers to the same id —
+	// and a stable identity makes sharing one possible, where the old
+	// pid-derived identity made it impossible by making reaping useless. An
+	// exclusive lock decides the question instead of assuming it: if the
+	// lock is free, any previous holder is gone and its containers really are
+	// orphans; if it is held, a peer is alive and this Orker refuses rather
+	// than destroying that peer's running work.
+	if err := a.claimIdentity(root); err != nil {
+		return err
+	}
 	// Reap this Orker's own previous life's containers. An Orker crash does
 	// not stop its containers (§14.17), so a restarted Orker inherits them.
 	if _, err := a.dispatcher.Runtime.Reap(ctx, a.dispatcher.OrkerID); err != nil {
@@ -218,8 +246,54 @@ func (a *Activities) Boot(ctx context.Context) error {
 	return nil
 }
 
-// defaultOrkerID derives a stable-per-process identity.
-func defaultOrkerID() string {
+// claimIdentity takes the process-lifetime lock that makes reaping by a stable
+// identity safe. The lock file is named for the identity, not the work root, so
+// two Orkers given distinct ORK_ORKER_ID values never contend.
+func (a *Activities) claimIdentity(root string) error {
+	path := filepath.Join(root, ".ork-orker-"+safeNameComponent(a.dispatcher.OrkerID)+".lock")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("%s: open the orker identity lock %s: %w", ReasonWorkdirFailed, path, err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = file.Close()
+		return fmt.Errorf(
+			"another live orker already holds the identity %q under %s; a second orker "+
+				"sharing one identity would force-remove the first one's RUNNING containers "+
+				"at boot (§5.5). Give this orker its own identity with %s, or its own "+
+				"workspace root with %s",
+			a.dispatcher.OrkerID, root, OrkerIDVar, WorkRootVar)
+	}
+	a.identityLock = file
+	return nil
+}
+
+// Close releases the identity claim. A process that exits releases it anyway —
+// that is the point of a lock rather than a pid file — so this exists for tests
+// and for an embedded Orker that outlives one Activities.
+func (a *Activities) Close() {
+	if a.identityLock != nil {
+		_ = syscall.Flock(int(a.identityLock.Fd()), syscall.LOCK_UN)
+		_ = a.identityLock.Close()
+		a.identityLock = nil
+	}
+}
+
+// defaultOrkerID derives an identity that is STABLE across a restart on the
+// same host, because the startup reaper's only key is this string.
+//
+// It used to end in os.Getpid(), which made every restart a different Orker:
+// the replacement filtered `label=ork.orker=<new id>`, matched none of its dead
+// predecessor's containers, and reaped nothing — exactly the scenario §5.5
+// measure 2 exists for. The pid is gone.
+//
+// The work root replaces it as the discriminator. It is what makes two Orkers
+// deliberately run side by side on one host distinct — they cannot share
+// per-attempt execution directories anyway (§6.4) — while a restart of the SAME
+// Orker keeps its configured root and therefore its identity. Two Orkers that
+// do share a root are caught by the boot lock rather than silently reaping each
+// other.
+func defaultOrkerID(workRoot string) string {
 	if explicit := strings.TrimSpace(os.Getenv(OrkerIDVar)); explicit != "" {
 		return explicit
 	}
@@ -227,5 +301,13 @@ func defaultOrkerID() string {
 	if err != nil || host == "" {
 		host = "orker"
 	}
-	return fmt.Sprintf("%s-%d", safeNameComponent(host), os.Getpid())
+	root := strings.TrimSpace(workRoot)
+	if root == "" {
+		root = os.TempDir()
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	sum := sha256.Sum256([]byte(root))
+	return fmt.Sprintf("%s-%s", safeNameComponent(host), hex.EncodeToString(sum[:4]))
 }

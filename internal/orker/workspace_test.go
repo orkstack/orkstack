@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 func testLimits() *orkstackv1.WorkspaceLimits {
@@ -557,5 +559,60 @@ func TestSplitSecretSource_SeparatesSchemeFromLocator(t *testing.T) {
 			t.Errorf("SplitSecretSource(%q) = (%q, %q), want (%q, %q)",
 				tc.source, scheme, locator, tc.scheme, tc.locator)
 		}
+	}
+}
+
+// TestSniffFileContentType_AgreesWithWhatTheStoreWouldRecord is the regression
+// for a step-4 projection that could not match step 5.
+//
+// pending.contentType was never assigned, so RefFor projected every artifact
+// with an EMPTY content type while Store.Put — handed that same empty string —
+// sniffed a real one. RefPredictor.RefFor's own doc says it "MUST agree
+// byte-for-byte with Put's result", so the pre-upload COMMIT_TOO_LARGE bound
+// understated the manifest it claimed to measure. Both sides now resolve the
+// type through one exported function, so agreement is structural.
+func TestSniffFileContentType_AgreesWithWhatTheStoreWouldRecord(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"json.txt", `{"a":1}`},
+		{"plain.txt", "hello, world\n"},
+		{"empty.bin", ""},
+		{"binary.bin", "\x00\x01\x02\x03\xff\xfe"},
+		{"html.txt", "<!DOCTYPE html><html></html>"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name)
+			mustWrite(t, path, tc.content)
+
+			got, err := sniffFileContentType(path)
+			if err != nil {
+				t.Fatalf("sniffFileContentType: %v", err)
+			}
+			if got == "" {
+				t.Fatal("an empty content type is exactly the defect: RefFor would " +
+					"project \"\" while Put records a sniffed type")
+			}
+
+			// What the store actually records for the same bytes, with no
+			// explicit type — the value the projection has to match.
+			store, err := artifacts.NewLocalStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = store.Close() }()
+			ref, err := store.Put(context.Background(), tc.name,
+				strings.NewReader(tc.content), artifacts.PutOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != ref.ContentType {
+				t.Fatalf("projection would carry %q but the store recorded %q; "+
+					"the step-4 bound is not the thing step 8 commits", got, ref.ContentType)
+			}
+		})
 	}
 }

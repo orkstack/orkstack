@@ -1075,7 +1075,20 @@ func (d *OCIDispatcher) commit(
 			return nil, FailCause(ReasonOutputNotReadable, err,
 				"hash output artifact %q: %v", artifact.Name, err)
 		}
-		items = append(items, pending{name: artifact.Name, path: artifact.Path, sha: sha, size: size})
+		// Resolve the content type HERE, from the same bytes and the same rule
+		// the store will use, so the step-4 projection and the step-5 upload
+		// agree on the field. Leaving it empty made RefFor project "" while
+		// Put sniffed a real type, so the bound understated the manifest it
+		// claimed to measure byte-for-byte.
+		contentType, err := sniffFileContentType(artifact.Path)
+		if err != nil {
+			return nil, FailCause(ReasonOutputNotReadable, err,
+				"read output artifact %q to resolve its content type: %v", artifact.Name, err)
+		}
+		items = append(items, pending{
+			name: artifact.Name, path: artifact.Path,
+			sha: sha, size: size, contentType: contentType,
+		})
 	}
 	valuesSHA := HashBytes(values)
 

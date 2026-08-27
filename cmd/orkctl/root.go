@@ -89,7 +89,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		Use:   "orkctl",
 		Short: "Control and observe OrkStack orkflows",
 		Long: "orkctl drives the OrkStack engine: apply orkflow DSL files, submit runs,\n" +
-			"watch their events live, and inspect runs, orkflows, and plugins.\n\n" +
+			"watch their events live, and inspect runs, orkflows, and activities.\n\n" +
 			"Everything an orkflow or a run belongs to is scoped by a namespace.\n" +
 			"--namespace picks one for a single command; `orkctl namespace use`\n" +
 			"remembers one so it does not have to be typed again.",
