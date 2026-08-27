@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.temporal.io/sdk/temporal"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -197,8 +198,23 @@ func (s *activitySuite) run(ctx context.Context) (*activityTestReport, error) {
 		s.assertExitCodesAreNotInterpreted(ctx),
 		s.assertCancellationIsHonoured(ctx),
 	}
+	return buildActivityTestReport(s.image, assertions), nil
+}
 
-	report := &activityTestReport{Image: s.image, OK: true}
+// buildActivityTestReport folds the six outcomes into the reported form.
+//
+// It is a pure function, separated from run() so the reporting layer can be
+// tested without a container runtime. That matters more than it looks: the
+// FAIL half of this command is the half an acceptance criterion names, and it
+// is the half that is hardest to reach through Docker.
+//
+// A SKIP is not a pass and is never counted as one, but it does not make the
+// report fail either — the host could not express the property, which is not
+// the image's fault. A caller that needs "all six were actually measured"
+// must check Passed, which is why proof gate 4 asserts on it rather than on
+// the exit code alone.
+func buildActivityTestReport(image string, assertions []assertion) *activityTestReport {
+	report := &activityTestReport{Image: image, OK: true}
 	for _, a := range assertions {
 		outcome := activityTestOutcome{Name: a.name, Status: a.status(), Detail: a.detail}
 		if a.err != nil {
@@ -215,7 +231,7 @@ func (s *activitySuite) run(ctx context.Context) (*activityTestReport, error) {
 		}
 		report.Assertions = append(report.Assertions, outcome)
 	}
-	return report, nil
+	return report
 }
 
 // build wires a dispatcher against local stores in the suite's temp root.
@@ -722,12 +738,38 @@ func suiteRootParent() string {
 }
 
 // preflight establishes that the suite can drive this image at all.
+//
+// It distinguishes two failures that look alike from the outside and mean
+// opposite things:
+//
+//   - The image REFUSED the suite's config. activity-http exits 2 on an
+//     unknown op, activity-file's fail() exits 1. That is correct behaviour
+//     for an image with its own config contract, and reporting six contract
+//     FAILURES for it would be a false accusation.
+//
+//   - The image ACCEPTED the config, exited 0, and still broke the ABI floor.
+//     §3.4 is unconditional: exit 0 means the computation succeeded, and the
+//     Orker then validates and commits outputs. An image that claims success
+//     and writes no values.json is not speaking a different config contract,
+//     it is violating the one contract every image shares.
+//
+// The second case used to be swallowed as "cannot be driven", which made
+// assertion 1 unreachable for EXACTLY the failure mode it exists to catch:
+// `orkctl activity test` on an image that exits 0 writing nothing returned a
+// bare error with no report and no FAIL row, so the fail half of the command
+// was unprovable. The exit code decides, because it is the workload's own
+// statement about whether it did the job.
 func (s *activitySuite) preflight(ctx context.Context) error {
 	_, err := s.execute(ctx, "preflight", map[string]any{
 		"op":      "exec",
 		"command": []any{"sh", "-c", "exit 0"},
 	})
 	if err == nil {
+		return nil
+	}
+	if preflightIsContractViolation(err) {
+		// Let the assertions run and NAME the violation, rather than
+		// reporting it as an image the suite cannot drive.
 		return nil
 	}
 	return fmt.Errorf("this image cannot be driven by the contract suite: %w\n\n"+
@@ -738,4 +780,47 @@ func (s *activitySuite) preflight(ctx context.Context) error {
 		"NOT a contract violation.\n\n"+
 		"Test such an image with a fixture that speaks its own config contract; see\n"+
 		"test/fixtures/ and the image's README", err)
+}
+
+// preflightIsContractViolation answers whether a failed preflight attempt is
+// the image breaking the ABI floor rather than refusing the suite's config.
+//
+// Pure, and separated from preflight, so the decision that governs whether a
+// violation is REPORTED can be tested without a container runtime.
+//
+// The test is: the container exited 0 — it claimed the work succeeded — and
+// the failure is a §8.1 ContractViolation. A non-zero exit is the image
+// refusing the input, which preflight exists to forgive. A failure that is
+// not a ContractViolation (an image pull failure, an unbindable workdir) is
+// the host's problem and is not the image's contract either way.
+//
+// OCIDispatcher.Execute returns failure.TemporalError(), so the error on this
+// path is a *temporal.ApplicationError whose TYPE is the category and whose
+// detail carries the reason code and the exit code — the same shape and the
+// same decode the engine performs in internal/engine/workflow.go. The raw
+// *orker.Failure is accepted too, because Validate and the pre-runtime
+// refusals return one directly.
+func preflightIsContractViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var applicationErr *temporal.ApplicationError
+	if errors.As(err, &applicationErr) {
+		if applicationErr.Type() != orker.CategoryContractViolation {
+			return false
+		}
+		var detail *orkstackv1.ActivityFailureDetail
+		if decodeErr := applicationErr.Details(&detail); decodeErr != nil {
+			// No detail means no exit code to judge by. The suite does not
+			// guess: an image is not accused on an error it cannot read.
+			return false
+		}
+		return detail.GetExitCode() == 0
+	}
+	var failure *orker.Failure
+	if errors.As(err, &failure) {
+		return failure.Category() == orker.CategoryContractViolation &&
+			failure.Detail.GetExitCode() == 0
+	}
+	return false
 }
