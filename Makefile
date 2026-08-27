@@ -129,3 +129,11 @@ fmt: ## Format Go code
 merge-check: build lint test ## Gate a merge: build + lint + unit tests + compile the integration suites
 	go vet -tags=integration ./...
 	@echo "merge-check OK: the merged tree builds, passes lint and unit tests, and its integration suites compile"
+	@echo "NOTE: COMPILE, not run. merge-check needs no infrastructure, so an"
+	@echo "      integration test can be red while this gate is green — v0.0.5"
+	@echo "      shipped ten such files, all failing at apply. Run"
+	@echo "      'make test-integration' with the stack up before releasing."
+
+.PHONY: test-integration
+test-integration: ## Run the integration suites against live infra (needs: make infra-up && make -C images push)
+	ORK_REQUIRE_INFRA=1 go test -tags=integration -p 1 -timeout 60m -count=1 ./...

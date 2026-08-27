@@ -68,11 +68,26 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	temporalClient.Close()
 
 	// The example's fetch step targets a local server so the run is hermetic.
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, servedBody)
-	}))
+	//
+	// It listens on every interface and is addressed as host.docker.internal,
+	// because since v0.0.5 the request is made by a CONTAINER, not by the Orker
+	// process: httptest's default 127.0.0.1 loopback is the container's own
+	// loopback there, and the fetch fails with CONTAINER_EXIT_NONZERO.
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen for the example's origin: %v", err)
+	}
+	origin := &httptest.Server{
+		Listener: listener,
+		Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, servedBody)
+		})},
+	}
+	origin.Start()
 	defer origin.Close()
+	originURL := fmt.Sprintf("http://host.docker.internal:%d", listener.Addr().(*net.TCPAddr).Port)
+	requireContainerCanReach(ctx, t, originURL)
 
 	pool := privateTaskPool()
 	taskQueue, err := task.QueueForPool(pool, "")
@@ -105,8 +120,24 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		t.Fatalf("version exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
 
-	// apply the repository's example orkflow exactly as a user would
-	stdout, stderr, code := cli("apply", filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
+	// Apply the repository's example orkflow exactly as a user would — but into
+	// a namespace this run owns.
+	//
+	// examples/hello.ork.yaml pins `version: "0.2.0"`, and since v0.0.5 a
+	// definition also carries the digests apply resolved (§4.4). Two trees that
+	// resolved `uses: shell` to different images therefore compile two
+	// different definitions of one IMMUTABLE version, and the second apply is
+	// refused with ALREADY_EXISTS — correct behaviour, and nothing to do with
+	// this test's subject. In `default`, against a durable store shared with
+	// every other run on the machine, that refusal is a matter of who applied
+	// first. A private namespace removes the collision without softening the
+	// assertion.
+	exampleNamespace := fmt.Sprintf("m4-example-%d-%d", os.Getpid(), time.Now().UnixNano())
+	if _, stderr, code := cli("namespace", "create", exampleNamespace); code != 0 {
+		t.Fatalf("namespace create %s exit = %d, want 0\nstderr:\n%s", exampleNamespace, code, stderr)
+	}
+	stdout, stderr, code := cli("--namespace", exampleNamespace,
+		"apply", filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
 	if code != 0 {
 		t.Fatalf("apply exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
@@ -122,7 +153,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 
 	// submit --watch: the real Orker runs http -> shell -> file for real.
 	stdout, stderr, code = cli("run", "submit", successOrkflowName,
-		"--input", "url="+origin.URL+"/json", "--watch")
+		"--input", "url="+originURL+"/json", "--watch")
 	if code != 0 {
 		t.Fatalf("submit --watch exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
@@ -166,7 +197,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		t.Fatalf("run get stdout does not report FAILED:\n%s", stdout)
 	}
 
-	// run list and plugin list work against the same live engine.
+	// run list and activity list work against the same live engine.
 	stdout, stderr, code = cli("run", "list")
 	if code != 0 {
 		t.Fatalf("run list exit = %d, want 0\nstderr:\n%s", code, stderr)
@@ -174,8 +205,13 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	if !strings.Contains(stdout, runID) || !strings.Contains(stdout, failedRunID) {
 		t.Fatalf("run list is missing a run:\n%s", stdout)
 	}
-	if _, stderr, code = cli("plugin", "list"); code != 0 {
-		t.Fatalf("plugin list exit = %d, want 0\nstderr:\n%s", code, stderr)
+	// `orkctl plugin list` went away with PluginService in v0.0.5; the catalog
+	// is what an operator lists now.
+	if stdout, stderr, code = cli("activity", "list"); code != 0 {
+		t.Fatalf("activity list exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "shell") {
+		t.Fatalf("activity list does not name the shell activity:\n%s", stdout)
 	}
 
 	// A machine-readable sample of the same successful run: statuses are named
@@ -341,8 +377,19 @@ func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, or
 
 // startProcess starts a built binary with extra environment and guarantees it
 // is stopped when the test ends, so no worker outlives the test.
+//
+// Every engine started here gets the local activity catalog, because apply-time
+// image resolution (§4.3) runs in the engine and the built-in catalog names
+// references that are not published (see localActivityCatalogEnv). One place,
+// rather than one copy per engine launcher.
 func startProcess(ctx context.Context, t *testing.T, name, path string, env ...string) {
 	t.Helper()
+	// The BINARY decides, not the label: replicas are started as "ork-A",
+	// "ork-history" and so on, and an engine that missed the catalog would fail
+	// its apply with IMAGE_RESOLVE_UNAUTHORIZED rather than compile-error.
+	if filepath.Base(path) == "ork" {
+		env = append(env, localActivityCatalogEnv(t))
+	}
 	cmd := exec.CommandContext(ctx, path)
 	cmd.Env = append(os.Environ(), env...)
 	var log strings.Builder
@@ -440,9 +487,13 @@ func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {
 
 	if name == failingOrkflowName {
 		doc["tasks"] = []any{map[string]any{
-			"id":     "fail",
-			"plugin": "shell",
-			"with":   map[string]any{"command": "echo boom >&2; exit 7"},
+			"id":   "fail",
+			"uses": "shell",
+			"with": map[string]any{
+				"op": "exec",
+				// argv, never a shell string (§10.2 rule 8).
+				"command": []any{"sh", "-c", "echo boom >&2; exit 7"},
+			},
 		}}
 	}
 	tasks, ok := doc["tasks"].([]any)

@@ -152,6 +152,30 @@ check_workdir_mountable() {
 	say ""
 }
 
+# local_activity_catalog — the ORK_ACTIVITY_CATALOG document for this machine.
+#
+# §4.6 of the OCI Activity Contract puts this decision here: `make images`
+# pushes each first-party activity to localhost:5001/orkstack/activity-<name>:dev
+# and "`orkstack dev` points ORK_ACTIVITY_CATALOG at that registry". The
+# BUILT-IN catalog keeps naming the published ghcr.io references, which is what
+# a real deployment must resolve; the local stack overrides it rather than the
+# default weakening to something that only exists on a developer's laptop.
+#
+# It prints nothing when the images are not in the local registry, so the
+# engine falls back to the published defaults and an apply of `uses: shell`
+# fails loudly at apply time (§4.3) instead of silently running something else.
+local_activity_catalog() {
+	local registry="${ORK_LOCAL_REGISTRY:-localhost:5001}" name doc=""
+	for name in shell http file; do
+		curl -sfo /dev/null \
+			-H 'Accept: application/vnd.oci.image.index.v1+json' \
+			"http://$registry/v2/orkstack/activity-$name/manifests/dev" || return 0
+		doc="$doc  $name: $registry/orkstack/activity-$name:dev
+"
+	done
+	printf 'activities:\n%s' "$doc"
+}
+
 cmd_up() {
 	say "== infrastructure (Temporal, MinIO) =="
 	"${COMPOSE[@]}" up -d
@@ -178,11 +202,17 @@ cmd_up() {
 	# empty, while a refresh still works because that reads through the
 	# same-origin Connect proxy instead of the socket.
 	local ws_origins="${ORK_WS_ALLOWED_ORIGINS:-localhost:$UI_PORT,127.0.0.1:$UI_PORT}"
+	local catalog="${ORK_ACTIVITY_CATALOG:-$(local_activity_catalog)}"
+	if [ -z "$catalog" ]; then
+		say "  no first-party activity images in the local registry;"
+		say "  'uses: shell' will resolve against ghcr.io — run 'make -C images push'"
+	fi
 	mkdir -p "$WORK_DIR"
 	check_workdir_mountable
 	start orker env ORK_ARTIFACT_BACKEND="$backend" ORK_ORKER_WORKDIR="$WORK_DIR" \
 		"$REPO/bin/orker"
 	start ork env ORK_ARTIFACT_BACKEND="$backend" ORK_HTTP_ADDR="$ENGINE_ADDR" \
+		ORK_ACTIVITY_CATALOG="$catalog" \
 		ORK_WS_ALLOWED_ORIGINS="$ws_origins" "$REPO/bin/ork"
 	wait_for "engine api" 60 "$REPO/bin/orkctl" --server "$ENGINE_URL" orkflow list
 	# DescribeOrker is an activity the engine schedules onto the Orker's queue

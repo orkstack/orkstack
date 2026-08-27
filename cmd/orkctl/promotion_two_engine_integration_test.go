@@ -353,14 +353,21 @@ func TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion(t *testin
 	// And it executed 1.0.0's configuration, not 2.0.0's. The two versions run
 	// different commands, so the task's own report says which document the
 	// Orker was given.
+	//
+	// Under the OCI Activity Contract that report is values.json, not a
+	// platform-captured stdout: §3.6 makes stdout a durable system ARTIFACT,
+	// and activity-shell's `exec` op writes only {"exitCode":n}. The `eval` op
+	// is the one whose contract is "the workload's output is the value", so
+	// the marker arrives as values.value — the workload's own words, which is
+	// what this assertion always meant.
 	taskRuns := finished.GetTaskRuns()
 	if len(taskRuns) != 1 {
 		t.Fatalf("the run reports %d task runs, want 1", len(taskRuns))
 	}
 	output := taskRuns[0].GetOutput().GetData().AsMap()
-	stdout := fmt.Sprint(output["stdout"])
+	stdout := fmt.Sprint(output["value"])
 	if !strings.Contains(stdout, "slow-1.0.0") {
-		t.Fatalf("the pinned run executed the wrong version's task: stdout %q, output %v",
+		t.Fatalf("the pinned run executed the wrong version's task: value %q, output %v",
 			stdout, output)
 	}
 	t.Logf("run %s finished on version %s having executed %q",
@@ -380,7 +387,7 @@ tasks:
   - id: report
     uses: shell
     with:
-      op: exec
+      op: eval
       command: ["sh", "-c", "echo %s"]
 `, name, version, version, marker)
 }
@@ -396,7 +403,7 @@ tasks:
     uses: shell
     timeout_seconds: 120
     with:
-      op: exec
+      op: eval
       command: ["sh", "-c", "sleep %d; echo slow-%s"]
 `, name, version, version, seconds, version)
 }

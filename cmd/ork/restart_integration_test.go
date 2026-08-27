@@ -294,6 +294,9 @@ func startEngine(
 	cmd.Env = append(os.Environ(),
 		"ORK_HTTP_ADDR="+address,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddress,
+		// Apply-time image resolution runs here (§4.3), and the built-in
+		// catalog names references that are not published yet.
+		localActivityCatalogEnv(t),
 	)
 	log := &strings.Builder{}
 	cmd.Stdout = log
