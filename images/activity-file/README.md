@@ -48,8 +48,13 @@ workspace path inside it.
 and §3.5 has no directory semantics — a whole hierarchy is not an artifact.
 `member` is required, and is a path inside the archive.
 
-`checksum` produces no artifact. It reads a file and reports its digest; there
-is nothing new to store, and `values.json` already carries the answer.
+`checksum` produces no artifact, and that is deliberate rather than an
+inconsistency with "every op that produces something writes exactly one file".
+It **produces nothing**: it reads a file and reports its digest. Writing the
+hex digest out as an artifact would be inventing an output so the table could
+have no exceptions — a file nobody asked for, which `values.json` already
+carries the contents of. `sha256sum` prints; it does not create a file, and
+AGENTS.md §9 asks this activity to stay Unix-like.
 
 ## Output
 

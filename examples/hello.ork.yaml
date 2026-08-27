@@ -1,11 +1,14 @@
-# OrkStack orkflow DSL — v0
-# A minimal end-to-end demo: fetch JSON over HTTP, transform it in a shell
-# task, then persist the result as an artifact via the file plugin.
+# OrkStack orkflow DSL
+#
+# The end-to-end shape of an Orkflow: fetch something over HTTP, transform it
+# in a shell, and checksum the result. Three tasks, three first-party
+# activities, and no SDK anywhere — each task is an ordinary OCI container that
+# reads /orkstack/input and writes /orkstack/output.
 name: hello-ork
-version: "0.1.0"
-description: Fetch JSON, extract a field, and persist it as an artifact.
+version: "0.2.0"
+description: Fetch JSON, extract a field, and record the result's digest.
 
-# Declared inputs. Values are provided at submit time and referenced via
+# Declared inputs. Values are supplied at submit and referenced as
 # {{ .inputs.<name> }} in task configuration.
 inputs:
   url:
@@ -13,34 +16,47 @@ inputs:
     default: "https://httpbin.org/json"
 
 tasks:
-  # 1. HTTP GET. `op` is the generic operation selector every plugin shares
-  #    (docs/PLUGIN_DESIGN.md); for http it names the verb. Exports the
-  #    response body as an artifact named "body" and the parsed JSON on
-  #    output.json.
+  # 1. One HTTP request. `captureBodyAs` saves the exact response bytes as an
+  #    output artifact, so the next task receives bytes rather than a string
+  #    that had to survive a JSON round trip.
+  #
+  #    A non-2xx response is DATA here, not a failure: this image exits 0 for
+  #    any response it received and reports the code in `status`. The activity
+  #    fails only when the request could not be performed at all.
   - id: fetch
     uses: http
     with:
       op: get
       url: "{{ .inputs.url }}"
-      capture_body_as: body        # artifact name
+      captureBodyAs: body
 
-  # 2. Shell task consuming the upstream artifact. Downstream tasks resolve
-  #    artifacts through the {{ artifact "<task>/<name>" }} helper, which the
-  #    Orker materializes to a local path before execution.
+  # 2. `command` is a JSON ARRAY — argv, never a shell string. Each element is
+  #    exactly one argument, so a rendered value cannot become code whatever it
+  #    contains. Asking for a shell explicitly, as below, puts that boundary in
+  #    the document where it is visible.
+  #
+  #    The artifact helper resolves to the path the Orker staged the upstream
+  #    artifact at, under the read-only /orkstack/input tree.
   - id: transform
     uses: shell
     needs: [fetch]
     with:
-      op: exec                     # exec: the command is the work; non-zero exit fails
-      command: |
-        cat "{{ artifact "fetch/body" }}" | tr -d '\n' | head -c 512
-      capture_stdout_as: title
+      op: exec
+      command:
+        - sh
+        - -c
+        - >-
+          tr -d '\n' < "{{ artifact "fetch/body" }}"
+          | head -c 512
+          > /orkstack/output/artifacts/summary.txt
 
-  # 3. Persist the shell stdout as a new artifact.
-  - id: save
+  # 3. Any regular file written to /orkstack/output/artifacts/ IS an output
+  #    artifact, named exactly as the file. `checksum` reads one and reports
+  #    its digest; it writes no artifact of its own, because there is nothing
+  #    new to store.
+  - id: verify
     uses: file
     needs: [transform]
     with:
-      op: write
-      path: result.txt
-      content: "{{ .tasks.transform.output.stdout }}"
+      op: checksum
+      src: '{{ artifact "transform/summary.txt" }}'

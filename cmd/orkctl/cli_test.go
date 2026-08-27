@@ -30,7 +30,7 @@ func TestApply_RegistersExampleOrkflowAgainstTheRealServer(t *testing.T) {
 	requireGolden(t, "apply.golden", applied.stdout)
 
 	listed := f.run("orkflow", "list").requireExit(t, exitOK)
-	listed.requireContains(t, "hello-ork", "0.1.0")
+	listed.requireContains(t, "hello-ork", "0.2.0")
 }
 
 func TestApply_MissingFileExitsNonZero(t *testing.T) {
@@ -71,7 +71,7 @@ func TestOrkflowGet_ReturnsTheAppliedOrkflow(t *testing.T) {
 
 	f.run("orkflow", "get", "hello-ork").
 		requireExit(t, exitOK).
-		requireContains(t, "hello-ork", "0.1.0", "fetch", "transform", "save", "url")
+		requireContains(t, "hello-ork", "0.2.0", "fetch", "transform", "verify", "url")
 }
 
 func TestOrkflowGet_UnknownOrkflowExitsNonZero(t *testing.T) {
@@ -688,8 +688,8 @@ func TestJSONFlag_ApplyCarriesTheCompiledOrkflow(t *testing.T) {
 	if err := json.Unmarshal([]byte(outcome.stdout), &document); err != nil {
 		t.Fatalf("apply --json is not valid JSON: %v\nstdout:\n%s", err, outcome.stdout)
 	}
-	if document.Orkflow.Name != "hello-ork" || document.Orkflow.Version != "0.1.0" {
-		t.Fatalf("orkflow = %s@%s, want hello-ork@0.1.0",
+	if document.Orkflow.Name != "hello-ork" || document.Orkflow.Version != "0.2.0" {
+		t.Fatalf("orkflow = %s@%s, want hello-ork@0.2.0",
 			document.Orkflow.Name, document.Orkflow.Version)
 	}
 	if len(document.Orkflow.Tasks) != 3 {

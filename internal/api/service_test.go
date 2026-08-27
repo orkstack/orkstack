@@ -175,8 +175,8 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 	wf := applied.Msg.GetOrkflow()
-	if wf.GetName() != "hello-ork" || wf.GetVersion() != "0.1.0" {
-		t.Fatalf("applied orkflow = %s@%s, want hello-ork@0.1.0", wf.GetName(), wf.GetVersion())
+	if wf.GetName() != "hello-ork" || wf.GetVersion() != "0.2.0" {
+		t.Fatalf("applied orkflow = %s@%s, want hello-ork@0.2.0", wf.GetName(), wf.GetVersion())
 	}
 	if len(wf.GetTasks()) != 3 {
 		t.Fatalf("applied orkflow has %d tasks, want 3", len(wf.GetTasks()))
@@ -184,7 +184,7 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 
 	// Exact version.
 	got, err := client.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{
-		Name: "hello-ork", Version: "0.1.0",
+		Name: "hello-ork", Version: "0.2.0",
 	}))
 	if err != nil {
 		t.Fatalf("GetOrkflow: %v", err)
@@ -204,8 +204,8 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrkflow(latest): %v", err)
 	}
-	if latest.Msg.GetOrkflow().GetVersion() != "0.1.0" {
-		t.Errorf("latest version = %q, want 0.1.0", latest.Msg.GetOrkflow().GetVersion())
+	if latest.Msg.GetOrkflow().GetVersion() != "0.2.0" {
+		t.Errorf("latest version = %q, want 0.2.0", latest.Msg.GetOrkflow().GetVersion())
 	}
 
 	listed, err := client.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
@@ -259,8 +259,8 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	if run.GetStatus() != orkstackv1.Status_STATUS_PENDING {
 		t.Errorf("submitted run status = %v, want PENDING", run.GetStatus())
 	}
-	if run.GetOrkflowName() != "hello-ork" || run.GetOrkflowVersion() != "0.1.0" {
-		t.Errorf("run pins %s@%s, want hello-ork@0.1.0", run.GetOrkflowName(), run.GetOrkflowVersion())
+	if run.GetOrkflowName() != "hello-ork" || run.GetOrkflowVersion() != "0.2.0" {
+		t.Errorf("run pins %s@%s, want hello-ork@0.2.0", run.GetOrkflowName(), run.GetOrkflowVersion())
 	}
 	if started := f.starter.startedRuns(); len(started) != 1 || started[0] != "run-001" {
 		t.Errorf("started runs = %v, want [run-001]", started)

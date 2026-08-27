@@ -4,6 +4,21 @@ Performs one HTTP request and reports the response as data. A reference
 implementation of the OCI Activity Contract: `curl` makes the request, `jq`
 writes the result, and there is no OrkStack SDK.
 
+### Why `curl`, when §10.1 says "jq is the only SDK"
+
+That annotation sits on **activity-shell's** Dockerfile, and the rule it states
+is that no image needs an **OrkStack** SDK — not that an image may install no
+packages. An HTTP client that cannot make an HTTP request would be a strange
+reading of it. What the rule forbids is a library that knows about OrkStack:
+some `orkstack-sdk` a workload must link against to be scheduled, report
+progress, or hand back results. This image links against nothing of the sort.
+It reads `/orkstack/input/config.json`, writes `/orkstack/output/values.json`,
+and exits — which is the entire ABI, and is exactly what a third-party image
+built on `curl` would do.
+
+The falsification test for the whole design is the Bash fixture, and it needs
+`cat`, `jq` and a redirect. That is the claim §10.1 is protecting.
+
 ```yaml
 - id: notify
   uses: http

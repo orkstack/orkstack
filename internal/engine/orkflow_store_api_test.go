@@ -114,8 +114,8 @@ func TestApplyOrkflow_WritesTheCompiledOrkflowThroughToTheStore(t *testing.T) {
 		t.Fatalf("store received %d writes, want 1", len(store.puts))
 	}
 	stored := store.puts[0]
-	if stored.GetName() != "hello-ork" || stored.GetVersion() != "0.1.0" {
-		t.Errorf("stored %s@%s, want hello-ork@0.1.0", stored.GetName(), stored.GetVersion())
+	if stored.GetName() != "hello-ork" || stored.GetVersion() != "0.2.0" {
+		t.Errorf("stored %s@%s, want hello-ork@0.2.0", stored.GetName(), stored.GetVersion())
 	}
 	if len(stored.GetTasks()) != 3 {
 		t.Errorf("stored orkflow has %d tasks, want 3", len(stored.GetTasks()))

@@ -1,49 +1,72 @@
-# OrkStack orkflow DSL — v0
-# Every op of the file plugin in one pipeline: write → read → copy → delete.
-# See docs/PLUGIN_DESIGN.md for the `op` pattern.
+# OrkStack orkflow DSL
+#
+# The file activity is deliberately small: copy, checksum, gzip, gunzip, tar,
+# untar, concat, and no eighth op. A workload that needs more builds its own
+# image, which under the OCI Activity Contract costs nothing — every task is
+# already a container, so a bespoke image is not a plugin, an extension or a
+# registration. It is just an image.
+#
+# This pipeline seeds a file with the shell, then round-trips it through
+# compression and verifies the digest survived.
 name: file-read
-version: "0.1.0"
-description: Exercise the file plugin's write, read, copy and delete ops.
+version: "0.2.0"
+description: Seed a file, compress it, decompress it, and prove the bytes round-tripped.
 
 inputs:
   greeting:
     type: string
-    default: "hello from the file plugin"
+    default: "hello from the file activity"
 
 tasks:
-  # 1. `op: write` creates the file and exports it as the artifact `greeting`.
+  # 1. Any regular file written to /orkstack/output/artifacts/ IS an output
+  #    artifact, named exactly as the file. The scan is not recursive, and a
+  #    directory, symlink, device, socket or FIFO there fails the activity —
+  #    §3.5 has no directory semantics, so archive a hierarchy yourself.
   - id: seed
-    uses: file
+    uses: shell
     with:
-      op: write
-      path: notes/greeting.txt
-      content: "{{ .inputs.greeting }}"
-      capture_as: greeting           # artifact name override
+      op: exec
+      command:
+        - sh
+        - -c
+        - printf '%s\n' "{{ .inputs.greeting }}" > /orkstack/output/artifacts/greeting.txt
 
-  # 2. `op: read` stats a materialized upstream artifact and re-exports it, so
-  #    output.size_bytes describes the bytes that actually arrived.
-  - id: reread
+  # 2. The digest of the original bytes. `checksum` writes no artifact: it
+  #    reads a file and reports its digest, and values.json already carries
+  #    the answer.
+  - id: before
     uses: file
     needs: [seed]
     with:
-      op: read
-      path: '{{ artifact "seed/greeting" }}'
-      capture_as: greeting-again
+      op: checksum
+      src: '{{ artifact "seed/greeting.txt" }}'
 
-  # 3. `op: eval` reads the value back through the shell without failing the
-  #    run if the command exits non-zero.
-  - id: show
-    uses: shell
-    needs: [reread]
-    with:
-      op: eval
-      command: 'cat "{{ artifact "reread/greeting-again" }}"'
-
-  # 4. `op: delete` is idempotent: removing a path that was never created
-  #    succeeds with size_bytes 0, so a Temporal retry behaves like attempt 1.
-  - id: cleanup
+  # 3. Compress. The output name defaults to basename(src) + ".gz".
+  - id: compress
     uses: file
-    needs: [show]
+    needs: [seed]
     with:
-      op: delete
-      path: scratch.txt
+      op: gzip
+      src: '{{ artifact "seed/greeting.txt" }}'
+
+  # 4. Decompress, back to the original name.
+  - id: expand
+    uses: file
+    needs: [compress]
+    with:
+      op: gunzip
+      src: '{{ artifact "compress/greeting.txt.gz" }}'
+
+  # 5. Prove the round trip. The two digests are compared in the document, so
+  #    the check is visible rather than buried in an image.
+  - id: verify
+    uses: shell
+    needs: [before, expand]
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - >-
+          test "{{ .tasks.before.output.sha256 }}"
+          = "$(sha256sum "{{ artifact "expand/greeting.txt" }}" | cut -d' ' -f1)"

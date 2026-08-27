@@ -30,8 +30,8 @@ func TestCompile_AcceptsHelloExample(t *testing.T) {
 	if wf.GetName() != "hello-ork" {
 		t.Errorf("name = %q, want hello-ork", wf.GetName())
 	}
-	if wf.GetVersion() != "0.1.0" {
-		t.Errorf("version = %q, want pinned 0.1.0", wf.GetVersion())
+	if wf.GetVersion() != "0.2.0" {
+		t.Errorf("version = %q, want pinned 0.2.0", wf.GetVersion())
 	}
 	if wf.GetSourceYaml() != string(source) {
 		t.Errorf("source_yaml does not round-trip the original bytes")
@@ -40,7 +40,7 @@ func TestCompile_AcceptsHelloExample(t *testing.T) {
 		t.Fatalf("tasks = %d, want %d", got, want)
 	}
 
-	wantOrder := []string{"fetch", "transform", "save"}
+	wantOrder := []string{"fetch", "transform", "verify"}
 	for i, task := range wf.GetTasks() {
 		if task.GetId() != wantOrder[i] {
 			t.Errorf("task[%d].id = %q, want %q", i, task.GetId(), wantOrder[i])
@@ -58,8 +58,8 @@ func TestCompile_AcceptsHelloExample(t *testing.T) {
 	if got := byID["transform"]; len(got) != 1 || got[0] != "fetch" {
 		t.Errorf("transform.needs = %v, want [fetch]", got)
 	}
-	if got := byID["save"]; len(got) != 1 || got[0] != "transform" {
-		t.Errorf("save.needs = %v, want [transform]", got)
+	if got := byID["verify"]; len(got) != 1 || got[0] != "transform" {
+		t.Errorf("verify.needs = %v, want [transform]", got)
 	}
 
 	fetchWith := wf.GetTasks()[0].GetWith().AsMap()

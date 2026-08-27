@@ -1,8 +1,14 @@
-# OrkStack orkflow DSL — v0
-# `op` on the http plugin: POST a JSON body, then archive the echoed response
-# with the file plugin's copy op. See docs/PLUGIN_DESIGN.md for the pattern.
+# OrkStack orkflow DSL
+#
+# POST a JSON body, then archive the echoed response. `op` is the portable
+# spelling of the HTTP method; the full set is get, post, put, patch, delete
+# and head.
+#
+# Header values are quoted before they reach argv, the same argv discipline
+# activity-shell applies to `command`, so a rendered value cannot inject a
+# request argument.
 name: http-post
-version: "0.1.0"
+version: "0.2.0"
 description: "POST a JSON body with `op: post` and archive the echoed response."
 
 inputs:
@@ -14,38 +20,44 @@ inputs:
     default: "hello from orkstack"
 
 tasks:
-  # 1. `op: post` selects the HTTP verb. The full set is
-  #    get | post | put | patch | delete | head; an unknown op fails the task
-  #    permanently rather than sending some other verb.
+  # 1. The request. `captureBodyAs` writes the exact response bytes as an
+  #    output artifact; `json` on the values carries the parsed body when it
+  #    is valid JSON and at most 1 MiB.
   - id: publish
     uses: http
     with:
       op: post
       url: "{{ .inputs.url }}"
       headers:
-        Content-Type: application/json
+        content-type: application/json
       body: |
         {"message": "{{ .inputs.message }}"}
-      capture_body_as: response      # exact response bytes, as an artifact
+      captureBodyAs: response
 
-  # 2. `op: copy` moves the materialized response artifact to a named file.
-  #    The artifact helper resolves to a local path inside this task's workdir.
+  # 2. `copy` re-exports the materialized response under a chosen name. A
+  #    relative source resolves under /orkstack/input/, and a `..` component is
+  #    REFUSED rather than normalized — a path can never be argued out of the
+  #    workspace.
   - id: archive
     uses: file
     needs: [publish]
     with:
       op: copy
-      from: '{{ artifact "publish/response" }}'
-      to: response.json
-      capture_as: response-json
+      src: '{{ artifact "publish/response" }}'
+      as: response.json
 
-  # 3. `op: eval` asks the shell a question: the answer lands on output.value.
+  # 3. An HTTP status is data. Branching on it in the document is the whole
+  #    point of the image exiting 0 for any response it received.
   - id: summarize
     uses: shell
     needs: [publish, archive]
+    condition: '{{ eq .tasks.publish.output.status 200.0 }}'
     with:
-      op: eval
-      command: |
-        printf 'status=%s bytes=%s' \
-          "{{ .tasks.publish.output.status }}" \
-          "$(wc -c < "{{ artifact "archive/response-json" }}" | tr -d ' ')"
+      op: exec
+      command:
+        - sh
+        - -c
+        - >-
+          printf 'status=%s bytes=%s\n'
+          "{{ .tasks.publish.output.status }}"
+          "$(wc -c < "{{ artifact "archive/response.json" }}" | tr -d ' ')"

@@ -44,3 +44,4 @@ ui/dist/
 
 # Process state written by scripts/stack.sh (make up).
 .run/
+__pycache__/
