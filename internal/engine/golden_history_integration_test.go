@@ -21,7 +21,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // goldenHistoryPath is the committed replay fixture. replay_test.go replays it
@@ -80,17 +79,17 @@ func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	}))
 	orkerWorker.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-			return task.ExecuteTaskResult{
-				TaskID: in.TaskID,
-				Output: plugin.Payload{
-					"echoed_task":    in.TaskID,
-					"echoed_plugin":  in.Plugin,
+		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			return &orkstackv1.ExecuteTaskResult{
+				TaskId: in.TaskId,
+				ValuesJson: valuesJSON(map[string]any{
+					"echoed_task":    in.TaskId,
+					"echoed_plugin":  in.Image.GetReference(),
 					"upstream_count": float64(len(in.Upstream)),
-				},
-				Artifacts: []plugin.ArtifactRef{{
+				}),
+				Artifacts: []*orkstackv1.ArtifactRef{{
 					Name: "report",
-					URI:  fmt.Sprintf("file:///tmp/%s/%s.txt", in.RunID, in.TaskID),
+					Uri:  fmt.Sprintf("file:///tmp/%s/%s.txt", in.RunId, in.TaskId),
 				}},
 			}, nil
 		},
@@ -173,12 +172,12 @@ func goldenOrkflow() *orkstackv1.Orkflow {
 		Name:    "golden-replay",
 		Version: "1.0.0",
 		Tasks: []*orkstackv1.Task{
-			{Id: "fetch", Plugin: "http", With: with(map[string]any{"url": "https://example.invalid/a"})},
-			{Id: "transform", Plugin: "shell", Needs: []string{"fetch"}, With: with(map[string]any{"run": "echo transform"})},
-			{Id: "sidecar", Plugin: "shell", Needs: []string{"fetch"}, With: with(map[string]any{"run": "echo sidecar"})},
-			{Id: "gated", Plugin: "shell", Needs: []string{"transform"}, Condition: "false"},
-			{Id: "after-gate", Plugin: "shell", Needs: []string{"gated"}},
-			{Id: "publish", Plugin: "file", Needs: []string{"transform", "sidecar"},
+			{Id: "fetch", Uses: "http", With: with(map[string]any{"url": "https://example.invalid/a"})},
+			{Id: "transform", Uses: "shell", Needs: []string{"fetch"}, With: with(map[string]any{"run": "echo transform"})},
+			{Id: "sidecar", Uses: "shell", Needs: []string{"fetch"}, With: with(map[string]any{"run": "echo sidecar"})},
+			{Id: "gated", Uses: "shell", Needs: []string{"transform"}, Condition: "false"},
+			{Id: "after-gate", Uses: "shell", Needs: []string{"gated"}},
+			{Id: "publish", Uses: "file", Needs: []string{"transform", "sidecar"},
 				With: with(map[string]any{"path": "/tmp/out.txt"})},
 		},
 	}

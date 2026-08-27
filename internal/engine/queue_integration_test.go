@@ -23,7 +23,6 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // privateOrkerQueue names a task queue no other process on this cluster polls.
@@ -139,27 +138,27 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	})
 	orkerWorker.RegisterActivityWithOptions(
-		func(actCtx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		func(actCtx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			observedMu.Lock()
-			observedQueues[in.TaskID] = activity.GetInfo(actCtx).TaskQueue
+			observedQueues[in.TaskId] = activity.GetInfo(actCtx).TaskQueue
 			observedMu.Unlock()
-			return task.ExecuteTaskResult{
-				TaskID: in.TaskID,
-				Output: plugin.Payload{"echoed_task": in.TaskID},
+			return &orkstackv1.ExecuteTaskResult{
+				TaskId:     in.TaskId,
+				ValuesJson: valuesJSON(map[string]any{"echoed_task": in.TaskId}),
 			}, nil
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
-	// A real Orker answers plugin discovery on its own channel too
+	// A real Orker answers the liveness probe on its own channel too
 	// (cmd/orker registers this), which is what ListPools asks a served pool.
 	orkerWorker.RegisterActivityWithOptions(
-		func(context.Context) ([]plugin.Descriptor, error) {
-			return []plugin.Descriptor{
-				{Name: "http", Version: "0.1.0"},
-				{Name: "shell", Version: "0.1.0"},
+		func(context.Context) (*orkstackv1.DescribeOrkerResult, error) {
+			return &orkstackv1.DescribeOrkerResult{
+				OrkerId:     "orker-queue-integration",
+				RuntimeName: "docker",
 			}, nil
 		},
-		activity.RegisterOptions{Name: task.ActivityListPlugins},
+		activity.RegisterOptions{Name: task.ActivityDescribeOrker},
 	)
 
 	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
@@ -197,8 +196,8 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		// With RawQueue set they are the pair that can disagree: the submit
 		// below is checked against the private channel, and ListPools at the
 		// end has to report the same pool from the same channel.
-		Pools:       engine.NewTemporalPoolProbe(temporalClient),
-		PoolPlugins: starter,
+		Pools:      engine.NewTemporalPoolProbe(temporalClient),
+		PoolOrkers: starter,
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -304,7 +303,7 @@ name: pool-main-pinned
 version: "0.1.0"
 tasks:
   - id: pinned-echo
-    plugin: shell
+    uses: shell
     pool: %s
     with:
       op: exec
@@ -375,10 +374,6 @@ tasks:
 		t.Errorf("ListPools reports %d Orkers on pool %q; the one Orker this test started "+
 			"is on the engine's own orker queue %q and just executed %d tasks",
 			got, task.DefaultPool, orkerQueue, len(observedQueues))
-	}
-	if got := strings.Join(main.GetPlugins(), ","); got != "http,shell" {
-		t.Errorf("ListPools reports plugins %q on pool %q, want http,shell — the answer "+
-			"has to come from the Orkers actually serving the pool", got, task.DefaultPool)
 	}
 	// On the record, for proof/M10.2: one engine, one configuration, both
 	// answers.

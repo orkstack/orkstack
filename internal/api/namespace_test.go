@@ -171,7 +171,7 @@ name: deploy
 version: 1.0.0
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with: {command: "echo build"}
 `
 	const deployInB = `
@@ -180,10 +180,10 @@ name: deploy
 version: 1.0.0
 tasks:
   - id: ship
-    plugin: shell
+    uses: shell
     with: {command: "echo ship"}
   - id: verify
-    plugin: shell
+    uses: shell
     needs: [ship]
     with: {command: "echo verify"}
 `
@@ -324,7 +324,7 @@ func TestSubmitRun_OneIdempotencyKeyInTwoNamespacesStartsTwoRuns(t *testing.T) {
 name: deploy
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with: {command: "echo build"}
 `
 	claimer := newSharedClaimer()
@@ -399,7 +399,7 @@ namespace: payments
 name: nightly-close
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo settle"}
 `
 	reg := newFakeRegistry(&orkstackv1.Namespace{Name: "payments"})
@@ -453,7 +453,7 @@ namespace: payments
 name: nightly-close
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo settle"}
 `
 	reg := newFakeRegistry(
@@ -485,7 +485,7 @@ func TestApplyOrkflow_SelectorAdoptsADocumentThatNamesNoNamespace(t *testing.T) 
 name: deploy
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with: {command: "echo build"}
 `
 	reg := newFakeRegistry(&orkstackv1.Namespace{Name: "staging"})
@@ -697,7 +697,7 @@ namespace: payments
 name: nightly-close
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo settle"}
 `
 	reg := newFakeRegistry(&orkstackv1.Namespace{Name: "payments"})
@@ -844,7 +844,7 @@ func TestRunID_IsAnAddressInsideANamespaceNotACapabilityOverTheDeployment(t *tes
 name: deploy
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with: {command: "echo build"}
 `
 	starter := &fakeStarter{}
@@ -965,7 +965,7 @@ func TestWebSocketBridge_RefusesARunOfAnotherNamespace(t *testing.T) {
 name: deploy
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with: {command: "echo build"}
 `
 	counter := 0

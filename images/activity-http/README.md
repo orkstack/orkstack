@@ -1,0 +1,90 @@
+# activity-http
+
+Performs one HTTP request and reports the response as data. A reference
+implementation of the OCI Activity Contract: `curl` makes the request, `jq`
+writes the result, and there is no OrkStack SDK.
+
+```yaml
+- id: notify
+  uses: http
+  with:
+    op: post
+    url: https://example.test/hooks/deploy
+    headers:
+      content-type: application/json
+    body: '{"status":"ok"}'
+```
+
+## Configuration
+
+Read from `/orkstack/input/config.json` (§3.3).
+
+| Key | Type | Meaning |
+|---|---|---|
+| `op` | string | `get` (default), `post`, `put`, `patch`, `delete`, `head` |
+| `url` | string | **Required.** The absolute request URL. |
+| `headers` | object | Request headers, one per key |
+| `body` | string | Request body, sent verbatim |
+| `timeoutSeconds` | number | Passed to curl as `--max-time` |
+| `captureBodyAs` | string | Save the response body as this output artifact |
+
+`op` is the portable spelling of the HTTP method; the two are the same thing.
+Header values are quoted before they reach argv, so a rendered value cannot
+inject a curl argument — the same argv discipline `activity-shell` applies to
+`command`.
+
+## A non-2xx response is not a failure
+
+**This image exits `0` for any response it received**, and reports the code in
+`status`. An HTTP status is data; an activity failure is a failure to *perform*
+the request. Branch on `status` in your Orkflow:
+
+```yaml
+condition: '{{ eq .tasks.notify.output.status 200.0 }}'
+```
+
+The activity fails (non-zero exit) only when the request could not be
+performed at all — DNS failure, connection refused, TLS failure, or the
+request exceeding `timeoutSeconds`. Those are the cases a retry can fix, so
+they are the cases that become retryable `ActivityFailed`.
+
+This is a documented contract of *this image*, carried over unchanged from the
+in-process HTTP plugin it replaces. It is not a platform rule.
+
+## Output
+
+`/orkstack/output/values.json`:
+
+```json
+{
+  "status": 200,
+  "headers": {"content-type": "application/json", "content-length": "18"},
+  "durationMs": 42.318,
+  "sizeBytes": 18,
+  "json": {"ok": true}
+}
+```
+
+| Key | Presence | Meaning |
+|---|---|---|
+| `status` | always | HTTP status code |
+| `headers` | always | Response headers. A repeated header keeps its last value. |
+| `durationMs` | always | Wall-clock time of the request, milliseconds |
+| `sizeBytes` | always | Response body size |
+| `json` | conditional | The parsed body, present only when it is valid JSON **and** at most 1 MiB. Absence means "not JSON, or too large" — never "empty". |
+
+When `captureBodyAs` is set, the raw response body is written to
+`/orkstack/output/artifacts/<name>` and becomes an output artifact. It must be
+a plain file name: no `/`, and not `.` or `..`.
+
+## Cancellation
+
+curl runs in the background under a TERM trap (§10.2 rule 2a), so cancellation
+interrupts an in-flight request within the grace period rather than being
+escalated to SIGKILL.
+
+## Building
+
+```bash
+make -C images image-http
+```

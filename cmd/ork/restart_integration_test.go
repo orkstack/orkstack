@@ -57,7 +57,7 @@ version: "%s"
 description: %s
 tasks:
   - id: fetch
-    plugin: http
+    uses: http
     with:
       op: get
       url: "https://example.test/json"
@@ -143,7 +143,7 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 			reloaded.GetName(), reloaded.GetVersion(), reloaded.GetDescription(),
 			probeOrkflowName, version, nonce)
 	}
-	if len(reloaded.GetTasks()) != 1 || reloaded.GetTasks()[0].GetPlugin() != "http" {
+	if len(reloaded.GetTasks()) != 1 || reloaded.GetTasks()[0].GetUses() != "http" {
 		t.Fatalf("engine B served a truncated definition: %v", reloaded.GetTasks())
 	}
 	fmt.Fprintf(transcript, "$ engine B (%s): GetOrkflow %s\n  version: %s\n  description: %s\n  tasks: %d\n\n",

@@ -27,11 +27,11 @@ const poolDocument = `
 name: pool-routing
 tasks:
   - id: crunch
-    plugin: shell
+    uses: shell
     pool: gpu
     with: {command: "echo crunch"}
   - id: tidy
-    plugin: shell
+    uses: shell
     needs: [crunch]
     with: {command: "echo tidy"}
 `
@@ -41,8 +41,8 @@ tasks:
 // message to the word the author typed.
 func TestRunWorkflow_ScheduledEventNamesThePoolNotTheQueue(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
 	// A raw operator queue, as ORK_ORKER_QUEUE sets for an isolated agent
@@ -97,8 +97,8 @@ func TestRunWorkflow_ScheduledEventNamesThePoolNotTheQueue(t *testing.T) {
 // without reading Temporal, and answers it in pools.
 func TestRunWorkflow_TaskRunRecordsThePoolItRanOn(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-projection",
@@ -130,14 +130,14 @@ namespace: payments
 name: pool-input
 tasks:
   - id: crunch
-    plugin: shell
+    uses: shell
     pool: gpu
   - id: tidy
-    plugin: shell
+    uses: shell
 `
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-input",
@@ -185,14 +185,14 @@ func TestRunWorkflow_TheReportedPoolNamesTheOrkersTheTaskReached(t *testing.T) {
 name: pool-agreement
 tasks:
   - id: silent
-    plugin: shell
+    uses: shell
     with: {command: "echo silent"}
   - id: named
-    plugin: shell
+    uses: shell
     pool: main
     with: {command: "echo named"}
   - id: crunch
-    plugin: shell
+    uses: shell
     pool: gpu
     with: {command: "echo crunch"}
 `
@@ -211,8 +211,8 @@ tasks:
 	} {
 		t.Run(channel.name, func(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
-			h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-				return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+			h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+				return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 			})
 			// Through the real submit decision, because that is where the two
 			// halves are now resolved: PoolResolver.Plan stamps each task with

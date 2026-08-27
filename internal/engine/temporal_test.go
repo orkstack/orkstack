@@ -75,8 +75,8 @@ func twoTaskOrkflow() *orkstackv1.Orkflow {
 		Name:    "hello-ork",
 		Version: "0.1.0",
 		Tasks: []*orkstackv1.Task{
-			{Id: "fetch", Plugin: "http"},
-			{Id: "render", Plugin: "shell", Pool: "gpu"},
+			{Id: "fetch", Uses: "http"},
+			{Id: "render", Uses: "shell", Pool: "gpu"},
 		},
 	}
 }

@@ -34,10 +34,26 @@ message Payload {
   google.protobuf.Struct data = 1;
 }
 
+// FailureCategory is the AGENTS.md §4 category of a terminal failure. Its
+// value names are also the exact Temporal ApplicationError type strings, so a
+// RetryPolicy's non_retryable_error_types can name them (§7.2).
+enum FailureCategory {
+  FAILURE_CATEGORY_UNSPECIFIED = 0;
+  FAILURE_CATEGORY_ACTIVITY_FAILED = 1;
+  FAILURE_CATEGORY_INFRASTRUCTURE_ERROR = 2;
+  FAILURE_CATEGORY_CONTRACT_VIOLATION = 3;
+  FAILURE_CATEGORY_TIMED_OUT = 4;
+  FAILURE_CATEGORY_CANCELLED = 5;
+}
+
 // Error captures a structured failure for a run or task run.
 message Error {
-  string code = 1;      // stable machine code, e.g. "PLUGIN_TIMEOUT"
+  string code = 1;      // stable machine code, e.g. "VALUES_MISSING"
   string message = 2;   // human readable
   string details = 3;   // optional stack/context
   bool retryable = 4;
+  // category is the AGENTS.md §4 failure category this error belongs to. It
+  // is what drives NonRetryableErrorTypes in ActivityOptions, so it is part
+  // of the replay-visible contract and not merely display data.
+  FailureCategory category = 5;
 }

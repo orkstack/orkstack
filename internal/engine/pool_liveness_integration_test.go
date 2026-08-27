@@ -15,6 +15,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 )
@@ -163,8 +164,8 @@ func startPollingOrker(t *testing.T, c client.Client, queue, identity string) wo
 		Identity:                    identity,
 	})
 	w.RegisterActivityWithOptions(
-		func(context.Context, task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-			return task.ExecuteTaskResult{}, nil
+		func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			return &orkstackv1.ExecuteTaskResult{}, nil
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)

@@ -4,15 +4,30 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	enumspb "go.temporal.io/api/enums/v1"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
+
+// orkerHeartbeatTimeout is what the engine sets in ActivityOptions, and the
+// number the Orker's heartbeat tick rate is derived from.
+//
+// The two halves must agree or cancellation silently stops working: Temporal
+// delivers cancellation to an activity ONLY through a heartbeat response, so
+// an activity that never calls RecordHeartbeat never observes ctx.Done().
+// Before this, no HeartbeatTimeout was set anywhere in the tree and the Orker
+// heartbeated only between phases, which meant cancellation could not reach a
+// running container at all — the largest correctness gap in the system (§6.3).
+const orkerHeartbeatTimeout = 30 * time.Second
 
 const (
 	// RunWorkflowType is the registered Temporal workflow type for a run. It
@@ -158,9 +173,16 @@ type runState struct {
 	order    []string
 	tasks    map[string]*orkstackv1.Task
 	taskRuns map[string]*orkstackv1.TaskRun
-	results  map[string]task.UpstreamResult
-	closure  map[string][]string
-	leaves   map[string]struct{}
+	// results is each completed task's ExecuteTaskResult, which is what an
+	// UpstreamRef is projected from. It holds REFERENCES, not bytes.
+	results map[string]*orkstackv1.ExecuteTaskResult
+	// outputs is each completed task's decoded values.json, for condition
+	// evaluation and for the run's aggregated output. It exists separately
+	// from results because a condition needs a map and an upstream ref needs
+	// a reference, and conflating them is how bytes end up on the wire.
+	outputs map[string]map[string]any
+	closure map[string][]string
+	leaves  map[string]struct{}
 
 	createdAt *timestamppb.Timestamp
 	startedAt *timestamppb.Timestamp
@@ -184,10 +206,11 @@ func newRunState(
 		wf:       wf,
 		plan:     plan,
 		input:    mergedInput,
-		inputs:   map[string]any(payloadToPlugin(mergedInput)),
+		inputs:   payloadMap(mergedInput),
 		tasks:    map[string]*orkstackv1.Task{},
 		taskRuns: map[string]*orkstackv1.TaskRun{},
-		results:  map[string]task.UpstreamResult{},
+		results:  map[string]*orkstackv1.ExecuteTaskResult{},
+		outputs:  map[string]map[string]any{},
 		closure:  map[string][]string{},
 		leaves:   map[string]struct{}{},
 		// CreatedAt is the execution's own start time, taken from the
@@ -203,7 +226,6 @@ func newRunState(
 		state.tasks[t.GetId()] = t
 		state.taskRuns[t.GetId()] = &orkstackv1.TaskRun{
 			TaskId: t.GetId(),
-			Plugin: t.GetPlugin(),
 			Status: orkstackv1.Status_STATUS_PENDING,
 		}
 		state.leaves[t.GetId()] = struct{}{}
@@ -295,7 +317,7 @@ func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
 		}
 	}
 
-	shouldRun, err := evaluateCondition(s.tasks[id].GetCondition(), s.inputs, s.upstreamFor(id))
+	shouldRun, err := evaluateCondition(s.tasks[id].GetCondition(), s.inputs, s.upstreamOutputs(id))
 	if err != nil {
 		return false, err
 	}
@@ -321,14 +343,40 @@ func (s *runState) markSkipped(ctx workflow.Context, id, reason string) error {
 
 // upstreamFor returns the results of every completed task in id's transitive
 // needs closure.
-func (s *runState) upstreamFor(id string) map[string]task.UpstreamResult {
-	upstream := make(map[string]task.UpstreamResult, len(s.closure[id]))
+// upstreamFor returns one UpstreamRef per completed task in id's transitive
+// needs closure.
+//
+// It carries REFERENCES ONLY. Fan-in is O(ancestors) small records, never a
+// transitive copy of every ancestor's payload: the Orker fetches each
+// ancestor's values.json and artifacts from the store, which is where bytes
+// live (OQ-2, AGENTS.md §2.2).
+func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
+	refs := make([]*orkstackv1.UpstreamRef, 0, len(s.closure[id]))
 	for _, need := range s.closure[id] {
-		if result, ok := s.results[need]; ok {
-			upstream[need] = result
+		result, ok := s.results[need]
+		if !ok {
+			continue
+		}
+		refs = append(refs, &orkstackv1.UpstreamRef{
+			TaskId:    need,
+			CommitUri: result.GetCommit().GetUri(),
+			Values:    result.GetValuesRef(),
+			Artifacts: result.GetArtifacts(),
+		})
+	}
+	return refs
+}
+
+// upstreamOutputs is the condition-evaluation view of the same closure: each
+// completed ancestor's decoded values.json.
+func (s *runState) upstreamOutputs(id string) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(s.closure[id]))
+	for _, need := range s.closure[id] {
+		if values, ok := s.outputs[need]; ok {
+			out[need] = values
 		}
 	}
-	return upstream
+	return out
 }
 
 // schedule emits the scheduled event and starts the ExecuteTask activity.
@@ -358,42 +406,132 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		return nil, err
 	}
 
-	timeout := time.Duration(timeoutSecondsFor(t)) * time.Second
+	// The three timeouts must not be confused, and this is where the
+	// confusion would happen (§6.3):
+	//
+	//   timeout_seconds       the TASK's wall clock. The ORKER enforces it,
+	//                         kills the container, and returns
+	//                         TimedOut/CONTAINER_TIMEOUT. It fires first.
+	//   HeartbeatTimeout      Temporal's dead-worker detector. Without it the
+	//                         SDK throttles heartbeats and a dead Orker is
+	//                         only noticed at StartToClose.
+	//   StartToCloseTimeout   the backstop for an Orker wedged OUTSIDE the
+	//                         container run. It has to be generous, because
+	//                         inside it sit input staging, the image pull,
+	//                         hashing, and uploading up to
+	//                         artifact_max_count x artifact_max_bytes.
+	//
+	// A fixed transfer budget was the earlier draft and is not survivable:
+	// retryPolicyFor returns MaximumAttempts: 1 whenever `retry:` is absent,
+	// so a legal large upload would be terminal on its first timeout with no
+	// retry at all. The budget is therefore resolved at submit, where process
+	// configuration is readable, and carried on the plan — the workflow only
+	// adds it up, which keeps this a pure function of its arguments.
+	taskTimeout := time.Duration(timeoutSecondsFor(t)) * time.Second
+	grace := time.Duration(graceSecondsFor(t)) * time.Second
+	startToClose := taskTimeout + grace + time.Duration(s.plan.TransferBudgetSeconds)*time.Second
+
 	activityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		TaskQueue:           queue,
-		StartToCloseTimeout: timeout,
+		StartToCloseTimeout: startToClose,
+		// Temporal delivers cancellation to an activity ONLY through a
+		// heartbeat response. Without this timeout the SDK throttles
+		// heartbeats to a 30 s default and cancellation cannot reach a
+		// running container at all.
+		HeartbeatTimeout: orkerHeartbeatTimeout,
+		// Without this the workflow may mark the task terminal before the
+		// Orker has finished killing the container and cleaning up.
+		WaitForCancellation: true,
 		RetryPolicy:         retryPolicyFor(t),
 	})
 
-	input := task.ExecuteTaskInput{
-		RunID:          s.runID,
+	commitURI, err := s.commitURIFor(id)
+	if err != nil {
+		return nil, err
+	}
+	namespace := s.wf.GetNamespace()
+	input := &orkstackv1.ExecuteTaskInput{
+		RunId:          s.runID,
 		OrkflowName:    s.wf.GetName(),
 		OrkflowVersion: s.wf.GetVersion(),
-		Namespace:      s.wf.GetNamespace(),
-		Pool:           pool,
-		TaskID:         id,
-		Plugin:         t.GetPlugin(),
-		With:           t.GetWith().AsMap(),
-		RunInput:       payloadToPlugin(s.input),
-		Upstream:       s.upstreamFor(id),
-		TimeoutSeconds: timeoutSecondsFor(t),
+		// The canonical definition digest is Phase 3's work (§4.4, §11.3): it is
+		// computed at APPLY, over the compiled definition, and stamped into the
+		// immutable version document. Phase 1 freezes the wire field and leaves
+		// it empty, which the commit-identity check tolerates because it
+		// compares this side against the stored side and both are empty until
+		// Phase 3 fills them.
+		OrkflowDefinitionDigest: "",
+		Namespace:               namespace,
+		Pool:                    pool,
+		TaskId:                  id,
+
+		IdempotencyKey: task.IdempotencyKeyFor(namespace, s.runID, id),
+		CommitUri:      commitURI,
+
+		// The image is the APPLY-TIME resolution stamped into the immutable
+		// version document. The engine never resolves a tag here: workflow
+		// code may not reach a registry, and a run must execute what its
+		// definition pinned even if the tag has since moved (§4.1).
+		Image:   t.GetImage(),
+		Command: t.GetCommand(),
+		// RAW, un-rendered. Rendering stays in the Orker because
+		// `artifact "<task>/<name>"` resolves to a container path only the
+		// Orker knows after staging (OQ-1).
+		With:    t.GetWith(),
+		Env:     t.GetEnv(),
+		Secrets: t.GetSecrets(),
+
+		TimeoutSeconds:                 int32(timeoutSecondsFor(t)),
+		CancellationGracePeriodSeconds: graceSecondsFor(t),
+		Resources:                      t.GetResources(),
+		Network:                        t.GetNetwork(),
+		Limits:                         s.plan.Limits.Proto(),
+
+		RunInput: s.input,
+		Upstream: s.upstreamFor(id),
+
+		RunAsOrkerUser: t.GetRunAsOrkerUser(),
+	}
+	// The wire bound is checked HERE, deterministically, before scheduling.
+	// Discovering it Temporal-side would produce an error nobody can
+	// attribute to a task.
+	if err := task.CheckInputSize(input); err != nil {
+		return nil, temporal.NewNonRetryableApplicationError(
+			err.Error(), task.CategoryContractViolation, err)
 	}
 	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
+}
+
+// commitURIFor composes one activity's commit URI.
+//
+// It is plan.CommitRoot + "/" + artifacts.CommitKey(...), which is a pure
+// function of workflow arguments and replays identically. artifacts.CommitKey
+// is the single shared renderer — the Orker MUST use the value it was sent
+// rather than re-deriving one, so there is exactly one convention with exactly
+// one owner (§5.2).
+//
+// An empty CommitRoot yields an empty URI rather than an error: a plan built
+// before the commit protocol existed, or by a test harness, still runs, and
+// the Orker simply has no commit to check or write.
+func (s *runState) commitURIFor(taskID string) (string, error) {
+	if s.plan.CommitRoot == "" {
+		return "", nil
+	}
+	key, err := artifacts.CommitKey(s.wf.GetNamespace(), s.runID, taskID)
+	if err != nil {
+		return "", temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("task %q: compose the commit uri: %v", taskID, err), "INVALID_COMMIT_KEY", err)
+	}
+	return strings.TrimSuffix(s.plan.CommitRoot, "/") + "/" + key, nil
 }
 
 // collect awaits one task future and records its outcome.
 func (s *runState) collect(ctx workflow.Context, id string, future workflow.Future) error {
 	taskRun := s.taskRuns[id]
 
-	var result task.ExecuteTaskResult
-	if err := future.Get(ctx, &result); err != nil {
-		taskRun.Status = orkstackv1.Status_STATUS_FAILED
-		taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
-		taskRun.Error = &orkstackv1.Error{
-			Code:    "TASK_FAILED",
-			Message: err.Error(),
-			Details: fmt.Sprintf("task %q (plugin %q)", id, s.tasks[id].GetPlugin()),
-		}
+	result := &orkstackv1.ExecuteTaskResult{}
+	if err := future.Get(ctx, result); err != nil {
+		s.recordFailure(ctx, id, err)
 		if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
 			orkstackv1.Status_STATUS_FAILED, err.Error()); emitErr != nil {
 			return emitErr
@@ -401,26 +539,137 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 		return err
 	}
 
-	output, convErr := payloadFromPlugin(result.Output)
+	taskRun.Status = orkstackv1.Status_STATUS_SUCCEEDED
+	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
+	taskRun.Artifacts = result.GetArtifacts()
+	taskRun.SystemArtifacts = result.GetSystemArtifacts()
+	taskRun.ValuesRef = result.GetValuesRef()
+	taskRun.Commit = result.GetCommit()
+	taskRun.ExitCode = result.GetExitCode()
+	if result.GetAttempt() > 0 {
+		taskRun.Attempt = result.GetAttempt()
+	}
+
+	// TaskRun.output is the inline copy, decoded FOR DISPLAY ONLY. values_ref
+	// is the authoritative reference, and a downstream task reads the
+	// committed object rather than this.
+	values := decodeValues(result.GetValuesJson())
+	output, convErr := payloadOf(values)
 	if convErr != nil {
 		taskRun.Status = orkstackv1.Status_STATUS_FAILED
 		taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
-		taskRun.Error = &orkstackv1.Error{Code: "TASK_OUTPUT_INVALID", Message: convErr.Error()}
+		taskRun.Error = &orkstackv1.Error{
+			Code:     "TASK_OUTPUT_INVALID",
+			Message:  convErr.Error(),
+			Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
+		}
 		if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
 			orkstackv1.Status_STATUS_FAILED, convErr.Error()); emitErr != nil {
 			return emitErr
 		}
 		return convErr
 	}
-
-	taskRun.Status = orkstackv1.Status_STATUS_SUCCEEDED
-	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
 	taskRun.Output = output
-	taskRun.Artifacts = artifactsFromPlugin(result.Artifacts)
-	s.results[id] = task.UpstreamResult{Output: result.Output, Artifacts: result.Artifacts}
+	s.results[id] = result
+	s.outputs[id] = values
 
 	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, id,
 		orkstackv1.Status_STATUS_SUCCEEDED, "task succeeded")
+}
+
+// recordFailure reads what the Orker actually said and records it as DATA.
+//
+// The engine stops flattening everything into TASK_FAILED with a stringified
+// error. It reads the ApplicationError type — which IS the §8.1 category — and
+// the ActivityFailureDetail, and populates Error{code, message, details,
+// retryable, category}. The event type stays TASK_FAILED; the category is data
+// on the error, so the UI can say "contract violation — this image did not
+// write values.json" instead of rendering a Go error string (§8.3).
+//
+// The failure detail is what keeps a failed attempt as inspectable as a
+// successful one: without it, an exit-1 task's uploaded test report and
+// captured stderr would be unreachable.
+func (s *runState) recordFailure(ctx workflow.Context, id string, cause error) {
+	taskRun := s.taskRuns[id]
+	taskRun.Status = orkstackv1.Status_STATUS_FAILED
+	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
+
+	failure := &orkstackv1.Error{
+		Code:    "TASK_FAILED",
+		Message: cause.Error(),
+		Details: fmt.Sprintf("task %q", id),
+	}
+
+	var applicationErr *temporal.ApplicationError
+	if errors.As(cause, &applicationErr) {
+		category := applicationErr.Type()
+		failure.Category = categoryEnumFor(category)
+		failure.Retryable = !applicationErr.NonRetryable()
+
+		// The target is a **ActivityFailureDetail: Details assigns the value
+		// it holds, which is a *ActivityFailureDetail both in-process and
+		// after the proto converter decodes it from the wire.
+		var detail *orkstackv1.ActivityFailureDetail
+		if err := applicationErr.Details(&detail); err == nil && detail.GetReasonCode() != "" {
+			failure.Code = detail.GetReasonCode()
+			if detail.GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED {
+				failure.Category = detail.GetCategory()
+			}
+			taskRun.Artifacts = detail.GetArtifacts()
+			taskRun.SystemArtifacts = detail.GetSystemArtifacts()
+			taskRun.ExitCode = detail.GetExitCode()
+			if detail.GetAttempt() > 0 {
+				taskRun.Attempt = detail.GetAttempt()
+			}
+			if notes := detail.GetScanNotes(); len(notes) > 0 {
+				// Scan notes are notes ON the workload's error, never a
+				// replacement for it (§7.1 step 14).
+				failure.Details = failure.Details + "; " + strings.Join(notes, "; ")
+			}
+		}
+	}
+
+	// A Temporal-produced timeout arrives as *TimeoutError rather than an
+	// ApplicationError, so the category is read from the timeout TYPE. A
+	// HEARTBEAT timeout is the one timeout that stays RETRYABLE regardless:
+	// it means the Orker died, which is an infrastructure fact about the
+	// host and not a statement about the workload (§8.1).
+	var timeoutErr *temporal.TimeoutError
+	if errors.As(cause, &timeoutErr) {
+		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
+		failure.Code = "ACTIVITY_TIMEOUT"
+		if timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_HEARTBEAT {
+			failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+			failure.Code = "ORKER_HEARTBEAT_TIMEOUT"
+			failure.Retryable = true
+		}
+	}
+	if temporal.IsCanceledError(cause) {
+		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
+		failure.Code = "TASK_CANCELED"
+		failure.Retryable = false
+	}
+	taskRun.Error = failure
+}
+
+// categoryEnumFor maps an ApplicationError type string to the proto enum.
+// The category names ARE the type strings, which is what makes
+// NonRetryableErrorTypes work at all (§8.1).
+func categoryEnumFor(category string) orkstackv1.FailureCategory {
+	switch category {
+	case task.CategoryActivityFailed:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED
+	case task.CategoryInfrastructureError:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+	case task.CategoryContractViolation:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
+	case task.CategoryTimedOut:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
+	case task.CategoryCancelled:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
+	default:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED
+	}
 }
 
 // fail terminates the run after a task failure or cancellation.
@@ -462,11 +711,11 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 		if _, leaf := s.leaves[id]; !leaf {
 			continue
 		}
-		if result, ok := s.results[id]; ok {
-			aggregated[id] = map[string]any(result.Output)
+		if values, ok := s.outputs[id]; ok {
+			aggregated[id] = values
 		}
 	}
-	output, err := payloadFromPlugin(aggregated)
+	output, err := payloadOf(aggregated)
 	if err != nil {
 		return nil, err
 	}
@@ -617,6 +866,16 @@ func (s *runState) poolForTask(t *orkstackv1.Task) string {
 		return t.GetPool()
 	}
 	return r.Pool
+}
+
+// graceSecondsFor is the SIGTERM-to-SIGKILL window for one task. The default
+// is AGENTS.md §3.3's 30 seconds; ordinary Unix signal handling is meant to be
+// enough for cleanup inside it.
+func graceSecondsFor(t *orkstackv1.Task) int32 {
+	if seconds := t.GetCancellationGracePeriodSeconds(); seconds > 0 {
+		return seconds
+	}
+	return 30
 }
 
 func timeoutSecondsFor(t *orkstackv1.Task) int {

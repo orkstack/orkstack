@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
@@ -23,7 +22,6 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // fakeStarter records started runs instead of talking to Temporal.
@@ -154,8 +152,8 @@ func (f *fixture) runClient() orkstackv1connect.RunServiceClient {
 	return orkstackv1connect.NewRunServiceClient(f.client, f.baseURL)
 }
 
-func (f *fixture) pluginClient() orkstackv1connect.PluginServiceClient {
-	return orkstackv1connect.NewPluginServiceClient(f.client, f.baseURL)
+func (f *fixture) activityClient() orkstackv1connect.ActivityServiceClient {
+	return orkstackv1connect.NewActivityServiceClient(f.client, f.baseURL)
 }
 
 func helloYAML(t *testing.T) string {
@@ -732,100 +730,6 @@ func TestWebSocketBridgeRejectsUnknownRun(t *testing.T) {
 	if resp == nil || resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("dial(ghost) status = %v, want 404", resp)
 	}
-}
-
-func TestListPluginsReturnsConfiguredSet(t *testing.T) {
-	svc := api.NewService(api.Config{
-		Plugins: []*orkstackv1.PluginInfo{
-			{Name: "shell"},
-			{Name: "file"},
-		},
-	})
-	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
-	defer server.Close()
-
-	client := orkstackv1connect.NewPluginServiceClient(server.Client(), server.URL)
-	resp, err := client.ListPlugins(context.Background(), connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPlugins: %v", err)
-	}
-	names := []string{}
-	for _, p := range resp.Msg.GetPlugins() {
-		names = append(names, p.GetName())
-	}
-	if fmt.Sprint(names) != fmt.Sprint([]string{"file", "shell"}) {
-		t.Errorf("plugins = %v, want [file shell] sorted by name", names)
-	}
-}
-
-func TestListPluginsEmptyByDefault(t *testing.T) {
-	f := newFixture(t)
-	resp, err := f.pluginClient().ListPlugins(context.Background(),
-		connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPlugins: %v", err)
-	}
-	if len(resp.Msg.GetPlugins()) != 0 {
-		t.Errorf("plugins = %v, want empty in M2", resp.Msg.GetPlugins())
-	}
-}
-
-type fakeLister struct{ descriptors []plugin.Descriptor }
-
-func (f fakeLister) ListPlugins(context.Context) ([]plugin.Descriptor, error) {
-	return f.descriptors, nil
-}
-
-func TestListPluginsUsesLiveOrkerListerWhenWired(t *testing.T) {
-	svc := api.NewService(api.Config{
-		Plugins: []*orkstackv1.PluginInfo{{Name: "stale-static"}},
-		Lister: fakeLister{descriptors: []plugin.Descriptor{
-			{Name: "http", Version: "0.1", Description: "HTTP requests"},
-			{Name: "file"},
-			{Name: "shell"},
-		}},
-	})
-	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
-	defer server.Close()
-
-	client := orkstackv1connect.NewPluginServiceClient(server.Client(), server.URL)
-	resp, err := client.ListPlugins(context.Background(), connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPlugins: %v", err)
-	}
-	names := []string{}
-	for _, p := range resp.Msg.GetPlugins() {
-		names = append(names, p.GetName())
-		if p.GetName() == "http" && p.GetVersion() != "0.1" {
-			t.Errorf("http version = %q, want 0.1", p.GetVersion())
-		}
-	}
-	if fmt.Sprint(names) != fmt.Sprint([]string{"file", "http", "shell"}) {
-		t.Errorf("plugins = %v, want [file http shell] from the live Orker, ignoring the static set", names)
-	}
-}
-
-func TestListPluginsSurfacesListerFailure(t *testing.T) {
-	svc := api.NewService(api.Config{
-		Lister: failingLister{},
-	})
-	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
-	defer server.Close()
-
-	client := orkstackv1connect.NewPluginServiceClient(server.Client(), server.URL)
-	_, err := client.ListPlugins(context.Background(), connect.NewRequest(&orkstackv1.ListPluginsRequest{}))
-	if err == nil {
-		t.Fatal("expected an error when the Orker lister fails")
-	}
-	if connect.CodeOf(err) != connect.CodeUnavailable {
-		t.Errorf("error code = %v, want Unavailable", connect.CodeOf(err))
-	}
-}
-
-type failingLister struct{}
-
-func (failingLister) ListPlugins(context.Context) ([]plugin.Descriptor, error) {
-	return nil, errors.New("no orker")
 }
 
 func TestServerSpeaksH2CToConnectClients(t *testing.T) {

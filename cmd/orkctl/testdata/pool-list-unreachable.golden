@@ -1,6 +1,6 @@
-NAME  ORKERS                 PLUGINS          DEFAULT  LAST SEEN
-gpu   unknown (unreachable)  -                -        -
-main  2                      file,http,shell  yes      2026-01-02T03:04:05Z
+NAME  ORKERS                 DEFAULT  LAST SEEN
+gpu   unknown (unreachable)  -        -
+main  2                      yes      2026-01-02T03:04:05Z
 
 A task naming no pool runs on main.
 

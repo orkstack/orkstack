@@ -26,19 +26,21 @@ func newPoolListCommand(g *globalFlags) *cobra.Command {
 		Short: "List the pools in scope, with the Orkers serving each",
 		Long: "List the pools this namespace may dispatch onto.\n\n" +
 			"A pool is a set of Orkers. The counts come from the cluster — who is polling\n" +
-			"for the pool's work right now — and the plugins from the Orkers themselves, so\n" +
-			"any replica answers the same. A pool with no live Orkers is listed, and says\n" +
-			"so: a task sent there waits for a worker that is not running.\n\n" +
+			"for the pool's work right now — so any replica answers the same. A pool with\n" +
+			"no live Orkers is listed, and says so: a task sent there waits for a worker\n" +
+			"that is not running.\n\n" +
 			"This read NARROWS and never refuses. A pool the cluster could not answer for\n" +
 			"is still listed, with `unknown (unreachable)` where its count would be and the\n" +
 			"reason printed under the table — one unreachable pool must not hide the\n" +
 			"healthy ones. `unknown` and `0` are different answers: 0 means start an Orker,\n" +
 			"unknown means ask again.\n\n" +
-			"PLUGINS is a sample: one of the pool's Orkers answers for the pool, and an\n" +
-			"empty column means nobody was asked or nobody answered — never that these\n" +
-			"Orkers run nothing. LAST SEEN is how fresh the count beside it is; a pool\n" +
-			"whose Orkers have all gone quiet shows no time at all rather than the moment\n" +
-			"the last one was heard.",
+			"There is no PLUGINS column any more: an activity is an OCI image, and which\n" +
+			"images this deployment can run is engine configuration rather than something\n" +
+			"an Orker reports. Use `orkctl activity list` for the catalog; this command\n" +
+			"answers who is available to run it.\n\n" +
+			"LAST SEEN is how fresh the count beside it is; a pool whose Orkers have all\n" +
+			"gone quiet shows no time at all rather than the moment the last one was\n" +
+			"heard.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := g.unaryContext(cmd)
@@ -77,16 +79,15 @@ func renderPoolList(out io.Writer, listing *orkstackv1.ListPoolsResponse) error 
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "NAME\tORKERS\tPLUGINS\tDEFAULT\tLAST SEEN")
+	fmt.Fprintln(table, "NAME\tORKERS\tDEFAULT\tLAST SEEN")
 	var unreachable []*orkstackv1.Pool
 	for _, pool := range pools {
 		if pool.GetUnavailableReason() != "" {
 			unreachable = append(unreachable, pool)
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n",
 			pool.GetName(),
 			poolOrkerLabel(pool),
-			joinOrDash(pool.GetPlugins()),
 			defaultMark(pool.GetIsDefault()),
 			formatTime(pool.GetLastSeen()))
 	}

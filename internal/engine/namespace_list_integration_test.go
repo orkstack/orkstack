@@ -60,7 +60,7 @@ func TestIntegration_AQuietNamespaceIsListedBesideABusyOne(t *testing.T) {
 			Name:      "deploy",
 			Version:   "0.1.0",
 			Namespace: namespace,
-			Tasks:     []*orkstackv1.Task{{Id: "settle", Plugin: "shell", Pool: task.DefaultPool}},
+			Tasks:     []*orkstackv1.Task{{Id: "settle", Uses: "shell", Pool: task.DefaultPool}},
 		}
 		plan := engine.RunPlan{
 			Namespace: namespace,

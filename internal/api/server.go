@@ -39,8 +39,11 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	namespacePath, namespaceHandler := orkstackv1connect.NewNamespaceServiceHandler(svc, handlerOptions...)
 	mux.Handle(namespacePath, namespaceHandler)
 
-	pluginPath, pluginHandler := orkstackv1connect.NewPluginServiceHandler(svc, handlerOptions...)
-	mux.Handle(pluginPath, pluginHandler)
+	// ActivityService replaces PluginService. An activity is an image and
+	// which images exist is engine configuration, so the catalog is served
+	// from here rather than gathered from Orkers (§4.2, §6.5).
+	activityPath, activityHandler := orkstackv1connect.NewActivityServiceHandler(svc, handlerOptions...)
+	mux.Handle(activityPath, activityHandler)
 
 	// System information: what this replica was built and configured as. It
 	// is mounted like every other read surface — an operator behind a load

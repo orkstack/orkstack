@@ -733,10 +733,10 @@ func TestGetStats_ReportsPoolHealthFromTheCluster(t *testing.T) {
 			DefaultPool:  "main",
 			AllowedPools: []string{"main", "gpu"},
 		}},
-		Starter:     &fakeStarter{},
-		Pools:       livePools{poolQueue(t, "main"): 2, poolQueue(t, "gpu"): 1},
-		PoolPlugins: poolPlugins{poolQueue(t, "gpu"): {"shell"}},
-		Now:         clock.Now,
+		Starter:    &fakeStarter{},
+		Pools:      livePools{poolQueue(t, "main"): 2, poolQueue(t, "gpu"): 1},
+		PoolOrkers: poolOrkers{poolQueue(t, "gpu"): {"shell"}},
+		Now:        clock.Now,
 	})
 	handler := api.NewStatsHandler(svc, 0)
 

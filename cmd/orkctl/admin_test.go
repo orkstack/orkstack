@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
@@ -39,9 +41,12 @@ func (p adminLivePools) ObservePool(_ context.Context, channel string) (engine.P
 	return live, nil
 }
 
-type adminPoolPlugins map[string][]string
+// adminPoolOrkers answers the DescribeOrker probe for a set of channels. The
+// value is unused: an Orker has no plugin list to report under the OCI
+// Activity Contract, so answering at all is the liveness evidence (§6.5).
+type adminPoolOrkers map[string][]string
 
-func (p adminPoolPlugins) PluginsOnPool(_ context.Context, channel string) ([]string, error) {
+func (p adminPoolOrkers) OrkerOnPool(_ context.Context, channel string) (*orkstackv1.DescribeOrkerResult, error) {
 	var pool string
 	switch channel {
 	case "ork-tasks":
@@ -49,14 +54,17 @@ func (p adminPoolPlugins) PluginsOnPool(_ context.Context, channel string) ([]st
 	case "ork-pool-gpu":
 		pool = "gpu"
 	default:
-		return nil, nil
+		return nil, fmt.Errorf("no orker is polling %q", channel)
 	}
-	return append([]string(nil), p[pool]...), nil
+	if _, serving := p[pool]; !serving {
+		return nil, fmt.Errorf("pool %q has no orker", pool)
+	}
+	return &orkstackv1.DescribeOrkerResult{OrkerId: "orker-" + pool, RuntimeName: "docker"}, nil
 }
 
 // adminFixture is a CLI fixture wired with the Config fields `cmd/ork` wires
 // and no others: system information injected as `ork` injects it, the pool
-// probe, and the per-pool plugin lister. A fixture that configured a seam no
+// probe, and the per-pool orker describer. A fixture that configured a seam no
 // shipped binary sets would golden a deployment nobody can run.
 //
 // The values are fixed rather than read from the machine, which is what lets
@@ -80,7 +88,7 @@ func adminFixture(t *testing.T) *fixture {
 			Orkers:   map[string]int{task.DefaultPool: 2, "gpu": 1},
 			LastSeen: fixedNow,
 		}
-		cfg.PoolPlugins = adminPoolPlugins{
+		cfg.PoolOrkers = adminPoolOrkers{
 			task.DefaultPool: {"file", "http", "shell"},
 			"gpu":            {"container"},
 		}
@@ -173,8 +181,12 @@ func TestPoolList_GoldenHumanAndJSON(t *testing.T) {
 	if !strings.Contains(human.stdout, "no live orkers") {
 		t.Errorf("a pool with no Orkers is printed as a bare number:\n%s", human.stdout)
 	}
-	if !strings.Contains(human.stdout, "container") {
-		t.Errorf("pool health does not report what the pool's Orkers run:\n%s", human.stdout)
+	// There is deliberately no plugin column to assert on any more: an
+	// activity is an image, and which images exist is engine configuration
+	// rather than something an Orker reports (§4.2, §6.5). What pool health
+	// answers is who is available, which the count above is.
+	if strings.Contains(human.stdout, "PLUGINS") {
+		t.Errorf("pool health still advertises a plugin inventory it cannot fill:\n%s", human.stdout)
 	}
 }
 
@@ -211,7 +223,7 @@ func TestPoolList_AnswersWithTheReachablePoolsAndMarksTheRest(t *testing.T) {
 			live:      adminLivePools{Orkers: map[string]int{task.DefaultPool: 2}, LastSeen: fixedNow},
 			unreached: map[string]string{"ork-pool-gpu": "context deadline exceeded"},
 		}
-		cfg.PoolPlugins = adminPoolPlugins{task.DefaultPool: {"file", "http", "shell"}}
+		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {"file", "http", "shell"}}
 	})
 	f.run("namespace", "create", "vision",
 		"--allow-pool", task.DefaultPool,

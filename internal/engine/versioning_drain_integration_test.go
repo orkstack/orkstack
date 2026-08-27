@@ -268,9 +268,9 @@ func drainOrkflow(_ string) *orkstackv1.Orkflow {
 		Name:    "drain-pinned",
 		Version: "1.0.0",
 		Tasks: []*orkstackv1.Task{
-			{Id: "prepare", Plugin: "shell", TimeoutSeconds: 240,
+			{Id: "prepare", Uses: "shell", TimeoutSeconds: 240,
 				With: mustStruct(map[string]any{"run": "echo prepare"})},
-			{Id: "report", Plugin: "shell", Needs: []string{"prepare"}, TimeoutSeconds: 240,
+			{Id: "report", Uses: "shell", Needs: []string{"prepare"}, TimeoutSeconds: 240,
 				With: mustStruct(map[string]any{"run": "echo report"})},
 		},
 	}

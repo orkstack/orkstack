@@ -37,7 +37,7 @@ func versionedDocument(name, version, marker string) string {
 version: "%s"
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: echo %s
@@ -245,7 +245,7 @@ func TestApplyOrkflow_UnpinnedEditsBecomeANewVersionAutomatically(t *testing.T) 
 		return fmt.Sprintf(`name: deploy
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: echo %s
@@ -299,7 +299,7 @@ func TestApplyOrkflow_ACommentOnlyEditOfAnUnpinnedDocumentIsANewVersion(t *testi
 	const document = `name: deploy
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: echo one

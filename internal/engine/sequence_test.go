@@ -12,7 +12,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // The event sequence is the producer's, not the bus's.
@@ -47,8 +46,8 @@ func TestRunWorkflow_NumbersItsOwnEvents(t *testing.T) {
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	env.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-			return task.ExecuteTaskResult{TaskID: in.TaskID, Output: plugin.Payload{"stdout": in.TaskID}}, nil
+		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
@@ -106,8 +105,8 @@ func TestRunWorkflow_SnapshotCarriesCreatedAt(t *testing.T) {
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	env.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-			return task.ExecuteTaskResult{TaskID: in.TaskID, Output: plugin.Payload{"stdout": in.TaskID}}, nil
+		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)

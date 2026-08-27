@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
 	"go.temporal.io/sdk/client"
 )
 
@@ -136,25 +138,22 @@ func (p *TemporalPoolProbe) now() time.Time {
 	return time.Now()
 }
 
-// PluginsOnPool asks one pool's Orkers what they can run, by executing the
-// Orker's own ListPlugins activity on that pool's channel.
+// OrkerOnPool asks one pool's Orkers who they are, by executing the Orker's
+// own DescribeOrker activity on that pool's channel.
+//
+// It replaces PluginsOnPool. The question changed — an Orker no longer has a
+// plugin list, because which images exist is engine configuration (§4.2) — but
+// the ROLE did not: a successful answer is how a pool proves it is alive, and
+// that is what the admin inventory renders.
 //
 // It is asked of a pool with live Orkers only. The activity has nowhere else
 // to run, so a pool with none would hold the request open until the timeout
 // and answer nothing.
-func (s *TemporalStarter) PluginsOnPool(ctx context.Context, queue string) ([]string, error) {
-	descriptors, err := s.listPluginsOn(ctx, queue, poolPluginTimeout)
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(descriptors))
-	for _, descriptor := range descriptors {
-		names = append(names, descriptor.Name)
-	}
-	return names, nil
+func (s *TemporalStarter) OrkerOnPool(ctx context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
+	return s.describeOrkerOn(ctx, queue, poolPluginTimeout)
 }
 
-var _ PoolPluginLister = (*TemporalStarter)(nil)
+var _ PoolOrkerDescriber = (*TemporalStarter)(nil)
 
 // poolProbeTimeout bounds one liveness question, so a slow cluster cannot hold
 // a submit open indefinitely.

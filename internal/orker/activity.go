@@ -2,45 +2,39 @@ package orker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
+	"strings"
 
-	"go.temporal.io/sdk/activity"
-	"go.temporal.io/sdk/temporal"
-
-	"github.com/orkstack/orkstack/internal/task"
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
-// Error types surfaced to Temporal as non-retryable application errors. The
-// engine reports err.Error() verbatim, so messages name the task, plugin and
-// reference involved.
-const (
-	ErrTypeUnknownPlugin = "UNKNOWN_PLUGIN"
-	ErrTypeRender        = "RENDER_FAILED"
-	ErrTypeWorkDir       = "WORKDIR_FAILED"
-	ErrTypeArtifact      = "ARTIFACT_FAILED"
-	ErrTypePluginFailed  = "PLUGIN_PERMANENT"
-)
-
-// WorkRootVar overrides the parent directory for per-attempt scratch workdirs.
+// WorkRootVar overrides the parent directory for per-attempt workspaces.
+//
+// It MUST name a path the container daemon can bind-mount. On macOS with a
+// VM-hosted daemon $HOME is shared and /var/folders is not, which is why
+// `make up` points this at .data/work — and why an Orker probes the root at
+// boot rather than failing every task later (§3.1).
 const WorkRootVar = "ORK_ORKER_WORKDIR"
 
+// OrkerIDVar overrides this Orker's identity. It labels every container the
+// Orker creates and is the startup reaper's key, so two Orkers sharing an id
+// would reap each other's live work (§5.5).
+const OrkerIDVar = "ORK_ORKER_ID"
+
+// BuildIDVar is the Worker Deployment build id recorded on every commit.
+const BuildIDVar = "ORK_BUILD_ID"
+
 // Options configures an Activities instance. The zero value reads the
-// environment for the workdir root and the `env` helper allowlist.
+// environment for everything.
 type Options struct {
-	// WorkRoot is the parent directory for per-attempt workdirs. Empty means
-	// ORK_ORKER_WORKDIR, then the OS temp directory.
+	// WorkRoot is the parent directory for per-attempt workspaces. Empty
+	// means ORK_ORKER_WORKDIR, then the OS temp directory.
 	WorkRoot string
 	// EnvAllowlist limits which variables the `env` template helper reads.
 	// Nil means ORK_ORKER_ENV_ALLOWLIST.
 	EnvAllowlist []string
-	// LogSink observes plugin log lines in addition to the activity logger.
-	LogSink func(in task.ExecuteTaskInput, line string)
 	// Logs is where a task attempt's output is streamed while it runs. Nil
 	// leaves an Orker that executes tasks and streams nothing: logging is
 	// observability, and losing it must never lose the work.
@@ -48,28 +42,47 @@ type Options struct {
 	// Log bounds that stream — flush size, flush interval and the per-attempt
 	// cap. The zero value is the documented default in every field.
 	Log LogOptions
+	// Commits is the durable completion store. Nil disables the commit
+	// protocol, which is a TEST-ONLY configuration: a deployment without it
+	// cannot honor "a durably committed activity result cannot become pending
+	// again" (AGENTS.md §15).
+	Commits artifacts.CommitStore
+	// Refs predicts upload URIs for the step-4 commit bound.
+	Refs artifacts.RefPredictor
+	// Runtime is the OCI runtime. Nil means DockerRuntime.
+	Runtime ContainerRuntime
+	// Policy is the Orker-local security and resource policy. The zero value
+	// means SecurityPolicyFromEnv.
+	Policy *SecurityPolicy
+	// OrkerID and BuildID identify this Orker. Empty reads the environment.
+	OrkerID string
+	BuildID string
+	// Pool is the pool this Orker serves, reported by DescribeOrker.
+	Pool string
+	// MaxConcurrent is reported by DescribeOrker.
+	MaxConcurrent int32
+	// LayoutRoot is where embedded OCI image layouts live (§4.6).
+	LayoutRoot string
 }
 
-// Activities implements the engine<->Orker activity seam: it renders task
-// config, materializes upstream artifacts, dispatches to a registered plugin,
-// and uploads produced artifacts.
+// Activities implements the engine<->Orker activity seam.
+//
+// It is now a thin shell around one OCIDispatcher. The plugin registry, the
+// name lookup and the four builtin plugins are gone: any OCI image is an
+// activity, and there is exactly one implementation that runs one (§6.1).
 type Activities struct {
-	registry  *plugin.Registry
-	store     artifacts.Store
-	logs      artifacts.LogStore
-	logOpts   LogOptions
-	workRoot  string
-	allowlist map[string]struct{}
-	logSink   func(in task.ExecuteTaskInput, line string)
+	dispatcher *OCIDispatcher
+	pool       string
+	maxConc    int32
 }
 
 // NewActivities builds the activity set with environment-derived defaults.
-func NewActivities(registry *plugin.Registry, store artifacts.Store) *Activities {
-	return NewActivitiesWithOptions(registry, store, Options{})
+func NewActivities(store artifacts.Store) *Activities {
+	return NewActivitiesWithOptions(store, Options{})
 }
 
 // NewActivitiesWithOptions builds the activity set with explicit options.
-func NewActivitiesWithOptions(registry *plugin.Registry, store artifacts.Store, opts Options) *Activities {
+func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	workRoot := opts.WorkRoot
 	if workRoot == "" {
 		workRoot = os.Getenv(WorkRootVar)
@@ -82,275 +95,133 @@ func NewActivitiesWithOptions(registry *plugin.Registry, store artifacts.Store, 
 			allowlist[name] = struct{}{}
 		}
 	}
+	runtime := opts.Runtime
+	if runtime == nil {
+		runtime = NewDockerRuntime()
+	}
+	policy := SecurityPolicyFromEnv()
+	if opts.Policy != nil {
+		policy = *opts.Policy
+	}
+	orkerID := opts.OrkerID
+	if orkerID == "" {
+		orkerID = defaultOrkerID()
+	}
+	buildID := opts.BuildID
+	if buildID == "" {
+		buildID = os.Getenv(BuildIDVar)
+	}
+
 	return &Activities{
-		registry:  registry,
-		store:     store,
-		logs:      opts.Logs,
-		logOpts:   opts.Log,
-		workRoot:  workRoot,
-		allowlist: allowlist,
-		logSink:   opts.LogSink,
+		dispatcher: &OCIDispatcher{
+			Runtime:      runtime,
+			Store:        store,
+			Commits:      opts.Commits,
+			Refs:         opts.Refs,
+			Logs:         opts.Logs,
+			LogOpts:      opts.Log,
+			Policy:       policy,
+			WorkRoot:     workRoot,
+			OrkerID:      orkerID,
+			BuildID:      buildID,
+			EnvAllowlist: allowlist,
+			LayoutRoot:   opts.LayoutRoot,
+		},
+		pool:    opts.Pool,
+		maxConc: opts.MaxConcurrent,
 	}
 }
 
-// ExecuteTask runs one task: dispatch by plugin name, render `with` against the
-// run input and upstream results, execute the plugin in a per-attempt workdir,
-// upload produced artifacts, and return the refs.
-func (a *Activities) ExecuteTask(ctx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-	var empty task.ExecuteTaskResult
+// Dispatcher exposes the dispatcher for boot-time work — the container reaper
+// and the bind probe — and for tests.
+func (a *Activities) Dispatcher() *OCIDispatcher { return a.dispatcher }
 
-	if a.registry == nil {
-		return empty, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("task %q: orker has no plugin registry", in.TaskID),
-			ErrTypeUnknownPlugin, nil)
-	}
-	impl, ok := a.registry.Get(in.Plugin)
-	if !ok {
-		return empty, temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("task %q: unknown plugin %q (registered plugins: %s)",
-				in.TaskID, in.Plugin, joinOrNone(a.pluginNames())),
-			ErrTypeUnknownPlugin, nil)
-	}
-
-	// The live log sink is opened before anything else this attempt does, so
-	// even a workdir failure is visible to somebody watching the task, and it
-	// is closed BEFORE this function returns — Temporal records the activity's
-	// completion after the return, so every chunk is durable before the task's
-	// terminal event exists. That ordering is what lets a reader end its
-	// stream on the terminal event without losing the last chunk.
-	sink := a.openLogSink(ctx, in)
-	defer sink.Close()
-	logf := a.logger(ctx, in, sink)
-	heartbeat(ctx, "start")
-
-	workDir, err := a.makeWorkDir(ctx, in)
-	if err != nil {
-		return empty, temporal.NewNonRetryableApplicationError(err.Error(), ErrTypeWorkDir, err)
-	}
-	// The workdir is scratch space for exactly this attempt: remove it on
-	// success, plugin failure, panic, and cancellation alike.
-	defer func() { _ = os.RemoveAll(workDir) }()
-	logf("workdir %s", workDir)
-
-	resolver := newUpstreamResolver(a.store, in.Upstream, workDir)
-	config, err := newRenderer(in.TaskID, in.RunInput, in.Upstream, resolver, a.allowlist).
-		render(ctx, in.With)
-	if err != nil {
-		return empty, failTask(err, ErrTypeRender)
-	}
-	heartbeat(ctx, "rendered")
-
-	ec := &plugin.ExecContext{
-		TaskID:    in.TaskID,
-		Config:    config,
-		Inputs:    in.RunInput,
-		Artifacts: resolver,
-		WorkDir:   workDir,
-		Log:       logf,
-	}
-	result, err := impl.Execute(ctx, ec)
-	if result == nil {
-		result = &plugin.Result{}
-	}
-	if err != nil {
-		// A FAILED TASK STILL PUBLISHES WHAT IT PRODUCED. The output of a
-		// failing task — compiler errors, a test report, a core dump the
-		// author named — is exactly what somebody opens the run to read, and
-		// it lives in the workdir the deferred RemoveAll above is about to
-		// delete. So the captures are uploaded first and the failure is
-		// returned after.
-		//
-		// The upload's own failure is swallowed on this path, deliberately.
-		// The plugin's error is WHY the task failed; replacing it with a
-		// storage error would tell the author their build failed because of
-		// the bucket. The loss is reported to the Orker's own log instead.
-		if _, upErr := a.upload(ctx, in, workDir, result.Artifacts); upErr != nil {
-			logf("[ork] a failed task's artifacts could not be stored: %v", upErr)
-		}
-		return empty, pluginFailure(in, err)
-	}
-	heartbeat(ctx, "executed")
-
-	refs, err := a.upload(ctx, in, workDir, result.Artifacts)
-	if err != nil {
-		return empty, err
-	}
-	heartbeat(ctx, "uploaded")
-
-	return task.ExecuteTaskResult{
-		TaskID:    in.TaskID,
-		Output:    result.Output,
-		Artifacts: refs,
-	}, nil
-}
-
-// ListPlugins returns descriptors for every plugin in the registry. It backs
-// the engine's PluginService via ActivityListPlugins so discovery reflects
-// what Orkers can actually run, not a static engine-side list.
-func (a *Activities) ListPlugins(_ context.Context) ([]plugin.Descriptor, error) {
-	return a.registry.List(), nil
-}
-
-// upload persists every produced artifact and returns the stored references in
-// the order the plugin produced them.
-func (a *Activities) upload(
+// ExecuteTask runs one activity: check the commit, build the workspace, stage
+// inputs, pull the image, run the container, validate its outputs, upload
+// them, and write the completion manifest.
+//
+// The argument is the proto message, not a Go struct. That is deliberate and
+// it is the reason §11.4's one-time replay-fixture reset exists: Temporal's
+// converter encodes a top-level protobuf message with protojson and everything
+// else with encoding/json, so making ExecuteTaskInput a proto message flips the
+// recorded payload encoding (§2.5).
+func (a *Activities) ExecuteTask(
 	ctx context.Context,
-	in task.ExecuteTaskInput,
-	workDir string,
-	produced []plugin.ProducedArtifact,
-) ([]plugin.ArtifactRef, error) {
-	refs := make([]plugin.ArtifactRef, 0, len(produced))
-	for _, item := range produced {
-		if item.Name == "" {
-			err := fmt.Errorf("task %q: plugin %q produced an artifact with an empty name", in.TaskID, in.Plugin)
-			return nil, temporal.NewNonRetryableApplicationError(err.Error(), ErrTypeArtifact, err)
-		}
-		path := item.LocalPath
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(workDir, path)
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			wrapped := fmt.Errorf("task %q: artifact %q: %w", in.TaskID, item.Name, err)
-			return nil, temporal.NewNonRetryableApplicationError(wrapped.Error(), ErrTypeArtifact, wrapped)
-		}
-		if a.store == nil {
-			_ = file.Close()
-			err := fmt.Errorf("task %q: artifact %q: orker has no artifact store", in.TaskID, item.Name)
-			return nil, temporal.NewNonRetryableApplicationError(err.Error(), ErrTypeArtifact, err)
-		}
-		ref, err := a.store.Put(ctx, item.Name, file, artifacts.PutOptions{
-			ContentType: item.ContentType,
-			Metadata:    artifactMetadata(in, item),
-		})
-		_ = file.Close()
-		if err != nil {
-			// Upload failures are usually transient storage errors; leave them
-			// retryable under the task's retry policy.
-			return nil, fmt.Errorf("task %q: upload artifact %q: %w", in.TaskID, item.Name, err)
-		}
-		refs = append(refs, ref)
+	in *orkstackv1.ExecuteTaskInput,
+) (*orkstackv1.ExecuteTaskResult, error) {
+	return a.dispatcher.Execute(ctx, in)
+}
+
+// DescribeOrker reports this Orker's identity.
+//
+// It replaces ListPlugins one-for-one as the pool-liveness probe (§6.5).
+// ListPlugins was never only a plugin list: a successful probe is how a pool
+// proves it is alive, and proof/M11.6 fixed a bug in exactly that path. An
+// Orker no longer has a plugin list, but a pool still has to prove it is
+// alive, so the probe stays and only its payload changes.
+func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrkerResult, error) {
+	result := &orkstackv1.DescribeOrkerResult{
+		OrkerId:         a.dispatcher.OrkerID,
+		BuildId:         a.dispatcher.BuildID,
+		Pool:            a.pool,
+		SecurityProfile: a.dispatcher.Policy.ProfileID(),
+		MaxConcurrent:   a.maxConc,
 	}
-	return refs, nil
+	if a.dispatcher.Runtime != nil {
+		info, err := a.dispatcher.Runtime.Describe(ctx)
+		if err != nil {
+			// The probe's job is to prove the Orker is ALIVE. An Orker whose
+			// runtime cannot be described is still polling and still able to
+			// answer, so the identity is returned with the runtime fields it
+			// could not fill rather than failing the pool.
+			result.RuntimeName = info.Name
+			return result, nil
+		}
+		result.RuntimeName = info.Name
+		result.RuntimeVersion = info.Version
+		result.Rootless = info.Rootless
+	}
+	return result, nil
 }
 
-// artifactMetadata records provenance without discarding plugin metadata. The
-// artifact store lays objects out by these coordinates —
-// orkflows/{orkflow}/{run-id}/{task-id}/{artifact-name} — so a stored URI
-// names the run that produced it, and provenance always wins over whatever a
-// plugin wrote under the same keys.
-func artifactMetadata(in task.ExecuteTaskInput, item plugin.ProducedArtifact) map[string]string {
-	meta := artifacts.Provenance{
-		Orkflow: in.OrkflowName,
-		TaskID:  in.TaskID,
-		RunID:   in.RunID,
-	}.Metadata(item.Metadata)
-	meta["artifact"] = item.Name
-	return meta
-}
-
-// makeWorkDir creates the scratch directory for this attempt.
-func (a *Activities) makeWorkDir(ctx context.Context, in task.ExecuteTaskInput) (string, error) {
-	root := a.workRoot
+// Boot performs the checks an Orker must pass before it accepts work.
+//
+// Refusing to start is the only honest response to either failure. An Orker
+// that starts anyway would fail every task later with an error naming the
+// container rather than the cause, or — worse, for the conditional-write
+// probe — would run a deployment that silently lost the immutability
+// guarantee (§3.1, §5.3).
+func (a *Activities) Boot(ctx context.Context) error {
+	root := a.dispatcher.WorkRoot
 	if root == "" {
 		root = os.TempDir()
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
-		return "", fmt.Errorf("task %q: create workdir root %s: %w", in.TaskID, root, err)
+		return fmt.Errorf("%s: create the workspace root %s: %w", ReasonWorkdirFailed, root, err)
 	}
-	pattern := fmt.Sprintf("ork-%s-%s-%d-*",
-		safeComponent(in.RunID), safeComponent(in.TaskID), attempt(ctx))
-	dir, err := os.MkdirTemp(root, pattern)
-	if err != nil {
-		return "", fmt.Errorf("task %q: create workdir: %w", in.TaskID, err)
-	}
-	return dir, nil
-}
-
-func (a *Activities) pluginNames() []string {
-	descriptors := a.registry.List()
-	names := make([]string, 0, len(descriptors))
-	for _, d := range descriptors {
-		names = append(names, d.Name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// openLogSink builds the chunk sink for this attempt. The attempt number comes
-// from Temporal, so a retry writes its own stream rather than appending to the
-// last try's — which is what keeps a resumed reader from seeing two tries
-// interleaved.
-func (a *Activities) openLogSink(ctx context.Context, in task.ExecuteTaskInput) *logChunkSink {
-	return newLogChunkSink(ctx, a.logs, artifacts.LogRef{
-		RunID:   in.RunID,
-		TaskID:  in.TaskID,
-		Attempt: attempt(ctx),
-	}, a.logOpts).withErrorReporter(func(err error) {
-		if activity.IsActivity(ctx) {
-			activity.GetLogger(ctx).Warn("task log chunk lost",
-				"run_id", in.RunID, "task_id", in.TaskID, "error", err)
-		}
-	})
-}
-
-// logger is plugin.Logger: it fans one line out to the live log stream (the
-// artifact store, where the bytes belong), to the activity logger, and to the
-// optional in-process observer.
-//
-// The live stream is the load-bearing one. Nothing here touches the Event
-// stream or a Temporal payload: a task's output is bytes, and bytes are
-// carried by the store (AGENTS.md §1.4).
-func (a *Activities) logger(
-	ctx context.Context,
-	in task.ExecuteTaskInput,
-	sink *logChunkSink,
-) plugin.Logger {
-	return func(format string, args ...any) {
-		line := fmt.Sprintf(format, args...)
-		sink.Write(line)
-		if activity.IsActivity(ctx) {
-			activity.GetLogger(ctx).Info(line,
-				"run_id", in.RunID, "task_id", in.TaskID, "plugin", in.Plugin)
-		}
-		if a.logSink != nil {
-			a.logSink(in, line)
+	if prober, ok := a.dispatcher.Runtime.(interface {
+		ProbeBindable(context.Context, string) error
+	}); ok {
+		if err := prober.ProbeBindable(ctx, root); err != nil {
+			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
 	}
+	// Reap this Orker's own previous life's containers. An Orker crash does
+	// not stop its containers (§14.17), so a restarted Orker inherits them.
+	if _, err := a.dispatcher.Runtime.Reap(ctx, a.dispatcher.OrkerID); err != nil {
+		return fmt.Errorf("reap orphaned containers: %w", err)
+	}
+	return nil
 }
 
-// heartbeat reports progress. The engine sets no heartbeat timeout, so this is
-// observability only and is skipped outside an activity context.
-func heartbeat(ctx context.Context, phase string) {
-	if activity.IsActivity(ctx) {
-		activity.RecordHeartbeat(ctx, phase)
+// defaultOrkerID derives a stable-per-process identity.
+func defaultOrkerID() string {
+	if explicit := strings.TrimSpace(os.Getenv(OrkerIDVar)); explicit != "" {
+		return explicit
 	}
-}
-
-func attempt(ctx context.Context) int32 {
-	if activity.IsActivity(ctx) {
-		return activity.GetInfo(ctx).Attempt
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "orker"
 	}
-	return 1
-}
-
-// failTask marks a deterministic failure non-retryable unless the cause
-// explicitly asked to be retried.
-func failTask(err error, errType string) error {
-	var retryable *plugin.RetryableError
-	if errors.As(err, &retryable) && retryable.Retryable {
-		return err
-	}
-	return temporal.NewNonRetryableApplicationError(err.Error(), errType, err)
-}
-
-// pluginFailure keeps plugin errors retryable by default and honors an
-// explicit plugin.Permanent marker.
-func pluginFailure(in task.ExecuteTaskInput, err error) error {
-	wrapped := fmt.Errorf("task %q: plugin %q: %w", in.TaskID, in.Plugin, err)
-	var retryable *plugin.RetryableError
-	if errors.As(err, &retryable) && !retryable.Retryable {
-		return temporal.NewNonRetryableApplicationError(wrapped.Error(), ErrTypePluginFailed, wrapped)
-	}
-	return wrapped
+	return fmt.Sprintf("%s-%d", safeNameComponent(host), os.Getpid())
 }

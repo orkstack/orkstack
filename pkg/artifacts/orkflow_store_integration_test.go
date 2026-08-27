@@ -64,7 +64,7 @@ func testOrkflow(t *testing.T, name, version string, appliedAt time.Time) *orkst
 		Description: "M7.5 durable orkflow store",
 		Tasks: []*orkstackv1.Task{{
 			Id:             "fetch",
-			Plugin:         "http",
+			Uses:           "http",
 			With:           with,
 			TimeoutSeconds: 300,
 		}},

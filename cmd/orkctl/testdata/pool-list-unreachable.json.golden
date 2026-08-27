@@ -7,11 +7,6 @@
     {
       "name": "main",
       "liveOrkerCount": 2,
-      "plugins": [
-        "file",
-        "http",
-        "shell"
-      ],
       "isDefault": true,
       "lastSeen": "2026-01-02T03:04:05Z"
     }

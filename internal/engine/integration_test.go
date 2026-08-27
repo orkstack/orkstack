@@ -28,7 +28,6 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // temporalAddress is where the integration test expects a real Temporal
@@ -69,7 +68,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
 	var observedMu sync.Mutex
-	observedRunInputs := map[string]plugin.Payload{}
+	observedRunInputs := map[string]map[string]any{}
 
 	// Worker 1 matches production: it handles workflow and local-activity tasks
 	// only, so it cannot steal ExecuteTask activities from an Orker sharing the
@@ -86,26 +85,26 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	})
 	taskWorker.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			observedMu.Lock()
-			observedRunInputs[in.TaskID] = in.RunInput
+			observedRunInputs[in.TaskId] = in.GetRunInput().GetData().AsMap()
 			observedMu.Unlock()
-			upstream := make([]string, 0, len(in.Upstream))
-			for id := range in.Upstream {
-				upstream = append(upstream, id)
+			upstream := make([]string, 0, len(in.GetUpstream()))
+			for _, ref := range in.GetUpstream() {
+				upstream = append(upstream, ref.GetTaskId())
 			}
-			return task.ExecuteTaskResult{
-				TaskID: in.TaskID,
-				Output: plugin.Payload{
-					"echoed_task":     in.TaskID,
-					"echoed_plugin":   in.Plugin,
+			return &orkstackv1.ExecuteTaskResult{
+				TaskId: in.TaskId,
+				ValuesJson: valuesJSON(map[string]any{
+					"echoed_task":     in.TaskId,
+					"echoed_plugin":   in.Image.GetReference(),
 					"upstream_count":  float64(len(upstream)),
 					"workflow":        in.OrkflowName,
 					"workflow_versio": in.OrkflowVersion,
-				},
-				Artifacts: []plugin.ArtifactRef{{
+				}),
+				Artifacts: []*orkstackv1.ArtifactRef{{
 					Name: "echo",
-					URI:  fmt.Sprintf("file:///tmp/%s/%s.txt", in.RunID, in.TaskID),
+					Uri:  fmt.Sprintf("file:///tmp/%s/%s.txt", in.RunId, in.TaskId),
 				}},
 			}, nil
 		},

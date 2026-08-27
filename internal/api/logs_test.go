@@ -173,7 +173,6 @@ func runningRun(runID, taskID string) *orkstackv1.Run {
 		StartedAt:      timestamppb.New(at),
 		TaskRuns: []*orkstackv1.TaskRun{{
 			TaskId:  taskID,
-			Plugin:  "shell",
 			Status:  orkstackv1.Status_STATUS_RUNNING,
 			Attempt: 1,
 		}},

@@ -320,7 +320,7 @@ version: "%s"
 description: the %s version
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: echo %s
@@ -341,7 +341,7 @@ func writeUnpinnedOrkflow(t *testing.T, name, marker string) string {
 description: an orkflow that names no version
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: echo %s

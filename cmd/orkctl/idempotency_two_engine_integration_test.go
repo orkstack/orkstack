@@ -450,7 +450,7 @@ version: "0.1.0"
 description: M8.2 two-replica idempotency probe.
 tasks:
   - id: echo
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: echo idempotent

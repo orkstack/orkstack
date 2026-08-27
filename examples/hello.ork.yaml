@@ -18,7 +18,7 @@ tasks:
   #    response body as an artifact named "body" and the parsed JSON on
   #    output.json.
   - id: fetch
-    plugin: http
+    uses: http
     with:
       op: get
       url: "{{ .inputs.url }}"
@@ -28,7 +28,7 @@ tasks:
   #    artifacts through the {{ artifact "<task>/<name>" }} helper, which the
   #    Orker materializes to a local path before execution.
   - id: transform
-    plugin: shell
+    uses: shell
     needs: [fetch]
     with:
       op: exec                     # exec: the command is the work; non-zero exit fails
@@ -38,7 +38,7 @@ tasks:
 
   # 3. Persist the shell stdout as a new artifact.
   - id: save
-    plugin: file
+    uses: file
     needs: [transform]
     with:
       op: write

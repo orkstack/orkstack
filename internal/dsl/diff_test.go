@@ -14,7 +14,7 @@ func TestUnified_RendersTheChangeBetweenTwoVersions(t *testing.T) {
 version: "1.0.0"
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: make build
@@ -23,12 +23,12 @@ tasks:
 version: "1.1.0"
 tasks:
   - id: build
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: make build
   - id: ship
-    plugin: shell
+    uses: shell
     needs: [build]
     with:
       op: exec
@@ -42,12 +42,12 @@ tasks:
 +version: "1.1.0"
  tasks:
    - id: build
-     plugin: shell
+     uses: shell
      with:
        op: exec
        command: make build
 +  - id: ship
-+    plugin: shell
++    uses: shell
 +    needs: [build]
 +    with:
 +      op: exec

@@ -214,7 +214,7 @@ version: "%s"
 description: M11.2 %s
 tasks:
   - id: report
-    plugin: shell
+    uses: shell
     pool: %s
     with:
       op: exec

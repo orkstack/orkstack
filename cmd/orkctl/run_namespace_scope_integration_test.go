@@ -152,7 +152,7 @@ version: 1.0.0
 description: M10.3 run-id scope
 tasks:
   - id: wait
-    plugin: shell
+    uses: shell
     pool: %s
     timeout: 120s
     with:

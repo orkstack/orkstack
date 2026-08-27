@@ -42,7 +42,7 @@ func helloOrkflow(t *testing.T, version string) *orkstackv1.Orkflow {
 		Inputs:      inputs,
 		Tasks: []*orkstackv1.Task{{
 			Id:             "fetch",
-			Plugin:         "http",
+			Uses:           "http",
 			With:           with,
 			TimeoutSeconds: 300,
 			Retry:          &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 2},

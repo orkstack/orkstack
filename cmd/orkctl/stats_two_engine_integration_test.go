@@ -409,7 +409,7 @@ version: "0.1.0"
 description: M10.6 stats probe.
 tasks:
   - id: work
-    plugin: shell
+    uses: shell
     timeout_seconds: 30
     retry:
       maximum_attempts: 1
@@ -427,7 +427,7 @@ version: "0.1.0"
 description: M10.6 stats probe, still running.
 tasks:
   - id: crawl
-    plugin: shell
+    uses: shell
     timeout_seconds: 240
     retry:
       maximum_attempts: 1

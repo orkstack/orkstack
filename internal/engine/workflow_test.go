@@ -19,7 +19,6 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // harness wires a TestWorkflowEnvironment with a mocked ExecuteTask activity
@@ -31,7 +30,7 @@ type harness struct {
 	store *engine.RunStore
 
 	mu    sync.Mutex
-	calls []task.ExecuteTaskInput
+	calls []*orkstackv1.ExecuteTaskInput
 	// queues records the task queue each task's activity actually arrived on,
 	// read from Temporal's own activity info rather than from the engine. It
 	// is what lets a test check the pool a client is TOLD against the Orkers
@@ -39,7 +38,7 @@ type harness struct {
 	queues map[string]string
 }
 
-func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(task.ExecuteTaskInput) (task.ExecuteTaskResult, error)) *harness {
+func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
 	t.Helper()
 	h := &harness{
 		env:    suite.NewTestWorkflowEnvironment(),
@@ -54,10 +53,10 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	h.env.RegisterActivityWithOptions(
-		func(actCtx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		func(actCtx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			h.mu.Lock()
 			h.calls = append(h.calls, in)
-			h.queues[in.TaskID] = activity.GetInfo(actCtx).TaskQueue
+			h.queues[in.TaskId] = activity.GetInfo(actCtx).TaskQueue
 			h.mu.Unlock()
 			return behavior(in)
 		},
@@ -67,27 +66,27 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 	return h
 }
 
-func (h *harness) invocations() []task.ExecuteTaskInput {
+func (h *harness) invocations() []*orkstackv1.ExecuteTaskInput {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return append([]task.ExecuteTaskInput(nil), h.calls...)
+	return append([]*orkstackv1.ExecuteTaskInput(nil), h.calls...)
 }
 
 func (h *harness) taskOrder() []string {
 	out := []string{}
 	for _, call := range h.invocations() {
-		out = append(out, call.TaskID)
+		out = append(out, call.TaskId)
 	}
 	return out
 }
 
-func (h *harness) inputFor(taskID string) (task.ExecuteTaskInput, bool) {
+func (h *harness) inputFor(taskID string) (*orkstackv1.ExecuteTaskInput, bool) {
 	for _, call := range h.invocations() {
-		if call.TaskID == taskID {
+		if call.TaskId == taskID {
 			return call, true
 		}
 	}
-	return task.ExecuteTaskInput{}, false
+	return (*orkstackv1.ExecuteTaskInput)(nil), false
 }
 
 // queueFor is the task queue taskID's activity arrived on.
@@ -132,14 +131,14 @@ const linearDocument = `
 name: linear
 tasks:
   - id: alpha
-    plugin: shell
+    uses: shell
     with: {command: "echo alpha"}
   - id: beta
-    plugin: shell
+    uses: shell
     needs: [alpha]
     with: {command: "echo beta"}
   - id: gamma
-    plugin: shell
+    uses: shell
     needs: [beta]
     with: {command: "echo gamma"}
 `
@@ -148,9 +147,9 @@ tasks:
 // user authored — an orkflow, not a "workflow".
 func TestRunWorkflow_RejectsAnOrkflowWithNoTasks(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		t.Fatalf("ExecuteTask called for %q, want no dispatch", in.TaskID)
-		return task.ExecuteTaskResult{}, nil
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		t.Fatalf("ExecuteTask called for %q, want no dispatch", in.TaskId)
+		return &orkstackv1.ExecuteTaskResult{}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-1-1",
@@ -170,10 +169,10 @@ func TestRunWorkflow_RejectsAnOrkflowWithNoTasks(t *testing.T) {
 
 func TestRunWorkflow_ExecutesLinearNeedsInOrder(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		return task.ExecuteTaskResult{
-			TaskID: in.TaskID,
-			Output: plugin.Payload{"stdout": in.TaskID},
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return &orkstackv1.ExecuteTaskResult{
+			TaskId:     in.TaskId,
+			ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId}),
 		}, nil
 	})
 
@@ -240,13 +239,13 @@ const fanOutDocument = `
 name: fanout
 tasks:
   - id: left
-    plugin: shell
+    uses: shell
     with: {command: "echo left"}
   - id: right
-    plugin: shell
+    uses: shell
     with: {command: "echo right"}
   - id: join
-    plugin: shell
+    uses: shell
     needs: [left, right]
     with: {command: "echo join"}
 `
@@ -258,11 +257,11 @@ func TestRunWorkflow_FansOutIndependentTasks(t *testing.T) {
 	// Each independent task blocks until the other has started. If the engine
 	// serialized them, neither would ever be released and the barrier would
 	// time out.
-	barrier := func(in task.ExecuteTaskInput) error {
-		if in.TaskID == "join" {
+	barrier := func(in *orkstackv1.ExecuteTaskInput) error {
+		if in.TaskId == "join" {
 			return nil
 		}
-		started <- in.TaskID
+		started <- in.TaskId
 		deadline := time.After(10 * time.Second)
 		for {
 			select {
@@ -277,11 +276,11 @@ func TestRunWorkflow_FansOutIndependentTasks(t *testing.T) {
 		}
 	}
 
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if err := barrier(in); err != nil {
-			return task.ExecuteTaskResult{}, err
+			return &orkstackv1.ExecuteTaskResult{}, err
 		}
-		return task.ExecuteTaskResult{TaskID: in.TaskID, Output: plugin.Payload{"stdout": in.TaskID}}, nil
+		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fanout", compile(t, fanOutDocument), payload(t, nil), defaultPlan())
@@ -305,15 +304,15 @@ const upstreamDocument = `
 name: upstream
 tasks:
   - id: fetch
-    plugin: http
+    uses: http
     with: {url: "https://example.test"}
   - id: transform
-    plugin: shell
+    uses: shell
     needs: [fetch]
     with:
       command: "cat {{ artifact \"fetch/body\" }}"
   - id: save
-    plugin: file
+    uses: file
     needs: [transform]
     with:
       content: "{{ .tasks.fetch.output.status }}"
@@ -321,22 +320,20 @@ tasks:
 
 func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		switch in.TaskID {
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		switch in.TaskId {
 		case "fetch":
-			return task.ExecuteTaskResult{
-				TaskID: "fetch",
-				Output: plugin.Payload{"status": float64(200)},
-				Artifacts: []plugin.ArtifactRef{{
-					Name:        "body",
-					URI:         "s3://bucket/run/fetch/body",
-					ContentType: "application/json",
-					SizeBytes:   17,
-					SHA256:      "abc123",
-				}},
-			}, nil
+			result := succeeded("fetch", map[string]any{"status": float64(200)})
+			result.Artifacts = []*orkstackv1.ArtifactRef{{
+				Name:        "body",
+				Uri:         "s3://bucket/run/fetch/body",
+				ContentType: "application/json",
+				SizeBytes:   17,
+				Sha256:      "abc123",
+			}}
+			return result, nil
 		default:
-			return task.ExecuteTaskResult{TaskID: in.TaskID, Output: plugin.Payload{"stdout": "ok"}}, nil
+			return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": "ok"})}, nil
 		}
 	})
 
@@ -350,23 +347,30 @@ func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 	if !ok {
 		t.Fatal("transform task was never executed")
 	}
-	fetchResult, ok := transform.Upstream["fetch"]
-	if !ok {
-		t.Fatalf("transform upstream = %v, want a fetch entry", transform.Upstream)
+	fetchRef := upstreamRef(transform, "fetch")
+	if fetchRef == nil {
+		t.Fatalf("transform upstream = %v, want a fetch entry", transform.GetUpstream())
 	}
-	if got := fetchResult.Output["status"]; got != float64(200) {
-		t.Errorf("upstream fetch output status = %v, want 200", got)
+	// An UpstreamRef carries REFERENCES ONLY (OQ-2). The ancestor's
+	// values.json is addressed, not copied: fan-in is O(ancestors) small
+	// records rather than a transitive copy of every ancestor's payload, and
+	// bytes never travel through Temporal (AGENTS.md §2.2).
+	if fetchRef.GetValues().GetUri() == "" {
+		t.Errorf("upstream fetch carries no values reference: %+v", fetchRef)
 	}
-	if len(fetchResult.Artifacts) != 1 {
-		t.Fatalf("upstream fetch artifacts = %v, want 1", fetchResult.Artifacts)
+	if len(fetchRef.GetArtifacts()) != 1 {
+		t.Fatalf("upstream fetch artifacts = %v, want 1", fetchRef.GetArtifacts())
 	}
-	artifactRef := fetchResult.Artifacts[0]
-	if artifactRef.Name != "body" || artifactRef.URI != "s3://bucket/run/fetch/body" ||
-		artifactRef.ContentType != "application/json" || artifactRef.SizeBytes != 17 || artifactRef.SHA256 != "abc123" {
+	artifactRef := fetchRef.GetArtifacts()[0]
+	if artifactRef.GetName() != "body" || artifactRef.GetUri() != "s3://bucket/run/fetch/body" ||
+		artifactRef.GetContentType() != "application/json" || artifactRef.GetSizeBytes() != 17 ||
+		artifactRef.GetSha256() != "abc123" {
 		t.Errorf("upstream artifact = %+v, want the ref produced by fetch", artifactRef)
 	}
-	if transform.With["command"] != "cat {{ artifact \"fetch/body\" }}" {
-		t.Errorf("with was rendered by the engine: %v (rendering belongs to the Orker)", transform.With)
+	// The engine must NOT have rendered the template: `artifact "fetch/body"`
+	// resolves to a container path only the Orker knows, after staging.
+	if got := transform.GetWith().AsMap()["command"]; got != "cat {{ artifact \"fetch/body\" }}" {
+		t.Errorf("with was rendered by the engine: %v (rendering belongs to the Orker)", got)
 	}
 
 	// save needs transform, which transitively needs fetch: both are visible.
@@ -374,11 +378,11 @@ func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 	if !ok {
 		t.Fatal("save task was never executed")
 	}
-	if _, ok := save.Upstream["fetch"]; !ok {
-		t.Errorf("save upstream = %v, want the transitive fetch entry", save.Upstream)
+	if upstreamRef(save, "fetch") == nil {
+		t.Errorf("save upstream = %v, want the transitive fetch entry", save.GetUpstream())
 	}
-	if _, ok := save.Upstream["transform"]; !ok {
-		t.Errorf("save upstream = %v, want the direct transform entry", save.Upstream)
+	if upstreamRef(save, "transform") == nil {
+		t.Errorf("save upstream = %v, want the direct transform entry", save.GetUpstream())
 	}
 
 	var run orkstackv1.Run
@@ -402,23 +406,23 @@ inputs:
     type: boolean
 tasks:
   - id: always
-    plugin: shell
+    uses: shell
     with: {command: "echo always"}
   - id: maybe
-    plugin: shell
+    uses: shell
     needs: [always]
     condition: "{{ .inputs.enabled }}"
     with: {command: "echo maybe"}
   - id: after
-    plugin: shell
+    uses: shell
     needs: [maybe]
     with: {command: "echo after"}
 `
 
 func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		return task.ExecuteTaskResult{TaskID: in.TaskID, Output: plugin.Payload{"stdout": in.TaskID}}, nil
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition",
@@ -458,8 +462,8 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 
 func TestRunWorkflow_RunsTaskWithMetCondition(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		return task.ExecuteTaskResult{TaskID: in.TaskID, Output: plugin.Payload{"stdout": in.TaskID}}, nil
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition-true",
@@ -477,7 +481,7 @@ const retryDocument = `
 name: retrying
 tasks:
   - id: flaky
-    plugin: shell
+    uses: shell
     timeout_seconds: 5
     retry:
       maximum_attempts: 3
@@ -486,7 +490,7 @@ tasks:
       maximum_interval_seconds: 1
     with: {command: "exit 1"}
   - id: downstream
-    plugin: shell
+    uses: shell
     needs: [flaky]
     with: {command: "echo never"}
 `
@@ -496,16 +500,16 @@ func TestRunWorkflow_RetriesPerPolicyThenFailsRun(t *testing.T) {
 	var attempts int32
 	var mu sync.Mutex
 
-	h := newHarness(t, &suite, func(task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		return task.ExecuteTaskResult{}, nil
+	h := newHarness(t, &suite, func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return &orkstackv1.ExecuteTaskResult{}, nil
 	})
 	// Explicit mock: assert the activity is retried exactly three times.
 	h.env.OnActivity(task.ActivityExecuteTask, mock.Anything, mock.Anything).
-		Return(func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		Return(func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			mu.Lock()
 			attempts++
 			mu.Unlock()
-			return task.ExecuteTaskResult{}, errors.New("plugin exited 1")
+			return &orkstackv1.ExecuteTaskResult{}, errors.New("plugin exited 1")
 		}).Times(3)
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil), defaultPlan())
@@ -555,18 +559,18 @@ func TestRunWorkflow_SingleAttemptWhenNoRetryPolicy(t *testing.T) {
 name: no-retry
 tasks:
   - id: only
-    plugin: shell
+    uses: shell
     timeout_seconds: 5
     with: {command: "exit 1"}
 `
 	var suite testsuite.WorkflowTestSuite
 	var attempts int
 	var mu sync.Mutex
-	h := newHarness(t, &suite, func(task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+	h := newHarness(t, &suite, func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		mu.Lock()
 		attempts++
 		mu.Unlock()
-		return task.ExecuteTaskResult{}, errors.New("boom")
+		return &orkstackv1.ExecuteTaskResult{}, errors.New("boom")
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-retry", compile(t, document), payload(t, nil), defaultPlan())
@@ -590,13 +594,13 @@ inputs:
     default: "https://default.test"
 tasks:
   - id: fetch
-    plugin: http
+    uses: http
     with:
       url: "{{ .inputs.url }}"
 `
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil), defaultPlan())
@@ -607,8 +611,8 @@ tasks:
 	if !ok {
 		t.Fatal("fetch task was not executed")
 	}
-	if input.RunInput["url"] != "https://default.test" {
-		t.Errorf("ExecuteTaskInput.RunInput.url = %v, want declared default", input.RunInput["url"])
+	if got := input.GetRunInput().GetData().AsMap()["url"]; got != "https://default.test" {
+		t.Errorf("ExecuteTaskInput.RunInput.url = %v, want declared default", got)
 	}
 }
 
@@ -617,30 +621,30 @@ func TestRunWorkflow_SchedulesChildWhenItsOwnNeedCompletes(t *testing.T) {
 name: readiness-driven
 tasks:
   - id: slow
-    plugin: shell
+    uses: shell
     timeout_seconds: 5
   - id: fast
-    plugin: shell
+    uses: shell
   - id: child
-    plugin: shell
+    uses: shell
     needs: [fast]
 `
 	var suite testsuite.WorkflowTestSuite
 	releaseSlow := make(chan struct{})
 	var releaseOnce sync.Once
-	h := newHarness(t, &suite, func(in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-		switch in.TaskID {
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		switch in.TaskId {
 		case "slow":
 			select {
 			case <-releaseSlow:
-				return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+				return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 			case <-time.After(2 * time.Second):
-				return task.ExecuteTaskResult{}, errors.New("child was not scheduled before unrelated slow task")
+				return &orkstackv1.ExecuteTaskResult{}, errors.New("child was not scheduled before unrelated slow task")
 			}
 		case "child":
 			releaseOnce.Do(func() { close(releaseSlow) })
 		}
-		return task.ExecuteTaskResult{TaskID: in.TaskID}, nil
+		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil), defaultPlan())
@@ -663,4 +667,17 @@ func mustWorkflowResult(t *testing.T, env *testsuite.TestWorkflowEnvironment) *o
 		t.Fatalf("workflow result: %v", err)
 	}
 	return &run
+}
+
+// upstreamRef finds one ancestor's contribution in a task's upstream list.
+//
+// The list is a slice rather than a map because it is proto, and a repeated
+// field is what keeps the ordering deterministic for replay.
+func upstreamRef(in *orkstackv1.ExecuteTaskInput, taskID string) *orkstackv1.UpstreamRef {
+	for _, ref := range in.GetUpstream() {
+		if ref.GetTaskId() == taskID {
+			return ref
+		}
+	}
+	return nil
 }

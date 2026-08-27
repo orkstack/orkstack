@@ -29,7 +29,6 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -46,18 +45,18 @@ version: "1.0.0"
 description: Three tasks whose run transitions must reach a registered webhook.
 tasks:
   - id: fetch
-    plugin: http
+    uses: http
     pool: %q
     with:
       op: get
   - id: transform
-    plugin: shell
+    uses: shell
     needs: [fetch]
     pool: %q
     with:
       op: exec
   - id: save
-    plugin: file
+    uses: file
     needs: [transform]
     pool: %q
     with:
@@ -134,10 +133,10 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	})
 	taskWorker.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-			return task.ExecuteTaskResult{
-				TaskID: in.TaskID,
-				Output: plugin.Payload{"echoed_task": in.TaskID},
+		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			return &orkstackv1.ExecuteTaskResult{
+				TaskId:     in.TaskId,
+				ValuesJson: valuesJSON(map[string]any{"echoed_task": in.TaskId}),
 			}, nil
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},

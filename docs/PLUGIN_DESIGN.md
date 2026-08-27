@@ -8,7 +8,7 @@ the next one.
 ```yaml
 tasks:
   - id: fetch
-    plugin: http
+    uses: http
     with:
       op: get                 # what to do
       url: "{{ .inputs.url }}"  # what to do it to
@@ -72,7 +72,7 @@ Per-plugin reference: [`pkg/plugins/http/README.md`](../pkg/plugins/http/README.
 
 ```yaml
 - id: publish
-  plugin: http
+  uses: http
   with:
     op: post              # get | post | put | patch | delete | head
     url: "https://httpbin.org/post"
@@ -93,7 +93,7 @@ Full example: [`examples/http-post.ork.yaml`](../examples/http-post.ork.yaml).
 
 ```yaml
 - id: report
-  plugin: shell
+  uses: shell
   with:
     op: exec              # exec | eval | script
     command: ./build.sh
@@ -112,7 +112,7 @@ keeps its own `$0`, needs no `&&` chaining, and can choose its interpreter.
 
 ```yaml
 - id: package
-  plugin: shell
+  uses: shell
   with:
     op: script
     interpreter: sh       # optional; a `#!` first line wins if this is unset
@@ -132,7 +132,7 @@ Full example: [`examples/shell-eval.ork.yaml`](../examples/shell-eval.ork.yaml).
 
 ```yaml
 - id: save
-  plugin: file
+  uses: file
   with:
     op: write             # write | read | copy | delete
     path: result.txt
@@ -155,7 +155,7 @@ Full example: [`examples/file-read.ork.yaml`](../examples/file-read.ork.yaml).
 
 ```yaml
 - id: build
-  plugin: container
+  uses: container
   with:
     op: run               # run | pull
     image: alpine:3.20

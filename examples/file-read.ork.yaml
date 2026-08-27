@@ -13,7 +13,7 @@ inputs:
 tasks:
   # 1. `op: write` creates the file and exports it as the artifact `greeting`.
   - id: seed
-    plugin: file
+    uses: file
     with:
       op: write
       path: notes/greeting.txt
@@ -23,7 +23,7 @@ tasks:
   # 2. `op: read` stats a materialized upstream artifact and re-exports it, so
   #    output.size_bytes describes the bytes that actually arrived.
   - id: reread
-    plugin: file
+    uses: file
     needs: [seed]
     with:
       op: read
@@ -33,7 +33,7 @@ tasks:
   # 3. `op: eval` reads the value back through the shell without failing the
   #    run if the command exits non-zero.
   - id: show
-    plugin: shell
+    uses: shell
     needs: [reread]
     with:
       op: eval
@@ -42,7 +42,7 @@ tasks:
   # 4. `op: delete` is idempotent: removing a path that was never created
   #    succeeds with size_bytes 0, so a Temporal retry behaves like attempt 1.
   - id: cleanup
-    plugin: file
+    uses: file
     needs: [show]
     with:
       op: delete

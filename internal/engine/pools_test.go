@@ -40,11 +40,11 @@ const twoPoolDocument = `
 name: pool-plan
 tasks:
   - id: crunch
-    plugin: shell
+    uses: shell
     pool: gpu
     with: {command: "echo crunch"}
   - id: tidy
-    plugin: shell
+    uses: shell
     needs: [crunch]
     with: {command: "echo tidy"}
 `
@@ -137,7 +137,7 @@ func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T)
 	// the channel the default pool would have used without the override.
 	resolver := &engine.PoolResolver{
 		Probe:    livePools{raw: 3, gpuQueue: 1},
-		Plugins:  fakePoolPlugins{raw: {"shell"}, gpuQueue: {"http"}},
+		Orkers:   fakePoolOrkers{raw: {"shell"}, gpuQueue: {"http"}},
 		RawQueue: raw,
 	}
 	ns := &orkstackv1.Namespace{Name: "default"}
@@ -168,10 +168,6 @@ func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T)
 		t.Errorf("pool %q reports %d live Orkers, want the 3 serving %q — the channel "+
 			"this very resolver dispatches the pool's work to", task.DefaultPool, got, raw)
 	}
-	if got := strings.Join(byName[task.DefaultPool].GetPlugins(), ","); got != "shell" {
-		t.Errorf("pool %q reports plugins %q, want the ones its Orkers run",
-			task.DefaultPool, got)
-	}
 	// The override moved one route, so it moves one report.
 	if got := byName["gpu"].GetLiveOrkerCount(); got != 1 {
 		t.Errorf("pool gpu reports %d live Orkers, want 1", got)
@@ -194,7 +190,7 @@ func TestPoolResolver_OneSetOfOrkersIsOnePool(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
 		Probe:    livePools{gpuQueue: 2},
-		Plugins:  fakePoolPlugins{gpuQueue: {"shell"}},
+		Orkers:   fakePoolOrkers{gpuQueue: {"shell"}},
 		RawQueue: gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
 	}
 	ns := &orkstackv1.Namespace{Name: "default"}
@@ -372,7 +368,7 @@ const mainPoolDocument = `
 name: main-pool
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     pool: main
     with: {command: "echo settle"}
 `
@@ -523,7 +519,7 @@ const onePoolDocument = `
 name: one-pool
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo settle"}
 `
 
@@ -533,8 +529,8 @@ tasks:
 func TestPoolResolver_ReportsPoolsWithTheirOrkersAndPlugins(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
-		Probe:   livePools{task.DefaultQueue: 2, gpuQueue: 1},
-		Plugins: fakePoolPlugins{gpuQueue: {"shell"}, task.DefaultQueue: {"http", "shell"}},
+		Probe:  livePools{task.DefaultQueue: 2, gpuQueue: 1},
+		Orkers: fakePoolOrkers{gpuQueue: {"shell"}, task.DefaultQueue: {"http", "shell"}},
 	}
 	ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"main", "gpu", "cold"}}
 
@@ -555,21 +551,22 @@ func TestPoolResolver_ReportsPoolsWithTheirOrkersAndPlugins(t *testing.T) {
 	if !byName["main"].GetIsDefault() {
 		t.Error("pool main is not marked as the namespace's default")
 	}
-	if got := strings.Join(byName["gpu"].GetPlugins(), ","); got != "shell" {
-		t.Errorf("pool gpu reports plugins %q, want shell", got)
-	}
 	// A pool nothing serves is reported, not hidden: "nobody is there" is the
 	// answer an operator came for.
 	if got := byName["cold"].GetLiveOrkerCount(); got != 0 {
 		t.Errorf("pool cold has %d live Orkers, want 0", got)
 	}
-	if len(byName["cold"].GetPlugins()) != 0 {
-		t.Errorf("pool cold reports plugins %v; there is nobody to ask", byName["cold"].GetPlugins())
-	}
 }
 
-type fakePoolPlugins map[string][]string
+// fakePoolOrkers answers the DescribeOrker probe for a set of channels. The
+// VALUE is unused — under the OCI Activity Contract an Orker has no plugin
+// list to report — so what a channel maps to only decides whether the probe
+// answers at all, which is the liveness evidence the report wants (§6.5).
+type fakePoolOrkers map[string][]string
 
-func (f fakePoolPlugins) PluginsOnPool(_ context.Context, queue string) ([]string, error) {
-	return f[queue], nil
+func (f fakePoolOrkers) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
+	if _, serving := f[queue]; !serving {
+		return nil, fmt.Errorf("no orker is polling %q", queue)
+	}
+	return &orkstackv1.DescribeOrkerResult{OrkerId: "orker-" + queue, RuntimeName: "docker"}, nil
 }

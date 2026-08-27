@@ -378,7 +378,7 @@ version: "%s"
 description: M10.4 version %s
 tasks:
   - id: report
-    plugin: shell
+    uses: shell
     with:
       op: exec
       command: echo %s
@@ -393,7 +393,7 @@ version: "%s"
 description: M10.4 version %s (slow)
 tasks:
   - id: report
-    plugin: shell
+    uses: shell
     timeout_seconds: 120
     with:
       op: exec

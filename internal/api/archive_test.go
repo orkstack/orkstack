@@ -124,7 +124,7 @@ func (h *archiveHarness) finish(t *testing.T, runID string, status orkstackv1.St
 		StartedAt:      timestamppb.New(finishedAt.Add(-time.Second)),
 		FinishedAt:     timestamppb.New(finishedAt),
 		TaskRuns: []*orkstackv1.TaskRun{
-			{TaskId: "fetch", Plugin: "http", Status: status},
+			{TaskId: "fetch", Status: status},
 		},
 	}
 	event := &orkstackv1.Event{

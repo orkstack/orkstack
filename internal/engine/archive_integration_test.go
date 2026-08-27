@@ -28,7 +28,6 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // requireMinIO skips when the dev object store is not up, matching the
@@ -99,14 +98,14 @@ func startEngine(
 			DisableWorkflowWorker:       true,
 		})
 		taskWorker.RegisterActivityWithOptions(
-			func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
-				return task.ExecuteTaskResult{
-					TaskID: in.TaskID,
-					Output: plugin.Payload{"echoed_task": in.TaskID},
-					Artifacts: []plugin.ArtifactRef{{
+			func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+				return &orkstackv1.ExecuteTaskResult{
+					TaskId:     in.TaskId,
+					ValuesJson: valuesJSON(map[string]any{"echoed_task": in.TaskId}),
+					Artifacts: []*orkstackv1.ArtifactRef{{
 						Name: "echo",
-						URI: fmt.Sprintf("s3://orkstack-artifacts/orkflows/%s/%s/%s/echo",
-							in.OrkflowName, in.TaskID, in.RunID),
+						Uri: fmt.Sprintf("s3://orkstack-artifacts/orkflows/%s/%s/%s/echo",
+							in.OrkflowName, in.TaskId, in.RunId),
 					}},
 				}, nil
 			},

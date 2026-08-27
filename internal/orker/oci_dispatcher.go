@@ -1,0 +1,1392 @@
+package orker
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"go.temporal.io/sdk/activity"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/logstream"
+)
+
+// System artifact names. They live in ExecuteTaskResult.system_artifacts,
+// which is a SEPARATE field from artifacts, so a workload artifact named
+// stdout.log cannot collide with the platform's (§3.6).
+const (
+	StdoutLogName = "stdout.log"
+	StderrLogName = "stderr.log"
+)
+
+// undecodableRereadDelay is the backoff before the single in-attempt reread of
+// an undecodable commit (§5.4).
+//
+// The reread needs no cross-attempt state, which is the whole point: the Orker
+// is stateless and disposable, a retry may land on a different host, and
+// Temporal's attempt counter counts every failure cause rather than
+// consecutive undecodable reads. A truncated read is a read-time artifact, so
+// one immediate reread separates it from genuine corruption without any
+// carrier at all.
+const undecodableRereadDelay = 250 * time.Millisecond
+
+// OCIDispatcher runs every activity. plugin.Registry and registry.Get(name)
+// are gone: there is one implementation, and an activity is an image.
+type OCIDispatcher struct {
+	// Runtime is the only Docker-aware seam in the repository.
+	Runtime ContainerRuntime
+	// Store holds artifacts, values.json and the captured streams.
+	Store artifacts.Store
+	// Commits holds the durable completion records. Its Create is
+	// create-if-absent, and that conditional is the arbitration point of the
+	// whole protocol.
+	Commits artifacts.CommitStore
+	// Refs predicts the ArtifactRef a Put would return, with no I/O, so step 4
+	// can bound the projected commit BEFORE any byte is uploaded (§5.4).
+	Refs artifacts.RefPredictor
+	// Logs is where a task attempt's live output is streamed while it runs.
+	Logs artifacts.LogStore
+	// LogOpts bounds that stream.
+	LogOpts LogOptions
+	// Policy is the Orker-local half of §9.
+	Policy SecurityPolicy
+	// WorkRoot is the parent of every per-attempt directory.
+	WorkRoot string
+	// OrkerID identifies this Orker. It labels every container, and it is the
+	// startup reaper's key: it is how an Orker recognizes its own previous
+	// life's containers (§5.5).
+	OrkerID string
+	// BuildID is ORK_BUILD_ID, recorded on every commit.
+	BuildID string
+	// EnvAllowlist limits which variables the `env` template helper reads.
+	EnvAllowlist map[string]struct{}
+	// LayoutRoot is where embedded OCI image layouts live (§4.6). Empty
+	// disables the fallback, which is the Phase 1 state: Phase 3 supplies the
+	// layouts, and this seam exists so it has something to implement against.
+	LayoutRoot string
+	// LogSinkObserver is an optional in-process observer of streamed lines.
+	LogSinkObserver func(in *orkstackv1.ExecuteTaskInput, line string)
+}
+
+// Execute runs one activity end to end, in the §7.1 order.
+//
+// The sequence is not a suggestion. Two orderings are load-bearing:
+//
+//   - The LOG SINK opens before anything else and closes before return, so
+//     even a workdir failure is visible to somebody watching the task, and
+//     every chunk is durable before Temporal records the terminal event.
+//   - IMAGE comes before RENDER. task.json carries image.platformDigest,
+//     image.platform and image.delivery, and none of those exists until the
+//     image is resolved — under the opposite order all three keys were always
+//     absent. Rendering first and rewriting task.json afterwards is worse: it
+//     makes an input file mutable during setup, and §3.1's permission model
+//     depends on input/ being sealed before the container starts.
+func (d *OCIDispatcher) Execute(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+) (*orkstackv1.ExecuteTaskResult, error) {
+	startedAt := timestamppb.New(time.Now().UTC())
+	attempt := attemptOf(ctx)
+
+	// STEP 1. The live log sink, first and always.
+	sink := d.openLogSink(ctx, in, attempt)
+	defer sink.Close()
+	stdoutLine := logstream.NewLineWriter(func(format string, args ...any) {
+		sink.Write(fmt.Sprintf(format, args...))
+	}, "")
+	stderrLine := logstream.NewLineWriter(func(format string, args ...any) {
+		sink.Write(fmt.Sprintf(format, args...))
+	}, logstream.StderrMarker)
+
+	// STEP 2. The heartbeat loop, for the ENTIRE attempt.
+	//
+	// Temporal delivers cancellation to an activity only through a heartbeat
+	// response: an activity that never calls RecordHeartbeat never observes
+	// ctx.Done(). A loop that only beat between phases could not deliver
+	// cancellation to a container that is running, which is exactly when
+	// somebody presses cancel.
+	beat := NewHeartbeater(ctx)
+	beat.Start(ctx)
+	defer beat.Stop()
+	beat.Phase("start")
+
+	result, failure := d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink)
+
+	// The line writers are flushed before the sink closes, so a workload's
+	// last unterminated line is not lost.
+	stdoutLine.Close()
+	stderrLine.Close()
+
+	// CANCELLATION IS CHECKED FIRST, before any failure this attempt
+	// collected.
+	//
+	// A cancelled attempt is Cancelled, whatever else was in flight. Checking
+	// the failure first reports the WRONG terminal reason: a container killed
+	// mid-run has necessarily written no values.json, so the attempt would
+	// fail with ContractViolation/VALUES_MISSING — blaming the image for not
+	// finishing work that was deliberately taken away from it, and doing so
+	// NON-RETRYABLY. Found by TestIntegration_CancellationSignalsThenKills.
+	//
+	// Returning nil here would be worse still: it would report success for
+	// work that was torn down, which §6.3 forbids outright.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if failure != nil {
+		return nil, failure.TemporalError()
+	}
+	return result, nil
+}
+
+// Validate is the pure, I/O-free half of the contract check. It is separate so
+// the engine's own tests and the activity test suite can assert the refusals
+// without a daemon.
+func (d *OCIDispatcher) Validate(in *orkstackv1.ExecuteTaskInput) *Failure {
+	if in == nil {
+		return Fail(ReasonInputTooLarge, "the activity received no input")
+	}
+	pinned := in.GetImage().GetPinned()
+	switch {
+	case pinned == "":
+		return Fail(ReasonImageNotPinned,
+			"task %q: image.pinned is empty; the engine resolves a reference to a digest at apply "+
+				"time and a run executes what that digest names", in.GetTaskId())
+	case !strings.Contains(pinned, "@sha256:"):
+		return Fail(ReasonImageNotPinned,
+			"task %q: image.pinned %q is not {registry}/{repository}@sha256:<64 hex>; a running "+
+				"execution must never silently switch images because a tag moved", in.GetTaskId(), pinned)
+	}
+	if _, failure := d.Policy.ResolveNetwork(in.GetNetwork()); failure != nil {
+		return failure
+	}
+	if _, _, failure := d.Policy.ResolveResources(in.GetResources()); failure != nil {
+		return failure
+	}
+	for _, secret := range in.GetSecrets() {
+		if !ValidSecretName(secret.GetName()) {
+			return Fail(ReasonSecretSchemeForbid,
+				"secret name %q must match ^[A-Za-z0-9._-]{1,128}$", secret.GetName())
+		}
+		scheme, _ := SplitSecretSource(secret.GetSource())
+		if !d.Policy.AllowsSecretScheme(scheme) {
+			return Fail(ReasonSecretSchemeForbid,
+				"secret %q uses source scheme %q, which this orker does not resolve (allowed: %s); "+
+					"an unknown scheme is refused rather than ignored",
+				secret.GetName(), scheme, strings.Join(d.Policy.SecretSchemes, ", "))
+		}
+	}
+	return nil
+}
+
+// execute is Execute's body, split out so Execute owns only the two lifecycles
+// that must wrap everything (§7.1 steps 1-2 and 15).
+func (d *OCIDispatcher) execute(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	attempt int32,
+	startedAt *timestamppb.Timestamp,
+	beat *Heartbeater,
+	stdoutLine, stderrLine io.Writer,
+	sink *logChunkSink,
+) (*orkstackv1.ExecuteTaskResult, *Failure) {
+	if failure := d.Validate(in); failure != nil {
+		return nil, failure
+	}
+
+	// STEP 3. The retry-start commit check, before anything expensive and
+	// before any container starts.
+	beat.Phase("commit-check")
+	if adopted, failure := d.adopt(ctx, in, attempt); adopted != nil || failure != nil {
+		return adopted, failure
+	}
+
+	// STEP 4. The workspace.
+	beat.Phase("workspace")
+	root, err := d.makeAttemptDir(in, attempt)
+	if err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err,
+			"task %q: create the per-attempt workspace: %v", in.GetTaskId(), err)
+	}
+	ws, err := NewWorkspace(root)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return nil, FailCause(ReasonWorkdirFailed, err,
+			"task %q: build the workspace tree: %v", in.GetTaskId(), err)
+	}
+	// Scratch space for exactly this attempt: removed on success, failure,
+	// panic and cancellation alike.
+	//
+	// Workspace.Remove, not os.RemoveAll: Seal leaves input/ at 0555 and
+	// unlinking needs write on the DIRECTORY, so a plain RemoveAll would fail
+	// and leave the attempt's tree — staged secrets included — on disk.
+	defer func() { _ = ws.Remove() }()
+	// Secret bytes must not outlive the attempt that needed them, on ANY exit
+	// path (§9.4).
+	defer func() { _ = ws.RemoveSecrets() }()
+
+	// STEP 5. Input staging.
+	beat.Phase("stage-inputs")
+	staged, failure := d.stageInputs(ctx, in, ws)
+	if failure != nil {
+		return nil, failure
+	}
+
+	// STEP 6. The image — BEFORE the render, so task.json can carry what the
+	// pull resolved.
+	beat.Phase("image")
+	image, failure := d.resolveImage(ctx, in)
+	if failure != nil {
+		return nil, failure
+	}
+
+	// STEP 7. Render, then compose and SEAL the input tree.
+	beat.Phase("render")
+	effectiveCPU, effectiveMem, resFailure := d.Policy.ResolveResources(in.GetResources())
+	if resFailure != nil {
+		return nil, resFailure
+	}
+	network, netFailure := d.Policy.ResolveNetwork(in.GetNetwork())
+	if netFailure != nil {
+		return nil, netFailure
+	}
+	runAsOrkerUser := in.GetRunAsOrkerUser() || d.Policy.ForceUser
+
+	rendered, failure := d.render(ctx, in, staged)
+	if failure != nil {
+		return nil, failure
+	}
+	if err := ws.WriteConfigJSON(rendered); err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err, "write config.json: %v", err)
+	}
+	if err := ws.WriteRunJSON(payloadMapOf(in.GetRunInput())); err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err, "write run.json: %v", err)
+	}
+	if err := ws.WriteTaskJSON(in, TaskContext{
+		Attempt:        attempt,
+		Pool:           resolvedPool(in.GetPool()),
+		Namespace:      artifacts.ResolveNamespace(in.GetNamespace()),
+		RunAsOrkerUser: runAsOrkerUser,
+		EffectiveCPU:   effectiveCPU,
+		EffectiveMem:   effectiveMem,
+		Network:        network,
+		Image:          image,
+		StagedInputs:   staged.artifacts,
+		StagedUpstream: staged.upstream,
+		StagedSecrets:  staged.secrets,
+	}); err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err, "write task.json: %v", err)
+	}
+	if err := ws.Seal(); err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err, "seal the input tree: %v", err)
+	}
+	if err := ws.SealSecrets(); err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err, "seal the secrets directory: %v", err)
+	}
+
+	// STEP 8. Create.
+	beat.Phase("create")
+	spec, failure := d.containerSpec(in, ws, image, attempt, network, effectiveCPU, effectiveMem, runAsOrkerUser)
+	if failure != nil {
+		return nil, failure
+	}
+	id, err := d.Runtime.Create(ctx, spec)
+	if err != nil {
+		return nil, d.runtimeFailure(err, "create the container")
+	}
+	beat.Container(id)
+	// Remove runs on a DETACHED context: cleanup must survive the
+	// cancellation that caused it (§6.3).
+	defer func() {
+		removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
+		defer cancel()
+		if err := d.Runtime.Remove(removeCtx, id); err != nil {
+			sink.Write(fmt.Sprintf("[ork] container %s could not be removed: %v", id, err))
+		}
+	}()
+
+	// STEP 9-10. Run, stream, and wait for exit, cancellation or the task
+	// timeout.
+	beat.Phase("run")
+	capture, failure := d.runContainer(ctx, in, ws, id, beat, stdoutLine, stderrLine)
+	if failure != nil {
+		// Even a failure publishes what it produced.
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+	}
+
+	// A cancelled attempt stops here. runContainer has already signalled,
+	// waited out the grace period, killed and let the deferred Remove run;
+	// continuing into validation would only produce a misleading
+	// VALUES_MISSING for a container that was never allowed to finish.
+	if err := ctx.Err(); err != nil {
+		return nil, nil
+	}
+
+	// STEP 11. Exit capture.
+	beat.Phase("exit")
+	if capture.status.Code != 0 {
+		failure := Fail(ReasonContainerExitNonzero,
+			"task %q: the container exited %d", in.GetTaskId(), capture.status.Code)
+		if capture.status.OOMKilled {
+			failure = Fail(ReasonContainerExitNonzero,
+				"task %q: the container exited %d after the kernel killed it for exceeding its "+
+					"memory limit of %s", in.GetTaskId(), capture.status.Code, effectiveMem)
+		}
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+	}
+
+	// STEP 12. Validate — INCLUDING readability — and bound the projected
+	// commit before any byte is uploaded.
+	beat.Phase("validate")
+	values, failure := ReadValues(filepath.Join(ws.Output, "values.json"), in.GetLimits())
+	if failure != nil {
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+	}
+	scanned, failure := ScanOutputArtifacts(ws.Artifacts, in.GetLimits())
+	if failure != nil {
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+	}
+	for _, artifact := range scanned {
+		if failure := CheckReadable(artifact.Path, ContainerArtifacts+"/"+artifact.Name); failure != nil {
+			return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+		}
+	}
+
+	// STEP 13. Hash, bound, upload, commit.
+	beat.Phase("commit")
+	return d.commit(ctx, in, ws, capture, image, scanned, values, attempt, startedAt)
+}
+
+// ---------------------------------------------------------------- step 0
+
+// adopt implements the §5.4 retry-start check.
+//
+// A commit that exists and matches means this activity already finished
+// durably. Adopting it is what makes "Orker died after commit.json, before
+// Temporal completion" a container that ran ONCE rather than twice.
+func (d *OCIDispatcher) adopt(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	attempt int32,
+) (*orkstackv1.ExecuteTaskResult, *Failure) {
+	uri := in.GetCommitUri()
+	if uri == "" || d.Commits == nil {
+		return nil, nil
+	}
+	record, err := d.Commits.Get(ctx, uri)
+	switch {
+	case err == nil:
+	case errors.Is(err, artifacts.ErrNotFound):
+		return nil, nil
+	case errors.Is(err, artifacts.ErrCommitUndecodable):
+		// One immediate reread, within this attempt. If it decodes, continue
+		// at the matching branch; if it does not, the stored bytes are
+		// corrupt rather than in flight.
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case <-time.After(undecodableRereadDelay):
+		}
+		record, err = d.Commits.Get(ctx, uri)
+		if err != nil {
+			if errors.Is(err, artifacts.ErrNotFound) {
+				return nil, nil
+			}
+			if errors.Is(err, artifacts.ErrCommitUndecodable) {
+				return nil, FailCause(ReasonCommitUndecodable, err,
+					"an object exists at %s but is still not a valid ActivityCommit after an "+
+						"in-attempt reread (%d bytes); the stored bytes are corrupt, not in flight",
+					uri, record.Bytes)
+			}
+			return nil, FailCause(ReasonCommitReadFailed, err, "read the commit at %s: %v", uri, err)
+		}
+	default:
+		// Execution NEVER proceeds on an unknown commit state: running the
+		// container blind could duplicate a durably committed result.
+		return nil, FailCause(ReasonCommitReadFailed, err,
+			"the commit store at %s could not be read: %v", uri, err)
+	}
+
+	commit := record.Commit
+	if commit.GetSchemaVersion() != artifacts.CommitSchemaVersion {
+		return nil, Fail(ReasonCommitSchema,
+			"the commit at %s has schema_version %d; this orker understands %d, and an orker that "+
+				"cannot read a commit must neither overwrite it nor re-run past it",
+			uri, commit.GetSchemaVersion(), artifacts.CommitSchemaVersion)
+	}
+	if mismatch := commitIdentityMismatch(commit, in); mismatch != "" {
+		return nil, Fail(ReasonCommitIdentity,
+			"the commit at %s is for a different activity: %s", uri, mismatch)
+	}
+
+	result := &orkstackv1.ExecuteTaskResult{
+		TaskId:          in.GetTaskId(),
+		ExitCode:        commit.GetExitCode(),
+		Commit:          &orkstackv1.CommitRef{Uri: uri, Sha256: record.SHA256, Etag: record.ETag, CreatedAt: commit.GetFinishedAt()},
+		Artifacts:       commit.GetArtifacts(),
+		SystemArtifacts: commit.GetSystemArtifacts(),
+		ValuesRef:       commit.GetValues(),
+		Image:           commit.GetImage(),
+		CommitAdopted:   true,
+		StartedAt:       commit.GetStartedAt(),
+		FinishedAt:      commit.GetFinishedAt(),
+		OrkerId:         d.OrkerID,
+		// The attempt is the COMMITTING attempt's, not this one's. Without it
+		// the engine could not populate TaskRun.attempt identically for fresh
+		// and adopted results, and a read-model difference would be decided by
+		// nothing but which Orker happened to crash.
+		Attempt: commit.GetAttempt(),
+	}
+	_ = attempt
+
+	// Adoption reconstructs the FULL result, including the inline copy.
+	// Otherwise the same task would produce a populated TaskRun.output on a
+	// fresh attempt and an empty one on an adopted attempt.
+	values := commit.GetValues()
+	if values.GetSizeBytes() > 0 && values.GetSizeBytes() <= InlineValuesLimit {
+		raw, failure := d.refetchValues(ctx, values)
+		if failure != nil {
+			return nil, failure
+		}
+		result.ValuesJson = raw
+		result.ValuesInlined = true
+	}
+	return result, nil
+}
+
+// refetchValues re-reads a small committed values.json so an adopted result
+// carries the same inline bytes a fresh one would.
+//
+// Adoption does NOT re-verify artifact bytes — they may have been expired by a
+// lifecycle rule, and a commit is a record of what happened, not a live
+// guarantee that every byte still exists. values is the one exception, because
+// it is being COPIED into the result rather than merely referenced.
+func (d *OCIDispatcher) refetchValues(ctx context.Context, ref *orkstackv1.ArtifactRef) ([]byte, *Failure) {
+	if d.Store == nil {
+		return nil, Fail(ReasonValuesRefetchFailed, "this orker has no artifact store")
+	}
+	reader, err := d.Store.Get(ctx, ref.GetUri())
+	if err != nil {
+		return nil, FailCause(ReasonValuesRefetchFailed, err,
+			"refetch the committed values.json at %s: %v", ref.GetUri(), err)
+	}
+	defer func() { _ = reader.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(reader, InlineValuesLimit+1))
+	if err != nil {
+		return nil, FailCause(ReasonValuesRefetchFailed, err,
+			"refetch the committed values.json at %s: %v", ref.GetUri(), err)
+	}
+	if got := HashBytes(raw); got != ref.GetSha256() {
+		// The store returned bytes that are not what the commit recorded.
+		// That is the store lying, and it is terminal: no retry can make the
+		// digest match.
+		return nil, Fail(ReasonValuesCorrupt,
+			"the committed values.json at %s hashes to %s but the commit records %s",
+			ref.GetUri(), got, ref.GetSha256())
+	}
+	return raw, nil
+}
+
+// commitIdentityMismatch compares exactly the seven identity fields of §5.4.
+//
+// image.platform_digest and image.platform are deliberately NOT compared. They
+// are audit data recorded by the winning attempt: the engine leaves both empty
+// in ExecuteTaskInput, so comparing them would reject EVERY adoption, and on a
+// mixed-architecture pool it would additionally reject two well-formed
+// attempts of the same activity for differing on a fact that is allowed to
+// differ. The index digest is the identity because it is what was pinned, what
+// was pulled, and what does not vary by host.
+func commitIdentityMismatch(commit *orkstackv1.ActivityCommit, in *orkstackv1.ExecuteTaskInput) string {
+	checks := []struct {
+		field, stored, wanted string
+	}{
+		{"namespace", commit.GetNamespace(), artifacts.ResolveNamespace(in.GetNamespace())},
+		{"run_id", commit.GetRunId(), in.GetRunId()},
+		{"task_id", commit.GetTaskId(), in.GetTaskId()},
+		{"orkflow_definition_digest", commit.GetOrkflowDefinitionDigest(), in.GetOrkflowDefinitionDigest()},
+		{"idempotency_key", commit.GetIdempotencyKey(), in.GetIdempotencyKey()},
+		{"image.index_digest", commit.GetImage().GetIndexDigest(), in.GetImage().GetIndexDigest()},
+	}
+	for _, check := range checks {
+		if check.stored != check.wanted {
+			return fmt.Sprintf("%s is %q, this activity's is %q", check.field, check.stored, check.wanted)
+		}
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------- steps 5-8
+
+// stagedInputs is what input staging produced, in the shape task.json needs.
+type stagedInputs struct {
+	artifacts []taskJSONInputArtifact
+	upstream  []taskJSONUpstream
+	secrets   []taskJSONSecret
+	// paths maps "<producer>/<name>" to the CONTAINER path, for the render's
+	// `artifact` helper. The helper returns a container path because that is
+	// the only path the workload can open.
+	paths map[string]string
+	// upstreamValues maps a task id to its decoded values.json, for the
+	// render's .tasks.<id>.output.
+	upstreamValues map[string]map[string]any
+	// upstreamArtifacts maps a task id to its refs, for .tasks.<id>.artifacts.
+	upstreamArtifacts map[string][]*orkstackv1.ArtifactRef
+}
+
+func (d *OCIDispatcher) stageInputs(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	ws *Workspace,
+) (*stagedInputs, *Failure) {
+	staged := &stagedInputs{
+		artifacts:         []taskJSONInputArtifact{},
+		upstream:          []taskJSONUpstream{},
+		secrets:           []taskJSONSecret{},
+		paths:             map[string]string{},
+		upstreamValues:    map[string]map[string]any{},
+		upstreamArtifacts: map[string][]*orkstackv1.ArtifactRef{},
+	}
+
+	for _, up := range in.GetUpstream() {
+		producer := up.GetTaskId()
+		staged.upstreamArtifacts[producer] = up.GetArtifacts()
+
+		for _, ref := range up.GetArtifacts() {
+			hostDir := filepath.Join(ws.Input, "artifacts", safeComponent(producer))
+			if err := os.MkdirAll(hostDir, 0o755); err != nil {
+				return nil, FailCause(ReasonWorkdirFailed, err,
+					"stage input artifacts for %q: %v", producer, err)
+			}
+			safe := safeComponent(ref.GetName())
+			hostPath := filepath.Join(hostDir, safe)
+			containerPath := ContainerInputArtifacts + "/" + safeComponent(producer) + "/" + safe
+
+			if failure := d.fetchInto(ctx, ref, hostPath); failure != nil {
+				return nil, failure
+			}
+			entry := taskJSONInputArtifact{
+				Producer:    producer,
+				NameB64:     EncodeArtifactName(ref.GetName()),
+				Path:        containerPath,
+				SizeBytes:   ref.GetSizeBytes(),
+				SHA256:      ref.GetSha256(),
+				ContentType: ref.GetContentType(),
+			}
+			// name is present only when the exact name is valid UTF-8;
+			// nameB64 is always present and authoritative (§3.2).
+			if utf8.ValidString(ref.GetName()) {
+				entry.Name = ref.GetName()
+			}
+			staged.artifacts = append(staged.artifacts, entry)
+			staged.paths[producer+"/"+ref.GetName()] = containerPath
+		}
+
+		// The ancestor's committed values.json, fetched by reference. Fan-in
+		// is O(ancestors) small records, never a transitive copy of every
+		// ancestor's payload (OQ-2).
+		if values := up.GetValues(); values.GetUri() != "" {
+			hostDir := filepath.Join(ws.Input, "upstream", safeComponent(producer))
+			if err := os.MkdirAll(hostDir, 0o755); err != nil {
+				return nil, FailCause(ReasonWorkdirFailed, err,
+					"stage upstream values for %q: %v", producer, err)
+			}
+			hostPath := filepath.Join(hostDir, "values.json")
+			if failure := d.fetchInto(ctx, values, hostPath); failure != nil {
+				return nil, failure
+			}
+			staged.upstream = append(staged.upstream, taskJSONUpstream{
+				TaskID:     producer,
+				ValuesPath: ContainerUpstream + "/" + safeComponent(producer) + "/values.json",
+			})
+			if raw, err := os.ReadFile(hostPath); err == nil {
+				decoded := map[string]any{}
+				if json.Unmarshal(raw, &decoded) == nil {
+					staged.upstreamValues[producer] = decoded
+				}
+			}
+		}
+	}
+
+	// Secrets. The value never appears in a proto message, in Temporal
+	// history, in the archive, in a log chunk, or in task.json — task.json
+	// carries only names and paths (§9.4).
+	for _, secret := range in.GetSecrets() {
+		value, failure := d.resolveSecret(secret)
+		if failure != nil {
+			return nil, failure
+		}
+		hostPath := filepath.Join(ws.Secrets, secret.GetName())
+		if err := os.WriteFile(hostPath, value, 0o600); err != nil {
+			return nil, FailCause(ReasonSecretUnresolved, err,
+				"write secret %q: %v", secret.GetName(), err)
+		}
+		staged.secrets = append(staged.secrets, taskJSONSecret{
+			Name: secret.GetName(),
+			Path: ContainerSecrets + "/" + secret.GetName(),
+		})
+	}
+	return staged, nil
+}
+
+// fetchInto downloads one referenced artifact and verifies its digest.
+func (d *OCIDispatcher) fetchInto(ctx context.Context, ref *orkstackv1.ArtifactRef, dest string) *Failure {
+	if d.Store == nil {
+		return Fail(ReasonInputUnavailable, "this orker has no artifact store")
+	}
+	reader, err := d.Store.Get(ctx, ref.GetUri())
+	if err != nil {
+		return FailCause(ReasonInputUnavailable, err,
+			"fetch input artifact %q from %s: %v", ref.GetName(), ref.GetUri(), err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	file, err := os.Create(dest)
+	if err != nil {
+		return FailCause(ReasonWorkdirFailed, err, "stage input artifact %q: %v", ref.GetName(), err)
+	}
+	if _, err := io.Copy(file, reader); err != nil {
+		_ = file.Close()
+		return FailCause(ReasonInputUnavailable, err,
+			"fetch input artifact %q from %s: %v", ref.GetName(), ref.GetUri(), err)
+	}
+	if err := file.Close(); err != nil {
+		return FailCause(ReasonWorkdirFailed, err, "stage input artifact %q: %v", ref.GetName(), err)
+	}
+
+	// A recorded digest that does not match the fetched bytes is the store
+	// contradicting the commit that referenced it. It is terminal: no retry
+	// makes corrupt bytes correct.
+	if want := ref.GetSha256(); want != "" {
+		got, _, err := HashFile(dest)
+		if err != nil {
+			return FailCause(ReasonInputUnavailable, err,
+				"hash the staged input artifact %q: %v", ref.GetName(), err)
+		}
+		if got != want {
+			return Fail(ReasonInputCorrupt,
+				"input artifact %q from %s hashes to %s but its reference records %s",
+				ref.GetName(), ref.GetUri(), got, want)
+		}
+	}
+	return nil
+}
+
+func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failure) {
+	scheme, locator := SplitSecretSource(ref.GetSource())
+	if !d.Policy.AllowsSecretScheme(scheme) {
+		return nil, Fail(ReasonSecretSchemeForbid,
+			"secret %q uses source scheme %q, which this orker does not resolve (allowed: %s)",
+			ref.GetName(), scheme, strings.Join(d.Policy.SecretSchemes, ", "))
+	}
+	switch scheme {
+	case "env":
+		value, ok := os.LookupEnv(locator)
+		if !ok {
+			return nil, Fail(ReasonSecretUnresolved,
+				"secret %q: environment variable %q is not set on this orker", ref.GetName(), locator)
+		}
+		return []byte(value), nil
+	case "file":
+		value, err := os.ReadFile(locator)
+		if err != nil {
+			return nil, FailCause(ReasonSecretUnresolved, err,
+				"secret %q: read %s: %v", ref.GetName(), locator, err)
+		}
+		return value, nil
+	default:
+		return nil, Fail(ReasonSecretSchemeForbid,
+			"secret %q: source scheme %q is unknown", ref.GetName(), scheme)
+	}
+}
+
+// resolveImage pulls the pinned image, or loads it from an embedded OCI layout.
+func (d *OCIDispatcher) resolveImage(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+) (*orkstackv1.ImageRef, *Failure) {
+	pinned := in.GetImage().GetPinned()
+	info, err := d.Runtime.Pull(ctx, pinned)
+	if err != nil && d.LayoutRoot != "" {
+		// The embedded fallback of §4.6. `docker load` verifies NOTHING about
+		// the root object (§14.15), so the digest check is what makes this
+		// safe — and it is the layout PATH that is derived from the digest,
+		// so a layout for a different image is simply absent rather than
+		// silently loaded.
+		layout := filepath.Join(d.LayoutRoot, layoutFileName(in.GetImage().GetIndexDigest()))
+		if loaded, loadErr := d.Runtime.LoadLayout(ctx, layout, in.GetImage().GetIndexDigest()); loadErr == nil {
+			info = loaded
+			err = nil
+		}
+	}
+	if err != nil {
+		return nil, FailCause(ReasonImagePullFailed, err,
+			"task %q: pull %s: %v", in.GetTaskId(), pinned, err)
+	}
+
+	// Clone rather than mutate: the input belongs to Temporal's decoded
+	// payload, and an activity that edited its own argument would make a
+	// retry's input differ from the recorded one.
+	image := &orkstackv1.ImageRef{
+		Reference:      in.GetImage().GetReference(),
+		Registry:       in.GetImage().GetRegistry(),
+		Repository:     in.GetImage().GetRepository(),
+		IndexDigest:    in.GetImage().GetIndexDigest(),
+		Pinned:         pinned,
+		MediaType:      in.GetImage().GetMediaType(),
+		Platforms:      in.GetImage().GetPlatforms(),
+		PlatformDigest: info.PlatformDigest,
+		Platform:       info.Platform,
+		Delivery:       info.Delivery,
+	}
+	return image, nil
+}
+
+// layoutFileName renders the embedded layout tarball's name from a digest.
+func layoutFileName(digest string) string {
+	return strings.ReplaceAll(digest, ":", "-") + ".tar"
+}
+
+func (d *OCIDispatcher) containerSpec(
+	in *orkstackv1.ExecuteTaskInput,
+	ws *Workspace,
+	image *orkstackv1.ImageRef,
+	attempt int32,
+	network, cpu, memory string,
+	runAsOrkerUser bool,
+) (ContainerSpec, *Failure) {
+	spec := ContainerSpec{
+		Image:   image.GetPinned(),
+		Command: in.GetCommand(),
+		Env:     in.GetEnv(),
+		WorkDir: ContainerRoot,
+		Mounts:  ws.Mounts(),
+
+		TmpfsPath:  ContainerScratchTmp,
+		TmpfsBytes: d.Policy.TmpfsBytes,
+
+		Network:   network,
+		CPUs:      cpu,
+		Memory:    memory,
+		PidsLimit: d.Policy.PidsLimit,
+
+		Labels: map[string]string{
+			"ork.run":     in.GetRunId(),
+			"ork.task":    in.GetTaskId(),
+			"ork.attempt": fmt.Sprintf("%d", attempt),
+			// ork.orker is how an Orker recognizes its own previous life's
+			// containers, which is what the startup reaper keys on (§5.5).
+			"ork.orker": d.OrkerID,
+		},
+
+		ReadOnlyRootfs:      true,
+		DropAllCapabilities: true,
+		NoNewPrivileges:     true,
+		SeccompProfile:      SeccompBuiltin,
+		Init:                true,
+
+		// The runtime-owned lifetime bound of §5.5 measure 3: a reaper cannot
+		// reach the containers of an Orker that never comes back, so the
+		// container's own budget has to be enforced by something inside its
+		// own lifetime.
+		StopTimeoutSeconds: int(graceSecondsOf(in)),
+	}
+	if runAsOrkerUser {
+		spec.User = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	}
+	return spec, nil
+}
+
+// ---------------------------------------------------------------- steps 9-11
+
+// runCapture is what one container run produced.
+type runCapture struct {
+	status     ExitStatus
+	stdoutPath string
+	stderrPath string
+	finishedAt *timestamppb.Timestamp
+}
+
+func (d *OCIDispatcher) runContainer(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	ws *Workspace,
+	id ContainerID,
+	beat *Heartbeater,
+	stdoutLine, stderrLine io.Writer,
+) (*runCapture, *Failure) {
+	logDir := filepath.Join(ws.Root, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err, "create the log capture directory: %v", err)
+	}
+	capture := &runCapture{
+		stdoutPath: filepath.Join(logDir, StdoutLogName),
+		stderrPath: filepath.Join(logDir, StderrLogName),
+	}
+
+	// The two streams go to two places each: live to the sink with the
+	// existing framing, and byte-exact to their own file for the durable
+	// system artifact. They are never merged on disk (§3.6).
+	stdoutFile, err := os.Create(capture.stdoutPath)
+	if err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err, "create %s: %v", StdoutLogName, err)
+	}
+	defer func() { _ = stdoutFile.Close() }()
+	stderrFile, err := os.Create(capture.stderrPath)
+	if err != nil {
+		return nil, FailCause(ReasonWorkdirFailed, err, "create %s: %v", StderrLogName, err)
+	}
+	defer func() { _ = stderrFile.Close() }()
+
+	logMax := in.GetLimits().GetLogMaxBytes()
+	stdout := io.MultiWriter(stdoutLine, newCappedWriter(stdoutFile, logMax, beat))
+	stderr := io.MultiWriter(stderrLine, newCappedWriter(stderrFile, logMax, beat))
+
+	if err := d.Runtime.Start(ctx, id, stdout, stderr); err != nil {
+		return capture, d.runtimeFailure(err, "start the container")
+	}
+
+	// Wait runs on a context of its OWN, not the activity's, so cancellation
+	// does not abort the wait before the kill sequence has finished. The
+	// select below is what observes cancellation.
+	waitCtx, cancelWait := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelWait()
+
+	exited := make(chan struct{})
+	var status ExitStatus
+	var waitErr error
+	go func() {
+		defer close(exited)
+		status, waitErr = d.Runtime.Wait(waitCtx, id)
+	}()
+
+	// timeout_seconds is the TASK's own wall clock and fires first. It is not
+	// StartToCloseTimeout and not HeartbeatTimeout; confusing the three is how
+	// a system ends up with a container nobody kills.
+	var timeout <-chan time.Time
+	if seconds := in.GetTimeoutSeconds(); seconds > 0 {
+		timer := time.NewTimer(time.Duration(seconds) * time.Second)
+		defer timer.Stop()
+		timeout = timer.C
+	}
+	grace := time.Duration(graceSecondsOf(in)) * time.Second
+
+	select {
+	case <-exited:
+		capture.finishedAt = timestamppb.New(time.Now().UTC())
+		if waitErr != nil {
+			return capture, FailCause(ReasonRuntimeRefused, waitErr,
+				"wait for the container: %v", waitErr)
+		}
+		capture.status = status
+		return capture, nil
+
+	case <-timeout:
+		beat.Phase("timeout")
+		TerminateContainer(ctx, d.Runtime, id, grace, exited)
+		<-exited
+		capture.finishedAt = timestamppb.New(time.Now().UTC())
+		return capture, Fail(ReasonContainerTimeout,
+			"task %q: the container exceeded its timeout of %d seconds and was terminated "+
+				"(SIGTERM, then SIGKILL after a %s grace period)",
+			in.GetTaskId(), in.GetTimeoutSeconds(), grace)
+
+	case <-ctx.Done():
+		// Cancellation arrived through a heartbeat response. The sequence is
+		// signal, wait the grace, kill, then let the deferred Remove run on a
+		// detached context.
+		beat.Phase("cancel")
+		TerminateContainer(ctx, d.Runtime, id, grace, exited)
+		<-exited
+		capture.finishedAt = timestamppb.New(time.Now().UTC())
+		// A canceled activity produces neither an ExecuteTaskResult nor an
+		// ActivityCommit — Temporal permits only CanceledError details on
+		// that path. What survives is the live log stream, which the sink has
+		// been writing as numbered chunks throughout the run and which the
+		// CLI and UI already read by (run, task, attempt) with no dependence
+		// on a result (§3.6).
+		return capture, nil
+	}
+}
+
+// runtimeFailure separates "the runtime refused" from "the host cannot bind
+// the workspace". The distinction is drawn from the runtime error, never from
+// an exit code.
+func (d *OCIDispatcher) runtimeFailure(err error, what string) *Failure {
+	if errors.Is(err, ErrNotBindable) {
+		return FailCause(ReasonWorkspaceNotBindable, err,
+			"%s: the container daemon cannot bind-mount this orker's workspace root %q. "+
+				"On macOS with a VM-hosted daemon $HOME is shared and /var/folders is not; point "+
+				"%s at a shared path. Retrying will not fix a host misconfiguration: %v",
+			what, d.WorkRoot, WorkRootVar, err)
+	}
+	return FailCause(ReasonRuntimeRefused, err, "%s: %v", what, err)
+}
+
+// ---------------------------------------------------------------- steps 12-13
+
+func (d *OCIDispatcher) commit(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	ws *Workspace,
+	capture *runCapture,
+	image *orkstackv1.ImageRef,
+	scanned []ScannedArtifact,
+	values []byte,
+	attempt int32,
+	startedAt *timestamppb.Timestamp,
+) (*orkstackv1.ExecuteTaskResult, *Failure) {
+	provenance := artifacts.Provenance{
+		Orkflow: in.GetOrkflowName(),
+		TaskID:  in.GetTaskId(),
+		RunID:   in.GetRunId(),
+	}
+
+	// Step 3: hash everything, streaming.
+	type pending struct {
+		name        string
+		path        string
+		sha         string
+		size        int64
+		contentType string
+	}
+	items := make([]pending, 0, len(scanned))
+	for _, artifact := range scanned {
+		sha, size, err := HashFile(artifact.Path)
+		if err != nil {
+			return nil, FailCause(ReasonOutputNotReadable, err,
+				"hash output artifact %q: %v", artifact.Name, err)
+		}
+		items = append(items, pending{name: artifact.Name, path: artifact.Path, sha: sha, size: size})
+	}
+	valuesSHA := HashBytes(values)
+
+	// Step 4: BOUND the commit before uploading a byte.
+	//
+	// The commit is the only thing a conforming workload can overflow without
+	// breaking any workload-facing limit. Measuring it here, with refs that
+	// are byte-identical to the ones step 8 will commit, means a violation
+	// costs no bandwidth and produces no orphans — and the only code available
+	// at step 8 would be retryable, so discovering it there would loop.
+	projected := &orkstackv1.ActivityCommit{
+		SchemaVersion:           artifacts.CommitSchemaVersion,
+		Namespace:               artifacts.ResolveNamespace(in.GetNamespace()),
+		RunId:                   in.GetRunId(),
+		TaskId:                  in.GetTaskId(),
+		OrkflowName:             in.GetOrkflowName(),
+		OrkflowVersion:          in.GetOrkflowVersion(),
+		OrkflowDefinitionDigest: in.GetOrkflowDefinitionDigest(),
+		IdempotencyKey:          in.GetIdempotencyKey(),
+		Image:                   image,
+		ExitCode:                capture.status.Code,
+		StartedAt:               startedAt,
+		FinishedAt:              capture.finishedAt,
+		Attempt:                 attempt,
+		OrkerId:                 d.OrkerID,
+		BuildId:                 d.BuildID,
+	}
+	if d.Refs != nil {
+		projected.Values = refPtr(d.Refs.RefFor(provenance, "values.json", valuesSHA, int64(len(values)), "application/json"))
+		for _, item := range items {
+			projected.Artifacts = append(projected.Artifacts,
+				refPtr(d.Refs.RefFor(provenance, item.name, item.sha, item.size, item.contentType)))
+		}
+		for _, name := range []string{StdoutLogName, StderrLogName} {
+			projected.SystemArtifacts = append(projected.SystemArtifacts,
+				refPtr(d.Refs.RefFor(provenance, name, strings.Repeat("0", 64), 0, "text/plain")))
+		}
+		document, err := artifacts.MarshalCommit(projected)
+		if err != nil {
+			return nil, FailCause(ReasonCommitWriteFailed, err, "project the commit: %v", err)
+		}
+		if max := in.GetLimits().GetCommitMaxBytes(); max > 0 && int64(len(document)) > max {
+			return nil, Fail(ReasonCommitTooLarge,
+				"the completion manifest for task %q would be %d bytes, over the %d-byte limit; "+
+					"measured before any upload, so no bandwidth was spent and no orphan objects exist",
+				in.GetTaskId(), len(document), max)
+		}
+	}
+
+	// Steps 5-7: upload artifacts, then values.json, then the streams.
+	uploaded := make([]*orkstackv1.ArtifactRef, 0, len(items))
+	for _, item := range items {
+		ref, failure := d.upload(ctx, provenance, item.name, item.path, item.contentType)
+		if failure != nil {
+			return nil, failure
+		}
+		uploaded = append(uploaded, ref)
+	}
+	valuesRef, failure := d.uploadBytes(ctx, provenance, "values.json", values, "application/json")
+	if failure != nil {
+		return nil, failure
+	}
+	systemRefs, failure := d.uploadStreams(ctx, provenance, capture)
+	if failure != nil {
+		return nil, failure
+	}
+
+	// Step 8: the conditional create. This is the completion boundary;
+	// nothing after it can change the outcome.
+	commit := projected
+	commit.Values = valuesRef
+	commit.Artifacts = uploaded
+	commit.SystemArtifacts = systemRefs
+
+	result := &orkstackv1.ExecuteTaskResult{
+		TaskId:          in.GetTaskId(),
+		ExitCode:        capture.status.Code,
+		Artifacts:       uploaded,
+		SystemArtifacts: systemRefs,
+		ValuesRef:       valuesRef,
+		Image:           image,
+		StartedAt:       startedAt,
+		FinishedAt:      capture.finishedAt,
+		OrkerId:         d.OrkerID,
+		Attempt:         attempt,
+	}
+	if len(values) <= InlineValuesLimit {
+		result.ValuesJson = values
+		result.ValuesInlined = true
+	}
+
+	if d.Commits == nil || in.GetCommitUri() == "" {
+		return result, nil
+	}
+	record, err := d.Commits.Create(ctx, in.GetCommitUri(), commit)
+	switch {
+	case err == nil:
+		result.Commit = &orkstackv1.CommitRef{
+			Uri:       in.GetCommitUri(),
+			Sha256:    record.SHA256,
+			Etag:      record.ETag,
+			CreatedAt: capture.finishedAt,
+		}
+		return result, nil
+
+	case errors.Is(err, artifacts.ErrPreconditionFailed):
+		// Another Orker committed the same logical activity while this one was
+		// working — possible whenever Temporal delivers a retry to a second
+		// worker before the first finished. Read the winner, apply the same
+		// identity checks as step 0, and return THAT commit's result.
+		//
+		// The loser's uploaded artifacts are inert: with content-addressed
+		// keys they are either byte-identical to the winner's (same key, same
+		// bytes) or unreferenced by any commit, and in neither case can they
+		// corrupt what the winner recorded.
+		adopted, failure := d.adopt(ctx, in, attempt)
+		if failure != nil {
+			return nil, failure
+		}
+		if adopted == nil {
+			return nil, FailCause(ReasonCommitWriteFailed, err,
+				"the commit at %s was refused as already present, but reading it found nothing",
+				in.GetCommitUri())
+		}
+		return adopted, nil
+
+	default:
+		// A storage failure can never look like success (AGENTS.md §15).
+		return nil, FailCause(ReasonCommitWriteFailed, err,
+			"write the commit at %s: %v", in.GetCommitUri(), err)
+	}
+}
+
+func (d *OCIDispatcher) upload(
+	ctx context.Context,
+	prov artifacts.Provenance,
+	name, path, contentType string,
+) (*orkstackv1.ArtifactRef, *Failure) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, FailCause(ReasonOutputNotReadable, err, "open output artifact %q: %v", name, err)
+	}
+	defer func() { _ = file.Close() }()
+	return d.put(ctx, prov, name, file, contentType)
+}
+
+func (d *OCIDispatcher) uploadBytes(
+	ctx context.Context,
+	prov artifacts.Provenance,
+	name string,
+	data []byte,
+	contentType string,
+) (*orkstackv1.ArtifactRef, *Failure) {
+	return d.put(ctx, prov, name, strings.NewReader(string(data)), contentType)
+}
+
+func (d *OCIDispatcher) put(
+	ctx context.Context,
+	prov artifacts.Provenance,
+	name string,
+	r io.Reader,
+	contentType string,
+) (*orkstackv1.ArtifactRef, *Failure) {
+	if d.Store == nil {
+		return nil, Fail(ReasonArtifactUploadFailed, "this orker has no artifact store")
+	}
+	metadata := prov.Metadata(nil)
+	metadata["artifact"] = name
+	ref, err := d.Store.Put(ctx, name, r, artifacts.PutOptions{
+		ContentType: contentType,
+		Metadata:    metadata,
+	})
+	if err != nil {
+		return nil, FailCause(ReasonArtifactUploadFailed, err, "upload %q: %v", name, err)
+	}
+	return refPtr(ref), nil
+}
+
+// uploadStreams publishes stdout.log and stderr.log as system artifacts.
+func (d *OCIDispatcher) uploadStreams(
+	ctx context.Context,
+	prov artifacts.Provenance,
+	capture *runCapture,
+) ([]*orkstackv1.ArtifactRef, *Failure) {
+	refs := make([]*orkstackv1.ArtifactRef, 0, 2)
+	for _, stream := range []struct{ name, path string }{
+		{StdoutLogName, capture.stdoutPath},
+		{StderrLogName, capture.stderrPath},
+	} {
+		if stream.path == "" {
+			continue
+		}
+		if _, err := os.Stat(stream.path); err != nil {
+			continue
+		}
+		ref, failure := d.upload(ctx, prov, stream.name, stream.path, "text/plain; charset=utf-8")
+		if failure != nil {
+			return nil, failure
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
+}
+
+// ---------------------------------------------------------------- step 14
+
+// attachFailureDetail is the §7.1 step-14 failure path.
+//
+// A FAILED TASK STILL PUBLISHES WHAT IT PRODUCED. The compiler errors, test
+// reports and core dumps a failing task produces are exactly what somebody
+// opens the run to read, and they live in a workdir that is about to be
+// deleted.
+//
+// The failure path SCANS TOO, under the same §3.5 rules — an earlier draft
+// left them unenforced on exactly the path a broken or hostile image is most
+// likely to take. What differs is the consequence: a violation here is a NOTE
+// attached to the workload's error, never a replacement for it. A task that
+// exited 1 and wrote a symlink into output/artifacts/ is reported as exit 1,
+// with the symlink named in the details and not uploaded.
+//
+// An upload failure on this path is swallowed, deliberately: the workload's
+// error is WHY the task failed, and replacing it with a storage error would
+// tell the author their build failed because of the bucket.
+func (d *OCIDispatcher) attachFailureDetail(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	ws *Workspace,
+	capture *runCapture,
+	image *orkstackv1.ImageRef,
+	attempt int32,
+	failure *Failure,
+) *Failure {
+	detail := &orkstackv1.ActivityFailureDetail{
+		ExitCode: capture.exitCode(),
+		Image:    image,
+		Attempt:  attempt,
+		OrkerId:  d.OrkerID,
+	}
+	prov := artifacts.Provenance{
+		Orkflow: in.GetOrkflowName(),
+		TaskID:  in.GetTaskId(),
+		RunID:   in.GetRunId(),
+	}
+	// Uploads on the failure path run on a detached context: the activity may
+	// already be past its deadline, and losing the evidence is the outcome
+	// this path exists to prevent.
+	upCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+
+	if ws != nil {
+		scanned, scanFailure := ScanOutputArtifacts(ws.Artifacts, in.GetLimits())
+		if scanFailure != nil {
+			detail.ScanNotes = append(detail.ScanNotes, scanFailure.Error())
+		}
+		for _, artifact := range scanned {
+			if readFailure := CheckReadable(artifact.Path, ContainerArtifacts+"/"+artifact.Name); readFailure != nil {
+				detail.ScanNotes = append(detail.ScanNotes, readFailure.Error())
+				continue
+			}
+			ref, upFailure := d.upload(upCtx, prov, artifact.Name, artifact.Path, "")
+			if upFailure != nil {
+				detail.ScanNotes = append(detail.ScanNotes,
+					fmt.Sprintf("artifact %q could not be stored: %s", artifact.Name, upFailure.Message))
+				continue
+			}
+			detail.Artifacts = append(detail.Artifacts, ref)
+		}
+	}
+	if capture != nil {
+		if refs, upFailure := d.uploadStreams(upCtx, prov, capture); upFailure == nil {
+			detail.SystemArtifacts = refs
+		} else {
+			detail.ScanNotes = append(detail.ScanNotes,
+				"the captured streams could not be stored: "+upFailure.Message)
+		}
+	}
+	return failure.WithDetail(detail)
+}
+
+func (c *runCapture) exitCode() int32 {
+	if c == nil {
+		return 0
+	}
+	return c.status.Code
+}
+
+// ---------------------------------------------------------------- helpers
+
+func (d *OCIDispatcher) makeAttemptDir(in *orkstackv1.ExecuteTaskInput, attempt int32) (string, error) {
+	root := d.WorkRoot
+	if root == "" {
+		root = os.TempDir()
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", fmt.Errorf("create workdir root %s: %w", root, err)
+	}
+	pattern := fmt.Sprintf("ork-%s-%s-%d-*",
+		safeComponent(in.GetRunId()), safeComponent(in.GetTaskId()), attempt)
+	dir, err := os.MkdirTemp(root, pattern)
+	if err != nil {
+		return "", err
+	}
+	// 0700 is what makes the 1777 children safe: no other host user can
+	// traverse into them (§3.1).
+	if err := os.Chmod(dir, ModeAttempt); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func (d *OCIDispatcher) openLogSink(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	attempt int32,
+) *logChunkSink {
+	return newLogChunkSink(ctx, d.Logs, artifacts.LogRef{
+		RunID:   in.GetRunId(),
+		TaskID:  in.GetTaskId(),
+		Attempt: attempt,
+	}, d.LogOpts).withErrorReporter(func(err error) {
+		if activity.IsActivity(ctx) {
+			activity.GetLogger(ctx).Warn("task log chunk lost",
+				"run_id", in.GetRunId(), "task_id", in.GetTaskId(), "error", err)
+		}
+	})
+}
+
+// cappedWriter bounds one captured stream at limits.logMaxBytes.
+type cappedWriter struct {
+	w       io.Writer
+	limit   int64
+	written int64
+	beat    *Heartbeater
+}
+
+func newCappedWriter(w io.Writer, limit int64, beat *Heartbeater) io.Writer {
+	return &cappedWriter{w: w, limit: limit, beat: beat}
+}
+
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	if c.beat != nil {
+		c.beat.Logged(int64(len(p)))
+	}
+	if c.limit > 0 && c.written >= c.limit {
+		// The bytes are dropped rather than the write failing: a workload
+		// that logs too much has still done its work, and the live stream
+		// already carries a truncation notice.
+		return len(p), nil
+	}
+	allowed := p
+	if c.limit > 0 && c.written+int64(len(p)) > c.limit {
+		allowed = p[:c.limit-c.written]
+	}
+	n, err := c.w.Write(allowed)
+	c.written += int64(n)
+	return len(p), err
+}
+
+func attemptOf(ctx context.Context) int32 {
+	if activity.IsActivity(ctx) {
+		return activity.GetInfo(ctx).Attempt
+	}
+	return 1
+}
+
+func graceSecondsOf(in *orkstackv1.ExecuteTaskInput) int32 {
+	if seconds := in.GetCancellationGracePeriodSeconds(); seconds > 0 {
+		return seconds
+	}
+	return int32(DefaultCancellationGrace / time.Second)
+}
+
+func resolvedPool(pool string) string {
+	if pool == "" {
+		return "main"
+	}
+	return pool
+}
+
+// render turns the RAW `with:` block into config.json.
+//
+// A render failure is ContractViolation/RENDER_FAILED and is never retried: a
+// missing key, a template parse error and a rendered "<no value>" are all
+// facts about the definition, and the definition does not change between
+// attempts (§3.3).
+func (d *OCIDispatcher) render(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	staged *stagedInputs,
+) (map[string]any, *Failure) {
+	with := map[string]any{}
+	if in.GetWith() != nil {
+		with = in.GetWith().AsMap()
+	}
+	rendered, err := newRenderer(
+		in.GetTaskId(),
+		payloadMapOf(in.GetRunInput()),
+		staged.upstreamValues,
+		staged.upstreamArtifacts,
+		staged.paths,
+		d.EnvAllowlist,
+	).render(ctx, with)
+	if err != nil {
+		return nil, FailCause(ReasonRenderFailed, err, "%v", err)
+	}
+	return rendered, nil
+}
+func refPtr(ref artifacts.ArtifactRef) *orkstackv1.ArtifactRef {
+	return &orkstackv1.ArtifactRef{
+		Name:        ref.Name,
+		Uri:         ref.URI,
+		SizeBytes:   ref.SizeBytes,
+		Sha256:      ref.SHA256,
+		ContentType: ref.ContentType,
+	}
+}
+
+// payloadMapOf decodes a Payload into the plain map run.json is written from
+// and templates address as .inputs.
+func payloadMapOf(p *orkstackv1.Payload) map[string]any {
+	if p.GetData() == nil {
+		return map[string]any{}
+	}
+	return p.GetData().AsMap()
+}

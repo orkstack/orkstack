@@ -98,14 +98,15 @@ func (EventType) EnumDescriptor() ([]byte, []int) {
 
 // TaskRun is the execution record of a single Task within a Run.
 type TaskRun struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	TaskId     string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	Plugin     string                 `protobuf:"bytes,2,opt,name=plugin,proto3" json:"plugin,omitempty"`
-	Status     Status                 `protobuf:"varint,3,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
-	Attempt    int32                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	TaskId  string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Status  Status                 `protobuf:"varint,3,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
+	Attempt int32                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// output carries the inline values.json when one was inlined, decoded for
+	// display only. values_ref is the authoritative reference.
 	Output     *Payload               `protobuf:"bytes,5,opt,name=output,proto3" json:"output,omitempty"`
 	Artifacts  []*ArtifactRef         `protobuf:"bytes,6,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
-	Error      *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	Error      *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"` // now carries FailureCategory
 	StartedAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 	// pool names the set of Orkers this attempt was dispatched to, in the word
@@ -124,9 +125,18 @@ type TaskRun struct {
 	//
 	// Empty means the task never reached an Orker (skipped, or terminal before
 	// dispatch).
-	Pool          string `protobuf:"bytes,10,opt,name=pool,proto3" json:"pool,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Pool string `protobuf:"bytes,10,opt,name=pool,proto3" json:"pool,omitempty"`
+	// values_ref addresses the committed values.json for this attempt. Set
+	// whenever the task succeeded, whether or not output was inlined.
+	ValuesRef *ArtifactRef `protobuf:"bytes,11,opt,name=values_ref,json=valuesRef,proto3" json:"values_ref,omitempty"`
+	// commit references the durable completion record (§5).
+	Commit *CommitRef `protobuf:"bytes,12,opt,name=commit,proto3" json:"commit,omitempty"`
+	// exit_code is the container's exit status as reported by the Orker.
+	ExitCode int32 `protobuf:"varint,13,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	// system_artifacts are stdout.log and stderr.log for this attempt.
+	SystemArtifacts []*ArtifactRef `protobuf:"bytes,14,rep,name=system_artifacts,json=systemArtifacts,proto3" json:"system_artifacts,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *TaskRun) Reset() {
@@ -162,13 +172,6 @@ func (*TaskRun) Descriptor() ([]byte, []int) {
 func (x *TaskRun) GetTaskId() string {
 	if x != nil {
 		return x.TaskId
-	}
-	return ""
-}
-
-func (x *TaskRun) GetPlugin() string {
-	if x != nil {
-		return x.Plugin
 	}
 	return ""
 }
@@ -229,6 +232,34 @@ func (x *TaskRun) GetPool() string {
 	return ""
 }
 
+func (x *TaskRun) GetValuesRef() *ArtifactRef {
+	if x != nil {
+		return x.ValuesRef
+	}
+	return nil
+}
+
+func (x *TaskRun) GetCommit() *CommitRef {
+	if x != nil {
+		return x.Commit
+	}
+	return nil
+}
+
+func (x *TaskRun) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *TaskRun) GetSystemArtifacts() []*ArtifactRef {
+	if x != nil {
+		return x.SystemArtifacts
+	}
+	return nil
+}
+
 // Run is one execution of an Orkflow.
 type Run struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -247,9 +278,13 @@ type Run struct {
 	// the built-in "default" namespace. It is a coordinate of the run, not a
 	// lookup: the archive indexes runs under it, so listing one namespace's runs
 	// is a single prefix scan.
-	Namespace     string `protobuf:"bytes,12,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Namespace string `protobuf:"bytes,12,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// orkflow_definition_digest is the canonical digest of the definition this
+	// run pinned (§4.4). A run that started before a pointer moved is still
+	// explainable by the exact bytes it ran.
+	OrkflowDefinitionDigest string `protobuf:"bytes,13,opt,name=orkflow_definition_digest,json=orkflowDefinitionDigest,proto3" json:"orkflow_definition_digest,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *Run) Reset() {
@@ -366,6 +401,13 @@ func (x *Run) GetNamespace() string {
 	return ""
 }
 
+func (x *Run) GetOrkflowDefinitionDigest() string {
+	if x != nil {
+		return x.OrkflowDefinitionDigest
+	}
+	return ""
+}
+
 // Event is a single realtime update for a run, delivered over the
 // server-streaming RPC and the WebSocket bridge.
 type Event struct {
@@ -472,10 +514,9 @@ var File_orkstack_v1_run_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
-	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\"\x9d\x03\n" +
+	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\"\xde\x04\n" +
 	"\aTaskRun\x12\x17\n" +
-	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x16\n" +
-	"\x06plugin\x18\x02 \x01(\tR\x06plugin\x12+\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12+\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +
 	"\aattempt\x18\x04 \x01(\x05R\aattempt\x12,\n" +
 	"\x06output\x18\x05 \x01(\v2\x14.orkstack.v1.PayloadR\x06output\x126\n" +
@@ -486,7 +527,12 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\vfinished_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12\x12\n" +
 	"\x04pool\x18\n" +
-	" \x01(\tR\x04pool\"\x96\x04\n" +
+	" \x01(\tR\x04pool\x127\n" +
+	"\n" +
+	"values_ref\x18\v \x01(\v2\x18.orkstack.v1.ArtifactRefR\tvaluesRef\x12.\n" +
+	"\x06commit\x18\f \x01(\v2\x16.orkstack.v1.CommitRefR\x06commit\x12\x1b\n" +
+	"\texit_code\x18\r \x01(\x05R\bexitCode\x12C\n" +
+	"\x10system_artifacts\x18\x0e \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0fsystemArtifactsJ\x04\b\x02\x10\x03R\x06plugin\"\xd2\x04\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
@@ -503,7 +549,8 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12\x1c\n" +
-	"\tnamespace\x18\f \x01(\tR\tnamespace\"\xaa\x02\n" +
+	"\tnamespace\x18\f \x01(\tR\tnamespace\x12:\n" +
+	"\x19orkflow_definition_digest\x18\r \x01(\tR\x17orkflowDefinitionDigest\"\xaa\x02\n" +
 	"\x05Event\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12*\n" +
@@ -552,6 +599,7 @@ var file_orkstack_v1_run_proto_goTypes = []any{
 	(*ArtifactRef)(nil),           // 6: orkstack.v1.ArtifactRef
 	(*Error)(nil),                 // 7: orkstack.v1.Error
 	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*CommitRef)(nil),             // 9: orkstack.v1.CommitRef
 }
 var file_orkstack_v1_run_proto_depIdxs = []int32{
 	4,  // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
@@ -560,23 +608,26 @@ var file_orkstack_v1_run_proto_depIdxs = []int32{
 	7,  // 3: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
 	8,  // 4: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
 	8,  // 5: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	4,  // 6: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
-	5,  // 7: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
-	5,  // 8: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
-	7,  // 9: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
-	1,  // 10: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
-	8,  // 11: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	8,  // 12: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	8,  // 13: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	0,  // 14: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
-	4,  // 15: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
-	5,  // 16: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
-	8,  // 17: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	6,  // 6: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
+	9,  // 7: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
+	6,  // 8: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	4,  // 9: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
+	5,  // 10: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
+	5,  // 11: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
+	7,  // 12: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
+	1,  // 13: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
+	8,  // 14: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	8,  // 15: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	8,  // 16: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	0,  // 17: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
+	4,  // 18: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
+	5,  // 19: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
+	8,  // 20: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }
@@ -584,6 +635,7 @@ func file_orkstack_v1_run_proto_init() {
 	if File_orkstack_v1_run_proto != nil {
 		return
 	}
+	file_orkstack_v1_activity_proto_init()
 	file_orkstack_v1_common_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{

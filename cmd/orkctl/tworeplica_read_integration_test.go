@@ -500,14 +500,14 @@ version: "0.1.0"
 description: M8.3 two-replica read probe.
 tasks:
   - id: slow
-    plugin: shell
+    uses: shell
     timeout_seconds: 60
     with:
       op: exec
       command: sleep 8; echo slow
       capture_stdout_as: out
   - id: after
-    plugin: shell
+    uses: shell
     needs: [slow]
     timeout_seconds: 60
     with:

@@ -252,7 +252,7 @@ func TestApply_RefusesASelectorThatContradictsTheDocument(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "deploy.ork.yaml")
 	document := "namespace: payments\nname: deploy\nversion: 1.0.0\ntasks:\n" +
-		"  - id: build\n    plugin: shell\n    with: {command: \"echo build\"}\n"
+		"  - id: build\n    uses: shell\n    with: {command: \"echo build\"}\n"
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write orkflow: %v", err)
 	}
@@ -275,7 +275,7 @@ func writeOrkflow(t *testing.T, name, taskID string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
 	document := "name: " + name + "\nversion: 1.0.0\ntasks:\n" +
-		"  - id: " + taskID + "\n    plugin: shell\n    with: {command: \"echo hi\"}\n"
+		"  - id: " + taskID + "\n    uses: shell\n    with: {command: \"echo hi\"}\n"
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write orkflow %s: %v", name, err)
 	}

@@ -132,7 +132,7 @@ Provided at submit time and referenced as `{{ .inputs.<name> }}`.
 ```yaml
 tasks:
   - id: fetch            # unique within the orkflow
-    plugin: http         # registered plugin name
+    uses: http         # registered plugin name
     needs: [other_id]    # DAG edges; must reference existing task ids; no cycles
     condition: ""        # optional gate expression (v0: truthy string / template)
     timeout_seconds: 300 # optional, default 300

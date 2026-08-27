@@ -128,7 +128,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newOrkflowCommand(g),
 		newPoolCommand(g),
 		newRunCommand(g),
-		newPluginCommand(g),
+		newActivityCommand(g),
 		newStatsCommand(g),
 		newWebhookCommand(g),
 		newVersionCommand(g),
@@ -219,8 +219,11 @@ func (g *globalFlags) runClient() orkstackv1connect.RunServiceClient {
 	return orkstackv1connect.NewRunServiceClient(g.httpClient(), g.baseURL())
 }
 
-func (g *globalFlags) pluginClient() orkstackv1connect.PluginServiceClient {
-	return orkstackv1connect.NewPluginServiceClient(g.httpClient(), g.baseURL())
+// activityClient reaches ActivityService, which replaced PluginService: an
+// activity is an image, and which images exist is engine configuration rather
+// than something to ask an Orker (§4.2, §6.5).
+func (g *globalFlags) activityClient() orkstackv1connect.ActivityServiceClient {
+	return orkstackv1connect.NewActivityServiceClient(g.httpClient(), g.baseURL())
 }
 
 func (g *globalFlags) namespaceClient() orkstackv1connect.NamespaceServiceClient {

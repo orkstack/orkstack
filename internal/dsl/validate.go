@@ -10,14 +10,10 @@ import (
 
 // validate enforces the eight documented DSL rules (docs/DSL.md).
 func validate(wf *orkstackv1.Orkflow, opts Options) error {
-	known := opts.KnownPlugins
-	if len(known) == 0 {
-		known = KnownPlugins
-	}
-	knownSet := make(map[string]struct{}, len(known))
-	for _, name := range known {
-		knownSet[name] = struct{}{}
-	}
+	// opts.KnownPlugins is no longer consulted: rule 6 checks that `uses:`
+	// is present and unambiguous, not that it names something this binary
+	// was compiled to know about.
+	_ = opts
 
 	// Rule 1: an explicit namespace is a slug. Absent is legal and means the
 	// built-in "default" namespace, so an empty value is not checked here —
@@ -64,13 +60,50 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 				return fmt.Errorf("task %q needs itself (cycle)", task.GetId())
 			}
 		}
-		// Rule 6: plugin is a non-empty known plugin name.
-		if task.GetPlugin() == "" {
-			return fmt.Errorf("task %q: plugin is required", task.GetId())
+		// Rule 6: `uses:` names the activity, and it is required.
+		//
+		// It is NOT checked against a list of known names. A task names an
+		// image, and whether a reference resolves is decided at APPLY by the
+		// registry (§4.3) — a hardcoded compiler list would refuse every
+		// third-party image, which is the opposite of "any OCI image can
+		// become a durable production activity".
+		if task.GetUses() == "" {
+			return fmt.Errorf("task %q: `uses:` is required — it names the activity, "+
+				"either a catalog name (\"shell\") or a registry reference "+
+				"(\"ghcr.io/acme/migrate:v3\")", task.GetId())
 		}
-		if _, ok := knownSet[task.GetPlugin()]; !ok {
-			return fmt.Errorf("task %q: unknown plugin %q (known: %s)",
-				task.GetId(), task.GetPlugin(), strings.Join(sortedKeys(knownSet), ", "))
+		// A templated `uses:` cannot compile, and this is a deliberate
+		// capability loss recorded in §17 rather than an oversight. Image
+		// resolution happens at apply time so a run pins a digest; a
+		// reference selected from `{{ .inputs.image }}` is not knowable then,
+		// and pinning is what makes the commit protocol's identity check mean
+		// anything.
+		if strings.Contains(task.GetUses(), "{{") {
+			return fmt.Errorf("task %q: `uses:` cannot be a template (%q). The engine resolves "+
+				"it to an immutable digest when the orkflow is applied, which a value that "+
+				"depends on run input cannot have. Put the choice in the container, or apply "+
+				"one orkflow version per image", task.GetId(), task.GetUses())
+		}
+		// Rule 6b: the network mode is one of exactly two.
+		switch task.GetNetwork() {
+		case orkstackv1.NetworkMode_NETWORK_MODE_UNSPECIFIED,
+			orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT,
+			orkstackv1.NetworkMode_NETWORK_MODE_NONE:
+		default:
+			return fmt.Errorf("task %q: `network:` must be \"default\" or \"none\"", task.GetId())
+		}
+		// Rule 6c: a secret names a file and a source, and the name is
+		// validated rather than sanitized so it can never escape the secrets
+		// directory.
+		for _, secret := range task.GetSecrets() {
+			if !validSecretName(secret.GetName()) {
+				return fmt.Errorf("task %q: secret name %q must match ^[A-Za-z0-9._-]{1,128}$",
+					task.GetId(), secret.GetName())
+			}
+			if secret.GetSource() == "" {
+				return fmt.Errorf("task %q: secret %q needs a `source:` (e.g. \"env:DB_PASSWORD\")",
+					task.GetId(), secret.GetName())
+			}
 		}
 		// Rule 7: an explicit pool is a slug. The compiler checks the shape
 		// only; whether this namespace may dispatch onto that pool is the
@@ -207,4 +240,25 @@ func transitiveNeeds(byID map[string]*orkstackv1.Task) map[string]map[string]str
 		resolve(id, map[string]struct{}{})
 	}
 	return out
+}
+
+// validSecretName holds a secret name to the §3.2 grammar,
+// ^[A-Za-z0-9._-]{1,128}$.
+//
+// It is VALIDATED, never sanitized — the same discipline every other name in
+// this file gets. A sanitized name is a name the author did not write, and
+// this one becomes a path segment under /orkstack/input/secrets.
+func validSecretName(name string) bool {
+	if name == "" || len(name) > 128 {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return name != "." && name != ".."
 }

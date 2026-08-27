@@ -1,0 +1,333 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/common.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// ---------------------------------------------------------------- images
+
+// ImageRef is an OCI image resolved to an immutable reference. The engine
+// produces it at apply time and it never changes afterwards: a run executes
+// what `pinned` names, whatever a tag does later.
+message ImageRef {
+  // reference is what the author wrote, verbatim: "ghcr.io/acme/migrate:v3",
+  // "shell", or an already-pinned "repo@sha256:...". Never used to pull.
+  string reference = 1;
+  // registry is the resolved host, e.g. "ghcr.io" or "docker.io".
+  string registry = 2;
+  // repository is the resolved path, e.g. "acme/migrate".
+  string repository = 3;
+  // index_digest is the digest of the object the tag named at resolve time:
+  // an OCI image index for a multi-platform tag, an image manifest otherwise.
+  // Spelled "sha256:<64 hex>".
+  string index_digest = 4;
+  // pinned is the only string that may be pulled or run:
+  //   "{registry}/{repository}@{index_digest}"
+  string pinned = 5;
+  // media_type is the media type index_digest addresses.
+  string media_type = 6;
+  // platforms lists the platforms the index advertises, "os/arch[/variant]".
+  // Empty for a single-manifest reference.
+  repeated string platforms = 7;
+  // 8 held resolved_at, the wall-clock time of the resolution. It is REMOVED,
+  // not merely excluded from the definition digest: ImageRef travels inside
+  // Task, Task travels inside the immutable Orkflow version document, and
+  // `pkg/artifacts.sameStoredOrkflow` (orkflow_store.go:400-408) decides
+  // "this apply is a repeat" with proto.Equal after clearing ONLY CreatedAt.
+  // A per-apply timestamp there turns every re-apply of an unchanged document
+  // into a version conflict (§4.4). Resolution time is audit data, not
+  // identity: the version document's created_at already records when the
+  // apply happened, and ActivityCommit records when the image actually ran.
+  reserved 8;
+  reserved "resolved_at";
+  // platform_digest is the manifest digest the Orker actually ran, and the
+  // platform it ran on. The engine leaves both empty; only an Orker fills
+  // them, and only into ExecuteTaskResult.image and ActivityCommit.image.
+  string platform_digest = 9;
+  string platform = 10;
+  // delivery records how the Orker obtained the image for this execution:
+  // "registry" (pulled) or "embedded" (loaded from the OCI image layout,
+  // §4.6). The engine leaves it empty; only an Orker fills it, beside
+  // platform_digest. It exists because objective deliverable 10's embedded
+  // fallback is otherwise invisible after the fact: an operator debugging a
+  // stale builtin needs to know the pull did not happen.
+  string delivery = 11;
+}
+
+// ---------------------------------------------------------------- execution shape
+
+// ResourceRequest is what a task asks the Orker for. Orker policy may cap it
+// (AGENTS.md §6); it may never raise it.
+message ResourceRequest {
+  string cpu = 1;     // Kubernetes spelling: "2", "500m"
+  string memory = 2;  // Kubernetes spelling: "4Gi", "512Mi"
+}
+
+// NetworkMode is the complete set of network configurations an Orkflow may
+// select. Named Orker-defined profiles are deliberately absent (AGENTS.md §6).
+enum NetworkMode {
+  NETWORK_MODE_UNSPECIFIED = 0;  // treated as NETWORK_MODE_DEFAULT
+  NETWORK_MODE_DEFAULT = 1;
+  NETWORK_MODE_NONE = 2;
+}
+
+// SecretRef names a secret and where the Orker gets it. The value never
+// appears in a proto message, in Temporal history, or in the archive.
+message SecretRef {
+  // name is the file name the workload reads under /orkstack/input/secrets/.
+  // Validated: ^[A-Za-z0-9._-]{1,128}$.
+  string name = 1;
+  // source is an Orker-resolvable locator, e.g. "env:DB_PASSWORD" or
+  // "file:/etc/orkstack/secrets/db". Orker policy decides which schemes exist.
+  string source = 2;
+}
+// WorkspaceLimits are the deployment-wide CONTRACT limits the Orker enforces
+// after the container exits. They also appear verbatim in
+// /orkstack/input/task.json so a workload can respect them instead of
+// discovering them by failing.
+//
+// These are engine configuration and are uniform across a deployment, which is
+// what lets them travel on RunPlan and lets the engine run its own
+// INPUT_TOO_LARGE check. Orker-local RESOURCE policy — cpu, memory, pids caps
+// — is deliberately NOT here: it varies per pool, the engine does not own it,
+// and it reaches the workload as the effective values in task.json instead
+// (§5.2, §9.3).
+message WorkspaceLimits {
+  int64 values_max_bytes = 1;      // default 262144 (256 KiB)
+  int32 artifact_max_count = 2;    // default 256
+  int64 artifact_max_bytes = 3;    // per artifact; default 5368709120 (5 GiB)
+  int64 log_max_bytes = 4;         // per stream per attempt; default 16777216
+  // commit_max_bytes bounds the serialized ActivityCommit. Default 4194304
+  // (4 MiB). See §5.3 for why it is not 64 KiB, and §8.2 for what happens
+  // when a legal workload would produce a commit above it.
+  int64 commit_max_bytes = 5;
+}
+
+// ---------------------------------------------------------------- upstream
+
+// UpstreamRef is one completed ancestor's contribution to a downstream task.
+// It carries references only: fan-in is O(ancestors) small records, never a
+// transitive copy of every ancestor's payload.
+message UpstreamRef {
+  string task_id = 1;
+  // commit_uri addresses the ancestor's ActivityCommit object.
+  string commit_uri = 2;
+  // values is the reference to the ancestor's committed values.json.
+  ArtifactRef values = 3;
+  // artifacts are the ancestor's output artifacts, references only.
+  repeated ArtifactRef artifacts = 4;
+}
+
+// ---------------------------------------------------------------- the seam
+
+// ExecuteTaskInput is the argument of the ExecuteTask Temporal activity. It
+// replaces the Go struct at internal/task/contract.go:49-84 outright.
+//
+// Serialized size MUST NOT exceed 262144 bytes (AGENTS.md §2.2). The engine
+// checks this deterministically before scheduling and fails the task with
+// ContractViolation/INPUT_TOO_LARGE when it would be exceeded.
+message ExecuteTaskInput {
+  // --- coordinates
+  string run_id = 1;
+  string orkflow_name = 2;
+  string orkflow_version = 3;
+  // orkflow_definition_digest is the sha256 of the canonical compiled
+  // definition this run pinned (AGENTS.md §2.2, §7.2).
+  string orkflow_definition_digest = 4;
+  string namespace = 5;   // empty means the built-in "default"
+  string pool = 6;        // empty means the deployment's default pool
+  string task_id = 7;
+
+  // --- identity
+  // idempotency_key is the stable key of one logical activity, unchanged
+  // across every retry (AGENTS.md §3, §4). Its value is exactly
+  //   "{namespace-or-default}/{run_id}/{task_id}"
+  //
+  // The name is plain, not "task_idempotency_key", for two reasons: its wire
+  // JSON (`idempotencyKey`) is then byte-identical to the key the workspace
+  // already writes into /orkstack/input/task.json, and there is nothing to
+  // collide with — proto scopes field names per message, and the run
+  // submission key lives on a different message entirely
+  // (SubmitRunRequest.idempotency_key = 4, service.proto:210). The Go
+  // identifiers stay distinct (§11.5).
+  string idempotency_key = 8;
+  // commit_uri is the deterministic object URI of this activity's commit
+  // record. The engine composes it from the commit-store root carried in
+  // RunPlan (decided at submit, outside workflow code) plus the run and task
+  // coordinates, so composing it stays a pure function of workflow arguments
+  // (§5.2, §7.2).
+  string commit_uri = 9;
+
+  // --- what to run
+  ImageRef image = 10;
+  // command overrides the image ENTRYPOINT/CMD. Empty means the image decides.
+  repeated string command = 11;
+  // with is the RAW, un-rendered `with:` block. Rendering stays in the Orker
+  // because `artifact "<task>/<name>"` resolves to a path only the Orker knows
+  // after staging (internal/task/contract.go:7-13). The rendered result is
+  // materialized to /orkstack/input/config.json.
+  google.protobuf.Struct with = 12;
+  // env is workload-supplied environment. The platform puts NOTHING here:
+  // required platform state travels as files (AGENTS.md §3).
+  map<string, string> env = 13;
+  repeated SecretRef secrets = 14;
+
+  // --- how to run it
+  int32 timeout_seconds = 15;                    // container wall clock
+  int32 cancellation_grace_period_seconds = 16;  // default 30 (AGENTS.md §3.3)
+  ResourceRequest resources = 17;
+  NetworkMode network = 18;
+  WorkspaceLimits limits = 19;
+
+  // --- context
+  Payload run_input = 20;               // exposed to templates as .inputs
+  repeated UpstreamRef upstream = 21;   // exposed as .tasks.<id>
+
+  // run_as_orker_user makes the Orker add --user <orker-uid>:<orker-gid>, so
+  // it owns every file the workload writes and can read them whatever umask
+  // the image uses (§3.1). Opt-in, because it overrides the image's own USER.
+  bool run_as_orker_user = 22;
+}
+
+// CommitRef points at a written ActivityCommit object.
+message CommitRef {
+  string uri = 1;
+  // sha256 is the hex sha256 of the exact bytes written to, or read from, the
+  // store. It MUST NEVER be recomputed by re-marshalling a decoded
+  // ActivityCommit: protojson deliberately varies its output across builds
+  // (§14.10), so a rebuilt Orker would compute a different digest for an
+  // unchanged commit.
+  string sha256 = 2;
+  string etag = 3;       // store etag observed at write or read
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// ExecuteTaskResult is what an Orker returns for a SUCCEEDED activity. A
+// failure is an ApplicationError, not a result (§8).
+message ExecuteTaskResult {
+  string task_id = 1;
+  // exit_code is the container's exit status. It is always 0 in a result: a
+  // non-zero exit is a failure. It travels so the engine, the archive and the
+  // UI record the fact rather than inferring it.
+  int32 exit_code = 2;
+  // commit references the durable completion record. Always set.
+  CommitRef commit = 3;
+  // artifacts are the workload's output artifacts, references only.
+  repeated ArtifactRef artifacts = 4;
+  // system_artifacts are platform-owned objects — stdout.log, stderr.log —
+  // kept in a separate field so a workload artifact can never collide with a
+  // platform name.
+  repeated ArtifactRef system_artifacts = 5;
+  // values_ref addresses the committed values.json. Always set.
+  ArtifactRef values_ref = 6;
+  // values_json is the inline copy of values.json — the workload's EXACT
+  // bytes — present ONLY when values.json is at most 4096 bytes. It exists
+  // for the engine's read model (TaskRun.output, the UI). Nothing renders a
+  // downstream template from it; downstream tasks read the committed object.
+  //
+  // It is `bytes`, not Payload, because Payload wraps google.protobuf.Struct
+  // and a Struct round trip is lossy in four measured ways: key order is not
+  // preserved, number formatting is normalized, unicode escapes are decoded,
+  // and an integer outside float64's exact range is SILENTLY CORRUPTED
+  // (12345678901234567890 -> 12345678901234567000). See §14.9. A field that
+  // promises byte identity cannot be a Struct.
+  bytes values_json = 7;
+  bool values_inlined = 8;
+  // image is the ImageRef as executed, with platform_digest and platform set.
+  ImageRef image = 9;
+  // commit_adopted is true when this attempt found an existing commit and
+  // returned it without running the container (§5.4).
+  bool commit_adopted = 10;
+  google.protobuf.Timestamp started_at = 11;
+  google.protobuf.Timestamp finished_at = 12;
+  string orker_id = 13;
+  // attempt is the Temporal attempt that produced this result: from
+  // activity.GetInfo(ctx).Attempt on a fresh run, and from commit.attempt on
+  // an adopted one (§5.4). Workflow code cannot call GetInfo, and an adopted
+  // result carries a CommitRef rather than the commit body, so without this
+  // field the engine cannot populate TaskRun.attempt identically for fresh and
+  // adopted results.
+  int32 attempt = 14;
+}
+
+// ---------------------------------------------------------------- the commit record
+
+// ActivityCommit is the immutable completion manifest (AGENTS.md §4.1). It is
+// serialized with protojson and stored as commit.json. Serialized size MUST
+// NOT exceed WorkspaceLimits.commit_max_bytes (default 4 MiB, §5.3).
+message ActivityCommit {
+  // schema_version is 1. A reader that does not know the value refuses the
+  // commit with ContractViolation/COMMIT_SCHEMA_UNSUPPORTED rather than
+  // guessing (§5.4).
+  int32 schema_version = 1;
+
+  string namespace = 2;
+  string run_id = 3;
+  string task_id = 4;
+  string orkflow_name = 5;
+  string orkflow_version = 6;
+  string orkflow_definition_digest = 7;
+  string idempotency_key = 8;
+
+  ImageRef image = 9;                        // with platform_digest and delivery set
+  int32 exit_code = 10;                      // always 0 in schema_version 1
+  ArtifactRef values = 11;
+  repeated ArtifactRef artifacts = 12;
+  repeated ArtifactRef system_artifacts = 13;
+
+  google.protobuf.Timestamp started_at = 14;
+  google.protobuf.Timestamp finished_at = 15;
+  int32 attempt = 16;                        // the attempt that committed
+  string orker_id = 17;
+  string build_id = 18;                      // ORK_BUILD_ID of the committer
+}
+
+// ---------------------------------------------------------------- failure transport
+
+// ActivityFailureDetail is what a FAILED activity returns. A failure produces
+// no ExecuteTaskResult, and orkstack.v1.Error.details is a bare string, so
+// without this message everything a failing task produced is unreachable: an
+// exit-1 task can upload its test report and its stderr and leave the engine
+// with nowhere to put the references.
+//
+// It travels as the single `details` argument of
+// temporal.NewApplicationError(message, category, detail); the Go SDK carries
+// details through the configured data converter, and the workflow retrieves
+// them with errors.As to *ApplicationError followed by .Details(&out).
+//
+// The engine then populates TaskRun.artifacts, .system_artifacts, .exit_code
+// and .attempt on the failure path exactly as it does on the success path, so
+// a failed attempt is as inspectable as a successful one.
+message ActivityFailureDetail {
+  string reason_code = 1;              // the §8.2 code, e.g. "VALUES_MISSING"
+  FailureCategory category = 2;
+  int32 exit_code = 3;                 // 0 when the container never ran
+  repeated ArtifactRef artifacts = 4;  // what the failure path managed to upload
+  repeated ArtifactRef system_artifacts = 5;
+  // scan_notes carries §3.5 violations found on the failure path. They are
+  // notes ON the workload's error, never a replacement for it (§7.1 step 14).
+  repeated string scan_notes = 6;
+  ImageRef image = 7;
+  int32 attempt = 8;
+  string orker_id = 9;
+}
+
+// ---------------------------------------------------------------- orker identity
+
+// DescribeOrkerResult replaces ListPlugins as the pool-liveness probe. An Orker
+// no longer has a plugin list, but a pool still has to prove it is alive
+// (proof/M11.6), so the probe stays and only its payload changes.
+message DescribeOrkerResult {
+  string orker_id = 1;
+  string build_id = 2;
+  string pool = 3;
+  string runtime_name = 4;      // "docker"
+  string runtime_version = 5;
+  string security_profile = 6;  // the profile id the Orker enforces (§9.2)
+  int32 max_concurrent = 7;
+  bool rootless = 8;
+}

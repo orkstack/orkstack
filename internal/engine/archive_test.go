@@ -62,7 +62,6 @@ func sampleRun(t *testing.T, id string, status orkstackv1.Status, created time.T
 		FinishedAt:     timestamppb.New(created.Add(3 * time.Second)),
 		TaskRuns: []*orkstackv1.TaskRun{{
 			TaskId: "fetch",
-			Plugin: "http",
 			Status: orkstackv1.Status_STATUS_SUCCEEDED,
 			Artifacts: []*orkstackv1.ArtifactRef{{
 				Name: "body",

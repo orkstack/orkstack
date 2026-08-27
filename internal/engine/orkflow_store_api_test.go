@@ -205,7 +205,7 @@ namespace: payments
 name: nightly-close
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo settle"}
 `
 	store := newRecordingStore()
@@ -235,8 +235,8 @@ tasks:
 
 	// The default namespace, named explicitly or left out, still applies.
 	for _, accepted := range []string{
-		"namespace: " + artifacts.DefaultNamespace + "\nname: nightly-close\ntasks:\n  - id: settle\n    plugin: shell\n",
-		"name: nightly-close\ntasks:\n  - id: settle\n    plugin: shell\n",
+		"namespace: " + artifacts.DefaultNamespace + "\nname: nightly-close\ntasks:\n  - id: settle\n    uses: shell\n",
+		"name: nightly-close\ntasks:\n  - id: settle\n    uses: shell\n",
 	} {
 		if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 			Yaml: accepted,

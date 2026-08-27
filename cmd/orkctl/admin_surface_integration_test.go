@@ -583,7 +583,7 @@ version: "1.0.0"
 description: M11.3 admin surface probe
 tasks:
   - id: report
-    plugin: shell
+    uses: shell
     pool: %s
     with:
       op: exec

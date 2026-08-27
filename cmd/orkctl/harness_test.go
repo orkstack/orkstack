@@ -200,9 +200,9 @@ type fixture struct {
 
 // newFixture starts the real h2c Connect server in-process, mirroring
 // internal/api/service_test.go's harness.
-func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
+func newFixture(t *testing.T, activities ...*orkstackv1.ActivityInfo) *fixture {
 	t.Helper()
-	return newFixtureWith(t, nil, plugins...)
+	return newFixtureWith(t, nil, activities...)
 }
 
 // newFixtureWith is newFixture with the service config left open for one more
@@ -210,7 +210,7 @@ func newFixture(t *testing.T, plugins ...*orkstackv1.PluginInfo) *fixture {
 func newFixtureWith(
 	t *testing.T,
 	configure func(*api.Config),
-	plugins ...*orkstackv1.PluginInfo,
+	activities ...*orkstackv1.ActivityInfo,
 ) *fixture {
 	t.Helper()
 	// A stray ORK_SERVER or ORK_NAMESPACE in the developer's environment must
@@ -233,7 +233,7 @@ func newFixtureWith(
 		Runs:       runs,
 		Bus:        bus,
 		Starter:    starter,
-		Plugins:    plugins,
+		Activities: staticActivities(activities),
 		Now:        func() time.Time { return fixedNow },
 		NewRunID: func() string {
 			counter++
@@ -364,4 +364,16 @@ func (r result) requireContains(t *testing.T, fragments ...string) result {
 		}
 	}
 	return r
+}
+
+// staticActivities is the catalog seam a test wires by hand.
+//
+// It is the whole implementation Phase 1 needs: which activities exist is
+// ENGINE CONFIGURATION (§4.2), so a fixture that states the configuration is
+// stating the real thing rather than faking a worker. Phase 3 replaces it with
+// the catalog that resolves each reference's index digest at apply time.
+type staticActivities []*orkstackv1.ActivityInfo
+
+func (a staticActivities) ListActivities(context.Context) ([]*orkstackv1.ActivityInfo, error) {
+	return append([]*orkstackv1.ActivityInfo(nil), a...), nil
 }

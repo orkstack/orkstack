@@ -29,7 +29,7 @@ import (
 // The replayer compares COMMANDS: an activity's type and its position in the
 // stream. It never looks inside a payload. Measured against this very fixture:
 // reordering the emit calls or deleting one fails ReplayWorkflowHistory
-// (TMPRL1100), while adding a field to task.ExecuteTaskInput, or emitting
+// (TMPRL1100), while adding a field to *orkstackv1.ExecuteTaskInput, or emitting
 // EVENT_TYPE_TASK_LOG where the recorded run emitted EVENT_TYPE_TASK_STARTED,
 // replays perfectly clean — the command stream is identical either way. Those
 // two are precisely the changes that break an Orker of another build (it
@@ -51,7 +51,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 
 	var (
 		mu        sync.Mutex
-		sentTasks []task.ExecuteTaskInput
+		sentTasks []*orkstackv1.ExecuteTaskInput
 		sentEvent []*orkstackv1.Event
 		replayErr []error
 	)
@@ -61,15 +61,15 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	env.RegisterActivityWithOptions(
-		func(_ context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			sentTasks = append(sentTasks, in)
-			result, ok := recordedResults[in.TaskID]
+			result, ok := recordedResults[in.TaskId]
 			if !ok {
-				err := fmt.Errorf("current code ran task %q, which the recorded run never executed", in.TaskID)
+				err := fmt.Errorf("current code ran task %q, which the recorded run never executed", in.TaskId)
 				replayErr = append(replayErr, err)
-				return task.ExecuteTaskResult{}, err
+				return &orkstackv1.ExecuteTaskResult{}, err
 			}
 			// Feed the recorded result back, so every downstream input is
 			// built from exactly the upstream data the recorded run had.
@@ -102,7 +102,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	// --- what the engine sends an Orker ------------------------------------
 	sentTaskInputs := map[string]map[string]any{}
 	for _, in := range sentTasks {
-		sentTaskInputs[in.TaskID] = canonicalPayload(t, in)
+		sentTaskInputs[in.TaskId] = canonicalPayload(t, in)
 	}
 	compareTaskInputs(t, recordedTaskInputs, sentTaskInputs)
 
@@ -140,7 +140,7 @@ func compareTaskInputs(t *testing.T, recorded, sent map[string]map[string]any) {
 			t.Errorf("the ExecuteTask input for task %q is not the one the recorded build sent:\n%s\n\n"+
 				"That is a cross-version break the replayer cannot see: it compares commands, never "+
 				"payloads. An Orker of the recorded build decodes this input, and a field it does not "+
-				"know is a field it silently drops. Either restore task.ExecuteTaskInput, or re-record "+
+				"know is a field it silently drops. Either restore *orkstackv1.ExecuteTaskInput, or re-record "+
 				"the fixture and say so in the commit.", taskID, diff)
 		}
 	}
@@ -250,12 +250,12 @@ func goldenWorkflowArgs(t *testing.T, recorded *historypb.History) (string, *ork
 func goldenActivityPayloads(t *testing.T, recorded *historypb.History) (
 	taskInputs map[string]map[string]any,
 	events []map[string]any,
-	results map[string]task.ExecuteTaskResult,
+	results map[string]*orkstackv1.ExecuteTaskResult,
 	run map[string]any,
 ) {
 	t.Helper()
 	taskInputs = map[string]map[string]any{}
-	results = map[string]task.ExecuteTaskResult{}
+	results = map[string]*orkstackv1.ExecuteTaskResult{}
 	activityByScheduledID := map[int64]string{}
 	taskByScheduledID := map[int64]string{}
 
@@ -266,9 +266,14 @@ func goldenActivityPayloads(t *testing.T, recorded *historypb.History) (
 			switch name {
 			case task.ActivityExecuteTask:
 				decoded := recordedPayload(t, attrs.GetInput(), 0)
-				taskID, _ := decoded["task_id"].(string)
+				// The key is lowerCamel because ExecuteTaskInput is a
+				// top-level PROTO message now, and Temporal's converter
+				// encodes those with protojson rather than encoding/json
+				// (§2.5). That encoder flip is precisely what made the one
+				// permitted fixture reset necessary (§11.4).
+				taskID, _ := decoded["taskId"].(string)
 				if taskID == "" {
-					t.Fatalf("a recorded ExecuteTask input has no task_id: %v", decoded)
+					t.Fatalf("a recorded ExecuteTask input has no taskId: %v", decoded)
 				}
 				taskByScheduledID[event.GetEventId()] = taskID
 				taskInputs[taskID] = decoded
@@ -281,7 +286,7 @@ func goldenActivityPayloads(t *testing.T, recorded *historypb.History) (
 			if activityByScheduledID[attrs.GetScheduledEventId()] != task.ActivityExecuteTask {
 				continue
 			}
-			var result task.ExecuteTaskResult
+			var result *orkstackv1.ExecuteTaskResult
 			if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetResult(), &result); err != nil {
 				t.Fatalf("decode a recorded ExecuteTask result: %v", err)
 			}

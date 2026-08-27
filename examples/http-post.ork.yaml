@@ -18,7 +18,7 @@ tasks:
   #    get | post | put | patch | delete | head; an unknown op fails the task
   #    permanently rather than sending some other verb.
   - id: publish
-    plugin: http
+    uses: http
     with:
       op: post
       url: "{{ .inputs.url }}"
@@ -31,7 +31,7 @@ tasks:
   # 2. `op: copy` moves the materialized response artifact to a named file.
   #    The artifact helper resolves to a local path inside this task's workdir.
   - id: archive
-    plugin: file
+    uses: file
     needs: [publish]
     with:
       op: copy
@@ -41,7 +41,7 @@ tasks:
 
   # 3. `op: eval` asks the shell a question: the answer lands on output.value.
   - id: summarize
-    plugin: shell
+    uses: shell
     needs: [publish, archive]
     with:
       op: eval

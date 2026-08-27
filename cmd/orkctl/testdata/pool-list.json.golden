@@ -6,9 +6,6 @@
     {
       "name": "gpu",
       "liveOrkerCount": 1,
-      "plugins": [
-        "container"
-      ],
       "isDefault": true,
       "lastSeen": "2026-01-02T03:04:05Z"
     }

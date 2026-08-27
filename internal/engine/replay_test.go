@@ -61,7 +61,7 @@ const goldenHistory = "testdata/history/run-succeeded-v1.json"
 //
 // What it does NOT catch, and must not be trusted for: what is INSIDE a
 // payload. The replayer compares an activity's type and its position in the
-// command stream, never its input. Adding a field to task.ExecuteTaskInput, or
+// command stream, never its input. Adding a field to *orkstackv1.ExecuteTaskInput, or
 // emitting a different EventType from the same emit call, replays perfectly
 // clean here — both were measured. That is
 // TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends' job

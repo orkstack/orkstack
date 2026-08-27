@@ -190,7 +190,7 @@ func TestIntegration_ListOrkflowsReadsTheBucketNotTheProcess(t *testing.T) {
 	if _, _, err := store.Put(ctx, &orkstackv1.Orkflow{
 		Name:    name,
 		Version: "0.1.0",
-		Tasks:   []*orkstackv1.Task{{Id: "fetch", Plugin: "http"}},
+		Tasks:   []*orkstackv1.Task{{Id: "fetch", Uses: "http"}},
 	}, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put: %v", err)
 	}

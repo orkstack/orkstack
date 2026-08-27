@@ -228,24 +228,60 @@ func TestRunCancel_IsAcceptedByTheServer(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// plugin + version
+// activity + version
 // ---------------------------------------------------------------------------
 
-func TestPluginList_ReturnsTheEnginesPlugins(t *testing.T) {
+// TestActivityList_ReturnsTheEnginesCatalog is the replacement for
+// TestPluginList_ReturnsTheEnginesPlugins.
+//
+// The question changed with the concept: `plugin list` asked a live Orker
+// which Go plugins it had been compiled with, and `activity list` asks the
+// ENGINE which images its catalog holds. The columns say so — a reference and
+// the digest it resolved to, which is what actually runs.
+func TestActivityList_ReturnsTheEnginesCatalog(t *testing.T) {
 	f := newFixture(t,
-		&orkstackv1.PluginInfo{Name: "http", Version: "0.1.0", Description: "HTTP requests"},
-		&orkstackv1.PluginInfo{Name: "shell", Version: "0.1.0", Description: "Shell commands"},
+		&orkstackv1.ActivityInfo{
+			Name:        "http",
+			Reference:   "ghcr.io/orkstack/activity-http:0.1",
+			IndexDigest: "sha256:" + strings.Repeat("a", 64),
+			Platforms:   []string{"linux/amd64", "linux/arm64"},
+		},
+		&orkstackv1.ActivityInfo{
+			Name:        "shell",
+			Reference:   "ghcr.io/orkstack/activity-shell:0.1",
+			IndexDigest: "sha256:" + strings.Repeat("b", 64),
+		},
 	)
 
-	f.run("plugin", "list").
+	f.run("activity", "list").
 		requireExit(t, exitOK).
-		requireContains(t, "NAME", "http", "shell", "HTTP requests")
+		requireContains(t, "NAME", "REFERENCE", "DIGEST",
+			"http", "shell", "ghcr.io/orkstack/activity-http:0.1", "sha256:aaaaaaaaaaaa")
 }
 
-func TestPluginList_ReportsAnEmptyRegistry(t *testing.T) {
+// TestActivityList_OrdersByName pins the ordering, which §2.3 makes part of
+// the contract rather than an implementation detail: the Admin page renders
+// this list, and a list that reordered itself between reads would look like
+// the catalog had changed.
+func TestActivityList_OrdersByName(t *testing.T) {
+	f := newFixture(t,
+		&orkstackv1.ActivityInfo{Name: "shell", Reference: "ghcr.io/orkstack/activity-shell:0.1"},
+		&orkstackv1.ActivityInfo{Name: "file", Reference: "ghcr.io/orkstack/activity-file:0.1"},
+		&orkstackv1.ActivityInfo{Name: "http", Reference: "ghcr.io/orkstack/activity-http:0.1"},
+	)
+
+	out := f.run("activity", "list").requireExit(t, exitOK).stdout
+	fileAt, httpAt, shellAt := strings.Index(out, "file"), strings.Index(out, "http"), strings.Index(out, "shell")
+	if !(fileAt < httpAt && httpAt < shellAt) {
+		t.Errorf("activity list is not ordered by name:\n%s", out)
+	}
+}
+
+func TestActivityList_ReportsAnEmptyCatalog(t *testing.T) {
 	f := newFixture(t)
 
-	f.run("plugin", "list").requireExit(t, exitOK).requireContains(t, "No plugins.")
+	f.run("activity", "list").requireExit(t, exitOK).
+		requireContains(t, "No activities in this deployment's catalog.")
 }
 
 func TestVersion_PrintsTheBuildVersion(t *testing.T) {
@@ -498,8 +534,8 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 			Orkers:   map[string]int{task.DefaultPool: 1},
 			LastSeen: fixedNow,
 		}
-		cfg.PoolPlugins = adminPoolPlugins{task.DefaultPool: {"http"}}
-	}, &orkstackv1.PluginInfo{Name: "http", Version: "0.1.0"})
+		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {"http"}}
+	}, &orkstackv1.ActivityInfo{Name: "http", Reference: "ghcr.io/orkstack/activity-http:0.1"})
 	f.applyExample().requireExit(t, exitOK)
 
 	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {
@@ -512,18 +548,18 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 	f.run("run", "submit", "hello-ork").requireExit(t, exitOK)
 
 	commands := map[string][]string{
-		"apply":        {"apply", examplePath(t)},
-		"orkflow list": {"orkflow", "list"},
-		"orkflow get":  {"orkflow", "get", "hello-ork"},
-		"run submit":   {"run", "submit", "hello-ork"},
-		"run get":      {"run", "get", "run-001"},
-		"run list":     {"run", "list"},
-		"run watch":    {"run", "watch", "run-001"},
-		"run cancel":   {"run", "cancel", "run-001"},
-		"plugin list":  {"plugin", "list"},
-		"admin info":   {"admin", "info"},
-		"pool list":    {"pool", "list"},
-		"version":      {"version"},
+		"apply":         {"apply", examplePath(t)},
+		"orkflow list":  {"orkflow", "list"},
+		"orkflow get":   {"orkflow", "get", "hello-ork"},
+		"run submit":    {"run", "submit", "hello-ork"},
+		"run get":       {"run", "get", "run-001"},
+		"run list":      {"run", "list"},
+		"run watch":     {"run", "watch", "run-001"},
+		"run cancel":    {"run", "cancel", "run-001"},
+		"activity list": {"activity", "list"},
+		"admin info":    {"admin", "info"},
+		"pool list":     {"pool", "list"},
+		"version":       {"version"},
 	}
 
 	for name, args := range commands {
@@ -678,17 +714,22 @@ func (f *fixture) completeRunSnapshot(runID string) {
 	run.FinishedAt = timestamppb.New(fixedNow)
 	run.Output = &orkstackv1.Payload{Data: mustStruct(f.t, map[string]any{"saved": "result.txt"})}
 	run.TaskRuns = []*orkstackv1.TaskRun{
-		newTaskRun("fetch", "http"),
-		newTaskRun("transform", "shell"),
-		newTaskRun("save", "file"),
+		newTaskRun("fetch", 0),
+		newTaskRun("transform", 0),
+		newTaskRun("save", 0),
 	}
 	f.runs.Apply(run)
 }
 
-func newTaskRun(id, pluginName string) *orkstackv1.TaskRun {
+// newTaskRun builds a completed task in the read model.
+//
+// The second argument used to be the plugin name. TaskRun.plugin is reserved
+// and never reused (§2.1), so it is now the exit code — which is what a run
+// table actually shows about a container that finished.
+func newTaskRun(id string, exitCode int32) *orkstackv1.TaskRun {
 	return &orkstackv1.TaskRun{
 		TaskId:     id,
-		Plugin:     pluginName,
+		ExitCode:   exitCode,
 		Status:     orkstackv1.Status_STATUS_SUCCEEDED,
 		Attempt:    1,
 		StartedAt:  timestamppb.New(fixedNow),

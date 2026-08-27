@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -132,19 +133,29 @@ func run(logger *slog.Logger, cfg config) error {
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
 
-	registry := orker.BuiltinRegistry()
-	activities := orker.NewActivitiesWithOptions(registry, store, orker.Options{
-		Logs: logStore,
-		Log:  logOptions,
+	// One dispatcher runs every activity. There is no registry and no name
+	// lookup: an activity is an OCI image (§6.1).
+	activities := orker.NewActivitiesWithOptions(store, orker.Options{
+		Logs:    logStore,
+		Log:     logOptions,
+		Pool:    cfg.pool,
+		BuildID: cfg.deployment.BuildID,
 	})
+	// Refusing to start is the only honest response to an unbindable
+	// workspace root or an orphaned container this Orker cannot account for:
+	// starting anyway would fail every task later with an error naming the
+	// container rather than the cause (§3.1, §5.5).
+	if err := activities.Boot(ctx); err != nil {
+		return fmt.Errorf("orker boot checks failed: %w", err)
+	}
 	taskWorker := worker.New(temporalClient, cfg.queue, workerOptions(cfg))
 	taskWorker.RegisterActivityWithOptions(
 		activities.ExecuteTask,
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 	taskWorker.RegisterActivityWithOptions(
-		activities.ListPlugins,
-		activity.RegisterOptions{Name: task.ActivityListPlugins},
+		activities.DescribeOrker,
+		activity.RegisterOptions{Name: task.ActivityDescribeOrker},
 	)
 
 	if err := taskWorker.Start(); err != nil {
@@ -152,13 +163,12 @@ func run(logger *slog.Logger, cfg config) error {
 	}
 	defer taskWorker.Stop()
 
-	names := make([]string, 0, len(registry.List()))
-	for _, descriptor := range registry.List() {
-		names = append(names, descriptor.Name)
-	}
 	logger.Info("orker started",
 		"pool", cfg.pool, "task_queue", cfg.queue,
-		"activity", task.ActivityExecuteTask, "plugins", names)
+		"activity", task.ActivityExecuteTask,
+		"probe", task.ActivityDescribeOrker,
+		"orker_id", activities.Dispatcher().OrkerID,
+		"security_profile", activities.Dispatcher().Policy.ProfileID())
 	logger.Info("task log streaming ready",
 		"flush_bytes", logOptions.FlushBytes,
 		"flush_interval", logOptions.FlushInterval,

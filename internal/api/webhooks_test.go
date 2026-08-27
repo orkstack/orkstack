@@ -261,7 +261,6 @@ func TestWebhookNotifier_PostsASignedPayloadNamingTheRunAndItsStatus(t *testing.
 		FinishedAt:     timestamppb.New(finished),
 		TaskRuns: []*orkstackv1.TaskRun{{
 			TaskId: "fetch",
-			Plugin: "http",
 			Status: orkstackv1.Status_STATUS_SUCCEEDED,
 		}},
 	}

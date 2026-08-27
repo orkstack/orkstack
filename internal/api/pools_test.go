@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -84,15 +85,22 @@ func (p observedPools) ObservePool(_ context.Context, queue string) (engine.Pool
 	return p[queue], nil
 }
 
-// poolPlugins names what one channel's Orkers can run. Pool health exposes
-// names; the global inventory uses the separate descriptor seam.
-type poolPlugins map[string][]string
+// poolOrkers answers the DescribeOrker probe for a set of channels.
+//
+// A channel present in the map has an Orker that answers; one absent does not.
+// The VALUE is unused: under the OCI Activity Contract an Orker has no plugin
+// list to report — which images exist is engine configuration (§4.2) — so
+// answering AT ALL is the whole content of the probe (§6.5).
+type poolOrkers map[string][]string
 
-func (p poolPlugins) PluginsOnPool(
+func (p poolOrkers) OrkerOnPool(
 	_ context.Context,
 	queue string,
-) ([]string, error) {
-	return append([]string(nil), p[queue]...), nil
+) (*orkstackv1.DescribeOrkerResult, error) {
+	if _, serving := p[queue]; !serving {
+		return nil, fmt.Errorf("no orker is polling %q", queue)
+	}
+	return &orkstackv1.DescribeOrkerResult{OrkerId: "orker-" + queue, RuntimeName: "docker"}, nil
 }
 
 // gpuOrkflow names a pool on one of its two tasks.
@@ -101,11 +109,11 @@ name: gpu-job
 version: 0.1.0
 tasks:
   - id: crunch
-    plugin: shell
+    uses: shell
     pool: gpu
     with: {command: "echo crunch"}
   - id: tidy
-    plugin: shell
+    uses: shell
     needs: [crunch]
     with: {command: "echo tidy"}
 `
@@ -210,7 +218,7 @@ name: unpinned
 version: 0.1.0
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo settle"}
 `
 	// The same channel, named the other way round.
@@ -219,7 +227,7 @@ name: main-pinned
 version: 0.1.0
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     pool: main
     with: {command: "echo settle"}
 `
@@ -470,8 +478,8 @@ func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
 			Name:         "default",
 			AllowedPools: []string{"main", "gpu", "cold"},
 		}},
-		Pools:       livePools{task.DefaultQueue: 2, gpu: 1},
-		PoolPlugins: poolPlugins{task.DefaultQueue: {"http", "shell"}, gpu: {"shell"}},
+		Pools:      livePools{task.DefaultQueue: 2, gpu: 1},
+		PoolOrkers: poolOrkers{task.DefaultQueue: {"http", "shell"}, gpu: {"shell"}},
 	})
 
 	resp, err := svc.ListPools(context.Background(),
@@ -494,9 +502,6 @@ func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
 	}
 	if !byName["main"].GetIsDefault() {
 		t.Error("pool main is not marked as the default")
-	}
-	if got := strings.Join(byName["gpu"].GetPlugins(), ","); got != "shell" {
-		t.Errorf("pool gpu reports plugins %q, want shell", got)
 	}
 	// A pool nothing serves is reported as empty rather than omitted: "nobody
 	// is there" is the answer the question was asked for.
@@ -557,9 +562,9 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 	mainVersion := strings.Replace(gpuOrkflow, "version: 0.1.0", "version: 0.2.0", 1)
 	mainVersion = strings.Replace(mainVersion, "    pool: gpu\n", "", 1)
 	svc := api.NewService(api.Config{
-		Orkflows:    store,
-		Pools:       livePools{task.DefaultQueue: 1, gpu: 1},
-		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}, gpu: {"container"}},
+		Orkflows:   store,
+		Pools:      livePools{task.DefaultQueue: 1, gpu: 1},
+		PoolOrkers: poolOrkers{task.DefaultQueue: {"shell"}, gpu: {"container"}},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: gpuOrkflow})); err != nil {
@@ -572,10 +577,10 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 	// No allow-list, so the pools its stored definitions name are what "in
 	// scope" means — which is the set this test is about.
 	reader := api.NewService(api.Config{
-		Orkflows:    store,
-		Namespaces:  registry{"default": {Name: "default"}},
-		Pools:       livePools{task.DefaultQueue: 1, gpu: 1},
-		PoolPlugins: poolPlugins{task.DefaultQueue: {"shell"}, gpu: {"container"}},
+		Orkflows:   store,
+		Namespaces: registry{"default": {Name: "default"}},
+		Pools:      livePools{task.DefaultQueue: 1, gpu: 1},
+		PoolOrkers: poolOrkers{task.DefaultQueue: {"shell"}, gpu: {"container"}},
 	})
 	resp, err := reader.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
@@ -602,10 +607,10 @@ func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
 	const raw = "ork-tasks-m10-2-agent"
 	starter := &fakeStarter{}
 	svc := api.NewService(api.Config{
-		Starter:     starter,
-		RawQueue:    raw,
-		Pools:       livePools{raw: 3},
-		PoolPlugins: poolPlugins{raw: {"http", "shell"}},
+		Starter:    starter,
+		RawQueue:   raw,
+		Pools:      livePools{raw: 3},
+		PoolOrkers: poolOrkers{raw: {"http", "shell"}},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -641,10 +646,6 @@ func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
 		t.Errorf("pool %q reports %d live Orkers, want the 3 this same Service just "+
 			"accepted a run onto", task.DefaultPool, got)
 	}
-	if got := strings.Join(main.GetPlugins(), ","); got != "http,shell" {
-		t.Errorf("pool %q reports plugins %q, want http,shell — the plugins its Orkers run",
-			task.DefaultPool, got)
-	}
 }
 
 // TestListPools_OneSetOfOrkersIsReportedOnce covers the other shape of the
@@ -663,10 +664,10 @@ func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 	}
 	starter := &fakeStarter{}
 	svc := api.NewService(api.Config{
-		Starter:     starter,
-		RawQueue:    gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
-		Pools:       livePools{gpuQueue: 2},
-		PoolPlugins: poolPlugins{gpuQueue: {"shell"}},
+		Starter:    starter,
+		RawQueue:   gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
+		Pools:      livePools{gpuQueue: 2},
+		PoolOrkers: poolOrkers{gpuQueue: {"shell"}},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -752,15 +753,15 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 	gpu := poolQueue(t, "gpu")
 	payments := registry{"payments": {Name: "payments", DefaultPool: "batch"}}
 	live := livePools{batch: 2, gpu: 1}
-	plugins := poolPlugins{batch: {"shell"}, gpu: {"shell"}}
+	plugins := poolOrkers{batch: {"shell"}, gpu: {"shell"}}
 
 	// The control: with the store up, the pool an orkflow names is in scope.
 	healthy := engine.NewMemoryOrkflowStore()
 	up := api.NewService(api.Config{
-		Orkflows:    healthy,
-		Namespaces:  payments,
-		Pools:       live,
-		PoolPlugins: plugins,
+		Orkflows:   healthy,
+		Namespaces: payments,
+		Pools:      live,
+		PoolOrkers: plugins,
 	})
 	if _, err := up.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
@@ -783,11 +784,11 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 	logs := &bytes.Buffer{}
 	refused := errors.New("dial tcp 127.0.0.1:9000: connect: connection refused")
 	down := api.NewService(api.Config{
-		Orkflows:    downOrkflowStore{err: refused},
-		Namespaces:  payments,
-		Pools:       live,
-		PoolPlugins: plugins,
-		Logger:      slog.New(slog.NewTextHandler(logs, nil)),
+		Orkflows:   downOrkflowStore{err: refused},
+		Namespaces: payments,
+		Pools:      live,
+		PoolOrkers: plugins,
+		Logger:     slog.New(slog.NewTextHandler(logs, nil)),
 	})
 
 	resp, err := down.ListPools(context.Background(),
@@ -805,9 +806,6 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 	only := resp.Msg.GetPools()[0]
 	if only.GetLiveOrkerCount() != 2 || !only.GetIsDefault() {
 		t.Errorf("pool batch = %v, want 2 live Orkers and the default mark", only)
-	}
-	if got := strings.Join(only.GetPlugins(), ","); got != "shell" {
-		t.Errorf("pool batch reports plugins %q, want shell", got)
 	}
 	if got := resp.Msg.GetDefaultPool(); got != "batch" {
 		t.Errorf("default pool = %q, want batch", got)

@@ -141,7 +141,7 @@ func seedLoggedRun(t *testing.T, f *fixture, runID string, status orkstackv1.Sta
 	taskRuns := make([]*orkstackv1.TaskRun, 0, len(taskIDs))
 	for _, id := range taskIDs {
 		taskRuns = append(taskRuns, &orkstackv1.TaskRun{
-			TaskId: id, Plugin: "shell", Status: status, Attempt: 1,
+			TaskId: id, Status: status, Attempt: 1,
 		})
 	}
 	f.runs.Apply(&orkstackv1.Run{

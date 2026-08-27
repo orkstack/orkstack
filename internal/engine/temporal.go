@@ -14,7 +14,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // ErrRunIDTaken reports that a run id is already the workflow id of an
@@ -152,38 +151,46 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID, _ string) error 
 	return nil
 }
 
-// ListPlugins executes the Orker's ListPlugins activity on this engine's
-// default execution channel and returns the descriptors of every plugin the
-// Orkers there can run.
-func (s *TemporalStarter) ListPlugins(ctx context.Context) ([]plugin.Descriptor, error) {
-	return s.listPluginsOn(ctx, s.orkerQueue, 10*time.Second)
+// DescribeOrker executes the Orker's DescribeOrker activity on this engine's
+// default execution channel and returns the identity of whichever Orker
+// answered.
+//
+// It replaces ListPlugins in this role one-for-one (§6.5). ListPlugins was
+// never only a plugin list: a SUCCESSFUL probe is how a pool proves it is
+// alive, and proof/M11.6 fixed a bug in exactly this path. An Orker no longer
+// has a plugin list — which images exist is engine configuration, not
+// something to ask an Orker (§4.2) — but a pool still has to prove it is
+// alive, so the probe stays and only its payload changes. The call site, the
+// 5 s and 10 s timeouts and the MaximumAttempts: 2 are unchanged.
+func (s *TemporalStarter) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrkerResult, error) {
+	return s.describeOrkerOn(ctx, s.orkerQueue, 10*time.Second)
 }
 
-// listPluginsOn asks one execution channel's Orkers what they can run. It is
-// the shared half of ListPlugins and the per-pool report (PluginsOnPool): the
+// describeOrkerOn asks one execution channel's Orkers who they are. It is the
+// shared half of DescribeOrker and the per-pool report (OrkerOnPool): the
 // question is the same activity, the channel is what differs.
-func (s *TemporalStarter) listPluginsOn(
+func (s *TemporalStarter) describeOrkerOn(
 	ctx context.Context,
 	queue string,
 	within time.Duration,
-) ([]plugin.Descriptor, error) {
-	var descriptors []plugin.Descriptor
+) (*orkstackv1.DescribeOrkerResult, error) {
+	result := &orkstackv1.DescribeOrkerResult{}
 	handle, err := s.client.ExecuteActivity(ctx, client.StartActivityOptions{
 		// The id is a collision-free token, not a clock reading: this call is
 		// made concurrently by the admin inventory's pool fan-out
 		// (`activityid.go`).
-		ID:                     newActivityID("list-plugins"),
+		ID:                     newActivityID("describe-orker"),
 		TaskQueue:              queue,
 		ScheduleToCloseTimeout: within,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 2,
 		},
-	}, task.ActivityListPlugins)
+	}, task.ActivityDescribeOrker)
 	if err != nil {
-		return nil, fmt.Errorf("list plugins: %w", err)
+		return nil, fmt.Errorf("describe orker: %w", err)
 	}
-	if err := handle.Get(ctx, &descriptors); err != nil {
-		return nil, fmt.Errorf("list plugins: %w", err)
+	if err := handle.Get(ctx, result); err != nil {
+		return nil, fmt.Errorf("describe orker: %w", err)
 	}
-	return descriptors, nil
+	return result, nil
 }

@@ -8,7 +8,7 @@
 +description: the 2.0.0 version
  tasks:
    - id: build
-     plugin: shell
+     uses: shell
      with:
        op: exec
 -      command: echo one

@@ -56,7 +56,13 @@ func checkSlug(kind, value string) error {
 	return nil
 }
 
-// KnownPlugins is the default set of plugin names accepted by rule 6. There is
+// KnownPlugins is retained only so a caller that still passes it compiles.
+//
+// Rule 6 no longer checks it: a task names an IMAGE, and whether a reference
+// resolves is decided at apply time by the registry, not by a hardcoded list
+// in the compiler (§4). It is unused and will be removed with the catalog work.
+//
+// Historical note. There is
 // no runtime plugin registry in M2, so the compiler validates against the
 // documented builtins (docs/PLUGINS.md).
 var KnownPlugins = []string{"container", "file", "http", "shell"}
@@ -84,7 +90,6 @@ type document struct {
 
 type taskDocument struct {
 	ID             string         `yaml:"id"`
-	Plugin         string         `yaml:"plugin"`
 	Needs          []string       `yaml:"needs"`
 	Condition      string         `yaml:"condition"`
 	TimeoutSeconds *int32         `yaml:"timeout_seconds"`
@@ -93,9 +98,61 @@ type taskDocument struct {
 	// namespace's default pool, then the built-in pool "main".
 	Pool string         `yaml:"pool"`
 	With map[string]any `yaml:"with"`
+
+	// Uses is the only image-selecting field in the DSL: a catalog activity
+	// name ("shell") or a registry reference ("ghcr.io/acme/migrate:v3",
+	// "repo@sha256:..."). It replaces `plugin:` outright — a task no longer
+	// names a Go type compiled into an Orker, it names an image (§4).
+	//
+	// It must NOT be a template. Resolution happens at APPLY, and a `uses:`
+	// selected from `{{ .inputs.image }}` cannot be pinned to a digest at
+	// apply time — which is the property the whole commit protocol rests on.
+	Uses string `yaml:"uses"`
+
+	// Command overrides the image ENTRYPOINT/CMD. It is argv, never a shell
+	// string: an array is what makes it impossible for a rendered value to
+	// become code (§10.2 rule 8).
+	Command []string `yaml:"command"`
+
+	// Env is workload-supplied environment. The platform puts NOTHING here:
+	// required platform state travels as files (AGENTS.md §3).
+	Env map[string]string `yaml:"env"`
+
+	// Secrets name files the Orker resolves and mounts read-only under
+	// /orkstack/input/secrets. The VALUE never appears in this document.
+	Secrets []secretDocument `yaml:"secrets"`
+
+	// Resources is what the task asks the Orker for. Orker policy may cap it;
+	// it may never raise it (§9.3).
+	Resources *resourceDocument `yaml:"resources"`
+
+	// Network is "default" or "none". Named Orker-defined profiles are
+	// deliberately absent (AGENTS.md §6).
+	Network string `yaml:"network"`
+
+	// CancellationGracePeriodSeconds is the SIGTERM-to-SIGKILL window.
+	CancellationGracePeriodSeconds *int32 `yaml:"cancellation_grace_period_seconds"`
+
+	// RunAsOrkerUser is the §3.1 readability escape hatch, per task. It
+	// overrides the image's own USER so the Orker owns every file the
+	// workload writes, and it is opt-in because that breaks images which
+	// need their baked-in identity.
+	RunAsOrkerUser bool `yaml:"run_as_orker_user"`
 	// Removed carries keys this document may no longer use, decoded only so
 	// the compiler can refuse them by name (removed.go).
 	Removed removedTaskFields `yaml:",inline"`
+}
+
+// secretDocument is one secret's name and where the Orker gets it.
+type secretDocument struct {
+	Name   string `yaml:"name"`
+	Source string `yaml:"source"`
+}
+
+// resourceDocument is the Kubernetes spelling of a resource request.
+type resourceDocument struct {
+	CPU    string `yaml:"cpu"`
+	Memory string `yaml:"memory"`
 }
 
 type retryDocument struct {
@@ -154,9 +211,16 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		if err := td.Removed.check(td.ID); err != nil {
 			return nil, err
 		}
+		if err := checkUses(td.ID, td.Uses); err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
 			Id:             td.ID,
-			Plugin:         td.Plugin,
+			Uses:           td.Uses,
+			Command:        td.Command,
+			Env:            td.Env,
+			Network:        networkModeOf(td.Network),
+			RunAsOrkerUser: td.RunAsOrkerUser,
 			Needs:          td.Needs,
 			Condition:      td.Condition,
 			TimeoutSeconds: DefaultTimeoutSeconds,
@@ -172,6 +236,21 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 				BackoffCoefficient:     td.Retry.BackoffCoefficient,
 				MaximumIntervalSeconds: td.Retry.MaximumIntervalSeconds,
 			}
+		}
+		if td.CancellationGracePeriodSeconds != nil {
+			task.CancellationGracePeriodSeconds = *td.CancellationGracePeriodSeconds
+		}
+		if td.Resources != nil {
+			task.Resources = &orkstackv1.ResourceRequest{
+				Cpu:    td.Resources.CPU,
+				Memory: td.Resources.Memory,
+			}
+		}
+		for _, sd := range td.Secrets {
+			task.Secrets = append(task.Secrets, &orkstackv1.SecretRef{
+				Name:   sd.Name,
+				Source: sd.Source,
+			})
 		}
 		if td.With != nil {
 			with, err := structpb.NewStruct(normalizeMap(td.With))
@@ -191,6 +270,24 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		wf.Version = sourceHash(source)
 	}
 	return wf, nil
+}
+
+// networkModeOf maps the DSL's word to the enum. An unrecognized value is
+// carried as UNSPECIFIED and refused by validate, so the error names the task
+// and the value rather than silently selecting a default.
+func networkModeOf(raw string) orkstackv1.NetworkMode {
+	switch raw {
+	case "":
+		return orkstackv1.NetworkMode_NETWORK_MODE_UNSPECIFIED
+	case "default":
+		return orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT
+	case "none":
+		return orkstackv1.NetworkMode_NETWORK_MODE_NONE
+	default:
+		// A sentinel the validator recognizes. Returning DEFAULT here would
+		// run a typo'd `network: nonw` with full network access.
+		return orkstackv1.NetworkMode(-1)
+	}
 }
 
 // normalizeMap converts a YAML-decoded value into the JSON-compatible shape

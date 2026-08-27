@@ -25,7 +25,6 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // versioningNamespace isolates this suite. AGENTS.md §6: a namespace is a hard
@@ -242,30 +241,30 @@ func (r *replica) startOrker(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	}))
 	r.orker.RegisterActivityWithOptions(
-		func(actCtx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+		func(actCtx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			r.mu.Lock()
-			r.executed[in.RunID+"/"+in.TaskID] = r.deployment.BuildID
+			r.executed[in.RunId+"/"+in.TaskId] = r.deployment.BuildID
 			r.mu.Unlock()
 
 			// The gate stands in for a long task: it is running when the
 			// rollout happens, so the run is unambiguously in flight.
-			if in.TaskID == gateTaskID {
+			if in.TaskId == gateTaskID {
 				r.once.Do(func() { close(r.started) })
 				select {
 				case <-r.release:
 				case <-actCtx.Done():
-					return task.ExecuteTaskResult{}, actCtx.Err()
+					return &orkstackv1.ExecuteTaskResult{}, actCtx.Err()
 				}
 			}
-			return task.ExecuteTaskResult{
-				TaskID: in.TaskID,
-				Output: plugin.Payload{
+			return &orkstackv1.ExecuteTaskResult{
+				TaskId: in.TaskId,
+				ValuesJson: valuesJSON(map[string]any{
 					// The stamp is the plugin-code-level evidence: it says
 					// which build's task implementation produced this result,
 					// and it is recorded in the run's own history.
 					"executed_by_build": r.deployment.BuildID,
-					"echoed_task":       in.TaskID,
-				},
+					"echoed_task":       in.TaskId,
+				}),
 			}, nil
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
@@ -632,23 +631,26 @@ func runHistory(t *testing.T, ctx context.Context, c client.Client, runID string
 // executeTaskIDFrom decodes the engine's activity input to name the ork task.
 func executeTaskIDFrom(t *testing.T, payloads *commonpb.Payloads) string {
 	t.Helper()
-	var in task.ExecuteTaskInput
+	var in *orkstackv1.ExecuteTaskInput
 	if err := converter.GetDefaultDataConverter().FromPayloads(payloads, &in); err != nil {
 		t.Fatalf("decode ExecuteTask input from history: %v", err)
 	}
-	return in.TaskID
+	return in.TaskId
 }
 
 // executeTaskStampFrom decodes the Orker's result and returns the task id with
 // the build its implementation stamped.
 func executeTaskStampFrom(t *testing.T, payloads *commonpb.Payloads) (string, string) {
 	t.Helper()
-	var result task.ExecuteTaskResult
-	if err := converter.GetDefaultDataConverter().FromPayloads(payloads, &result); err != nil {
+	result := &orkstackv1.ExecuteTaskResult{}
+	if err := converter.GetDefaultDataConverter().FromPayloads(payloads, result); err != nil {
 		t.Fatalf("decode ExecuteTask result from history: %v", err)
 	}
-	build, _ := result.Output["executed_by_build"].(string)
-	return result.TaskID, build
+	// The stamp is inside the workload's values.json bytes, not a structured
+	// field: ExecuteTaskResult carries the workload's EXACT bytes so the
+	// committed sha256 is the sha256 of what the workload wrote (§3.4).
+	build, _ := decodeValuesJSON(t, result.GetValuesJson())["executed_by_build"].(string)
+	return result.GetTaskId(), build
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -667,13 +669,13 @@ func gatedOrkflow() *orkstackv1.Orkflow {
 		Name:    "rollout-gated",
 		Version: "1.0.0",
 		Tasks: []*orkstackv1.Task{
-			{Id: "prepare", Plugin: "shell", TimeoutSeconds: 120,
+			{Id: "prepare", Uses: "shell", TimeoutSeconds: 120,
 				With: mustStruct(map[string]any{"run": "echo prepare"})},
-			{Id: gateTaskID, Plugin: "shell", Needs: []string{"prepare"}, TimeoutSeconds: 200,
+			{Id: gateTaskID, Uses: "shell", Needs: []string{"prepare"}, TimeoutSeconds: 200,
 				With: mustStruct(map[string]any{"run": "echo gate"})},
-			{Id: "after-gate", Plugin: "shell", Needs: []string{gateTaskID}, TimeoutSeconds: 120,
+			{Id: "after-gate", Uses: "shell", Needs: []string{gateTaskID}, TimeoutSeconds: 120,
 				With: mustStruct(map[string]any{"run": "echo after"})},
-			{Id: "publish", Plugin: "file", Needs: []string{"after-gate"}, TimeoutSeconds: 120,
+			{Id: "publish", Uses: "file", Needs: []string{"after-gate"}, TimeoutSeconds: 120,
 				With: mustStruct(map[string]any{"path": "/tmp/rollout.txt"})},
 		},
 	}
@@ -685,9 +687,9 @@ func plainOrkflow() *orkstackv1.Orkflow {
 		Name:    "rollout-plain",
 		Version: "1.0.0",
 		Tasks: []*orkstackv1.Task{
-			{Id: "fetch", Plugin: "http", TimeoutSeconds: 120,
+			{Id: "fetch", Uses: "http", TimeoutSeconds: 120,
 				With: mustStruct(map[string]any{"url": "https://example.invalid/x"})},
-			{Id: "report", Plugin: "shell", Needs: []string{"fetch"}, TimeoutSeconds: 120,
+			{Id: "report", Uses: "shell", Needs: []string{"fetch"}, TimeoutSeconds: 120,
 				With: mustStruct(map[string]any{"run": "echo report"})},
 		},
 	}

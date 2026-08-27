@@ -82,11 +82,15 @@ type PoolProbe interface {
 	ObservePool(ctx context.Context, queue string) (PoolLiveness, error)
 }
 
-// PoolPluginLister reports what the Orkers of one pool can run. It is asked
-// only of a pool that has live Orkers — a pool with none has nobody to answer,
-// and asking would only time out.
-type PoolPluginLister interface {
-	PluginsOnPool(ctx context.Context, queue string) ([]string, error)
+// PoolOrkerDescriber reports the identity of an Orker serving one pool. It is
+// asked only of a pool that has live Orkers — a pool with none has nobody to
+// answer, and asking would only time out.
+//
+// It replaces PoolPluginLister. An Orker no longer has a plugin list to
+// report; what it has is an identity, a runtime and a security profile, and
+// answering at all is the liveness evidence the inventory wants (§6.5).
+type PoolOrkerDescriber interface {
+	OrkerOnPool(ctx context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error)
 }
 
 // NamespaceReader is the engine's view of the namespace registry: the one
@@ -204,8 +208,8 @@ type PoolResolver struct {
 	// refuse every submit or vouch for every pool.
 	Probe PoolProbe
 
-	// Plugins reports what a pool's Orkers can run, for reporting only.
-	Plugins PoolPluginLister
+	// Orkers describes a pool's Orkers, for reporting only.
+	Orkers PoolOrkerDescriber
 
 	// RawQueue is the operator escape hatch (ORK_ORKER_QUEUE): the channel a
 	// task that names no pool is dispatched to. Empty means the pool's own.
@@ -595,21 +599,26 @@ func (r *PoolResolver) Pools(
 				}
 			}
 		}
-		if pool.GetLiveOrkerCount() > 0 && r.Plugins != nil {
-			plugins, err := r.Plugins.PluginsOnPool(ctx, queue)
-			if err != nil {
-				// The pool's liveness was measured and stands; only what its
-				// Orkers run was lost, which the wire contract already reads
-				// as "nobody answered". Logged, because an empty plugin list
-				// looks exactly like a complete one.
-				r.logger().Warn("list pools: a live pool did not answer, so its "+
-					"plugin list is missing from this report",
+		if pool.GetLiveOrkerCount() > 0 && r.Orkers != nil {
+			// The probe is asked for its LIVENESS evidence, not for an
+			// inventory. Under the OCI Activity Contract an Orker has no
+			// plugin list to report — which images exist is engine
+			// configuration, not something to ask an Orker (§4.2) — so
+			// Pool.plugins is deliberately left unpopulated here and the
+			// Admin page it fed becomes an Activities page rendering the
+			// engine's catalog instead (§6.5, Phase 3).
+			//
+			// The call is kept rather than dropped because answering AT ALL
+			// is the evidence: proof/M11.6 exists because this path had a bug,
+			// and a probe nobody makes cannot regress visibly.
+			if _, err := r.Orkers.OrkerOnPool(ctx, queue); err != nil {
+				// The pool's liveness was measured from the cluster and
+				// stands; only the Orker's self-description was lost.
+				r.logger().Warn("list pools: a live pool did not answer the "+
+					"describe-orker probe",
 					"namespace", namespaceName(ns),
 					"pool", name,
 					"error", err)
-			} else {
-				sort.Strings(plugins)
-				pool.Plugins = plugins
 			}
 		}
 		pools = append(pools, pool)

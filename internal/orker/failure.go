@@ -1,0 +1,271 @@
+package orker
+
+import (
+	"fmt"
+
+	"go.temporal.io/sdk/temporal"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/task"
+)
+
+// The five failure categories of the OCI Activity Contract (§8.1).
+//
+// They are re-exported from internal/task rather than redeclared. The Orker
+// constructs them and the engine reads them, and they are the exact Temporal
+// ApplicationError type strings that RetryPolicy.NonRetryableErrorTypes
+// matches LITERALLY — so a second spelling on this side would silently stop a
+// contract violation from being non-retryable. One owner, one string.
+const (
+	CategoryActivityFailed      = task.CategoryActivityFailed
+	CategoryInfrastructureError = task.CategoryInfrastructureError
+	CategoryContractViolation   = task.CategoryContractViolation
+	CategoryTimedOut            = task.CategoryTimedOut
+	CategoryCancelled           = task.CategoryCancelled
+)
+
+// Reason codes — the exhaustive §8.2 table. Every terminal failure names one,
+// so a failure is machine-readable as well as human-readable (AGENTS.md §15).
+//
+// There is deliberately NO exit-code table. An earlier draft classified 126 as
+// "not executable" and 127 as "command not found", both permanent — but a
+// workload choosing `exit 126` produces a byte-identical status to the CLI's
+// own diagnostic (§14.13), and POSIX makes 127 an ordinary shell "command not
+// found", so a routine activity-shell failure would have been permanently
+// un-retryable. The signal that genuinely separates "the runtime refused" from
+// "the workload failed" is which runtime call failed, not a number: Create and
+// Start returning an error means the container never ran.
+const (
+	ReasonContainerExitNonzero = "CONTAINER_EXIT_NONZERO"
+	ReasonContainerTimeout     = "CONTAINER_TIMEOUT"
+	ReasonRuntimeRefused       = "RUNTIME_REFUSED"
+	ReasonWorkspaceNotBindable = "WORKSPACE_NOT_BINDABLE"
+	ReasonWorkdirNotBindable   = "WORKDIR_NOT_BINDABLE"
+	ReasonImagePullFailed      = "IMAGE_PULL_FAILED"
+	ReasonImageDigestMismatch  = "IMAGE_DIGEST_MISMATCH"
+	ReasonImageNotPinned       = "IMAGE_NOT_PINNED"
+	ReasonValuesMissing        = "VALUES_MISSING"
+	ReasonValuesMalformed      = "VALUES_MALFORMED"
+	ReasonValuesTooLarge       = "VALUES_TOO_LARGE"
+	ReasonArtifactNotAFile     = "ARTIFACT_NOT_A_FILE"
+	ReasonArtifactLimit        = "ARTIFACT_LIMIT_EXCEEDED"
+	ReasonArtifactNameNotUTF8  = "ARTIFACT_NAME_NOT_UTF8"
+	ReasonArtifactUploadFailed = "ARTIFACT_UPLOAD_FAILED"
+	ReasonInputUnavailable     = "INPUT_ARTIFACT_UNAVAILABLE"
+	ReasonInputCorrupt         = "INPUT_ARTIFACT_CORRUPT"
+	ReasonInputTooLarge        = "INPUT_TOO_LARGE"
+	ReasonRenderFailed         = "RENDER_FAILED"
+	ReasonWorkdirFailed        = "WORKDIR_FAILED"
+	ReasonSecretUnresolved     = "SECRET_UNRESOLVED"
+	ReasonSecretSchemeForbid   = "SECRET_SCHEME_FORBIDDEN"
+	ReasonCommitReadFailed     = "COMMIT_READ_FAILED"
+	ReasonCommitWriteFailed    = "COMMIT_WRITE_FAILED"
+	ReasonCommitSchema         = "COMMIT_SCHEMA_UNSUPPORTED"
+	ReasonCommitIdentity       = "COMMIT_IDENTITY_MISMATCH"
+	ReasonCommitUndecodable    = "COMMIT_UNDECODABLE"
+	ReasonCommitTooLarge       = "COMMIT_TOO_LARGE"
+	ReasonCommitNotConditional = "COMMIT_STORE_NOT_CONDITIONAL"
+	ReasonOutputNotReadable    = "OUTPUT_NOT_READABLE"
+	ReasonValuesCorrupt        = "VALUES_CORRUPT"
+	ReasonValuesRefetchFailed  = "VALUES_REFETCH_FAILED"
+	ReasonResourceRefused      = "RESOURCE_REQUEST_REFUSED"
+	ReasonNetworkModeRefused   = "NETWORK_MODE_REFUSED"
+)
+
+// reasonCategory is the §8.2 table, as data.
+//
+// It is a map rather than a switch so a code with no row is a detectable
+// programming error rather than a silent default. categoryFor panics on a
+// miss in tests via TestReasonCodes_AllHaveCategories; at runtime an unknown
+// code degrades to InfrastructureError, which is retryable — the safe
+// direction, because the alternative is refusing to retry something nobody
+// classified.
+var reasonCategory = map[string]string{
+	ReasonContainerExitNonzero: CategoryActivityFailed,
+	ReasonContainerTimeout:     CategoryTimedOut,
+	ReasonRuntimeRefused:       CategoryInfrastructureError,
+	ReasonWorkspaceNotBindable: CategoryInfrastructureError,
+	ReasonWorkdirNotBindable:   CategoryInfrastructureError,
+	ReasonImagePullFailed:      CategoryInfrastructureError,
+	ReasonImageDigestMismatch:  CategoryContractViolation,
+	ReasonImageNotPinned:       CategoryContractViolation,
+	ReasonValuesMissing:        CategoryContractViolation,
+	ReasonValuesMalformed:      CategoryContractViolation,
+	ReasonValuesTooLarge:       CategoryContractViolation,
+	ReasonArtifactNotAFile:     CategoryContractViolation,
+	ReasonArtifactLimit:        CategoryContractViolation,
+	ReasonArtifactNameNotUTF8:  CategoryContractViolation,
+	ReasonArtifactUploadFailed: CategoryInfrastructureError,
+	ReasonInputUnavailable:     CategoryInfrastructureError,
+	ReasonInputCorrupt:         CategoryContractViolation,
+	ReasonInputTooLarge:        CategoryContractViolation,
+	ReasonRenderFailed:         CategoryContractViolation,
+	ReasonWorkdirFailed:        CategoryInfrastructureError,
+	ReasonSecretUnresolved:     CategoryInfrastructureError,
+	ReasonSecretSchemeForbid:   CategoryContractViolation,
+	ReasonCommitReadFailed:     CategoryInfrastructureError,
+	ReasonCommitWriteFailed:    CategoryInfrastructureError,
+	ReasonCommitSchema:         CategoryContractViolation,
+	ReasonCommitIdentity:       CategoryContractViolation,
+	ReasonCommitUndecodable:    CategoryContractViolation,
+	ReasonCommitTooLarge:       CategoryContractViolation,
+	ReasonCommitNotConditional: CategoryInfrastructureError,
+	ReasonOutputNotReadable:    CategoryContractViolation,
+	ReasonValuesCorrupt:        CategoryContractViolation,
+	ReasonValuesRefetchFailed:  CategoryInfrastructureError,
+	ReasonResourceRefused:      CategoryContractViolation,
+	ReasonNetworkModeRefused:   CategoryContractViolation,
+}
+
+// retryableReason overrides the category's own default for the two codes where
+// they differ (§8.2).
+//
+// WORKSPACE_NOT_BINDABLE and COMMIT_STORE_NOT_CONDITIONAL are
+// InfrastructureError — the category whose default is "retry" — but both are
+// host misconfigurations that retrying cannot fix. Retrying them would loop
+// against a deterministic fact, which AGENTS.md §11 forbids as loudly as it
+// forbids a stuck state.
+var retryableReason = map[string]bool{
+	ReasonWorkspaceNotBindable: false,
+	ReasonWorkdirNotBindable:   false,
+	ReasonCommitNotConditional: false,
+}
+
+// CategoryFor answers which of the five categories a reason code belongs to.
+func CategoryFor(reason string) string {
+	if category, ok := reasonCategory[reason]; ok {
+		return category
+	}
+	return CategoryInfrastructureError
+}
+
+// RetryableReason answers whether Temporal should try a reason code again.
+//
+// The category supplies the default and the override table supplies the two
+// exceptions. ContractViolation and TimedOut are never retryable, which is the
+// same statement NonRetryableCategories makes to the engine.
+func RetryableReason(reason string) bool {
+	if explicit, ok := retryableReason[reason]; ok {
+		return explicit
+	}
+	switch CategoryFor(reason) {
+	case CategoryContractViolation, CategoryTimedOut, CategoryCancelled:
+		return false
+	default:
+		return true
+	}
+}
+
+// CategoryEnum maps a category string to the proto enum the engine records on
+// Error.category, so the UI can say "contract violation — this image did not
+// write values.json" instead of rendering a Go error string (§8.3).
+func CategoryEnum(category string) orkstackv1.FailureCategory {
+	switch category {
+	case CategoryActivityFailed:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED
+	case CategoryInfrastructureError:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+	case CategoryContractViolation:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
+	case CategoryTimedOut:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
+	case CategoryCancelled:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
+	default:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED
+	}
+}
+
+// Failure is one terminal activity failure, before it becomes a Temporal
+// error. It pairs the machine-readable reason with the human-readable message
+// AGENTS.md §15 requires of every terminal failure, and carries the detail
+// message that makes a failed attempt as inspectable as a successful one.
+type Failure struct {
+	// Reason is the §8.2 code.
+	Reason string
+	// Message is the human-readable explanation. It names the specific thing:
+	// the file and its mode for OUTPUT_NOT_READABLE, the uri and its size for
+	// COMMIT_UNDECODABLE.
+	Message string
+	// Detail is the transport for everything a failed attempt produced —
+	// uploaded artifacts, stream references, scan notes. Nil when the failure
+	// happened before there was anything to report.
+	Detail *orkstackv1.ActivityFailureDetail
+	// Cause is the underlying error, kept for %w chains and for the Orker's
+	// own logs. It is never what the engine reports: the reason and message
+	// are.
+	Cause error
+}
+
+// Error implements error.
+func (f *Failure) Error() string {
+	if f.Message == "" {
+		return f.Reason
+	}
+	return f.Reason + ": " + f.Message
+}
+
+// Unwrap exposes the cause to errors.Is / errors.As.
+func (f *Failure) Unwrap() error { return f.Cause }
+
+// Category is the §8.1 category this failure's reason belongs to.
+func (f *Failure) Category() string { return CategoryFor(f.Reason) }
+
+// Fail builds a Failure with a formatted message.
+func Fail(reason string, format string, args ...any) *Failure {
+	return &Failure{Reason: reason, Message: fmt.Sprintf(format, args...)}
+}
+
+// FailCause builds a Failure that wraps an underlying error.
+func FailCause(reason string, cause error, format string, args ...any) *Failure {
+	return &Failure{Reason: reason, Message: fmt.Sprintf(format, args...), Cause: cause}
+}
+
+// WithDetail attaches the failure transport and returns the same Failure, so a
+// construction site can stay one expression.
+func (f *Failure) WithDetail(detail *orkstackv1.ActivityFailureDetail) *Failure {
+	if detail != nil {
+		detail.ReasonCode = f.Reason
+		detail.Category = CategoryEnum(f.Category())
+	}
+	f.Detail = detail
+	return f
+}
+
+// TemporalError converts a Failure into the error an activity returns.
+//
+// The category is the ApplicationError TYPE, because that is what
+// NonRetryableErrorTypes matches. The reason code is not the type: it is far
+// more granular than a retry policy should have to enumerate, and it travels
+// in the detail instead, where the engine reads it into Error.code.
+//
+// A non-retryable category is additionally constructed with
+// NewNonRetryableApplicationError. The constructor's flag always wins over the
+// policy list, so a task whose retry: policy forgot to list the category still
+// cannot loop on a contract violation.
+func (f *Failure) TemporalError() error {
+	detail := f.Detail
+	if detail == nil {
+		detail = &orkstackv1.ActivityFailureDetail{
+			ReasonCode: f.Reason,
+			Category:   CategoryEnum(f.Category()),
+		}
+	}
+	category := f.Category()
+	message := f.Error()
+	if !RetryableReason(f.Reason) {
+		return temporal.NewNonRetryableApplicationError(message, category, f.Cause, detail)
+	}
+	// NewApplicationErrorWithCause, NOT NewApplicationError.
+	//
+	// temporal.NewApplicationError's signature is
+	// (message, errType string, details ...interface{}) — it takes NO cause.
+	// Passing one to it puts the cause in details[0] and the real detail in
+	// details[1], so the engine's Details(&detail) decodes the wrong slot and
+	// every RETRYABLE failure loses its artifacts, exit code and scan notes.
+	// That is the most common failure path there is: CONTAINER_EXIT_NONZERO,
+	// where a failing build's test report is exactly what somebody opens the
+	// run to read. Found by
+	// TestIntegration_AFailedTaskStillPublishesWhatItProduced.
+	return temporal.NewApplicationErrorWithCause(message, category, f.Cause, detail)
+}

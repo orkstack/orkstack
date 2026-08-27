@@ -2471,7 +2471,7 @@ container**. What `uses: container` meant is now spelled directly:
 ```yaml
 # before (in-process container plugin)
 - id: migrate
-  plugin: container
+  uses: container
   with: { op: run, image: ghcr.io/acme/migrate:v3, command: ["/bin/migrate"] }
 
 # after (the task IS the container)

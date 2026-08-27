@@ -4,6 +4,7 @@ package orkstack.v1;
 
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
@@ -15,12 +16,18 @@ message RetryPolicy {
   int32 maximum_interval_seconds = 4;    // default 100
 }
 
-// Task is a single node in the orkflow DAG. It maps to exactly one plugin
-// invocation on an Orker.
+// Task is a single node in the orkflow DAG. It maps to exactly one activity
+// execution on an Orker, and an activity is an OCI image.
 message Task {
   string id = 1;                         // unique within the orkflow
-  string plugin = 2;                     // plugin name, e.g. "http", "shell", "file"
-  // with holds the plugin-specific configuration (templated).
+
+  // 2 held the in-process plugin name. Under the OCI Activity Contract a task
+  // names an activity, and an activity is an image. Reserved rather than
+  // reused so a stored version document can never be re-read as an image.
+  reserved 2;
+  reserved "plugin";
+
+  // with holds the activity-specific configuration (templated).
   google.protobuf.Struct with = 3;
   // needs lists task ids that must complete before this task runs (DAG edges).
   repeated string needs = 4;
@@ -49,6 +56,24 @@ message Task {
   // name means one set of Orkers, in both directions. The engine maps a pool
   // to its internal execution channel and nowhere else.
   string pool = 9;
+
+  // uses is what the author wrote: a catalog activity name ("shell") or a
+  // registry reference ("ghcr.io/acme/migrate:v3", "repo@sha256:..."). It is
+  // the only image-selecting field in the DSL.
+  string uses = 10;
+  // image is the engine's apply-time resolution of uses. It is stamped into
+  // the immutable version document, so re-applying the same YAML after a tag
+  // moves produces a different definition (§4.4).
+  ImageRef image = 11;
+  repeated string command = 12;
+  map<string, string> env = 13;
+  repeated SecretRef secrets = 14;
+  ResourceRequest resources = 15;
+  NetworkMode network = 16;
+  int32 cancellation_grace_period_seconds = 17;
+  // run_as_orker_user is the §3.1 escape hatch, per task. It changes what
+  // runs, so it is part of canonicalOrkflow(Task) (§4.4).
+  bool run_as_orker_user = 18;
 }
 
 // Orkflow is the compiled, validated form of a DSL document.

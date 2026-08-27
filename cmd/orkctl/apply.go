@@ -64,10 +64,10 @@ func renderTaskTable(out io.Writer, tasks []*orkstackv1.Task) error {
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "TASK\tPLUGIN\tNEEDS\tTIMEOUT")
+	fmt.Fprintln(table, "TASK\tUSES\tNEEDS\tTIMEOUT")
 	for _, task := range tasks {
 		fmt.Fprintf(table, "%s\t%s\t%s\t%ds\n",
-			task.GetId(), task.GetPlugin(), joinOrDash(task.GetNeeds()), task.GetTimeoutSeconds())
+			task.GetId(), task.GetUses(), joinOrDash(task.GetNeeds()), task.GetTimeoutSeconds())
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

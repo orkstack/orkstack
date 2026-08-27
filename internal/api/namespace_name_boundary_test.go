@@ -49,7 +49,7 @@ func namespaceCarryingCalls(svc *api.Service) map[string]func(ctx context.Contex
 		},
 		"ApplyOrkflow": func(ctx context.Context, name string) error {
 			_, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-				Yaml:      "name: deploy\ntasks:\n  - id: build\n    plugin: shell\n    with: {command: \"echo\"}\n",
+				Yaml:      "name: deploy\ntasks:\n  - id: build\n    uses: shell\n    with: {command: \"echo\"}\n",
 				Namespace: name,
 			}))
 			return err

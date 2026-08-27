@@ -651,7 +651,7 @@ version: "0.1.0"
 description: M10.5 slow-emitting task, followed live from a second replica.
 tasks:
   - id: emit
-    plugin: shell
+    uses: shell
     timeout_seconds: 120
     with:
       op: exec
@@ -685,7 +685,7 @@ version: "0.1.0"
 description: M10.5 marker task, for the no-bytes-in-history invariant.
 tasks:
   - id: emit
-    plugin: shell
+    uses: shell
     timeout_seconds: 120
     with:
       op: exec

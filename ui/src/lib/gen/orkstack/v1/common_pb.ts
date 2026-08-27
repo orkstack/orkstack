@@ -11,7 +11,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/common.proto.
  */
 export const file_orkstack_v1_common: GenFile = /*@__PURE__*/
-  fileDesc("ChhvcmtzdGFjay92MS9jb21tb24ucHJvdG8SC29ya3N0YWNrLnYxIs0BCgtBcnRpZmFjdFJlZhIMCgRuYW1lGAEgASgJEgsKA3VyaRgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSEgoKc2l6ZV9ieXRlcxgEIAEoAxIOCgZzaGEyNTYYBSABKAkSOAoIbWV0YWRhdGEYBiADKAsyJi5vcmtzdGFjay52MS5BcnRpZmFjdFJlZi5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIwCgdQYXlsb2FkEiUKBGRhdGEYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IkoKBUVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCRIPCgdkZXRhaWxzGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCCqaAQoGU3RhdHVzEhYKElNUQVRVU19VTlNQRUNJRklFRBAAEhIKDlNUQVRVU19QRU5ESU5HEAESEgoOU1RBVFVTX1JVTk5JTkcQAhIUChBTVEFUVVNfU1VDQ0VFREVEEAMSEQoNU1RBVFVTX0ZBSUxFRBAEEhMKD1NUQVRVU19DQU5DRUxFRBAFEhIKDlNUQVRVU19TS0lQUEVEEAZCpwEKD2NvbS5vcmtzdGFjay52MUILQ29tbW9uUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct]);
+  fileDesc("ChhvcmtzdGFjay92MS9jb21tb24ucHJvdG8SC29ya3N0YWNrLnYxIs0BCgtBcnRpZmFjdFJlZhIMCgRuYW1lGAEgASgJEgsKA3VyaRgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSEgoKc2l6ZV9ieXRlcxgEIAEoAxIOCgZzaGEyNTYYBSABKAkSOAoIbWV0YWRhdGEYBiADKAsyJi5vcmtzdGFjay52MS5BcnRpZmFjdFJlZi5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIwCgdQYXlsb2FkEiUKBGRhdGEYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0InoKBUVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCRIPCgdkZXRhaWxzGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCBIuCghjYXRlZ29yeRgFIAEoDjIcLm9ya3N0YWNrLnYxLkZhaWx1cmVDYXRlZ29yeSqaAQoGU3RhdHVzEhYKElNUQVRVU19VTlNQRUNJRklFRBAAEhIKDlNUQVRVU19QRU5ESU5HEAESEgoOU1RBVFVTX1JVTk5JTkcQAhIUChBTVEFUVVNfU1VDQ0VFREVEEAMSEQoNU1RBVFVTX0ZBSUxFRBAEEhMKD1NUQVRVU19DQU5DRUxFRBAFEhIKDlNUQVRVU19TS0lQUEVEEAYq7QEKD0ZhaWx1cmVDYXRlZ29yeRIgChxGQUlMVVJFX0NBVEVHT1JZX1VOU1BFQ0lGSUVEEAASJAogRkFJTFVSRV9DQVRFR09SWV9BQ1RJVklUWV9GQUlMRUQQARIpCiVGQUlMVVJFX0NBVEVHT1JZX0lORlJBU1RSVUNUVVJFX0VSUk9SEAISJwojRkFJTFVSRV9DQVRFR09SWV9DT05UUkFDVF9WSU9MQVRJT04QAxIeChpGQUlMVVJFX0NBVEVHT1JZX1RJTUVEX09VVBAEEh4KGkZBSUxVUkVfQ0FURUdPUllfQ0FOQ0VMTEVEEAVCpwEKD2NvbS5vcmtzdGFjay52MUILQ29tbW9uUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct]);
 
 /**
  * ArtifactRef is a pointer to a stored artifact in the object store.
@@ -93,7 +93,7 @@ export const PayloadSchema: GenMessage<Payload> = /*@__PURE__*/
  */
 export type Error = Message<"orkstack.v1.Error"> & {
   /**
-   * stable machine code, e.g. "PLUGIN_TIMEOUT"
+   * stable machine code, e.g. "VALUES_MISSING"
    *
    * @generated from field: string code = 1;
    */
@@ -117,6 +117,15 @@ export type Error = Message<"orkstack.v1.Error"> & {
    * @generated from field: bool retryable = 4;
    */
   retryable: boolean;
+
+  /**
+   * category is the AGENTS.md §4 failure category this error belongs to. It
+   * is what drives NonRetryableErrorTypes in ActivityOptions, so it is part
+   * of the replay-visible contract and not merely display data.
+   *
+   * @generated from field: orkstack.v1.FailureCategory category = 5;
+   */
+  category: FailureCategory;
 };
 
 /**
@@ -173,4 +182,49 @@ export enum Status {
  */
 export const StatusSchema: GenEnum<Status> = /*@__PURE__*/
   enumDesc(file_orkstack_v1_common, 0);
+
+/**
+ * FailureCategory is the AGENTS.md §4 category of a terminal failure. Its
+ * value names are also the exact Temporal ApplicationError type strings, so a
+ * RetryPolicy's non_retryable_error_types can name them (§7.2).
+ *
+ * @generated from enum orkstack.v1.FailureCategory
+ */
+export enum FailureCategory {
+  /**
+   * @generated from enum value: FAILURE_CATEGORY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: FAILURE_CATEGORY_ACTIVITY_FAILED = 1;
+   */
+  ACTIVITY_FAILED = 1,
+
+  /**
+   * @generated from enum value: FAILURE_CATEGORY_INFRASTRUCTURE_ERROR = 2;
+   */
+  INFRASTRUCTURE_ERROR = 2,
+
+  /**
+   * @generated from enum value: FAILURE_CATEGORY_CONTRACT_VIOLATION = 3;
+   */
+  CONTRACT_VIOLATION = 3,
+
+  /**
+   * @generated from enum value: FAILURE_CATEGORY_TIMED_OUT = 4;
+   */
+  TIMED_OUT = 4,
+
+  /**
+   * @generated from enum value: FAILURE_CATEGORY_CANCELLED = 5;
+   */
+  CANCELLED = 5,
+}
+
+/**
+ * Describes the enum orkstack.v1.FailureCategory.
+ */
+export const FailureCategorySchema: GenEnum<FailureCategory> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_common, 1);
 

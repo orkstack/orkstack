@@ -5,7 +5,9 @@
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_struct, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { DescribeOrkerResult } from "./activity_pb";
+import { file_orkstack_v1_activity } from "./activity_pb";
 import type { Payload, Status } from "./common_pb";
 import { file_orkstack_v1_common } from "./common_pb";
 import type { EventSchema, Run } from "./run_pb";
@@ -14,13 +16,13 @@ import type { Orkflow } from "./orkflow_pb";
 import { file_orkstack_v1_orkflow } from "./orkflow_pb";
 import type { Namespace, Pool } from "./namespace_pb";
 import { file_orkstack_v1_namespace } from "./namespace_pb";
-import type { JsonObject, Message } from "@bufbuild/protobuf";
+import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file orkstack/v1/service.proto.
  */
 export const file_orkstack_v1_service: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSJrChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEhQKDGJhc2VfdmVyc2lvbhgDIAEoCRIdChVleHBlY3RlZF9oZWFkX3ZlcnNpb24YBCABKAkiYAoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkSDwoHY3JlYXRlZBgDIAEoCCJFChFHZXRPcmtmbG93UmVxdWVzdBIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyJPChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSJXChRMaXN0T3JrZmxvd3NSZXNwb25zZRImCghvcmtmbG93cxgBIAMoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJInoKDk9ya2Zsb3dWZXJzaW9uEg8KB3ZlcnNpb24YASABKAkSLgoKYXBwbGllZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKaXNfY3VycmVudBgDIAEoCBITCgtkZXNjcmlwdGlvbhgEIAEoCSI9ChpMaXN0T3JrZmxvd1ZlcnNpb25zUmVxdWVzdBIMCgRuYW1lGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSJ7ChtMaXN0T3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USLQoIdmVyc2lvbnMYASADKAsyGy5vcmtzdGFjay52MS5PcmtmbG93VmVyc2lvbhIXCg9jdXJyZW50X3ZlcnNpb24YAiABKAkSFAoMaGVhZF92ZXJzaW9uGAMgASgJIlMKH1NldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSKmAQogU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVzcG9uc2USDAoEbmFtZRgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSFwoPY3VycmVudF92ZXJzaW9uGAMgASgJEhgKEHByZXZpb3VzX3ZlcnNpb24YBCABKAkSLgoKdXBkYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiZwoaRGlmZk9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCRIRCgluYW1lc3BhY2UYBCABKAkiXQobRGlmZk9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlEhQKDHVuaWZpZWRfZGlmZhgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCSKsAQoQU3VibWl0UnVuUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAIgASgJEiMKBWlucHV0GAMgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIXCg9pZGVtcG90ZW5jeV9rZXkYBCABKAkSEQoJbmFtZXNwYWNlGAUgASgJEhgKEGFsbG93X2VtcHR5X3Bvb2wYBiABKAgiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIjIKDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSIvCg5HZXRSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4ihgEKD0xpc3RSdW5zUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSIwoGc3RhdHVzGAIgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEhEKCXBhZ2Vfc2l6ZRgDIAEoBRISCgpwYWdlX3Rva2VuGAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIkUKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkiMgoRQ2FuY2VsUnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIk8KE1N0cmVhbUV2ZW50c1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhUKDWZyb21fc2VxdWVuY2UYAiABKAMSEQoJbmFtZXNwYWNlGAMgASgJIpQBChVTdHJlYW1UYXNrTG9nc1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDwoHYXR0ZW1wdBgDIAEoBRIQCghmcm9tX3NlcRgEIAEoAxIUCgxmcm9tX2F0dGVtcHQYByABKAUSDgoGZm9sbG93GAUgASgIEhEKCW5hbWVzcGFjZRgGIAEoCSJ8CgxUYXNrTG9nQ2h1bmsSDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDwoHYXR0ZW1wdBgDIAEoBRILCgNzZXEYBCABKAMSDAoEZGF0YRgFIAEoDBIRCgl0cnVuY2F0ZWQYBiABKAgSDAoEbGFzdBgHIAEoCCJDChZDcmVhdGVOYW1lc3BhY2VSZXF1ZXN0EikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJVChdDcmVhdGVOYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2USDwoHY3JlYXRlZBgCIAEoCCIjChNHZXROYW1lc3BhY2VSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoUR2V0TmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIhcKFUxpc3ROYW1lc3BhY2VzUmVxdWVzdCJEChZMaXN0TmFtZXNwYWNlc1Jlc3BvbnNlEioKCm5hbWVzcGFjZXMYASADKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiQwoWVXBkYXRlTmFtZXNwYWNlUmVxdWVzdBIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiRAoXVXBkYXRlTmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIiYKFkRlbGV0ZU5hbWVzcGFjZVJlcXVlc3QSDAoEbmFtZRgBIAEoCSIZChdEZWxldGVOYW1lc3BhY2VSZXNwb25zZSIlChBMaXN0UG9vbHNSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCSJLChFMaXN0UG9vbHNSZXNwb25zZRIgCgVwb29scxgBIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSFAoMZGVmYXVsdF9wb29sGAIgASgJIhQKEkxpc3RQbHVnaW5zUmVxdWVzdCKfAQoKUGx1Z2luSW5mbxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSLQoMaW5wdXRfc2NoZW1hGAQgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIuCg1vdXRwdXRfc2NoZW1hGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCI/ChNMaXN0UGx1Z2luc1Jlc3BvbnNlEigKB3BsdWdpbnMYASADKAsyFy5vcmtzdGFjay52MS5QbHVnaW5JbmZvIhYKFEdldFN5c3RlbUluZm9SZXF1ZXN0IokCChVHZXRTeXN0ZW1JbmZvUmVzcG9uc2USFgoOZW5naW5lX3ZlcnNpb24YASABKAkSEgoKZ29fdmVyc2lvbhgCIAEoCRIXCg9kZXBsb3ltZW50X25hbWUYAyABKAkSEAoIYnVpbGRfaWQYBCABKAkSGQoRdmVyc2lvbmluZ19hY3RpdmUYBSABKAgSGAoQYXJ0aWZhY3RfYmFja2VuZBgGIAEoCRIZChFhcnRpZmFjdF9sb2NhdGlvbhgHIAEoCRIYChB0ZW1wb3JhbF9hZGRyZXNzGAggASgJEi8KC3NlcnZlcl90aW1lGAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDLWBAoOT3JrZmxvd1NlcnZpY2USUwoMQXBwbHlPcmtmbG93EiAub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVxdWVzdBohLm9ya3N0YWNrLnYxLkFwcGx5T3JrZmxvd1Jlc3BvbnNlEk0KCkdldE9ya2Zsb3cSHi5vcmtzdGFjay52MS5HZXRPcmtmbG93UmVxdWVzdBofLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXNwb25zZRJTCgxMaXN0T3JrZmxvd3MSIC5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXF1ZXN0GiEub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dzUmVzcG9uc2USaAoTTGlzdE9ya2Zsb3dWZXJzaW9ucxInLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93VmVyc2lvbnNSZXF1ZXN0Gigub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlEncKGFNldEN1cnJlbnRPcmtmbG93VmVyc2lvbhIsLm9ya3N0YWNrLnYxLlNldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlcXVlc3QaLS5vcmtzdGFjay52MS5TZXRDdXJyZW50T3JrZmxvd1ZlcnNpb25SZXNwb25zZRJoChNEaWZmT3JrZmxvd1ZlcnNpb25zEicub3Jrc3RhY2sudjEuRGlmZk9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QaKC5vcmtzdGFjay52MS5EaWZmT3JrZmxvd1ZlcnNpb25zUmVzcG9uc2UyywMKClJ1blNlcnZpY2USSgoJU3VibWl0UnVuEh0ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlc3BvbnNlEkEKBkdldFJ1bhIaLm9ya3N0YWNrLnYxLkdldFJ1blJlcXVlc3QaGy5vcmtzdGFjay52MS5HZXRSdW5SZXNwb25zZRJHCghMaXN0UnVucxIcLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVxdWVzdBodLm9ya3N0YWNrLnYxLkxpc3RSdW5zUmVzcG9uc2USSgoJQ2FuY2VsUnVuEh0ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVxdWVzdBoeLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlc3BvbnNlEkYKDFN0cmVhbUV2ZW50cxIgLm9ya3N0YWNrLnYxLlN0cmVhbUV2ZW50c1JlcXVlc3QaEi5vcmtzdGFjay52MS5FdmVudDABElEKDlN0cmVhbVRhc2tMb2dzEiIub3Jrc3RhY2sudjEuU3RyZWFtVGFza0xvZ3NSZXF1ZXN0Ghkub3Jrc3RhY2sudjEuVGFza0xvZ0NodW5rMAEyqAQKEE5hbWVzcGFjZVNlcnZpY2USXAoPQ3JlYXRlTmFtZXNwYWNlEiMub3Jrc3RhY2sudjEuQ3JlYXRlTmFtZXNwYWNlUmVxdWVzdBokLm9ya3N0YWNrLnYxLkNyZWF0ZU5hbWVzcGFjZVJlc3BvbnNlElMKDEdldE5hbWVzcGFjZRIgLm9ya3N0YWNrLnYxLkdldE5hbWVzcGFjZVJlcXVlc3QaIS5vcmtzdGFjay52MS5HZXROYW1lc3BhY2VSZXNwb25zZRJZCg5MaXN0TmFtZXNwYWNlcxIiLm9ya3N0YWNrLnYxLkxpc3ROYW1lc3BhY2VzUmVxdWVzdBojLm9ya3N0YWNrLnYxLkxpc3ROYW1lc3BhY2VzUmVzcG9uc2USXAoPVXBkYXRlTmFtZXNwYWNlEiMub3Jrc3RhY2sudjEuVXBkYXRlTmFtZXNwYWNlUmVxdWVzdBokLm9ya3N0YWNrLnYxLlVwZGF0ZU5hbWVzcGFjZVJlc3BvbnNlElwKD0RlbGV0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLkRlbGV0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5EZWxldGVOYW1lc3BhY2VSZXNwb25zZRJKCglMaXN0UG9vbHMSHS5vcmtzdGFjay52MS5MaXN0UG9vbHNSZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuTGlzdFBvb2xzUmVzcG9uc2UyYQoNUGx1Z2luU2VydmljZRJQCgtMaXN0UGx1Z2lucxIfLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVxdWVzdBogLm9ya3N0YWNrLnYxLkxpc3RQbHVnaW5zUmVzcG9uc2UyZwoNU3lzdGVtU2VydmljZRJWCg1HZXRTeXN0ZW1JbmZvEiEub3Jrc3RhY2sudjEuR2V0U3lzdGVtSW5mb1JlcXVlc3QaIi5vcmtzdGFjay52MS5HZXRTeXN0ZW1JbmZvUmVzcG9uc2VCqAEKD2NvbS5vcmtzdGFjay52MUIMU2VydmljZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
+  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSJrChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEhQKDGJhc2VfdmVyc2lvbhgDIAEoCRIdChVleHBlY3RlZF9oZWFkX3ZlcnNpb24YBCABKAkiYAoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkSDwoHY3JlYXRlZBgDIAEoCCJFChFHZXRPcmtmbG93UmVxdWVzdBIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyJPChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSJXChRMaXN0T3JrZmxvd3NSZXNwb25zZRImCghvcmtmbG93cxgBIAMoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJInoKDk9ya2Zsb3dWZXJzaW9uEg8KB3ZlcnNpb24YASABKAkSLgoKYXBwbGllZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKaXNfY3VycmVudBgDIAEoCBITCgtkZXNjcmlwdGlvbhgEIAEoCSI9ChpMaXN0T3JrZmxvd1ZlcnNpb25zUmVxdWVzdBIMCgRuYW1lGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSJ7ChtMaXN0T3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USLQoIdmVyc2lvbnMYASADKAsyGy5vcmtzdGFjay52MS5PcmtmbG93VmVyc2lvbhIXCg9jdXJyZW50X3ZlcnNpb24YAiABKAkSFAoMaGVhZF92ZXJzaW9uGAMgASgJIlMKH1NldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSKmAQogU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVzcG9uc2USDAoEbmFtZRgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSFwoPY3VycmVudF92ZXJzaW9uGAMgASgJEhgKEHByZXZpb3VzX3ZlcnNpb24YBCABKAkSLgoKdXBkYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiZwoaRGlmZk9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCRIRCgluYW1lc3BhY2UYBCABKAkiXQobRGlmZk9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlEhQKDHVuaWZpZWRfZGlmZhgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCSKsAQoQU3VibWl0UnVuUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAIgASgJEiMKBWlucHV0GAMgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIXCg9pZGVtcG90ZW5jeV9rZXkYBCABKAkSEQoJbmFtZXNwYWNlGAUgASgJEhgKEGFsbG93X2VtcHR5X3Bvb2wYBiABKAgiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIjIKDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSIvCg5HZXRSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4ihgEKD0xpc3RSdW5zUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSIwoGc3RhdHVzGAIgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEhEKCXBhZ2Vfc2l6ZRgDIAEoBRISCgpwYWdlX3Rva2VuGAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIkUKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkiMgoRQ2FuY2VsUnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIk8KE1N0cmVhbUV2ZW50c1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhUKDWZyb21fc2VxdWVuY2UYAiABKAMSEQoJbmFtZXNwYWNlGAMgASgJIpQBChVTdHJlYW1UYXNrTG9nc1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDwoHYXR0ZW1wdBgDIAEoBRIQCghmcm9tX3NlcRgEIAEoAxIUCgxmcm9tX2F0dGVtcHQYByABKAUSDgoGZm9sbG93GAUgASgIEhEKCW5hbWVzcGFjZRgGIAEoCSJ8CgxUYXNrTG9nQ2h1bmsSDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDwoHYXR0ZW1wdBgDIAEoBRILCgNzZXEYBCABKAMSDAoEZGF0YRgFIAEoDBIRCgl0cnVuY2F0ZWQYBiABKAgSDAoEbGFzdBgHIAEoCCJDChZDcmVhdGVOYW1lc3BhY2VSZXF1ZXN0EikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJVChdDcmVhdGVOYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2USDwoHY3JlYXRlZBgCIAEoCCIjChNHZXROYW1lc3BhY2VSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoUR2V0TmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIhcKFUxpc3ROYW1lc3BhY2VzUmVxdWVzdCJEChZMaXN0TmFtZXNwYWNlc1Jlc3BvbnNlEioKCm5hbWVzcGFjZXMYASADKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiQwoWVXBkYXRlTmFtZXNwYWNlUmVxdWVzdBIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiRAoXVXBkYXRlTmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIiYKFkRlbGV0ZU5hbWVzcGFjZVJlcXVlc3QSDAoEbmFtZRgBIAEoCSIZChdEZWxldGVOYW1lc3BhY2VSZXNwb25zZSIlChBMaXN0UG9vbHNSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCSJLChFMaXN0UG9vbHNSZXNwb25zZRIgCgVwb29scxgBIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSFAoMZGVmYXVsdF9wb29sGAIgASgJIhcKFUxpc3RBY3Rpdml0aWVzUmVxdWVzdCKdAQoMQWN0aXZpdHlJbmZvEgwKBG5hbWUYASABKAkSEQoJcmVmZXJlbmNlGAIgASgJEhQKDGluZGV4X2RpZ2VzdBgDIAEoCRISCgptZWRpYV90eXBlGAQgASgJEhEKCXBsYXRmb3JtcxgFIAMoCRIvCgtyZXNvbHZlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiRwoWTGlzdEFjdGl2aXRpZXNSZXNwb25zZRItCgphY3Rpdml0aWVzGAEgAygLMhkub3Jrc3RhY2sudjEuQWN0aXZpdHlJbmZvIhYKFERlc2NyaWJlT3JrZXJSZXF1ZXN0IkgKFURlc2NyaWJlT3JrZXJSZXNwb25zZRIvCgVvcmtlchgBIAEoCzIgLm9ya3N0YWNrLnYxLkRlc2NyaWJlT3JrZXJSZXN1bHQiFgoUR2V0U3lzdGVtSW5mb1JlcXVlc3QiiQIKFUdldFN5c3RlbUluZm9SZXNwb25zZRIWCg5lbmdpbmVfdmVyc2lvbhgBIAEoCRISCgpnb192ZXJzaW9uGAIgASgJEhcKD2RlcGxveW1lbnRfbmFtZRgDIAEoCRIQCghidWlsZF9pZBgEIAEoCRIZChF2ZXJzaW9uaW5nX2FjdGl2ZRgFIAEoCBIYChBhcnRpZmFjdF9iYWNrZW5kGAYgASgJEhkKEWFydGlmYWN0X2xvY2F0aW9uGAcgASgJEhgKEHRlbXBvcmFsX2FkZHJlc3MYCCABKAkSLwoLc2VydmVyX3RpbWUYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wMtYECg5PcmtmbG93U2VydmljZRJTCgxBcHBseU9ya2Zsb3cSIC5vcmtzdGFjay52MS5BcHBseU9ya2Zsb3dSZXF1ZXN0GiEub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVzcG9uc2USTQoKR2V0T3JrZmxvdxIeLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXF1ZXN0Gh8ub3Jrc3RhY2sudjEuR2V0T3JrZmxvd1Jlc3BvbnNlElMKDExpc3RPcmtmbG93cxIgLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93c1JlcXVlc3QaIS5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXNwb25zZRJoChNMaXN0T3JrZmxvd1ZlcnNpb25zEicub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QaKC5vcmtzdGFjay52MS5MaXN0T3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USdwoYU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uEiwub3Jrc3RhY2sudjEuU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVxdWVzdBotLm9ya3N0YWNrLnYxLlNldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlc3BvbnNlEmgKE0RpZmZPcmtmbG93VmVyc2lvbnMSJy5vcmtzdGFjay52MS5EaWZmT3JrZmxvd1ZlcnNpb25zUmVxdWVzdBooLm9ya3N0YWNrLnYxLkRpZmZPcmtmbG93VmVyc2lvbnNSZXNwb25zZTLLAwoKUnVuU2VydmljZRJKCglTdWJtaXRSdW4SHS5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVzcG9uc2USQQoGR2V0UnVuEhoub3Jrc3RhY2sudjEuR2V0UnVuUmVxdWVzdBobLm9ya3N0YWNrLnYxLkdldFJ1blJlc3BvbnNlEkcKCExpc3RSdW5zEhwub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXF1ZXN0Gh0ub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXNwb25zZRJKCglDYW5jZWxSdW4SHS5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVzcG9uc2USRgoMU3RyZWFtRXZlbnRzEiAub3Jrc3RhY2sudjEuU3RyZWFtRXZlbnRzUmVxdWVzdBoSLm9ya3N0YWNrLnYxLkV2ZW50MAESUQoOU3RyZWFtVGFza0xvZ3MSIi5vcmtzdGFjay52MS5TdHJlYW1UYXNrTG9nc1JlcXVlc3QaGS5vcmtzdGFjay52MS5UYXNrTG9nQ2h1bmswATKoBAoQTmFtZXNwYWNlU2VydmljZRJcCg9DcmVhdGVOYW1lc3BhY2USIy5vcmtzdGFjay52MS5DcmVhdGVOYW1lc3BhY2VSZXF1ZXN0GiQub3Jrc3RhY2sudjEuQ3JlYXRlTmFtZXNwYWNlUmVzcG9uc2USUwoMR2V0TmFtZXNwYWNlEiAub3Jrc3RhY2sudjEuR2V0TmFtZXNwYWNlUmVxdWVzdBohLm9ya3N0YWNrLnYxLkdldE5hbWVzcGFjZVJlc3BvbnNlElkKDkxpc3ROYW1lc3BhY2VzEiIub3Jrc3RhY2sudjEuTGlzdE5hbWVzcGFjZXNSZXF1ZXN0GiMub3Jrc3RhY2sudjEuTGlzdE5hbWVzcGFjZXNSZXNwb25zZRJcCg9VcGRhdGVOYW1lc3BhY2USIy5vcmtzdGFjay52MS5VcGRhdGVOYW1lc3BhY2VSZXF1ZXN0GiQub3Jrc3RhY2sudjEuVXBkYXRlTmFtZXNwYWNlUmVzcG9uc2USXAoPRGVsZXRlTmFtZXNwYWNlEiMub3Jrc3RhY2sudjEuRGVsZXRlTmFtZXNwYWNlUmVxdWVzdBokLm9ya3N0YWNrLnYxLkRlbGV0ZU5hbWVzcGFjZVJlc3BvbnNlEkoKCUxpc3RQb29scxIdLm9ya3N0YWNrLnYxLkxpc3RQb29sc1JlcXVlc3QaHi5vcmtzdGFjay52MS5MaXN0UG9vbHNSZXNwb25zZTLEAQoPQWN0aXZpdHlTZXJ2aWNlElkKDkxpc3RBY3Rpdml0aWVzEiIub3Jrc3RhY2sudjEuTGlzdEFjdGl2aXRpZXNSZXF1ZXN0GiMub3Jrc3RhY2sudjEuTGlzdEFjdGl2aXRpZXNSZXNwb25zZRJWCg1EZXNjcmliZU9ya2VyEiEub3Jrc3RhY2sudjEuRGVzY3JpYmVPcmtlclJlcXVlc3QaIi5vcmtzdGFjay52MS5EZXNjcmliZU9ya2VyUmVzcG9uc2UyZwoNU3lzdGVtU2VydmljZRJWCg1HZXRTeXN0ZW1JbmZvEiEub3Jrc3RhY2sudjEuR2V0U3lzdGVtSW5mb1JlcXVlc3QaIi5vcmtzdGFjay52MS5HZXRTeXN0ZW1JbmZvUmVzcG9uc2VCqAEKD2NvbS5vcmtzdGFjay52MUIMU2VydmljZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
 
 /**
  * @generated from message orkstack.v1.ApplyOrkflowRequest
@@ -1121,88 +1123,122 @@ export const ListPoolsResponseSchema: GenMessage<ListPoolsResponse> = /*@__PURE_
   messageDesc(file_orkstack_v1_service, 35);
 
 /**
- * @generated from message orkstack.v1.ListPluginsRequest
+ * @generated from message orkstack.v1.ListActivitiesRequest
  */
-export type ListPluginsRequest = Message<"orkstack.v1.ListPluginsRequest"> & {
+export type ListActivitiesRequest = Message<"orkstack.v1.ListActivitiesRequest"> & {
 };
 
 /**
- * Describes the message orkstack.v1.ListPluginsRequest.
- * Use `create(ListPluginsRequestSchema)` to create a new message.
+ * Describes the message orkstack.v1.ListActivitiesRequest.
+ * Use `create(ListActivitiesRequestSchema)` to create a new message.
  */
-export const ListPluginsRequestSchema: GenMessage<ListPluginsRequest> = /*@__PURE__*/
+export const ListActivitiesRequestSchema: GenMessage<ListActivitiesRequest> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 36);
 
 /**
- * PluginInfo is one plugin, as the pool that answered described it.
+ * ActivityInfo is one catalog entry, resolved.
  *
- * Entries are keyed by (name, version): two pools mid-rollout genuinely do run
- * two versions of one plugin, and collapsing them would hide the fact an
- * operator opened this view to find.
+ * resolved_at is a READ-MODEL field on a live catalog read, and is unrelated
+ * to the ImageRef.resolved_at that activity.proto reserves: nothing hashes it,
+ * and it is never stored in a version document.
  *
- * @generated from message orkstack.v1.PluginInfo
+ * @generated from message orkstack.v1.ActivityInfo
  */
-export type PluginInfo = Message<"orkstack.v1.PluginInfo"> & {
+export type ActivityInfo = Message<"orkstack.v1.ActivityInfo"> & {
   /**
-   * name is always present, whichever pool reported it.
+   * catalog key, e.g. "shell"
    *
    * @generated from field: string name = 1;
    */
   name: string;
 
   /**
-   * version, description and the two schemas are reported by the deployment's
-   * DEFAULT pool, whose Orkers answer the plugin-descriptor activity directly.
+   * as configured, e.g. ghcr.io/orkstack/activity-shell:0.1
    *
-   * A plugin visible only on another pool arrives as a bare name and these
-   * fields are EMPTY: the per-pool question that found it reports names. Empty
-   * means "not reported by the pool that has it", never "this plugin declares
-   * none" — a version invented for a plugin nobody described would be worse
-   * than the gap.
+   * @generated from field: string reference = 2;
+   */
+  reference: string;
+
+  /**
+   * resolved, "sha256:<64 hex>"
    *
-   * @generated from field: string version = 2;
+   * @generated from field: string index_digest = 3;
    */
-  version: string;
+  indexDigest: string;
 
   /**
-   * @generated from field: string description = 3;
+   * @generated from field: string media_type = 4;
    */
-  description: string;
+  mediaType: string;
 
   /**
-   * @generated from field: google.protobuf.Struct input_schema = 4;
+   * @generated from field: repeated string platforms = 5;
    */
-  inputSchema?: JsonObject | undefined;
+  platforms: string[];
 
   /**
-   * @generated from field: google.protobuf.Struct output_schema = 5;
+   * @generated from field: google.protobuf.Timestamp resolved_at = 6;
    */
-  outputSchema?: JsonObject | undefined;
+  resolvedAt?: Timestamp | undefined;
 };
 
 /**
- * Describes the message orkstack.v1.PluginInfo.
- * Use `create(PluginInfoSchema)` to create a new message.
+ * Describes the message orkstack.v1.ActivityInfo.
+ * Use `create(ActivityInfoSchema)` to create a new message.
  */
-export const PluginInfoSchema: GenMessage<PluginInfo> = /*@__PURE__*/
+export const ActivityInfoSchema: GenMessage<ActivityInfo> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 37);
 
 /**
- * @generated from message orkstack.v1.ListPluginsResponse
+ * @generated from message orkstack.v1.ListActivitiesResponse
  */
-export type ListPluginsResponse = Message<"orkstack.v1.ListPluginsResponse"> & {
+export type ListActivitiesResponse = Message<"orkstack.v1.ListActivitiesResponse"> & {
   /**
-   * @generated from field: repeated orkstack.v1.PluginInfo plugins = 1;
+   * activities is ordered by name, matching ListPoolsResponse.pools
+   * ("ordered by name", above). A stable order is part of the contract, not an
+   * implementation detail: the Admin page renders it.
+   *
+   * @generated from field: repeated orkstack.v1.ActivityInfo activities = 1;
    */
-  plugins: PluginInfo[];
+  activities: ActivityInfo[];
 };
 
 /**
- * Describes the message orkstack.v1.ListPluginsResponse.
- * Use `create(ListPluginsResponseSchema)` to create a new message.
+ * Describes the message orkstack.v1.ListActivitiesResponse.
+ * Use `create(ListActivitiesResponseSchema)` to create a new message.
  */
-export const ListPluginsResponseSchema: GenMessage<ListPluginsResponse> = /*@__PURE__*/
+export const ListActivitiesResponseSchema: GenMessage<ListActivitiesResponse> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_service, 38);
+
+/**
+ * @generated from message orkstack.v1.DescribeOrkerRequest
+ */
+export type DescribeOrkerRequest = Message<"orkstack.v1.DescribeOrkerRequest"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.DescribeOrkerRequest.
+ * Use `create(DescribeOrkerRequestSchema)` to create a new message.
+ */
+export const DescribeOrkerRequestSchema: GenMessage<DescribeOrkerRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 39);
+
+/**
+ * @generated from message orkstack.v1.DescribeOrkerResponse
+ */
+export type DescribeOrkerResponse = Message<"orkstack.v1.DescribeOrkerResponse"> & {
+  /**
+   * @generated from field: orkstack.v1.DescribeOrkerResult orker = 1;
+   */
+  orker?: DescribeOrkerResult | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.DescribeOrkerResponse.
+ * Use `create(DescribeOrkerResponseSchema)` to create a new message.
+ */
+export const DescribeOrkerResponseSchema: GenMessage<DescribeOrkerResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 40);
 
 /**
  * @generated from message orkstack.v1.GetSystemInfoRequest
@@ -1215,7 +1251,7 @@ export type GetSystemInfoRequest = Message<"orkstack.v1.GetSystemInfoRequest"> &
  * Use `create(GetSystemInfoRequestSchema)` to create a new message.
  */
 export const GetSystemInfoRequestSchema: GenMessage<GetSystemInfoRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 39);
+  messageDesc(file_orkstack_v1_service, 41);
 
 /**
  * @generated from message orkstack.v1.GetSystemInfoResponse
@@ -1307,7 +1343,7 @@ export type GetSystemInfoResponse = Message<"orkstack.v1.GetSystemInfoResponse">
  * Use `create(GetSystemInfoResponseSchema)` to create a new message.
  */
 export const GetSystemInfoResponseSchema: GenMessage<GetSystemInfoResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 40);
+  messageDesc(file_orkstack_v1_service, 42);
 
 /**
  * OrkflowService manages orkflow definitions (the compiled DSL).
@@ -1579,30 +1615,37 @@ export const NamespaceService: GenService<{
   serviceDesc(file_orkstack_v1_service, 2);
 
 /**
- * PluginService exposes the plugins registered across connected Orkers.
+ * ActivityService reports what this deployment can run. It replaces
+ * PluginService: an activity is an image, and which images exist is engine
+ * configuration (§4.2), not something to ask an Orker.
  *
- * @generated from service orkstack.v1.PluginService
+ * PluginService, PluginInfo, ListPluginsRequest and ListPluginsResponse are
+ * DELETED, not repurposed. This note records why, and no new message reuses
+ * those names. Deleting whole messages is not a field-number reuse, so §2.1's
+ * rule — field numbers are never reused or renumbered — is untouched.
+ *
+ * @generated from service orkstack.v1.ActivityService
  */
-export const PluginService: GenService<{
+export const ActivityService: GenService<{
   /**
-   * ListPlugins reports what this deployment can run.
-   *
-   * It answers even when part of the deployment cannot be reached. Each live
-   * pool contributes what it can, an unreachable source contributes nothing
-   * and is logged, and only one failure remains: the deployment's own Orkers
-   * asked and silent, where an empty list would read as "no plugins are
-   * installed". An inventory is opened when something is already wrong, and a
-   * refusal hides the plugins that ARE reachable.
-   *
-   * How complete each entry is depends on which pool reported it — see
-   * PluginInfo.
-   *
-   * @generated from rpc orkstack.v1.PluginService.ListPlugins
+   * @generated from rpc orkstack.v1.ActivityService.ListActivities
    */
-  listPlugins: {
+  listActivities: {
     methodKind: "unary";
-    input: typeof ListPluginsRequestSchema;
-    output: typeof ListPluginsResponseSchema;
+    input: typeof ListActivitiesRequestSchema;
+    output: typeof ListActivitiesResponseSchema;
+  },
+  /**
+   * DescribeOrker is the pool-liveness probe that replaces ListPlugins in
+   * that role (§6.5). It is dispatched as a Temporal activity on a pool's
+   * queue, exactly where the ListPlugins probe went.
+   *
+   * @generated from rpc orkstack.v1.ActivityService.DescribeOrker
+   */
+  describeOrker: {
+    methodKind: "unary";
+    input: typeof DescribeOrkerRequestSchema;
+    output: typeof DescribeOrkerResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_orkstack_v1_service, 3);

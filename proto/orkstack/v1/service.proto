@@ -2,8 +2,8 @@ syntax = "proto3";
 
 package orkstack.v1;
 
-import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
 import "orkstack/v1/run.proto";
 import "orkstack/v1/orkflow.proto";
@@ -408,44 +408,47 @@ message ListPoolsResponse {
   string default_pool = 2;               // where a task naming no pool runs
 }
 
-// PluginService exposes the plugins registered across connected Orkers.
-service PluginService {
-  // ListPlugins reports what this deployment can run.
-  //
-  // It answers even when part of the deployment cannot be reached. Each live
-  // pool contributes what it can, an unreachable source contributes nothing
-  // and is logged, and only one failure remains: the deployment's own Orkers
-  // asked and silent, where an empty list would read as "no plugins are
-  // installed". An inventory is opened when something is already wrong, and a
-  // refusal hides the plugins that ARE reachable.
-  //
-  // How complete each entry is depends on which pool reported it — see
-  // PluginInfo.
-  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
-}
-message ListPluginsRequest {}
-// PluginInfo is one plugin, as the pool that answered described it.
+// ActivityService reports what this deployment can run. It replaces
+// PluginService: an activity is an image, and which images exist is engine
+// configuration (§4.2), not something to ask an Orker.
 //
-// Entries are keyed by (name, version): two pools mid-rollout genuinely do run
-// two versions of one plugin, and collapsing them would hide the fact an
-// operator opened this view to find.
-message PluginInfo {
-  // name is always present, whichever pool reported it.
-  string name = 1;
-  // version, description and the two schemas are reported by the deployment's
-  // DEFAULT pool, whose Orkers answer the plugin-descriptor activity directly.
-  //
-  // A plugin visible only on another pool arrives as a bare name and these
-  // fields are EMPTY: the per-pool question that found it reports names. Empty
-  // means "not reported by the pool that has it", never "this plugin declares
-  // none" — a version invented for a plugin nobody described would be worse
-  // than the gap.
-  string version = 2;
-  string description = 3;
-  google.protobuf.Struct input_schema = 4;
-  google.protobuf.Struct output_schema = 5;
+// PluginService, PluginInfo, ListPluginsRequest and ListPluginsResponse are
+// DELETED, not repurposed. This note records why, and no new message reuses
+// those names. Deleting whole messages is not a field-number reuse, so §2.1's
+// rule — field numbers are never reused or renumbered — is untouched.
+service ActivityService {
+  rpc ListActivities(ListActivitiesRequest) returns (ListActivitiesResponse);
+  // DescribeOrker is the pool-liveness probe that replaces ListPlugins in
+  // that role (§6.5). It is dispatched as a Temporal activity on a pool's
+  // queue, exactly where the ListPlugins probe went.
+  rpc DescribeOrker(DescribeOrkerRequest) returns (DescribeOrkerResponse);
 }
-message ListPluginsResponse { repeated PluginInfo plugins = 1; }
+
+message ListActivitiesRequest {}
+
+// ActivityInfo is one catalog entry, resolved.
+//
+// resolved_at is a READ-MODEL field on a live catalog read, and is unrelated
+// to the ImageRef.resolved_at that activity.proto reserves: nothing hashes it,
+// and it is never stored in a version document.
+message ActivityInfo {
+  string name = 1;          // catalog key, e.g. "shell"
+  string reference = 2;     // as configured, e.g. ghcr.io/orkstack/activity-shell:0.1
+  string index_digest = 3;  // resolved, "sha256:<64 hex>"
+  string media_type = 4;
+  repeated string platforms = 5;
+  google.protobuf.Timestamp resolved_at = 6;
+}
+
+message ListActivitiesResponse {
+  // activities is ordered by name, matching ListPoolsResponse.pools
+  // ("ordered by name", above). A stable order is part of the contract, not an
+  // implementation detail: the Admin page renders it.
+  repeated ActivityInfo activities = 1;
+}
+
+message DescribeOrkerRequest {}
+message DescribeOrkerResponse { DescribeOrkerResult orker = 1; }
 
 // SystemService reports what this deployment is made of.
 service SystemService {

@@ -9,8 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/orkstack/orkstack/internal/task"
-	"github.com/orkstack/orkstack/pkg/plugin"
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
 // EnvAllowlistVar names the environment variable holding the comma-separated
@@ -26,10 +25,19 @@ const noValueMarker = "<no value>"
 // compile-time traversal (internal/dsl/template.go): string leaves are
 // rendered, maps and slices are walked, every other value is preserved
 // verbatim, and map keys are never templated.
+//
+// Rendering stays in the ORKER rather than the engine, and that is the whole
+// reason the wire carries the RAW `with:` block (OQ-1): `artifact
+// "<task>/<name>"` resolves to a path only the Orker knows, after staging.
+// The rendered result is materialized to /orkstack/input/config.json.
 type renderer struct {
-	taskID    string
-	data      map[string]any
-	resolver  plugin.ArtifactResolver
+	taskID string
+	data   map[string]any
+	// paths maps "<producer>/<name>" to the CONTAINER path of a staged input
+	// artifact. The helper returns a container path because that is the only
+	// path the workload can open — the host path would be meaningless inside
+	// the container.
+	paths     map[string]string
 	allowlist map[string]struct{}
 }
 
@@ -38,41 +46,49 @@ type renderer struct {
 // `.tasks.<id>.artifacts` from the upstream results.
 func newRenderer(
 	taskID string,
-	inputs plugin.Payload,
-	upstream map[string]task.UpstreamResult,
-	resolver plugin.ArtifactResolver,
+	inputs map[string]any,
+	upstreamValues map[string]map[string]any,
+	upstreamArtifacts map[string][]*orkstackv1.ArtifactRef,
+	paths map[string]string,
 	allowlist map[string]struct{},
 ) *renderer {
-	tasks := make(map[string]any, len(upstream))
-	for id, result := range upstream {
-		refs := make([]any, 0, len(result.Artifacts))
-		for _, ref := range result.Artifacts {
+	tasks := make(map[string]any, len(upstreamArtifacts))
+	ids := make(map[string]struct{}, len(upstreamArtifacts)+len(upstreamValues))
+	for id := range upstreamArtifacts {
+		ids[id] = struct{}{}
+	}
+	for id := range upstreamValues {
+		ids[id] = struct{}{}
+	}
+	for id := range ids {
+		refs := make([]any, 0, len(upstreamArtifacts[id]))
+		for _, ref := range upstreamArtifacts[id] {
 			refs = append(refs, map[string]any{
-				"name":         ref.Name,
-				"uri":          ref.URI,
-				"content_type": ref.ContentType,
-				"size_bytes":   ref.SizeBytes,
-				"sha256":       ref.SHA256,
+				"name":         ref.GetName(),
+				"uri":          ref.GetUri(),
+				"content_type": ref.GetContentType(),
+				"size_bytes":   ref.GetSizeBytes(),
+				"sha256":       ref.GetSha256(),
 			})
 		}
 		tasks[id] = map[string]any{
-			"output":    payloadMap(result.Output),
+			"output":    nonNilMap(upstreamValues[id]),
 			"artifacts": refs,
 		}
 	}
 	return &renderer{
 		taskID:    taskID,
-		data:      map[string]any{"inputs": payloadMap(inputs), "tasks": tasks},
-		resolver:  resolver,
+		data:      map[string]any{"inputs": nonNilMap(inputs), "tasks": tasks},
+		paths:     paths,
 		allowlist: allowlist,
 	}
 }
 
-// payloadMap always yields a non-nil map so a missing key is an error rather
+// nonNilMap always yields a non-nil map so a missing key is an error rather
 // than the zero value text/template returns when indexing a nil map.
-func payloadMap(p plugin.Payload) map[string]any {
-	out := make(map[string]any, len(p))
-	for k, v := range p {
+func nonNilMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
 		out[k] = v
 	}
 	return out
@@ -149,13 +165,16 @@ func (r *renderer) renderString(ctx context.Context, path, text string) (string,
 	return out, nil
 }
 
-func (r *renderer) funcs(ctx context.Context) template.FuncMap {
+func (r *renderer) funcs(_ context.Context) template.FuncMap {
 	return template.FuncMap{
 		"artifact": func(ref string) (string, error) {
-			if r.resolver == nil {
-				return "", fmt.Errorf("artifact %q: no artifact resolver is configured", ref)
+			path, ok := r.paths[ref]
+			if !ok {
+				return "", fmt.Errorf(
+					"artifact %q is not an input of this task (staged: %s)",
+					ref, joinOrNone(sortedKeys(r.paths)))
 			}
-			return r.resolver.Resolve(ctx, ref)
+			return path, nil
 		},
 		"env": func(name string) (string, error) {
 			if _, ok := r.allowlist[name]; !ok {
@@ -163,6 +182,20 @@ func (r *renderer) funcs(ctx context.Context) template.FuncMap {
 					"env %q is not allowlisted on this orker (set %s)", name, EnvAllowlistVar)
 			}
 			return os.Getenv(name), nil
+		},
+		// sh wraps a value in POSIX single quotes, escaping any embedded '
+		// as '\''.
+		//
+		// AGENTS.md §6 requires that shell commands must not interpolate
+		// untrusted input without the templating layer's escaping, and until
+		// now NEITHER FuncMap had a quoting function of any kind. This is the
+		// escaping that sentence names.
+		//
+		// It is the SECONDARY mitigation. The primary one is that a
+		// first-party `command` is an argv array rather than a shell string
+		// (§10.2), so nothing rendered becomes code in the first place.
+		"sh": func(value any) string {
+			return "'" + strings.ReplaceAll(fmt.Sprint(value), "'", `'\''`) + "'"
 		},
 	}
 }

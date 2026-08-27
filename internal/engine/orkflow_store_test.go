@@ -22,7 +22,7 @@ func orkflowFixture(name, version string, appliedAt time.Time) *orkstackv1.Orkfl
 	return &orkstackv1.Orkflow{
 		Name:      name,
 		Version:   version,
-		Tasks:     []*orkstackv1.Task{{Id: "fetch", Plugin: "http"}},
+		Tasks:     []*orkstackv1.Task{{Id: "fetch", Uses: "http"}},
 		CreatedAt: timestamppb.New(appliedAt),
 	}
 }

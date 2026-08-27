@@ -12,12 +12,9 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
-	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
-	"github.com/orkstack/orkstack/pkg/plugin"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -28,13 +25,6 @@ import (
 // namespace router hands out bindings carrying a starter, and one type keeps
 // what the router returns and what the API accepts from drifting apart.
 type RunStarter = engine.RunStarter
-
-// PluginLister is the seam between the API and a live Orker: ListPlugins
-// returns descriptors for every plugin a connected Orker can run. Tests
-// substitute a fake; production uses engine.TemporalStarter.
-type PluginLister interface {
-	ListPlugins(ctx context.Context) ([]plugin.Descriptor, error)
-}
 
 // RunArchive is the seam between the API and durable run history. Temporal is
 // the record for a live run; the archive is the record for a finished one, and
@@ -72,7 +62,6 @@ type Config struct {
 	// substitutes the in-memory store, never a fallback for a configured one.
 	Orkflows engine.OrkflowStore
 	Starter  RunStarter
-	Lister   PluginLister
 
 	// Reader is the system of record for live runs. `ork` wires
 	// engine.TemporalRunReader, and every read then leaves the process. Nil
@@ -118,9 +107,15 @@ type Config struct {
 	// this covers the one that never did, when StartRun fails.
 	Notifier engine.RunNotifier
 
-	// Plugins is the fallback discovery set for PluginService.ListPlugins
-	// when no live Orker lister is configured.
-	Plugins []*orkstackv1.PluginInfo
+	// Activities is the deployment's activity catalog, served by
+	// ActivityService.ListActivities. Nil answers with an empty catalog:
+	// which images exist is engine configuration (§4.2), and an
+	// unconfigured engine genuinely has none.
+	Activities ActivityLister
+
+	// Orkers answers ActivityService.DescribeOrker — the pool-liveness probe
+	// that replaced ListPlugins (§6.5).
+	Orkers OrkerDescriber
 
 	// Namespaces is the registry: routing reads pool defaults and allow-lists
 	// from it, and NamespaceService creates, updates and deletes through it.
@@ -136,8 +131,8 @@ type Config struct {
 	// answer would either refuse every submit or vouch for every pool.
 	Pools engine.PoolProbe
 
-	// PoolPlugins reports the names a pool's Orkers can run, for ListPools.
-	PoolPlugins engine.PoolPluginLister
+	// PoolOrkers describes a pool's Orkers, for ListPools' liveness report.
+	PoolOrkers engine.PoolOrkerDescriber
 
 	// RawQueue is the operator escape hatch (ORK_ORKER_QUEUE): the execution
 	// channel a task that names no pool is dispatched to. Empty routes the
@@ -177,7 +172,8 @@ type Service struct {
 	namespaces engine.NamespaceRegistry
 	runs       *engine.RunStore
 	bus        *engine.EventBus
-	lister     PluginLister
+	activities ActivityLister
+	orkers     OrkerDescriber
 	// router resolves which cluster answers for a namespace or a run. It
 	// holds one binding today; every read and write path goes through it, so
 	// partitioning namespaces across clusters later is configuration rather
@@ -195,7 +191,6 @@ type Service struct {
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
 	notifier    engine.RunNotifier
-	plugins     []*orkstackv1.PluginInfo
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system   SystemInfo
@@ -212,7 +207,8 @@ func NewService(cfg Config) *Service {
 		rawQueue:    cfg.RawQueue,
 		runs:        cfg.Runs,
 		bus:         cfg.Bus,
-		lister:      cfg.Lister,
+		activities:  cfg.Activities,
+		orkers:      cfg.Orkers,
 		system:      cfg.System,
 		router:      cfg.Router,
 		archive:     cfg.Archive,
@@ -221,7 +217,6 @@ func NewService(cfg Config) *Service {
 		idempotency: cfg.Idempotency,
 		webhooks:    cfg.Webhooks,
 		notifier:    cfg.Notifier,
-		plugins:     cfg.Plugins,
 		logger:      cfg.Logger,
 		now:         cfg.Now,
 		newRunID:    cfg.NewRunID,
@@ -241,7 +236,7 @@ func NewService(cfg Config) *Service {
 	}
 	svc.pools = &engine.PoolResolver{
 		Namespaces: cfg.Namespaces,
-		Plugins:    cfg.PoolPlugins,
+		Orkers:     cfg.PoolOrkers,
 		RawQueue:   cfg.RawQueue,
 		Logger:     svc.logger,
 		// The same clock the rest of the Service stamps with. Pool liveness
@@ -1420,184 +1415,6 @@ func IsTerminalEvent(event *orkstackv1.Event) bool {
 	}
 }
 
-// ListPlugins reports the plugins the connected Orkers of this deployment can
-// run — the inventory the Admin surface shows.
-//
-// It answers, always. Every source below is best-effort ON TOP of the answer
-// this RPC gave before the Admin surface existed (the deployment's own Orkers,
-// through the PluginLister seam), and a source that cannot be reached is
-// logged and skipped rather than failing the read. A plugin inventory is what
-// an operator opens when something is already wrong; a refusal there tells
-// them nothing they can act on, and hides the plugins that ARE reachable.
-//
-// Completeness, stated exactly: the deployment's default pool reports full
-// descriptors — version, description and both schemas — because its Orkers
-// answer the ListPlugins activity directly. Any OTHER live pool contributes
-// the plugin NAMES its Orkers report and nothing else, because the seam this
-// process is wired with for a per-pool question (engine.PoolPluginLister)
-// carries names. A pool with several Orkers is answered by whichever of them
-// picks the activity up; the Orkers of one pool are one release by
-// construction (AGENTS.md §10), so that is a sample, and it is labelled as one
-// on the wire (proto/orkstack/v1/service.proto) and in docs/DEPLOY.md.
-func (s *Service) ListPlugins(
-	ctx context.Context,
-	_ *connect.Request[orkstackv1.ListPluginsRequest],
-) (*connect.Response[orkstackv1.ListPluginsResponse], error) {
-	binding, err := s.binding(artifacts.DefaultNamespace)
-	if err != nil {
-		return nil, err
-	}
-	defaultRoute, routeErr := task.DefaultRoute(s.rawQueue)
-
-	// The probe is an optimization and nothing more: it lets a deployment
-	// whose default pool has no Orkers skip a question that would only time
-	// out. When it cannot answer — no probe wired, an unroutable override, a
-	// cluster hiccup — the Orkers are asked anyway, which is what this RPC
-	// did before the probe existed.
-	askDefault := true
-	if binding.Pools != nil && routeErr == nil {
-		if live, err := binding.Pools.ObservePool(ctx, defaultRoute.Queue); err == nil {
-			askDefault = live.Fresh(s.now(), engine.DefaultPollerFreshness)
-		} else {
-			s.logger.Warn("list plugins: the default pool could not be probed, "+
-				"so its Orkers are asked directly",
-				"pool", defaultRoute.Pool, "error", err)
-		}
-	}
-	var plugins []*orkstackv1.PluginInfo
-	if askDefault {
-		plugins, err = s.deploymentPlugins(ctx)
-		if err != nil {
-			// The one failure this RPC has always had, kept exactly: the
-			// deployment's own Orkers were asked and did not answer.
-			return nil, connect.NewError(connect.CodeUnavailable,
-				fmt.Errorf("discover plugins: %w", err))
-		}
-	}
-	if binding.Pools != nil && routeErr == nil {
-		plugins = s.appendOtherPoolPlugins(ctx, binding, defaultRoute, plugins)
-	}
-	return pluginResponse(plugins), nil
-}
-
-// deploymentPlugins is what this deployment's own Orkers report: the whole
-// descriptor, schemas included. It is the pre-Admin body of ListPlugins, kept
-// as it was including its one Unavailable.
-func (s *Service) deploymentPlugins(ctx context.Context) ([]*orkstackv1.PluginInfo, error) {
-	if s.lister == nil {
-		return append([]*orkstackv1.PluginInfo(nil), s.plugins...), nil
-	}
-	descriptors, err := s.lister.ListPlugins(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return appendPluginInfo(nil, descriptors), nil
-}
-
-// appendOtherPoolPlugins widens the inventory with every OTHER live pool this
-// deployment knows about, by name.
-//
-// Without it a plugin that only a `gpu` pool's Orkers run is absent from the
-// deployment's inventory, and an operator concludes it is not installed while
-// a run using it succeeds. With it the plugin is visible; what it cannot carry
-// is the version and the schemas, because the per-pool seam reports names.
-//
-// Nothing here can fail the read. Each step that cannot be taken is logged and
-// skipped: a narrower inventory is a worse answer, and a refused one is not an
-// answer at all.
-func (s *Service) appendOtherPoolPlugins(
-	ctx context.Context,
-	binding engine.Binding,
-	defaultRoute task.Route,
-	plugins []*orkstackv1.PluginInfo,
-) []*orkstackv1.PluginInfo {
-	if s.pools == nil || s.pools.Plugins == nil {
-		return plugins
-	}
-	// inventoryPools returns BOTH: the pools it learned, and what it could not
-	// read. The two are not exclusive — a registry with ten namespaces and one
-	// unreadable catalog knows nine namespaces' pools — and treating an error
-	// as "nothing was learned" is what made one bad tenant cost every other
-	// tenant's pools. So the failure is logged and the names are used.
-	pools, err := s.inventoryPools(ctx)
-	if err != nil {
-		s.logger.Warn("list plugins: part of the durable pool catalogue could not be "+
-			"read, so the pools only it names are missing from this inventory",
-			"pools_still_known", len(pools),
-			"error", err)
-	}
-	routes := map[string]task.Route{}
-	for _, pool := range pools {
-		route, err := task.RouteForPool(pool, s.rawQueue)
-		if err != nil {
-			// A stored document can hold a pool this engine cannot route.
-			// It has no Orkers to ask by definition.
-			s.logger.Warn("list plugins: a stored pool cannot be routed by this engine",
-				"pool", pool, "error", err)
-			continue
-		}
-		if route.Queue == defaultRoute.Queue {
-			continue
-		}
-		routes[route.Queue] = route
-	}
-	ordered := make([]task.Route, 0, len(routes))
-	for _, route := range routes {
-		ordered = append(ordered, route)
-	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Pool < ordered[j].Pool })
-
-	// One instant judges every pool, and the probes go out together rather
-	// than one at a time (storeFanout). A deployment with hundreds of stored
-	// pools is the ordinary case for a long-lived bucket, and a probe apiece
-	// in series is what spent this read's whole deadline before it had asked
-	// a single live pool what it runs.
-	now := s.now()
-	found := make([][]string, len(ordered))
-	inParallel(len(ordered), func(i int) {
-		route := ordered[i]
-		live, err := binding.Pools.ObservePool(ctx, route.Queue)
-		if err != nil {
-			s.logger.Warn("list plugins: a pool could not be probed, so its plugins "+
-				"are missing from this inventory",
-				"pool", route.Pool, "error", err)
-			return
-		}
-		if !live.Fresh(now, engine.DefaultPollerFreshness) {
-			// Nobody is there to ask, and asking would hold the request open
-			// for the activity's whole timeout to learn nothing.
-			return
-		}
-		names, err := s.pools.Plugins.PluginsOnPool(ctx, route.Queue)
-		if err != nil {
-			s.logger.Warn("list plugins: a live pool did not answer, so its plugins "+
-				"are missing from this inventory",
-				"pool", route.Pool, "error", err)
-			return
-		}
-		found[i] = names
-	})
-	// Reduced in pool order, which is what keeps one plugin reported by two
-	// pools deduplicating to the same entry on every call.
-	for _, names := range found {
-		for _, name := range names {
-			plugins = append(plugins, &orkstackv1.PluginInfo{Name: name})
-		}
-	}
-	return plugins
-}
-
-func pluginResponse(plugins []*orkstackv1.PluginInfo) *connect.Response[orkstackv1.ListPluginsResponse] {
-	plugins = dedupePlugins(plugins)
-	sort.Slice(plugins, func(i, j int) bool {
-		if plugins[i].GetName() != plugins[j].GetName() {
-			return plugins[i].GetName() < plugins[j].GetName()
-		}
-		return plugins[i].GetVersion() < plugins[j].GetVersion()
-	})
-	return connect.NewResponse(&orkstackv1.ListPluginsResponse{Plugins: plugins})
-}
-
 // inventoryPools names every pool this deployment may have Orkers on from
 // durable namespace and orkflow state.
 //
@@ -1656,73 +1473,4 @@ func (s *Service) inventoryPools(ctx context.Context) ([]string, error) {
 	}
 	sort.Strings(pools)
 	return pools, errors.Join(lost...)
-}
-
-// appendPluginInfo maps Orker descriptors onto the wire message, schemas
-// included. A schema that cannot be represented as a protobuf Struct is
-// omitted while the plugin identity remains visible.
-func appendPluginInfo(
-	into []*orkstackv1.PluginInfo,
-	descriptors []plugin.Descriptor,
-) []*orkstackv1.PluginInfo {
-	for _, d := range descriptors {
-		into = append(into, &orkstackv1.PluginInfo{
-			Name:         d.Name,
-			Version:      d.Version,
-			Description:  d.Description,
-			InputSchema:  schemaStruct(d.InputSchema),
-			OutputSchema: schemaStruct(d.OutputSchema),
-		})
-	}
-	return into
-}
-
-func schemaStruct(doc plugin.SchemaDoc) *structpb.Struct {
-	if len(doc) == 0 {
-		return nil
-	}
-	encoded, err := structpb.NewStruct(doc)
-	if err != nil {
-		return nil
-	}
-	return encoded
-}
-
-// dedupePlugins collapses one plugin reported by several pools.
-//
-// The key is (name, version), not name: mid-rollout two pools genuinely do run
-// two versions of one plugin, and collapsing those would hide the fact an
-// operator opened this view to find. The first report of a pair wins, and the
-// pools are asked in a fixed order, so the answer does not move between calls.
-//
-// One extra rule, and it exists because two seams answer this question with
-// different amounts of detail: a NAME-ONLY entry (a non-default pool, which
-// reports names) is dropped when the same name already arrived with a version.
-// Without it a plugin that both the default pool and a gpu pool run is listed
-// twice — once whole, once as a bare name — and the second row reads as a
-// second, version-less installation.
-func dedupePlugins(plugins []*orkstackv1.PluginInfo) []*orkstackv1.PluginInfo {
-	type key struct{ name, version string }
-	versioned := map[string]struct{}{}
-	for _, info := range plugins {
-		if info.GetVersion() != "" {
-			versioned[info.GetName()] = struct{}{}
-		}
-	}
-	seen := map[key]struct{}{}
-	out := plugins[:0]
-	for _, info := range plugins {
-		if info.GetVersion() == "" {
-			if _, ok := versioned[info.GetName()]; ok {
-				continue
-			}
-		}
-		k := key{info.GetName(), info.GetVersion()}
-		if _, ok := seen[k]; ok {
-			continue
-		}
-		seen[k] = struct{}{}
-		out = append(out, info)
-	}
-	return out
 }

@@ -3,6 +3,7 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
@@ -10,12 +11,19 @@ option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1"
 // TaskRun is the execution record of a single Task within a Run.
 message TaskRun {
   string task_id = 1;
-  string plugin = 2;
+
+  // 2 held the in-process plugin name, mirroring Task.plugin. Reserved for
+  // the same reason and at the same time.
+  reserved 2;
+  reserved "plugin";
+
   Status status = 3;
   int32 attempt = 4;
+  // output carries the inline values.json when one was inlined, decoded for
+  // display only. values_ref is the authoritative reference.
   Payload output = 5;
   repeated ArtifactRef artifacts = 6;
-  Error error = 7;
+  Error error = 7;                       // now carries FailureCategory
   google.protobuf.Timestamp started_at = 8;
   google.protobuf.Timestamp finished_at = 9;
   // pool names the set of Orkers this attempt was dispatched to, in the word
@@ -35,6 +43,16 @@ message TaskRun {
   // Empty means the task never reached an Orker (skipped, or terminal before
   // dispatch).
   string pool = 10;
+
+  // values_ref addresses the committed values.json for this attempt. Set
+  // whenever the task succeeded, whether or not output was inlined.
+  ArtifactRef values_ref = 11;
+  // commit references the durable completion record (§5).
+  CommitRef commit = 12;
+  // exit_code is the container's exit status as reported by the Orker.
+  int32 exit_code = 13;
+  // system_artifacts are stdout.log and stderr.log for this attempt.
+  repeated ArtifactRef system_artifacts = 14;
 }
 
 // Run is one execution of an Orkflow.
@@ -55,6 +73,11 @@ message Run {
   // lookup: the archive indexes runs under it, so listing one namespace's runs
   // is a single prefix scan.
   string namespace = 12;
+
+  // orkflow_definition_digest is the canonical digest of the definition this
+  // run pinned (§4.4). A run that started before a pointer moved is still
+  // explainable by the exact bytes it ran.
+  string orkflow_definition_digest = 13;
 }
 
 // EventType classifies a run event on the realtime stream.

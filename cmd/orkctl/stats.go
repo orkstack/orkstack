@@ -176,14 +176,13 @@ func renderStats(out io.Writer, stats *orkstackv1.GetStatsResponse) error {
 		return nil
 	}
 	pools := newTable(out)
-	fmt.Fprintln(pools, "POOL\tORKERS\tPLUGINS")
+	fmt.Fprintln(pools, "POOL\tORKERS")
 	for _, pool := range stats.GetPools() {
 		name := pool.GetName()
 		if pool.GetIsDefault() {
 			name += " (default)"
 		}
-		fmt.Fprintf(pools, "%s\t%d\t%s\n",
-			name, pool.GetLiveOrkerCount(), joinOrDash(pool.GetPlugins()))
+		fmt.Fprintf(pools, "%s\t%d\n", name, pool.GetLiveOrkerCount())
 	}
 	if err := pools.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

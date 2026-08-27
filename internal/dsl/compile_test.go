@@ -123,10 +123,10 @@ func TestCompile_RejectsInvalidDocuments(t *testing.T) {
 name: dup-wf
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo 2"}
 `,
 			wantMessage: "duplicate task id",
@@ -137,7 +137,7 @@ tasks:
 name: missing-need
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     needs: [ghost]
     with: {command: "echo 1"}
 `,
@@ -149,11 +149,11 @@ tasks:
 name: cyclic
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     needs: [b]
     with: {command: "echo a"}
   - id: b
-    plugin: shell
+    uses: shell
     needs: [a]
     with: {command: "echo b"}
 `,
@@ -165,7 +165,7 @@ tasks:
 name: self-cycle
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     needs: [a]
     with: {command: "echo a"}
 `,
@@ -177,7 +177,7 @@ tasks:
 name: Hello_Ork
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
 `,
 			wantMessage: "is not a slug",
@@ -188,7 +188,7 @@ tasks:
 name: bad-task-slug
 tasks:
   - id: Fetch_Thing
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
 `,
 			wantMessage: "is not a slug",
@@ -199,7 +199,7 @@ tasks:
 name: bad-template
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with:
       command: "echo {{ .inputs.url "
 `,
@@ -211,22 +211,95 @@ tasks:
 name: bad-condition
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     condition: "{{ if }}"
     with: {command: "echo 1"}
 `,
 			wantMessage: "template parse error",
 		},
 		{
-			name: "unknown plugin",
+			// `uses:` is REQUIRED. It replaced `plugin:` as the only
+			// image-selecting field, and a task that names no activity has
+			// nothing to run.
+			name: "uses is missing",
 			yaml: `
-name: unknown-plugin
+name: no-uses
 tasks:
   - id: a
-    plugin: quantum
     with: {command: "echo 1"}
 `,
-			wantMessage: "unknown plugin",
+			wantMessage: "`uses:` is required",
+		},
+		{
+			// A templated `uses:` cannot compile. Resolution happens at APPLY
+			// so a run pins an immutable digest, and a reference selected from
+			// run input is not knowable then. This is a deliberate capability
+			// loss recorded in §17, not an oversight.
+			name: "uses is a template",
+			yaml: `
+name: templated-uses
+inputs:
+  image: {type: string, default: "alpine:3.20"}
+tasks:
+  - id: a
+    uses: "{{ .inputs.image }}"
+`,
+			wantMessage: "cannot be a template",
+		},
+		{
+			// `plugin:` is refused BY NAME rather than ignored. yaml.v3 drops
+			// what it cannot map, so a field that merely disappeared from the
+			// struct would be accepted in silence and the author would find
+			// out when the run behaved differently.
+			name: "plugin was removed",
+			yaml: `
+name: retired-plugin
+tasks:
+  - id: a
+    plugin: shell
+    with: {command: "echo 1"}
+`,
+			wantMessage: "`plugin:` was removed",
+		},
+		{
+			// `uses: container` names a capability that has no compliant
+			// image: a container that starts containers needs the docker
+			// socket, which §9.1 forbids without exception. It is an error
+			// naming the replacement rather than an alias, because the launch
+			// contract excludes compatibility shims (§17 C6, C7).
+			name: "uses container is refused with its replacement",
+			yaml: `
+name: retired-container
+tasks:
+  - id: a
+    uses: container
+`,
+			wantMessage: "has no replacement alias",
+		},
+		{
+			// Exactly two network modes exist. A typo must not silently
+			// select the one with full network access.
+			name: "unknown network mode",
+			yaml: `
+name: bad-network
+tasks:
+  - id: a
+    uses: shell
+    network: nonw
+`,
+			wantMessage: "`network:` must be",
+		},
+		{
+			name: "secret without a source",
+			yaml: `
+name: bad-secret
+tasks:
+  - id: a
+    uses: shell
+    secrets:
+      - name: db_password
+`,
+			wantMessage: "needs a `source:`",
 		},
 		{
 			name: "undeclared input reference",
@@ -234,7 +307,7 @@ tasks:
 name: undeclared-input
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with:
       command: "echo {{ .inputs.nope }}"
 `,
@@ -246,10 +319,10 @@ tasks:
 name: non-upstream
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo a"}
   - id: b
-    plugin: shell
+    uses: shell
     with:
       command: "echo {{ .tasks.a.output.stdout }}"
 `,
@@ -261,10 +334,10 @@ tasks:
 name: non-upstream-artifact
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo a"}
   - id: b
-    plugin: shell
+    uses: shell
     with:
       command: "cat {{ artifact \"a/body\" }}"
 `,
@@ -276,10 +349,10 @@ tasks:
 name: bad-artifact
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo a"}
   - id: b
-    plugin: shell
+    uses: shell
     needs: [a]
     with:
       command: "cat {{ artifact \"body\" }}"
@@ -291,7 +364,7 @@ tasks:
 			yaml: `
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
 `,
 			wantMessage: "orkflow name is required",
@@ -321,14 +394,14 @@ func TestCompile_AcceptsTransitiveUpstreamReference(t *testing.T) {
 name: transitive
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo a"}
   - id: b
-    plugin: shell
+    uses: shell
     needs: [a]
     with: {command: "echo b"}
   - id: c
-    plugin: shell
+    uses: shell
     needs: [b]
     with:
       command: "echo {{ .tasks.a.output.stdout }} {{ artifact \"a/body\" }}"
@@ -357,7 +430,7 @@ name: unpinned
 description: hash me
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
 `
 	first, err := dsl.Compile([]byte(doc))
@@ -417,7 +490,7 @@ name: pinned
 version: "  2.0.0-RC1  "
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
 `
 	wf, err := dsl.Compile([]byte(doc))
@@ -434,7 +507,7 @@ func TestCompile_CompilesRetryTimeoutAndPool(t *testing.T) {
 name: options
 tasks:
   - id: a
-    plugin: shell
+    uses: shell
     pool: gpu
     timeout_seconds: 42
     retry:
@@ -472,7 +545,7 @@ namespace: payments
 name: nightly-close
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
 `
 	wf, err := dsl.Compile([]byte(named))
@@ -487,7 +560,7 @@ tasks:
 name: nightly-close
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
 `
 	wf, err = dsl.Compile([]byte(anonymous))
@@ -508,7 +581,7 @@ namespace: Payments Team
 name: nightly-close
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     with: {command: "echo 1"}
 `,
 			want: "namespace",
@@ -519,7 +592,7 @@ tasks:
 name: nightly-close
 tasks:
   - id: settle
-    plugin: shell
+    uses: shell
     pool: GPU_Large
     with: {command: "echo 1"}
 `,
@@ -569,10 +642,10 @@ inputs:
     type: string
 tasks:
   - id: producer
-    plugin: shell
+    uses: shell
     with: {command: "echo producer"}
   - id: consumer
-    plugin: shell
+    uses: shell
     with:
       command: %q
 `, tc.expression)
@@ -597,10 +670,10 @@ inputs:
     type: array
 tasks:
   - id: producer
-    plugin: shell
+    uses: shell
     with: {command: "echo producer"}
   - id: consumer
-    plugin: shell
+    uses: shell
     needs: [producer]
     with:
       direct_input: '{{ index .inputs "url" }}'
@@ -638,10 +711,10 @@ inputs:
     type: array
 tasks:
   - id: producer
-    plugin: shell
+    uses: shell
     with: {command: "echo producer"}
   - id: consumer
-    plugin: shell
+    uses: shell
     with:
       command: %q
 `, tc.expression)
@@ -664,10 +737,10 @@ inputs:
     type: string
 tasks:
   - id: producer
-    plugin: shell
+    uses: shell
     with: {command: "echo producer"}
   - id: consumer
-    plugin: shell
+    uses: shell
     needs: [producer]
     with:
       input: '{{ $.inputs.url }}'
@@ -691,7 +764,7 @@ inputs:
     type: object
 tasks:
   - id: render
-    plugin: shell
+    uses: shell
     with:
       command: '{{ define "value" }}{{ .value }}{{ end }}{{ with .inputs.obj }}{{ template "value" . }}{{ end }}'
 `
@@ -721,7 +794,7 @@ inputs:
     type: string
 tasks:
   - id: only
-    plugin: shell
+    uses: shell
     with:
       command: %q
 `, tc.expression)
@@ -744,9 +817,9 @@ inputs:
     type: string
 tasks:
   - id: producer
-    plugin: shell
+    uses: shell
   - id: consumer
-    plugin: shell
+    uses: shell
     needs: [producer]
     with:
       with_dot: '{{ with . }}{{ .inputs.present }}{{ end }}'
@@ -778,7 +851,7 @@ func TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime(t *testing.T) {
 name: colliding-keys
 tasks:
   - id: only
-    plugin: shell
+    uses: shell
     with:
       nested:
         null: one
@@ -811,7 +884,7 @@ name: explicit-empty
 inputs: {}
 tasks:
   - id: only
-    plugin: shell
+    uses: shell
     with: {}
 `
 	wf, err := dsl.Compile([]byte(explicit))
@@ -829,7 +902,7 @@ tasks:
 name: omitted-empty
 tasks:
   - id: only
-    plugin: shell
+    uses: shell
 `
 	wf, err = dsl.Compile([]byte(omitted))
 	if err != nil {

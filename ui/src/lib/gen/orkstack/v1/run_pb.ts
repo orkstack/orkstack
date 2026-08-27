@@ -6,6 +6,8 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { CommitRef } from "./activity_pb";
+import { file_orkstack_v1_activity } from "./activity_pb";
 import type { ArtifactRef, Error, Payload, Status } from "./common_pb";
 import { file_orkstack_v1_common } from "./common_pb";
 import type { Message } from "@bufbuild/protobuf";
@@ -14,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/run.proto.
  */
 export const file_orkstack_v1_run: GenFile = /*@__PURE__*/
-  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIsUCCgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSDgoGcGx1Z2luGAIgASgJEiMKBnN0YXR1cxgDIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdhdHRlbXB0GAQgASgFEiQKBm91dHB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKwoJYXJ0aWZhY3RzGAYgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchIuCgpzdGFydGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEcG9vbBgKIAEoCSKgAwoDUnVuEgoKAmlkGAEgASgJEhQKDG9ya2Zsb3dfbmFtZRgCIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YAyABKAkSIwoGc3RhdHVzGAQgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEiMKBWlucHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIkCgZvdXRwdXQYBiABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEiEKBWVycm9yGAcgASgLMhIub3Jrc3RhY2sudjEuRXJyb3ISJwoJdGFza19ydW5zGAggAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIuCgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAwgASgJIukBCgVFdmVudBIOCgZydW5faWQYASABKAkSEAoIc2VxdWVuY2UYAiABKAMSJAoEdHlwZRgDIAEoDjIWLm9ya3N0YWNrLnYxLkV2ZW50VHlwZRIPCgd0YXNrX2lkGAQgASgJEiMKBnN0YXR1cxgFIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdtZXNzYWdlGAYgASgJEiIKBGRhdGEYByABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEi0KCXRpbWVzdGFtcBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqxQIKCUV2ZW50VHlwZRIaChZFVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRVZFTlRfVFlQRV9SVU5fQ1JFQVRFRBABEhoKFkVWRU5UX1RZUEVfUlVOX1NUQVJURUQQAhIdChlFVkVOVF9UWVBFX1RBU0tfU0NIRURVTEVEEAMSGwoXRVZFTlRfVFlQRV9UQVNLX1NUQVJURUQQBBIXChNFVkVOVF9UWVBFX1RBU0tfTE9HEAUSHQoZRVZFTlRfVFlQRV9UQVNLX1NVQ0NFRURFRBAGEhoKFkVWRU5UX1RZUEVfVEFTS19GQUlMRUQQBxIcChhFVkVOVF9UWVBFX1JVTl9TVUNDRUVERUQQCBIZChVFVkVOVF9UWVBFX1JVTl9GQUlMRUQQCRIbChdFVkVOVF9UWVBFX1JVTl9DQU5DRUxFRBAKQqQBCg9jb20ub3Jrc3RhY2sudjFCCFJ1blByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_common]);
+  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIuADCgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZkoECAIQA1IGcGx1Z2luIsMDCgNSdW4SCgoCaWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIjCgZzdGF0dXMYBCABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSIwoFaW5wdXQYBSABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEiQKBm91dHB1dBgGIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchInCgl0YXNrX3J1bnMYCCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEi4KCmNyZWF0ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnN0YXJ0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYDCABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgNIAEoCSLpAQoFRXZlbnQSDgoGcnVuX2lkGAEgASgJEhAKCHNlcXVlbmNlGAIgASgDEiQKBHR5cGUYAyABKA4yFi5vcmtzdGFjay52MS5FdmVudFR5cGUSDwoHdGFza19pZBgEIAEoCRIjCgZzdGF0dXMYBSABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSDwoHbWVzc2FnZRgGIAEoCRIiCgRkYXRhGAcgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBItCgl0aW1lc3RhbXAYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKsUCCglFdmVudFR5cGUSGgoWRVZFTlRfVFlQRV9VTlNQRUNJRklFRBAAEhoKFkVWRU5UX1RZUEVfUlVOX0NSRUFURUQQARIaChZFVkVOVF9UWVBFX1JVTl9TVEFSVEVEEAISHQoZRVZFTlRfVFlQRV9UQVNLX1NDSEVEVUxFRBADEhsKF0VWRU5UX1RZUEVfVEFTS19TVEFSVEVEEAQSFwoTRVZFTlRfVFlQRV9UQVNLX0xPRxAFEh0KGUVWRU5UX1RZUEVfVEFTS19TVUNDRUVERUQQBhIaChZFVkVOVF9UWVBFX1RBU0tfRkFJTEVEEAcSHAoYRVZFTlRfVFlQRV9SVU5fU1VDQ0VFREVEEAgSGQoVRVZFTlRfVFlQRV9SVU5fRkFJTEVEEAkSGwoXRVZFTlRfVFlQRV9SVU5fQ0FOQ0VMRUQQCkKkAQoPY29tLm9ya3N0YWNrLnYxQghSdW5Qcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common]);
 
 /**
  * TaskRun is the execution record of a single Task within a Run.
@@ -28,11 +30,6 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
   taskId: string;
 
   /**
-   * @generated from field: string plugin = 2;
-   */
-  plugin: string;
-
-  /**
    * @generated from field: orkstack.v1.Status status = 3;
    */
   status: Status;
@@ -43,6 +40,9 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
   attempt: number;
 
   /**
+   * output carries the inline values.json when one was inlined, decoded for
+   * display only. values_ref is the authoritative reference.
+   *
    * @generated from field: orkstack.v1.Payload output = 5;
    */
   output?: Payload | undefined;
@@ -53,6 +53,8 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
   artifacts: ArtifactRef[];
 
   /**
+   * now carries FailureCategory
+   *
    * @generated from field: orkstack.v1.Error error = 7;
    */
   error?: Error | undefined;
@@ -88,6 +90,35 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    * @generated from field: string pool = 10;
    */
   pool: string;
+
+  /**
+   * values_ref addresses the committed values.json for this attempt. Set
+   * whenever the task succeeded, whether or not output was inlined.
+   *
+   * @generated from field: orkstack.v1.ArtifactRef values_ref = 11;
+   */
+  valuesRef?: ArtifactRef | undefined;
+
+  /**
+   * commit references the durable completion record (§5).
+   *
+   * @generated from field: orkstack.v1.CommitRef commit = 12;
+   */
+  commit?: CommitRef | undefined;
+
+  /**
+   * exit_code is the container's exit status as reported by the Orker.
+   *
+   * @generated from field: int32 exit_code = 13;
+   */
+  exitCode: number;
+
+  /**
+   * system_artifacts are stdout.log and stderr.log for this attempt.
+   *
+   * @generated from field: repeated orkstack.v1.ArtifactRef system_artifacts = 14;
+   */
+  systemArtifacts: ArtifactRef[];
 };
 
 /**
@@ -171,6 +202,15 @@ export type Run = Message<"orkstack.v1.Run"> & {
    * @generated from field: string namespace = 12;
    */
   namespace: string;
+
+  /**
+   * orkflow_definition_digest is the canonical digest of the definition this
+   * run pinned (§4.4). A run that started before a pointer moved is still
+   * explainable by the exact bytes it ran.
+   *
+   * @generated from field: string orkflow_definition_digest = 13;
+   */
+  orkflowDefinitionDigest: string;
 };
 
 /**

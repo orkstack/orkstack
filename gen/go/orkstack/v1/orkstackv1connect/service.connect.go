@@ -27,8 +27,8 @@ const (
 	RunServiceName = "orkstack.v1.RunService"
 	// NamespaceServiceName is the fully-qualified name of the NamespaceService service.
 	NamespaceServiceName = "orkstack.v1.NamespaceService"
-	// PluginServiceName is the fully-qualified name of the PluginService service.
-	PluginServiceName = "orkstack.v1.PluginService"
+	// ActivityServiceName is the fully-qualified name of the ActivityService service.
+	ActivityServiceName = "orkstack.v1.ActivityService"
 	// SystemServiceName is the fully-qualified name of the SystemService service.
 	SystemServiceName = "orkstack.v1.SystemService"
 )
@@ -90,9 +90,12 @@ const (
 	// NamespaceServiceListPoolsProcedure is the fully-qualified name of the NamespaceService's
 	// ListPools RPC.
 	NamespaceServiceListPoolsProcedure = "/orkstack.v1.NamespaceService/ListPools"
-	// PluginServiceListPluginsProcedure is the fully-qualified name of the PluginService's ListPlugins
-	// RPC.
-	PluginServiceListPluginsProcedure = "/orkstack.v1.PluginService/ListPlugins"
+	// ActivityServiceListActivitiesProcedure is the fully-qualified name of the ActivityService's
+	// ListActivities RPC.
+	ActivityServiceListActivitiesProcedure = "/orkstack.v1.ActivityService/ListActivities"
+	// ActivityServiceDescribeOrkerProcedure is the fully-qualified name of the ActivityService's
+	// DescribeOrker RPC.
+	ActivityServiceDescribeOrkerProcedure = "/orkstack.v1.ActivityService/DescribeOrker"
 	// SystemServiceGetSystemInfoProcedure is the fully-qualified name of the SystemService's
 	// GetSystemInfo RPC.
 	SystemServiceGetSystemInfoProcedure = "/orkstack.v1.SystemService/GetSystemInfo"
@@ -848,96 +851,106 @@ func (UnimplementedNamespaceServiceHandler) ListPools(context.Context, *connect.
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.NamespaceService.ListPools is not implemented"))
 }
 
-// PluginServiceClient is a client for the orkstack.v1.PluginService service.
-type PluginServiceClient interface {
-	// ListPlugins reports what this deployment can run.
-	//
-	// It answers even when part of the deployment cannot be reached. Each live
-	// pool contributes what it can, an unreachable source contributes nothing
-	// and is logged, and only one failure remains: the deployment's own Orkers
-	// asked and silent, where an empty list would read as "no plugins are
-	// installed". An inventory is opened when something is already wrong, and a
-	// refusal hides the plugins that ARE reachable.
-	//
-	// How complete each entry is depends on which pool reported it — see
-	// PluginInfo.
-	ListPlugins(context.Context, *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error)
+// ActivityServiceClient is a client for the orkstack.v1.ActivityService service.
+type ActivityServiceClient interface {
+	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
+	// DescribeOrker is the pool-liveness probe that replaces ListPlugins in
+	// that role (§6.5). It is dispatched as a Temporal activity on a pool's
+	// queue, exactly where the ListPlugins probe went.
+	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
 }
 
-// NewPluginServiceClient constructs a client for the orkstack.v1.PluginService service. By default,
-// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
-// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
-// or connect.WithGRPCWeb() options.
+// NewActivityServiceClient constructs a client for the orkstack.v1.ActivityService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
 //
 // The URL supplied here should be the base URL for the Connect or gRPC server (for example,
 // http://api.acme.com or https://acme.com/grpc).
-func NewPluginServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) PluginServiceClient {
+func NewActivityServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ActivityServiceClient {
 	baseURL = strings.TrimRight(baseURL, "/")
-	pluginServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("PluginService").Methods()
-	return &pluginServiceClient{
-		listPlugins: connect.NewClient[v1.ListPluginsRequest, v1.ListPluginsResponse](
+	activityServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("ActivityService").Methods()
+	return &activityServiceClient{
+		listActivities: connect.NewClient[v1.ListActivitiesRequest, v1.ListActivitiesResponse](
 			httpClient,
-			baseURL+PluginServiceListPluginsProcedure,
-			connect.WithSchema(pluginServiceMethods.ByName("ListPlugins")),
+			baseURL+ActivityServiceListActivitiesProcedure,
+			connect.WithSchema(activityServiceMethods.ByName("ListActivities")),
+			connect.WithClientOptions(opts...),
+		),
+		describeOrker: connect.NewClient[v1.DescribeOrkerRequest, v1.DescribeOrkerResponse](
+			httpClient,
+			baseURL+ActivityServiceDescribeOrkerProcedure,
+			connect.WithSchema(activityServiceMethods.ByName("DescribeOrker")),
 			connect.WithClientOptions(opts...),
 		),
 	}
 }
 
-// pluginServiceClient implements PluginServiceClient.
-type pluginServiceClient struct {
-	listPlugins *connect.Client[v1.ListPluginsRequest, v1.ListPluginsResponse]
+// activityServiceClient implements ActivityServiceClient.
+type activityServiceClient struct {
+	listActivities *connect.Client[v1.ListActivitiesRequest, v1.ListActivitiesResponse]
+	describeOrker  *connect.Client[v1.DescribeOrkerRequest, v1.DescribeOrkerResponse]
 }
 
-// ListPlugins calls orkstack.v1.PluginService.ListPlugins.
-func (c *pluginServiceClient) ListPlugins(ctx context.Context, req *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error) {
-	return c.listPlugins.CallUnary(ctx, req)
+// ListActivities calls orkstack.v1.ActivityService.ListActivities.
+func (c *activityServiceClient) ListActivities(ctx context.Context, req *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error) {
+	return c.listActivities.CallUnary(ctx, req)
 }
 
-// PluginServiceHandler is an implementation of the orkstack.v1.PluginService service.
-type PluginServiceHandler interface {
-	// ListPlugins reports what this deployment can run.
-	//
-	// It answers even when part of the deployment cannot be reached. Each live
-	// pool contributes what it can, an unreachable source contributes nothing
-	// and is logged, and only one failure remains: the deployment's own Orkers
-	// asked and silent, where an empty list would read as "no plugins are
-	// installed". An inventory is opened when something is already wrong, and a
-	// refusal hides the plugins that ARE reachable.
-	//
-	// How complete each entry is depends on which pool reported it — see
-	// PluginInfo.
-	ListPlugins(context.Context, *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error)
+// DescribeOrker calls orkstack.v1.ActivityService.DescribeOrker.
+func (c *activityServiceClient) DescribeOrker(ctx context.Context, req *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error) {
+	return c.describeOrker.CallUnary(ctx, req)
 }
 
-// NewPluginServiceHandler builds an HTTP handler from the service implementation. It returns the
+// ActivityServiceHandler is an implementation of the orkstack.v1.ActivityService service.
+type ActivityServiceHandler interface {
+	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
+	// DescribeOrker is the pool-liveness probe that replaces ListPlugins in
+	// that role (§6.5). It is dispatched as a Temporal activity on a pool's
+	// queue, exactly where the ListPlugins probe went.
+	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
+}
+
+// NewActivityServiceHandler builds an HTTP handler from the service implementation. It returns the
 // path on which to mount the handler and the handler itself.
 //
 // By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
 // and JSON codecs. They also support gzip compression.
-func NewPluginServiceHandler(svc PluginServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-	pluginServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("PluginService").Methods()
-	pluginServiceListPluginsHandler := connect.NewUnaryHandler(
-		PluginServiceListPluginsProcedure,
-		svc.ListPlugins,
-		connect.WithSchema(pluginServiceMethods.ByName("ListPlugins")),
+func NewActivityServiceHandler(svc ActivityServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	activityServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("ActivityService").Methods()
+	activityServiceListActivitiesHandler := connect.NewUnaryHandler(
+		ActivityServiceListActivitiesProcedure,
+		svc.ListActivities,
+		connect.WithSchema(activityServiceMethods.ByName("ListActivities")),
 		connect.WithHandlerOptions(opts...),
 	)
-	return "/orkstack.v1.PluginService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	activityServiceDescribeOrkerHandler := connect.NewUnaryHandler(
+		ActivityServiceDescribeOrkerProcedure,
+		svc.DescribeOrker,
+		connect.WithSchema(activityServiceMethods.ByName("DescribeOrker")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/orkstack.v1.ActivityService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case PluginServiceListPluginsProcedure:
-			pluginServiceListPluginsHandler.ServeHTTP(w, r)
+		case ActivityServiceListActivitiesProcedure:
+			activityServiceListActivitiesHandler.ServeHTTP(w, r)
+		case ActivityServiceDescribeOrkerProcedure:
+			activityServiceDescribeOrkerHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
 	})
 }
 
-// UnimplementedPluginServiceHandler returns CodeUnimplemented from all methods.
-type UnimplementedPluginServiceHandler struct{}
+// UnimplementedActivityServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedActivityServiceHandler struct{}
 
-func (UnimplementedPluginServiceHandler) ListPlugins(context.Context, *connect.Request[v1.ListPluginsRequest]) (*connect.Response[v1.ListPluginsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.PluginService.ListPlugins is not implemented"))
+func (UnimplementedActivityServiceHandler) ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.ActivityService.ListActivities is not implemented"))
+}
+
+func (UnimplementedActivityServiceHandler) DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.ActivityService.DescribeOrker is not implemented"))
 }
 
 // SystemServiceClient is a client for the orkstack.v1.SystemService service.

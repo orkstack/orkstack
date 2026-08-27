@@ -361,7 +361,7 @@ version: 1.0.0
 description: M10.3 namespace acceptance
 tasks:
   - id: %s
-    plugin: shell
+    uses: shell
     pool: %s
     with:
       command: "echo %s"

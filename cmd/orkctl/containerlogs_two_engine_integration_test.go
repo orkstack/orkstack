@@ -17,7 +17,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
-	"github.com/orkstack/orkstack/pkg/plugin"
+	"github.com/orkstack/orkstack/pkg/logstream"
 )
 
 // M11.1's falsifying tests: the CONTAINER arm of the two claims M10.5 made for
@@ -150,7 +150,7 @@ func TestIntegration_ContainerApplicationOutputIsReadableBeforeTheRunEnds(t *tes
 			t.Fatalf("the followed log carries %q %d time(s), want exactly 1; it reads:\n%s",
 				want, n, streamed)
 		}
-		marked := fmt.Sprintf("%scerr-%02d", plugin.StderrMarker, line)
+		marked := fmt.Sprintf("%scerr-%02d", logstream.StderrMarker, line)
 		if n := countWholeLines(streamed, marked); n != 1 {
 			t.Fatalf("the followed log carries %q %d time(s), want exactly 1; it reads:\n%s",
 				marked, n, streamed)
@@ -159,7 +159,7 @@ func TestIntegration_ContainerApplicationOutputIsReadableBeforeTheRunEnds(t *tes
 	if got := containerLineOrder(streamed, "cout-"); !isAscending(got) {
 		t.Fatalf("the container's stdout lines arrived out of order: %v", got)
 	}
-	if got := containerLineOrder(streamed, plugin.StderrMarker+"cerr-"); !isAscending(got) {
+	if got := containerLineOrder(streamed, logstream.StderrMarker+"cerr-"); !isAscending(got) {
 		t.Fatalf("the container's stderr lines arrived out of order: %v", got)
 	}
 
@@ -204,7 +204,7 @@ func TestIntegration_ContainerApplicationOutputIsReadableBeforeTheRunEnds(t *tes
 	for line := 1; line <= 10; line++ {
 		for _, want := range []string{
 			fmt.Sprintf("cout-%02d", line),
-			fmt.Sprintf("%scerr-%02d", plugin.StderrMarker, line),
+			fmt.Sprintf("%scerr-%02d", logstream.StderrMarker, line),
 		} {
 			if !strings.Contains(cli.stdout, want) {
 				t.Fatalf("`orkctl run logs -f` did not print %q; it printed:\n%s", want, cli.stdout)
@@ -313,9 +313,9 @@ func TestIntegration_ContainerTaskLogBytesNeverEnterRunHistory(t *testing.T) {
 	}
 	// The stderr marker is there AND marked, which is the wire shape a reader
 	// tells the two streams apart by.
-	if !strings.Contains(logged.body(), plugin.StderrMarker+errMarker) {
+	if !strings.Contains(logged.body(), logstream.StderrMarker+errMarker) {
 		t.Fatalf("the log stream does not carry %q; it holds %d bytes",
-			plugin.StderrMarker+errMarker, len(logged.body()))
+			logstream.StderrMarker+errMarker, len(logged.body()))
 	}
 	t.Logf("StreamTaskLogs delivered all three markers in %d chunk(s), %d bytes",
 		logged.count(), len(logged.body()))
@@ -443,9 +443,9 @@ func TestIntegration_AFailingContainerPutsNoOutputInRunHistory(t *testing.T) {
 		}
 	}
 	for _, marker := range []string{errHeadMarker, errMarker} {
-		if !strings.Contains(logged.body(), plugin.StderrMarker+marker) {
+		if !strings.Contains(logged.body(), logstream.StderrMarker+marker) {
 			t.Fatalf("the log stream does not carry %q; it holds %d bytes",
-				plugin.StderrMarker+marker, len(logged.body()))
+				logstream.StderrMarker+marker, len(logged.body()))
 		}
 	}
 	t.Logf("StreamTaskLogs delivered all four markers of the FAILED task in %d chunk(s), %d bytes",
@@ -656,7 +656,7 @@ func containerAppLines(body string) []string {
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "cout-") ||
-			strings.HasPrefix(trimmed, plugin.StderrMarker+"cerr-") {
+			strings.HasPrefix(trimmed, logstream.StderrMarker+"cerr-") {
 			out = append(out, trimmed)
 		}
 	}
@@ -755,7 +755,7 @@ version: "0.1.0"
 description: M11.1 chatty container, followed live from a second replica.
 tasks:
   - id: chatty
-    plugin: container
+    uses: container
     timeout_seconds: 300
     with:
       image: %s
@@ -787,7 +787,7 @@ version: "0.1.0"
 description: M11.1 container marker task, for the no-bytes-in-history invariant.
 tasks:
   - id: marker
-    plugin: container
+    uses: container
     timeout_seconds: 300
     with:
       image: %s
@@ -819,7 +819,7 @@ version: "0.1.0"
 description: M11.1 failing container, for the no-output-in-history invariant.
 tasks:
   - id: boom
-    plugin: container
+    uses: container
     timeout_seconds: 300
     with:
       image: %s
@@ -868,7 +868,7 @@ func writeContainerLogTranscript(
 	fmt.Fprintf(&out, "followed on            replica B (ork-B), which never saw the submission\n")
 	fmt.Fprintf(&out, "task                   chatty — a container printing one line a second on\n")
 	fmt.Fprintf(&out, "                       EACH stream for ten seconds\n")
-	fmt.Fprintf(&out, "wire shape             stdout bare, stderr prefixed %q\n\n", plugin.StderrMarker)
+	fmt.Fprintf(&out, "wire shape             stdout bare, stderr prefixed %q\n\n", logstream.StderrMarker)
 	fmt.Fprintf(&out, "the cluster still reported the workflow RUNNING when B held these lines:\n")
 	for _, line := range liveLines {
 		fmt.Fprintf(&out, "  %s\n", line)
@@ -942,7 +942,7 @@ func writeContainerMarkerTranscript(
 	fmt.Fprintf(&out, "log-only stderr marker %s   (the stream this milestone newly carries)\n\n", errMarker)
 	fmt.Fprintf(&out, "StreamTaskLogs         %d chunk(s), %d bytes: ALL THREE markers present,\n",
 		logged.count(), len(body))
-	fmt.Fprintf(&out, "                       the stderr one prefixed %q\n", plugin.StderrMarker)
+	fmt.Fprintf(&out, "                       the stderr one prefixed %q\n", logstream.StderrMarker)
 	fmt.Fprintf(&out, "Temporal history       %d bytes scanned (payloads base64-decoded)\n", historyBytes)
 	fmt.Fprintf(&out, "  image_pulled         PRESENT  — so the scan reads payloads\n")
 	fmt.Fprintf(&out, "  every marker         ABSENT   — neither the log path nor the payload\n")

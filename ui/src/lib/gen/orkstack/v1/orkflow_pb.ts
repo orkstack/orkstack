@@ -6,13 +6,15 @@ import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_struct, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { ImageRef, NetworkMode, ResourceRequest, SecretRef } from "./activity_pb";
+import { file_orkstack_v1_activity } from "./activity_pb";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file orkstack/v1/orkflow.proto.
  */
 export const file_orkstack_v1_orkflow: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiyAEKBFRhc2sSCgoCaWQYASABKAkSDgoGcGx1Z2luGAIgASgJEiUKBHdpdGgYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Eg0KBW5lZWRzGAQgAygJEhEKCWNvbmRpdGlvbhgFIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYBiABKAUSJwoFcmV0cnkYByABKAsyGC5vcmtzdGFjay52MS5SZXRyeVBvbGljeRIMCgRwb29sGAkgASgJSgQICBAJUgVxdWV1ZSLBAgoHT3JrZmxvdxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSMAoGbGFiZWxzGAQgAygLMiAub3Jrc3RhY2sudjEuT3JrZmxvdy5MYWJlbHNFbnRyeRInCgZpbnB1dHMYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXRhc2tzGAYgAygLMhEub3Jrc3RhY2sudjEuVGFzaxITCgtzb3VyY2VfeWFtbBgHIAEoCRIuCgpjcmVhdGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYCSABKAkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUKoAQoPY29tLm9ya3N0YWNrLnYxQgxPcmtmbG93UHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct, file_google_protobuf_timestamp]);
+  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiqwQKBFRhc2sSCgoCaWQYASABKAkSJQoEd2l0aBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDQoFbmVlZHMYBCADKAkSEQoJY29uZGl0aW9uGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoBRInCgVyZXRyeRgHIAEoCzIYLm9ya3N0YWNrLnYxLlJldHJ5UG9saWN5EgwKBHBvb2wYCSABKAkSDAoEdXNlcxgKIAEoCRIkCgVpbWFnZRgLIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEg8KB2NvbW1hbmQYDCADKAkSJwoDZW52GA0gAygLMhoub3Jrc3RhY2sudjEuVGFzay5FbnZFbnRyeRInCgdzZWNyZXRzGA4gAygLMhYub3Jrc3RhY2sudjEuU2VjcmV0UmVmEi8KCXJlc291cmNlcxgPIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBAgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBEgASgFEhkKEXJ1bl9hc19vcmtlcl91c2VyGBIgASgIGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFKBAgCEANKBAgIEAlSBnBsdWdpblIFcXVldWUiwQIKB09ya2Zsb3cSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEjAKBmxhYmVscxgEIAMoCzIgLm9ya3N0YWNrLnYxLk9ya2Zsb3cuTGFiZWxzRW50cnkSJwoGaW5wdXRzGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV0YXNrcxgGIAMoCzIRLm9ya3N0YWNrLnYxLlRhc2sSEwoLc291cmNlX3lhbWwYByABKAkSLgoKY3JlYXRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAkgASgJGi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCqAEKD2NvbS5vcmtzdGFjay52MUIMT3JrZmxvd1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
 
 /**
  * RetryPolicy mirrors Temporal retry semantics for a task.
@@ -57,8 +59,8 @@ export const RetryPolicySchema: GenMessage<RetryPolicy> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_orkflow, 0);
 
 /**
- * Task is a single node in the orkflow DAG. It maps to exactly one plugin
- * invocation on an Orker.
+ * Task is a single node in the orkflow DAG. It maps to exactly one activity
+ * execution on an Orker, and an activity is an OCI image.
  *
  * @generated from message orkstack.v1.Task
  */
@@ -71,14 +73,7 @@ export type Task = Message<"orkstack.v1.Task"> & {
   id: string;
 
   /**
-   * plugin name, e.g. "http", "shell", "file"
-   *
-   * @generated from field: string plugin = 2;
-   */
-  plugin: string;
-
-  /**
-   * with holds the plugin-specific configuration (templated).
+   * with holds the activity-specific configuration (templated).
    *
    * @generated from field: google.protobuf.Struct with = 3;
    */
@@ -127,6 +122,62 @@ export type Task = Message<"orkstack.v1.Task"> & {
    * @generated from field: string pool = 9;
    */
   pool: string;
+
+  /**
+   * uses is what the author wrote: a catalog activity name ("shell") or a
+   * registry reference ("ghcr.io/acme/migrate:v3", "repo@sha256:..."). It is
+   * the only image-selecting field in the DSL.
+   *
+   * @generated from field: string uses = 10;
+   */
+  uses: string;
+
+  /**
+   * image is the engine's apply-time resolution of uses. It is stamped into
+   * the immutable version document, so re-applying the same YAML after a tag
+   * moves produces a different definition (§4.4).
+   *
+   * @generated from field: orkstack.v1.ImageRef image = 11;
+   */
+  image?: ImageRef | undefined;
+
+  /**
+   * @generated from field: repeated string command = 12;
+   */
+  command: string[];
+
+  /**
+   * @generated from field: map<string, string> env = 13;
+   */
+  env: { [key: string]: string };
+
+  /**
+   * @generated from field: repeated orkstack.v1.SecretRef secrets = 14;
+   */
+  secrets: SecretRef[];
+
+  /**
+   * @generated from field: orkstack.v1.ResourceRequest resources = 15;
+   */
+  resources?: ResourceRequest | undefined;
+
+  /**
+   * @generated from field: orkstack.v1.NetworkMode network = 16;
+   */
+  network: NetworkMode;
+
+  /**
+   * @generated from field: int32 cancellation_grace_period_seconds = 17;
+   */
+  cancellationGracePeriodSeconds: number;
+
+  /**
+   * run_as_orker_user is the §3.1 escape hatch, per task. It changes what
+   * runs, so it is part of canonicalOrkflow(Task) (§4.4).
+   *
+   * @generated from field: bool run_as_orker_user = 18;
+   */
+  runAsOrkerUser: boolean;
 };
 
 /**

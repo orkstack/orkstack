@@ -24,7 +24,6 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
-	"github.com/orkstack/orkstack/pkg/plugin"
 )
 
 // poolRoutingNamespace isolates this suite's Temporal namespace, per
@@ -57,10 +56,10 @@ type poolOrker struct {
 	name  string
 	pool  string
 	queue string
-	// plugins is what this Orker answers when its pool is asked what it can
-	// run. The two Orkers answer differently on purpose: a report that came
-	// from the engine rather than from the pool would give both the same set.
-	plugins []plugin.Descriptor
+	// identity is what this Orker answers when its pool is probed. The two
+	// Orkers answer differently on purpose: a report that came from the
+	// engine rather than from the pool would give both the same answer.
+	identity *orkstackv1.DescribeOrkerResult
 
 	mu       sync.Mutex
 	executed []string
@@ -73,31 +72,32 @@ func newPoolOrker(t *testing.T, name, pool string, plugins ...string) *poolOrker
 	if err != nil {
 		t.Fatalf("QueueForPool(%q): %v", pool, err)
 	}
-	descriptors := make([]plugin.Descriptor, 0, len(plugins))
-	for _, name := range plugins {
-		descriptors = append(descriptors, plugin.Descriptor{Name: name, Version: "0.1.0"})
-	}
+	_ = plugins
 	return &poolOrker{
 		name: name, pool: pool, queue: queue,
-		plugins:  descriptors,
+		identity: &orkstackv1.DescribeOrkerResult{
+			OrkerId:     name,
+			Pool:        pool,
+			RuntimeName: "docker",
+		},
 		channels: map[string]string{},
 	}
 }
 
-// listPlugins answers the engine's plugin-discovery activity, as a real Orker
-// does (cmd/orker registers task.ActivityListPlugins on its own channel).
-func (o *poolOrker) listPlugins(context.Context) ([]plugin.Descriptor, error) {
-	return o.plugins, nil
+// describeOrker answers the engine's pool-liveness probe, as a real Orker does
+// (cmd/orker registers task.ActivityDescribeOrker on its own channel).
+func (o *poolOrker) describeOrker(context.Context) (*orkstackv1.DescribeOrkerResult, error) {
+	return o.identity, nil
 }
 
-func (o *poolOrker) execute(ctx context.Context, in task.ExecuteTaskInput) (task.ExecuteTaskResult, error) {
+func (o *poolOrker) execute(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 	o.mu.Lock()
-	o.executed = append(o.executed, in.TaskID)
-	o.channels[in.TaskID] = activity.GetInfo(ctx).TaskQueue
+	o.executed = append(o.executed, in.TaskId)
+	o.channels[in.TaskId] = activity.GetInfo(ctx).TaskQueue
 	o.mu.Unlock()
-	return task.ExecuteTaskResult{
-		TaskID: in.TaskID,
-		Output: plugin.Payload{"ran_on_orker": o.name, "pool": in.Pool},
+	return &orkstackv1.ExecuteTaskResult{
+		TaskId:     in.TaskId,
+		ValuesJson: valuesJSON(map[string]any{"ran_on_orker": o.name, "pool": in.Pool}),
 	}, nil
 }
 
@@ -227,8 +227,8 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		})
 		w.RegisterActivityWithOptions(orker.execute,
 			activity.RegisterOptions{Name: task.ActivityExecuteTask})
-		w.RegisterActivityWithOptions(orker.listPlugins,
-			activity.RegisterOptions{Name: task.ActivityListPlugins})
+		w.RegisterActivityWithOptions(orker.describeOrker,
+			activity.RegisterOptions{Name: task.ActivityDescribeOrker})
 		started[orker.name] = w
 	}
 	for name, w := range started {
@@ -247,11 +247,10 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		Runs:       runs,
 		Bus:        bus,
 		Starter:    starter,
-		Lister:     starter,
 		// The liveness answer comes from Temporal's poller information, which
 		// is the whole point: the engine asks the cluster rather than guessing.
-		Pools:       engine.NewTemporalPoolProbe(temporalClient),
-		PoolPlugins: starter,
+		Pools:      engine.NewTemporalPoolProbe(temporalClient),
+		PoolOrkers: starter,
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -304,11 +303,11 @@ name: %s
 version: 0.1.0
 tasks:
   - id: crunch
-    plugin: shell
+    uses: shell
     pool: %s
     with: {command: "echo crunch"}
   - id: polish
-    plugin: shell
+    uses: shell
     pool: %s
     needs: [crunch]
     with: {command: "echo polish"}
@@ -324,7 +323,7 @@ name: %s
 version: 0.1.0
 tasks:
   - id: freeze
-    plugin: shell
+    uses: shell
     pool: %s
     with: {command: "echo freeze"}
 `, coldName, poolCold)
@@ -356,7 +355,7 @@ name: %s
 version: 0.1.0
 tasks:
   - id: sneak
-    plugin: shell
+    uses: shell
     pool: forbidden
     with: {command: "echo sneak"}
 `, forbiddenName)
@@ -373,7 +372,7 @@ tasks:
 		Name:      forbiddenName,
 		Version:   "0.1.0",
 		Tasks: []*orkstackv1.Task{
-			{Id: "sneak", Plugin: "shell", Pool: "forbidden"},
+			{Id: "sneak", Uses: "shell", Pool: "forbidden"},
 		},
 	}, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("seed the stored definition: %v", err)
@@ -508,18 +507,6 @@ tasks:
 			t.Errorf("ListPools reports %d Orkers on pool %q; exactly 1 is serving it",
 				got, orker.pool)
 		}
-		// The plugin set has to come from the POOL, not from the engine: each
-		// Orker answers with its own, and a report that asked the wrong one
-		// would hand back the other's.
-		want := make([]string, 0, len(orker.plugins))
-		for _, descriptor := range orker.plugins {
-			want = append(want, descriptor.Name)
-		}
-		sort.Strings(want)
-		if got := strings.Join(reported.GetPlugins(), ","); got != strings.Join(want, ",") {
-			t.Errorf("ListPools reports plugins %q on pool %q, want %q — the answer must come "+
-				"from that pool's own Orkers", got, orker.pool, strings.Join(want, ","))
-		}
 	}
 	if got := byName[poolCold].GetLiveOrkerCount(); got != 0 {
 		t.Errorf("ListPools reports %d Orkers on the unserved pool %q, want 0", got, poolCold)
@@ -527,8 +514,7 @@ tasks:
 	transcript.section("6. pools, observed from the cluster")
 	transcript.line("default pool         %s", pools.Msg.GetDefaultPool())
 	for _, pool := range pools.Msg.GetPools() {
-		transcript.line("pool %-24s orkers=%d plugins=%v", pool.GetName(),
-			pool.GetLiveOrkerCount(), pool.GetPlugins())
+		transcript.line("pool %-24s orkers=%d", pool.GetName(), pool.GetLiveOrkerCount())
 	}
 }
 

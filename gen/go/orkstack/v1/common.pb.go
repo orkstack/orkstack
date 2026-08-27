@@ -84,6 +84,67 @@ func (Status) EnumDescriptor() ([]byte, []int) {
 	return file_orkstack_v1_common_proto_rawDescGZIP(), []int{0}
 }
 
+// FailureCategory is the AGENTS.md §4 category of a terminal failure. Its
+// value names are also the exact Temporal ApplicationError type strings, so a
+// RetryPolicy's non_retryable_error_types can name them (§7.2).
+type FailureCategory int32
+
+const (
+	FailureCategory_FAILURE_CATEGORY_UNSPECIFIED          FailureCategory = 0
+	FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED      FailureCategory = 1
+	FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR FailureCategory = 2
+	FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION   FailureCategory = 3
+	FailureCategory_FAILURE_CATEGORY_TIMED_OUT            FailureCategory = 4
+	FailureCategory_FAILURE_CATEGORY_CANCELLED            FailureCategory = 5
+)
+
+// Enum value maps for FailureCategory.
+var (
+	FailureCategory_name = map[int32]string{
+		0: "FAILURE_CATEGORY_UNSPECIFIED",
+		1: "FAILURE_CATEGORY_ACTIVITY_FAILED",
+		2: "FAILURE_CATEGORY_INFRASTRUCTURE_ERROR",
+		3: "FAILURE_CATEGORY_CONTRACT_VIOLATION",
+		4: "FAILURE_CATEGORY_TIMED_OUT",
+		5: "FAILURE_CATEGORY_CANCELLED",
+	}
+	FailureCategory_value = map[string]int32{
+		"FAILURE_CATEGORY_UNSPECIFIED":          0,
+		"FAILURE_CATEGORY_ACTIVITY_FAILED":      1,
+		"FAILURE_CATEGORY_INFRASTRUCTURE_ERROR": 2,
+		"FAILURE_CATEGORY_CONTRACT_VIOLATION":   3,
+		"FAILURE_CATEGORY_TIMED_OUT":            4,
+		"FAILURE_CATEGORY_CANCELLED":            5,
+	}
+)
+
+func (x FailureCategory) Enum() *FailureCategory {
+	p := new(FailureCategory)
+	*p = x
+	return p
+}
+
+func (x FailureCategory) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FailureCategory) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_common_proto_enumTypes[1].Descriptor()
+}
+
+func (FailureCategory) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_common_proto_enumTypes[1]
+}
+
+func (x FailureCategory) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FailureCategory.Descriptor instead.
+func (FailureCategory) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_common_proto_rawDescGZIP(), []int{1}
+}
+
 // ArtifactRef is a pointer to a stored artifact in the object store.
 // It never carries bytes inline; downstream tasks resolve it via the
 // artifact storage provider using uri.
@@ -218,11 +279,15 @@ func (x *Payload) GetData() *structpb.Struct {
 
 // Error captures a structured failure for a run or task run.
 type Error struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`       // stable machine code, e.g. "PLUGIN_TIMEOUT"
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"` // human readable
-	Details       string                 `protobuf:"bytes,3,opt,name=details,proto3" json:"details,omitempty"` // optional stack/context
-	Retryable     bool                   `protobuf:"varint,4,opt,name=retryable,proto3" json:"retryable,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Code      string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`       // stable machine code, e.g. "VALUES_MISSING"
+	Message   string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"` // human readable
+	Details   string                 `protobuf:"bytes,3,opt,name=details,proto3" json:"details,omitempty"` // optional stack/context
+	Retryable bool                   `protobuf:"varint,4,opt,name=retryable,proto3" json:"retryable,omitempty"`
+	// category is the AGENTS.md §4 failure category this error belongs to. It
+	// is what drives NonRetryableErrorTypes in ActivityOptions, so it is part
+	// of the replay-visible contract and not merely display data.
+	Category      FailureCategory `protobuf:"varint,5,opt,name=category,proto3,enum=orkstack.v1.FailureCategory" json:"category,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -285,6 +350,13 @@ func (x *Error) GetRetryable() bool {
 	return false
 }
 
+func (x *Error) GetCategory() FailureCategory {
+	if x != nil {
+		return x.Category
+	}
+	return FailureCategory_FAILURE_CATEGORY_UNSPECIFIED
+}
+
 var File_orkstack_v1_common_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_common_proto_rawDesc = "" +
@@ -302,12 +374,13 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
 	"\aPayload\x12+\n" +
-	"\x04data\x18\x01 \x01(\v2\x17.google.protobuf.StructR\x04data\"m\n" +
+	"\x04data\x18\x01 \x01(\v2\x17.google.protobuf.StructR\x04data\"\xa7\x01\n" +
 	"\x05Error\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x18\n" +
 	"\adetails\x18\x03 \x01(\tR\adetails\x12\x1c\n" +
-	"\tretryable\x18\x04 \x01(\bR\tretryable*\x9a\x01\n" +
+	"\tretryable\x18\x04 \x01(\bR\tretryable\x128\n" +
+	"\bcategory\x18\x05 \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory*\x9a\x01\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_PENDING\x10\x01\x12\x12\n" +
@@ -315,7 +388,14 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\x10STATUS_SUCCEEDED\x10\x03\x12\x11\n" +
 	"\rSTATUS_FAILED\x10\x04\x12\x13\n" +
 	"\x0fSTATUS_CANCELED\x10\x05\x12\x12\n" +
-	"\x0eSTATUS_SKIPPED\x10\x06B\xa7\x01\n" +
+	"\x0eSTATUS_SKIPPED\x10\x06*\xed\x01\n" +
+	"\x0fFailureCategory\x12 \n" +
+	"\x1cFAILURE_CATEGORY_UNSPECIFIED\x10\x00\x12$\n" +
+	" FAILURE_CATEGORY_ACTIVITY_FAILED\x10\x01\x12)\n" +
+	"%FAILURE_CATEGORY_INFRASTRUCTURE_ERROR\x10\x02\x12'\n" +
+	"#FAILURE_CATEGORY_CONTRACT_VIOLATION\x10\x03\x12\x1e\n" +
+	"\x1aFAILURE_CATEGORY_TIMED_OUT\x10\x04\x12\x1e\n" +
+	"\x1aFAILURE_CATEGORY_CANCELLED\x10\x05B\xa7\x01\n" +
 	"\x0fcom.orkstack.v1B\vCommonProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -330,24 +410,26 @@ func file_orkstack_v1_common_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_common_proto_rawDescData
 }
 
-var file_orkstack_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_orkstack_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_orkstack_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_orkstack_v1_common_proto_goTypes = []any{
 	(Status)(0),             // 0: orkstack.v1.Status
-	(*ArtifactRef)(nil),     // 1: orkstack.v1.ArtifactRef
-	(*Payload)(nil),         // 2: orkstack.v1.Payload
-	(*Error)(nil),           // 3: orkstack.v1.Error
-	nil,                     // 4: orkstack.v1.ArtifactRef.MetadataEntry
-	(*structpb.Struct)(nil), // 5: google.protobuf.Struct
+	(FailureCategory)(0),    // 1: orkstack.v1.FailureCategory
+	(*ArtifactRef)(nil),     // 2: orkstack.v1.ArtifactRef
+	(*Payload)(nil),         // 3: orkstack.v1.Payload
+	(*Error)(nil),           // 4: orkstack.v1.Error
+	nil,                     // 5: orkstack.v1.ArtifactRef.MetadataEntry
+	(*structpb.Struct)(nil), // 6: google.protobuf.Struct
 }
 var file_orkstack_v1_common_proto_depIdxs = []int32{
-	4, // 0: orkstack.v1.ArtifactRef.metadata:type_name -> orkstack.v1.ArtifactRef.MetadataEntry
-	5, // 1: orkstack.v1.Payload.data:type_name -> google.protobuf.Struct
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	5, // 0: orkstack.v1.ArtifactRef.metadata:type_name -> orkstack.v1.ArtifactRef.MetadataEntry
+	6, // 1: orkstack.v1.Payload.data:type_name -> google.protobuf.Struct
+	1, // 2: orkstack.v1.Error.category:type_name -> orkstack.v1.FailureCategory
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_common_proto_init() }
@@ -360,7 +442,7 @@ func file_orkstack_v1_common_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_common_proto_rawDesc), len(file_orkstack_v1_common_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
