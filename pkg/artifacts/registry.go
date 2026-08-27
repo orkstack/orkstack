@@ -75,6 +75,23 @@ func New(cfg Config) (Store, error) {
 // NewFromEnv builds the Store described by the ORK_* environment.
 func NewFromEnv() (Store, error) { return New(ConfigFromEnv()) }
 
+// NewCommitStore builds the durable completion-record store selected by cfg.
+func NewCommitStore(ctx context.Context, cfg Config) (CommitStore, error) {
+	switch name := cfg.Backend; name {
+	case "", BackendLocal:
+		return NewLocalCommitStore(localDir(cfg))
+	case BackendS3:
+		return NewS3CommitStore(ctx, cfg)
+	default:
+		return nil, fmt.Errorf("artifacts: commit store backend %q: %w", name, ErrUnknownBackend)
+	}
+}
+
+// NewCommitStoreFromEnv builds the completion store from ORK_* configuration.
+func NewCommitStoreFromEnv(ctx context.Context) (CommitStore, error) {
+	return NewCommitStore(ctx, ConfigFromEnv())
+}
+
 // ArchiveFactory builds a RunArchive from a Config. A backend that can persist
 // finished runs registers one of these.
 type ArchiveFactory func(cfg Config) (RunArchive, error)

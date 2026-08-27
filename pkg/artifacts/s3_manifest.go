@@ -14,7 +14,7 @@ import (
 // S3 object keys are a human-readable hierarchy, so a key names the run that
 // produced it:
 //
-//	orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name}
+//	orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name}/{sha256}
 //
 // Every part is exactly one path segment. That gives two things the previous
 // content-hash layout could not: a URI a person can read, and an S3 lifecycle
@@ -32,8 +32,8 @@ const (
 	// s3OrkflowNamespace roots the object hierarchy.
 	s3OrkflowNamespace = "orkflows"
 	// s3ObjectKeySegments is the fixed segment count of every object key:
-	// namespace, orkflow, run, task, artifact.
-	s3ObjectKeySegments = 5
+	// namespace, orkflow, run, task, artifact, content digest.
+	s3ObjectKeySegments = 6
 	// s3ManifestNamespace holds the binary companion that restores an object's
 	// exact logical name.
 	s3ManifestNamespace = "manifests"
@@ -61,13 +61,14 @@ const (
 var cleanComponentPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // s3ObjectKey renders the physical key for an artifact produced by p.
-func s3ObjectKey(p Provenance, name string) string {
+func s3ObjectKey(p Provenance, name, digest string) string {
 	return path.Join(
 		s3OrkflowNamespace,
 		s3ProvenanceComponent(p.Orkflow),
 		s3ProvenanceComponent(p.RunID),
 		s3ProvenanceComponent(p.TaskID),
 		s3KeyComponent(name),
+		digest,
 	)
 }
 
@@ -114,8 +115,8 @@ func sanitizeS3Component(raw string, budget int) string {
 	return strings.TrimLeft(head.String(), ".-_")
 }
 
-// splitS3ObjectKey reports whether key has the shape this store generates and
-// returns its segments (namespace, orkflow, run, task, artifact).
+// splitS3ObjectKey reports whether key has the six-segment shape this store
+// generates and returns namespace, orkflow, run, task, artifact and digest.
 func splitS3ObjectKey(key string) (segments []string, ok bool) {
 	parts := strings.Split(key, "/")
 	if len(parts) != s3ObjectKeySegments || parts[0] != s3OrkflowNamespace {
@@ -126,6 +127,9 @@ func splitS3ObjectKey(key string) (segments []string, ok bool) {
 			return nil, false
 		}
 	}
+	if !digestPattern.MatchString(parts[len(parts)-1]) {
+		return nil, false
+	}
 	return parts, true
 }
 
@@ -134,7 +138,7 @@ func splitS3ObjectKey(key string) (segments []string, ok bool) {
 // no companion object at all; a sanitized segment (it carries the digest
 // marker) only says which manifest to read.
 func s3NameFromKey(segments []string) (name string, exact bool) {
-	artifact := segments[len(segments)-1]
+	artifact := segments[len(segments)-2]
 	if !isCleanS3Component(artifact) {
 		return "", false
 	}

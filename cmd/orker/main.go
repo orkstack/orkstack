@@ -107,6 +107,19 @@ func run(logger *slog.Logger, cfg config) error {
 	if err != nil {
 		return err
 	}
+	commitStore, err := artifacts.NewCommitStoreFromEnv(ctx)
+	if err != nil {
+		return err
+	}
+	// Prove the backend's conditional create with simultaneous writers before
+	// accepting activity work; "S3-compatible" alone does not promise this.
+	if err := artifacts.ProbeCommitStore(ctx, commitStore); err != nil {
+		return fmt.Errorf("COMMIT_STORE_NOT_CONDITIONAL: %w", err)
+	}
+	refPredictor, ok := store.(artifacts.RefPredictor)
+	if !ok {
+		return fmt.Errorf("artifact backend %T cannot predict content-addressed references", store)
+	}
 
 	// The live log sink's destination. It is the SAME backend the artifacts go
 	// to, so an engine replica reading a task's log reads the bucket this
@@ -138,6 +151,8 @@ func run(logger *slog.Logger, cfg config) error {
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{
 		Logs:    logStore,
 		Log:     logOptions,
+		Commits: commitStore,
+		Refs:    refPredictor,
 		Pool:    cfg.pool,
 		BuildID: cfg.deployment.BuildID,
 	})

@@ -78,3 +78,15 @@ func (p MemoryRefPredictor) RefFor(prov Provenance, name, sha256 string, sizeByt
 		Metadata:    prov.Metadata(nil),
 	}
 }
+
+// RefFor predicts the content-addressed local reference returned by Put.
+func (s *LocalStore) RefFor(prov Provenance, name, sha256 string, sizeBytes int64, contentType string) ArtifactRef {
+	return ArtifactRef{Name: name, URI: s.uri(objectKey(name, sha256)), ContentType: contentType,
+		SizeBytes: sizeBytes, SHA256: sha256, Metadata: prov.Metadata(nil)}
+}
+
+// RefFor predicts the sixth-segment content-addressed S3 reference returned by Put.
+func (s *S3Store) RefFor(prov Provenance, name, sha256 string, sizeBytes int64, contentType string) ArtifactRef {
+	return ArtifactRef{Name: name, URI: s.uri(s3ObjectKey(prov, name, sha256)), ContentType: contentType,
+		SizeBytes: sizeBytes, SHA256: sha256, Metadata: prov.Metadata(nil)}
+}

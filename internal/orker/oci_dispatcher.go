@@ -1,7 +1,10 @@
 package orker
 
 import (
+	"archive/tar"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -715,15 +718,19 @@ func (d *OCIDispatcher) resolveImage(
 	pinned := in.GetImage().GetPinned()
 	info, err := d.Runtime.Pull(ctx, pinned)
 	if err != nil && d.LayoutRoot != "" {
-		// The embedded fallback of §4.6. `docker load` verifies NOTHING about
-		// the root object (§14.15), so the digest check is what makes this
-		// safe — and it is the layout PATH that is derived from the digest,
-		// so a layout for a different image is simply absent rather than
-		// silently loaded.
+		// Docker load trusts blob filenames. Verify the descriptor and the exact
+		// root bytes before allowing the runtime to import anything (§14.15).
 		layout := filepath.Join(d.LayoutRoot, layoutFileName(in.GetImage().GetIndexDigest()))
-		if loaded, loadErr := d.Runtime.LoadLayout(ctx, layout, in.GetImage().GetIndexDigest()); loadErr == nil {
-			info = loaded
-			err = nil
+		verified, verifyErr := verifyLayoutRoot(layout, in.GetImage().GetIndexDigest())
+		switch {
+		case errors.Is(verifyErr, errLayoutDigestMismatch):
+			return nil, FailCause(ReasonImageDigestMismatch, verifyErr,
+				"embedded image layout %s does not match %s: %v", layout, in.GetImage().GetIndexDigest(), verifyErr)
+		case verifyErr == nil && verified:
+			if loaded, loadErr := d.Runtime.LoadLayout(ctx, layout, in.GetImage().GetIndexDigest()); loadErr == nil {
+				info = loaded
+				err = nil
+			}
 		}
 	}
 	if err != nil {
@@ -752,6 +759,80 @@ func (d *OCIDispatcher) resolveImage(
 // layoutFileName renders the embedded layout tarball's name from a digest.
 func layoutFileName(digest string) string {
 	return strings.ReplaceAll(digest, ":", "-") + ".tar"
+}
+
+var errLayoutDigestMismatch = errors.New("embedded layout digest mismatch")
+
+// verifyLayoutRoot checks both links the runtime does not: index.json must
+// name digest, and blobs/sha256/<hex> must hash to that digest. It intentionally
+// runs before LoadLayout.
+func verifyLayoutRoot(layout, digest string) (bool, error) {
+	const prefix = "sha256:"
+	if !strings.HasPrefix(digest, prefix) || len(digest) != len(prefix)+64 {
+		return false, nil
+	}
+	wantedBlob := "blobs/sha256/" + strings.TrimPrefix(digest, prefix)
+	f, err := os.Open(layout)
+	if err != nil {
+		return false, nil
+	}
+	defer f.Close()
+	tr := tar.NewReader(f)
+	foundDescriptor := false
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return false, fmt.Errorf("read embedded layout %s: %w", layout, err)
+		}
+		if filepath.ToSlash(h.Name) != "index.json" {
+			continue
+		}
+		var index struct {
+			Manifests []struct {
+				Digest string `json:"digest"`
+			} `json:"manifests"`
+		}
+		if err := json.NewDecoder(io.LimitReader(tr, 4<<20)).Decode(&index); err != nil {
+			return false, fmt.Errorf("decode embedded layout index: %w", err)
+		}
+		for _, descriptor := range index.Manifests {
+			if descriptor.Digest == digest {
+				foundDescriptor = true
+			}
+		}
+		break
+	}
+	if !foundDescriptor {
+		return false, nil
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false, err
+	}
+	tr = tar.NewReader(f)
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if filepath.ToSlash(h.Name) != wantedBlob {
+			continue
+		}
+		hash := sha256.New()
+		if _, err := io.Copy(hash, tr); err != nil {
+			return false, err
+		}
+		got := hex.EncodeToString(hash.Sum(nil))
+		if got != strings.TrimPrefix(digest, prefix) {
+			return false, fmt.Errorf("%w: blob claims %s, bytes hash to sha256:%s", errLayoutDigestMismatch, digest, got)
+		}
+		return true, nil
+	}
 }
 
 func (d *OCIDispatcher) containerSpec(

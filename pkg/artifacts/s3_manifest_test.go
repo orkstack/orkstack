@@ -22,19 +22,19 @@ func TestS3ObjectKey_NamesTheOrkflowTaskAndRunThatProducedTheArtifact(t *testing
 			label: "example run",
 			prov:  runProvenance,
 			name:  "body",
-			want:  "orkflows/hello-ork/ork-1755302400123456789-1/fetch/body",
+			want:  "orkflows/hello-ork/ork-1755302400123456789-1/fetch/body/" + strings.Repeat("0", 64),
 		},
 		{
 			label: "file name with extension",
 			prov:  Provenance{Orkflow: "nightly-etl", TaskID: "save", RunID: "ork-42-7"},
 			name:  "result.txt",
-			want:  "orkflows/nightly-etl/ork-42-7/save/result.txt",
+			want:  "orkflows/nightly-etl/ork-42-7/save/result.txt/" + strings.Repeat("0", 64),
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			got := s3ObjectKey(tc.prov, tc.name)
+			got := s3ObjectKey(tc.prov, tc.name, strings.Repeat("0", 64))
 			if got != tc.want {
 				t.Errorf("s3ObjectKey = %q, want %q", got, tc.want)
 			}
@@ -51,15 +51,15 @@ func TestS3ObjectKey_PutsOneOrkflowUnderOneLifecyclePrefix(t *testing.T) {
 	const deprecated = "orkflows/deprecated-flow/"
 
 	doomed := []string{
-		s3ObjectKey(Provenance{Orkflow: "deprecated-flow", TaskID: "fetch", RunID: "ork-1-1"}, "body"),
-		s3ObjectKey(Provenance{Orkflow: "deprecated-flow", TaskID: "save", RunID: "ork-1-1"}, "result.txt"),
-		s3ObjectKey(Provenance{Orkflow: "deprecated-flow", TaskID: "save", RunID: "ork-2-1"}, "result.txt"),
-		s3ObjectKey(Provenance{Orkflow: "deprecated-flow", TaskID: "save", RunID: "ork-3-1"}, strings.Repeat("x", 5000)),
+		s3ObjectKey(Provenance{Orkflow: "deprecated-flow", TaskID: "fetch", RunID: "ork-1-1"}, "body", strings.Repeat("0", 64)),
+		s3ObjectKey(Provenance{Orkflow: "deprecated-flow", TaskID: "save", RunID: "ork-1-1"}, "result.txt", strings.Repeat("0", 64)),
+		s3ObjectKey(Provenance{Orkflow: "deprecated-flow", TaskID: "save", RunID: "ork-2-1"}, "result.txt", strings.Repeat("0", 64)),
+		s3ObjectKey(Provenance{Orkflow: "deprecated-flow", TaskID: "save", RunID: "ork-3-1"}, strings.Repeat("x", 5000), strings.Repeat("0", 64)),
 	}
 	kept := []string{
-		s3ObjectKey(Provenance{Orkflow: "kept-flow", TaskID: "save", RunID: "ork-1-1"}, "result.txt"),
-		s3ObjectKey(Provenance{Orkflow: "deprecated-flow-2", TaskID: "save", RunID: "ork-1-1"}, "result.txt"),
-		s3ObjectKey(Provenance{}, "result.txt"),
+		s3ObjectKey(Provenance{Orkflow: "kept-flow", TaskID: "save", RunID: "ork-1-1"}, "result.txt", strings.Repeat("0", 64)),
+		s3ObjectKey(Provenance{Orkflow: "deprecated-flow-2", TaskID: "save", RunID: "ork-1-1"}, "result.txt", strings.Repeat("0", 64)),
+		s3ObjectKey(Provenance{}, "result.txt", strings.Repeat("0", 64)),
 	}
 
 	for _, key := range doomed {
@@ -77,7 +77,7 @@ func TestS3ObjectKey_PutsOneOrkflowUnderOneLifecyclePrefix(t *testing.T) {
 // A run prefix and a task prefix must select their own slice of a run too, so
 // lifecycle rules can be narrower than a whole orkflow.
 func TestS3ObjectKey_NestsRunsInsideTasksInsideOrkflows(t *testing.T) {
-	key := s3ObjectKey(runProvenance, "body")
+	key := s3ObjectKey(runProvenance, "body", strings.Repeat("0", 64))
 	for _, prefix := range []string{
 		"orkflows/",
 		"orkflows/hello-ork/",
@@ -92,14 +92,14 @@ func TestS3ObjectKey_NestsRunsInsideTasksInsideOrkflows(t *testing.T) {
 	if !ok || len(segments) != s3ObjectKeySegments {
 		t.Fatalf("splitS3ObjectKey(%q) = %v, %t, want %d segments", key, segments, ok, s3ObjectKeySegments)
 	}
-	if last := segments[len(segments)-1]; last != "body" {
+	if last := segments[len(segments)-2]; last != "body" {
 		t.Errorf("last segment = %q, want the artifact name %q", last, "body")
 	}
 }
 
 func TestS3ObjectKey_StaysBoundedAndDistinctForHostileComponents(t *testing.T) {
 	// 8 + 4*(1+56) = 236: the longest key this layout can generate.
-	const maxKey = len(s3OrkflowNamespace) + 4*(1+s3MaxComponent)
+	const maxKey = len(s3OrkflowNamespace) + 4*(1+s3MaxComponent) + 1 + 64
 
 	names := []string{
 		"",
@@ -119,7 +119,7 @@ func TestS3ObjectKey_StaysBoundedAndDistinctForHostileComponents(t *testing.T) {
 
 	seen := map[string]string{}
 	for _, name := range names {
-		key := s3ObjectKey(runProvenance, name)
+		key := s3ObjectKey(runProvenance, name, strings.Repeat("0", 64))
 		if len(key) > maxKey {
 			t.Errorf("key for a %d-byte name is %d bytes, want at most %d", len(name), len(key), maxKey)
 		}
@@ -133,9 +133,9 @@ func TestS3ObjectKey_StaysBoundedAndDistinctForHostileComponents(t *testing.T) {
 	}
 
 	// A sanitized segment still reads: it keeps the head of the name.
-	hostile := s3ObjectKey(runProvenance, "report/../../etc/passwd")
+	hostile := s3ObjectKey(runProvenance, "report/../../etc/passwd", strings.Repeat("0", 64))
 	segments, _ := splitS3ObjectKey(hostile)
-	artifact := segments[len(segments)-1]
+	artifact := segments[len(segments)-2]
 	if !strings.HasPrefix(artifact, "report-") || !strings.Contains(artifact, s3ComponentDigestMarker) {
 		t.Errorf("sanitized artifact segment = %q, want a readable head plus a digest", artifact)
 	}
@@ -145,8 +145,8 @@ func TestS3ObjectKey_StaysBoundedAndDistinctForHostileComponents(t *testing.T) {
 }
 
 func TestS3ObjectKey_FilesPutsWithoutProvenanceUnderTheReservedPrefix(t *testing.T) {
-	key := s3ObjectKey(Provenance{}, "loose.txt")
-	want := "orkflows/_unattributed/_unattributed/_unattributed/loose.txt"
+	key := s3ObjectKey(Provenance{}, "loose.txt", strings.Repeat("0", 64))
+	want := "orkflows/_unattributed/_unattributed/_unattributed/loose.txt/" + strings.Repeat("0", 64)
 	if key != want {
 		t.Errorf("s3ObjectKey without provenance = %q, want %q", key, want)
 	}
@@ -157,8 +157,8 @@ func TestS3ObjectKey_FilesPutsWithoutProvenanceUnderTheReservedPrefix(t *testing
 		t.Errorf("a caller could reach the reserved segment %q verbatim", s3UnattributedComponent)
 	}
 	// A partially attributed put keeps the coordinates it does have.
-	partial := s3ObjectKey(Provenance{Orkflow: "hello-ork", TaskID: "fetch"}, "body")
-	if partial != "orkflows/hello-ork/_unattributed/fetch/body" {
+	partial := s3ObjectKey(Provenance{Orkflow: "hello-ork", TaskID: "fetch"}, "body", strings.Repeat("0", 64))
+	if partial != "orkflows/hello-ork/_unattributed/fetch/body/"+strings.Repeat("0", 64) {
 		t.Errorf("partial provenance key = %q, want the known coordinates kept", partial)
 	}
 }
@@ -191,7 +191,7 @@ func TestSplitS3ObjectKey_RejectsKeysThisStoreNeverWrote(t *testing.T) {
 // name, so the store reads it back without any companion object.
 func TestS3NameFromKey_ReadsCleanNamesStraightOffTheKey(t *testing.T) {
 	for _, name := range []string{"body", "result.txt", "a-b_c.9", "TITLE"} {
-		segments, ok := splitS3ObjectKey(s3ObjectKey(runProvenance, name))
+		segments, ok := splitS3ObjectKey(s3ObjectKey(runProvenance, name, strings.Repeat("0", 64)))
 		if !ok {
 			t.Fatalf("generated key for %q has a foreign shape", name)
 		}
@@ -202,7 +202,7 @@ func TestS3NameFromKey_ReadsCleanNamesStraightOffTheKey(t *testing.T) {
 	}
 	// A name the key cannot hold verbatim must fall back to its manifest.
 	for _, name := range []string{"", "a/b", "nul\x00name", strings.Repeat("x", 100)} {
-		segments, ok := splitS3ObjectKey(s3ObjectKey(runProvenance, name))
+		segments, ok := splitS3ObjectKey(s3ObjectKey(runProvenance, name, strings.Repeat("0", 64)))
 		if !ok {
 			t.Fatalf("generated key for a %d-byte name has a foreign shape", len(name))
 		}
@@ -226,7 +226,7 @@ func TestS3NameManifest_PreservesOpaqueNames(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
-			key := s3ObjectKey(runProvenance, tc.name)
+			key := s3ObjectKey(runProvenance, tc.name, strings.Repeat("0", 64))
 			got, err := unmarshalS3NameManifest(marshalS3NameManifest(key, tc.name), key)
 			if err != nil {
 				t.Fatalf("unmarshal: %v", err)
@@ -243,7 +243,7 @@ func TestS3NameManifest_PreservesOpaqueNames(t *testing.T) {
 
 func TestS3NameManifest_RejectsCorruption(t *testing.T) {
 	name := "opaque\x00name"
-	key := s3ObjectKey(runProvenance, name)
+	key := s3ObjectKey(runProvenance, name, strings.Repeat("0", 64))
 	valid := marshalS3NameManifest(key, name)
 
 	badMagic := append([]byte(nil), valid...)
@@ -263,7 +263,7 @@ func TestS3NameManifest_RejectsCorruption(t *testing.T) {
 		{label: "bad magic", manifest: badMagic, key: key},
 		{label: "bad key binding", manifest: badBinding, key: key},
 		{label: "bad length", manifest: badLength, key: key},
-		{label: "manifest of another object", manifest: valid, key: s3ObjectKey(runProvenance, "other")},
+		{label: "manifest of another object", manifest: valid, key: s3ObjectKey(runProvenance, "other", strings.Repeat("0", 64))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -287,7 +287,7 @@ func TestProvenanceMetadata_CarriesCoordinatesAndOutranksPluginMetadata(t *testi
 	if got := ProvenanceFromMetadata(meta); got != runProvenance {
 		t.Errorf("ProvenanceFromMetadata = %+v, want %+v", got, runProvenance)
 	}
-	if key := s3ObjectKey(ProvenanceFromMetadata(meta), "body"); key != s3ObjectKey(runProvenance, "body") {
+	if key := s3ObjectKey(ProvenanceFromMetadata(meta), "body", strings.Repeat("0", 64)); key != s3ObjectKey(runProvenance, "body", strings.Repeat("0", 64)) {
 		t.Errorf("plugin metadata moved the object to %q", key)
 	}
 

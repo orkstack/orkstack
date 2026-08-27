@@ -106,6 +106,7 @@ func ProvenanceFromMetadata(meta map[string]string) Provenance {
 
 // compile-time contract check.
 var _ Store = (*S3Store)(nil)
+var _ RefPredictor = (*S3Store)(nil)
 
 // NewS3Store builds an S3-backed store from cfg.
 func NewS3Store(ctx context.Context, cfg Config) (*S3Store, error) {
@@ -193,7 +194,7 @@ func (s *S3Store) Put(ctx context.Context, name string, r io.Reader, opts PutOpt
 	}
 
 	sum := hex.EncodeToString(hasher.Sum(nil))
-	key := s3ObjectKey(ProvenanceFromMetadata(opts.Metadata), name)
+	key := s3ObjectKey(ProvenanceFromMetadata(opts.Metadata), name, sum)
 	contentType := resolveContentType(opts.ContentType, sniff.head)
 	metadata := copyMetadata(opts.Metadata)
 
@@ -463,7 +464,7 @@ func (s *S3Store) parseURI(uri string) (string, []string, error) {
 	}
 	segments, ok := splitS3ObjectKey(key)
 	if !ok {
-		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: key must be %s/{orkflow-name}/{run-id}/{task-id}/{artifact-name}",
+		return "", nil, fmt.Errorf("artifacts: s3 %q: %w: key must be %s/{orkflow-name}/{run-id}/{task-id}/{artifact-name}/{sha256}",
 			uri, ErrInvalidURI, s3OrkflowNamespace)
 	}
 	return key, segments, nil

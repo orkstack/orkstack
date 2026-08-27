@@ -1,7 +1,9 @@
 package artifacts
 
 import (
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -89,4 +91,29 @@ func envBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
+}
+
+// CommitRoot returns the caller-visible URI prefix used when composing
+// CommitKey. It is resolved outside workflow code and pinned into RunPlan.
+func CommitRoot(cfg Config) (string, error) {
+	switch cfg.Backend {
+	case "", BackendLocal:
+		dir := cfg.LocalDir
+		if dir == "" {
+			dir = DefaultLocalDir
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", err
+		}
+		return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String(), nil
+	case BackendS3:
+		bucket := cfg.S3Bucket
+		if bucket == "" {
+			bucket = DefaultS3Bucket
+		}
+		return (&url.URL{Scheme: "s3", Host: bucket}).String(), nil
+	default:
+		return "", ErrUnknownBackend
+	}
 }

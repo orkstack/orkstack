@@ -172,7 +172,7 @@ func TestCommitKey_CannotCollideWithAWorkloadArtifact(t *testing.T) {
 	if strings.HasPrefix(artifactKey, "metadata/") {
 		t.Fatalf("a local artifact key %q reaches the metadata prefix", artifactKey)
 	}
-	s3Key := s3ObjectKey(Provenance{Orkflow: "billing", RunID: "ork-1700000000-1", TaskID: "migrate"}, "commit.json")
+	s3Key := s3ObjectKey(Provenance{Orkflow: "billing", RunID: "ork-1700000000-1", TaskID: "migrate"}, "commit.json", strings.Repeat("0", 64))
 	if strings.HasPrefix(s3Key, "metadata/") {
 		t.Fatalf("an s3 artifact key %q reaches the metadata prefix", s3Key)
 	}

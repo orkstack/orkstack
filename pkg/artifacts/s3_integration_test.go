@@ -144,14 +144,14 @@ var cleanSegmentForTest = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,55}$`
 // s3URIForTest builds the URI M7.4 promises, independently of the store:
 //
 //	s3://{bucket}/orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name}
-func s3URIForTest(t *testing.T, bucket string, prov artifacts.Provenance, name string) string {
+func s3URIForTest(t *testing.T, bucket string, prov artifacts.Provenance, name, digest string) string {
 	t.Helper()
 	for _, segment := range []string{prov.Orkflow, prov.RunID, prov.TaskID, name} {
 		if !cleanSegmentForTest.MatchString(segment) {
 			t.Fatalf("s3URIForTest: %q cannot appear verbatim in a key", segment)
 		}
 	}
-	key := path.Join("orkflows", prov.Orkflow, prov.RunID, prov.TaskID, name)
+	key := path.Join("orkflows", prov.Orkflow, prov.RunID, prov.TaskID, name, digest)
 	return (&url.URL{Scheme: "s3", Host: bucket, Path: "/" + key}).String()
 }
 
@@ -191,12 +191,12 @@ func TestS3Store_PutsRunArtifactsUnderOrkflowTaskAndRun(t *testing.T) {
 
 	ref := putS3(t, st, prov, "body", data, artifacts.PutOptions{ContentType: "application/json"})
 
-	want := s3URIForTest(t, cfg.S3Bucket, prov, "body")
+	want := s3URIForTest(t, cfg.S3Bucket, prov, "body", ref.SHA256)
 	if ref.URI != want {
 		t.Fatalf("URI = %q, want %q", ref.URI, want)
 	}
-	if strings.Contains(ref.URI, ref.SHA256) {
-		t.Errorf("URI %q still carries the content digest", ref.URI)
+	if !strings.HasSuffix(ref.URI, "/"+ref.SHA256) {
+		t.Errorf("URI %q does not carry the content digest as its sixth segment", ref.URI)
 	}
 	t.Logf("put uri=%s size=%d sha256=%s", ref.URI, ref.SizeBytes, ref.SHA256)
 	recordProofURI(t, "acceptance-1 run artifact", ref)
@@ -325,13 +325,15 @@ func TestS3Store_LifecycleRuleExpiresExactlyOneOrkflow(t *testing.T) {
 	selected := listKeys(t, ctx, raw, cfg.S3Bucket, artifactPrefix)
 	selected = append(selected, listKeys(t, ctx, raw, cfg.S3Bucket, manifestPrefix)...)
 	sort.Strings(selected)
-	wantSelected := []string{
-		"manifests/orkflows/deprecated-flow/ork-1755302400000000001-1/save/nested-report-copy.txt~9031737d4770a2f1",
-		"orkflows/deprecated-flow/ork-1755302400000000001-1/fetch/body",
-		"orkflows/deprecated-flow/ork-1755302400000000001-1/save/nested-report-copy.txt~9031737d4770a2f1",
-		"orkflows/deprecated-flow/ork-1755302400000000001-1/save/result.txt",
-		"orkflows/deprecated-flow/ork-1755302400000000002-1/save/result.txt",
+	wantSelected := make([]string, 0, len(doomed)+1)
+	for _, ref := range doomed {
+		key := strings.TrimPrefix(ref.URI, "s3://"+cfg.S3Bucket+"/")
+		wantSelected = append(wantSelected, key)
+		if ref.Name == "nested/report copy.txt" {
+			wantSelected = append(wantSelected, "manifests/"+key)
+		}
 	}
+	sort.Strings(wantSelected)
 	if strings.Join(selected, "\n") != strings.Join(wantSelected, "\n") {
 		t.Fatalf("prefix %q selected\n%s\nwant\n%s", artifactPrefix,
 			strings.Join(selected, "\n"), strings.Join(wantSelected, "\n"))
@@ -374,7 +376,7 @@ func TestS3Store_PutGetRoundTripIsByteIdentical(t *testing.T) {
 		Metadata:    map[string]string{"milestone": "m1"},
 	})
 
-	wantURI := s3URIForTest(t, cfg.S3Bucket, prov, "roundtrip.txt")
+	wantURI := s3URIForTest(t, cfg.S3Bucket, prov, "roundtrip.txt", ref.SHA256)
 	if ref.URI != wantURI {
 		t.Errorf("URI = %q, want %q", ref.URI, wantURI)
 	}
@@ -576,13 +578,14 @@ func TestS3Store_PreservesOpaqueNames(t *testing.T) {
 				t.Errorf("Put Name = %q, want exact %q", ref.Name, tc.name)
 			}
 			// However opaque the name, the run is still readable in the URI and
-			// the artifact is still exactly one segment below it.
+			// the artifact name segment and immutable digest are directly below it.
 			runPrefix := runPrefixForTest(cfg.S3Bucket, prov)
 			if !strings.HasPrefix(ref.URI, runPrefix) {
 				t.Fatalf("Put URI = %q, want it under %q", ref.URI, runPrefix)
 			}
-			if segment := strings.TrimPrefix(ref.URI, runPrefix); segment == "" || strings.Contains(segment, "/") {
-				t.Fatalf("artifact segment = %q, want exactly one non-empty segment", segment)
+			segments := strings.Split(strings.TrimPrefix(ref.URI, runPrefix), "/")
+			if len(segments) != 2 || segments[0] == "" || segments[1] != ref.SHA256 {
+				t.Fatalf("artifact suffix = %q, want name segment plus sha256", segments)
 			}
 			parsed, err := url.Parse(ref.URI)
 			if err != nil || parsed.String() != ref.URI || parsed.RawQuery != "" || parsed.Fragment != "" {
@@ -815,7 +818,7 @@ func TestS3Store_FilesPutsWithoutProvenanceUnderTheReservedPrefix(t *testing.T) 
 		}
 	})
 
-	want := fmt.Sprintf("s3://%s/orkflows/_unattributed/_unattributed/_unattributed/%s", cfg.S3Bucket, name)
+	want := fmt.Sprintf("s3://%s/orkflows/_unattributed/_unattributed/_unattributed/%s/%s", cfg.S3Bucket, name, ref.SHA256)
 	if ref.URI != want {
 		t.Errorf("URI = %q, want %q", ref.URI, want)
 	}
@@ -873,7 +876,7 @@ func TestS3Store_RejectsRawQueryAndFragmentInURI(t *testing.T) {
 func TestS3Store_StatMissingReturnsErrNotFound(t *testing.T) {
 	st, cfg := newS3Store(t)
 	prov := testRun(t, "missing-flow", "emit")
-	uri := s3URIForTest(t, cfg.S3Bucket, prov, "absent.txt")
+	uri := s3URIForTest(t, cfg.S3Bucket, prov, "absent.txt", strings.Repeat("0", 64))
 
 	if _, err := st.Stat(context.Background(), uri); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Stat missing err = %v, want ErrNotFound", err)
