@@ -117,14 +117,14 @@ var reasonCategory = map[string]string{
 	ReasonNetworkModeRefused:   CategoryContractViolation,
 }
 
-// retryableReason overrides the category's own default for the two codes where
-// they differ (§8.2).
+// retryableReason overrides the category's own default for the three codes
+// where they differ (§8.2).
 //
-// WORKSPACE_NOT_BINDABLE and COMMIT_STORE_NOT_CONDITIONAL are
-// InfrastructureError — the category whose default is "retry" — but both are
-// host misconfigurations that retrying cannot fix. Retrying them would loop
-// against a deterministic fact, which AGENTS.md §11 forbids as loudly as it
-// forbids a stuck state.
+// WORKSPACE_NOT_BINDABLE, WORKDIR_NOT_BINDABLE, and
+// COMMIT_STORE_NOT_CONDITIONAL are InfrastructureError — the category whose
+// default is "retry" — but all three are host misconfigurations that retrying
+// cannot fix. Retrying them would loop against a deterministic fact, which
+// AGENTS.md §11 forbids as loudly as it forbids a stuck state.
 var retryableReason = map[string]bool{
 	ReasonWorkspaceNotBindable: false,
 	ReasonWorkdirNotBindable:   false,

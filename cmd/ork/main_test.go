@@ -68,6 +68,33 @@ func TestLoadConfigUsesDocumentedRunPlanDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRefusesInvalidRunPlanLimitsAtBoot(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		value string
+	}{
+		{key: "ORK_VALUES_MAX_BYTES", value: "1MB"},
+		{key: "ORK_ARTIFACT_MAX_BYTES", value: "-1"},
+		{key: "ORK_LOG_MAX_BYTES", value: "0"},
+		{key: "ORK_ARTIFACT_MAX_COUNT", value: "2147483648"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			t.Setenv(tc.key, tc.value)
+
+			cfg := loadConfig()
+			if cfg.limitsErr == nil {
+				t.Fatalf("%s=%q silently fell back to a default", tc.key, tc.value)
+			}
+			if message := cfg.limitsErr.Error(); !strings.Contains(message, tc.key) || !strings.Contains(message, tc.value) {
+				t.Errorf("boot error %q must name %s and its rejected value %q", message, tc.key, tc.value)
+			}
+			if err := run(nil, cfg); err == nil {
+				t.Fatalf("engine booted with %s=%q", tc.key, tc.value)
+			}
+		})
+	}
+}
+
 func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *testing.T) {
 	runOptions := runWorkerOptions(config{})
 	if !runOptions.LocalActivityWorkerOnly {

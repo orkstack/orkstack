@@ -27,9 +27,11 @@
 //	M10.1  Namespace and Pool were added to the activity input, and
 //	       internal/engine/testdata/history/run-succeeded-v1.json was
 //	       re-recorded once.
+//	M10.2  Per-task routing replaced the selected execution-channel string
+//	       with engine.RunPlan, and the fixture was re-recorded a second time.
 //	M11.1  The activity input became orkstack.v1.ExecuteTaskInput and the
 //	       recorded payload encoder flipped from encoding/json to protojson
-//	       (§2.5). The fixture was re-recorded once, LAST, after every
+//	       (§2.5). The fixture was re-recorded a third time, LAST, after every
 //	       wire-visible change of Phase 1 had landed — the proto contract,
 //	       Error.category, the Task and TaskRun fields, RunPlan's CommitRoot,
 //	       Limits and TransferBudgetSeconds, ActivityFailureDetail, and the

@@ -61,6 +61,9 @@ type config struct {
 	// namespace's own default_pool meaningful: with no override, the default
 	// pool resolves to its own channel like every other pool.
 	defaultRouteOverride string
+	// limitsErr is malformed contract-limit configuration, reported at boot
+	// rather than silently replaced with a default.
+	limitsErr error
 	// poolErr is a refused ORK_ORKER_POOL/ORK_ORKER_QUEUE pair, reported at
 	// boot rather than resolved by picking a winner.
 	poolErr                       error
@@ -88,22 +91,32 @@ type config struct {
 }
 
 func loadConfig() config {
+	valuesMaxBytes, valuesErr := envInt64("ORK_VALUES_MAX_BYTES", engine.DefaultValuesMaxBytes)
+	artifactMaxCount, artifactCountErr := envInt32("ORK_ARTIFACT_MAX_COUNT", engine.DefaultArtifactMaxCount)
+	artifactMaxBytes, artifactBytesErr := envInt64("ORK_ARTIFACT_MAX_BYTES", engine.DefaultArtifactMaxBytes)
+	logMaxBytes, logErr := envInt64("ORK_LOG_MAX_BYTES", engine.DefaultLogMaxBytes)
+	commitMaxBytes, commitErr := envInt64("ORK_COMMIT_MAX_BYTES", engine.DefaultCommitMaxBytes)
+	transferBudgetSeconds, transferErr := envInt32("ORK_TRANSFER_BUDGET_SECONDS", 0)
+	floorThroughput, throughputErr := envInt64("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
+
 	cfg := config{
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		httpAddr:          env("ORK_HTTP_ADDR", api.DefaultHTTPAddr),
 		idempotencyTTL:    envDuration("ORK_IDEMPOTENCY_TTL", engine.DefaultClaimTTL),
 		contractLimits: engine.WorkspaceLimits{
-			ValuesMaxBytes:   envInt64("ORK_VALUES_MAX_BYTES", engine.DefaultValuesMaxBytes),
-			ArtifactMaxCount: envInt32("ORK_ARTIFACT_MAX_COUNT", engine.DefaultArtifactMaxCount),
-			ArtifactMaxBytes: envInt64("ORK_ARTIFACT_MAX_BYTES", engine.DefaultArtifactMaxBytes),
-			LogMaxBytes:      envInt64("ORK_LOG_MAX_BYTES", engine.DefaultLogMaxBytes),
-			CommitMaxBytes:   envInt64("ORK_COMMIT_MAX_BYTES", engine.DefaultCommitMaxBytes),
+			ValuesMaxBytes:   valuesMaxBytes,
+			ArtifactMaxCount: artifactMaxCount,
+			ArtifactMaxBytes: artifactMaxBytes,
+			LogMaxBytes:      logMaxBytes,
+			CommitMaxBytes:   commitMaxBytes,
 		},
-		transferBudgetSeconds:         envInt32("ORK_TRANSFER_BUDGET_SECONDS", 0),
-		floorThroughputBytesPerSecond: envInt64("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond),
-		deployment:                    task.DeploymentFromEnv(),
-		registryAuthFile:              env("ORK_REGISTRY_AUTH_FILE", ""),
+		transferBudgetSeconds:         transferBudgetSeconds,
+		floorThroughputBytesPerSecond: floorThroughput,
+		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
+			logErr, commitErr, transferErr, throughputErr),
+		deployment:       task.DeploymentFromEnv(),
+		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 	}
 	cfg.activityCatalog, cfg.catalogErr = dsl.ParseCatalog([]byte(env("ORK_ACTIVITY_CATALOG", "")))
 	rawPool := env("ORK_ORKER_POOL", "")
@@ -134,24 +147,31 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
-func envInt64(key string, fallback int64) int64 {
+func envInt64(key string, fallback int64) (int64, error) {
 	raw := env(key, "")
 	if raw == "" {
-		return fallback
+		return fallback, nil
 	}
 	parsed, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || parsed <= 0 {
-		return fallback
+	if err != nil {
+		return fallback, fmt.Errorf("%s=%q must be a positive base-10 integer: %w", key, raw, err)
 	}
-	return parsed
+	if parsed <= 0 {
+		return fallback, fmt.Errorf("%s=%q must be a positive base-10 integer", key, raw)
+	}
+	return parsed, nil
 }
 
-func envInt32(key string, fallback int32) int32 {
-	parsed := envInt64(key, int64(fallback))
-	if parsed > math.MaxInt32 {
-		return fallback
+func envInt32(key string, fallback int32) (int32, error) {
+	parsed, err := envInt64(key, int64(fallback))
+	if err != nil {
+		return fallback, err
 	}
-	return int32(parsed)
+	if parsed > math.MaxInt32 {
+		raw := env(key, "")
+		return fallback, fmt.Errorf("%s=%q exceeds the maximum value %d", key, raw, int64(math.MaxInt32))
+	}
+	return int32(parsed), nil
 }
 
 func env(key, fallback string) string {
@@ -424,6 +444,12 @@ func run(logger *slog.Logger, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Refuse malformed contract-limit configuration before opening any
+	// infrastructure. Silently substituting a default would make an operator
+	// believe a ceiling is active when the process discarded it.
+	if cfg.limitsErr != nil {
+		return cfg.limitsErr
+	}
 	// Fail on a deployment identity the cluster would reject later, while the
 	// error can still name the variable that caused it.
 	if err := cfg.deployment.Validate(); err != nil {
@@ -438,8 +464,8 @@ func run(logger *slog.Logger, cfg config) error {
 	}
 	// A malformed ORK_ACTIVITY_CATALOG is a boot failure for the same reason:
 	// an engine that cannot read its catalog would refuse every `uses: shell`
-	// as an unknown activity, which reads as the author'''s mistake rather than
-	// the operator'''s.
+	// as an unknown activity, which reads as the author's mistake rather than
+	// the operator's.
 	if cfg.catalogErr != nil {
 		return cfg.catalogErr
 	}

@@ -32,17 +32,18 @@ import (
 // it against a body carrying one extra emit — the exact shape of the change
 // M8 made to RunWorkflow.
 //
-// The baseline was reset twice, and the file committed here is M10.2's. M10.1
-// removed the user-facing task routing field and made the fourth workflow
+// The baseline was reset three times, and the file committed here is M11.1's.
+// M10.1 removed the user-facing task routing field and made the fourth workflow
 // input the deployment's selected default execution channel, a string; M10.2
 // made routing per task, so that same slot became the run's whole routing
 // record — an engine.RunPlan carrying the namespace and a pool → channel
 // table. A string does not decode as that struct, so no history recorded
 // before M10.2 replays, and the pre-M10.1 histories could not decode the
-// removed field either. Nothing was deployed on either occasion; the fixture
-// was re-recorded by the opt-in real-cluster test both times, and the command
-// and payload guards remain active against it. See
-// testdata/history/README.md and proof/M10.2/.
+// removed field either. M11.1 replaced that activity payload with
+// orkstack.v1.ExecuteTaskInput encoded as protojson. Nothing was deployed on
+// any occasion; the fixture was re-recorded by the opt-in real-cluster test,
+// and the command and payload guards remain active against it. See
+// testdata/history/README.md, proof/M10.2/, and internal/task/contract.go.
 const goldenHistory = "testdata/history/run-succeeded-v1.json"
 
 // TestRunWorkflow_ReplaysCommittedV1History is half of the cross-version
