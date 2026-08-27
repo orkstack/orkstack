@@ -92,4 +92,27 @@ message Orkflow {
   // namespaces may both hold an orkflow called "deploy", and they are two
   // different orkflows stored under two different keys.
   string namespace = 9;
+
+  // definition_digest is the canonical digest of THIS document's definition
+  // (§4.4): "sha256:" + hex(sha256(canonicalOrkflow(wf))).
+  //
+  // It is computed at APPLY, after image resolution, and stamped here —
+  // "the version document is the pin", which is what AGENTS.md §7.2 requires
+  // of a run. Workflow code READS it and never computes it, so a run records
+  // the digest of the definition it actually pinned rather than one derived
+  // from whatever a later reader happened to reconstruct.
+  //
+  // It is NOT part of canonicalOrkflow. The canonical form enumerates its
+  // fields and this one is not among them, so stamping the digest into the
+  // document it describes does not change that digest: the value is stable
+  // under re-canonicalization, and pkg/artifacts.sameStoredOrkflow still
+  // sees a re-apply of an unchanged document as equal.
+  //
+  // Added after the Phase 1 wire freeze, deliberately and ADDITIVELY: fields
+  // 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an
+  // older reader simply does not see it. The alternative was to populate
+  // orkflow_definition_digest from workflow code, which changes recorded
+  // activity-payload bytes and would force a SECOND replay-fixture reset —
+  // which §11.4 calls a process failure.
+  string definition_digest = 10;
 }

@@ -118,6 +118,16 @@ type Config struct {
 	// that replaced ListPlugins (§6.5).
 	Orkers OrkerDescriber
 
+	// Catalog is the deployment's activity table (§4.2): the short names
+	// `uses:` may spell. Nil selects dsl.BuiltinActivityCatalog.
+	Catalog dsl.Catalog
+
+	// Resolver performs apply-time image resolution (§4.3). Nil applies
+	// WITHOUT pinning a digest, which is what an air-gapped engine and a
+	// hermetic unit test both need; a configured engine always has one, and
+	// cmd/ork builds it from ORK_REGISTRY_AUTH_FILE.
+	Resolver ImageResolver
+
 	// Namespaces is the registry: routing reads pool defaults and allow-lists
 	// from it, and NamespaceService creates, updates and deletes through it.
 	// Nil serves the built-in default namespace only and refuses every write,
@@ -187,6 +197,11 @@ type Service struct {
 	bus        *engine.EventBus
 	activities ActivityLister
 	orkers     OrkerDescriber
+	// catalog and resolver are the two halves of §4.1: the catalog turns a
+	// short name into a reference, and the resolver turns a reference into a
+	// digest. Both live here because ApplyOrkflow is where §4.3 puts them.
+	catalog  dsl.Catalog
+	resolver ImageResolver
 	// router resolves which cluster answers for a namespace or a run. It
 	// holds one binding today; every read and write path goes through it, so
 	// partitioning namespaces across clusters later is configuration rather
@@ -226,6 +241,8 @@ func NewService(cfg Config) *Service {
 		bus:             cfg.Bus,
 		activities:      cfg.Activities,
 		orkers:          cfg.Orkers,
+		catalog:         cfg.Catalog,
+		resolver:        cfg.Resolver,
 		system:          cfg.System,
 		router:          cfg.Router,
 		archive:         cfg.Archive,
@@ -359,7 +376,14 @@ func (s *Service) ApplyOrkflow(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
 ) (*connect.Response[orkstackv1.ApplyOrkflowResponse], error) {
-	wf, err := dsl.Compile([]byte(req.Msg.GetYaml()))
+	source := []byte(req.Msg.GetYaml())
+	wf, err := dsl.CompileWithOptions(source, dsl.Options{Catalog: s.activityCatalog()})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// Whether the AUTHOR pinned a version has to be read from the document,
+	// because Compile fills Version either way (§4.4(b)).
+	pinsVersion, err := dsl.DocumentPinsVersion(source)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -389,6 +413,42 @@ func (s *Service) ApplyOrkflow(
 	// The stored document names the namespace it lives in, whichever of the
 	// two said so, so a reader needs no key to know where it came from.
 	wf.Namespace = ns.GetName()
+
+	// §4.3: resolution runs HERE — after Compile, before Put. Not in the
+	// compiler, which stays pure so `orkctl orkflow validate` needs no
+	// registry; and not in workflow code, which may perform no IO at all.
+	//
+	// It runs after the namespace and allow-list checks on purpose: a
+	// document that this namespace may not dispatch is refused without
+	// touching a registry, so a misrouted apply costs no network round trip
+	// and leaks no repository name to a registry it was never meant for.
+	if err := s.resolveImages(ctx, wf); err != nil {
+		return nil, applyResolveError(err)
+	}
+	// §4.4(b): the derived version is assigned AFTER resolution and covers
+	// it. Deriving before resolution — which is what Compile did — mints the
+	// SAME version for a DIFFERENT definition when a tag moves, and the store
+	// then refuses the apply as an attempt to rewrite an immutable version.
+	// The author would get a refusal instead of a new version.
+	//
+	// A document that pins its own `version:` keeps it. A moved tag under a
+	// pinned version is an ALREADY_EXISTS conflict from the store, which is
+	// correct and intended: an immutable version cannot mean two definitions.
+	if !pinsVersion {
+		derived, err := dsl.DerivedVersion(source, wf)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		wf.Version = derived
+	}
+	// The definition digest is stamped LAST, because canonicalOrkflow hashes
+	// `version` and the version was only just decided. It is not part of the
+	// canonical form itself, so stamping it does not invalidate it.
+	digest, err := dsl.DefinitionDigest(wf)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	wf.DefinitionDigest = digest
 	expected, err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
 		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion())
 	if err != nil {

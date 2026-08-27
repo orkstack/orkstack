@@ -30,6 +30,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -71,6 +72,19 @@ type config struct {
 	// build id unless an operator configures one, which leaves versioning off
 	// and the workers exactly as they were before M8.4.
 	deployment task.Deployment
+
+	// activityCatalog is the deployment's §4.2 table, from
+	// ORK_ACTIVITY_CATALOG. catalogErr is a malformed one, reported at boot
+	// rather than at the first apply — a catalog this process cannot read is
+	// a configuration error, and discovering it when an author applies makes
+	// it look like their document is wrong.
+	activityCatalog dsl.Catalog
+	catalogErr      error
+
+	// registryAuthFile is ORK_REGISTRY_AUTH_FILE (§4.5): a docker
+	// config.json used ONLY for manifest GETs during apply-time resolution.
+	// It grants no push and no execution.
+	registryAuthFile string
 }
 
 func loadConfig() config {
@@ -89,7 +103,9 @@ func loadConfig() config {
 		transferBudgetSeconds:         envInt32("ORK_TRANSFER_BUDGET_SECONDS", 0),
 		floorThroughputBytesPerSecond: envInt64("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond),
 		deployment:                    task.DeploymentFromEnv(),
+		registryAuthFile:              env("ORK_REGISTRY_AUTH_FILE", ""),
 	}
+	cfg.activityCatalog, cfg.catalogErr = dsl.ParseCatalog([]byte(env("ORK_ACTIVITY_CATALOG", "")))
 	rawPool := env("ORK_ORKER_POOL", "")
 	rawQueue := env("ORK_ORKER_QUEUE", "")
 	binding, err := task.ResolvePoolBinding(rawPool, rawQueue)
@@ -420,6 +436,13 @@ func run(logger *slog.Logger, cfg config) error {
 	if cfg.poolErr != nil {
 		return cfg.poolErr
 	}
+	// A malformed ORK_ACTIVITY_CATALOG is a boot failure for the same reason:
+	// an engine that cannot read its catalog would refuse every `uses: shell`
+	// as an unknown activity, which reads as the author'''s mistake rather than
+	// the operator'''s.
+	if cfg.catalogErr != nil {
+		return cfg.catalogErr
+	}
 
 	namespaces, err := openNamespaceStore(ctx, logger)
 	if err != nil {
@@ -592,6 +615,13 @@ func run(logger *slog.Logger, cfg config) error {
 		"artifact_backend", system.ArtifactBackend,
 		"artifact_location", system.ArtifactLocation)
 
+	// The two halves of §4.1, built once: the catalog turns a short name into
+	// a reference, and the resolver turns a reference into a digest. The
+	// lister shares the resolver so `orkctl activity list` reports the same
+	// digests an apply would pin.
+	resolver := dsl.NewResolver(cfg.registryAuthFile)
+	activities := &api.CatalogLister{Catalog: cfg.activityCatalog, Resolver: resolver}
+
 	svc := api.NewService(api.Config{
 		Orkflows:                      orkflows,
 		Namespaces:                    namespaces,
@@ -602,6 +632,9 @@ func run(logger *slog.Logger, cfg config) error {
 		Pools:                         pools,
 		PoolOrkers:                    starter,
 		Orkers:                        starter,
+		Catalog:                       cfg.activityCatalog,
+		Resolver:                      resolver,
+		Activities:                    activities,
 		RawQueue:                      cfg.defaultRouteOverride,
 		Archive:                       archive,
 		Logs:                          logStore,

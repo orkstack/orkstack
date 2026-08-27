@@ -14,7 +14,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/orkflow.proto.
  */
 export const file_orkstack_v1_orkflow: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiqwQKBFRhc2sSCgoCaWQYASABKAkSJQoEd2l0aBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDQoFbmVlZHMYBCADKAkSEQoJY29uZGl0aW9uGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoBRInCgVyZXRyeRgHIAEoCzIYLm9ya3N0YWNrLnYxLlJldHJ5UG9saWN5EgwKBHBvb2wYCSABKAkSDAoEdXNlcxgKIAEoCRIkCgVpbWFnZRgLIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEg8KB2NvbW1hbmQYDCADKAkSJwoDZW52GA0gAygLMhoub3Jrc3RhY2sudjEuVGFzay5FbnZFbnRyeRInCgdzZWNyZXRzGA4gAygLMhYub3Jrc3RhY2sudjEuU2VjcmV0UmVmEi8KCXJlc291cmNlcxgPIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBAgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBEgASgFEhkKEXJ1bl9hc19vcmtlcl91c2VyGBIgASgIGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFKBAgCEANKBAgIEAlSBnBsdWdpblIFcXVldWUiwQIKB09ya2Zsb3cSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEjAKBmxhYmVscxgEIAMoCzIgLm9ya3N0YWNrLnYxLk9ya2Zsb3cuTGFiZWxzRW50cnkSJwoGaW5wdXRzGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV0YXNrcxgGIAMoCzIRLm9ya3N0YWNrLnYxLlRhc2sSEwoLc291cmNlX3lhbWwYByABKAkSLgoKY3JlYXRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAkgASgJGi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCqAEKD2NvbS5vcmtzdGFjay52MUIMT3JrZmxvd1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
+  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiqwQKBFRhc2sSCgoCaWQYASABKAkSJQoEd2l0aBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDQoFbmVlZHMYBCADKAkSEQoJY29uZGl0aW9uGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoBRInCgVyZXRyeRgHIAEoCzIYLm9ya3N0YWNrLnYxLlJldHJ5UG9saWN5EgwKBHBvb2wYCSABKAkSDAoEdXNlcxgKIAEoCRIkCgVpbWFnZRgLIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEg8KB2NvbW1hbmQYDCADKAkSJwoDZW52GA0gAygLMhoub3Jrc3RhY2sudjEuVGFzay5FbnZFbnRyeRInCgdzZWNyZXRzGA4gAygLMhYub3Jrc3RhY2sudjEuU2VjcmV0UmVmEi8KCXJlc291cmNlcxgPIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBAgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBEgASgFEhkKEXJ1bl9hc19vcmtlcl91c2VyGBIgASgIGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFKBAgCEANKBAgIEAlSBnBsdWdpblIFcXVldWUi3AIKB09ya2Zsb3cSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEjAKBmxhYmVscxgEIAMoCzIgLm9ya3N0YWNrLnYxLk9ya2Zsb3cuTGFiZWxzRW50cnkSJwoGaW5wdXRzGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV0YXNrcxgGIAMoCzIRLm9ya3N0YWNrLnYxLlRhc2sSEwoLc291cmNlX3lhbWwYByABKAkSLgoKY3JlYXRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAkgASgJEhkKEWRlZmluaXRpb25fZGlnZXN0GAogASgJGi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCqAEKD2NvbS5vcmtzdGFjay52MUIMT3JrZmxvd1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
 
 /**
  * RetryPolicy mirrors Temporal retry semantics for a task.
@@ -250,6 +250,33 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
    * @generated from field: string namespace = 9;
    */
   namespace: string;
+
+  /**
+   * definition_digest is the canonical digest of THIS document's definition
+   * (§4.4): "sha256:" + hex(sha256(canonicalOrkflow(wf))).
+   *
+   * It is computed at APPLY, after image resolution, and stamped here —
+   * "the version document is the pin", which is what AGENTS.md §7.2 requires
+   * of a run. Workflow code READS it and never computes it, so a run records
+   * the digest of the definition it actually pinned rather than one derived
+   * from whatever a later reader happened to reconstruct.
+   *
+   * It is NOT part of canonicalOrkflow. The canonical form enumerates its
+   * fields and this one is not among them, so stamping the digest into the
+   * document it describes does not change that digest: the value is stable
+   * under re-canonicalization, and pkg/artifacts.sameStoredOrkflow still
+   * sees a re-apply of an unchanged document as equal.
+   *
+   * Added after the Phase 1 wire freeze, deliberately and ADDITIVELY: fields
+   * 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an
+   * older reader simply does not see it. The alternative was to populate
+   * orkflow_definition_digest from workflow code, which changes recorded
+   * activity-payload bytes and would force a SECOND replay-fixture reset —
+   * which §11.4 calls a process failure.
+   *
+   * @generated from field: string definition_digest = 10;
+   */
+  definitionDigest: string;
 };
 
 /**

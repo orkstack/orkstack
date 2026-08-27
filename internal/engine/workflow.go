@@ -454,13 +454,13 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		RunId:          s.runID,
 		OrkflowName:    s.wf.GetName(),
 		OrkflowVersion: s.wf.GetVersion(),
-		// The canonical definition digest is Phase 3's work (§4.4, §11.3): it is
-		// computed at APPLY, over the compiled definition, and stamped into the
-		// immutable version document. Phase 1 freezes the wire field and leaves
-		// it empty, which the commit-identity check tolerates because it
-		// compares this side against the stored side and both are empty until
-		// Phase 3 fills them.
-		OrkflowDefinitionDigest: "",
+		// READ from the version document, never computed here (§4.4). The
+		// digest is stamped at APPLY, after image resolution, so it describes
+		// the definition this run actually pinned. Computing it in workflow
+		// code would be deterministic but would describe whatever the reader
+		// reconstructed, and would record a digest for a definition that was
+		// never resolved at all.
+		OrkflowDefinitionDigest: s.wf.GetDefinitionDigest(),
 		Namespace:               namespace,
 		Pool:                    pool,
 		TaskId:                  id,
@@ -741,13 +741,17 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		Namespace:      s.wf.GetNamespace(),
 		OrkflowName:    s.wf.GetName(),
 		OrkflowVersion: s.wf.GetVersion(),
-		Status:         s.status,
-		Input:          s.input,
-		Output:         s.output,
-		Error:          s.runError,
-		CreatedAt:      s.createdAt,
-		StartedAt:      s.startedAt,
-		FinishedAt:     s.finished,
+		// A run that started before the current pointer moved is still
+		// explainable by the exact bytes it ran (§4.4). Read from the version
+		// document for the same reason ExecuteTaskInput reads it.
+		OrkflowDefinitionDigest: s.wf.GetDefinitionDigest(),
+		Status:                  s.status,
+		Input:                   s.input,
+		Output:                  s.output,
+		Error:                   s.runError,
+		CreatedAt:               s.createdAt,
+		StartedAt:               s.startedAt,
+		FinishedAt:              s.finished,
 	}
 	for _, id := range s.order {
 		run.TaskRuns = append(run.TaskRuns, s.taskRuns[id])

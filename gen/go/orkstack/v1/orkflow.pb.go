@@ -297,9 +297,31 @@ type Orkflow struct {
 	// namespace. A name is unique WITHIN a namespace, never globally: two
 	// namespaces may both hold an orkflow called "deploy", and they are two
 	// different orkflows stored under two different keys.
-	Namespace     string `protobuf:"bytes,9,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Namespace string `protobuf:"bytes,9,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// definition_digest is the canonical digest of THIS document's definition
+	// (§4.4): "sha256:" + hex(sha256(canonicalOrkflow(wf))).
+	//
+	// It is computed at APPLY, after image resolution, and stamped here —
+	// "the version document is the pin", which is what AGENTS.md §7.2 requires
+	// of a run. Workflow code READS it and never computes it, so a run records
+	// the digest of the definition it actually pinned rather than one derived
+	// from whatever a later reader happened to reconstruct.
+	//
+	// It is NOT part of canonicalOrkflow. The canonical form enumerates its
+	// fields and this one is not among them, so stamping the digest into the
+	// document it describes does not change that digest: the value is stable
+	// under re-canonicalization, and pkg/artifacts.sameStoredOrkflow still
+	// sees a re-apply of an unchanged document as equal.
+	//
+	// Added after the Phase 1 wire freeze, deliberately and ADDITIVELY: fields
+	// 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an
+	// older reader simply does not see it. The alternative was to populate
+	// orkflow_definition_digest from workflow code, which changes recorded
+	// activity-payload bytes and would force a SECOND replay-fixture reset —
+	// which §11.4 calls a process failure.
+	DefinitionDigest string `protobuf:"bytes,10,opt,name=definition_digest,json=definitionDigest,proto3" json:"definition_digest,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Orkflow) Reset() {
@@ -395,6 +417,13 @@ func (x *Orkflow) GetNamespace() string {
 	return ""
 }
 
+func (x *Orkflow) GetDefinitionDigest() string {
+	if x != nil {
+		return x.DefinitionDigest
+	}
+	return ""
+}
+
 var File_orkstack_v1_orkflow_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_orkflow_proto_rawDesc = "" +
@@ -425,7 +454,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\x11run_as_orker_user\x18\x12 \x01(\bR\x0erunAsOrkerUser\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x02\x10\x03J\x04\b\b\x10\tR\x06pluginR\x05queue\"\xa2\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x02\x10\x03J\x04\b\b\x10\tR\x06pluginR\x05queue\"\xcf\x03\n" +
 	"\aOrkflow\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
@@ -437,7 +466,9 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"sourceYaml\x129\n" +
 	"\n" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x1c\n" +
-	"\tnamespace\x18\t \x01(\tR\tnamespace\x1a9\n" +
+	"\tnamespace\x18\t \x01(\tR\tnamespace\x12+\n" +
+	"\x11definition_digest\x18\n" +
+	" \x01(\tR\x10definitionDigest\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\xa8\x01\n" +

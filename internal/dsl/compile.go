@@ -56,22 +56,26 @@ func checkSlug(kind, value string) error {
 	return nil
 }
 
-// KnownPlugins is retained only so a caller that still passes it compiles.
-//
-// Rule 6 no longer checks it: a task names an IMAGE, and whether a reference
-// resolves is decided at apply time by the registry, not by a hardcoded list
-// in the compiler (§4). It is unused and will be removed with the catalog work.
-//
-// Historical note. There is
-// no runtime plugin registry in M2, so the compiler validates against the
-// documented builtins (docs/PLUGINS.md).
-var KnownPlugins = []string{"container", "file", "http", "shell"}
-
 // Options tunes compilation.
+//
+// Compile stays PURE: no network, no clock, no environment (§4.3). A catalog
+// is configuration, so it arrives as an argument rather than being read from
+// the process — which is also what keeps every hermetic compiler test, and
+// TestCompile_AcceptsEveryShippedExample, independent of how this binary
+// happens to be configured.
 type Options struct {
-	// KnownPlugins overrides the accepted `plugin:` names. Empty means
-	// KnownPlugins.
-	KnownPlugins []string
+	// Catalog is the deployment's activity table (§4.2). Nil selects
+	// BuiltinActivityCatalog, which is what the shipped examples compile
+	// against.
+	Catalog Catalog
+}
+
+// catalog is Options.Catalog with its documented default applied.
+func (o Options) catalog() Catalog {
+	if o.Catalog == nil {
+		return BuiltinActivityCatalog()
+	}
+	return o.Catalog
 }
 
 // document is the YAML shape of a *.ork.yaml file.
@@ -173,6 +177,28 @@ func CompileFile(path string) (*orkstackv1.Orkflow, error) {
 		return nil, fmt.Errorf("dsl: %s: %w", path, err)
 	}
 	return wf, nil
+}
+
+// DocumentPinsVersion reports whether the document names its own `version:`.
+//
+// It exists because §4.4(b) moves the DERIVATION of an unpinned version out of
+// Compile and into the apply path, after image resolution — and the applier
+// therefore has to tell "the author pinned 1.2.0" from "Compile derived this
+// from the source". It cannot read that off the compiled message, because both
+// arrive as a non-empty Version.
+//
+// The alternative was for Compile to leave Version empty and let every caller
+// derive it, which would mean `orkctl orkflow validate` and every hermetic
+// test either duplicating the derivation or reporting a versionless orkflow.
+// One small parse here is cheaper than that.
+func DocumentPinsVersion(source []byte) (bool, error) {
+	var doc struct {
+		Version string `yaml:"version"`
+	}
+	if err := yaml.Unmarshal(source, &doc); err != nil {
+		return false, fmt.Errorf("parse yaml: %w", err)
+	}
+	return doc.Version != "", nil
 }
 
 // Compile parses, validates, and compiles a DSL document. The returned

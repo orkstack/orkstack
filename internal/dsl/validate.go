@@ -11,9 +11,9 @@ import (
 // validate enforces the eight documented DSL rules (docs/DSL.md).
 func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	// opts.KnownPlugins is no longer consulted: rule 6 checks that `uses:`
-	// is present and unambiguous, not that it names something this binary
-	// was compiled to know about.
-	_ = opts
+	// is present and resolvable through the CATALOG, not that it names
+	// something this binary was compiled to know about.
+	catalog := opts.catalog()
 
 	// Rule 1: an explicit namespace is a slug. Absent is legal and means the
 	// built-in "default" namespace, so an empty value is not checked here —
@@ -62,27 +62,28 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		}
 		// Rule 6: `uses:` names the activity, and it is required.
 		//
-		// It is NOT checked against a list of known names. A task names an
-		// image, and whether a reference resolves is decided at APPLY by the
-		// registry (§4.3) — a hardcoded compiler list would refuse every
-		// third-party image, which is the opposite of "any OCI image can
-		// become a durable production activity".
+		// It is checked against the CATALOG, not against a list of plugin
+		// names this binary was compiled with. §4.2's four rules decide what
+		// a value means: a template can never be pinned (rule 1); a slug that
+		// is a catalog key is that entry (rule 2); anything carrying `/`, `:`
+		// or `@` is a reference and is taken as itself (rule 3); anything
+		// else names nothing (rule 4).
+		//
+		// Rule 3 is what keeps "any OCI image can become a durable production
+		// activity" true: a third-party reference needs no catalog entry, and
+		// the compiler never asks whether it exists — that is the registry's
+		// answer, at APPLY (§4.3), not a hardcoded list's.
+		//
+		// This runs in the compiler AND again in internal/api before Put, as
+		// §4.2 specifies. The compiler's copy is the one an author sees while
+		// editing; the applier's is the one nothing can skip.
 		if task.GetUses() == "" {
 			return fmt.Errorf("task %q: `uses:` is required — it names the activity, "+
 				"either a catalog name (\"shell\") or a registry reference "+
 				"(\"ghcr.io/acme/migrate:v3\")", task.GetId())
 		}
-		// A templated `uses:` cannot compile, and this is a deliberate
-		// capability loss recorded in §17 rather than an oversight. Image
-		// resolution happens at apply time so a run pins a digest; a
-		// reference selected from `{{ .inputs.image }}` is not knowable then,
-		// and pinning is what makes the commit protocol's identity check mean
-		// anything.
-		if strings.Contains(task.GetUses(), "{{") {
-			return fmt.Errorf("task %q: `uses:` cannot be a template (%q). The engine resolves "+
-				"it to an immutable digest when the orkflow is applied, which a value that "+
-				"depends on run input cannot have. Put the choice in the container, or apply "+
-				"one orkflow version per image", task.GetId(), task.GetUses())
+		if _, err := catalog.ResolveUses(task.GetId(), task.GetUses()); err != nil {
+			return err
 		}
 		// Rule 6b: the network mode is one of exactly two.
 		switch task.GetNetwork() {
