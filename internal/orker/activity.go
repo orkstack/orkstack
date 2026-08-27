@@ -235,7 +235,7 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// lock is free, any previous holder is gone and its containers really are
 	// orphans; if it is held, a peer is alive and this Orker refuses rather
 	// than destroying that peer's running work.
-	if err := a.claimIdentity(root); err != nil {
+	if err := a.claimIdentity(); err != nil {
 		return err
 	}
 	// Reap this Orker's own previous life's containers. An Orker crash does
@@ -247,22 +247,29 @@ func (a *Activities) Boot(ctx context.Context) error {
 }
 
 // claimIdentity takes the process-lifetime lock that makes reaping by a stable
-// identity safe. The lock file is named for the identity, not the work root, so
-// two Orkers given distinct ORK_ORKER_ID values never contend.
-func (a *Activities) claimIdentity(root string) error {
-	path := filepath.Join(root, ".ork-orker-"+safeNameComponent(a.dispatcher.OrkerID)+".lock")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+// identity safe. The lock lives in a host directory independent of the
+// workspace: one identity must have one holder even when two processes use
+// different work roots. Otherwise two Orkers explicitly given the same
+// ORK_ORKER_ID could each acquire a different lock and force-remove the other's
+// running containers at boot.
+func (a *Activities) claimIdentity() error {
+	dir := filepath.Join(os.TempDir(), "orkstack-orker-identity-locks")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("%s: create the orker identity lock directory %s: %w", ReasonWorkdirFailed, dir, err)
+	}
+	sum := sha256.Sum256([]byte(a.dispatcher.OrkerID))
+	path := filepath.Join(dir, hex.EncodeToString(sum[:])+".lock")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return fmt.Errorf("%s: open the orker identity lock %s: %w", ReasonWorkdirFailed, path, err)
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = file.Close()
 		return fmt.Errorf(
-			"another live orker already holds the identity %q under %s; a second orker "+
-				"sharing one identity would force-remove the first one's RUNNING containers "+
-				"at boot (§5.5). Give this orker its own identity with %s, or its own "+
-				"workspace root with %s",
-			a.dispatcher.OrkerID, root, OrkerIDVar, WorkRootVar)
+			"another live orker already holds the identity %q; a second orker sharing one identity "+
+				"would force-remove the first one's RUNNING containers at boot (§5.5). "+
+				"Give this orker its own identity with %s",
+			a.dispatcher.OrkerID, OrkerIDVar)
 	}
 	a.identityLock = file
 	return nil
@@ -305,8 +312,16 @@ func defaultOrkerID(workRoot string) string {
 	if root == "" {
 		root = os.TempDir()
 	}
-	if abs, err := filepath.Abs(root); err == nil {
+	abs, err := filepath.Abs(root)
+	if err == nil {
 		root = abs
+		// A restart may spell one existing directory through a symlink. Resolve
+		// that alias before hashing so it retains the predecessor's reaper key.
+		// EvalSymlinks legitimately fails before Boot creates a new root, so the
+		// absolute path remains the deterministic fallback.
+		if canonical, evalErr := filepath.EvalSymlinks(abs); evalErr == nil {
+			root = canonical
+		}
 	}
 	sum := sha256.Sum256([]byte(root))
 	return fmt.Sprintf("%s-%s", safeNameComponent(host), hex.EncodeToString(sum[:4]))

@@ -113,6 +113,9 @@ func TestDefaultOrkerID_SurvivesARestartSoTheReaperCanMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if canonical, evalErr := filepath.EvalSymlinks(abs); evalErr == nil {
+		abs = canonical
+	}
 	sum := sha256.Sum256([]byte(abs))
 	want := safeNameComponent(host) + "-" + hex.EncodeToString(sum[:4])
 	if orphanOwner != want {
@@ -179,4 +182,66 @@ func TestBoot_RefusesASecondLiveOrkerOnOneIdentity(t *testing.T) {
 		t.Fatalf("replacement Boot after the predecessor released: %v", err)
 	}
 	replacement.Close()
+}
+
+// TestDefaultOrkerID_ResolvesSymlinkedWorkRoot proves that one directory has
+// one reaper identity even when a restart spells the configured root through
+// a symlink. The identity is the reaper's only key.
+func TestDefaultOrkerID_ResolvesSymlinkedWorkRoot(t *testing.T) {
+	t.Setenv(OrkerIDVar, "")
+	realRoot := t.TempDir()
+	linkParent := t.TempDir()
+	linkRoot := filepath.Join(linkParent, "work")
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Fatalf("symlink work root: %v", err)
+	}
+
+	realID := defaultOrkerID(realRoot)
+	linkID := defaultOrkerID(linkRoot)
+	if linkID != realID {
+		t.Fatalf("one work directory minted two identities: real %q, symlink %q", realID, linkID)
+	}
+}
+
+// TestBoot_RefusesOneExplicitIdentityAcrossDifferentWorkRoots proves that the
+// identity lock is scoped by identity, not by workspace. Otherwise two live
+// Orkers explicitly named alike can both boot under different roots, and the
+// second one's reap destroys the first one's running containers.
+func TestBoot_RefusesOneExplicitIdentityAcrossDifferentWorkRoots(t *testing.T) {
+	id := "shared-" + safeNameComponent(t.Name())
+	runtime := &reapRecorder{labelled: map[string]int{}}
+
+	newExplicitLife := func(root string) *Activities {
+		store, err := artifacts.NewLocalStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		return NewActivitiesWithOptions(store, Options{
+			Runtime:  runtime,
+			WorkRoot: root,
+			OrkerID:  id,
+		})
+	}
+
+	first := newExplicitLife(t.TempDir())
+	if err := first.Boot(context.Background()); err != nil {
+		t.Fatalf("first Boot: %v", err)
+	}
+	t.Cleanup(first.Close)
+	runtime.labelled[id] = 2
+
+	second := newExplicitLife(t.TempDir())
+	err := second.Boot(context.Background())
+	if err == nil {
+		second.Close()
+		t.Fatal("two Orkers sharing one explicit identity booted under different roots; " +
+			"the second was allowed to reap the first's live containers")
+	}
+	if runtime.labelled[id] != 2 {
+		t.Fatalf("the refused Orker reaped live containers before claiming identity: %v", runtime.labelled)
+	}
+	if !strings.Contains(err.Error(), OrkerIDVar) {
+		t.Fatalf("refusal %q does not tell the operator to choose a distinct %s", err, OrkerIDVar)
+	}
 }
