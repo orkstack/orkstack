@@ -93,12 +93,16 @@ The repo already works this way: `proto/orkstack/v1/orkflow.proto:37-38` carries
 committed Temporal replay fixture (§11.4).
 
 Measured, not asserted (§14.6): the full proto below compiles, passes `buf
-lint`, and passes `buf breaking --against` the current tree under both
-`WIRE_JSON` and `FILE` minus `FIELD_NO_DELETE`. The single complaint under the
-repo's literal `breaking: use: [FILE]` is that `Task.plugin` was deleted — and
-the same command reports the identical complaint for the `queue` field the repo
-already reserved, so this design is no less compatible than the tree it edits.
-`make proto` runs `buf lint` and `buf generate`, not `buf breaking`.
+lint`, generates Go, and passes `buf breaking --against` the current tree under
+`WIRE`, under `WIRE_JSON`, and under `FILE` minus the deletion rules. Under the
+repo's literal `breaking: use: [FILE]` it reports **six** complaints, every one
+a deletion this design makes on purpose: `Task.plugin` and `TaskRun.plugin`
+reserved rather than reused, and the four `service.proto` messages the activity
+catalog replaces. The same command reports the identical field complaint for
+the `queue` field the repo already reserved, so this design is no less
+compatible than the tree it edits. `make proto` runs `buf lint` and
+`buf generate`, not `buf breaking`; adding it to `make merge-check` would make
+the rule enforced rather than merely configured.
 
 ### 2.2 New file: `proto/orkstack/v1/activity.proto`
 
@@ -154,6 +158,13 @@ message ImageRef {
   // them, and only into ExecuteTaskResult.image and ActivityCommit.image.
   string platform_digest = 9;
   string platform = 10;
+  // delivery records how the Orker obtained the image for this execution:
+  // "registry" (pulled) or "embedded" (loaded from the OCI image layout,
+  // §4.6). The engine leaves it empty; only an Orker fills it, beside
+  // platform_digest. It exists because objective deliverable 10's embedded
+  // fallback is otherwise invisible after the fact: an operator debugging a
+  // stale builtin needs to know the pull did not happen.
+  string delivery = 11;
 }
 
 // ---------------------------------------------------------------- execution shape
@@ -183,10 +194,17 @@ message SecretRef {
   // "file:/etc/orkstack/secrets/db". Orker policy decides which schemes exist.
   string source = 2;
 }
-
-// WorkspaceLimits are the contract limits the Orker enforces after the
-// container exits. They also appear verbatim in /orkstack/input/task.json so a
-// workload can respect them instead of discovering them by failing.
+// WorkspaceLimits are the deployment-wide CONTRACT limits the Orker enforces
+// after the container exits. They also appear verbatim in
+// /orkstack/input/task.json so a workload can respect them instead of
+// discovering them by failing.
+//
+// These are engine configuration and are uniform across a deployment, which is
+// what lets them travel on RunPlan and lets the engine run its own
+// INPUT_TOO_LARGE check. Orker-local RESOURCE policy — cpu, memory, pids caps
+// — is deliberately NOT here: it varies per pool, the engine does not own it,
+// and it reaches the workload as the effective values in task.json instead
+// (§5.2, §9.3).
 message WorkspaceLimits {
   int64 values_max_bytes = 1;      // default 262144 (256 KiB)
   int32 artifact_max_count = 2;    // default 256
@@ -234,12 +252,18 @@ message ExecuteTaskInput {
   string task_id = 7;
 
   // --- identity
-  // task_idempotency_key is the stable key of one logical activity, unchanged
+  // idempotency_key is the stable key of one logical activity, unchanged
   // across every retry (AGENTS.md §3, §4). Its value is exactly
   //   "{namespace-or-default}/{run_id}/{task_id}"
-  // It is deliberately NOT the run-submission idempotency key handled by
-  // IdempotencyClaimWorkflow; the two are different things (§11.5).
-  string task_idempotency_key = 8;
+  //
+  // The name is plain, not "task_idempotency_key", for two reasons: its wire
+  // JSON (`idempotencyKey`) is then byte-identical to the key the workspace
+  // already writes into /orkstack/input/task.json, and there is nothing to
+  // collide with — proto scopes field names per message, and the run
+  // submission key lives on a different message entirely
+  // (SubmitRunRequest.idempotency_key = 4, service.proto:210). The Go
+  // identifiers stay distinct (§11.5).
+  string idempotency_key = 8;
   // commit_uri is the deterministic object URI of this activity's commit
   // record. The engine composes it from the commit-store root carried in
   // RunPlan (decided at submit, outside workflow code) plus the run and task
@@ -271,6 +295,11 @@ message ExecuteTaskInput {
   // --- context
   Payload run_input = 20;               // exposed to templates as .inputs
   repeated UpstreamRef upstream = 21;   // exposed as .tasks.<id>
+
+  // run_as_orker_user makes the Orker add --user <orker-uid>:<orker-gid>, so
+  // it owns every file the workload writes and can read them whatever umask
+  // the image uses (§3.1). Opt-in, because it overrides the image's own USER.
+  bool run_as_orker_user = 22;
 }
 
 // CommitRef points at a written ActivityCommit object.
@@ -344,9 +373,9 @@ message ActivityCommit {
   string orkflow_name = 5;
   string orkflow_version = 6;
   string orkflow_definition_digest = 7;
-  string task_idempotency_key = 8;
+  string idempotency_key = 8;
 
-  ImageRef image = 9;                        // with platform_digest set
+  ImageRef image = 9;                        // with platform_digest and delivery set
   int32 exit_code = 10;                      // always 0 in schema_version 1
   ArtifactRef values = 11;
   repeated ArtifactRef artifacts = 12;
@@ -438,6 +467,9 @@ message Task {
   ResourceRequest resources = 15;
   NetworkMode network = 16;
   int32 cancellation_grace_period_seconds = 17;
+  // run_as_orker_user is the §3.1 escape hatch, per task. It changes what
+  // runs, so it is part of canonicalOrkflow(Task) (§4.4).
+  bool run_as_orker_user = 18;
 }
 ```
 
@@ -491,9 +523,62 @@ message Run {
 
 `run.proto` must import `orkstack/v1/activity.proto` for `CommitRef`.
 
-`proto/orkstack/v1/service.proto` — `PluginInfo` and `ListPlugins`-shaped
-surfaces are replaced by an activity catalog read (`ListActivities`) and
-`DescribeOrker`. Existing field numbers in those messages stay reserved.
+`proto/orkstack/v1/service.proto` — the activity catalog is a cross-process
+contract and must be frozen at the same fidelity `run.proto` just got.
+`PluginService` is what it replaces, and that surface is concrete today:
+`PluginService.ListPlugins`, `PluginInfo{name=1, version=2, description=3,
+input_schema=4, output_schema=5}` and `ListPluginsResponse{plugins=1}`
+(`proto/orkstack/v1/service.proto:411-448`).
+
+```proto
+// ActivityService reports what this deployment can run. It replaces
+// PluginService: an activity is an image, and which images exist is engine
+// configuration (§4.2), not something to ask an Orker.
+service ActivityService {
+  rpc ListActivities(ListActivitiesRequest) returns (ListActivitiesResponse);
+  // DescribeOrker is the pool-liveness probe that replaces ListPlugins in
+  // that role (§6.5). It is dispatched as a Temporal activity on a pool's
+  // queue, exactly where the ListPlugins probe went.
+  rpc DescribeOrker(DescribeOrkerRequest) returns (DescribeOrkerResponse);
+}
+
+message ListActivitiesRequest {}
+
+// ActivityInfo is one catalog entry, resolved.
+message ActivityInfo {
+  string name = 1;          // catalog key, e.g. "shell"
+  string reference = 2;     // as configured, e.g. ghcr.io/orkstack/activity-shell:0.1
+  string index_digest = 3;  // resolved, "sha256:<64 hex>"
+  string media_type = 4;
+  repeated string platforms = 5;
+  google.protobuf.Timestamp resolved_at = 6;
+}
+
+message ListActivitiesResponse {
+  // activities is ordered by name, matching ListPoolsResponse.pools
+  // ("ordered by name", service.proto:405-407). A stable order is part of the
+  // contract, not an implementation detail: the Admin page renders it.
+  repeated ActivityInfo activities = 1;
+}
+
+message DescribeOrkerRequest {}
+message DescribeOrkerResponse { DescribeOrkerResult orker = 1; }
+
+// PluginService, PluginInfo, ListPluginsRequest and ListPluginsResponse are
+// DELETED, not repurposed. A file-level note records why, and no new message
+// reuses those names. Deleting whole messages is not a field-number reuse, so
+// §2.1's rule is untouched.
+```
+
+`service.proto` must import `orkstack/v1/activity.proto` for
+`DescribeOrkerResult`, and must **drop its `google/protobuf/struct.proto`
+import**: `PluginInfo.input_schema`/`output_schema` are its only users
+(`proto/orkstack/v1/service.proto:445-446`), so removing that message leaves the
+import unused
+and `buf lint` fails the build (verified, §14.6). Note `ActivityInfo.resolved_at`
+is a *read-model* field on a live catalog read and is unrelated to the
+`ImageRef.resolved_at` that §2.2 reserves: nothing hashes it, and it is never
+stored in a version document.
 
 ### 2.4 What dies in Go
 
@@ -576,8 +661,10 @@ from §9.1:
    (§14.8: `mode=600 owner=65534:65534`). Classifying it as
    `ARTIFACT_UPLOAD_FAILED` — infrastructure, retryable — would loop forever
    against deterministic image behavior, which AGENTS.md §11 forbids.
-2. **Give an explicit escape hatch.** A task may set `runAsOrkerUser: true`,
-   or an Orker may set `ORK_ORKER_FORCE_USER=1`, which adds
+2. **Give an explicit escape hatch.** A task may set `runAsOrkerUser: true`
+   (`Task.run_as_orker_user = 18`, `ExecuteTaskInput.run_as_orker_user = 22`,
+   surfaced to the workload as `task.runAsOrkerUser` in `task.json`), or an
+   Orker may set `ORK_ORKER_FORCE_USER=1`, which adds
    `--user <orker-uid>:<orker-gid>`. The Orker then owns every written file
    and reads it whatever the umask — verified (§14.8). It is opt-in because
    it overrides the image's own `USER` and breaks images that need their
@@ -723,11 +810,13 @@ absence rather than treating it as an error.
 | `task.id` | string | required | — | slug |
 | `task.attempt` | integer | required | — | 1-based Temporal attempt |
 | `task.pool` | string | required | `"main"` | resolved pool name |
+| `task.runAsOrkerUser` | boolean | optional | absent = false | present and true when the Orker overrode the image's `USER` (§3.1), so a workload can see why its UID is not the one its image declared |
 | `image.reference` | string | required | — | as authored |
 | `image.pinned` | string | required | — | `{registry}/{repo}@sha256:…` — what ran |
 | `image.indexDigest` | string | required | — | `sha256:<64 hex>` |
 | `image.platformDigest` | string | optional | absent | present once the Orker resolved the platform manifest |
 | `image.platform` | string | optional | absent | `os/arch[/variant]` |
+| `image.delivery` | string | optional | absent | `"registry"` or `"embedded"` (§4.6) |
 | `limits.timeoutSeconds` | integer | required | — | container wall clock |
 | `limits.cancellationGracePeriodSeconds` | integer | required | — | SIGTERM→SIGKILL window |
 | `limits.valuesMaxBytes` | integer | required | — | §3.4 |
@@ -849,7 +938,7 @@ Plain text works with no logging SDK. Structured JSON is not part of the ABI.
 ```
 APPLY TIME (engine, internal/api, once per version)
   uses: "shell"                      catalog lookup
-     └─> ghcr.io/orkstack/shell:0.1   registry HEAD /v2/<repo>/manifests/<tag>
+     └─> ghcr.io/orkstack/shell:0.1   registry GET /v2/<repo>/manifests/<tag>
           └─> sha256:9ab2…            Docker-Content-Digest
                └─> ImageRef{pinned: "ghcr.io/orkstack/shell@sha256:9ab2…"}
                     └─> stamped into the immutable Orkflow version document
@@ -906,24 +995,52 @@ already stamped (`internal/api/service.go:342-393`).
 The resolver:
 
 1. Collects the distinct `uses` values of the compiled tasks.
-2. For each, issues `HEAD /v2/<repository>/manifests/<tag-or-digest>` with the
-   **exact** `Accept` header set the Orker will use at pull time, and reads
-   `Docker-Content-Digest`. Sending a different `Accept` set at resolve and pull
-   can select a different object (OCI distribution-spec content negotiation).
-3. For an already-pinned `repo@sha256:…` it still issues the HEAD, and requires
-   a `200` whose `Docker-Content-Digest` equals the pin. Apply MUST NOT succeed
+2. For each, issues a **`GET /v2/<repository>/manifests/<tag-or-digest>`** with
+   the **exact** `Accept` header set the Orker will use at pull time. A
+   different `Accept` set at resolve and pull can select a different object
+   (OCI distribution-spec content negotiation).
+
+   It must be a GET, not a HEAD, and this is not a preference. §4.4 hashes
+   `ImageRef.platforms` into the definition digest, and `platforms` comes from
+   the index's `manifests[].platform` array — which lives in the response
+   **body**. HTTP forbids content on a HEAD response, and the OCI spec's HEAD
+   requires only `Docker-Content-Digest` and `Content-Length`. A HEAD-only
+   resolver would leave `platforms` empty where a GET-based one fills it, and
+   the two would mint **different definition digests for the same index** —
+   precisely the non-determinism §4.4 exists to remove.
+3. Computes `sha256` over the **exact response bytes** and requires equality
+   with `Docker-Content-Digest` when the header is present; the spec makes
+   that verification mandatory. A mismatch is `IMAGE_DIGEST_MISMATCH` at apply.
+4. Branches on the response `Content-Type`:
+   - `application/vnd.oci.image.index.v1+json` or
+     `application/vnd.docker.distribution.manifest.list.v2+json` → read
+     `manifests[].platform{os,architecture,variant}` and render each as
+     `os/arch[/variant]`.
+   - any single-manifest media type → `platforms` stays **empty**, as §2.2
+     already specifies.
+
+   `platforms` is recorded in the **index's own order**, not sorted. The digest
+   hashes it, so the order is part of the contract; index order is what the
+   registry returned and needs no second rule to agree on.
+5. For an already-pinned `repo@sha256:…` it still issues the GET, and requires
+   a `200` whose computed body digest equals the pin. Apply MUST NOT succeed
    with an unpullable pin.
-4. Stamps `Task.image`.
+6. Stamps `Task.image`.
 
 Failures are apply-time Connect errors, never silent: `IMAGE_NOT_FOUND` (404),
 `IMAGE_RESOLVE_UNAUTHORIZED` (401/403), `IMAGE_RESOLVE_UNAVAILABLE` (5xx,
 timeout, DNS). No fallback to a tag exists.
 
-**The daemon is not the resolver.** `docker image inspect .RepoDigests` reports
+**There is exactly one resolver.** `docker image inspect .RepoDigests` reports
 whatever the daemon negotiated for the platform it pulled, and
 `docker manifest inspect --verbose` does not reliably surface a parent index
-digest. Resolution goes to the registry, over the distribution API, or through
-`docker buildx imagetools inspect`, which does report the index digest (§14.4).
+digest — so the daemon is not the resolver. Neither is
+`docker buildx imagetools inspect`, which an earlier draft offered as an
+alternative: a second resolver can disagree with the first about `platforms`
+and therefore about the definition digest, and §4.4's whole argument is that
+one definition has one digest. Resolution goes to the registry over the
+distribution API, and nowhere else. (`imagetools inspect` remains fine as a
+human diagnostic, which is all §14.4 uses it for.)
 
 ### 4.4 Where the digest lives, and what it does to versioning
 
@@ -955,10 +1072,12 @@ serializer:
 > `tasks`. **Not** `source_yaml`, **not** `created_at`.
 > `Task`: `id`, `uses`, `image`, `with`, `needs`, `condition`,
 > `timeout_seconds`, `retry`, `pool`, `command`, `env`, `secrets`, `resources`,
-> `network`, `cancellation_grace_period_seconds`.
+> `network`, `cancellation_grace_period_seconds`, `run_as_orker_user`.
 > `ImageRef`: `reference`, `registry`, `repository`, `index_digest`, `pinned`,
-> `media_type`, `platforms`. (`resolved_at` no longer exists; `platform_digest`
-> and `platform` are always empty in a definition and are not serialized.)
+> `media_type`, `platforms`, in the index's own order (§4.3 step 4).
+> (`resolved_at` no longer exists; `platform_digest`, `platform` and `delivery`
+> are always empty in a definition — they are per-execution facts an Orker
+> records — and are not serialized.)
 >
 > `orkflow_definition_digest = "sha256:" + hex(sha256(canonicalOrkflow(wf)))`
 
@@ -1038,12 +1157,37 @@ same string it would have verified after a pull:
 
 ```
 Runtime.Pull(pinned) fails (network, registry down, rate limit)
-  → look up image.index_digest in <layout>/index.json
+  → Runtime.LoadLayout(layoutPath, image.index_digest)
   → miss  → InfrastructureError/IMAGE_PULL_FAILED   (retryable, as before)
-  → hit   → load the blob, verify sha256(blob) == index_digest
-            mismatch → ContractViolation/IMAGE_DIGEST_MISMATCH
-            match    → run it, and record source="embedded" in the commit
+  → hit   → verify, run, and set ImageRef.delivery = "embedded"
+            digest mismatch → ContractViolation/IMAGE_DIGEST_MISMATCH
 ```
+
+**The runtime seam.** `ContainerRuntime` (§6.1) gains one method, because
+§6.1's own rule forbids Docker-specific detail anywhere else:
+
+```go
+// LoadLayout imports the image addressed by digest from an OCI image layout
+// on local disk and returns the same PullInfo a Pull would have. A digest the
+// layout does not contain returns an error matching ErrNotInLayout.
+LoadLayout(ctx context.Context, layoutPath, digest string) (PullInfo, error)
+```
+
+`DockerRuntime` implements it with `docker load`, which accepts an OCI image
+layout tar — verified, §14.12. No Docker vocabulary escapes
+`runtime_docker.go`.
+
+**Which layer verifies what**, stated rather than implied:
+
+| Object | Verified by | How |
+|---|---|---|
+| the index blob | **OrkStack** | the layout is content-addressed — the blob's file name *is* its digest (`blobs/sha256/<hex>`), and `index.json` names the index digest. Verified against `image.index_digest` (§14.12). |
+| the child platform manifest | the container runtime, on load | it is referenced by digest from the index it just verified |
+| the layer blobs | the container runtime, on load | referenced by digest from the child manifest |
+
+OrkStack verifies the one link that ties the layout to what apply pinned; the
+runtime verifies the rest of the chain, which is what a registry pull would
+also delegate to it. OrkStack does not re-implement layer verification.
 
 The layout is a cache with a proof, not a second source of truth: an image can
 only be served from it if its digest was already resolved from a registry at
@@ -1139,13 +1283,31 @@ type RunPlan struct {
     // CommitRoot is the store root every commit URI in this run is composed
     // against, e.g. "s3://orkstack-artifacts" or "file:///var/lib/ork".
     CommitRoot string `json:"commit_root"`
-    // Limits are the effective WorkspaceLimits for this run, after Orker
-    // policy defaults and caps were applied at submit.
+    // Limits are the deployment-wide CONTRACT limits (§2.2 WorkspaceLimits):
+    // values, artifact count and size, log and commit bounds. They are engine
+    // configuration, uniform across the deployment, and the engine needs them
+    // itself for its own INPUT_TOO_LARGE check.
+    //
+    // They are NOT "effective limits after Orker policy" — an earlier draft
+    // said that and it cannot be true. `internal/engine/pools.go:410-436`
+    // builds `routes` as a map of MANY pools to MANY queues plus a
+    // `tasksByPool` index, so one run genuinely spans pools whose Orkers hold
+    // different caps; and `internal/api` owns no worker-local policy at all —
+    // §9.3 puts cpu/memory/pids caps in ORK_ORKER_* on the Orker. A single
+    // submit-time value cannot represent per-pool policy, so it does not try.
     Limits WorkspaceLimits `json:"limits"`
 }
 ```
 
-The workflow then composes `commit_uri` as
+**Resource policy stays where it is enforced.** The Orker applies its own
+`ORK_ORKER_MAX_CPU` / `ORK_ORKER_MAX_MEMORY` / `ORK_ORKER_PIDS_LIMIT`, refuses
+an over-cap request with `ContractViolation/RESOURCE_REQUEST_REFUSED` (§9.3),
+and writes the **effective** values into `task.json` — which is already exactly
+how §3.2 documents `resources.*` ("as requested/capped; absent means Orker
+default"). Neither half claims knowledge it does not have: the engine owns
+contract limits, the Orker owns resource policy.
+
+The workflow composes `commit_uri` as
 `plan.CommitRoot + "/" + CommitKey(namespace, runID, taskID)`, which is a pure
 function of workflow arguments and replays identically. The Orker MUST use the
 value it was sent rather than re-deriving one, so there is exactly one
@@ -1274,7 +1436,7 @@ namespace                 == input.namespace
 run_id                    == input.run_id
 task_id                   == input.task_id
 orkflow_definition_digest == input.orkflow_definition_digest
-task_idempotency_key      == input.task_idempotency_key
+idempotency_key           == input.idempotency_key
 image.index_digest        == input.image.index_digest
 ```
 
@@ -1289,18 +1451,56 @@ was pulled, and what does not vary by host.
 
 **The undecodable commit.** An object exists at `commit_uri` but is not valid
 `ActivityCommit` JSON — a torn write from a pre-`link(2)` Orker, or corruption.
-This is the one branch that is neither of the two obvious answers: treating it
-as "no commit" would let a second container run after a possible durable
-commit, and treating it as `COMMIT_IDENTITY_MISMATCH` would permanently wedge a
-run on a transient read. The rule is **retry once, then terminal**: re-read the
-object on the next attempt (a truncated read can succeed on a retry), and if it
-still does not decode, fail with `ContractViolation/COMMIT_UNDECODABLE`, naming
-the URI and its size. That is an operator-actionable terminal state — inspect
-or delete one named object — and never a silent re-execution.
+Treating it as "no commit" would let a second container run after a possibly
+durable commit; treating it as `COMMIT_IDENTITY_MISMATCH` would wedge a run on
+a transient read.
 
-Adoption does not re-verify artifact bytes: they may have been expired by a
+The rule is an **in-attempt reread**, and it needs no cross-attempt state:
+re-read the object once after a short backoff, **within the same attempt**. If
+it decodes, continue at the matching branch above. If it does not, the stored
+bytes are corrupt — not in flight — and the attempt fails with
+`ContractViolation/COMMIT_UNDECODABLE`, naming the URI and its size.
+
+An earlier draft said "retry once on the *next* attempt", which is not
+implementable as written: §6.4 makes the Orker stateless and disposable, a
+retry may land on a different host, Temporal's attempt counter counts every
+failure cause rather than consecutive undecodable reads, and §8.2 listed no
+retryable code for the first occurrence — so an implementer following the
+table literally failed terminally on read one, the outcome the branch exists
+to avoid. The only durable cross-attempt carrier available would be a second
+marker object, i.e. a second durability mechanism to prove, which §17 C4
+already warns against.
+
+A truncated read is a read-time artifact, so one immediate reread separates it
+from genuine corruption without any carrier. And once Phase 2's `link(2)`
+publication lands, a torn commit cannot be created at all, so this branch only
+ever fires for real corruption.
+
+**Adoption reconstructs the full result, including the inline copy.** The
+commit stores `values` as an `ArtifactRef`, while `ExecuteTaskResult` carries
+`values_json` inline at ≤ 4096 bytes. If adoption simply returned the commit,
+the same task would produce a populated `TaskRun.output` on a fresh attempt and
+an empty one on an adopted attempt — a read-model difference decided by nothing
+but which Orker happened to crash. So an adopting Orker:
+
+```
+commit.values.size_bytes <= 4096
+  → GET commit.values.uri
+  → verify sha256 == commit.values.sha256
+       mismatch → ContractViolation/VALUES_CORRUPT     (the store lied; terminal)
+       fetch failed → InfrastructureError/VALUES_REFETCH_FAILED  (retryable)
+  → set values_json, values_inlined = true
+commit.values.size_bytes > 4096
+  → values_json stays empty, values_inlined = false, exactly as a fresh run
+```
+
+The cost is one GET on a rare path, and the benefit is that `commit_adopted`
+changes nothing an API consumer can observe except the flag itself.
+
+Adoption does **not** re-verify artifact bytes: they may have been expired by a
 lifecycle rule, and a commit is a record of what happened, not a live guarantee
-that every byte still exists.
+that every byte still exists. `values` is the one exception, because it is
+being copied into the result rather than merely referenced.
 
 **Success path**, in this exact order (AGENTS.md §4.1):
 
@@ -1412,6 +1612,11 @@ func (d *OCIDispatcher) Execute(ctx context.Context, in *orkstackv1.ExecuteTaskI
 // internal/orker/runtime.go — portability boundary, not a framework
 type ContainerRuntime interface {
     Pull(ctx context.Context, pinned string) (PullInfo, error)   // PullInfo: platform digest, platform, cached bool
+    // LoadLayout imports the image addressed by digest from a local OCI image
+    // layout — the embedded fallback of §4.6 — and returns the PullInfo a
+    // Pull would have. A digest the layout does not hold returns an error
+    // matching ErrNotInLayout.
+    LoadLayout(ctx context.Context, layoutPath, digest string) (PullInfo, error)
     Create(ctx context.Context, spec ContainerSpec) (ContainerID, error)
     Start(ctx context.Context, id ContainerID, stdout, stderr io.Writer) error
     Signal(ctx context.Context, id ContainerID, sig Signal) error
@@ -1425,6 +1630,13 @@ Exactly one implementation ships: `DockerRuntime`, shelling out to `docker` as
 Podman, containerd, Kubernetes Jobs, ECS or Nomad remain *possible*, not because
 any of them is planned. **No Docker-specific detail may appear outside
 `internal/orker/runtime_docker.go`.**
+
+**The interface split is also the failure classification.** `Create` and
+`Start` return `error`; `Wait` returns `(ExitStatus, error)`. A container that
+never started never reaches `Wait`. So "the runtime refused" and "the workload
+failed" are distinguished by *which call failed*, not by inspecting a number —
+which matters because exit codes 125, 126 and 127 carry no runtime guarantee
+(§8.2, measured in §14.13).
 
 ### 6.2 What survives from today's Orker
 
@@ -1482,7 +1694,35 @@ Timeouts, which must not be confused:
 |---|---|---|---|
 | `timeout_seconds` | Orker | task's `timeout:` | Kills the container (SIGTERM→grace→SIGKILL), returns `TimedOut/CONTAINER_TIMEOUT`. Fires first. |
 | `HeartbeatTimeout` | Temporal | 30 s | Detects a dead Orker. Produces a Temporal `*TimeoutError` with `TIMEOUT_TYPE_HEARTBEAT`. |
-| `StartToCloseTimeout` | Temporal | `timeout_seconds + grace + 120 s` | Backstop for an Orker wedged outside the container run. `TIMEOUT_TYPE_START_TO_CLOSE`. |
+| `StartToCloseTimeout` | Temporal | `timeout_seconds + grace + transfer_budget` | Backstop for an Orker wedged outside the container run. `TIMEOUT_TYPE_START_TO_CLOSE`. |
+
+**`transfer_budget` is derived, not a constant.** An earlier draft used a fixed
+120 s, which is the one number in this section with no measurement behind it,
+and it is not survivable: inside that window sit input staging (step 5), the
+image pull (step 7), hashing (step 12) and uploading up to
+`artifact_max_count` × `artifact_max_bytes` — 256 × 5 GiB at the documented
+defaults. Worse, `retryPolicyFor` returns `MaximumAttempts: 1` whenever
+`retry:` is absent or `<= 1` (`internal/engine/workflow.go:632-637`), so a
+legal large upload would be **terminal on its first timeout, with no retry at
+all**.
+
+Temporal's own guidance for a long-running activity is a generous
+Start-to-Close paired with a short Heartbeat timeout, because heartbeats do not
+reset Start-to-Close. §6.3's heartbeat loop already supplies dead-worker
+detection, so Start-to-Close only has to be large enough not to kill honest
+work:
+
+```
+transfer_budget = ORK_ORKER_TRANSFER_BUDGET_SECONDS
+                  (default: limits.artifact_max_count × limits.artifact_max_bytes
+                            ÷ ORK_ORKER_FLOOR_THROUGHPUT_BYTES_PER_SEC,
+                   floor 300 s)
+```
+
+An operator who knows their storage sets the seconds directly; one who does not
+gets a bound derived from the limits the deployment already declares. Both are
+decided at submit alongside the other `RunPlan` values, since `ActivityOptions`
+is set in workflow code and may not read process configuration (§5.2).
 
 ### 6.4 Orker state
 
@@ -1528,9 +1768,11 @@ longer something to ask an Orker.
                       (§3.1, §3.4, §3.5), then bound the projected commit
                       (§5.4 step 4) before any byte is uploaded
 13. UPLOAD + COMMIT   hash → artifacts → values.json → streams → commit.json (§5.4)
-14. FAILURE PATH      upload streams and produced artifacts, attach refs to the
-                      error, write NO commit, return the workload's error —
-                      never a storage error in its place
+14. FAILURE PATH      SCAN output/artifacts/ under the same §3.5 + readability
+                      rules, then upload streams and the artifacts that passed;
+                      attach refs and any scan note to the error; write NO
+                      commit; return the workload's error — never a storage
+                      error, and never a scan error, in its place
 15. CLEANUP           Remove container (detached ctx), RemoveAll workdir,
                       stop heartbeat, close log sink, return
 ```
@@ -1540,6 +1782,20 @@ the plugin's error with a storage error "would tell the author their build
 failed because of the bucket" (`internal/orker/activity.go:155-171`, proven by
 proof/M11.3). Under OCI the same rule holds: a workload's exit-1 is reported as
 exit-1 even if the stderr upload also failed.
+
+**The failure path scans too.** An earlier draft sent a non-zero exit from step
+11 straight to step 14, so the regular-file, symlink, device, FIFO,
+readability, count and size rules of §3.5 applied *only* on the success path —
+leaving them unenforced on exactly the path a broken or hostile image is most
+likely to take. Step 14 therefore runs the same scan. What differs is the
+consequence: a violation here is **a note attached to the workload's error**,
+never a replacement for it and never a separate failure. A task that exited 1
+*and* wrote a symlink into `output/artifacts/` is reported as exit 1, with the
+symlink named in the error details and not uploaded.
+
+Discarding everything but `stdout.log`/`stderr.log` on failure would be simpler
+and is rejected: the compiler errors, test reports and core dumps a failing
+task produces are the reason proof/M11.3 exists.
 
 ### 7.2 Data flow, end to end
 
@@ -1630,11 +1886,9 @@ moves the task to a live Orker.
 
 | Reason code | Category | Retryable | Trigger |
 |---|---|---|---|
-| `CONTAINER_EXIT_NONZERO` | ActivityFailed | yes | any non-zero exit not otherwise classified |
-| `CONTAINER_NOT_EXECUTABLE` | ContractViolation | no | exit 126 — the image cannot run the requested command |
-| `CONTAINER_COMMAND_NOT_FOUND` | ContractViolation | no | exit 127 |
+| `CONTAINER_EXIT_NONZERO` | ActivityFailed | yes | **every** non-zero status returned by `Wait`, whatever the number |
 | `CONTAINER_TIMEOUT` | TimedOut | **no** (see §8.1) | Orker killed the container at `timeout_seconds` |
-| `RUNTIME_REFUSED` | InfrastructureError | yes | exit 125 — the daemon refused to start the container |
+| `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran. Sourced from the runtime error, never from an exit code. |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | no | daemon cannot bind the workspace path (`bind source path does not exist`) — a host misconfiguration retrying will not fix |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out |
 | `IMAGE_DIGEST_MISMATCH` | ContractViolation | no | pulled content does not match `image.pinned` |
@@ -1656,16 +1910,33 @@ moves the task to a live Orker.
 | `COMMIT_WRITE_FAILED` | InfrastructureError | yes | conditional PUT failed for a non-precondition reason |
 | `COMMIT_SCHEMA_UNSUPPORTED` | ContractViolation | no | existing commit has an unknown `schema_version` |
 | `COMMIT_IDENTITY_MISMATCH` | ContractViolation | no | existing commit differs on one of the seven identity fields (§5.4) |
-| `COMMIT_UNDECODABLE` | ContractViolation | no | an object exists at `commit_uri` but is not valid `ActivityCommit` JSON, on the second consecutive attempt (§5.4) |
+| `COMMIT_UNDECODABLE` | ContractViolation | no | an object exists at `commit_uri` but is still not valid `ActivityCommit` JSON after the in-attempt reread (§5.4) |
 | `COMMIT_TOO_LARGE` | ContractViolation | no | the projected `ActivityCommit` exceeds `limits.commitMaxBytes`, measured at step 4 before any upload |
 | `COMMIT_STORE_NOT_CONDITIONAL` | InfrastructureError | no | the boot-time two-writer race proved the object store does not implement conditional create; the Orker refuses to start (§5.3) |
 | `OUTPUT_NOT_READABLE` | ContractViolation | no | the Orker cannot open a file the workload wrote; the message names path, mode and owner, and the fix is `umask 022` (§3.1) |
+| `VALUES_CORRUPT` | ContractViolation | no | on adoption, the refetched `values.json` does not match `commit.values.sha256` (§5.4) |
+| `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched (§5.4) |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | request exceeds the Orker's policy cap |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | requested mode is not `default` or `none` |
 
-Note `RUNTIME_REFUSED` versus `WORKSPACE_NOT_BINDABLE`: today's container plugin
-already special-cases the bind-source message inside exit 125 and treats it as
-permanent, and that distinction is preserved.
+**There is no exit-code table, deliberately.** An earlier draft classified exit
+126 as `CONTAINER_NOT_EXECUTABLE` and 127 as `CONTAINER_COMMAND_NOT_FOUND`,
+both `ContractViolation`, both never retried. Measurement kills that: a
+workload choosing `exit 126` produces `.State.ExitCode == 126`, byte-identical
+to the CLI's own diagnostic for a missing entrypoint (§14.13). Since POSIX
+makes 127 the shell's ordinary "command not found" and 126 "not executable", a
+*routine* `activity-shell` failure lands on 127 — and the draft would have
+permanently refused to retry it. AGENTS.md §3.2 says exactly this: *"Any
+non-zero exit means the activity failed. Retry behavior belongs to Temporal
+workflow policy, not magic exit codes such as 42, 43, or 44."*
+
+So the two codes are deleted rather than kept with a caveat. The signal that
+genuinely distinguishes "the runtime refused" from "the workload failed" lives
+at the interface boundary, not in a number: `Create`/`Start` returning an error
+means the container never ran (`RUNTIME_REFUSED`, or `WORKSPACE_NOT_BINDABLE`
+when the runtime error names an unbindable source, which is the distinction
+today's container plugin already draws); every status `Wait` returns is the
+workload's own and is `ActivityFailed`.
 
 ### 8.3 Engine side
 
@@ -1796,8 +2067,31 @@ Rules, all mandatory for first-party images and recommended for everyone:
 1. **`ENTRYPOINT` in exec form.** Shell form runs the process as a child of a
    shell that does not forward signals, so SIGTERM never arrives and every
    cancellation degrades to SIGKILL.
-2. **The entry script ends in `exec`** for the same reason, whenever it hands
-   off to another program.
+2. **`exec` only when the script produces nothing itself.** A script that hands
+   off and is finished with — a thin wrapper — ends in `exec "$@"`, so signals
+   reach the workload directly. **A script that must write `values.json` after
+   the workload exits MUST NOT use `exec`**, because `exec` replaces the shell
+   and nothing after it can run; every successful run would then end in
+   `ContractViolation/VALUES_MISSING`. Such a script MUST instead run the
+   workload in the background, install a TERM trap that forwards to `$!`, and
+   `wait`. See rule 2a. This exception exists because measurement showed the
+   unqualified rule to be unfollowable (§14.14).
+2a. **The background-and-trap shape, exactly.** Three shapes were measured
+   (§14.14) and only one satisfies the contract:
+
+   | Shape | Workload sees SIGTERM? | `values.json` written? | Exit |
+   |---|---|---|---|
+   | `sh -c "$cmd"; rc=$?; …` (naive) | **no** | **no** | 143 |
+   | `exec sh -c "$cmd"` | yes | **no** | 0 |
+   | background + trap + `wait` | yes | yes | 0 |
+
+   The naive shape fails because `--init` forwards SIGTERM to its **direct
+   child only**: tini signals one process and Docker injects `docker-init --`
+   without `-g`, so `entry.sh` — a shell with no trap — dies on the default
+   disposition and takes the grandchild with it. It is not the "degrades to
+   SIGKILL at the grace boundary" one might assume; it is faster and more
+   total, and §10.3's own promise that "SIGTERM is honored within the grace
+   period" would fail for the platform's own reference image.
 3. **`USER` is not root.**
 4. **No `VOLUME`** — it would shadow the workspace mounts.
 5. **The base image is digest-pinned** inside the Dockerfile.
@@ -1815,31 +2109,53 @@ Rules, all mandatory for first-party images and recommended for everyone:
 ```sh
 #!/bin/sh
 # images/activity-shell/entry.sh — the whole SDK is jq and a redirect.
-set -eu
+set -u
 umask 022        # rule 7: outputs must be readable by the Orker (§3.1)
-TASK=/orkstack/input/task.json
+
 CONFIG=/orkstack/input/config.json
-OUT=/orkstack/output
-VALUES="$OUT/values.json"
+VALUES=/orkstack/output/values.json
 
 op=$(jq -r '.op // "exec"' "$CONFIG")
 cmd=$(jq -r '.command // empty' "$CONFIG")
 
+# run_supervised executes the workload as a background child, forwards SIGTERM
+# to it, and returns the child's real exit status.
+#
+# Rules 2 and 2a in one function. `exec` cannot be used here because this
+# script must still write values.json afterwards, and the naive foreground
+# form never receives SIGTERM at all (§14.14).
+run_supervised() {
+    sh -c "$1" &
+    child=$!
+    trap 'kill -TERM "$child" 2>/dev/null' TERM INT
+    wait "$child"
+    rc=$?
+    # POSIX: a trapped signal makes `wait` return >128 IMMEDIATELY, before the
+    # child has actually finished. Wait again on that path only — a second
+    # unconditional wait would discard the status when no signal arrived.
+    if [ "$rc" -gt 128 ]; then
+        wait "$child"
+        rc=$?
+    fi
+    trap - TERM INT
+    return "$rc"
+}
+
 case "$op" in
-  exec)
+  exec|script)
     # The child's exit status IS the activity's exit status. No magic codes.
-    sh -c "$cmd"
+    run_supervised "$cmd"
     rc=$?
     printf '{"exitCode":%d}\n' "$rc" > "$VALUES"
-    exit $rc
+    exit "$rc"
     ;;
   eval)
     # `eval` is documented to treat a non-zero exit as DATA: the evaluation
     # ran, so the activity succeeded. This is one image's contract, not a
     # platform rule, and it is the only way to express it under exit-code
     # semantics without the platform inventing a magic code.
-    value=$(sh -c "$cmd") || rc=$?
-    rc=${rc:-0}
+    value=$(run_supervised "$cmd")
+    rc=$?
     jq -n --arg v "$value" --argjson rc "$rc" '{value:$v, exitCode:$rc}' > "$VALUES"
     exit 0
     ;;
@@ -1849,6 +2165,10 @@ case "$op" in
     ;;
 esac
 ```
+
+Note `set -u` rather than `set -eu`: `-e` would abort the script on the
+workload's first non-zero status, before `values.json` is written, which is the
+same failure rule 2a exists to prevent.
 
 The three first-party images:
 
@@ -1884,19 +2204,31 @@ container**. What `uses: container` meant is now spelled directly:
   command: ["/bin/migrate"]
 ```
 
-The compiler accepts `uses: container` for one release as an alias that
-rewrites to `uses: <with.image>` and lifts `with.command`/`with.env`, so an
-existing document keeps compiling; anything else under `with:` that the old
-plugin interpreted is a compile error naming the replacement.
+**`uses: container` is rejected, not aliased.** An earlier draft kept it for
+one release as an alias rewriting to `uses: <with.image>`. That is a
+compatibility shim, and the objective excludes them in as many words: *"This is
+NOT a backward-compatible migration — the system has not shipped yet, so no
+migration plans or compatibility shims are needed."* It also carried retired
+plugin vocabulary past the clean cut §13 item 1 makes everywhere else by rejecting
+`plugin:` outright. So the compiler rejects `uses: container` with an error
+naming the replacement — the same treatment `internal/dsl/removed.go` already
+gives a removed key. The change is recorded in §17 as an escalation, because
+`container` is named in a user decision.
 
 **One capability genuinely goes away: a templated image.**
-`examples/container-example.ork.yaml` selects its image with
-`{{ .tasks.build.output.image }}`, which cannot be resolved to a digest at
-apply time because the value does not exist until the run. AGENTS.md §5 forbids
-running an unresolved reference, so a templated `uses:` is a compile error
-(`ContractViolation/IMAGE_NOT_PINNED` at validation, not at run time). The
-example is rewritten in Phase 3. This is a real, deliberate loss of expressive
-power, listed in §13 and §17 rather than buried.
+`examples/container-example.ork.yaml:55` selects its image with
+`image: "{{ .inputs.image }}"`, which cannot be resolved to a digest at apply
+time because a run input does not exist until submit — later than apply, and
+later still than the version document that must carry the pin. AGENTS.md §5
+forbids running an unresolved reference, so a templated `uses:` is a compile
+error (`IMAGE_NOT_PINNED` at validation, not at run time). The example is
+rewritten in Phase 3. This is a real, deliberate loss of expressive power,
+listed in §13 and §17 rather than buried.
+
+(An earlier draft cited `{{ .tasks.build.output.image }}` here. That construct
+appears at line 113 of the same file, inside the `record` task's report *text*,
+where it is only interpolated into a string — not an image selector. Phase 3
+would have rewritten the wrong data flow from that citation.)
 
 Two carried-over semantics are documented image contracts, not platform rules:
 
@@ -1929,7 +2261,22 @@ oversize outputs are rejected; SIGTERM is honored within the grace period; a
 non-zero exit is reported as a non-zero exit; and the task timeout kills a
 hung container.
 
-Two assertions exist because probes found real failures they would have caught:
+Three assertions exist because probes found real failures they would have
+caught:
+
+- **SIGTERM actually reaches the workload.** Assert both halves: the workload
+  observes SIGTERM *and* `values.json` exists afterwards. The naive entry
+  script passes neither — the container exits 143 in under 200 ms with the
+  trap never firing and no `values.json` written (§14.14) — while `exec`
+  passes the first and fails the second. This is a sub-second fixture and it
+  is the only thing standing between §10.3's "SIGTERM is honored within the
+  grace period" and a reference image that silently breaks it. It runs
+  **before** any first-party image is written.
+- **Exit codes are not interpreted.** A table fixture over 0, 1, 42, 125, 126
+  and 127 asserting every non-zero maps to `ActivityFailed`, plus a separate
+  case proving a `Create`/`Start` failure maps to `InfrastructureError`. These
+  are the two halves §8.2 distinguishes, and the measurement that forced them
+  is §14.13.
 
 - **Output modes.** Every file the image writes must be readable by a user
   other than the one that wrote it. A dedicated fixture runs the image under
@@ -1955,6 +2302,16 @@ The complete proto lands in Phase 1 so Phases 2 and 3 never renegotiate the
 wire. After Phase 1's freeze, the three phases touch disjoint packages and can
 proceed in parallel across teams.
 
+**Disjointness is by seam, not by feature.** An earlier draft gave Phase 2 "the
+§5.4 sequence, adoption, the identity check, the undecodable branch and 412
+handling" — all of which live in `internal/orker.OCIDispatcher`, which Phase 1
+owns — plus "the UI", which Phase 3 owns. Three teams would have edited two of
+the same packages. The fix is to cut at an interface: **Phase 1 defines and
+lands `artifacts.CommitStore` as an interface with an in-memory
+implementation, plus every `OCIDispatcher` call site that uses it** (steps 0,
+4 and 8 of §5.4). Phase 2 then supplies only *implementations* behind that
+frozen interface and never opens `internal/orker`. Phase 3 keeps all UI work.
+
 ### 11.1 Phase 1 — the wire and the workspace
 
 Owns `proto/`, `internal/task`, `internal/engine`, `internal/orker`.
@@ -1964,8 +2321,12 @@ would otherwise be a *second* wire change later. Four of them exist only
 because a review round found them:
 
 - `proto/orkstack/v1/activity.proto`; `Error.category`; `Task` reserving
-  `plugin` and gaining `uses`/`image`/`env`/`secrets`/`resources`/`network`;
-  `make proto`.
+  `plugin` and gaining `uses`/`image`/`env`/`secrets`/`resources`/`network`/
+  `run_as_orker_user`; `make proto`.
+- **`service.proto`**: `ActivityService`, `ActivityInfo`,
+  `ListActivities{Request,Response}`, `DescribeOrker{Request,Response}`, and
+  the deletion of `PluginService`/`PluginInfo` (§2.3). This is a cross-process
+  contract; leaving it to Phase 3 means inventing one after the freeze.
 - **`run.proto`**: `TaskRun` reserving `plugin` and gaining `values_ref`,
   `commit`, `exit_code`, `system_artifacts`; `Run.orkflow_definition_digest`
   (§2.3). Without this Phase 2 has nowhere to record what it commits.
@@ -1975,10 +2336,16 @@ because a review round found them:
 - **`RunPlan.CommitRoot` and `RunPlan.Limits`** (§5.2). `RunPlan` is workflow
   argument 4; changing its shape after the fixture reset would force a *second*
   reset, which §11.4 calls a process failure.
-- **`WorkspaceLimits.commit_max_bytes`** and the `COMMIT_*` / `OUTPUT_*` reason
-  codes. Reason codes are `Error.code` strings and are cheap to add later, but
-  the *categories* drive `NonRetryableErrorTypes` in `ActivityOptions`, which
-  is replay-visible.
+- **`WorkspaceLimits.commit_max_bytes`**, `ImageRef.delivery`,
+  `ExecuteTaskInput.run_as_orker_user`, and the `COMMIT_*` / `OUTPUT_*` /
+  `VALUES_*` reason codes. Reason codes are `Error.code` strings and are cheap
+  to add later, but the *categories* drive `NonRetryableErrorTypes` in
+  `ActivityOptions`, which is replay-visible.
+- **`artifacts.CommitStore` as an interface**, with an in-memory
+  implementation and the `OCIDispatcher` call sites (§5.4 steps 0, 4, 8). This
+  is what makes Phase 2 genuinely separable.
+- `ContainerRuntime` including `LoadLayout` (§6.1), so Phase 3's embedded
+  fallback has a seam to implement against.
 - `OCIDispatcher` + `ContainerRuntime` + `DockerRuntime`.
 - `/orkstack` workspace construction, permissions, `task.json` (to the §3.2
   table), `config.json`, `run.json`, input staging, output scan, validation,
@@ -1994,15 +2361,15 @@ because a review round found them:
 
 Owns `pkg/artifacts`, and the failure-category read side in `internal/engine`.
 
-- `artifacts.CommitStore`; S3 conditional implementation; local temp-file +
-  `fsync` + **`link(2)`** implementation; `artifacts.CommitKey` built on
-  `encodeArchiveSegment`; the boot-time two-writer conditional-write probe.
+- S3 conditional implementation; local temp-file + `fsync` + **`link(2)`**
+  implementation; `artifacts.CommitKey` built on `encodeArchiveSegment`; the
+  boot-time two-writer conditional-write probe. All behind the `CommitStore`
+  interface Phase 1 froze — **Phase 2 does not open `internal/orker`**.
 - **Content-addressed S3 output keys** (§5.4) — the sixth key segment that
   makes an uploaded artifact immutable before the commit references it.
-- The §5.4 sequence, retry adoption, the seven-field identity check, the
-  undecodable branch, the step-4 commit bound, and 412 handling.
 - Durable `stdout.log` / `stderr.log` as system artifacts.
-- Failure categories end to end into `Error.category`, the UI, and the archive.
+- Failure categories into `Error.category` and the run archive. **The UI work
+  moves to Phase 3**, which owns `ui/`.
 - The §5.5 chaos matrix as integration tests under `-tags=integration`,
   including a kill between the temp write and the `link(2)`.
 
@@ -2010,17 +2377,20 @@ Owns `pkg/artifacts`, and the failure-category read side in `internal/engine`.
 
 Owns `internal/dsl`, `internal/api`, `images/`, `cmd/orkctl`, `ui/`, `examples/`.
 
-- The activity catalog, `uses:` resolution, apply-time registry HEAD resolution,
-  the canonical definition digest.
-- `registry:3` in `deploy/docker-compose.yml`; `make images`;
-  `orkctl activity build`.
+- The activity catalog, `uses:` resolution, apply-time registry **GET**
+  resolution (§4.3), the canonical definition digest and the post-resolution
+  derived version (§4.4).
+- `registry:3` in `deploy/docker-compose.yml`; pinned MinIO/Temporal tags;
+  `make images`; `orkctl activity build`; the OCI image layout `LoadLayout`
+  reads (§4.6).
 - The three first-party images, their Dockerfiles and entry scripts (including
-  `umask 022`).
-- `orkstack activity test`, the Bash/Go/Python fixtures, and the umask and
-  commit-bound assertions (§10.3).
-- `DescribeOrker` replacing `ListPlugins`; the Admin Activities page.
-- Rewritten `examples/*.ork.yaml`, including retiring the templated image in
-  `container-example.ork.yaml` (§10.2).
+  `umask 022` and the background-and-trap shape of rule 2a).
+- `orkstack activity test`, the Bash/Go/Python fixtures, and the SIGTERM,
+  exit-code, umask and commit-bound assertions (§10.3).
+- `DescribeOrker` replacing `ListPlugins`; the Admin Activities page; **all UI
+  work**, including surfacing `Error.category` (moved here from Phase 2).
+- Rewritten `examples/*.ork.yaml`, including retiring the templated image at
+  `examples/container-example.ork.yaml:55` (§10.2).
 
 ### 11.4 The replay-fixture reset
 
@@ -2044,8 +2414,17 @@ thing with a different lifetime. Spellings, enforced everywhere:
 
 | Concept | Wire | Go | User-facing |
 |---|---|---|---|
-| Run submission dedupe | `run_idempotency_key` | `RunIdempotencyKey` | `orkctl run submit --idempotency-key` |
-| Activity identity | `task_idempotency_key` | `TaskIdempotencyKey` | `idempotencyKey` in `task.json` (the ABI spelling AGENTS.md §3 fixes) |
+| Run submission dedupe | `SubmitRunRequest.idempotency_key` (field 4) | `RunIdempotencyKey` | `orkctl run submit --idempotency-key` |
+| Activity identity | `ExecuteTaskInput.idempotency_key` (field 8) | `TaskIdempotencyKey` | `idempotencyKey` in `task.json` |
+
+The two wire names are identical and that is fine: proto scopes field names per
+message, and these are different messages. Checked against the code — the Go
+claim path takes a bare `key string` (`internal/engine/idempotency.go:82-122`,
+`internal/engine/claim.go:82`) and defines no `IdempotencyKey` identifier, so nothing
+collides there either. Keeping the wire name plain is what makes
+`ExecuteTaskInput`'s JSON key (`idempotencyKey`) byte-identical to the one
+`task.json` already writes, which criterion 1 names literally. The Go
+identifiers stay distinct because *those* share a package.
 
 ---
 
@@ -2076,7 +2455,7 @@ Every open question the research raised, with its decision.
 | OQ-19 | `shell eval`'s non-zero exit as data | `eval` documents it; `exec` and `script` propagate the exit code (§10.2). |
 | OQ-20 | Rewriting workdir-relative examples | Phase 3; paths become workspace paths and `activity-file` adopts AGENTS.md §9's op set (§10.2, §11). |
 | OQ-21 | Immutable reference for a local build | Every build path pushes, including `make images`. The only non-registry path is an OCI image **layout** whose blob name *is* the manifest digest, used solely as a verified fallback for an already-pinned digest (§4.6). |
-| OQ-22 | Idempotency-key spelling | `run_idempotency_key` vs `task_idempotency_key`; `idempotencyKey` only in `task.json` (§11.5). |
+| OQ-22 | Idempotency-key spelling | Both wire fields are plainly `idempotency_key` on **different messages** — `SubmitRunRequest` and `ExecuteTaskInput` — which makes `ExecuteTaskInput`'s JSON key identical to `task.json`'s. Go keeps `RunIdempotencyKey` / `TaskIdempotencyKey` (§11.5). |
 | OQ-23 | One fixture reset or two | **One**, at the end of Phase 1 (§11.4). |
 
 ---
@@ -2100,9 +2479,11 @@ reconciliation.
    The UI reads the artifact for larger results.
 6. **`ListPlugins` is removed** and `DescribeOrker` takes over pool liveness
    (§6.5).
-7. **`activity-container` is retired as an image** and becomes a DSL alias for a
-   direct image reference (§10.2). No compliant implementation of it exists
-   under §9.1, and every task is already a container.
+7. **`activity-container` is retired as an image**, and `uses: container` is
+   rejected rather than aliased (§10.2). No compliant implementation exists
+   under §9.1, and an alias would be a compatibility shim the objective
+   excludes. Because `container` is named in a user decision, this is
+   **escalated in §17 (E-A, E-B)**, not settled here.
 8. **A templated `uses:` is a compile error.** Dynamic image selection cannot be
    digest-pinned at apply time, which AGENTS.md §5 requires. This is a real
    loss of expressive power (§10.2, §17).
@@ -2120,6 +2501,20 @@ reconciliation.
 13. **S3 output keys become content-addressed.** A sixth key segment makes an
     uploaded artifact immutable, so a losing attempt cannot overwrite bytes a
     winning commit already hashed (§5.4).
+14. **Exit codes 125, 126 and 127 are no longer special-cased.**
+    `CONTAINER_NOT_EXECUTABLE` and `CONTAINER_COMMAND_NOT_FOUND` are deleted;
+    every non-zero `Wait` status is `ActivityFailed`. This *removes* a
+    deviation from AGENTS.md §3.2 rather than adding one (§8.2, §14.13).
+15. **Entry-script rule 2 gains an exception.** A script that must write
+    `values.json` cannot use `exec`; it uses background + TERM trap + `wait`.
+    The unqualified rule was unfollowable (§10.1 rule 2a, §14.14).
+16. **Image resolution uses GET, not HEAD**, because `ImageRef.platforms` is
+    hashed into the definition digest and lives in the response body. Only one
+    resolver is permitted (§4.3).
+17. **`RunPlan.Limits` carries contract limits only.** Orker-local resource
+    policy stays on the Orker, because one run spans pools with different caps
+    and `internal/api` owns no worker-local policy (§5.2).
+18. **The `StartToCloseTimeout` transfer budget is derived, not 120 s** (§6.3).
 
 ---
 
@@ -2226,38 +2621,53 @@ image that ignores SIGTERM is killed at the boundary with exit 137. What is
 missing today is not this mechanism but the heartbeat that lets Temporal
 cancellation reach the Orker at all (§6.3).
 
-### 14.6 The proto in §2 compiles, lints, and does not break the wire
+### 14.6 The proto in §2 compiles, lints, generates, and does not break the wire
 
-The three proto blocks in §2 were extracted from this document, applied to a
-copy of `proto/` (new `activity.proto`, patched `common.proto`, patched
-`orkflow.proto` with the added `orkstack/v1/activity.proto` import), and run
-through the repo's own `buf.yaml`:
+All five proto blocks in §2 were extracted from this document and applied to a
+copy of `proto/`: new `activity.proto`, patched `common.proto`, patched
+`orkflow.proto` and `run.proto` (each with the added
+`orkstack/v1/activity.proto` import), and `service.proto` with `PluginService`
+replaced by `ActivityService` and the now-unused `struct.proto` import
+dropped. Then the repo's own `buf.yaml`:
 
 ```
-$ buf build                                        # (no output — compiles)
-$ buf lint                                         # (no output — passes)
-$ buf breaking --against <repo>                    # breaking: use: [FILE]
-proto/orkstack/v1/orkflow.proto:21:1:Previously present field "2" with name
-  "plugin" on message "Task" was deleted.
-$ buf breaking --against <repo>                    # breaking: use: [WIRE_JSON]
-                                                   # (no output — passes)
-$ buf breaking --against <repo>                    # FILE except FIELD_NO_DELETE
-                                                   # (no output — passes)
+$ buf build                       # (no output — compiles)
+$ buf lint                        # (no output — passes)
+$ buf generate                    # protoc-gen-go: 7 .pb.go files
+
+$ buf breaking --against <repo>   # breaking: use: [FILE]   ← the repo's config
+proto/orkstack/v1/orkflow.proto:21:1: … field "2" name "plugin" on "Task" was deleted.
+proto/orkstack/v1/run.proto:12:1:     … field "2" name "plugin" on "TaskRun" was deleted.
+proto/orkstack/v1/service.proto:1:1:  … message "ListPluginsRequest" was deleted.
+proto/orkstack/v1/service.proto:1:1:  … message "ListPluginsResponse" was deleted.
+proto/orkstack/v1/service.proto:1:1:  … message "PluginInfo" was deleted.
+proto/orkstack/v1/service.proto:1:1:  … service "PluginService" was deleted.
+
+$ buf breaking --against <repo>   # breaking: use: [WIRE_JSON]     (no output)
+$ buf breaking --against <repo>   # breaking: use: [WIRE]          (no output)
+$ buf breaking --against <repo>   # FILE minus the three *_NO_DELETE rules
+                                  #                                (no output)
 ```
 
-And the control, proving the complaint is pre-existing practice rather than a
-regression this design introduces — the current tree checked against a baseline
-where `Task.queue` still exists, under the repo's unmodified `buf.yaml`:
+**Six complaints, not one.** An earlier draft of this section reported a single
+complaint, because its transcript predated the `run.proto` and `service.proto`
+patches §2.3 now specifies. Every one of the six is a deletion this design
+makes on purpose: two fields reserved rather than reused (§2.1's rule), and
+four `service.proto` messages the activity catalog replaces outright (§2.3).
+No field number is reused and no wire or JSON representation changes — which is
+why `WIRE` and `WIRE_JSON` both pass clean.
+
+And the control, showing the field complaints are pre-existing practice rather
+than something this design introduces — the current tree checked against a
+baseline where `Task.queue` still exists, under the repo's unmodified
+`buf.yaml`:
 
 ```
 $ buf breaking --against /tmp/queuebase
-proto/orkstack/v1/orkflow.proto:20:1:Previously present field "8" with name
-  "queue" on message "Task" was deleted.
+proto/orkstack/v1/orkflow.proto:20:1: … field "8" name "queue" on "Task" was deleted.
 ```
 
-Identical shape, identical rule, already shipped. The design is wire-compatible
-and JSON-compatible; only buf's strictest `FIELD_NO_DELETE` objects, and it
-objects to `reserved` itself.
+Identical shape, identical rule, already shipped.
 
 ### 14.7 The commit primitives, measured against the specified encoder
 
@@ -2368,13 +2778,95 @@ Consequence encoded in §2.2: `CommitRef.sha256` is computed from the bytes
 written to or read from the store, never by re-marshalling a decoded
 `ActivityCommit`.
 
-### 14.11 Not verified
+### 14.12 The embedded fallback is implementable: `docker load` takes an OCI layout
+
+§4.6 requires `LoadLayout`, and the previous round listed "`docker load`
+accepting an OCI layout tar" as an inference. It is not:
+
+```
+$ docker save alpine:3.20 -o save.tar && tar tf save.tar
+blobs/  blobs/sha256/…  index.json  oci-layout          ← already an OCI layout
+$ cat oci-layout
+{"imageLayoutVersion":"1.0.0"}
+$ python3 -c 'print(json.load(open("index.json"))["manifests"][0])'
+mediaType: application/vnd.oci.image.index.v1+json
+digest:    sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+
+$ docker buildx build --output type=oci,dest=oci.tar .   # an OCI-layout export
+$ docker load -i oci.tar
+Loaded image ID: sha256:fa6ded5f…
+```
+
+Three things this settles. `docker load` **accepts** an OCI image layout, so
+`DockerRuntime.LoadLayout` needs no exotic tooling. The layout's `index.json`
+names the **index digest** — `sha256:d9e853e8…`, the same digest §14.4 resolved
+for `alpine:3.20` — so the lookup §4.6 specifies is a direct key read. And the
+blob's file name *is* its digest (`blobs/sha256/<hex>`, verified to match), so
+verifying the index blob is a path comparison rather than a re-hash, which is
+why §4.6 can assign the remaining chain to the runtime.
+
+### 14.13 Exit codes 125/126/127 carry no runtime guarantee
+
+```
+workload exit   0 -> docker reports   0
+workload exit   1 -> docker reports   1
+workload exit  42 -> docker reports  42
+workload exit 125 -> docker reports 125     logs=WORKLOAD-CHOSE-125
+workload exit 126 -> docker reports 126     logs=WORKLOAD-CHOSE-126
+workload exit 127 -> docker reports 127     logs=WORKLOAD-CHOSE-127
+
+contrast, a container that never started:
+  docker run alpine /no/such/binary   -> CLI rc=127
+  docker run --cgroupns=nope alpine   -> CLI rc=125
+```
+
+A started container's status passes through verbatim, and a workload can choose
+the exact numbers the CLI uses for its own diagnostics. Since POSIX makes 127
+the shell's ordinary "command not found" and 126 "not executable", the earlier
+draft's `CONTAINER_COMMAND_NOT_FOUND` / `CONTAINER_NOT_EXECUTABLE` rows would
+have permanently refused to retry a routine shell failure. §8.2 deletes them.
+
+### 14.14 SIGTERM does not reach the workload under the naive entry script
+
+`--init`, a workload that traps TERM and exits 0, `docker stop --timeout 5`:
+
+```
+(a) sh -c "$cmd"; rc=$?; write values; exit $rc
+      stop=192ms  exit=143  logs: WORKLOAD-UP
+(b) sh -c "$cmd" & child=$!; trap 'kill -TERM $child' TERM; wait; [double-wait]
+      stop=321ms  exit=  0  logs: WORKLOAD-UP | WORKLOAD-GOT-SIGTERM | ENTRY-WROTE-VALUES rc=0
+(c) exec sh -c "$cmd"
+      stop=317ms  exit=  0  logs: WORKLOAD-UP | WORKLOAD-GOT-SIGTERM
+```
+
+**(a) fails both halves of the contract.** The workload's handler never ran and
+`values.json` was never written; exit 143 is 128+15, the default disposition.
+`--init` forwards SIGTERM to its *direct child only* — tini signals one process
+and Docker injects `docker-init --` without `-g` — so `entry.sh`, a shell with
+no trap, dies and takes the grandchild with it. This is not the "degrades to
+SIGKILL at the grace boundary" one might assume; it is faster and more total,
+and §10.3's promise that "SIGTERM is honored within the grace period" would
+fail for the platform's own reference image.
+
+**(c) shows rule 2 was unfollowable as written.** `exec` replaces the shell, so
+the signal arrives but nothing can write `values.json` — every successful run
+would end in `ContractViolation/VALUES_MISSING`.
+
+**(b) is the only shape that satisfies both**, and it needs the double-`wait`
+caveat §10.2's script encodes: POSIX makes a trapped signal return from `wait`
+immediately with a status >128, before the child has finished, so the real
+status needs a second `wait` **on that path only** — an unconditional second
+`wait` would discard the status when no signal arrived.
+
+### 14.15 Not verified
 
 - That cancellation cannot currently reach a running container is an inference
   from Temporal's heartbeat-gated cancellation delivery plus the four discrete
   heartbeat call sites in `internal/orker/activity.go`. It was **not**
-  reproduced end to end. §6.3 is written so the design is correct whether or not
-  the current behavior is as inferred.
+  reproduced end to end. §14.14 proves the container-side half — that SIGTERM
+  arrives and is handled — but the Temporal-side half, a heartbeat-delivered
+  cancellation reaching the Orker, remains unexercised. §6.3 is written so the
+  design is correct whether or not the current behavior is as inferred.
 - The quadratic fan-in cost was reasoned from `transitiveNeeds` + `upstreamFor`,
   not measured.
 - That `protojson` changes recorded bytes for a given payload was reasoned from
@@ -2387,6 +2879,17 @@ written to or read from the store, never by re-marshalling a decoded
   documentation and third-party reports; only MinIO was exercised (§14.1).
 - `proto.MarshalOptions{Deterministic:true}` instability across schema changes
   (§4.4) is quoted from the upstream doc comment, not executed.
+- §14.13 and §14.14 used inline `sh -c` scripts, not built images. The process
+  topology under test — `docker-init` → `entry.sh` → `sh -c "$cmd"` — is the
+  same one the specified image produces, but exec-form `ENTRYPOINT` was not
+  separately exercised.
+- The §4.3 GET-based resolver was **not** exercised against a live registry;
+  the HEAD-cannot-carry-a-body argument rests on RFC 9110 and the OCI
+  distribution spec, and §14.4 observed the index digest through a diagnostic
+  tool rather than the specified code path.
+- No Start-to-Close transfer budget was measured. §6.3 replaces an unsupported
+  constant with a derived formula; the formula's constants are themselves
+  unmeasured and are operator-configurable for that reason.
 
 ---
 
@@ -2427,21 +2930,23 @@ that way.
 
 ## 17. Conflicts requiring a user ruling
 
-Five places where the launch contract, AGENTS.md, and the code cannot all be
-satisfied at once. Each is implemented here under the narrowest reading
+**Seven** places where the launch contract, AGENTS.md, and the code cannot all
+be satisfied at once. Each is implemented here under the narrowest reading
 consistent with the acceptance criteria, and each is listed so a user can
 overrule it cheaply. None was resolved silently.
 
 | # | Conflict | Implemented as | Cost to flip |
 |---|---|---|---|
 | **C1** | Acceptance criterion 7 groups timeout with *permanent* failures; AGENTS.md §4 says `TimedOut` → "retry according to policy". | The criterion controls: `TimedOut` is non-retryable by default (§8.1). | One line: drop `"TimedOut"` from `NonRetryableErrorTypes`, flip one row in §8.2. |
-| **C2** | Objective deliverable 10 names a "fallback to embedded" image path; the previous draft said there is none. | An **OCI image layout** fallback, verified against the pinned digest (§4.6). The deliverable is met without weakening AGENTS.md §5. | None — this is believed to satisfy both. Flagged because the earlier draft contradicted the deliverable outright. |
-| **C3** | "Proto contract is forward-compatible (no breaking changes to existing code)" vs. retiring `Task.plugin` in a system the same objective says needs no compatibility shims. | Field numbers reserved, never reused (§2.1). Wire- and JSON-compatible; only buf's `FIELD_NO_DELETE` objects, and it objects to the `queue` removal the repo already shipped (§14.6). | Keep `plugin = 2` in place with new semantics: no `reserved`, but the word survives in the contract. |
+| **C2** | Objective deliverable 10 names a "fallback to embedded" image path; an earlier draft said there is none. | An **OCI image layout** fallback with a `LoadLayout` runtime seam, verified against the pinned digest (§4.6, §14.12). The deliverable is met without weakening AGENTS.md §5. | None — this is believed to satisfy both. Flagged because the earlier draft contradicted the deliverable outright. |
+| **C3** | "Proto contract is forward-compatible (no breaking changes to existing code)" vs. retiring `Task.plugin`/`TaskRun.plugin` and `PluginService` in a system the same objective says needs no compatibility shims. | Field numbers reserved, never reused; wholly replaced messages deleted (§2.1). `WIRE` and `WIRE_JSON` pass clean; the repo's `FILE` config reports six deliberate deletions, and reports the identical field complaint for the `queue` removal it already shipped (§14.6). | Keep `plugin = 2` in place with new semantics and keep `PluginService` beside `ActivityService` — but the word "plugin" then survives in the contract this work exists to remove. |
 | **C4** | AGENTS.md §2.2 says "S3-compatible object storage"; the commit protocol needs atomic `If-None-Match: *`, which GCS's XML API, Backblaze B2's S3 endpoint and Garage do not provide. | Stated as an explicit deployment requirement with a boot-time two-writer race (§5.3). | Add a per-backend commit strategy — substantially more design, and a second durability mechanism to prove. |
 | **C5** | AGENTS.md §9 forbids a privileged internal path for first-party activities; the only mechanism that *guarantees* the Orker can read workload output is a relabel container running as UID 0 with `CAP_FOWNER`, which §9.1 forbids. | **Avoided rather than resolved.** Detection + terminal error + opt-in `runAsOrkerUser` + mandatory `umask 022` in first-party images (§3.1). No exemption is requested. | Grant a §9.1 exemption for an Orker-owned relabel container, which guarantees readability at the cost of one privileged container per task. |
+| **C6** *(new)* | **User decision 4 names `container` as a builtin image**: *"Builtin images (http, shell, file, container) can be built locally OR pulled from remote registry"*. §10.2 shows no compliant `activity-container` can exist — today's plugin reaches a daemon only through an ambient CLI on `PATH` plus `DOCKER_HOST`/the default socket (`pkg/plugins/container/docker.go:54-75`), and §9.1 forbids the socket as source *or* target, credential mounts, `--privileged`, `--device` and host namespaces. | Retired as an image; the capability survives as an ordinary `uses: <image>` task, since every task is already a container. **The technical argument is sound and verified, but a user decision may only be overridden by the user** — so this is escalated rather than settled. | Grant a §9.1 exemption for a socket-mounting `activity-container`, accepting that any workload using it can control the host's daemon. |
+| **C7** *(new)* | The one-release `uses: container` alias an earlier draft proposed is a **compatibility shim**, which the objective excludes: *"This is NOT a backward-compatible migration… no migration plans or compatibility shims are needed."* It also carried retired plugin vocabulary past the cut §13 item 1 makes by rejecting `plugin:` outright. | The alias is **dropped**: `uses: container` is a compile error naming the replacement, through the same `internal/dsl/removed.go` mechanism. This is the narrowest reading consistent with the launch contract. | Reinstate the alias for one release and record it in §13 as a deliberate departure from the no-shims clause. It would not have preserved the example it cited anyway: `examples/container-example.ork.yaml:55` selects its image from `{{ .inputs.image }}`, which no alias can pin. |
 
-A sixth item is a capability loss rather than a conflict, and is called out
+An eighth item is a capability loss rather than a conflict, and is called out
 here for the same reason: **a templated `uses:` no longer compiles** (§10.2).
-`examples/container-example.ork.yaml` uses one today. If run-time image
-selection must survive, this design cannot pin digests at apply time and
-AGENTS.md §5 has to change instead.
+`examples/container-example.ork.yaml:55` uses one today, selecting its image
+from `{{ .inputs.image }}`. If run-time image selection must survive, this
+design cannot pin digests at apply time and AGENTS.md §5 has to change instead.
