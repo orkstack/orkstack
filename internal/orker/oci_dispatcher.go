@@ -106,11 +106,24 @@ func (d *OCIDispatcher) Execute(
 	// STEP 1. The live log sink, first and always.
 	sink := d.openLogSink(ctx, in, attempt)
 	defer sink.Close()
+	// emit fans one framed line out to the durable chunk sink AND to the
+	// in-process observer. The observer is what lets a caller inside this
+	// process watch a container's output while it runs — `orkctl activity
+	// test` uses it to cancel exactly when the workload is live, rather than
+	// sleeping and hoping. It fires whether or not a LogStore is configured,
+	// because openLogSink returns nil without one and an observer that went
+	// silent in that case would be a seam only production could use.
+	emit := func(line string) {
+		sink.Write(line)
+		if d.LogSinkObserver != nil {
+			d.LogSinkObserver(in, line)
+		}
+	}
 	stdoutLine := logstream.NewLineWriter(func(format string, args ...any) {
-		sink.Write(fmt.Sprintf(format, args...))
+		emit(fmt.Sprintf(format, args...))
 	}, "")
 	stderrLine := logstream.NewLineWriter(func(format string, args ...any) {
-		sink.Write(fmt.Sprintf(format, args...))
+		emit(fmt.Sprintf(format, args...))
 	}, logstream.StderrMarker)
 
 	// STEP 2. The heartbeat loop, for the ENTIRE attempt.

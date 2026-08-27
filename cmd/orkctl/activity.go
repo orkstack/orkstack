@@ -22,6 +22,8 @@ func newActivityCommand(g *globalFlags) *cobra.Command {
 		Short: "Inspect the activities this deployment can run",
 	}
 	cmd.AddCommand(newActivityListCommand(g))
+	cmd.AddCommand(newActivityTestCommand(g))
+	cmd.AddCommand(newActivityBuildCommand(g))
 	return cmd
 }
 

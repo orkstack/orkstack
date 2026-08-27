@@ -368,7 +368,21 @@ func (d *DockerRuntime) Start(ctx context.Context, id ContainerID, stdout, stder
 	// workload's stderr is unbounded.
 	diagnostics := &boundedBuffer{limit: 4096}
 
-	cmd := exec.CommandContext(ctx, bin, "start", "--attach", string(id))
+	// NOT exec.CommandContext, and that is the point. Binding the attach to
+	// the activity context kills `docker start --attach` the instant the
+	// activity is cancelled — which is exactly when the workload is running
+	// its TERM handler and printing what it cleaned up. The container's LAST
+	// WORDS were being dropped from the live stream and from the durable
+	// stdout.log, so a cancelled attempt's logs ended mid-flight and §3.6's
+	// "retain them and associate them with the attempt" quietly did not hold
+	// for the one case an operator most wants to read.
+	//
+	// The attach instead ends when the CONTAINER does, which is guaranteed:
+	// cancellation runs SIGTERM -> grace -> SIGKILL, so the process cannot
+	// outlive the container it is reading. Found by `orkctl activity test`,
+	// whose cancellation assertion watches for the workload's own TERM-trap
+	// marker and never saw it.
+	cmd := exec.Command(bin, "start", "--attach", string(id))
 	cmd.Stdout = stdout
 	cmd.Stderr = io.MultiWriter(stderr, diagnostics)
 	if err := cmd.Start(); err != nil {

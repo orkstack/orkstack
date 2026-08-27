@@ -201,3 +201,11 @@ var ErrNotInLayout = errors.New("digest not present in OCI image layout")
 // host misconfiguration (§3.1). It is surfaced as WORKDIR_NOT_BINDABLE at
 // boot rather than as a mysterious failure of every task later.
 var ErrNotBindable = errors.New("path is not bind-mountable by the container runtime")
+
+// DefaultImageLayoutRoot is where the embedded OCI image layouts live when
+// ORK_ORKER_IMAGE_LAYOUT says nothing (§4.6).
+//
+// An absent directory is not an error: the fallback is for an air-gapped or
+// rate-limited Orker, and the overwhelmingly common deployment pulls from a
+// registry and never reads this path at all.
+const DefaultImageLayoutRoot = "/var/lib/orkstack/images"

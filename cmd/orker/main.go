@@ -41,11 +41,18 @@ type config struct {
 	// the engine's, or a pinned run's tasks are not routed to this Orker's
 	// version at all — see workerOptions.
 	deployment task.Deployment
+	// imageLayoutRoot is ORK_ORKER_IMAGE_LAYOUT (§4.6): the OCI image layouts
+	// this Orker may serve a PINNED digest from when a pull fails. It is a
+	// cache with a proof, not a second source of truth — an image can only be
+	// served from it if its digest was already resolved from a registry at
+	// apply time.
+	imageLayoutRoot string
 }
 
 func loadConfig() config {
 	binding, err := task.ResolvePoolBinding(env("ORK_ORKER_POOL", ""), env("ORK_ORKER_QUEUE", ""))
 	return config{
+		imageLayoutRoot:   env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		pool:              binding.Pool,
@@ -155,7 +162,14 @@ func run(logger *slog.Logger, cfg config) error {
 		Refs:    refPredictor,
 		Pool:    cfg.pool,
 		BuildID: cfg.deployment.BuildID,
-		Logger:  logger,
+		// The embedded OCI-layout fallback (§4.6). It is used ONLY when a
+		// pull of an already-pinned digest fails, and only after OrkStack has
+		// hashed the layout's root blob itself and matched it against the
+		// pinned index digest — `docker load` verifies nothing about the root
+		// (§14.15), so a filename is a claim rather than a digest. An absent
+		// directory simply disables the fallback.
+		LayoutRoot: cfg.imageLayoutRoot,
+		Logger:     logger,
 	})
 	// Refusing to start is the only honest response to an unbindable
 	// workspace root or an orphaned container this Orker cannot account for:

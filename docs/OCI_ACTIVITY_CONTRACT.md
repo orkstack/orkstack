@@ -2265,13 +2265,27 @@ cannot do. They are reference implementations.
 
 ```dockerfile
 # images/activity-shell/Dockerfile
-FROM alpine:3.20@sha256:…            # first-party images pin their own bases
-RUN apk add --no-cache jq            # jq is the only "SDK": a JSON reader
+# first-party images pin their own bases
+FROM alpine:3.20@sha256:…
+# jq is the only "SDK": a JSON reader
+RUN apk add --no-cache jq
 COPY entry.sh /usr/local/bin/entry.sh
 RUN chmod 0555 /usr/local/bin/entry.sh
-USER 65532:65532                     # never root
-ENTRYPOINT ["/usr/local/bin/entry.sh"]   # exec form, mandatory
+# never root
+USER 65532:65532
+# exec form, mandatory
+ENTRYPOINT ["/usr/local/bin/entry.sh"]
 ```
+
+**The comments are on their own lines, and that is load-bearing rather than a
+style choice.** A Dockerfile has no inline comment syntax: `#` introduces a
+comment only as the first non-whitespace character of a line, and anywhere
+else it is ordinary argument text. An earlier draft of this section printed
+the annotations trailing their instructions — `USER 65532:65532   # never
+root` — and an image built verbatim from it took the group to be
+`65532   # never root`, so **every container was refused before it started**.
+The Dockerfile above is the corrected one, and it builds as printed; anyone
+applying §10.1 literally now gets a working image.
 
 Rules, all mandatory for first-party images and recommended for everyone:
 
