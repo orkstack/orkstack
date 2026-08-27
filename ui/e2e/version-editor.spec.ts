@@ -3,7 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	catalogEnv,
 	clusterEnv,
+	ensureActivityImages,
 	killAll,
 	noteTo,
 	proofOut,
@@ -84,6 +86,12 @@ type Catalog = {
 const catalog = () =>
 	rpc<Catalog>('OrkflowService/ListOrkflowVersions', { name: ORKFLOW, namespace: NS });
 
+// The document these tests edit. `command` is a JSON ARRAY under the OCI
+// Activity Contract — argv, never a shell string (images/activity-shell:
+// "each element becomes exactly one argv element") — so the caller's command
+// is handed to an explicit `sh -c`, which is where the shell boundary is
+// supposed to be visible. JSON.stringify keeps a caller's embedded newline a
+// legal scalar rather than a broken document.
 function orkflowYaml(version: string, description: string, command = 'echo hello'): string {
 	return `name: ${ORKFLOW}
 version: "${version}"
@@ -91,10 +99,10 @@ description: ${description}
 
 tasks:
   - id: greet
-    plugin: shell
+    uses: shell
     with:
       op: exec
-      command: ${command}
+      command: ["sh", "-c", ${JSON.stringify(command)}]
 `;
 }
 
@@ -147,6 +155,10 @@ test.beforeAll(async () => {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
 	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
@@ -157,6 +169,7 @@ test.beforeAll(async () => {
 	// bucket: every marker this spec asserts on is a MinIO object, not process
 	// memory. No Orker: nothing here submits a run.
 	spawnLogged(outPath('engine.log'), './bin/ork', [], {
+		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18087',

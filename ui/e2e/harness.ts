@@ -146,3 +146,100 @@ export const s3Env = {
 export function clusterEnv(namespace: string) {
 	return { ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233', ORK_TEMPORAL_NAMESPACE: namespace };
 }
+
+/**
+ * orkerEnv is what one Orker in this directory is started with.
+ *
+ * It carries the work root, for two reasons that happen to have one answer.
+ *
+ * FIRST, the per-attempt workspace is BIND-MOUNTED into the activity
+ * container, and the Orker's default work root is the OS temp directory. On
+ * macOS that is `/var/folders/...`, which the Docker VM does not share, so
+ * every attempt would fail `WORKDIR_NOT_BINDABLE` before the workload starts.
+ * `scripts/stack.sh` already points ORK_ORKER_WORKDIR at `$REPO/.data/work`
+ * for the running stack, and proof/M11.1 does the same.
+ *
+ * SECOND, an Orker's default identity is derived from its work root
+ * (`hostname-<hash of the root>`, internal/orker/activity.go), and an Orker
+ * takes an EXCLUSIVE LOCK on that identity at boot so that its startup reaper
+ * can force-remove its own dead predecessor's containers without ever
+ * touching a live peer's. Two Orkers sharing one root would therefore share
+ * one identity, and the second would refuse to start. Several specs here run
+ * two Orkers at once (`main` and `gpu`, `main` and `batch`), so each one is
+ * given its OWN root and gets its own identity for free.
+ *
+ * `name` is the pool or role the spec calls this Orker, so a leftover
+ * directory says which Orker left it.
+ */
+export function orkerEnv(name: string) {
+	const root = path.join(repoRoot, '.data', 'work', 'e2e', name);
+	// Created HERE, before the Orker boots, rather than left to the Orker's own
+	// MkdirAll. The Orker creates the root and then immediately asks the daemon
+	// to bind-mount it, and on a macOS daemon the share is a virtiofs mount of
+	// the host filesystem: a directory that came into existence microseconds
+	// earlier has been observed to fail that probe with a bare
+	// `docker exited -1`. Creating it up front removes the race rather than
+	// retrying around it.
+	mkdirSync(root, { recursive: true });
+	return { ORK_ORKER_WORKDIR: root };
+}
+
+/**
+ * The registry the first-party activity images are built and pushed to. It is
+ * `registry:3` from deploy/docker-compose.yml, the same one images/Makefile
+ * and proof/M11.3 use.
+ */
+export const testRegistry = process.env.ORK_TEST_REGISTRY ?? 'localhost:5001';
+const imageNamespace = process.env.ORK_TEST_IMAGE_NAMESPACE ?? 'orkstack';
+const imageTag = process.env.ORK_TEST_IMAGE_TAG ?? 'dev';
+
+/** activityRef spells one first-party image reference, as images/Makefile does. */
+export const activityRef = (name: string) =>
+	`${testRegistry}/${imageNamespace}/activity-${name}:${imageTag}`;
+
+/**
+ * catalogEnv is what every ENGINE in this directory is started with.
+ *
+ * `uses: shell` is a CATALOG name, and the catalog is engine configuration
+ * (§4.2). Its built-in default points at `ghcr.io/orkstack/activity-shell:0.1`,
+ * which is not published, so an engine booted without this resolves nothing
+ * and every apply fails IMAGE_RESOLVE_UNAUTHORIZED — apply-time resolution is
+ * a real registry GET (§4.3), not a lookup in a table. proof/M11.3 makes the
+ * same substitution for the same reason, in its own words: "the catalog must
+ * point at the local registry: an engine booted against ghcr.io resolves
+ * nothing".
+ */
+export const catalogEnv = {
+	ORK_ACTIVITY_CATALOG: `activities:
+  shell: ${activityRef('shell')}
+  http: ${activityRef('http')}
+  file: ${activityRef('file')}
+`
+};
+
+/**
+ * ensureActivityImages builds and pushes the three first-party images.
+ *
+ * Pushed, not merely built: a never-pushed tag has no registry manifest
+ * digest, so apply-time resolution cannot pin it and `uses: shell` fails
+ * (§4.6). Idempotent, so a spec that runs after another is a no-op.
+ */
+export function ensureActivityImages(): void {
+	execSync('make -C images push', { cwd: repoRoot, stdio: 'ignore', timeout: 600_000 });
+}
+
+/**
+ * containerHost is how a WORKLOAD addresses a server running in this test
+ * process.
+ *
+ * Every activity is a container now, so `127.0.0.1` inside one is the
+ * container's own loopback and never the host's. Docker Desktop publishes the
+ * host as `host.docker.internal`; on a Linux daemon the same name works when
+ * the container is started with `--add-host`, and ORK_TEST_CONTAINER_HOST is
+ * the override for anything else.
+ *
+ * A server a container must reach therefore has to listen on all interfaces
+ * as well: binding 127.0.0.1 and advertising this name would still refuse the
+ * connection.
+ */
+export const containerHost = process.env.ORK_TEST_CONTAINER_HOST ?? 'host.docker.internal';

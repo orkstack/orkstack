@@ -55,7 +55,7 @@
 <!--
 	ORKER STATUS. Presented the way the Pools page presents liveness: an
 	unanswered probe is its OWN state, never drawn as a zero or an absence.
-	DescribeOrker is dispatched onto the default pool's queue (§6.5), so
+	DescribeOrker is dispatched onto the default pool's own channel (§6.5), so
 	"no answer" means no Orker is serving that pool right now — which is
 	fixed by starting one, not by asking again.
 -->

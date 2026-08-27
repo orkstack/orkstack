@@ -4,9 +4,14 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import {
+	activityRef,
+	catalogEnv,
 	clusterEnv,
+	containerHost,
+	ensureActivityImages,
 	killAll,
 	noteTo,
+	orkerEnv,
 	proofOut,
 	rpc as callEngine,
 	s3Env,
@@ -47,14 +52,27 @@ const UI_ORIGIN = 'http://127.0.0.1:14176';
 
 const TEMPORAL_NAMESPACE =
 	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m11-4-run-page-logs-events';
-const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? 'alpine:3.20';
+// The image every container task here runs. It is activity-shell rather than a
+// bare `alpine:3.20`, because an activity must write
+// /orkstack/output/values.json and a stock base image does not — an image that
+// exits 0 without one fails VALUES_MISSING. It is still an ordinary OCI image,
+// built by `docker build` and pulled by digest.
+const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 
 const STAMP = Date.now().toString(36);
 const LIVE_ORKFLOW = `m11-4-live-${STAMP}`;
 const EVENTS_ORKFLOW = `m11-4-events-${STAMP}`;
 // The stub the retried task calls. It destroys the FIRST connection it is
-// given and answers every one after it, which is a retryable transport
-// failure for the http plugin and therefore a second attempt.
+// given and answers every one after it, which activity-http reports as a
+// request it could not perform — a failed activity, and therefore a second
+// attempt.
+//
+// The task that calls it is a CONTAINER, so the URL it is given must be
+// reachable from inside one: `127.0.0.1` there is the container's own
+// loopback, not this process's. The stub therefore listens on all interfaces
+// and is addressed through the daemon's host alias. Under the in-process http
+// plugin this distinction did not exist, because the request was made by the
+// Orker itself.
 let probeServer: Server | undefined;
 let probeUrl = '';
 let probeRequests = 0;
@@ -90,19 +108,34 @@ const submit = (orkflowName: string) =>
  * minute, and a task that fails its first try and succeeds its second.
  *
  * The container is the point of acceptance 1's third clause: those bytes are
- * the application's own, not the plugin's, and they have to be on screen while
- * the run is still RUNNING. `flaky` is the point of the attempt selector — a
- * Temporal activity retry is invisible in a task's status, so the only way to
- * know a task has two attempts is to be told, and the only way to read the
- * first one is to ask for it.
+ * the application's own, and they have to be on screen while the run is still
+ * RUNNING. Under the OCI Activity Contract that clause got easier to state,
+ * because there is no longer anything else in the stream: every task IS a
+ * container, and the Orker narrates nothing of its own into a task's live log.
  *
- * `flaky` is an http task and not a shell one, and that is not a taste: the
- * shell plugin marks a non-zero exit `plugin.Permanent`
- * (pkg/plugins/shell/shell.go:249), which the Orker turns into a
- * non-retryable application error — so a shell task cannot have a second
- * attempt, whatever its `retry:` says. A transport failure is retryable
- * (pkg/plugins/http/http.go:137), and the stub below produces one on demand
- * by destroying the first connection: no clock, no sleep, no race.
+ * `talk` runs through `uses: shell` rather than naming a bare image like
+ * `alpine:3.20` directly. That is the contract, not a convenience: an activity
+ * must write /orkstack/output/values.json, and an image that exits 0 without
+ * one is a ContractViolation (VALUES_MISSING) — measured, by running it.
+ * activity-shell IS an ordinary OCI image, really pulled by digest and really
+ * run, so "a real docker container wrote these bytes" is still exactly what is
+ * proven here; it is simply an image that holds up its end of the ABI.
+ *
+ * `flaky` is the point of the attempt selector — a Temporal activity retry is
+ * invisible in a task's status, so the only way to know a task has two
+ * attempts is to be told, and the only way to read the first one is to ask.
+ *
+ * `flaky` is an http task and not a shell one, and that is still not a taste,
+ * though the reason changed with the contract. It used to be that the shell
+ * PLUGIN marked a non-zero exit permanent, so a shell task could not have a
+ * second attempt whatever its `retry:` said. Now no exit code is magic
+ * (AGENTS.md §3.2) and a non-zero exit is an ordinary retryable
+ * ActivityFailed, so a shell task COULD retry — but it would retry on a timer,
+ * and the stub below still produces its failure deterministically by
+ * destroying the first connection: no clock, no sleep, no race. activity-http
+ * performs the request and fails the activity only when it could not be
+ * performed at all, which is exactly the destroyed connection and exactly not
+ * the 200 that follows it.
  */
 function liveOrkflow(probeUrl: string): string {
 	return `name: ${LIVE_ORKFLOW}
@@ -111,12 +144,12 @@ description: M11.4 live run page — a chatty container and a task that retries.
 
 tasks:
   - id: talk
-    plugin: container
+    uses: shell
     timeout_seconds: 300
     with:
-      image: ${IMAGE}
-      pull: missing
-      command: |
+      op: script
+      interpreter: sh
+      script: |
         i=1
         while [ $i -le ${CONTAINER_LINES} ]; do
           echo "container stdout line $i"
@@ -124,11 +157,8 @@ tasks:
           i=$((i+1))
           sleep 1
         done
-      capture_stdout_as: out
-      capture_stderr_as: err
-      timeout_seconds: 240
   - id: flaky
-    plugin: http
+    uses: http
     timeout_seconds: 120
     retry:
       maximum_attempts: 2
@@ -154,11 +184,12 @@ description: M11.4 event inspector — a slow task, then a failing one.
 
 tasks:
   - id: slow
-    plugin: shell
+    uses: shell
     timeout_seconds: 120
     with:
-      op: exec
-      command: |
+      op: script
+      interpreter: sh
+      script: |
         i=1
         while [ $i -le 10 ]; do
           echo "slow step $i"
@@ -166,12 +197,12 @@ tasks:
           sleep 1
         done
   - id: boom
-    plugin: shell
+    uses: shell
     needs: [slow]
     timeout_seconds: 60
     with:
       op: exec
-      command: echo "about to fail"; exit 3
+      command: ["sh", "-c", "echo \\"about to fail\\"; exit 3"]
 `;
 }
 
@@ -218,13 +249,6 @@ test.beforeAll(async () => {
 	for (const port of [18084, 14176]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
-	try {
-		execFileSync(process.env.ORK_DOCKER_BIN ?? 'docker', ['image', 'inspect', IMAGE], {
-			stdio: 'ignore'
-		});
-	} catch {
-		throw new Error(`the container image ${IMAGE} is not on this host`);
-	}
 	// The retry stub: hermetic, on a port the OS picks, and deterministic —
 	// the first request loses its connection, every one after it is answered.
 	probeServer = createServer((req, res) => {
@@ -236,11 +260,15 @@ test.beforeAll(async () => {
 		res.writeHead(200, { 'content-type': 'application/json' });
 		res.end(JSON.stringify({ served: probeRequests }));
 	});
-	await new Promise<void>((resolve) => probeServer!.listen(0, '127.0.0.1', resolve));
+	await new Promise<void>((resolve) => probeServer!.listen(0, '0.0.0.0', resolve));
 	const probeAddr = probeServer.address();
 	if (!probeAddr || typeof probeAddr === 'string') throw new Error('stub server has no port');
-	probeUrl = `http://127.0.0.1:${probeAddr.port}/attempt-probe`;
+	probeUrl = `http://${containerHost}:${probeAddr.port}/attempt-probe`;
 
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
@@ -251,12 +279,17 @@ test.beforeAll(async () => {
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 
 	spawnLogged(outPath('engine.log'), './bin/ork', [], {
+		...catalogEnv,
 		...cluster,
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18084',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged(outPath('orker.log'), './bin/orker', [], { ...cluster, ...s3Env });
+	spawnLogged(outPath('orker.log'), './bin/orker', [], {
+		...cluster,
+		...s3Env,
+		...orkerEnv('m11-4-run-page')
+	});
 	await waitForEngine(ENGINE);
 
 	spawnLogged(
@@ -326,13 +359,15 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	await expect(page.getByTestId('task-log-flaky')).toHaveCount(0);
 
 	await page.getByTestId('task-log-toggle-talk').click();
-	// Poll for the LINE THIS TEST ASSERTS ON, not for a non-empty pane. Three
-	// lines reach a `talk` pane before the application writes a byte — the
-	// Orker's `workdir …` (internal/orker/activity.go:133) and the plugin's
-	// `container: using local image …` and `container: running … as …`
-	// (pkg/plugins/container/container.go:429,291). A `length > 0` poll is
-	// satisfied by those three, and the scoping assertion below then reads a
-	// pane whose task has not started talking yet: one failure in four runs.
+	// Poll for the LINE THIS TEST ASSERTS ON, not for a non-empty pane. Under
+	// the OCI Activity Contract a task's stream carries the workload's bytes
+	// and nothing else, so a pane is empty until the application writes — but
+	// the image still has to be pulled and the workspace built first, so
+	// "non-empty" and "the application has spoken" are still different
+	// moments, and only the second one is what the scoping assertion below
+	// needs. A `length > 0` poll would read a pane whose task has not started
+	// talking yet: one failure in four runs, before this was pinned to the
+	// line itself.
 	await expect
 		.poll(
 			async () =>
@@ -343,8 +378,8 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	await expect(page.getByTestId('task-log-flaky')).toHaveCount(0);
 
 	await page.getByTestId('task-log-toggle-flaky').click();
-	// The same shape on the sibling: the http plugin's attempt also opens with
-	// the Orker's `workdir …` line, before any request is made.
+	// The same shape on the sibling: activity-http announces the request it is
+	// about to make before it makes it, so this is the first line either way.
 	await expect
 		.poll(
 			async () => (await paneLines(page, 'flaky')).some((l) => l.text.startsWith('http GET ')),
@@ -354,10 +389,9 @@ test('the page loads with task panes and no event list, and each task keeps its 
 
 	const talkTexts = (await paneLines(page, 'talk')).map((l) => l.text);
 	const flakyTexts = (await paneLines(page, 'flaky')).map((l) => l.text);
-	// Each pane holds its own task's stream: the application's lines and the
-	// plugin's own lifecycle lines for THAT task, and nothing from the other.
-	// (`workdir …` and `container: running …` are the Orker's and the plugin's
-	// voice on this task's stream, exactly as `[ork] ` notices are.)
+	// Each pane holds its own task's stream: the lines that task's own
+	// workload wrote, and nothing from the other. (`[ork] ` notices are the
+	// one exception the Orker still reserves for itself.)
 	expect(talkTexts.some((t) => t.startsWith('container stdout line'))).toBe(true);
 	expect(talkTexts.some((t) => t.startsWith('http GET'))).toBe(false);
 	expect(flakyTexts.some((t) => t.startsWith('http GET '))).toBe(true);
@@ -371,8 +405,8 @@ test('the page loads with task panes and no event list, and each task keeps its 
 });
 
 // Acceptance 1, the container half: the application's own two streams, live,
-// told apart on screen — from the in-band marker the plugin wrote, not from a
-// guess about the text.
+// told apart on screen — from the in-band marker the Orker framed them with,
+// not from a guess about the text.
 test("a container application's stdout and stderr arrive live and render apart", async ({
 	page
 }) => {
@@ -382,9 +416,9 @@ test("a container application's stdout and stderr arrive live and render apart",
 	// LIVE: lines are on screen while the run itself still reads RUNNING, so
 	// nothing here came from an artifact published at the end. The poll carries
 	// EVERY condition the block below asserts — six lines in the pane and at
-	// least one of each of the application's own two streams — because the
-	// plugin's three lifecycle lines can satisfy a bare count while the
-	// application is still silent.
+	// least one of each of the application's own two streams — because a bare
+	// count cannot tell "the application has written on both descriptors" from
+	// "it has written six times on one".
 	await expect
 		.poll(
 			async () => {
@@ -405,10 +439,9 @@ test("a container application's stdout and stderr arrive live and render apart",
 	await expect(page.getByTestId('task-log-state-talk')).toHaveText('LIVE');
 
 	const live = await paneLines(page, 'talk');
-	// The APPLICATION's lines, told apart by the marker the plugin framed them
-	// with. The plugin's own lifecycle lines travel bare and read as stdout,
-	// which is where an unmarked line belongs, so they are excluded here by
-	// name rather than by stream.
+	// The APPLICATION's lines, told apart by the marker the Orker framed them
+	// with. They are selected by name rather than by stream so that the
+	// stream assertion below is a CHECK and not a tautology.
 	const stdout = live.filter((l) => l.text.startsWith('container stdout line'));
 	const stderr = live.filter((l) => l.text.startsWith('container stderr line'));
 	expect(stdout.length).toBeGreaterThan(0);
@@ -491,10 +524,15 @@ test('a retried task offers its attempts, and attempt 1 still reads back', async
 			{ timeout: 60_000 }
 		)
 		.toEqual([`http GET ${probeUrl}`, expect.stringContaining('-> 200')]);
-	const latestTexts = (await paneLines(page, 'flaky')).map((l) => l.text);
-	// The Orker names the work directory after the attempt it made it for, so
-	// this pane can say WHICH try it is showing in the task's own words.
-	expect(latestTexts.some((t) => t.includes('-flaky-2-'))).toBe(true);
+	// WHICH try this pane is showing is asserted from the page's own attempt
+	// label rather than sniffed out of the log text.
+	//
+	// It used to be read out of the Orker's `workdir …` line, which named the
+	// attempt directory (`…-flaky-2-…`). Under the OCI Activity Contract the
+	// Orker narrates NOTHING into a task's live log — the stream carries the
+	// workload's own bytes and nothing else (§3.6) — so that line is gone by
+	// design, and the evidence moves to the element whose job this is.
+	await expect(page.getByTestId('task-log-attempt-flaky')).toHaveText('attempt 2');
 	await shot(page, 'screenshot-attempt-latest.png');
 
 	// Attempt 1 — the try that FAILED — is still in the store and reads back.
@@ -510,7 +548,6 @@ test('a retried task offers its attempts, and attempt 1 still reads back', async
 		.toEqual([`http GET ${probeUrl}`]);
 	const firstTexts = (await paneLines(page, 'flaky')).map((l) => l.text);
 	expect(firstTexts.some((t) => t.includes('-> 200'))).toBe(false);
-	expect(firstTexts.some((t) => t.includes('-flaky-1-'))).toBe(true);
 	await expect(page.getByTestId('task-log-attempt-flaky')).toHaveText('attempt 1');
 	note(
 		'attempt selector on task flaky: latest shows the try that answered, "1" shows the ' +

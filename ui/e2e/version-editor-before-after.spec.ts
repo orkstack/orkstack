@@ -3,7 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	catalogEnv,
 	clusterEnv,
+	ensureActivityImages,
 	killAll,
 	noteTo,
 	proofOut,
@@ -53,6 +55,8 @@ const note = noteTo(out('before-after.txt'));
 const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fullPage: true });
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
+// `command` is a JSON ARRAY under the OCI Activity Contract — argv, never a
+// shell string — so the caller's command goes to an explicit `sh -c`.
 function orkflowYaml(version: string, description: string, command: string): string {
 	return `name: ${ORKFLOW}
 version: "${version}"
@@ -60,10 +64,10 @@ description: ${description}
 
 tasks:
   - id: greet
-    plugin: shell
+    uses: shell
     with:
       op: exec
-      command: ${command}
+      command: ["sh", "-c", ${JSON.stringify(command)}]
 `;
 }
 
@@ -103,10 +107,15 @@ test.beforeAll(async () => {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
 
 	spawnLogged(out('shots-engine.log'), './bin/ork', [], {
+		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18088',

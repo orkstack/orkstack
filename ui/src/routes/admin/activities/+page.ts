@@ -13,7 +13,7 @@ import type { PageLoad } from './$types';
 // The catalog and the Orker description are read INDEPENDENTLY and reported
 // independently. They answer different questions from different places — the
 // catalog is engine configuration, DescribeOrker is a Temporal activity
-// dispatched onto the default pool's queue (§6.5) — so a deployment with no
+// dispatched onto the default pool's channel (§6.5) — so a deployment with no
 // Orker running must still show its catalog, and an unresolvable registry must
 // not hide a healthy Orker. Folding them into one try/catch would have made
 // either failure erase the other's answer.

@@ -4,6 +4,7 @@ import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { catalogEnv, ensureActivityImages } from './harness';
 
 // M10.7 proof: the UI is namespace-aware, and an orkflow can be edited,
 // versioned, promoted, rolled back and diffed without leaving the browser.
@@ -156,10 +157,10 @@ description: ${description}
 
 tasks:
   - id: greet
-    plugin: shell
+    uses: shell
     with:
       op: exec
-      command: echo hello
+      command: ["echo", "hello"]
 `;
 }
 
@@ -200,6 +201,10 @@ test.beforeAll(async () => {
 	if (await tcpOpen(18081)) throw new Error('port 18081 already in use (stray engine?)');
 	if (await tcpOpen(14174)) throw new Error('port 14174 already in use (stray UI?)');
 
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
 	if (!existsSync(path.join(uiDir, 'build', 'index.js'))) {
@@ -210,6 +215,7 @@ test.beforeAll(async () => {
 	// real bucket: the version list, the current pointer and the CAS this spec
 	// exercises are MinIO objects, not process memory.
 	spawnLogged('engine.log', './bin/ork', [], {
+		...catalogEnv,
 		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
 		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE,
 		ORK_HTTP_ADDR: '127.0.0.1:18081',

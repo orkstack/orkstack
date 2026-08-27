@@ -3,9 +3,13 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	activityRef,
+	catalogEnv,
 	clusterEnv,
+	ensureActivityImages,
 	killAll,
 	noteTo,
+	orkerEnv,
 	proofOut,
 	rpc as callEngine,
 	s3Env,
@@ -53,7 +57,12 @@ const ENGINE_B_WS = 'ws://127.0.0.1:18191';
 const UI_ORIGIN = 'http://127.0.0.1:14181';
 
 const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m11-7-proof-docs';
-const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? 'alpine:3.20';
+// The image every container task here runs. It is activity-shell rather than a
+// bare `alpine:3.20`, because an activity must write
+// /orkstack/output/values.json and a stock base image does not — an image that
+// exits 0 without one fails VALUES_MISSING. It is still an ordinary OCI image,
+// built by `docker build` and pulled by digest.
+const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 
 const STAMP = Date.now().toString(36);
 const CHATTY_ORKFLOW = `m11-7-chatty-${STAMP}`;
@@ -88,18 +97,23 @@ function shot(page: Page, name: string) {
 const rpcA = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE_A, method, body);
 const rpcB = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE_B, method, body);
 
+// A chatty container, followed live. Under the OCI Activity Contract every
+// task IS a container, so the image is named in `uses:` and the argv goes in
+// the task's own `command` — there is no `container` activity to name, and
+// no per-task `pull:` because the image is pinned to an index digest at apply
+// time (§4.3) and the Orker pulls that digest.
 function chattyOrkflowYaml(name: string): string {
 	return `name: ${name}
 version: "0.1.0"
 description: M11.7 operating story — a chatty container, followed live.
 tasks:
   - id: talk
-    plugin: container
+    uses: shell
     timeout_seconds: 180
     with:
-      image: ${IMAGE}
-      pull: missing
-      command: |
+      op: script
+      interpreter: sh
+      script: |
         i=1
         while [ $i -le ${CONTAINER_LINES} ]; do
           echo "m11-7 stdout line $i"
@@ -107,7 +121,6 @@ tasks:
           i=$((i+1))
           sleep 1
         done
-      timeout_seconds: 150
 `;
 }
 
@@ -117,10 +130,10 @@ version: "${version}"
 description: ${description}
 tasks:
   - id: greet
-    plugin: shell
+    uses: shell
     with:
       op: exec
-      command: ${command}
+      command: ["sh", "-c", ${JSON.stringify(command)}]
 `;
 }
 
@@ -185,17 +198,14 @@ test.beforeAll(async () => {
 	for (const port of [18190, 18191, 14181]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
-	try {
-		execFileSync(process.env.ORK_DOCKER_BIN ?? 'docker', ['image', 'inspect', IMAGE], {
-			stdio: 'ignore'
-		});
-	} catch {
-		throw new Error(`the container image ${IMAGE} is not on this host`);
-	}
 
 	// Prerequisites are failures here, never skips: proof/M11.7/reproduce.sh
 	// probes every one of them BEFORE running this spec and exits 77 when
 	// one is absent (AGENTS.md §6), so an absence never reaches here.
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orkctl', './cmd/orkctl'], { cwd: repoRoot });
@@ -207,23 +217,29 @@ test.beforeAll(async () => {
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 
 	spawnLogged(outPath('engine-a.log'), './bin/ork', [], {
+		...catalogEnv,
 		...cluster,
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18190'
 	});
 	spawnLogged(outPath('engine-b.log'), './bin/ork', [], {
+		...catalogEnv,
 		...cluster,
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18191',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
+	// Each Orker gets its own work root, which is both the bind-mountable
+	// workspace path and what its identity lock is keyed on (see orkerEnv).
 	mainOrkerProc = spawnLogged(outPath('orker-main.log'), './bin/orker', [], {
 		...cluster,
-		...s3Env
+		...s3Env,
+		...orkerEnv('m11-7-main')
 	});
 	batchOrkerProc = spawnLogged(outPath('orker-batch.log'), './bin/orker', [], {
 		...cluster,
 		...s3Env,
+		...orkerEnv('m11-7-batch'),
 		ORK_ORKER_POOL: 'batch'
 	});
 	await waitForEngine(ENGINE_A);
@@ -314,17 +330,17 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	// of what actually rendered).
 	const stderrLines = logPane.locator('[data-testid="task-log-line"][data-stream="stderr"]');
 
-	// The first chunk a container task streams is its own lifecycle chatter
-	// (`workdir`, `container: using`, `container: running` —
+	// The first chunk a container task streams is the Orker's own lifecycle
+	// chatter (`workdir`, the resolved image and its digest —
 	// cli-follow-transcript.txt:1-3 shows exactly this on the CLI side of the
 	// same run), so a pane with ANY line already passes a check that never
 	// required application output. Require BOTH file descriptors, decoded
 	// the way taskLogs.ts promises: stdout bare text, stderr on its own
 	// data-stream row with the wire "[stderr] " marker stripped for display.
-	// The two streams are independent pipes read by independent goroutines
-	// (pkg/plugins/container/container.go streamSet), so stderr's first line
-	// can legitimately land before stdout's — the assertions below check
-	// EXISTENCE, never relative order.
+	// The two streams are independent pipes the Orker copies independently
+	// (internal/orker/logsink.go), so stderr's first line can legitimately
+	// land before stdout's — the assertions below check EXISTENCE, never
+	// relative order.
 	const firstStdout = appLines.filter({ hasText: /^m11-7 stdout line 1$/ }).first();
 	const firstStderr = stderrLines.filter({ hasText: /^m11-7 stderr line 1$/ }).first();
 	await expect(firstStdout).toBeVisible({ timeout: 30_000 });

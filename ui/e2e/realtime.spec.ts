@@ -5,6 +5,7 @@ import { createServer, type Server } from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { catalogEnv, containerHost, ensureActivityImages, orkerEnv, s3Env } from './harness';
 
 // Realtime proof: real engine + real Orker + built UI, driven by a browser.
 // The spec submits hello-ork through the UI form and asserts the run page
@@ -113,6 +114,10 @@ test.beforeAll(async () => {
 	if (await tcpOpen(14173)) throw new Error('port 14173 already in use (stray UI?)');
 
 	// Build the real binaries and the production UI.
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
@@ -121,17 +126,31 @@ test.beforeAll(async () => {
 	}
 
 	// Hermetic target for the hello-ork fetch task (no external network).
+	//
+	// It listens on ALL interfaces, and is addressed below through the daemon's
+	// host alias, because the task that calls it is a CONTAINER: `127.0.0.1`
+	// inside one is that container's own loopback, not this process's.
 	stubServer = createServer((req, res) => {
 		res.writeHead(200, { 'content-type': 'application/json' });
 		res.end(JSON.stringify({ slideshow: { title: 'orkstack realtime proof' }, path: req.url }));
 	});
-	await new Promise<void>((resolve) => stubServer!.listen(0, '127.0.0.1', resolve));
+	await new Promise<void>((resolve) => stubServer!.listen(0, '0.0.0.0', resolve));
 	const addr = stubServer.address();
 	if (!addr || typeof addr === 'string') throw new Error('stub server has no port');
 	stubPort = addr.port;
 
 	// Engine: Connect API + WS bridge, with the UI origin allowed for the WS.
+	//
+	// It is given the SAME artifact backend as the Orker below, and that is
+	// load-bearing rather than tidiness. The engine resolves the run's commit
+	// root at submit and pins it onto the replay-pinned plan (§5.2); the Orker
+	// then reads and writes `commit.json` there. An engine left on the default
+	// local backend beside an S3 Orker pins a `file://` root that the Orker's
+	// S3 commit store cannot parse, and every task fails COMMIT_READ_FAILED
+	// before it runs.
 	spawnLogged('engine.log', './bin/ork', [], {
+		...catalogEnv,
+		...s3Env,
 		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
 		ORK_HTTP_ADDR: '127.0.0.1:18080',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
@@ -145,16 +164,11 @@ test.beforeAll(async () => {
 		return res.ok;
 	});
 
-	// Orker: generic worker with http/shell/file plugins against MinIO.
+	// Orker: the generic worker that runs any activity image, against MinIO.
 	spawnLogged('orker.log', './bin/orker', [], {
+		...s3Env,
 		ORK_TEMPORAL_ADDRESS: '127.0.0.1:7233',
-		ORK_ARTIFACT_BACKEND: 's3',
-		ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
-		ORK_S3_REGION: 'us-east-1',
-		ORK_S3_BUCKET: 'orkstack-artifacts',
-		ORK_S3_ACCESS_KEY: 'orkstack',
-		ORK_S3_SECRET_KEY: 'orkstack-secret',
-		ORK_S3_PATH_STYLE: 'true'
+		...orkerEnv('realtime')
 	});
 
 	// Built UI served by adapter-node, proxying RPC to the engine.
@@ -173,7 +187,18 @@ test.beforeAll(async () => {
 	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
 
 	// Register hello-ork through the UI proxy (the same path the browser uses).
-	const yaml = readFileSync(path.join(repoRoot, 'examples', 'hello.ork.yaml'), 'utf8');
+	//
+	// Its `version:` is stamped for this run. The example pins a fixed version,
+	// and an Orkflow version is IMMUTABLE — but the compiled definition now
+	// embeds the index digest each `uses:` resolved to (§4.4), and that digest
+	// is minted afresh every time the activity images are pushed. Re-applying
+	// the unchanged file after a re-push is therefore a genuinely different
+	// definition under a version that already exists, which the store correctly
+	// refuses. Stamping the version says what is true: this is a new definition.
+	const yaml = readFileSync(path.join(repoRoot, 'examples', 'hello.ork.yaml'), 'utf8').replace(
+		/^version:.*$/m,
+		`version: "0.0.${Date.now() % 100000}"`
+	);
 	const apply = await fetch(`${UI_ORIGIN}/orkstack.v1.OrkflowService/ApplyOrkflow`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
@@ -206,7 +231,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	// SVG edges are stroke-only paths (zero-area bbox when horizontal), so
 	// assert DOM attachment rather than visibility.
 	await expect(page.getByTestId('dag-edge-fetch-transform')).toBeAttached();
-	await expect(page.getByTestId('dag-edge-transform-save')).toBeAttached();
+	await expect(page.getByTestId('dag-edge-transform-verify')).toBeAttached();
 	await page.screenshot({ path: logPath('screenshot-orkflow-dag.png'), fullPage: true });
 
 	// 3. Submit hello-ork via the UI form with the hermetic stub URL.
@@ -215,7 +240,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	await page.getByTestId('orkflow-select').selectOption('hello-ork');
 	await page
 		.getByTestId('inputs-json')
-		.fill(JSON.stringify({ url: `http://127.0.0.1:${stubPort}/data.json` }, null, 2));
+		.fill(JSON.stringify({ url: `http://${containerHost}:${stubPort}/data.json` }, null, 2));
 	await page.getByTestId('submit-run').click();
 
 	// 4. The browser lands on the run page; from here on NO navigation or
@@ -249,7 +274,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	await expect(page.getByTestId('run-status-trail')).toHaveText('PENDING -> RUNNING -> SUCCEEDED');
 
 	// 6. All three tasks show succeeded — updated in place by the stream.
-	for (const taskId of ['fetch', 'transform', 'save']) {
+	for (const taskId of ['fetch', 'transform', 'verify']) {
 		await expect(page.getByTestId(`task-${taskId}-status`)).toHaveText('SUCCEEDED');
 	}
 	await expect(page.getByTestId('task-summary')).toHaveText('3/3 succeeded');
@@ -275,7 +300,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	expect(idxCreated).toBeGreaterThanOrEqual(0);
 	expect(idxStarted).toBeGreaterThan(idxCreated);
 	expect(idxSucceeded).toBeGreaterThan(idxStarted);
-	for (const taskId of ['fetch', 'transform', 'save']) {
+	for (const taskId of ['fetch', 'transform', 'verify']) {
 		expect(logText).toContain(`[${taskId}]`);
 	}
 

@@ -4,6 +4,7 @@ import { appendFileSync, createWriteStream, existsSync, mkdirSync, writeFileSync
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { catalogEnv, ensureActivityImages, orkerEnv } from './harness';
 
 // M10.8 — the whole v0.0.3 story, in one browser session against the real
 // stack.
@@ -217,12 +218,13 @@ namespace: ${ALPHA}
 
 tasks:
   - id: talk
-    plugin: shell
+    uses: shell
     pool: gpu
     timeout_seconds: 300
     with:
-      op: exec
-      command: |
+      op: script
+      interpreter: sh
+      script: |
         i=1
         while [ $i -le ${TALK_BURST} ]; do
           echo "talk line $i"
@@ -234,13 +236,14 @@ tasks:
           sleep 1
         done
   - id: chatter
-    plugin: shell
+    uses: shell
     pool: main
     needs: [talk]
     timeout_seconds: 300
     with:
-      op: exec
-      command: |
+      op: script
+      interpreter: sh
+      script: |
         i=1
         while [ $i -le ${CHATTER_LINES} ]; do
           echo "chatter line $i"
@@ -256,11 +259,11 @@ namespace: ${ALPHA}
 
 tasks:
   - id: boom
-    plugin: shell
+    uses: shell
     timeout_seconds: 60
     with:
       op: exec
-      command: echo "about to fail"; exit 3
+      command: ["sh", "-c", "echo \\"about to fail\\"; exit 3"]
 `;
 
 /** lineNumbers reads the numbers off a pane's rendered lines, in DOM order. */
@@ -300,6 +303,10 @@ test.beforeAll(async () => {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
@@ -326,20 +333,31 @@ test.beforeAll(async () => {
 	};
 
 	spawnLogged('engine-a.log', './bin/ork', [], {
+		...catalogEnv,
 		...cluster,
 		...store,
 		ORK_HTTP_ADDR: '127.0.0.1:18082'
 	});
 	spawnLogged('engine-b.log', './bin/ork', [], {
+		...catalogEnv,
 		...cluster,
 		...store,
 		ORK_HTTP_ADDR: '127.0.0.1:18083',
 		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
 	});
-	spawnLogged('orker-main.log', './bin/orker', [], { ...cluster, ...store });
+	// Each Orker gets its OWN work root: it is the bind-mountable path the
+	// activity workspace needs, and it is also what the Orker derives its
+	// identity from, so two Orkers on one host do not collide on the identity
+	// lock their startup reaper takes (see orkerEnv).
+	spawnLogged('orker-main.log', './bin/orker', [], {
+		...cluster,
+		...store,
+		...orkerEnv('logs-main')
+	});
 	spawnLogged('orker-gpu.log', './bin/orker', [], {
 		...cluster,
 		...store,
+		...orkerEnv('logs-gpu'),
 		ORK_ORKER_POOL: 'gpu'
 	});
 

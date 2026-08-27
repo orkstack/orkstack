@@ -3,9 +3,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	activityRef,
+	catalogEnv,
 	clusterEnv,
+	ensureActivityImages,
 	killAll,
 	noteTo,
+	orkerEnv,
 	proofOut,
 	rpc,
 	s3Env,
@@ -38,7 +42,12 @@ const BEFORE_ORIGIN = 'http://127.0.0.1:14179';
 
 const TEMPORAL_NAMESPACE =
 	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m11-4-run-page-logs-events';
-const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? 'alpine:3.20';
+// The image every container task here runs. It is activity-shell rather than a
+// bare `alpine:3.20`, because an activity must write
+// /orkstack/output/values.json and a stock base image does not — an image that
+// exits 0 without one fails VALUES_MISSING. It is still an ordinary OCI image,
+// built by `docker build` and pulled by digest.
+const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 const BEFORE_UI_DIR = process.env.ORK_BEFORE_UI_DIR ?? '';
 
 const STAMP = Date.now().toString(36);
@@ -55,25 +64,30 @@ const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fu
 // A container that writes to both file descriptors and stops. The run is
 // FINISHED before either browser opens it: this spec compares two renderings,
 // and a live stream would make them two different sets of bytes.
+//
+// Under the OCI Activity Contract this is an ORDINARY task: every task is a
+// container, so the image goes in `uses:` and there is no `container` activity
+// to name. `command` is argv, so the two-stream program is handed to an
+// explicit `sh -c`. The old `capture_stdout_as`/`capture_stderr_as` keys are
+// gone and nothing replaces them, because the Orker now captures both streams
+// for every task as the `stdout.log`/`stderr.log` system artifacts (§3.6) —
+// which is what this spec was asking for by hand.
 const orkflow = () => `name: ${ORKFLOW}
 version: "0.1.0"
 description: M11.4 before/after — a container that writes to both streams.
 
 tasks:
   - id: talk
-    plugin: container
+    uses: shell
     timeout_seconds: 300
     with:
-      image: ${IMAGE}
-      pull: missing
-      command: |
+      op: script
+      interpreter: sh
+      script: |
         echo "building the thing"
         echo "warning: this line came from stderr" 1>&2
         echo "built the thing"
         echo "error: and so did this one" 1>&2
-      capture_stdout_as: out
-      capture_stderr_as: err
-      timeout_seconds: 120
 `;
 
 test.beforeAll(async () => {
@@ -105,18 +119,27 @@ test.beforeAll(async () => {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
 	execFileSync('bun', ['run', 'build'], { cwd: uiDir, stdio: 'inherit' });
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('shots-engine.log'), './bin/ork', [], {
+		...catalogEnv,
 		...cluster,
 		...s3Env,
 		ORK_HTTP_ADDR: '127.0.0.1:18086',
 		ORK_WS_ALLOWED_ORIGINS: `${AFTER_ORIGIN},${BEFORE_ORIGIN}`
 	});
-	spawnLogged(out('shots-orker.log'), './bin/orker', [], { ...cluster, ...s3Env });
+	spawnLogged(out('shots-orker.log'), './bin/orker', [], {
+		...cluster,
+		...s3Env,
+		...orkerEnv('m11-4-shots')
+	});
 	await waitForEngine(ENGINE);
 
 	for (const [name, dir, port] of [

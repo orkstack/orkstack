@@ -1638,7 +1638,7 @@ export const ActivityService: GenService<{
   /**
    * DescribeOrker is the pool-liveness probe that replaces ListPlugins in
    * that role (§6.5). It is dispatched as a Temporal activity on a pool's
-   * queue, exactly where the ListPlugins probe went.
+   * own channel, exactly where the ListPlugins probe went.
    *
    * @generated from rpc orkstack.v1.ActivityService.DescribeOrker
    */

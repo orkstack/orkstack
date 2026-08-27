@@ -856,7 +856,7 @@ type ActivityServiceClient interface {
 	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
 	// DescribeOrker is the pool-liveness probe that replaces ListPlugins in
 	// that role (§6.5). It is dispatched as a Temporal activity on a pool's
-	// queue, exactly where the ListPlugins probe went.
+	// own channel, exactly where the ListPlugins probe went.
 	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
 }
 
@@ -907,7 +907,7 @@ type ActivityServiceHandler interface {
 	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
 	// DescribeOrker is the pool-liveness probe that replaces ListPlugins in
 	// that role (§6.5). It is dispatched as a Temporal activity on a pool's
-	// queue, exactly where the ListPlugins probe went.
+	// own channel, exactly where the ListPlugins probe went.
 	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
 }
 

@@ -3,9 +3,13 @@ import { execFileSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+	activityRef,
+	catalogEnv,
 	clusterEnv,
+	ensureActivityImages,
 	killAll,
 	noteTo,
+	orkerEnv,
 	proofOut,
 	rpc as callEngine,
 	s3Env,
@@ -17,8 +21,8 @@ import {
 	waitForEngine
 } from './harness';
 
-// M11.6 — the Admin section: namespaces, pool health, plugin inventory and
-// system information, in a browser, against the real stack.
+// M11.6 — the Admin section: namespaces, pool health, the activity catalog
+// and system information, in a browser, against the real stack.
 //
 // What this milestone claims, and therefore what is measured here:
 //
@@ -32,13 +36,15 @@ import {
 //      undeletable BEFORE any other namespace exists (not merely among
 //      others), and deleting the namespace the app is currently scoped to
 //      resets that scope rather than stranding it;
-//   3. a partial answer is shown as partial, in BOTH shapes this milestone
-//      has: a pool's own per-pool inventory (Pool.plugins, asserted for
-//      every live pool including a NON-default one this spec starts
-//      itself) and the deployment-wide inventory's name-only entries
-//      (PluginInfo with no version — proto/orkstack/v1/service.proto),
-//      produced HERE by a genuine default-pool outage, not fabricated;
-//   4. the namespace switcher and the two global views coexist without
+//   3. a partial answer is shown as partial, in every shape this deployment
+//      still has: a pool with zero live Orkers (a real zero, with the words
+//      that say what to do), a pool health read that could not reach the
+//      cluster at all (drawn as unknown, never as a zero), and an Orker
+//      probe on the Activities page that goes unanswered while that page's
+//      catalog still answers in full — each produced HERE by a genuine
+//      outage, not fabricated. The per-pool and deployment-wide PLUGIN
+//      inventories that used to carry this clause are gone with the plugin
+//      surface; see the pool-health test for what replaced them and why;
 //      confusion — the URL still carries `?ns=`, and the page says whether
 //      that selection scopes what it shows;
 //   5. loading, empty and error states throughout.
@@ -47,33 +53,29 @@ import {
 // `main` pool, one on a `gpu` pool this spec creates, and one on a `deaf`
 // pool that is a real Temporal poller with no activities registered
 // (proof/M11.6/tools/deaf-poller) — so pool health has a genuinely
-// non-default live pool to report on, a genuinely live pool whose plugin
-// question genuinely goes unanswered, and the plugin inventory has a
-// genuine source for name-only entries once `main` goes quiet (see the
-// last two tests). The engine and its two Orkers (`main`, `gpu`) run
-// against a bucket this run creates and this run alone has ever
-// written to (proof/M11.6/tools/bucket-ensure) — the shared
-// `orkstack-artifacts` bucket every other e2e spec in this module writes to
-// has accumulated a stamped namespace from every earlier run of THIS spec
-// too, and "default is the only namespace this deployment has" cannot occur
-// there a second time. Isolation per AGENTS.md §6: this milestone's own
-// Temporal namespace, which is a hard partition, so no queue-level isolation
-// is additionally required.
+// non-default live pool to report on, and a live pool whose liveness comes
+// from polling alone rather than from anything it can answer. The engine and
+// its two Orkers (`main`, `gpu`) run against a bucket this run creates and
+// this run alone has ever written to (proof/M11.6/tools/bucket-ensure) — the
+// shared `orkstack-artifacts` bucket every other e2e spec in this module
+// writes to has accumulated a stamped namespace from every earlier run of
+// THIS spec too, and "default is the only namespace this deployment has"
+// cannot occur there a second time. Isolation per AGENTS.md §6: this
+// milestone's own Temporal namespace, which is a hard partition, so no
+// queue-level isolation is additionally required. Each Orker also gets its
+// OWN work root, because that is what its identity lock is keyed on and two
+// Orkers sharing one root would refuse to boot beside each other.
 //
 // Two things here are genuinely destructive, and both are placed LAST among
 // the tests that need the thing they destroy, in a suite that is `serial`
 // specifically so that ordering is the safety rail:
-//   - the `main` pool's Orker is killed to prove the plugin inventory's
-//     name-only state for real (a pool answered by NAME ONLY is what a
-//     non-default pool reports for a plugin the default pool is NOT
-//     currently reachable to describe in full — internal/api/service.go's
-//     own dedupePlugins deliberately drops a name-only report for a plugin
-//     the default pool already described in full, so this state cannot be
-//     produced by running a second Orker of the SAME build alongside a
-//     healthy default pool; it requires the default pool to have gone
-//     quiet, which is what this does, for real, waiting out the real
-//     freshness window (internal/engine/pools.go DefaultPollerFreshness)
-//     rather than asserting on a race);
+//   - the `main` pool's Orker is killed to prove, for real, that an
+//     unanswered DescribeOrker on the Activities page is reported as
+//     "nothing was measured" and does not take the catalog down with it.
+//     DescribeOrker is dispatched onto the DEFAULT pool's queue (§6.5), so
+//     only a genuine outage of that pool produces it — `gpu` staying up is
+//     what makes it an unanswered default pool rather than a dead
+//     deployment;
 //   - this run's OWN Temporal namespace is deleted outright to prove a pool
 //     health read that cannot reach the cluster at all — no other black-box
 //     lever reproduces that failure (see the comment on that test).
@@ -94,7 +96,12 @@ const UI_ORIGIN = 'http://127.0.0.1:14177';
 // isolation already assigned this namespace to M11.6; this is the one
 // caller that must not let a different assignment override it.
 const TEMPORAL_NAMESPACE = 'ork-m11-6-admin-ui';
-const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? 'alpine:3.20';
+// The image every container task here runs. It is activity-shell rather than a
+// bare `alpine:3.20`, because an activity must write
+// /orkstack/output/values.json and a stock base image does not — an image that
+// exits 0 without one fails VALUES_MISSING. It is still an ordinary OCI image,
+// built by `docker build` and pulled by digest.
+const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 
 const STAMP = Date.now().toString(36);
 const OPS_NS = `m11-6-ops-${STAMP}`;
@@ -145,27 +152,31 @@ function shot(page: Page, name: string) {
 
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
-// containerOrkflowYaml is a genuinely Docker-backed task: the container
-// plugin, run for real (pkg/plugins/container), not merely named in a stored
-// definition nobody executes. AGENTS.md's integration-test rule ("genuinely
-// exercise real Temporal, MinIO and docker") is not satisfied by a document
-// sitting in the catalog — ApplyOrkflow only validates and stores YAML, it
-// never runs a task — so this orkflow is APPLIED *and submitted*, and the
-// test that does so waits for the run to actually succeed before this
-// namespace is used to prove a delete refusal.
+// containerOrkflowYaml is a genuinely Docker-backed task, run for real, not
+// merely named in a stored definition nobody executes. AGENTS.md's
+// integration-test rule ("genuinely exercise real Temporal, MinIO and
+// docker") is not satisfied by a document sitting in the catalog —
+// ApplyOrkflow only validates and stores YAML, it never runs a task — so this
+// orkflow is APPLIED *and submitted*, and the test that does so waits for the
+// run to actually succeed before this namespace is used to prove a delete
+// refusal.
+//
+// Under the OCI Activity Contract there is no `container` activity to name,
+// because every task already IS a container: the image goes in `uses:` and
+// the argv in the task's own `command`.
 function containerOrkflowYaml(name: string): string {
 	return `name: ${name}
 version: "0.1.0"
 description: M11.6 admin proof — a real docker container, run for real.
 tasks:
   - id: probe
-    plugin: container
+    uses: shell
     timeout_seconds: 120
     with:
-      image: ${IMAGE}
-      pull: missing
-      command: echo "m11-6 admin proof - real Temporal, real MinIO, real docker"
-      timeout_seconds: 60
+      op: exec
+      command:
+        - echo
+        - "m11-6 admin proof - real Temporal, real MinIO, real docker"
 `;
 }
 
@@ -207,7 +218,7 @@ test.beforeAll(async () => {
 	writeFileSync(
 		outPath(TRANSCRIPT),
 		[
-			'# M11.6 — the Admin section: namespaces, pool health, plugins, system info.',
+			'# M11.6 — the Admin section: namespaces, pool health, activities, system info.',
 			'#',
 			'# Written by ui/e2e/admin.spec.ts against a real engine + two real Orkers on',
 			'# real Temporal + MinIO + Docker.',
@@ -238,17 +249,10 @@ test.beforeAll(async () => {
 				'pool-unavailable failure (see the last test in this file)'
 		);
 	}
-	// A genuinely Docker-backed task (containerOrkflowYaml above) needs a
-	// reachable daemon and the image on this host, the same check
-	// ui/e2e/run-page.spec.ts makes for the identical reason.
-	try {
-		execFileSync(process.env.ORK_DOCKER_BIN ?? 'docker', ['image', 'inspect', IMAGE], {
-			stdio: 'ignore'
-		});
-	} catch {
-		throw new Error(`the container image ${IMAGE} is not on this host`);
-	}
-
+	// The three first-party images, built and PUSHED: `uses: shell` is a
+	// catalog name resolved by a real registry GET at apply time (§4.3), so an
+	// unpushed tag has no manifest digest to pin (§4.6).
+	ensureActivityImages();
 	execFileSync('go', ['build', '-o', 'bin/ork', './cmd/ork'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/orker', './cmd/orker'], { cwd: repoRoot });
 	execFileSync('go', ['build', '-o', 'bin/deaf-poller', './proof/M11.6/tools/deaf-poller'], {
@@ -272,6 +276,7 @@ test.beforeAll(async () => {
 	const store = { ...s3Env, ORK_S3_BUCKET: BUCKET };
 
 	spawnLogged(outPath('engine.log'), './bin/ork', [], {
+		...catalogEnv,
 		...cluster,
 		...store,
 		ORK_HTTP_ADDR: '127.0.0.1:18085',
@@ -283,34 +288,42 @@ test.beforeAll(async () => {
 	// an already-dead child is a no-op there).
 	mainOrkerProc = spawnLogged(outPath('orker-main.log'), './bin/orker', [], {
 		...cluster,
-		...store
+		...store,
+		...orkerEnv('m11-6-main')
 	});
 	// A second Orker, on a pool NOTHING in this deployment names by default:
-	// pool health's per-pool plugin list is asserted against it (a NON
-	// -default live pool, not just `main`), and the deployment-wide plugin
-	// inventory's name-only state (the last-but-one test) needs a pool that
-	// is still live and reachable once `main` is not.
+	// pool health needs a genuinely live NON-default pool to report on (not
+	// just `main`), and the Activities page's unanswered-Orker test needs a
+	// pool that is still live once `main` is not, so that the state it proves
+	// is "the DEFAULT pool did not answer" and not "this deployment is dead".
+	//
+	// Its own work root, because that is what the identity lock is keyed on.
 	spawnLogged(outPath('orker-gpu.log'), './bin/orker', [], {
 		...cluster,
 		...store,
+		...orkerEnv('m11-6-gpu'),
 		ORK_ORKER_POOL: 'gpu'
 	});
+	await waitForEngine(ENGINE);
+	note(`engine up at ${ENGINE}, temporal namespace ${TEMPORAL_NAMESPACE}, bucket ${BUCKET}`);
+
 	// A THIRD pool, `deaf`: a real Temporal activity poller with NO activity
-	// registered (proof/M11.6/tools/deaf-poller — see that file's own
-	// comment for why this is the only way to produce this state for real).
-	// ObservePool counts it as a live Orker exactly like the two above; the
-	// ListPlugins activity dispatched to its channel is never answered, so
-	// PluginsOnPool's err is non-nil and internal/engine/pools.go's
-	// `pool.Plugins` stays empty while `pool.LiveOrkerCount` stays real —
-	// the live-count/empty-plugin state acceptance 3 names and that neither
-	// the zero-Orker `cpu` pool nor the wholly-unreachable-cluster test
-	// below can produce.
+	// registered (proof/M11.6/tools/deaf-poller). ObservePool counts it as a
+	// live Orker exactly like the two above, because liveness is measured
+	// from POLLERS and not from anything the poller can answer — so it is
+	// what proves a live count does not quietly depend on a working Orker.
+	//
+	// Started AFTER the engine is up, and that ordering is load-bearing. The
+	// engine registers this run's Temporal namespace at boot; the poller has
+	// no retry for a namespace that is not there yet and exits immediately
+	// with "Namespace ... is not found". The last test in this file DELETES
+	// this namespace on purpose, so the first run after a completed run is
+	// exactly the one that finds it absent — which is why this raced rarely
+	// enough to survive until now, and why it is ordered rather than retried.
 	spawnLogged(outPath('deaf-poller.log'), './bin/deaf-poller', [], {
 		...cluster,
 		ORK_DEAF_QUEUE: 'ork-pool-deaf'
 	});
-	await waitForEngine(ENGINE);
-	note(`engine up at ${ENGINE}, temporal namespace ${TEMPORAL_NAMESPACE}, bucket ${BUCKET}`);
 
 	spawnLogged(
 		outPath('ui.log'),
@@ -441,7 +454,7 @@ test('a docker-backed orkflow this proof holds runs for real, before it is used 
 		},
 		120_000
 	);
-	note(`run ${runId} (container plugin, image ${IMAGE}) succeeded — a real docker container ran`);
+	note(`run ${runId} (image ${IMAGE}) succeeded — a real docker container ran`);
 });
 
 // Acceptance 2 & 6: local validation blocks a bad slug before any RPC, a good
@@ -796,16 +809,30 @@ test('deleting the currently-selected namespace resets the selection to default'
 
 // Acceptance 1 & 3: pool health respects the namespace switcher, a pool with
 // zero live Orkers is drawn as zero WITH the warning (never silently
-// healthy-looking), every LIVE pool's per-pool plugin list is reported —
-// including a pool that is not this deployment's default, which is the
-// state acceptance 1's "per-pool plugins" clause actually names — and a
-// LIVE pool whose plugin question genuinely goes unanswered (`deaf`, a real
-// Temporal poller with no activities registered, proof/M11.6/tools/deaf-poller)
-// is shown as unknown/incomplete rather than as a report that came back
-// empty — the third partial shape acceptance 3 requires, distinct from
-// both "zero Orkers" (`cpu`, below) and "the pool could not be reached at
-// all" (the real-outage test near the end of this file).
-test('pool health is namespace-scoped, and reports live Orker counts and per-pool plugins for every pool', async ({
+// healthy-looking), and a live count is reported for every live pool —
+// including pools that are not this deployment's default, which is what
+// distinguishes "this page shows SOME pool's health" from "this page shows
+// the RIGHT pool's health".
+//
+// WHAT THIS TEST NO LONGER ASSERTS, AND WHY. It used to also assert a
+// per-pool INVENTORY (`Pool.plugins`, rendered as `pool-plugins-*`), in three
+// states: sampled, unknown-because-nobody-was-asked, and
+// unknown-because-the-answer-failed. That surface is gone with the plugin
+// surface itself. `PluginsOnPool` no longer exists (it was replaced by
+// DescribeOrker, internal/engine/pool_probe.go), so the engine never
+// populates `Pool.plugins`, and the Pools page renders no per-pool inventory
+// at all. Asking an Orker "what can you run" stopped being a question worth
+// asking when an activity became an image: which images exist is engine
+// configuration read in one place, which is what the Admin Activities page
+// shows.
+//
+// Acceptance 3's "a partial answer is shown as partial" is therefore proven
+// in two places now, both still real and both still produced by genuine
+// outages rather than fabricated: the `cpu` assertions below (zero live
+// Orkers, drawn as a real zero with the words that say what to do), the
+// wholly-unreachable-cluster test near the end of this file, and the Orker
+// half of the Activities page (the test above this one).
+test('pool health is namespace-scoped, and reports live Orker counts for every pool', async ({
 	page
 }) => {
 	// OPS_NS is widened to include `gpu` — the second Orker this file's
@@ -821,16 +848,14 @@ test('pool health is namespace-scoped, and reports live Orker counts and per-poo
 		return answer.pools?.some((p) => p.name === 'gpu' && (p.liveOrkerCount ?? 0) > 0) ?? false;
 	});
 	note(`namespace ${OPS_NS} widened to allow gpu, which reports a live Orker`);
+
 	// `deaf`: a real Temporal poller with NO activities registered
-	// (proof/M11.6/tools/deaf-poller, started in beforeAll) — a genuinely
-	// live Orker count, and a genuinely failed plugin question, both
-	// produced for real rather than by injecting a response at the network
-	// layer. This is the ONLY black-box way to reach
-	// internal/engine/pools.go's `r.Plugins.PluginsOnPool` error branch: a
-	// pool with zero live Orkers is never asked (see the `cpu` assertions
-	// below), and killing a whole Orker only turns its liveness off too
-	// (the real-outage test near the end of this file), which is the OTHER
-	// partial state, not this one.
+	// (proof/M11.6/tools/deaf-poller, started in beforeAll). It is kept
+	// because liveness is measured from POLLERS, not from anything an Orker
+	// answers, so a poller that could not run a single task still has to be
+	// counted as live — and a page that quietly required a working Orker to
+	// show a live count would be wrong in exactly the moment an operator
+	// opens it.
 	await addPoolToNamespace(OPS_NS, 'deaf');
 	await waitFor('the deaf pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
@@ -839,20 +864,17 @@ test('pool health is namespace-scoped, and reports live Orker counts and per-poo
 		);
 		return answer.pools?.some((p) => p.name === 'deaf' && (p.liveOrkerCount ?? 0) > 0) ?? false;
 	});
-	note(`namespace ${OPS_NS} widened to allow deaf, a live poller that cannot answer ListPlugins`);
+	note(`namespace ${OPS_NS} widened to allow deaf, a live poller that runs no activities`);
 
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${OPS_NS}`);
 	await expect(page.getByTestId('pools-scope-caption')).toContainText(OPS_NS);
 	await expect(page.getByTestId('pools-scope-caption')).toContainText('honours the namespace');
 
-	// main: a live Orker really is polling for it, and it reports the real
-	// plugin set that Orker was built with.
+	// main: a live Orker really is polling for it, and it is the default.
 	const mainCard = page.getByTestId('pool-card-main');
 	await expect(mainCard).toBeVisible();
 	await expect(mainCard.getByTestId('pool-orker-count-main')).not.toHaveText('0');
 	await expect(mainCard.getByTestId('pool-default-main')).toBeVisible();
-	await expect(mainCard.getByTestId('pool-plugins-main')).toContainText('shell');
-	await expect(mainCard.getByTestId('pool-plugins-main')).toContainText('container');
 
 	// cpu: named in this namespace's allow-list, genuinely nobody serves it.
 	// Rendered as a real zero, tinted, with the words that say what to do
@@ -861,47 +883,26 @@ test('pool health is namespace-scoped, and reports live Orker counts and per-poo
 	await expect(cpuCard).toBeVisible();
 	await expect(cpuCard.getByTestId('pool-orker-count-cpu')).toHaveText('0');
 	await expect(cpuCard.getByTestId('pool-no-orkers-cpu')).toContainText('no live Orkers');
-	// Round-2 review: a pool with zero live Orkers is never asked for
-	// plugins at all (internal/engine/pools.go only calls PluginsOnPool
-	// when live_orker_count > 0), so its plugin caption must say "unknown",
-	// never "sampled" — this is a DIFFERENT reason than the amber
-	// unavailable-pool caption below, and gets its own testid.
-	await expect(cpuCard.getByTestId('pool-plugins-no-live-orkers-cpu')).toContainText('unknown');
-	await expect(cpuCard.getByTestId('pool-plugins-cpu')).toHaveCount(0);
-	await expect(cpuCard.getByTestId('pool-plugins-unknown-cpu')).toHaveCount(0);
+	// A zero is a MEASUREMENT, and must not be drawn as the amber
+	// "could not be asked" state the unreachable-cluster test proves.
+	await expect(cpuCard.getByTestId('pool-unavailable-cpu')).toHaveCount(0);
 
 	// gpu: a SECOND, genuinely live, NON-default pool — this spec's own
-	// Orker, started in beforeAll — with its own real plugin list. This is
-	// the per-pool plugin assertion the acceptance's "pool health with …
-	// per-pool plugins" clause names and an earlier version of this file
-	// never made: main and cpu alone cannot distinguish "this page shows
-	// SOME pool's plugins" from "this page shows the RIGHT pool's plugins".
+	// Orker, started in beforeAll. main and cpu alone cannot distinguish
+	// "this page shows SOME pool's health" from "this page shows the RIGHT
+	// pool's health".
 	const gpuCard = page.getByTestId('pool-card-gpu');
 	await expect(gpuCard).toBeVisible();
 	await expect(gpuCard.getByTestId('pool-orker-count-gpu')).not.toHaveText('0');
 	await expect(gpuCard.getByTestId('pool-default-gpu')).toHaveCount(0);
-	await expect(gpuCard.getByTestId('pool-plugins-gpu')).toContainText('shell');
-	await expect(gpuCard.getByTestId('pool-plugins-gpu')).toContainText('container');
 
-	// deaf: a THIRD, genuinely live, non-default pool whose Orker cannot
-	// answer ListPlugins (proof/M11.6/tools/deaf-poller) — the live-count/
-	// empty-plugin partial state acceptance 3 requires, distinct from `cpu`
-	// (never asked, because there is no live Orker) and from the
-	// wholly-unreachable-cluster state proven near the end of this file
-	// (no live count at all). The Orker count is real and positive; the
-	// caption plainly says the inventory is unknown/incomplete rather than
-	// implying an answer that happened to be empty.
+	// deaf: a THIRD, genuinely live, non-default pool, counted live off its
+	// polling alone.
 	const deafCard = page.getByTestId('pool-card-deaf');
 	await expect(deafCard).toBeVisible();
 	await expect(deafCard.getByTestId('pool-orker-count-deaf')).not.toHaveText('0');
 	await expect(deafCard.getByTestId('pool-default-deaf')).toHaveCount(0);
-	await expect(deafCard.getByTestId('pool-plugins-deaf')).toHaveCount(0);
-	const deafUnknown = deafCard.getByTestId('pool-plugins-unknown-deaf');
-	await expect(deafUnknown).toBeVisible();
-	await expect(deafUnknown).toContainText('unknown');
-	await expect(deafUnknown).not.toContainText('sampled');
-	await expect(deafCard.getByTestId('pool-plugins-no-live-orkers-deaf')).toHaveCount(0);
-	await expect(deafCard.getByTestId('pool-plugins-unavailable-deaf')).toHaveCount(0);
+	await expect(deafCard.getByTestId('pool-unavailable-deaf')).toHaveCount(0);
 
 	await shot(page, 'screenshot-admin-pools.png');
 });
@@ -989,84 +990,104 @@ test('switching namespace while on Pools shows this page\'s own loading state, n
 	await page.unroute('**/orkstack.v1.NamespaceService/ListPools');
 });
 
-// Acceptance 1 & 3: the plugin inventory is global (no namespace scoping in
-// the caption), lists what the default pool's Orker reports IN FULL, and
-// discloses a schema on request. Then, once the default pool genuinely goes
-// quiet, the SAME inventory narrows to name-only entries — a real partial
-// answer, produced by killing this spec's own `main` Orker and waiting out
-// the real freshness window, not by injecting a response at the network
-// layer. See the file-level comment for why this is the only way to produce
-// this state without a code change outside SCOPE LOCK: a second Orker of the
-// same build running ALONGSIDE a healthy default pool cannot produce it,
-// because internal/api/service.go's dedupePlugins deliberately drops a
-// name-only report for a plugin the default pool already described in full
-// (verified against this exact build before this test was written).
-test('the plugin inventory is global, discloses schemas on request, and narrows to name-only entries once the default pool goes quiet', async ({
+// Acceptance 1 & 3, on the surface that replaced the plugin inventory.
+//
+// The ACTIVITY CATALOG is global (no namespace scoping in the caption) and
+// lists what this deployment can run, each entry resolved to an index digest.
+// It is engine configuration read in one place (design §4.2), so — unlike the
+// plugin inventory it replaces — it has no "partial row" state at all: there
+// is no Orker to disagree, so a name-only entry cannot exist. That is a
+// deliberate simplification of the contract, not a coverage gap, and the
+// milestone's acceptance-3 claim ("a partial answer is shown as partial,
+// produced by a genuine outage rather than fabricated") moves to the thing on
+// this page that IS asked of a pool: the Orker description.
+//
+// DescribeOrker is dispatched onto the DEFAULT pool's queue (§6.5), and the
+// page reads it INDEPENDENTLY of the catalog. So killing this spec's own
+// `main` Orker produces, for real, the exact shape acceptance 3 names: one
+// half of the page reports that nothing could be measured, in its own
+// distinct state, while the other half still answers in full. `gpu` stays up
+// throughout, which is what makes this an unanswered DEFAULT pool rather than
+// a dead deployment.
+test('the activity catalog is global and resolved, and an Orker outage is reported as unmeasured without hiding the catalog', async ({
 	page
 }) => {
 	test.setTimeout(240_000);
 
-	await page.goto(`${UI_ORIGIN}/admin/plugins?ns=${OPS_NS}`);
-	await expect(page.getByTestId('plugins-scope-caption')).toContainText('across this whole deployment');
+	await page.goto(`${UI_ORIGIN}/admin/activities?ns=${OPS_NS}`);
+	await expect(page.getByTestId('activities-scope-caption')).toContainText(
+		'deployment-wide, not scoped'
+	);
 
-	const shellKey = 'shell@0.1.0';
-	const shellRow = page.getByTestId(`plugin-row-${shellKey}`);
-	await expect(shellRow).toBeVisible();
-	await expect(shellRow).toContainText('shell');
-	await expect(shellRow).toContainText('0.1.0');
-	await expect(page.getByTestId(`plugin-partial-${shellKey}`)).toHaveCount(0);
+	// The catalog, in the RESPONSE's own order — §2.3 makes that order
+	// contract in as many words ("the Admin page renders it"), so a
+	// client-side sort here would quietly take the guarantee over from the
+	// server.
+	const names = await page.getByTestId('activity-list').locator('tbody tr').evaluateAll((rows) =>
+		rows.map((row) => row.getAttribute('data-testid')?.replace('activity-row-', '') ?? '')
+	);
+	expect(names).toEqual(['file', 'http', 'shell']);
+	for (const name of names) {
+		await expect(page.getByTestId(`activity-reference-${name}`)).toContainText(`activity-${name}`);
+		// Resolved at APPLY time, so the page shows a digest and not a tag.
+		await expect(page.getByTestId(`activity-digest-${name}`)).toContainText('sha256:');
+		await expect(page.getByTestId(`activity-digest-unresolved-${name}`)).toHaveCount(0);
+	}
 
-	await page.getByTestId(`plugin-schema-toggle-${shellKey}`).click();
-	const schema = page.getByTestId(`plugin-schema-${shellKey}`);
-	await expect(schema).toBeVisible();
-	await expect(page.getByTestId(`plugin-input-schema-${shellKey}`)).toContainText('op');
-	await shot(page, 'screenshot-admin-plugins.png');
+	// The Orker half, answered: this is what "measured" looks like, so that
+	// the unavailable state below is a CHANGE and not the only thing ever seen.
+	await expect(page.getByTestId('orker-card')).toBeVisible();
+	await expect(page.getByTestId('orker-pool')).toHaveText('main');
+	await expect(page.getByTestId('orker-unavailable')).toHaveCount(0);
+	await shot(page, 'screenshot-admin-activities.png');
 
-	// Kill THIS spec's own `main` Orker (captured in beforeAll) — `gpu`
-	// stays up. Once the real freshness window (60s,
-	// internal/engine/pools.go DefaultPollerFreshness) elapses, ListPlugins
-	// stops asking the default pool at all (it is no longer fresh) and
-	// reports only what `gpu` answers, by name — genuinely partial, because
-	// nothing but a real outage of the default pool produces it.
+	// Kill THIS spec's own `main` Orker (captured in beforeAll) — `gpu` stays
+	// up. DescribeOrker goes to the default pool's queue, so once `main` is
+	// gone there is nobody to answer it, and the engine reports that it could
+	// not be measured rather than reporting a zero.
 	mainOrkerProc?.kill('SIGTERM');
-	note('killed this spec\'s own main-pool Orker to let the default pool go stale for real');
+	note("killed this spec's own main-pool Orker so the default pool cannot answer DescribeOrker");
 
 	await waitFor(
-		'the plugin inventory narrows to name-only entries once main is stale',
+		'DescribeOrker stops being answered once the main-pool Orker is gone',
 		async () => {
-			const answer = await rpc<{ plugins?: { name: string; version?: string }[] }>(
-				'PluginService/ListPlugins',
-				{}
-			);
-			const shell = answer.plugins?.find((p) => p.name === 'shell');
-			return shell !== undefined && (shell.version ?? '') === '';
+			try {
+				await rpc('ActivityService/DescribeOrker', {});
+				return false;
+			} catch {
+				return true;
+			}
 		},
 		150_000
 	);
-	note('the deployment-wide plugin inventory now reports name-only entries from gpu alone');
+	note('the default pool no longer answers DescribeOrker');
 
 	// A client-side navigation (not page.goto/page.reload) so the browser's
 	// own fetch is the one re-running `load` — the identical reasoning the
 	// "A note on Playwright and SSR" section of proof/M11.6/README.md gives
 	// for the pool-health test below.
 	await page.getByTestId('admin-tab-namespaces').click();
-	await page.getByTestId('admin-tab-plugins').click();
+	await page.getByTestId('admin-tab-activities').click();
 
-	const partialKey = 'shell@unreported';
-	const partialRow = page.getByTestId(`plugin-row-${partialKey}`);
-	await expect(partialRow).toBeVisible();
-	await expect(page.getByTestId(`plugin-partial-${partialKey}`)).toBeVisible();
-	await expect(page.getByTestId(`plugin-unreported-${partialKey}`)).toContainText('not reported');
-	await expect(page.getByTestId(`plugin-description-unreported-${partialKey}`)).toContainText(
-		'not reported'
-	);
-	await expect(page.getByTestId(`plugin-schema-unreported-${partialKey}`)).toContainText(
-		'not reported'
-	);
-	// The fully-described row is gone: the default pool that reported it is
-	// the one that just went quiet.
-	await expect(page.getByTestId(`plugin-row-${shellKey}`)).toHaveCount(0);
-	await shot(page, 'screenshot-admin-plugins-partial.png');
+	// The partial answer, shown as partial: an unanswered probe is its OWN
+	// state, and it says nothing was measured rather than showing a zero.
+	const unavailable = page.getByTestId('orker-unavailable');
+	await expect(unavailable).toBeVisible();
+	await expect(unavailable).toContainText('No Orker answered the default pool');
+	await expect(unavailable).toContainText('Nothing was measured');
+	await expect(page.getByTestId('orker-card')).toHaveCount(0);
+
+	// And the catalog is UNTOUCHED by that outage, which is the whole reason
+	// the page reads the two independently: which images exist is engine
+	// configuration, and no Orker was ever asked.
+	await expect(page.getByTestId('activity-list')).toBeVisible();
+	expect(
+		await page
+			.getByTestId('activity-list')
+			.locator('tbody tr')
+			.evaluateAll((rows) => rows.length)
+	).toBe(3);
+	await shot(page, 'screenshot-admin-activities-orker-unavailable.png');
 });
 
 // Acceptance 1 & 3: a pool health read that cannot reach the cluster AT ALL
@@ -1093,7 +1114,7 @@ test('the plugin inventory is global, discloses schemas on request, and narrows 
 // to destroy without touching any other agent's cluster state.
 //
 // Placed last among the tests that need Temporal: nothing after this one
-// reads a pool or a plugin, so nothing here strands a later assertion.
+// reads a pool, so nothing here strands a later assertion.
 test('a pool health read that cannot reach the cluster reports every pool as unknown, never as zero — proven by a real Temporal outage', async ({
 	page
 }) => {
@@ -1143,11 +1164,10 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 		// The number itself is never drawn as zero for an unreachable pool:
 		// there is no pool-orker-count testid on the card at all.
 		await expect(card.getByTestId(`pool-orker-count-${pool}`)).toHaveCount(0);
-		// Round-2 review: an unavailable pool's plugin caption must say it
-		// was never asked, not that it was "sampled" — there was no live
-		// count to gate a plugin request on in the first place.
-		await expect(card.getByTestId(`pool-plugins-unavailable-${pool}`)).toContainText('unknown');
-		await expect(card.getByTestId(`pool-plugins-${pool}`)).toHaveCount(0);
+		// A pool that could not be asked shows no live-count warning either:
+		// "no live Orkers" is a MEASUREMENT and would contradict the amber
+		// caption right beside it.
+		await expect(card.getByTestId(`pool-no-orkers-${pool}`)).toHaveCount(0);
 	}
 	await shot(page, 'screenshot-admin-pools-unavailable.png');
 });
