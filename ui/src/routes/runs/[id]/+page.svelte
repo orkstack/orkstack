@@ -9,7 +9,7 @@
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
 	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
+	import { EventType, type Event, type TaskRun } from '$lib/gen/orkstack/v1/run_pb';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp, isTerminal, statusLabel } from '$lib/status';
@@ -45,10 +45,11 @@
 		// page can render its §8.1 category and §8.2 reason code rather than
 		// only the sentence. Absent while a task has not failed.
 		error?: OrkError;
-		// exitCode and commit are per-ATTEMPT facts an Orker reports: the
-		// container's own status, and the durable completion record that makes
-		// the result adoptable on a retry (§5). They arrive on the GetRun
-		// snapshot; no run event carries them.
+		// exitCode has presence HERE even though proto3 int32 does not. A task
+		// that has not completed has no measured exit code; 0 is a real result
+		// only once a task succeeded. A failed task's non-zero value is likewise
+		// measured. Keeping the absence out of the generated zero value prevents
+		// the page from drawing "0" before the terminal snapshot arrives.
 		exitCode?: number;
 		commit?: CommitRef;
 	}
@@ -70,9 +71,10 @@
 		new Map((data.orkflow?.tasks ?? []).map((t) => [t.id, t]))
 	);
 
-	// Seed from the GetRun snapshot, then let the WebSocket stream drive every
-	// subsequent change in place (no page refresh). The seed is deliberately a
-	// one-shot read of `data`, hence untrack.
+	// Seed from the GetRun snapshot, then let the WebSocket stream drive live
+	// changes. Terminal per-attempt facts are the exception: events carry only
+	// status/message, so a terminal RUN event triggers one snapshot re-read
+	// below. The seed is deliberately a one-shot read of `data`, hence untrack.
 	let runStatus = $state<Status>(untrack(() => data.run?.status) ?? Status.UNSPECIFIED);
 	// The streamed RUN_FAILED event carries a message and nothing else, so the
 	// live path and the snapshot path are kept apart: `runErrorMessage` is what
@@ -129,11 +131,45 @@
 				attempt: tr.attempt,
 				message: tr.error?.message ?? '',
 				error: hasError(tr.error) ? tr.error : undefined,
-				exitCode: tr.exitCode,
+				exitCode: measuredExitCode(tr),
 				commit: tr.commit
 			});
 		}
 		return [...views.values()];
+	}
+
+	// Proto3's int32 has no field presence. Preserve the distinction the UI
+	// actually knows: success necessarily measured exit 0, and any non-zero
+	// value is measured; a zero on a pending/running/failed infrastructure
+	// snapshot is not evidence that a container exited 0.
+	function measuredExitCode(tr: TaskRun): number | undefined {
+		if (tr.status === Status.SUCCEEDED || tr.exitCode !== 0) return tr.exitCode;
+		return undefined;
+	}
+
+	function mergeTerminalFacts() {
+		for (const tr of data.run?.taskRuns ?? []) {
+			upsertTask(tr.taskId, {
+				status: tr.status,
+				attempt: tr.attempt,
+				message: tr.error?.message ?? '',
+				error: hasError(tr.error) ? tr.error : undefined,
+				exitCode: measuredExitCode(tr),
+				commit: tr.commit
+			});
+		}
+	}
+
+	let terminalRefresh: Promise<void> | undefined;
+	function refreshTerminalFacts() {
+		if (terminalRefresh) return;
+		terminalRefresh = (async () => {
+			// Events intentionally remain compact and carry no ActivityFailureDetail.
+			// Re-read exactly once at the run's terminal transition instead of
+			// inventing a polling loop or pretending the event message is structured.
+			await invalidateAll();
+			mergeTerminalFacts();
+		})();
 	}
 
 	// Patch the view IN PLACE. Replacing `tasks[idx]` carries the same data,
@@ -173,15 +209,18 @@
 			case EventType.RUN_SUCCEEDED:
 				runStatus = status ?? Status.SUCCEEDED;
 				finishedAt = event.timestamp;
+				refreshTerminalFacts();
 				break;
 			case EventType.RUN_FAILED:
 				runStatus = status ?? Status.FAILED;
 				finishedAt = event.timestamp;
 				if (event.message) runErrorMessage = event.message;
+				refreshTerminalFacts();
 				break;
 			case EventType.RUN_CANCELED:
 				runStatus = status ?? Status.CANCELED;
 				finishedAt = event.timestamp;
+				refreshTerminalFacts();
 				break;
 			case EventType.TASK_SCHEDULED:
 				upsertTask(event.taskId, { status: status ?? Status.PENDING });
@@ -490,19 +529,20 @@
 										</dd>
 									</div>
 								{/if}
-								{#if task.exitCode !== undefined}
-									<div>
-										<dt class="uppercase text-zinc-500">Exit code</dt>
-										<dd
-											class="mt-0.5 font-mono {task.exitCode === 0
+								<div>
+									<dt class="uppercase text-zinc-500">Exit code</dt>
+									<dd
+										class="mt-0.5 font-mono {task.exitCode === undefined
+											? 'text-zinc-500'
+											: task.exitCode === 0
 												? 'text-zinc-300'
 												: 'text-rose-300'}"
-											data-testid="task-{task.id}-exit-code"
-										>
-											{task.exitCode}
-										</dd>
-									</div>
-								{/if}
+										data-state={task.exitCode === undefined ? 'unknown' : 'measured'}
+										data-testid="task-{task.id}-exit-code"
+									>
+										{task.exitCode === undefined ? 'Not measured' : task.exitCode}
+									</dd>
+								</div>
 								{#if task.commit?.uri}
 									<div class="sm:col-span-2">
 										<dt class="uppercase text-zinc-500">Commit</dt>

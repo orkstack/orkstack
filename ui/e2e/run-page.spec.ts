@@ -62,6 +62,7 @@ const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 const STAMP = Date.now().toString(36);
 const LIVE_ORKFLOW = `m11-4-live-${STAMP}`;
 const EVENTS_ORKFLOW = `m11-4-events-${STAMP}`;
+const LIVE_FAILURE_ORKFLOW = `m11-4-live-failure-${STAMP}`;
 // The stub the retried task calls. It destroys the FIRST connection it is
 // given and answers every one after it, which activity-http reports as a
 // request it could not perform — a failed activity, and therefore a second
@@ -206,6 +207,29 @@ tasks:
 `;
 }
 
+/** A focused live-watch regression: measured exit 0, then measured exit 3. */
+function liveFailureOrkflow(): string {
+	return `name: ${LIVE_FAILURE_ORKFLOW}
+version: "0.1.0"
+description: M11.4 live terminal attempt facts.
+
+tasks:
+  - id: ok
+    uses: shell
+    timeout_seconds: 60
+    with:
+      op: exec
+      command: ["sh", "-c", "exit 0"]
+  - id: boom
+    uses: shell
+    needs: [ok]
+    timeout_seconds: 60
+    with:
+      op: exec
+      command: ["sh", "-c", "sleep 5; exit 3"]
+`;
+}
+
 /** paneLines reads one pane's rendered lines as (stream, text) pairs. */
 async function paneLines(
 	page: Page,
@@ -233,7 +257,7 @@ test.beforeAll(async () => {
 			'# Written by ui/e2e/run-page.spec.ts. Every line below was produced by',
 			'# the run that wrote this file.',
 			`# temporal namespace: ${TEMPORAL_NAMESPACE}`,
-			`# orkflows:           ${LIVE_ORKFLOW}, ${EVENTS_ORKFLOW} (ork namespace: default)`,
+			`# orkflows:           ${LIVE_ORKFLOW}, ${EVENTS_ORKFLOW}, ${LIVE_FAILURE_ORKFLOW} (ork namespace: default)`,
 			`# engine:             ${ENGINE}`,
 			`# container image:    ${IMAGE}`,
 			''
@@ -318,7 +342,8 @@ test.beforeAll(async () => {
 
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: liveOrkflow(probeUrl) });
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: eventsOrkflow() });
-	note(`applied ${LIVE_ORKFLOW} and ${EVENTS_ORKFLOW}`);
+	await rpc('OrkflowService/ApplyOrkflow', { yaml: liveFailureOrkflow() });
+	note(`applied ${LIVE_ORKFLOW}, ${EVENTS_ORKFLOW}, and ${LIVE_FAILURE_ORKFLOW}`);
 });
 
 test.afterAll(async () => {
@@ -578,6 +603,10 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-id')).toHaveText(run);
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
+	// A generated proto3 int32 reads as 0 even before an attempt finishes. The
+	// page must not draw that absence as a successful measurement.
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('Not measured');
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'unknown');
 
 	// A marker that survives only if the page never reloads: the toggle is a
 	// same-route navigation, so nothing below may re-enter the loader.
@@ -647,6 +676,18 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await expect(page.getByTestId('task-boom-status')).toHaveText('FAILED', { timeout: 120_000 });
 	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 60_000 });
 	note('task boom reached FAILED and the run FAILED with the event inspector CLOSED');
+
+	// TASK_FAILED itself carries only status/message. RUN_FAILED causes one
+	// terminal GetRun re-read (not a poll and not a reload), after which the
+	// task card has the Orker's actual attempt facts and structured category.
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3', { timeout: 60_000 });
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'measured');
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	await expect(page.getByTestId('task-boom-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
+	// A genuine successful exit 0 is still a measurement, not "unknown".
+	await expect(page.getByTestId('task-slow-exit-code')).toHaveText('0');
+	await expect(page.getByTestId('task-slow-exit-code')).toHaveAttribute('data-state', 'measured');
+	note('live terminal refresh rendered boom exit 3 / Activity failed and slow exit 0 without reload');
 	await shot(page, 'screenshot-events-closed-still-live.png');
 
 	// The page never reloaded through any of it, and exactly ONE event socket
@@ -678,6 +719,7 @@ test('the event view opens and closes while task state keeps updating', async ({
 	note(`failure rows tinted ${tint} against ${plain} for the rest`);
 
 	await page.getByTestId('event-filter-failures').click();
+
 	// Same as the chips above: wait for the repaint that is asserted.
 	await expect
 		.poll(async () => {
@@ -694,4 +736,46 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&events=1`);
 	await expect(page.getByTestId('event-inspector')).toBeVisible();
 	note('a fresh load of ?events=1 opens the inspector: the URL is the state');
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	await page.reload();
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	note('a reload of the finished run kept exit 3 and the Activity failed category');
+});
+
+test('a task watched live acquires its real exit code and Error.category without reload', async ({
+	page
+}) => {
+	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
+	const run = submitted.run.id;
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+	await expect(page.getByTestId('run-status')).toHaveText(/PENDING|RUNNING/);
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('Not measured');
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'unknown');
+
+	// A property on window is direct evidence that the terminal snapshot re-read
+	// was a SvelteKit invalidation, not a browser reload.
+	await page.evaluate(() => {
+		(window as unknown as { __orkTerminalMarker: string }).__orkTerminalMarker = 'alive';
+	});
+	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 120_000 });
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3', { timeout: 60_000 });
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'measured');
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	await expect(page.getByTestId('task-boom-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
+	await expect(page.getByTestId('task-ok-exit-code')).toHaveAttribute('data-state', 'measured');
+	expect(
+		await page.evaluate(
+			() => (window as unknown as { __orkTerminalMarker?: string }).__orkTerminalMarker
+		)
+	).toBe('alive');
+	note(`live-watched run ${run}: ok measured 0; boom measured 3 / Activity failed without reload`);
+	await shot(page, 'screenshot-live-terminal-facts.png');
+
+	await page.reload();
+	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
 });
