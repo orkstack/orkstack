@@ -415,7 +415,7 @@ tasks:
       maximum_attempts: 1
     with:
       op: exec
-      command: %s
+      command: ["sh", "-c", "%s"]
 `, name, command)
 }
 
@@ -433,7 +433,7 @@ tasks:
       maximum_attempts: 1
     with:
       op: exec
-      command: sleep 180
+      command: ["sh", "-c", "sleep 180"]
 `, name)
 }
 

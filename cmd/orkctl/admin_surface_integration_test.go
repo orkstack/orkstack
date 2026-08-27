@@ -108,7 +108,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 			"ORK_TEMPORAL_ADDRESS="+address,
 			"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
 			"ORK_ORKER_QUEUE="+queue,
-			"ORK_ORKER_WORKDIR="+filepath.Join(t.TempDir(), "work"),
+			"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 			"ORK_ARTIFACT_BACKEND=s3",
 		)
 	}
@@ -275,8 +275,6 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	pools := awaitLivePoolsOnB(t, onB, namespace, map[string]int{pool: 2, auxPool: 1})
 	if got := pools.byName(pool); got == nil || got.LiveOrkerCount < 2 {
 		t.Fatalf("pool %q does not report its two Orkers on B: %+v", pool, pools)
-	} else if len(got.Plugins) == 0 {
-		t.Errorf("pool %q reports no plugins; the Orkers serving it were never asked", pool)
 	}
 	if got := pools.byName(auxPool); got == nil || got.LiveOrkerCount < 1 {
 		t.Fatalf("the live non-default pool %q is missing from B's report: %+v", auxPool, pools)
@@ -284,14 +282,11 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 		if got.IsDefault {
 			t.Errorf("pool %q is marked default; %q is", auxPool, pool)
 		}
-		if len(got.Plugins) == 0 {
-			t.Errorf("pool %q reports no plugins; its Orker was never asked", auxPool)
-		}
 	}
 	if cold := pools.byName("cold"); cold == nil {
 		t.Error("the allow-listed pool nothing serves is missing; an empty pool must be reported")
-	} else if cold.LiveOrkerCount != 0 || len(cold.Plugins) != 0 {
-		t.Errorf("pool cold = %+v, want no Orkers and no plugins", cold)
+	} else if cold.LiveOrkerCount != 0 {
+		t.Errorf("pool cold = %+v, want no Orkers", cold)
 	} else if cold.LastSeen != "" {
 		// A pool nothing polls has no fresh observation, so it has no time to
 		// report. See Pool.last_seen: this column never dates a dead pool.
@@ -313,22 +308,17 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 		t.Errorf("the replicas disagree about the pools:\nA %+v\nB %+v", fromA, pools)
 	}
 
-	// ---- the plugin inventory, from B --------------------------------------
+	// ---- the activity catalog, from B --------------------------------------
 	//
-	// A live non-default pool is in scope while this runs, which is the shape
-	// that used to make this RPC refuse. It answers, and it carries the whole
-	// descriptor for the deployment's own pool.
-	inventory := requireCLI(t, onB, "B lists the plugins the Orkers run", "plugin", "list")
+	// v0.0.5 retired the per-Orker plugin inventory: an activity is an image,
+	// and which images exist is engine configuration. The read that replaced it
+	// is ActivityService.ListActivities, and B answers it having started
+	// nothing, exactly as it answers pool health.
+	catalog := requireCLI(t, onB, "B lists the activity catalog", "activity", "list")
 	for _, want := range []string{"shell", "http", "file"} {
-		if !strings.Contains(inventory, want) {
-			t.Errorf("the inventory does not report the %q plugin:\n%s", want, inventory)
+		if !strings.Contains(catalog, want) {
+			t.Errorf("the catalog does not report the %q activity:\n%s", want, catalog)
 		}
-	}
-	inventoryJSON := decodePluginList(t, requireCLI(t, onB, "B reads the inventory as JSON",
-		"--json", "plugin", "list"))
-	if shell := inventoryJSON.byName("shell"); shell == nil || shell.Version == "" {
-		t.Errorf("the deployment's own pool did not answer with a whole descriptor: %+v",
-			inventoryJSON.Plugins)
 	}
 
 	// ---- write safety, on B ------------------------------------------------
@@ -587,7 +577,7 @@ tasks:
     pool: %s
     with:
       op: exec
-      command: echo admin
+      command: ["sh", "-c", "echo admin"]
 `, name, pool)
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)

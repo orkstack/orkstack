@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -406,7 +405,7 @@ func startIdempotencyOrker(
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE="+namespace,
 		"ORK_ORKER_QUEUE="+queue,
-		"ORK_ORKER_WORKDIR="+filepath.Join(t.TempDir(), "work"),
+		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 		"ORK_ARTIFACT_BACKEND=s3",
 	)
 }
@@ -453,8 +452,7 @@ tasks:
     uses: shell
     with:
       op: exec
-      command: echo idempotent
-      capture_stdout_as: out
+      command: ["sh", "-c", "echo idempotent"]
 `, name)
 }
 

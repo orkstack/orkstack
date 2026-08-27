@@ -61,7 +61,7 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 		"ORK_TEMPORAL_ADDRESS="+address,
 		"ORK_TEMPORAL_NAMESPACE="+namespace,
 		"ORK_ORKER_QUEUE="+taskQueue,
-		"ORK_ORKER_WORKDIR="+filepath.Join(t.TempDir(), "work"),
+		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 	)
 	engineAddr := freeAddress(t)
 	startProcess(ctx, t, "ork", enginePath,
@@ -132,8 +132,8 @@ sed -i.bak -e 's/echo one/echo forked/' -e 's/1\.0\.0/1\.1\.0/' "$1"`)
 	// entered it.
 	diffed := requireCLI(t, cli, "the fork came from 1.0.0, not from the head",
 		"orkflow", "diff", name, "1.0.0", "1.1.0")
-	if !strings.Contains(diffed, "-      command: echo one") ||
-		!strings.Contains(diffed, "+      command: echo forked") {
+	if !strings.Contains(diffed, "-      command: [\"sh\", \"-c\", \"echo one\"]") ||
+		!strings.Contains(diffed, "+      command: [\"sh\", \"-c\", \"echo forked\"]") {
 		t.Fatalf("the fork is not 1.0.0 edited:\n%s", diffed)
 	}
 	// The version it was derived from is untouched — a fork adds, never
@@ -218,7 +218,7 @@ tasks:
     pool: %s
     with:
       op: exec
-      command: echo %s
+      command: ["sh", "-c", "echo %s"]
 `, name, version, version, pool, marker)
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write %s@%s: %v", name, version, err)

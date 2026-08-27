@@ -73,11 +73,23 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	}
 	awaitOrkflowVisible(ctx, t, replicaB.flows, orkflowName)
 
-	submitted, err := replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		OrkflowName: orkflowName,
-	}))
-	if err != nil {
-		t.Fatalf("SubmitRun on replica A: %v", err)
+	var submitted *connect.Response[orkstackv1.SubmitRunResponse]
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var err error
+		submitted, err = replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+			OrkflowName: orkflowName,
+		}))
+		if err == nil {
+			break
+		}
+		// Engine readiness and Temporal poller visibility are distinct. The
+		// submit boundary deliberately fails fast until DescribeOrker is visible;
+		// wait for that cluster fact instead of racing worker startup.
+		if !strings.Contains(err.Error(), "has no live Orkers") || time.Now().After(deadline) {
+			t.Fatalf("SubmitRun on replica A: %v", err)
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 	runID := submitted.Msg.GetRun().GetId()
 	t.Logf("replica A started run %s", runID)
@@ -299,18 +311,27 @@ func TestIntegration_TaskLogBytesNeverEnterRunHistory(t *testing.T) {
 	//
 	// Every event of the whole history is rendered AND its payloads decoded:
 	// activity inputs and results, the workflow argument, the completion.
+	//
+	// The control USED to be headMarker itself, because the retired shell
+	// plugin echoed the head of stdout onto its output payload. v0.0.5 removed
+	// that echo (§1.2: a task's bytes travel as artifacts and logs, never as a
+	// payload), so the standard here is now the stronger one: NEITHER marker
+	// may be in history. The control is the orkflow name, which is workflow
+	// input and is therefore in history by construction — a scan that cannot
+	// find it is reading nothing.
 	events, size := historyText(ctx, t, temporalClient, runID)
-	if !strings.Contains(events, headMarker) {
-		t.Fatalf("the history scan cannot even find %s, which the task payload's own "+
-			"documented stdout echo puts there; its verdict about the log path means nothing",
-			headMarker)
+	if !strings.Contains(events, orkflowName) {
+		t.Fatalf("the history scan cannot even find the orkflow name %q, which is workflow "+
+			"input; its verdict about the log path means nothing", orkflowName)
 	}
-	if strings.Contains(events, tailMarker) {
-		t.Fatalf("%s is in run %s's Temporal history; the log path must put no bytes there "+
-			"(AGENTS.md §1.4)", tailMarker, runID)
+	for _, marker := range []string{headMarker, tailMarker} {
+		if strings.Contains(events, marker) {
+			t.Fatalf("%s is in run %s's Temporal history; a task's own bytes must never "+
+				"reach a payload or the history (AGENTS.md §1.4)", marker, runID)
+		}
 	}
-	t.Logf("scanned %d bytes of run %s's Temporal history: it carries the payload echo "+
-		"(%s) and NOT the log line beyond it (%s)", size, runID, headMarker, tailMarker)
+	t.Logf("scanned %d bytes of run %s's Temporal history: it carries the control (%s) "+
+		"and NEITHER task-output marker", size, runID, orkflowName)
 
 	// ---- the event stream carries NEITHER -----------------------------------
 	//
@@ -655,12 +676,10 @@ tasks:
     timeout_seconds: 120
     with:
       op: exec
-      command: |
-        for i in 01 02 03 04 05 06 07 08 09 10; do
-          echo "emit-$i"
-          sleep 1
-        done
-      capture_stdout_as: out
+      command:
+        - sh
+        - -c
+        - 'for i in 01 02 03 04 05 06 07 08 09 10; do echo "emit-$i"; sleep 1; done'
 `, name)
 }
 
@@ -689,16 +708,10 @@ tasks:
     timeout_seconds: 120
     with:
       op: exec
-      command: |
-        tag=%s
-        echo "ORKHEAD${tag}"
-        i=0
-        while [ $i -lt 200 ]; do
-          echo "filler-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          i=$((i + 1))
-        done
-        echo "ORKTAIL${tag}"
-      capture_stdout_as: out
+      command:
+        - sh
+        - -c
+        - 'tag=%s; echo "ORKHEAD${tag}"; i=0; while [ $i -lt 200 ]; do echo "filler-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; i=$((i + 1)); done; echo "ORKTAIL${tag}"'
 `, name, tag)
 }
 

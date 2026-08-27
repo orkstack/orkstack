@@ -313,23 +313,22 @@ func startNamespacedOrker(
 	orkerPath, temporalAddr, temporalNamespace, queue string,
 ) {
 	t.Helper()
-	root := t.TempDir()
 	startProcess(ctx, t, "orker", orkerPath,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
 		"ORK_ORKER_QUEUE="+queue,
-		"ORK_ORKER_WORKDIR="+filepath.Join(root, "work"),
+		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 		"ORK_ARTIFACT_BACKEND=local",
-		"ORK_ARTIFACT_DIR="+filepath.Join(root, "artifacts"),
+		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
 	)
 }
 
 // startNamespacedEngine is startEngine bound to one Temporal namespace.
 //
-// The engine keeps its default artifact configuration, because the namespace
-// REGISTRY lives in the bucket: this test needs the durable registry, not a
-// per-process directory, which is exactly the property AGENTS.md §1.7 asks of
-// a read.
+// Both binaries are pinned to ONE local artifact root. The namespace registry
+// and the run's commit records must be the same durable store for every process
+// in the test: since v0.0.5 the engine mints the commit URI and the Orker reads
+// it (§5.4), so two roots fail every activity with COMMIT_READ_FAILED.
 func startNamespacedEngine(
 	ctx context.Context,
 	t *testing.T,
@@ -342,6 +341,8 @@ func startNamespacedEngine(
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
 		"ORK_ORKER_QUEUE="+orkerQueue,
+		"ORK_ARTIFACT_BACKEND=local",
+		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
 	)
 	return addr
 }
@@ -364,8 +365,8 @@ tasks:
     uses: shell
     pool: %s
     with:
-      command: "echo %s"
-      capture_stdout_as: out
+      op: exec
+      command: ["sh", "-c", "echo %s"]
 `, name, taskID, pool, taskID)
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write orkflow %s: %v", name, err)

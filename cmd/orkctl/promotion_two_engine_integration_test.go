@@ -381,7 +381,7 @@ tasks:
     uses: shell
     with:
       op: exec
-      command: echo %s
+      command: ["sh", "-c", "echo %s"]
 `, name, version, version, marker)
 }
 
@@ -397,7 +397,7 @@ tasks:
     timeout_seconds: 120
     with:
       op: exec
-      command: sleep %d; echo slow-%s
+      command: ["sh", "-c", "sleep %d; echo slow-%s"]
 `, name, version, version, seconds, version)
 }
 

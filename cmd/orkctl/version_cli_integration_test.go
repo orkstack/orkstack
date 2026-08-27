@@ -51,7 +51,7 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 		"ORK_TEMPORAL_ADDRESS="+address,
 		"ORK_TEMPORAL_NAMESPACE="+namespace,
 		"ORK_ORKER_QUEUE="+taskQueue,
-		"ORK_ORKER_WORKDIR="+filepath.Join(t.TempDir(), "work"),
+		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 	)
 	engineAddr := freeAddress(t)
 	startProcess(ctx, t, "ork", enginePath,
@@ -157,8 +157,8 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 	// ---- diff, and the promote-to-unknown refusal -------------------------
 	diffed := requireCLI(t, cli, "diff the two versions",
 		"orkflow", "diff", name, "1.0.0", "2.0.0")
-	if !strings.Contains(diffed, "-      command: echo one") ||
-		!strings.Contains(diffed, "+      command: echo two") {
+	if !strings.Contains(diffed, "-      command: [\"sh\", \"-c\", \"echo one\"]") ||
+		!strings.Contains(diffed, "+      command: [\"sh\", \"-c\", \"echo two\"]") {
 		t.Fatalf("the diff does not describe the change:\n%s", diffed)
 	}
 	if _, stderr, code := cli("orkflow", "promote", name, "9.9.9"); code == 0 {
@@ -188,7 +188,7 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 	// always was.
 	original := requireCLI(t, cli, "the edited-from version is unchanged",
 		"orkflow", "diff", name, "2.0.0", "3.0.0")
-	if !strings.Contains(original, "-      command: echo two") {
+	if !strings.Contains(original, "-      command: [\"sh\", \"-c\", \"echo two\"]") {
 		t.Fatalf("2.0.0 no longer holds what it held:\n%s", original)
 	}
 
@@ -255,7 +255,7 @@ tasks:
     pool: %s
     with:
       op: exec
-      command: echo %s
+      command: ["sh", "-c", "echo %s"]
 `, name, version, version, pool, marker)
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write %s@%s: %v", name, version, err)

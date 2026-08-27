@@ -156,7 +156,8 @@ tasks:
     pool: %s
     timeout: 120s
     with:
-      command: "sleep 60"
+      op: exec
+      command: ["sh", "-c", "sleep 60"]
 `, name, pool)
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatalf("write orkflow %s: %v", name, err)

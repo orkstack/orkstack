@@ -267,17 +267,59 @@ func privateTaskPool() string {
 	return fmt.Sprintf("orkctl-m4-%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
+// bindableOrkerWorkRoot returns a work root the container runtime can bind.
+//
+// Every task is a container under the OCI Activity Contract, and the macOS
+// Docker VM cannot bind the system TMPDIR under /var/folders, so t.TempDir()
+// makes an Orker fail its boot probe with WORKDIR_NOT_BINDABLE. The repository
+// lives under the shared home directory, which is what scripts/stack.sh and
+// the OCI proofs already use.
+func bindableOrkerWorkRoot(t *testing.T) string {
+	t.Helper()
+	if root := os.Getenv("ORK_TEST_CONTAINER_TMPDIR"); root != "" {
+		return root
+	}
+	// Deterministic per test, so every process one test starts shares one root.
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			return r
+		default:
+			return '-'
+		}
+	}, t.Name())
+	root := filepath.Join(repoRoot(t), ".data", "work", "orkctl-integration-"+safe)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("create bindable work root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
+}
+
+// sharedLocalArtifactDir is one artifact root for every process in a test.
+//
+// The engine mints the commit URI and the Orker reads and writes it (§5.4), so
+// two different local artifact roots make every activity fail with
+// COMMIT_READ_FAILED. One directory per test, shared by both binaries.
+func sharedLocalArtifactDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(bindableOrkerWorkRoot(t), "artifacts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create artifact dir: %v", err)
+	}
+	return dir
+}
+
 // startOrker runs the real orker binary against the private task queue, with a
 // local-filesystem artifact store so the test needs no object storage.
 func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, queue string) {
 	t.Helper()
-	root := t.TempDir()
 	startProcess(ctx, t, "orker", orkerPath,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_ORKER_QUEUE="+queue,
-		"ORK_ORKER_WORKDIR="+filepath.Join(root, "work"),
+		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 		"ORK_ARTIFACT_BACKEND=local",
-		"ORK_ARTIFACT_DIR="+filepath.Join(root, "artifacts"),
+		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
 	)
 }
 
@@ -291,6 +333,8 @@ func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, or
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_ORKER_QUEUE="+orkerQueue,
+		"ORK_ARTIFACT_BACKEND=local",
+		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
 	)
 	return addr
 }

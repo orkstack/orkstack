@@ -504,16 +504,14 @@ tasks:
     timeout_seconds: 60
     with:
       op: exec
-      command: sleep 8; echo slow
-      capture_stdout_as: out
+      command: ["sh", "-c", "sleep 8; echo slow"]
   - id: after
     uses: shell
     needs: [slow]
     timeout_seconds: 60
     with:
       op: exec
-      command: echo after
-      capture_stdout_as: out
+      command: ["sh", "-c", "echo after"]
 `, name)
 }
 
