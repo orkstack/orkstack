@@ -276,7 +276,7 @@ func TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion(t *testin
 	enginePath := buildBinary(t, root, binDir, "ork")
 	orkerPath := buildBinary(t, root, binDir, "orker")
 	queue := idempotencyTaskQueue()
-	startIdempotencyOrker(ctx, t, orkerPath, address, namespace, queue)
+	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, namespace, queue)
 	engineProcess := startReplica(ctx, t, "ork-A", enginePath, address, namespace, queue)
 	engineProcess.awaitReady(ctx, t)
 

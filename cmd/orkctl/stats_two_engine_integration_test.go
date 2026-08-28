@@ -67,7 +67,7 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 	orkerPath := buildBinary(t, root, binDir, "orker")
 
 	channel := idempotencyTaskQueue()
-	startIdempotencyOrker(ctx, t, orkerPath, address, partition, channel)
+	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, partition, channel)
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, partition, channel)
 	replicaB := startReplica(ctx, t, "ork-B", enginePath, address, partition, channel)
 	replicaA.awaitReady(ctx, t)

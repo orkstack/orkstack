@@ -59,7 +59,7 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	cliPath := buildBinary(t, root, binDir, "orkctl")
 
 	queue := idempotencyTaskQueue()
-	startIdempotencyOrker(ctx, t, orkerPath, address, namespace, queue)
+	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, namespace, queue)
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, namespace, queue)
 	replicaB := startReplica(ctx, t, "ork-B", enginePath, address, namespace, queue)
 	replicaA.awaitReady(ctx, t)
@@ -73,23 +73,11 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	}
 	awaitOrkflowVisible(ctx, t, replicaB.flows, orkflowName)
 
-	var submitted *connect.Response[orkstackv1.SubmitRunResponse]
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		var err error
-		submitted, err = replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-			OrkflowName: orkflowName,
-		}))
-		if err == nil {
-			break
-		}
-		// Engine readiness and Temporal poller visibility are distinct. The
-		// submit boundary deliberately fails fast until DescribeOrker is visible;
-		// wait for that cluster fact instead of racing worker startup.
-		if !strings.Contains(err.Error(), "has no live Orkers") || time.Now().After(deadline) {
-			t.Fatalf("SubmitRun on replica A: %v", err)
-		}
-		time.Sleep(250 * time.Millisecond)
+	submitted, err := replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+		OrkflowName: orkflowName,
+	}))
+	if err != nil {
+		t.Fatalf("SubmitRun on replica A after the Orker poller became ready: %v", err)
 	}
 	runID := submitted.Msg.GetRun().GetId()
 	t.Logf("replica A started run %s", runID)
@@ -261,7 +249,7 @@ func TestIntegration_TaskLogBytesNeverEnterRunHistory(t *testing.T) {
 	orkerPath := buildBinary(t, root, binDir, "orker")
 
 	queue := idempotencyTaskQueue()
-	startIdempotencyOrker(ctx, t, orkerPath, address, namespace, queue)
+	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, namespace, queue)
 	engine := startReplica(ctx, t, "ork-history", enginePath, address, namespace, queue)
 	engine.awaitReady(ctx, t)
 

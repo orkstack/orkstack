@@ -71,7 +71,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	orkerPath := buildBinary(t, root, binDir, "orker")
 
 	queue := idempotencyTaskQueue()
-	startIdempotencyOrker(ctx, t, orkerPath, address, namespace, queue)
+	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, namespace, queue)
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, namespace, queue)
 	replicaB := startReplica(ctx, t, "ork-B", enginePath, address, namespace, queue)
 	replicaA.awaitReady(ctx, t)

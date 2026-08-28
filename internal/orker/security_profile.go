@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -56,6 +57,7 @@ const (
 // an arbitrary host bind mount, and neither can an operator: no configuration
 // key exists for any of them, which is a stronger guarantee than validation.
 type SecurityPolicy struct {
+	configErr error
 	// DefaultCPU and DefaultMemory are what a task that requested nothing
 	// receives.
 	DefaultCPU    string
@@ -110,12 +112,16 @@ func SecurityPolicyFromEnv() SecurityPolicy {
 		policy.MaxMemory = v
 	}
 	if v := strings.TrimSpace(os.Getenv(PidsLimitVar)); v != "" {
-		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil && parsed > 0 {
+		parsed, err := positivePolicyInt(PidsLimitVar, v)
+		policy.configErr = errors.Join(policy.configErr, err)
+		if err == nil {
 			policy.PidsLimit = parsed
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv(TmpfsBytesVar)); v != "" {
-		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil && parsed > 0 {
+		parsed, err := positivePolicyInt(TmpfsBytesVar, v)
+		policy.configErr = errors.Join(policy.configErr, err)
+		if err == nil {
 			policy.TmpfsBytes = parsed
 		}
 	}
@@ -132,6 +138,17 @@ func SecurityPolicyFromEnv() SecurityPolicy {
 		policy.SecretSchemes = schemes
 	}
 	return policy
+}
+
+func positivePolicyInt(key, raw string) (int64, error) {
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q must be a positive base-10 integer: %w", key, raw, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("%s=%q must be a positive base-10 integer", key, raw)
+	}
+	return parsed, nil
 }
 
 // ProfileID names the enforced profile for DescribeOrker, so an operator can
@@ -164,6 +181,9 @@ func (p SecurityPolicy) AllowsSecretScheme(scheme string) bool {
 // until the first dispatch and silently over-granting there (AGENTS.md §6:
 // "Workflows must not receive unlimited resources by default").
 func (p SecurityPolicy) Validate() error {
+	if p.configErr != nil {
+		return p.configErr
+	}
 	capCPU, err := parseCPU(p.MaxCPU)
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid cpu quantity (%v); use the Kubernetes "+

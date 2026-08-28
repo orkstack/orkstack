@@ -2,7 +2,9 @@ package orker
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,6 +251,42 @@ func TestWorkspace_TaskJSONOmitsAbsentOptionalsAndKeepsRequiredZeroes(t *testing
 			t.Errorf("limits.%s is absent; every limit is required so a workload can respect "+
 				"it instead of discovering it by failing", key)
 		}
+	}
+}
+
+type namedDirEntry string
+
+func (e namedDirEntry) Name() string    { return string(e) }
+func (namedDirEntry) IsDir() bool       { return false }
+func (namedDirEntry) Type() os.FileMode { return 0 }
+func (namedDirEntry) Info() (os.FileInfo, error) {
+	return nil, errors.New("Info must not run before name validation")
+}
+
+func TestScanOutputArtifactsRejectsInvalidUTF8BeforeFilesystemAccess(t *testing.T) {
+	tests := []struct {
+		name  string
+		bytes []byte
+	}{
+		{name: "lone continuation byte", bytes: []byte{'a', 0x80, 'b'}},
+		{name: "truncated multibyte sequence", bytes: []byte{0xe2, 0x82}},
+		{name: "encoded surrogate", bytes: []byte{0xed, 0xa0, 0x80}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			found, failure := scanOutputArtifactEntries(
+				"unread", []os.DirEntry{namedDirEntry(string(tc.bytes))}, testLimits(),
+			)
+			if failure == nil {
+				t.Fatalf("scan succeeded with %v for invalid UTF-8 %x", found, tc.bytes)
+			}
+			if failure.Reason != ReasonArtifactNameNotUTF8 {
+				t.Errorf("reason = %q, want %q (%s)", failure.Reason, ReasonArtifactNameNotUTF8, failure.Message)
+			}
+			if !strings.Contains(failure.Message, hex.EncodeToString(tc.bytes)) {
+				t.Errorf("failure %q does not name rejected bytes %x", failure.Message, tc.bytes)
+			}
+		})
 	}
 }
 

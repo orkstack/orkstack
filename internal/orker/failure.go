@@ -141,7 +141,7 @@ func CategoryFor(reason string) string {
 
 // RetryableReason answers whether Temporal should try a reason code again.
 //
-// The category supplies the default and the override table supplies the two
+// The category supplies the default and the override table supplies the three
 // exceptions. ContractViolation and TimedOut are never retryable, which is the
 // same statement NonRetryableCategories makes to the engine.
 func RetryableReason(reason string) bool {

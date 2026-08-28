@@ -103,7 +103,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	orkerPath := buildBinary(t, root, binDir, "orker")
 
 	queue := idempotencyTaskQueue()
-	startIdempotencyOrker(ctx, t, orkerPath, address, namespace, queue)
+	startIdempotencyOrker(ctx, t, temporalClient, orkerPath, address, namespace, queue)
 	replicaA := startReplica(ctx, t, "ork-A", enginePath, address, namespace, queue)
 	replicaB := startReplica(ctx, t, "ork-B", enginePath, address, namespace, queue)
 	replicaA.awaitReady(ctx, t)
@@ -398,6 +398,7 @@ func startReplica(
 func startIdempotencyOrker(
 	ctx context.Context,
 	t *testing.T,
+	temporalClient client.Client,
 	orkerPath, temporalAddr, namespace, queue string,
 ) {
 	t.Helper()
@@ -408,6 +409,44 @@ func startIdempotencyOrker(
 		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 		"ORK_ARTIFACT_BACKEND=s3",
 	)
+	awaitActivityPoller(ctx, t, temporalClient, queue)
+}
+
+// awaitActivityPoller waits for Temporal's cluster-visible readiness fact.
+// Process startup alone is insufficient: submit deliberately refuses a pool
+// until its activity poller is registered.
+func awaitActivityPoller(ctx context.Context, t *testing.T, temporalClient client.Client, queue string) {
+	t.Helper()
+	deadline := time.NewTimer(90 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		description, err := temporalClient.DescribeTaskQueueEnhanced(ctx, client.DescribeTaskQueueEnhancedOptions{
+			TaskQueue:      queue,
+			TaskQueueTypes: []client.TaskQueueType{client.TaskQueueTypeActivity},
+			ReportPollers:  true,
+			Versions:       &client.TaskQueueVersionSelection{AllActive: true, Unversioned: true},
+		})
+		lastErr = err
+		if err == nil {
+			for _, version := range description.VersionsInfo {
+				if len(version.TypesInfo[client.TaskQueueTypeActivity].Pollers) > 0 {
+					t.Logf("Orker activity poller ready on %s", queue)
+					return
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("waiting for Orker activity poller on %s: %v", queue, ctx.Err())
+		case <-deadline.C:
+			t.Fatalf("Orker activity poller on %s did not become ready: %v", queue, lastErr)
+		case <-ticker.C:
+		}
+	}
 }
 
 // h2cClient dials the engine's h2c Connect server.

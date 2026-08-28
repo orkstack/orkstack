@@ -7,6 +7,32 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
+func TestSecurityPolicyFromEnvRefusesInvalidProcessLimits(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		value string
+	}{
+		{key: PidsLimitVar, value: "1k"},
+		{key: PidsLimitVar, value: "0"},
+		{key: PidsLimitVar, value: "-1"},
+		{key: TmpfsBytesVar, value: "abc"},
+		{key: TmpfsBytesVar, value: "0"},
+		{key: TmpfsBytesVar, value: "-1"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			t.Setenv(tc.key, tc.value)
+			policy := SecurityPolicyFromEnv()
+			err := policy.Validate()
+			if err == nil {
+				t.Fatalf("%s=%q silently fell back to the default policy", tc.key, tc.value)
+			}
+			if message := err.Error(); !strings.Contains(message, tc.key) || !strings.Contains(message, tc.value) {
+				t.Errorf("validation error %q must name %s and its rejected value %q", message, tc.key, tc.value)
+			}
+		})
+	}
+}
+
 // TestSecurityPolicy_RefusesAnOverCapRequestRatherThanClamping is §9.3's
 // central choice, stated as a test.
 //

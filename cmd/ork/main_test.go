@@ -68,6 +68,45 @@ func TestLoadConfigUsesDocumentedRunPlanDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAcceptsExplicitZeroForDerivedLimits(t *testing.T) {
+	t.Setenv("ORK_TRANSFER_BUDGET_SECONDS", "0")
+	t.Setenv("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", "0")
+
+	cfg := loadConfig()
+	if cfg.limitsErr != nil {
+		t.Fatalf("explicit derive values refused at boot: %v", cfg.limitsErr)
+	}
+	if cfg.transferBudgetSeconds != 0 {
+		t.Errorf("transfer budget = %d, want derived (zero)", cfg.transferBudgetSeconds)
+	}
+	if cfg.floorThroughputBytesPerSecond != 0 {
+		t.Errorf("floor throughput = %d, want derived (zero)", cfg.floorThroughputBytesPerSecond)
+	}
+}
+
+func TestLoadConfigRefusesInvalidDerivedLimitsAtBoot(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		value string
+	}{
+		{key: "ORK_TRANSFER_BUDGET_SECONDS", value: "1MB"},
+		{key: "ORK_TRANSFER_BUDGET_SECONDS", value: "-1"},
+		{key: "ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", value: "1MB"},
+		{key: "ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", value: "-1"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			t.Setenv(tc.key, tc.value)
+			cfg := loadConfig()
+			if cfg.limitsErr == nil {
+				t.Fatalf("%s=%q silently fell back to a default", tc.key, tc.value)
+			}
+			if message := cfg.limitsErr.Error(); !strings.Contains(message, tc.key) || !strings.Contains(message, tc.value) {
+				t.Errorf("boot error %q must name %s and its rejected value %q", message, tc.key, tc.value)
+			}
+		})
+	}
+}
+
 func TestLoadConfigRefusesInvalidRunPlanLimitsAtBoot(t *testing.T) {
 	for _, tc := range []struct {
 		key   string

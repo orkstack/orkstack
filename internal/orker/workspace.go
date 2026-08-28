@@ -541,6 +541,13 @@ func ScanOutputArtifacts(dir string, limits *orkstackv1.WorkspaceLimits) ([]Scan
 			"cannot read the output artifact directory %s: %v", ContainerArtifacts, err)
 	}
 
+	return scanOutputArtifactEntries(dir, entries, limits)
+}
+
+// scanOutputArtifactEntries is the filesystem-independent half of the output
+// scanner. Keeping the name validation here lets tests supply byte strings
+// that the host filesystem itself may refuse to create.
+func scanOutputArtifactEntries(dir string, entries []os.DirEntry, limits *orkstackv1.WorkspaceLimits) ([]ScannedArtifact, *Failure) {
 	maxCount := limits.GetArtifactMaxCount()
 	maxBytes := limits.GetArtifactMaxBytes()
 

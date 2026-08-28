@@ -96,8 +96,8 @@ func loadConfig() config {
 	artifactMaxBytes, artifactBytesErr := envInt64("ORK_ARTIFACT_MAX_BYTES", engine.DefaultArtifactMaxBytes)
 	logMaxBytes, logErr := envInt64("ORK_LOG_MAX_BYTES", engine.DefaultLogMaxBytes)
 	commitMaxBytes, commitErr := envInt64("ORK_COMMIT_MAX_BYTES", engine.DefaultCommitMaxBytes)
-	transferBudgetSeconds, transferErr := envInt32("ORK_TRANSFER_BUDGET_SECONDS", 0)
-	floorThroughput, throughputErr := envInt64("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
+	transferBudgetSeconds, transferErr := envInt32AllowZero("ORK_TRANSFER_BUDGET_SECONDS", 0)
+	floorThroughput, throughputErr := envInt64AllowZero("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
 
 	cfg := config{
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
@@ -164,6 +164,36 @@ func envInt64(key string, fallback int64) (int64, error) {
 
 func envInt32(key string, fallback int32) (int32, error) {
 	parsed, err := envInt64(key, int64(fallback))
+	if err != nil {
+		return fallback, err
+	}
+	if parsed > math.MaxInt32 {
+		raw := env(key, "")
+		return fallback, fmt.Errorf("%s=%q exceeds the maximum value %d", key, raw, int64(math.MaxInt32))
+	}
+	return int32(parsed), nil
+}
+
+// envInt64AllowZero reads limits whose zero value means "derive". Negative
+// and malformed values remain configuration errors; only the explicit zero
+// spelling differs from envInt64.
+func envInt64AllowZero(key string, fallback int64) (int64, error) {
+	raw := env(key, "")
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return fallback, fmt.Errorf("%s=%q must be a non-negative base-10 integer: %w", key, raw, err)
+	}
+	if parsed < 0 {
+		return fallback, fmt.Errorf("%s=%q must be a non-negative base-10 integer", key, raw)
+	}
+	return parsed, nil
+}
+
+func envInt32AllowZero(key string, fallback int32) (int32, error) {
+	parsed, err := envInt64AllowZero(key, int64(fallback))
 	if err != nil {
 		return fallback, err
 	}
