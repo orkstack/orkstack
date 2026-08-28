@@ -1,8 +1,8 @@
 # OCI Activity Contract — architecture
 
-Status: **accepted design, not yet implemented.** This document is the design
-authority for replacing the in-process Go plugin registry with pure OCI
-execution. It is normative: where it says MUST, an implementation that does
+Status: **implemented in v0.0.5.** This document is the design authority for
+the replacement of the in-process Go plugin registry with pure OCI execution.
+It is normative: where it says MUST, an implementation that does
 otherwise is wrong. Where it says SHOULD, a deviation needs a recorded reason.
 
 Scope: the engine↔Orker wire, the container-facing filesystem ABI, the durable

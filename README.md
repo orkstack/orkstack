@@ -1,20 +1,20 @@
 <h1 align="center">OrkStack</h1>
 
 <p align="center">
-  A powerful, Temporal-backed orkflow engine. Author <em>orkflows</em> in a simple
-  YAML DSL; run them durably on a fleet of pluggable workers (<em>Orkers</em>);
-  drive and observe them from a modern CLI and a realtime UI.
+  A thin, Temporal-backed durable execution platform. Author <em>Orkflows</em>
+  in YAML and run any OCI image on a fleet of disposable workers
+  (<em>Orkers</em>), without a workload SDK.
 </p>
 
 ---
 
-> Status: pre-release, building toward **v0.0.1**. See [milestones](#milestones).
+> Status: pre-release; v0.0.5 implements the OCI Activity Contract.
 
 ## Why
 
 - **Durable orchestration on Temporal** — retries, timeouts, and replay for free.
-- **Pluggable execution** — Orkers run plugins (`http`, `shell`, `file`, …) with
-  a fixed task contract: input payload + artifacts → output payload + artifacts.
+- **OCI execution** — Orkers run ordinary container images through a stable
+  filesystem contract; workloads need no OrkStack SDK.
 - **Artifacts by reference** — files flow between tasks through local or S3/MinIO
   storage, not through the control plane.
 - **One contract, everywhere** — a single Connect/proto API powers the `ork`
@@ -25,9 +25,9 @@
 See [ARCHITECTURE.md](./ARCHITECTURE.md). In short:
 
 ```
-DSL yaml → ork engine (Temporal) → Orker → Plugin → artifacts (local/S3)
-                 │  realtime events (Connect stream + WebSocket)
-        CLI (orkctl) / SvelteKit UI
+DSL YAML → ork engine (Temporal) → Orker → OCI image
+                 │                           │
+        CLI / SvelteKit UI            object storage
 ```
 
 ## Quickstart (dev)
@@ -55,9 +55,10 @@ The individual steps are still there when you want them: `make tools`,
 
 ## Repository layout
 
-See [AGENTS.md](./AGENTS.md) §2. The short version: `proto/` is the contract,
-`internal/` is the engine/orker/dsl, `pkg/` holds the plugin SDK, plugins, and
-artifact store, `cmd/` are the binaries, `ui/` is the SvelteKit app.
+See [AGENTS.md](./AGENTS.md) §12. The short version: `proto/` is the wire
+contract, `internal/` holds engine/Orker/DSL implementation, `images/` holds
+first-party OCI activities, `pkg/` holds reusable storage/logging code, `cmd/`
+contains the binaries, and `ui/` is the SvelteKit app.
 
 ## Contributing
 
@@ -68,22 +69,15 @@ a reproducible proof artifact under `proof/`.
 ## Docs
 
 - [DSL reference](./docs/DSL.md)
-- [Plugin reference](./docs/PLUGINS.md)
-- [Plugin design: the `op` pattern](./docs/PLUGIN_DESIGN.md)
-- [OCI Activity Contract — architecture](./docs/OCI_ACTIVITY_CONTRACT.md) (accepted design, not yet implemented)
+- [Retired Go plugin system and current replacements](./docs/PLUGINS.md)
+- [Activity-image design: the optional `op` pattern](./docs/PLUGIN_DESIGN.md)
+- [OCI Activity Contract — implemented architecture](./docs/OCI_ACTIVITY_CONTRACT.md)
 - [Architecture](./ARCHITECTURE.md)
 
 ## Milestones
 
-| id | area | status |
-|----|------|--------|
-| M0 | Foundation: contracts, infra, conventions | in progress |
-| M1 | Artifact storage (local + S3/MinIO) | planned |
-| M2 | Engine: Temporal + DSL + Connect + WS | planned |
-| M3 | Orker + plugins (http/shell/file) | planned |
-| M4 | CLI (orkctl) | planned |
-| M5 | UI (SvelteKit realtime) | planned |
-| M6 | E2E + proof + v0.0.1 release | planned |
+The current pre-release is **v0.0.5**, implementing the OCI Activity Contract.
+Committed milestone evidence and reproduction commands live under [`proof/`](./proof/).
 
 ## License
 

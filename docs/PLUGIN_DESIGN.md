@@ -1,204 +1,65 @@
-# Plugin design: the `op` pattern
+# Activity image design: the `op` pattern
 
-Every OrkStack plugin exposes **one generic operation selector, spelled `op`**.
-`op` names *what the task does*; the rest of `with:` supplies the arguments that
-operation needs. A reader who knows one plugin can therefore guess the shape of
-the next one.
+> **v0.0.5:** the in-process Go plugin system is retired. Tasks now name OCI
+> images through `uses:` and every image implements the public filesystem ABI.
+> This page keeps its historical filename so old links resolve; it documents a
+> convention used by OrkStack's reference activity images, not a platform plugin
+> interface.
+
+An activity image may expose one operation selector, spelled `op`, inside its
+`with:` configuration. `op` names what that image does; the other keys are the
+arguments for that operation. This is an image-level convention, not part of
+the OCI Activity Contract: third-party images may choose any configuration
+shape and need no OrkStack SDK.
 
 ```yaml
+name: notify
+inputs:
+  url:
+    type: string
+    required: true
 tasks:
-  - id: fetch
+  - id: publish
     uses: http
     with:
-      op: get                 # what to do
-      url: "{{ .inputs.url }}"  # what to do it to
+      op: post
+      url: "{{ .inputs.url }}"
+      headers:
+        content-type: application/json
+      body: '{"status":"ok"}'
 ```
 
-`docs/PLUGINS.md` describes the *contract* a plugin implements (`Name`,
-`Describe`, `Execute`). This document describes the *convention* every plugin
-follows on top of it.
+The catalog name `http` resolves to the `activity-http` OCI image at apply time.
+A task may instead put a registry reference directly in `uses:`. The retired
+container selector has no alias: every activity already is a container, so a
+custom workload names its own image directly.
 
-## Why one field
+## Rules for reference activity authors
 
-- **One thing to learn.** `op` is the first line of every task, in every plugin.
-- **Discoverable.** `op` is a property of the plugin's `Describe().InputSchema`
-  with an `enum` of its values, so `orkctl plugin list`, the UI, and any editor
-  reading the schema can offer the operations without special-casing plugins.
-- **Closed set, open plugin.** Adding an operation is an additive change to one
-  plugin. It never touches the proto, the engine, or the DSL — `with:` is an
-  opaque struct to everything except the plugin that receives it.
-- **Errors point at the author.** A misspelled operation is caught before any
-  side effect, and reported as the author's mistake rather than as a runtime
-  surprise 200 lines into a shell script.
+1. Use `op` only when one image genuinely offers several related operations.
+2. Use lowercase verbs and reject unknown values before side effects.
+3. Document whether an op is the default; do not silently guess when no choice
+   is clearly safest.
+4. Keep arguments minimal and document output values and artifact files.
+5. Use ordinary exit status: zero succeeds and non-zero fails. An image such as
+   `activity-shell` may explicitly define an operation whose child exit status
+   is returned as data, but that is the image's contract, not a platform magic
+   exit code.
 
-## Rules for plugin authors
+## First-party reference images
 
-1. **Name the field `op`.** Not `action`, `mode`, `method`, or `command`.
-2. **Values are lowercase verbs**: `get`, `write`, `copy`, `exec`. Compare
-   case-insensitively; report the value the author actually wrote.
-3. **Declare the enum in `Describe().InputSchema`** under `properties.op`, so
-   discovery advertises the real set.
-4. **Validate `op` first**, before touching the network, the filesystem, or any
-   other argument that could fail for an unrelated reason.
-5. **Reject an unknown `op` permanently** (`plugin.Permanent`), with a message
-   that quotes the rejected value *and* lists the supported ops. An unknown op
-   is never retryable: retrying cannot make a typo correct.
-6. **Never silently ignore an unknown `op`.** A dropped field is a config bug
-   that produces a plausible-looking run doing the wrong thing.
-7. **Pick a default only when one operation is obviously the common case**, and
-   document it. `http` defaults to `get`; `shell` defaults to `exec`; `file` has
-   no sensible default and requires `op`.
-8. **Keep an op's arguments minimal.** Arguments that only apply to one op are
-   documented with that op and ignored by the others.
+The current configuration and output contract for each image lives beside its
+Dockerfile:
 
-The rules are enforced by
-`internal/orker/activity_test.go:TestBuiltinPlugins_AllExposeAndValidateTheGenericOpSelector`,
-which walks the builtin registry, asserts every plugin advertises an `op` enum,
-and asserts every plugin rejects `op: frobnicate` with a permanent error.
+- [`activity-http`](../images/activity-http/README.md) — HTTP requests;
+- [`activity-shell`](../images/activity-shell/README.md) — argv, scripts, and
+  evaluations;
+- [`activity-file`](../images/activity-file/README.md) — small Unix-like file
+  operations.
 
-## The builtin ops
-
-| plugin  | ops                                          | default | required |
-|---------|----------------------------------------------|---------|----------|
-| `http`  | `get`, `post`, `put`, `patch`, `delete`, `head` | `get`   | no       |
-| `shell` | `exec`, `eval`, `script`                     | `exec`  | no       |
-| `file`  | `write`, `read`, `copy`, `delete`            | —       | yes      |
-
-Per-plugin reference: [`pkg/plugins/http/README.md`](../pkg/plugins/http/README.md),
-[`pkg/plugins/shell/README.md`](../pkg/plugins/shell/README.md),
-[`pkg/plugins/file/README.md`](../pkg/plugins/file/README.md).
-
-### `http` — the op is the HTTP verb
-
-```yaml
-- id: publish
-  uses: http
-  with:
-    op: post              # get | post | put | patch | delete | head
-    url: "https://httpbin.org/post"
-    headers:
-      Content-Type: application/json
-    body: '{"message": "hello"}'
-    capture_body_as: response
-```
-
-`method` is the pre-`op` spelling and still works, so orkflows written before
-this convention keep running. Unlike `op` it accepts any verb (`OPTIONS`,
-`TRACE`, a custom one). Setting both to *different* verbs is a permanent error;
-setting both to the same verb is fine.
-
-Full example: [`examples/http-post.ork.yaml`](../examples/http-post.ork.yaml).
-
-### `shell` — the op is how the body runs and what a non-zero exit means
-
-```yaml
-- id: report
-  uses: shell
-  with:
-    op: exec              # exec | eval | script
-    command: ./build.sh
-    capture_stdout_as: build-log
-```
-
-| op       | body      | meaning                                                                |
-|----------|-----------|------------------------------------------------------------------------|
-| `exec`   | `command` | The command **is the work**: `sh -c command`. A non-zero exit fails the task. |
-| `eval`   | `command` | The command **is a question**: `sh -c command`. Any exit succeeds; the answer is `output.value` (stdout, trimmed) and the caller branches on `output.exit_code`. |
-| `script` | `script`  | A **program** is the work. The body is written to `.ork-shell/script` in the workdir and executed by `interpreter` (default `sh`) or by its own `#!` line. A non-zero exit fails the task. |
-
-`eval` is for probes and measurements whose failure is information, not an
-outage. `script` is for work that is a program rather than a one-liner: it
-keeps its own `$0`, needs no `&&` chaining, and can choose its interpreter.
-
-```yaml
-- id: package
-  uses: shell
-  with:
-    op: script
-    interpreter: sh       # optional; a `#!` first line wins if this is unset
-    script: |
-      set -eu
-      mkdir -p dist
-      date -u +%Y-%m-%dT%H:%M:%SZ > dist/built-at.txt
-    capture_paths: ["dist/*"]
-```
-
-All three ops take the same capture arguments and produce the same artifacts;
-`eval` produces them even after a non-zero exit.
-
-Full example: [`examples/shell-eval.ork.yaml`](../examples/shell-eval.ork.yaml).
-
-### `file` — the op is the filesystem operation
-
-```yaml
-- id: save
-  uses: file
-  with:
-    op: write             # write | read | copy | delete
-    path: result.txt
-    content: "{{ .tasks.report.output.stdout }}"
-```
-
-| op       | arguments        | produces an artifact | notes                                    |
-|----------|------------------|----------------------|------------------------------------------|
-| `write`  | `path`, `content`| yes                  | creates parent directories               |
-| `read`   | `path`           | yes                  | re-exports a materialized upstream file  |
-| `copy`   | `from`, `to`     | yes                  | both ends stay inside the workdir        |
-| `delete` | `path`           | no                   | idempotent: a missing path still succeeds|
-
-`file` has no default op because none of the four is safer to guess than the
-others; omitting `op` is an error.
-
-Full example: [`examples/file-read.ork.yaml`](../examples/file-read.ork.yaml).
-
-### `container` — the op is what to do with the image
-
-```yaml
-- id: build
-  uses: container
-  with:
-    op: run               # run | pull
-    image: alpine:3.20
-    command: ./build.sh
-    capture_stdout_as: build-log
-```
-
-| op     | meaning                                                             |
-|--------|---------------------------------------------------------------------|
-| `run`  | The container **is the work**. A non-zero exit fails the task.       |
-| `pull` | Only fetch the image, so a later task starts without the download.   |
-
-`output` carries what only the plugin knows — `exit_code`, `image`,
-`image_pulled`, `container`, `timed_out`, `duration_ms` — and **none of the
-container's own bytes**: a payload is a Temporal payload, and a task's output
-travels as artifacts (AGENTS.md §1.2). Read the output with `orkctl run logs`,
-or name it with `capture_stdout_as` and consume it downstream as
-`{{ artifact "build/build-log" }}`.
-
-`op` lived entirely inside `with:` when this plugin landed, so nothing in the
-engine, DSL or proto changed for it — which is the point of the convention.
-
-Full example: [`examples/container-example.ork.yaml`](../examples/container-example.ork.yaml)
-and [the plugin reference](../pkg/plugins/container/README.md).
-
-## Unknown ops in practice
-
-```console
-$ orkctl run submit http-post --input op=frobnicate
-task publish failed: http: unknown op "frobnicate" (want get, post, put, patch, delete, head)
-```
-
-The failure is permanent, so Temporal does not retry it, and it happens before
-the request is built — an unknown op never reaches the network, the filesystem,
-or a shell.
-
-## Adding an op to an existing plugin
-
-1. Add the value to the plugin's `switch` and to the `enum` in `Describe()`.
-2. Add a behavior test for the new op **and** confirm the unknown-op test still
-   passes.
-3. Document it in the plugin's `README.md` and in the table above.
-4. Add or extend an example under `examples/` — every task in every shipped
-   example sets an explicit `op`, and
-   `internal/dsl/compile_test.go:TestCompile_AcceptsEveryShippedExample`
-   enforces it.
+All three read rendered configuration from
+`/orkstack/input/config.json`, write compact values to
+`/orkstack/output/values.json`, and write regular-file artifacts beneath
+`/orkstack/output/artifacts/`. They use the same ABI as any third-party image.
+See the [OCI Activity Contract](OCI_ACTIVITY_CONTRACT.md) for the authoritative
+platform contract and [the DSL reference](DSL.md) for task syntax.

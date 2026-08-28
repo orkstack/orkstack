@@ -131,20 +131,51 @@ Provided at submit time and referenced as `{{ .inputs.<name> }}`.
 
 ```yaml
 tasks:
-  - id: fetch            # unique within the orkflow
-    uses: http         # registered plugin name
-    needs: [other_id]    # DAG edges; must reference existing task ids; no cycles
-    condition: ""        # optional gate expression (v0: truthy string / template)
-    timeout_seconds: 300 # optional, default 300
-    retry:               # optional Temporal retry policy
+  - id: fetch             # unique within the Orkflow
+    uses: http            # catalog activity name or full OCI image reference
+    needs: []             # DAG edges list existing task ids; no cycles
+    condition: ""         # optional templated gate
+    timeout_seconds: 300  # optional container wall-clock timeout; default 300
+    retry:                # optional Temporal retry policy
       maximum_attempts: 3
       initial_interval_seconds: 1
       backoff_coefficient: 2.0
       maximum_interval_seconds: 100
-    pool: ""             # optional: the set of Orkers this task runs on
-    with:                # plugin-specific config (templated)
-      key: value
+    pool: ""              # optional Orker pool; absent means the default pool
+    command: ["curl", "--version"] # optional image ENTRYPOINT/CMD override; argv
+    env:                  # workload environment only; no platform state
+      MODE: probe
+    secrets:              # resolved to read-only files, never embedded values
+      - name: api-token
+        source: env:API_TOKEN
+    resources:            # request; Orker policy supplies defaults and caps
+      cpu: "2"
+      memory: 4Gi
+    network: none         # optional: `default` or `none`
+    cancellation_grace_period_seconds: 30 # SIGTERM-to-SIGKILL window
+    run_as_orker_user: false # opt in to overriding the image's USER
+    with:                 # image-specific config, rendered into config.json
+      op: get
+      url: https://example.test/health
 ```
+
+`uses:` is the only image selector. A catalog name is resolved at apply time;
+a registry tag or digest may be written directly. In every case the applied
+definition records an immutable digest. `uses:` cannot be templated.
+
+`command` is a top-level argv override and never a shell string. `env` contains
+only variables supplied to the workload; OrkStack's required context travels
+as files. Each `secrets` item names the file exposed under
+`/orkstack/input/secrets` and the Orker-specific source used to resolve it.
+Secret values never enter this YAML or Temporal history.
+
+`resources` uses `cpu` and `memory` request strings. Orker policy may refuse a
+request above its cap but never silently raises or clamps it. `network` accepts
+only `default` and `none`. Cancellation sends SIGTERM and waits
+`cancellation_grace_period_seconds` before SIGKILL. `run_as_orker_user` is an
+opt-in readability escape hatch: it overrides the image's own USER so output
+files are owned by the Orker, and may therefore break images that require their
+baked-in identity.
 
 A task with no `pool:` runs on the deployment's default pool, which answers to
 the name `main`. Writing `pool: main` is the same thing, always: `main` names
@@ -163,8 +194,10 @@ this context:
 - `.inputs.<name>` — submitted inputs.
 - `.tasks.<id>.output.<field>` — a completed upstream task's output payload.
 - Helper `artifact "<taskId>/<artifactName>"` — resolves to a **local path** the
-  Orker has materialized before the task runs (used by `shell`/`file`).
+  Orker has materialized before the task runs.
 - Helper `env "<NAME>"` — reads an allowlisted environment variable on the Orker.
+- Helper `sh <value>` — quotes a rendered value for an explicitly requested
+  shell boundary.
 
 Only tasks listed (transitively) in `needs` are guaranteed to be resolvable;
 referencing an unrelated task's output is a compile-time error.
@@ -179,7 +212,8 @@ referencing an unrelated task's output is a compile-time error.
 3. Task ids unique and slug-formatted.
 4. Every `needs` entry references an existing task id.
 5. The `needs` graph is acyclic (DAG).
-6. `plugin` is a non-empty known plugin name.
+6. `uses` is a non-empty catalog activity name or OCI registry reference;
+   removed plugin-era selectors are refused rather than aliased.
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks.
 
@@ -198,4 +232,6 @@ direction — a test dependency costs an importer nothing.
 ## Example
 
 See `examples/hello.ork.yaml` for a fetch → transform → persist pipeline that
-exercises the `http`, `shell`, and `file` plugins with artifact hand-off.
+uses the first-party `http`, `shell`, and `file` OCI activity images with
+artifact hand-off. Every shipped example is compiled by
+`TestCompile_AcceptsEveryShippedExample`.

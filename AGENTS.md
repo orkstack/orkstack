@@ -516,8 +516,7 @@ internal/api/          Connect services and WebSocket bridge
 internal/dsl/          YAML parse, validation, and Orkflow compilation
 internal/orker/        Orker runtime and OCI activity dispatch
 internal/task/         Temporal namespace, pool routing, and deployment identity
-pkg/plugin/            Existing activity implementation area; it must not define a required workload SDK
-pkg/plugins/*/         First-party activity implementations
+images/                 First-party OCI activity images; public filesystem ABI, no required SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
 deploy/                Temporal and object-storage development stack
@@ -543,8 +542,7 @@ generated files. Regenerate Go and UI clients when the proto changes.
 Agent ownership is split as follows:
 
 - engine agents: `internal/engine`, `internal/api`, `cmd/ork`;
-- Orker/activity agents: `internal/orker`, `pkg/plugin`, `pkg/plugins/*`,
-  `cmd/orker`;
+- Orker/activity agents: `internal/orker`, `images/`, `cmd/orker`;
 - CLI agents: `cmd/orkctl`;
 - UI agents: `ui/`;
 - artifact agents: `pkg/artifacts`;
