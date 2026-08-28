@@ -3,6 +3,7 @@ package artifacts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
@@ -13,6 +14,13 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
+
+func TestCommitProbeKeyTracksCommitSchemaVersion(t *testing.T) {
+	want := fmt.Sprintf("%s/schema-v%d/conditional-create/%s", CommitProbePrefix, CommitSchemaVersion, CommitObjectName)
+	if CommitProbeKey != want {
+		t.Fatalf("CommitProbeKey = %q, want %q; a schema bump must move the durable probe key", CommitProbeKey, want)
+	}
+}
 
 func TestProbeCommitStoreRepeatedCallsUseOneObjectOutsideCommitPrefix(t *testing.T) {
 	root := t.TempDir()
@@ -47,6 +55,35 @@ func TestProbeCommitStoreRepeatedCallsUseOneObjectOutsideCommitPrefix(t *testing
 	}
 	if strings.HasPrefix(files[0], CommitPrefix+"/") {
 		t.Fatalf("probe object %q polluted completion prefix %q", files[0], CommitPrefix)
+	}
+}
+
+func TestProbeCommitStoreIgnoresDivergentLegacyProbeObject(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewLocalCommitStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyKey := CommitProbePrefix + "/conditional-create/" + CommitObjectName
+	legacyPath := filepath.Join(root, filepath.FromSlash(legacyKey))
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := MarshalCommit(&orkstackv1.ActivityCommit{
+		SchemaVersion: CommitSchemaVersion + 1,
+		Namespace:     "foreign",
+		RunId:         "foreign",
+		TaskId:        "foreign",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, foreign, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ProbeCommitStore(context.Background(), store); err != nil {
+		t.Fatalf("probe with divergent legacy object: %v", err)
 	}
 }
 

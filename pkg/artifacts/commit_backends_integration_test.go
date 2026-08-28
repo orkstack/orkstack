@@ -25,15 +25,22 @@ func TestS3CommitStoreConditionalTwoWriterProbe(t *testing.T) {
 	}
 	raw := newRawS3Client(t, cfg)
 	commitsBefore := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitPrefix+"/")
-	t.Logf("probe prefix before: %v", listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitProbePrefix+"/"))
+	probeKeysBefore := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitProbePrefix+"/")
+	t.Logf("probe prefix before: %v", probeKeysBefore)
+	var probeKeysAfterFirst []string
 	for i := 0; i < 3; i++ {
 		if err := artifacts.ProbeCommitStore(ctx, store); err != nil {
 			t.Fatalf("two-writer probe %d: %v", i+1, err)
 		}
 		got := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitProbePrefix+"/")
 		t.Logf("probe prefix after call %d: %v", i+1, got)
-		if len(got) != 1 || got[0] != artifacts.CommitProbeKey {
-			t.Fatalf("probe objects after call %d = %v, want [%s]", i+1, got, artifacts.CommitProbeKey)
+		if !slices.Contains(got, artifacts.CommitProbeKey) {
+			t.Fatalf("probe objects after call %d = %v, missing current key %s", i+1, got, artifacts.CommitProbeKey)
+		}
+		if i == 0 {
+			probeKeysAfterFirst = slices.Clone(got)
+		} else if !slices.Equal(got, probeKeysAfterFirst) {
+			t.Fatalf("probe prefix grew after call %d: first %v now %v", i+1, probeKeysAfterFirst, got)
 		}
 	}
 	commitsAfter := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitPrefix+"/")

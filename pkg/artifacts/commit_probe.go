@@ -10,13 +10,15 @@ import (
 )
 
 // ProbeCommitStore checks the configured backend's conditional-create
-// behavior before accepting activity work. The first caller races two writers
-// against the absent fixed probe key and requires one winner and one conflict.
-// Later callers race against that durable winner, require both writes to be
-// refused, and read the exact candidate back. Those later calls prove refusal
-// and readback rather than repeating fresh-key arbitration; the first call is
-// the full two-writer proof. The fixed key bounds storage at one object, and
-// its dedicated prefix keeps capability probes out of activity completions.
+// behavior before accepting activity work. The first caller for one commit
+// schema version races two writers against that version's absent probe key and
+// requires one winner and one conflict. Later callers race against that
+// durable winner, require both writes to be refused, and read the exact
+// candidate back. Those later calls prove refusal and readback rather than
+// repeating fresh-key arbitration; the first call is the full two-writer
+// proof. One key per schema version bounds storage across upgrades without
+// making an older durable winner a boot blocker, and the dedicated prefix
+// keeps capability probes out of activity completions.
 func ProbeCommitStore(ctx context.Context, store CommitStore) error {
 	if store == nil {
 		return fmt.Errorf("commit store is not configured")

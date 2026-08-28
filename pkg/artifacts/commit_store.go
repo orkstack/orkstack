@@ -78,12 +78,14 @@ const (
 	CommitObjectName = "commit.json"
 
 	// CommitProbePrefix is deliberately outside CommitPrefix: objects under
-	// metadata/commits are activity completion records, while this object is a
-	// bounded deployment-capability probe.
+	// metadata/commits are activity completion records, while objects here are
+	// bounded deployment-capability probes.
 	CommitProbePrefix = "metadata/probes/commit-store"
 
-	// CommitProbeKey is the single fixed conditional-create probe object.
-	CommitProbeKey = CommitProbePrefix + "/conditional-create/" + CommitObjectName
+	// CommitProbeKey is versioned with the candidate schema. A build that
+	// changes CommitSchemaVersion must move to a fresh key rather than refusing
+	// to boot forever on the durable winner written by an older build.
+	CommitProbeKey = CommitProbePrefix + "/schema-v1/conditional-create/" + CommitObjectName
 
 	// CommitContentType is what a commit record is served as.
 	CommitContentType = "application/json"
