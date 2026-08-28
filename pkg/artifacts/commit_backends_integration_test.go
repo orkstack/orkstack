@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -17,12 +18,27 @@ import (
 func TestS3CommitStoreConditionalTwoWriterProbe(t *testing.T) {
 	cfg := s3TestConfig()
 	requireMinIO(t, cfg)
-	store, err := artifacts.NewS3CommitStore(context.Background(), cfg)
+	ctx := context.Background()
+	store, err := artifacts.NewS3CommitStore(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := artifacts.ProbeCommitStore(context.Background(), store); err != nil {
-		t.Fatalf("two-writer probe: %v", err)
+	raw := newRawS3Client(t, cfg)
+	commitsBefore := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitPrefix+"/")
+	t.Logf("probe prefix before: %v", listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitProbePrefix+"/"))
+	for i := 0; i < 3; i++ {
+		if err := artifacts.ProbeCommitStore(ctx, store); err != nil {
+			t.Fatalf("two-writer probe %d: %v", i+1, err)
+		}
+		got := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitProbePrefix+"/")
+		t.Logf("probe prefix after call %d: %v", i+1, got)
+		if len(got) != 1 || got[0] != artifacts.CommitProbeKey {
+			t.Fatalf("probe objects after call %d = %v, want [%s]", i+1, got, artifacts.CommitProbeKey)
+		}
+	}
+	commitsAfter := listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.CommitPrefix+"/")
+	if !slices.Equal(commitsAfter, commitsBefore) {
+		t.Fatalf("completion prefix changed during probe: before %v after %v", commitsBefore, commitsAfter)
 	}
 }
 

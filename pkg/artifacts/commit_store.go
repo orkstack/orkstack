@@ -77,6 +77,14 @@ const (
 	// CommitObjectName is the fixed leaf of every commit key.
 	CommitObjectName = "commit.json"
 
+	// CommitProbePrefix is deliberately outside CommitPrefix: objects under
+	// metadata/commits are activity completion records, while this object is a
+	// bounded deployment-capability probe.
+	CommitProbePrefix = "metadata/probes/commit-store"
+
+	// CommitProbeKey is the single fixed conditional-create probe object.
+	CommitProbeKey = CommitProbePrefix + "/conditional-create/" + CommitObjectName
+
 	// CommitContentType is what a commit record is served as.
 	CommitContentType = "application/json"
 

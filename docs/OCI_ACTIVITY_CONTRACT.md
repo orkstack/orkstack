@@ -1515,14 +1515,22 @@ it plainly: a production OrkStack deployment requires an object store that
 implements conditional `PutObject` with `If-None-Match: *`, returning 412 on
 conflict, on non-multipart writes.
 
-The Orker MUST verify this at boot with a **two-writer race**, not a sequential
-`HEAD`-then-`PUT`: a sequential check proves ordering, not atomicity. Two
-goroutines conditionally create the same probe key; exactly one must succeed
-and the other must see `ErrPreconditionFailed`. Any other outcome is a boot
-failure with `InfrastructureError/COMMIT_STORE_NOT_CONDITIONAL`, naming the
-endpoint — refusing to start is the only honest response, because the
-alternative is a deployment that silently loses the immutability guarantee.
-`TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters` is the model.
+The Orker MUST verify this at boot with concurrent writers, not a sequential
+`HEAD`-then-`PUT`: a sequential check proves ordering, not atomicity. The probe
+uses one fixed object under `metadata/probes/commit-store/`, outside the
+activity-completion prefix. On the first boot, two goroutines conditionally
+create that absent key; exactly one must succeed and the other must see
+`ErrPreconditionFailed`, proving full fresh-key arbitration. The winner remains
+as a bounded capability record. Later boots race the same two writes, require
+both to see `ErrPreconditionFailed`, and read back the exact fixed candidate.
+Those later checks prove refusal and readback rather than repeating fresh-key
+arbitration, while remaining capable of rejecting an unconditional backend.
+Any other outcome is a boot failure with
+`InfrastructureError/COMMIT_STORE_NOT_CONDITIONAL`, naming the endpoint —
+refusing to start is the only honest response, because the alternative is a
+deployment that silently loses the immutability guarantee.
+`TestS3CommitStoreConditionalTwoWriterProbe` measures both first and later
+calls against the deployed MinIO backend.
 
 ### 5.4 The sequence
 

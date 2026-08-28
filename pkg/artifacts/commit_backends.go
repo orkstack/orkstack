@@ -151,8 +151,9 @@ func (s *LocalCommitStore) commitPath(raw string) (string, error) {
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("artifacts: local commit uri %q is outside %s: %w", raw, s.dir, ErrInvalidURI)
 	}
-	if !strings.HasPrefix(filepath.ToSlash(rel), CommitPrefix+"/") || filepath.Base(filename) != CommitObjectName {
-		return "", fmt.Errorf("artifacts: local commit uri %q is not a commit key: %w", raw, ErrInvalidURI)
+	relSlash := filepath.ToSlash(rel)
+	if (relSlash != CommitProbeKey && !strings.HasPrefix(relSlash, CommitPrefix+"/")) || filepath.Base(filename) != CommitObjectName {
+		return "", fmt.Errorf("artifacts: local commit uri %q is not a commit or probe key: %w", raw, ErrInvalidURI)
 	}
 	return filename, nil
 }
@@ -166,8 +167,8 @@ func syncDirectory(name string) error {
 	return d.Sync()
 }
 
-func (s *LocalCommitStore) commitProbeURI(token string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(filepath.Join(s.dir, CommitPrefix, "default", "probe-"+token, "probe", CommitObjectName))}).String()
+func (s *LocalCommitStore) commitProbeURI() string {
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(filepath.Join(s.dir, filepath.FromSlash(CommitProbeKey)))}).String()
 }
 
 func (s *S3CommitStore) Create(ctx context.Context, uri string, c *orkstackv1.ActivityCommit) (CommitRecord, error) {
@@ -235,13 +236,13 @@ func (s *S3CommitStore) commitKey(raw string) (string, error) {
 		return "", fmt.Errorf("artifacts: s3 commit uri %q: %w", raw, ErrInvalidURI)
 	}
 	key := strings.TrimPrefix(u.Path, "/")
-	if !strings.HasPrefix(key, CommitPrefix+"/") || !strings.HasSuffix(key, "/"+CommitObjectName) {
-		return "", fmt.Errorf("artifacts: s3 commit uri %q is not a commit key: %w", raw, ErrInvalidURI)
+	if (key != CommitProbeKey && !strings.HasPrefix(key, CommitPrefix+"/")) || !strings.HasSuffix(key, "/"+CommitObjectName) {
+		return "", fmt.Errorf("artifacts: s3 commit uri %q is not a commit or probe key: %w", raw, ErrInvalidURI)
 	}
 	return key, nil
 }
-func (s *S3CommitStore) commitProbeURI(token string) string {
-	return s.uri(CommitPrefix + "/default/probe-" + token + "/probe/" + CommitObjectName)
+func (s *S3CommitStore) commitProbeURI() string {
+	return s.uri(CommitProbeKey)
 }
 
 func isConditionalConflict(err error) bool {
