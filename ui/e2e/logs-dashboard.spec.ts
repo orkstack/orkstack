@@ -59,8 +59,8 @@ const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m10-8-ui-l
 //
 // A namespace of this run's own makes every number on the dashboard this run's:
 // the failures table has one row and it is ours. The cost is registry entries;
-// the empty one is handed back in afterAll, and the other holds this run's
-// orkflows, which nothing can delete (there is no DeleteOrkflow).
+// the empty one is handed back in afterAll, while the other deliberately retains
+// this run's orkflows and recent runs as dashboard history.
 const STAMP = Date.now().toString(36);
 const ALPHA = `m10-8-alpha-${STAMP}`;
 const BETA = `m10-8-beta-${STAMP}`;

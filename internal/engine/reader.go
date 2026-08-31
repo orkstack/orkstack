@@ -66,8 +66,19 @@ type RunQuery struct {
 	Namespace   string
 	OrkflowName string
 	Status      orkstackv1.Status
-	// Limit caps the runs returned, newest first. 0 means DefaultRunPageSize.
+	// Limit caps the runs RETURNED, newest first. 0 means DefaultRunPageSize,
+	// except under Exhaustive, where 0 means every match.
 	Limit int
+	// Exhaustive makes a safety-sensitive caller fail rather than return a
+	// prefix when matching requires more than the ordinary page budget. It is
+	// deliberately internal: user-facing lists stay bounded.
+	//
+	// It governs how completely visibility is WALKED, not how much comes back.
+	// A caller may ask for a trustworthy answer and still want one page of it,
+	// which is what the UI's "is any run still live?" check does; only a
+	// caller that also leaves Limit at 0 receives everything, and that is the
+	// deletion gate, which needs true counts for its refusal message.
+	Exhaustive bool
 }
 
 // runReadClient is the slice of client.Client the reader uses. Narrowing it
@@ -199,6 +210,39 @@ func (r *TemporalRunReader) StreamEvents(
 	return err
 }
 
+// runListBudget resolves the three numbers a visibility walk needs, keeping
+// them apart on purpose.
+//
+// `limit` is how many runs the CALLER gets; `batch` is how many records each
+// visibility request asks Temporal for. Conflating them made an exhaustive
+// query ignore page_size.
+//
+// Only the explicit Exhaustive flag unlocks an unbounded result. The derived
+// walk (an unscoped namespace) must not: that is still a user-facing list and
+// keeps its default page.
+//
+// An explicitly exhaustive caller reads whole pages whatever its Limit is. The
+// safety check asks for one run and is willing to read the index to find it;
+// at a page size of one, the 2000-page budget would be spent after 2000
+// records and the check would start failing on any busy orkflow. The derived
+// walk keeps the caller's page size, which is the budget the
+// namespace-fallback tests calibrate against.
+func runListBudget(q RunQuery, exhaustive bool) (limit, batch, pages int) {
+	limit = q.Limit
+	if limit <= 0 && !q.Exhaustive {
+		limit = DefaultRunPageSize
+	}
+	batch = limit
+	if batch <= 0 || q.Exhaustive {
+		batch = DefaultRunPageSize
+	}
+	pages = maxRunListPages
+	if exhaustive {
+		pages = maxRunScanPages
+	}
+	return limit, batch, pages
+}
+
 // ListRuns returns runs from Temporal's visibility index, newest first.
 //
 // A listed run is the shallow projection visibility can give: id, orkflow
@@ -221,24 +265,20 @@ func (r *TemporalRunReader) StreamEvents(
 // caller cannot tell from a complete one is the defect this paragraph exists
 // to close.
 func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orkstackv1.Run, error) {
-	limit := q.Limit
-	if limit <= 0 {
-		limit = DefaultRunPageSize
-	}
 	query, scoped := r.listQuery(q)
-	// The exhaustive walk is taken only when a namespace was asked for and the
-	// cluster could not answer it: nothing else here is a tenancy boundary.
-	exhaustive := q.Namespace != "" && !scoped
-	pages := maxRunListPages
-	if exhaustive {
-		pages = maxRunScanPages
-	}
-	out := make([]*orkstackv1.Run, 0, limit)
+	// A safety-sensitive exhaustive walk must either reach the end or fail.
+	// The same fail-closed walk is required when the namespace could not be
+	// pushed into visibility: another tenant's traffic must not create a short
+	// answer for this one.
+	exhaustive := q.Exhaustive || (q.Namespace != "" && !scoped)
+
+	limit, batch, pages := runListBudget(q, exhaustive)
+	out := make([]*orkstackv1.Run, 0, batch)
 	var token []byte
 	for page := 0; page < pages; page++ {
 		response, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
 			Query:         query,
-			PageSize:      int32(limit),
+			PageSize:      int32(batch),
 			NextPageToken: token,
 		})
 		if err != nil {
@@ -250,7 +290,11 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 				continue
 			}
 			out = append(out, run)
-			if len(out) >= limit {
+			// A full quota is a COMPLETE answer to "give me up to N", so the
+			// walk can stop even when it was asked to be exhaustive. What it
+			// must never do is stop SHORT — that is the ambiguity the error
+			// below exists to prevent.
+			if limit > 0 && len(out) >= limit {
 				return out, nil
 			}
 		}
@@ -259,13 +303,20 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 			return out, nil
 		}
 	}
-	if exhaustive {
+	if q.Namespace != "" && !scoped {
 		return nil, fmt.Errorf(
 			"engine: list runs in namespace %q: visibility does not index %s, so every "+
 				"other namespace's runs had to be read and discarded, and %d pages were "+
 				"not enough. Register the search attribute (it is provisioned at engine "+
 				"boot) and the namespace becomes a query predicate",
 			q.Namespace, task.SearchAttrOrkflowNamespace, pages)
+	}
+	if exhaustive {
+		return nil, fmt.Errorf(
+			"engine: exhaustive run list for orkflow %q in namespace %q did not reach the "+
+				"end of Temporal visibility after %d pages; deletion safety cannot be "+
+				"decided from a partial answer",
+			q.OrkflowName, q.Namespace, pages)
 	}
 	return out, nil
 }

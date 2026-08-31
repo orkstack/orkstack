@@ -449,6 +449,113 @@ func TestTemporalRunReader_ListsRunsFromVisibility(t *testing.T) {
 	}
 }
 
+// TestTemporalRunReader_ExhaustiveListWalksPastTheFirstPage proves the
+// safety-gate query keeps paging, so an older active run behind a full page of
+// newer runs is still found, and that asking for everything is what unlocks
+// the unbounded answer.
+func TestTemporalRunReader_ExhaustiveListWalksPastTheFirstPage(t *testing.T) {
+	pages := [][]*workflowpb.WorkflowExecutionInfo{
+		{visibilityRecord(t, "ork-newer", "hello-ork", "1.0.0",
+			enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, readerEpoch.Add(time.Hour))},
+		{visibilityRecord(t, "ork-older-active", "hello-ork", "1.0.0",
+			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, readerEpoch)},
+	}
+	bounded, err := newRunReader(&pagedReadClient{pages: pages},
+		converter.GetDefaultDataConverter()).
+		ListRuns(context.Background(), RunQuery{OrkflowName: "hello-ork", Limit: 1})
+	if err != nil {
+		t.Fatalf("bounded ListRuns: %v", err)
+	}
+	if len(bounded) != 1 || bounded[0].GetId() != "ork-newer" {
+		t.Fatalf("bounded list = %v, want only the newest run", bounded)
+	}
+
+	// Limit 0 under Exhaustive is the deletion gate's query: every match, so
+	// the refusal can count honestly.
+	all, err := newRunReader(&pagedReadClient{pages: pages},
+		converter.GetDefaultDataConverter()).
+		ListRuns(context.Background(), RunQuery{OrkflowName: "hello-ork", Exhaustive: true})
+	if err != nil {
+		t.Fatalf("exhaustive ListRuns: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("exhaustive list returned %d runs, want both pages", len(all))
+	}
+	if all[1].GetId() != "ork-older-active" || all[1].GetStatus() != orkstackv1.Status_STATUS_RUNNING {
+		t.Fatalf("exhaustive list missed the older active run: %v", all)
+	}
+}
+
+// TestTemporalRunReader_ExhaustiveListStillHonoursLimit separates the two
+// things Exhaustive could have meant. It makes the walk complete; it does not
+// widen the answer. A caller that asks for one run gets one run, and the run
+// it gets is found by walking past the page it was not on.
+func TestTemporalRunReader_ExhaustiveListStillHonoursLimit(t *testing.T) {
+	pages := [][]*workflowpb.WorkflowExecutionInfo{
+		{visibilityRecord(t, "ork-newer", "hello-ork", "1.0.0",
+			enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, readerEpoch.Add(time.Hour))},
+		{visibilityRecord(t, "ork-older-active", "hello-ork", "1.0.0",
+			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, readerEpoch)},
+	}
+	capped, err := newRunReader(&pagedReadClient{pages: pages},
+		converter.GetDefaultDataConverter()).
+		ListRuns(context.Background(), RunQuery{OrkflowName: "hello-ork", Limit: 1, Exhaustive: true})
+	if err != nil {
+		t.Fatalf("exhaustive ListRuns(Limit=1): %v", err)
+	}
+	if len(capped) != 1 {
+		t.Fatalf("exhaustive list with Limit 1 returned %d runs, want 1; Exhaustive controls "+
+			"how far the walk goes, not how much comes back", len(capped))
+	}
+
+	// The same bound, asked the question the UI asks: only the older run on
+	// the second page matches, so a reader that stopped at page one would
+	// report no live run.
+	live, err := newRunReader(&pagedReadClient{pages: pages},
+		converter.GetDefaultDataConverter()).
+		ListRuns(context.Background(), RunQuery{
+			OrkflowName: "hello-ork",
+			Status:      orkstackv1.Status_STATUS_RUNNING,
+			Limit:       1,
+			Exhaustive:  true,
+		})
+	if err != nil {
+		t.Fatalf("exhaustive ListRuns(status=RUNNING, Limit=1): %v", err)
+	}
+	if len(live) != 1 || live[0].GetId() != "ork-older-active" {
+		t.Fatalf("exhaustive status query = %v, want the older active run from the second page", live)
+	}
+}
+
+// pagedReadClient serves one visibility page per call, so a walk that stops at
+// the first page is observable.
+type pagedReadClient struct {
+	pages [][]*workflowpb.WorkflowExecutionInfo
+	calls int
+}
+
+func (p *pagedReadClient) GetWorkflowHistory(
+	context.Context, string, string, bool, enumspb.HistoryEventFilterType,
+) client.HistoryEventIterator {
+	return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}
+}
+
+func (p *pagedReadClient) ListWorkflow(
+	_ context.Context,
+	_ *workflowservice.ListWorkflowExecutionsRequest,
+) (*workflowservice.ListWorkflowExecutionsResponse, error) {
+	index := p.calls
+	p.calls++
+	if index >= len(p.pages) {
+		return &workflowservice.ListWorkflowExecutionsResponse{}, nil
+	}
+	response := &workflowservice.ListWorkflowExecutionsResponse{Executions: p.pages[index]}
+	if index < len(p.pages)-1 {
+		response.NextPageToken = []byte("next")
+	}
+	return response, nil
+}
+
 func visibilityRecord(
 	t *testing.T,
 	runID, name, version string,

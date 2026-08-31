@@ -227,3 +227,57 @@ func (s *S3OrkflowStore) SetCurrentVersion(
 	}
 	return "", lastErr
 }
+
+// Delete permanently removes every version and both pointers for one orkflow.
+// A name with neither versions nor pointers returns ErrNotFound.
+func (s *S3OrkflowStore) Delete(ctx context.Context, namespace, name string) error {
+	namespace = ResolveNamespace(namespace)
+	scan, err := s.scan(ctx, namespace, name)
+	if err != nil {
+		return fmt.Errorf("artifacts: scan orkflow %q in namespace %q for deletion: %w",
+			name, namespace, err)
+	}
+
+	currentKey, err := OrkflowCurrentKey(namespace, name)
+	if err != nil {
+		return err
+	}
+	headKey, err := OrkflowHeadKey(namespace, name)
+	if err != nil {
+		return err
+	}
+	found := len(scan.versions) > 0 || scan.current[name] != "" || scan.head[name] != ""
+
+	// Remove pointers before definitions. If object storage fails part way
+	// through, readers can still derive a usable head from the definitions that
+	// remain; they must never observe a pointer naming a definition already
+	// removed. The unconditional cleanup also repairs a previous partial delete
+	// that left only pointers behind.
+	for _, key := range []string{currentKey, headKey} {
+		if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+		}); err != nil {
+			return fmt.Errorf("artifacts: delete orkflow pointer %q: %w", s.uri(key), err)
+		}
+	}
+	if !found {
+		return fmt.Errorf("artifacts: delete orkflow %q in namespace %q: %w",
+			name, namespace, ErrNotFound)
+	}
+
+	for _, wf := range scan.versions {
+		key, err := OrkflowKey(namespace, name, wf.GetVersion())
+		if err != nil {
+			return fmt.Errorf("artifacts: address orkflow %q version %q for deletion: %w",
+				name, wf.GetVersion(), err)
+		}
+		if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+		}); err != nil {
+			return fmt.Errorf("artifacts: delete orkflow version %q: %w", s.uri(key), err)
+		}
+	}
+	return nil
+}

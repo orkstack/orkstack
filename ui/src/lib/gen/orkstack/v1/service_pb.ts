@@ -22,7 +22,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/service.proto.
  */
 export const file_orkstack_v1_service: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSJrChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEhQKDGJhc2VfdmVyc2lvbhgDIAEoCRIdChVleHBlY3RlZF9oZWFkX3ZlcnNpb24YBCABKAkiYAoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkSDwoHY3JlYXRlZBgDIAEoCCJFChFHZXRPcmtmbG93UmVxdWVzdBIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyJPChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSJXChRMaXN0T3JrZmxvd3NSZXNwb25zZRImCghvcmtmbG93cxgBIAMoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJInoKDk9ya2Zsb3dWZXJzaW9uEg8KB3ZlcnNpb24YASABKAkSLgoKYXBwbGllZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKaXNfY3VycmVudBgDIAEoCBITCgtkZXNjcmlwdGlvbhgEIAEoCSI9ChpMaXN0T3JrZmxvd1ZlcnNpb25zUmVxdWVzdBIMCgRuYW1lGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSJ7ChtMaXN0T3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USLQoIdmVyc2lvbnMYASADKAsyGy5vcmtzdGFjay52MS5PcmtmbG93VmVyc2lvbhIXCg9jdXJyZW50X3ZlcnNpb24YAiABKAkSFAoMaGVhZF92ZXJzaW9uGAMgASgJIlMKH1NldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSKmAQogU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVzcG9uc2USDAoEbmFtZRgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSFwoPY3VycmVudF92ZXJzaW9uGAMgASgJEhgKEHByZXZpb3VzX3ZlcnNpb24YBCABKAkSLgoKdXBkYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiZwoaRGlmZk9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCRIRCgluYW1lc3BhY2UYBCABKAkiXQobRGlmZk9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlEhQKDHVuaWZpZWRfZGlmZhgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCSKsAQoQU3VibWl0UnVuUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAIgASgJEiMKBWlucHV0GAMgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIXCg9pZGVtcG90ZW5jeV9rZXkYBCABKAkSEQoJbmFtZXNwYWNlGAUgASgJEhgKEGFsbG93X2VtcHR5X3Bvb2wYBiABKAgiMgoRU3VibWl0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIjIKDUdldFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSIvCg5HZXRSdW5SZXNwb25zZRIdCgNydW4YASABKAsyEC5vcmtzdGFjay52MS5SdW4ihgEKD0xpc3RSdW5zUmVxdWVzdBIUCgxvcmtmbG93X25hbWUYASABKAkSIwoGc3RhdHVzGAIgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEhEKCXBhZ2Vfc2l6ZRgDIAEoBRISCgpwYWdlX3Rva2VuGAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCSJLChBMaXN0UnVuc1Jlc3BvbnNlEh4KBHJ1bnMYASADKAsyEC5vcmtzdGFjay52MS5SdW4SFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIkUKEENhbmNlbFJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkiMgoRQ2FuY2VsUnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIk8KE1N0cmVhbUV2ZW50c1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhUKDWZyb21fc2VxdWVuY2UYAiABKAMSEQoJbmFtZXNwYWNlGAMgASgJIpQBChVTdHJlYW1UYXNrTG9nc1JlcXVlc3QSDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDwoHYXR0ZW1wdBgDIAEoBRIQCghmcm9tX3NlcRgEIAEoAxIUCgxmcm9tX2F0dGVtcHQYByABKAUSDgoGZm9sbG93GAUgASgIEhEKCW5hbWVzcGFjZRgGIAEoCSJ8CgxUYXNrTG9nQ2h1bmsSDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDwoHYXR0ZW1wdBgDIAEoBRILCgNzZXEYBCABKAMSDAoEZGF0YRgFIAEoDBIRCgl0cnVuY2F0ZWQYBiABKAgSDAoEbGFzdBgHIAEoCCJDChZDcmVhdGVOYW1lc3BhY2VSZXF1ZXN0EikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSJVChdDcmVhdGVOYW1lc3BhY2VSZXNwb25zZRIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2USDwoHY3JlYXRlZBgCIAEoCCIjChNHZXROYW1lc3BhY2VSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoUR2V0TmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIhcKFUxpc3ROYW1lc3BhY2VzUmVxdWVzdCJEChZMaXN0TmFtZXNwYWNlc1Jlc3BvbnNlEioKCm5hbWVzcGFjZXMYASADKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiQwoWVXBkYXRlTmFtZXNwYWNlUmVxdWVzdBIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiRAoXVXBkYXRlTmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIiYKFkRlbGV0ZU5hbWVzcGFjZVJlcXVlc3QSDAoEbmFtZRgBIAEoCSIZChdEZWxldGVOYW1lc3BhY2VSZXNwb25zZSIlChBMaXN0UG9vbHNSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCSJLChFMaXN0UG9vbHNSZXNwb25zZRIgCgVwb29scxgBIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSFAoMZGVmYXVsdF9wb29sGAIgASgJIhcKFUxpc3RBY3Rpdml0aWVzUmVxdWVzdCKdAQoMQWN0aXZpdHlJbmZvEgwKBG5hbWUYASABKAkSEQoJcmVmZXJlbmNlGAIgASgJEhQKDGluZGV4X2RpZ2VzdBgDIAEoCRISCgptZWRpYV90eXBlGAQgASgJEhEKCXBsYXRmb3JtcxgFIAMoCRIvCgtyZXNvbHZlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiRwoWTGlzdEFjdGl2aXRpZXNSZXNwb25zZRItCgphY3Rpdml0aWVzGAEgAygLMhkub3Jrc3RhY2sudjEuQWN0aXZpdHlJbmZvIhYKFERlc2NyaWJlT3JrZXJSZXF1ZXN0IkgKFURlc2NyaWJlT3JrZXJSZXNwb25zZRIvCgVvcmtlchgBIAEoCzIgLm9ya3N0YWNrLnYxLkRlc2NyaWJlT3JrZXJSZXN1bHQiFgoUR2V0U3lzdGVtSW5mb1JlcXVlc3QiiQIKFUdldFN5c3RlbUluZm9SZXNwb25zZRIWCg5lbmdpbmVfdmVyc2lvbhgBIAEoCRISCgpnb192ZXJzaW9uGAIgASgJEhcKD2RlcGxveW1lbnRfbmFtZRgDIAEoCRIQCghidWlsZF9pZBgEIAEoCRIZChF2ZXJzaW9uaW5nX2FjdGl2ZRgFIAEoCBIYChBhcnRpZmFjdF9iYWNrZW5kGAYgASgJEhkKEWFydGlmYWN0X2xvY2F0aW9uGAcgASgJEhgKEHRlbXBvcmFsX2FkZHJlc3MYCCABKAkSLwoLc2VydmVyX3RpbWUYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wMtYECg5PcmtmbG93U2VydmljZRJTCgxBcHBseU9ya2Zsb3cSIC5vcmtzdGFjay52MS5BcHBseU9ya2Zsb3dSZXF1ZXN0GiEub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVzcG9uc2USTQoKR2V0T3JrZmxvdxIeLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXF1ZXN0Gh8ub3Jrc3RhY2sudjEuR2V0T3JrZmxvd1Jlc3BvbnNlElMKDExpc3RPcmtmbG93cxIgLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93c1JlcXVlc3QaIS5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXNwb25zZRJoChNMaXN0T3JrZmxvd1ZlcnNpb25zEicub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QaKC5vcmtzdGFjay52MS5MaXN0T3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USdwoYU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uEiwub3Jrc3RhY2sudjEuU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVxdWVzdBotLm9ya3N0YWNrLnYxLlNldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlc3BvbnNlEmgKE0RpZmZPcmtmbG93VmVyc2lvbnMSJy5vcmtzdGFjay52MS5EaWZmT3JrZmxvd1ZlcnNpb25zUmVxdWVzdBooLm9ya3N0YWNrLnYxLkRpZmZPcmtmbG93VmVyc2lvbnNSZXNwb25zZTLLAwoKUnVuU2VydmljZRJKCglTdWJtaXRSdW4SHS5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuU3VibWl0UnVuUmVzcG9uc2USQQoGR2V0UnVuEhoub3Jrc3RhY2sudjEuR2V0UnVuUmVxdWVzdBobLm9ya3N0YWNrLnYxLkdldFJ1blJlc3BvbnNlEkcKCExpc3RSdW5zEhwub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXF1ZXN0Gh0ub3Jrc3RhY2sudjEuTGlzdFJ1bnNSZXNwb25zZRJKCglDYW5jZWxSdW4SHS5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXF1ZXN0Gh4ub3Jrc3RhY2sudjEuQ2FuY2VsUnVuUmVzcG9uc2USRgoMU3RyZWFtRXZlbnRzEiAub3Jrc3RhY2sudjEuU3RyZWFtRXZlbnRzUmVxdWVzdBoSLm9ya3N0YWNrLnYxLkV2ZW50MAESUQoOU3RyZWFtVGFza0xvZ3MSIi5vcmtzdGFjay52MS5TdHJlYW1UYXNrTG9nc1JlcXVlc3QaGS5vcmtzdGFjay52MS5UYXNrTG9nQ2h1bmswATKoBAoQTmFtZXNwYWNlU2VydmljZRJcCg9DcmVhdGVOYW1lc3BhY2USIy5vcmtzdGFjay52MS5DcmVhdGVOYW1lc3BhY2VSZXF1ZXN0GiQub3Jrc3RhY2sudjEuQ3JlYXRlTmFtZXNwYWNlUmVzcG9uc2USUwoMR2V0TmFtZXNwYWNlEiAub3Jrc3RhY2sudjEuR2V0TmFtZXNwYWNlUmVxdWVzdBohLm9ya3N0YWNrLnYxLkdldE5hbWVzcGFjZVJlc3BvbnNlElkKDkxpc3ROYW1lc3BhY2VzEiIub3Jrc3RhY2sudjEuTGlzdE5hbWVzcGFjZXNSZXF1ZXN0GiMub3Jrc3RhY2sudjEuTGlzdE5hbWVzcGFjZXNSZXNwb25zZRJcCg9VcGRhdGVOYW1lc3BhY2USIy5vcmtzdGFjay52MS5VcGRhdGVOYW1lc3BhY2VSZXF1ZXN0GiQub3Jrc3RhY2sudjEuVXBkYXRlTmFtZXNwYWNlUmVzcG9uc2USXAoPRGVsZXRlTmFtZXNwYWNlEiMub3Jrc3RhY2sudjEuRGVsZXRlTmFtZXNwYWNlUmVxdWVzdBokLm9ya3N0YWNrLnYxLkRlbGV0ZU5hbWVzcGFjZVJlc3BvbnNlEkoKCUxpc3RQb29scxIdLm9ya3N0YWNrLnYxLkxpc3RQb29sc1JlcXVlc3QaHi5vcmtzdGFjay52MS5MaXN0UG9vbHNSZXNwb25zZTLEAQoPQWN0aXZpdHlTZXJ2aWNlElkKDkxpc3RBY3Rpdml0aWVzEiIub3Jrc3RhY2sudjEuTGlzdEFjdGl2aXRpZXNSZXF1ZXN0GiMub3Jrc3RhY2sudjEuTGlzdEFjdGl2aXRpZXNSZXNwb25zZRJWCg1EZXNjcmliZU9ya2VyEiEub3Jrc3RhY2sudjEuRGVzY3JpYmVPcmtlclJlcXVlc3QaIi5vcmtzdGFjay52MS5EZXNjcmliZU9ya2VyUmVzcG9uc2UyZwoNU3lzdGVtU2VydmljZRJWCg1HZXRTeXN0ZW1JbmZvEiEub3Jrc3RhY2sudjEuR2V0U3lzdGVtSW5mb1JlcXVlc3QaIi5vcmtzdGFjay52MS5HZXRTeXN0ZW1JbmZvUmVzcG9uc2VCqAEKD2NvbS5vcmtzdGFjay52MUIMU2VydmljZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
+  fileDesc("ChlvcmtzdGFjay92MS9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSJrChNBcHBseU9ya2Zsb3dSZXF1ZXN0EgwKBHlhbWwYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEhQKDGJhc2VfdmVyc2lvbhgDIAEoCRIdChVleHBlY3RlZF9oZWFkX3ZlcnNpb24YBCABKAkiYAoUQXBwbHlPcmtmbG93UmVzcG9uc2USJQoHb3JrZmxvdxgBIAEoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSEAoId2FybmluZ3MYAiADKAkSDwoHY3JlYXRlZBgDIAEoCCJFChFHZXRPcmtmbG93UmVxdWVzdBIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIjsKEkdldE9ya2Zsb3dSZXNwb25zZRIlCgdvcmtmbG93GAEgASgLMhQub3Jrc3RhY2sudjEuT3JrZmxvdyJPChNMaXN0T3JrZmxvd3NSZXF1ZXN0EhEKCXBhZ2Vfc2l6ZRgBIAEoBRISCgpwYWdlX3Rva2VuGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSJXChRMaXN0T3JrZmxvd3NSZXNwb25zZRImCghvcmtmbG93cxgBIAMoCzIULm9ya3N0YWNrLnYxLk9ya2Zsb3cSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJInoKDk9ya2Zsb3dWZXJzaW9uEg8KB3ZlcnNpb24YASABKAkSLgoKYXBwbGllZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEgoKaXNfY3VycmVudBgDIAEoCBITCgtkZXNjcmlwdGlvbhgEIAEoCSI9ChpMaXN0T3JrZmxvd1ZlcnNpb25zUmVxdWVzdBIMCgRuYW1lGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSJ7ChtMaXN0T3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USLQoIdmVyc2lvbnMYASADKAsyGy5vcmtzdGFjay52MS5PcmtmbG93VmVyc2lvbhIXCg9jdXJyZW50X3ZlcnNpb24YAiABKAkSFAoMaGVhZF92ZXJzaW9uGAMgASgJIlMKH1NldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlcXVlc3QSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCSKmAQogU2V0Q3VycmVudE9ya2Zsb3dWZXJzaW9uUmVzcG9uc2USDAoEbmFtZRgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSFwoPY3VycmVudF92ZXJzaW9uGAMgASgJEhgKEHByZXZpb3VzX3ZlcnNpb24YBCABKAkSLgoKdXBkYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiZwoaRGlmZk9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QSDAoEbmFtZRgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCRIRCgluYW1lc3BhY2UYBCABKAkiXQobRGlmZk9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlEhQKDHVuaWZpZWRfZGlmZhgBIAEoCRIUCgxmcm9tX3ZlcnNpb24YAiABKAkSEgoKdG9fdmVyc2lvbhgDIAEoCSI3ChREZWxldGVPcmtmbG93UmVxdWVzdBIMCgRuYW1lGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSJoChVEZWxldGVPcmtmbG93UmVzcG9uc2USDAoEbmFtZRgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSLgoKZGVsZXRlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAirAEKEFN1Ym1pdFJ1blJlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgCIAEoCRIjCgVpbnB1dBgDIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSFwoPaWRlbXBvdGVuY3lfa2V5GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIYChBhbGxvd19lbXB0eV9wb29sGAYgASgIIjIKEVN1Ym1pdFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biIyCg1HZXRSdW5SZXF1ZXN0Eg4KBnJ1bl9pZBgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkiLwoOR2V0UnVuUmVzcG9uc2USHQoDcnVuGAEgASgLMhAub3Jrc3RhY2sudjEuUnVuIoYBCg9MaXN0UnVuc1JlcXVlc3QSFAoMb3JrZmxvd19uYW1lGAEgASgJEiMKBnN0YXR1cxgCIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIRCglwYWdlX3NpemUYAyABKAUSEgoKcGFnZV90b2tlbhgEIAEoCRIRCgluYW1lc3BhY2UYBSABKAkiSwoQTGlzdFJ1bnNSZXNwb25zZRIeCgRydW5zGAEgAygLMhAub3Jrc3RhY2sudjEuUnVuEhcKD25leHRfcGFnZV90b2tlbhgCIAEoCSJFChBDYW5jZWxSdW5SZXF1ZXN0Eg4KBnJ1bl9pZBgBIAEoCRIOCgZyZWFzb24YAiABKAkSEQoJbmFtZXNwYWNlGAMgASgJIjIKEUNhbmNlbFJ1blJlc3BvbnNlEh0KA3J1bhgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1biJPChNTdHJlYW1FdmVudHNSZXF1ZXN0Eg4KBnJ1bl9pZBgBIAEoCRIVCg1mcm9tX3NlcXVlbmNlGAIgASgDEhEKCW5hbWVzcGFjZRgDIAEoCSKUAQoVU3RyZWFtVGFza0xvZ3NSZXF1ZXN0Eg4KBnJ1bl9pZBgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEg8KB2F0dGVtcHQYAyABKAUSEAoIZnJvbV9zZXEYBCABKAMSFAoMZnJvbV9hdHRlbXB0GAcgASgFEg4KBmZvbGxvdxgFIAEoCBIRCgluYW1lc3BhY2UYBiABKAkifAoMVGFza0xvZ0NodW5rEg4KBnJ1bl9pZBgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEg8KB2F0dGVtcHQYAyABKAUSCwoDc2VxGAQgASgDEgwKBGRhdGEYBSABKAwSEQoJdHJ1bmNhdGVkGAYgASgIEgwKBGxhc3QYByABKAgiQwoWQ3JlYXRlTmFtZXNwYWNlUmVxdWVzdBIpCgluYW1lc3BhY2UYASABKAsyFi5vcmtzdGFjay52MS5OYW1lc3BhY2UiVQoXQ3JlYXRlTmFtZXNwYWNlUmVzcG9uc2USKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlEg8KB2NyZWF0ZWQYAiABKAgiIwoTR2V0TmFtZXNwYWNlUmVxdWVzdBIMCgRuYW1lGAEgASgJIkEKFEdldE5hbWVzcGFjZVJlc3BvbnNlEikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSIXChVMaXN0TmFtZXNwYWNlc1JlcXVlc3QiRAoWTGlzdE5hbWVzcGFjZXNSZXNwb25zZRIqCgpuYW1lc3BhY2VzGAEgAygLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIkMKFlVwZGF0ZU5hbWVzcGFjZVJlcXVlc3QSKQoJbmFtZXNwYWNlGAEgASgLMhYub3Jrc3RhY2sudjEuTmFtZXNwYWNlIkQKF1VwZGF0ZU5hbWVzcGFjZVJlc3BvbnNlEikKCW5hbWVzcGFjZRgBIAEoCzIWLm9ya3N0YWNrLnYxLk5hbWVzcGFjZSImChZEZWxldGVOYW1lc3BhY2VSZXF1ZXN0EgwKBG5hbWUYASABKAkiGQoXRGVsZXRlTmFtZXNwYWNlUmVzcG9uc2UiJQoQTGlzdFBvb2xzUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkiSwoRTGlzdFBvb2xzUmVzcG9uc2USIAoFcG9vbHMYASADKAsyES5vcmtzdGFjay52MS5Qb29sEhQKDGRlZmF1bHRfcG9vbBgCIAEoCSIXChVMaXN0QWN0aXZpdGllc1JlcXVlc3QinQEKDEFjdGl2aXR5SW5mbxIMCgRuYW1lGAEgASgJEhEKCXJlZmVyZW5jZRgCIAEoCRIUCgxpbmRleF9kaWdlc3QYAyABKAkSEgoKbWVkaWFfdHlwZRgEIAEoCRIRCglwbGF0Zm9ybXMYBSADKAkSLwoLcmVzb2x2ZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIkcKFkxpc3RBY3Rpdml0aWVzUmVzcG9uc2USLQoKYWN0aXZpdGllcxgBIAMoCzIZLm9ya3N0YWNrLnYxLkFjdGl2aXR5SW5mbyIWChREZXNjcmliZU9ya2VyUmVxdWVzdCJIChVEZXNjcmliZU9ya2VyUmVzcG9uc2USLwoFb3JrZXIYASABKAsyIC5vcmtzdGFjay52MS5EZXNjcmliZU9ya2VyUmVzdWx0IhYKFEdldFN5c3RlbUluZm9SZXF1ZXN0IokCChVHZXRTeXN0ZW1JbmZvUmVzcG9uc2USFgoOZW5naW5lX3ZlcnNpb24YASABKAkSEgoKZ29fdmVyc2lvbhgCIAEoCRIXCg9kZXBsb3ltZW50X25hbWUYAyABKAkSEAoIYnVpbGRfaWQYBCABKAkSGQoRdmVyc2lvbmluZ19hY3RpdmUYBSABKAgSGAoQYXJ0aWZhY3RfYmFja2VuZBgGIAEoCRIZChFhcnRpZmFjdF9sb2NhdGlvbhgHIAEoCRIYChB0ZW1wb3JhbF9hZGRyZXNzGAggASgJEi8KC3NlcnZlcl90aW1lGAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDKuBQoOT3JrZmxvd1NlcnZpY2USUwoMQXBwbHlPcmtmbG93EiAub3Jrc3RhY2sudjEuQXBwbHlPcmtmbG93UmVxdWVzdBohLm9ya3N0YWNrLnYxLkFwcGx5T3JrZmxvd1Jlc3BvbnNlEk0KCkdldE9ya2Zsb3cSHi5vcmtzdGFjay52MS5HZXRPcmtmbG93UmVxdWVzdBofLm9ya3N0YWNrLnYxLkdldE9ya2Zsb3dSZXNwb25zZRJTCgxMaXN0T3JrZmxvd3MSIC5vcmtzdGFjay52MS5MaXN0T3JrZmxvd3NSZXF1ZXN0GiEub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dzUmVzcG9uc2USaAoTTGlzdE9ya2Zsb3dWZXJzaW9ucxInLm9ya3N0YWNrLnYxLkxpc3RPcmtmbG93VmVyc2lvbnNSZXF1ZXN0Gigub3Jrc3RhY2sudjEuTGlzdE9ya2Zsb3dWZXJzaW9uc1Jlc3BvbnNlEncKGFNldEN1cnJlbnRPcmtmbG93VmVyc2lvbhIsLm9ya3N0YWNrLnYxLlNldEN1cnJlbnRPcmtmbG93VmVyc2lvblJlcXVlc3QaLS5vcmtzdGFjay52MS5TZXRDdXJyZW50T3JrZmxvd1ZlcnNpb25SZXNwb25zZRJoChNEaWZmT3JrZmxvd1ZlcnNpb25zEicub3Jrc3RhY2sudjEuRGlmZk9ya2Zsb3dWZXJzaW9uc1JlcXVlc3QaKC5vcmtzdGFjay52MS5EaWZmT3JrZmxvd1ZlcnNpb25zUmVzcG9uc2USVgoNRGVsZXRlT3JrZmxvdxIhLm9ya3N0YWNrLnYxLkRlbGV0ZU9ya2Zsb3dSZXF1ZXN0GiIub3Jrc3RhY2sudjEuRGVsZXRlT3JrZmxvd1Jlc3BvbnNlMssDCgpSdW5TZXJ2aWNlEkoKCVN1Ym1pdFJ1bhIdLm9ya3N0YWNrLnYxLlN1Ym1pdFJ1blJlcXVlc3QaHi5vcmtzdGFjay52MS5TdWJtaXRSdW5SZXNwb25zZRJBCgZHZXRSdW4SGi5vcmtzdGFjay52MS5HZXRSdW5SZXF1ZXN0Ghsub3Jrc3RhY2sudjEuR2V0UnVuUmVzcG9uc2USRwoITGlzdFJ1bnMSHC5vcmtzdGFjay52MS5MaXN0UnVuc1JlcXVlc3QaHS5vcmtzdGFjay52MS5MaXN0UnVuc1Jlc3BvbnNlEkoKCUNhbmNlbFJ1bhIdLm9ya3N0YWNrLnYxLkNhbmNlbFJ1blJlcXVlc3QaHi5vcmtzdGFjay52MS5DYW5jZWxSdW5SZXNwb25zZRJGCgxTdHJlYW1FdmVudHMSIC5vcmtzdGFjay52MS5TdHJlYW1FdmVudHNSZXF1ZXN0GhIub3Jrc3RhY2sudjEuRXZlbnQwARJRCg5TdHJlYW1UYXNrTG9ncxIiLm9ya3N0YWNrLnYxLlN0cmVhbVRhc2tMb2dzUmVxdWVzdBoZLm9ya3N0YWNrLnYxLlRhc2tMb2dDaHVuazABMqgEChBOYW1lc3BhY2VTZXJ2aWNlElwKD0NyZWF0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLkNyZWF0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5DcmVhdGVOYW1lc3BhY2VSZXNwb25zZRJTCgxHZXROYW1lc3BhY2USIC5vcmtzdGFjay52MS5HZXROYW1lc3BhY2VSZXF1ZXN0GiEub3Jrc3RhY2sudjEuR2V0TmFtZXNwYWNlUmVzcG9uc2USWQoOTGlzdE5hbWVzcGFjZXMSIi5vcmtzdGFjay52MS5MaXN0TmFtZXNwYWNlc1JlcXVlc3QaIy5vcmtzdGFjay52MS5MaXN0TmFtZXNwYWNlc1Jlc3BvbnNlElwKD1VwZGF0ZU5hbWVzcGFjZRIjLm9ya3N0YWNrLnYxLlVwZGF0ZU5hbWVzcGFjZVJlcXVlc3QaJC5vcmtzdGFjay52MS5VcGRhdGVOYW1lc3BhY2VSZXNwb25zZRJcCg9EZWxldGVOYW1lc3BhY2USIy5vcmtzdGFjay52MS5EZWxldGVOYW1lc3BhY2VSZXF1ZXN0GiQub3Jrc3RhY2sudjEuRGVsZXRlTmFtZXNwYWNlUmVzcG9uc2USSgoJTGlzdFBvb2xzEh0ub3Jrc3RhY2sudjEuTGlzdFBvb2xzUmVxdWVzdBoeLm9ya3N0YWNrLnYxLkxpc3RQb29sc1Jlc3BvbnNlMsQBCg9BY3Rpdml0eVNlcnZpY2USWQoOTGlzdEFjdGl2aXRpZXMSIi5vcmtzdGFjay52MS5MaXN0QWN0aXZpdGllc1JlcXVlc3QaIy5vcmtzdGFjay52MS5MaXN0QWN0aXZpdGllc1Jlc3BvbnNlElYKDURlc2NyaWJlT3JrZXISIS5vcmtzdGFjay52MS5EZXNjcmliZU9ya2VyUmVxdWVzdBoiLm9ya3N0YWNrLnYxLkRlc2NyaWJlT3JrZXJSZXNwb25zZTJnCg1TeXN0ZW1TZXJ2aWNlElYKDUdldFN5c3RlbUluZm8SIS5vcmtzdGFjay52MS5HZXRTeXN0ZW1JbmZvUmVxdWVzdBoiLm9ya3N0YWNrLnYxLkdldFN5c3RlbUluZm9SZXNwb25zZUKoAQoPY29tLm9ya3N0YWNrLnYxQgxTZXJ2aWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_run, file_orkstack_v1_orkflow, file_orkstack_v1_namespace]);
 
 /**
  * @generated from message orkstack.v1.ApplyOrkflowRequest
@@ -477,6 +477,57 @@ export const DiffOrkflowVersionsResponseSchema: GenMessage<DiffOrkflowVersionsRe
   messageDesc(file_orkstack_v1_service, 12);
 
 /**
+ * @generated from message orkstack.v1.DeleteOrkflowRequest
+ */
+export type DeleteOrkflowRequest = Message<"orkstack.v1.DeleteOrkflowRequest"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
+};
+
+/**
+ * Describes the message orkstack.v1.DeleteOrkflowRequest.
+ * Use `create(DeleteOrkflowRequestSchema)` to create a new message.
+ */
+export const DeleteOrkflowRequestSchema: GenMessage<DeleteOrkflowRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 13);
+
+/**
+ * @generated from message orkstack.v1.DeleteOrkflowResponse
+ */
+export type DeleteOrkflowResponse = Message<"orkstack.v1.DeleteOrkflowResponse"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string namespace = 2;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp deleted_at = 3;
+   */
+  deletedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.DeleteOrkflowResponse.
+ * Use `create(DeleteOrkflowResponseSchema)` to create a new message.
+ */
+export const DeleteOrkflowResponseSchema: GenMessage<DeleteOrkflowResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_service, 14);
+
+/**
  * @generated from message orkstack.v1.SubmitRunRequest
  */
 export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
@@ -532,7 +583,7 @@ export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
  * Use `create(SubmitRunRequestSchema)` to create a new message.
  */
 export const SubmitRunRequestSchema: GenMessage<SubmitRunRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 13);
+  messageDesc(file_orkstack_v1_service, 15);
 
 /**
  * @generated from message orkstack.v1.SubmitRunResponse
@@ -549,7 +600,7 @@ export type SubmitRunResponse = Message<"orkstack.v1.SubmitRunResponse"> & {
  * Use `create(SubmitRunResponseSchema)` to create a new message.
  */
 export const SubmitRunResponseSchema: GenMessage<SubmitRunResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 14);
+  messageDesc(file_orkstack_v1_service, 16);
 
 /**
  * A run id addresses a run INSIDE a namespace, exactly as an orkflow name
@@ -582,7 +633,7 @@ export type GetRunRequest = Message<"orkstack.v1.GetRunRequest"> & {
  * Use `create(GetRunRequestSchema)` to create a new message.
  */
 export const GetRunRequestSchema: GenMessage<GetRunRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 15);
+  messageDesc(file_orkstack_v1_service, 17);
 
 /**
  * @generated from message orkstack.v1.GetRunResponse
@@ -599,7 +650,7 @@ export type GetRunResponse = Message<"orkstack.v1.GetRunResponse"> & {
  * Use `create(GetRunResponseSchema)` to create a new message.
  */
 export const GetRunResponseSchema: GenMessage<GetRunResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 16);
+  messageDesc(file_orkstack_v1_service, 18);
 
 /**
  * @generated from message orkstack.v1.ListRunsRequest
@@ -642,7 +693,7 @@ export type ListRunsRequest = Message<"orkstack.v1.ListRunsRequest"> & {
  * Use `create(ListRunsRequestSchema)` to create a new message.
  */
 export const ListRunsRequestSchema: GenMessage<ListRunsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 17);
+  messageDesc(file_orkstack_v1_service, 19);
 
 /**
  * @generated from message orkstack.v1.ListRunsResponse
@@ -664,7 +715,7 @@ export type ListRunsResponse = Message<"orkstack.v1.ListRunsResponse"> & {
  * Use `create(ListRunsResponseSchema)` to create a new message.
  */
 export const ListRunsResponseSchema: GenMessage<ListRunsResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 18);
+  messageDesc(file_orkstack_v1_service, 20);
 
 /**
  * @generated from message orkstack.v1.CancelRunRequest
@@ -693,7 +744,7 @@ export type CancelRunRequest = Message<"orkstack.v1.CancelRunRequest"> & {
  * Use `create(CancelRunRequestSchema)` to create a new message.
  */
 export const CancelRunRequestSchema: GenMessage<CancelRunRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 19);
+  messageDesc(file_orkstack_v1_service, 21);
 
 /**
  * @generated from message orkstack.v1.CancelRunResponse
@@ -710,7 +761,7 @@ export type CancelRunResponse = Message<"orkstack.v1.CancelRunResponse"> & {
  * Use `create(CancelRunResponseSchema)` to create a new message.
  */
 export const CancelRunResponseSchema: GenMessage<CancelRunResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 20);
+  messageDesc(file_orkstack_v1_service, 22);
 
 /**
  * @generated from message orkstack.v1.StreamEventsRequest
@@ -739,7 +790,7 @@ export type StreamEventsRequest = Message<"orkstack.v1.StreamEventsRequest"> & {
  * Use `create(StreamEventsRequestSchema)` to create a new message.
  */
 export const StreamEventsRequestSchema: GenMessage<StreamEventsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 21);
+  messageDesc(file_orkstack_v1_service, 23);
 
 /**
  * @generated from message orkstack.v1.StreamTaskLogsRequest
@@ -828,7 +879,7 @@ export type StreamTaskLogsRequest = Message<"orkstack.v1.StreamTaskLogsRequest">
  * Use `create(StreamTaskLogsRequestSchema)` to create a new message.
  */
 export const StreamTaskLogsRequestSchema: GenMessage<StreamTaskLogsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 22);
+  messageDesc(file_orkstack_v1_service, 24);
 
 /**
  * TaskLogChunk is one slice of a task attempt's output, exactly as the Orker
@@ -895,7 +946,7 @@ export type TaskLogChunk = Message<"orkstack.v1.TaskLogChunk"> & {
  * Use `create(TaskLogChunkSchema)` to create a new message.
  */
 export const TaskLogChunkSchema: GenMessage<TaskLogChunk> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 23);
+  messageDesc(file_orkstack_v1_service, 25);
 
 /**
  * @generated from message orkstack.v1.CreateNamespaceRequest
@@ -914,7 +965,7 @@ export type CreateNamespaceRequest = Message<"orkstack.v1.CreateNamespaceRequest
  * Use `create(CreateNamespaceRequestSchema)` to create a new message.
  */
 export const CreateNamespaceRequestSchema: GenMessage<CreateNamespaceRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 24);
+  messageDesc(file_orkstack_v1_service, 26);
 
 /**
  * @generated from message orkstack.v1.CreateNamespaceResponse
@@ -939,7 +990,7 @@ export type CreateNamespaceResponse = Message<"orkstack.v1.CreateNamespaceRespon
  * Use `create(CreateNamespaceResponseSchema)` to create a new message.
  */
 export const CreateNamespaceResponseSchema: GenMessage<CreateNamespaceResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 25);
+  messageDesc(file_orkstack_v1_service, 27);
 
 /**
  * @generated from message orkstack.v1.GetNamespaceRequest
@@ -956,7 +1007,7 @@ export type GetNamespaceRequest = Message<"orkstack.v1.GetNamespaceRequest"> & {
  * Use `create(GetNamespaceRequestSchema)` to create a new message.
  */
 export const GetNamespaceRequestSchema: GenMessage<GetNamespaceRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 26);
+  messageDesc(file_orkstack_v1_service, 28);
 
 /**
  * @generated from message orkstack.v1.GetNamespaceResponse
@@ -973,7 +1024,7 @@ export type GetNamespaceResponse = Message<"orkstack.v1.GetNamespaceResponse"> &
  * Use `create(GetNamespaceResponseSchema)` to create a new message.
  */
 export const GetNamespaceResponseSchema: GenMessage<GetNamespaceResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 27);
+  messageDesc(file_orkstack_v1_service, 29);
 
 /**
  * @generated from message orkstack.v1.ListNamespacesRequest
@@ -986,7 +1037,7 @@ export type ListNamespacesRequest = Message<"orkstack.v1.ListNamespacesRequest">
  * Use `create(ListNamespacesRequestSchema)` to create a new message.
  */
 export const ListNamespacesRequestSchema: GenMessage<ListNamespacesRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 28);
+  messageDesc(file_orkstack_v1_service, 30);
 
 /**
  * @generated from message orkstack.v1.ListNamespacesResponse
@@ -1003,7 +1054,7 @@ export type ListNamespacesResponse = Message<"orkstack.v1.ListNamespacesResponse
  * Use `create(ListNamespacesResponseSchema)` to create a new message.
  */
 export const ListNamespacesResponseSchema: GenMessage<ListNamespacesResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 29);
+  messageDesc(file_orkstack_v1_service, 31);
 
 /**
  * @generated from message orkstack.v1.UpdateNamespaceRequest
@@ -1028,7 +1079,7 @@ export type UpdateNamespaceRequest = Message<"orkstack.v1.UpdateNamespaceRequest
  * Use `create(UpdateNamespaceRequestSchema)` to create a new message.
  */
 export const UpdateNamespaceRequestSchema: GenMessage<UpdateNamespaceRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 30);
+  messageDesc(file_orkstack_v1_service, 32);
 
 /**
  * @generated from message orkstack.v1.UpdateNamespaceResponse
@@ -1045,7 +1096,7 @@ export type UpdateNamespaceResponse = Message<"orkstack.v1.UpdateNamespaceRespon
  * Use `create(UpdateNamespaceResponseSchema)` to create a new message.
  */
 export const UpdateNamespaceResponseSchema: GenMessage<UpdateNamespaceResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 31);
+  messageDesc(file_orkstack_v1_service, 33);
 
 /**
  * @generated from message orkstack.v1.DeleteNamespaceRequest
@@ -1062,7 +1113,7 @@ export type DeleteNamespaceRequest = Message<"orkstack.v1.DeleteNamespaceRequest
  * Use `create(DeleteNamespaceRequestSchema)` to create a new message.
  */
 export const DeleteNamespaceRequestSchema: GenMessage<DeleteNamespaceRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 32);
+  messageDesc(file_orkstack_v1_service, 34);
 
 /**
  * @generated from message orkstack.v1.DeleteNamespaceResponse
@@ -1075,7 +1126,7 @@ export type DeleteNamespaceResponse = Message<"orkstack.v1.DeleteNamespaceRespon
  * Use `create(DeleteNamespaceResponseSchema)` to create a new message.
  */
 export const DeleteNamespaceResponseSchema: GenMessage<DeleteNamespaceResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 33);
+  messageDesc(file_orkstack_v1_service, 35);
 
 /**
  * @generated from message orkstack.v1.ListPoolsRequest
@@ -1094,7 +1145,7 @@ export type ListPoolsRequest = Message<"orkstack.v1.ListPoolsRequest"> & {
  * Use `create(ListPoolsRequestSchema)` to create a new message.
  */
 export const ListPoolsRequestSchema: GenMessage<ListPoolsRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 34);
+  messageDesc(file_orkstack_v1_service, 36);
 
 /**
  * @generated from message orkstack.v1.ListPoolsResponse
@@ -1120,7 +1171,7 @@ export type ListPoolsResponse = Message<"orkstack.v1.ListPoolsResponse"> & {
  * Use `create(ListPoolsResponseSchema)` to create a new message.
  */
 export const ListPoolsResponseSchema: GenMessage<ListPoolsResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 35);
+  messageDesc(file_orkstack_v1_service, 37);
 
 /**
  * @generated from message orkstack.v1.ListActivitiesRequest
@@ -1133,7 +1184,7 @@ export type ListActivitiesRequest = Message<"orkstack.v1.ListActivitiesRequest">
  * Use `create(ListActivitiesRequestSchema)` to create a new message.
  */
 export const ListActivitiesRequestSchema: GenMessage<ListActivitiesRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 36);
+  messageDesc(file_orkstack_v1_service, 38);
 
 /**
  * ActivityInfo is one catalog entry, resolved.
@@ -1187,7 +1238,7 @@ export type ActivityInfo = Message<"orkstack.v1.ActivityInfo"> & {
  * Use `create(ActivityInfoSchema)` to create a new message.
  */
 export const ActivityInfoSchema: GenMessage<ActivityInfo> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 37);
+  messageDesc(file_orkstack_v1_service, 39);
 
 /**
  * @generated from message orkstack.v1.ListActivitiesResponse
@@ -1208,7 +1259,7 @@ export type ListActivitiesResponse = Message<"orkstack.v1.ListActivitiesResponse
  * Use `create(ListActivitiesResponseSchema)` to create a new message.
  */
 export const ListActivitiesResponseSchema: GenMessage<ListActivitiesResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 38);
+  messageDesc(file_orkstack_v1_service, 40);
 
 /**
  * @generated from message orkstack.v1.DescribeOrkerRequest
@@ -1221,7 +1272,7 @@ export type DescribeOrkerRequest = Message<"orkstack.v1.DescribeOrkerRequest"> &
  * Use `create(DescribeOrkerRequestSchema)` to create a new message.
  */
 export const DescribeOrkerRequestSchema: GenMessage<DescribeOrkerRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 39);
+  messageDesc(file_orkstack_v1_service, 41);
 
 /**
  * @generated from message orkstack.v1.DescribeOrkerResponse
@@ -1238,7 +1289,7 @@ export type DescribeOrkerResponse = Message<"orkstack.v1.DescribeOrkerResponse">
  * Use `create(DescribeOrkerResponseSchema)` to create a new message.
  */
 export const DescribeOrkerResponseSchema: GenMessage<DescribeOrkerResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 40);
+  messageDesc(file_orkstack_v1_service, 42);
 
 /**
  * @generated from message orkstack.v1.GetSystemInfoRequest
@@ -1251,7 +1302,7 @@ export type GetSystemInfoRequest = Message<"orkstack.v1.GetSystemInfoRequest"> &
  * Use `create(GetSystemInfoRequestSchema)` to create a new message.
  */
 export const GetSystemInfoRequestSchema: GenMessage<GetSystemInfoRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 41);
+  messageDesc(file_orkstack_v1_service, 43);
 
 /**
  * @generated from message orkstack.v1.GetSystemInfoResponse
@@ -1343,7 +1394,7 @@ export type GetSystemInfoResponse = Message<"orkstack.v1.GetSystemInfoResponse">
  * Use `create(GetSystemInfoResponseSchema)` to create a new message.
  */
 export const GetSystemInfoResponseSchema: GenMessage<GetSystemInfoResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_service, 42);
+  messageDesc(file_orkstack_v1_service, 44);
 
 /**
  * OrkflowService manages orkflow definitions (the compiled DSL).
@@ -1432,6 +1483,27 @@ export const OrkflowService: GenService<{
     methodKind: "unary";
     input: typeof DiffOrkflowVersionsRequestSchema;
     output: typeof DiffOrkflowVersionsResponseSchema;
+  },
+  /**
+   * DeleteOrkflow removes all versions of an orkflow from the registry.
+   *
+   * It refuses (FailedPrecondition) if any runs are currently executing or
+   * queued for this orkflow, or if runs have completed recently (within the
+   * past 24 hours). The check is conservative: an orkflow with any recent
+   * activity cannot be deleted. This protects against accidental deletion of
+   * an orkflow in active use.
+   *
+   * The operation is NOT reversible: all versions and their metadata are
+   * permanently deleted. Runs that pinned the orkflow keep executing — they
+   * have the version they started with — but any new run will fail with
+   * NotFound.
+   *
+   * @generated from rpc orkstack.v1.OrkflowService.DeleteOrkflow
+   */
+  deleteOrkflow: {
+    methodKind: "unary";
+    input: typeof DeleteOrkflowRequestSchema;
+    output: typeof DeleteOrkflowResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_orkstack_v1_service, 0);

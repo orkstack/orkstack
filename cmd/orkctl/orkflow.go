@@ -27,6 +27,7 @@ func newOrkflowCommand(g *globalFlags) *cobra.Command {
 		newOrkflowPromoteCommand(g),
 		newOrkflowDiffCommand(g),
 		newOrkflowEditCommand(g),
+		newOrkflowDeleteCommand(g),
 	)
 	return cmd
 }

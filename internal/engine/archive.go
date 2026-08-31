@@ -153,8 +153,10 @@ type ArchiveQuery struct {
 	// the run's creation time.
 	Since time.Time
 	Until time.Time
-	// Limit caps the runs returned, newest first. 0 means DefaultArchivePageSize.
-	Limit int
+	// Limit caps the runs returned, newest first. 0 means DefaultArchivePageSize
+	// unless Exhaustive is set, in which case zero means every matching entry.
+	Limit      int
+	Exhaustive bool
 }
 
 // RunArchiver is the engine's view of the run archive: it owns the protobuf
@@ -242,7 +244,7 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		return nil, nil
 	}
 	limit := q.Limit
-	if limit <= 0 {
+	if limit <= 0 && !q.Exhaustive {
 		limit = DefaultArchivePageSize
 	}
 	entries, err := a.archive.ListRuns(ctx, artifacts.RunQuery{

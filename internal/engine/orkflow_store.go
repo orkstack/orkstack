@@ -60,6 +60,9 @@ type OrkflowStore interface {
 	// SetCurrentVersion moves the current pointer to an existing version and
 	// returns the version it replaced ("" when never set).
 	SetCurrentVersion(ctx context.Context, namespace, name, version string) (string, error)
+	// Delete removes all versions of an orkflow from the namespace.
+	// It is not reversible: all versions and their metadata are permanently deleted.
+	Delete(ctx context.Context, namespace, name string) error
 }
 
 // MemoryOrkflowStore is the in-memory OrkflowStore used by unit tests that have no
@@ -283,6 +286,41 @@ func (s *MemoryOrkflowStore) SetCurrentVersion(
 	previous := s.current[namespace][name]
 	s.current[namespace][name] = version
 	return previous, nil
+}
+
+// Delete removes all versions of an orkflow from the namespace.
+// It is not reversible: all versions and their metadata are permanently deleted.
+func (s *MemoryOrkflowStore) Delete(
+	_ context.Context,
+	namespace, name string,
+) error {
+	namespace = artifacts.ResolveNamespace(namespace)
+	if _, err := artifacts.OrkflowKey(namespace, name, "validation"); err != nil {
+		return fmt.Errorf("engine: delete orkflow %q in namespace %q: %w", name, namespace, err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.byNamespace[namespace][name]; !ok {
+		return notStored(namespace, name, "")
+	}
+
+	// Delete all versions of this orkflow
+	delete(s.byNamespace[namespace], name)
+	// Delete the version pointers
+	delete(s.latest[namespace], name)
+	delete(s.current[namespace], name)
+	// Remove from name list
+	if names, ok := s.nameList[namespace]; ok {
+		for i, n := range names {
+			if n == name {
+				s.nameList[namespace] = append(names[:i], names[i+1:]...)
+				break
+			}
+		}
+	}
+
+	return nil
 }
 
 func notStored(namespace, name, version string) error {

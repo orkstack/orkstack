@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -271,5 +272,59 @@ func TestMemoryOrkflowStore_AnApplyCommitsAgainstTheHeadItNamed(t *testing.T) {
 	if versions.Head != "0.9.0" || len(versions.All) != 3 {
 		t.Errorf("after the retargeted apply the store holds %d versions with head %q, "+
 			"want 3 and 0.9.0", len(versions.All), versions.Head)
+	}
+}
+
+func TestMemoryOrkflowStore_DeleteRemovesEveryVersionAndPointerOnlyInTheSelectedNamespace(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	ctx := context.Background()
+	base := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	for _, wf := range []*orkstackv1.Orkflow{
+		orkflowFixture("deploy", "1.0.0", base),
+		orkflowFixture("deploy", "2.0.0", base.Add(time.Second)),
+		inNamespace(orkflowFixture("deploy", "9.0.0", base), "payments"),
+	} {
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
+			t.Fatalf("Put(%s/%s@%s): %v", wf.GetNamespace(), wf.GetName(), wf.GetVersion(), err)
+		}
+	}
+	if _, err := store.SetCurrentVersion(ctx, "", "deploy", "1.0.0"); err != nil {
+		t.Fatalf("SetCurrentVersion: %v", err)
+	}
+
+	if err := store.Delete(ctx, "", "deploy"); err != nil {
+		t.Fatalf("Delete(default/deploy): %v", err)
+	}
+	for _, version := range []string{"", "1.0.0", "2.0.0"} {
+		if _, err := store.Get(ctx, "default", "deploy", version); !errors.Is(err, artifacts.ErrNotFound) {
+			t.Errorf("Get(default/deploy@%q) after delete = %v, want ErrNotFound", version, err)
+		}
+	}
+	listed, err := store.List(ctx, "default")
+	if err != nil || len(listed) != 0 {
+		t.Errorf("List(default) after delete = %v, %v; want empty", listed, err)
+	}
+	versions, err := store.Versions(ctx, "default", "deploy")
+	if err != nil {
+		t.Fatalf("Versions(default/deploy): %v", err)
+	}
+	if len(versions.All) != 0 || versions.Current != "" || versions.Head != "" {
+		t.Errorf("Versions after delete = %+v, want no versions, current, or head", versions)
+	}
+	if got, err := store.Get(ctx, "payments", "deploy", ""); err != nil || got.GetVersion() != "9.0.0" {
+		t.Errorf("Get(payments/deploy) after deleting default = %v, %v; want 9.0.0", got, err)
+	}
+}
+
+func TestMemoryOrkflowStore_DeleteRefusesUnknownAndInvalidNames(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	ctx := context.Background()
+	if err := store.Delete(ctx, "", "unknown"); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("Delete(unknown) = %v, want ErrNotFound", err)
+	}
+	for _, name := range []string{"Deploy", "1deploy", strings.Repeat("a", 201)} {
+		if err := store.Delete(ctx, "", name); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
+			t.Errorf("Delete(%q) = %v, want ErrInvalidOrkflow", name, err)
+		}
 	}
 }

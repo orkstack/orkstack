@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // These tests describe the replica that did not start the run.
@@ -120,8 +122,11 @@ func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstack
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []*orkstackv1.Run
+	out := make([]*orkstackv1.Run, 0, len(f.runs))
 	for _, run := range f.runs {
+		if q.Namespace != "" && artifacts.ResolveNamespace(run.GetNamespace()) != artifacts.ResolveNamespace(q.Namespace) {
+			continue
+		}
 		if q.OrkflowName != "" && run.GetOrkflowName() != q.OrkflowName {
 			continue
 		}
@@ -129,6 +134,24 @@ func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstack
 			continue
 		}
 		out = append(out, run)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := engine.RunIndexTime(out[i]), engine.RunIndexTime(out[j])
+		if !a.Equal(b) {
+			return a.After(b)
+		}
+		return out[i].GetId() > out[j].GetId()
+	})
+	// Mirror TemporalRunReader exactly: Exhaustive changes how completely the
+	// index is walked, not how much comes back, and only an exhaustive caller
+	// that also leaves Limit at 0 receives everything. A double that returned
+	// more than the production reader would hide a pagination bug.
+	limit := q.Limit
+	if limit <= 0 && !q.Exhaustive {
+		limit = engine.DefaultRunPageSize
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
@@ -320,6 +343,61 @@ func TestListRuns_AnswersForRunsThisReplicaNeverSaw(t *testing.T) {
 	if len(filtered.Msg.GetRuns()) != 0 {
 		t.Fatalf("filtering by another orkflow returned %v, want nothing",
 			listedIDs(filtered.Msg.GetRuns()))
+	}
+}
+
+// TestListRuns_PageSizeBoundsASafetyShapedQuery pins the public pagination
+// contract against the exhaustive walk the deletion gate needs.
+//
+// A request naming an orkflow AND a non-terminal status is answered by reading
+// visibility to the end, so an older live run cannot hide behind a page of
+// newer ones. That is about how completely the index is WALKED. It must not
+// change how much is RETURNED: page_size still caps the response, and a
+// request that names no page_size still gets one default page rather than
+// every run the orkflow ever had.
+func TestListRuns_PageSizeBoundsASafetyShapedQuery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// One more than a default page, so "bounded" and "everything" differ.
+	total := engine.DefaultRunPageSize + 50
+	runs := make(map[string]*orkstackv1.Run, total)
+	base := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("ork-running-%03d", i)
+		runs[id] = &orkstackv1.Run{
+			Id:          id,
+			OrkflowName: "deploy",
+			Status:      orkstackv1.Status_STATUS_RUNNING,
+			CreatedAt:   timestamppb.New(base.Add(time.Duration(i) * time.Second)),
+		}
+	}
+	f := newReaderFixture(t, &fakeReader{runs: runs})
+
+	asked, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
+		OrkflowName: "deploy",
+		Status:      orkstackv1.Status_STATUS_RUNNING,
+		PageSize:    10,
+	}))
+	if err != nil {
+		t.Fatalf("ListRuns(page_size=10): %v", err)
+	}
+	if got := len(asked.Msg.GetRuns()); got != 10 {
+		t.Errorf("ListRuns(page_size=10) returned %d runs, want the 10 that were asked for", got)
+	}
+
+	// page_size 0 has always meant "one default page", never "all of them".
+	unstated, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
+		OrkflowName: "deploy",
+		Status:      orkstackv1.Status_STATUS_RUNNING,
+	}))
+	if err != nil {
+		t.Fatalf("ListRuns(no page_size): %v", err)
+	}
+	if got := len(unstated.Msg.GetRuns()); got != engine.DefaultRunPageSize {
+		t.Errorf("ListRuns without page_size returned %d runs, want one default page of %d; "+
+			"an exhaustive walk must not turn a public list into an unbounded dump",
+			got, engine.DefaultRunPageSize)
 	}
 }
 

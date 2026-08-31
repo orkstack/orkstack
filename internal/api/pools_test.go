@@ -738,6 +738,10 @@ func (d downOrkflowStore) SetCurrentVersion(context.Context, string, string, str
 	return "", d.err
 }
 
+func (d downOrkflowStore) Delete(context.Context, string, string) error {
+	return d.err
+}
+
 // TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown is
 // the degradation the code promises, measured.
 //

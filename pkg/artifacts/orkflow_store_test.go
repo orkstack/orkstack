@@ -134,6 +134,20 @@ func TestOrkflowKey_RejectsCoordinatesThatCouldEscapeThePrefix(t *testing.T) {
 	}
 }
 
+func TestOrkflowKey_InvalidNameErrorNamesTheOrkflowName(t *testing.T) {
+	_, err := OrkflowKey("default", "Foo", "1.0.0")
+	if !errors.Is(err, ErrInvalidOrkflow) {
+		t.Fatalf("OrkflowKey invalid name error = %v, want ErrInvalidOrkflow", err)
+	}
+	want := `artifacts: orkflow name "Foo" must match ^[a-z][a-z0-9-]*$: invalid orkflow coordinates`
+	if err.Error() != want {
+		t.Fatalf("OrkflowKey invalid name error = %q, want %q", err, want)
+	}
+	if strings.Contains(err.Error(), "namespace") {
+		t.Fatalf("OrkflowKey invalid name error misidentifies the field: %v", err)
+	}
+}
+
 func TestParseOrkflowKey_RoundTripsGeneratedKeysAndSkipsForeignOnes(t *testing.T) {
 	for _, want := range []struct{ namespace, name, version string }{
 		{"default", "hello-ork", "0.1.0"},

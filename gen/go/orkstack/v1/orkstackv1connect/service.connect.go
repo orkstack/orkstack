@@ -59,6 +59,9 @@ const (
 	// OrkflowServiceDiffOrkflowVersionsProcedure is the fully-qualified name of the OrkflowService's
 	// DiffOrkflowVersions RPC.
 	OrkflowServiceDiffOrkflowVersionsProcedure = "/orkstack.v1.OrkflowService/DiffOrkflowVersions"
+	// OrkflowServiceDeleteOrkflowProcedure is the fully-qualified name of the OrkflowService's
+	// DeleteOrkflow RPC.
+	OrkflowServiceDeleteOrkflowProcedure = "/orkstack.v1.OrkflowService/DeleteOrkflow"
 	// RunServiceSubmitRunProcedure is the fully-qualified name of the RunService's SubmitRun RPC.
 	RunServiceSubmitRunProcedure = "/orkstack.v1.RunService/SubmitRun"
 	// RunServiceGetRunProcedure is the fully-qualified name of the RunService's GetRun RPC.
@@ -133,6 +136,19 @@ type OrkflowServiceClient interface {
 	// changed. One implementation, golden-tested once, rendered verbatim by
 	// every client.
 	DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error)
+	// DeleteOrkflow removes all versions of an orkflow from the registry.
+	//
+	// It refuses (FailedPrecondition) if any runs are currently executing or
+	// queued for this orkflow, or if runs have completed recently (within the
+	// past 24 hours). The check is conservative: an orkflow with any recent
+	// activity cannot be deleted. This protects against accidental deletion of
+	// an orkflow in active use.
+	//
+	// The operation is NOT reversible: all versions and their metadata are
+	// permanently deleted. Runs that pinned the orkflow keep executing — they
+	// have the version they started with — but any new run will fail with
+	// NotFound.
+	DeleteOrkflow(context.Context, *connect.Request[v1.DeleteOrkflowRequest]) (*connect.Response[v1.DeleteOrkflowResponse], error)
 }
 
 // NewOrkflowServiceClient constructs a client for the orkstack.v1.OrkflowService service. By
@@ -182,6 +198,12 @@ func NewOrkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(orkflowServiceMethods.ByName("DiffOrkflowVersions")),
 			connect.WithClientOptions(opts...),
 		),
+		deleteOrkflow: connect.NewClient[v1.DeleteOrkflowRequest, v1.DeleteOrkflowResponse](
+			httpClient,
+			baseURL+OrkflowServiceDeleteOrkflowProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("DeleteOrkflow")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -193,6 +215,7 @@ type orkflowServiceClient struct {
 	listOrkflowVersions      *connect.Client[v1.ListOrkflowVersionsRequest, v1.ListOrkflowVersionsResponse]
 	setCurrentOrkflowVersion *connect.Client[v1.SetCurrentOrkflowVersionRequest, v1.SetCurrentOrkflowVersionResponse]
 	diffOrkflowVersions      *connect.Client[v1.DiffOrkflowVersionsRequest, v1.DiffOrkflowVersionsResponse]
+	deleteOrkflow            *connect.Client[v1.DeleteOrkflowRequest, v1.DeleteOrkflowResponse]
 }
 
 // ApplyOrkflow calls orkstack.v1.OrkflowService.ApplyOrkflow.
@@ -223,6 +246,11 @@ func (c *orkflowServiceClient) SetCurrentOrkflowVersion(ctx context.Context, req
 // DiffOrkflowVersions calls orkstack.v1.OrkflowService.DiffOrkflowVersions.
 func (c *orkflowServiceClient) DiffOrkflowVersions(ctx context.Context, req *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error) {
 	return c.diffOrkflowVersions.CallUnary(ctx, req)
+}
+
+// DeleteOrkflow calls orkstack.v1.OrkflowService.DeleteOrkflow.
+func (c *orkflowServiceClient) DeleteOrkflow(ctx context.Context, req *connect.Request[v1.DeleteOrkflowRequest]) (*connect.Response[v1.DeleteOrkflowResponse], error) {
+	return c.deleteOrkflow.CallUnary(ctx, req)
 }
 
 // OrkflowServiceHandler is an implementation of the orkstack.v1.OrkflowService service.
@@ -257,6 +285,19 @@ type OrkflowServiceHandler interface {
 	// changed. One implementation, golden-tested once, rendered verbatim by
 	// every client.
 	DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error)
+	// DeleteOrkflow removes all versions of an orkflow from the registry.
+	//
+	// It refuses (FailedPrecondition) if any runs are currently executing or
+	// queued for this orkflow, or if runs have completed recently (within the
+	// past 24 hours). The check is conservative: an orkflow with any recent
+	// activity cannot be deleted. This protects against accidental deletion of
+	// an orkflow in active use.
+	//
+	// The operation is NOT reversible: all versions and their metadata are
+	// permanently deleted. Runs that pinned the orkflow keep executing — they
+	// have the version they started with — but any new run will fail with
+	// NotFound.
+	DeleteOrkflow(context.Context, *connect.Request[v1.DeleteOrkflowRequest]) (*connect.Response[v1.DeleteOrkflowResponse], error)
 }
 
 // NewOrkflowServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -302,6 +343,12 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 		connect.WithSchema(orkflowServiceMethods.ByName("DiffOrkflowVersions")),
 		connect.WithHandlerOptions(opts...),
 	)
+	orkflowServiceDeleteOrkflowHandler := connect.NewUnaryHandler(
+		OrkflowServiceDeleteOrkflowProcedure,
+		svc.DeleteOrkflow,
+		connect.WithSchema(orkflowServiceMethods.ByName("DeleteOrkflow")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.OrkflowService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case OrkflowServiceApplyOrkflowProcedure:
@@ -316,6 +363,8 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 			orkflowServiceSetCurrentOrkflowVersionHandler.ServeHTTP(w, r)
 		case OrkflowServiceDiffOrkflowVersionsProcedure:
 			orkflowServiceDiffOrkflowVersionsHandler.ServeHTTP(w, r)
+		case OrkflowServiceDeleteOrkflowProcedure:
+			orkflowServiceDeleteOrkflowHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -347,6 +396,10 @@ func (UnimplementedOrkflowServiceHandler) SetCurrentOrkflowVersion(context.Conte
 
 func (UnimplementedOrkflowServiceHandler) DiffOrkflowVersions(context.Context, *connect.Request[v1.DiffOrkflowVersionsRequest]) (*connect.Response[v1.DiffOrkflowVersionsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.DiffOrkflowVersions is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) DeleteOrkflow(context.Context, *connect.Request[v1.DeleteOrkflowRequest]) (*connect.Response[v1.DeleteOrkflowResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.DeleteOrkflow is not implemented"))
 }
 
 // RunServiceClient is a client for the orkstack.v1.RunService service.

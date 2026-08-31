@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -148,4 +150,100 @@ func (s *Service) DiffOrkflowVersions(
 // in a `--- a/…` header, spelled as the coordinates that address the document.
 func versionLabel(wf *orkstackv1.Orkflow) string {
 	return wf.GetName() + "@" + wf.GetVersion()
+}
+
+// OrkflowDeletionRunWindow is the recent-run safety window checked before an
+// orkflow can be permanently deleted.
+const OrkflowDeletionRunWindow = 24 * time.Hour
+
+// DeleteOrkflow permanently removes every stored version of one orkflow after
+// proving that no active or recent run still refers to it.
+func (s *Service) DeleteOrkflow(
+	ctx context.Context,
+	req *connect.Request[orkstackv1.DeleteOrkflowRequest],
+) (*connect.Response[orkstackv1.DeleteOrkflowResponse], error) {
+	name := req.Msg.GetName()
+	if name == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("name is required"))
+	}
+	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
+	if err != nil {
+		return nil, err
+	}
+	if _, err := artifacts.OrkflowKey(ns.GetName(), name, "validation"); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("invalid orkflow name %q: %w", name, err))
+	}
+
+	// Existence is checked before the run query so a missing name is NotFound
+	// even when the run record is temporarily unavailable.
+	if _, err := s.orkflows.Get(ctx, ns.GetName(), name, ""); err != nil {
+		return nil, orkflowStoreError(err, "orkflow %q in namespace %q", name, ns.GetName())
+	}
+
+	listed, err := s.completeOrkflowRuns(ctx, ns.GetName(), name)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+			"cannot verify whether orkflow %q in namespace %q has active or recent runs: %w",
+			name, ns.GetName(), err))
+	}
+
+	cutoff := s.now().Add(-OrkflowDeletionRunWindow)
+	active, recent := 0, 0
+	for _, run := range listed {
+		if !isTerminalStatus(run.GetStatus()) {
+			active++
+			continue
+		}
+		finished := run.GetFinishedAt()
+		if finished == nil || finished.AsTime().After(cutoff) {
+			recent++
+		}
+	}
+	if active+recent > 0 {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"cannot delete orkflow %q in namespace %q: %d run(s) block deletion (%d active, %d finished within %s)",
+			name, ns.GetName(), active+recent, active, recent, OrkflowDeletionRunWindow))
+	}
+
+	if err := s.orkflows.Delete(ctx, ns.GetName(), name); err != nil {
+		return nil, orkflowStoreError(err, "delete orkflow %q in namespace %q", name, ns.GetName())
+	}
+	return connect.NewResponse(&orkstackv1.DeleteOrkflowResponse{
+		Name:      name,
+		Namespace: ns.GetName(),
+		DeletedAt: timestamppb.New(s.now().UTC()),
+	}), nil
+}
+
+// completeOrkflowRuns reads both durable run authorities to completion. A
+// deletion gate cannot use the user-facing bounded ListRuns page: an older
+// active run behind that page is still active. Temporal's walk either reaches
+// the end or errors, and the archive's namespace/orkflow prefix is exhaustive.
+func (s *Service) completeOrkflowRuns(ctx context.Context, namespace, name string) ([]*orkstackv1.Run, error) {
+	binding, err := s.binding(namespace)
+	if err != nil {
+		return nil, err
+	}
+	var runs []*orkstackv1.Run
+	if binding.Reader != nil {
+		runs, err = binding.Reader.ListRuns(ctx, engine.RunQuery{
+			Namespace: namespace, OrkflowName: name, Exhaustive: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		runs = s.runs.List(engine.ListFilter{Namespace: namespace, OrkflowName: name})
+	}
+	if s.archive == nil {
+		return runs, nil
+	}
+	archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
+		Namespace: namespace, OrkflowName: name, Exhaustive: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return mergeRuns(archived, runs), nil
 }

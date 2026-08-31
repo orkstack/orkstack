@@ -71,6 +71,9 @@ type OrkflowStore interface {
 	// Promoting to a version that is not stored returns ErrNotFound, so no
 	// reader can observe a pointer to a version that does not exist.
 	SetCurrentVersion(ctx context.Context, namespace, name, version string) (string, error)
+	// Delete permanently removes every version and both pointers for one
+	// orkflow. A missing orkflow returns ErrNotFound.
+	Delete(ctx context.Context, namespace, name string) error
 }
 
 // OrkflowVersions is one orkflow's version catalog.
@@ -241,6 +244,19 @@ func parseOrkflowKey(key string) (namespace, name, version string, ok bool) {
 }
 
 func validOrkflowComponent(kind, value string) error {
+	if kind == "name" {
+		switch {
+		case value == "":
+			return fmt.Errorf("artifacts: orkflow name is empty: %w", ErrInvalidOrkflow)
+		case len(value) > maxOrkflowComponent:
+			return fmt.Errorf("artifacts: orkflow name %q exceeds %d bytes: %w",
+				value, maxOrkflowComponent, ErrInvalidOrkflow)
+		case !namespaceNamePattern.MatchString(value):
+			return fmt.Errorf("artifacts: orkflow name %q must match %s: %w",
+				value, namespaceNamePattern, ErrInvalidOrkflow)
+		}
+		return nil
+	}
 	switch {
 	case value == "":
 		return fmt.Errorf("artifacts: orkflow %s is empty: %w", kind, ErrInvalidOrkflow)

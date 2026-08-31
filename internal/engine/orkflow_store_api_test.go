@@ -60,6 +60,13 @@ func (r *recordingStore) SetCurrentVersion(
 	return r.inner.SetCurrentVersion(ctx, namespace, name, version)
 }
 
+func (r *recordingStore) Delete(
+	ctx context.Context,
+	namespace, name string,
+) error {
+	return r.inner.Delete(ctx, namespace, name)
+}
+
 // unreachableStore is a durable store that is down.
 type unreachableStore struct{ err error }
 
@@ -84,6 +91,10 @@ func (u unreachableStore) Versions(
 	string, string,
 ) (artifacts.OrkflowVersions, error) {
 	return artifacts.OrkflowVersions{}, u.err
+}
+
+func (u unreachableStore) Delete(context.Context, string, string) error {
+	return u.err
 }
 
 func (u unreachableStore) SetCurrentVersion(context.Context, string, string, string) (string, error) {

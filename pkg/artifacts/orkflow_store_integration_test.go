@@ -530,3 +530,51 @@ func versionNumbers(versions []*orkstackv1.Orkflow) string {
 	}
 	return strings.Join(numbers, ",")
 }
+
+func TestS3OrkflowStore_DeleteRemovesEveryVersionAndPointerWithoutCrossingNamespaces(t *testing.T) {
+	store, cfg := newS3OrkflowStore(t)
+	ctx := context.Background()
+	raw := newRawS3Client(t, cfg)
+	name := testOrkflowName(t)
+	namespace := "payments-" + uniqueToken(t)
+	defaultPrefix := artifacts.OrkflowPrefix + "/" + artifacts.DefaultNamespace + "/" + name + "/"
+	otherPrefix := artifacts.OrkflowPrefix + "/" + namespace + "/" + name + "/"
+	t.Cleanup(func() {
+		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, defaultPrefix)
+		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, otherPrefix)
+	})
+
+	base := time.Now().UTC().Truncate(time.Millisecond)
+	for _, wf := range []*orkstackv1.Orkflow{
+		testOrkflow(t, name, "1.0.0", base),
+		testOrkflow(t, name, "2.0.0", base.Add(time.Second)),
+	} {
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
+			t.Fatalf("Put(default/%s@%s): %v", name, wf.GetVersion(), err)
+		}
+	}
+	other := testOrkflow(t, name, "9.0.0", base)
+	other.Namespace = namespace
+	if _, _, err := store.Put(ctx, other, artifacts.NoHeadExpectation()); err != nil {
+		t.Fatalf("Put(%s/%s): %v", namespace, name, err)
+	}
+	if _, err := store.SetCurrentVersion(ctx, "", name, "1.0.0"); err != nil {
+		t.Fatalf("SetCurrentVersion: %v", err)
+	}
+
+	if err := store.Delete(ctx, "", name); err != nil {
+		t.Fatalf("Delete(default/%s): %v", name, err)
+	}
+	if keys := sortedKeys(t, ctx, raw, cfg.S3Bucket, defaultPrefix); len(keys) != 0 {
+		t.Errorf("default prefix after delete = %v, want no version/current/head objects", keys)
+	}
+	if _, err := store.Get(ctx, "", name, ""); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("Get(default/%s) after delete = %v, want ErrNotFound", name, err)
+	}
+	if got, err := store.Get(ctx, namespace, name, ""); err != nil || got.GetVersion() != "9.0.0" {
+		t.Errorf("Get(%s/%s) after default delete = %v, %v; want 9.0.0", namespace, name, got, err)
+	}
+	if err := store.Delete(ctx, "", name); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Errorf("second Delete(default/%s) = %v, want ErrNotFound", name, err)
+	}
+}

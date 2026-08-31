@@ -7,11 +7,12 @@
 	// compare-and-swap: a UI that moved the badge on click would show the loser
 	// of that race a result that never happened.
 	import { untrack } from 'svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
+	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/service_pb';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
@@ -50,7 +51,7 @@
 	async function reload() {
 		reloading = true;
 		try {
-			await invalidateAll();
+			await Promise.all([invalidateAll(), checkDeletionSafety()]);
 		} finally {
 			// Whatever happened, the view stops waiting: either the data arrived
 			// or the loader's own error is rendered below with this button again.
@@ -86,6 +87,95 @@
 			promoteError = errorMessage(err);
 		} finally {
 			promoting = false;
+		}
+	}
+
+	// ── delete ────────────────────────────────────────────────────────────
+	const deletionRunWindowMs = 24 * 60 * 60 * 1000;
+	type DeleteSafety = 'checking' | 'safe' | 'blocked' | 'error';
+	let deleteSafety = $state<DeleteSafety>('checking');
+	let deleteSafetyReason = $state('Checking for runs that block deletion…');
+	let deleteCheckSequence = 0;
+	let pendingDelete = $state(false);
+	let deleting = $state(false);
+	let deleteError = $state('');
+
+	function terminal(status: Status): boolean {
+		return (
+			status === Status.SUCCEEDED ||
+			status === Status.FAILED ||
+			status === Status.CANCELED ||
+			status === Status.SKIPPED
+		);
+	}
+
+	function timestampMs(timestamp: { seconds: bigint; nanos: number }): number {
+		return Number(timestamp.seconds) * 1000 + Math.floor(timestamp.nanos / 1e6);
+	}
+
+	async function checkDeletionSafety() {
+		const sequence = ++deleteCheckSequence;
+		deleteSafety = 'checking';
+		deleteSafetyReason = 'Checking for runs that block deletion…';
+		try {
+			// Active runs are queried separately by status. The API answers these
+			// safety-shaped name+status queries exhaustively before applying the
+			// one-result response cap, so an older live run cannot hide behind a
+			// page of newer completed runs. The ordinary page remains useful for
+			// the 24-hour explanation; the server performs the authoritative,
+			// exhaustive active-and-recent check again at deletion time.
+			const [running, pending, recentPage] = await Promise.all([
+				orkstack(fetch).runs.listRuns({ orkflowName: name, namespace, status: Status.RUNNING, pageSize: 1 }),
+				orkstack(fetch).runs.listRuns({ orkflowName: name, namespace, status: Status.PENDING, pageSize: 1 }),
+				orkstack(fetch).runs.listRuns({ orkflowName: name, namespace, pageSize: 200 })
+			]);
+			if (sequence !== deleteCheckSequence) return;
+			const cutoff = Date.now() - deletionRunWindowMs;
+			const active = running.runs.length + pending.runs.length;
+			let recent = 0;
+			for (const run of recentPage.runs) {
+				if (terminal(run.status) && (!run.finishedAt || timestampMs(run.finishedAt) > cutoff)) {
+					recent++;
+				}
+			}
+			if (active + recent > 0) {
+				deleteSafety = 'blocked';
+				const lowerBound = active > 0 ? 'At least ' : '';
+				deleteSafetyReason = `${lowerBound}${active + recent} run(s) block deletion (${active} active status(es), ${recent} finished within 24h or missing a finish time).`;
+			} else {
+				deleteSafety = 'safe';
+				deleteSafetyReason = '';
+			}
+		} catch (err) {
+			if (sequence !== deleteCheckSequence) return;
+			deleteSafety = 'error';
+			deleteSafetyReason = `Deletion is disabled because runs could not be checked: ${errorMessage(err)}`;
+		}
+	}
+
+	$effect(() => {
+		name;
+		namespace;
+		void checkDeletionSafety();
+	});
+
+	function askToDelete() {
+		if (deleteSafety !== 'safe') return;
+		pendingDelete = true;
+		deleteError = '';
+	}
+
+	async function deleteOrkflow() {
+		deleting = true;
+		deleteError = '';
+		try {
+			await orkstack(fetch).orkflows.deleteOrkflow({ name, namespace });
+			await goto(withNamespace('/orkflows', namespace), { invalidateAll: true });
+		} catch (err) {
+			// Keep the engine's refusal sentence intact in ConfirmDialog's error slot.
+			deleteError = errorMessage(err);
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -150,7 +240,7 @@
 		No stored versions. Apply this orkflow from the Edit tab to create one.
 	</p>
 {:else}
-	<div class="mb-4 flex items-center justify-between gap-4">
+	<div class="mb-4 flex items-start justify-between gap-4">
 		<p class="text-sm text-zinc-400" data-testid="versions-summary">
 			{versions.length}
 			{versions.length === 1 ? 'version' : 'versions'}; runs execute
@@ -159,15 +249,34 @@
 				<span class="text-zinc-500">(nobody has promoted this orkflow, so the newest applies)</span>
 			{/if}
 		</p>
-		<button
-			type="button"
-			data-testid="versions-reload"
-			disabled={reloading}
-			onclick={reload}
-			class="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-		>
-			{reloading ? 'Reloading…' : 'Reload'}
-		</button>
+		<div class="flex flex-col items-end gap-2">
+			<div class="flex gap-2">
+				<button
+					type="button"
+					data-testid="versions-reload"
+					disabled={reloading}
+					onclick={reload}
+					class="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+				>
+					{reloading ? 'Reloading…' : 'Reload'}
+				</button>
+				<button
+					type="button"
+					data-testid="versions-delete"
+					disabled={reloading || deleteSafety !== 'safe'}
+					title={deleteSafetyReason || 'Permanently delete this orkflow and every version'}
+					onclick={askToDelete}
+					class="rounded-md border border-red-700 px-3 py-1.5 text-sm text-red-300 hover:bg-red-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+				>
+					Delete Orkflow
+				</button>
+			</div>
+			{#if deleteSafetyReason}
+				<p data-testid="versions-delete-status" class="max-w-md text-right text-xs text-zinc-400">
+					{deleteSafetyReason}
+				</p>
+			{/if}
+		</div>
 	</div>
 
 	<div class="overflow-hidden rounded-lg border border-zinc-800">
@@ -324,6 +433,36 @@
 			<p class="mt-2 text-zinc-400">
 				Runs already executing keep the version they pinned. Nothing stored changes — only which
 				version an unnamed one resolves to.
+			</p>
+		{/snippet}
+	</ConfirmDialog>
+{/if}
+
+{#if pendingDelete}
+	<ConfirmDialog
+		testid="delete-confirm"
+		title="Delete {name}?"
+		acceptLabel="Delete"
+		acceptTestid="delete-accept"
+		cancelTestid="delete-cancel"
+		busy={deleting}
+		error={deleteError}
+		onaccept={deleteOrkflow}
+		oncancel={() => {
+			pendingDelete = false;
+			deleteError = '';
+		}}
+	>
+		{#snippet body()}
+			<p class="font-bold text-red-400">
+				This action will delete all versions and cannot be reversed.
+			</p>
+			<p class="mt-3">
+				Delete <span class="font-medium text-zinc-100">{name}</span> in namespace
+				<span class="font-medium text-zinc-100">{namespaceLabel(namespace)}</span>?
+			</p>
+			<p class="mt-3 text-sm text-zinc-300">
+				The engine will refuse deletion if a run is active or finished within the last 24 hours.
 			</p>
 		{/snippet}
 	</ConfirmDialog>

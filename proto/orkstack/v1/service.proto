@@ -48,6 +48,19 @@ service OrkflowService {
   // changed. One implementation, golden-tested once, rendered verbatim by
   // every client.
   rpc DiffOrkflowVersions(DiffOrkflowVersionsRequest) returns (DiffOrkflowVersionsResponse);
+  // DeleteOrkflow removes all versions of an orkflow from the registry.
+  //
+  // It refuses (FailedPrecondition) if any runs are currently executing or
+  // queued for this orkflow, or if runs have completed recently (within the
+  // past 24 hours). The check is conservative: an orkflow with any recent
+  // activity cannot be deleted. This protects against accidental deletion of
+  // an orkflow in active use.
+  //
+  // The operation is NOT reversible: all versions and their metadata are
+  // permanently deleted. Runs that pinned the orkflow keep executing — they
+  // have the version they started with — but any new run will fail with
+  // NotFound.
+  rpc DeleteOrkflow(DeleteOrkflowRequest) returns (DeleteOrkflowResponse);
 }
 
 message ApplyOrkflowRequest {
@@ -175,6 +188,15 @@ message DiffOrkflowVersionsResponse {
   string unified_diff = 1;
   string from_version = 2;               // resolved
   string to_version = 3;                 // resolved
+}
+message DeleteOrkflowRequest {
+  string name = 1;
+  string namespace = 2;                  // empty = the default namespace
+}
+message DeleteOrkflowResponse {
+  string name = 1;
+  string namespace = 2;
+  google.protobuf.Timestamp deleted_at = 3;
 }
 
 // RunService submits and observes orkflow executions.
