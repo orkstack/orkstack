@@ -174,10 +174,9 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 	if c.config.TemporalNamespace == "" {
 		return stats, fmt.Errorf("archive cleanup: Temporal namespace is empty")
 	}
-	entries, err := c.archive.ListRuns(ctx, artifacts.RunQuery{})
-	if err != nil {
-		return stats, fmt.Errorf("archive cleanup: list runs: %w", err)
-	}
+	// Retention is resolved before the first page so every query can exclude
+	// recent runs rather than truncating the newest, ineligible end of the
+	// archive.
 	// One Temporal namespace partitions the whole deployment. Resolve its
 	// retention once per iteration; archive entry namespaces are OrkStack
 	// coordinates and must never be used for Temporal calls. A transient
@@ -189,58 +188,103 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 		return stats, fmt.Errorf("archive cleanup: resolve Temporal namespace %q retention: %w", c.config.TemporalNamespace, err)
 	}
 	now := c.now().UTC()
+	cutoff := now.Add(-(retention + c.config.RetentionBuffer))
+	until := cutoff
+	pageLimit := c.config.BatchSize * 2
+	var cursorTime time.Time
+	var cursorRunID string
+	// Each archive query is capped and this loop retains only one page, so
+	// worker memory is O(page). An archive whose eligible runs are all already
+	// cleaned can still require O(archive/page) queries in one iteration because
+	// cleanup state is not a dimension of the immutable run index.
 	var errs []error
 	processed := 0
-	for _, entry := range entries {
-		if processed >= c.config.BatchSize {
+	for processed < c.config.BatchSize {
+		entries, err := c.archive.ListRuns(ctx, artifacts.RunQuery{
+			Until: until, Limit: pageLimit, CursorTime: cursorTime, CursorRunID: cursorRunID,
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("archive cleanup: list runs: %w", err))
+			return stats, errors.Join(errs...)
+		}
+		if len(entries) == 0 {
 			break
 		}
-		stats.RunsScanned++
-		state, stateErr := c.archive.CleanupState(ctx, entry.RunID)
-		if stateErr == nil && state.ArtifactsCleaned {
-			continue
+
+		last := entries[len(entries)-1]
+		// A conforming composite cursor makes every last entry strictly older.
+		// Stop before processing if a backend violates that contract so the
+		// worker cannot spin or repeat deletion attempts.
+		if !cursorTime.IsZero() && (last.Time.After(cursorTime) ||
+			(last.Time.Equal(cursorTime) && last.RunID >= cursorRunID)) {
+			break
 		}
-		if stateErr != nil && !errors.Is(stateErr, artifacts.ErrNotFound) {
-			wrapped := fmt.Errorf("run %q: read cleanup state: %w", entry.RunID, stateErr)
-			errs = append(errs, wrapped)
-			stats.Errors++
-			continue
+		for _, entry := range entries {
+			// Cleanup is a background worker, so a cancelled context means the
+			// engine is shutting down. Stop between runs rather than grinding
+			// through the page: each run is deleted then marked, so stopping
+			// here leaves every run either fully cleaned or wholly untouched.
+			if err := ctx.Err(); err != nil {
+				errs = append(errs, fmt.Errorf("archive cleanup: canceled: %w", err))
+				return stats, errors.Join(errs...)
+			}
+			stats.RunsScanned++
+			state, stateErr := c.archive.CleanupState(ctx, entry.RunID)
+			if stateErr == nil && state.ArtifactsCleaned {
+				continue
+			}
+			if stateErr != nil && !errors.Is(stateErr, artifacts.ErrNotFound) {
+				wrapped := fmt.Errorf("run %q: read cleanup state: %w", entry.RunID, stateErr)
+				errs = append(errs, wrapped)
+				stats.Errors++
+				continue
+			}
+			processed++
+			exists, err := c.temporal.WorkflowExists(ctx, c.config.TemporalNamespace, entry.RunID)
+			if err != nil {
+				wrapped := fmt.Errorf("run %q: check Temporal workflow: %w", entry.RunID, err)
+				errs = append(errs, wrapped)
+				stats.Errors++
+				c.logger.Error("artifact cleanup workflow check failed", "run_id", entry.RunID, "error", err)
+				if processed >= c.config.BatchSize {
+					break
+				}
+				continue
+			}
+			if !exists {
+				result, err := c.archive.DeleteRunArtifacts(ctx, entry.Namespace, entry.RunID)
+				stats.ObjectsDeleted += result.ObjectsDeleted
+				stats.BytesReclaimed += result.BytesReclaimed
+				if err != nil {
+					wrapped := fmt.Errorf("run %q: delete artifacts: %w", entry.RunID, err)
+					errs = append(errs, wrapped)
+					stats.Errors++
+					c.logger.Error("artifact cleanup delete failed", "run_id", entry.RunID, "error", err)
+				} else if err := c.archive.MarkArtifactsCleaned(ctx, entry.RunID, now); err != nil {
+					wrapped := fmt.Errorf("run %q: mark artifacts cleaned: %w", entry.RunID, err)
+					errs = append(errs, wrapped)
+					stats.Errors++
+					c.logger.Error("artifact cleanup mark failed", "run_id", entry.RunID, "error", err)
+				} else {
+					stats.RunsCleaned++
+					c.logger.Info("run artifacts cleaned", "run_id", entry.RunID,
+						"objects_deleted", result.ObjectsDeleted, "bytes_reclaimed", result.BytesReclaimed)
+				}
+			}
+			if processed >= c.config.BatchSize {
+				break
+			}
 		}
-		if !entry.Time.Before(now.Add(-(retention + c.config.RetentionBuffer))) {
-			continue
+		if processed >= c.config.BatchSize || len(entries) < pageLimit {
+			break
 		}
-		processed++
-		exists, err := c.temporal.WorkflowExists(ctx, c.config.TemporalNamespace, entry.RunID)
-		if err != nil {
-			wrapped := fmt.Errorf("run %q: check Temporal workflow: %w", entry.RunID, err)
-			errs = append(errs, wrapped)
-			stats.Errors++
-			c.logger.Error("artifact cleanup workflow check failed", "run_id", entry.RunID, "error", err)
-			continue
-		}
-		if exists {
-			continue
-		}
-		result, err := c.archive.DeleteRunArtifacts(ctx, entry.Namespace, entry.RunID)
-		stats.ObjectsDeleted += result.ObjectsDeleted
-		stats.BytesReclaimed += result.BytesReclaimed
-		if err != nil {
-			wrapped := fmt.Errorf("run %q: delete artifacts: %w", entry.RunID, err)
-			errs = append(errs, wrapped)
-			stats.Errors++
-			c.logger.Error("artifact cleanup delete failed", "run_id", entry.RunID, "error", err)
-			continue
-		}
-		if err := c.archive.MarkArtifactsCleaned(ctx, entry.RunID, now); err != nil {
-			wrapped := fmt.Errorf("run %q: mark artifacts cleaned: %w", entry.RunID, err)
-			errs = append(errs, wrapped)
-			stats.Errors++
-			c.logger.Error("artifact cleanup mark failed", "run_id", entry.RunID, "error", err)
-			continue
-		}
-		stats.RunsCleaned++
-		c.logger.Info("run artifacts cleaned", "run_id", entry.RunID,
-			"objects_deleted", result.ObjectsDeleted, "bytes_reclaimed", result.BytesReclaimed)
+
+		// Until is exclusive, so one nanosecond keeps the cursor timestamp in
+		// the next query. The run-id half of the cursor then reaches every run
+		// sharing that timestamp without revisiting the preceding page.
+		until = last.Time.Add(time.Nanosecond)
+		cursorTime = last.Time
+		cursorRunID = last.RunID
 	}
 	return stats, errors.Join(errs...)
 }
