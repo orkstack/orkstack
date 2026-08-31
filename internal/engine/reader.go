@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
@@ -120,6 +121,7 @@ type runReadClient interface {
 // body and dedupe webhook notifications.
 type TemporalRunReader struct {
 	client    runReadClient
+	temporal  client.Client
 	converter converter.DataConverter
 
 	// namespaceIndexed reports that this cluster has the OrkflowNamespace
@@ -138,7 +140,55 @@ var _ RunEventSource = (*TemporalRunReader)(nil)
 // namespace the client is bound to, which is the hard partition every other
 // part of the engine already respects.
 func NewTemporalRunReader(c client.Client) *TemporalRunReader {
-	return newRunReader(c, converter.GetDefaultDataConverter())
+	r := newRunReader(c, converter.GetDefaultDataConverter())
+	r.temporal = c
+	return r
+}
+
+// WorkflowExists reports whether Temporal still retains workflowID. A timeout
+// or transport failure is returned, never interpreted as absence.
+func (r *TemporalRunReader) WorkflowExists(ctx context.Context, namespace, workflowID string) (bool, error) {
+	if r.temporal == nil {
+		return false, fmt.Errorf("engine: workflow existence reader has no Temporal client")
+	}
+	if namespace == "" {
+		_, err := r.temporal.DescribeWorkflowExecution(ctx, workflowID, "")
+		return classifyWorkflowExists(err)
+	}
+	_, err := r.temporal.WorkflowService().DescribeWorkflowExecution(ctx,
+		&workflowservice.DescribeWorkflowExecutionRequest{
+			Namespace: namespace,
+			Execution: &commonpb.WorkflowExecution{WorkflowId: workflowID},
+		})
+	return classifyWorkflowExists(err)
+}
+
+func classifyWorkflowExists(err error) (bool, error) {
+	if err == nil {
+		return true, nil
+	}
+	var notFound *serviceerror.NotFound
+	var namespaceNotFound *serviceerror.NamespaceNotFound
+	if errors.As(err, &notFound) || errors.As(err, &namespaceNotFound) {
+		return false, nil
+	}
+	return false, err
+}
+
+// NamespaceRetention returns Temporal's configured workflow retention period.
+func (r *TemporalRunReader) NamespaceRetention(ctx context.Context, namespace string) (time.Duration, error) {
+	if r.temporal == nil {
+		return 0, fmt.Errorf("engine: namespace retention reader has no Temporal client")
+	}
+	response, err := r.temporal.WorkflowService().DescribeNamespace(ctx,
+		&workflowservice.DescribeNamespaceRequest{Namespace: namespace})
+	if err != nil {
+		return 0, err
+	}
+	if response.GetConfig().GetWorkflowExecutionRetentionTtl() == nil {
+		return 0, fmt.Errorf("engine: namespace %q has no workflow retention", namespace)
+	}
+	return response.GetConfig().GetWorkflowExecutionRetentionTtl().AsDuration(), nil
 }
 
 // WithNamespaceIndex records whether the cluster indexes a run's OrkStack

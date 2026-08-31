@@ -30,29 +30,30 @@ import (
 // namespace, then orkflow, then status, then a lexicographically sortable UTC
 // timestamp — so a query that pins the first segments scans only its own
 // subtree, and a time range starts the scan at its lower bound instead of at
-// the first key.
+// the first key. Cleanup state is a separate immutable sidecar, so cleanup
+// never rewrites run history.
 const (
 	// RunArchiveNamespace prefixes every archived run body.
 	RunArchiveNamespace = "metadata/runs"
 	// RunIndexNamespace prefixes every query-index key.
 	RunIndexNamespace = "metadata/index/runs"
+	// RunCleanupNamespace prefixes immutable cleanup-state sidecars.
+	RunCleanupNamespace = "metadata/cleanup/runs"
 	// RunArchiveSuffix is the body's extension: JSON Lines.
 	RunArchiveSuffix = ".jsonl"
 	// RunArchiveContentType is the media type recorded for a body.
 	RunArchiveContentType = "application/x-ndjson"
+	// RunCleanupContentType is the media type recorded for cleanup state.
+	RunCleanupContentType = "application/json"
 	// RunStampLayout renders an index timestamp: UTC, fixed width, and ordered
 	// the same lexicographically as chronologically.
 	RunStampLayout = "20060102T150405.000000000Z"
 	// runIndexSegments is the fixed segment count of an index key:
 	// metadata, index, runs, namespace, orkflow, status, stamp, run-id.
 	runIndexSegments = 8
-	// archiveMaxComponent bounds one generated segment. Orkflow names and task
-	// ids are DSL slugs and run ids are ork-{timestamp}-{sequence}, so a real
-	// segment is far shorter; the bound only rejects abuse.
+	// archiveMaxComponent bounds one generated segment.
 	archiveMaxComponent = 200
-	// archiveEncodedMarker introduces a segment that is not already a clean S3
-	// component. A clean component cannot start with it, so the two forms never
-	// collide and decoding is exact.
+	// archiveEncodedMarker introduces a reversibly escaped segment.
 	archiveEncodedMarker = "~"
 )
 
@@ -63,25 +64,36 @@ var ErrInvalidRunKey = errors.New("invalid run archive key")
 // key is built from. The body's encoding belongs to the caller (the engine
 // marshals protobuf with protojson); this package treats it as opaque bytes.
 type RunRecord struct {
-	// RunID identifies the run, e.g. "ork-1786856120616785000-1".
+	// RunID identifies the run.
 	RunID string
-	// Namespace is the namespace the run's orkflow belongs to. Empty means
-	// DefaultNamespace, resolved where the key is built.
+	// Namespace is the namespace the run's orkflow belongs to.
 	Namespace string
 	// Orkflow is the orkflow name the run executed.
 	Orkflow string
-	// Status is the run's terminal status, lowercase and unprefixed
-	// ("succeeded", "failed", "canceled").
+	// Status is the run's terminal status.
 	Status string
-	// Time orders the run in the index. The engine passes the run's creation
-	// time, so a date range means "runs created in this window".
+	// Time orders the run in the index.
 	Time time.Time
 	// JSONL is the archive body: one JSON record per line.
 	JSONL []byte
 }
 
-// RunIndexEntry is one row of a prefix scan. It is built from the index key
-// alone, so a query answers without reading a single object body.
+// RunCleanupState records when Temporal retention removed a run and OrkStack
+// reclaimed its run-scoped storage. It is separate from the immutable body.
+type RunCleanupState struct {
+	RunID             string    `json:"run_id"`
+	ArtifactsCleaned  bool      `json:"artifacts_cleaned"`
+	TemporalDeletedAt time.Time `json:"temporal_deleted_at"`
+}
+
+// CleanupResult reports storage reclaimed for one run.
+type CleanupResult struct {
+	ObjectsDeleted int
+	BytesReclaimed int64
+}
+
+// RunIndexEntry is one row of a prefix scan. Cleanup state is returned by
+// RunArchive.CleanupState without changing the immutable index.
 type RunIndexEntry struct {
 	RunID     string
 	Namespace string
@@ -123,6 +135,44 @@ type RunArchive interface {
 	GetRun(ctx context.Context, runID string) ([]byte, error)
 	// ListRuns scans the index and returns matching entries, newest first.
 	ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntry, error)
+	// CleanupState returns the immutable cleanup sidecar. A run that has not
+	// been cleaned returns an error matching ErrNotFound.
+	CleanupState(ctx context.Context, runID string) (RunCleanupState, error)
+	// DeleteRunArtifacts removes only run-scoped logs and completion commits.
+	DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error)
+	// MarkArtifactsCleaned writes cleanup state once. Re-marking is a no-op.
+	MarkArtifactsCleaned(ctx context.Context, runID string, temporalDeletedAt time.Time) error
+}
+
+// RunCleanupKey renders the immutable cleanup-state key for a run id.
+func RunCleanupKey(runID string) (string, error) {
+	segment, err := encodeArchiveSegment(runID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run cleanup key: run id: %w", err)
+	}
+	return path.Join(RunCleanupNamespace, segment) + ".json", nil
+}
+
+// RunLogPrefix renders the prefix containing every log chunk for a run.
+func RunLogPrefix(runID string) (string, error) {
+	segment, err := encodeArchiveSegment(runID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run log prefix: run id: %w", err)
+	}
+	return path.Join(LogPrefix, segment) + "/", nil
+}
+
+// RunCommitPrefix renders the prefix containing every commit for a run.
+func RunCommitPrefix(namespace, runID string) (string, error) {
+	namespaceSegment, err := encodeArchiveSegment(ResolveNamespace(namespace))
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run commit prefix: namespace: %w", err)
+	}
+	runSegment, err := encodeArchiveSegment(runID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run commit prefix: run id: %w", err)
+	}
+	return path.Join(CommitPrefix, namespaceSegment, runSegment) + "/", nil
 }
 
 // RunArchiveKey renders the body key for a run id.

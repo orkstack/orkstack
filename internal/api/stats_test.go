@@ -72,6 +72,18 @@ func (b bodyReadPanics) ListRuns(
 	return b.inner.ListRuns(ctx, q)
 }
 
+func (b bodyReadPanics) CleanupState(ctx context.Context, runID string) (artifacts.RunCleanupState, error) {
+	return b.inner.CleanupState(ctx, runID)
+}
+
+func (b bodyReadPanics) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (artifacts.CleanupResult, error) {
+	return b.inner.DeleteRunArtifacts(ctx, namespace, runID)
+}
+
+func (b bodyReadPanics) MarkArtifactsCleaned(ctx context.Context, runID string, at time.Time) error {
+	return b.inner.MarkArtifactsCleaned(ctx, runID, at)
+}
+
 // statsFixture is one service under test, with the two sources it reads.
 type statsFixture struct {
 	svc     *api.Service

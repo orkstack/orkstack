@@ -3,12 +3,13 @@ package artifacts
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
-	"strings"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"io"
+	"strings"
+	"time"
 )
 
 // S3RunArchive is the S3-compatible RunArchive. It writes
@@ -113,6 +114,81 @@ func (a *S3RunArchive) GetRun(ctx context.Context, runID string) ([]byte, error)
 		return nil, fmt.Errorf("artifacts: s3 archive get %q: read body: %w", runID, err)
 	}
 	return body, nil
+}
+
+// CleanupState returns a run's immutable cleanup sidecar.
+func (a *S3RunArchive) CleanupState(ctx context.Context, runID string) (RunCleanupState, error) {
+	key, err := RunCleanupKey(runID)
+	if err != nil {
+		return RunCleanupState{}, err
+	}
+	out, err := a.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(key)})
+	if isNotFound(err) {
+		return RunCleanupState{}, fmt.Errorf("artifacts: s3 cleanup state %q: %w", runID, ErrNotFound)
+	}
+	if err != nil {
+		return RunCleanupState{}, fmt.Errorf("artifacts: s3 cleanup state %q: %w", runID, err)
+	}
+	defer out.Body.Close()
+	var state RunCleanupState
+	if err := json.NewDecoder(out.Body).Decode(&state); err != nil {
+		return RunCleanupState{}, fmt.Errorf("artifacts: s3 cleanup state %q: decode: %w", runID, err)
+	}
+	return state, nil
+}
+
+// MarkArtifactsCleaned writes cleanup state once using a conditional put.
+func (a *S3RunArchive) MarkArtifactsCleaned(ctx context.Context, runID string, deletedAt time.Time) error {
+	key, err := RunCleanupKey(runID)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(RunCleanupState{RunID: runID, ArtifactsCleaned: true, TemporalDeletedAt: deletedAt.UTC()})
+	if err != nil {
+		return fmt.Errorf("artifacts: s3 mark cleanup %q: %w", runID, err)
+	}
+	_, err = a.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(a.bucket), Key: aws.String(key), Body: bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))), ContentType: aws.String(RunCleanupContentType),
+		IfNoneMatch: aws.String("*"),
+	})
+	if err != nil {
+		if isPreconditionFailed(err) {
+			return nil
+		}
+		return fmt.Errorf("artifacts: s3 mark cleanup %q: %w", runID, err)
+	}
+	return nil
+}
+
+// DeleteRunArtifacts removes the log and commit objects owned by one run.
+func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error) {
+	logPrefix, err := RunLogPrefix(runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+	commitPrefix, err := RunCommitPrefix(namespace, runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+	var result CleanupResult
+	for _, prefix := range []string{logPrefix, commitPrefix} {
+		pager := s3.NewListObjectsV2Paginator(a.client, &s3.ListObjectsV2Input{Bucket: aws.String(a.bucket), Prefix: aws.String(prefix)})
+		for pager.HasMorePages() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				return result, fmt.Errorf("artifacts: s3 cleanup run %q list %q: %w", runID, prefix, err)
+			}
+			for _, object := range page.Contents {
+				if _, err := a.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(a.bucket), Key: object.Key}); err != nil {
+					return result, fmt.Errorf("artifacts: s3 cleanup run %q delete %q: %w", runID, aws.ToString(object.Key), err)
+				}
+				result.ObjectsDeleted++
+				result.BytesReclaimed += aws.ToInt64(object.Size)
+			}
+		}
+	}
+	return result, nil
 }
 
 // ListRuns answers a query with one prefix scan. Nothing but keys crosses the

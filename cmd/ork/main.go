@@ -30,6 +30,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	archivecleanup "github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
@@ -75,6 +76,7 @@ type config struct {
 	// build id unless an operator configures one, which leaves versioning off
 	// and the workers exactly as they were before M8.4.
 	deployment task.Deployment
+	cleanup    archivecleanup.CleanupConfig
 
 	// activityCatalog is the deployment's §4.2 table, from
 	// ORK_ACTIVITY_CATALOG. catalogErr is a malformed one, reported at boot
@@ -117,6 +119,7 @@ func loadConfig() config {
 			logErr, commitErr, transferErr, throughputErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
+		cleanup:          archivecleanup.CleanupConfigFromEnv(),
 	}
 	cfg.activityCatalog, cfg.catalogErr = dsl.ParseCatalog([]byte(env("ORK_ACTIVITY_CATALOG", "")))
 	rawPool := env("ORK_ORKER_POOL", "")
@@ -594,6 +597,14 @@ func run(logger *slog.Logger, cfg config) error {
 	// its event log, and Temporal hands the same answer to every replica, for
 	// runs this one neither started nor projected.
 	reader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(namespaceIndexed)
+	if cfg.cleanup.Enabled {
+		cleaner := archivecleanup.NewCleaner(cfg.cleanup, archiveStore, reader, logger)
+		go cleaner.Run(ctx)
+		logger.Info("artifact cleanup worker started",
+			"interval", cfg.cleanup.Interval,
+			"retention_buffer", cfg.cleanup.RetentionBuffer,
+			"batch_size", cfg.cleanup.BatchSize)
+	}
 
 	// Workflow worker: hosts RunWorkflow and the idempotency claims on the
 	// engine's own queue — NOT ORK_ORKER_QUEUE, which moves task execution

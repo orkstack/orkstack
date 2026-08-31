@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // LocalRunArchive is the filesystem-backed RunArchive used for development and
@@ -40,7 +42,7 @@ func NewLocalRunArchive(dir string) (*LocalRunArchive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: local run archive: open %q: %w", abs, err)
 	}
-	for _, subdir := range []string{localTempDir, RunArchiveNamespace, RunIndexNamespace} {
+	for _, subdir := range []string{localTempDir, RunArchiveNamespace, RunIndexNamespace, RunCleanupNamespace} {
 		if err := root.MkdirAll(subdir, localDirPerm); err != nil {
 			_ = root.Close()
 			return nil, fmt.Errorf("artifacts: local run archive: create %q: %w", subdir, err)
@@ -105,6 +107,94 @@ func (a *LocalRunArchive) GetRun(ctx context.Context, runID string) ([]byte, err
 	return body, nil
 }
 
+// CleanupState returns a run's immutable cleanup sidecar.
+func (a *LocalRunArchive) CleanupState(ctx context.Context, runID string) (RunCleanupState, error) {
+	key, err := RunCleanupKey(runID)
+	if err != nil {
+		return RunCleanupState{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return RunCleanupState{}, err
+	}
+	body, err := a.root.ReadFile(key)
+	if errors.Is(err, fs.ErrNotExist) {
+		return RunCleanupState{}, fmt.Errorf("artifacts: local cleanup state %q: %w", runID, ErrNotFound)
+	}
+	if err != nil {
+		return RunCleanupState{}, fmt.Errorf("artifacts: local cleanup state %q: %w", runID, err)
+	}
+	var state RunCleanupState
+	if err := json.Unmarshal(body, &state); err != nil {
+		return RunCleanupState{}, fmt.Errorf("artifacts: local cleanup state %q: decode: %w", runID, err)
+	}
+	return state, nil
+}
+
+// MarkArtifactsCleaned writes the cleanup sidecar once.
+func (a *LocalRunArchive) MarkArtifactsCleaned(ctx context.Context, runID string, deletedAt time.Time) error {
+	key, err := RunCleanupKey(runID)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := a.root.Stat(key); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("artifacts: local mark cleanup %q: %w", runID, err)
+	}
+	body, err := json.Marshal(RunCleanupState{RunID: runID, ArtifactsCleaned: true, TemporalDeletedAt: deletedAt.UTC()})
+	if err != nil {
+		return fmt.Errorf("artifacts: local mark cleanup %q: %w", runID, err)
+	}
+	if err := a.writeOnce(key, body); err != nil {
+		return fmt.Errorf("artifacts: local mark cleanup %q: %w", runID, err)
+	}
+	return nil
+
+}
+
+// DeleteRunArtifacts removes the log and commit subtrees owned by one run.
+func (a *LocalRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error) {
+	logPrefix, err := RunLogPrefix(runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+	commitPrefix, err := RunCommitPrefix(namespace, runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+	var result CleanupResult
+	for _, prefix := range []string{logPrefix, commitPrefix} {
+		err := fs.WalkDir(a.root.FS(), strings.TrimSuffix(prefix, "/"), func(_ string, d fs.DirEntry, walkErr error) error {
+			if errors.Is(walkErr, fs.ErrNotExist) {
+				return fs.SkipAll
+			}
+			if walkErr != nil || d.IsDir() {
+				return walkErr
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			result.ObjectsDeleted++
+			result.BytesReclaimed += info.Size()
+			return nil
+		})
+		if err != nil {
+			return result, fmt.Errorf("artifacts: local cleanup run %q list %q: %w", runID, prefix, err)
+		}
+		if err := a.root.RemoveAll(strings.TrimSuffix(prefix, "/")); err != nil {
+			return result, fmt.Errorf("artifacts: local cleanup run %q delete %q: %w", runID, prefix, err)
+		}
+	}
+	return result, nil
+}
+
 // ListRuns walks the narrowest index subtree the query can match and reads
 // nothing but names, which is the filesystem's equivalent of an S3 prefix scan.
 func (a *LocalRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
@@ -156,4 +246,21 @@ func (a *LocalRunArchive) writeAtomic(key string, data []byte) error {
 		return fmt.Errorf("commit %q: %w", key, err)
 	}
 	return nil
+}
+
+// writeOnce publishes data atomically without replacing an existing winner.
+func (a *LocalRunArchive) writeOnce(key string, data []byte) error {
+	if err := a.root.MkdirAll(path.Dir(key), localDirPerm); err != nil {
+		return err
+	}
+	tmpKey := path.Join(localTempDir, "cleanup-"+randomToken())
+	if err := a.root.WriteFile(tmpKey, data, localFilePerm); err != nil {
+		return err
+	}
+	defer a.root.Remove(tmpKey)
+	if err := a.root.Link(tmpKey, key); errors.Is(err, fs.ErrExist) {
+		return nil
+	} else {
+		return err
+	}
 }

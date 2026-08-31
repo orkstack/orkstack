@@ -173,3 +173,15 @@ func (n noBodies) ListRuns(
 ) ([]artifacts.RunIndexEntry, error) {
 	return n.inner.ListRuns(ctx, q)
 }
+
+func (n noBodies) CleanupState(ctx context.Context, runID string) (artifacts.RunCleanupState, error) {
+	return n.inner.CleanupState(ctx, runID)
+}
+
+func (n noBodies) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (artifacts.CleanupResult, error) {
+	return n.inner.DeleteRunArtifacts(ctx, namespace, runID)
+}
+
+func (n noBodies) MarkArtifactsCleaned(ctx context.Context, runID string, at time.Time) error {
+	return n.inner.MarkArtifactsCleaned(ctx, runID, at)
+}
