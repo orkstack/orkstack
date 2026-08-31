@@ -3,6 +3,7 @@ package orker
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -233,6 +234,13 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 	if cpuErr != nil {
 		return "", "", Fail(ReasonResourceRefused, "cpu %q is not a valid quantity: %v", cpu, cpuErr)
 	}
+	if !isPositiveFinite(requestedCPU) {
+		// Docker reads `--cpus 0` as NO limit, so a non-positive or non-finite
+		// request is an unlimited container, not a small one (§9.2, §9.3).
+		return "", "", Fail(ReasonResourceRefused,
+			"cpu request %q is not a positive, finite quantity; it is refused rather than passed to the "+
+				"runtime, because a zero or negative limit means UNLIMITED there", cpu)
+	}
 	capCPU, cpuErr := parseCPU(p.MaxCPU)
 	if cpuErr != nil {
 		// An unreadable cap is a refusal, NOT an absent ceiling. Skipping the
@@ -284,6 +292,12 @@ func (p SecurityPolicy) ResolveNetwork(mode orkstackv1.NetworkMode) (string, *Fa
 			"network mode %q is not %q or %q; named orker-defined network profiles are deliberately absent",
 			mode.String(), NetworkDefault, NetworkNone)
 	}
+}
+
+// isPositiveFinite reports whether a resource quantity is safe to pass to a
+// runtime that interprets zero as unlimited.
+func isPositiveFinite(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 // parseCPU reads the Kubernetes CPU spelling: "2", "0.5", "500m".

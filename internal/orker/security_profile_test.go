@@ -87,6 +87,31 @@ func TestSecurityPolicy_RefusesAnOverCapRequestRatherThanClamping(t *testing.T) 
 			request: &orkstackv1.ResourceRequest{Memory: "lots"},
 			wantErr: true,
 		},
+		{
+			name:    "zero cpu is refused rather than interpreted as unlimited",
+			request: &orkstackv1.ResourceRequest{Cpu: "0"},
+			wantErr: true,
+		},
+		{
+			name:    "negative cpu is refused",
+			request: &orkstackv1.ResourceRequest{Cpu: "-1"},
+			wantErr: true,
+		},
+		{
+			name:    "zero millicpu is refused rather than interpreted as unlimited",
+			request: &orkstackv1.ResourceRequest{Cpu: "0m"},
+			wantErr: true,
+		},
+		{
+			name:    "NaN cpu is refused",
+			request: &orkstackv1.ResourceRequest{Cpu: "NaN"},
+			wantErr: true,
+		},
+		{
+			name:    "one cpu remains accepted",
+			request: &orkstackv1.ResourceRequest{Cpu: "1"},
+			wantCPU: "1", wantMem: policy.DefaultMemory,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
