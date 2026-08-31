@@ -460,6 +460,33 @@ by run id, so two runs can reference the same object. Safe reclamation needs
 reference accounting that the archive does not have; deleting by the
 producing run would corrupt the other run's committed result.
 
+**Bucket lifecycle rules are the independent retention policy.** Cleanup is
+off by default, so a deployment that has not set `ORK_CLEANUP_ENABLED=true`
+otherwise reclaims nothing. Even when enabled, cleanup waits for Temporal to
+drop the execution; a bucket lifecycle rule expires objects by age regardless
+of Temporal. The two mechanisms are complementary rather than alternatives.
+
+Lifecycle policy is also the only storage-level mechanism that can bound
+growth under `objects/`, because the cleaner intentionally leaves those shared
+content-addressed artifacts alone. Choose that expiry separately according to
+how long archived artifact references must remain readable. A conservative
+log-only rule can bound task-log growth without touching definitions,
+artifacts, or archived runs:
+
+```bash
+# MinIO: expire task logs after 30 days, leaving definitions, artifacts and
+# archived runs alone.
+mc ilm rule add local/orkstack-artifacts \
+  --prefix "metadata/logs/" --expire-days 30
+```
+
+```bash
+# AWS S3: the same rule.
+aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
+  --lifecycle-configuration '{"Rules":[{"ID":"ork-task-logs","Status":"Enabled",
+    "Filter":{"Prefix":"metadata/logs/"},"Expiration":{"Days":30}}]}'
+```
+
 This is separate from `DeleteOrkflow`. Orkflow deletion removes the stored
 versions of an Orkflow only after its run-safety gate proves no affected run
 is live. Retention cleanup removes one finished run's logs and commits only
