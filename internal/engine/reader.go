@@ -168,8 +168,7 @@ func classifyWorkflowExists(err error) (bool, error) {
 		return true, nil
 	}
 	var notFound *serviceerror.NotFound
-	var namespaceNotFound *serviceerror.NamespaceNotFound
-	if errors.As(err, &notFound) || errors.As(err, &namespaceNotFound) {
+	if errors.As(err, &notFound) {
 		return false, nil
 	}
 	return false, err

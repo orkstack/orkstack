@@ -50,6 +50,10 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	cfg, raw := privateCleanupBucket(t, ctx)
 
 	namespace := fmt.Sprintf("%s-cleanup-%d-%d", baseNamespace(), os.Getpid(), time.Now().UnixNano()%1_000_000_000)
+	// The OrkStack namespace is an application coordinate and deliberately
+	// does not name a Temporal namespace. Cleanup must use namespace only for
+	// Temporal calls and orkNamespace only for archive/commit coordinates.
+	orkNamespace := "cleanup-e2e"
 	temporalClient := cleanupTemporalClient(t, ctx, address, namespace)
 	reader := engine.NewTemporalRunReader(temporalClient)
 	retention, err := reader.NamespaceRetention(ctx, namespace)
@@ -92,7 +96,7 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		}); err != nil {
 			return nil, err
 		}
-		commitKey, err := artifacts.CommitKey(namespace, in.GetRunId(), in.GetTaskId())
+		commitKey, err := artifacts.CommitKey(orkNamespace, in.GetRunId(), in.GetTaskId())
 		if err != nil {
 			return nil, err
 		}
@@ -135,14 +139,14 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	start := func(label string) string {
 		runID := fmt.Sprintf("ork-cleanup-%s-%d", label, time.Now().UnixNano())
 		definition := &orkstackv1.Orkflow{
-			Name: "cleanup-" + label, Namespace: namespace, Version: "1.0.0",
+			Name: "cleanup-" + label, Namespace: orkNamespace, Version: "1.0.0",
 			Tasks: []*orkstackv1.Task{{
 				Id: "build", Uses: "cleanup-test", Image: &orkstackv1.ImageRef{Reference: "cleanup-test", Pinned: "cleanup-test"},
 				TimeoutSeconds: 30,
 			}},
 		}
 		if err := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, queue).StartRun(ctx, runID, definition, nil, engine.RunPlan{
-			Namespace: namespace, Routes: map[string]string{task.DefaultPool: queue},
+			Namespace: orkNamespace, Routes: map[string]string{task.DefaultPool: queue},
 		}); err != nil {
 			t.Fatalf("StartRun(%s): %v", label, err)
 		}
@@ -155,8 +159,8 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 
 	goneID := start("gone")
 	retainedID := start("retained")
-	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, namespace, goneID)
-	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, namespace, retainedID)
+	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespace, goneID)
+	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespace, retainedID)
 
 	seededMu.Lock()
 	goneObject, ok := seeded[goneID]
@@ -173,7 +177,7 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	awaitWorkflowGone(t, ctx, reader, namespace, goneID)
 
 	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
-		Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
+		TemporalNamespace: namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
 	}, runArchive, reader, slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time {
 		return time.Now().UTC().Add(retention + archivecleanup.DefaultRetentionBuffer + time.Hour)
 	})
@@ -185,8 +189,8 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		t.Fatalf("cleanup metrics = %+v, want one run and at least log+commit", stats)
 	}
 
-	assertNoRunStorage(t, ctx, raw, cfg.S3Bucket, namespace, goneID)
-	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, namespace, retainedID)
+	assertNoRunStorage(t, ctx, raw, cfg.S3Bucket, orkNamespace, goneID)
+	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespace, retainedID)
 	if _, err := objectStore.Stat(ctx, goneObject.URI); err != nil {
 		t.Fatalf("shared content-addressed object %q was deleted: %v", goneObject.URI, err)
 	}
@@ -194,7 +198,7 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	if err != nil || len(body) == 0 {
 		t.Fatalf("cleaned run archive body missing: bytes=%d error=%v", len(body), err)
 	}
-	listed, err := runArchive.ListRuns(ctx, artifacts.RunQuery{Namespace: namespace, Orkflow: "cleanup-gone"})
+	listed, err := runArchive.ListRuns(ctx, artifacts.RunQuery{Namespace: orkNamespace, Orkflow: "cleanup-gone"})
 	if err != nil || !containsArchivedRun(listed, goneID) {
 		t.Fatalf("cleaned run absent from archive index: entries=%v error=%v", listed, err)
 	}
@@ -213,7 +217,7 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	if _, err := runArchive.GetRun(ctx, goneID); err != nil {
 		t.Fatalf("archive body missing after idempotent pass: %v", err)
 	}
-	t.Logf("EVIDENCE temporal_history_gone=true logs_gone=true commits_gone=true archive_body_present=true archive_index_present=true cleanup_state=true shared_object_present=true retained_run_untouched=true idempotent=true runs_cleaned=%d objects_deleted=%d bytes_reclaimed=%d",
+	t.Logf("EVIDENCE distinct_namespaces=true temporal_history_gone=true logs_gone=true commits_gone=true archive_body_present=true archive_index_present=true cleanup_state=true shared_object_present=true retained_run_untouched=true idempotent=true runs_cleaned=%d objects_deleted=%d bytes_reclaimed=%d",
 		stats.RunsCleaned, stats.ObjectsDeleted, stats.BytesReclaimed)
 }
 
@@ -356,8 +360,4 @@ func containsArchivedRun(entries []artifacts.RunIndexEntry, runID string) bool {
 		}
 	}
 	return false
-}
-
-func errorsIsNotFound(err error) bool {
-	return err != nil && strings.Contains(err.Error(), artifacts.ErrNotFound.Error())
 }

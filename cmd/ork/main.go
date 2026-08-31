@@ -121,6 +121,7 @@ func loadConfig() config {
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
 	}
+	cfg.cleanup.TemporalNamespace = cfg.temporalNamespace
 	cfg.activityCatalog, cfg.catalogErr = dsl.ParseCatalog([]byte(env("ORK_ACTIVITY_CATALOG", "")))
 	rawPool := env("ORK_ORKER_POOL", "")
 	rawQueue := env("ORK_ORKER_QUEUE", "")

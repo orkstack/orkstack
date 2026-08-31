@@ -8,23 +8,29 @@ import (
 	"testing"
 	"time"
 
+	"go.temporal.io/api/serviceerror"
+
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 var errInjected = errors.New("injected")
 
 type fakeTemporal struct {
-	retention    time.Duration
-	retentionErr error
-	exists       map[string]bool
-	errors       map[string]error
+	retention           time.Duration
+	retentionErr        error
+	exists              map[string]bool
+	errors              map[string]error
+	retentionNamespaces []string
+	workflowNamespaces  []string
 }
 
-func (f *fakeTemporal) NamespaceRetention(context.Context, string) (time.Duration, error) {
+func (f *fakeTemporal) NamespaceRetention(_ context.Context, namespace string) (time.Duration, error) {
+	f.retentionNamespaces = append(f.retentionNamespaces, namespace)
 	return f.retention, f.retentionErr
 }
 
-func (f *fakeTemporal) WorkflowExists(_ context.Context, _, id string) (bool, error) {
+func (f *fakeTemporal) WorkflowExists(_ context.Context, namespace, id string) (bool, error) {
+	f.workflowNamespaces = append(f.workflowNamespaces, namespace)
 	return f.exists[id], f.errors[id]
 }
 
@@ -71,7 +77,7 @@ func (f *fakeArchive) MarkArtifactsCleaned(_ context.Context, id string, at time
 }
 
 func testCleaner(store artifacts.RunArchive, temporal WorkflowReader, now time.Time) *Cleaner {
-	c := NewCleaner(CleanupConfig{Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}, store, temporal, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}, store, temporal, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	c.now = func() time.Time { return now }
 	return c
 }
@@ -95,6 +101,35 @@ func TestRunOnce_DeletesOnlyExpiredWorkflowsGoneFromTemporal(t *testing.T) {
 	}
 	if store.deletes["gone"] != 1 || store.deletes["exists"] != 0 || store.deletes["recent"] != 0 {
 		t.Fatalf("deletes = %#v", store.deletes)
+	}
+	if got := temporal.retentionNamespaces; len(got) != 1 || got[0] != "temporal-runtime" {
+		t.Fatalf("retention namespaces = %v", got)
+	}
+	for _, got := range temporal.workflowNamespaces {
+		if got != "temporal-runtime" {
+			t.Fatalf("workflow namespace = %q, want temporal-runtime", got)
+		}
+	}
+}
+
+func TestRunOnce_EmptyTemporalNamespaceFailsClosed(t *testing.T) {
+	now := time.Now().UTC()
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "gone", Namespace: "archive-coordinate", Time: now.Add(-100 * time.Hour)})
+	cleaner := NewCleaner(CleanupConfig{Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}, store,
+		&fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	stats, err := cleaner.RunOnce(context.Background())
+	if err == nil || stats.RunsCleaned != 0 || len(store.deletes) != 0 {
+		t.Fatalf("stats=%+v error=%v deletes=%#v", stats, err, store.deletes)
+	}
+}
+
+func TestRunOnce_NamespaceNotFoundDeletesNothing(t *testing.T) {
+	now := time.Now().UTC()
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "gone", Namespace: "archive-coordinate", Time: now.Add(-100 * time.Hour)})
+	temporal := &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}, errors: map[string]error{"gone": serviceerror.NewNamespaceNotFound("temporal namespace missing")}}
+	stats, err := testCleaner(store, temporal, now).RunOnce(context.Background())
+	if err == nil || stats.Errors != 1 || stats.RunsCleaned != 0 || len(store.deletes) != 0 {
+		t.Fatalf("stats=%+v error=%v deletes=%#v", stats, err, store.deletes)
 	}
 }
 

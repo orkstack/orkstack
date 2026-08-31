@@ -51,9 +51,13 @@ const (
 	// runIndexSegments is the fixed segment count of an index key:
 	// metadata, index, runs, namespace, orkflow, status, stamp, run-id.
 	runIndexSegments = 8
-	// archiveMaxComponent bounds one generated segment.
+	// archiveMaxComponent bounds one generated segment. Orkflow names and task
+	// ids are DSL slugs and run ids are ork-{timestamp}-{sequence}, so a real
+	// segment is far shorter; the bound only rejects abuse.
 	archiveMaxComponent = 200
-	// archiveEncodedMarker introduces a reversibly escaped segment.
+	// archiveEncodedMarker introduces a segment that is not already a clean S3
+	// component. A clean component cannot start with it, so the two forms never
+	// collide and decoding is exact.
 	archiveEncodedMarker = "~"
 )
 
@@ -64,15 +68,19 @@ var ErrInvalidRunKey = errors.New("invalid run archive key")
 // key is built from. The body's encoding belongs to the caller (the engine
 // marshals protobuf with protojson); this package treats it as opaque bytes.
 type RunRecord struct {
-	// RunID identifies the run.
+	// RunID identifies the run, e.g. "ork-1786856120616785000-1".
 	RunID string
-	// Namespace is the namespace the run's orkflow belongs to.
+	// Namespace is the OrkStack namespace the run's orkflow belongs to. It is
+	// not a Temporal namespace. Empty means DefaultNamespace, resolved where
+	// the key is built.
 	Namespace string
 	// Orkflow is the orkflow name the run executed.
 	Orkflow string
-	// Status is the run's terminal status.
+	// Status is the run's terminal status, lowercase and unprefixed
+	// ("succeeded", "failed", "canceled").
 	Status string
-	// Time orders the run in the index.
+	// Time orders the run in the index. The engine passes the run's creation
+	// time, so a date range means "runs created in this window".
 	Time time.Time
 	// JSONL is the archive body: one JSON record per line.
 	JSONL []byte

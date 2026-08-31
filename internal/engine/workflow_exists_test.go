@@ -17,7 +17,7 @@ func TestClassifyWorkflowExists(t *testing.T) {
 	}{
 		{name: "visible", exists: true},
 		{name: "execution gone", err: serviceerror.NewNotFound("gone")},
-		{name: "namespace gone", err: serviceerror.NewNamespaceNotFound("gone")},
+		{name: "namespace gone is not execution absence", err: serviceerror.NewNamespaceNotFound("gone"), wantErr: true},
 		{name: "deadline is not absence", err: context.DeadlineExceeded, wantErr: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

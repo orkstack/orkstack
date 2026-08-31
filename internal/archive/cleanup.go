@@ -28,13 +28,16 @@ const (
 	DefaultBatchSize       = 100
 )
 
-// CleanupConfig controls the background cleanup worker. Enabled defaults false
-// because cleanup deletes durable data and must be explicitly opted into.
+// CleanupConfig controls the background cleanup worker. TemporalNamespace is
+// the deployment's Temporal partition, not an OrkStack namespace from an
+// archived run. Enabled defaults false because cleanup deletes durable data
+// and must be explicitly opted into.
 type CleanupConfig struct {
-	Enabled         bool
-	Interval        time.Duration
-	RetentionBuffer time.Duration
-	BatchSize       int
+	Enabled           bool
+	TemporalNamespace string
+	Interval          time.Duration
+	RetentionBuffer   time.Duration
+	BatchSize         int
 }
 
 // CleanupConfigFromEnv reads cleanup's ORK_* configuration. Invalid values use
@@ -168,24 +171,24 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 	if c.archive == nil || c.temporal == nil {
 		return stats, fmt.Errorf("archive cleanup: worker is not fully configured")
 	}
+	if c.config.TemporalNamespace == "" {
+		return stats, fmt.Errorf("archive cleanup: Temporal namespace is empty")
+	}
 	entries, err := c.archive.ListRuns(ctx, artifacts.RunQuery{})
 	if err != nil {
 		return stats, fmt.Errorf("archive cleanup: list runs: %w", err)
 	}
-	now := c.now().UTC()
-	retentions := make(map[string]time.Duration)
-	for _, entry := range entries {
-		if _, known := retentions[entry.Namespace]; known {
-			continue
-		}
-		retention, err := c.temporal.NamespaceRetention(ctx, entry.Namespace)
-		if err != nil {
-			stats.Errors = 1
-			c.logger.Error("artifact cleanup retention lookup failed", "namespace", entry.Namespace, "error", err)
-			return stats, fmt.Errorf("archive cleanup: resolve namespace %q retention: %w", entry.Namespace, err)
-		}
-		retentions[entry.Namespace] = retention
+	// One Temporal namespace partitions the whole deployment. Resolve its
+	// retention once per iteration; archive entry namespaces are OrkStack
+	// coordinates and must never be used for Temporal calls. A transient
+	// lookup failure fails this iteration closed and the next tick retries.
+	retention, err := c.temporal.NamespaceRetention(ctx, c.config.TemporalNamespace)
+	if err != nil {
+		stats.Errors = 1
+		c.logger.Error("artifact cleanup retention lookup failed", "namespace", c.config.TemporalNamespace, "error", err)
+		return stats, fmt.Errorf("archive cleanup: resolve Temporal namespace %q retention: %w", c.config.TemporalNamespace, err)
 	}
+	now := c.now().UTC()
 	var errs []error
 	processed := 0
 	for _, entry := range entries {
@@ -203,12 +206,11 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 			stats.Errors++
 			continue
 		}
-		retention := retentions[entry.Namespace]
 		if !entry.Time.Before(now.Add(-(retention + c.config.RetentionBuffer))) {
 			continue
 		}
 		processed++
-		exists, err := c.temporal.WorkflowExists(ctx, entry.Namespace, entry.RunID)
+		exists, err := c.temporal.WorkflowExists(ctx, c.config.TemporalNamespace, entry.RunID)
 		if err != nil {
 			wrapped := fmt.Errorf("run %q: check Temporal workflow: %w", entry.RunID, err)
 			errs = append(errs, wrapped)

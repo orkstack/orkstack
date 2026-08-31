@@ -23,6 +23,14 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
+func TestLoadConfigThreadsTemporalNamespaceIntoCleanup(t *testing.T) {
+	t.Setenv("ORK_TEMPORAL_NAMESPACE", "temporal-runtime")
+	cfg := loadConfig()
+	if cfg.cleanup.TemporalNamespace != "temporal-runtime" {
+		t.Fatalf("cleanup Temporal namespace = %q, want temporal-runtime", cfg.cleanup.TemporalNamespace)
+	}
+}
+
 func TestLoadConfigReadsRunPlanDurabilitySettings(t *testing.T) {
 	t.Setenv("ORK_VALUES_MAX_BYTES", "131072")
 	t.Setenv("ORK_ARTIFACT_MAX_COUNT", "12")

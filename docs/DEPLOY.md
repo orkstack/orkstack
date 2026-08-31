@@ -437,11 +437,13 @@ run detail page opens one per expanded task.
 
 **Retention-aware cleanup is eventual and fail-closed.** With
 `ORK_CLEANUP_ENABLED=true`, `ork` periodically lists archived runs older than
-the Temporal namespace retention period plus `ORK_CLEANUP_RETENTION_BUFFER`.
-It asks Temporal about every eligible execution and removes that run's
-`metadata/logs/{run-id}/` and
-`metadata/commits/{namespace}/{run-id}/` objects only after Temporal reports
-the execution is gone. The archive body, its index, and its cleanup marker
+the deployment's `ORK_TEMPORAL_NAMESPACE` retention period plus
+`ORK_CLEANUP_RETENTION_BUFFER`. This Temporal runtime partition is distinct
+from the OrkStack namespace stored in each archived run. The cleaner asks
+Temporal about every eligible execution using only the runtime partition, then
+removes that run's `metadata/logs/{run-id}/` and
+`metadata/commits/{orkstack-namespace}/{run-id}/` objects only after Temporal
+reports the execution gone. The archive body, its index, and its cleanup marker
 remain permanent. There is therefore a bounded and deliberate window after a
 run finishes in which Temporal still has the execution and the bucket still
 has its run-scoped objects; there can be another interval after Temporal
