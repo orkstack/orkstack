@@ -117,6 +117,17 @@ func NewCleaner(config CleanupConfig, archive artifacts.RunArchive, temporal Wor
 	return &Cleaner{config: config, archive: archive, temporal: temporal, logger: logger, now: time.Now}
 }
 
+// WithClock replaces the wall clock used to decide whether an archived run is
+// beyond Temporal retention plus the configured buffer. It keeps integration
+// tests deterministic without waiting for a production-length retention
+// window.
+func (c *Cleaner) WithClock(now func() time.Time) *Cleaner {
+	if now != nil {
+		c.now = now
+	}
+	return c
+}
+
 // Run scans immediately, then periodically, until ctx is canceled.
 func (c *Cleaner) Run(ctx context.Context) {
 	c.runAndLog(ctx)

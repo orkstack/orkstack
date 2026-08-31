@@ -286,6 +286,10 @@ deployment cares about.
 | `ORK_TRANSFER_BUDGET_SECONDS` | *(derived)* | `ork` | data-transfer slack inside `StartToCloseTimeout`. Unset derives `max(300, artifact_max_count × artifact_max_bytes ÷ floor throughput)`. An operator who knows their storage sets it directly |
 | `ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC` | `10 MiB/s` | `ork` | the denominator of that derivation. Only read when `ORK_TRANSFER_BUDGET_SECONDS` is unset |
 | `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts, the run archive and task logs live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
+| `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables retention-aware reclamation of run-scoped logs and completion commits. Default-off because it deletes durable data and an operator must opt in after choosing the retention policy |
+| `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts |
+| `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | additional safety window after Temporal namespace retention before a run becomes eligible |
+| `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration |
 | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `ORK_S3_REGION` | `us-east-1` | both | |
@@ -431,26 +435,38 @@ sequence it ended on, so a replay of a 16 MiB attempt is whole. Size a replica
 for this per concurrently open pane or `orkctl run logs`, remembering that a
 run detail page opens one per expanded task.
 
-**Retention is the bucket's.** Nothing in OrkStack deletes a log chunk; the run
-archive never embeds one, so expiring them cannot damage a run's record. The
-default is to keep them forever, which is rarely what an operator wants for
-16 MiB per attempt. One lifecycle rule on the prefix:
+**Retention-aware cleanup is eventual and fail-closed.** With
+`ORK_CLEANUP_ENABLED=true`, `ork` periodically lists archived runs older than
+the Temporal namespace retention period plus `ORK_CLEANUP_RETENTION_BUFFER`.
+It asks Temporal about every eligible execution and removes that run's
+`metadata/logs/{run-id}/` and
+`metadata/commits/{namespace}/{run-id}/` objects only after Temporal reports
+the execution is gone. The archive body, its index, and its cleanup marker
+remain permanent. There is therefore a bounded and deliberate window after a
+run finishes in which Temporal still has the execution and the bucket still
+has its run-scoped objects; there can be another interval after Temporal
+drops it but before the next cleanup scan. That is eventual consistency, not
+a stuck cleanup.
 
-```bash
-# MinIO: expire task logs after 30 days, leaving definitions, artifacts and
-# archived runs alone.
-mc ilm rule add local/orkstack-artifacts \
-  --prefix "metadata/logs/" --expire-days 30
-```
+Cleanup fails closed. If namespace retention is unknown, or a Temporal
+description times out or returns any error other than NotFound, that check
+deletes nothing. Per-run storage failures are logged and retried by a later
+iteration. Repeating a successful pass is a no-op because the immutable
+`artifacts_cleaned` sidecar records when Temporal deletion was observed.
 
-```bash
-# AWS S3: the same rule.
-aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
-  --lifecycle-configuration '{"Rules":[{"ID":"ork-task-logs","Status":"Enabled",
-    "Filter":{"Prefix":"metadata/logs/"},"Expiration":{"Days":30}}]}'
-```
+The cleaner deliberately does **not** remove workload artifacts under
+`objects/`. Those keys are content-addressed by logical name and digest, not
+by run id, so two runs can reference the same object. Safe reclamation needs
+reference accounting that the archive does not have; deleting by the
+producing run would corrupt the other run's committed result.
 
-A reader that meets an expired chunk mid-stream stops at the gap rather than
+This is separate from `DeleteOrkflow`. Orkflow deletion removes the stored
+versions of an Orkflow only after its run-safety gate proves no affected run
+is live. Retention cleanup removes one finished run's logs and commits only
+after Temporal has already removed that execution. They act on different
+objects, have different triggers, and neither deletes archived run records.
+
+A reader that meets a removed chunk mid-stream stops at the gap rather than
 skipping it, so a resumed read continues from the last sequence it actually
 received.
 
