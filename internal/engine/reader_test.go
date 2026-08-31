@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -586,4 +587,167 @@ func visibilityRecord(
 		info.CloseTime = timestamppb.New(startedAt.Add(time.Minute))
 	}
 	return info
+}
+
+// endlessReadClient always returns a full page and always offers another one,
+// so a walk that does not stop on its own budget never stops at all. It also
+// records every query string it was handed.
+type endlessReadClient struct {
+	page    []*workflowpb.WorkflowExecutionInfo
+	calls   int
+	queries []string
+}
+
+func (e *endlessReadClient) GetWorkflowHistory(
+	context.Context, string, string, bool, enumspb.HistoryEventFilterType,
+) client.HistoryEventIterator {
+	return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}
+}
+
+func (e *endlessReadClient) ListWorkflow(
+	_ context.Context,
+	req *workflowservice.ListWorkflowExecutionsRequest,
+) (*workflowservice.ListWorkflowExecutionsResponse, error) {
+	e.calls++
+	e.queries = append(e.queries, req.GetQuery())
+	return &workflowservice.ListWorkflowExecutionsResponse{
+		Executions:    e.page,
+		NextPageToken: []byte("next"),
+	}, nil
+}
+
+// TestTemporalRunReader_OrdinaryListStaysOnTheBoundedBudget pins the half of
+// the walk a wire caller gets. An ordinary list — any list that did not ASK to
+// be exhaustive — stops at maxRunListPages and returns what it found. It must
+// not spend the 2000-page scan budget, and it must not report the
+// deletion-safety failure, which is a sentence about an internal gate that no
+// `orkctl run list` should ever be able to print.
+func TestTemporalRunReader_OrdinaryListStaysOnTheBoundedBudget(t *testing.T) {
+	// A page of runs belonging to a DIFFERENT orkflow: every record is read
+	// and discarded, so nothing ever satisfies the limit and only the budget
+	// can end the walk.
+	client := &endlessReadClient{page: []*workflowpb.WorkflowExecutionInfo{
+		visibilityRecord(t, "ork-other", "other-ork", "1.0.0",
+			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, readerEpoch),
+	}}
+	runs, err := newRunReader(client, converter.GetDefaultDataConverter()).
+		ListRuns(context.Background(), RunQuery{
+			OrkflowName: "hello-ork",
+			Status:      orkstackv1.Status_STATUS_RUNNING,
+			Limit:       1,
+		})
+	if err != nil {
+		t.Fatalf("ordinary ListRuns returned an error: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("ordinary ListRuns = %v, want none: no record matches the orkflow", runs)
+	}
+	if client.calls != maxRunListPages {
+		t.Fatalf("ordinary ListRuns read %d pages, want the bounded %d; a wire request "+
+			"must not reach the %d-page scan budget", client.calls, maxRunListPages, maxRunScanPages)
+	}
+}
+
+// TestTemporalRunReader_PushesTheStatusPredicateIntoVisibility is why the
+// bounded budget above is ENOUGH for the delete control's question. With the
+// status in the query, visibility returns live executions only, so "is
+// anything still live?" is answered over matches instead of over every run the
+// orkflow ever had.
+func TestTemporalRunReader_PushesTheStatusPredicateIntoVisibility(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status orkstackv1.Status
+		want   string
+	}{
+		{
+			name:   "running is the complement of the terminal set",
+			status: orkstackv1.Status_STATUS_RUNNING,
+			want: `ExecutionStatus NOT IN ("Completed", "Failed", "TimedOut", ` +
+				`"Canceled", "Terminated")`,
+		},
+		{
+			name:   "failed covers the timeout Temporal reports separately",
+			status: orkstackv1.Status_STATUS_FAILED,
+			want:   `ExecutionStatus IN ("Failed", "TimedOut")`,
+		},
+		{
+			name:   "canceled covers termination",
+			status: orkstackv1.Status_STATUS_CANCELED,
+			want:   `ExecutionStatus IN ("Canceled", "Terminated")`,
+		},
+		{
+			name:   "succeeded is exactly completed",
+			status: orkstackv1.Status_STATUS_SUCCEEDED,
+			want:   `ExecutionStatus IN ("Completed")`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &endlessReadClient{}
+			_, err := newRunReader(client, converter.GetDefaultDataConverter()).
+				ListRuns(context.Background(), RunQuery{
+					OrkflowName: "hello-ork", Status: tc.status, Limit: 1,
+				})
+			if err != nil {
+				t.Fatalf("ListRuns: %v", err)
+			}
+			if len(client.queries) == 0 {
+				t.Fatal("ListRuns issued no visibility query")
+			}
+			if !strings.Contains(client.queries[0], tc.want) {
+				t.Fatalf("visibility query = %q, want it to contain %q",
+					client.queries[0], tc.want)
+			}
+		})
+	}
+}
+
+// An unfiltered list, and the two statuses no visibility record can decode to,
+// push nothing down. STATUS_PENDING and STATUS_SKIPPED are archive-only
+// outcomes; narrowing visibility on them would state something about the index
+// that is not true of it.
+func TestTemporalRunReader_PushesNoStatusPredicateItCannotMean(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status orkstackv1.Status
+	}{
+		{"unspecified means no filter", orkstackv1.Status_STATUS_UNSPECIFIED},
+		{"pending is never decoded from visibility", orkstackv1.Status_STATUS_PENDING},
+		{"skipped is never decoded from visibility", orkstackv1.Status_STATUS_SKIPPED},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &endlessReadClient{}
+			if _, err := newRunReader(client, converter.GetDefaultDataConverter()).
+				ListRuns(context.Background(), RunQuery{
+					OrkflowName: "hello-ork", Status: tc.status, Limit: 1,
+				}); err != nil {
+				t.Fatalf("ListRuns: %v", err)
+			}
+			if strings.Contains(client.queries[0], "ExecutionStatus") {
+				t.Fatalf("visibility query = %q, want no ExecutionStatus predicate",
+					client.queries[0])
+			}
+		})
+	}
+}
+
+// TestExecutionStatusPredicate_TracksStatusFromExecution is the anti-drift
+// guard. The pushdown and the DECODE must describe the same partition: a
+// status listed as terminal here that statusFromExecution decodes as RUNNING
+// would be filtered out of the live set and let deletion proceed over a live
+// run. Iterating the SDK's own enum means a status added by an upgrade fails
+// this test rather than silently joining the wrong side.
+func TestExecutionStatusPredicate_TracksStatusFromExecution(t *testing.T) {
+	terminal := map[enumspb.WorkflowExecutionStatus]bool{}
+	for _, status := range terminalExecutionStatuses {
+		terminal[status] = true
+	}
+	for value := range enumspb.WorkflowExecutionStatus_name {
+		status := enumspb.WorkflowExecutionStatus(value)
+		decodedLive := statusFromExecution(status) == orkstackv1.Status_STATUS_RUNNING
+		if decodedLive == terminal[status] {
+			t.Errorf("%s: statusFromExecution decodes it as live=%t, but the pushdown "+
+				"treats it as terminal=%t; the two must agree or the live set is wrong",
+				status, decodedLive, terminal[status])
+		}
+	}
 }

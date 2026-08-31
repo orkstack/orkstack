@@ -118,12 +118,17 @@
 		deleteSafety = 'checking';
 		deleteSafetyReason = 'Checking for runs that block deletion…';
 		try {
-			// Active runs are queried separately by status. The API answers these
-			// safety-shaped name+status queries exhaustively before applying the
-			// one-result response cap, so an older live run cannot hide behind a
-			// page of newer completed runs. The ordinary page remains useful for
-			// the 24-hour explanation; the server performs the authoritative,
-			// exhaustive active-and-recent check again at deletion time.
+			// Active runs are queried separately BY STATUS, which is the whole
+			// trick: the engine pushes the status into Temporal's visibility
+			// query, so these two reads are answered over live executions
+			// rather than over every run this orkflow ever had. An older live
+			// run therefore cannot hide behind a page of newer completed ones,
+			// and no read here costs a scan of the namespace.
+			//
+			// The ordinary page stays a BOUNDED sample, used only for the
+			// 24-hour explanation. This check exists to disable the control
+			// and say why; the server repeats the active-and-recent check
+			// exhaustively at deletion time and is the authority that refuses.
 			const [running, pending, recentPage] = await Promise.all([
 				orkstack(fetch).runs.listRuns({ orkflowName: name, namespace, status: Status.RUNNING, pageSize: 1 }),
 				orkstack(fetch).runs.listRuns({ orkflowName: name, namespace, status: Status.PENDING, pageSize: 1 }),

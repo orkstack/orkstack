@@ -57,6 +57,18 @@ type fakeReader struct {
 	// about, so a test can prove that an answer served from the cache
 	// consulted the record no further.
 	executionWindows []engine.StatsWindow
+	// listQueries records every RunQuery this reader was asked, so a test can
+	// assert what the handler ASKED for and not only what came back. The wire
+	// path setting Exhaustive is invisible in the response — it costs pages,
+	// not rows — so it has to be observed here.
+	listQueries []engine.RunQuery
+}
+
+// runQueries is every RunQuery this reader has served, in order.
+func (f *fakeReader) runQueries() []engine.RunQuery {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]engine.RunQuery(nil), f.listQueries...)
 }
 
 // Executions answers the aggregate question. It records the window first, so
@@ -117,6 +129,9 @@ func (f *fakeReader) runReads() int {
 }
 
 func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstackv1.Run, error) {
+	f.mu.Lock()
+	f.listQueries = append(f.listQueries, q)
+	f.mu.Unlock()
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -346,16 +361,21 @@ func TestListRuns_AnswersForRunsThisReplicaNeverSaw(t *testing.T) {
 	}
 }
 
-// TestListRuns_PageSizeBoundsASafetyShapedQuery pins the public pagination
-// contract against the exhaustive walk the deletion gate needs.
+// TestListRuns_StaysBoundedAndNeverAsksForAnExhaustiveWalk pins what a WIRE
+// list may cost.
 //
-// A request naming an orkflow AND a non-terminal status is answered by reading
-// visibility to the end, so an older live run cannot hide behind a page of
-// newer ones. That is about how completely the index is WALKED. It must not
-// change how much is RETURNED: page_size still caps the response, and a
-// request that names no page_size still gets one default page rather than
-// every run the orkflow ever had.
-func TestListRuns_PageSizeBoundsASafetyShapedQuery(t *testing.T) {
+// The deletion gate needs an exhaustive walk, and for a while any request that
+// named an orkflow and a non-terminal status was given one — which made
+// `orkctl run list --orkflow X --status running` read the whole visibility
+// index and, past the scan budget, fail with a sentence about deletion safety.
+// The exhaustive walk belongs to Service.completeOrkflowRuns alone. From the
+// wire, the status is answered by a visibility PREDICATE instead, so the
+// ordinary bounded budget suffices.
+//
+// Two things are pinned: page_size still caps the response and an unstated
+// page_size still means one default page, and no wire request ever sets
+// Exhaustive on the query the handler builds.
+func TestListRuns_StaysBoundedAndNeverAsksForAnExhaustiveWalk(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -398,6 +418,22 @@ func TestListRuns_PageSizeBoundsASafetyShapedQuery(t *testing.T) {
 		t.Errorf("ListRuns without page_size returned %d runs, want one default page of %d; "+
 			"an exhaustive walk must not turn a public list into an unbounded dump",
 			got, engine.DefaultRunPageSize)
+	}
+
+	// The cost, not the response. Exhaustive is invisible in the rows that
+	// come back — it buys pages — so it has to be read off the query the
+	// handler built. Both requests above were the exact shape that used to
+	// trigger the whole-index walk.
+	queries := f.reader.runQueries()
+	if len(queries) != 2 {
+		t.Fatalf("reader served %d list queries, want 2", len(queries))
+	}
+	for i, q := range queries {
+		if q.Exhaustive {
+			t.Errorf("wire ListRuns[%d] asked for an exhaustive walk (%+v); the whole-index "+
+				"walk belongs to the deletion gate, and from the wire it lets a plain "+
+				"`run list` scan every run and fail with a deletion-safety error", i, q)
+		}
 	}
 }
 

@@ -244,19 +244,6 @@ func parseOrkflowKey(key string) (namespace, name, version string, ok bool) {
 }
 
 func validOrkflowComponent(kind, value string) error {
-	if kind == "name" {
-		switch {
-		case value == "":
-			return fmt.Errorf("artifacts: orkflow name is empty: %w", ErrInvalidOrkflow)
-		case len(value) > maxOrkflowComponent:
-			return fmt.Errorf("artifacts: orkflow name %q exceeds %d bytes: %w",
-				value, maxOrkflowComponent, ErrInvalidOrkflow)
-		case !namespaceNamePattern.MatchString(value):
-			return fmt.Errorf("artifacts: orkflow name %q must match %s: %w",
-				value, namespaceNamePattern, ErrInvalidOrkflow)
-		}
-		return nil
-	}
 	switch {
 	case value == "":
 		return fmt.Errorf("artifacts: orkflow %s is empty: %w", kind, ErrInvalidOrkflow)

@@ -135,16 +135,45 @@ func TestOrkflowKey_RejectsCoordinatesThatCouldEscapeThePrefix(t *testing.T) {
 }
 
 func TestOrkflowKey_InvalidNameErrorNamesTheOrkflowName(t *testing.T) {
-	_, err := OrkflowKey("default", "Foo", "1.0.0")
+	// A leading underscore fails cleanComponentPattern, so this is a name the
+	// store genuinely refuses rather than one a stricter rule invented.
+	_, err := OrkflowKey("default", "_foo", "1.0.0")
 	if !errors.Is(err, ErrInvalidOrkflow) {
 		t.Fatalf("OrkflowKey invalid name error = %v, want ErrInvalidOrkflow", err)
 	}
-	want := `artifacts: orkflow name "Foo" must match ^[a-z][a-z0-9-]*$: invalid orkflow coordinates`
+	want := `artifacts: orkflow name "_foo" must match ^[A-Za-z0-9][A-Za-z0-9._-]*$: invalid orkflow coordinates`
 	if err.Error() != want {
 		t.Fatalf("OrkflowKey invalid name error = %q, want %q", err, want)
 	}
 	if strings.Contains(err.Error(), "namespace") {
 		t.Fatalf("OrkflowKey invalid name error misidentifies the field: %v", err)
+	}
+}
+
+// A name outside the slug rule is not creatable through the engine, which
+// compiles every apply against internal/dsl's slug pattern. It IS creatable by
+// another consumer of this PUBLIC package, and once such an object exists it
+// has to stay addressable: a key this validator rejects is skipped by
+// parseOrkflowKey, so List never reports it and Delete cannot remove it, which
+// strands the object with no path to repair. Storage addressing therefore
+// keeps the broader rule, and the slug rule stays where names are CREATED.
+func TestOrkflowKey_AddressesANonSlugNameSoItStaysListableAndDeletable(t *testing.T) {
+	for _, name := range []string{"My_Flow", "a.b", "Legacy-Flow", "flow_2"} {
+		key, err := OrkflowKey("default", name, "1.0.0")
+		if err != nil {
+			t.Fatalf("OrkflowKey(default, %q, 1.0.0): %v", name, err)
+		}
+		_, parsed, _, ok := parseOrkflowKey(key)
+		if !ok {
+			t.Fatalf("parseOrkflowKey(%q) dropped the key, so List would hide %q "+
+				"and Delete could not remove it", key, name)
+		}
+		if parsed != name {
+			t.Fatalf("parseOrkflowKey(%q) name = %q, want %q", key, parsed, name)
+		}
+		if _, err := orkflowNamePrefix("default", name); err != nil {
+			t.Fatalf("orkflowNamePrefix(default, %q): %v; Delete scans this prefix", name, err)
+		}
 	}
 }
 

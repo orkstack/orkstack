@@ -170,6 +170,16 @@ func (s *Service) DeleteOrkflow(
 	if err != nil {
 		return nil, err
 	}
+	// Two rules, deliberately, because they answer different questions. The
+	// SLUG rule is the user-facing contract (AGENTS.md §7), applied here so a
+	// name no OrkStack surface would ever create is refused at the boundary
+	// that received it. The store's ADDRESSING rule is broader on purpose: it
+	// only asks whether a key can be formed, so an object written by another
+	// consumer of the public artifacts package stays listable and deletable
+	// instead of becoming unreachable.
+	if err := dsl.ValidSlug("orkflow name", name); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	if _, err := artifacts.OrkflowKey(ns.GetName(), name, "validation"); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument,
 			fmt.Errorf("invalid orkflow name %q: %w", name, err))

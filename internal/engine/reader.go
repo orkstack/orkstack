@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
@@ -45,9 +47,10 @@ const (
 	// maxRunListPages bounds how far ListRuns pages through visibility looking
 	// for matches, so a narrow filter over a large namespace cannot turn one
 	// request into an unbounded scan. It applies when every record the walk
-	// reads already belongs to the namespace that asked — the filters left are
-	// then the caller's own orkflow name and status, and how far its own
-	// traffic lets it see is its own business.
+	// reads already belongs to the namespace that asked and already carries
+	// the status it asked for — the filter left is then the caller's own
+	// orkflow name, and how far its own traffic lets it see is its own
+	// business.
 	maxRunListPages = 20
 
 	// maxRunScanPages bounds the walk taken when the namespace could NOT be
@@ -324,17 +327,90 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 // listQuery is the visibility query for one RunQuery, and whether the
 // namespace went into it.
 //
-// Only the namespace is pushed down, and only when the cluster has the index.
+// TWO predicates are pushed down. The namespace goes in when the cluster has
+// the custom index. The STATUS goes in unconditionally when it can be spelled,
+// because ExecutionStatus is one of Temporal's BUILT-IN attributes and needs
+// no registration — which is what keeps "is anything still live?" a query over
+// live runs rather than a walk over every run the namespace ever had.
+//
 // A run started before the index existed carries the memo and no attribute, so
 // it is not listed by namespace; it is still readable by id, and once it
 // finishes the archive — whose key begins with the namespace — holds it.
+//
+// The orkflow NAME stays a client-side filter: its memo is unindexed.
 func (r *TemporalRunReader) listQuery(q RunQuery) (string, bool) {
 	query := fmt.Sprintf("WorkflowType = %q", RunWorkflowType)
-	if q.Namespace == "" || !r.namespaceIndexed {
-		return query, false
+	scoped := q.Namespace != "" && r.namespaceIndexed
+	if scoped {
+		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowNamespace,
+			artifacts.ResolveNamespace(q.Namespace))
 	}
-	return fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowNamespace,
-		artifacts.ResolveNamespace(q.Namespace)), true
+	if predicate, ok := executionStatusPredicate(q.Status); ok {
+		query += " AND " + predicate
+	}
+	return query, scoped
+}
+
+// terminalExecutionStatuses is every Temporal execution status that
+// statusFromExecution maps onto a TERMINAL OrkStack status.
+//
+// The live set is deliberately this list's COMPLEMENT rather than a list of
+// its own, because statusFromExecution's default arm is what decides it: a
+// status a later SDK adds — Paused arrived exactly that way — becomes RUNNING
+// there, and a NOT IN predicate keeps it live here with no edit to this file.
+// Enumerating the live statuses instead would drop such a run from "is
+// anything still live?", which is the one question that must not under-report,
+// because an under-report deletes an orkflow out from under a running run.
+var terminalExecutionStatuses = []enumspb.WorkflowExecutionStatus{
+	enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED,
+	enumspb.WORKFLOW_EXECUTION_STATUS_FAILED,
+	enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT,
+	enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED,
+	enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+}
+
+// executionStatusPredicate is the visibility predicate narrowing a listing to
+// the executions statusFromExecution maps onto want, and whether there is one
+// to push down at all.
+//
+// It NARROWS; it never decides. matchesRunQuery still applies the status over
+// the page, so a predicate that is correct but too wide cannot change which
+// runs come back — only how many records were read to find them. That is the
+// property that makes pushing anything down here safe.
+//
+// STATUS_PENDING and STATUS_SKIPPED push nothing down, because no visibility
+// record decodes to either: statusFromExecution cannot return them. Narrowing
+// on them would assert something about the index that is not true of it, and
+// they are answered by the archive half, which stores the status it was given.
+func executionStatusPredicate(want orkstackv1.Status) (string, bool) {
+	if want == orkstackv1.Status_STATUS_UNSPECIFIED {
+		return "", false
+	}
+	if want == orkstackv1.Status_STATUS_RUNNING {
+		return "ExecutionStatus NOT IN (" +
+			quotedExecutionStatuses(terminalExecutionStatuses) + ")", true
+	}
+	var match []enumspb.WorkflowExecutionStatus
+	for _, status := range terminalExecutionStatuses {
+		if statusFromExecution(status) == want {
+			match = append(match, status)
+		}
+	}
+	if len(match) == 0 {
+		return "", false
+	}
+	return "ExecutionStatus IN (" + quotedExecutionStatuses(match) + ")", true
+}
+
+// quotedExecutionStatuses renders statuses the way the query language spells
+// them. The SDK's own String() is that spelling, so an SDK upgrade which
+// renames a status cannot leave a stale literal behind here.
+func quotedExecutionStatuses(statuses []enumspb.WorkflowExecutionStatus) string {
+	quoted := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		quoted = append(quoted, strconv.Quote(status.String()))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // runProjection is one run's history, decoded.

@@ -56,6 +56,16 @@ func checkSlug(kind, value string) error {
 	return nil
 }
 
+// ValidSlug reports why value cannot be used as an identifier of the named
+// kind, so a caller outside this package can hold a client-supplied name to
+// the SAME rule the compiler applies.
+//
+// AGENTS.md §7 asks for one rule at every boundary, and this is how a boundary
+// that does not compile YAML still gets it. It is checkSlug under an exported
+// name rather than a second pattern, because a second pattern is precisely how
+// two boundaries start disagreeing about the same name.
+func ValidSlug(kind, value string) error { return checkSlug(kind, value) }
+
 // Options tunes compilation.
 //
 // Compile stays PURE: no network, no clock, no environment (§4.3). A catalog

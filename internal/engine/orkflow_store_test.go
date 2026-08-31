@@ -316,13 +316,23 @@ func TestMemoryOrkflowStore_DeleteRemovesEveryVersionAndPointerOnlyInTheSelected
 	}
 }
 
+// Delete refuses a name it cannot ADDRESS. The rule here is the storage
+// addressing rule, not the slug rule the DSL enforces where names are created:
+// a name this rejects can never be scanned or removed, so rejecting more than
+// addressing requires would strand an object rather than protect one.
 func TestMemoryOrkflowStore_DeleteRefusesUnknownAndInvalidNames(t *testing.T) {
 	store := engine.NewMemoryOrkflowStore()
 	ctx := context.Background()
 	if err := store.Delete(ctx, "", "unknown"); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("Delete(unknown) = %v, want ErrNotFound", err)
 	}
-	for _, name := range []string{"Deploy", "1deploy", strings.Repeat("a", 201)} {
+	for _, name := range []string{
+		"_deploy",      // leading punctuation
+		"pay ments",    // whitespace
+		"deploy/1.0.0", // a separator would address another key
+		"../deploy",    // and this one would leave the prefix
+		strings.Repeat("a", 201),
+	} {
 		if err := store.Delete(ctx, "", name); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 			t.Errorf("Delete(%q) = %v, want ErrInvalidOrkflow", name, err)
 		}

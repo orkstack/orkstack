@@ -1285,34 +1285,6 @@ func (s *Service) GetRun(
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
-// isRunSafetyQuery reports whether this request is the "is anything still
-// live?" question the delete control asks: it names an orkflow AND pins a
-// non-terminal status. Such a request is answered by walking visibility to the
-// end, so an older live run cannot hide behind a page of newer completed ones.
-func isRunSafetyQuery(msg *orkstackv1.ListRunsRequest) bool {
-	return msg.GetOrkflowName() != "" && !isTerminalStatus(msg.GetStatus()) &&
-		msg.GetStatus() != orkstackv1.Status_STATUS_UNSPECIFIED
-}
-
-// runListLimits caps what a list returns. Walking exhaustively is the only
-// thing a safety query changes; the response stays bounded, because page_size
-// still caps it and an unstated page_size still means one default page.
-// Exhaustive with NO limit means "everything", which is reserved for the
-// internal deletion gate and must never be reachable from the wire.
-func runListLimits(size int, safety bool) (readerLimit, archiveLimit int) {
-	readerLimit, archiveLimit = size, size
-	if !safety {
-		return readerLimit, archiveLimit
-	}
-	if readerLimit <= 0 {
-		readerLimit = engine.DefaultRunPageSize
-	}
-	if archiveLimit <= 0 {
-		archiveLimit = engine.DefaultArchivePageSize
-	}
-	return readerLimit, archiveLimit
-}
-
 // ListRuns returns runs of one namespace, newest first, with optional filters.
 //
 // The two halves are Temporal's visibility index, which holds every run that
@@ -1340,8 +1312,6 @@ func (s *Service) ListRuns(
 	req *connect.Request[orkstackv1.ListRunsRequest],
 ) (*connect.Response[orkstackv1.ListRunsResponse], error) {
 	size := int(req.Msg.GetPageSize())
-	exhaustiveSafetyQuery := isRunSafetyQuery(req.Msg)
-	readerLimit, archiveLimit := runListLimits(size, exhaustiveSafetyQuery)
 	var (
 		runs       []*orkstackv1.Run
 		fromMemory bool
@@ -1361,8 +1331,7 @@ func (s *Service) ListRuns(
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
-			Limit:       readerLimit,
-			Exhaustive:  exhaustiveSafetyQuery,
+			Limit:       size,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable,
@@ -1382,8 +1351,7 @@ func (s *Service) ListRuns(
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
-			Limit:       archiveLimit,
-			Exhaustive:  exhaustiveSafetyQuery,
+			Limit:       size,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal,
