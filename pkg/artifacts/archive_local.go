@@ -42,7 +42,7 @@ func NewLocalRunArchive(dir string) (*LocalRunArchive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: local run archive: open %q: %w", abs, err)
 	}
-	for _, subdir := range []string{localTempDir, RunArchiveNamespace, RunIndexNamespace, RunCleanupNamespace} {
+	for _, subdir := range []string{localTempDir, RunArchiveNamespace, RunIndexNamespace, RunObjectRefNamespace, RunObjectListNamespace, RunCleanupNamespace} {
 		if err := root.MkdirAll(subdir, localDirPerm); err != nil {
 			_ = root.Close()
 			return nil, fmt.Errorf("artifacts: local run archive: create %q: %w", subdir, err)
@@ -57,8 +57,9 @@ func (a *LocalRunArchive) Dir() string { return a.dir }
 // Close releases the directory handle held by the archive.
 func (a *LocalRunArchive) Close() error { return a.root.Close() }
 
-// PutRun writes the body, then the index key, and leaves an already-archived
-// body untouched — the same immutable, crash-safe order as the S3 archive.
+// PutRun writes the body and object references before publishing the index key,
+// and leaves an already-archived body untouched. An interrupted write can be
+// retried without advertising a run whose reference accounting is incomplete.
 func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	bodyKey, err := RunArchiveKey(rec.RunID)
 	if err != nil {
@@ -67,6 +68,23 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	indexKey, err := RunIndexKey(rec)
 	if err != nil {
 		return err
+	}
+	objectIDs := dedupeObjectIDs(rec.ObjectIDs)
+	listKey, err := RunObjectListKey(rec.RunID)
+	if err != nil {
+		return err
+	}
+	listBody, err := json.Marshal(objectIDs)
+	if err != nil {
+		return fmt.Errorf("artifacts: local archive run %q: encode object list: %w", rec.RunID, err)
+	}
+	refKeys := make([]string, 0, len(objectIDs))
+	for _, objectID := range objectIDs {
+		refKey, err := RunObjectRefKey(objectID, rec.RunID)
+		if err != nil {
+			return err
+		}
+		refKeys = append(refKeys, refKey)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -82,6 +100,16 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return fmt.Errorf("artifacts: local archive run %q: stat body: %w", rec.RunID, err)
 	}
 
+	// The list keeps exact object ids out of marker-key components and makes
+	// deletion proportional to this run's references rather than the archive.
+	if err := a.writeAtomic(listKey, listBody); err != nil {
+		return fmt.Errorf("artifacts: local archive run %q: write object list: %w", rec.RunID, err)
+	}
+	for _, refKey := range refKeys {
+		if err := a.writeAtomic(refKey, nil); err != nil {
+			return fmt.Errorf("artifacts: local archive run %q: write object reference: %w", rec.RunID, err)
+		}
+	}
 	if err := a.writeAtomic(indexKey, nil); err != nil {
 		return fmt.Errorf("artifacts: local archive run %q: %w", rec.RunID, err)
 	}
@@ -155,7 +183,9 @@ func (a *LocalRunArchive) MarkArtifactsCleaned(ctx context.Context, runID string
 
 }
 
-// DeleteRunArtifacts removes the log and commit subtrees owned by one run.
+// DeleteRunArtifacts removes run-owned logs, commits, and reference markers.
+// Removing a marker only drops this run's claim: shared workload objects stay
+// untouched until DeleteUnreferencedObjects observes that no claims remain.
 func (a *LocalRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error) {
 	logPrefix, err := RunLogPrefix(runID)
 	if err != nil {
@@ -192,7 +222,99 @@ func (a *LocalRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, run
 			return result, fmt.Errorf("artifacts: local cleanup run %q delete %q: %w", runID, prefix, err)
 		}
 	}
+
+	listKey, err := RunObjectListKey(runID)
+	if err != nil {
+		return result, err
+	}
+	listBody, err := a.root.ReadFile(listKey)
+	if errors.Is(err, fs.ErrNotExist) {
+		// Archives written before reference accounting have no list. Falling
+		// back to a namespace-wide scan would make every cleanup unbounded.
+		return result, nil
+	}
+	if err != nil {
+		return result, fmt.Errorf("artifacts: local cleanup run %q read object list: %w", runID, err)
+	}
+	var objectIDs []string
+	if err := json.Unmarshal(listBody, &objectIDs); err != nil {
+		return result, fmt.Errorf("artifacts: local cleanup run %q decode object list: %w", runID, err)
+	}
+	for _, objectID := range objectIDs {
+		key, err := RunObjectRefKey(objectID, runID)
+		if err != nil {
+			return result, err
+		}
+		if err := a.root.Remove(key); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return result, fmt.Errorf("artifacts: local cleanup run %q delete object reference %q: %w", runID, key, err)
+		}
+	}
+	if err := a.root.Remove(listKey); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return result, fmt.Errorf("artifacts: local cleanup run %q delete object list: %w", runID, err)
+	}
 	return result, nil
+}
+
+// DeleteUnreferencedObjects removes local content-addressed objects only after
+// their reference prefix is empty. Missing objects make retries a no-op.
+func (a *LocalRunArchive) DeleteUnreferencedObjects(ctx context.Context, objectIDs []string) (CleanupResult, error) {
+	var result CleanupResult
+	var errs []error
+	seen := make(map[string]struct{}, len(objectIDs))
+	for _, objectID := range objectIDs {
+		if _, duplicate := seen[objectID]; duplicate {
+			continue
+		}
+		seen[objectID] = struct{}{}
+		if _, _, ok := splitKey(objectID); !ok {
+			errs = append(errs, fmt.Errorf("object %q: not a canonical local object id", objectID))
+			continue
+		}
+		prefix := runObjectRefPrefix(objectID)
+		referenced := false
+		err := fs.WalkDir(a.root.FS(), strings.TrimSuffix(prefix, "/"), func(_ string, d fs.DirEntry, walkErr error) error {
+			if errors.Is(walkErr, fs.ErrNotExist) {
+				return fs.SkipAll
+			}
+			if walkErr != nil {
+				return walkErr
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !d.IsDir() {
+				referenced = true
+				return fs.SkipAll
+			}
+			return nil
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("object %q: list references: %w", objectID, err))
+			continue
+		}
+		if referenced {
+			continue
+		}
+		info, err := a.root.Stat(objectID)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("object %q: stat: %w", objectID, err))
+			continue
+		}
+		if err := a.root.Remove(objectID); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("object %q: delete: %w", objectID, err))
+			continue
+		}
+		result.ObjectsDeleted++
+		result.BytesReclaimed += info.Size()
+		if err := a.root.Remove(metadataKey(objectID)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("object %q: delete metadata: %w", objectID, err))
+			continue
+		}
+	}
+	return result, errors.Join(errs...)
 }
 
 // ListRuns walks the narrowest index subtree the query can match and reads

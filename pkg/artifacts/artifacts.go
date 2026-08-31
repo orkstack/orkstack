@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -103,6 +104,50 @@ func objectKey(name, sha string) string {
 	parts = append(parts, encodeName(name)...)
 	parts = append(parts, sha)
 	return path.Join(parts...)
+}
+
+// ObjectIDFromURI returns the physical content-addressed key carried by a
+// canonical local or S3 artifact URI. The complete key is the object identity,
+// rather than its digest alone, because equal bytes under different logical
+// names are distinct stored objects.
+func ObjectIDFromURI(uri string) (string, bool) {
+	u, err := url.Parse(uri)
+	if err != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if segment == "." || segment == ".." {
+			return "", false
+		}
+	}
+	switch u.Scheme {
+	case "file":
+		if u.Host != "" && u.Host != "localhost" {
+			return "", false
+		}
+		parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+		for i, part := range parts {
+			if part != objectNamespace {
+				continue
+			}
+			candidate := strings.Join(parts[i:], "/")
+			if _, _, ok := splitKey(candidate); ok {
+				return candidate, true
+			}
+		}
+	case "s3":
+		if u.Host == "" {
+			return "", false
+		}
+		candidate := strings.TrimPrefix(u.Path, "/")
+		if _, _, ok := splitKey(candidate); ok {
+			return candidate, true
+		}
+		if _, ok := splitS3ObjectKey(candidate); ok {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func encodeName(name string) []string {

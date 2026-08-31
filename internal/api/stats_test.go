@@ -80,6 +80,10 @@ func (b bodyReadPanics) DeleteRunArtifacts(ctx context.Context, namespace, runID
 	return b.inner.DeleteRunArtifacts(ctx, namespace, runID)
 }
 
+func (b bodyReadPanics) DeleteUnreferencedObjects(ctx context.Context, objectIDs []string) (artifacts.CleanupResult, error) {
+	return b.inner.DeleteUnreferencedObjects(ctx, objectIDs)
+}
+
 func (b bodyReadPanics) MarkArtifactsCleaned(ctx context.Context, runID string, at time.Time) error {
 	return b.inner.MarkArtifactsCleaned(ctx, runID, at)
 }

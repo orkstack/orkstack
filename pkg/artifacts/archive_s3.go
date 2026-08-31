@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -47,9 +48,9 @@ func (a *S3RunArchive) URI(runID string) (string, error) {
 	return "s3://" + a.bucket + "/" + key, nil
 }
 
-// PutRun writes the body, then the index key. Body first is what makes a crash
-// between the two writes safe: the worst case is an archived run the index has
-// not advertised yet, never an advertised run whose body is missing.
+// PutRun writes the body and object references before publishing the index key.
+// An interrupted write can be retried without advertising a run whose body or
+// reference accounting is incomplete.
 //
 // The body is immutable. A run that already has one keeps it — this is what
 // makes an activity retry, a workflow replay and a second engine writing the
@@ -62,6 +63,23 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	indexKey, err := RunIndexKey(rec)
 	if err != nil {
 		return err
+	}
+	objectIDs := dedupeObjectIDs(rec.ObjectIDs)
+	listKey, err := RunObjectListKey(rec.RunID)
+	if err != nil {
+		return err
+	}
+	listBody, err := json.Marshal(objectIDs)
+	if err != nil {
+		return fmt.Errorf("artifacts: s3 archive run %q: encode object list: %w", rec.RunID, err)
+	}
+	refKeys := make([]string, 0, len(objectIDs))
+	for _, objectID := range objectIDs {
+		refKey, err := RunObjectRefKey(objectID, rec.RunID)
+		if err != nil {
+			return err
+		}
+		refKeys = append(refKeys, refKey)
 	}
 
 	exists, err := a.exists(ctx, bodyKey)
@@ -80,13 +98,25 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		}
 	}
 
-	// The index carries everything in its key, so its body is empty. Rewriting
-	// it is harmless: the key is derived from the same terminal record.
+	// The list keeps exact object ids out of marker-key components and makes
+	// deletion proportional to this run's references rather than the archive.
 	if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:        aws.String(a.bucket),
-		Key:           aws.String(indexKey),
-		Body:          bytes.NewReader(nil),
-		ContentLength: aws.Int64(0),
+		Bucket: aws.String(a.bucket), Key: aws.String(listKey), Body: bytes.NewReader(listBody),
+		ContentLength: aws.Int64(int64(len(listBody))), ContentType: aws.String(RunCleanupContentType),
+	}); err != nil {
+		return fmt.Errorf("artifacts: s3 archive run %q: write object list %q: %w", rec.RunID, listKey, err)
+	}
+	for _, refKey := range refKeys {
+		if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(a.bucket), Key: aws.String(refKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
+		}); err != nil {
+			return fmt.Errorf("artifacts: s3 archive run %q: write object reference %q: %w", rec.RunID, refKey, err)
+		}
+	}
+	// The index carries everything in its key, so its body is empty. Publishing
+	// it last makes all prior durable records visible to cleanup first.
+	if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(a.bucket), Key: aws.String(indexKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
 	}); err != nil {
 		return fmt.Errorf("artifacts: s3 archive run %q: write index %q: %w", rec.RunID, indexKey, err)
 	}
@@ -162,7 +192,9 @@ func (a *S3RunArchive) MarkArtifactsCleaned(ctx context.Context, runID string, d
 	return nil
 }
 
-// DeleteRunArtifacts removes the log and commit objects owned by one run.
+// DeleteRunArtifacts removes run-owned logs, commits, and reference markers.
+// Removing a marker only drops this run's claim: shared workload objects stay
+// untouched until DeleteUnreferencedObjects observes that no claims remain.
 func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error) {
 	logPrefix, err := RunLogPrefix(runID)
 	if err != nil {
@@ -189,7 +221,95 @@ func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID 
 			}
 		}
 	}
+	listKey, err := RunObjectListKey(runID)
+	if err != nil {
+		return result, err
+	}
+	listObject, err := a.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(listKey)})
+	if isNotFound(err) {
+		// Archives written before reference accounting have no list. Falling
+		// back to a namespace-wide scan would make every cleanup unbounded.
+		return result, nil
+	}
+	if err != nil {
+		return result, fmt.Errorf("artifacts: s3 cleanup run %q read object list: %w", runID, err)
+	}
+	var objectIDs []string
+	decodeErr := json.NewDecoder(listObject.Body).Decode(&objectIDs)
+	closeErr := listObject.Body.Close()
+	if decodeErr != nil {
+		return result, fmt.Errorf("artifacts: s3 cleanup run %q decode object list: %w", runID, decodeErr)
+	}
+	if closeErr != nil {
+		return result, fmt.Errorf("artifacts: s3 cleanup run %q close object list: %w", runID, closeErr)
+	}
+	for _, objectID := range objectIDs {
+		key, err := RunObjectRefKey(objectID, runID)
+		if err != nil {
+			return result, err
+		}
+		if _, err := a.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(key)}); err != nil {
+			return result, fmt.Errorf("artifacts: s3 cleanup run %q delete object reference %q: %w", runID, key, err)
+		}
+	}
+	if _, err := a.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(listKey)}); err != nil {
+		return result, fmt.Errorf("artifacts: s3 cleanup run %q delete object list %q: %w", runID, listKey, err)
+	}
+
 	return result, nil
+}
+
+// DeleteUnreferencedObjects removes S3 content-addressed objects only after
+// their reference prefix is empty. Missing objects make retries a no-op.
+func (a *S3RunArchive) DeleteUnreferencedObjects(ctx context.Context, objectIDs []string) (CleanupResult, error) {
+	var result CleanupResult
+	var errs []error
+	seen := make(map[string]struct{}, len(objectIDs))
+	for _, objectID := range objectIDs {
+		if _, duplicate := seen[objectID]; duplicate {
+			continue
+		}
+		seen[objectID] = struct{}{}
+		_, _, localOK := splitKey(objectID)
+		s3Segments, s3OK := splitS3ObjectKey(objectID)
+		if !localOK && !s3OK {
+			errs = append(errs, fmt.Errorf("object %q: not a canonical object id", objectID))
+			continue
+		}
+		prefix := runObjectRefPrefix(objectID)
+		page, err := a.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(a.bucket), Prefix: aws.String(prefix), MaxKeys: aws.Int32(1),
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("object %q: list references: %w", objectID, err))
+			continue
+		}
+		if len(page.Contents) != 0 {
+			continue
+		}
+		head, err := a.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(objectID)})
+		if isNotFound(err) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("object %q: stat: %w", objectID, err))
+			continue
+		}
+		if _, err := a.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(objectID)}); err != nil {
+			errs = append(errs, fmt.Errorf("object %q: delete: %w", objectID, err))
+			continue
+		}
+		result.ObjectsDeleted++
+		result.BytesReclaimed += aws.ToInt64(head.ContentLength)
+		if s3OK && !isCleanS3Component(s3Segments[len(s3Segments)-2]) {
+			manifestKey := s3ManifestKey(objectID)
+			if _, err := a.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(manifestKey)}); err != nil {
+				errs = append(errs, fmt.Errorf("object %q: delete name manifest: %w", objectID, err))
+				continue
+			}
+		}
+	}
+	return result, errors.Join(errs...)
 }
 
 // ListRuns answers a query with one prefix scan. Nothing but keys crosses the

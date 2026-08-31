@@ -198,6 +198,7 @@ func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events [
 		Status:    archiveStatus(run.GetStatus()),
 		Time:      RunIndexTime(run),
 		JSONL:     body,
+		ObjectIDs: runObjectIDs(run),
 	}
 	if record.Status == "" {
 		return fmt.Errorf("engine: archive run %q: status is unspecified", run.GetId())
@@ -206,6 +207,25 @@ func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events [
 		return fmt.Errorf("engine: archive run %q: %w", run.GetId(), err)
 	}
 	return nil
+}
+
+func runObjectIDs(run *orkstackv1.Run) []string {
+	var ids []string
+	appendRef := func(ref *orkstackv1.ArtifactRef) {
+		if objectID, ok := artifacts.ObjectIDFromURI(ref.GetUri()); ok {
+			ids = append(ids, objectID)
+		}
+	}
+	for _, taskRun := range run.GetTaskRuns() {
+		for _, ref := range taskRun.GetArtifacts() {
+			appendRef(ref)
+		}
+		for _, ref := range taskRun.GetSystemArtifacts() {
+			appendRef(ref)
+		}
+		appendRef(taskRun.GetValuesRef())
+	}
+	return ids
 }
 
 // Load returns the archived run and its events.

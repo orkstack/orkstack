@@ -182,6 +182,10 @@ func (n noBodies) DeleteRunArtifacts(ctx context.Context, namespace, runID strin
 	return n.inner.DeleteRunArtifacts(ctx, namespace, runID)
 }
 
+func (n noBodies) DeleteUnreferencedObjects(ctx context.Context, objectIDs []string) (artifacts.CleanupResult, error) {
+	return n.inner.DeleteUnreferencedObjects(ctx, objectIDs)
+}
+
 func (n noBodies) MarkArtifactsCleaned(ctx context.Context, runID string, at time.Time) error {
 	return n.inner.MarkArtifactsCleaned(ctx, runID, at)
 }

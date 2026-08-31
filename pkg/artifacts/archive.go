@@ -2,7 +2,9 @@ package artifacts
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path"
@@ -39,6 +41,12 @@ const (
 	RunIndexNamespace = "metadata/index/runs"
 	// RunCleanupNamespace prefixes immutable cleanup-state sidecars.
 	RunCleanupNamespace = "metadata/cleanup/runs"
+	// RunObjectRefNamespace prefixes reference markers connecting archived runs
+	// to the physical content-addressed objects their completions reference.
+	RunObjectRefNamespace = "metadata/index/objects"
+	// RunObjectListNamespace prefixes the directly addressable object-id list
+	// used to remove one run's markers without scanning every stored reference.
+	RunObjectListNamespace = "metadata/index/run-objects"
 	// RunArchiveSuffix is the body's extension: JSON Lines.
 	RunArchiveSuffix = ".jsonl"
 	// RunArchiveContentType is the media type recorded for a body.
@@ -82,6 +90,11 @@ type RunRecord struct {
 	// Time orders the run in the index. The engine passes the run's creation
 	// time, so a date range means "runs created in this window".
 	Time time.Time
+	// ObjectIDs are the physical content-addressed object keys referenced by
+	// this completion. The whole key is the identity, not only its terminal
+	// digest: equal bytes stored under different logical names are distinct
+	// physical objects.
+	ObjectIDs []string
 	// JSONL is the archive body: one JSON record per line.
 	JSONL []byte
 }
@@ -127,6 +140,10 @@ type RunQuery struct {
 	Since time.Time
 	// Until is the exclusive upper bound on RunRecord.Time.
 	Until time.Time
+	// CursorTime and CursorRunID resume a newest-first query after one entry.
+	// They are a pair because several runs may have the same nanosecond stamp.
+	CursorTime  time.Time
+	CursorRunID string
 	// Limit caps the number of entries returned, newest first. 0 means all.
 	Limit int
 }
@@ -146,8 +163,13 @@ type RunArchive interface {
 	// CleanupState returns the immutable cleanup sidecar. A run that has not
 	// been cleaned returns an error matching ErrNotFound.
 	CleanupState(ctx context.Context, runID string) (RunCleanupState, error)
-	// DeleteRunArtifacts removes only run-scoped logs and completion commits.
+	// DeleteRunArtifacts removes run-scoped logs, completion commits, and this
+	// run's object-reference markers. It never deletes shared workload objects;
+	// callers use DeleteUnreferencedObjects after all run references are gone.
 	DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error)
+	// DeleteUnreferencedObjects removes physical objects with no run-reference
+	// markers. Missing objects are already clean and do not count as deletions.
+	DeleteUnreferencedObjects(ctx context.Context, objectIDs []string) (CleanupResult, error)
 	// MarkArtifactsCleaned writes cleanup state once. Re-marking is a no-op.
 	MarkArtifactsCleaned(ctx context.Context, runID string, temporalDeletedAt time.Time) error
 }
@@ -181,6 +203,63 @@ func RunCommitPrefix(namespace, runID string) (string, error) {
 		return "", fmt.Errorf("artifacts: run commit prefix: run id: %w", err)
 	}
 	return path.Join(CommitPrefix, namespaceSegment, runSegment) + "/", nil
+}
+
+// RunObjectRefKey renders the zero-byte marker connecting one physical object
+// key to one archived run. The object segment is the SHA-256 of the complete
+// object id: this index is a refcount, not a directory of object ids, and an
+// object key is unbounded while one storage-key component is not. The fixed
+// digest keeps every canonical object addressable regardless of name length.
+func RunObjectRefKey(objectID, runID string) (string, error) {
+	runSegment, err := encodeArchiveSegment(runID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run object reference key: run id: %w", err)
+	}
+	return path.Join(RunObjectRefNamespace, objectRefDigest(objectID), runSegment), nil
+}
+
+// ParseRunObjectRefRunID returns the exact run id carried by a reference
+// marker. The object segment is deliberately one-way and is validated as a
+// lowercase SHA-256 rather than presented as a decodable object id.
+func ParseRunObjectRefRunID(key string) (runID string, ok bool) {
+	prefix := RunObjectRefNamespace + "/"
+	parts := strings.Split(key, "/")
+	if len(parts) != 5 || !strings.HasPrefix(key, prefix) || !digestPattern.MatchString(parts[3]) {
+		return "", false
+	}
+	runID, ok = decodeArchiveSegment(parts[4])
+	return runID, ok
+}
+
+func runObjectRefPrefix(objectID string) string {
+	return path.Join(RunObjectRefNamespace, objectRefDigest(objectID)) + "/"
+}
+
+func objectRefDigest(objectID string) string {
+	digest := sha256.Sum256([]byte(objectID))
+	return hex.EncodeToString(digest[:])
+}
+
+// RunObjectListKey renders the JSON object-id list owned by one archived run.
+func RunObjectListKey(runID string) (string, error) {
+	runSegment, err := encodeArchiveSegment(runID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run object list key: run id: %w", err)
+	}
+	return path.Join(RunObjectListNamespace, runSegment) + ".json", nil
+}
+
+func dedupeObjectIDs(objectIDs []string) []string {
+	unique := make([]string, 0, len(objectIDs))
+	seen := make(map[string]struct{}, len(objectIDs))
+	for _, objectID := range objectIDs {
+		if _, duplicate := seen[objectID]; duplicate {
+			continue
+		}
+		seen[objectID] = struct{}{}
+		unique = append(unique, objectID)
+	}
+	return unique
 }
 
 // RunArchiveKey renders the body key for a run id.
@@ -319,6 +398,11 @@ func (q RunQuery) Matches(entry RunIndexEntry) bool {
 	}
 	if !q.Until.IsZero() && !entry.Time.Before(q.Until) {
 		return false
+	}
+	if !q.CursorTime.IsZero() {
+		if entry.Time.After(q.CursorTime) || (entry.Time.Equal(q.CursorTime) && entry.RunID >= q.CursorRunID) {
+			return false
+		}
 	}
 	return true
 }
