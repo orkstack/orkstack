@@ -701,32 +701,113 @@ func TestTemporalRunReader_PushesTheStatusPredicateIntoVisibility(t *testing.T) 
 	}
 }
 
-// An unfiltered list, and the two statuses no visibility record can decode to,
-// push nothing down. STATUS_PENDING and STATUS_SKIPPED are archive-only
-// outcomes; narrowing visibility on them would state something about the index
-// that is not true of it.
-func TestTemporalRunReader_PushesNoStatusPredicateItCannotMean(t *testing.T) {
+// An unfiltered list pushes nothing down and still walks: STATUS_UNSPECIFIED
+// means "no status filter", not "a filter visibility cannot express".
+func TestTemporalRunReader_PushesNoStatusPredicateForAnUnfilteredList(t *testing.T) {
+	client := &endlessReadClient{}
+	if _, err := newRunReader(client, converter.GetDefaultDataConverter()).
+		ListRuns(context.Background(), RunQuery{
+			OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_UNSPECIFIED, Limit: 1,
+		}); err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(client.queries) == 0 {
+		t.Fatal("an unfiltered list issued no visibility query")
+	}
+	if strings.Contains(client.queries[0], "ExecutionStatus") {
+		t.Fatalf("visibility query = %q, want no ExecutionStatus predicate",
+			client.queries[0])
+	}
+}
+
+// TestTemporalRunReader_AsksNothingForAStatusVisibilityCannotDecode pins the
+// difference between "found nothing" and "asked nothing".
+//
+// statusFromExecution can only ever return SUCCEEDED, FAILED, CANCELED or
+// RUNNING, so matchesRunQuery rejects EVERY record a PENDING or SKIPPED walk
+// reads. The old behaviour spent the whole page budget proving that — 20
+// visibility round-trips per call, and the UI's Versions tab asks on every
+// render. The answer is provably empty before the first request, so the walk
+// is skipped rather than performed.
+//
+// The call count is the assertion, deliberately: an empty result alone cannot
+// tell a skipped walk from an exhausted one.
+func TestTemporalRunReader_AsksNothingForAStatusVisibilityCannotDecode(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		status orkstackv1.Status
 	}{
-		{"unspecified means no filter", orkstackv1.Status_STATUS_UNSPECIFIED},
 		{"pending is never decoded from visibility", orkstackv1.Status_STATUS_PENDING},
 		{"skipped is never decoded from visibility", orkstackv1.Status_STATUS_SKIPPED},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &endlessReadClient{}
-			if _, err := newRunReader(client, converter.GetDefaultDataConverter()).
+			runs, err := newRunReader(client, converter.GetDefaultDataConverter()).
 				ListRuns(context.Background(), RunQuery{
 					OrkflowName: "hello-ork", Status: tc.status, Limit: 1,
-				}); err != nil {
+				})
+			if err != nil {
 				t.Fatalf("ListRuns: %v", err)
 			}
-			if strings.Contains(client.queries[0], "ExecutionStatus") {
-				t.Fatalf("visibility query = %q, want no ExecutionStatus predicate",
-					client.queries[0])
+			if len(runs) != 0 {
+				t.Fatalf("returned %d runs, want none: visibility cannot decode %s",
+					len(runs), tc.status)
+			}
+			if client.calls != 0 {
+				t.Fatalf("issued %d visibility calls, want 0: the answer is provably "+
+					"empty before the first request, so asking is pure cost",
+					client.calls)
 			}
 		})
+	}
+}
+
+// The exhaustive walk must take the same shortcut. An empty answer that is
+// provably COMPLETE is not the short answer the exhaustive error guards
+// against, so the deletion-safety caller may not be handed a failure for a
+// question visibility was never going to answer.
+func TestTemporalRunReader_ExhaustiveAlsoAsksNothingForAnImpossibleStatus(t *testing.T) {
+	client := &endlessReadClient{}
+	runs, err := newRunReader(client, converter.GetDefaultDataConverter()).
+		ListRuns(context.Background(), RunQuery{
+			Namespace: "payments", OrkflowName: "hello-ork",
+			Status: orkstackv1.Status_STATUS_PENDING, Exhaustive: true,
+		})
+	if err != nil {
+		t.Fatalf("exhaustive ListRuns: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("returned %d runs, want none", len(runs))
+	}
+	if client.calls != 0 {
+		t.Fatalf("issued %d visibility calls, want 0", client.calls)
+	}
+}
+
+// TestReaderStatuses_TracksStatusFromExecution is the anti-drift guard for the
+// shortcut. The skipped set is the COMPLEMENT of what statusFromExecution can
+// return, so it is derived from that function here rather than restated:
+// iterating the SDK's own enum means a status added by an upgrade fails this
+// test instead of quietly making a reachable status unaskable.
+func TestReaderStatuses_TracksStatusFromExecution(t *testing.T) {
+	for value := range enumspb.WorkflowExecutionStatus_name {
+		decoded := statusFromExecution(enumspb.WorkflowExecutionStatus(value))
+		if !readerDecodableStatuses[decoded] {
+			t.Errorf("statusFromExecution(%s) = %s, but the reader treats %s as a "+
+				"status it can never decode and skips the walk for it",
+				enumspb.WorkflowExecutionStatus(value), decoded, decoded)
+		}
+	}
+	// The two archive-only outcomes must stay outside the decodable set, or
+	// the shortcut silently stops applying and the wasted walk returns.
+	for _, status := range []orkstackv1.Status{
+		orkstackv1.Status_STATUS_PENDING,
+		orkstackv1.Status_STATUS_SKIPPED,
+	} {
+		if readerDecodableStatuses[status] {
+			t.Errorf("%s is marked decodable from visibility, but no Temporal "+
+				"execution status maps onto it", status)
+		}
 	}
 }
 

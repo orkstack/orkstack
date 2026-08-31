@@ -361,6 +361,63 @@ func TestListRuns_AnswersForRunsThisReplicaNeverSaw(t *testing.T) {
 	}
 }
 
+// TestListRuns_ArchiveStillAnswersAStatusVisibilityCannotDecode is the guard on
+// the reader's impossible-status shortcut.
+//
+// TemporalRunReader skips the visibility walk entirely for STATUS_PENDING and
+// STATUS_SKIPPED, because statusFromExecution can never decode a record into
+// either, so the walk was 20 round-trips proving a foregone conclusion. Those
+// statuses are real on the wire all the same — the ARCHIVE stores the status it
+// was given, and a PENDING run lives there.
+//
+// So the shortcut is only safe while ListRuns keeps merging the archive half
+// independently of what the reader returned. A shortcut written one layer up,
+// in this handler instead of the reader, would make PENDING runs vanish from
+// the wire; this test is what fails in that case.
+func TestListRuns_ArchiveStillAnswersAStatusVisibilityCannotDecode(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	archive := newArchiver(t)
+	pending := &orkstackv1.Run{
+		Id:          "ork-archived-pending-1",
+		OrkflowName: "deploy",
+		Status:      orkstackv1.Status_STATUS_PENDING,
+		CreatedAt:   timestamppb.New(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)),
+	}
+	if err := archive.Archive(ctx, pending, nil); err != nil {
+		t.Fatalf("archive the pending run: %v", err)
+	}
+
+	// The reader holds a RUNNING run of the same orkflow and nothing pending,
+	// which is exactly what the real reader can hold: visibility decodes only
+	// SUCCEEDED, FAILED, CANCELED and RUNNING.
+	f := newReaderFixtureWith(t, &fakeReader{runs: map[string]*orkstackv1.Run{
+		"ork-live-1": {
+			Id:          "ork-live-1",
+			OrkflowName: "deploy",
+			Status:      orkstackv1.Status_STATUS_RUNNING,
+			CreatedAt:   timestamppb.New(time.Date(2026, 8, 30, 13, 0, 0, 0, time.UTC)),
+		},
+	}}, func(cfg *api.Config) { cfg.Archive = archive })
+
+	listed, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
+		OrkflowName: "deploy",
+		Status:      orkstackv1.Status_STATUS_PENDING,
+	}))
+	if err != nil {
+		t.Fatalf("ListRuns(status=PENDING): %v", err)
+	}
+	ids := make([]string, 0, len(listed.Msg.GetRuns()))
+	for _, run := range listed.Msg.GetRuns() {
+		ids = append(ids, run.GetId())
+	}
+	if len(ids) != 1 || ids[0] != pending.GetId() {
+		t.Fatalf("ListRuns(status=PENDING) returned %v, want [%s]; the reader's shortcut "+
+			"must not take the archive's answer with it", ids, pending.GetId())
+	}
+}
+
 // TestListRuns_StaysBoundedAndNeverAsksForAnExhaustiveWalk pins what a WIRE
 // list may cost.
 //

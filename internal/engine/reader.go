@@ -268,6 +268,21 @@ func runListBudget(q RunQuery, exhaustive bool) (limit, batch, pages int) {
 // caller cannot tell from a complete one is the defect this paragraph exists
 // to close.
 func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orkstackv1.Run, error) {
+	// A status no execution decodes to is answered without asking.
+	// matchesRunQuery would reject every record the walk read, so the result is
+	// empty however far it went — the round-trips are the only real thing about
+	// it, and the UI's Versions tab spends a whole page budget on one of these
+	// per render.
+	//
+	// This returns BEFORE the exhaustive branches on purpose. Their error exists
+	// to stop a SHORT answer being mistaken for a complete one; an answer that is
+	// provably empty is complete, so failing here would refuse a question
+	// visibility was never going to answer. The archive half, which stores the
+	// status it was given, still answers PENDING and SKIPPED.
+	if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && !readerDecodableStatuses[q.Status] {
+		return nil, nil
+	}
+
 	query, scoped := r.listQuery(q)
 	// A safety-sensitive exhaustive walk must either reach the end or fail.
 	// The same fail-closed walk is required when the namespace could not be
@@ -368,6 +383,22 @@ var terminalExecutionStatuses = []enumspb.WorkflowExecutionStatus{
 	enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED,
 	enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
 }
+
+// readerDecodableStatuses is every OrkStack status a Temporal visibility record
+// can decode to.
+//
+// It is DERIVED from statusFromExecution rather than written out, so it cannot
+// drift from it: a status a later SDK adds lands here through that function's
+// default arm, in the same move that makes it RUNNING everywhere else. The
+// complement — STATUS_PENDING and STATUS_SKIPPED — is what no execution maps
+// onto, and asking visibility for one of those is answered without a request.
+var readerDecodableStatuses = func() map[orkstackv1.Status]bool {
+	decodable := make(map[orkstackv1.Status]bool, len(enumspb.WorkflowExecutionStatus_name))
+	for value := range enumspb.WorkflowExecutionStatus_name {
+		decodable[statusFromExecution(enumspb.WorkflowExecutionStatus(value))] = true
+	}
+	return decodable
+}()
 
 // executionStatusPredicate is the visibility predicate narrowing a listing to
 // the executions statusFromExecution maps onto want, and whether there is one
