@@ -12,6 +12,14 @@
 > as one vocabulary. The measurements, the decision and the dates are
 > untouched.
 
+> **M11.9 note.** This record predates the object store's reference
+> accounting. Archived runs now record which physical content-addressed
+> objects their completion references, so an object can be reclaimed once no
+> archived run claims it. That mechanism, its key shapes, and why the cleanup
+> worker still does not reclaim `objects/` automatically are documented in
+> [DEPLOY.md](DEPLOY.md#object-reference-accounting), not here. The decision,
+> measurements, and dates below are untouched.
+
 ---
 
 ## 1. Decision

@@ -457,10 +457,60 @@ iteration. Repeating a successful pass is a no-op because the immutable
 `artifacts_cleaned` sidecar records when Temporal deletion was observed.
 
 The cleaner deliberately does **not** remove workload artifacts under
-`objects/`. Those keys are content-addressed by logical name and digest, not
-by run id, so two runs can reference the same object. Safe reclamation needs
-reference accounting that the archive does not have; deleting by the
-producing run would corrupt the other run's committed result.
+`objects/`. Those keys are content-addressed by logical name and digest, not by
+run id, so two runs can reference the same object and deleting by the producing
+run would corrupt the other run's committed result.
+
+#### Object reference accounting
+
+The archive does now record which physical objects each run's completion
+references, so safe reclamation is possible; what remains deferred is having
+the cleaner perform it automatically. Archiving a run writes two pieces of
+bookkeeping beside the run body:
+
+```text
+metadata/index/objects/{sha256(object-id)}/{encoded-run-id}   zero bytes
+metadata/index/run-objects/{encoded-run-id}.json              this run's object ids
+```
+
+The marker key is the reference itself — an object with no keys under its
+prefix is referenced by no archived run — so counting references is a prefix
+scan that reads no bodies, exactly like the run index. The per-run list is what
+makes releasing a run's claims cost one read plus one delete per referenced
+object, instead of a scan of every marker in the bucket.
+
+Two details in those key shapes are load-bearing:
+
+- **The object identity is the whole content-addressed key, not the bare
+  digest.** Equal bytes stored under two different logical names are two
+  distinct stored objects, and refcounting on the digest alone would let one
+  run's cleanup delete the other's object.
+- **The marker's object segment is a SHA-256 *of* the object id, not the id.**
+  An object key embeds a base64 logical name, so it easily exceeds the
+  200-byte limit on one archive key segment; hashing it to fixed-width hex
+  means no artifact name can make a run unarchivable.
+
+`DeleteRunArtifacts` releases only the calling run's markers and its list. It
+never touches `objects/`. `DeleteUnreferencedObjects` deletes a physical object
+only when that object's marker prefix is empty, and treats an object that is
+already gone as a no-op rather than an error, so a concurrent cleaner, an
+operator, or a lifecycle rule racing the same object cannot turn cleanup red or
+inflate its reclaimed-bytes count.
+
+**Automatic `objects/` reclamation is still deferred.** The mechanism ships and
+is covered by tests against live object storage, but the cleanup worker does
+not call `DeleteUnreferencedObjects`: reference accounting only exists for runs
+archived by a build that has it. A run archived earlier has no per-run list, so
+it contributes no reference markers, and an object it alone referenced would
+look unreferenced. Bucket lifecycle policy therefore remains the operational
+answer for `objects/` growth until an archive-wide backfill exists.
+
+A note on what "bounded scan" buys. Each cleanup query is capped at
+`ORK_CLEANUP_BATCH_SIZE * 2` entries and the worker holds one page at a time,
+so worker memory is proportional to a page rather than to the archive. It does
+not bound the number of queries: cleanup state is not a dimension of the
+immutable run index, so an iteration whose eligible runs are already cleaned
+still pages through them to reach older work.
 
 **Bucket lifecycle rules are the independent retention policy.** Cleanup is
 off by default, so a deployment that has not set `ORK_CLEANUP_ENABLED=true`
