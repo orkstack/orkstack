@@ -409,3 +409,30 @@ func runIDsOf(runs []*orkstackv1.Run) []string {
 	}
 	return out
 }
+
+func TestRunArchiver_IndexesEveryCanonicalTaskObjectReference(t *testing.T) {
+	archiver, _, dir := newArchiveFixture(t)
+	created := at(t, "2026-08-14T09:30:15Z")
+	run := sampleRun(t, "ork-object-refs", orkstackv1.Status_STATUS_SUCCEEDED, created)
+	digest := strings.Repeat("a", 64)
+	objectIDs := []string{
+		"objects/n-YXJ0aWZhY3Q/" + digest,
+		"objects/n-c3Rkb3V0/" + digest,
+		"objects/n-dmFsdWVz/" + digest,
+	}
+	run.TaskRuns[0].Artifacts = []*orkstackv1.ArtifactRef{{Uri: "file:///tmp/root/" + objectIDs[0]}}
+	run.TaskRuns[0].SystemArtifacts = []*orkstackv1.ArtifactRef{{Uri: "s3://bucket/" + objectIDs[1]}, {Uri: "s3://bucket/not-an-object"}}
+	run.TaskRuns[0].ValuesRef = &orkstackv1.ArtifactRef{Uri: "file:///tmp/root/" + objectIDs[2]}
+	if err := archiver.Archive(context.Background(), run, nil); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	for _, objectID := range objectIDs {
+		key, err := artifacts.RunObjectRefKey(objectID, run.Id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(key))); err != nil {
+			t.Fatalf("reference marker %q: %v", key, err)
+		}
+	}
+}

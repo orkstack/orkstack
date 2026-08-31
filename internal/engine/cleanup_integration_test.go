@@ -361,3 +361,214 @@ func containsArchivedRun(entries []artifacts.RunIndexEntry, runID string) bool {
 	}
 	return false
 }
+
+// cancelAfterFirstDelete wraps a real archive and trips a cancel func the
+// moment one run's storage has been durably deleted, so cancellation lands
+// between two runs instead of inside one. Everything else is the real S3
+// archive: only the timing of the cancellation is synthetic.
+type cancelAfterFirstDelete struct {
+	artifacts.RunArchive
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (a *cancelAfterFirstDelete) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (artifacts.CleanupResult, error) {
+	result, err := a.RunArchive.DeleteRunArtifacts(ctx, namespace, runID)
+	if err == nil {
+		a.once.Do(a.cancel)
+	}
+	return result, err
+}
+
+// TestIntegration_CleanupCancellationLeavesConsistentState is the chaos
+// scenario the goal calls "Orker crash simulation during cleanup (Temporal
+// cancellation)". Stating precisely what is simulated: cleanup is a background
+// worker, NOT a Temporal activity, so there is no activity cancellation token
+// to deliver. What is exercised is a cancelled in-flight cleanup iteration —
+// the shape an engine shutdown or a killed replica produces — running against a
+// live Temporal namespace and a private live MinIO bucket.
+//
+// The assertions are deliberately narrow: cleanup stops promptly, surfaces a
+// cancellation-shaped error, leaves every run it touched either fully cleaned
+// or wholly untouched, and converges on restart. Restarting is resumption, not
+// cross-restart idempotence, and nothing here claims more.
+func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
+	address := temporalAddress()
+	if conn, err := net.DialTimeout("tcp", address, 2*time.Second); err != nil {
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
+	} else {
+		_ = conn.Close()
+	}
+
+	ctx, cancelAll := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelAll()
+	cfg, raw := privateCleanupBucket(t, ctx)
+
+	namespace := fmt.Sprintf("%s-cancel-%d-%d", baseNamespace(), os.Getpid(), time.Now().UnixNano()%1_000_000_000)
+	orkNamespace := "cleanup-cancel"
+	temporalClient := cleanupTemporalClient(t, ctx, address, namespace)
+	reader := engine.NewTemporalRunReader(temporalClient)
+
+	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3RunArchive: %v", err)
+	}
+	objectStore, err := artifacts.New(cfg)
+	if err != nil {
+		t.Fatalf("artifact store: %v", err)
+	}
+
+	// Four archived runs, each owning a real object and a real log chunk, all
+	// well past retention. None ever ran in Temporal, so the live
+	// WorkflowExists calls legitimately report them gone.
+	archived := time.Now().UTC().Add(-200 * time.Hour)
+	var runIDs []string
+	objectIDs := map[string]string{}
+	for i := range 4 {
+		runID := fmt.Sprintf("ork-cancel-%d-%d", time.Now().UnixNano(), i)
+		ref, err := objectStore.Put(ctx, fmt.Sprintf("payload-%d", i),
+			bytes.NewBufferString(fmt.Sprintf("payload %d", i)), artifacts.PutOptions{})
+		if err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		objectID, ok := artifacts.ObjectIDFromURI(ref.URI)
+		if !ok {
+			t.Fatalf("ObjectIDFromURI(%q) failed", ref.URI)
+		}
+		objectIDs[runID] = objectID
+		logKey, err := artifacts.RunLogPrefix(runID)
+		if err != nil {
+			t.Fatalf("RunLogPrefix: %v", err)
+		}
+		if _, err := raw.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(cfg.S3Bucket), Key: aws.String(logKey + "task/1/chunk"),
+			Body: bytes.NewReader([]byte("log bytes")),
+		}); err != nil {
+			t.Fatalf("seed log chunk: %v", err)
+		}
+		if err := runArchive.PutRun(ctx, artifacts.RunRecord{
+			RunID: runID, Namespace: orkNamespace, Orkflow: "cleanup-cancel", Status: "succeeded",
+			Time: archived.Add(time.Duration(i) * time.Minute), ObjectIDs: []string{objectID},
+			JSONL: []byte(runID + "\n"),
+		}); err != nil {
+			t.Fatalf("PutRun(%s): %v", runID, err)
+		}
+		runIDs = append(runIDs, runID)
+	}
+	// Prove the seeded storage exists, so no assertion below can pass vacuously.
+	for _, runID := range runIDs {
+		logs, _ := runStorageKeys(t, ctx, raw, cfg.S3Bucket, orkNamespace, runID)
+		if len(logs) == 0 {
+			t.Fatalf("run %q has no seeded log storage", runID)
+		}
+	}
+
+	iterationCtx, cancelIteration := context.WithCancel(ctx)
+	defer cancelIteration()
+	wrapped := &cancelAfterFirstDelete{RunArchive: runArchive, cancel: cancelIteration}
+	config := archivecleanup.CleanupConfig{
+		Enabled: true, TemporalNamespace: namespace, Interval: time.Hour,
+		RetentionBuffer: 24 * time.Hour, BatchSize: len(runIDs),
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	stats, err := archivecleanup.NewCleaner(config, wrapped, reader, logger).RunOnce(iterationCtx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled iteration error = %v, want context.Canceled", err)
+	}
+	// Prompt stop means exactly one run was TOUCHED, not that one run reached
+	// every step. Cancellation can land between the delete and the sidecar
+	// write, which is the interesting case, so it is classified rather than
+	// assumed.
+	if stats.RunsScanned != 1 {
+		t.Fatalf("cancellation did not stop promptly: %+v", stats)
+	}
+
+	// Every run is in one of exactly two states, and neither is corrupt:
+	// fully cleaned (storage gone, sidecar written), or wholly untouched.
+	// A third shape — storage gone with no sidecar — is the cancelled-between-
+	// steps case: recoverable, because deletion is idempotent and the next pass
+	// re-runs it and writes the sidecar. What must never appear is a run whose
+	// archive body or index row is damaged.
+	cleaned, untouched, interrupted := 0, 0, 0
+	for _, runID := range runIDs {
+		state, stateErr := runArchive.CleanupState(ctx, runID)
+		logs, commits := runStorageKeys(t, ctx, raw, cfg.S3Bucket, orkNamespace, runID)
+		marked := stateErr == nil && state.ArtifactsCleaned
+		if stateErr != nil && !errors.Is(stateErr, artifacts.ErrNotFound) {
+			t.Fatalf("run %q cleanup state = %+v, %v", runID, state, stateErr)
+		}
+		switch {
+		case marked && len(logs) == 0 && len(commits) == 0:
+			cleaned++
+		case !marked && len(logs) != 0:
+			untouched++
+		case !marked && len(logs) == 0:
+			interrupted++
+		default:
+			t.Fatalf("run %q is corrupt: marked=%v logs=%v commits=%v", runID, marked, logs, commits)
+		}
+		if _, err := runArchive.GetRun(ctx, runID); err != nil {
+			t.Fatalf("archive body for %q lost: %v", runID, err)
+		}
+		if !containsArchivedRun(mustListRuns(t, ctx, runArchive, orkNamespace), runID) {
+			t.Fatalf("archive index row for %q lost", runID)
+		}
+	}
+	if cleaned+interrupted != 1 || untouched != len(runIDs)-1 {
+		t.Fatalf("inconsistent partial state: cleaned=%d interrupted=%d untouched=%d",
+			cleaned, interrupted, untouched)
+	}
+
+	// Restart on a fresh context and converge: cleaned runs are skipped through
+	// their sidecars, the interrupted remainder is retried and completes.
+	resumed, err := archivecleanup.NewCleaner(config, runArchive, reader, logger).RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("resumed iteration: %v", err)
+	}
+	// The interrupted run is cleaned AGAIN — its deletion never got a sidecar,
+	// so the next pass repeats an idempotent delete and then marks it. That is
+	// the goal's "not idempotent across restarts, but not corrupted", asserted
+	// literally rather than glossed as a clean skip.
+	if resumed.RunsCleaned != untouched+interrupted {
+		t.Fatalf("resume cleaned %d, want %d (untouched=%d interrupted=%d)",
+			resumed.RunsCleaned, untouched+interrupted, untouched, interrupted)
+	}
+	for _, runID := range runIDs {
+		state, err := runArchive.CleanupState(ctx, runID)
+		if err != nil || !state.ArtifactsCleaned {
+			t.Fatalf("run %q did not converge: %+v, %v", runID, state, err)
+		}
+		assertNoRunStorage(t, ctx, raw, cfg.S3Bucket, orkNamespace, runID)
+	}
+
+	// Reference accounting survived the interruption: every run's markers are
+	// gone, so each object is now reclaimable exactly once.
+	var allObjects []string
+	for _, runID := range runIDs {
+		allObjects = append(allObjects, objectIDs[runID])
+	}
+	reclaimed, err := runArchive.DeleteUnreferencedObjects(ctx, allObjects)
+	if err != nil || reclaimed.ObjectsDeleted != len(runIDs) {
+		t.Fatalf("reclaim after resume = %+v, %v", reclaimed, err)
+	}
+	again, err := runArchive.DeleteUnreferencedObjects(ctx, allObjects)
+	if err != nil || again != (artifacts.CleanupResult{}) {
+		t.Fatalf("repeat reclaim = %+v, %v", again, err)
+	}
+
+	t.Logf("EVIDENCE cancellation_shaped_error=true stopped_promptly=true runs_scanned_before_cancel=%d "+
+		"partial_state_consistent=true corrupt_runs=0 archive_bodies_present=true archive_index_present=true "+
+		"resumed_and_converged=true reference_markers_released=true objects_reclaimed=%d repeat_reclaim_no_op=true "+
+		"cleaned=%d interrupted_recoverable=%d untouched=%d",
+		stats.RunsScanned, reclaimed.ObjectsDeleted, cleaned, interrupted, untouched)
+}
+
+func mustListRuns(t *testing.T, ctx context.Context, archive artifacts.RunArchive, namespace string) []artifacts.RunIndexEntry {
+	t.Helper()
+	entries, err := archive.ListRuns(ctx, artifacts.RunQuery{Namespace: namespace})
+	if err != nil {
+		t.Fatalf("ListRuns(%q): %v", namespace, err)
+	}
+	return entries
+}

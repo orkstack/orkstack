@@ -10,6 +10,7 @@
 package artifacts_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -53,10 +54,16 @@ func cleanupArchivedRun(t *testing.T, cfg artifacts.Config, runID string) {
 		if err != nil {
 			t.Fatalf("RunArchiveKey: %v", err)
 		}
-		keys := []string{body}
-		for _, key := range listKeys(t, ctx, client, cfg.S3Bucket, artifacts.RunIndexNamespace+"/") {
-			if strings.HasSuffix(key, "/"+runID) {
-				keys = append(keys, key)
+		list, err := artifacts.RunObjectListKey(runID)
+		if err != nil {
+			t.Fatalf("RunObjectListKey: %v", err)
+		}
+		keys := []string{body, list}
+		for _, prefix := range []string{artifacts.RunIndexNamespace + "/", artifacts.RunObjectRefNamespace + "/"} {
+			for _, key := range listKeys(t, ctx, client, cfg.S3Bucket, prefix) {
+				if strings.HasSuffix(key, "/"+runID) {
+					keys = append(keys, key)
+				}
 			}
 		}
 		for _, key := range keys {
@@ -292,4 +299,125 @@ func TestS3RunArchive_PrefixScanFiltersByOrkflowStatusAndDateRange(t *testing.T)
 			t.Fatalf("index object %q is %d bytes, want 0: the key is the record", key, size)
 		}
 	}
+}
+
+func TestS3RunArchive_DeletesObjectOnlyAfterLastReference(t *testing.T) {
+	archive, cfg := newS3RunArchive(t)
+	ctx := context.Background()
+	store, err := artifacts.NewS3Store(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3Store: %v", err)
+	}
+	shared, err := store.Put(ctx, "shared-"+uniqueToken(t), bytes.NewBufferString("shared bytes"), artifacts.PutOptions{
+		Metadata: artifacts.Provenance{Orkflow: "cleanup", RunID: archiveTestRun(t, "-producer"), TaskID: "task"}.Metadata(nil),
+	})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Delete(context.Background(), shared.URI) })
+	objectID, ok := artifacts.ObjectIDFromURI(shared.URI)
+	if !ok {
+		t.Fatalf("ObjectIDFromURI(%q) failed", shared.URI)
+	}
+	// Assert the object is really there before any cleanup runs, so a survival
+	// assertion cannot pass vacuously against an empty or shared dev bucket.
+	if _, err := store.Stat(ctx, shared.URI); err != nil {
+		t.Fatalf("shared object absent before cleanup: %v", err)
+	}
+	run1 := archiveTestRun(t, "-ref-1")
+	run2 := archiveTestRun(t, "-ref-2")
+	cleanupArchivedRun(t, cfg, run1)
+	cleanupArchivedRun(t, cfg, run2)
+	for i, runID := range []string{run1, run2} {
+		if err := archive.PutRun(ctx, artifacts.RunRecord{RunID: runID, Namespace: "default", Orkflow: "cleanup", Status: "succeeded", Time: time.Now().UTC().Add(time.Duration(i) * time.Second), ObjectIDs: []string{objectID}, JSONL: []byte(runID + "\n")}); err != nil {
+			t.Fatalf("PutRun(%s): %v", runID, err)
+		}
+	}
+	if _, err := archive.DeleteRunArtifacts(ctx, "default", run1); err != nil {
+		t.Fatalf("DeleteRunArtifacts(first): %v", err)
+	}
+	result, err := archive.DeleteUnreferencedObjects(ctx, []string{objectID})
+	if err != nil || result.ObjectsDeleted != 0 {
+		t.Fatalf("shared result = %+v, %v", result, err)
+	}
+	if _, err := store.Stat(ctx, shared.URI); err != nil {
+		t.Fatalf("shared object disappeared: %v", err)
+	}
+	if _, err := archive.DeleteRunArtifacts(ctx, "default", run2); err != nil {
+		t.Fatalf("DeleteRunArtifacts(last): %v", err)
+	}
+	result, err = archive.DeleteUnreferencedObjects(ctx, []string{objectID, objectID})
+	if err != nil || result.ObjectsDeleted != 1 || result.BytesReclaimed != shared.SizeBytes {
+		t.Fatalf("last-reference result = %+v, %v", result, err)
+	}
+	result, err = archive.DeleteUnreferencedObjects(ctx, []string{objectID})
+	if err != nil || result != (artifacts.CleanupResult{}) {
+		t.Fatalf("idempotent result = %+v, %v", result, err)
+	}
+	for _, runID := range []string{run1, run2} {
+		if _, err := archive.GetRun(ctx, runID); err != nil {
+			t.Fatalf("archived body %s disappeared: %v", runID, err)
+		}
+	}
+	t.Logf("EVIDENCE s3_shared_object_present_before_cleanup=true shared_survived_first_run=true "+
+		"deleted_after_last_reference=true bytes_reclaimed=%d repeat_pass_no_op=true archive_bodies_present=true",
+		shared.SizeBytes)
+}
+
+// TestS3RunArchive_ObjectDeletedMidScanIsIdempotent is the live half of the
+// mid-scan race: the reference index says the object is unreclaimed and the
+// bytes vanish before the delete reaches MinIO. Recovery must be silent and
+// repeatable, and a still-referenced object whose bytes vanished must not be
+// counted as reclaimed either.
+func TestS3RunArchive_ObjectDeletedMidScanIsIdempotent(t *testing.T) {
+	archive, cfg := newS3RunArchive(t)
+	ctx := context.Background()
+	store, err := artifacts.NewS3Store(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3Store: %v", err)
+	}
+	raced, err := store.Put(ctx, "raced-"+uniqueToken(t), bytes.NewBufferString("raced bytes"), artifacts.PutOptions{})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Delete(context.Background(), raced.URI) })
+	objectID, ok := artifacts.ObjectIDFromURI(raced.URI)
+	if !ok {
+		t.Fatalf("ObjectIDFromURI(%q) failed", raced.URI)
+	}
+	if _, err := store.Stat(ctx, raced.URI); err != nil {
+		t.Fatalf("object absent before the race: %v", err)
+	}
+
+	runID := archiveTestRun(t, "-raced")
+	cleanupArchivedRun(t, cfg, runID)
+	if err := archive.PutRun(ctx, artifacts.RunRecord{RunID: runID, Namespace: "default", Orkflow: "cleanup",
+		Status: "succeeded", Time: time.Now().UTC(), ObjectIDs: []string{objectID}, JSONL: []byte(runID + "\n")}); err != nil {
+		t.Fatalf("PutRun: %v", err)
+	}
+
+	// Still referenced, bytes already gone: a no-op, not an error, not a count.
+	if err := store.Delete(ctx, raced.URI); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	result, err := archive.DeleteUnreferencedObjects(ctx, []string{objectID})
+	if err != nil || result != (artifacts.CleanupResult{}) {
+		t.Fatalf("referenced-but-missing = %+v, %v", result, err)
+	}
+
+	// Unreferenced and already gone: still a no-op, and stable across passes.
+	if _, err := archive.DeleteRunArtifacts(ctx, "default", runID); err != nil {
+		t.Fatalf("DeleteRunArtifacts: %v", err)
+	}
+	for pass := range 2 {
+		result, err = archive.DeleteUnreferencedObjects(ctx, []string{objectID, objectID})
+		if err != nil || result != (artifacts.CleanupResult{}) {
+			t.Fatalf("recovery pass %d = %+v, %v", pass, result, err)
+		}
+	}
+	if _, err := archive.GetRun(ctx, runID); err != nil {
+		t.Fatalf("archived body disappeared: %v", err)
+	}
+	t.Logf("EVIDENCE s3_midscan_referenced_missing_noop=true s3_midscan_unreferenced_missing_noop=true " +
+		"s3_midscan_repeat_pass_no_op=true s3_midscan_archive_body_present=true")
 }

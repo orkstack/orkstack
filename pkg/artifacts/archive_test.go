@@ -523,3 +523,21 @@ func TestNewRunArchive_SelectsBackendByConfig(t *testing.T) {
 		t.Fatalf("run archive backends = %v, want [local s3]", backends)
 	}
 }
+
+func TestRunObjectRefKey_CarriesHashedObjectAndExactRun(t *testing.T) {
+	objectID := "objects/n-YXdrd2FyZC8uLi8gbmFtZQ/" + "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	runID := "run/with/awkward bytes"
+	key, err := artifacts.RunObjectRefKey(objectID, runID)
+	if err != nil {
+		t.Fatalf("RunObjectRefKey: %v", err)
+	}
+	gotRunID, ok := artifacts.ParseRunObjectRefRunID(key)
+	if !ok || gotRunID != runID {
+		t.Fatalf("ParseRunObjectRefRunID(%q) = %q, %v", key, gotRunID, ok)
+	}
+	for _, foreign := range []string{"metadata/index/runs/x", key + "/extra", artifacts.RunObjectRefNamespace + "/bad"} {
+		if _, ok := artifacts.ParseRunObjectRefRunID(foreign); ok {
+			t.Fatalf("ParseRunObjectRefRunID(%q) accepted a foreign key", foreign)
+		}
+	}
+}
