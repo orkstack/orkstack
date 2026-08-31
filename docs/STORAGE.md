@@ -13,12 +13,45 @@
 > untouched.
 
 > **M11.9 note.** This record predates the object store's reference
-> accounting. Archived runs now record which physical content-addressed
-> objects their completion references, so an object can be reclaimed once no
-> archived run claims it. That mechanism, its key shapes, and why the cleanup
-> worker still does not reclaim `objects/` automatically are documented in
-> [DEPLOY.md](DEPLOY.md#object-reference-accounting), not here. The decision,
-> measurements, and dates below are untouched.
+> accounting, which is summarised here because it changes what the object
+> store can safely reclaim. An archived run now records which physical
+> content-addressed objects its completion references. Archiving writes two
+> pieces of bookkeeping beside the run body: a zero-byte marker
+> `metadata/index/objects/{sha256(object-id)}/{encoded-run-id}` for every
+> object the run references, and
+> `metadata/index/run-objects/{encoded-run-id}.json` listing that run's object
+> ids. The marker key *is* the reference, so asking whether an object is still
+> claimed is a prefix scan that reads no bodies, in the same spirit as the run
+> index this record proposes; the per-run list is what makes releasing one
+> run's claims cost a read and a delete per referenced object rather than a
+> scan of every marker in the bucket.
+>
+> Two choices in those key shapes are load-bearing. The object identity is the
+> whole content-addressed key rather than its terminal digest, because equal
+> bytes stored under two different logical names are two distinct stored
+> objects; refcounting on the digest alone would let one run's cleanup destroy
+> another run's committed result. And the marker's object segment is a SHA-256
+> *of* the object id rather than the id itself, because an object key embeds a
+> base64 logical name and so easily exceeds the 200-byte limit on a single
+> archive key segment — hashing it to fixed-width hex is what stops a long
+> artifact name from making a run unarchivable.
+>
+> `DeleteUnreferencedObjects` therefore deletes a physical object only when
+> that object's marker prefix is empty, and treats an object that is already
+> gone as a no-op rather than an error, so an operator, a bucket lifecycle
+> rule, or a second cleaner racing the same object cannot fail the pass.
+>
+> Reclaiming `objects/` automatically is nevertheless still deferred: the
+> mechanism ships and is proven against live object storage, but the cleanup
+> worker does not call it. Reference accounting exists only for runs archived
+> by a build that has it, so a run archived earlier carries no per-run list and
+> contributes no markers, and an object that only such a run referenced would
+> look unreferenced and be deleted while it is still needed. Until an
+> archive-wide backfill exists, bucket lifecycle policy remains the operational
+> answer for `objects/` growth.
+> [DEPLOY.md](DEPLOY.md#object-reference-accounting) carries the operational
+> detail and the `ORK_CLEANUP_*` tuning. The decision, measurements, and dates
+> below are untouched.
 
 ---
 
