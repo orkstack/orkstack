@@ -163,7 +163,10 @@ type RunQuery struct {
 	// StartAfterKey is the exclusive index-key cursor for a KeyOrder walk. It
 	// is ignored unless KeyOrder is set.
 	StartAfterKey string
-	// Limit caps the number of entries returned, newest first. 0 means all.
+	// Limit caps the number of entries returned. 0 means all. By default it
+	// truncates the newest-first result after the scan, so it bounds the
+	// answer rather than the work; under KeyOrder it bounds the page the walk
+	// collects, which is what lets the backend stop early.
 	Limit int
 }
 
@@ -177,7 +180,9 @@ type RunArchive interface {
 	// GetRun returns the JSONL body archived for runID. A run that was never
 	// archived returns an error matching ErrNotFound.
 	GetRun(ctx context.Context, runID string) ([]byte, error)
-	// ListRuns scans the index and returns matching entries, newest first.
+	// ListRuns scans the index and returns matching entries, newest first. A
+	// query that sets KeyOrder instead returns one resumable page in
+	// index-key order, so an implementation must honour both orderings.
 	ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntry, error)
 	// CleanupState returns the immutable cleanup sidecar. A run that has not
 	// been cleaned returns an error matching ErrNotFound.
