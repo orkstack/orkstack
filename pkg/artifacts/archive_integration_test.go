@@ -521,3 +521,131 @@ func TestS3RunArchive_MarkerWritesDoNotScaleSerially(t *testing.T) {
 	}
 	t.Logf("EVIDENCE s3_marker_write_scaling %s", strings.Join(evidence, " | "))
 }
+
+// The key-order page contract is what makes one cleanup iteration enumerate the
+// run index once instead of once per page, and S3 is the backend it was
+// reasoned about — its StartAfter is the cursor. Every other test of that
+// contract drives the local archive, and the cleanup worker's own tests drive a
+// fake that MODELS StartAfter rather than exercising it, so this is the only
+// place the production listing semantics are pinned.
+//
+// The corpus is scoped to one generated namespace so the counts are exact in a
+// shared dev bucket, and the ordering hazard lives in the segments beneath it:
+// sibling orkflows where one name is a prefix of another and where '-' (0x2D)
+// sorts BELOW the '/' (0x2F) that separates segments, so directory-name order
+// and key order disagree. Timestamps repeat five ways, so ties are the norm.
+func TestS3RunArchive_KeyOrderPagingIsOnePassOverTheIndex(t *testing.T) {
+	archive, cfg := newS3RunArchive(t)
+	ctx := context.Background()
+	client := newRawS3Client(t, cfg)
+
+	namespace := "keyorder-" + uniqueToken(t)
+	orkflows := []string{"f", "f-g", "f-", "fg", "nightly", "nightly-build"}
+	statuses := []string{"succeeded", "failed", "canceled"}
+	base := time.Date(2026, 4, 5, 6, 7, 8, 0, time.UTC)
+	const runs = 60
+
+	t.Cleanup(func() {
+		deleteByPrefix(t, ctx, client, cfg.S3Bucket,
+			artifacts.RunIndexNamespace+"/"+namespace+"/")
+	})
+	for i := 0; i < runs; i++ {
+		runID := archiveTestRun(t, fmt.Sprintf("-ko-%02d", i))
+		cleanupArchivedRun(t, cfg, runID)
+		if err := archive.PutRun(ctx, artifacts.RunRecord{
+			RunID:     runID,
+			Namespace: namespace,
+			Orkflow:   orkflows[i%len(orkflows)],
+			Status:    statuses[i%len(statuses)],
+			// i/5 makes five runs share every stamp.
+			Time:  base.Add(time.Duration(i/5) * time.Minute),
+			JSONL: []byte(runID + "\n"),
+		}); err != nil {
+			t.Fatalf("PutRun %q: %v", runID, err)
+		}
+	}
+
+	scoped := artifacts.RunQuery{Namespace: namespace, KeyOrder: true}
+	walk := func(pageSize int) (ids []string, keysEnumerated int64) {
+		before := archive.IndexKeysScanned()
+		q := scoped
+		q.Limit = pageSize
+		for {
+			page, err := archive.ListRuns(ctx, q)
+			if err != nil {
+				t.Fatalf("ListRuns(page=%d, after=%q): %v", pageSize, q.StartAfterKey, err)
+			}
+			if len(page) == 0 {
+				break
+			}
+			for _, entry := range page {
+				ids = append(ids, entry.RunID)
+			}
+			if pageSize <= 0 || len(page) < pageSize {
+				break
+			}
+			cursor, err := artifacts.RunIndexKeyForEntry(page[len(page)-1])
+			if err != nil {
+				t.Fatalf("RunIndexKeyForEntry: %v", err)
+			}
+			q.StartAfterKey = cursor
+		}
+		return ids, archive.IndexKeysScanned() - before
+	}
+
+	// A single unpaged key-order walk is the reference every paged traversal
+	// must reproduce exactly — same runs, same order, each one once.
+	want, wantKeys := walk(0)
+	if len(want) != runs {
+		t.Fatalf("unpaged key-order walk returned %d runs, want %d", len(want), runs)
+	}
+	seen := make(map[string]int, len(want))
+	for _, id := range want {
+		seen[id]++
+	}
+	if len(seen) != runs {
+		t.Fatalf("unpaged walk returned %d distinct runs, want %d", len(seen), runs)
+	}
+
+	var evidence []string
+	for _, pageSize := range []int{1, 3, 7, 60, 61} {
+		got, keys := walk(pageSize)
+		if len(got) != len(want) {
+			t.Fatalf("page=%d visited %d runs, want %d", pageSize, len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("page=%d diverged at %d: got %q, want %q", pageSize, i, got[i], want[i])
+			}
+		}
+		// The whole point of the key-order page: cost is one enumeration per
+		// traversal, not one per page. A page size that changed this number
+		// would mean the backend re-reads the index to answer each page.
+		if keys != wantKeys {
+			t.Errorf("page=%d enumerated %d index keys, want %d — paging is re-scanning",
+				pageSize, keys, wantKeys)
+		}
+		evidence = append(evidence, fmt.Sprintf("page=%d:keys=%d", pageSize, keys))
+	}
+
+	// The contrast the key-order mode exists to remove: the default newest-first
+	// query cannot stop early, because the stamp is the fourth key segment, so
+	// every page re-enumerates the whole scope.
+	const defaultPages, defaultPage = 5, 12
+	beforeDefault := archive.IndexKeysScanned()
+	for i := 0; i < defaultPages; i++ {
+		if _, err := archive.ListRuns(ctx, artifacts.RunQuery{
+			Namespace: namespace, Limit: defaultPage,
+		}); err != nil {
+			t.Fatalf("default-order ListRuns: %v", err)
+		}
+	}
+	newestFirstKeys := archive.IndexKeysScanned() - beforeDefault
+	if newestFirstKeys <= wantKeys {
+		t.Errorf("default-order paging enumerated %d keys over %d pages, expected it to exceed "+
+			"the %d of one key-order traversal", newestFirstKeys, defaultPages, wantKeys)
+	}
+
+	t.Logf("EVIDENCE s3_keyorder runs=%d unpaged_keys=%d %s newest_first_pages=%d newest_first_keys=%d",
+		runs, wantKeys, strings.Join(evidence, " "), defaultPages, newestFirstKeys)
+}

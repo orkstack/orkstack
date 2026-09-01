@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"sort"
 	"testing"
 	"time"
@@ -615,6 +616,67 @@ func TestRunOnce_CancellationStopsPromptlyAndLeavesStateConsistent(t *testing.T)
 		if store.deletes[entry.RunID] != 1 || !store.states[entry.RunID].ArtifactsCleaned {
 			t.Fatalf("run %q did not converge: deletes=%d state=%+v",
 				entry.RunID, store.deletes[entry.RunID], store.states[entry.RunID])
+		}
+	}
+}
+
+// The page limit is twice the batch size, and the batch size comes from
+// ORK_CLEANUP_BATCH_SIZE, which envPositiveInt only checks parses positive. A
+// value above MaxInt/2 doubled into a NEGATIVE limit, and a non-positive limit
+// means "no limit" to every check downstream — so the wrap silently turned a
+// bounded page into an unbounded one, and reached make() with a negative
+// capacity, panicking inside the cleanup goroutine.
+func TestDoubleSaturating_NeverWrapsNegative(t *testing.T) {
+	for _, tc := range []struct {
+		in   int
+		want int
+	}{
+		{in: 1, want: 2},
+		{in: 100, want: 200},
+		{in: math.MaxInt/2 - 1, want: (math.MaxInt/2 - 1) * 2},
+		{in: math.MaxInt / 2, want: (math.MaxInt / 2) * 2},
+		{in: math.MaxInt/2 + 1, want: math.MaxInt},
+		{in: 4611686018427387905, want: math.MaxInt},
+		{in: math.MaxInt, want: math.MaxInt},
+	} {
+		got := doubleSaturating(tc.in)
+		if got != tc.want {
+			t.Errorf("doubleSaturating(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+		if got <= 0 {
+			t.Errorf("doubleSaturating(%d) = %d, which every limit check reads as unbounded", tc.in, got)
+		}
+	}
+}
+
+// The same property through the worker: an absurd batch size must still
+// produce a positive page limit rather than a negative one, and the iteration
+// must complete rather than panic.
+func TestRunOnce_AbsurdBatchSizeStillAsksForABoundedPage(t *testing.T) {
+	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	archived := now.Add(-(72*time.Hour + 48*time.Hour))
+	store := newFakeArchive(
+		artifacts.RunIndexEntry{RunID: "run-0", Namespace: "default", Orkflow: "flow", Status: "succeeded", Time: archived},
+	)
+	cleaner := NewCleaner(CleanupConfig{
+		TemporalNamespace: "temporal-runtime", Interval: time.Hour,
+		RetentionBuffer: 24 * time.Hour, BatchSize: 4611686018427387905,
+	}, store, &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}},
+		slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time { return now })
+
+	stats, err := cleaner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if stats.RunsCleaned != 1 {
+		t.Fatalf("RunOnce = %+v, want the one expired run cleaned", stats)
+	}
+	if len(store.queries) == 0 {
+		t.Fatal("no query recorded")
+	}
+	for _, q := range store.queries {
+		if q.Limit <= 0 {
+			t.Errorf("query limit = %d, want a positive bound: the doubling wrapped", q.Limit)
 		}
 	}
 }
