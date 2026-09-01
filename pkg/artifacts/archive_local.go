@@ -188,9 +188,10 @@ func (a *LocalRunArchive) MarkArtifactsCleaned(ctx context.Context, runID string
 
 }
 
-// DeleteRunArtifacts removes run-owned logs, commits, and reference markers.
-// Removing a marker only drops this run's claim: shared workload objects stay
-// untouched until DeleteUnreferencedObjects observes that no claims remain.
+// DeleteRunArtifacts removes run-owned logs, commits, snapshots, and reference
+// markers. Removing a marker only drops this run's claim: shared workload
+// objects stay untouched until DeleteUnreferencedObjects observes that no
+// claims remain.
 func (a *LocalRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error) {
 	logPrefix, err := RunLogPrefix(runID)
 	if err != nil {
@@ -200,8 +201,12 @@ func (a *LocalRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, run
 	if err != nil {
 		return CleanupResult{}, err
 	}
+	snapshotPrefix, err := RunSnapshotPrefix(namespace, runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
 	var result CleanupResult
-	for _, prefix := range []string{logPrefix, commitPrefix} {
+	for _, prefix := range []string{logPrefix, commitPrefix, snapshotPrefix} {
 		err := fs.WalkDir(a.root.FS(), strings.TrimSuffix(prefix, "/"), func(_ string, d fs.DirEntry, walkErr error) error {
 			if errors.Is(walkErr, fs.ErrNotExist) {
 				return fs.SkipAll

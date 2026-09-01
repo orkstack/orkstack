@@ -1,10 +1,8 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 
 	"google.golang.org/protobuf/proto"
 
@@ -17,57 +15,22 @@ import (
 const ActivityWriteSnapshot = "WriteSnapshot"
 
 // SnapshotStore persists immutable run snapshots and retrieves them by URI.
+// It is the engine's seam over artifacts.RunSnapshotStore: production wiring
+// passes artifacts.NewRunSnapshotStore's store, which files every snapshot as
+// a platform record under the metadata/snapshots prefix — beside commits,
+// logs and run bodies, and deliberately outside the workload artifact
+// namespace — so run-scoped cleanup can reclaim it by prefix.
 type SnapshotStore interface {
 	WriteSnapshot(ctx context.Context, namespace, runID string, sequence int64, data []byte) (string, error)
 	ReadSnapshot(ctx context.Context, uri string) ([]byte, error)
 }
 
-// NewSnapshotStore returns a snapshot store backed by the artifact store.
-func NewSnapshotStore(store artifacts.Store) SnapshotStore {
-	return &snapshotStore{store: store}
-}
-
-type snapshotStore struct {
-	store artifacts.Store
-}
-
-func (s *snapshotStore) WriteSnapshot(
-	ctx context.Context,
-	namespace, runID string,
-	sequence int64,
-	data []byte,
-) (string, error) {
-	if namespace == "" {
-		namespace = artifacts.DefaultNamespace
-	}
-	if runID == "" || len(data) == 0 {
-		return "", fmt.Errorf("engine: write snapshot: run id and data are required")
-	}
-	key := fmt.Sprintf("snapshots/%s/%s/%d.pb", namespace, runID, sequence)
-	ref, err := s.store.Put(ctx, key, bytes.NewReader(data), artifacts.PutOptions{
-		ContentType: "application/x-protobuf",
-	})
-	if err != nil {
-		return "", fmt.Errorf("engine: write snapshot %s: %w", key, err)
-	}
-	return ref.URI, nil
-}
-
-func (s *snapshotStore) ReadSnapshot(ctx context.Context, uri string) ([]byte, error) {
-	if uri == "" {
-		return nil, fmt.Errorf("engine: read snapshot: uri is required")
-	}
-	reader, err := s.store.Get(ctx, uri)
-	if err != nil {
-		return nil, fmt.Errorf("engine: read snapshot %s: %w", uri, err)
-	}
-	defer reader.Close()
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("engine: read snapshot %s: %w", uri, err)
-	}
-	return data, nil
-}
+// compile-time checks: the artifacts platform-record stores are what
+// production hands to this seam.
+var (
+	_ SnapshotStore = (*artifacts.LocalRunSnapshotStore)(nil)
+	_ SnapshotStore = (*artifacts.S3RunSnapshotStore)(nil)
+)
 
 // SnapshotActivities owns the local activity that durably externalizes a run
 // snapshot. Its result is only a URI, so the local-activity marker stays small.

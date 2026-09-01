@@ -28,9 +28,11 @@ func TestLocalRunArchive_CleanupSidecarAndRunScopedDeletion(t *testing.T) {
 
 	logPrefix, _ := RunLogPrefix(rec.RunID)
 	commitPrefix, _ := RunCommitPrefix(rec.Namespace, rec.RunID)
+	snapshotPrefix, _ := RunSnapshotPrefix(rec.Namespace, rec.RunID)
 	for name, body := range map[string][]byte{
 		filepath.Join(root, filepath.FromSlash(logPrefix), "task", "attempt", "chunk"):  []byte("logs"),
 		filepath.Join(root, filepath.FromSlash(commitPrefix), "task", CommitObjectName): []byte("commit"),
+		filepath.Join(root, filepath.FromSlash(snapshotPrefix), "7.pb"):                 []byte("snapshot"),
 		filepath.Join(root, "objects", "shared"):                                        []byte("shared"),
 	} {
 		if err := os.MkdirAll(filepath.Dir(name), 0o750); err != nil {
@@ -45,8 +47,11 @@ func TestLocalRunArchive_CleanupSidecarAndRunScopedDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.ObjectsDeleted != 2 || result.BytesReclaimed != int64(len("logs")+len("commit")) {
+	if result.ObjectsDeleted != 3 || result.BytesReclaimed != int64(len("logs")+len("commit")+len("snapshot")) {
 		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(snapshotPrefix), "7.pb")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("run snapshot survived cleanup: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "objects", "shared")); err != nil {
 		t.Fatalf("shared object: %v", err)

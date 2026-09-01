@@ -187,9 +187,10 @@ type RunArchive interface {
 	// CleanupState returns the immutable cleanup sidecar. A run that has not
 	// been cleaned returns an error matching ErrNotFound.
 	CleanupState(ctx context.Context, runID string) (RunCleanupState, error)
-	// DeleteRunArtifacts removes run-scoped logs, completion commits, and this
-	// run's object-reference markers. It never deletes shared workload objects;
-	// callers use DeleteUnreferencedObjects after all run references are gone.
+	// DeleteRunArtifacts removes run-scoped logs, completion commits, run
+	// snapshots, and this run's object-reference markers. It never deletes
+	// shared workload objects; callers use DeleteUnreferencedObjects after all
+	// run references are gone.
 	DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error)
 	// DeleteUnreferencedObjects removes physical objects with no run-reference
 	// markers. Missing objects are already clean and do not count as deletions.

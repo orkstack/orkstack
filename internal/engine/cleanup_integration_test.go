@@ -73,7 +73,10 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("artifact store: %v", err)
 	}
-	snapshots := engine.NewSnapshotStore(objectStore)
+	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("snapshot store: %v", err)
+	}
 	reader.WithSnapshotStore(snapshots)
 
 	queue := fmt.Sprintf("ork-cleanup-e2e-%d", time.Now().UnixNano())
@@ -191,8 +194,8 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-	if stats.RunsCleaned != 1 || stats.ObjectsDeleted < 2 {
-		t.Fatalf("cleanup metrics = %+v, want one run and at least log+commit", stats)
+	if stats.RunsCleaned != 1 || stats.ObjectsDeleted < 3 {
+		t.Fatalf("cleanup metrics = %+v, want one run and at least log+commit+snapshot", stats)
 	}
 
 	assertNoRunStorage(t, ctx, raw, cfg.S3Bucket, orkNamespace, goneID)
@@ -223,7 +226,7 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	if _, err := runArchive.GetRun(ctx, goneID); err != nil {
 		t.Fatalf("archive body missing after idempotent pass: %v", err)
 	}
-	t.Logf("EVIDENCE distinct_namespaces=true temporal_history_gone=true logs_gone=true commits_gone=true archive_body_present=true archive_index_present=true cleanup_state=true shared_object_present=true retained_run_untouched=true idempotent=true runs_cleaned=%d objects_deleted=%d bytes_reclaimed=%d",
+	t.Logf("EVIDENCE distinct_namespaces=true temporal_history_gone=true logs_gone=true commits_gone=true snapshots_gone=true archive_body_present=true archive_index_present=true cleanup_state=true shared_object_present=true retained_run_untouched=true idempotent=true runs_cleaned=%d objects_deleted=%d bytes_reclaimed=%d",
 		stats.RunsCleaned, stats.ObjectsDeleted, stats.BytesReclaimed)
 }
 
@@ -319,7 +322,7 @@ func awaitWorkflowGone(t *testing.T, ctx context.Context, reader *engine.Tempora
 	}
 }
 
-func runStorageKeys(t *testing.T, ctx context.Context, raw *s3.Client, bucket, namespace, runID string) (logs, commits []string) {
+func runStorageKeys(t *testing.T, ctx context.Context, raw *s3.Client, bucket, namespace, runID string) (logs, commits, snapshots []string) {
 	t.Helper()
 	logPrefix, err := artifacts.RunLogPrefix(runID)
 	if err != nil {
@@ -328,6 +331,10 @@ func runStorageKeys(t *testing.T, ctx context.Context, raw *s3.Client, bucket, n
 	commitPrefix, err := artifacts.RunCommitPrefix(namespace, runID)
 	if err != nil {
 		t.Fatalf("RunCommitPrefix: %v", err)
+	}
+	snapshotPrefix, err := artifacts.RunSnapshotPrefix(namespace, runID)
+	if err != nil {
+		t.Fatalf("RunSnapshotPrefix: %v", err)
 	}
 	list := func(prefix string) []string {
 		page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix)})
@@ -340,22 +347,24 @@ func runStorageKeys(t *testing.T, ctx context.Context, raw *s3.Client, bucket, n
 		}
 		return out
 	}
-	return list(logPrefix), list(commitPrefix)
+	return list(logPrefix), list(commitPrefix), list(snapshotPrefix)
 }
 
 func assertRunStoragePresent(t *testing.T, ctx context.Context, raw *s3.Client, bucket, namespace, runID string) {
 	t.Helper()
-	logs, commits := runStorageKeys(t, ctx, raw, bucket, namespace, runID)
-	if len(logs) == 0 || len(commits) == 0 {
-		t.Fatalf("run %q storage before cleanup: logs=%v commits=%v; test would be vacuous", runID, logs, commits)
+	logs, commits, snapshots := runStorageKeys(t, ctx, raw, bucket, namespace, runID)
+	if len(logs) == 0 || len(commits) == 0 || len(snapshots) == 0 {
+		t.Fatalf("run %q storage before cleanup: logs=%v commits=%v snapshots=%v; test would be vacuous",
+			runID, logs, commits, snapshots)
 	}
 }
 
 func assertNoRunStorage(t *testing.T, ctx context.Context, raw *s3.Client, bucket, namespace, runID string) {
 	t.Helper()
-	logs, commits := runStorageKeys(t, ctx, raw, bucket, namespace, runID)
-	if len(logs) != 0 || len(commits) != 0 {
-		t.Fatalf("run %q storage after cleanup: logs=%v commits=%v", runID, logs, commits)
+	logs, commits, snapshots := runStorageKeys(t, ctx, raw, bucket, namespace, runID)
+	if len(logs) != 0 || len(commits) != 0 || len(snapshots) != 0 {
+		t.Fatalf("run %q storage after cleanup: logs=%v commits=%v snapshots=%v",
+			runID, logs, commits, snapshots)
 	}
 }
 
@@ -463,7 +472,7 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 	}
 	// Prove the seeded storage exists, so no assertion below can pass vacuously.
 	for _, runID := range runIDs {
-		logs, _ := runStorageKeys(t, ctx, raw, cfg.S3Bucket, orkNamespace, runID)
+		logs, _, _ := runStorageKeys(t, ctx, raw, cfg.S3Bucket, orkNamespace, runID)
 		if len(logs) == 0 {
 			t.Fatalf("run %q has no seeded log storage", runID)
 		}
@@ -499,7 +508,7 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 	cleaned, untouched, interrupted := 0, 0, 0
 	for _, runID := range runIDs {
 		state, stateErr := runArchive.CleanupState(ctx, runID)
-		logs, commits := runStorageKeys(t, ctx, raw, cfg.S3Bucket, orkNamespace, runID)
+		logs, commits, _ := runStorageKeys(t, ctx, raw, cfg.S3Bucket, orkNamespace, runID)
 		marked := stateErr == nil && state.ArtifactsCleaned
 		if stateErr != nil && !errors.Is(stateErr, artifacts.ErrNotFound) {
 			t.Fatalf("run %q cleanup state = %+v, %v", runID, state, stateErr)

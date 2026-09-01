@@ -50,13 +50,11 @@ func boot(t *testing.T, archive *engine.RunArchiver, prefix string, now func() t
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
 	starter := &fakeStarter{}
-	snapshotBackend, err := artifacts.New(artifacts.Config{
-		Backend: artifacts.BackendLocal, LocalDir: t.TempDir(),
-	})
+	snapshotStore, err := artifacts.NewLocalRunSnapshotStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("snapshot artifact store: %v", err)
+		t.Fatalf("snapshot store: %v", err)
 	}
-	snapshotStore := engine.NewSnapshotStore(snapshotBackend)
+	t.Cleanup(func() { _ = snapshotStore.Close() })
 	var counter int
 	svc := api.NewService(api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(),

@@ -70,11 +70,10 @@ func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 		infraAbsent(t, "history measurement requires ORK_ARTIFACT_BACKEND=s3, got %q", cfg.Backend)
 	}
 	requireMinIO(t, cfg)
-	objectStore, err := artifacts.New(cfg)
+	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
 	if err != nil {
-		infraAbsent(t, "open snapshot object store: %v", err)
+		infraAbsent(t, "open snapshot store: %v", err)
 	}
-	snapshots := engine.NewSnapshotStore(objectStore)
 
 	suffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	runQueue := "ork-m11-10-runs-" + suffix
@@ -130,7 +129,7 @@ func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 		if err := c.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
 			t.Fatalf("wait for %d-task run: %v", n, err)
 		}
-		m := measureRunHistory(t, ctx, c, objectStore, snapshots, runID, n)
+		m := measureRunHistory(t, ctx, c, snapshots, runID, n)
 		measurements = append(measurements, m)
 		t.Logf("EVIDENCE tasks=%d after_bytes=%d events=%d max_activity_input_bytes=%d before_bytes=%d ratio=%.4f bytes_per_event=%.2f bytes_per_task=%.2f snapshots=%d binary_snapshot_bytes=%d old_snapshot_payload_bytes=%d uri_payload_bytes=%d first_snapshot_bytes=%d last_snapshot_bytes=%d snapshot_growth_bytes_per_task=%.2f",
 			m.tasks, m.historyBytes, m.historyEvents, m.maxActivityInputBytes,
@@ -177,8 +176,7 @@ func measureRunHistory(
 	t *testing.T,
 	ctx context.Context,
 	c client.Client,
-	objectStore artifacts.Store,
-	snapshots engine.SnapshotStore,
+	snapshots *artifacts.S3RunSnapshotStore,
 	runID string,
 	tasks int,
 ) historyMeasurement {
@@ -248,7 +246,7 @@ func measureRunHistory(
 			t.Fatalf("encode old snapshot payload %q: %v", uri, err)
 		}
 		m.oldSnapshotPayloadBytes += proto.Size(oldPayload)
-		if err := objectStore.Delete(ctx, uri); err != nil {
+		if err := snapshots.DeleteSnapshot(ctx, uri); err != nil {
 			t.Fatalf("delete measured snapshot %q: %v", uri, err)
 		}
 	}

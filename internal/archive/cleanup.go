@@ -1,8 +1,14 @@
 // Package archive reclaims storage that is scoped to one run after Temporal
 // retention has removed that run's workflow execution.
 //
-// Cleanup deliberately removes only metadata/logs/{run-id}/ and
-// metadata/commits/{namespace}/{run-id}/. Workload artifacts under objects/ are
+// Cleanup deliberately removes only metadata/logs/{run-id}/,
+// metadata/commits/{namespace}/{run-id}/ and
+// metadata/snapshots/{namespace}/{run-id}/. The snapshot prefix matters as
+// much as the other two: every lifecycle emit externalizes one run snapshot,
+// and once Temporal retention deletes the history naming those objects,
+// nothing else can ever reach them — reads for a retired run fall through to
+// the archive body, never to snapshots.
+// Workload artifacts under objects/ are
 // content-addressed by logical name and digest, with no run id in the key. The
 // same object can therefore be referenced by another live or retained run;
 // deleting it by a run prefix could destroy that run's committed result.

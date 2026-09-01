@@ -582,11 +582,13 @@ func run(logger *slog.Logger, cfg config) error {
 	archive := engine.NewRunArchiver(archiveStore)
 	logger.Info("run archive ready",
 		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
-	snapshotBackend, err := artifacts.New(archiveConfig)
+	// Run snapshots are a platform record, filed under metadata/snapshots
+	// beside commits, logs and run bodies — never in the workload artifact
+	// namespace — so run-scoped cleanup reclaims them by prefix.
+	snapshots, err := artifacts.NewRunSnapshotStore(archiveConfig)
 	if err != nil {
 		return fmt.Errorf("open snapshot store: %w", err)
 	}
-	snapshots := engine.NewSnapshotStore(snapshotBackend)
 
 	// Task logs: the chunks an Orker wrote while a task ran. They live in the
 	// same bucket, so this engine serves the logs of a run it never started
