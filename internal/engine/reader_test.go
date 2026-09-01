@@ -270,6 +270,116 @@ func TestTemporalRunReader_FetchesOnlyTheLastSnapshotURI(t *testing.T) {
 	}
 }
 
+// uriRunHistory is a run in the externalized shape: every lifecycle event
+// carries a snapshot URI, the run publishes its own terminal event, and the
+// execution closes afterwards when withClose is set.
+func uriRunHistory(t *testing.T, runID string, withClose bool) []*historypb.HistoryEvent {
+	t.Helper()
+	wf := &orkstackv1.Orkflow{Name: "uri-ork", Version: "1.0.0"}
+	history := []*historypb.HistoryEvent{
+		startedEvent(t, runID, wf),
+		publishEventWithURI(t, 2, &orkstackv1.Event{RunId: runID, Sequence: 1,
+			Type:   orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
+			Status: orkstackv1.Status_STATUS_RUNNING}, "memory://first"),
+		publishEventWithURI(t, 3, &orkstackv1.Event{RunId: runID, Sequence: 2,
+			Type:   orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+			Status: orkstackv1.Status_STATUS_SUCCEEDED}, "memory://last"),
+	}
+	if withClose {
+		history = append(history, closedEvent(4, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED,
+			readerEpoch.Add(10*time.Second)))
+	}
+	return history
+}
+
+// TestTemporalRunReader_EventReadsSurviveAnUnreadableSnapshot is the
+// regression for the live-run inversion: the events are complete in Temporal
+// history, so an event read must succeed — and fetch nothing from object
+// storage — even when every referenced snapshot object is gone and even when
+// no snapshot store is wired at all. Before the fix both reads returned
+// "artifact not found"/"snapshot store is not configured", which the API layer
+// translated into CodeNotFound for a run Temporal was actively executing.
+func TestTemporalRunReader_EventReadsSurviveAnUnreadableSnapshot(t *testing.T) {
+	const runID = "ork-evrev-live"
+	for name, history := range map[string][]*historypb.HistoryEvent{
+		"live":   uriRunHistory(t, runID, false),
+		"closed": uriRunHistory(t, runID, true),
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Every snapshot object is missing: reads would fail if attempted.
+			store := &countingSnapshotStore{objects: map[string][]byte{}}
+			reader, _ := readerOver(history, runID)
+			reader.WithSnapshotStore(store)
+
+			events, err := reader.Events(context.Background(), runID, 0)
+			if err != nil {
+				t.Fatalf("Events: %v", err)
+			}
+			if len(events) != 2 || events[1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
+				t.Fatalf("events = %+v, want the 2 recorded events ending in RUN_SUCCEEDED", events)
+			}
+			if store.reads != 0 {
+				t.Fatalf("event read fetched %d snapshots, want 0", store.reads)
+			}
+
+			// No snapshot store at all must read the same.
+			bare, _ := readerOver(history, runID)
+			events, err = bare.Events(context.Background(), runID, 0)
+			if err != nil {
+				t.Fatalf("Events without a snapshot store: %v", err)
+			}
+			if len(events) != 2 {
+				t.Fatalf("events without a snapshot store = %+v, want 2", events)
+			}
+
+			var streamed []*orkstackv1.Event
+			if err := bare.StreamEvents(context.Background(), runID, 0, func(event *orkstackv1.Event) error {
+				streamed = append(streamed, event)
+				return nil
+			}); err != nil {
+				t.Fatalf("StreamEvents: %v", err)
+			}
+			if len(streamed) != 2 {
+				t.Fatalf("streamed = %+v, want 2 events", streamed)
+			}
+		})
+	}
+}
+
+// TestTemporalRunReader_EventReadsDoNotSynthesizeASecondTerminal pins the
+// closeRun decision an event read now makes from history alone: a closed run
+// that published its own terminal event gets no synthetic duplicate, while a
+// terminated run — which published nothing — still gets its synthesized end.
+func TestTemporalRunReader_EventReadsDoNotSynthesizeASecondTerminal(t *testing.T) {
+	const runID = "ork-evrev-close"
+	terminated := []*historypb.HistoryEvent{
+		startedEvent(t, runID, &orkstackv1.Orkflow{Name: "uri-ork", Version: "1.0.0"}),
+		publishEventWithURI(t, 2, &orkstackv1.Event{RunId: runID, Sequence: 1,
+			Type:   orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
+			Status: orkstackv1.Status_STATUS_RUNNING}, "memory://first"),
+		closedEvent(3, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED,
+			readerEpoch.Add(10*time.Second)),
+	}
+	reader, _ := readerOver(terminated, runID)
+	events, err := reader.Events(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatalf("Events(terminated): %v", err)
+	}
+	if len(events) != 2 || events[1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
+		t.Fatalf("terminated events = %+v, want RUN_STARTED then a synthesized RUN_CANCELED", events)
+	}
+
+	closed := uriRunHistory(t, runID, true)
+	reader, _ = readerOver(closed, runID)
+	events, err = reader.Events(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatalf("Events(closed): %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("closed run events = %+v, want exactly the 2 published events", events)
+	}
+}
+
 // TestTemporalRunReader_RebuildsTheOrderedStreamFromHistory is the core claim:
 // the events Temporal recorded when each projection activity was *scheduled*
 // are the run's stream, in order, on any replica.

@@ -226,7 +226,7 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 	if runID == "" {
 		return nil, fmt.Errorf("engine: get run: run id is required")
 	}
-	projection, err := r.scan(ctx, runID, false, 0, nil)
+	projection, err := r.scan(ctx, runID, false, 0, true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -238,12 +238,16 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 
 // Events returns a run's whole event stream after fromSequence, in sequence
 // order, as Temporal recorded it.
+//
+// The stream is answered from history alone: no snapshot object is fetched,
+// so an event read succeeds even when a snapshot is unreadable or no snapshot
+// store is wired at all.
 func (r *TemporalRunReader) Events(
 	ctx context.Context,
 	runID string,
 	fromSequence int64,
 ) ([]*orkstackv1.Event, error) {
-	projection, err := r.scan(ctx, runID, false, fromSequence, nil)
+	projection, err := r.scan(ctx, runID, false, fromSequence, false, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +269,7 @@ func (r *TemporalRunReader) StreamEvents(
 	if send == nil {
 		return fmt.Errorf("engine: stream run %s: no consumer", runID)
 	}
-	_, err := r.scan(ctx, runID, true, fromSequence, send)
+	_, err := r.scan(ctx, runID, true, fromSequence, false, send)
 	return err
 }
 
@@ -506,6 +510,11 @@ type runProjection struct {
 	events         []*orkstackv1.Event
 	snapshotURI    string
 	snapshotLoaded bool
+	// sawTerminal records that the run published its own terminal lifecycle
+	// event. closeRun consults it so an event read can decide "no synthetic
+	// terminal needed" from history alone, without fetching the snapshot the
+	// run projection would need.
+	sawTerminal bool
 }
 
 // scan walks a run's history once and decodes it.
@@ -515,11 +524,20 @@ type runProjection struct {
 // send nil the whole projection is collected, and the walk continues past the
 // terminal event to the execution's closing event, which is the only place a
 // terminated run's outcome is recorded.
+//
+// wantRun says the caller consumes the run projection, and it alone triggers
+// an object-storage fetch of the referenced snapshot. An event read passes
+// false: the events are complete in Temporal history, so a missing snapshot
+// object — or no configured snapshot store at all — must not destroy an
+// answer Temporal already gave. Turning a live run's event read into "not
+// found" because one snapshot object was unreadable is exactly the inversion
+// LookupRun rules out.
 func (r *TemporalRunReader) scan(
 	ctx context.Context,
 	runID string,
 	follow bool,
 	fromSequence int64,
+	wantRun bool,
 	send func(*orkstackv1.Event) error,
 ) (*runProjection, error) {
 	iter := r.client.GetWorkflowHistory(ctx, runID, "", follow,
@@ -563,6 +581,9 @@ func (r *TemporalRunReader) scan(
 			if event == nil {
 				continue
 			}
+			if isTerminalRunEvent(event) {
+				projection.sawTerminal = true
+			}
 			if _, duplicate := seen[event.GetSequence()]; duplicate {
 				continue
 			}
@@ -589,8 +610,10 @@ func (r *TemporalRunReader) scan(
 			continue
 		}
 		if status, cause, closed := closedExecution(historyEvent); closed {
-			if err := r.loadSnapshot(ctx, runID, projection); err != nil {
-				return nil, err
+			if wantRun {
+				if err := r.loadSnapshot(ctx, runID, projection); err != nil {
+					return nil, err
+				}
 			}
 			terminal := r.closeRun(projection, runID, historyEvent, status, cause, lastSequence)
 			if terminal == nil || terminal.GetSequence() <= fromSequence {
@@ -605,8 +628,10 @@ func (r *TemporalRunReader) scan(
 			projection.events = append(projection.events, terminal)
 		}
 	}
-	if err := r.loadSnapshot(ctx, runID, projection); err != nil {
-		return nil, err
+	if wantRun {
+		if err := r.loadSnapshot(ctx, runID, projection); err != nil {
+			return nil, err
+		}
 	}
 	if projection.run == nil && len(projection.events) == 0 {
 		return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
@@ -634,7 +659,10 @@ func (r *TemporalRunReader) closeRun(
 	if projection.run == nil {
 		projection.run = &orkstackv1.Run{Id: runID}
 	}
-	if isTerminal(projection.run.GetStatus()) {
+	// The run announced its own end either on the loaded run projection or —
+	// for an event read that deliberately fetched no snapshot — as a decoded
+	// terminal event. Both mean the closing event adds nothing to synthesize.
+	if projection.sawTerminal || isTerminal(projection.run.GetStatus()) {
 		if projection.run.GetFinishedAt() == nil {
 			projection.run.FinishedAt = closedAt
 		}
