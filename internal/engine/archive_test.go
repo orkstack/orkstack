@@ -205,7 +205,7 @@ func TestPublishEvent_ArchivesTheRunWhenItEnds(t *testing.T) {
 	archiver, store, dir := newArchiveFixture(t)
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
-	activities := engine.NewArchivingEventActivities(bus, runs, archiver)
+	activities, snapshots := eventActivitiesWithSnapshots(engine.NewArchivingEventActivities(bus, runs, archiver))
 
 	created := at(t, "2026-08-14T09:30:15Z")
 	runID := "ork-1-1"
@@ -226,7 +226,7 @@ func TestPublishEvent_ArchivesTheRunWhenItEnds(t *testing.T) {
 	if err := activities.PublishEvent(context.Background(), &orkstackv1.Event{
 		RunId: runID, Type: orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, TaskId: "fetch",
 		Status: orkstackv1.Status_STATUS_SUCCEEDED, Timestamp: timestamppb.New(created.Add(2 * time.Second)),
-	}, running, runID+"#2"); err != nil {
+	}, snapshots.putRun(t, running), runID+"#2"); err != nil {
 		t.Fatalf("PublishEvent(task succeeded): %v", err)
 	}
 	if _, err := store.GetRun(context.Background(), runID); !errors.Is(err, artifacts.ErrNotFound) {
@@ -240,7 +240,7 @@ func TestPublishEvent_ArchivesTheRunWhenItEnds(t *testing.T) {
 		RunId: runID, Type: orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		Status: orkstackv1.Status_STATUS_SUCCEEDED, Message: "run succeeded",
 		Timestamp: timestamppb.New(created.Add(3 * time.Second)),
-	}, finished, runID+"#3"); err != nil {
+	}, snapshots.putRun(t, finished), runID+"#3"); err != nil {
 		t.Fatalf("PublishEvent(run succeeded): %v", err)
 	}
 
@@ -294,7 +294,7 @@ func TestPublishEvent_RepeatedTerminalEventArchivesOnce(t *testing.T) {
 	archiver, store, _ := newArchiveFixture(t)
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
-	activities := engine.NewArchivingEventActivities(bus, runs, archiver)
+	activities, snapshots := eventActivitiesWithSnapshots(engine.NewArchivingEventActivities(bus, runs, archiver))
 
 	created := at(t, "2026-08-14T09:30:15Z")
 	runID := "ork-2-1"
@@ -310,7 +310,7 @@ func TestPublishEvent_RepeatedTerminalEventArchivesOnce(t *testing.T) {
 	finished.CreatedAt = nil
 
 	for attempt := 0; attempt < 3; attempt++ {
-		if err := activities.PublishEvent(context.Background(), terminal, finished, runID+"#1"); err != nil {
+		if err := activities.PublishEvent(context.Background(), terminal, snapshots.putRun(t, finished), runID+"#1"); err != nil {
 			t.Fatalf("PublishEvent attempt %d: %v", attempt+1, err)
 		}
 	}

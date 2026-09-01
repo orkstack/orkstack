@@ -52,8 +52,8 @@ func runEvent(runID string, eventType orkstackv1.EventType, status orkstackv1.St
 
 func TestPublishEvent_AnnouncesRunTransitionsAndIgnoresTaskEvents(t *testing.T) {
 	notifier := &recordingNotifier{}
-	activities := engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).
-		WithRunNotifier(notifier)
+	activities, snapshots := eventActivitiesWithSnapshots(
+		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithRunNotifier(notifier))
 
 	const runID = "ork-1755302400123456789-1"
 	sequence := []struct {
@@ -71,7 +71,7 @@ func TestPublishEvent_AnnouncesRunTransitionsAndIgnoresTaskEvents(t *testing.T) 
 	for i, step := range sequence {
 		run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: step.status}
 		if err := activities.PublishEvent(context.Background(),
-			runEvent(runID, step.eventType, step.status), run, dedupe(runID, i)); err != nil {
+			runEvent(runID, step.eventType, step.status), snapshots.putRun(t, run), dedupe(runID, i)); err != nil {
 			t.Fatalf("PublishEvent %v: %v", step.eventType, err)
 		}
 	}
@@ -100,13 +100,13 @@ func TestPublishEvent_AnnouncesFailureAndCancellationToo(t *testing.T) {
 		{orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED, orkstackv1.Status_STATUS_CANCELED},
 	} {
 		notifier := &recordingNotifier{}
-		activities := engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).
-			WithRunNotifier(notifier)
+		activities, snapshots := eventActivitiesWithSnapshots(
+			engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithRunNotifier(notifier))
 
 		const runID = "ork-1755302400123456789-2"
 		run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: terminal.status}
 		if err := activities.PublishEvent(context.Background(),
-			runEvent(runID, terminal.eventType, terminal.status), run, runID+"#1"); err != nil {
+			runEvent(runID, terminal.eventType, terminal.status), snapshots.putRun(t, run), runID+"#1"); err != nil {
 			t.Fatalf("PublishEvent: %v", err)
 		}
 		if got := notifier.types(); len(got) != 1 || got[0] != terminal.eventType {
@@ -117,8 +117,8 @@ func TestPublishEvent_AnnouncesFailureAndCancellationToo(t *testing.T) {
 
 func TestPublishEvent_AnnouncesATransitionOnceAcrossActivityRetries(t *testing.T) {
 	notifier := &recordingNotifier{}
-	activities := engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).
-		WithRunNotifier(notifier)
+	activities, snapshots := eventActivitiesWithSnapshots(
+		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithRunNotifier(notifier))
 
 	const runID = "ork-1755302400123456789-3"
 	run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED}
@@ -128,7 +128,7 @@ func TestPublishEvent_AnnouncesATransitionOnceAcrossActivityRetries(t *testing.T
 	// The same dedupe key three times: a Temporal activity retry, then a
 	// workflow replay.
 	for range 3 {
-		if err := activities.PublishEvent(context.Background(), event, run, runID+"#7"); err != nil {
+		if err := activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), runID+"#7"); err != nil {
 			t.Fatalf("PublishEvent: %v", err)
 		}
 	}
@@ -153,11 +153,12 @@ func TestPublishEvent_AnnouncesTheMergedRunSnapshot(t *testing.T) {
 	})
 
 	notifier := &recordingNotifier{}
-	activities := engine.NewEventActivities(engine.NewEventBus(), store).WithRunNotifier(notifier)
+	activities, snapshots := eventActivitiesWithSnapshots(
+		engine.NewEventActivities(engine.NewEventBus(), store).WithRunNotifier(notifier))
+	finished := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED}
 	if err := activities.PublishEvent(context.Background(),
 		runEvent(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED),
-		&orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED},
-		runID+"#1"); err != nil {
+		snapshots.putRun(t, finished), runID+"#1"); err != nil {
 		t.Fatalf("PublishEvent: %v", err)
 	}
 
@@ -179,13 +180,13 @@ func TestPublishEvent_AnnouncesTheMergedRunSnapshot(t *testing.T) {
 func TestPublishEvent_ProjectsNormallyWithoutANotifier(t *testing.T) {
 	bus := engine.NewEventBus()
 	store := engine.NewRunStore()
-	activities := engine.NewEventActivities(bus, store)
+	activities, snapshots := eventActivitiesWithSnapshots(engine.NewEventActivities(bus, store))
 
 	const runID = "ork-1755302400123456789-5"
 	run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_SUCCEEDED}
 	if err := activities.PublishEvent(context.Background(),
 		runEvent(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED),
-		run, runID+"#1"); err != nil {
+		snapshots.putRun(t, run), runID+"#1"); err != nil {
 		t.Fatalf("PublishEvent: %v", err)
 	}
 	if events := bus.Events(runID, 0); len(events) != 1 {

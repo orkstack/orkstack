@@ -91,6 +91,11 @@ func startEngine(
 			LocalActivityWorkerOnly:     true,
 		})
 		engine.RegisterWorkflows(runWorker)
+		snapshots := newTestSnapshotStore()
+		runWorker.RegisterActivityWithOptions(
+			engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+			activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+		)
 
 		// Activity-only stub Orker on the shared queue.
 		taskWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{
@@ -117,7 +122,7 @@ func startEngine(
 			DisableWorkflowWorker:       true,
 		})
 		eventWorker.RegisterActivityWithOptions(
-			engine.NewArchivingEventActivities(bus, runs, archive).PublishEvent,
+			engine.NewArchivingEventActivities(bus, runs, archive).WithSnapshotStore(snapshots).PublishEvent,
 			activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 		)
 

@@ -73,6 +73,8 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("artifact store: %v", err)
 	}
+	snapshots := engine.NewSnapshotStore(objectStore)
+	reader.WithSnapshotStore(snapshots)
 
 	queue := fmt.Sprintf("ork-cleanup-e2e-%d", time.Now().UnixNano())
 	bus, runs := engine.NewEventBus(), engine.NewRunStore()
@@ -81,6 +83,10 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		LocalActivityWorkerOnly:     true,
 	})
 	engine.RegisterWorkflows(runWorker)
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
 
 	var seededMu sync.Mutex
 	seeded := make(map[string]artifacts.ArtifactRef)
@@ -126,7 +132,7 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	})
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewArchivingEventActivities(bus, runs, engine.NewRunArchiver(runArchive)).PublishEvent,
+		engine.NewArchivingEventActivities(bus, runs, engine.NewRunArchiver(runArchive)).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	for name, w := range map[string]worker.Worker{"run": runWorker, "task": taskWorker, "event": eventWorker} {

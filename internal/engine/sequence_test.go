@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -35,12 +36,20 @@ func TestRunWorkflow_NumbersItsOwnEvents(t *testing.T) {
 	env.SetTestTimeout(60 * time.Second)
 	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 
-	// The events are captured as the workflow emitted them, before any bus
-	// touches them: this is the history copy, exactly.
+	// The events and URI references are captured as the workflow emitted them,
+	// before any bus touches them: this is the regular-activity history copy.
 	var emitted []*orkstackv1.Event
+	var publishedURIs []string
 	env.RegisterActivityWithOptions(
-		func(_ context.Context, event *orkstackv1.Event, _ *orkstackv1.Run, _ string) error {
+		func(_ context.Context, run *orkstackv1.Run, sequence int64) (string, error) {
+			return fmt.Sprintf("memory://snapshots/%s/%d.pb", run.GetId(), sequence), nil
+		},
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, event *orkstackv1.Event, uri string, _ string) error {
 			emitted = append(emitted, event)
+			publishedURIs = append(publishedURIs, uri)
 			return nil
 		},
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
@@ -60,6 +69,9 @@ func TestRunWorkflow_NumbersItsOwnEvents(t *testing.T) {
 		t.Fatalf("workflow error: %v", err)
 	}
 
+	if len(publishedURIs) != len(emitted) || publishedURIs[0] == "" {
+		t.Fatalf("PublishEvent received URI references %v for %d events", publishedURIs, len(emitted))
+	}
 	if len(emitted) == 0 {
 		t.Fatal("the workflow emitted no events")
 	}
@@ -98,10 +110,14 @@ func TestRunWorkflow_SnapshotCarriesCreatedAt(t *testing.T) {
 
 	var snapshots []*orkstackv1.Run
 	env.RegisterActivityWithOptions(
-		func(_ context.Context, _ *orkstackv1.Event, run *orkstackv1.Run, _ string) error {
+		func(_ context.Context, run *orkstackv1.Run, sequence int64) (string, error) {
 			snapshots = append(snapshots, run)
-			return nil
+			return fmt.Sprintf("memory://snapshots/%s/%d.pb", run.GetId(), sequence), nil
 		},
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	env.RegisterActivityWithOptions(
+		func(context.Context, *orkstackv1.Event, string, string) error { return nil },
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	env.RegisterActivityWithOptions(

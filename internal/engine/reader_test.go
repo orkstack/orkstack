@@ -16,6 +16,7 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -207,6 +208,66 @@ func closedEvent(eventID int64, eventType enumspb.EventType, at time.Time) *hist
 func readerOver(events []*historypb.HistoryEvent, runID string) (*TemporalRunReader, *fakeReadClient) {
 	fake := &fakeReadClient{history: map[string]*fakeHistory{runID: {events: events}}}
 	return newRunReader(fake, converter.GetDefaultDataConverter()), fake
+}
+
+type countingSnapshotStore struct {
+	objects map[string][]byte
+	reads   int
+}
+
+func (s *countingSnapshotStore) WriteSnapshot(context.Context, string, string, int64, []byte) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
+func (s *countingSnapshotStore) ReadSnapshot(_ context.Context, uri string) ([]byte, error) {
+	s.reads++
+	data, ok := s.objects[uri]
+	if !ok {
+		return nil, artifacts.ErrNotFound
+	}
+	return data, nil
+}
+
+func publishEventWithURI(t *testing.T, eventID int64, event *orkstackv1.Event, uri string) *historypb.HistoryEvent {
+	t.Helper()
+	return &historypb.HistoryEvent{
+		EventId:   eventID,
+		EventType: enumspb.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED,
+		Attributes: &historypb.HistoryEvent_ActivityTaskScheduledEventAttributes{
+			ActivityTaskScheduledEventAttributes: &historypb.ActivityTaskScheduledEventAttributes{
+				ActivityType: &commonpb.ActivityType{Name: ActivityPublishEvent},
+				Input:        payloadsOf(t, event, uri, event.GetRunId()+"#"+fmt.Sprint(event.GetSequence())),
+			},
+		},
+	}
+}
+
+func TestTemporalRunReader_FetchesOnlyTheLastSnapshotURI(t *testing.T) {
+	const runID = "ork-uri-snapshot"
+	wf := &orkstackv1.Orkflow{Name: "snapshot-ork", Version: "1.0.0"}
+	first := &orkstackv1.Run{Id: runID, Status: orkstackv1.Status_STATUS_RUNNING}
+	last := &orkstackv1.Run{Id: runID, Status: orkstackv1.Status_STATUS_SUCCEEDED,
+		TaskRuns: []*orkstackv1.TaskRun{{TaskId: "done", Status: orkstackv1.Status_STATUS_SUCCEEDED}}}
+	firstBytes, _ := proto.Marshal(first)
+	lastBytes, _ := proto.Marshal(last)
+	store := &countingSnapshotStore{objects: map[string][]byte{"memory://first": firstBytes, "memory://last": lastBytes}}
+	history := []*historypb.HistoryEvent{
+		startedEvent(t, runID, wf),
+		publishEventWithURI(t, 2, &orkstackv1.Event{RunId: runID, Sequence: 1, Type: orkstackv1.EventType_EVENT_TYPE_RUN_STARTED}, "memory://first"),
+		publishEventWithURI(t, 3, &orkstackv1.Event{RunId: runID, Sequence: 2, Type: orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED}, "memory://last"),
+	}
+	reader, _ := readerOver(history, runID)
+	reader.WithSnapshotStore(store)
+	run, err := reader.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if store.reads != 1 {
+		t.Fatalf("snapshot reads = %d, want exactly 1", store.reads)
+	}
+	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || len(run.GetTaskRuns()) != 1 {
+		t.Fatalf("rebuilt run = %+v, want complete last snapshot", run)
+	}
 }
 
 // TestTemporalRunReader_RebuildsTheOrderedStreamFromHistory is the core claim:

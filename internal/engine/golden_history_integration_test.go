@@ -73,6 +73,11 @@ func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 	// `bin/ork` declares. A copy of it here would let the recorded history
 	// claim Pinned while the binary registered something else.
 	engine.RegisterWorkflows(runWorker)
+	snapshots := newTestSnapshotStore()
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
 
 	orkerWorker := worker.New(temporalClient, orkerQueue, deployment.Apply(worker.Options{
 		DisableRegistrationAliasing: true,
@@ -102,7 +107,7 @@ func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	})
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).PublishEvent,
+		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 

@@ -28,6 +28,7 @@ type archiveHarness struct {
 	runs       *engine.RunStore
 	bus        *engine.EventBus
 	activities *engine.EventActivities
+	snapshots  *engine.SnapshotActivities
 	starter    *fakeStarter
 }
 
@@ -49,6 +50,13 @@ func boot(t *testing.T, archive *engine.RunArchiver, prefix string, now func() t
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
 	starter := &fakeStarter{}
+	snapshotBackend, err := artifacts.New(artifacts.Config{
+		Backend: artifacts.BackendLocal, LocalDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("snapshot artifact store: %v", err)
+	}
+	snapshotStore := engine.NewSnapshotStore(snapshotBackend)
 	var counter int
 	svc := api.NewService(api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(),
@@ -66,7 +74,8 @@ func boot(t *testing.T, archive *engine.RunArchiver, prefix string, now func() t
 		svc:        svc,
 		runs:       runs,
 		bus:        bus,
-		activities: engine.NewArchivingEventActivities(bus, runs, archive),
+		activities: engine.NewArchivingEventActivities(bus, runs, archive).WithSnapshotStore(snapshotStore),
+		snapshots:  engine.NewSnapshotActivities(snapshotStore),
 		starter:    starter,
 	}
 }
@@ -77,6 +86,15 @@ func (h *archiveHarness) apply(t *testing.T, yaml string) {
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: yaml})); err != nil {
 		t.Fatalf("ApplyOrkflow: %v", err)
 	}
+}
+
+func (h *archiveHarness) snapshotURI(t *testing.T, run *orkstackv1.Run) string {
+	t.Helper()
+	uri, err := h.snapshots.WriteSnapshot(context.Background(), run, time.Now().UnixNano())
+	if err != nil {
+		t.Fatalf("WriteSnapshot: %v", err)
+	}
+	return uri
 }
 
 // submit submits a run and plays the workflow's first act: RUN_CREATED, event
@@ -98,7 +116,7 @@ func (h *archiveHarness) submit(t *testing.T, name string) string {
 		Status:    orkstackv1.Status_STATUS_PENDING,
 		Message:   "run created for orkflow " + run.GetOrkflowName(),
 		Timestamp: run.GetCreatedAt(),
-	}, run, run.GetId()+"#1"); err != nil {
+	}, h.snapshotURI(t, run), run.GetId()+"#1"); err != nil {
 		t.Fatalf("PublishEvent(created): %v", err)
 	}
 	return run.GetId()
@@ -131,7 +149,7 @@ func (h *archiveHarness) finish(t *testing.T, runID string, status orkstackv1.St
 		RunId: runID, Type: eventType, Status: status,
 		Message: "run " + status.String(), Timestamp: timestamppb.New(finishedAt),
 	}
-	if err := h.activities.PublishEvent(context.Background(), event, snapshot, runID+"#terminal"); err != nil {
+	if err := h.activities.PublishEvent(context.Background(), event, h.snapshotURI(t, snapshot), runID+"#terminal"); err != nil {
 		t.Fatalf("PublishEvent(terminal): %v", err)
 	}
 }

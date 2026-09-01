@@ -127,6 +127,11 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 		LocalActivityWorkerOnly:     true,
 	})
 	engine.RegisterWorkflows(runWorker)
+	snapshots := newTestSnapshotStore()
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
 
 	taskWorker := worker.New(temporalClient, runQueue, worker.Options{
 		DisableRegistrationAliasing: true,
@@ -147,7 +152,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	})
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewEventActivities(bus, runs).WithRunNotifier(runNotifier).PublishEvent,
+		engine.NewEventActivities(bus, runs).WithRunNotifier(runNotifier).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 

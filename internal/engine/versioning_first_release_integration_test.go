@@ -72,7 +72,7 @@ func TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent(t *testing.
 	// the test holds it.
 	released := make(chan struct{})
 	close(released)
-	release := newReplica(t, c, v1, runQueue, orkerQueue, released)
+	release := newReplica(t, c, v1, runQueue, orkerQueue, released, newTestSnapshotStore())
 	defer release.stop()
 
 	// The workers are up and the server knows it. This is the load-bearing

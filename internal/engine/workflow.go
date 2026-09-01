@@ -46,6 +46,11 @@ const (
 
 	// ActivityPublishEvent is the registered name of the projection activity.
 	ActivityPublishEvent = "PublishEvent"
+
+	// snapshotActivityTimeout bounds the complete local snapshot write,
+	// including its retries. Snapshot input is deliberately local: a regular
+	// activity would record the complete Run in Temporal history.
+	snapshotActivityTimeout = 10 * time.Second
 )
 
 // eventActivityTimeout bounds one projection activity attempt.
@@ -785,12 +790,30 @@ func (s *runState) emit(
 	}
 	dedupeKey := fmt.Sprintf("%s#%d", s.runID, s.eventSeq)
 
+	// A local activity is essential here: Temporal does not persist its input,
+	// while a regular activity would put this complete snapshot straight back
+	// into ActivityTaskScheduled.input and retain quadratic history growth. Its
+	// only recorded result is the small URI reference.
+	localCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
+		ScheduleToCloseTimeout: snapshotActivityTimeout,
+		RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
+	})
+	var snapshotURI string
+	if err := workflow.ExecuteLocalActivity(
+		localCtx, ActivityWriteSnapshot, s.snapshot(), int64(s.eventSeq),
+	).Get(localCtx, &snapshotURI); err != nil {
+		// Object storage is part of the durable record. Continuing would let a
+		// run succeed without a readable terminal snapshot or complete archive,
+		// so unlike the best-effort projection below this failure ends the run.
+		return fmt.Errorf("write snapshot for event %d: %w", s.eventSeq, err)
+	}
+
 	activityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		TaskQueue:           EventQueue,
 		StartToCloseTimeout: eventActivityTimeout,
 		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
 	})
-	future := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, s.snapshot(), dedupeKey)
+	future := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey)
 	if err := future.Get(ctx, nil); err != nil {
 		// Projection is observability, not orchestration: a failed publish is
 		// logged and the run continues.

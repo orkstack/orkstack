@@ -16,6 +16,7 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -104,16 +105,14 @@ type runReadClient interface {
 // TemporalRunReader answers run reads from Temporal, so any replica can answer
 // for any run.
 //
-// The mechanism is that a run's history already *is* its event log. RunWorkflow
-// emits each lifecycle event through the PublishEvent activity, and Temporal
-// records the event and the run snapshot as that activity's input when it is
-// **scheduled** — before, and independently of, whichever replica later
-// executes it. Reading history therefore needs no process to have seen the run:
-// not the one that started it, and not the one that projected its events.
+// A run's history is its event log. RunWorkflow records each lifecycle Event
+// and a small immutable snapshot URI in the PublishEvent activity input. The
+// complete Run lives in shared object storage and is fetched once, after the
+// history scan, so both history payload size and read cost remain bounded.
 //
 //	eventId 5  ACTIVITY_TASK_SCHEDULED  PublishEvent  queue ork-engine-events
 //	  json/protobuf orkstack.v1.Event  {"runId":"ork-…","sequence":"2",…}
-//	  json/protobuf orkstack.v1.Run    {"id":"ork-…","status":"STATUS_RUNNING",…}
+//	  json/plain                       "file:///…/snapshots/…/2.pb"
 //	  json/plain                       "ork-…#2"
 //
 // The in-process RunStore and EventBus are not consulted here and are not a
@@ -123,6 +122,7 @@ type TemporalRunReader struct {
 	client    runReadClient
 	temporal  client.Client
 	converter converter.DataConverter
+	snapshots SnapshotStore
 
 	// namespaceIndexed reports that this cluster has the OrkflowNamespace
 	// search attribute (task.EnsureRunSearchAttributes), so a namespace is a
@@ -142,6 +142,13 @@ var _ RunEventSource = (*TemporalRunReader)(nil)
 func NewTemporalRunReader(c client.Client) *TemporalRunReader {
 	r := newRunReader(c, converter.GetDefaultDataConverter())
 	r.temporal = c
+	return r
+}
+
+// WithSnapshotStore resolves the immutable references recorded in run
+// history. All replicas use the same configured object store.
+func (r *TemporalRunReader) WithSnapshotStore(store SnapshotStore) *TemporalRunReader {
+	r.snapshots = store
 	return r
 }
 
@@ -495,8 +502,10 @@ func quotedExecutionStatuses(statuses []enumspb.WorkflowExecutionStatus) string 
 
 // runProjection is one run's history, decoded.
 type runProjection struct {
-	run    *orkstackv1.Run
-	events []*orkstackv1.Event
+	run            *orkstackv1.Run
+	events         []*orkstackv1.Event
+	snapshotURI    string
+	snapshotLoaded bool
 }
 
 // scan walks a run's history once and decodes it.
@@ -527,8 +536,6 @@ func (r *TemporalRunReader) scan(
 		if err != nil {
 			var notFound *serviceerror.NotFound
 			if errors.As(err, &notFound) && read == 0 {
-				// Nothing has been decoded or delivered yet, so the caller may
-				// still fall back to the archive without duplicating anything.
 				return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
 			}
 			return nil, fmt.Errorf("engine: read history of run %s: %w", runID, err)
@@ -540,11 +547,19 @@ func (r *TemporalRunReader) scan(
 			continue
 		}
 		if r.isPublishEvent(historyEvent) {
-			event, run, err := r.decodePublishEvent(runID, historyEvent)
+			event, snapshotURI, legacyRun, err := r.decodePublishEvent(runID, historyEvent)
 			if err != nil {
 				return nil, err
 			}
-			projection.run = mergeRunSnapshot(projection.run, run)
+			if snapshotURI != "" {
+				projection.snapshotURI = snapshotURI
+			}
+			if legacyRun != nil {
+				// Whichever compatible shape appears last is the complete latest
+				// snapshot. This also keeps a mixed upgrade history ordered.
+				projection.snapshotURI = ""
+				projection.run = mergeRunSnapshot(projection.run, legacyRun)
+			}
 			if event == nil {
 				continue
 			}
@@ -556,8 +571,6 @@ func (r *TemporalRunReader) scan(
 				lastSequence = event.GetSequence()
 			}
 			if event.GetSequence() <= fromSequence {
-				// The cursor is already past this event. A terminal one still
-				// ends the stream: the caller has seen it.
 				if send != nil && isTerminalRunEvent(event) {
 					return projection, nil
 				}
@@ -576,6 +589,9 @@ func (r *TemporalRunReader) scan(
 			continue
 		}
 		if status, cause, closed := closedExecution(historyEvent); closed {
+			if err := r.loadSnapshot(ctx, runID, projection); err != nil {
+				return nil, err
+			}
 			terminal := r.closeRun(projection, runID, historyEvent, status, cause, lastSequence)
 			if terminal == nil || terminal.GetSequence() <= fromSequence {
 				continue
@@ -588,6 +604,9 @@ func (r *TemporalRunReader) scan(
 			}
 			projection.events = append(projection.events, terminal)
 		}
+	}
+	if err := r.loadSnapshot(ctx, runID, projection); err != nil {
+		return nil, err
 	}
 	if projection.run == nil && len(projection.events) == 0 {
 		return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
@@ -640,37 +659,65 @@ func (r *TemporalRunReader) closeRun(
 	}
 }
 
-// isPublishEvent reports whether a history event is one of the run's own
-// lifecycle events, recorded as the scheduling of the projection activity.
+// isPublishEvent reports whether a history event is one of the run's lifecycle
+// events, recorded as the scheduling of the projection activity.
 func (r *TemporalRunReader) isPublishEvent(historyEvent *historypb.HistoryEvent) bool {
 	attrs := historyEvent.GetActivityTaskScheduledEventAttributes()
 	return attrs != nil && attrs.GetActivityType().GetName() == ActivityPublishEvent
 }
 
-// decodePublishEvent decodes the (Event, Run, dedupeKey) arguments RunWorkflow
-// passed to the projection activity.
+// decodePublishEvent decodes the current (Event, snapshotURI, dedupeKey)
+// arguments. Histories written before snapshot externalization carried an
+// inline Run in payload 1; that shape remains readable during upgrades.
 func (r *TemporalRunReader) decodePublishEvent(
 	runID string,
 	historyEvent *historypb.HistoryEvent,
-) (*orkstackv1.Event, *orkstackv1.Run, error) {
+) (*orkstackv1.Event, string, *orkstackv1.Run, error) {
 	payloads := historyEvent.GetActivityTaskScheduledEventAttributes().GetInput().GetPayloads()
-	var (
-		event *orkstackv1.Event
-		run   *orkstackv1.Run
-	)
+	var event *orkstackv1.Event
 	if len(payloads) > 0 {
 		if err := r.converter.FromPayload(payloads[0], &event); err != nil {
-			return nil, nil, fmt.Errorf("engine: decode event of run %s at history event %d: %w",
+			return nil, "", nil, fmt.Errorf("engine: decode event of run %s at history event %d: %w",
 				runID, historyEvent.GetEventId(), err)
 		}
 	}
-	if len(payloads) > 1 {
-		if err := r.converter.FromPayload(payloads[1], &run); err != nil {
-			return nil, nil, fmt.Errorf("engine: decode run snapshot of run %s at history event %d: %w",
-				runID, historyEvent.GetEventId(), err)
-		}
+	if len(payloads) <= 1 {
+		return event, "", nil, nil
 	}
-	return event, run, nil
+	var uri string
+	if err := r.converter.FromPayload(payloads[1], &uri); err == nil {
+		return event, uri, nil, nil
+	}
+	var legacyRun *orkstackv1.Run
+	if err := r.converter.FromPayload(payloads[1], &legacyRun); err != nil {
+		return nil, "", nil, fmt.Errorf("engine: decode snapshot reference of run %s at history event %d: %w",
+			runID, historyEvent.GetEventId(), err)
+	}
+	return event, "", legacyRun, nil
+}
+
+func (r *TemporalRunReader) loadSnapshot(
+	ctx context.Context,
+	runID string,
+	projection *runProjection,
+) error {
+	if projection.snapshotLoaded || projection.snapshotURI == "" {
+		return nil
+	}
+	if r.snapshots == nil {
+		return fmt.Errorf("engine: read snapshot of run %s: snapshot store is not configured", runID)
+	}
+	data, err := r.snapshots.ReadSnapshot(ctx, projection.snapshotURI)
+	if err != nil {
+		return fmt.Errorf("engine: read snapshot of run %s: %w", runID, err)
+	}
+	run := &orkstackv1.Run{}
+	if err := proto.Unmarshal(data, run); err != nil {
+		return fmt.Errorf("engine: decode snapshot of run %s at %s: %w", runID, projection.snapshotURI, err)
+	}
+	projection.run = mergeRunSnapshot(projection.run, run)
+	projection.snapshotLoaded = true
+	return nil
 }
 
 // startedRun is the run as it exists before its first lifecycle event: the

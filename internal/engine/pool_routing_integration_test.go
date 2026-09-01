@@ -209,13 +209,18 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		LocalActivityWorkerOnly:     true,
 	})
 	engine.RegisterWorkflows(runWorker)
+	snapshots := newTestSnapshotStore()
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
 
 	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
 		DisableRegistrationAliasing: true,
 		DisableWorkflowWorker:       true,
 	})
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewEventActivities(bus, runs).PublishEvent,
+		engine.NewEventActivities(bus, runs).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
@@ -243,7 +248,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	svc := api.NewService(api.Config{
 		Orkflows:   orkflows,
 		Namespaces: namespaceStore,
-		Reader:     engine.NewTemporalRunReader(temporalClient),
+		Reader:     engine.NewTemporalRunReader(temporalClient).WithSnapshotStore(snapshots),
 		Runs:       runs,
 		Bus:        bus,
 		Starter:    starter,

@@ -342,8 +342,13 @@ func TestRunWorkflow_SetsTheHeartbeatAndCancellationOptions(t *testing.T) {
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
+	snapshots := newTestSnapshotStore()
 	env.RegisterActivityWithOptions(
-		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).PublishEvent,
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	env.RegisterActivityWithOptions(
+		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 

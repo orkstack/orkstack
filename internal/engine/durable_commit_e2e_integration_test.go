@@ -134,6 +134,11 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 		LocalActivityWorkerOnly:     true,
 	})
 	engine.RegisterWorkflows(runWorker)
+	snapshots := newTestSnapshotStore()
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
 
 	taskWorker := worker.New(temporalClient, orkerQueue, worker.Options{
 		DisableRegistrationAliasing: true,
@@ -158,7 +163,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 		DisableWorkflowWorker:       true,
 	})
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewEventActivities(bus, runs).PublishEvent,
+		engine.NewEventActivities(bus, runs).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 

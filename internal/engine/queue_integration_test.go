@@ -129,6 +129,11 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		LocalActivityWorkerOnly:     true,
 	})
 	engine.RegisterWorkflows(runWorker)
+	snapshots := newTestSnapshotStore()
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
 
 	// The Orker stub polls the private queue and nothing else. Its record of
 	// the queue each activity arrived on is the evidence: it comes from
@@ -166,7 +171,7 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		DisableWorkflowWorker:       true,
 	})
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewEventActivities(bus, runs).PublishEvent,
+		engine.NewEventActivities(bus, runs).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 

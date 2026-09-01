@@ -181,6 +181,7 @@ func newReplica(
 	deployment task.Deployment,
 	runQueue, orkerQueue string,
 	release <-chan struct{},
+	snapshots engine.SnapshotStore,
 ) *replica {
 	t.Helper()
 	r := &replica{
@@ -203,6 +204,10 @@ func newReplica(
 	// would have made the test pass while the binary registered AutoUpgrade —
 	// measured: flipping engine.RegisterWorkflows used to leave this green.
 	engine.RegisterWorkflows(r.run)
+	r.run.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
 
 	// Unversioned on purpose: PublishEvent must stay executable by any live
 	// replica of any version. See eventWorkerOptions in cmd/ork.
@@ -210,13 +215,13 @@ func newReplica(
 		DisableRegistrationAliasing: true,
 		DisableWorkflowWorker:       true,
 	})
-	inner := engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore())
+	inner := engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(snapshots)
 	r.events.RegisterActivityWithOptions(
-		func(actCtx context.Context, event *orkstackv1.Event, run *orkstackv1.Run, dedupeKey string) error {
+		func(actCtx context.Context, event *orkstackv1.Event, snapshotURI string, dedupeKey string) error {
 			r.mu.Lock()
 			r.projected[fmt.Sprintf("%s/%d", event.GetRunId(), event.GetSequence())] = deployment.BuildID
 			r.mu.Unlock()
-			return inner.PublishEvent(actCtx, event, run, dedupeKey)
+			return inner.PublishEvent(actCtx, event, snapshotURI, dedupeKey)
 		},
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
@@ -348,11 +353,12 @@ func TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn(t *testi
 	releaseOnce := sync.Once{}
 	releaseGate := func() { releaseOnce.Do(func() { close(release) }) }
 	defer releaseGate()
+	snapshots := newTestSnapshotStore()
 
 	transcript := newRolloutTranscript(t, namespace, deploymentName, runQueue, orkerQueue)
 
 	// --- v1 is the whole world -------------------------------------------
-	first := newReplica(t, c, v1, runQueue, orkerQueue, release)
+	first := newReplica(t, c, v1, runQueue, orkerQueue, release, snapshots)
 	defer first.stop()
 	setCurrentVersion(t, ctx, c, v1, runQueue, orkerQueue)
 	transcript.step("v1 workers up; current version = v1")
@@ -372,7 +378,7 @@ func TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn(t *testi
 	transcript.step("run " + pinnedRun + " is in flight: its gate task is executing on v1")
 
 	// --- v2 arrives and takes over ---------------------------------------
-	second := newReplica(t, c, v2, runQueue, orkerQueue, release)
+	second := newReplica(t, c, v2, runQueue, orkerQueue, release, snapshots)
 	defer second.stop()
 	setCurrentVersion(t, ctx, c, v2, runQueue, orkerQueue)
 	transcript.step("v2 workers up; current version = v2, while " + pinnedRun + " is still executing")

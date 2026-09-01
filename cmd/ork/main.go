@@ -582,6 +582,11 @@ func run(logger *slog.Logger, cfg config) error {
 	archive := engine.NewRunArchiver(archiveStore)
 	logger.Info("run archive ready",
 		"backend", archiveConfig.Backend, "location", archiveLocation(archiveConfig))
+	snapshotBackend, err := artifacts.New(archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open snapshot store: %w", err)
+	}
+	snapshots := engine.NewSnapshotStore(snapshotBackend)
 
 	// Task logs: the chunks an Orker wrote while a task ran. They live in the
 	// same bucket, so this engine serves the logs of a run it never started
@@ -597,7 +602,9 @@ func run(logger *slog.Logger, cfg config) error {
 	// The read model. Every run read leaves this process: a run's history is
 	// its event log, and Temporal hands the same answer to every replica, for
 	// runs this one neither started nor projected.
-	reader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(namespaceIndexed)
+	reader := engine.NewTemporalRunReader(temporalClient).
+		WithSnapshotStore(snapshots).
+		WithNamespaceIndex(namespaceIndexed)
 	if cfg.cleanup.Enabled {
 		cleaner := archivecleanup.NewCleaner(cfg.cleanup, archiveStore, reader, logger)
 		go cleaner.Run(ctx)
@@ -615,6 +622,10 @@ func run(logger *slog.Logger, cfg config) error {
 	q := queuesFor(cfg)
 	runWorker := worker.New(temporalClient, q.run, runWorkerOptions(cfg))
 	engine.RegisterWorkflows(runWorker)
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
 
 	// Projection worker: engine-internal activities on a dedicated queue so
 	// Orkers never receive them. The archive body's event log is read back
@@ -625,6 +636,7 @@ func run(logger *slog.Logger, cfg config) error {
 		engine.NewArchivingEventActivities(bus, runs, archive).
 			WithRunNotifier(runNotifier).
 			WithEventSource(reader).
+			WithSnapshotStore(snapshots).
 			PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)

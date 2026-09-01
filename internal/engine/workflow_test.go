@@ -48,8 +48,13 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 	}
 	h.env.SetTestTimeout(60 * time.Second)
 	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
+	snapshots := newTestSnapshotStore()
 	h.env.RegisterActivityWithOptions(
-		engine.NewEventActivities(h.bus, h.store).PublishEvent,
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	h.env.RegisterActivityWithOptions(
+		engine.NewEventActivities(h.bus, h.store).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	h.env.RegisterActivityWithOptions(

@@ -78,7 +78,13 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 	env.RegisterActivityWithOptions(
-		func(_ context.Context, event *orkstackv1.Event, _ *orkstackv1.Run, _ string) error {
+		func(_ context.Context, run *orkstackv1.Run, sequence int64) (string, error) {
+			return fmt.Sprintf("memory://snapshots/%s/%d.pb", run.GetId(), sequence), nil
+		},
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, event *orkstackv1.Event, _ string, _ string) error {
 			mu.Lock()
 			defer mu.Unlock()
 			sentEvent = append(sentEvent, event)

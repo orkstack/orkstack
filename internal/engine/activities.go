@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"google.golang.org/protobuf/proto"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
@@ -30,11 +32,12 @@ type RunEventSource interface {
 // deterministic, so every mutation of the store, every event publication and
 // every archive write happens here, inside an activity.
 type EventActivities struct {
-	bus      *EventBus
-	store    *RunStore
-	archive  *RunArchiver
-	notifier RunNotifier
-	events   RunEventSource
+	bus       *EventBus
+	store     *RunStore
+	archive   *RunArchiver
+	notifier  RunNotifier
+	events    RunEventSource
+	snapshots SnapshotStore
 }
 
 // NewEventActivities wires the projection activity to a bus and run store.
@@ -69,10 +72,16 @@ func (a *EventActivities) WithEventSource(events RunEventSource) *EventActivitie
 	return a
 }
 
-// PublishEvent records a run snapshot and publishes one lifecycle event.
-// dedupeKey makes the call idempotent across activity retries and workflow
-// replays.
-//
+// WithSnapshotStore resolves the immutable snapshot references carried by
+// PublishEvent. The same object store is shared by every engine replica.
+func (a *EventActivities) WithSnapshotStore(store SnapshotStore) *EventActivities {
+	a.snapshots = store
+	return a
+}
+
+// PublishEvent resolves and records a run snapshot, then publishes one
+// lifecycle event. dedupeKey makes the call idempotent across activity retries
+// and workflow replays.
 // A terminal event also archives the run: this is the write-through seam, and
 // it is the last thing the activity does, so the archived body already contains
 // the terminal event itself. The write is idempotent (the archive body is
@@ -85,18 +94,18 @@ func (a *EventActivities) WithEventSource(events RunEventSource) *EventActivitie
 // from seeing the same run finish twice.
 //
 // Arguments are passed separately (rather than in one struct) because the
-// Temporal data converter encodes top-level protobuf messages with protojson;
-// protobuf messages nested inside a plain Go struct would be encoded with
-// encoding/json, which cannot round-trip google.protobuf.Struct.
+// Temporal data converter encodes top-level protobuf messages with protojson.
 func (a *EventActivities) PublishEvent(
 	ctx context.Context,
 	event *orkstackv1.Event,
-	run *orkstackv1.Run,
+	snapshotURI string,
 	dedupeKey string,
 ) error {
-	if run != nil {
-		a.store.Apply(run)
+	run, err := a.readSnapshot(ctx, snapshotURI)
+	if err != nil {
+		return err
 	}
+	a.store.Apply(run)
 	firstPublication := false
 	if event != nil {
 		_, firstPublication = a.bus.Publish(event, dedupeKey)
@@ -122,6 +131,21 @@ func (a *EventActivities) PublishEvent(
 	// Returning the error makes Temporal retry the activity, so a transient
 	// storage failure heals itself instead of silently dropping the run.
 	return a.archive.Archive(ctx, snapshot, archived)
+}
+
+func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orkstackv1.Run, error) {
+	if a.snapshots == nil {
+		return nil, fmt.Errorf("engine: publish event: snapshot store is not configured")
+	}
+	data, err := a.snapshots.ReadSnapshot(ctx, uri)
+	if err != nil {
+		return nil, fmt.Errorf("engine: publish event: read snapshot: %w", err)
+	}
+	run := &orkstackv1.Run{}
+	if err := proto.Unmarshal(data, run); err != nil {
+		return nil, fmt.Errorf("engine: publish event: decode snapshot %s: %w", uri, err)
+	}
+	return run, nil
 }
 
 // archivedEvents is the event log that goes into the archive body.

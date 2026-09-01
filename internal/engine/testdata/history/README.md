@@ -75,8 +75,28 @@ why the alternative (keeping the dead string beside the plan) was worse, is in
 Both replay guards pass unchanged against the M10.2 recording. Nothing is
 deployed, so no shim and no dual-read.
 
-**The rule the two resets share:** anything that changes what the engine puts
-into an activity is part of the reset that lands with it, or it waits for a
-deployed build to be compatible with. A fixture is re-recorded when the
-contract genuinely moved and never to turn a red test green (AGENTS.md §10) —
-and when it is, this section grows a line.
+## And again at M11.10, because the command stream gained a marker
+
+The file committed here now is **M11.10's**. Snapshot externalization inserts
+one local-activity marker before every `PublishEvent`, and the projection
+activity's second input changed from an inline `orkstack.v1.Run` to a snapshot
+URI. The previous history has no marker at that point, so replaying it against
+the new workflow body correctly reports non-determinism.
+
+This is the contract change the recording test's exception names, not a reset
+made merely to turn its failure green. The opt-in test above recorded 142
+events from a real six-task run on a real Temporal cluster with a versioned,
+Pinned worker. Nothing was deployed, so no history produced by a released
+build needs a compatibility branch. The URI decoder nevertheless retains the
+old inline-Run read shape for live histories and archives that predate this
+fixture.
+
+The command and payload guards run unchanged against the new baseline. The
+real 6/50/100-task size measurements and the reason a local activity is
+required are in `proof/M11.10/README.md`.
+
+**The rule all resets share:** anything that changes what the engine puts into
+an activity is part of the reset that lands with it, or it waits for a deployed
+build to be compatible with. A fixture is re-recorded when the contract
+genuinely moved and never to turn a red test green (AGENTS.md §10) — and when
+it is, this section grows a line.

@@ -78,13 +78,14 @@ func TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained(t *
 	// Nothing in this test's orkflow is the gate task, so release is never
 	// read; it exists because a replica takes one.
 	release := make(chan struct{})
+	snapshots := newTestSnapshotStore()
 
-	first := newReplica(t, c, v1, runQueue, orkerQueue, release)
+	first := newReplica(t, c, v1, runQueue, orkerQueue, release, snapshots)
 	defer first.stop()
 	setCurrentVersion(t, ctx, c, v1, runQueue, orkerQueue)
 	transcript.step("v1 up; current version = v1")
 
-	second := newReplica(t, c, v2, runQueue, orkerQueue, release)
+	second := newReplica(t, c, v2, runQueue, orkerQueue, release, snapshots)
 	defer second.stop()
 	setCurrentVersion(t, ctx, c, v2, runQueue, orkerQueue)
 	transcript.step("v2 up; current version = v2, and v1 still has runs to finish")
