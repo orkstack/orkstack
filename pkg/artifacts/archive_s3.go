@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -20,6 +21,9 @@ import (
 type S3RunArchive struct {
 	client *s3.Client
 	bucket string
+	// indexKeysScanned counts index keys enumerated by ListRuns. See
+	// IndexKeysScanned.
+	indexKeysScanned atomic.Int64
 }
 
 // compile-time contract check.
@@ -314,10 +318,17 @@ func (a *S3RunArchive) DeleteUnreferencedObjects(ctx context.Context, objectIDs 
 
 // ListRuns answers a query with one prefix scan. Nothing but keys crosses the
 // wire: every filtered field lives in the key itself.
+//
+// A KeyOrder query resumes at StartAfterKey and returns as soon as the page is
+// full, so paging a whole traversal costs one enumeration rather than one per
+// page. S3 already lists in key order, so the cursor is just StartAfter.
 func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
 	prefix, startAfter, err := q.ScanPrefix()
 	if err != nil {
 		return nil, err
+	}
+	if q.KeyOrder && q.StartAfterKey != "" {
+		startAfter = q.StartAfterKey
 	}
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(a.bucket),
@@ -332,7 +343,7 @@ func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntr
 	stopAfterUntil := q.Namespace != "" && q.Orkflow != "" && q.Status != "" && !q.Until.IsZero()
 	stopKey := prefix + RunStamp(q.Until)
 
-	var entries []RunIndexEntry
+	entries := make([]RunIndexEntry, 0, q.Limit)
 	pager := s3.NewListObjectsV2Paginator(a.client, input)
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)
@@ -342,17 +353,36 @@ func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntr
 		for _, obj := range page.Contents {
 			key := aws.ToString(obj.Key)
 			if stopAfterUntil && key >= stopKey {
-				return q.finish(entries), nil
+				return a.finishList(q, entries), nil
 			}
+			a.indexKeysScanned.Add(1)
 			entry, ok := ParseRunIndexKey(key)
 			if !ok || !q.Matches(entry) {
 				continue
 			}
 			entries = append(entries, entry)
+			if q.KeyOrder && q.Limit > 0 && len(entries) >= q.Limit {
+				return entries, nil
+			}
 		}
 	}
-	return q.finish(entries), nil
+	return a.finishList(q, entries), nil
 }
+
+// finishList applies the newest-first ordering unless the caller asked for a
+// key-order page, which is already in the order it must be resumed from.
+func (a *S3RunArchive) finishList(q RunQuery, entries []RunIndexEntry) []RunIndexEntry {
+	if q.KeyOrder {
+		return entries
+	}
+	return q.finish(entries)
+}
+
+// IndexKeysScanned reports how many index keys this archive has enumerated
+// across every ListRuns call. It is the instrument behind the cleanup worker's
+// scan-cost contract: a bounded page is only bounded if the backend stops at
+// the page boundary. Tests assert on it; nothing in the running system reads it.
+func (a *S3RunArchive) IndexKeysScanned() int64 { return a.indexKeysScanned.Load() }
 
 func (a *S3RunArchive) exists(ctx context.Context, key string) (bool, error) {
 	_, err := a.client.HeadObject(ctx, &s3.HeadObjectInput{

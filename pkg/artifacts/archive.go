@@ -140,10 +140,25 @@ type RunQuery struct {
 	Since time.Time
 	// Until is the exclusive upper bound on RunRecord.Time.
 	Until time.Time
-	// CursorTime and CursorRunID resume a newest-first query after one entry.
-	// They are a pair because several runs may have the same nanosecond stamp.
-	CursorTime  time.Time
-	CursorRunID string
+	// KeyOrder switches the scan from "newest first, then truncate" to a
+	// resumable walk in index-key order that stops as soon as Limit matching
+	// entries are collected.
+	//
+	// It exists because Limit alone cannot make a page cheap. The default
+	// ordering is global and newest-first, but the stamp is the fourth key
+	// segment, so producing it requires enumerating every key under
+	// metadata/index/runs before sorting. A caller that only needs to visit
+	// every matching run once — cleanup is the only one — pays that full
+	// enumeration per page instead of per traversal. Walking in key order
+	// lets the backend stop at the page boundary, so a whole traversal costs
+	// one enumeration no matter how many pages it takes.
+	//
+	// Entries come back in key order, not newest first, and finish() does not
+	// run. Resume by rebuilding the last entry's key with RunIndexKey.
+	KeyOrder bool
+	// StartAfterKey is the exclusive index-key cursor for a KeyOrder walk. It
+	// is ignored unless KeyOrder is set.
+	StartAfterKey string
 	// Limit caps the number of entries returned, newest first. 0 means all.
 	Limit int
 }
@@ -293,6 +308,19 @@ func RunIndexKey(rec RunRecord) (string, error) {
 		RunStamp(rec.Time), runID), nil
 }
 
+// RunIndexKeyForEntry renders the index key a scanned entry came from. It is
+// how a KeyOrder caller turns the last entry of a page into the exclusive
+// cursor for the next one, without inventing a second key convention.
+func RunIndexKeyForEntry(entry RunIndexEntry) (string, error) {
+	return RunIndexKey(RunRecord{
+		RunID:     entry.RunID,
+		Namespace: entry.Namespace,
+		Orkflow:   entry.Orkflow,
+		Status:    entry.Status,
+		Time:      entry.Time,
+	})
+}
+
 // ParseRunIndexKey reverses RunIndexKey. A key this package did not generate
 // reports ok=false rather than an error, so a scan can skip foreign objects.
 func ParseRunIndexKey(key string) (RunIndexEntry, bool) {
@@ -399,12 +427,38 @@ func (q RunQuery) Matches(entry RunIndexEntry) bool {
 	if !q.Until.IsZero() && !entry.Time.Before(q.Until) {
 		return false
 	}
-	if !q.CursorTime.IsZero() {
-		if entry.Time.After(q.CursorTime) || (entry.Time.Equal(q.CursorTime) && entry.RunID >= q.CursorRunID) {
-			return false
-		}
-	}
 	return true
+}
+
+// afterCursor reports whether an index key sorts strictly after the KeyOrder
+// cursor, which is what makes a resumed page exclusive of the previous one.
+func (q RunQuery) afterCursor(key string) bool {
+	return q.StartAfterKey == "" || key > q.StartAfterKey
+}
+
+// prunesDir reports whether every key beneath dir sorts at or before the
+// KeyOrder cursor, so a resumed walk can skip the whole subtree.
+//
+// The comparison is against dir+"/", never dir, because dir+"/" is what every
+// key beneath it actually starts with. The distinction is load-bearing rather
+// than pedantic: '-' (0x2D) sorts below '/' (0x2F), so for sibling orkflows
+// "f" and "f-g" the plain name "f" sorts before the cursor ".../f-g/..." while
+// every key under it — ".../f/..." — sorts after. Pruning on the name alone
+// therefore skipped a whole subtree of runs that had not been visited yet, and
+// they would never have been cleaned.
+//
+// If the cursor lies inside dir's own subtree the walk must descend, because
+// deeper keys may still sort after it. Otherwise the subtree is wholly on one
+// side of the cursor, and dir+"/" decides which.
+func (q RunQuery) prunesDir(dir string) bool {
+	if q.StartAfterKey == "" {
+		return false
+	}
+	subtree := dir + "/"
+	if strings.HasPrefix(q.StartAfterKey, subtree) {
+		return false
+	}
+	return q.StartAfterKey > subtree
 }
 
 // finish orders scanned entries newest first and applies the query limit.

@@ -9,7 +9,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +23,9 @@ import (
 type LocalRunArchive struct {
 	dir  string
 	root *os.Root
+	// indexKeysScanned counts index keys enumerated by ListRuns. See
+	// IndexKeysScanned.
+	indexKeysScanned atomic.Int64
 }
 
 // compile-time contract check.
@@ -319,12 +324,18 @@ func (a *LocalRunArchive) DeleteUnreferencedObjects(ctx context.Context, objectI
 
 // ListRuns walks the narrowest index subtree the query can match and reads
 // nothing but names, which is the filesystem's equivalent of an S3 prefix scan.
+//
+// A KeyOrder query takes the resumable walk instead, which stops at the page
+// boundary rather than enumerating the subtree and sorting it.
 func (a *LocalRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntry, error) {
 	prefix, _, err := q.ScanPrefix()
 	if err != nil {
 		return nil, err
 	}
 	walkRoot := strings.TrimSuffix(prefix, "/")
+	if q.KeyOrder {
+		return a.listRunsInKeyOrder(ctx, q, walkRoot, prefix)
+	}
 
 	var entries []RunIndexEntry
 	err = fs.WalkDir(a.root.FS(), walkRoot, func(p string, d fs.DirEntry, err error) error {
@@ -340,6 +351,7 @@ func (a *LocalRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexE
 		if d.IsDir() {
 			return nil
 		}
+		a.indexKeysScanned.Add(1)
 		entry, ok := ParseRunIndexKey(p)
 		if !ok || !q.Matches(entry) {
 			return nil
@@ -352,6 +364,86 @@ func (a *LocalRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexE
 	}
 	return q.finish(entries), nil
 }
+
+// listRunsInKeyOrder descends the index in exact key order, skipping subtrees
+// that lie wholly at or before the cursor and stopping as soon as the page is
+// full. Cost is proportional to the page, not to the subtree, so paging a whole
+// traversal enumerates each key once rather than once per page.
+//
+// It does not use fs.WalkDir. WalkDir orders siblings by name, and a name is
+// not a key: '-' (0x2D) sorts below the '/' (0x2F) that separates segments, so
+// sibling directories "a" and "a-b" are visited in an order that contradicts
+// the order of the keys beneath them. Comparing each child by the string its
+// keys actually start with — name+"/" for a directory, name for a file — makes
+// the descent agree with the cursor comparisons, which is what lets a page
+// boundary be resumed without skipping or repeating a run.
+func (a *LocalRunArchive) listRunsInKeyOrder(ctx context.Context, q RunQuery, walkRoot, prefix string) ([]RunIndexEntry, error) {
+	entries := make([]RunIndexEntry, 0, q.Limit)
+	full := func() bool { return q.Limit > 0 && len(entries) >= q.Limit }
+
+	var descend func(dir string) error
+	descend = func(dir string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		children, err := fs.ReadDir(a.root.FS(), dir)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil // nothing archived under this prefix yet
+			}
+			return err
+		}
+		sort.Slice(children, func(i, j int) bool {
+			return keyOrderName(children[i]) < keyOrderName(children[j])
+		})
+		for _, child := range children {
+			if full() {
+				return nil
+			}
+			p := path.Join(dir, child.Name())
+			if child.IsDir() {
+				if q.prunesDir(p) {
+					continue
+				}
+				if err := descend(p); err != nil {
+					return err
+				}
+				continue
+			}
+			if !q.afterCursor(p) {
+				continue
+			}
+			a.indexKeysScanned.Add(1)
+			entry, ok := ParseRunIndexKey(p)
+			if !ok || !q.Matches(entry) {
+				continue
+			}
+			entries = append(entries, entry)
+		}
+		return nil
+	}
+
+	if err := descend(walkRoot); err != nil {
+		return nil, fmt.Errorf("artifacts: local archive list %q: %w", prefix, err)
+	}
+	return entries, nil
+}
+
+// keyOrderName renders the string a child's keys begin with, so sorting by it
+// orders siblings the same way their keys sort.
+func keyOrderName(d fs.DirEntry) string {
+	if d.IsDir() {
+		return d.Name() + "/"
+	}
+	return d.Name()
+}
+
+// IndexKeysScanned reports how many index keys this archive has enumerated
+// across every ListRuns call. It is the instrument behind the cleanup worker's
+// scan-cost contract: a bounded page is only bounded if the backend stops at
+// the page boundary, and elapsed time cannot tell the difference on a warm
+// cache. Tests assert on it; nothing in the running system reads it.
+func (a *LocalRunArchive) IndexKeysScanned() int64 { return a.indexKeysScanned.Load() }
 
 // writeAtomic commits data at key through a temp file and a rename, so a reader
 // never sees a half-written archive.

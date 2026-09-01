@@ -6,8 +6,12 @@
 // content-addressed by logical name and digest, with no run id in the key. The
 // same object can therefore be referenced by another live or retained run;
 // deleting it by a run prefix could destroy that run's committed result.
-// Reclaiming those shared objects requires reference counts the archive does
-// not have today. Archive bodies and indexes are never deleted.
+// The archive does now keep those reference counts, so a shared object can be
+// reclaimed once no archived run claims it — that is what
+// artifacts.DeleteUnreferencedObjects does. What remains deferred is this
+// worker calling it: reference accounting only exists for runs archived by a
+// build that has it, so an object referenced solely by an older run would look
+// unreferenced. Archive bodies and indexes are never deleted.
 package archive
 
 import (
@@ -189,19 +193,18 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 	}
 	now := c.now().UTC()
 	cutoff := now.Add(-(retention + c.config.RetentionBuffer))
-	until := cutoff
 	pageLimit := c.config.BatchSize * 2
-	var cursorTime time.Time
-	var cursorRunID string
-	// Each archive query is capped and this loop retains only one page, so
-	// worker memory is O(page). An archive whose eligible runs are all already
-	// cleaned can still require O(archive/page) queries in one iteration because
-	// cleanup state is not a dimension of the immutable run index.
+	cursor := ""
+	// Pages are walked in index-key order, so the backend stops at the page
+	// boundary and one whole iteration enumerates each index key once no matter
+	// how many pages it takes. Ordering by key rather than by time is what makes
+	// that possible: the stamp is the fourth key segment, so a newest-first page
+	// cannot be produced without reading every key first.
 	var errs []error
 	processed := 0
 	for processed < c.config.BatchSize {
 		entries, err := c.archive.ListRuns(ctx, artifacts.RunQuery{
-			Until: until, Limit: pageLimit, CursorTime: cursorTime, CursorRunID: cursorRunID,
+			Until: cutoff, Limit: pageLimit, KeyOrder: true, StartAfterKey: cursor,
 		})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("archive cleanup: list runs: %w", err))
@@ -211,12 +214,14 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 			break
 		}
 
-		last := entries[len(entries)-1]
-		// A conforming composite cursor makes every last entry strictly older.
-		// Stop before processing if a backend violates that contract so the
-		// worker cannot spin or repeat deletion attempts.
-		if !cursorTime.IsZero() && (last.Time.After(cursorTime) ||
-			(last.Time.Equal(cursorTime) && last.RunID >= cursorRunID)) {
+		// The cursor is only needed to ask for the NEXT page, so a page whose
+		// last entry cannot be rendered back into a key stops the walk after
+		// this page rather than discarding work already scanned.
+		next, cursorErr := artifacts.RunIndexKeyForEntry(entries[len(entries)-1])
+		// A conforming key-order page ends strictly after the cursor it was
+		// given. Stop before processing if a backend violates that contract so
+		// the worker cannot spin or repeat deletion attempts.
+		if cursorErr == nil && next <= cursor {
 			break
 		}
 		for _, entry := range entries {
@@ -237,6 +242,14 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 				wrapped := fmt.Errorf("run %q: read cleanup state: %w", entry.RunID, stateErr)
 				errs = append(errs, wrapped)
 				stats.Errors++
+				continue
+			}
+			// The query's Until already excludes anything inside the retention
+			// window, but deletion is irreversible and RunArchive is an
+			// exported interface, so eligibility is re-checked here against the
+			// entry the backend actually returned rather than trusted from the
+			// filter that was requested.
+			if !entry.Time.Before(cutoff) {
 				continue
 			}
 			processed++
@@ -278,13 +291,14 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 		if processed >= c.config.BatchSize || len(entries) < pageLimit {
 			break
 		}
-
-		// Until is exclusive, so one nanosecond keeps the cursor timestamp in
-		// the next query. The run-id half of the cursor then reaches every run
-		// sharing that timestamp without revisiting the preceding page.
-		until = last.Time.Add(time.Nanosecond)
-		cursorTime = last.Time
-		cursorRunID = last.RunID
+		if cursorErr != nil {
+			errs = append(errs, fmt.Errorf("archive cleanup: resume cursor: %w", cursorErr))
+			stats.Errors++
+			break
+		}
+		// A short page means the walk reached the end of the index, so the
+		// cursor only has to advance while full pages keep coming back.
+		cursor = next
 	}
 	return stats, errors.Join(errs...)
 }
