@@ -490,6 +490,17 @@ Two details in those key shapes are load-bearing:
   200-byte limit on one archive key segment; hashing it to fixed-width hex
   means no artifact name can make a run unarchivable.
 
+Archiving a run writes one marker per referenced object, so its cost is linear
+in the run's artifact count. Those writes are issued with bounded concurrency
+(8 in flight, matching the engine's archive fetches) because archiving happens
+inside a projection activity with a 10-second budget whose failure is only
+logged — a run that exhausts it would end up with no archive body, which is the
+only record of it once Temporal retention passes. Measured against MinIO on
+loopback: 500 objects took 1.464s serially and 297ms with the writes
+overlapped. This reduces the risk rather than removing it: the cost is still
+linear, so a sufficiently wide fan-out run can still approach the budget. Treat
+the ceiling as raised, not gone.
+
 `DeleteRunArtifacts` releases only the calling run's markers and its list. It
 never touches `objects/`. `DeleteUnreferencedObjects` deletes a physical object
 only when that object's marker prefix is empty, and treats an object that is
@@ -505,12 +516,33 @@ it contributes no reference markers, and an object it alone referenced would
 look unreferenced. Bucket lifecycle policy therefore remains the operational
 answer for `objects/` growth until an archive-wide backfill exists.
 
-A note on what "bounded scan" buys. Each cleanup query is capped at
-`ORK_CLEANUP_BATCH_SIZE * 2` entries and the worker holds one page at a time,
-so worker memory is proportional to a page rather than to the archive. It does
-not bound the number of queries: cleanup state is not a dimension of the
-immutable run index, so an iteration whose eligible runs are already cleaned
-still pages through them to reach older work.
+A note on what "bounded scan" buys. Cleanup pages the run index in index-key
+order, asking for `ORK_CLEANUP_BATCH_SIZE * 2` entries at a time and resuming
+each page after the previous page's last key. Two things follow, and they are
+different claims:
+
+- **Worker memory is proportional to a page**, not to the archive, because the
+  worker holds one page at a time.
+- **A whole iteration costs one pass over the index**, because the backend
+  stops walking as soon as the page is full. On S3 that is `StartAfter` plus an
+  early return; on the local backend it is a key-order descent that prunes any
+  subtree sorting at or before the cursor.
+
+Ordering by key rather than by time is what makes the second claim possible.
+The run index key is
+`metadata/index/runs/{namespace}/{orkflow}/{status}/{stamp}/{run-id}`, so the
+stamp is the fourth segment: a newest-first page cannot be produced without
+reading every key under the prefix and sorting it. Paging a newest-first query
+would therefore re-read the whole index once per page — measured at 22,000 keys
+enumerated over 11 pages for 2,000 archived runs at batch size 100, against
+2,000 keys for the key-order walk. The amplified case is the steady state of a
+healthy deployment, where every eligible run already carries its
+`artifacts_cleaned` sidecar, so the walk pages through them to reach older work.
+
+What is still not bounded is the number of queries. Cleanup state is not a
+dimension of the immutable run index, so an iteration whose eligible runs are
+all already cleaned still issues `archive-size / page` list calls to walk past
+them, even though the total keys they enumerate stays linear.
 
 **Bucket lifecycle rules are the independent retention policy.** Cleanup is
 off by default, so a deployment that has not set `ORK_CLEANUP_ENABLED=true`
