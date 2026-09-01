@@ -380,7 +380,7 @@ func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntr
 	stopAfterUntil := q.Namespace != "" && q.Orkflow != "" && q.Status != "" && !q.Until.IsZero()
 	stopKey := prefix + RunStamp(q.Until)
 
-	entries := make([]RunIndexEntry, 0, q.Limit)
+	entries := make([]RunIndexEntry, 0, q.pageCapacity())
 	pager := s3.NewListObjectsV2Paginator(a.client, input)
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)

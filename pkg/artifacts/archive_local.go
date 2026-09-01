@@ -378,7 +378,7 @@ func (a *LocalRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexE
 // the descent agree with the cursor comparisons, which is what lets a page
 // boundary be resumed without skipping or repeating a run.
 func (a *LocalRunArchive) listRunsInKeyOrder(ctx context.Context, q RunQuery, walkRoot, prefix string) ([]RunIndexEntry, error) {
-	entries := make([]RunIndexEntry, 0, q.Limit)
+	entries := make([]RunIndexEntry, 0, q.pageCapacity())
 	full := func() bool { return q.Limit > 0 && len(entries) >= q.Limit }
 
 	var descend func(dir string) error

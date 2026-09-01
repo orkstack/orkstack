@@ -470,6 +470,34 @@ func (q RunQuery) prunesDir(dir string) bool {
 	return q.StartAfterKey > subtree
 }
 
+// runPageCapacityHint bounds the capacity a scan reserves before it starts
+// collecting. It is deliberately small: a page of run index entries is a
+// handful of kilobytes, and growing past it costs a few appends.
+const runPageCapacityHint = 64
+
+// pageCapacity is the capacity a scan starts its result slice with.
+//
+// It exists because Limit must never size an allocation. Limit is what a
+// caller ASKED for, not a promise about what the archive contains, and it
+// arrives unclamped: ListRuns is reachable from the wire through the ListRuns
+// RPC's page_size, and from operator configuration through the cleanup
+// worker's page limit. Reserving it eagerly turned a caller's number into a
+// heap reservation — MaxInt32 entries reserve 176 GiB — while the entries a
+// scan actually finds are bounded by the archive. A negative Limit was worse
+// than wasteful: it reached make() and panicked with "makeslice: cap out of
+// range", in library code and, for cleanup, on a bare goroutine.
+//
+// So the hint caps the reservation and append grows the rest, which restores
+// the property the plain `var entries []RunIndexEntry` had. A non-positive
+// Limit means "no limit" everywhere else in this type, and here it simply
+// means "no useful hint".
+func (q RunQuery) pageCapacity() int {
+	if q.Limit > 0 && q.Limit < runPageCapacityHint {
+		return q.Limit
+	}
+	return runPageCapacityHint
+}
+
 // finish orders scanned entries newest first and applies the query limit.
 // Equal timestamps fall back to the run id, so results are deterministic.
 func (q RunQuery) finish(entries []RunIndexEntry) []RunIndexEntry {

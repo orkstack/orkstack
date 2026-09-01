@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -81,6 +82,21 @@ func envPositiveInt(key string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+// doubleSaturating returns 2*n, or the largest int when that would wrap.
+//
+// BatchSize comes from ORK_CLEANUP_BATCH_SIZE and envPositiveInt only checks
+// that it parses positive, so a value above MaxInt/2 doubles into a NEGATIVE
+// page limit. Every limit check downstream reads a non-positive limit as "no
+// limit", so the wrap would silently turn a bounded page into an unbounded
+// one. Saturating keeps an absurd batch size absurd instead of inverting its
+// meaning.
+func doubleSaturating(n int) int {
+	if n > math.MaxInt/2 {
+		return math.MaxInt
+	}
+	return n * 2
 }
 
 // WorkflowReader is the fail-closed Temporal boundary cleanup needs.
@@ -193,7 +209,7 @@ func (c *Cleaner) RunOnce(ctx context.Context) (CleanupStats, error) {
 	}
 	now := c.now().UTC()
 	cutoff := now.Add(-(retention + c.config.RetentionBuffer))
-	pageLimit := c.config.BatchSize * 2
+	pageLimit := doubleSaturating(c.config.BatchSize)
 	cursor := ""
 	// Pages are walked in index-key order, so the backend stops at the page
 	// boundary and one whole iteration enumerates each index key once no matter
