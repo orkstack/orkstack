@@ -95,19 +95,35 @@ key, and the UI's ability to attach to a run Temporal is still executing.
 
 ### 2.1 The write seam already exists and is already idempotent
 
-`internal/engine/workflow.go:439-471` — `emit()` calls
-`workflow.ExecuteActivity(ctx, ActivityPublishEvent, event, s.snapshot(), dedupeKey)` with
-`dedupeKey = fmt.Sprintf("%s#%d", s.runID, s.eventSeq)`.
-`internal/engine/activities.go:30-43` — `PublishEvent` does `store.Apply(run)` then
+`internal/engine/workflow.go:796-847` — `emit()` first writes the run snapshot
+to object storage through a **local activity** (`ActivityWriteSnapshot`,
+workflow.go:825 — local because Temporal does not persist local-activity
+input, which is what keeps the snapshot bytes out of history), then calls
+`workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey)`
+with `dedupeKey = fmt.Sprintf("%s#%d", s.runID, s.eventSeq)`.
+`internal/engine/activities.go:108-125` — `PublishEvent` resolves the URI back
+into the run (`readSnapshot`), then does `store.Apply(run)` and
 `bus.Publish(event, dedupeKey)`.
+
+> **M11.10 note.** This section originally quoted
+> `PublishEvent(event, s.snapshot(), dedupeKey)`: the complete run snapshot
+> rode along as a regular activity argument, so Temporal history carried every
+> snapshot and grew quadratically with task count. M11.10 externalized the
+> snapshot to object storage (`metadata/snapshots/{namespace}/{run-id}/{sequence}.pb`,
+> `pkg/artifacts/snapshots.go`) and made the activity argument a URI. The seam
+> itself is unchanged — one idempotent projection call per lifecycle event,
+> same dedupe key — but a durable store slotting in behind it now receives a
+> URI to resolve rather than an inline run. See `proof/M11.10/`.
 
 A durable store slots in behind this seam with **zero Temporal workflow-code change**, so the
 determinism boundary (AGENTS.md §1.3) is untouched. The existing dedupe key is exactly the natural
 key for `INSERT … ON CONFLICT(run_id, dedupe_key) DO NOTHING`.
 
 One caveat in the same function: publish failures are logged and swallowed — *"Projection is
-observability, not orchestration"* (`internal/engine/workflow.go:462-467`). Once the store **is**
-the system of record, a swallowed write is silent data loss. See open question OQ-1.
+observability, not orchestration"* (`internal/engine/workflow.go:840-845`). Once the store **is**
+the system of record, a swallowed write is silent data loss. The snapshot write itself is the
+exception: it fails the emit (workflow.go:826-833), so object-storage failure cannot silently
+produce a successful run. See open question OQ-1.
 
 ### 2.2 Contract gaps found while reading (independent of backend)
 
@@ -463,11 +479,11 @@ projection, which is why it is 2–3× faster than the blob-carrying pass.
 
 | ID | Question | Status |
 |---|---|---|
-| OQ-1 | `PublishEvent` swallows write failures (`internal/engine/workflow.go:462-467`). Once SQLite is authoritative this is silent data loss. | **Blocking** for "no data loss". Must be decided before M7.5 ships. |
+| OQ-1 | `PublishEvent` swallows write failures (`internal/engine/workflow.go:840-845`). Once SQLite is authoritative this is silent data loss. | **Blocking** for "no data loss". Must be decided before M7.5 ships. |
 | OQ-2 | Event-log persistence and sequence continuity across restart. | **Blocking** for WS / `StreamEvents` resume. |
 | OQ-3 | How much of `internal/api/service.go`'s in-memory state (idempotency map, run-id counter) is persisted. | Open; drives the effort estimate's main variance. |
 | OQ-4 | Retention / GC policy for `runs` and `run_events`. No retention policy exists anywhere in the repo today. | Open; newly required by the 452 MB / 100k-run measurement. |
-| OQ-5 | Quadratic Temporal history growth: `s.snapshot()` is an activity input on every event, so history is ≈(3N+2) events × an O(N) snapshot. A 3-task run already measured 89 events / 41 KB. | Pre-existing, out of scope for this decision; track against the 51 200-event / 50 MiB server limits. |
+| OQ-5 | Quadratic Temporal history growth: `s.snapshot()` was an activity input on every event, so history was ≈(3N+2) events × an O(N) snapshot. A 3-task run already measured 89 events / 41 KB. | **Resolved by M11.10**: the snapshot moved to object storage and the activity input became a URI; measured history growth is now linear (`proof/M11.10/README.md`). |
 
 **Where evidence is missing.** PostgreSQL latency was not measured — no PostgreSQL in this stack.
 All S3 numbers are localhost MinIO floors; real AWS was not measured. Temporal visibility lag was
