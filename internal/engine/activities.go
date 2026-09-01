@@ -95,6 +95,16 @@ func (a *EventActivities) WithSnapshotStore(store SnapshotStore) *EventActivitie
 //
 // Arguments are passed separately (rather than in one struct) because the
 // Temporal data converter encodes top-level protobuf messages with protojson.
+//
+// This activity accepts ONLY the URI shape. The reader's decodePublishEvent
+// keeps a fallback for histories whose second payload is an inline Run, but no
+// such branch exists here: the projection worker on ork-engine-events is
+// unversioned (AGENTS.md §7.2), so a Pinned pre-externalization RunWorkflow
+// scheduling PublishEvent(Event, Run, key) onto this code would fail to decode
+// its second argument. No released build writes that shape — the change
+// landed before any deployment — but a rollout that ever straddles it must
+// drain the old RunWorkflow version before retiring the workers that carry
+// the old activity code.
 func (a *EventActivities) PublishEvent(
 	ctx context.Context,
 	event *orkstackv1.Event,
