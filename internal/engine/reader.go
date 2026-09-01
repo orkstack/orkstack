@@ -515,6 +515,11 @@ type runProjection struct {
 	// terminal needed" from history alone, without fetching the snapshot the
 	// run projection would need.
 	sawTerminal bool
+	// lastRunStatus is the run-level status of the newest published lifecycle
+	// event. It is the degraded answer's status when the referenced snapshot
+	// object is gone: history already recorded how far the run got, and a
+	// tolerated miss must not report a SUCCEEDED run as still PENDING.
+	lastRunStatus orkstackv1.Status
 }
 
 // scan walks a run's history once and decodes it.
@@ -584,6 +589,9 @@ func (r *TemporalRunReader) scan(
 			if isTerminalRunEvent(event) {
 				projection.sawTerminal = true
 			}
+			if event.GetTaskId() == "" && event.GetStatus() != orkstackv1.Status_STATUS_UNSPECIFIED {
+				projection.lastRunStatus = event.GetStatus()
+			}
 			if _, duplicate := seen[event.GetSequence()]; duplicate {
 				continue
 			}
@@ -611,6 +619,13 @@ func (r *TemporalRunReader) scan(
 		}
 		if status, cause, closed := closedExecution(historyEvent); closed {
 			if wantRun {
+				// For a CLOSED run a missing snapshot stays fatal — and stays
+				// matching artifacts.ErrNotFound — on purpose: the API layer
+				// answers that error from the archive, which holds the finished
+				// run's complete body, task runs included. Tolerating the miss
+				// here would hand back a partial run and shadow that better
+				// answer. The tolerance below is only for runs still executing,
+				// which have no archive body yet.
 				if err := r.loadSnapshot(ctx, runID, projection); err != nil {
 					return nil, err
 				}
@@ -629,8 +644,29 @@ func (r *TemporalRunReader) scan(
 		}
 	}
 	if wantRun {
+		// This load runs for a LIVE run: a closed execution was already handled
+		// (and its snapshot loaded) above. A missing snapshot object — an
+		// operator lifecycle rule over metadata/snapshots/, or any ordinary
+		// object-store 404 — must not erase a run Temporal is actively
+		// executing: ErrRunNotFound wraps the same artifacts.ErrNotFound
+		// sentinel, so returning the miss would read as "this run does not
+		// exist" one layer up, the exact inversion LookupRun rules out. The
+		// projection assembled from history still names the run, its orkflow,
+		// status and input; only the snapshot overlay is lost. The tolerance
+		// lives at this call site rather than inside loadSnapshot because the
+		// closed-run site above needs the opposite contract. A transient
+		// (non-404) failure stays fatal so it maps to Unavailable, not to a
+		// silently degraded answer.
 		if err := r.loadSnapshot(ctx, runID, projection); err != nil {
-			return nil, err
+			if !errors.Is(err, artifacts.ErrNotFound) {
+				return nil, err
+			}
+			// Degrade with what history already recorded: the newest published
+			// lifecycle event's run status, so a run that got past PENDING is
+			// not reported as if it never started.
+			if projection.run != nil && projection.lastRunStatus != orkstackv1.Status_STATUS_UNSPECIFIED {
+				projection.run.Status = projection.lastRunStatus
+			}
 		}
 	}
 	if projection.run == nil && len(projection.events) == 0 {

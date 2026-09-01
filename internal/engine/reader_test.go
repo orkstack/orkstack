@@ -1003,3 +1003,91 @@ func TestExecutionStatusPredicate_TracksStatusFromExecution(t *testing.T) {
 		}
 	}
 }
+
+// failingSnapshotStore returns the same transient error for every read, so a
+// test can prove that a storage outage — as opposed to a missing object — is
+// still surfaced rather than swallowed into a partial answer.
+type failingSnapshotStore struct{ err error }
+
+func (s *failingSnapshotStore) WriteSnapshot(context.Context, string, string, int64, []byte) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
+func (s *failingSnapshotStore) ReadSnapshot(context.Context, string) ([]byte, error) {
+	return nil, s.err
+}
+
+// TestTemporalRunReader_GetRunSurvivesAMissingSnapshotOnALiveRun is the run
+// half of the live-run inversion regression: a run Temporal is actively
+// executing must not vanish from GetRun because one snapshot object is gone —
+// an operator lifecycle rule over metadata/snapshots/ or any ordinary 404 is
+// enough to trigger it. The projection assembled from history still names the
+// run, its orkflow and its status; only the snapshot overlay is missing, and
+// a degraded answer beats a running execution reading as not found.
+func TestTemporalRunReader_GetRunSurvivesAMissingSnapshotOnALiveRun(t *testing.T) {
+	const runID = "ork-evrev-live"
+	store := &countingSnapshotStore{objects: map[string][]byte{}}
+	reader, _ := readerOver(uriRunHistory(t, runID, false), runID)
+	reader.WithSnapshotStore(store)
+
+	run, err := reader.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun on a live run with a missing snapshot: %v", err)
+	}
+	if run.GetId() != runID {
+		t.Fatalf("run id = %q, want %q", run.GetId(), runID)
+	}
+	if run.GetOrkflowName() != "uri-ork" {
+		t.Fatalf("orkflow name = %q, want the history's %q", run.GetOrkflowName(), "uri-ork")
+	}
+	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("status = %v, want the last published event's SUCCEEDED", run.GetStatus())
+	}
+	if store.reads != 1 {
+		t.Fatalf("snapshot reads = %d, want exactly 1 attempted fetch", store.reads)
+	}
+}
+
+// TestTemporalRunReader_GetRunOnAClosedRunStillReportsAMissingSnapshot is the
+// guard against over-fixing: for a run whose execution has CLOSED, a missing
+// snapshot must stay an error matching artifacts.ErrNotFound, because the API
+// layer deliberately falls through to the archive — which holds the finished
+// run's complete body, task runs included. Tolerating the miss here would
+// return a partial run and silently shadow the archive's better answer.
+func TestTemporalRunReader_GetRunOnAClosedRunStillReportsAMissingSnapshot(t *testing.T) {
+	const runID = "ork-evrev-closed"
+	store := &countingSnapshotStore{objects: map[string][]byte{}}
+	reader, _ := readerOver(uriRunHistory(t, runID, true), runID)
+	reader.WithSnapshotStore(store)
+
+	_, err := reader.GetRun(context.Background(), runID)
+	if err == nil {
+		t.Fatal("GetRun on a closed run with a missing snapshot: want an error, got nil")
+	}
+	if !errors.Is(err, artifacts.ErrNotFound) {
+		t.Fatalf("error = %v, want a match for artifacts.ErrNotFound so the API falls to the archive", err)
+	}
+}
+
+// TestTemporalRunReader_GetRunStillFailsOnATransientSnapshotError pins the
+// difference between "the object is gone" and "storage is down": a transient
+// failure is returned from both the live and the closed path, so the API maps
+// it to Unavailable rather than answering with a silently degraded run.
+func TestTemporalRunReader_GetRunStillFailsOnATransientSnapshotError(t *testing.T) {
+	const runID = "ork-evrev-transient"
+	transient := fmt.Errorf("object storage is down")
+	for name, withClose := range map[string]bool{"live": false, "closed": true} {
+		t.Run(name, func(t *testing.T) {
+			reader, _ := readerOver(uriRunHistory(t, runID, withClose), runID)
+			reader.WithSnapshotStore(&failingSnapshotStore{err: transient})
+
+			_, err := reader.GetRun(context.Background(), runID)
+			if err == nil {
+				t.Fatal("GetRun with a failing snapshot store: want an error, got nil")
+			}
+			if errors.Is(err, artifacts.ErrNotFound) {
+				t.Fatalf("error = %v, must not read as not-found", err)
+			}
+		})
+	}
+}

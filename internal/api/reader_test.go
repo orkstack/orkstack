@@ -699,3 +699,83 @@ func sequencesOf(events []*orkstackv1.Event) []int64 {
 	}
 	return out
 }
+
+// TestGetRun_MapsAMissingSnapshotShapeByWhoHoldsTheBetterAnswer pins the API
+// mapping for the exact error shape engine.TemporalRunReader's loadSnapshot
+// produces when a run's snapshot object is gone: it wraps
+// artifacts.ErrNotFound, so LookupRun falls through to the archive. For a
+// CLOSED run that fallthrough is the point — the archive holds the finished
+// run's complete body — and this test holds that path open. For a LIVE run
+// there is no archive body, which is why the reader itself must never emit
+// this shape for a run that is still executing:
+// TestTemporalRunReader_GetRunSurvivesAMissingSnapshotOnALiveRun (engine)
+// guarantees the degraded run is returned instead. A transient storage error
+// keeps its distinct shape and must stay Unavailable, never a fallthrough.
+func TestGetRun_MapsAMissingSnapshotShapeByWhoHoldsTheBetterAnswer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	t.Run("closed run falls through to the archive body", func(t *testing.T) {
+		run, events := foreignRun()
+		archive := newArchiver(t)
+		if err := archive.Archive(ctx, run, events); err != nil {
+			t.Fatalf("archive the finished run: %v", err)
+		}
+		missing := fmt.Errorf("engine: read snapshot of run %s: %w", run.GetId(), artifacts.ErrNotFound)
+		f := newReaderFixtureWith(t, &fakeReader{getErr: missing},
+			func(cfg *api.Config) { cfg.Archive = archive })
+
+		got, err := f.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
+			RunId: run.GetId(),
+		}))
+		if err != nil {
+			t.Fatalf("GetRun should have answered from the archive: %v", err)
+		}
+		if got.Msg.GetRun().GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+			t.Fatalf("archived run status = %s, want SUCCEEDED", got.Msg.GetRun().GetStatus())
+		}
+	})
+
+	t.Run("transient storage error stays unavailable", func(t *testing.T) {
+		run, events := foreignRun()
+		archive := newArchiver(t)
+		if err := archive.Archive(ctx, run, events); err != nil {
+			t.Fatalf("archive the finished run: %v", err)
+		}
+		transient := fmt.Errorf("engine: read snapshot of run %s: object storage is down", run.GetId())
+		f := newReaderFixtureWith(t, &fakeReader{getErr: transient},
+			func(cfg *api.Config) { cfg.Archive = archive })
+
+		_, err := f.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
+			RunId: run.GetId(),
+		}))
+		if err == nil {
+			t.Fatal("GetRun answered from the archive while storage was down")
+		}
+		if got := connect.CodeOf(err); got != connect.CodeUnavailable {
+			t.Fatalf("GetRun failed with %s, want Unavailable", got)
+		}
+	})
+
+	t.Run("live run with a degraded reader answer is served, not lost", func(t *testing.T) {
+		// After the engine fix a live run whose snapshot is gone comes back
+		// from the reader as a degraded run rather than an error; the handler
+		// must serve it as an ordinary answer instead of CodeNotFound.
+		run, _ := foreignRun()
+		run.Status = orkstackv1.Status_STATUS_RUNNING
+		run.FinishedAt = nil
+		f := newReaderFixture(t, &fakeReader{
+			runs: map[string]*orkstackv1.Run{run.GetId(): run},
+		})
+
+		got, err := f.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
+			RunId: run.GetId(),
+		}))
+		if err != nil {
+			t.Fatalf("GetRun on the live degraded run: %v", err)
+		}
+		if got.Msg.GetRun().GetStatus() != orkstackv1.Status_STATUS_RUNNING {
+			t.Fatalf("live run status = %s, want RUNNING", got.Msg.GetRun().GetStatus())
+		}
+	})
+}
