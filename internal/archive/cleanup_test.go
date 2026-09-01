@@ -45,32 +45,105 @@ type fakeArchive struct {
 	queries     []artifacts.RunQuery
 	pages       [][]string
 	afterDelete func(runID string)
+	// keysEnumerated counts index keys this archive walked past, which is what
+	// a bounded page has to bound. Returning a short slice after reading the
+	// whole index is exactly the regression these tests exist to catch.
+	keysEnumerated int
+	// ignoreUntil models a backend that honours every filter except Until, to
+	// prove cleanup does not trust the query it asked for.
+	ignoreUntil bool
 }
 
 func newFakeArchive(entries ...artifacts.RunIndexEntry) *fakeArchive {
+	// A real archive parses entries out of index keys, so every coordinate is
+	// always present. Fill the ones a test did not care to name rather than
+	// letting the double return entries no backend could produce.
+	for i := range entries {
+		if entries[i].Namespace == "" {
+			entries[i].Namespace = "default"
+		}
+		if entries[i].Orkflow == "" {
+			entries[i].Orkflow = "flow"
+		}
+		if entries[i].Status == "" {
+			entries[i].Status = "succeeded"
+		}
+	}
 	return &fakeArchive{entries: entries, states: map[string]artifacts.RunCleanupState{}, deleteErr: map[string]error{}, markErr: map[string]error{}, deletes: map[string]int{}}
 }
 func (f *fakeArchive) PutRun(context.Context, artifacts.RunRecord) error { return nil }
 func (f *fakeArchive) GetRun(context.Context, string) ([]byte, error) {
 	return nil, artifacts.ErrNotFound
 }
+
+// add appends entries through the same normalisation newFakeArchive applies,
+// so a test that grows the archive still holds entries a backend could produce.
+func (f *fakeArchive) add(entries ...artifacts.RunIndexEntry) {
+	seeded := newFakeArchive(entries...)
+	f.entries = append(f.entries, seeded.entries...)
+}
+
+// ListRuns models both orderings the real backends implement. A KeyOrder query
+// walks the index in key order from the cursor and stops at the page boundary,
+// counting every key it steps over, so a test can tell a genuinely bounded page
+// from a full scan that was truncated afterwards.
 func (f *fakeArchive) ListRuns(_ context.Context, q artifacts.RunQuery) ([]artifacts.RunIndexEntry, error) {
 	f.queries = append(f.queries, q)
+	matches := func(entry artifacts.RunIndexEntry) bool {
+		if f.ignoreUntil {
+			relaxed := q
+			relaxed.Until = time.Time{}
+			return relaxed.Matches(entry)
+		}
+		return q.Matches(entry)
+	}
+
 	var entries []artifacts.RunIndexEntry
-	for _, entry := range f.entries {
-		if q.Matches(entry) {
-			entries = append(entries, entry)
+	if q.KeyOrder {
+		type keyed struct {
+			key   string
+			entry artifacts.RunIndexEntry
+		}
+		indexed := make([]keyed, 0, len(f.entries))
+		for _, entry := range f.entries {
+			key, err := artifacts.RunIndexKeyForEntry(entry)
+			if err != nil {
+				return nil, err
+			}
+			indexed = append(indexed, keyed{key: key, entry: entry})
+		}
+		sort.Slice(indexed, func(i, j int) bool { return indexed[i].key < indexed[j].key })
+		for _, row := range indexed {
+			if q.StartAfterKey != "" && row.key <= q.StartAfterKey {
+				continue
+			}
+			f.keysEnumerated++
+			if !matches(row.entry) {
+				continue
+			}
+			entries = append(entries, row.entry)
+			if q.Limit > 0 && len(entries) >= q.Limit {
+				break
+			}
+		}
+	} else {
+		for _, entry := range f.entries {
+			f.keysEnumerated++
+			if matches(entry) {
+				entries = append(entries, entry)
+			}
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].Time.Equal(entries[j].Time) {
+				return entries[i].RunID > entries[j].RunID
+			}
+			return entries[i].Time.After(entries[j].Time)
+		})
+		if q.Limit > 0 && len(entries) > q.Limit {
+			entries = entries[:q.Limit]
 		}
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Time.Equal(entries[j].Time) {
-			return entries[i].RunID > entries[j].RunID
-		}
-		return entries[i].Time.After(entries[j].Time)
-	})
-	if q.Limit > 0 && len(entries) > q.Limit {
-		entries = entries[:q.Limit]
-	}
+
 	page := make([]string, len(entries))
 	for i, entry := range entries {
 		page[i] = entry.RunID
@@ -216,7 +289,10 @@ func TestRunOnce_PagesPastAlreadyCleanedRuns(t *testing.T) {
 		entries = append(entries, artifacts.RunIndexEntry{RunID: fmt.Sprintf("run-%d", i), Namespace: "default", Time: now.Add(time.Duration(-100-i) * time.Hour)})
 	}
 	store := newFakeArchive(entries...)
-	for i := 0; i < 4; i++ {
+	// The walk is in index-key order, and the stamp precedes the run id in a
+	// key, so it reaches the OLDEST run first. Marking the four oldest cleaned
+	// is what forces it to page before it finds anything left to do.
+	for i := 3; i < 7; i++ {
 		store.states[fmt.Sprintf("run-%d", i)] = artifacts.RunCleanupState{RunID: fmt.Sprintf("run-%d", i), ArtifactsCleaned: true}
 	}
 	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2}, store,
@@ -229,22 +305,26 @@ func TestRunOnce_PagesPastAlreadyCleanedRuns(t *testing.T) {
 		t.Fatalf("queries = %+v, want multiple bounded pages", store.queries)
 	}
 	for _, q := range store.queries {
-		if q.Limit != 4 || q.Until.IsZero() {
+		if q.Limit != 4 || q.Until.IsZero() || !q.KeyOrder {
 			t.Fatalf("unbounded query = %+v", q)
 		}
 	}
-	if store.deletes["run-4"] != 1 || store.deletes["run-5"] != 1 {
-		t.Fatalf("older eligible runs were not reached: %#v", store.deletes)
+	if store.deletes["run-2"] != 1 || store.deletes["run-1"] != 1 {
+		t.Fatalf("runs past the cleaned page were not reached: %#v", store.deletes)
+	}
+	// Paging must not re-read what earlier pages already stepped over.
+	if store.keysEnumerated != 7 {
+		t.Fatalf("keys enumerated = %d, want each of the 7 index keys once", store.keysEnumerated)
 	}
 }
 
-func TestRunOnce_CompositeCursorMakesPagesDisjoint(t *testing.T) {
+func TestRunOnce_KeyCursorMakesPagesDisjoint(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	stamp := now.Add(-100 * time.Hour)
 	store := newFakeArchive()
 	for i := 0; i < 9; i++ {
 		id := fmt.Sprintf("cursor-%02d", i)
-		store.entries = append(store.entries, artifacts.RunIndexEntry{RunID: id, Namespace: "default", Time: stamp.Add(-time.Duration(i/3) * time.Hour)})
+		store.add(artifacts.RunIndexEntry{RunID: id, Namespace: "default", Time: stamp.Add(-time.Duration(i/3) * time.Hour)})
 		store.states[id] = artifacts.RunCleanupState{RunID: id, ArtifactsCleaned: true}
 	}
 	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2}, store,
@@ -264,6 +344,12 @@ func TestRunOnce_CompositeCursorMakesPagesDisjoint(t *testing.T) {
 			seen[runID] = struct{}{}
 		}
 	}
+	if len(seen) != 9 {
+		t.Fatalf("pages covered %d runs, want all 9 with no gap: %v", len(seen), store.pages)
+	}
+	if store.keysEnumerated != 9 {
+		t.Fatalf("keys enumerated = %d, want each of the 9 index keys once", store.keysEnumerated)
+	}
 }
 
 func TestRunOnce_SharedTimestampTerminates(t *testing.T) {
@@ -272,7 +358,7 @@ func TestRunOnce_SharedTimestampTerminates(t *testing.T) {
 	store := newFakeArchive()
 	for i := 0; i < 6; i++ {
 		id := fmt.Sprintf("same-%d", i)
-		store.entries = append(store.entries, artifacts.RunIndexEntry{RunID: id, Namespace: "default", Time: stamp})
+		store.add(artifacts.RunIndexEntry{RunID: id, Namespace: "default", Time: stamp})
 		store.states[id] = artifacts.RunCleanupState{RunID: id, ArtifactsCleaned: true}
 	}
 	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2}, store,
@@ -288,6 +374,99 @@ func TestRunOnce_SharedTimestampTerminates(t *testing.T) {
 		if q.Limit != 4 || q.Until.IsZero() {
 			t.Fatalf("unbounded query = %+v", q)
 		}
+	}
+}
+
+// A whole cleanup iteration must cost ONE pass over the run index, no matter
+// how many pages it takes. Paging that re-reads the index per page turns a
+// linear scan into a quadratic one, and the steady state of a healthy
+// deployment — every eligible run already cleaned — is exactly the shape that
+// amplifies it. Elapsed time hides this on a warm cache, so this asserts on
+// keys enumerated.
+func TestRunOnce_WholeIterationEnumeratesTheIndexOnce(t *testing.T) {
+	const runs = 2000
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	var entries []artifacts.RunIndexEntry
+	for i := 0; i < runs; i++ {
+		entries = append(entries, artifacts.RunIndexEntry{
+			RunID: fmt.Sprintf("scan-%05d", i), Namespace: "default",
+			Time: now.Add(time.Duration(-100-i) * time.Hour),
+		})
+	}
+	store := newFakeArchive(entries...)
+	for _, entry := range store.entries {
+		store.states[entry.RunID] = artifacts.RunCleanupState{RunID: entry.RunID, ArtifactsCleaned: true}
+	}
+	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}, store,
+		&fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time { return now })
+
+	stats, err := cleaner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if stats.RunsScanned != runs {
+		t.Fatalf("runs scanned = %d, want every eligible run visited once (%d)", stats.RunsScanned, runs)
+	}
+	// One pass, not one pass per page.
+	if store.keysEnumerated != runs {
+		t.Fatalf("keys enumerated = %d over %d pages, want %d — the index is being re-read per page",
+			store.keysEnumerated, len(store.queries), runs)
+	}
+
+	// The cost the key-order walk replaced, measured rather than asserted from
+	// memory: paging a newest-first query re-reads the whole index per page,
+	// because the stamp is the fourth key segment so the newest page cannot be
+	// produced without sorting every key first.
+	newestFirst := newFakeArchive(entries...)
+	pages := 0
+	for until := cutoffFor(now, 72*time.Hour, 24*time.Hour); ; pages++ {
+		page, err := newestFirst.ListRuns(context.Background(), artifacts.RunQuery{Until: until, Limit: 200})
+		if err != nil {
+			t.Fatalf("newest-first page: %v", err)
+		}
+		if len(page) < 200 {
+			break
+		}
+		until = page[len(page)-1].Time
+	}
+	if newestFirst.keysEnumerated <= store.keysEnumerated {
+		t.Fatalf("newest-first paging enumerated %d keys, key-order %d: the comparison is not measuring what it claims",
+			newestFirst.keysEnumerated, store.keysEnumerated)
+	}
+	t.Logf("EVIDENCE runs=%d batch_size=100 key_order_pages=%d key_order_keys_enumerated=%d "+
+		"newest_first_pages=%d newest_first_keys_enumerated=%d reduction=%.1fx",
+		runs, len(store.queries), store.keysEnumerated,
+		pages, newestFirst.keysEnumerated,
+		float64(newestFirst.keysEnumerated)/float64(store.keysEnumerated))
+}
+
+// cutoffFor mirrors the eligibility bound RunOnce computes.
+func cutoffFor(now time.Time, retention, buffer time.Duration) time.Time {
+	return now.Add(-(retention + buffer))
+}
+
+// Cleanup asks for runs outside the retention window, but the deletion it then
+// performs is irreversible and RunArchive is an exported interface, so the
+// eligibility of each entry is re-checked rather than trusted from the filter.
+func TestRunOnce_RechecksRetentionAgainstEachReturnedEntry(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	store := newFakeArchive(
+		artifacts.RunIndexEntry{RunID: "expired", Namespace: "default", Time: now.Add(-100 * time.Hour)},
+		artifacts.RunIndexEntry{RunID: "still-retained", Namespace: "default", Time: now.Add(-time.Minute)},
+	)
+	store.ignoreUntil = true // a backend that honours every filter except Until
+	stats, err := testCleaner(store, &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, now).RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if store.deletes["still-retained"] != 0 {
+		t.Fatalf("a run inside the retention window was deleted: %#v", store.deletes)
+	}
+	if _, marked := store.states["still-retained"]; marked {
+		t.Fatal("a run inside the retention window was marked cleaned")
+	}
+	if store.deletes["expired"] != 1 || stats.RunsCleaned != 1 {
+		t.Fatalf("the expired run was not cleaned: deletes=%#v stats=%+v", store.deletes, stats)
 	}
 }
 

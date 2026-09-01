@@ -421,3 +421,103 @@ func TestS3RunArchive_ObjectDeletedMidScanIsIdempotent(t *testing.T) {
 	t.Logf("EVIDENCE s3_midscan_referenced_missing_noop=true s3_midscan_unreferenced_missing_noop=true " +
 		"s3_midscan_repeat_pass_no_op=true s3_midscan_archive_body_present=true")
 }
+
+// Archiving writes one reference marker per referenced object, so its cost is
+// linear in a run's artifact count — and it happens inside a projection
+// activity with a 10-second budget whose failure is only logged, which would
+// leave a wide fan-out run with no archive body at all. This measures the
+// marker write against real object storage, and pins that overlapping the round
+// trips is materially cheaper than issuing them one at a time.
+//
+// It bounds the ratio, not the absolute time: a shared dev bucket and a loaded
+// machine make wall-clock thresholds flaky, while the serial baseline is
+// measured in the same conditions in the same test.
+func TestS3RunArchive_MarkerWritesDoNotScaleSerially(t *testing.T) {
+	archive, cfg := newS3RunArchive(t)
+	ctx := context.Background()
+	client := newRawS3Client(t, cfg)
+
+	digest := strings.Repeat("ab", 32)
+	objectIDsFor := func(n int) []string {
+		ids := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			ids = append(ids, fmt.Sprintf("objects/n-%s%04d/%s", uniqueToken(t)[:6], i, digest))
+		}
+		return ids
+	}
+
+	type sample struct {
+		objects    int
+		concurrent time.Duration
+		serial     time.Duration
+	}
+	var samples []sample
+	for _, objects := range []int{0, 50, 200, 500} {
+		objectIDs := objectIDsFor(objects)
+
+		runID := archiveTestRun(t, fmt.Sprintf("-conc-%d", objects))
+		cleanupArchivedRun(t, cfg, runID)
+		start := time.Now()
+		if err := archive.PutRun(ctx, artifacts.RunRecord{
+			RunID: runID, Namespace: "default", Orkflow: "cleanup", Status: "succeeded",
+			Time: time.Now().UTC(), ObjectIDs: objectIDs, JSONL: []byte(runID + "\n"),
+		}); err != nil {
+			t.Fatalf("PutRun(%d objects): %v", objects, err)
+		}
+		concurrent := time.Since(start)
+
+		// The same marker keys, written one at a time through the same client
+		// and bucket: the cost this replaced, measured rather than remembered.
+		serialRun := archiveTestRun(t, fmt.Sprintf("-serial-%d", objects))
+		cleanupArchivedRun(t, cfg, serialRun)
+		serialKeys := make([]string, 0, objects)
+		for _, objectID := range objectIDs {
+			key, err := artifacts.RunObjectRefKey(objectID, serialRun)
+			if err != nil {
+				t.Fatalf("RunObjectRefKey: %v", err)
+			}
+			serialKeys = append(serialKeys, key)
+		}
+		start = time.Now()
+		for _, key := range serialKeys {
+			if _, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket: aws.String(cfg.S3Bucket), Key: aws.String(key),
+				Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
+			}); err != nil {
+				t.Fatalf("serial marker %q: %v", key, err)
+			}
+		}
+		samples = append(samples, sample{objects: objects, concurrent: concurrent, serial: time.Since(start)})
+
+		// Every marker still has to be durable: bounded concurrency must not
+		// turn into partial success, or a later DeleteUnreferencedObjects would
+		// delete an object this run still references.
+		for _, objectID := range objectIDs {
+			key, err := artifacts.RunObjectRefKey(objectID, runID)
+			if err != nil {
+				t.Fatalf("RunObjectRefKey: %v", err)
+			}
+			if _, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+				Bucket: aws.String(cfg.S3Bucket), Key: aws.String(key),
+			}); err != nil {
+				t.Fatalf("marker %q missing after PutRun(%d objects): %v", key, objects, err)
+			}
+		}
+	}
+
+	var evidence []string
+	for _, s := range samples {
+		speedup := 1.0
+		if s.concurrent > 0 {
+			speedup = float64(s.serial) / float64(s.concurrent)
+		}
+		evidence = append(evidence, fmt.Sprintf("objects=%d concurrent=%s serial=%s speedup=%.1fx",
+			s.objects, s.concurrent.Round(time.Millisecond), s.serial.Round(time.Millisecond), speedup))
+	}
+	widest := samples[len(samples)-1]
+	if widest.concurrent >= widest.serial {
+		t.Fatalf("bounded concurrency bought nothing at %d objects: concurrent=%s serial=%s",
+			widest.objects, widest.concurrent, widest.serial)
+	}
+	t.Logf("EVIDENCE s3_marker_write_scaling %s", strings.Join(evidence, " | "))
+}
