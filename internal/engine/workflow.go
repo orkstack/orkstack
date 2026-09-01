@@ -47,10 +47,20 @@ const (
 	// ActivityPublishEvent is the registered name of the projection activity.
 	ActivityPublishEvent = "PublishEvent"
 
-	// snapshotActivityTimeout bounds the complete local snapshot write,
-	// including its retries. Snapshot input is deliberately local: a regular
-	// activity would record the complete Run in Temporal history.
-	snapshotActivityTimeout = 10 * time.Second
+	// snapshotAttemptTimeout bounds ONE attempt of the local snapshot write —
+	// the same per-attempt budget the projection activity gets below.
+	snapshotAttemptTimeout = 10 * time.Second
+
+	// snapshotActivityTimeout bounds the complete local snapshot write end to
+	// end, retries and backoff included: for a local activity
+	// ScheduleToCloseTimeout covers every attempt. The write is run-critical —
+	// emit fails the run when it exhausts this budget — so it gets MORE total
+	// time than the best-effort projection below (three 10s attempts, 30s),
+	// never less: three 10s attempts plus the SDK's default 1s/2.0 backoff is
+	// ~33s, and the 60s ceiling leaves room for a remote object store to
+	// throttle without one latency spike converting hours of completed task
+	// work into a terminal failure.
+	snapshotActivityTimeout = 60 * time.Second
 )
 
 // eventActivityTimeout bounds one projection activity attempt.
@@ -795,6 +805,7 @@ func (s *runState) emit(
 	// into ActivityTaskScheduled.input and retain quadratic history growth. Its
 	// only recorded result is the small URI reference.
 	localCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
+		StartToCloseTimeout:    snapshotAttemptTimeout,
 		ScheduleToCloseTimeout: snapshotActivityTimeout,
 		RetryPolicy:            &temporal.RetryPolicy{MaximumAttempts: 3},
 	})
