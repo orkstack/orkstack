@@ -11,12 +11,15 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
+	namespacepb "go.temporal.io/api/namespace/v1"
 	"go.temporal.io/api/serviceerror"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -102,6 +105,24 @@ type runReadClient interface {
 	) (*workflowservice.ListWorkflowExecutionsResponse, error)
 }
 
+// namespaceRetentionClient is the slice of Temporal's WorkflowService the
+// admin retention read and write need. Narrowing it keeps both testable
+// with a fake and no live cluster, the same way internal/task/namespace.go's
+// namespaceRegistrar narrows DescribeNamespace/RegisterNamespace for
+// EnsureNamespace.
+type namespaceRetentionClient interface {
+	DescribeNamespace(
+		ctx context.Context,
+		in *workflowservice.DescribeNamespaceRequest,
+		opts ...grpc.CallOption,
+	) (*workflowservice.DescribeNamespaceResponse, error)
+	UpdateNamespace(
+		ctx context.Context,
+		in *workflowservice.UpdateNamespaceRequest,
+		opts ...grpc.CallOption,
+	) (*workflowservice.UpdateNamespaceResponse, error)
+}
+
 // TemporalRunReader answers run reads from Temporal, so any replica can answer
 // for any run.
 //
@@ -124,6 +145,14 @@ type TemporalRunReader struct {
 	converter converter.DataConverter
 	snapshots SnapshotStore
 
+	// retention is the narrowed seam NamespaceRetention and
+	// SetNamespaceRetention use. It is set from the same Temporal client as
+	// everything else on this reader (NewTemporalRunReader), so the admin
+	// retention read and write are never a second path to the cluster; a
+	// unit test sets it directly to a fake, with client and temporal left
+	// nil.
+	retention namespaceRetentionClient
+
 	// namespaceIndexed reports that this cluster has the OrkflowNamespace
 	// search attribute (task.EnsureRunSearchAttributes), so a namespace is a
 	// predicate the cluster applies rather than a filter this reader applies
@@ -136,12 +165,17 @@ type TemporalRunReader struct {
 // bus, which is the only way that body is whole under more than one replica.
 var _ RunEventSource = (*TemporalRunReader)(nil)
 
+// TemporalRunReader also satisfies RetentionAdmin, over the same client and
+// no second connection to the cluster.
+var _ RetentionAdmin = (*TemporalRunReader)(nil)
+
 // NewTemporalRunReader returns a reader over a Temporal client. It reads the
 // namespace the client is bound to, which is the hard partition every other
 // part of the engine already respects.
 func NewTemporalRunReader(c client.Client) *TemporalRunReader {
 	r := newRunReader(c, converter.GetDefaultDataConverter())
 	r.temporal = c
+	r.retention = c.WorkflowService()
 	return r
 }
 
@@ -181,18 +215,56 @@ func classifyWorkflowExists(err error) (bool, error) {
 	return false, err
 }
 
-// NamespaceRetention returns Temporal's configured workflow retention period.
+// NamespaceRetention returns Temporal's configured workflow retention period,
+// read live from the cluster (DescribeNamespace). namespace is the TEMPORAL
+// namespace, never an orkstack.v1.Namespace name.
 func (r *TemporalRunReader) NamespaceRetention(ctx context.Context, namespace string) (time.Duration, error) {
-	if r.temporal == nil {
+	if r.retention == nil {
 		return 0, fmt.Errorf("engine: namespace retention reader has no Temporal client")
 	}
-	response, err := r.temporal.WorkflowService().DescribeNamespace(ctx,
+	response, err := r.retention.DescribeNamespace(ctx,
 		&workflowservice.DescribeNamespaceRequest{Namespace: namespace})
 	if err != nil {
 		return 0, err
 	}
 	if response.GetConfig().GetWorkflowExecutionRetentionTtl() == nil {
 		return 0, fmt.Errorf("engine: namespace %q has no workflow retention", namespace)
+	}
+	return response.GetConfig().GetWorkflowExecutionRetentionTtl().AsDuration(), nil
+}
+
+// SetNamespaceRetention changes Temporal's workflow-execution retention for
+// namespace — the TEMPORAL namespace, never an orkstack.v1.Namespace name —
+// through Temporal's real UpdateNamespace RPC, and returns the retention
+// Temporal CONFIRMED in its response.
+//
+// retention must be positive; a non-positive value is refused here, before
+// any call reaches the cluster. Temporal's own refusal of a positive value it
+// still considers invalid (for example, below the cluster's configured
+// minimum) is returned to the caller UNTOUCHED: never swallowed into a
+// default, a zero value, or a fabricated success.
+func (r *TemporalRunReader) SetNamespaceRetention(
+	ctx context.Context,
+	namespace string,
+	retention time.Duration,
+) (time.Duration, error) {
+	if r.retention == nil {
+		return 0, fmt.Errorf("engine: namespace retention writer has no Temporal client")
+	}
+	if retention <= 0 {
+		return 0, fmt.Errorf("engine: namespace retention must be positive, got %s", retention)
+	}
+	response, err := r.retention.UpdateNamespace(ctx, &workflowservice.UpdateNamespaceRequest{
+		Namespace: namespace,
+		Config: &namespacepb.NamespaceConfig{
+			WorkflowExecutionRetentionTtl: durationpb.New(retention),
+		},
+	})
+	if err != nil {
+		return 0, err
+	}
+	if response.GetConfig().GetWorkflowExecutionRetentionTtl() == nil {
+		return 0, fmt.Errorf("engine: namespace %q update reported no workflow retention", namespace)
 	}
 	return response.GetConfig().GetWorkflowExecutionRetentionTtl().AsDuration(), nil
 }

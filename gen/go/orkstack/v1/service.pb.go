@@ -9,6 +9,7 @@ package orkstackv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -993,6 +994,7 @@ type SubmitRunRequest struct {
 	// the default namespace. A name is unique WITHIN a namespace, so this is
 	// half of the orkflow's address, not a filter.
 	Namespace string `protobuf:"bytes,5,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	//
 	// allow_empty_pool submits even when a task's resolved pool has no live
 	// Orkers. Default false: an empty pool is an error at submit, not a run
 	// that reaches RUNNING and stays there because nothing will ever pick its
@@ -2708,11 +2710,208 @@ func (x *GetSystemInfoResponse) GetServerTime() *timestamppb.Timestamp {
 	return nil
 }
 
+type GetExecutionRetentionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetExecutionRetentionRequest) Reset() {
+	*x = GetExecutionRetentionRequest{}
+	mi := &file_orkstack_v1_service_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetExecutionRetentionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetExecutionRetentionRequest) ProtoMessage() {}
+
+func (x *GetExecutionRetentionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_service_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetExecutionRetentionRequest.ProtoReflect.Descriptor instead.
+func (*GetExecutionRetentionRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{45}
+}
+
+type GetExecutionRetentionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// temporal_namespace is the Temporal namespace this retention describes:
+	// this deployment's ONE Temporal cluster namespace, never an
+	// orkstack.v1.Namespace name.
+	TemporalNamespace string `protobuf:"bytes,1,opt,name=temporal_namespace,json=temporalNamespace,proto3" json:"temporal_namespace,omitempty"`
+	// retention is Temporal's CURRENT workflow-execution retention, OBSERVED
+	// live from the cluster (DescribeNamespace) — not configuration echoed
+	// back, unlike every field of GetSystemInfoResponse above.
+	Retention     *durationpb.Duration `protobuf:"bytes,2,opt,name=retention,proto3" json:"retention,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetExecutionRetentionResponse) Reset() {
+	*x = GetExecutionRetentionResponse{}
+	mi := &file_orkstack_v1_service_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetExecutionRetentionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetExecutionRetentionResponse) ProtoMessage() {}
+
+func (x *GetExecutionRetentionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_service_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetExecutionRetentionResponse.ProtoReflect.Descriptor instead.
+func (*GetExecutionRetentionResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *GetExecutionRetentionResponse) GetTemporalNamespace() string {
+	if x != nil {
+		return x.TemporalNamespace
+	}
+	return ""
+}
+
+func (x *GetExecutionRetentionResponse) GetRetention() *durationpb.Duration {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
+type UpdateExecutionRetentionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// retention is the workflow-execution retention to set on this
+	// deployment's one Temporal cluster namespace. A non-positive value is
+	// rejected with INVALID_ARGUMENT before any call leaves this process.
+	Retention     *durationpb.Duration `protobuf:"bytes,1,opt,name=retention,proto3" json:"retention,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateExecutionRetentionRequest) Reset() {
+	*x = UpdateExecutionRetentionRequest{}
+	mi := &file_orkstack_v1_service_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateExecutionRetentionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateExecutionRetentionRequest) ProtoMessage() {}
+
+func (x *UpdateExecutionRetentionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_service_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateExecutionRetentionRequest.ProtoReflect.Descriptor instead.
+func (*UpdateExecutionRetentionRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *UpdateExecutionRetentionRequest) GetRetention() *durationpb.Duration {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
+type UpdateExecutionRetentionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// temporal_namespace is the Temporal namespace that was changed.
+	TemporalNamespace string `protobuf:"bytes,1,opt,name=temporal_namespace,json=temporalNamespace,proto3" json:"temporal_namespace,omitempty"`
+	// retention is the value Temporal CONFIRMED after the write — read back
+	// from Temporal's own UpdateNamespace response, not echoed from the
+	// request.
+	Retention     *durationpb.Duration `protobuf:"bytes,2,opt,name=retention,proto3" json:"retention,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateExecutionRetentionResponse) Reset() {
+	*x = UpdateExecutionRetentionResponse{}
+	mi := &file_orkstack_v1_service_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateExecutionRetentionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateExecutionRetentionResponse) ProtoMessage() {}
+
+func (x *UpdateExecutionRetentionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_service_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateExecutionRetentionResponse.ProtoReflect.Descriptor instead.
+func (*UpdateExecutionRetentionResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *UpdateExecutionRetentionResponse) GetTemporalNamespace() string {
+	if x != nil {
+		return x.TemporalNamespace
+	}
+	return ""
+}
+
+func (x *UpdateExecutionRetentionResponse) GetRetention() *durationpb.Duration {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
 var File_orkstack_v1_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x19orkstack/v1/service.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\x1a\x19orkstack/v1/orkflow.proto\x1a\x1borkstack/v1/namespace.proto\"\x9e\x01\n" +
+	"\x19orkstack/v1/service.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\x1a\x19orkstack/v1/orkflow.proto\x1a\x1borkstack/v1/namespace.proto\"\x9e\x01\n" +
 	"\x13ApplyOrkflowRequest\x12\x12\n" +
 	"\x04yaml\x18\x01 \x01(\tR\x04yaml\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12!\n" +
@@ -2885,7 +3084,16 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x11artifact_location\x18\a \x01(\tR\x10artifactLocation\x12)\n" +
 	"\x10temporal_address\x18\b \x01(\tR\x0ftemporalAddress\x12;\n" +
 	"\vserver_time\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"serverTime2\xae\x05\n" +
+	"serverTime\"\x1e\n" +
+	"\x1cGetExecutionRetentionRequest\"\x87\x01\n" +
+	"\x1dGetExecutionRetentionResponse\x12-\n" +
+	"\x12temporal_namespace\x18\x01 \x01(\tR\x11temporalNamespace\x127\n" +
+	"\tretention\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\tretention\"Z\n" +
+	"\x1fUpdateExecutionRetentionRequest\x127\n" +
+	"\tretention\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\tretention\"\x8a\x01\n" +
+	" UpdateExecutionRetentionResponse\x12-\n" +
+	"\x12temporal_namespace\x18\x01 \x01(\tR\x11temporalNamespace\x127\n" +
+	"\tretention\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\tretention2\xae\x05\n" +
 	"\x0eOrkflowService\x12S\n" +
 	"\fApplyOrkflow\x12 .orkstack.v1.ApplyOrkflowRequest\x1a!.orkstack.v1.ApplyOrkflowResponse\x12M\n" +
 	"\n" +
@@ -2912,9 +3120,11 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\tListPools\x12\x1d.orkstack.v1.ListPoolsRequest\x1a\x1e.orkstack.v1.ListPoolsResponse2\xc4\x01\n" +
 	"\x0fActivityService\x12Y\n" +
 	"\x0eListActivities\x12\".orkstack.v1.ListActivitiesRequest\x1a#.orkstack.v1.ListActivitiesResponse\x12V\n" +
-	"\rDescribeOrker\x12!.orkstack.v1.DescribeOrkerRequest\x1a\".orkstack.v1.DescribeOrkerResponse2g\n" +
+	"\rDescribeOrker\x12!.orkstack.v1.DescribeOrkerRequest\x1a\".orkstack.v1.DescribeOrkerResponse2\xd0\x02\n" +
 	"\rSystemService\x12V\n" +
-	"\rGetSystemInfo\x12!.orkstack.v1.GetSystemInfoRequest\x1a\".orkstack.v1.GetSystemInfoResponseB\xa8\x01\n" +
+	"\rGetSystemInfo\x12!.orkstack.v1.GetSystemInfoRequest\x1a\".orkstack.v1.GetSystemInfoResponse\x12n\n" +
+	"\x15GetExecutionRetention\x12).orkstack.v1.GetExecutionRetentionRequest\x1a*.orkstack.v1.GetExecutionRetentionResponse\x12w\n" +
+	"\x18UpdateExecutionRetention\x12,.orkstack.v1.UpdateExecutionRetentionRequest\x1a-.orkstack.v1.UpdateExecutionRetentionResponseB\xa8\x01\n" +
 	"\x0fcom.orkstack.v1B\fServiceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -2929,7 +3139,7 @@ func file_orkstack_v1_service_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_service_proto_rawDescData
 }
 
-var file_orkstack_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_orkstack_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
 var file_orkstack_v1_service_proto_goTypes = []any{
 	(*ApplyOrkflowRequest)(nil),              // 0: orkstack.v1.ApplyOrkflowRequest
 	(*ApplyOrkflowResponse)(nil),             // 1: orkstack.v1.ApplyOrkflowResponse
@@ -2976,90 +3186,102 @@ var file_orkstack_v1_service_proto_goTypes = []any{
 	(*DescribeOrkerResponse)(nil),            // 42: orkstack.v1.DescribeOrkerResponse
 	(*GetSystemInfoRequest)(nil),             // 43: orkstack.v1.GetSystemInfoRequest
 	(*GetSystemInfoResponse)(nil),            // 44: orkstack.v1.GetSystemInfoResponse
-	(*Orkflow)(nil),                          // 45: orkstack.v1.Orkflow
-	(*timestamppb.Timestamp)(nil),            // 46: google.protobuf.Timestamp
-	(*Payload)(nil),                          // 47: orkstack.v1.Payload
-	(*Run)(nil),                              // 48: orkstack.v1.Run
-	(Status)(0),                              // 49: orkstack.v1.Status
-	(*Namespace)(nil),                        // 50: orkstack.v1.Namespace
-	(*Pool)(nil),                             // 51: orkstack.v1.Pool
-	(*DescribeOrkerResult)(nil),              // 52: orkstack.v1.DescribeOrkerResult
-	(*Event)(nil),                            // 53: orkstack.v1.Event
+	(*GetExecutionRetentionRequest)(nil),     // 45: orkstack.v1.GetExecutionRetentionRequest
+	(*GetExecutionRetentionResponse)(nil),    // 46: orkstack.v1.GetExecutionRetentionResponse
+	(*UpdateExecutionRetentionRequest)(nil),  // 47: orkstack.v1.UpdateExecutionRetentionRequest
+	(*UpdateExecutionRetentionResponse)(nil), // 48: orkstack.v1.UpdateExecutionRetentionResponse
+	(*Orkflow)(nil),                          // 49: orkstack.v1.Orkflow
+	(*timestamppb.Timestamp)(nil),            // 50: google.protobuf.Timestamp
+	(*Payload)(nil),                          // 51: orkstack.v1.Payload
+	(*Run)(nil),                              // 52: orkstack.v1.Run
+	(Status)(0),                              // 53: orkstack.v1.Status
+	(*Namespace)(nil),                        // 54: orkstack.v1.Namespace
+	(*Pool)(nil),                             // 55: orkstack.v1.Pool
+	(*DescribeOrkerResult)(nil),              // 56: orkstack.v1.DescribeOrkerResult
+	(*durationpb.Duration)(nil),              // 57: google.protobuf.Duration
+	(*Event)(nil),                            // 58: orkstack.v1.Event
 }
 var file_orkstack_v1_service_proto_depIdxs = []int32{
-	45, // 0: orkstack.v1.ApplyOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
-	45, // 1: orkstack.v1.GetOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
-	45, // 2: orkstack.v1.ListOrkflowsResponse.orkflows:type_name -> orkstack.v1.Orkflow
-	46, // 3: orkstack.v1.OrkflowVersion.applied_at:type_name -> google.protobuf.Timestamp
+	49, // 0: orkstack.v1.ApplyOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	49, // 1: orkstack.v1.GetOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	49, // 2: orkstack.v1.ListOrkflowsResponse.orkflows:type_name -> orkstack.v1.Orkflow
+	50, // 3: orkstack.v1.OrkflowVersion.applied_at:type_name -> google.protobuf.Timestamp
 	6,  // 4: orkstack.v1.ListOrkflowVersionsResponse.versions:type_name -> orkstack.v1.OrkflowVersion
-	46, // 5: orkstack.v1.SetCurrentOrkflowVersionResponse.updated_at:type_name -> google.protobuf.Timestamp
-	46, // 6: orkstack.v1.DeleteOrkflowResponse.deleted_at:type_name -> google.protobuf.Timestamp
-	47, // 7: orkstack.v1.SubmitRunRequest.input:type_name -> orkstack.v1.Payload
-	48, // 8: orkstack.v1.SubmitRunResponse.run:type_name -> orkstack.v1.Run
-	48, // 9: orkstack.v1.GetRunResponse.run:type_name -> orkstack.v1.Run
-	49, // 10: orkstack.v1.ListRunsRequest.status:type_name -> orkstack.v1.Status
-	48, // 11: orkstack.v1.ListRunsResponse.runs:type_name -> orkstack.v1.Run
-	48, // 12: orkstack.v1.CancelRunResponse.run:type_name -> orkstack.v1.Run
-	50, // 13: orkstack.v1.CreateNamespaceRequest.namespace:type_name -> orkstack.v1.Namespace
-	50, // 14: orkstack.v1.CreateNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
-	50, // 15: orkstack.v1.GetNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
-	50, // 16: orkstack.v1.ListNamespacesResponse.namespaces:type_name -> orkstack.v1.Namespace
-	50, // 17: orkstack.v1.UpdateNamespaceRequest.namespace:type_name -> orkstack.v1.Namespace
-	50, // 18: orkstack.v1.UpdateNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
-	51, // 19: orkstack.v1.ListPoolsResponse.pools:type_name -> orkstack.v1.Pool
-	46, // 20: orkstack.v1.ActivityInfo.resolved_at:type_name -> google.protobuf.Timestamp
+	50, // 5: orkstack.v1.SetCurrentOrkflowVersionResponse.updated_at:type_name -> google.protobuf.Timestamp
+	50, // 6: orkstack.v1.DeleteOrkflowResponse.deleted_at:type_name -> google.protobuf.Timestamp
+	51, // 7: orkstack.v1.SubmitRunRequest.input:type_name -> orkstack.v1.Payload
+	52, // 8: orkstack.v1.SubmitRunResponse.run:type_name -> orkstack.v1.Run
+	52, // 9: orkstack.v1.GetRunResponse.run:type_name -> orkstack.v1.Run
+	53, // 10: orkstack.v1.ListRunsRequest.status:type_name -> orkstack.v1.Status
+	52, // 11: orkstack.v1.ListRunsResponse.runs:type_name -> orkstack.v1.Run
+	52, // 12: orkstack.v1.CancelRunResponse.run:type_name -> orkstack.v1.Run
+	54, // 13: orkstack.v1.CreateNamespaceRequest.namespace:type_name -> orkstack.v1.Namespace
+	54, // 14: orkstack.v1.CreateNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
+	54, // 15: orkstack.v1.GetNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
+	54, // 16: orkstack.v1.ListNamespacesResponse.namespaces:type_name -> orkstack.v1.Namespace
+	54, // 17: orkstack.v1.UpdateNamespaceRequest.namespace:type_name -> orkstack.v1.Namespace
+	54, // 18: orkstack.v1.UpdateNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
+	55, // 19: orkstack.v1.ListPoolsResponse.pools:type_name -> orkstack.v1.Pool
+	50, // 20: orkstack.v1.ActivityInfo.resolved_at:type_name -> google.protobuf.Timestamp
 	39, // 21: orkstack.v1.ListActivitiesResponse.activities:type_name -> orkstack.v1.ActivityInfo
-	52, // 22: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
-	46, // 23: orkstack.v1.GetSystemInfoResponse.server_time:type_name -> google.protobuf.Timestamp
-	0,  // 24: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
-	2,  // 25: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
-	4,  // 26: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
-	7,  // 27: orkstack.v1.OrkflowService.ListOrkflowVersions:input_type -> orkstack.v1.ListOrkflowVersionsRequest
-	9,  // 28: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:input_type -> orkstack.v1.SetCurrentOrkflowVersionRequest
-	11, // 29: orkstack.v1.OrkflowService.DiffOrkflowVersions:input_type -> orkstack.v1.DiffOrkflowVersionsRequest
-	13, // 30: orkstack.v1.OrkflowService.DeleteOrkflow:input_type -> orkstack.v1.DeleteOrkflowRequest
-	15, // 31: orkstack.v1.RunService.SubmitRun:input_type -> orkstack.v1.SubmitRunRequest
-	17, // 32: orkstack.v1.RunService.GetRun:input_type -> orkstack.v1.GetRunRequest
-	19, // 33: orkstack.v1.RunService.ListRuns:input_type -> orkstack.v1.ListRunsRequest
-	21, // 34: orkstack.v1.RunService.CancelRun:input_type -> orkstack.v1.CancelRunRequest
-	23, // 35: orkstack.v1.RunService.StreamEvents:input_type -> orkstack.v1.StreamEventsRequest
-	24, // 36: orkstack.v1.RunService.StreamTaskLogs:input_type -> orkstack.v1.StreamTaskLogsRequest
-	26, // 37: orkstack.v1.NamespaceService.CreateNamespace:input_type -> orkstack.v1.CreateNamespaceRequest
-	28, // 38: orkstack.v1.NamespaceService.GetNamespace:input_type -> orkstack.v1.GetNamespaceRequest
-	30, // 39: orkstack.v1.NamespaceService.ListNamespaces:input_type -> orkstack.v1.ListNamespacesRequest
-	32, // 40: orkstack.v1.NamespaceService.UpdateNamespace:input_type -> orkstack.v1.UpdateNamespaceRequest
-	34, // 41: orkstack.v1.NamespaceService.DeleteNamespace:input_type -> orkstack.v1.DeleteNamespaceRequest
-	36, // 42: orkstack.v1.NamespaceService.ListPools:input_type -> orkstack.v1.ListPoolsRequest
-	38, // 43: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
-	41, // 44: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
-	43, // 45: orkstack.v1.SystemService.GetSystemInfo:input_type -> orkstack.v1.GetSystemInfoRequest
-	1,  // 46: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
-	3,  // 47: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
-	5,  // 48: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
-	8,  // 49: orkstack.v1.OrkflowService.ListOrkflowVersions:output_type -> orkstack.v1.ListOrkflowVersionsResponse
-	10, // 50: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:output_type -> orkstack.v1.SetCurrentOrkflowVersionResponse
-	12, // 51: orkstack.v1.OrkflowService.DiffOrkflowVersions:output_type -> orkstack.v1.DiffOrkflowVersionsResponse
-	14, // 52: orkstack.v1.OrkflowService.DeleteOrkflow:output_type -> orkstack.v1.DeleteOrkflowResponse
-	16, // 53: orkstack.v1.RunService.SubmitRun:output_type -> orkstack.v1.SubmitRunResponse
-	18, // 54: orkstack.v1.RunService.GetRun:output_type -> orkstack.v1.GetRunResponse
-	20, // 55: orkstack.v1.RunService.ListRuns:output_type -> orkstack.v1.ListRunsResponse
-	22, // 56: orkstack.v1.RunService.CancelRun:output_type -> orkstack.v1.CancelRunResponse
-	53, // 57: orkstack.v1.RunService.StreamEvents:output_type -> orkstack.v1.Event
-	25, // 58: orkstack.v1.RunService.StreamTaskLogs:output_type -> orkstack.v1.TaskLogChunk
-	27, // 59: orkstack.v1.NamespaceService.CreateNamespace:output_type -> orkstack.v1.CreateNamespaceResponse
-	29, // 60: orkstack.v1.NamespaceService.GetNamespace:output_type -> orkstack.v1.GetNamespaceResponse
-	31, // 61: orkstack.v1.NamespaceService.ListNamespaces:output_type -> orkstack.v1.ListNamespacesResponse
-	33, // 62: orkstack.v1.NamespaceService.UpdateNamespace:output_type -> orkstack.v1.UpdateNamespaceResponse
-	35, // 63: orkstack.v1.NamespaceService.DeleteNamespace:output_type -> orkstack.v1.DeleteNamespaceResponse
-	37, // 64: orkstack.v1.NamespaceService.ListPools:output_type -> orkstack.v1.ListPoolsResponse
-	40, // 65: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
-	42, // 66: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
-	44, // 67: orkstack.v1.SystemService.GetSystemInfo:output_type -> orkstack.v1.GetSystemInfoResponse
-	46, // [46:68] is the sub-list for method output_type
-	24, // [24:46] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	56, // 22: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
+	50, // 23: orkstack.v1.GetSystemInfoResponse.server_time:type_name -> google.protobuf.Timestamp
+	57, // 24: orkstack.v1.GetExecutionRetentionResponse.retention:type_name -> google.protobuf.Duration
+	57, // 25: orkstack.v1.UpdateExecutionRetentionRequest.retention:type_name -> google.protobuf.Duration
+	57, // 26: orkstack.v1.UpdateExecutionRetentionResponse.retention:type_name -> google.protobuf.Duration
+	0,  // 27: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
+	2,  // 28: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
+	4,  // 29: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
+	7,  // 30: orkstack.v1.OrkflowService.ListOrkflowVersions:input_type -> orkstack.v1.ListOrkflowVersionsRequest
+	9,  // 31: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:input_type -> orkstack.v1.SetCurrentOrkflowVersionRequest
+	11, // 32: orkstack.v1.OrkflowService.DiffOrkflowVersions:input_type -> orkstack.v1.DiffOrkflowVersionsRequest
+	13, // 33: orkstack.v1.OrkflowService.DeleteOrkflow:input_type -> orkstack.v1.DeleteOrkflowRequest
+	15, // 34: orkstack.v1.RunService.SubmitRun:input_type -> orkstack.v1.SubmitRunRequest
+	17, // 35: orkstack.v1.RunService.GetRun:input_type -> orkstack.v1.GetRunRequest
+	19, // 36: orkstack.v1.RunService.ListRuns:input_type -> orkstack.v1.ListRunsRequest
+	21, // 37: orkstack.v1.RunService.CancelRun:input_type -> orkstack.v1.CancelRunRequest
+	23, // 38: orkstack.v1.RunService.StreamEvents:input_type -> orkstack.v1.StreamEventsRequest
+	24, // 39: orkstack.v1.RunService.StreamTaskLogs:input_type -> orkstack.v1.StreamTaskLogsRequest
+	26, // 40: orkstack.v1.NamespaceService.CreateNamespace:input_type -> orkstack.v1.CreateNamespaceRequest
+	28, // 41: orkstack.v1.NamespaceService.GetNamespace:input_type -> orkstack.v1.GetNamespaceRequest
+	30, // 42: orkstack.v1.NamespaceService.ListNamespaces:input_type -> orkstack.v1.ListNamespacesRequest
+	32, // 43: orkstack.v1.NamespaceService.UpdateNamespace:input_type -> orkstack.v1.UpdateNamespaceRequest
+	34, // 44: orkstack.v1.NamespaceService.DeleteNamespace:input_type -> orkstack.v1.DeleteNamespaceRequest
+	36, // 45: orkstack.v1.NamespaceService.ListPools:input_type -> orkstack.v1.ListPoolsRequest
+	38, // 46: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
+	41, // 47: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
+	43, // 48: orkstack.v1.SystemService.GetSystemInfo:input_type -> orkstack.v1.GetSystemInfoRequest
+	45, // 49: orkstack.v1.SystemService.GetExecutionRetention:input_type -> orkstack.v1.GetExecutionRetentionRequest
+	47, // 50: orkstack.v1.SystemService.UpdateExecutionRetention:input_type -> orkstack.v1.UpdateExecutionRetentionRequest
+	1,  // 51: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
+	3,  // 52: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
+	5,  // 53: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
+	8,  // 54: orkstack.v1.OrkflowService.ListOrkflowVersions:output_type -> orkstack.v1.ListOrkflowVersionsResponse
+	10, // 55: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:output_type -> orkstack.v1.SetCurrentOrkflowVersionResponse
+	12, // 56: orkstack.v1.OrkflowService.DiffOrkflowVersions:output_type -> orkstack.v1.DiffOrkflowVersionsResponse
+	14, // 57: orkstack.v1.OrkflowService.DeleteOrkflow:output_type -> orkstack.v1.DeleteOrkflowResponse
+	16, // 58: orkstack.v1.RunService.SubmitRun:output_type -> orkstack.v1.SubmitRunResponse
+	18, // 59: orkstack.v1.RunService.GetRun:output_type -> orkstack.v1.GetRunResponse
+	20, // 60: orkstack.v1.RunService.ListRuns:output_type -> orkstack.v1.ListRunsResponse
+	22, // 61: orkstack.v1.RunService.CancelRun:output_type -> orkstack.v1.CancelRunResponse
+	58, // 62: orkstack.v1.RunService.StreamEvents:output_type -> orkstack.v1.Event
+	25, // 63: orkstack.v1.RunService.StreamTaskLogs:output_type -> orkstack.v1.TaskLogChunk
+	27, // 64: orkstack.v1.NamespaceService.CreateNamespace:output_type -> orkstack.v1.CreateNamespaceResponse
+	29, // 65: orkstack.v1.NamespaceService.GetNamespace:output_type -> orkstack.v1.GetNamespaceResponse
+	31, // 66: orkstack.v1.NamespaceService.ListNamespaces:output_type -> orkstack.v1.ListNamespacesResponse
+	33, // 67: orkstack.v1.NamespaceService.UpdateNamespace:output_type -> orkstack.v1.UpdateNamespaceResponse
+	35, // 68: orkstack.v1.NamespaceService.DeleteNamespace:output_type -> orkstack.v1.DeleteNamespaceResponse
+	37, // 69: orkstack.v1.NamespaceService.ListPools:output_type -> orkstack.v1.ListPoolsResponse
+	40, // 70: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
+	42, // 71: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
+	44, // 72: orkstack.v1.SystemService.GetSystemInfo:output_type -> orkstack.v1.GetSystemInfoResponse
+	46, // 73: orkstack.v1.SystemService.GetExecutionRetention:output_type -> orkstack.v1.GetExecutionRetentionResponse
+	48, // 74: orkstack.v1.SystemService.UpdateExecutionRetention:output_type -> orkstack.v1.UpdateExecutionRetentionResponse
+	51, // [51:75] is the sub-list for method output_type
+	27, // [27:51] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_service_proto_init() }
@@ -3078,7 +3300,7 @@ func file_orkstack_v1_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_service_proto_rawDesc), len(file_orkstack_v1_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   45,
+			NumMessages:   49,
 			NumExtensions: 0,
 			NumServices:   5,
 		},

@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package orkstack.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
@@ -486,8 +487,39 @@ service SystemService {
   // Orkers run — comes from the store or the cluster, so any replica gives
   // the same reply. This one describes the replica in front of you, on
   // purpose, because that is what an operator behind a load balancer needs
-  // to know during a rollout.
   rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse);
+
+  // GetExecutionRetention reads Temporal's CURRENT workflow-execution
+  // retention for this deployment's ONE Temporal cluster namespace
+  // (internal/engine/router.go's SingleRouter serves every OrkStack
+  // namespace from that one binding). UNLIKE GetSystemInfo above, this RPC
+  // is a LIVE READ observed from the cluster right now (Temporal's
+  // DescribeNamespace) — it does NOT weaken or contradict GetSystemInfo's
+  // "every field is configuration-derived, not observed" guarantee, which
+  // still holds for every field of THAT message; this is a different RPC
+  // answering a different question.
+  //
+  // This is deployment-wide, not per-OrkStack-Namespace: it has nothing to
+  // do with orkstack.v1.Namespace, NamespaceService or `orkctl namespace
+  // ...`, which is an already-shipped registry entity owning orkflow names,
+  // runs and pool defaults. There is exactly one Temporal namespace behind
+  // this whole deployment, and this RPC describes that one setting.
+  rpc GetExecutionRetention(GetExecutionRetentionRequest) returns (GetExecutionRetentionResponse);
+
+  // UpdateExecutionRetention CHANGES that same cluster-wide setting. UNLIKE
+  // GetSystemInfo, this RPC is a LIVE WRITE against the cluster (Temporal's
+  // UpdateNamespace, WorkflowExecutionRetentionPeriod) — again, no claim
+  // about GetSystemInfo's own fields changes because of this RPC existing.
+  //
+  // A non-positive retention is rejected with INVALID_ARGUMENT before any
+  // call leaves this process. A positive retention Temporal itself refuses
+  // (for example, below the cluster's own configured minimum) comes back to
+  // the caller as Temporal reported it — never swallowed into a default, a
+  // zero value, or a fabricated success.
+  //
+  // Deployment-wide, not per-OrkStack-Namespace, for the same reason as
+  // GetExecutionRetention above.
+  rpc UpdateExecutionRetention(UpdateExecutionRetentionRequest) returns (UpdateExecutionRetentionResponse);
 }
 message GetSystemInfoRequest {}
 message GetSystemInfoResponse {
@@ -526,4 +558,31 @@ message GetSystemInfoResponse {
   // observed field in this message. A client comparing it with its own clock
   // is comparing two clocks, which is what makes a skewed replica visible.
   google.protobuf.Timestamp server_time = 9;
+}
+
+message GetExecutionRetentionRequest {}
+message GetExecutionRetentionResponse {
+  // temporal_namespace is the Temporal namespace this retention describes:
+  // this deployment's ONE Temporal cluster namespace, never an
+  // orkstack.v1.Namespace name.
+  string temporal_namespace = 1;
+  // retention is Temporal's CURRENT workflow-execution retention, OBSERVED
+  // live from the cluster (DescribeNamespace) — not configuration echoed
+  // back, unlike every field of GetSystemInfoResponse above.
+  google.protobuf.Duration retention = 2;
+}
+
+message UpdateExecutionRetentionRequest {
+  // retention is the workflow-execution retention to set on this
+  // deployment's one Temporal cluster namespace. A non-positive value is
+  // rejected with INVALID_ARGUMENT before any call leaves this process.
+  google.protobuf.Duration retention = 1;
+}
+message UpdateExecutionRetentionResponse {
+  // temporal_namespace is the Temporal namespace that was changed.
+  string temporal_namespace = 1;
+  // retention is the value Temporal CONFIRMED after the write — read back
+  // from Temporal's own UpdateNamespace response, not echoed from the
+  // request.
+  google.protobuf.Duration retention = 2;
 }

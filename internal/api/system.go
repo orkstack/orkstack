@@ -2,11 +2,16 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"connectrpc.com/connect"
+	"go.temporal.io/api/serviceerror"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/engine"
 )
 
 // SystemInfo is what this replica was built and configured as — the values
@@ -88,4 +93,98 @@ func (s *Service) GetSystemInfo(
 		TemporalAddress:  s.system.TemporalAddress,
 		ServerTime:       timestamppb.New(s.now().UTC()),
 	}), nil
+}
+
+// retentionBinding resolves the single binding every admin/cluster read goes
+// through, and the retention seam on it. There is no second, parallel path to
+// a Temporal client here: this is the SAME s.binding(...) call GetRun,
+// ListRuns and CancelRun use, just asked with no OrkStack namespace, because
+// execution retention is a deployment-wide Temporal cluster setting, not a
+// per-OrkStack-Namespace one — internal/engine/router.go's SingleRouter
+// serves every OrkStack namespace from this one binding.
+func (s *Service) retentionBinding() (engine.RetentionAdmin, error) {
+	binding, err := s.binding("")
+	if err != nil {
+		return nil, err
+	}
+	if binding.Retention == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented,
+			fmt.Errorf("this engine has no Temporal retention admin configured"))
+	}
+	return binding.Retention, nil
+}
+
+// GetExecutionRetention reads Temporal's CURRENT workflow-execution retention
+// for this deployment's one Temporal namespace, live from the cluster
+// (DescribeNamespace) — UNLIKE GetSystemInfo above, whose fields are all
+// configuration echoed back rather than observed. That guarantee is
+// unaffected by this RPC: it still holds for every field of
+// GetSystemInfoResponse, which gains none here.
+//
+// It is deployment-wide, never per-OrkStack-Namespace: see retentionBinding.
+func (s *Service) GetExecutionRetention(
+	ctx context.Context,
+	_ *connect.Request[orkstackv1.GetExecutionRetentionRequest],
+) (*connect.Response[orkstackv1.GetExecutionRetentionResponse], error) {
+	retention, err := s.retentionBinding()
+	if err != nil {
+		return nil, err
+	}
+	current, err := retention.NamespaceRetention(ctx, s.temporalNamespace)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("read temporal namespace %q retention: %w", s.temporalNamespace, err))
+	}
+	return connect.NewResponse(&orkstackv1.GetExecutionRetentionResponse{
+		TemporalNamespace: s.temporalNamespace,
+		Retention:         durationpb.New(current),
+	}), nil
+}
+
+// UpdateExecutionRetention CHANGES that same cluster-wide setting through
+// Temporal's real UpdateNamespace RPC — UNLIKE GetSystemInfo, a live write
+// against the cluster, and again no claim about GetSystemInfoResponse's own
+// fields is affected by this RPC existing.
+//
+// A non-positive duration is rejected with InvalidArgument before any call
+// leaves this process. A Temporal refusal of a positive one — including its
+// own server-side minimum-retention rejection — is returned to the caller
+// untouched: never swallowed into a default, a zero value, or a fabricated
+// success.
+func (s *Service) UpdateExecutionRetention(
+	ctx context.Context,
+	req *connect.Request[orkstackv1.UpdateExecutionRetentionRequest],
+) (*connect.Response[orkstackv1.UpdateExecutionRetentionResponse], error) {
+	requested := req.Msg.GetRetention()
+	if requested == nil || requested.AsDuration() <= 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("retention must be a positive duration"))
+	}
+	retention, err := s.retentionBinding()
+	if err != nil {
+		return nil, err
+	}
+	confirmed, err := retention.SetNamespaceRetention(ctx, s.temporalNamespace, requested.AsDuration())
+	if err != nil {
+		return nil, connect.NewError(temporalWriteErrorCode(err),
+			fmt.Errorf("update temporal namespace %q retention: %w", s.temporalNamespace, err))
+	}
+	return connect.NewResponse(&orkstackv1.UpdateExecutionRetentionResponse{
+		TemporalNamespace: s.temporalNamespace,
+		Retention:         durationpb.New(confirmed),
+	}), nil
+}
+
+// temporalWriteErrorCode classifies a Temporal write failure the way the
+// caller can act on it. Temporal's own validation refusals — the
+// server-side minimum-retention rejection is exactly this shape — surface as
+// *serviceerror.InvalidArgument, so those come back as InvalidArgument rather
+// than the Unavailable every other cluster-reachability failure here uses;
+// the message itself is always Temporal's own, untouched either way.
+func temporalWriteErrorCode(err error) connect.Code {
+	var invalid *serviceerror.InvalidArgument
+	if errors.As(err, &invalid) {
+		return connect.CodeInvalidArgument
+	}
+	return connect.CodeUnavailable
 }

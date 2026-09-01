@@ -34,7 +34,8 @@
 		{ id: 'overview', href: '/admin', label: 'Overview' },
 		{ id: 'namespaces', href: '/admin/namespaces', label: 'Namespaces' },
 		{ id: 'pools', href: '/admin/pools', label: 'Pools' },
-		{ id: 'activities', href: '/admin/activities', label: 'Activities' }
+		{ id: 'activities', href: '/admin/activities', label: 'Activities' },
+		{ id: 'retention', href: '/admin/retention', label: 'Retention' }
 	];
 
 	// "overview" only ever matches the exact `/admin` path: every other tab's

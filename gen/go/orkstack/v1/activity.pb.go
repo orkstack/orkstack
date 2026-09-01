@@ -91,8 +91,7 @@ type ImageRef struct {
 	// Spelled "sha256:<64 hex>".
 	IndexDigest string `protobuf:"bytes,4,opt,name=index_digest,json=indexDigest,proto3" json:"index_digest,omitempty"`
 	// pinned is the only string that may be pulled or run:
-	//
-	//	"{registry}/{repository}@{index_digest}"
+	//   "{registry}/{repository}@{index_digest}"
 	Pinned string `protobuf:"bytes,5,opt,name=pinned,proto3" json:"pinned,omitempty"`
 	// media_type is the media type index_digest addresses.
 	MediaType string `protobuf:"bytes,6,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
@@ -512,8 +511,7 @@ type ExecuteTaskInput struct {
 	// --- identity
 	// idempotency_key is the stable key of one logical activity, unchanged
 	// across every retry (AGENTS.md §3, §4). Its value is exactly
-	//
-	//	"{namespace-or-default}/{run_id}/{task_id}"
+	//   "{namespace-or-default}/{run_id}/{task_id}"
 	//
 	// The name is plain, not "task_idempotency_key", for two reasons: its wire
 	// JSON (`idempotencyKey`) is then byte-identical to the key the workspace

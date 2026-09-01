@@ -269,6 +269,15 @@ volume** (only `minio-data` is a named volume), and `start-dev` defaults to an i
 database — a container restart wipes everything. This directly violates "no loss of orkflow or run
 data". *MinIO loss:* unaffected.
 
+**Reading and writing it is now a first-class deployment operation**, not
+only a manual `temporal operator namespace describe`: `orkctl admin retention
+get`/`orkctl admin retention set <duration>` and the Admin → Retention UI
+page read and write this exact setting live against the cluster (see
+`docs/DEPLOY.md`'s "Execution retention: one deployment-wide Temporal cluster
+setting"). It remains what this section measured it to be — one Temporal
+cluster-wide setting for the whole deployment, never a per-OrkStack-namespace
+one, and never a property `orkctl namespace` touches.
+
 **Operational complexity.** Deceptively high: register custom search attributes per namespace,
 raise retention, add a persistent Temporal database and volume (a `deploy/` change, coordinated
 under AGENTS.md §8), and then version the history→`Run` reconstruction against workflow-code

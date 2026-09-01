@@ -1113,14 +1113,16 @@ Runs already pinned to a version still need that version's workers.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
-Four reads answer every operational question about a deployment, and each is
+Five reads answer every operational question about a deployment, and each is
 available from the CLI and over Connect. Three of them are answered from the
 cluster or the bucket, so **any replica answers them and they all answer the
-same** (`AGENTS.md` §1.7). The fourth is deliberately not.
+same** (`AGENTS.md` §1.7). The fourth is deliberately not, and the fifth is a
+live cluster read with its own write counterpart (below).
 
 | read | CLI | where the answer comes from |
 |---|---|---|
 | system information | `orkctl admin info` | **this replica's own build and configuration** |
+| execution retention | `orkctl admin retention get \| set <duration>` | Temporal's `DescribeNamespace`/`UpdateNamespace` — **live, observed from the cluster**, and writable |
 | pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
 | namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket |
 | plugin inventory | `orkctl plugin list` | the connected Orkers, asked pool by pool |
@@ -1243,6 +1245,52 @@ The whole surface, answered by a second replica that started nothing — no
 namespace registered, no orkflow applied, no run — is proven live in
 `TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`
 (`proof/M11.3/`).
+
+### Execution retention: one deployment-wide Temporal cluster setting
+
+`orkctl admin retention get` and `orkctl admin retention set <duration>` read
+and change how long Temporal keeps a finished workflow's history for **this
+deployment's ONE Temporal cluster namespace** — the same
+`ORK_TEMPORAL_NAMESPACE` retention already described above (§ "The bucket
+stops being optional…" and the cleanup section that follows it) and in
+`docs/STORAGE.md`'s own "Temporal namespace retention" measurements. It is a
+single cluster-wide setting, **never a per-OrkStack-Namespace one**: it has
+nothing to do with `orkctl namespace`, which manages the OrkStack registry
+entity owning orkflow names, runs and pool defaults, of which a deployment may
+have many. There is exactly one Temporal namespace behind the whole
+deployment (`internal/engine/router.go`'s `SingleRouter`), and this is its one
+retention setting.
+
+Unlike `orkctl admin info`, both subcommands leave the process: `get` calls
+Temporal's `DescribeNamespace` and `set` calls Temporal's `UpdateNamespace`
+(`WorkflowExecutionRetentionPeriod`), live against the cluster, through the
+same `NamespaceRouter` binding every other admin/cluster read already uses —
+never a second, parallel Temporal client. `<duration>` uses Go's
+`time.ParseDuration` syntax (`168h`, `24h30m`, …), the same flavour every
+`ORK_*_TTL`/`ORK_*_INTERVAL` variable in the table above uses. A zero or
+negative duration is refused locally, before any request leaves this process;
+a positive duration Temporal itself refuses (for example, below the cluster's
+own configured minimum) is reported back exactly as Temporal worded it —
+never swallowed into a default, a zero value, or a fabricated success:
+
+```
+$ orkctl admin retention get
+temporal namespace:   ork-main
+execution retention:  72h0m0s
+
+This is ONE Temporal cluster setting for the whole deployment, not a
+per-OrkStack-namespace value — see `orkctl namespace` for that, unrelated,
+concept.
+
+$ orkctl admin retention set 168h
+temporal namespace:   ork-main
+execution retention:  168h0m0s
+```
+
+The same reads and writes are the UI's Admin → Retention page
+(`ui/src/routes/admin/retention`), which carries the identical
+deployment-wide caption and sits apart from `/admin/namespaces`.
+
 ---
 
 ## 6. Replay safety across versions
