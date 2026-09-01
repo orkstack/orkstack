@@ -320,14 +320,36 @@ func RunIndexKey(rec RunRecord) (string, error) {
 // RunIndexKeyForEntry renders the index key a scanned entry came from. It is
 // how a KeyOrder caller turns the last entry of a page into the exclusive
 // cursor for the next one, without inventing a second key convention.
+//
+// It renders the entry's segments VERBATIM rather than going through
+// RunIndexKey. An entry is parsed out of a stored key, so its fields already
+// are the stored segments; RunIndexKey would re-apply NormalizeRunStatus,
+// which strips a "status_" prefix and is therefore idempotent only while the
+// stored status does not itself begin with "status_". A status of
+// "STATUS_STATUS_SUCCEEDED" stores ".../status_succeeded/..." and re-rendered
+// to ".../succeeded/...", and because "status_succeeded" < "succeeded" the
+// cursor would overshoot its own key and silently skip every run after it —
+// the same loss the paging safety test exists to catch. Nothing in this repo
+// produces such a status today, but the cursor must not depend on that.
 func RunIndexKeyForEntry(entry RunIndexEntry) (string, error) {
-	return RunIndexKey(RunRecord{
-		RunID:     entry.RunID,
-		Namespace: entry.Namespace,
-		Orkflow:   entry.Orkflow,
-		Status:    entry.Status,
-		Time:      entry.Time,
-	})
+	namespace, err := encodeArchiveSegment(ResolveNamespace(entry.Namespace))
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run index key for entry: namespace: %w", err)
+	}
+	orkflow, err := encodeArchiveSegment(entry.Orkflow)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run index key for entry: orkflow: %w", err)
+	}
+	status, err := encodeArchiveSegment(entry.Status)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run index key for entry: status: %w", err)
+	}
+	runID, err := encodeArchiveSegment(entry.RunID)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: run index key for entry: run id: %w", err)
+	}
+	return path.Join(RunIndexNamespace, namespace, orkflow, status,
+		RunStamp(entry.Time), runID), nil
 }
 
 // ParseRunIndexKey reverses RunIndexKey. A key this package did not generate
