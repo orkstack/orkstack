@@ -793,6 +793,14 @@ func (s *runState) snapshot() *orkstackv1.Run {
 // is *scheduled*, so it is on the copy every replica can read, and it is the
 // same number the bus stores and the archive keeps. The dedupe key is derived
 // from the same counter, so activity retries cannot duplicate an event.
+//
+// If the snapshot write fails, the sequence number is consumed (burned) and
+// will not appear in the published stream. This is unavoidable for replay
+// consistency: the sequence counter is deterministic state recorded in Temporal
+// history, and a replay must produce identical history. A snapshot write failure
+// is terminal (fails the run), so the gap is visible only to auditors examining
+// the history: the bus and archive contain sequences 1..N-1 and N+1..M, never
+// with a gap that crosses a run boundary.
 func (s *runState) emit(
 	ctx workflow.Context,
 	eventType orkstackv1.EventType,
