@@ -549,7 +549,11 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 		s.recordFailure(ctx, id, err)
 		if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
 			orkstackv1.Status_STATUS_FAILED, err.Error()); emitErr != nil {
-			return emitErr
+			// The task's own cause is this run's machine-readable reason
+			// (AGENTS.md §15). A snapshot-write failure on the way out is
+			// logged, never allowed to replace what the Orker actually said.
+			workflow.GetLogger(ctx).Error("emit task failure failed",
+				"run_id", s.runID, "task_id", id, "error", emitErr)
 		}
 		return err
 	}
@@ -580,7 +584,10 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 		}
 		if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
 			orkstackv1.Status_STATUS_FAILED, convErr.Error()); emitErr != nil {
-			return emitErr
+			// As above: the contract violation is the reason, not the storage
+			// error that followed it.
+			workflow.GetLogger(ctx).Error("emit task failure failed",
+				"run_id", s.runID, "task_id", id, "error", emitErr)
 		}
 		return convErr
 	}
@@ -714,7 +721,12 @@ func (s *runState) fail(ctx workflow.Context, taskID string, cause error) (*orks
 	}
 
 	if err := s.emit(eventCtx, eventType, taskID, s.status, s.runError.GetMessage()); err != nil {
-		return s.snapshot(), err
+		// The run is already failing for a recorded reason. That cause — a
+		// task's failure or the operator's cancellation — is the run's
+		// machine-readable reason (AGENTS.md §15); a snapshot-write error on
+		// the terminal emit is logged rather than allowed to replace it.
+		workflow.GetLogger(ctx).Error("emit terminal run event failed",
+			"run_id", s.runID, "event", eventType.String(), "error", err)
 	}
 	return s.snapshot(), cause
 }

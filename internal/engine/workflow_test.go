@@ -559,6 +559,73 @@ func TestRunWorkflow_RetriesPerPolicyThenFailsRun(t *testing.T) {
 	}
 }
 
+// TestRunWorkflow_KeepsTheTaskCauseWhenSnapshotWritesFail pins the §15
+// contract that a terminal failure keeps its machine-readable reason: when a
+// task has already failed and object storage then dies, the run must fail
+// with the task's own cause, not with the snapshot-write error that followed
+// it. Before the fix collect returned the emit error, replacing what the
+// Orker actually said.
+func TestRunWorkflow_KeepsTheTaskCauseWhenSnapshotWritesFail(t *testing.T) {
+	const document = `
+name: cause-kept
+tasks:
+  - id: doomed
+    uses: shell
+    with: {command: "exit 3"}
+`
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(60 * time.Second)
+	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
+
+	// Storage dies at the exact moment the run starts recording the failure —
+	// the moment a storage error could shadow the task's cause.
+	healthy := newTestSnapshotStore()
+	snapshots := engine.NewSnapshotActivities(healthy)
+	env.RegisterActivityWithOptions(
+		func(ctx context.Context, run *orkstackv1.Run, sequence int64) (string, error) {
+			failing := run.GetStatus() == orkstackv1.Status_STATUS_FAILED
+			for _, taskRun := range run.GetTaskRuns() {
+				if taskRun.GetStatus() == orkstackv1.Status_STATUS_FAILED {
+					failing = true
+				}
+			}
+			if failing {
+				return "", errors.New("object storage is down")
+			}
+			return snapshots.WriteSnapshot(ctx, run, sequence)
+		},
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	env.RegisterActivityWithOptions(
+		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(healthy).PublishEvent,
+		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
+	)
+	env.RegisterActivityWithOptions(
+		func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			return nil, errors.New("plugin exited 3")
+		},
+		activity.RegisterOptions{Name: task.ActivityExecuteTask},
+	)
+
+	env.ExecuteWorkflow(engine.RunWorkflow, "run-cause-kept", compile(t, document), payload(t, nil), defaultPlan())
+
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("workflow did not complete")
+	}
+	err := env.GetWorkflowError()
+	if err == nil {
+		t.Fatal("workflow error = nil, want the task failure")
+	}
+	if !strings.Contains(err.Error(), "plugin exited 3") {
+		t.Fatalf("workflow error = %v, want the task's own cause", err)
+	}
+	if strings.Contains(err.Error(), "object storage is down") ||
+		strings.Contains(err.Error(), "write snapshot") {
+		t.Fatalf("workflow error = %v, the storage failure replaced the task's cause", err)
+	}
+}
+
 func TestRunWorkflow_SingleAttemptWhenNoRetryPolicy(t *testing.T) {
 	const document = `
 name: no-retry
