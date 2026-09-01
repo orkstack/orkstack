@@ -59,6 +59,10 @@ const (
 	// runIndexSegments is the fixed segment count of an index key:
 	// metadata, index, runs, namespace, orkflow, status, stamp, run-id.
 	runIndexSegments = 8
+	// archiveRefWriteConcurrency bounds the parallel reference-marker writes
+	// one PutRun issues. It matches the engine's archiveFetchConcurrency: the
+	// same shape of problem, so the same number rather than a second knob.
+	archiveRefWriteConcurrency = 8
 	// archiveMaxComponent bounds one generated segment. Orkflow names and task
 	// ids are DSL slugs and run ids are ork-{timestamp}-{sequence}, so a real
 	// segment is far shorter; the bound only rejects abuse.

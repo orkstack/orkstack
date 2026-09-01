@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -110,12 +111,8 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	}); err != nil {
 		return fmt.Errorf("artifacts: s3 archive run %q: write object list %q: %w", rec.RunID, listKey, err)
 	}
-	for _, refKey := range refKeys {
-		if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(a.bucket), Key: aws.String(refKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
-		}); err != nil {
-			return fmt.Errorf("artifacts: s3 archive run %q: write object reference %q: %w", rec.RunID, refKey, err)
-		}
+	if err := a.putObjectRefs(ctx, refKeys); err != nil {
+		return fmt.Errorf("artifacts: s3 archive run %q: %w", rec.RunID, err)
 	}
 	// The index carries everything in its key, so its body is empty. Publishing
 	// it last makes all prior durable records visible to cleanup first.
@@ -125,6 +122,46 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return fmt.Errorf("artifacts: s3 archive run %q: write index %q: %w", rec.RunID, indexKey, err)
 	}
 	return nil
+}
+
+// putObjectRefs writes every reference marker with bounded concurrency.
+//
+// One PUT per referenced object made archiving linear in a run's artifact
+// count, and archiving happens inside a projection activity with a 10-second
+// budget whose failure is only logged — so a wide fan-out run could quietly
+// end up with no archive body at all, which is the only record of it once
+// Temporal retention passes. Overlapping the round trips keeps that cost flat
+// enough to stay inside the budget; it does not remove the linearity.
+//
+// Every marker is still written before PutRun's caller publishes the index
+// key, and any single failure fails the whole call. A dropped marker would
+// under-count references and let DeleteUnreferencedObjects delete an object
+// another run still needs, so there is no partial-success path here.
+func (a *S3RunArchive) putObjectRefs(ctx context.Context, refKeys []string) error {
+	if len(refKeys) == 0 {
+		return nil
+	}
+	errs := make([]error, len(refKeys))
+	var (
+		wg    sync.WaitGroup
+		slots = make(chan struct{}, archiveRefWriteConcurrency)
+	)
+	for i, refKey := range refKeys {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func(i int, refKey string) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket: aws.String(a.bucket), Key: aws.String(refKey),
+				Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
+			}); err != nil {
+				errs[i] = fmt.Errorf("write object reference %q: %w", refKey, err)
+			}
+		}(i, refKey)
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 // GetRun returns the archived JSONL body for runID.
