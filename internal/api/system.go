@@ -95,18 +95,29 @@ func (s *Service) GetSystemInfo(
 	}), nil
 }
 
-// retentionBinding resolves the single binding every admin/cluster read goes
-// through, and the retention seam on it. There is no second, parallel path to
-// a Temporal client here: this is the SAME s.binding(...) call GetRun,
-// ListRuns and CancelRun use, just asked with no OrkStack namespace, because
-// execution retention is a deployment-wide Temporal cluster setting, not a
-// per-OrkStack-Namespace one — internal/engine/router.go's SingleRouter
-// serves every OrkStack namespace from this one binding.
+// retentionBinding resolves the deployment's sole router binding and the
+// retention seam on it — internal/engine/router.go's SingleRouter, the SAME
+// binding GetRun, ListRuns and CancelRun read through, so there is no second,
+// parallel path to a Temporal client here.
+//
+// It deliberately does NOT go through s.binding(namespace), which asks
+// router.For(namespace) whether the binding serves a given OrkStack
+// namespace (defaulting "" to "default" — see SingleRouter.For). Execution
+// retention has no OrkStack-namespace scope at all: a deployment whose one
+// binding is scoped to `Namespaces: []string{"payments"}` (Binding.serves)
+// still has exactly one Temporal namespace and exactly one retention
+// setting, and asking "does this binding serve the OrkStack namespace
+// `default`?" would wrongly refuse it. So this reads router.Bindings()
+// directly and takes the one binding a single-cluster deployment has —
+// the same binding s.binding("") would have resolved to, minus the
+// accidental OrkStack-namespace gate.
 func (s *Service) retentionBinding() (engine.RetentionAdmin, error) {
-	binding, err := s.binding("")
-	if err != nil {
-		return nil, err
+	bindings := s.router.Bindings()
+	if len(bindings) != 1 {
+		return nil, connect.NewError(connect.CodeUnimplemented,
+			fmt.Errorf("execution retention requires exactly one router binding, this engine has %d", len(bindings)))
 	}
+	binding := bindings[0]
 	if binding.Retention == nil {
 		return nil, connect.NewError(connect.CodeUnimplemented,
 			fmt.Errorf("this engine has no Temporal retention admin configured"))

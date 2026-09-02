@@ -206,4 +206,52 @@ func TestExecutionRetention_WithNoRetentionAdminAnswersUnimplemented(t *testing.
 	}
 }
 
+// TestExecutionRetention_UsesTheSoleBindingEvenWhenItIsScopedToAnOrkStackNamespace
+// is the regression for retentionBinding's rule: execution retention has no
+// OrkStack-namespace scope, so a deployment whose one binding is restricted
+// to serving a single OrkStack namespace (Binding.Namespaces, e.g. because
+// the deployment only ever runs orkflows in the "payments" namespace) must
+// still answer both RPCs from that binding's retention seam. Before this
+// fix, retentionBinding asked s.binding(""), which SingleRouter.For
+// defaults to the OrkStack namespace "default" and then refuses because the
+// scoped binding does not serve "default" (see
+// engine.TestSingleRouter_ServesEveryNamespaceUntilOneIsNamed) — an
+// InvalidArgument that never reached Temporal at all, for a setting that
+// was never namespace-scoped to begin with.
+func TestExecutionRetention_UsesTheSoleBindingEvenWhenItIsScopedToAnOrkStackNamespace(t *testing.T) {
+	retention := &fakeRetention{current: 72 * time.Hour, confirm: 240 * time.Hour}
+	router := engine.NewSingleRouter(engine.Binding{
+		Namespaces: []string{"payments"},
+		Reader:     &fakeReader{},
+		Retention:  retention,
+	})
+	svc := api.NewService(api.Config{
+		Router:            router,
+		TemporalNamespace: "ork-main",
+	})
+
+	readResp, err := svc.GetExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.GetExecutionRetentionRequest{}))
+	if err != nil {
+		t.Fatalf("GetExecutionRetention on a namespace-scoped binding: %v", err)
+	}
+	if got := readResp.Msg.GetRetention().AsDuration(); got != 72*time.Hour {
+		t.Errorf("retention = %s, want 72h", got)
+	}
+
+	writeResp, err := svc.UpdateExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{
+			Retention: durationpb.New(168 * time.Hour),
+		}))
+	if err != nil {
+		t.Fatalf("UpdateExecutionRetention on a namespace-scoped binding: %v", err)
+	}
+	if got := writeResp.Msg.GetRetention().AsDuration(); got != 240*time.Hour {
+		t.Errorf("retention = %s, want the cluster-confirmed 240h", got)
+	}
+	if len(retention.writeRequests) != 1 || retention.writeRequests[0] != 168*time.Hour {
+		t.Errorf("write requests = %v, want [168h]", retention.writeRequests)
+	}
+}
+
 var _ engine.RetentionAdmin = (*fakeRetention)(nil)
