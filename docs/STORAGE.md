@@ -263,20 +263,30 @@ $ temporal operator namespace describe --namespace default
 Config.WorkflowExecutionRetentionTtl  24h0m0s
 ```
 
-24 h is also the global minimum, and expiry deletes the history **and** the visibility record.
-Worse, `deploy/docker-compose.yml` runs `server start-dev` with **no `--db-filename` and no
-volume** (only `minio-data` is a named volume), and `start-dev` defaults to an in-memory SQLite
-database — a container restart wipes everything. This directly violates "no loss of orkflow or run
-data". *MinIO loss:* unaffected.
+24 h is what this dev cluster registered for Temporal's own built-in `default`
+namespace — not this deployment's namespace (`ork-main`, selected by
+`ORK_TEMPORAL_NAMESPACE`), and not a hard floor Temporal enforces here: the
+retention-admin proof below moves `ork-main`'s retention to 6 h via the CLI
+and 2 h via the UI on this same cluster, and Temporal accepts both. Whatever
+the configured period, expiry deletes the history **and** the visibility
+record. Worse, `deploy/docker-compose.yml` runs `server start-dev` with **no
+`--db-filename` and no volume** (only `minio-data` is a named volume), and
+`start-dev` defaults to an in-memory SQLite database — a container restart
+wipes everything. This directly violates "no loss of orkflow or run data".
+*MinIO loss:* unaffected.
 
 **Reading and writing it is now a first-class deployment operation**, not
 only a manual `temporal operator namespace describe`: `orkctl admin retention
 get`/`orkctl admin retention set <duration>` and the Admin → Retention UI
-page read and write this exact setting live against the cluster (see
-`docs/DEPLOY.md`'s "Execution retention: one deployment-wide Temporal cluster
-setting"). It remains what this section measured it to be — one Temporal
-cluster-wide setting for the whole deployment, never a per-OrkStack-namespace
-one, and never a property `orkctl namespace` touches.
+page read and write the deployment's own namespace (`ork-main`, provisioned
+at 72 h by `internal/task.EnsureNamespace`; see `docs/DEPLOY.md`'s "Execution
+retention: one deployment-wide Temporal cluster setting") — never the
+built-in `default` namespace measured above, and never a per-OrkStack-namespace
+value that `orkctl namespace` touches. The real-cluster proof in
+`proof/retention-admin/` is what shows 24 h above was this cluster's default
+for an unconfigured namespace rather than an enforced floor: it moves
+`ork-main` to 6 h through the CLI and to 2 h through the UI, and Temporal
+accepts both.
 
 **Operational complexity.** Deceptively high: register custom search attributes per namespace,
 raise retention, add a persistent Temporal database and volume (a `deploy/` change, coordinated
@@ -426,8 +436,11 @@ disqualifiers, each sufficient on its own:
    measured on localhost against an in-memory database.
 2. `ORDER BY` is rejected by the SQL visibility store (re-verified this session), so "newest first"
    cannot be expressed.
-3. Retention is a data-loss clock: 24 h on this namespace (re-verified this session), 24 h global
-   minimum, and expiry deletes history *and* the visibility record — while the shipped dev stack's
+3. Retention is a data-loss clock: 24 h on Temporal's built-in `default` namespace
+   (re-verified this session) is this cluster's default for an unconfigured namespace, not
+   a hard floor — retention-admin's proof (§4 above) moves this deployment's own namespace
+   (`ork-main`) to 6 h and 2 h on the same cluster — and expiry deletes history *and* the
+   visibility record regardless of the configured period, while the shipped dev stack's
    Temporal has no database file and no volume at all.
 
 Storing orkflow YAML in Temporal is additionally hopeless: memo is not queryable and is capped at
