@@ -5,10 +5,9 @@
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
-	// The placeholder must be a document that actually APPLIES. `plugin:` is
-	// no longer a field — it is a compile error naming its replacement (§13) —
-	// so this sample uses `uses:`, the only image-selecting field in the DSL,
-	// with a first-party activity. It mirrors examples/http-post.ork.yaml.
+	// The placeholder must be a document that actually APPLIES: `uses:`, the
+	// only image-selecting field in the DSL, selects a first-party activity
+	// image. It mirrors examples/http-post.ork.yaml.
 	const PLACEHOLDER = `name: my-orkflow
 version: "0.1.0"
 description: Describe what this orkflow does.

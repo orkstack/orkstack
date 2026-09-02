@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +27,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
 // temporalAddress is where the integration test expects a real Temporal
@@ -102,7 +102,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 				TaskId: in.TaskId,
 				ValuesJson: valuesJSON(map[string]any{
 					"echoed_task":     in.TaskId,
-					"echoed_plugin":   in.Image.GetReference(),
+					"echoed_image":    in.Image.GetReference(),
 					"upstream_count":  float64(len(upstream)),
 					"workflow":        in.OrkflowName,
 					"workflow_versio": in.OrkflowVersion,
@@ -260,7 +260,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 
 // assertDeterministicReplay replays the run's real Temporal history through
 // RunWorkflow. A non-deterministic workflow body fails here, which is the
-// direct check of the determinism boundary in AGENTS.md §1.3.
+// direct check of the determinism boundary in AGENTS.md §2.1.
 func assertDeterministicReplay(t *testing.T, ctx context.Context, c client.Client, runID string) {
 	t.Helper()
 	history := &history.History{}
@@ -285,14 +285,9 @@ func assertDeterministicReplay(t *testing.T, ctx context.Context, c client.Clien
 	t.Logf("replayed %d history events deterministically", len(history.Events))
 }
 
-// writeEventProof records the observed event stream when ORK_PROOF_EVENT_FILE
-// is set, producing the committed proof artifact.
+// writeEventProof records the observed event stream as evidence.
 func writeEventProof(t *testing.T, runID string, events []*orkstackv1.Event) {
 	t.Helper()
-	path := os.Getenv("ORK_PROOF_EVENT_FILE")
-	if path == "" {
-		return
-	}
 	marshaler := protojson.MarshalOptions{Multiline: false}
 	raw := make([]json.RawMessage, 0, len(events))
 	for _, event := range events {
@@ -302,19 +297,9 @@ func writeEventProof(t *testing.T, runID string, events []*orkstackv1.Event) {
 		}
 		raw = append(raw, encoded)
 	}
-	document, err := json.MarshalIndent(map[string]any{
+	proof.WriteJSON(t, "engine", "run-event-stream.json", map[string]any{
 		"run_id":   runID,
 		"captured": time.Now().UTC().Format(time.RFC3339),
 		"events":   raw,
-	}, "", "  ")
-	if err != nil {
-		t.Fatalf("encode proof: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
-	if err := os.WriteFile(path, append(document, '\n'), 0o644); err != nil {
-		t.Fatalf("write proof: %v", err)
-	}
-	t.Logf("wrote event stream proof to %s", path)
+	})
 }

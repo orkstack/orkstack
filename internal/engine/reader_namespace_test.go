@@ -247,15 +247,15 @@ func TestTemporalRunReader_ReportsAnUnscopedListItCouldNotFinish(t *testing.T) {
 // same shape of field and the only one with a boundary attached.
 
 // TestTemporalRunReader_ARunKeepsItsNamespaceWhenALaterSnapshotOmitsIt reads a
-// history whose lifecycle snapshots carry no namespace — the shape a build
-// that does not fill the field writes, and the shape every history recorded
-// before the field existed already has. The run's own start payload carries
-// the definition, so the namespace is in history; the question is whether the
+// history whose lifecycle snapshots carry no namespace — the shape a snapshot
+// that omits the field would write. The run's own start payload carries the
+// definition, so the namespace is in history; the question is whether the
 // fold keeps it.
 func TestTemporalRunReader_ARunKeepsItsNamespaceWhenALaterSnapshotOmitsIt(t *testing.T) {
 	const runID = "ork-tenancy-1"
 	wf := &orkstackv1.Orkflow{Name: "deploy", Version: "1.4.0", Namespace: "payments"}
 	history := []*historypb.HistoryEvent{startedEvent(t, runID, wf)}
+	store := &countingSnapshotStore{objects: map[string][]byte{}}
 	for i, stage := range []struct {
 		eventType orkstackv1.EventType
 		status    orkstackv1.Status
@@ -265,22 +265,25 @@ func TestTemporalRunReader_ARunKeepsItsNamespaceWhenALaterSnapshotOmitsIt(t *tes
 		{orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED},
 	} {
 		sequence := int64(i + 1)
-		history = append(history, publishEventScheduled(t, sequence+1, &orkstackv1.Event{
+		uri := snapshotURIFor(runID, sequence)
+		store.objects[uri] = mustMarshalRun(t, &orkstackv1.Run{
+			// No Namespace: this is the snapshot under test.
+			Id:             runID,
+			OrkflowName:    wf.GetName(),
+			OrkflowVersion: wf.GetVersion(),
+			Status:         stage.status,
+		})
+		history = append(history, publishEventWithURI(t, sequence+1, &orkstackv1.Event{
 			RunId:     runID,
 			Sequence:  sequence,
 			Type:      stage.eventType,
 			Status:    stage.status,
 			Message:   stage.eventType.String(),
 			Timestamp: timestamppb.New(readerEpoch.Add(time.Duration(sequence) * time.Second)),
-		}, &orkstackv1.Run{
-			// No Namespace: this is the snapshot under test.
-			Id:             runID,
-			OrkflowName:    wf.GetName(),
-			OrkflowVersion: wf.GetVersion(),
-			Status:         stage.status,
-		}))
+		}, uri))
 	}
 	reader, _ := readerOver(history, runID)
+	reader.WithSnapshotStore(store)
 
 	run, err := reader.GetRun(context.Background(), runID)
 	if err != nil {

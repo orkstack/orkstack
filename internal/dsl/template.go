@@ -10,13 +10,15 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// TemplateFuncs are the helper stubs the DSL exposes to templates. They exist
-// so a document parses; the Orker supplies the real implementations at render
-// time (see internal/task package doc).
+// TemplateFuncs are the helper stubs the DSL exposes to templates: `artifact`,
+// `env`, and `sh` (docs/DSL.md, "Templating"). They exist so a document
+// parses; the Orker supplies the real implementations at render time
+// (internal/orker/render.go).
 func TemplateFuncs() template.FuncMap {
 	return template.FuncMap{
 		"artifact": func(string) string { return "" },
 		"env":      func(string) string { return "" },
+		"sh":       func(any) string { return "" },
 	}
 }
 

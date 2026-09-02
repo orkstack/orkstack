@@ -16,8 +16,7 @@ import (
 
 // These tests cover the API's use of the orkflow store: apply writes through to
 // it, and a store that cannot be reached is reported rather than papered over.
-// They live in internal/engine because M7.5's scope covers this package and
-// internal/api/service.go.
+// They live beside the store they exercise.
 
 // recordingStore captures what the API writes.
 type recordingStore struct {
@@ -195,14 +194,8 @@ func TestOrkflowPaths_ReportAMissingOrkflowAsNotFound(t *testing.T) {
 	}
 }
 
-// TestApplyOrkflow_StoresTheNamespaceTheDocumentNames replaces M10.1's interim
-// guard.
-//
-// That guard refused every namespace but the default, because the API's read
-// paths could not honour one and a stored `namespace: payments` would have
-// been an object nothing could read. M10.3 made the reads namespace-aware and
-// deleted the guard; what has to hold now is that a document naming a
-// namespace is written INTO it, which is what this asserts at the store seam.
+// TestApplyOrkflow_StoresTheNamespaceTheDocumentNames: a document naming a
+// namespace is written INTO it, asserted at the store seam.
 //
 // The end-to-end half — apply, list, get and submit in a non-default namespace,
 // invisible from the default — is

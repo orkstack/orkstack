@@ -11,11 +11,10 @@ import {
 
 // The run page's event buffer, on its own.
 //
-// The page used to hold `let events = $state<Event[]>([])` and push into it
-// for the life of the tab. A run's event stream is bounded by the run, but
-// nothing on the page bounded it: a long run with many tasks grew one deeply
-// reactive proxy and one DOM row per event until the tab could no longer
-// paint. The cap is the fix, and DROPPING IN SILENCE is the thing a log view
+// A page that held `let events = $state<Event[]>([])` and pushed into it for
+// the life of the tab would be bounded only by the run: a long run with many
+// tasks grows one deeply reactive proxy and one DOM row per event until the
+// tab cannot paint. The cap is the bound, and DROPPING IN SILENCE is the thing a log view
 // must never do — so what was dropped is counted, and the count is shown.
 //
 // This lives beside the page rather than inside it because it is a pure

@@ -23,8 +23,7 @@ import (
 // is the end-to-end pool-liveness seam from §6.5: the engine schedules the
 // named activity on one pool's Temporal channel and receives the identity
 // produced by the real Orker Activities implementation. A direct method call
-// would not prove registration, routing, serialization, or the replacement of
-// ListPlugins on the channel.
+// would not prove registration, routing, or serialization.
 func TestIntegration_DescribeOrkerTravelsThroughTemporalToTheRealOrkerActivity(t *testing.T) {
 	if out, err := exec.Command("docker", "version", "--format", "{{.Server.Version}}").CombinedOutput(); err != nil {
 		infraAbsent(t, "docker is not reachable: %v: %s", err, out)

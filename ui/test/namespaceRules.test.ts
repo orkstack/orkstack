@@ -9,7 +9,7 @@ import {
 // The Admin namespace form's local validation mirrors the registry's own rule
 // (pkg/artifacts/namespace_store.go: namespaceNamePattern, validNamespacePools)
 // so a bad slug or an allow-list that excludes its own default is caught
-// before an RPC, not after (M11.6, design §6.2).
+// before an RPC, not after.
 
 test('a slug that starts with a digit or holds uppercase is refused, same as the registry', () => {
 	expect(slugError('namespace name', '9ops')).toContain('must match');

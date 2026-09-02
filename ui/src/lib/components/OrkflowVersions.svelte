@@ -40,10 +40,10 @@
 
 	// editHref makes this table the entry point to editing: a row's Edit opens
 	// THAT row's document, because the editor reads the version the link names.
-	// Before M11.5 there was no such link and the Edit tab always opened the
-	// head — so the one edit an operator most often wants, changing the version
-	// that RUNS, showed somebody else's text. The namespace is stated like on
-	// every other internal link.
+	// Without it the Edit tab would always open the head — so the one edit an
+	// operator most often wants, changing the version that RUNS, would show
+	// somebody else's text. The namespace is stated like on every other
+	// internal link.
 	const editHref = (version: string) =>
 		withNamespace(`/orkflows/${name}?version=${version}&tab=edit`, namespace);
 

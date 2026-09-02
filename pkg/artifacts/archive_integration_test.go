@@ -77,8 +77,8 @@ func cleanupArchivedRun(t *testing.T, cfg artifacts.Config, runID string) {
 	})
 }
 
-// TestS3RunArchive_WritesRunJSONLAtTheContractPath is acceptance 1 against real
-// object storage: the body lands at s3://{bucket}/metadata/runs/{run-id}.jsonl,
+// TestS3RunArchive_WritesRunJSONLAtTheContractPath measures the contract path
+// against real object storage: the body lands at s3://{bucket}/metadata/runs/{run-id}.jsonl,
 // one record per line, and a raw S3 client (not our store) can see it there.
 func TestS3RunArchive_WritesRunJSONLAtTheContractPath(t *testing.T) {
 	archive, cfg := newS3RunArchive(t)
@@ -183,8 +183,8 @@ func TestS3RunArchive_MissingRunIsNotFound(t *testing.T) {
 	}
 }
 
-// TestS3RunArchive_PrefixScanFiltersByOrkflowStatusAndDateRange is acceptance 2
-// at the storage layer: real ListObjectsV2 prefix scans answer the query, and
+// TestS3RunArchive_PrefixScanFiltersByOrkflowStatusAndDateRange measures the
+// query at the storage layer: real ListObjectsV2 prefix scans answer it, and
 // the keys they return carry every filtered field.
 func TestS3RunArchive_PrefixScanFiltersByOrkflowStatusAndDateRange(t *testing.T) {
 	archive, cfg := newS3RunArchive(t)

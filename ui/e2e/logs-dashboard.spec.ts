@@ -6,11 +6,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catalogEnv, ensureActivityImages, orkerEnv } from './harness';
 
-// M10.8 — the whole v0.0.3 story, in one browser session against the real
+// The whole logs-dashboard story, in one browser session against the real
 // stack.
 //
-// The milestone's claim is a COMPOSITION, which is why the per-slice proofs
-// are not enough for it (design §2, M10.8): two ork namespaces, two Orker
+// The claim is a COMPOSITION, which is why the per-feature specs are not
+// enough for it: two ork namespaces, two Orker
 // pools, an orkflow edited and promoted, a task's output followed live, and a
 // dashboard — all read through a replica that started nothing.
 //
@@ -26,7 +26,7 @@ import { catalogEnv, ensureActivityImages, orkerEnv } from './harness';
 //   orker main         the default pool
 //   orker gpu          ORK_ORKER_POOL=gpu
 //
-// Isolation (AGENTS.md §6): one Temporal namespace of this milestone's own.
+// Isolation (AGENTS.md §11.1): one Temporal namespace of this spec's own.
 // BOTH engines and BOTH Orkers share it — the deliberate exception the rule
 // names, because "any replica answers for any run" is the condition under
 // test and splitting the namespace would make it fail for an unrelated reason.
@@ -42,11 +42,11 @@ const ENGINE_B_WS = 'ws://127.0.0.1:18083';
 const UI_ORIGIN = 'http://127.0.0.1:14175';
 const B_PORT = '18083';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m10-8-ui-logs-dashboard';
+const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-logs-dashboard';
 
 // Per-run ork namespaces, and per-run orkflow names inside them.
 //
-// M10.7's spec fixes its two namespace names so the registry does not grow by
+// namespaces-editor.spec.ts fixes its two namespace names so the registry does not grow by
 // two on every run. This one deliberately does not, because what it asserts is
 // an AGGREGATE over a shared bucket. The dashboard's recent-failures table is
 // the top `MostFailingLimit = 5` rows of a 24h window (internal/api/stats.go),
@@ -62,12 +62,14 @@ const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m10-8-ui-l
 // the empty one is handed back in afterAll, while the other deliberately retains
 // this run's orkflows and recent runs as dashboard history.
 const STAMP = Date.now().toString(36);
-const ALPHA = `m10-8-alpha-${STAMP}`;
-const BETA = `m10-8-beta-${STAMP}`;
+const ALPHA = `alpha-${STAMP}`;
+const BETA = `beta-${STAMP}`;
 const ORKFLOW = `chatty-${STAMP}`;
 const FAILING = `flaky-${STAMP}`;
 
-const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m10-8');
+const PROOF_DIR = process.env.ORK_PROOF_DIR
+	? path.join(process.env.ORK_PROOF_DIR, 'logs-dashboard')
+	: path.join(uiDir, 'test-results', 'logs-dashboard');
 const TRANSCRIPT = 'live-composition.txt';
 
 // The lines the slow task writes, and the burst the chatty one writes. 40
@@ -168,7 +170,7 @@ async function killAll(): Promise<void> {
 		}
 		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
 	}
-	// AGENTS.md §6: never leave a stray engine or Orker behind, and anchor both
+	// AGENTS.md §11.1: never leave a stray engine or Orker behind, and anchor both
 	// patterns — unanchored, `bin/ork` also matches `bin/orkctl`.
 	try {
 		execSync("pkill -f '/bin/orker$' || true; pkill -f '/bin/ork$' || true", { timeout: 5_000 });
@@ -282,7 +284,7 @@ test.beforeAll(async () => {
 	writeFileSync(
 		outPath(TRANSCRIPT),
 		[
-			'# M10.8 — one live composition: two namespaces, two pools, an edit and a',
+			'# One live composition: two namespaces, two pools, an edit and a',
 			'# promotion, a followed log and a dashboard, read through a replica that',
 			'# started nothing.',
 			'#',
@@ -317,7 +319,7 @@ test.beforeAll(async () => {
 	// Both replicas and both Orkers read and write the SAME bucket: orkflow
 	// definitions, the version pointer, the namespace registry, the run archive
 	// and every log chunk live there, which is what lets B answer for a run A
-	// started (AGENTS.md §1.7).
+	// started (AGENTS.md §7).
 	const store = {
 		ORK_ARTIFACT_BACKEND: 's3',
 		ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
@@ -398,18 +400,18 @@ test.beforeAll(async () => {
 	await rpc(ENGINE_A, 'NamespaceService/CreateNamespace', {
 		namespace: {
 			name: ALPHA,
-			description: 'M10.8 live composition',
+			description: 'live composition',
 			defaultPool: 'main',
 			allowedPools: ['main', 'gpu']
 		}
 	});
 	await rpc(ENGINE_A, 'NamespaceService/CreateNamespace', {
-		namespace: { name: BETA, description: 'M10.8 empty namespace' }
+		namespace: { name: BETA, description: 'empty namespace' }
 	});
 	note(`namespaces created on engine A: ${ALPHA} (pools main,gpu), ${BETA} (empty)`);
 
 	// Both pools must have live Orkers before a submit: the engine refuses to
-	// start a run whose pool has nobody serving it (design §1.3).
+	// start a run whose pool has nobody serving it.
 	await waitFor('both pools report live Orkers', async () => {
 		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
 			ENGINE_B,
@@ -446,7 +448,7 @@ test.afterAll(async () => {
 	await killAll();
 });
 
-// Acceptance 1, the live half: the pane follows while the task runs, keeps the
+// The live half: the pane follows while the task runs, keeps the
 // engine's order, and every byte of it arrived over a socket served by the
 // replica that started nothing.
 test('a task log follows live in the browser, in order, from the replica that started nothing', async ({
@@ -524,9 +526,9 @@ test('a task log follows live in the browser, in order, from the replica that st
 	note(`follow paused at scrollTop=${parkedAt}; ${before} lines grew while the view stayed put`);
 	await shot(page, 'screenshot-log-paused.png');
 
-	// AND THE PAUSE SURVIVES THE TASK ENDING — which is the moment it used to
-	// break, and the reason this assertion is here rather than after a
-	// convenient click. The last line of a task arrives with its terminal
+	// AND THE PAUSE SURVIVES THE TASK ENDING — the moment that would break it,
+	// and the reason this assertion is here rather than after a convenient
+	// click. The last line of a task arrives with its terminal
 	// status event, so a pane whose subscription is invalidated by that event
 	// tears its socket down, opens a second one at from_seq=0, empties its
 	// buffer, and reads the empty box as "the reader is at the tail": the
@@ -587,7 +589,7 @@ test('a task log follows live in the browser, in order, from the replica that st
 	note(`engine B reports run ${run1}: task talk ran on pool ${pools.get('talk')}`);
 });
 
-// Acceptance 1, the half a slow task cannot prove: a chatty task must not
+// The half a slow task cannot prove: a chatty task must not
 // freeze the tab, and its scrollback must be bounded — visibly, never in
 // silence.
 test('a chatty task keeps a bounded scrollback and leaves the tab responsive', async ({ page }) => {
@@ -642,16 +644,14 @@ test('a chatty task keeps a bounded scrollback and leaves the tab responsive', a
 	// against the implementation that failed it.
 	//
 	// "The tab is not frozen" means the main thread comes back between frames,
-	// not merely that it comes back eventually. This bound was 5000ms — chosen
-	// because a per-line render blew through it — and a regression that blocked
-	// the main thread for four seconds passed it: four seconds is a frozen tab
-	// by any reader's definition, and it was the only gate standing for this
-	// acceptance.
+	// not merely that it comes back eventually. A 5000ms bound would pass a
+	// regression that blocked the main thread for four seconds, and four
+	// seconds is a frozen tab by any reader's definition.
 	//
-	// 750ms is a fifth of that and still five times the worst this tree has
+	// 750ms is still five times the worst this tree has
 	// measured on a machine running two engines, two Orkers, a browser and the
-	// whole 5000-line burst at once (124ms and 138ms in two runs, recorded in
-	// proof/M10.8/live-composition.txt). The median is bounded separately,
+	// whole 5000-line burst at once (124ms and 138ms in two recorded runs).
+	// The median is bounded separately,
 	// because a single unlucky probe on a busy machine is not the property:
 	// a page that answered 24 probes in 5ms and one in 700ms is responsive,
 	// and one whose typical answer is a quarter of a second is not.
@@ -660,7 +660,7 @@ test('a chatty task keeps a bounded scrollback and leaves the tab responsive', a
 	await shot(page, 'screenshot-log-chatty.png');
 });
 
-// Acceptance 5: an orkflow edited and promoted, in the browser, against the
+// An orkflow edited and promoted, in the browser, against the
 // replica that started nothing — and then executed by the one that starts runs.
 test('an orkflow is edited and promoted in the browser, and the next run executes the promoted version', async ({
 	page
@@ -708,7 +708,7 @@ test('an orkflow is edited and promoted in the browser, and the next run execute
 	note(`engine A started run ${run2} with no version and pinned 0.1.0, the promoted one`);
 });
 
-// Acceptance 1, the property a reconnect is for: a dropped socket resumes with
+// The property a reconnect is for: a dropped socket resumes with
 // from_seq. Nothing is replayed twice and nothing is missed — over a socket
 // Playwright drops mid-follow, which is the failure a wifi handover is.
 test('a dropped log socket resumes from the last sequence, repeating and losing nothing', async ({
@@ -726,7 +726,7 @@ test('a dropped log socket resumes from the last sequence, repeating and losing 
 				dropped = true;
 				// The page's socket dies with everything the engine has already
 				// sent still on screen. The client's only way back is from_seq.
-				void ws.close({ code: 1011, reason: 'M10.8 injected drop' });
+				void ws.close({ code: 1011, reason: 'injected drop' });
 			}
 		});
 	});
@@ -761,7 +761,7 @@ test('a dropped log socket resumes from the last sequence, repeating and losing 
 	await shot(page, 'screenshot-log-resumed.png');
 });
 
-// Acceptance 2: the dashboard, scoped to the selected namespace, with pool
+// The dashboard, scoped to the selected namespace, with pool
 // health and recent failures — and the honesty clause, which needs a namespace
 // where the numbers genuinely cannot be answered.
 test('the dashboard scopes to a namespace, shows pool health and failures, and says unavailable rather than zero', async ({
@@ -820,8 +820,8 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 	// ONE WINDOW, ONE POPULATION. The note under the percentiles states them as
 	// a SHARE of the set they are drawn from: the window's runs that have
 	// FINISHED, which is the same set the success rate beside them is a rate
-	// over. It used to be a bare count of runs that had CLOSED in the window —
-	// a different set again, with nothing on the screen to say so.
+	// over — not a bare count of runs that CLOSED in the window, which is a
+	// different set again.
 	//
 	// The denominator EXCLUDES `running`, and that is what is asserted below.
 	// `running` is the one number on this row that is not about the window: it

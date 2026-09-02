@@ -12,8 +12,7 @@ import (
 
 // `orkctl orkflow edit --version <v>`: editing a version that is not the head.
 //
-// The command used to be pinned to the head, and the server refused any other
-// base, so the two halves of this file are one feature: the CLI can start from
+// The two halves of this file are one feature: the CLI can start an edit from
 // any stored version, and the apply that follows still loses to a competing
 // apply — it is the HEAD the editor saw that decides the race, not the version
 // it was reading.
@@ -133,14 +132,14 @@ func TestOrkflowEdit_RefusesAVersionThatWasNeverApplied(t *testing.T) {
 	}
 }
 
-// TestOrkflowEdit_RefusesWhenTheHeadMovedUnderAVersionScopedEdit is acceptance
-// 3 through the CLI, and it is a real interleaving rather than a description of
+// TestOrkflowEdit_RefusesWhenTheHeadMovedUnderAVersionScopedEdit is the race
+// through the CLI, and it is a real interleaving rather than a description of
 // one: the stub editor blocks until this test has applied a competing version,
 // so the edit is genuinely written while the head moves.
 //
-// The base is deliberately NOT the head — the user asked for 1.0.0 — which is
-// the case that could not exist before this slice. Choosing an old base is a
-// fork, not an exemption: the head the editor saw (2.0.0) is gone, so the apply
+// The base is deliberately NOT the head — the user asked for 1.0.0. Choosing
+// an old base is a fork, not an exemption: the head the editor saw (2.0.0) is
+// gone, so the apply
 // is refused naming it and the head that replaced it.
 func TestOrkflowEdit_RefusesWhenTheHeadMovedUnderAVersionScopedEdit(t *testing.T) {
 	if runtime.GOOS == "windows" {

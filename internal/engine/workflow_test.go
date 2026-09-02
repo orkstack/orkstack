@@ -514,7 +514,7 @@ func TestRunWorkflow_RetriesPerPolicyThenFailsRun(t *testing.T) {
 			mu.Lock()
 			attempts++
 			mu.Unlock()
-			return &orkstackv1.ExecuteTaskResult{}, errors.New("plugin exited 1")
+			return &orkstackv1.ExecuteTaskResult{}, errors.New("workload exited 1")
 		}).Times(3)
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil), defaultPlan())
@@ -603,7 +603,7 @@ tasks:
 	)
 	env.RegisterActivityWithOptions(
 		func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-			return nil, errors.New("plugin exited 3")
+			return nil, errors.New("workload exited 3")
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
@@ -617,7 +617,7 @@ tasks:
 	if err == nil {
 		t.Fatal("workflow error = nil, want the task failure")
 	}
-	if !strings.Contains(err.Error(), "plugin exited 3") {
+	if !strings.Contains(err.Error(), "workload exited 3") {
 		t.Fatalf("workflow error = %v, want the task's own cause", err)
 	}
 	if strings.Contains(err.Error(), "object storage is down") ||

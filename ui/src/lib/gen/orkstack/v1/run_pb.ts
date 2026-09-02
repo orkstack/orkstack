@@ -53,7 +53,7 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
   artifacts: ArtifactRef[];
 
   /**
-   * now carries FailureCategory
+   * carries FailureCategory (§8)
    *
    * @generated from field: orkstack.v1.Error error = 7;
    */

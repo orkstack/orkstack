@@ -3,7 +3,7 @@ import type { Error as OrkError } from './gen/orkstack/v1/common_pb';
 import type { ImageRef } from './gen/orkstack/v1/activity_pb';
 import type { Task } from './gen/orkstack/v1/orkflow_pb';
 
-// An activity is an image (design §1). This module holds the two things the
+// An activity is an image. This module holds the two things the
 // UI needs to say about that, in one place because both are answered from a
 // contract rather than from a component's taste: WHICH activity a task names,
 // and WHAT KIND of failure a terminal error was.

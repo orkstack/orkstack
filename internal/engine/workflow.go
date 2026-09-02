@@ -85,7 +85,7 @@ const eventActivityTimeout = 10 * time.Second
 // reasons that both matter: workflow code is deterministic and may not read
 // process configuration or a namespace document, and the orkflow message must
 // not carry a channel name — that is Temporal's word, the definition is the
-// user's document, and the two stopped touching at M10.1. Binding the plan
+// user's document, and the two never touch. Binding the plan
 // records the routing in history, so every replay dispatches where the
 // original run did and a second engine finishes a run this one started without
 // redirecting its tasks onto its own defaults.

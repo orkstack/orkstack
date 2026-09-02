@@ -14,7 +14,7 @@ import (
 // S3LogStore keeps task log chunks in an S3-compatible bucket — the store both
 // the Orker writing them and every engine replica reading them already share.
 //
-// It is the reason any replica serves any run's logs (AGENTS.md §1.7): the
+// It is the reason any replica serves any run's logs (AGENTS.md §7): the
 // chunks are in the bucket, not in the process that produced them, so a run
 // whose Orker has exited and whose engine replica is gone reads exactly the
 // same as one executing right now.

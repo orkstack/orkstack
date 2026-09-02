@@ -233,8 +233,8 @@ func TestOrkflowEdit_ACommentOnlyEditIsAppliedAsANewVersion(t *testing.T) {
 	}
 }
 
-// TestOrkflowEdit_ReportsAnEditMadeFromAStaleVersion is acceptance 5 through
-// the CLI, and it is a real interleaving rather than a description of one: the
+// TestOrkflowEdit_ReportsAnEditMadeFromAStaleVersion is the stale-head race
+// through the CLI, and it is a real interleaving rather than a description of one: the
 // stub editor blocks until this test has applied a competing version, so the
 // edit is genuinely written against a version that stopped being the head
 // while the editor was open.

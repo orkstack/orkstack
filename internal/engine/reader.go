@@ -41,7 +41,7 @@ const (
 	//
 	// All three carry the orkflow_ prefix, and the third one needs it most: an
 	// unqualified `namespace` sitting beside a Temporal client would read as
-	// the Temporal namespace, which is exactly the ambiguity AGENTS.md §1.9
+	// the Temporal namespace, which is exactly the ambiguity AGENTS.md §7
 	// forbids. The key is written into history, so it is chosen once.
 	MemoOrkflowName    = "orkflow_name"
 	MemoOrkflowVersion = "orkflow_version"
@@ -642,18 +642,12 @@ func (r *TemporalRunReader) scan(
 			continue
 		}
 		if r.isPublishEvent(historyEvent) {
-			event, snapshotURI, legacyRun, err := r.decodePublishEvent(runID, historyEvent)
+			event, snapshotURI, err := r.decodePublishEvent(runID, historyEvent)
 			if err != nil {
 				return nil, err
 			}
 			if snapshotURI != "" {
 				projection.snapshotURI = snapshotURI
-			}
-			if legacyRun != nil {
-				// Whichever compatible shape appears last is the complete latest
-				// snapshot. This also keeps a mixed upgrade history ordered.
-				projection.snapshotURI = ""
-				projection.run = mergeRunSnapshot(projection.run, legacyRun)
 			}
 			if event == nil {
 				continue
@@ -802,34 +796,31 @@ func (r *TemporalRunReader) isPublishEvent(historyEvent *historypb.HistoryEvent)
 	return attrs != nil && attrs.GetActivityType().GetName() == ActivityPublishEvent
 }
 
-// decodePublishEvent decodes the current (Event, snapshotURI, dedupeKey)
-// arguments. Histories written before snapshot externalization carried an
-// inline Run in payload 1; that shape remains readable during upgrades.
+// decodePublishEvent decodes the (Event, snapshotURI, dedupeKey) arguments
+// the workflow schedules PublishEvent with: the event itself and the URI of
+// the run snapshot written alongside it. The Run is never inline in history;
+// it is fetched from the snapshot store only when a caller wants it.
 func (r *TemporalRunReader) decodePublishEvent(
 	runID string,
 	historyEvent *historypb.HistoryEvent,
-) (*orkstackv1.Event, string, *orkstackv1.Run, error) {
+) (*orkstackv1.Event, string, error) {
 	payloads := historyEvent.GetActivityTaskScheduledEventAttributes().GetInput().GetPayloads()
 	var event *orkstackv1.Event
 	if len(payloads) > 0 {
 		if err := r.converter.FromPayload(payloads[0], &event); err != nil {
-			return nil, "", nil, fmt.Errorf("engine: decode event of run %s at history event %d: %w",
+			return nil, "", fmt.Errorf("engine: decode event of run %s at history event %d: %w",
 				runID, historyEvent.GetEventId(), err)
 		}
 	}
 	if len(payloads) <= 1 {
-		return event, "", nil, nil
+		return event, "", nil
 	}
 	var uri string
-	if err := r.converter.FromPayload(payloads[1], &uri); err == nil {
-		return event, uri, nil, nil
-	}
-	var legacyRun *orkstackv1.Run
-	if err := r.converter.FromPayload(payloads[1], &legacyRun); err != nil {
-		return nil, "", nil, fmt.Errorf("engine: decode snapshot reference of run %s at history event %d: %w",
+	if err := r.converter.FromPayload(payloads[1], &uri); err != nil {
+		return nil, "", fmt.Errorf("engine: decode snapshot reference of run %s at history event %d: %w",
 			runID, historyEvent.GetEventId(), err)
 	}
-	return event, "", legacyRun, nil
+	return event, uri, nil
 }
 
 func (r *TemporalRunReader) loadSnapshot(
@@ -904,8 +895,8 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 	return run
 }
 
-// memoString reads one memo field. A run started by an engine that predates
-// the memo simply has none, which is a missing name rather than an error.
+// memoString reads one memo field; a field the memo does not carry reads as
+// an empty string, not an error.
 func (r *TemporalRunReader) memoString(memo *commonpb.Memo, key string) string {
 	payload, ok := memo.GetFields()[key]
 	if !ok {

@@ -27,15 +27,15 @@ var ErrNoNamespaceRegistry = fmt.Errorf("no namespace registry is configured")
 // The window is deliberately generous, and the asymmetry is the reason.
 // Temporal keeps poller records for minutes after a worker dies, so a stale
 // record can still say "live" shortly after an Orker stopped — that degrades
-// to the behaviour this milestone replaces, a run that waits. A window too
+// to a run that waits. A window too
 // tight would do the opposite and refuse a healthy submit, which is a new
 // failure invented by the check itself.
 const DefaultPollerFreshness = 60 * time.Second
 
-// poolPluginTimeout bounds the plugin question asked of one pool. It is short:
-// a pool with live Orkers answers immediately, and a report is not worth
-// holding a request open for.
-const poolPluginTimeout = 10 * time.Second
+// poolDescribeTimeout bounds one DescribeOrker probe. It is short: a pool with
+// live Orkers answers immediately, and a report is not worth holding a request
+// open for.
+const poolDescribeTimeout = 10 * time.Second
 
 // PoolLiveness is what the cluster says about the Orkers serving one pool.
 type PoolLiveness struct {
@@ -86,9 +86,7 @@ type PoolProbe interface {
 // asked only of a pool that has live Orkers — a pool with none has nobody to
 // answer, and asking would only time out.
 //
-// It replaces PoolPluginLister. An Orker no longer has a plugin list to
-// report; what it has is an identity, a runtime and a security profile, and
-// answering at all is the liveness evidence the inventory wants (§6.5).
+// Answering at all is the liveness evidence the inventory wants (§6.5).
 type PoolOrkerDescriber interface {
 	OrkerOnPool(ctx context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error)
 }
@@ -110,7 +108,7 @@ type NamespaceReader interface {
 //
 // Put carries artifacts.PutConditions because the arbitration between two
 // replicas is the store's own: a conditional write is refused by the backend,
-// so nothing above it invents a lock (design §5, AGENTS.md §1.7).
+// so nothing above it invents a lock (design §5, AGENTS.md §7).
 type NamespaceRegistry interface {
 	NamespaceReader
 	List(ctx context.Context) ([]*orkstackv1.Namespace, error)
@@ -153,7 +151,7 @@ func (e *PoolNotAllowedError) Error() string {
 // PoolEmptyError reports a submit refused because the pool it resolved to has
 // no live Orkers.
 //
-// This is the stranded run of AGENTS.md §6, converted into an error at the
+// This is the stranded run of AGENTS.md §11.1, converted into an error at the
 // moment the routing decision is made. Both remedies are named, because a
 // caller who cannot act on the error is left exactly where they were.
 type PoolEmptyError struct {
@@ -194,7 +192,7 @@ func (e *PoolUnreachableError) Unwrap() error { return e.Err }
 // It is the whole of the routing decision and it lives outside workflow code
 // on purpose: it reads a namespace document, it reads process configuration
 // (RawQueue) and it asks the cluster a question, none of which a deterministic
-// workflow may do (AGENTS.md §1.3). What it produces — a definition whose
+// workflow may do (AGENTS.md §2.1). What it produces — a definition whose
 // tasks all carry a pool, and a pool→channel route table — is bound into the
 // workflow input and is all the workflow ever needs.
 type PoolResolver struct {
@@ -498,7 +496,7 @@ func (r *PoolResolver) routeFor(pool string) (task.Route, error) {
 }
 
 // Pools reports the pools a namespace may dispatch onto, each with the Orkers
-// serving it now and the plugins those Orkers run.
+// serving it now.
 //
 // Scope: the namespace's allow-list when it has one, otherwise its default
 // plus whatever extra pools the caller knows about (the pools its orkflows
@@ -517,7 +515,7 @@ func (r *PoolResolver) routeFor(pool string) (task.Route, error) {
 //
 // IT NARROWS RATHER THAN REFUSING. A pool the cluster does not answer for
 // keeps its row and carries UnavailableReason instead of a count; a pool whose
-// Orkers do not answer keeps its count and loses its plugin list. Both are
+// Orkers do not answer keeps its count and loses its Orker description. Both are
 // logged with the pool and the cause, because a narrowed answer that says
 // nothing is indistinguishable from a complete one.
 //
@@ -600,17 +598,10 @@ func (r *PoolResolver) Pools(
 			}
 		}
 		if pool.GetLiveOrkerCount() > 0 && r.Orkers != nil {
-			// The probe is asked for its LIVENESS evidence, not for an
-			// inventory. Under the OCI Activity Contract an Orker has no
-			// plugin list to report — which images exist is engine
-			// configuration, not something to ask an Orker (§4.2) — so
-			// Pool.plugins is deliberately left unpopulated here and the
-			// Admin page it fed becomes an Activities page rendering the
-			// engine's catalog instead (§6.5, Phase 3).
-			//
-			// The call is kept rather than dropped because answering AT ALL
-			// is the evidence: proof/M11.6 exists because this path had a bug,
-			// and a probe nobody makes cannot regress visibly.
+			// The probe is asked for liveness evidence only: which images
+			// exist is engine configuration (§4.2). The call is kept because
+			// answering at all is the evidence a probe nobody makes cannot
+			// give.
 			if _, err := r.Orkers.OrkerOnPool(ctx, queue); err != nil {
 				// The pool's liveness was measured from the cluster and
 				// stands; only the Orker's self-description was lost.

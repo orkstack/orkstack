@@ -16,7 +16,7 @@ import (
 // place. Which pool a task runs on is the user's document plus the namespace's
 // default — configuration, read from a store, at submit. Which channel that
 // pool is, is process configuration, which workflow code may not read at all
-// (AGENTS.md §1.3). So the decision is made once, by the process that accepts
+// (AGENTS.md §2.1). So the decision is made once, by the process that accepts
 // the submission, and travels as an argument: recorded in history, identical
 // on every replay, and readable by a second engine finishing a run this one
 // started.

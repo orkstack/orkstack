@@ -815,19 +815,20 @@ type orkflowScan struct {
 // document it is.
 //
 // The pointer decides, because moving the pointer is what an apply commits.
-// The documents' own stamps answer only when the pointer cannot: an orkflow
-// last applied by an engine built before the head became a pointer, or — and
-// this is why the check is on membership rather than on emptiness — a pointer
-// naming a version this scan did not see. Put writes the document BEFORE it
-// moves the pointer, so that state should be unreachable; falling back rather
-// than reporting a head nothing holds is what keeps a listing answerable if it
+// The documents' own stamps answer only when the pointer cannot: a catalog
+// whose pointer is missing (Delete removes the pointers before the
+// definitions, so a Delete that fails part way leaves the documents behind,
+// and a writer killed on an orkflow's first apply does too), or — and this is
+// why the check is on membership rather than on emptiness — a pointer naming
+// a version this scan did not see. Put writes the document BEFORE it moves
+// the pointer, so that state should be unreachable; falling back rather than
+// reporting a head nothing holds is what keeps a listing answerable if it
 // ever is, exactly as pinnedOrkflow does for the current pointer.
 //
 // The derived answer is not a listing's private convenience: S3OrkflowStore.Put
 // checks an apply's expected head against the SAME rule (effectiveHead), or a
-// catalog stored before @head.json existed would be readable and not editable
-// — an editor shown 1.0.0 as the head, and an apply naming 1.0.0 refused
-// against a head of "".
+// pointer-less catalog would be readable and not editable — an editor shown
+// 1.0.0 as the head, and an apply naming 1.0.0 refused against a head of "".
 func (scan orkflowScan) headOf(name string) string {
 	if head := scan.derivedHeadOf(name); head != nil {
 		return head.GetVersion()

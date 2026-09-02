@@ -124,20 +124,20 @@ func TestPoolResolver_ResolvesTaskPoolThenNamespaceDefaultThenMain(t *testing.T)
 // TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel keeps the
 // escape hatch working: an engine started with ORK_ORKER_QUEUE dispatches a
 // task that names no pool there, which is how a test harness isolates itself
-// (AGENTS.md §6) with no change to any document.
+// (AGENTS.md §11.1) with no change to any document.
 //
 // Dispatch and reporting must read the same map. One process holding two
 // answers about one pool — accepting a submit because the operator's channel
 // is served, and reporting that same pool deserted — is worse than either
 // answer alone, because the number an operator reads is the wrong one.
 func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T) {
-	const raw = "ork-tasks-m10-2-agent"
+	const raw = "ork-tasks-private-agent"
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	// Three Orkers on the operator's channel, one on gpu's own, and nobody on
 	// the channel the default pool would have used without the override.
 	resolver := &engine.PoolResolver{
 		Probe:    livePools{raw: 3, gpuQueue: 1},
-		Orkers:   fakePoolOrkers{raw: {"shell"}, gpuQueue: {"http"}},
+		Orkers:   fakePoolOrkers{raw: true, gpuQueue: true},
 		RawQueue: raw,
 	}
 	ns := &orkstackv1.Namespace{Name: "default"}
@@ -190,7 +190,7 @@ func TestPoolResolver_OneSetOfOrkersIsOnePool(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
 		Probe:    livePools{gpuQueue: 2},
-		Orkers:   fakePoolOrkers{gpuQueue: {"shell"}},
+		Orkers:   fakePoolOrkers{gpuQueue: true},
 		RawQueue: gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
 	}
 	ns := &orkstackv1.Namespace{Name: "default"}
@@ -384,7 +384,7 @@ func stampedPools(planned *orkstackv1.Orkflow) []string {
 }
 
 // TestPoolResolver_RefusesASubmitOntoAPoolWithNoLiveOrkers converts the
-// stranded-RUNNING failure AGENTS.md §6 describes into an error at submit.
+// stranded-RUNNING failure AGENTS.md §11.1 describes into an error at submit.
 //
 // Before this, a task dispatched to a pool nothing serves left the run in
 // RUNNING until a human noticed. The pool is asked, once, at the moment the
@@ -523,14 +523,13 @@ tasks:
     with: {command: "echo settle"}
 `
 
-// TestPoolResolver_ReportsPoolsWithTheirOrkersAndPlugins is the observability
-// half: an operator asks which pools exist, how many Orkers serve each, and
-// what those Orkers can run.
-func TestPoolResolver_ReportsPoolsWithTheirOrkersAndPlugins(t *testing.T) {
+// TestPoolResolver_ReportsPoolsWithTheirLiveOrkers is the observability
+// half: an operator asks which pools exist and how many Orkers serve each.
+func TestPoolResolver_ReportsPoolsWithTheirLiveOrkers(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
 		Probe:  livePools{task.DefaultQueue: 2, gpuQueue: 1},
-		Orkers: fakePoolOrkers{gpuQueue: {"shell"}, task.DefaultQueue: {"http", "shell"}},
+		Orkers: fakePoolOrkers{gpuQueue: true, task.DefaultQueue: true},
 	}
 	ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"main", "gpu", "cold"}}
 
@@ -558,11 +557,9 @@ func TestPoolResolver_ReportsPoolsWithTheirOrkersAndPlugins(t *testing.T) {
 	}
 }
 
-// fakePoolOrkers answers the DescribeOrker probe for a set of channels. The
-// VALUE is unused — under the OCI Activity Contract an Orker has no plugin
-// list to report — so what a channel maps to only decides whether the probe
-// answers at all, which is the liveness evidence the report wants (§6.5).
-type fakePoolOrkers map[string][]string
+// fakePoolOrkers answers the DescribeOrker probe for the channels it maps; a
+// channel it does not map is a pool nobody serves.
+type fakePoolOrkers map[string]bool
 
 func (f fakePoolOrkers) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
 	if _, serving := f[queue]; !serving {

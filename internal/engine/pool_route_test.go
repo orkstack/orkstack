@@ -18,7 +18,7 @@ import (
 //
 // The defect it closes: `pool: main` mapped through task.QueueForPool to
 // task.DefaultQueue while a task that named no pool went to the deployment's
-// own channel. Under the ORK_ORKER_QUEUE isolation AGENTS.md §6 gives every
+// own channel. Under the ORK_ORKER_QUEUE isolation AGENTS.md §11.1 gives every
 // parallel agent, that made `pool: main` an escape hatch onto the shared
 // queue — from a document whose author was told the two spellings mean the
 // same thing (docs/DSL.md). The same arithmetic, run the other way, reported
@@ -48,8 +48,8 @@ var defaultChannels = []struct {
 	{name: "the unconfigured default channel", bound: task.DefaultQueue, wantPool: task.DefaultPool},
 	// StartRun always binds a channel; a zero value must still resolve.
 	{name: "nothing bound at all", bound: "", wantPool: task.DefaultPool},
-	// ORK_ORKER_QUEUE for one parallel agent (AGENTS.md §6).
-	{name: "a plain operator override", bound: "ork-tasks-m7-9", wantPool: task.DefaultPool},
+	// ORK_ORKER_QUEUE for one parallel agent (AGENTS.md §11.1).
+	{name: "a plain operator override", bound: "ork-tasks-private", wantPool: task.DefaultPool},
 	// ORK_ORKER_POOL=gpu on BOTH binaries, which docs/DEPLOY.md documents as
 	// the preferred way to run a dedicated pool: the engine's bound channel is
 	// then that pool's own queue.
@@ -150,7 +150,7 @@ func TestPoolResolver_OnePoolNameMeansOneSetOfOrkers(t *testing.T) {
 
 // TestPoolResolver_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute is the
 // isolation half, stated on its own because it is the one that bites: an agent
-// running under ORK_ORKER_QUEUE (AGENTS.md §6) must not be able to reach the
+// running under ORK_ORKER_QUEUE (AGENTS.md §11.1) must not be able to reach the
 // shared `ork-tasks` by writing `pool: main`, however the override is spelled.
 func TestPoolResolver_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute(t *testing.T) {
 	for _, channel := range defaultChannels {

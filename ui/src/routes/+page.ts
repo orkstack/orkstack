@@ -2,9 +2,9 @@ import { errorMessage, orkstack } from '$lib/client';
 import { namespaceFrom } from '$lib/namespace';
 import type { PageLoad } from './$types';
 
-// The dashboard is the home page (design §1.9). It was a redirect to
-// /orkflows, which answered "how is this namespace doing?" with a list of
-// definitions — the one question a definition cannot answer.
+// The dashboard is the home page. A redirect to /orkflows would answer "how
+// is this namespace doing?" with a list of definitions — the one question a
+// definition cannot answer.
 //
 // Everything here comes from ONE call. GetStats derives every number on read
 // from the cluster's index and the archive index, so any replica answers

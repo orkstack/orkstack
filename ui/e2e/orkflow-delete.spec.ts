@@ -29,9 +29,9 @@ const STAMP = Date.now().toString(36);
 const DELETABLE = `deletable-${STAMP}`;
 const BLOCKED = `blocked-${STAMP}`;
 const UNCHECKED = `unchecked-${STAMP}`;
-const PROOF_DIR =
-  process.env.ORK_PROOF_DIR ??
-  path.join(uiDir, "test-results", "orkflow-delete");
+const PROOF_DIR = process.env.ORK_PROOF_DIR
+  ? path.join(process.env.ORK_PROOF_DIR, "orkflow-delete")
+  : path.join(uiDir, "test-results", "orkflow-delete");
 const outPath = proofOut(PROOF_DIR);
 const rpc = <T>(method: string, body: unknown): Promise<T> =>
   callEngine<T>(ENGINE, method, body);

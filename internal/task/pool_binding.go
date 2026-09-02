@@ -16,7 +16,7 @@ var ErrPoolBindingConflict = errors.New("pool and queue disagree")
 // arrive at the same answer. An Orker polls Queue; the engine dispatches a
 // task that names no pool of its own to Queue. Disagree and the run reaches
 // RUNNING and stays there: the Orker is listening to one channel while the
-// engine speaks into another, and nothing reports it (AGENTS.md §6).
+// engine speaks into another, and nothing reports it (AGENTS.md §11.1).
 type PoolBinding struct {
 	// Pool is the OrkStack name for this process's work: what a task's `pool:`
 	// has to say to reach it, and what a report calls it.

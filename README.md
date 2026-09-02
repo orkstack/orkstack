@@ -8,7 +8,7 @@
 
 ---
 
-> Status: pre-release; v0.0.5 implements the OCI Activity Contract.
+> Status: pre-release.
 
 ## Why
 
@@ -47,8 +47,8 @@ make down           # stop everything (data is kept)
 `make status` shows what is running, `make logs` tails all three processes,
 and `make reset` returns the machine to a vanilla state — it deletes Temporal
 history, every MinIO object (artifacts, archived runs, and the orkflow
-catalogue), the local artifact store and all build output. The repository,
-including `proof/`, is untouched.
+catalogue), the local artifact store and all build output. The repository
+itself is untouched.
 
 The individual steps are still there when you want them: `make tools`,
 `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
@@ -63,21 +63,21 @@ contains the binaries, and `ui/` is the SvelteKit app.
 ## Contributing
 
 Read [AGENTS.md](./AGENTS.md) (engineering contract) and
-[CONTRIBUTING.md](./CONTRIBUTING.md). Every change ships with behavior tests and
-a reproducible proof artifact under `proof/`.
+[CONTRIBUTING.md](./CONTRIBUTING.md). Every change ships with behavior tests
+and with evidence: `make proof` runs every gate against the real stack and
+keeps the output under `proof/<name>/`, which is gitignored; the commit or
+pull request quotes it. No proof, no done.
 
 ## Docs
 
-- [DSL reference](./docs/DSL.md)
-- [Retired Go plugin system and current replacements](./docs/PLUGINS.md)
-- [Activity-image design: the optional `op` pattern](./docs/PLUGIN_DESIGN.md)
-- [OCI Activity Contract — implemented architecture](./docs/OCI_ACTIVITY_CONTRACT.md)
 - [Architecture](./ARCHITECTURE.md)
-
-## Milestones
-
-The current pre-release is **v0.0.5**, implementing the OCI Activity Contract.
-Committed milestone evidence and reproduction commands live under [`proof/`](./proof/).
+- [DSL reference](./docs/DSL.md)
+- [OCI Activity Contract](./docs/OCI_ACTIVITY_CONTRACT.md)
+- [Activity images and the `op` convention](./docs/ACTIVITY_IMAGES.md)
+- [Deploying OrkStack](./docs/DEPLOY.md)
+- [Storage layout](./docs/STORAGE.md)
+- [JSON enum dialect](./docs/JSON.md)
+- [Stats](./docs/STATS.md)
 
 ## License
 

@@ -8,11 +8,8 @@ import { fileURLToPath } from 'node:url';
 // its log, probe a port, wait for a condition, call one engine by name, and
 // leave nothing running afterwards.
 //
-// It is a MODULE and not a copy in each spec on purpose. M7.5 and M7.6 each
-// added a `requireMinIO` to their own build-tagged file and the merged package
-// had it twice, invisible to every default check (AGENTS.md §7). A Playwright
-// spec is not build-tagged, but the lesson is the same one: a helper that
-// exists twice drifts twice.
+// It is a MODULE and not a copy in each spec on purpose: a helper that exists
+// twice drifts twice.
 //
 // Playwright collects `*.spec.ts`, so this file is imported and never run as a
 // test.
@@ -99,7 +96,7 @@ export async function killAll(): Promise<void> {
 		}
 		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
 	}
-	// AGENTS.md §6: never leave a stray engine or Orker behind, and anchor both
+	// AGENTS.md §11.1: never leave a stray engine or Orker behind, and anchor both
 	// patterns — unanchored, `bin/ork` also matches `bin/orkctl`.
 	try {
 		execSync("pkill -f '/bin/orker$' || true; pkill -f '/bin/ork$' || true", { timeout: 5_000 });
@@ -157,7 +154,7 @@ export function clusterEnv(namespace: string) {
  * macOS that is `/var/folders/...`, which the Docker VM does not share, so
  * every attempt would fail `WORKDIR_NOT_BINDABLE` before the workload starts.
  * `scripts/stack.sh` already points ORK_ORKER_WORKDIR at `$REPO/.data/work`
- * for the running stack, and proof/M11.1 does the same.
+ * for the running stack, and this harness does the same.
  *
  * SECOND, an Orker's default identity is derived from its work root
  * (`hostname-<hash of the root>`, internal/orker/activity.go), and an Orker
@@ -187,7 +184,7 @@ export function orkerEnv(name: string) {
 /**
  * The registry the first-party activity images are built and pushed to. It is
  * `registry:3` from deploy/docker-compose.yml, the same one images/Makefile
- * and proof/M11.3 use.
+ * pushes to.
  */
 export const testRegistry = process.env.ORK_TEST_REGISTRY ?? 'localhost:5001';
 const imageNamespace = process.env.ORK_TEST_IMAGE_NAMESPACE ?? 'orkstack';
@@ -204,10 +201,8 @@ export const activityRef = (name: string) =>
  * (§4.2). Its built-in default points at `ghcr.io/orkstack/activity-shell:0.1`,
  * which is not published, so an engine booted without this resolves nothing
  * and every apply fails IMAGE_RESOLVE_UNAUTHORIZED — apply-time resolution is
- * a real registry GET (§4.3), not a lookup in a table. proof/M11.3 makes the
- * same substitution for the same reason, in its own words: "the catalog must
- * point at the local registry: an engine booted against ghcr.io resolves
- * nothing".
+ * a real registry GET (§4.3), not a lookup in a table. The catalog must point
+ * at the local registry: an engine booted against ghcr.io resolves nothing.
  */
 export const catalogEnv = {
 	ORK_ACTIVITY_CATALOG: `activities:

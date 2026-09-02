@@ -19,7 +19,9 @@ const ENGINE_HTTP = 'http://127.0.0.1:18080';
 const ENGINE_WS = 'ws://127.0.0.1:18080';
 const UI_ORIGIN = 'http://127.0.0.1:14173';
 
-const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof');
+const PROOF_DIR = process.env.ORK_PROOF_DIR
+	? path.join(process.env.ORK_PROOF_DIR, 'realtime')
+	: path.join(uiDir, 'test-results', 'realtime');
 
 const children: ChildProcess[] = [];
 let stubServer: Server | undefined;
@@ -94,7 +96,7 @@ async function killAll(): Promise<void> {
 		}
 		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
 	}
-	// Backstop per AGENTS.md §6: never leave stray ork processes behind.
+	// Backstop per AGENTS.md §11.1: never leave stray ork processes behind.
 	try {
 		execSync("pkill -f 'bin/orker' || true; pkill -f 'bin/ork' || true", {
 			timeout: 5_000
@@ -282,8 +284,8 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	// 7. The event log holds the ordered lifecycle: proof the
 	//    PENDING -> RUNNING -> SUCCEEDED transition streamed live.
 	//
-	//    Since M11.4 the event list is an inspection view rather than part of
-	//    the page, so it is asked for first. What it renders is the buffer the
+	//    The event list is an inspection view rather than part of the page,
+	//    so it is asked for first. What it renders is the buffer the
 	//    socket has been filling since the page loaded — every event below
 	//    arrived long before this click, which is the property that lets the
 	//    list be on demand at all.
@@ -306,7 +308,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 
 	// 8. The page never reloaded during the transitions, and never left this
 	//    run. The URL gained `?events=1` above, because that is where the
-	//    event view's state lives since M11.4 and step 7 asked for it — a
+	//    event view's state lives and step 7 asked for it — a
 	//    same-route navigation whose loader was never re-entered, which is
 	//    what the marker says. Everything else about the address is
 	//    unchanged: same page, same namespace, one parameter this test set

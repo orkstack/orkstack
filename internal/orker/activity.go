@@ -74,9 +74,8 @@ type Options struct {
 
 // Activities implements the engine<->Orker activity seam.
 //
-// It is now a thin shell around one OCIDispatcher. The plugin registry, the
-// name lookup and the four builtin plugins are gone: any OCI image is an
-// activity, and there is exactly one implementation that runs one (§6.1).
+// It wraps one OCIDispatcher: any OCI image is an activity, and there is
+// exactly one implementation that runs one (§6.1).
 type Activities struct {
 	dispatcher *OCIDispatcher
 	pool       string
@@ -165,11 +164,9 @@ func (a *Activities) ExecuteTask(
 
 // DescribeOrker reports this Orker's identity.
 //
-// It replaces ListPlugins one-for-one as the pool-liveness probe (§6.5).
-// ListPlugins was never only a plugin list: a successful probe is how a pool
-// proves it is alive, and proof/M11.6 fixed a bug in exactly that path. An
-// Orker no longer has a plugin list, but a pool still has to prove it is
-// alive, so the probe stays and only its payload changes.
+// It is the pool-liveness probe (§6.5): a successful call is how a pool
+// proves it is alive, so it must answer even when there is nothing else to
+// report.
 func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrkerResult, error) {
 	result := &orkstackv1.DescribeOrkerResult{
 		OrkerId:         a.dispatcher.OrkerID,
@@ -203,10 +200,10 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 // probe — would run a deployment that silently lost the immutability
 // guarantee (§3.1, §5.3).
 func (a *Activities) Boot(ctx context.Context) error {
-	// An operator typo in a resource cap must stop the process here. Left to
-	// dispatch time an unreadable cap used to REMOVE the ceiling rather than
-	// refuse, so a workload could be granted any size it asked for (§9.3,
-	// AGENTS.md §6).
+	// An operator typo in a resource cap must stop the process here rather
+	// than surface per request at dispatch time: a cap that cannot be read is
+	// not a ceiling, and a workload must never be granted a size nobody set
+	// (§9.3, AGENTS.md §6).
 	if err := a.dispatcher.Policy.Validate(); err != nil {
 		return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
 	}
@@ -289,12 +286,12 @@ func (a *Activities) Close() {
 // defaultOrkerID derives an identity that is STABLE across a restart on the
 // same host, because the startup reaper's only key is this string.
 //
-// It used to end in os.Getpid(), which made every restart a different Orker:
-// the replacement filtered `label=ork.orker=<new id>`, matched none of its dead
-// predecessor's containers, and reaped nothing — exactly the scenario §5.5
-// measure 2 exists for. The pid is gone.
+// It deliberately carries no os.Getpid(): an identity ending in the pid would
+// make every restart a different Orker — the replacement would filter
+// `label=ork.orker=<new id>`, match none of its dead predecessor's containers,
+// and reap nothing — exactly the scenario §5.5 measure 2 exists for.
 //
-// The work root replaces it as the discriminator. It is what makes two Orkers
+// The work root is the discriminator instead. It is what makes two Orkers
 // deliberately run side by side on one host distinct — they cannot share
 // per-attempt execution directories anyway (§6.4) — while a restart of the SAME
 // Orker keeps its configured root and therefore its identity. Two Orkers that

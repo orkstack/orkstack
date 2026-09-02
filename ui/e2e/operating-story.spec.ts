@@ -21,32 +21,32 @@ import {
 	waitForEngine
 } from './harness';
 
-// M11.7 — the v0.0.4 operating story, in one command against the real stack.
+// The operating story, in one command against the real stack.
 //
-// The per-slice proofs (M11.1..M11.6) each hold their own claim. None of them
-// holds the MILESTONE's: that the four things v0.0.4 added — container output
+// The per-slice specs each hold their own claim. None of them holds the
+// COMPOSITION's: that four things — container output
 // in the live log, an editable base version, the Admin surface, and the run
 // page's on-demand event inspector — work TOGETHER, read through one replica
 // that started nothing, while another replica does the starting.
 //
-// Topology, mirroring proof/M10.8's own two-replica composition:
+// Topology, mirroring logs-dashboard.spec.ts's two-replica composition:
 //
 //   engine A (:18190)   SubmitRun only. This is the one write nothing else
 //                        may perform: starting a Temporal workflow.
 //   engine B (:18191)   Every read this spec makes, and every write that is
 //                        NOT a run start (apply, promote, namespace CRUD) —
 //                        those are store writes any replica may serve
-//                        (AGENTS.md §1.7), which is the same reasoning
-//                        proof/M10.8/logs-dashboard.spec.ts test 3 already
-//                        rests on for an orkflow edit.
+//                        (AGENTS.md §7), which is the same reasoning
+//                        logs-dashboard.spec.ts test 3 already rests on for
+//                        an orkflow edit.
 //   UI       (:14181)   the production build, proxying Connect to B and
 //                        pointing the browser's WebSockets at B.
 //   orker main           the default pool — runs the chatty container task.
 //   orker batch           ORK_ORKER_POOL=batch — the second pool this run's
 //                        own namespace's pool policy names.
 //
-// Isolation (AGENTS.md §6): ORK_TEMPORAL_NAMESPACE=ork-m11-7-proof-docs, this
-// slice's own. Both engines and both Orkers share it — the deliberate
+// Isolation (AGENTS.md §11.1): ORK_TEMPORAL_NAMESPACE=ork-ui-operating-story,
+// this spec's own. Both engines and both Orkers share it — the deliberate
 // exception the rule names: "any replica answers for any run" is the
 // condition under test, and splitting the namespace would fail the proof for
 // a reason unrelated to the property.
@@ -56,7 +56,7 @@ const ENGINE_B = 'http://127.0.0.1:18191';
 const ENGINE_B_WS = 'ws://127.0.0.1:18191';
 const UI_ORIGIN = 'http://127.0.0.1:14181';
 
-const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m11-7-proof-docs';
+const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-operating-story';
 // The image every container task here runs. It is activity-shell rather than a
 // bare `alpine:3.20`, because an activity must write
 // /orkstack/output/values.json and a stock base image does not — an image that
@@ -65,9 +65,9 @@ const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m11-7-proo
 const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 
 const STAMP = Date.now().toString(36);
-const CHATTY_ORKFLOW = `m11-7-chatty-${STAMP}`;
-const VERSIONED_ORKFLOW = `m11-7-versioned-${STAMP}`;
-const OPS_NS = `m11-7-ops-${STAMP}`;
+const CHATTY_ORKFLOW = `story-chatty-${STAMP}`;
+const VERSIONED_ORKFLOW = `story-versioned-${STAMP}`;
+const OPS_NS = `story-ops-${STAMP}`;
 
 // One line per second on each of stdout/stderr — long enough that both the
 // CLI follow and the browser pane are certainly watching before the last
@@ -78,13 +78,15 @@ const OPS_NS = `m11-7-ops-${STAMP}`;
 // consolidated proof stays minutes, not tens of minutes.
 const CONTAINER_LINES = 18;
 
-const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m11-7');
+const PROOF_DIR = process.env.ORK_PROOF_DIR
+	? path.join(process.env.ORK_PROOF_DIR, 'operating-story')
+	: path.join(uiDir, 'test-results', 'operating-story');
 const TRANSCRIPT = 'operating-story.txt';
 
 // These tests build on what the last left in the cluster and the bucket —
 // the version-editing test's namespace and orkflow, the Admin test's pool
-// Orkers — so ordering is the safety rail, exactly as M10.8 and M11.5/M11.6
-// are.
+// Orkers — so ordering is the safety rail, as in the other serial specs
+// here.
 test.describe.configure({ mode: 'serial' });
 
 const outPath = proofOut(PROOF_DIR);
@@ -105,7 +107,7 @@ const rpcB = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENG
 function chattyOrkflowYaml(name: string): string {
 	return `name: ${name}
 version: "0.1.0"
-description: M11.7 operating story — a chatty container, followed live.
+description: Operating story — a chatty container, followed live.
 tasks:
   - id: talk
     uses: shell
@@ -116,8 +118,8 @@ tasks:
       script: |
         i=1
         while [ $i -le ${CONTAINER_LINES} ]; do
-          echo "m11-7 stdout line $i"
-          echo "m11-7 stderr line $i" 1>&2
+          echo "story stdout line $i"
+          echo "story stderr line $i" 1>&2
           i=$((i+1))
           sleep 1
         done
@@ -175,12 +177,12 @@ test.beforeAll(async () => {
 	writeFileSync(
 		outPath(TRANSCRIPT),
 		[
-			'# M11.7 — the v0.0.4 operating story: a chatty container followed live',
+			'# The operating story: a chatty container followed live',
 			'# (CLI and UI), a version edited from a non-head base and promoted',
 			'# forward, and the Admin surface — all read through a replica that',
 			'# started nothing.',
 			'#',
-			'# Written by ui/e2e/m11-7-operating-story.spec.ts against two real',
+			'# Written by ui/e2e/operating-story.spec.ts against two real',
 			'# engine replicas, two real Orkers, real Temporal, real MinIO and real',
 			'# Docker.',
 			`# temporal namespace: ${TEMPORAL_NAMESPACE}`,
@@ -199,9 +201,9 @@ test.beforeAll(async () => {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
-	// Prerequisites are failures here, never skips: proof/M11.7/reproduce.sh
-	// probes every one of them BEFORE running this spec and exits 77 when
-	// one is absent (AGENTS.md §6), so an absence never reaches here.
+	// Prerequisites are failures here, never skips: the caller is expected to
+	// probe every one of them BEFORE running this spec (AGENTS.md §11.1), so
+	// an absence never reaches here.
 	// The three first-party images, built and PUSHED: `uses: shell` is a
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
 	// unpushed tag has no manifest digest to pin (§4.6).
@@ -234,12 +236,12 @@ test.beforeAll(async () => {
 	mainOrkerProc = spawnLogged(outPath('orker-main.log'), './bin/orker', [], {
 		...cluster,
 		...s3Env,
-		...orkerEnv('m11-7-main')
+		...orkerEnv('story-main')
 	});
 	batchOrkerProc = spawnLogged(outPath('orker-batch.log'), './bin/orker', [], {
 		...cluster,
 		...s3Env,
-		...orkerEnv('m11-7-batch'),
+		...orkerEnv('story-batch'),
 		ORK_ORKER_POOL: 'batch'
 	});
 	await waitForEngine(ENGINE_A);
@@ -300,9 +302,9 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	// in the same breath. The container sleeps 1s between each of
 	// CONTAINER_LINES*2 lines, so there is ample window before it finishes.
 	await expect
-		.poll(() => follow.lines.some((l) => l.text.includes('m11-7 st')), { timeout: 30_000 })
+		.poll(() => follow.lines.some((l) => l.text.includes('story st')), { timeout: 30_000 })
 		.toBe(true);
-	const firstLineAt = follow.lines.find((l) => l.text.includes('m11-7 st'))?.at ?? 0;
+	const firstLineAt = follow.lines.find((l) => l.text.includes('story st'))?.at ?? 0;
 	expect(firstLineAt).toBeGreaterThan(0);
 	const statusWhileFollowing = await rpcB<{ run: { status: string } }>('RunService/GetRun', { runId: run });
 	expect(statusWhileFollowing.run.status).toBe('STATUS_RUNNING');
@@ -322,7 +324,7 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	await page.getByTestId('task-log-toggle-talk').click();
 	const logPane = page.getByTestId('task-log-talk');
 	const logLines = logPane.getByTestId('task-log-line');
-	const appLines = logLines.filter({ hasText: /^m11-7 (?:stdout|stderr) line \d+$/ });
+	const appLines = logLines.filter({ hasText: /^story (?:stdout|stderr) line \d+$/ });
 	// `data-stream` is an attribute on the SAME element `data-testid` names —
 	// there is no child to descend into — so it must be part of one CSS
 	// selector, not chained via `.locator()` (which searches descendants and
@@ -341,16 +343,16 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	// (internal/orker/logsink.go), so stderr's first line can legitimately
 	// land before stdout's — the assertions below check EXISTENCE, never
 	// relative order.
-	const firstStdout = appLines.filter({ hasText: /^m11-7 stdout line 1$/ }).first();
-	const firstStderr = stderrLines.filter({ hasText: /^m11-7 stderr line 1$/ }).first();
+	const firstStdout = appLines.filter({ hasText: /^story stdout line 1$/ }).first();
+	const firstStderr = stderrLines.filter({ hasText: /^story stderr line 1$/ }).first();
 	await expect(firstStdout).toBeVisible({ timeout: 30_000 });
 	await expect(firstStderr).toBeVisible({ timeout: 30_000 });
 	await expect(firstStderr).not.toContainText('[stderr]');
 	const runStatusWhileLive = (await page.getByTestId('run-status').innerText()).trim();
 	expect(runStatusWhileLive).toBe('RUNNING');
 	note(
-		`browser pane shows a decoded stdout application line ("m11-7 stdout line 1") ` +
-			`AND a decoded stderr application line ("m11-7 stderr line 1", wire marker ` +
+		`browser pane shows a decoded stdout application line ("story stdout line 1") ` +
+			`AND a decoded stderr application line ("story stderr line 1", wire marker ` +
 			`stripped, data-stream="stderr") while run reads ${runStatusWhileLive}`
 	);
 
@@ -399,10 +401,10 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 
 	// Now let the follow run to completion and check the whole transcript.
 	await follow.done;
-	const cliLines = follow.lines.filter((l) => l.text.includes('m11-7 st'));
+	const cliLines = follow.lines.filter((l) => l.text.includes('story st'));
 	expect(cliLines.length).toBeGreaterThanOrEqual(CONTAINER_LINES * 2); // both streams
-	expect(cliLines.some((l) => l.text.startsWith('m11-7 stdout'))).toBe(true);
-	expect(cliLines.some((l) => l.text.startsWith('[stderr] m11-7 stderr'))).toBe(true);
+	expect(cliLines.some((l) => l.text.startsWith('story stdout'))).toBe(true);
+	expect(cliLines.some((l) => l.text.startsWith('[stderr] story stderr'))).toBe(true);
 	const lastLineAt = cliLines[cliLines.length - 1]?.at ?? firstLineAt;
 	expect(lastLineAt - firstLineAt).toBeGreaterThan(1000);
 	note(
@@ -453,8 +455,8 @@ test('a version is edited from its current (non-head) base and applied as the ne
 	note(`promoted 0.1.0: current=0.1.0, head=0.2.0 (read from engine B)`);
 	await shot(page, 'screenshot-promoted.png');
 
-	// Edit the PROMOTED (current) version, not head: this is M11.5's fix,
-	// re-measured. The editor must hold 0.1.0's source, not 0.2.0's.
+	// Edit the PROMOTED (current) version, not head. The editor must hold
+	// 0.1.0's source, not 0.2.0's.
 	await page.getByTestId('version-edit-0.1.0').click();
 	await expect(page.getByTestId('editor-form')).toBeVisible();
 	await expect(page.getByTestId('editor-yaml')).toHaveValue(/first revision/);
@@ -466,7 +468,7 @@ test('a version is edited from its current (non-head) base and applied as the ne
 	note('Edit on the current version (0.1.0) shows 0.1.0 source over head 0.2.0');
 
 	// Apply it as the new head: base=0.1.0 (provenance), expected_head=0.2.0
-	// (the CAS token) — the M11.2 contract.
+	// (the CAS token).
 	await page
 		.getByTestId('editor-yaml')
 		.fill(versionedOrkflowYaml(VERSIONED_ORKFLOW, '0.3.0', 'forked from current', 'echo three'));
@@ -493,7 +495,7 @@ test('a namespace and its pool policy are set in the Admin section, and pool hea
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
 	await expect(page.getByTestId('ns-create-name')).toBeVisible();
 	await page.getByTestId('ns-create-name').fill(OPS_NS);
-	await page.getByTestId('ns-create-description').fill('M11.7 operating story — a pool policy set in the browser.');
+	await page.getByTestId('ns-create-description').fill('Operating story — a pool policy set in the browser.');
 	await page.getByTestId('ns-create-default-pool').fill('main');
 	await page.getByTestId('ns-create-allowed-pools').fill('main, batch');
 	await page.getByTestId('ns-create-submit').click();

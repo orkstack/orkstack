@@ -219,8 +219,7 @@ func UnmarshalCommit(document []byte) (*orkstackv1.ActivityCommit, error) {
 	return c, nil
 }
 
-// MemoryCommitStore is an in-memory CommitStore for tests and for the seam
-// Phase 1 needs before Phase 2's S3 and local backends exist.
+// MemoryCommitStore is an in-memory CommitStore for tests.
 //
 // It is a real implementation of the contract rather than a stub: Create is
 // genuinely create-if-absent under a mutex, so a two-writer race against it

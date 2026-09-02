@@ -35,8 +35,7 @@
 	interface TaskView {
 		id: string;
 		// activity is what the task NAMES — its `uses:`, or the reference its
-		// image resolved from. It replaces the plugin name: an activity is an
-		// image, so there is no in-process plugin left to name here.
+		// image resolved from.
 		activity: string;
 		status: Status;
 		attempt: number;
@@ -382,8 +381,8 @@
 	<!--
 		The run's terminal error. The snapshot's Error carries the §8.1
 		category, the §8.2 reason code and the retryable flag, so when it is
-		present it is rendered in full rather than as the bare sentence this
-		panel used to show. A run whose failure arrived only over the socket
+		present it is rendered in full rather than as a bare sentence. A run
+		whose failure arrived only over the socket
 		has a message and no category, and says exactly that much.
 	-->
 	{#if runError}

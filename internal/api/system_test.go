@@ -102,7 +102,7 @@ func TestGetSystemInfo_ReportsVersioningOffWithoutABuildID(t *testing.T) {
 	}
 }
 
-// TestGetSystemInfo_AnswersFromAServiceThatHoldsNoRunState is AGENTS.md §1.7
+// TestGetSystemInfo_AnswersFromAServiceThatHoldsNoRunState is AGENTS.md §7
 // read the only way it can be read for this RPC.
 //
 // Every other admin read leaves the process; this one describes the process,
@@ -112,7 +112,7 @@ func TestGetSystemInfo_ReportsVersioningOffWithoutABuildID(t *testing.T) {
 // replica that started everything does. This Service has none of those seams.
 func TestGetSystemInfo_AnswersFromAServiceThatHoldsNoRunState(t *testing.T) {
 	wired := api.SystemInfo{
-		EngineVersion:    "v0.0.4",
+		EngineVersion:    "v1.2.3",
 		DeploymentName:   "orkstack",
 		ArtifactBackend:  "local",
 		ArtifactLocation: "./.data/artifacts",

@@ -15,8 +15,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -26,13 +24,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // TestS3OrkflowStore_CurrentPointerDecidesWhatAnEmptyVersionMeans is the
-// milestone's first acceptance against a real bucket: versions stay immutable,
-// a pointer decides what resolves, and an orkflow nobody promoted keeps
-// answering exactly as it did before this milestone existed.
+// pointer contract's first acceptance against a real bucket: versions stay
+// immutable, a pointer decides what resolves, and an orkflow nobody promoted
+// keeps answering with its newest applied version.
 func TestS3OrkflowStore_CurrentPointerDecidesWhatAnEmptyVersionMeans(t *testing.T) {
 	store, cfg := newS3OrkflowStore(t)
 	ctx := context.Background()
@@ -134,9 +133,9 @@ func TestS3OrkflowStore_CurrentPointerDecidesWhatAnEmptyVersionMeans(t *testing.
 // milestone's no-op claim the only way it can be measured: the stored bytes,
 // before and after.
 //
-// It is the check that would have failed before this slice, when ApplyOrkflow
-// stamped created_at into the document ahead of the write and every re-apply
-// therefore produced different bytes under the same key.
+// It is the check that fails if ApplyOrkflow ever stamps created_at into the
+// document ahead of the write, because every re-apply would then produce
+// different bytes under the same key.
 func TestS3OrkflowStore_ReApplyingIdenticalYAMLChurnsNothing(t *testing.T) {
 	store, cfg := newS3OrkflowStore(t)
 	ctx := context.Background()
@@ -447,18 +446,10 @@ func objectModified(
 	return aws.ToTime(head.LastModified)
 }
 
-// writePromotionProof records the concurrency transcript when the milestone's
-// proof asks for it (ORK_PROOF_DIR); a plain test run writes nothing into the
-// tree.
+// writePromotionProof records the concurrency transcript as evidence
+// (proof.Write); a plain test run writes nothing into the tree.
 func writePromotionProof(t *testing.T, name, final string, landed, refused int, seen map[string]int) {
 	t.Helper()
-	dir := os.Getenv("ORK_PROOF_DIR")
-	if dir == "" {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "# concurrent promotion against one MinIO bucket (%s)\n",
 		time.Now().UTC().Format(time.RFC3339))
@@ -469,9 +460,5 @@ func writePromotionProof(t *testing.T, name, final string, landed, refused int, 
 	fmt.Fprintf(&out, "reads taken during the race, by version observed: %v\n", seen)
 	fmt.Fprintf(&out, "every observation named a stored version; the two stores agree "+
 		"the current version is %s\n", final)
-	path := filepath.Join(dir, "concurrent-promotion.txt")
-	if err := os.WriteFile(path, []byte(out.String()), 0o644); err != nil {
-		t.Fatalf("write promotion proof: %v", err)
-	}
-	t.Logf("wrote %s", path)
+	proof.Write(t, "artifacts", "concurrent-promotion.txt", []byte(out.String()))
 }

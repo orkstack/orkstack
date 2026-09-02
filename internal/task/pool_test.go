@@ -22,8 +22,8 @@ var boundChannels = []struct {
 	{name: "the unconfigured default channel", bound: task.DefaultQueue, want: task.DefaultQueue},
 	// A caller with nothing bound must still get the zero-config answer.
 	{name: "nothing bound at all", bound: "", want: task.DefaultQueue},
-	// ORK_ORKER_QUEUE for one parallel agent (AGENTS.md §6).
-	{name: "a plain operator override", bound: "ork-tasks-m7-9", want: "ork-tasks-m7-9"},
+	// ORK_ORKER_QUEUE for one parallel agent (AGENTS.md §11.1).
+	{name: "a plain operator override", bound: "ork-tasks-agent", want: "ork-tasks-agent"},
 	// The same override written as a pool's queue, which this repository's own
 	// harness does (cmd/orkctl/integration_test.go).
 	{name: "an override that is itself pool-shaped", bound: "ork-pool-gpu", want: "ork-pool-gpu"},
@@ -131,9 +131,9 @@ func TestQueueForPool_BoundsThePoolNameWhereTheDSLDoes(t *testing.T) {
 // the mapping must not answer for any pool. ork-engine-events carries the
 // engine's projection activities; a deployment that bound it as its execution
 // channel would dispatch every task naming no pool — and every `pool: main` —
-// onto the engine's internals. The comment on QueueForPool used to claim no
-// pool could reach it, while `QueueForPool("main", "ork-engine-events")`
-// returned exactly that.
+// onto the engine's internals. The refusal is asserted for every pool shape,
+// because `QueueForPool("main", "ork-engine-events")` is the one that reaches
+// it through the default channel rather than by name.
 func TestQueueForPool_RefusesTheEnginesOwnEventQueueAsAChannel(t *testing.T) {
 	for _, pool := range []string{"", task.DefaultPool, "gpu"} {
 		queue, err := task.QueueForPool(pool, task.EngineEventQueue)
@@ -151,13 +151,12 @@ func TestQueueForPool_RefusesTheEnginesOwnEventQueueAsAChannel(t *testing.T) {
 	}
 }
 
-// TestRouteForPool_OneSetOfOrkersHasExactlyOneName is the property the
-// QueueForPool comment used to claim and did not hold: two pools CAN share a
+// TestRouteForPool_OneSetOfOrkersHasExactlyOneName: two pools CAN share a
 // queue, because an operator can bind one pool's queue as the deployment's
 // default channel. What must never happen is a client being told two different
-// pool names for one set of Orkers — and the collapse that prevents it lived
-// in internal/engine, one layer above the function that documented it, where
-// the next caller (M10.2's pool resolver) would not have gone through it.
+// pool names for one set of Orkers, so RouteForPool collapses them — here, in
+// the function every caller that names a pool goes through, rather than one
+// layer up where a new caller could bypass it.
 func TestRouteForPool_OneSetOfOrkersHasExactlyOneName(t *testing.T) {
 	pools := []string{"", task.DefaultPool, "gpu", "etl"}
 	for _, channel := range boundChannels {
@@ -236,7 +235,7 @@ func TestPoolForQueue_ReversesTheMappingAndSkipsForeignQueues(t *testing.T) {
 			t.Errorf("PoolForQueue(%q) = %q, %v; want %q, true", queue, got, ok, pool)
 		}
 	}
-	for _, queue := range []string{"", "ork-engine-events", "ork-tasks-m7-9", "ork-pool-", "ork-pool-GPU"} {
+	for _, queue := range []string{"", "ork-engine-events", "ork-tasks-agent", "ork-pool-", "ork-pool-GPU"} {
 		if pool, ok := task.PoolForQueue(queue); ok {
 			t.Errorf("PoolForQueue(%q) = %q, true; want false", queue, pool)
 		}

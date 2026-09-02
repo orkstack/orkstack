@@ -13,8 +13,8 @@ import (
 	"go.temporal.io/sdk/client"
 )
 
-// TestIntegration_CLISetsExecutionRetentionOnTheRealCluster is acceptance 7's
-// end-to-end case: it goes through the SAME path an operator does —
+// TestIntegration_CLISetsExecutionRetentionOnTheRealCluster is the end-to-end
+// case: it goes through the SAME path an operator does —
 // `orkctl admin retention get/set`, over Connect, into a real `ork` process,
 // into engine.TemporalRunReader.SetNamespaceRetention, into Temporal's real
 // UpdateNamespace RPC — and it verifies the change through a client this test

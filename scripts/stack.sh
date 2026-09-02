@@ -8,7 +8,7 @@
 # Everything it starts is recorded in .run/: one pidfile and one log per
 # process. down kills exactly those pids, then sweeps by name for anything
 # started by hand, because a stray Orker steals activities from every later
-# run and looks like a code bug (AGENTS.md §6).
+# run and looks like a code bug (AGENTS.md §11.1).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -22,18 +22,18 @@ UI_PORT="${ORK_UI_PORT:-5173}"
 UI_URL="http://localhost:$UI_PORT"
 
 # The Orker's per-attempt work directory. It holds materialized artifacts and
-# the container plugin's ephemeral mounts, so it must be bind-mountable BY THE
+# each activity container's workspace mount, so it must be bind-mountable BY THE
 # DOCKER DAEMON, not merely writable here — and when the daemon lives in a VM
 # those are different things. The Orker's own default is os.TempDir(), which on
 # macOS is /var/folders/... and which colima, Lima and Rancher Desktop do not
-# share into the VM: the container plugin then dies with "bind source path does
+# share into the VM: the container start then dies with "bind source path does
 # not exist" on a path that plainly exists. Every one of those VMs shares the
 # user's home, and the repo is under it, so .data/ is the one location that
 # works everywhere without asking. `make reset` wipes it with the rest of .data.
 WORK_DIR="${ORK_ORKER_WORKDIR:-$REPO/.data/work}"
 
-# The image the mount probe uses. It is the container example's own image, so a
-# machine that can run the example already has it and the probe pulls nothing.
+# The image the mount probe uses. A small image most machines already hold, so
+# the probe usually pulls nothing.
 PROBE_IMAGE="${ORK_PROBE_IMAGE:-alpine:3.20}"
 
 say() { printf '%s\n' "$*"; }
@@ -114,15 +114,16 @@ wait_for() {
 
 # check_workdir_mountable — warn when the daemon cannot bind-mount WORK_DIR.
 #
-# The container plugin needs the Orker's work directory to exist INSIDE the
-# daemon's world. When the daemon runs in a VM it sees only the paths that VM
-# shares, and Docker reports an unshared path as "bind source path does not
-# exist" — which reads like a missing file and sends you looking in the wrong
-# place entirely. Better to say it here, once, at startup, than to have it
-# surface as a failed task twenty minutes into a run.
+# Every activity container bind-mounts its workspace out of the Orker's work
+# directory, so that directory has to exist INSIDE the daemon's world. When the
+# daemon runs in a VM it sees only the paths that VM shares, and Docker reports
+# an unshared path as "bind source path does not exist" — which reads like a
+# missing file and sends you looking in the wrong place entirely. Better to say
+# it here, once, at startup, than to have it surface as a failed task twenty
+# minutes into a run.
 #
-# Never fatal: the rest of the stack does not need Docker, and a machine with
-# no daemon runs every other plugin perfectly well.
+# Never fatal: ork and the UI start without Docker; only task execution needs
+# it.
 check_workdir_mountable() {
 	command -v docker >/dev/null 2>&1 || return 0
 	docker info >/dev/null 2>&1 || return 0
@@ -143,7 +144,7 @@ check_workdir_mountable() {
 	rmdir "$probe" 2>/dev/null || true
 	say ""
 	say "  WARNING: the docker daemon cannot bind-mount $WORK_DIR."
-	say "  Tasks using the 'container' plugin will fail with"
+	say "  Every task will fail with"
 	say "  \"bind source path does not exist\" even though the path is right here."
 	say "  The daemon runs in a VM that does not share this path. Point"
 	say "  ORK_ORKER_WORKDIR at a directory the VM does share — on macOS that is"
@@ -154,9 +155,9 @@ check_workdir_mountable() {
 
 # local_activity_catalog — the ORK_ACTIVITY_CATALOG document for this machine.
 #
-# §4.6 of the OCI Activity Contract puts this decision here: `make images`
+# §4.6 of the OCI Activity Contract puts this decision here: `make -C images push`
 # pushes each first-party activity to localhost:5001/orkstack/activity-<name>:dev
-# and "`orkstack dev` points ORK_ACTIVITY_CATALOG at that registry". The
+# and the dev stack points ORK_ACTIVITY_CATALOG at that registry. The
 # BUILT-IN catalog keeps naming the published ghcr.io references, which is what
 # a real deployment must resolve; the local stack overrides it rather than the
 # default weakening to something that only exists on a developer's laptop.
@@ -222,8 +223,7 @@ cmd_up() {
 	#
 	# The COUNT is what is waited on, not the command's exit status: ListPools
 	# narrows rather than refuses, so it exits 0 for a pool with no Orker at
-	# all. This replaces the `orkctl plugin list` probe, which went away with
-	# PluginService.
+	# all.
 	wait_for "orker (via the engine's DescribeOrker probe)" 60 \
 		bash -c "\"$REPO/bin/orkctl\" --server \"$ENGINE_URL\" pool list --json | grep -q '\"liveOrkerCount\": [1-9]'"
 
@@ -268,7 +268,7 @@ cmd_down() {
 	stop ork
 	stop orker
 	# A worker started by hand outlives its pidfile and steals activities from
-	# every later run, so sweep by name too (AGENTS.md §6).
+	# every later run, so sweep by name too (AGENTS.md §11.1).
 	pkill -f "$REPO/bin/orker" 2>/dev/null || true
 	pkill -f "$REPO/bin/ork$" 2>/dev/null || true
 	pkill -f "vite dev --port $UI_PORT" 2>/dev/null || true

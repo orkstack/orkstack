@@ -36,7 +36,7 @@
 	}
 
 	// Every page states the namespace it is showing, and a URL that names none
-	// is answered here (design §1.9).
+	// is answered here.
 	//
 	// Two different answers, because they are two different situations:
 	//

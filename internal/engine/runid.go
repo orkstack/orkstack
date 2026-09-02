@@ -10,7 +10,7 @@ import (
 )
 
 // RunIDGenerator issues run ids of the documented shape
-// `ork-{timestamp}-{sequence}` (AGENTS.md §1.5).
+// `ork-{timestamp}-{sequence}` (AGENTS.md §7).
 //
 // A run id is the Temporal workflow id, so a duplicate is not cosmetic: the
 // second start either fails or silently attaches to the first one's execution.
@@ -62,7 +62,7 @@ func (g *RunIDGenerator) NewRunID() string {
 // newRunIDNonce draws the high half of the sequence.
 //
 // Zero is excluded so a fresh replica can never render its first sequence as
-// "1", which is exactly the misleading id M8.1 removes.
+// "1", a misleadingly ordinal-looking id.
 func newRunIDNonce() uint32 {
 	var b [4]byte
 	nonce := uint32(0)

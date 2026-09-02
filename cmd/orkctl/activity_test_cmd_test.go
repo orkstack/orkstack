@@ -260,15 +260,16 @@ func TestRenderActivityTestReport_PassingReportSaysSo(t *testing.T) {
 	}
 }
 
-// TestPreflightIsContractViolation is the regression guard for the defect that
-// made the fail half of this command unreachable.
+// TestPreflightIsContractViolation guards the fail half of this command from
+// becoming unreachable.
 //
 // preflight exists to forgive an image that speaks a different config contract
 // (activity-http takes a url, activity-file takes a src) rather than accuse it
-// of six violations. It used to forgive EVERY failed preflight, including an
-// image that accepted the config, exited 0, and wrote no values.json — so
-// `orkctl activity test` on the canonical broken image returned a bare error
-// with no report and no FAIL row at all.
+// of six violations. It must NOT forgive every failed preflight: an image that
+// accepted the config, exited 0, and wrote no values.json is a contract
+// violation, and forgiving it would make `orkctl activity test` on the
+// canonical broken image return a bare error with no report and no FAIL row
+// at all.
 //
 // The exit code is what separates the two: a workload that exits 0 has stated
 // the work succeeded, and §3.4 then requires values.json unconditionally.

@@ -21,33 +21,32 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// This file is the design's `tworeplica_read_integration_test.go`. It lives in
-// cmd/orkctl rather than internal/engine — the one deviation from
-// .atomic/production-hardening-design.md §M8.3 "Files" — because the harness
+// This file lives in cmd/orkctl rather than internal/engine because the harness
 // that boots *real* `ork` binaries on separate ports already exists here
 // (startReplica, buildBinary, startProcess, isolatedNamespace). Rebuilding it
 // under internal/engine would be the duplicated-integration-helper hazard
-// AGENTS.md §7 records twice, and two real processes are a strictly stronger
+// AGENTS.md §11.1 records twice, and two real processes are a strictly stronger
 // claim than two in-process engines.
 
-// TestIntegration_SecondReplicaServesARunItNeverStarted is the falsifying test
-// for M8.3. Two real `ork` processes share one Temporal namespace, one Orker
-// queue and one MinIO bucket — the production topology behind a load balancer.
+// TestIntegration_SecondReplicaServesARunItNeverStarted proves a second
+// replica serves a run it never started. Two real `ork` processes share one
+// Temporal namespace, one Orker queue and one MinIO bucket — the production
+// topology behind a load balancer.
 // A run is submitted to A only; every read below is issued against B.
 //
 // B never accepted the submission, so its RunStore has no entry for the run,
 // and the projection activities it happened not to execute are not in its
-// EventBus. Before M8.3 that made every one of these reads a NotFound while the
-// run was still executing. They pass only because the reads leave the process.
+// EventBus. They pass only because the reads leave the process.
 //
 // The reads are taken **while the run is live**, checked against the cluster's
 // own status, so an archive-only answer cannot satisfy them: nothing is
 // archived before a run's terminal event.
 //
-// Isolation (AGENTS.md §6): a unique namespace per test run. Note the
+// Isolation (AGENTS.md §11.1): a unique namespace per test run. Note the
 // deliberate inversion of the usual rule — the two replicas share it, because
 // sharing a namespace is exactly the condition under test.
 func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
@@ -95,14 +94,14 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	runID := submitted.Msg.GetRun().GetId()
 	t.Logf("replica A started run %s", runID)
 
-	// ---- acceptance 1 + 2: B streams the whole run, from sequence 1 --------
+	// ---- B streams the whole run, from sequence 1 --------------------------
 	// The stream is opened immediately, so it is a live subscription and not a
 	// replay of anything finished.
 	streamed := newEventCollector()
 	streamDone := make(chan error, 1)
 	go func() { streamDone <- collectStream(ctx, replicaB, runID, 0, streamed) }()
 
-	// ---- acceptance 1: B answers GetRun while the run is still executing ---
+	// ---- B answers GetRun while the run is still executing -----------------
 	liveRun := awaitReadableOnB(ctx, t, replicaB, runID)
 	if liveRun.GetOrkflowName() != orkflowName || liveRun.GetOrkflowVersion() != "0.1.0" {
 		t.Errorf("replica B describes run %s as %s@%s, want %s@0.1.0",
@@ -135,7 +134,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 
 	awaitWorkflowCompleted(ctx, t, temporalClient, runID)
 
-	// ---- acceptance 1: B reaches the terminal status ------------------------
+	// ---- B reaches the terminal status --------------------------------------
 	finished := awaitTerminalOnB(ctx, t, replicaB, runID)
 	if finished.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("replica B reports run %s as %s, want SUCCEEDED", runID, finished.GetStatus())
@@ -173,11 +172,11 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	}
 	assertRunStreamContract(t, "replica B resumed", resumed.events(), 2)
 
-	// ---- acceptance 1: B lists a run it never started -----------------------
+	// ---- B lists a run it never started -------------------------------------
 	listed := awaitListedOnB(ctx, t, replicaB, runID, orkflowName)
 	t.Logf("replica B lists run %s as %s", listed.GetId(), listed.GetStatus())
 
-	// ---- acceptance 3: the archive is the record for the finished run -------
+	// ---- the archive is the record for the finished run ---------------------
 	// It also has to be *complete*. The projection activities of one run are
 	// dispatched to whichever replica polls ork-engine-events first, so the
 	// archive body is only whole because it is assembled from the system of
@@ -440,7 +439,7 @@ func awaitArchivedStream(
 	return nil
 }
 
-// assertRunStreamContract is acceptance 2: strictly increasing sequences with
+// assertRunStreamContract is the stream contract: strictly increasing sequences with
 // no gaps, starting just after the cursor, ending on a terminal event and only
 // there.
 func assertRunStreamContract(t *testing.T, source string, events []*orkstackv1.Event, from int64) {
@@ -497,7 +496,7 @@ func sequenceList(events []*orkstackv1.Event) []int64 {
 func twoReplicaOrkflowYAML(name string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
-description: M8.3 two-replica read probe.
+description: two-replica read probe.
 tasks:
   - id: slow
     uses: shell
@@ -515,8 +514,8 @@ tasks:
 `, name)
 }
 
-// writeTwoReplicaTranscript records the proof artifact when the milestone's
-// reproduce.sh asks for one.
+// writeTwoReplicaTranscript records the transcript under ORK_PROOF_DIR when it
+// is set.
 func writeTwoReplicaTranscript(
 	t *testing.T,
 	namespace, runID, orkflowName string,
@@ -524,10 +523,6 @@ func writeTwoReplicaTranscript(
 	streamed, archived []*orkstackv1.Event,
 ) {
 	t.Helper()
-	path := os.Getenv("ORK_PROOF_TWOREPLICA_FILE")
-	if path == "" {
-		return
-	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "# two engine replicas, one namespace, one queue (%s)\n",
 		time.Now().UTC().Format(time.RFC3339))
@@ -547,7 +542,5 @@ func writeTwoReplicaTranscript(
 	}
 	fmt.Fprintf(&out, "\narchived stream in MinIO: %d events, identical to B's: %t\n",
 		len(archived), len(archived) == len(streamed))
-	if err := os.WriteFile(path, []byte(out.String()), 0o644); err != nil {
-		t.Errorf("write two-replica transcript: %v", err)
-	}
+	proof.Write(t, "orkctl", "two-replica-read.txt", []byte(out.String()))
 }

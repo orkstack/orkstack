@@ -54,23 +54,19 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 	// The editor is seeded from the SELECTED version — `?version=` when the URL
 	// names one, and the head when it does not.
 	//
-	// It used to be seeded from head unconditionally, which made the one edit an
-	// operator most often wants impossible to perform: opening Edit on the
-	// version that RUNS showed head's document, and applying it published text
-	// nobody had looked at under a base nobody had chosen. Head stays the
-	// DEFAULT — it is the lineage's tip, and selecting is explicit — but a
-	// selection is now honoured.
+	// Head stays the default — it is the lineage's tip, and selecting is
+	// explicit — but a selection is honoured.
 	//
 	// Two versions travel from here, because an apply carries two tokens
-	// (proto/orkstack/v1/service.proto, M11.2): `editVersion` is the edit's
+	// (proto/orkstack/v1/service.proto): `editVersion` is the edit's
 	// PROVENANCE, and `headVersion` is the optimistic-concurrency token — the
 	// head this page observed when it fetched. When head cannot be established
 	// the editor says so and refuses to apply: an apply with no token is an
 	// apply that can bury a newer version.
 	const editVersion = version || catalog.headVersion;
-	// A version the engine will not answer is reported AS ITSELF. Falling back
-	// to head here is the bug this milestone exists to kill, in its quietest
-	// form: the box would hold a document the URL does not name.
+	// A version the engine will not answer is reported AS ITSELF rather than
+	// replaced by head: the box must never hold a document the URL does not
+	// name.
 	let editYaml = '';
 	let editError: string | null = null;
 	// The Overview's read answers this one when it asked the same question —

@@ -7,21 +7,18 @@ import (
 )
 
 // activityIDGenerator issues the ids of the standalone activities this engine
-// executes directly against a task queue — today the plugin question
-// listPluginsOn asks one pool's Orkers.
+// executes directly against a task queue — today the DescribeOrker probe
+// (describeOrkerOn).
 //
 // A standalone activity's id is its identity on the cluster, so two of them
-// must not be spelled the same way. The id was
-// `"list-plugins-" + time.Now().UnixNano()`, which held only while the caller
-// was a serial loop: one read could not ask for two ids in one instant
-// because it asked for the next one only after the previous answer. The admin
-// inventory now probes its pools together (`inParallel`, `internal/api`), so
-// several goroutines read the clock at once — and a host whose clock is
-// coarser than a nanosecond hands them the same reading routinely.
+// must never be spelled the same way. The admin inventory probes its pools
+// concurrently (`inParallel`, `internal/api`), so several goroutines ask for
+// an id at once, and a host whose clock is coarser than a nanosecond hands
+// them the same reading routinely: a clock reading alone is not enough.
 //
 // A clock reading is not a uniqueness token; the construction that is, and
 // that this package already relies on for run ids, is a random nonce over a
-// counter (`runid.go`, AGENTS.md §1.5):
+// counter (`runid.go`, AGENTS.md §7):
 //
 //	sequence = (nonce << 32) | counter
 //	nonce   : 32 bits from crypto/rand, drawn once per generator

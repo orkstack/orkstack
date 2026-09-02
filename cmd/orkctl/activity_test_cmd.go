@@ -753,11 +753,11 @@ func suiteRootParent() string {
 //     and writes no values.json is not speaking a different config contract,
 //     it is violating the one contract every image shares.
 //
-// The second case used to be swallowed as "cannot be driven", which made
-// assertion 1 unreachable for EXACTLY the failure mode it exists to catch:
-// `orkctl activity test` on an image that exits 0 writing nothing returned a
-// bare error with no report and no FAIL row, so the fail half of the command
-// was unprovable. The exit code decides, because it is the workload's own
+// The second case must not be swallowed as "cannot be driven": that would make
+// assertion 1 unreachable for EXACTLY the failure mode it exists to catch —
+// `orkctl activity test` on an image that exits 0 writing nothing would return
+// a bare error with no report and no FAIL row, leaving the fail half of the
+// command unprovable. The exit code decides, because it is the workload's own
 // statement about whether it did the job.
 func (s *activitySuite) preflight(ctx context.Context) error {
 	_, err := s.execute(ctx, "preflight", map[string]any{

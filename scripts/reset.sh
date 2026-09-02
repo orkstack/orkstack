@@ -9,14 +9,14 @@
 #   - Temporal's sqlite volume: every run's history, and every worker
 #     deployment version registered against it.
 #   - MinIO's volume: every artifact, every archived run, and the orkflow
-#     catalogue itself — an applied orkflow lives in the bucket (M7.5), so
-#     after this the engine boots with nothing to run.
+#     catalogue itself — an applied orkflow lives in the bucket, so after
+#     this the engine boots with nothing to run.
 #   - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results.
 #   - .data/: the local artifact store AND the Orker's work directory
 #     (.data/work), which `make up` recreates on the next start.
 #
-# It does NOT touch the repository: committed proof artifacts, research notes
-# and source stay exactly as they are.
+# It does NOT touch the repository: source and committed files stay exactly
+# as they are.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -34,7 +34,7 @@ if [ "$force" -ne 1 ]; then
 	say "  - MinIO objects: artifacts, archived runs, and the orkflow catalogue"
 	say "  - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results"
 	say ""
-	say "The repository itself, including proof/, is untouched."
+	say "The repository itself is untouched."
 	say ""
 	printf 'Type "reset" to continue: '
 	read -r answer

@@ -276,8 +276,8 @@ test('a socket that opens and then dies without a chunk reports the close it saw
 // THE TWO FILE DESCRIPTORS, TOLD APART IN BAND.
 //
 // One task attempt has one log stream — one Logger, one sink, one dense
-// sequence — so a plugin marks a stderr line with a fixed prefix rather than
-// carrying a field the chunk has no room for (pkg/plugin/linewriter.go).
+// sequence — so the Orker marks a stderr line with a fixed prefix rather than
+// carrying a field the chunk has no room for (pkg/logstream/linewriter.go).
 // The browser is one of the readers that has to invert it: a pane that showed
 // the marker verbatim would be showing the wire, and a pane that guessed at
 // the origin would be re-deriving what the producer already stated.
@@ -302,8 +302,7 @@ test('a stderr line is marked and its marker never reaches the reader', () => {
 
 // The escape is what makes the encoding invertible, and it is the producer's,
 // not this module's guess: an application that prints "[stderr] ..." on STDOUT
-// travels behind "[stdout] ", so the two cases that used to render
-// identically no longer do.
+// travels behind "[stdout] ", so the two cases render differently.
 test('stdout that imitates the marker is unescaped and stays stdout', () => {
 	const f = follower();
 	f.socket().deliver({

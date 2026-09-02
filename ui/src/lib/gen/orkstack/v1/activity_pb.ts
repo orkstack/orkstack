@@ -341,8 +341,8 @@ export type ExecuteTaskInput = Message<"orkstack.v1.ExecuteTaskInput"> & {
    * already writes into /orkstack/input/task.json, and there is nothing to
    * collide with — proto scopes field names per message, and the run
    * submission key lives on a different message entirely
-   * (SubmitRunRequest.idempotency_key = 4, service.proto:210). The Go
-   * identifiers stay distinct (§11.5).
+   * (SubmitRunRequest.idempotency_key = 4, service.proto). The Go
+   * identifiers stay distinct.
    *
    * @generated from field: string idempotency_key = 8;
    */
@@ -825,9 +825,8 @@ export const ActivityFailureDetailSchema: GenMessage<ActivityFailureDetail> = /*
   messageDesc(file_orkstack_v1_activity, 9);
 
 /**
- * DescribeOrkerResult replaces ListPlugins as the pool-liveness probe. An Orker
- * no longer has a plugin list, but a pool still has to prove it is alive
- * (proof/M11.6), so the probe stays and only its payload changes.
+ * DescribeOrkerResult is the pool-liveness probe's payload: a pool proves it
+ * is alive by answering DescribeOrker (§6.5).
  *
  * @generated from message orkstack.v1.DescribeOrkerResult
  */

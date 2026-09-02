@@ -1,7 +1,8 @@
-// Command orker runs an OrkStack Orker: a generic Temporal worker that executes
-// tasks by dispatching to registered plugins. It polls the task queue for the
-// ExecuteTask activity, renders task config, materializes upstream artifacts,
-// runs the plugin, and uploads produced artifacts through pkg/artifacts.
+// Command orker runs an OrkStack Orker: a Temporal worker that executes tasks
+// as OCI images. It polls its pool's execution channel for the ExecuteTask
+// activity, materializes upstream artifacts, runs the image under the security
+// profile, streams its log, and commits produced artifacts through
+// pkg/artifacts.
 package main
 
 import (
@@ -87,7 +88,7 @@ func main() {
 // the current version of that queue instead. So an Orker that does not carry
 // the engine's exact (ORK_DEPLOYMENT_NAME, ORK_BUILD_ID) is invisible to a
 // pinned run's routing, and a rollout would move an in-flight run's tasks onto
-// new plugin code. `ork` and `orker` ship as one version: docs/DEPLOY.md.
+// a newer Orker build. `ork` and `orker` ship as one version: docs/DEPLOY.md.
 func workerOptions(cfg config) worker.Options {
 	return cfg.deployment.Apply(worker.Options{
 		DisableRegistrationAliasing: true,

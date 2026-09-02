@@ -23,14 +23,13 @@ import (
 // ONE WINDOW, ONE POPULATION.
 //
 // A stats answer is assembled from two records — the archive's index keys and
-// the cluster's execution index — and the two used to disagree about which
+// the cluster's execution index — and nothing forces them to agree about which
 // runs a window contains. The archive stamps a run by when it was CREATED
-// (RunIndexTime), so runs_by_status, success_rate and most_failing counted the
-// runs a window created; the percentiles queried `CloseTime` and therefore
-// counted the runs it CLOSED. One response carried both and nothing in it said
-// so: `orkctl stats --since 15m` over hour-long runs reported
-// `succeeded 0 / failed 0 / rate unavailable` beside `p50 58m over 12 finished
-// runs`.
+// (RunIndexTime), so runs_by_status, success_rate and most_failing count the
+// runs a window created; percentiles queried by `CloseTime` would count the
+// runs it CLOSED instead. A response carrying both, with nothing in it saying
+// so, reads as `succeeded 0 / failed 0 / rate unavailable` beside `p50 58m
+// over 12 finished runs` for `orkctl stats --since 15m` over hour-long runs.
 //
 // The tests below hold the two sources to one set of runs, over one corpus,
 // with the same window applied to both.
@@ -167,7 +166,7 @@ func statsCorpus() []statsCorpusRun {
 		},
 		// THE OTHER HALF OF THE TRAP. Created inside, closed after the window
 		// ends — the shape of every long run, and the reason a 15-minute
-		// window over hour-long runs used to report nothing finished.
+		// window over hour-long runs sampled by close time reports nothing finished.
 		{
 			id: "ork-late", namespace: "alpha", orkflow: "deploy",
 			createdAt: statsWindowEnd.Add(-30 * time.Minute),
@@ -229,7 +228,7 @@ func statsIndexOver(t *testing.T, corpus []statsCorpusRun) *statsIndex {
 }
 
 // TestExecutions_SamplesTheDurationsOfRunsTheWindowCREATED is the population
-// rule, stated over the record that used to break it.
+// rule, stated over the record that breaks it when sampling goes by close time.
 func TestExecutions_SamplesTheDurationsOfRunsTheWindowCREATED(t *testing.T) {
 	index := statsIndexOver(t, statsCorpus())
 	reader := newRunReader(index, converter.GetDefaultDataConverter())

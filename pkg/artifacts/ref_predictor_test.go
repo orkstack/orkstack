@@ -116,9 +116,8 @@ func TestMemoryRefPredictor_CarriesProvenanceInMetadata(t *testing.T) {
 //
 // The predictor under test composes a different SCHEME (it is the in-memory
 // one), so the comparison is on everything a projection can be wrong about: the
-// key, the name, the digest, the size and the content type. Phase 2's
-// LocalStore.RefFor and S3Store.RefFor inherit this test's shape for the uri
-// too.
+// key, the name, the digest, the size and the content type. LocalStore and
+// S3Store are RefPredictors too, and inherit this test's shape for the uri.
 func TestRefPrediction_AgreesWithWhatPutActuallyReturns(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewLocalStore(t.TempDir())

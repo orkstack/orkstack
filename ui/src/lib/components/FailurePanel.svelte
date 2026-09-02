@@ -1,8 +1,8 @@
 <script lang="ts">
-	// A terminal failure, said the way the system says it (design §8.3).
+	// A terminal failure, said the way the system says it.
 	//
-	// The engine stopped flattening everything into TASK_FAILED with a
-	// stringified Go error: Error now carries a machine-readable `code` (the
+	// Error is not a stringified Go error behind TASK_FAILED: it carries a
+	// machine-readable `code` (the
 	// §8.2 reason), a human `message`, and a `category` — which of the five
 	// AGENTS.md §4 kinds of failure this was. All three are rendered, because
 	// they answer three different questions and a reader needs all of them:

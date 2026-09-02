@@ -14,7 +14,7 @@ import (
 // The two variables answer different questions. ORK_ORKER_POOL is OrkStack's:
 // which pool does this process serve. ORK_ORKER_QUEUE is the operator's escape
 // hatch to the raw execution channel underneath, which the test harnesses use
-// to isolate themselves (AGENTS.md §6). Both binaries resolve them the same
+// to isolate themselves (AGENTS.md §11.1). Both binaries resolve them the same
 // way, or an Orker polls one place while the engine dispatches to another and
 // the run strands in RUNNING.
 func TestResolvePoolBinding_ResolvesTheFiveWaysAProcessCanBeToldWhereItsWorkLives(t *testing.T) {
@@ -46,9 +46,9 @@ func TestResolvePoolBinding_ResolvesTheFiveWaysAProcessCanBeToldWhereItsWorkLive
 		// process reports the built-in default and flags that its channel was
 		// set by hand.
 		name:      "raw override only",
-		rawQueue:  "ork-tasks-m7-9",
+		rawQueue:  "ork-tasks-agent",
 		wantPool:  task.DefaultPool,
-		wantQueue: "ork-tasks-m7-9",
+		wantQueue: "ork-tasks-agent",
 		wantRaw:   true,
 	}, {
 		// A raw override that IS a pool's image resolves to that pool: the
@@ -88,16 +88,16 @@ func TestResolvePoolBinding_ResolvesTheFiveWaysAProcessCanBeToldWhereItsWorkLive
 // this pair of variables exists to make impossible.
 //
 // Set the pool on one binary and the raw channel on the other and the run
-// strands in RUNNING with nothing to say why (AGENTS.md §6). Set both on one
+// strands in RUNNING with nothing to say why (AGENTS.md §11.1). Set both on one
 // binary and disagree, and the process would have to silently pick a winner.
 // It refuses at boot instead, while the error can still name both variables.
 func TestResolvePoolBinding_RefusesAPoolAndARawChannelThatDisagree(t *testing.T) {
-	binding, err := task.ResolvePoolBinding("gpu", "ork-tasks-m7-9")
+	binding, err := task.ResolvePoolBinding("gpu", "ork-tasks-agent")
 	if !errors.Is(err, task.ErrPoolBindingConflict) {
-		t.Fatalf("ResolvePoolBinding(gpu, ork-tasks-m7-9) = %+v, %v; want ErrPoolBindingConflict",
+		t.Fatalf("ResolvePoolBinding(gpu, ork-tasks-agent) = %+v, %v; want ErrPoolBindingConflict",
 			binding, err)
 	}
-	for _, want := range []string{"ORK_ORKER_POOL", "ORK_ORKER_QUEUE", "gpu", "ork-tasks-m7-9"} {
+	for _, want := range []string{"ORK_ORKER_POOL", "ORK_ORKER_QUEUE", "gpu", "ork-tasks-agent"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %q; an operator cannot fix what the error will not name",
 				err, want)

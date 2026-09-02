@@ -10,12 +10,12 @@ import (
 // TestActivityIDs_AreDistinctWhenTheClockDoesNotMove is the regression that
 // matters, and it is deterministic.
 //
-// The admin plugin inventory probes its pools together rather than one after
-// another, so several goroutines ask for a `list-plugins` activity id at the
-// same instant. While the id was `"list-plugins-" + time.Now().UnixNano()`
-// that was a collision waiting for a clock tick to be shared — a standalone
-// activity's id is its identity on the cluster, so the second caller either
-// fails or attaches to the first one's activity.
+// The admin pool inventory probes its pools together rather than one after
+// another, so several goroutines ask for a `describe-orker` activity id at
+// the same instant. An id derived from the clock alone is a collision waiting
+// for a clock tick to be shared — a standalone activity's id is its identity
+// on the cluster, so the second caller either fails or attaches to the first
+// one's activity.
 //
 // Freezing the clock is how the property is measured rather than raced: a
 // generator that derives its id from the clock produces ONE id here, whatever
@@ -27,7 +27,7 @@ func TestActivityIDs_AreDistinctWhenTheClockDoesNotMove(t *testing.T) {
 	const ids = 1024
 	seen := make(map[string]struct{}, ids)
 	for i := 0; i < ids; i++ {
-		id := g.next("list-plugins")
+		id := g.next("describe-orker")
 		if _, dup := seen[id]; dup {
 			t.Fatalf("id %q issued twice from one stopped clock after %d ids", id, i)
 		}
@@ -57,7 +57,7 @@ func TestActivityIDs_AreDistinctAcrossAConcurrentPoolFanout(t *testing.T) {
 			defer done.Done()
 			start.Wait()
 			for i := 0; i < apiece; i++ {
-				issued[c*apiece+i] = newActivityID("list-plugins")
+				issued[c*apiece+i] = newActivityID("describe-orker")
 			}
 		}(c)
 	}
@@ -66,7 +66,7 @@ func TestActivityIDs_AreDistinctAcrossAConcurrentPoolFanout(t *testing.T) {
 
 	seen := make(map[string]struct{}, expected)
 	for _, id := range issued {
-		if !strings.HasPrefix(id, "list-plugins-") {
+		if !strings.HasPrefix(id, "describe-orker-") {
 			t.Fatalf("id %q does not carry the prefix its call site asked for", id)
 		}
 		if _, dup := seen[id]; dup {
@@ -92,7 +92,7 @@ func TestActivityIDs_TwoProcessesDoNotShareASequence(t *testing.T) {
 	if a.nonce == b.nonce {
 		t.Fatalf("two generators drew the same nonce %d; the draw is not random", a.nonce)
 	}
-	if got, other := a.next("list-plugins"), b.next("list-plugins"); got == other {
+	if got, other := a.next("describe-orker"), b.next("describe-orker"); got == other {
 		t.Fatalf("two processes issued the same first id %q in one instant", got)
 	}
 }

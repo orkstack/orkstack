@@ -85,13 +85,10 @@ func (p observedPools) ObservePool(_ context.Context, queue string) (engine.Pool
 	return p[queue], nil
 }
 
-// poolOrkers answers the DescribeOrker probe for a set of channels.
-//
-// A channel present in the map has an Orker that answers; one absent does not.
-// The VALUE is unused: under the OCI Activity Contract an Orker has no plugin
-// list to report — which images exist is engine configuration (§4.2) — so
-// answering AT ALL is the whole content of the probe (§6.5).
-type poolOrkers map[string][]string
+// poolOrkers answers the DescribeOrker probe for a set of channels: a channel
+// present in the set has an Orker that answers, one absent does not. Presence
+// is the whole content of the probe (§6.5).
+type poolOrkers map[string]struct{}
 
 func (p poolOrkers) OrkerOnPool(
 	_ context.Context,
@@ -301,7 +298,7 @@ tasks:
 }
 
 // TestSubmitRun_FailsFastWhenTheResolvedPoolHasNoOrkers converts the stranded
-// run of AGENTS.md §6 into an error at submit.
+// run of AGENTS.md §11.1 into an error at submit.
 //
 // Before this, the submission was accepted, the run reached RUNNING, and its
 // tasks sat on a channel nobody polled until someone noticed. The submission
@@ -465,13 +462,13 @@ func TestSubmitRun_BindsEveryTasksResolvedPoolAndItsRoute(t *testing.T) {
 	}
 }
 
-// TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins is the observability
-// acceptance: name, live Orker count, and the plugins those Orkers run.
+// TestListPools_ReportsEveryPoolWithItsOrkers is the observability contract:
+// every pool by name, with its live Orker count.
 //
 // Every number comes from the cluster, so a replica that started nothing gives
 // the same answer as the one that started everything — which is why the test
 // asks a Service with no runs, no bus and no history of its own.
-func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
+func TestListPools_ReportsEveryPoolWithItsOrkers(t *testing.T) {
 	gpu := poolQueue(t, "gpu")
 	svc := api.NewService(api.Config{
 		Namespaces: registry{"default": {
@@ -479,7 +476,7 @@ func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
 			AllowedPools: []string{"main", "gpu", "cold"},
 		}},
 		Pools:      livePools{task.DefaultQueue: 2, gpu: 1},
-		PoolOrkers: poolOrkers{task.DefaultQueue: {"http", "shell"}, gpu: {"shell"}},
+		PoolOrkers: poolOrkers{task.DefaultQueue: {}, gpu: {}},
 	})
 
 	resp, err := svc.ListPools(context.Background(),
@@ -505,8 +502,8 @@ func TestListPools_ReportsEveryPoolWithItsOrkersAndPlugins(t *testing.T) {
 	}
 	// A pool nothing serves is reported as empty rather than omitted: "nobody
 	// is there" is the answer the question was asked for.
-	if byName["cold"].GetLiveOrkerCount() != 0 || len(byName["cold"].GetPlugins()) != 0 {
-		t.Errorf("pool cold = %v, want no Orkers and no plugins", byName["cold"])
+	if byName["cold"].GetLiveOrkerCount() != 0 {
+		t.Errorf("pool cold = %v, want no Orkers", byName["cold"])
 	}
 	if byName["main"].GetLastSeen() == nil {
 		t.Error("a served pool reports no last_seen; an operator cannot judge staleness without it")
@@ -564,7 +561,7 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 	svc := api.NewService(api.Config{
 		Orkflows:   store,
 		Pools:      livePools{task.DefaultQueue: 1, gpu: 1},
-		PoolOrkers: poolOrkers{task.DefaultQueue: {"shell"}, gpu: {"container"}},
+		PoolOrkers: poolOrkers{task.DefaultQueue: {}, gpu: {}},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: gpuOrkflow})); err != nil {
@@ -580,7 +577,7 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 		Orkflows:   store,
 		Namespaces: registry{"default": {Name: "default"}},
 		Pools:      livePools{task.DefaultQueue: 1, gpu: 1},
-		PoolOrkers: poolOrkers{task.DefaultQueue: {"shell"}, gpu: {"container"}},
+		PoolOrkers: poolOrkers{task.DefaultQueue: {}, gpu: {}},
 	})
 	resp, err := reader.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
@@ -593,7 +590,7 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 }
 
 // TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo covers the
-// configuration AGENTS.md §6 mandates for every parallel agent and
+// configuration AGENTS.md §11.1 mandates for every parallel agent and
 // docs/DEPLOY.md documents for a single-pool deployment: an engine started
 // with ORK_ORKER_QUEUE.
 //
@@ -604,13 +601,13 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 // in the same second, saying nobody is there. An operator reading that report
 // scales up a pool that is already running their work.
 func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
-	const raw = "ork-tasks-m10-2-agent"
+	const raw = "ork-tasks-agent"
 	starter := &fakeStarter{}
 	svc := api.NewService(api.Config{
 		Starter:    starter,
 		RawQueue:   raw,
 		Pools:      livePools{raw: 3},
-		PoolOrkers: poolOrkers{raw: {"http", "shell"}},
+		PoolOrkers: poolOrkers{raw: {}},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -667,7 +664,7 @@ func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 		Starter:    starter,
 		RawQueue:   gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
 		Pools:      livePools{gpuQueue: 2},
-		PoolOrkers: poolOrkers{gpuQueue: {"shell"}},
+		PoolOrkers: poolOrkers{gpuQueue: {}},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -757,7 +754,7 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 	gpu := poolQueue(t, "gpu")
 	payments := registry{"payments": {Name: "payments", DefaultPool: "batch"}}
 	live := livePools{batch: 2, gpu: 1}
-	plugins := poolOrkers{batch: {"shell"}, gpu: {"shell"}}
+	serving := poolOrkers{batch: {}, gpu: {}}
 
 	// The control: with the store up, the pool an orkflow names is in scope.
 	healthy := engine.NewMemoryOrkflowStore()
@@ -765,7 +762,7 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 		Orkflows:   healthy,
 		Namespaces: payments,
 		Pools:      live,
-		PoolOrkers: plugins,
+		PoolOrkers: serving,
 	})
 	if _, err := up.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
@@ -791,7 +788,7 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 		Orkflows:   downOrkflowStore{err: refused},
 		Namespaces: payments,
 		Pools:      live,
-		PoolOrkers: plugins,
+		PoolOrkers: serving,
 		Logger:     slog.New(slog.NewTextHandler(logs, nil)),
 	})
 

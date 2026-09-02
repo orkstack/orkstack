@@ -49,9 +49,9 @@ const strandedWindow = 45 * time.Second
 //     Current Deployment Version of its own task queue"
 //     (api/enums/v1/workflow.pb.go, quoted in docs/DEPLOY.md §2) — and if that
 //     exception ever fired here, an operator following step 6 would silently
-//     run an in-flight run's remaining tasks on NEW plugin code. That is the
-//     failure this milestone exists to prevent, and nothing in the repo would
-//     have noticed it.
+//     run an in-flight run's remaining tasks on a NEW Orker build. That is the
+//     failure the drain step exists to prevent, and nothing else in the repo
+//     would notice it.
 //
 // The run is pinned by a start-time versioning override rather than by
 // outliving a rollout. That is deterministic — no race between releasing a
@@ -105,7 +105,7 @@ func TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained(t *
 	deadline := time.Now().Add(strandedWindow)
 	for time.Now().Before(deadline) {
 		assertNoTaskOfRunRan(t, second, runID, "v2",
-			"a rollout that stopped v1's Orker moved a run pinned to v1 onto v2's plugin code")
+			"a rollout that stopped v1's Orker moved a run pinned to v1 onto v2's Orker build")
 		assertNoTaskOfRunRan(t, first, runID, "v1",
 			"v1's Orker executed a task after it was stopped")
 		if status := executionStatus(t, ctx, c, runID); status != enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
@@ -254,7 +254,7 @@ func assertTaskScheduledAndNeverStarted(
 		if started[taskID] {
 			t.Errorf("task %q of run %s was STARTED while its version's Orker was stopped: some worker "+
 				"took it — which, with v2 Current, means the activity fell through to the Current "+
-				"Version and an in-flight run reached new plugin code mid-rollout", taskID, runID)
+				"Version and an in-flight run reached new Orker build mid-rollout", taskID, runID)
 		}
 	}
 	return len(scheduled)

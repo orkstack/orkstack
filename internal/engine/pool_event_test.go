@@ -11,9 +11,9 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// The naming gate (proof/M10.1/naming-sweep.sh) exempts internal/engine,
-// because below the seam `queue` means a Temporal task queue and must survive.
-// That exemption is also a blind spot: the engine composes the strings it SHIPS
+// The rule that no user-facing surface spells `queue` does not reach
+// internal/engine, because below the seam `queue` means a Temporal task queue
+// and must survive. That exemption is also a blind spot: the engine composes the strings it SHIPS
 // TO CLIENTS here, and the gate cannot see them. `orkctl watch` prints an
 // event's message in its MESSAGE column (cmd/orkctl/watch.go) and the run page
 // renders it (ui/src/routes/runs/[id]/+page.svelte), so a message naming a
@@ -46,9 +46,9 @@ func TestRunWorkflow_ScheduledEventNamesThePoolNotTheQueue(t *testing.T) {
 	})
 
 	// A raw operator queue, as ORK_ORKER_QUEUE sets for an isolated agent
-	// (AGENTS.md §6). It is nobody's pool, so a task that names no pool is
+	// (AGENTS.md §11.1). It is nobody's pool, so a task that names no pool is
 	// still reported as running on the built-in default.
-	const rawQueue = "ork-tasks-m10-1-agent"
+	const rawQueue = "ork-tasks-private-agent"
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-message",
 		compile(t, poolDocument), payload(t, nil), rawPlan(rawQueue, "gpu"))
@@ -121,9 +121,8 @@ func TestRunWorkflow_TaskRunRecordsThePoolItRanOn(t *testing.T) {
 }
 
 // TestRunWorkflow_ExecuteTaskInputCarriesNamespaceAndPool holds the
-// engine->Orker contract to the two coordinates M10.1 introduces. The Orker
-// keys a run's logs by them (M10.5), and this is the slice that re-records the
-// replay fixture, so they are added here rather than forcing a second reset.
+// engine->Orker contract to the two coordinates the Orker keys a run's logs
+// by: namespace and pool.
 func TestRunWorkflow_ExecuteTaskInputCarriesNamespaceAndPool(t *testing.T) {
 	const document = `
 namespace: payments
@@ -161,13 +160,13 @@ tasks:
 }
 
 // TestRunWorkflow_TheReportedPoolNamesTheOrkersTheTaskReached closes the gap
-// between the two halves of the M10.1 contract. The tests above prove the
+// between the two halves of the pool contract. The tests above prove the
 // engine SAYS "pool"; this one proves the word is true — the pool a client
 // reads names the Orkers the activity was really dispatched to, measured from
 // Temporal's own activity info.
 //
 // It is also the isolation guarantee, stated where a run can see it. Under the
-// ORK_ORKER_QUEUE override AGENTS.md §6 gives every parallel agent, `pool:
+// ORK_ORKER_QUEUE override AGENTS.md §11.1 gives every parallel agent, `pool:
 // main` and no pool at all are one route: a document cannot leave the
 // operator's channel by naming the pool it was already told it was on
 // (docs/DSL.md).
@@ -206,7 +205,7 @@ tasks:
 		bound    string
 		wantPool string // the pool the bound channel answers to
 	}{
-		{name: "a plain operator override", bound: "ork-tasks-m10-1-agent", wantPool: task.DefaultPool},
+		{name: "a plain operator override", bound: "ork-tasks-private-agent", wantPool: task.DefaultPool},
 		{name: "an override that is itself pool-shaped", bound: gpuQueue, wantPool: "gpu"},
 	} {
 		t.Run(channel.name, func(t *testing.T) {

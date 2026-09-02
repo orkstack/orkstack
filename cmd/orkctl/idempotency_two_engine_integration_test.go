@@ -26,16 +26,17 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // idempotencyKey is the key both replicas submit under, and submittedInto is
 // the ork namespace they submit it into: neither request names one, and an
-// unnamed namespace means the default (M10.3). Together they are the
+// unnamed namespace means the default. Together they are the
 // coordinate whose hash names the claim workflow, so the test can look that
 // workflow up without asking the implementation what it called it.
 const (
-	idempotencyKey = "m8-2-two-engine-key"
+	idempotencyKey = "two-engine-key"
 	submittedInto  = artifacts.DefaultNamespace
 )
 
@@ -46,8 +47,8 @@ const (
 // be able to disagree with the implementation.
 //
 // That coordinate is `namespace/key`, not the key alone. A key is the caller's
-// own word for one submission and two tenants pick the same words, so M10.3
-// made it a coordinate inside a namespace exactly as an orkflow name is
+// own word for one submission and two tenants pick the same words, so it is
+// a coordinate inside a namespace exactly as an orkflow name is
 // (api.submission.claimKey): one unscoped binding would be shared by the whole
 // deployment, and the second tenant would be answered with the first tenant's
 // run id while its own work was never started. So the lookup below is live
@@ -59,17 +60,18 @@ const (
 	claimWorkflowIDHexLen = 32
 )
 
-// TestIntegration_TwoEnginesDedupeOneIdempotencyKey is the falsifying test for
-// M8.2. Two real `ork` processes share one Temporal namespace, one Orker queue
-// and one MinIO bucket — the production topology behind a load balancer — and
-// receive the same idempotency key at the same moment.
+// TestIntegration_TwoEnginesDedupeOneIdempotencyKey proves two engine replicas
+// dedupe one idempotency key. Two real `ork` processes share one Temporal
+// namespace, one Orker queue and one MinIO bucket — the production topology
+// behind a load balancer — and receive the same idempotency key at the same
+// moment.
 //
 // A process-local dedupe map cannot survive this: the replicas hold two maps
 // and two run stores, so each one believes it is the first to see the key and
 // starts its own run. The assertions below are what a server-side authority
 // makes true and a process-local one cannot.
 //
-// Isolation (AGENTS.md §6): the namespace is unique per test run, because the
+// Isolation (AGENTS.md §11.1): the namespace is unique per test run, because the
 // central assertion counts every RunWorkflow execution in the namespace. That
 // count is only a statement about this test if nothing else shares it.
 func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
@@ -94,7 +96,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	// rather than leaving a 24-hour execution behind on the dev cluster.
 	t.Cleanup(func() {
 		_ = temporalClient.TerminateWorkflow(context.Background(),
-			claimWorkflowIDFor(submittedInto, idempotencyKey), "", "m8.2 integration test cleanup")
+			claimWorkflowIDFor(submittedInto, idempotencyKey), "", "integration test cleanup")
 	})
 
 	root := repoRoot(t)
@@ -153,7 +155,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 		}
 	}
 
-	// ---- acceptance 1 + 4: both callers see one run -------------------------
+	// ---- both callers see one run -------------------------------------------
 	a, b := results[0].run, results[1].run
 	t.Logf("%s returned run %s", results[0].replica, a.GetId())
 	t.Logf("%s returned run %s", results[1].replica, b.GetId())
@@ -184,9 +186,8 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	// ---- the claimed run is real, and it executes ---------------------------
 	// Asked of the server, not of a replica: which replica's projection worker
 	// executed a given lifecycle event is arbitrary, so a run's live status in
-	// one process's read model is not a fact about the run. (Making every
-	// replica answer for every run is M8.3.) What both replicas must do here
-	// is resolve the claimed id to the claimed orkflow.
+	// one process's read model is not a fact about the run. What both replicas
+	// must do here is resolve the claimed id to the claimed orkflow.
 	awaitWorkflowCompleted(ctx, t, temporalClient, runID)
 	for _, replica := range []*engineReplica{replicaA, replicaB} {
 		got, err := replica.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
@@ -485,7 +486,7 @@ func awaitOrkflowVisible(
 func idempotencyOrkflowYAML(name string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
-description: M8.2 two-replica idempotency probe.
+description: two-replica idempotency probe.
 tasks:
   - id: echo
     uses: shell
@@ -497,11 +498,11 @@ tasks:
 
 // isolatedNamespace names a Temporal namespace this test run alone uses. The
 // operator's ORK_TEMPORAL_NAMESPACE is kept as the prefix so the isolation
-// choice from AGENTS.md §6 stays visible in `temporal workflow list`.
+// choice from AGENTS.md §11.1 stays visible in `temporal workflow list`.
 func isolatedNamespace() string {
 	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
 	if base == "" {
-		base = "ork-m8-2-idempotency"
+		base = "ork-idempotency"
 	}
 	return fmt.Sprintf("%s-%d-%d", base, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 }
@@ -579,14 +580,10 @@ func requireMinIOForIdempotency(t *testing.T, cfg artifacts.Config) {
 	t.Logf("MinIO health %s -> %d", health, resp.StatusCode)
 }
 
-// writeIdempotencyTranscript records the proof artifact when the milestone's
-// reproduce.sh asks for one.
+// writeIdempotencyTranscript records the transcript under ORK_PROOF_DIR when
+// it is set.
 func writeIdempotencyTranscript(t *testing.T, namespace, runID, claimID, replicaA, replicaB string) {
 	t.Helper()
-	path := os.Getenv("ORK_PROOF_IDEMPOTENCY_FILE")
-	if path == "" {
-		return
-	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "# two engine replicas, one idempotency key (%s)\n",
 		time.Now().UTC().Format(time.RFC3339))
@@ -598,7 +595,5 @@ func writeIdempotencyTranscript(t *testing.T, namespace, runID, claimID, replica
 	fmt.Fprintf(&out, "%s returned run    %s\n", replicaA, runID)
 	fmt.Fprintf(&out, "%s returned run    %s\n", replicaB, runID)
 	fmt.Fprintf(&out, "RunWorkflow executions in the namespace: 1\n")
-	if err := os.WriteFile(path, []byte(out.String()), 0o644); err != nil {
-		t.Errorf("write idempotency transcript: %v", err)
-	}
+	proof.Write(t, "orkctl", "idempotency-two-replicas.txt", []byte(out.String()))
 }

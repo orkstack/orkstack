@@ -29,9 +29,9 @@ import (
 // through cleanComponentPattern (`^[A-Za-z0-9][A-Za-z0-9._-]*$`), which is the
 // rule for a stored VERSION string and was never the rule for a name. The last
 // group is the one class a corpus of short names cannot hold: a name is a
-// pattern AND a length, and while only the pattern was shared the two rules
-// disagreed above 200 bytes — a 201-character lower-case slug compiled and the
-// registry then refused to key it.
+// pattern AND a length, and a corpus that shares only the pattern would let
+// the two rules disagree above 200 bytes — a 201-character lower-case slug
+// that compiles and that the registry then refuses to key.
 var namespaceCorpus = append([]string{
 	// nameable in a document, and storable
 	"default", "payments", "pay-ments", "a", "team-42", "a--b", "x1",

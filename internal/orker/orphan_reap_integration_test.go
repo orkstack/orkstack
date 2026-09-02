@@ -56,9 +56,9 @@ func TestIntegration_ReplacementOrkerReapsLabelledOrphan(t *testing.T) {
 // guarantee through the path production actually takes.
 //
 // The test above injects OrkerID, so it proves the label-matching MECHANISM and
-// never exercises the default. That mattered: the default used to embed
-// os.Getpid(), so every real restart minted a new identity and reaped nothing,
-// while this suite stayed green. Here nothing is injected — the identity is
+// never exercises the default. That matters: a default that embedded
+// os.Getpid() would mint a new identity on every real restart and reap
+// nothing, while this suite stayed green. Here nothing is injected — the identity is
 // whatever an Orker started with no ORK_ORKER_ID gets, exactly as
 // scripts/stack.sh and cmd/orker produce it.
 func TestIntegration_ReplacementOrkerReapsUnderTheDefaultIdentity(t *testing.T) {

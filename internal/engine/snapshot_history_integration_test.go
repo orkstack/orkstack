@@ -21,34 +21,34 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 const snapshotHistoryMeasurementEnv = "ORK_MEASURE_SNAPSHOT_HISTORY"
 
 type historyMeasurement struct {
-	tasks                   int
-	historyBytes            int
-	historyEvents           int
-	maxActivityInputBytes   int
-	snapshotCount           int
-	binarySnapshotBytes     int
-	oldSnapshotPayloadBytes int
-	snapshotURIBytes        int
-	beforeBytes             int
-	firstSnapshotBytes      int
-	lastSnapshotBytes       int
+	Tasks                 int `json:"tasks"`
+	HistoryBytes          int `json:"history_bytes"`
+	HistoryEvents         int `json:"history_events"`
+	MaxActivityInputBytes int `json:"max_activity_input_bytes"`
+	SnapshotCount         int `json:"snapshots"`
+	BinarySnapshotBytes   int `json:"binary_snapshot_bytes"`
+	SnapshotURIBytes      int `json:"uri_payload_bytes"`
+	FirstSnapshotBytes    int `json:"first_snapshot_bytes"`
+	LastSnapshotBytes     int `json:"last_snapshot_bytes"`
 }
 
 // TestIntegration_SnapshotExternalizationHistoryGrowth is the real-cluster
-// measurement behind proof/M11.10. It is opt-in because 156 activities and
-// their lifecycle projections make it substantially slower than a unit test.
+// measurement of what snapshot externalization buys: a run's history carries
+// one snapshot URI per lifecycle event, never the Run itself, so history grows
+// linearly in the task count and no activity input approaches Temporal's
+// payload limit. It is opt-in because 156 activities and their lifecycle
+// projections make it substantially slower than a unit test.
 //
-// The before counterfactual follows the old wire shape exactly: replace every
-// URI payload in PublishEvent's input with the same stored Run re-encoded by
-// Temporal's data converter. Object storage remains compact binary protobuf;
-// the old top-level activity argument was protojson. No assumed snapshot size
-// or elapsed-time proxy enters the calculation.
+// Every number is measured — history bytes and events from the cluster,
+// snapshot sizes from object storage — and no assumed snapshot size or
+// elapsed-time proxy enters the calculation.
 func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 	if os.Getenv(snapshotHistoryMeasurementEnv) == "" {
 		t.Skip("set " + snapshotHistoryMeasurementEnv + "=1 to run the live history-size measurement")
@@ -76,8 +76,8 @@ func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 	}
 
 	suffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
-	runQueue := "ork-m11-10-runs-" + suffix
-	taskQueue := "ork-m11-10-tasks-" + suffix
+	runQueue := "ork-snapshot-history-runs-" + suffix
+	taskQueue := "ork-snapshot-history-tasks-" + suffix
 
 	runWorker := worker.New(c, runQueue, worker.Options{
 		DisableRegistrationAliasing: true,
@@ -121,7 +121,7 @@ func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 
 	measurements := make([]historyMeasurement, 0, 3)
 	for _, n := range []int{6, 50, 100} {
-		runID := fmt.Sprintf("ork-m11-10-%03d-%s", n, suffix)
+		runID := fmt.Sprintf("ork-snapshot-history-%03d-%s", n, suffix)
 		starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, taskQueue)
 		if err := starter.StartRun(ctx, runID, measuredOrkflow(n), nil, rawPlan(taskQueue)); err != nil {
 			t.Fatalf("start %d-task run: %v", n, err)
@@ -131,44 +131,30 @@ func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 		}
 		m := measureRunHistory(t, ctx, c, snapshots, runID, n)
 		measurements = append(measurements, m)
-		t.Logf("EVIDENCE tasks=%d after_bytes=%d events=%d max_activity_input_bytes=%d before_bytes=%d ratio=%.4f bytes_per_event=%.2f bytes_per_task=%.2f snapshots=%d binary_snapshot_bytes=%d old_snapshot_payload_bytes=%d uri_payload_bytes=%d first_snapshot_bytes=%d last_snapshot_bytes=%d snapshot_growth_bytes_per_task=%.2f",
-			m.tasks, m.historyBytes, m.historyEvents, m.maxActivityInputBytes,
-			m.beforeBytes, float64(m.beforeBytes)/float64(m.historyBytes),
-			float64(m.historyBytes)/float64(m.historyEvents),
-			float64(m.historyBytes)/float64(m.tasks), m.snapshotCount,
-			m.binarySnapshotBytes, m.oldSnapshotPayloadBytes, m.snapshotURIBytes,
-			m.firstSnapshotBytes, m.lastSnapshotBytes,
-			float64(m.lastSnapshotBytes-m.firstSnapshotBytes)/float64(m.tasks-1))
-		meanSnapshotPayload := float64(m.oldSnapshotPayloadBytes) / float64(m.snapshotCount)
-		simulated := m.historyBytes - m.snapshotURIBytes + 40960*m.snapshotCount
-		t.Logf("MODEL tasks=%d assumed_snapshot_bytes_per_emit=40960 measured_mean_old_payload_bytes_per_emit=%.2f simulated_before_bytes=%d rederived_before_bytes=%d",
-			m.tasks, meanSnapshotPayload, simulated, m.beforeBytes)
+		t.Logf("EVIDENCE tasks=%d history_bytes=%d events=%d max_activity_input_bytes=%d bytes_per_event=%.2f bytes_per_task=%.2f snapshots=%d binary_snapshot_bytes=%d uri_payload_bytes=%d first_snapshot_bytes=%d last_snapshot_bytes=%d snapshot_growth_bytes_per_task=%.2f",
+			m.Tasks, m.HistoryBytes, m.HistoryEvents, m.MaxActivityInputBytes,
+			float64(m.HistoryBytes)/float64(m.HistoryEvents),
+			float64(m.HistoryBytes)/float64(m.Tasks), m.SnapshotCount,
+			m.BinarySnapshotBytes, m.SnapshotURIBytes,
+			m.FirstSnapshotBytes, m.LastSnapshotBytes,
+			float64(m.LastSnapshotBytes-m.FirstSnapshotBytes)/float64(m.Tasks-1))
 	}
+	proof.WriteJSON(t, "engine", "snapshot-history-growth.json", measurements)
 
 	for _, m := range measurements {
-		if m.maxActivityInputBytes >= 256*1024 {
-			t.Errorf("%d-task max activity input = %d bytes, want < %d", m.tasks, m.maxActivityInputBytes, 256*1024)
+		if m.MaxActivityInputBytes >= 256*1024 {
+			t.Errorf("%d-task max activity input = %d bytes, want < %d", m.Tasks, m.MaxActivityInputBytes, 256*1024)
 		}
-		if m.historyBytes >= 50*1024*1024 {
-			t.Errorf("%d-task history = %d bytes, want < 50 MiB", m.tasks, m.historyBytes)
+		if m.HistoryBytes >= 50*1024*1024 {
+			t.Errorf("%d-task history = %d bytes, want < 50 MiB", m.Tasks, m.HistoryBytes)
 		}
 	}
-	firstSlope := float64(measurements[1].historyBytes-measurements[0].historyBytes) / 44
-	secondSlope := float64(measurements[2].historyBytes-measurements[1].historyBytes) / 50
+	firstSlope := float64(measurements[1].HistoryBytes-measurements[0].HistoryBytes) / 44
+	secondSlope := float64(measurements[2].HistoryBytes-measurements[1].HistoryBytes) / 50
 	ratio := secondSlope / firstSlope
-	t.Logf("EVIDENCE linear_after_growth bytes_per_added_task_6_to_50=%.2f bytes_per_added_task_50_to_100=%.2f slope_ratio=%.4f", firstSlope, secondSlope, ratio)
+	t.Logf("EVIDENCE linear_growth bytes_per_added_task_6_to_50=%.2f bytes_per_added_task_50_to_100=%.2f slope_ratio=%.4f", firstSlope, secondSlope, ratio)
 	if ratio < 0.8 || ratio > 1.2 {
-		t.Errorf("after-history growth is not linear enough: slope ratio %.4f, want [0.8, 1.2]", ratio)
-	}
-	firstBeforeSlope := float64(measurements[1].beforeBytes-measurements[0].beforeBytes) / 44
-	secondBeforeSlope := float64(measurements[2].beforeBytes-measurements[1].beforeBytes) / 50
-	beforeSlopeRatio := secondBeforeSlope / firstBeforeSlope
-	firstEventSlope := float64(measurements[1].historyEvents-measurements[0].historyEvents) / 44
-	secondEventSlope := float64(measurements[2].historyEvents-measurements[1].historyEvents) / 50
-	t.Logf("EVIDENCE growth_contrast before_bytes_per_added_task_6_to_50=%.2f before_bytes_per_added_task_50_to_100=%.2f before_slope_ratio=%.4f events_per_added_task_6_to_50=%.2f events_per_added_task_50_to_100=%.2f",
-		firstBeforeSlope, secondBeforeSlope, beforeSlopeRatio, firstEventSlope, secondEventSlope)
-	if beforeSlopeRatio < 1.5 {
-		t.Errorf("counterfactual history does not show quadratic growth: slope ratio %.4f, want >= 1.5", beforeSlopeRatio)
+		t.Errorf("history growth is not linear enough: slope ratio %.4f, want [0.8, 1.2]", ratio)
 	}
 }
 
@@ -181,7 +167,7 @@ func measureRunHistory(
 	tasks int,
 ) historyMeasurement {
 	t.Helper()
-	m := historyMeasurement{tasks: tasks}
+	m := historyMeasurement{Tasks: tasks}
 	history := &historypb.History{}
 	iter := c.GetWorkflowHistory(ctx, runID, "", false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	dataConverter := converter.GetDefaultDataConverter()
@@ -198,8 +184,8 @@ func measureRunHistory(
 			continue
 		}
 		inputBytes := proto.Size(attrs.GetInput())
-		if inputBytes > m.maxActivityInputBytes {
-			m.maxActivityInputBytes = inputBytes
+		if inputBytes > m.MaxActivityInputBytes {
+			m.MaxActivityInputBytes = inputBytes
 		}
 		if attrs.GetActivityType().GetName() != engine.ActivityPublishEvent {
 			continue
@@ -212,45 +198,30 @@ func measureRunHistory(
 		if err := dataConverter.FromPayload(payloads[1], &uri); err != nil {
 			t.Fatalf("decode snapshot URI at event %d: %v", event.GetEventId(), err)
 		}
-		m.snapshotURIBytes += proto.Size(payloads[1])
+		m.SnapshotURIBytes += proto.Size(payloads[1])
 		if _, duplicate := seenURI[uri]; duplicate {
 			t.Fatalf("duplicate snapshot URI %q", uri)
 		}
 		seenURI[uri] = struct{}{}
 		uris = append(uris, uri)
 	}
-	m.historyEvents = len(history.Events)
-	m.historyBytes = proto.Size(history)
-	m.snapshotCount = len(uris)
+	m.HistoryEvents = len(history.Events)
+	m.HistoryBytes = proto.Size(history)
+	m.SnapshotCount = len(uris)
 	for i, uri := range uris {
 		data, err := snapshots.ReadSnapshot(ctx, uri)
 		if err != nil {
 			t.Fatalf("read snapshot %q: %v", uri, err)
 		}
 		if i == 0 {
-			m.firstSnapshotBytes = len(data)
+			m.FirstSnapshotBytes = len(data)
 		}
-		m.lastSnapshotBytes = len(data)
-		m.binarySnapshotBytes += len(data)
-
-		// Object storage deliberately keeps compact binary protobuf. The old
-		// top-level Run argument was encoded by Temporal's data converter as a
-		// protojson Payload, so re-encode the real stored Run through that same
-		// converter to obtain the exact payload it replaced.
-		run := &orkstackv1.Run{}
-		if err := proto.Unmarshal(data, run); err != nil {
-			t.Fatalf("decode stored snapshot %q: %v", uri, err)
-		}
-		oldPayload, err := dataConverter.ToPayload(run)
-		if err != nil {
-			t.Fatalf("encode old snapshot payload %q: %v", uri, err)
-		}
-		m.oldSnapshotPayloadBytes += proto.Size(oldPayload)
+		m.LastSnapshotBytes = len(data)
+		m.BinarySnapshotBytes += len(data)
 		if err := snapshots.DeleteSnapshot(ctx, uri); err != nil {
 			t.Fatalf("delete measured snapshot %q: %v", uri, err)
 		}
 	}
-	m.beforeBytes = m.historyBytes - m.snapshotURIBytes + m.oldSnapshotPayloadBytes
 	return m
 }
 

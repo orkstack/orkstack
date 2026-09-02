@@ -23,7 +23,7 @@ message TaskRun {
   // display only. values_ref is the authoritative reference.
   Payload output = 5;
   repeated ArtifactRef artifacts = 6;
-  Error error = 7;                       // now carries FailureCategory
+  Error error = 7;                       // carries FailureCategory (§8)
   google.protobuf.Timestamp started_at = 8;
   google.protobuf.Timestamp finished_at = 9;
   // pool names the set of Orkers this attempt was dispatched to, in the word

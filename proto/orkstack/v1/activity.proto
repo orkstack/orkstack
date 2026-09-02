@@ -152,8 +152,8 @@ message ExecuteTaskInput {
   // already writes into /orkstack/input/task.json, and there is nothing to
   // collide with — proto scopes field names per message, and the run
   // submission key lives on a different message entirely
-  // (SubmitRunRequest.idempotency_key = 4, service.proto:210). The Go
-  // identifiers stay distinct (§11.5).
+  // (SubmitRunRequest.idempotency_key = 4, service.proto). The Go
+  // identifiers stay distinct.
   string idempotency_key = 8;
   // commit_uri is the deterministic object URI of this activity's commit
   // record. The engine composes it from the commit-store root carried in
@@ -318,9 +318,8 @@ message ActivityFailureDetail {
 
 // ---------------------------------------------------------------- orker identity
 
-// DescribeOrkerResult replaces ListPlugins as the pool-liveness probe. An Orker
-// no longer has a plugin list, but a pool still has to prove it is alive
-// (proof/M11.6), so the probe stays and only its payload changes.
+// DescribeOrkerResult is the pool-liveness probe's payload: a pool proves it
+// is alive by answering DescribeOrker (§6.5).
 message DescribeOrkerResult {
   string orker_id = 1;
   string build_id = 2;

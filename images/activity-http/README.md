@@ -63,8 +63,7 @@ performed at all — DNS failure, connection refused, TLS failure, or the
 request exceeding `timeoutSeconds`. Those are the cases a retry can fix, so
 they are the cases that become retryable `ActivityFailed`.
 
-This is a documented contract of *this image*, carried over unchanged from the
-in-process HTTP plugin it replaces. It is not a platform rule.
+This is a documented contract of *this image*, not a platform rule.
 
 ## Output
 

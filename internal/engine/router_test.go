@@ -16,7 +16,7 @@ import (
 // only a run id to go on. With one binding the answer is total by
 // construction: the router hands back its one binding without looking at the
 // id. So the seam costs the read path nothing, and no run id is ever parsed
-// for meaning (AGENTS.md §1.5), which is the temptation a router of this shape
+// for meaning (AGENTS.md §7), which is the temptation a router of this shape
 // would otherwise create.
 func TestSingleRouter_LocatesARunWithoutParsingItsID(t *testing.T) {
 	binding := engine.Binding{Reader: nopReader{}}

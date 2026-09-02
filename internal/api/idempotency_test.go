@@ -143,8 +143,8 @@ func (r *replica) submit(t *testing.T, key string) (*orkstackv1.Run, error) {
 	return resp.Msg.GetRun(), nil
 }
 
-// TestSubmitRun_TwoReplicasSharingAClaimerConverseOnOneRun is acceptance 1 at
-// the unit level, and it is the shape the two-engine integration test proves
+// TestSubmitRun_TwoReplicasSharingAClaimerConverseOnOneRun is the headline
+// property at the unit level, and the shape the two-engine integration test proves
 // against a real cluster: two Services with nothing in common but the claimer
 // — separate run stores, separate buses, separate starters — must still answer
 // one key with one run.
@@ -209,10 +209,9 @@ func TestSubmitRun_LosingReplicaReportsTheWinnersRunNotItsOwnRequest(t *testing.
 	}
 }
 
-// TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun is acceptance 3.
-// The claim is never released, so a repeat submission is told the run that
-// failed rather than being allowed to start a second one — the behaviour the
-// in-process path documented, now on a binding two replicas share.
+// TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun: the claim is never
+// released, so a repeat submission is told the run that failed rather than
+// being allowed to start a second one — on a binding two replicas share.
 func TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun(t *testing.T) {
 	claimer := newSharedClaimer()
 	starter := &fakeStarter{err: errors.New("temporal is down")}
@@ -237,8 +236,8 @@ func TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun(t *testing.T) {
 	}
 }
 
-// TestSubmitRun_FailedStartStaysDeduplicatedOnAnotherReplica is acceptance 3
-// where the process-local map could never reach: the replica that failed the
+// TestSubmitRun_FailedStartStaysDeduplicatedOnAnotherReplica is the same
+// property where a process-local map could never reach: the replica that failed the
 // start is not the one that receives the repeat. The claim names the run and
 // the shared archive holds it, so the second replica reports the same failure
 // instead of starting a run the caller already has.
@@ -265,20 +264,20 @@ func TestSubmitRun_FailedStartStaysDeduplicatedOnAnotherReplica(t *testing.T) {
 }
 
 // TestSubmitRun_AClaimWhoseWinnerDiedHoldsTheKeyUntilItsTTL pins the ONE case
-// acceptance 3 does not cover, and the liveness price the durable claim
-// charges for "never two runs for one key".
+// the failed-start tests above do not cover, and the liveness price the
+// durable claim charges for "never two runs for one key".
 //
 // A replica can win a claim and die before its StartRun reaches the cluster.
 // The claim survives the replica, so the key stays bound to a run that nobody
 // will ever execute, and every later submission is answered from the claim's
 // own PENDING snapshot — no error, no second run — until the claim workflow
 // completes at ORK_IDEMPOTENCY_TTL or an operator terminates it by hand
-// (internal/engine/claim.go, docs/DEPLOY.md §5). The in-process map this
-// replaced had no such window; it also let two replicas start two runs.
+// (internal/engine/claim.go, docs/DEPLOY.md §5). A process-local map has no
+// such window; it also lets two replicas start two runs.
 //
 // It is written down as a test so the shape of the window cannot drift
 // unnoticed: if some later change decided to start a fresh run here, that is
-// two runs for one key and the milestone's headline property is gone; if it
+// two runs for one key and the claim's headline property is gone; if it
 // decided to fail the submission instead, the runbook's advice would be
 // wrong. Both are visible from here.
 func TestSubmitRun_AClaimWhoseWinnerDiedHoldsTheKeyUntilItsTTL(t *testing.T) {
@@ -323,8 +322,8 @@ func TestSubmitRun_AClaimWhoseWinnerDiedHoldsTheKeyUntilItsTTL(t *testing.T) {
 
 // TestSubmitRun_AnUnreachableClaimerFailsTheSubmission: without the authority
 // there is no way to know whether the key is already bound, and guessing is
-// the duplicate this milestone removes. The submission fails and nothing
-// starts.
+// exactly the duplicate the claim exists to prevent. The submission fails and
+// nothing starts.
 func TestSubmitRun_AnUnreachableClaimerFailsTheSubmission(t *testing.T) {
 	claimer := newSharedClaimer()
 	claimer.err = errors.New("temporal frontend unreachable")
@@ -343,7 +342,7 @@ func TestSubmitRun_AnUnreachableClaimerFailsTheSubmission(t *testing.T) {
 }
 
 // TestSubmitRun_ReissueMovesTheClaimToTheRunThatStarted keeps the binding
-// honest across the M8.1 retry: when Temporal refuses the claimed run id, the
+// honest across the reissue retry: when Temporal refuses the claimed run id, the
 // key has to follow the id that actually started, and it has to move by
 // naming the id it replaces so no other caller can take the binding over.
 func TestSubmitRun_ReissueMovesTheClaimToTheRunThatStarted(t *testing.T) {

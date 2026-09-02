@@ -41,10 +41,10 @@ func (p adminLivePools) ObservePool(_ context.Context, channel string) (engine.P
 	return live, nil
 }
 
-// adminPoolOrkers answers the DescribeOrker probe for a set of channels. The
-// value is unused: an Orker has no plugin list to report under the OCI
-// Activity Contract, so answering at all is the liveness evidence (§6.5).
-type adminPoolOrkers map[string][]string
+// adminPoolOrkers is the set of pools with a live Orker. It answers the
+// DescribeOrker probe for those pools' channels; answering at all is the
+// liveness evidence (§6.5).
+type adminPoolOrkers map[string]struct{}
 
 func (p adminPoolOrkers) OrkerOnPool(_ context.Context, channel string) (*orkstackv1.DescribeOrkerResult, error) {
 	var pool string
@@ -76,7 +76,7 @@ func adminFixture(t *testing.T) *fixture {
 	t.Helper()
 	return newFixtureWith(t, func(cfg *api.Config) {
 		cfg.System = api.SystemInfo{
-			EngineVersion:    "v0.0.4",
+			EngineVersion:    "v1.2.3",
 			GoVersion:        "go1.25.6",
 			DeploymentName:   "orkstack",
 			BuildID:          "2026-01-02.1",
@@ -88,10 +88,7 @@ func adminFixture(t *testing.T) *fixture {
 			Orkers:   map[string]int{task.DefaultPool: 2, "gpu": 1},
 			LastSeen: fixedNow,
 		}
-		cfg.PoolOrkers = adminPoolOrkers{
-			task.DefaultPool: {"file", "http", "shell"},
-			"gpu":            {"container"},
-		}
+		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {}, "gpu": {}}
 	})
 }
 
@@ -134,13 +131,13 @@ func TestAdminInfo_GoldenHumanAndJSON(t *testing.T) {
 // design's explicit rendering rule (v004-design §3.3).
 //
 // An empty build id is not "unknown": it is the documented off switch for
-// Worker Deployment Versioning (AGENTS.md §10). Printing a blank cell would
+// Worker Deployment Versioning (AGENTS.md §7.2). Printing a blank cell would
 // read as missing data on the one surface an operator checks during a
 // rollout.
 func TestAdminInfo_SaysVersioningIsOffRatherThanPrintingAnEmptyBuildID(t *testing.T) {
 	f := newFixtureWith(t, func(cfg *api.Config) {
 		cfg.System = api.SystemInfo{
-			EngineVersion:    "v0.0.4",
+			EngineVersion:    "v1.2.3",
 			GoVersion:        "go1.25.6",
 			DeploymentName:   "orkstack",
 			ArtifactBackend:  "local",
@@ -181,13 +178,6 @@ func TestPoolList_GoldenHumanAndJSON(t *testing.T) {
 	if !strings.Contains(human.stdout, "no live orkers") {
 		t.Errorf("a pool with no Orkers is printed as a bare number:\n%s", human.stdout)
 	}
-	// There is deliberately no plugin column to assert on any more: an
-	// activity is an image, and which images exist is engine configuration
-	// rather than something an Orker reports (§4.2, §6.5). What pool health
-	// answers is who is available, which the count above is.
-	if strings.Contains(human.stdout, "PLUGINS") {
-		t.Errorf("pool health still advertises a plugin inventory it cannot fill:\n%s", human.stdout)
-	}
 }
 
 // TestPoolList_DefaultNamespaceIsTheDeploymentsOwnDefault covers the command
@@ -207,12 +197,12 @@ func TestPoolList_DefaultNamespaceIsTheDeploymentsOwnDefault(t *testing.T) {
 // TestPoolList_AnswersWithTheReachablePoolsAndMarksTheRest — F1, at the
 // surface an operator actually reads.
 //
-// One pool the cluster cannot answer for used to fail the command outright:
-// `orkctl pool list` printed an Unavailable error and NO pools, hiding the
-// healthy ones beside the broken one on exactly the surface somebody opens
-// during an incident.
+// One pool the cluster cannot answer for must not fail the command outright:
+// an `orkctl pool list` that printed an Unavailable error and NO pools would
+// hide the healthy ones beside the broken one on exactly the surface somebody
+// opens during an incident.
 //
-// It answers now, and the unreachable row says what it is. The distinction
+// It answers, and the unreachable row says what it is. The distinction
 // this pins is the one that decides what an operator does next: `0 (no live
 // orkers)` means start an Orker, `unknown (unreachable)` means the cluster did
 // not answer and the pool may be perfectly healthy. A blank or a zero would
@@ -223,7 +213,7 @@ func TestPoolList_AnswersWithTheReachablePoolsAndMarksTheRest(t *testing.T) {
 			live:      adminLivePools{Orkers: map[string]int{task.DefaultPool: 2}, LastSeen: fixedNow},
 			unreached: map[string]string{"ork-pool-gpu": "context deadline exceeded"},
 		}
-		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {"file", "http", "shell"}}
+		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {}}
 	})
 	f.run("namespace", "create", "vision",
 		"--allow-pool", task.DefaultPool,

@@ -140,7 +140,7 @@ func ParseReference(reference string) (Reference, error) {
 // IsLoopback reports whether the API host is a loopback address, which is the
 // one case this resolver speaks plain HTTP to. A local `registry:3` from
 // deploy/docker-compose.yml has no TLS, and requiring one would mean either a
-// certificate ceremony in `orkstack dev` or an "insecure registries" list that
+// certificate ceremony in the dev stack (`make up`) or an "insecure registries" list that
 // could be pointed at anything. Loopback is the narrow, non-configurable
 // exception: nothing off this host can be reached through it.
 func (r Reference) IsLoopback() bool {

@@ -73,7 +73,7 @@ const (
 const metaContentSHA256 = "ork-content-sha256"
 
 // Metadata copies extra and writes the provenance keys over it. Provenance
-// addresses the object, so plugin metadata can never move an artifact.
+// addresses the object, so caller-supplied metadata can never move an artifact.
 func (p Provenance) Metadata(extra map[string]string) map[string]string {
 	meta := make(map[string]string, len(extra)+3)
 	for k, v := range extra {

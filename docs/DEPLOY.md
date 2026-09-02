@@ -17,11 +17,12 @@ version **Current** when you want it to serve (the first one especially: until
 then it serves nothing), and do not stop the old workers until their version
 reports `Drained`.
 
-Everything here is executed against the built binaries. The topology claims and
-a rollout across a live two-replica deployment: `proof/M8.5/ha-deploy.sh`, one
-command. The release procedure, transition by transition:
-`proof/M8.4/deploy-runbook.sh`. Their transcripts are the evidence for the
-claims below.
+The claims below are held by integration tests against the built binaries:
+the two-replica topology by `cmd/orkctl/tworeplica_read_integration_test.go`
+and `cmd/orkctl/admin_surface_integration_test.go`, the rollout and drain rules
+by `internal/engine/versioning_rollout_integration_test.go` and
+`internal/engine/versioning_drain_integration_test.go`
+(`make test-integration` with the stack up).
 
 ---
 
@@ -65,9 +66,9 @@ adding processes and both survive losing one.
 
 So a replica owns nothing. Kill one and you lose its in-flight HTTP
 connections and nothing else: its runs keep executing on another replica's
-workers, and a client that reconnects anywhere reads the same run. That is
-measured, not argued — `proof/M8.5/ha-transcript.txt` phase 4 kills the
-submitting replica with `-9` mid-run and the run finishes.
+workers, and a client that reconnects anywhere reads the same run
+(`TestIntegration_SecondReplicaServesARunItNeverStarted`,
+`cmd/orkctl/tworeplica_read_integration_test.go`).
 
 **One variable decides whether two of those rows are true.**
 `ORK_ARTIFACT_BACKEND` defaults to `local` — a directory per process
@@ -106,12 +107,9 @@ needs `ORK_S3_*` either way.
   `from_sequence`, over a sequence the single Orker executing that attempt
   assigned (§1, "Live task logs").
 - **Readiness: there is no `/healthz` yet.** Probe with a cheap unary call —
-  `OrkflowService.ListOrkflows`, i.e. `orkctl --server … orkflow list`. Every
-  script under `proof/` that starts today's engine binary gates on exactly
-  that; it reaches the bucket the replica loads definitions from, so it fails
-  while the replica cannot serve. (`proof/M6/e2e.sh` is the one exception, and
-  not a counter-example: it predates the M7.1 rename and drives `bin/orkengine`
-  with that release's `workflow list`.)
+  `OrkflowService.ListOrkflows`, i.e. `orkctl --server … orkflow list`.
+  `scripts/stack.sh` gates on exactly that; it reaches the bucket the replica
+  loads definitions from, so it fails while the replica cannot serve.
 - **Browser clients need `ORK_WS_ALLOWED_ORIGINS`** set on every replica, since
   any of them may take the socket. Unset, the engine allows same-origin only,
   which is right for production and wrong the moment the UI is served from its
@@ -132,14 +130,14 @@ needs `ORK_S3_*` either way.
 - **A pool is a set of Orkers, and `ORK_ORKER_POOL` is how a process joins
   one.** Start Orkers with `ORK_ORKER_POOL=gpu` and they serve the pool a task
   reaches by writing `pool: gpu` (`docs/DSL.md`). Add processes to a pool for
-  throughput; add a pool for isolation — a GPU host, a pool with different
-  plugins, a pool near some data. `main` is the built-in pool and needs no
+  throughput; add a pool for isolation — a GPU host, a pool with a different
+  Orker build or security profile, a pool near some data. `main` is the built-in pool and needs no
   configuration: `make run-ork` + `make run-orker` with nothing set is one
   Orker serving `main`.
 - **`ORK_ORKER_QUEUE` is the operator escape hatch underneath it**, naming the
   raw Temporal task queue directly. It exists for the test harnesses, which
   isolate concurrent runs by pinning a queue no other agent polls (AGENTS.md
-  §6). Prefer `ORK_ORKER_POOL`: a pool is a name the whole system speaks, a
+  §11.1). Prefer `ORK_ORKER_POOL`: a pool is a name the whole system speaks, a
   raw queue is nobody's pool and is reported as `main` with a boot log saying
   so.
 - **Set both and they must agree, or the process refuses to boot.** The check
@@ -149,9 +147,9 @@ needs `ORK_S3_*` either way.
   |---|---|---|
   | neither | `ork-tasks` | `main` |
   | `ORK_ORKER_POOL=gpu` | `ork-pool-gpu` | `gpu` |
-  | `ORK_ORKER_QUEUE=ork-tasks-m7-9` | that queue, verbatim | `main`, with a boot log naming the raw queue |
+  | `ORK_ORKER_QUEUE=ork-tasks-private` | that queue, verbatim | `main`, with a boot log naming the raw queue |
   | both, agreeing | that queue | that pool |
-  | both, disagreeing | **boot fails** | `ORK_ORKER_POOL=gpu resolves to "ork-pool-gpu" but ORK_ORKER_QUEUE="ork-tasks-m7-9"` |
+  | both, disagreeing | **boot fails** | `ORK_ORKER_POOL=gpu resolves to "ork-pool-gpu" but ORK_ORKER_QUEUE="ork-tasks-private"` |
 
   Refusing is the point. Silently picking a winner is how an Orker ends up
   polling one channel while the engine dispatches to another, which strands
@@ -232,16 +230,15 @@ needs `ORK_S3_*` either way.
   deployment must allow that pool by name; `main` there names Orkers this
   deployment does not have.
 - **"Is anything serving my pools?" has an answer.**
-  `NamespaceService.ListPools` reports each pool's name, its live Orker count
-  and the plugins those Orkers run. The count is the one described above — the
+  `NamespaceService.ListPools` (`orkctl pool list`) reports each pool's name
+  and its live Orker count. The count is the one described above — the
   Orkers polling now, one per worker — so scaling a pool down shows up in it
   within the window rather than minutes later. Every number is read from the
   cluster, so any replica answers, including one that started nothing. It
   reports each pool from the same channel a submit dispatches it to, so an
   engine using the `ORK_ORKER_QUEUE` escape hatch reports its default pool
   from that raw queue — the Orkers it accepts runs onto are the Orkers it
-  says the pool has. A `orkctl` command for it arrives with the namespace
-  CLI; until then it is one Connect call.
+  says the pool has.
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
@@ -251,9 +248,8 @@ needs `ORK_S3_*` either way.
 - **A pool can name itself.** `ORK_ORKER_ENV_ALLOWLIST=ORK_BUILD_ID` on the
   Orker lets a task render `{{ env "ORK_BUILD_ID" }}`; the template resolves in
   the Orker process (`internal/orker/render.go`), so the task output names the
-  build that executed it. `proof/M8.5` uses this to show a task scheduled
-  *after* a rollout still executed on the old build — from the plugin's own
-  output, independent of what the server records.
+  build that executed it — evidence of which build ran a task that is
+  independent of what the server records.
 
 ---
 
@@ -267,9 +263,21 @@ deployment cares about.
 | `ORK_TEMPORAL_ADDRESS` | `localhost:7233` | both | Temporal frontend. The default is the SDK's `client.DefaultHostPort` |
 | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
 | `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
-| `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §6). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
+| `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
+| `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file` → `ghcr.io/orkstack/activity-*:0.1` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
+| `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
+| `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one |
+| `ORK_ORKER_IMAGE_LAYOUT` | *(empty)* | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails |
+| `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI |
+| `ORK_DOCKER_PULL_TIMEOUT` | *(runtime default)* | `orker` | how long an image pull may take |
+| `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
+| `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
+| `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
+| `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
+| `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable |
+| `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
 | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
-| `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **The `container` plugin needs this bind-mountable by the docker daemon.** The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
+| `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
 | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
 | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
@@ -296,7 +304,9 @@ deployment cares about.
 | `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts, archived runs and task logs |
 | `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
 | `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
+| `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for temporary credentials |
 | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
+| `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
 
 ### The bucket stops being optional at the second replica
 
@@ -345,14 +355,10 @@ never stamps its version earlier than the head it extends — so `orkctl orkflow
 versions` lists them in the order they were applied on a deployment whose
 clocks disagree.
 
-`proof/M8.5/ha-deploy.sh` exports exactly that block, and phase 7 of
-`proof/M8.5/ha-transcript.txt` reads a finished run back out of the bucket —
-with a control showing nothing was written to local disk.
-
 ### Live task logs: where they are, what bounds them, how long they stay
 
 A task's output is bytes, so it travels as stored objects and never through a
-Temporal payload or the event stream (AGENTS.md §1.4). The Orker executing an
+Temporal payload or the event stream (AGENTS.md §2.2). The Orker executing an
 attempt buffers its lines and flushes them as numbered chunks **while the task
 runs**; `orkctl run logs -f`, `RunService.StreamTaskLogs` and the
 `/ws/runs/{id}/tasks/{task}/logs` socket read them back.
@@ -508,13 +514,11 @@ already gone as a no-op rather than an error, so a concurrent cleaner, an
 operator, or a lifecycle rule racing the same object cannot turn cleanup red or
 inflate its reclaimed-bytes count.
 
-**Automatic `objects/` reclamation is still deferred.** The mechanism ships and
-is covered by tests against live object storage, but the cleanup worker does
-not call `DeleteUnreferencedObjects`: reference accounting only exists for runs
-archived by a build that has it. A run archived earlier has no per-run list, so
-it contributes no reference markers, and an object it alone referenced would
-look unreferenced. Bucket lifecycle policy therefore remains the operational
-answer for `objects/` growth until an archive-wide backfill exists.
+**Automatic `objects/` reclamation is not wired yet.**
+`DeleteUnreferencedObjects` exists and is covered by tests against live object
+storage, but the cleanup worker deliberately does not call it. Bucket lifecycle
+policy is the operational answer for `objects/` growth until automatic
+reclamation is wired into the cleanup pass.
 
 A note on what "bounded scan" buys. Cleanup pages the run index in index-key
 order, asking for `ORK_CLEANUP_BATCH_SIZE * 2` entries at a time and resuming
@@ -641,8 +645,7 @@ Backlogged runs start within seconds of it. §3 step 0 is the full first-release
 procedure; every release after that inherits a Current Version from its
 predecessor, and takes over with the same call at §3 step 4.
 
-Measured, both ways: `proof/M8.4/deploy-runbook-transcript.txt` phase 1 (the
-real binaries) and `TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent`
+Measured by `TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent`
 (`internal/engine`), which watches a versioned release receive no workflow task
 at all for 15s and then complete the same run 1s after the routing change.
 
@@ -665,7 +668,7 @@ Deployment Version — with one exception:
 
 So if the Orker polling `ORK_ORKER_QUEUE` does not carry the engine's exact
 `(ORK_DEPLOYMENT_NAME, ORK_BUILD_ID)`, the exception fires and an in-flight
-run's tasks land on whatever is current — new plugin code, mid-run. Setting
+run's tasks land on whatever is current — a newer Orker build, mid-run. Setting
 `ORK_BUILD_ID` on the engine and forgetting it on the Orker is therefore the
 one misconfiguration to watch for. Check both boot lines print the same
 `version=`.
@@ -742,9 +745,7 @@ OLD=2026.08.09-9f8e7d6      # v1, currently serving
 ```
 
 The last two are for **you**; the CLI reads neither (§1), which is why every
-command below hands it both. `proof/M8.5/ha-deploy.sh` runs this whole
-sequence exactly this way — that is the version of these commands that is
-known to work.
+command below hands it both.
 
 Steps 1–6 are every release that has a predecessor. **The very first versioned
 release of a deployment has none, so start at step 0** — skip it and the
@@ -788,9 +789,8 @@ release runs nothing at all (§1).
    replica and an Orker in every pool the release dispatches to. v1's replicas
    stay up and keep serving the API — the two versions coexist behind one
    address, and which version a new run executes on is the deployment's
-   Current Version, never the replica the client happened to reach. `proof/M8.5`
-   shows this directly: after the switch, a run submitted **to a v1 replica**
-   executes wholly on v2.
+   Current Version, never the replica the client happened to reach: after the
+   switch, a run submitted **to a v1 replica** executes wholly on v2.
 
 2. **Check v2 polls every queue it should**, engine and Orker both:
 
@@ -814,7 +814,7 @@ release runs nothing at all (§1).
    `orker_queue=` — rather than assuming them. A missing **activity** entry
    means v2's engine is running without v2 Orkers: stop here, because a pinned
    run's tasks would fall through to that queue's own current version and land
-   on the wrong plugin code. A missing **workflow** entry means v2's Orker is
+   on the wrong Orker build. A missing **workflow** entry means v2's Orker is
    running without a v2 engine. Do not expect `ORK_ORKER_QUEUE` to appear under
    `workflow`: it never does, and treating that as a failure aborts a healthy
    rollout.
@@ -849,12 +849,10 @@ release runs nothing at all (§1).
    either way (a run started a moment early simply runs on v1 and is pinned
    there). It matters if you **automate** a check around the switch: assert on
    the queue, or you are asserting on a fact the dispatcher has not seen yet.
-   That mistake made this milestone's own runbook proof red one execution in
-   three; see `proof/M8.4/README.md`.
 
    ```bash
    # both physical queues, engine and Orker, must report the new version
-   go run ./proof/M8.4/tools/queue-routing \
+   go run ./test/tools/queue-routing \
      -namespace "$ORK_TEMPORAL_NAMESPACE" -address "$ORK_TEMPORAL_ADDRESS" \
      -queue ork-tasks:workflow -queue ork-tasks-gpu-pool:activity \
      -want "$ORK_DEPLOYMENT_NAME.$NEW"
@@ -893,21 +891,19 @@ release runs nothing at all (§1).
    not pick those tasks up.** The exception in §2 routes an activity to the
    Current Version when the workflow's own version has no workers on that task
    queue, and if it ever fired here, skipping this step would silently run an
-   in-flight run's remaining tasks on new plugin code — the thing this whole
+   in-flight run's remaining tasks on a newer Orker build — the thing this whole
    document exists to prevent. The test fails the day that changes.
 
 6. **Stop v1** once it reports `Drained` — every replica and every Orker
    carrying that build id. Stopping *some* of them earlier is safe (§5); the
    version is what must not disappear while runs are pinned to it.
 
-A rollout done this way is proven end to end on the real binaries twice, from
-two angles. `proof/M8.4/deploy-runbook-transcript.txt` (phase 3) walks the
-transitions one release pair at a time: the run in flight when v2 became
-Current finished on v1 and **both** of its tasks — including the one scheduled
-after the switch — were executed by v1's Orker, while the run submitted after
-the switch ran wholly on v2. `proof/M8.5/ha-transcript.txt` does it across a
-live **two-replica** v1 deployment, and adds the plugin's own account: the task
-scheduled after the switch printed the build id of the Orker that ran it, `v1`.
+A rollout done this way is held by
+`TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn`
+(`internal/engine/versioning_rollout_integration_test.go`): the run in flight
+when v2 became Current finishes on v1 and **both** of its tasks — including the
+one scheduled after the switch — are executed by v1's Orker, while the run
+submitted after the switch runs wholly on v2.
 
 ---
 
@@ -924,10 +920,8 @@ started unversioned has **nothing pinning it**.
 
 So when the first version becomes Current, an unversioned run in flight
 **upgrades onto it** at its next workflow task, and is pinned there from then
-on. Measured, with the real binaries, in
-`proof/M8.4/deploy-runbook-transcript.txt` (phase 2): a run whose first task
-was executed by an unversioned Orker finished on `orkstack-runbook.v1`, and its
-second task ran on v1's Orker.
+on: a run whose first task was executed by an unversioned Orker finishes on
+the first version, and its second task runs on that version's Orker.
 
 That is convenient — nothing strands — but it is the one moment when a
 **partial history meets a different build**: the new version replays what the
@@ -943,22 +937,19 @@ pinned when it started. Two ways to handle it:
   command stream by construction, which is the only thing that makes replaying
   an unversioned run's partial history onto the new version a non-event.
 
-  It is **not** made safe by the replay guards in §6, and this document used to
-  claim it was. Those guards compare current code against a fixture recorded at
+  It is **not** made safe by the replay guards in §6. Those guards compare current code against a fixture recorded at
   a known commit; they say nothing about whatever build is running in your
   cluster right now, and a fixture is only "older" than the code once someone
   commits a change after recording it.
 
-  Worse, a live switch across an actual code change is exactly what breaks. The
-  M8 engine inserted `RUN_CREATED` as command 1 of every run
-  (`internal/engine/workflow.go`; before M8 that event was published in-process
-  by the API and never entered a history), so an unversioned run started by a
-  pre-M8 engine cannot be upgraded onto an M8 version: its next workflow task
-  fails with a determinism violation. Measured, not assumed —
+  Worse, a live switch across an actual code change is exactly what breaks:
+  an unversioned run whose recorded command stream no longer matches the new
+  workflow body fails its next workflow task with a determinism violation.
   `TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream`
-  (`internal/engine/replay_test.go`) replays the committed history against a
-  body carrying one extra emit and the SDK rejects it with `TMPRL1100`.
-  Upgrading a pre-M8 system therefore means draining first.
+  (`internal/engine/replay_test.go`) shows the mechanism: it replays the
+  committed history against a body carrying one extra emit and the SDK rejects
+  it with `TMPRL1100`. Upgrading across such a change therefore means
+  draining first.
 
 Either way, keep the old workers up until their runs are done. That rule is
 not about versioning: an Orker killed mid-task loses that attempt until its
@@ -979,11 +970,10 @@ New runs go back to v1 immediately. **Runs already pinned to v2 keep finishing
 on v2** — that is the intended outcome, not a fault, and it is why v2's workers
 must stay up until *they* drain.
 
-Both halves are measured, on the real binaries, in
-`proof/M8.5/ha-transcript.txt` (phase 6): a run was put in flight on v2, v1 was
-made Current again, and a run submitted **to the v2 replica** afterwards
-executed on v1 — while the in-flight run finished on v2, its task scheduled
-*after* the rollback executed by v2's Orker.
+Both halves follow from the same routing rule: with a run in flight on v2
+and v1 made Current again, a run submitted **to the v2 replica** afterwards
+executes on v1, while the in-flight run finishes on v2 and its task scheduled
+*after* the rollback is executed by v2's Orker.
 
 This only works while v1's workers are still running, which is the real rule
 behind the drain wait: **never decommission the previous version until the next
@@ -1037,7 +1027,7 @@ Runs already pinned to a version still need that version's workers.
   (`internal/api/service.go`, guarded by
   `TestListRuns_OrdersRunsByTimeNotByRunID`) and `RunQuery.finish`, which
   orders one page of the archive index (`pkg/artifacts/archive.go`). Those two
-  are the whole list; `proof/M8.5/docs-claims.sh` fails if a third appears.
+  are the whole list.
 - **Any replica answers any run** (§0). Live runs are read from Temporal,
   finished ones from the archive in the bucket — the half that needs
   `ORK_ARTIFACT_BACKEND=s3` (§1), because on the default `local` backend each
@@ -1107,7 +1097,7 @@ Runs already pinned to a version still need that version's workers.
   ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep   # must be empty
   ```
 
-  Anchor both patterns with `/` and `$`, as `AGENTS.md` §6 does. Unanchored,
+  Anchor both patterns with `/` and `$`, as `AGENTS.md` §11.1 does. Unanchored,
   `bin/ork` also matches `bin/orkctl` — the cleanup then kills the CLI you are
   about to drive the deploy with.
 
@@ -1116,7 +1106,7 @@ Runs already pinned to a version still need that version's workers.
 Five reads answer every operational question about a deployment, and each is
 available from the CLI and over Connect. Three of them are answered from the
 cluster or the bucket, so **any replica answers them and they all answer the
-same** (`AGENTS.md` §1.7). The fourth is deliberately not, and the fifth is a
+same** (`AGENTS.md` §7). The fourth is deliberately not, and the fifth is a
 live cluster read with its own write counterpart (below).
 
 | read | CLI | where the answer comes from |
@@ -1125,14 +1115,14 @@ live cluster read with its own write counterpart (below).
 | execution retention | `orkctl admin retention get \| set <duration>` | Temporal's `DescribeNamespace`/`UpdateNamespace` — **live, observed from the cluster**, and writable |
 | pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
 | namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket |
-| plugin inventory | `orkctl plugin list` | the connected Orkers, asked pool by pool |
+| activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests at apply time |
 
 `orkctl admin info` describes **the replica that answered**, and it says so in
 its own output. Behind a load balancer that is whichever replica took the
 request:
 
 ```
-engine:       v0.0.4
+engine:       a1b2c3d
 go:           go1.25.6
 deployment:   orkstack
 versioning:   off
@@ -1160,10 +1150,12 @@ bucket or directory, never the key that opens it.
 single number cannot:
 
 ```
-NAME     ORKERS                 PLUGINS                    DEFAULT  LAST SEEN
-cold     0 (no live orkers)     -                          -        -
-gpu      1                      container,file,http,shell  yes      2026-01-02T03:04:05Z
-remote   unknown (unreachable)  -                          -        -
+NAME     ORKERS                 DEFAULT  LAST SEEN
+cold     0 (no live orkers)     -        -
+gpu      1                      yes      2026-01-02T03:04:05Z
+remote   unknown (unreachable)  -        -
+
+A task naming no pool runs on gpu.
 
 1 pool could not be reached, so its Orkers are unknown rather than zero:
   remote: cannot tell whether pool "remote" has live Orkers: context deadline exceeded
@@ -1183,58 +1175,38 @@ answer the question was asked for. A pool that could not be asked about is
 listed too, and never as a zero: reporting "not measured" as "measured zero"
 sends an operator to scale a pool that may need nothing.
 
-**Both admin reads answer as much as they can.** A source that cannot be reached
+**Pool health answers as much as it can.** A source that cannot be reached
 costs the answer the part that source held, is logged with the pool or the
-store it lost, and costs nothing else. `ListPlugins` has one deliberate
-all-or-nothing exception: when the deployment's **own** Orkers do not answer,
-it returns `Unavailable` rather than making an empty inventory look like proof
-that no plugins are installed. The partial-source rules are:
+store it lost, and costs nothing else. The partial-source rules are:
 
 | what is lost | what the answer loses | where it is recorded |
 |---|---|---|
 | the cluster, for one pool | that pool's count and `LAST SEEN` | `Pool.unavailable_reason` on the wire, printed under the table, and a warning log |
-| a live pool's Orkers, not answering | that pool's `PLUGINS` column | the log; the empty column already means "nobody answered" |
 | the orkflow store, for one namespace | the pools only that namespace's stored definitions name | the log |
-| the namespace registry | every non-default pool | the log; the deployment's own Orkers still answer |
+| the namespace registry | every non-default pool | the log |
 
-That rule is not a preference: an operator opens pool health and the plugin
-inventory when something is already wrong, and an `Unavailable` there hides
-every pool that IS healthy in order to report one that is not. One namespace's
-unreadable catalog likewise costs the inventory that namespace's pools and no
-other's.
+That rule is not a preference: an operator opens pool health when something is
+already wrong, and an `Unavailable` there hides every pool that IS healthy in
+order to report one that is not.
 
-The one refusal left on each read is the one that leaves nothing to report:
-`orkctl pool list` on a namespace that cannot be resolved or whose default pool
-this deployment cannot route (under which no task of it could run at all), and
-`orkctl plugin list` when the deployment's OWN Orkers are asked and do not
-answer (where an empty list would read as "no plugins are installed").
+The one refusal left is the one that leaves nothing to report: `orkctl pool
+list` on a namespace that cannot be resolved or whose default pool this
+deployment cannot route (under which no task of it could run at all).
 
 What that costs, stated so nobody has to discover it:
 
-- **`PLUGINS` is a sample, not a census.** The question is one activity
-  executed on the pool's own channel, so whichever of the pool's Orkers picks
-  it up answers for the pool. The Orkers of one pool are one release
-  (`AGENTS.md` §10), which is what makes the sample worth showing; mid-rollout
-  two of them can differ and the column shows one of the two.
-- **An empty `PLUGINS` means "nobody was asked, or nobody answered".** A pool
-  with no live Orkers has nobody to ask; a pool whose Orkers did not answer in
-  time keeps its `ORKERS` count and loses its plugin list. It never means
-  "these Orkers run no plugins". The two are the same bytes on the wire, and
-  telling them apart would cost the whole report — so the report is kept and
-  the ambiguity is written down here instead.
+- **There is no per-pool inventory of what a pool can run.** An activity is an
+  OCI image, and which images a deployment can run is engine configuration
+  (`orkctl activity list`), not something an Orker reports. A pool's Orkers
+  still prove they are alive by answering `DescribeOrker` on the pool's own
+  channel; that probe is what `LAST SEEN` and the count are built from.
 - **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
   minutes after its worker died, so a record older than the freshness window is
   dropped before anything is counted or timestamped. A pool whose Orkers have
   all gone quiet shows `-`, not the moment the last one was heard. The column
   says how fresh the number beside it is, and nothing else.
-- **`orkctl plugin list` carries versions and schemas only for the
-  deployment's default pool**, whose Orkers answer the descriptor activity
-  directly. A plugin found only on another pool appears as a bare NAME with an
-  empty version — the per-pool question that found it reports names. Listing
-  it is still worth it: without it an operator hunting `container` concludes it
-  is not installed while a run using it succeeds.
 
-The inventory's pool scope is the durable state the replica can read: the
+The pool scope of that read is the durable state the replica can read: the
 deployment's default route, namespace allow-lists, and pools named by any
 stored orkflow version. A pool that no namespace or stored version names cannot
 be inferred from this API. Temporal's task-queue description call requires a
@@ -1244,7 +1216,7 @@ below this user-facing pool surface.
 The whole surface, answered by a second replica that started nothing — no
 namespace registered, no orkflow applied, no run — is proven live in
 `TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`
-(`proof/M11.3/`).
+(`cmd/orkctl/admin_surface_integration_test.go`).
 
 ### Execution retention: one deployment-wide Temporal cluster setting
 
@@ -1252,8 +1224,7 @@ namespace registered, no orkflow applied, no run — is proven live in
 and change how long Temporal keeps a finished workflow's history for **this
 deployment's ONE Temporal cluster namespace** — the same
 `ORK_TEMPORAL_NAMESPACE` retention already described above (§ "The bucket
-stops being optional…" and the cleanup section that follows it) and in
-`docs/STORAGE.md`'s own "Temporal namespace retention" measurements. It is a
+stops being optional…" and the cleanup section that follows it). It is a
 single cluster-wide setting, **never a per-OrkStack-Namespace one**: it has
 nothing to do with `orkctl namespace`, which manages the OrkStack registry
 entity owning orkflow names, runs and pool defaults, of which a deployment may
@@ -1332,8 +1303,8 @@ change), or — if the contract genuinely changed and no old run can still be in
 flight — re-record the fixture and say so in the commit:
 
 ```bash
-ORK_RECORD_GOLDEN_HISTORY=1 go test -tags=integration ./internal/engine/ \
-  -run RecordGoldenRunHistory
+ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 go test -tags=integration -p 1 ./internal/engine/ \
+  -run TestIntegration_RecordGoldenRunHistory
 ```
 
 Re-recording resets the guard to today. Do it deliberately, never to make a

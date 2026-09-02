@@ -86,7 +86,7 @@ func twoTaskOrkflow() *orkstackv1.Orkflow {
 //
 // Where a task runs is decided at submit, by the process that read the
 // namespace document and this deployment's configuration; workflow code may
-// read none of that (AGENTS.md §1.3). So StartRun binds what it was handed,
+// read none of that (AGENTS.md §2.1). So StartRun binds what it was handed,
 // verbatim — it does not consult its own orker channel, and it does not
 // substitute a route of its own. Binding it records the routing in the run's
 // history, which is what makes a replay dispatch where the original run did
@@ -96,7 +96,7 @@ func TestStartRun_BindsTheCallersRoutingIntoTheWorkflowInput(t *testing.T) {
 	// A starter whose OWN default channel is a different name entirely: if
 	// StartRun substituted its configuration for the caller's plan, this is
 	// where it would show.
-	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
+	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-private")
 
 	plan := rawPlan("ork-tasks-submitted", "gpu")
 	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, plan); err != nil {
@@ -115,19 +115,18 @@ func TestStartRun_BindsTheCallersRoutingIntoTheWorkflowInput(t *testing.T) {
 			t.Errorf("bound route for pool %q = %q, want %q", pool, bound.Routes[pool], queue)
 		}
 	}
-	if bound.Routes[task.DefaultPool] == "ork-tasks-m7-9" {
+	if bound.Routes[task.DefaultPool] == "ork-tasks-private" {
 		t.Error("StartRun overwrote the caller's default route with its own configuration")
 	}
 }
 
-// TestStartRun_SendsTheStoredDefinitionVerbatim is the M10.1 half of the same
-// property. The engine used to clone the orkflow to write a queue name onto
-// every task; a definition carries no queue at all now, so the document that
+// TestStartRun_SendsTheStoredDefinitionVerbatim holds the other half of the
+// same property: a definition carries no channel name, so the document that
 // reaches Temporal is the one the bucket holds — including a task's own pool,
 // which is the user's word and not the engine's to rewrite.
 func TestStartRun_SendsTheStoredDefinitionVerbatim(t *testing.T) {
 	c := &recordingClient{}
-	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
+	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-private")
 
 	stored := twoTaskOrkflow()
 	if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil, defaultPlan()); err != nil {
@@ -153,10 +152,10 @@ func TestStartRun_SendsTheStoredDefinitionVerbatim(t *testing.T) {
 //
 // All three carry the orkflow_ prefix. The namespace one needs it most — an
 // unqualified `namespace` sitting on a Temporal execution reads as the
-// Temporal namespace, which is the ambiguity AGENTS.md §1.9 forbids.
+// Temporal namespace, which is the ambiguity AGENTS.md §7 forbids.
 func TestStartRun_WritesTheOrkflowCoordinatesAsAQualifiedMemo(t *testing.T) {
 	c := &recordingClient{}
-	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
+	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-private")
 
 	stored := twoTaskOrkflow()
 	stored.Namespace = "payments"
@@ -189,7 +188,7 @@ func TestStartRun_WritesTheOrkflowCoordinatesAsAQualifiedMemo(t *testing.T) {
 // memoKeys names what a memo carries, sorted, for a failure message. It is
 // spelled memoKeys rather than sortedKeys because a build-tagged file in this
 // same package already has the latter (versioning_rollout_integration_test.go),
-// and a duplicate there is invisible to `make test` — AGENTS.md §7.
+// and a duplicate there is invisible to `make test` — AGENTS.md §11.1.
 func memoKeys(memo map[string]any) []string {
 	out := make([]string, 0, len(memo))
 	for key := range memo {
@@ -217,7 +216,7 @@ func TestStartRun_ZeroConfigRoutingReachesTheChannelAZeroConfigOrkerPolls(t *tes
 
 func TestStartRun_StartsTheWorkflowOnTheEnginesOwnQueue(t *testing.T) {
 	c := &recordingClient{}
-	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-m7-9")
+	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-private")
 
 	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()); err != nil {
 		t.Fatalf("StartRun: %v", err)
@@ -233,7 +232,8 @@ func TestStartRun_StartsTheWorkflowOnTheEnginesOwnQueue(t *testing.T) {
 	}
 }
 
-// TestStartRun_MakesARunIDSingleUse pins the server-side half of M8.1.
+// TestStartRun_MakesARunIDSingleUse pins the server-side half of run-id
+// single use.
 //
 // Without these three options a colliding id is silent: ExecuteWorkflow
 // returns a handle to whatever execution already holds the id and the caller

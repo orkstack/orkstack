@@ -479,8 +479,8 @@ func TestListRuns_StaysBoundedAndNeverAsksForAnExhaustiveWalk(t *testing.T) {
 
 	// The cost, not the response. Exhaustive is invisible in the rows that
 	// come back — it buys pages — so it has to be read off the query the
-	// handler built. Both requests above were the exact shape that used to
-	// trigger the whole-index walk.
+	// handler built. Both requests above are the exact shape that would
+	// trigger a whole-index walk.
 	queries := f.reader.runQueries()
 	if len(queries) != 2 {
 		t.Fatalf("reader served %d list queries, want 2", len(queries))
@@ -667,8 +667,8 @@ func TestStreamEvents_EndsALiveRunAtItsTerminalEvent(t *testing.T) {
 	}
 }
 
-// assertStreamContract holds acceptance 2: strictly increasing sequences
-// starting just after the cursor, no gaps, and a terminal event last.
+// assertStreamContract holds the stream contract: strictly increasing
+// sequences starting just after the cursor, no gaps, and a terminal event last.
 func assertStreamContract(t *testing.T, events []*orkstackv1.Event, fromSequence int64) {
 	t.Helper()
 	if len(events) == 0 {

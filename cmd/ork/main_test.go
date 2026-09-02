@@ -232,8 +232,8 @@ func TestQueues_RefuseAnExecutionChannelThatIsTheEnginesOwnEventQueue(t *testing
 
 	// And the two legitimate shapes still boot: the unconfigured default,
 	// where one queue carries the engine's workflows and its tasks, and a
-	// parallel agent's isolation queue (AGENTS.md §6).
-	for _, channel := range []string{"", task.DefaultQueue, "ork-tasks-m7-9", "ork-pool-gpu"} {
+	// parallel agent's isolation queue (AGENTS.md §11.1).
+	for _, channel := range []string{"", task.DefaultQueue, "ork-tasks-private", "ork-pool-gpu"} {
 		t.Setenv("ORK_ORKER_QUEUE", channel)
 		if err := queuesFor(loadConfig()).validate(); err != nil {
 			t.Errorf("ORK_ORKER_QUEUE=%q refused at boot: %v", channel, err)
@@ -241,8 +241,8 @@ func TestQueues_RefuseAnExecutionChannelThatIsTheEnginesOwnEventQueue(t *testing
 	}
 }
 
-// TestRunWorkerOptions_CarryTheConfiguredDeploymentVersion is acceptance 1 for
-// the engine: the process that hosts RunWorkflow registers with Worker
+// TestRunWorkerOptions_CarryTheConfiguredDeploymentVersion: the engine
+// process that hosts RunWorkflow registers with Worker
 // Deployment Versioning when — and only when — an operator configured a build
 // id.
 func TestRunWorkerOptions_CarryTheConfiguredDeploymentVersion(t *testing.T) {
@@ -262,9 +262,10 @@ func TestRunWorkerOptions_CarryTheConfiguredDeploymentVersion(t *testing.T) {
 	}
 }
 
-// TestWorkerOptions_UnsetDeploymentEnvLeavesBothWorkersUnversioned is
-// acceptance 6 at the binary's own seam: `make run-ork` with no configuration
-// must produce exactly the workers it produced before this milestone.
+// TestWorkerOptions_UnsetDeploymentEnvLeavesBothWorkersUnversioned: `make
+// run-ork` with no ORK_DEPLOYMENT_NAME/ORK_BUILD_ID produces unversioned run
+// and event workers, with no DefaultVersioningBehavior set (the SDK panics on
+// that pair).
 func TestWorkerOptions_UnsetDeploymentEnvLeavesBothWorkersUnversioned(t *testing.T) {
 	t.Setenv(task.EnvDeploymentName, "")
 	t.Setenv(task.EnvBuildID, "")
@@ -317,8 +318,8 @@ func (r *recordingRegistrar) RegisterWorkflowWithOptions(_ any, options workflow
 	*r = append(*r, recordedRegistration{name: options.Name, behavior: options.VersioningBehavior})
 }
 
-// TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims is
-// acceptance 2. It reads the list `ork` itself registers at boot
+// TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims
+// reads the list `ork` itself registers at boot
 // (engine.RegisterWorkflows, the binary's only call site), so dropping a
 // behaviour fails here — asserting against a copy of the registration would
 // prove only that the test still compiles. It is not the only such guard: the
@@ -454,7 +455,7 @@ func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 }
 
 // TestQueues_ThePoolTheEngineDispatchesToIsTheOneItsOrkersJoin is the engine's
-// half of acceptance 5: both binaries resolve ORK_ORKER_POOL and
+// half of the pool contract: both binaries resolve ORK_ORKER_POOL and
 // ORK_ORKER_QUEUE through the same function, so a pool named on one and a
 // channel named on the other cannot silently diverge.
 func TestQueues_ThePoolTheEngineDispatchesToIsTheOneItsOrkersJoin(t *testing.T) {
@@ -501,10 +502,10 @@ func TestLoadConfig_LeavesTheDefaultRouteToTheNamespaceWhenNothingIsSet(t *testi
 }
 
 // TestLoadConfig_RefusesAPoolAndAChannelThatDisagree keeps the engine from
-// booting into the split-brain AGENTS.md §6 describes.
+// booting into the split-brain AGENTS.md §11.1 describes.
 func TestLoadConfig_RefusesAPoolAndAChannelThatDisagree(t *testing.T) {
 	t.Setenv("ORK_ORKER_POOL", "gpu")
-	t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-m7-9")
+	t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-private")
 
 	cfg := loadConfig()
 	if cfg.poolErr == nil {
@@ -525,7 +526,7 @@ func TestLoadConfig_RefusesAPoolAndAChannelThatDisagree(t *testing.T) {
 // is actually doing. And nothing secret travels: the artifact location names
 // the bucket, never the access key that opens it.
 func TestSystemInfo_CarriesTheProcessConfigurationAndNoCredential(t *testing.T) {
-	t.Setenv(task.EnvDeploymentName, "orkstack-m11-3")
+	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
 	t.Setenv(task.EnvBuildID, "build-7")
 	t.Setenv("ORK_TEMPORAL_ADDRESS", "cluster.internal:7233")
 
@@ -538,8 +539,8 @@ func TestSystemInfo_CarriesTheProcessConfigurationAndNoCredential(t *testing.T) 
 	}
 	info := systemInfo(loadConfig(), artifactCfg)
 
-	if info.DeploymentName != "orkstack-m11-3" || info.BuildID != "build-7" {
-		t.Errorf("deployment identity = %q/%q, want orkstack-m11-3/build-7",
+	if info.DeploymentName != "orkstack-prod" || info.BuildID != "build-7" {
+		t.Errorf("deployment identity = %q/%q, want orkstack-prod/build-7",
 			info.DeploymentName, info.BuildID)
 	}
 	if !info.VersioningActive() {
@@ -571,7 +572,7 @@ func TestSystemInfo_CarriesTheProcessConfigurationAndNoCredential(t *testing.T) 
 // TestSystemInfo_LeavesVersioningOffWhenNoBuildIDIsConfigured pins the
 // documented default: one variable turns versioning on, and with neither set
 // `make run-ork` reports an unversioned deployment rather than a fabricated
-// version (AGENTS.md §10).
+// version (AGENTS.md §7.2).
 func TestSystemInfo_LeavesVersioningOffWhenNoBuildIDIsConfigured(t *testing.T) {
 	t.Setenv(task.EnvDeploymentName, "")
 	t.Setenv(task.EnvBuildID, "")

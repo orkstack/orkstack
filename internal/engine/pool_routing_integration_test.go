@@ -23,30 +23,24 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // poolRoutingNamespace isolates this suite's Temporal namespace, per
-// AGENTS.md §6: it starts Orkers on well-known pool channels
+// AGENTS.md §11.1: it starts Orkers on well-known pool channels
 // (ork-pool-alpha and friends), and a parallel agent's run must never be
 // picked up by them.
 func poolRoutingNamespace() string {
 	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
 		return ns
 	}
-	return fmt.Sprintf("ork-m10-2-pool-routing-%d", os.Getpid())
+	return fmt.Sprintf("ork-pool-routing-%d", os.Getpid())
 }
 
 // The engine under test is wired to the REAL namespace registry
 // (artifacts.S3NamespaceStore), and every request below names this suite's own
 // namespace, which is unique to the execution.
-//
-// It used to be a shim pinning every read to that one name, because until
-// M10.3 a request could not select a namespace and writing an allow-list onto
-// the shared "default" would have refused every other suite's pools for as
-// long as this one ran — a collision of exactly the kind AGENTS.md §6 is
-// about. M10.3 put the selector on the wire, so the isolation is now the
-// production path rather than a stand-in for it.
 
 // poolOrker is one Orker stub: it serves a single pool and records every task
 // it was handed, together with the channel Temporal delivered it on. The
@@ -66,13 +60,12 @@ type poolOrker struct {
 	channels map[string]string
 }
 
-func newPoolOrker(t *testing.T, name, pool string, plugins ...string) *poolOrker {
+func newPoolOrker(t *testing.T, name, pool string) *poolOrker {
 	t.Helper()
 	queue, err := task.QueueForPool(pool, "")
 	if err != nil {
 		t.Fatalf("QueueForPool(%q): %v", pool, err)
 	}
-	_ = plugins
 	return &poolOrker{
 		name: name, pool: pool, queue: queue,
 		identity: &orkstackv1.DescribeOrkerResult{
@@ -127,11 +120,11 @@ func (o *poolOrker) channelFor(taskID string) string {
 //  2. a task naming a pool the namespace forbids is refused at SubmitRun, with
 //     an error naming the namespace, the task and the pool;
 //  3. a submit whose pool has no live Orkers is refused at SubmitRun, and no
-//     run is created for it — the failure AGENTS.md §6 describes, converted
+//     run is created for it — the failure AGENTS.md §11.1 describes, converted
 //     from a run stranded in RUNNING into an error a client can act on.
 //
-// Before this milestone: (1) sent both tasks to one channel, (2) was accepted
-// and ran, (3) hung until the stream deadline.
+// Each is what a routing bug turns into: (1) both tasks on one channel, (2) a
+// forbidden pool accepted and run, (3) a submit hung until the stream deadline.
 func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
@@ -158,7 +151,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	if err != nil {
 		infraAbsent(t, "cannot open the namespace registry: %v", err)
 	}
-	nsName := fmt.Sprintf("m10-2-pools-%d-%d", os.Getpid(), time.Now().UnixNano())
+	nsName := fmt.Sprintf("pools-%d-%d", os.Getpid(), time.Now().UnixNano())
 	// Pools and orkflow names of this run's own. A pool name is a channel name
 	// (task.QueueForPool) and Temporal remembers a channel's pollers for
 	// minutes after their worker stopped, so a fixed "alpha" would be
@@ -170,8 +163,8 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	// up: `ListRuns(orkflow_name=...)` is answered from the whole Temporal
 	// namespace, so a fixed "cold-job" would let a run some EARLIER execution
 	// started answer the assertion that THIS execution's refused submit
-	// created nothing. That is not a hypothesis: a run left in
-	// ork-m10-2-review by an earlier execution failed this assertion while the
+	// created nothing. That is not a hypothesis: a run left in a shared
+	// namespace by an earlier execution failed this assertion while the
 	// submit under test had been correctly refused. Scoped, the question is
 	// about this run and nothing else.
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
@@ -183,7 +176,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	forbiddenName := "forbidden-job-" + token
 	registered := &orkstackv1.Namespace{
 		Name:         nsName,
-		Description:  "M10.2 pool routing acceptance",
+		Description:  "pool routing acceptance",
 		DefaultPool:  task.DefaultPool,
 		AllowedPools: []string{task.DefaultPool, poolAlpha, poolBravo, poolCold},
 	}
@@ -198,8 +191,8 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		}
 	})
 
-	alpha := newPoolOrker(t, "orker-A", poolAlpha, "shell")
-	bravo := newPoolOrker(t, "orker-B", poolBravo, "file", "http")
+	alpha := newPoolOrker(t, "orker-A", poolAlpha)
+	bravo := newPoolOrker(t, "orker-B", poolBravo)
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
@@ -588,7 +581,7 @@ func awaitRunListed(
 	t.Fatalf("run %s never became visible; a later empty listing would prove nothing", runID)
 }
 
-// poolTranscript records what happened, for proof/M10.2.
+// poolTranscript records what happened, as evidence.
 type poolTranscript struct {
 	mu    sync.Mutex
 	lines []string
@@ -611,15 +604,11 @@ func (p *poolTranscript) write(t *testing.T) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	header := []string{
-		"# M10.2 — two Orkers, two pools, one cluster",
-		"#",
-		"# Written by TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently",
-		"# (internal/engine/pool_routing_integration_test.go) against a real Temporal",
-		"# and a real MinIO. Every fact below came from the cluster or from the Orker",
-		"# that executed the task, never from the engine's own expectation.",
-		"#",
+		"# two Orkers, two pools, one cluster",
+		"# Every fact below came from the cluster or from the Orker that executed",
+		"# the task, never from the engine's own expectation.",
 		"# recorded " + time.Now().UTC().Format(time.RFC3339),
 	}
-	publishProofArtifact(t, "two-pool-transcript.txt",
-		strings.Join(append(header, p.lines...), "\n")+"\n")
+	proof.Write(t, "engine", "two-pool-transcript.txt",
+		[]byte(strings.Join(append(header, p.lines...), "\n")+"\n"))
 }

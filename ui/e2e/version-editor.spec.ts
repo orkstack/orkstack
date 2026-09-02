@@ -19,24 +19,23 @@ import {
 	waitForEngine
 } from './harness';
 
-// M11.5 — editing ANY version of an orkflow from the browser.
+// Editing ANY version of an orkflow from the browser.
 //
-// The bug this milestone exists to kill: the Edit tab always loaded the HEAD
-// version's document, whatever version the page was showing. So the one edit
-// an operator most wants — "change the version that is RUNNING" — silently
-// opened a different document, and applying it published somebody else's text
-// under the operator's name.
+// The property: the Edit tab opens the document of the version the page is
+// showing, never HEAD's under that version's name. The one edit an operator
+// most wants — "change the version that is RUNNING" — must open that version's
+// own text, and applying the edit must publish the operator's text as a new
+// head forked from it.
 //
 // The owner's scenario, verbatim, is the first test below: apply two versions,
 // promote the OLDER one, open Edit on the CURRENT version, and assert the
-// editor holds CURRENT's contents and not HEAD's. That single assertion is red
-// on the tree this milestone started from.
+// editor holds CURRENT's contents and not HEAD's.
 //
 // Real engine (Connect API over real Temporal + real MinIO) and the real
 // production UI build. Nothing is stubbed: every version listed, every refusal
 // and every no-op below is the engine's own answer.
 //
-// Isolation (AGENTS.md §6): this milestone's own Temporal namespace, its own
+// Isolation (AGENTS.md §11.1): this spec's own Temporal namespace, its own
 // OrkStack namespace, and a per-run stamp on the orkflow name — so a version
 // lineage is never polluted by yesterday's run and the markers this spec
 // asserts on are always the ones it created.
@@ -47,16 +46,18 @@ const ENGINE_WS = 'ws://127.0.0.1:18087';
 const UI_ORIGIN = 'http://127.0.0.1:14180';
 
 const TEMPORAL_NAMESPACE =
-	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m11-5-version-scoped-editor';
+	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-version-editor';
 
 // The OrkStack namespace is NOT `default`, deliberately: every link the version
 // list offers has to carry the namespace it belongs to, and a spec that worked
 // only in `default` could not tell a carried namespace from a forgotten one.
-const NS = 'm11-5-editing';
+const NS = 'version-editing';
 const STAMP = Date.now().toString(36);
 const ORKFLOW = `versioned-${STAMP}`;
 
-const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m11-5');
+const PROOF_DIR = process.env.ORK_PROOF_DIR
+	? path.join(process.env.ORK_PROOF_DIR, 'version-editor')
+	: path.join(uiDir, 'test-results', 'version-editor');
 const TRANSCRIPT = 'version-editor-session.txt';
 
 // These tests are sequential and stateful ON PURPOSE: each reads the lineage
@@ -132,7 +133,7 @@ test.beforeAll(async () => {
 	writeFileSync(
 		outPath(TRANSCRIPT),
 		[
-			'# M11.5 — the orkflow page edits ANY version: select it, see ITS',
+			'# The orkflow page edits ANY version: select it, see ITS',
 			'# contents, apply the edit as a new version.',
 			'#',
 			'# Written by ui/e2e/version-editor.spec.ts. Every line below was',
@@ -145,10 +146,9 @@ test.beforeAll(async () => {
 		].join('\n')
 	);
 
-	// Prerequisites are failures here, never skips: proof/M11.5/reproduce.sh
-	// probes every one of them BEFORE running this spec and exits 77 when one
-	// is absent, so an absence never reaches here and a failure here is never
-	// an absence (AGENTS.md §6).
+	// Prerequisites are failures here, never skips: the caller is expected to
+	// probe every one of them BEFORE running this spec, so an absence never
+	// reaches here and a failure here is never an absence (AGENTS.md §11.1).
 	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	for (const port of [18087, 14180]) {
@@ -194,7 +194,7 @@ test.beforeAll(async () => {
 	// CreateNamespace is idempotent for an identical spec, so the registry does
 	// not grow by one on every run.
 	await rpc('NamespaceService/CreateNamespace', {
-		namespace: { name: NS, description: 'M11.5 version-scoped editing' }
+		namespace: { name: NS, description: 'version-scoped editing' }
 	});
 	// The lineage's first version. Everything after this one is applied by the
 	// browser, through the editor under test.
@@ -209,20 +209,18 @@ test.afterAll(async () => {
 	await killAll();
 });
 
-// ACCEPTANCE 1, 2 and 5 — the owner's scenario, verbatim.
+// The owner's scenario, verbatim.
 //
 // Two versions applied, the OLDER one promoted, then Edit opened on the
-// CURRENT version. The editor must show CURRENT's contents; on the tree this
-// milestone started from it showed HEAD's, because the loader fetched
-// `catalog.headVersion` whatever the page was showing.
+// CURRENT version. The editor must show CURRENT's contents, not HEAD's.
 test("editing the current version opens ITS source, and applying forks forward from it", async ({
 	page
 }) => {
 	// 1. A second version, applied through the editor itself.
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${NS}&tab=edit`);
 	await openEditor(page);
-	// With no version selected the base is the head — the default this
-	// milestone keeps: head is the lineage's tip, and selecting is explicit.
+	// With no version selected the base is the head — the default: head is
+	// the lineage's tip, and selecting is explicit.
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
 	await page.getByTestId('editor-yaml').fill(orkflowYaml('0.2.0', 'second revision', 'echo two'));
 	await page.getByTestId('editor-apply').click();
@@ -251,7 +249,7 @@ test("editing the current version opens ITS source, and applying forks forward f
 	await expect(editCurrent).toHaveAttribute('href', /version=0\.1\.0/);
 	await expect(editCurrent).toHaveAttribute('href', new RegExp(`ns=${NS}`));
 
-	// 4. THE ASSERTION THIS MILESTONE IS DEFINED BY. Edit the CURRENT version
+	// 4. THE ASSERTION THIS SPEC IS DEFINED BY. Edit the CURRENT version
 	//    and the box holds CURRENT's source — not head's.
 	await editCurrent.click();
 	await openEditor(page);
@@ -269,7 +267,7 @@ test("editing the current version opens ITS source, and applying forks forward f
 	note('Edit on the current version (0.1.0) shows 0.1.0 source over head 0.2.0');
 
 	// 5. Edit it and apply. base=0.1.0 (provenance), expected_head=0.2.0 (the
-	//    CAS token) — a request the pre-M11.2 rule would have refused.
+	//    CAS token).
 	await page.getByTestId('editor-yaml').fill(orkflowYaml('0.3.0', 'forked from current', 'echo three'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
@@ -300,7 +298,7 @@ test("editing the current version opens ITS source, and applying forks forward f
 	expect(forked.orkflow.sourceYaml).toContain('forked from current');
 });
 
-// ACCEPTANCE 2, second half — an unchanged document is a VISIBLE no-op, not a
+// An unchanged document is a VISIBLE no-op, not a
 // new version. Twice: the local compare that never leaves the browser, and the
 // engine's own created=false for a byte-identical re-apply.
 test('applying an unchanged document is a visible no-op, and stores nothing', async ({ page }) => {
@@ -336,7 +334,7 @@ test('applying an unchanged document is a visible no-op, and stores nothing', as
 	note('an unchanged apply and a byte-identical re-apply both stored nothing');
 });
 
-// ACCEPTANCE 3 — a stale head is REPORTED, never clobbered. The refusal names
+// A stale head is REPORTED, never clobbered. The refusal names
 // the head the editor saw AND the head there is now, and the way forward keeps
 // the user's work.
 test('a head that moved mid-edit is refused naming both versions, and the edit survives', async ({
@@ -398,7 +396,7 @@ test('a head that moved mid-edit is refused naming both versions, and the edit s
 	await shot(page, 'screenshot-versions-after-retarget.png');
 });
 
-// ACCEPTANCE 4 — every version action has its states. A SELECTED version the
+// Every version action has its states. A SELECTED version the
 // engine will not answer is reported as itself, with a retry, and the editor
 // refuses to show anything: showing head's document under that URL is the bug.
 test('a selected version the engine will not answer is reported, not replaced by head', async ({
@@ -421,7 +419,7 @@ test('a selected version the engine will not answer is reported, not replaced by
 	note('an unknown selected version is reported by name; a stored one loads');
 });
 
-// ACCEPTANCE 4 — the version list's own states survive: a failed read reports
+// The version list's own states survive: a failed read reports
 // and retries rather than spinning, and the Edit action is not offered over a
 // list nobody could read.
 test('the version list reports a failed read and recovers on retry', async ({ page }) => {

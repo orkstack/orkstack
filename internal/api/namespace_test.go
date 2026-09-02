@@ -152,8 +152,8 @@ func mustApply(t *testing.T, svc *api.Service, document, namespace string) *orks
 	return resp.Msg.GetOrkflow()
 }
 
-// TestTwoNamespaces_SameOrkflowName_ListsAndRunsStayDisjoint is the acceptance
-// this slice exists for.
+// TestTwoNamespaces_SameOrkflowName_ListsAndRunsStayDisjoint is the namespace
+// contract's central acceptance.
 //
 // An orkflow name is unique WITHIN a namespace, not across the deployment. So
 // two tenants may each own a "deploy", and every read has to answer for the
@@ -386,13 +386,9 @@ tasks:
 	}
 }
 
-// TestApplyOrkflow_AppliesIntoANonDefaultNamespaceAndReadsItBack is the
-// replacement for M10.1's interim guard.
-//
-// That guard refused every namespace but the default because the read paths
-// could not honour one, and its test said its replacement would be "a test
-// that applies and then READS BACK a non-default namespace". This is it: the
-// same document the guard refused, now applied, listed, read and submitted.
+// TestApplyOrkflow_AppliesIntoANonDefaultNamespaceAndReadsItBack applies into
+// a non-default namespace and then lists, reads and submits the same document
+// there, which is the contract every read path must honour.
 func TestApplyOrkflow_AppliesIntoANonDefaultNamespaceAndReadsItBack(t *testing.T) {
 	const document = `
 namespace: payments
@@ -497,8 +493,8 @@ tasks:
 	}
 }
 
-// TestSubmitRun_IntoAMissingNamespaceNamesItAndListsTheOnesThatExist is
-// acceptance 4.
+// TestSubmitRun_IntoAMissingNamespaceNamesItAndListsTheOnesThatExist pins the
+// shape of the refusal.
 //
 // "namespace not found" is true and useless. A caller who mistyped needs the
 // name they typed and the names they could have typed, in the answer they

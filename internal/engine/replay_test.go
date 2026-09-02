@@ -18,35 +18,15 @@ import (
 )
 
 // goldenHistory is a real, committed history from a successful multi-task run,
-// recorded against a real cluster by a VERSIONED worker
-// (golden_history_integration_test.go writes it, opt-in, and nothing else
-// touches it).
+// recorded against a real cluster by a VERSIONED worker. Only the opt-in
+// TestIntegration_RecordGoldenRunHistory writes it; it is never hand-edited.
 //
-// Its provenance, stated exactly, because two docs used to overstate it: it
-// was recorded by the commit that added it, so on the day it landed it was
-// same-code, not old-code. It is a frozen command stream that AGES into the
-// cross-version guard — every commit after that one is measured against a
-// build that is genuinely older than itself. What proves the fixture can
-// detect the interesting change on day one is
-// TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream below, which replays
-// it against a body carrying one extra emit — the exact shape of the change
-// M8 made to RunWorkflow.
-//
-// The baseline was reset four times, and the file committed here is M11.10's.
-// M10.1 removed the user-facing task routing field and made the fourth workflow
-// input the deployment's selected default execution channel, a string; M10.2
-// made routing per task, so that same slot became the run's whole routing
-// record — an engine.RunPlan carrying the namespace and a pool → channel
-// table. A string does not decode as that struct, so no history recorded
-// before M10.2 replays, and the pre-M10.1 histories could not decode the
-// removed field either. M11.1 replaced that activity payload with
-// orkstack.v1.ExecuteTaskInput encoded as protojson. M11.10 inserted a local-
-// activity marker before every PublishEvent and replaced its inline Run input
-// with a snapshot URI, so the old command stream cannot replay. Nothing was
-// deployed on any occasion; the fixture was re-recorded by the opt-in real-
-// cluster test, and the command and payload guards remain active against it.
-// See testdata/history/README.md, proof/M10.2/, proof/M11.10/, and
-// internal/task/contract.go.
+// On the day it is recorded the fixture is same-code, not old-code. It is a
+// frozen command stream that AGES into the cross-version guard — every commit
+// after the recording is measured against a build genuinely older than
+// itself. TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream below is
+// what proves the guard can see an inserted activity from day one.
+// See testdata/history/README.md and internal/task/contract.go.
 const goldenHistory = "testdata/history/run-succeeded-v1.json"
 
 // TestRunWorkflow_ReplaysCommittedV1History is half of the cross-version
@@ -106,11 +86,9 @@ func TestRunWorkflow_ReplaysCommittedV1History(t *testing.T) {
 // yet demonstrates it can catch old-history-meets-new-code. This one supplies
 // the missing half by playing the other side: it replays the committed history
 // against a workflow body that publishes ONE extra event before doing exactly
-// what RunWorkflow does. History without the emit, code with it — which is
-// precisely the relationship between a pre-M8 history and this tree, whose
-// RunWorkflow inserted EVENT_TYPE_RUN_CREATED as command 1 of every run
-// (internal/engine/workflow.go; before M8 that event was published in-process
-// by internal/api/service.go and never appeared in a history).
+// what RunWorkflow does. History without the emit, code with it — the extra-
+// emit body models a build that inserts one activity before RunWorkflow's
+// first command (internal/engine/workflow.go).
 //
 // So the replay MUST fail. If it ever passes, the replayer is not comparing
 // what this repo believes it compares, and both `make test` replay guards are

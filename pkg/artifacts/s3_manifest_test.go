@@ -169,7 +169,7 @@ func TestSplitS3ObjectKey_RejectsKeysThisStoreNeverWrote(t *testing.T) {
 		label string
 		key   string
 	}{
-		{label: "pre-M7.4 digest layout", key: "objects/" + digest + "/" + digest},
+		{label: "content-hash layout this store never writes", key: "objects/" + digest + "/" + digest},
 		{label: "manifest namespace", key: "manifests/" + digest},
 		{label: "too few segments", key: "orkflows/hello-ork/fetch/body"},
 		{label: "too many segments", key: "orkflows/hello-ork/fetch/ork-1-1/dir/body"},
@@ -274,21 +274,21 @@ func TestS3NameManifest_RejectsCorruption(t *testing.T) {
 	}
 }
 
-func TestProvenanceMetadata_CarriesCoordinatesAndOutranksPluginMetadata(t *testing.T) {
+func TestProvenanceMetadata_CarriesCoordinatesAndOutranksCallerMetadata(t *testing.T) {
 	meta := runProvenance.Metadata(map[string]string{
-		"origin":    "plugin",
+		"origin":    "caller",
 		MetaOrkflow: "spoofed-flow",
 		MetaTaskID:  "spoofed-task",
 		MetaRunID:   "spoofed-run",
 	})
-	if meta["origin"] != "plugin" {
-		t.Errorf("plugin metadata lost: %#v", meta)
+	if meta["origin"] != "caller" {
+		t.Errorf("caller metadata lost: %#v", meta)
 	}
 	if got := ProvenanceFromMetadata(meta); got != runProvenance {
 		t.Errorf("ProvenanceFromMetadata = %+v, want %+v", got, runProvenance)
 	}
 	if key := s3ObjectKey(ProvenanceFromMetadata(meta), "body", strings.Repeat("0", 64)); key != s3ObjectKey(runProvenance, "body", strings.Repeat("0", 64)) {
-		t.Errorf("plugin metadata moved the object to %q", key)
+		t.Errorf("caller metadata moved the object to %q", key)
 	}
 
 	// S3 servers normalize user-metadata header names, so reading back is

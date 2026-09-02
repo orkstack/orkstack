@@ -53,11 +53,11 @@ func validNamespaceName(name string) error {
 // namespace rather than naming one to write: empty is the default namespace,
 // which is the contract of every `namespace` field on the wire.
 //
-// It is asked on every path, not only the writing ones. A read used to hand
-// the raw name to the registry and answer with whatever came back, so
-// `Payments` was NotFound against an in-memory registry — "does not exist;
-// these do: default", which reads as an empty namespace and sends the caller
-// to create it — and Unavailable against a store that validates its own keys,
+// It is asked on every path, not only the writing ones. A read that handed
+// the raw name to the registry and answered with whatever came back would make
+// `Payments` NotFound against an in-memory registry — "does not exist; these
+// do: default", which reads as an empty namespace and sends the caller to
+// create it — and Unavailable against a store that validates its own keys,
 // which blames the deployment for a typo. Neither is true: the name cannot be
 // a namespace anywhere, and that is a bad request.
 func validNamespaceSelector(name string) error {
@@ -255,14 +255,14 @@ func (s *Service) ListNamespaces(
 // token names the stored version it replaces, and no token says "the version I
 // read had no stored bytes at all", which is written IfAbsent.
 //
-// There is deliberately no unconditional escape hatch. It used to be the
-// meaning of an empty etag, and `default` is why that could not stand: until
-// somebody writes metadata/namespaces/default.json a read hands back a
-// SYNTHESIZED document, whose etag is empty because there is nothing stored to
-// name — not because the caller asked for anything. Read as an escape hatch,
-// the first two edits of `default` were both unconditional writes and one of
-// them vanished with no error, which is exactly what Namespace.etag promises
-// cannot happen. A caller who genuinely means "whatever is there now" reads
+// There is deliberately no unconditional escape hatch, and an empty etag is
+// not one; `default` is why that cannot stand: until somebody writes
+// metadata/namespaces/default.json a read hands back a SYNTHESIZED document,
+// whose etag is empty because there is nothing stored to name — not because
+// the caller asked for anything. Read as an escape hatch, the first two edits
+// of `default` would both be unconditional writes and one of them would vanish
+// with no error, which is exactly what Namespace.etag promises cannot happen.
+// A caller who genuinely means "whatever is there now" reads
 // first and sends that token back; that round trip IS the compare-and-swap.
 func (s *Service) UpdateNamespace(
 	ctx context.Context,

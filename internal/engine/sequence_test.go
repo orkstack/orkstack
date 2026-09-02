@@ -17,13 +17,13 @@ import (
 
 // The event sequence is the producer's, not the bus's.
 //
-// Until M8.3 the bus stamped every event with the length of its own log, so
-// the copy that reached Temporal history — the copy every replica can read —
-// carried sequence 0. A stream rebuilt from history was therefore unordered by
-// construction, and no second replica could satisfy the stream contract.
+// The copy of an event that reaches Temporal history is the copy every
+// replica reads, so the number must be assigned by the producer before the
+// activity is scheduled; a number stamped by one replica's bus would never
+// reach the others.
 //
-// These tests pin the two halves of the fix: the workflow numbers the events
-// it emits, and the bus honours a number it is given.
+// These tests pin the two halves of that invariant: the workflow numbers the
+// events it emits, and the bus honours a number it is given.
 
 // TestRunWorkflow_NumbersItsOwnEvents is the falsifying test for the producer
 // half. Every event the workflow emits must reach the projection activity

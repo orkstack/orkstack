@@ -17,10 +17,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces is M10.6's
+// TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces is the
 // central claim, measured on two real `ork` processes.
 //
 // Every run below is submitted to replica A: replica B accepts no submission
@@ -30,7 +31,7 @@ import (
 // it (EventActivities.PublishEvent). That is the point rather than a gap:
 // neither replica's memory is consulted, so what is in it cannot matter, and
 // both answer with the SAME numbers because both derive them from the two
-// shared records (AGENTS.md §1.7). The stronger claim — that a run present
+// shared records (AGENTS.md §7). The stronger claim — that a run present
 // ONLY in a replica's memory is not counted — is proven where it can be
 // controlled, in TestGetStats_IgnoresTheRunsThisProcessRemembers.
 //
@@ -43,7 +44,7 @@ import (
 // orkflow of the same name, and each namespace's numbers are asserted exactly
 // and asserted to exclude the other's.
 //
-// Isolation (AGENTS.md §6): a unique deployment partition per test run. Note
+// Isolation (AGENTS.md §11.1): a unique deployment partition per test run. Note
 // the deliberate inversion of the usual rule — the two replicas SHARE it,
 // because sharing is the condition under test.
 func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T) {
@@ -78,8 +79,8 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 
 	// ---- two namespaces, one orkflow name in each -------------------------
 	stamp := time.Now().UnixNano()
-	alpha := fmt.Sprintf("m106-alpha-%d-%d", os.Getpid(), stamp)
-	beta := fmt.Sprintf("m106-beta-%d-%d", os.Getpid(), stamp)
+	alpha := fmt.Sprintf("alpha-%d-%d", os.Getpid(), stamp)
+	beta := fmt.Sprintf("beta-%d-%d", os.Getpid(), stamp)
 	namespacesA := orkstackv1connect.NewNamespaceServiceClient(h2cClient(t), "http://"+replicaA.addr)
 	for _, name := range []string{alpha, beta} {
 		if _, err := namespacesA.CreateNamespace(ctx,
@@ -175,7 +176,7 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 			"a namespace with a run in it", status)
 	}
 
-	// ---- acceptance 5: exact numbers, and A excludes B --------------------
+	// ---- exact numbers, and A excludes B ----------------------------------
 	assertStatsCounts(t, "alpha", alphaA, map[string]int64{
 		"running": 1, "succeeded": 3, "failed": 1, "canceled": 0,
 	})
@@ -213,7 +214,7 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 		}
 	}
 
-	// ---- acceptance 4: the two replicas agree, number for number ----------
+	// ---- the two replicas agree, number for number ------------------------
 	assertSameStats(t, "alpha", alphaA, alphaB)
 	assertSameStats(t, "beta", betaA, betaB)
 
@@ -229,12 +230,12 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 }
 
 // statsPartition is this test run's deployment partition, unique to it and
-// SHARED by both replicas — AGENTS.md §6's deliberate exception, because two
+// SHARED by both replicas — AGENTS.md §11.1's deliberate exception, because two
 // replicas answering for one set of runs is the condition under test and
 // splitting them would make the test fail for a reason unrelated to the
 // property.
 func statsPartition() string {
-	return fmt.Sprintf("ork-m10-6-stats-%d-%d",
+	return fmt.Sprintf("ork-stats-%d-%d",
 		os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 }
 
@@ -340,7 +341,7 @@ func assertStatsRunning(
 	}
 }
 
-// assertSameStats is acceptance 4: two replicas, one set of numbers.
+// assertSameStats: two replicas, one set of numbers.
 //
 // computed_at and a pool's last_seen are excluded, and only those two: both
 // record WHEN a reading was taken rather than what it says, and two readings
@@ -383,9 +384,8 @@ func statsDigest(stats *orkstackv1.GetStatsResponse) string {
 	// named the wrong namespace would be identical in every number and wrong.
 	fmt.Fprintf(&out, "| ns=%s ", stats.GetNamespace())
 	for _, pool := range stats.GetPools() {
-		fmt.Fprintf(&out, "| pool %s orkers=%d default=%t plugins=%s ",
-			pool.GetName(), pool.GetLiveOrkerCount(), pool.GetIsDefault(),
-			strings.Join(pool.GetPlugins(), "+"))
+		fmt.Fprintf(&out, "| pool %s orkers=%d default=%t ",
+			pool.GetName(), pool.GetLiveOrkerCount(), pool.GetIsDefault())
 	}
 	return strings.TrimSpace(out.String())
 }
@@ -406,7 +406,7 @@ func runningIDs(stats *orkstackv1.GetStatsResponse) []string {
 func statsOrkflowYAML(name, command string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
-description: M10.6 stats probe.
+description: stats probe.
 tasks:
   - id: work
     uses: shell
@@ -424,7 +424,7 @@ tasks:
 func statsSlowOrkflowYAML(name string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
-description: M10.6 stats probe, still running.
+description: stats probe, still running.
 tasks:
   - id: crawl
     uses: shell
@@ -437,7 +437,8 @@ tasks:
 `, name)
 }
 
-// writeStatsTranscript records the proof artifact when reproduce.sh asks.
+// writeStatsTranscript records the transcript under ORK_PROOF_DIR when it is
+// set.
 func writeStatsTranscript(
 	t *testing.T,
 	partition, alpha, beta, slow string,
@@ -445,10 +446,6 @@ func writeStatsTranscript(
 	alphaA, alphaB, betaA, betaB *orkstackv1.GetStatsResponse,
 ) {
 	t.Helper()
-	path := os.Getenv("ORK_PROOF_STATS_FILE")
-	if path == "" {
-		return
-	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "# two engine replicas, one cluster partition, two namespaces (%s)\n",
 		time.Now().UTC().Format(time.RFC3339))
@@ -480,7 +477,5 @@ func writeStatsTranscript(
 	}
 	fmt.Fprintf(&out, "alpha's numbers exclude beta's: %t\n",
 		statsDigest(alphaA) != statsDigest(betaA))
-	if err := os.WriteFile(path, []byte(out.String()), 0o644); err != nil {
-		t.Errorf("write stats transcript: %v", err)
-	}
+	proof.Write(t, "orkctl", "stats-two-replicas.txt", []byte(out.String()))
 }

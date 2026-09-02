@@ -161,6 +161,9 @@ func TestLocalRunArchive_DeletesObjectsOnlyAfterLastReference(t *testing.T) {
 	}
 }
 
+// A run whose object list is missing is a corrupt archive (PutRun writes the
+// list before the index). Cleanup must leave its reference markers alone
+// rather than fall back to scanning the whole reference index.
 func TestLocalRunArchive_MissingObjectListDoesNotScanReferenceIndex(t *testing.T) {
 	root := t.TempDir()
 	archive, err := NewLocalRunArchive(root)
@@ -168,8 +171,8 @@ func TestLocalRunArchive_MissingObjectListDoesNotScanReferenceIndex(t *testing.T
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = archive.Close() })
-	objectID := objectKey("legacy", strings.Repeat("a", 64))
-	record := RunRecord{RunID: "ork-legacy", Namespace: "default", Orkflow: "flow", Status: "succeeded", Time: time.Now().UTC(), ObjectIDs: []string{objectID}, JSONL: []byte("archive\n")}
+	objectID := objectKey("report", strings.Repeat("a", 64))
+	record := RunRecord{RunID: "ork-nolist", Namespace: "default", Orkflow: "flow", Status: "succeeded", Time: time.Now().UTC(), ObjectIDs: []string{objectID}, JSONL: []byte("archive\n")}
 	if err := archive.PutRun(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}

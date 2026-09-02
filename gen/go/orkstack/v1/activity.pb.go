@@ -518,8 +518,8 @@ type ExecuteTaskInput struct {
 	// already writes into /orkstack/input/task.json, and there is nothing to
 	// collide with — proto scopes field names per message, and the run
 	// submission key lives on a different message entirely
-	// (SubmitRunRequest.idempotency_key = 4, service.proto:210). The Go
-	// identifiers stay distinct (§11.5).
+	// (SubmitRunRequest.idempotency_key = 4, service.proto). The Go
+	// identifiers stay distinct.
 	IdempotencyKey string `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
 	// commit_uri is the deterministic object URI of this activity's commit
 	// record. The engine composes it from the commit-store root carried in
@@ -1304,9 +1304,8 @@ func (x *ActivityFailureDetail) GetOrkerId() string {
 	return ""
 }
 
-// DescribeOrkerResult replaces ListPlugins as the pool-liveness probe. An Orker
-// no longer has a plugin list, but a pool still has to prove it is alive
-// (proof/M11.6), so the probe stays and only its payload changes.
+// DescribeOrkerResult is the pool-liveness probe's payload: a pool proves it
+// is alive by answering DescribeOrker (§6.5).
 type DescribeOrkerResult struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	OrkerId         string                 `protobuf:"bytes,1,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`

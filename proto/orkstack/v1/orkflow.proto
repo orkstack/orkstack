@@ -31,7 +31,6 @@ message Task {
   google.protobuf.Struct with = 3;
   // needs lists task ids that must complete before this task runs (DAG edges).
   repeated string needs = 4;
-  // if_ is an optional CEL-like expression gating execution (v0: simple truthy).
   // condition is an optional CEL-like expression gating execution (v0: simple truthy).
   string condition = 5;
   int32 timeout_seconds = 6;             // default 300
@@ -46,8 +45,7 @@ message Task {
 
   // pool names the set of Orkers this task runs on. Empty means the
   // deployment's default pool, which answers to the name "main";
-  // Namespace.default_pool joins that resolution in M10.2, which is the slice
-  // that reads it.
+  // Namespace.default_pool joins that resolution.
   //
   // Writing "main" and writing nothing are ONE route, always: "main" is a name
   // for the deployment's default pool and not for one fixed set of Orkers, so

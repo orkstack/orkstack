@@ -74,7 +74,7 @@ type config struct {
 	floorThroughputBytesPerSecond int64
 	// deployment is this release's Worker Deployment identity. It carries no
 	// build id unless an operator configures one, which leaves versioning off
-	// and the workers exactly as they were before M8.4.
+	// and the workers unversioned.
 	deployment task.Deployment
 	cleanup    archivecleanup.CleanupConfig
 
@@ -309,10 +309,10 @@ func main() {
 }
 
 // queues names every Temporal queue this engine touches. It exists because
-// which queue carries what is an operational claim (docs/DEPLOY.md §2) that
-// used to live only in a comment and a log line, where it was wrong: the run
-// worker polls task.DefaultQueue, ALWAYS, and ORK_ORKER_QUEUE moves task
-// EXECUTION only. Naming the split lets a test hold the runbook to it.
+// which queue carries what is an operational claim (docs/DEPLOY.md §2), and a
+// claim that lives only in a comment and a log line can be wrong unnoticed:
+// the run worker polls task.DefaultQueue, ALWAYS, and ORK_ORKER_QUEUE moves
+// task EXECUTION only. Naming the split lets a test hold the runbook to it.
 type queues struct {
 	// run carries RunWorkflow and the idempotency claims: the engine's own
 	// workflows, hosted by every replica of a release. Fixed, because a run
@@ -383,7 +383,7 @@ func runWorkerOptions(cfg config) worker.Options {
 // PublishEvent carries no run semantics: it writes the read model and the
 // archive from arguments the workflow already computed. It must stay
 // executable by ANY live replica whatever version that replica is, which is
-// what keeps a run readable from every replica (M8.3). With no versioned
+// what keeps a run readable from every replica. With no versioned
 // poller on ork-engine-events, Temporal's pinned-activity exception clause
 // routes these activities to that queue's own current version — the
 // unversioned pollers. The rollout integration test asserts exactly this: a
@@ -412,8 +412,8 @@ func installServerShutdownContext(server *http.Server) context.CancelFunc {
 // The reload is the restart path: the store keeps no cache, so listing it here
 // both proves the bucket is reachable before the API accepts an apply and logs
 // exactly which orkflows this engine came up with. An unreachable bucket is
-// fatal — an engine that cannot read orkflows cannot run them, and answering
-// from memory is what this milestone removed.
+// fatal — an engine that cannot read orkflows cannot run them, and there is no
+// in-memory copy to answer from.
 func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3OrkflowStore, error) {
 	cfg := artifacts.ConfigFromEnv()
 	store, err := artifacts.NewS3OrkflowStore(ctx, cfg)
@@ -492,7 +492,7 @@ func run(logger *slog.Logger, cfg config) error {
 	// Fail on a pool and a raw execution channel that disagree, for the same
 	// reason: an engine dispatching to one channel while its Orkers poll
 	// another strands every run in RUNNING with nothing to say why
-	// (AGENTS.md §6).
+	// (AGENTS.md §11.1).
 	if cfg.poolErr != nil {
 		return cfg.poolErr
 	}
@@ -657,7 +657,7 @@ func run(logger *slog.Logger, cfg config) error {
 	// The versioning line is separate and always printed, because "which
 	// version am I" is the first question of any rollout. The Orker must
 	// report the same pair, or a pinned run's tasks fall through to the task
-	// queue's current version and land on the wrong plugin code.
+	// queue's current version and land on a different build's activity code.
 	logger.Info("worker deployment versioning",
 		"enabled", cfg.deployment.Versioned(),
 		"deployment", cfg.deployment.Name,

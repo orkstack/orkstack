@@ -1,8 +1,9 @@
 # OrkStack local infrastructure: Temporal dev-server, MinIO (S3) and a
-# registry. Application services (ork, orker, ui) are added in milestone M6;
-# during development run them with `make run-ork`, `make run-orker`, `bun dev`.
+# registry. The application processes (ork, orker, ui) are not containers here;
+# `make up` (scripts/stack.sh) starts them on the host against this stack, or
+# run them by hand with `make run-ork`, `make run-orker`, `bun dev`.
 #
-# Usage: docker compose -f deploy/docker-compose.yml up -d
+# Usage: docker compose -f deploy/docker-compose.yml up -d  (or `make infra-up`)
 #
 # EVERY TAG HERE IS PINNED, and that is a correctness requirement rather than
 # a style preference (§4.6). The durable commit protocol depends on behaviour
@@ -18,7 +19,7 @@
 #                     workflow versioning and replay behaviour.
 #
 # A floating `:latest` makes the infrastructure a variable in every durability
-# proof, and the proofs are the product (AGENTS.md §11).
+# test, and reliability is the product (AGENTS.md §11).
 name: orkstack
 
 services:
@@ -79,8 +80,8 @@ services:
   # does not transfer to a second Orker — so nothing could pin it.
   #
   # `make -C images push` publishes the three first-party activities here and
-  # prints their index digests, which is what makes `orkstack dev` produce
-  # REAL digests with no network at all.
+  # prints their index digests, which is what makes `make up` produce REAL
+  # digests with no network at all.
   #
   # Port 5001, not 5000: macOS binds 5000 to AirPlay Receiver by default.
   registry:

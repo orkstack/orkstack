@@ -21,14 +21,14 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// runIDNamespace is the Temporal namespace these tests use. AGENTS.md §6: a
+// runIDNamespace is the Temporal namespace these tests use. AGENTS.md §11.1: a
 // namespace is a hard partition, and these tests deliberately collide workflow
 // ids, so they must not share one with another agent's runs.
 func runIDNamespace() string {
 	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
 		return ns
 	}
-	return "ork-m8-1-run-identity"
+	return "ork-run-identity"
 }
 
 // runIDQueue names a queue no worker polls. Nothing here needs a run to
@@ -96,7 +96,7 @@ func terminateAll(t *testing.T, c client.Client, ids ...string) {
 }
 
 // TestIntegration_WithoutTheStartPoliciesACollisionAttachesToAnotherRun is the
-// hazard M8.1 removes, recorded against the real server rather than argued
+// hazard the start policies exist for, recorded against the real server rather than argued
 // from the SDK source: with Temporal's own defaults, starting a workflow id
 // that already exists returns no error at all, and the handle names the *other*
 // execution. A replica whose id collided would report someone else's run as
@@ -130,8 +130,8 @@ func TestIntegration_WithoutTheStartPoliciesACollisionAttachesToAnotherRun(t *te
 		"TemporalStarter.StartRun's three policies prevent", first.GetRunID())
 }
 
-// TestIntegration_StartRunRefusesARunIDTheClusterAlreadyHolds is acceptance 1
-// against the real server: with the policies set, a reused id is an error, so
+// TestIntegration_StartRunRefusesARunIDTheClusterAlreadyHolds is the start
+// policies against the real server: with them set, a reused id is an error, so
 // two replicas can never both believe they own a run.
 func TestIntegration_StartRunRefusesARunIDTheClusterAlreadyHolds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

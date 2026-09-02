@@ -177,12 +177,12 @@ func TestLineWriter_PrefixesEveryLineItEmits(t *testing.T) {
 	}
 }
 
-// The property the marker exists for, stated as the case that used to break
-// it: an application printing "[stderr] same text" on STDOUT while another
-// writes "same text" on STDERR. Both used to render as "[stderr] same text",
-// so no reader — orkctl, the UI pane, or a test — could tell their origins
-// apart. They must not render alike, and each must decode back to the stream
-// and the text it came from.
+// The property the marker exists for, stated as the case that would break it:
+// an application printing "[stderr] same text" on STDOUT while another writes
+// "same text" on STDERR. Without the escape both render as "[stderr] same
+// text", so no reader — orkctl, the UI pane, or a test — could tell their
+// origins apart. They must not render alike, and each must decode back to the
+// stream and the text it came from.
 func TestLineWriter_StdoutThatLooksLikeStderrStaysDistinguishable(t *testing.T) {
 	rec := &recorder{}
 	out := NewLineWriter(rec.logger(), "")
@@ -295,7 +295,7 @@ func TestLineWriter_EmitsLinesAsDataNotFormatStrings(t *testing.T) {
 	}
 }
 
-// A run of bytes with no terminator is the plugin-side way to exhaust memory.
+// A run of bytes with no terminator is the writer-side way to exhaust memory.
 // It is emitted in pieces as it accumulates, so the writer holds less than one
 // piece at any moment and every byte still arrives exactly once.
 func TestLineWriter_SplitsAnUnterminatedRunAtTheStreamedLineLimit(t *testing.T) {
@@ -341,8 +341,8 @@ func TestLineWriter_SplitsAnUnterminatedRunAtTheStreamedLineLimit(t *testing.T) 
 	}
 }
 
-// A plugin with no logger still runs: nothing about streaming may fail a task,
-// and a nil writer is what a plugin that never built one holds.
+// A runtime with no logger still runs: nothing about streaming may fail a task,
+// and a nil writer is what a caller that never built one holds.
 func TestLineWriter_WithoutALoggerIsAWorkingNoOp(t *testing.T) {
 	for name, w := range map[string]*LineWriter{
 		"nil logger": NewLineWriter(nil, ""),
@@ -379,7 +379,7 @@ func TestLineWriter_CloseIsIdempotent(t *testing.T) {
 }
 
 // A write that arrives after Close cannot be lost silently and cannot panic:
-// exec.Cmd's copy goroutine may still be draining a pipe when the plugin has
+// exec.Cmd's copy goroutine may still be draining a pipe when the runtime has
 // already flushed.
 func TestLineWriter_KeepsStreamingAfterClose(t *testing.T) {
 	rec := &recorder{}

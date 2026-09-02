@@ -1,8 +1,8 @@
 # OrkStack model routing policy
 
 This policy optimizes frontier-model use without lowering the engineering bar.
-It applies to every custom workflow and agent run in this repository. Model
-choice follows risk and evidence, not a fixed role label.
+It applies to every agent run in this repository. Model choice follows risk
+and evidence, not a fixed role label.
 
 ## Operating rules
 
@@ -102,13 +102,3 @@ wins only when the catalog supports it.
   defects by reviewer tier, false positives, escalations, tokens, cost,
   latency, escaped defects, test failures after acceptance, Fable/Opus use and
   reviewer disagreement. Raise or lower routing for task classes from evidence.
-
-## Routes used by the custom workflows
-
-`.atomic/workflows/support/model-policy.ts` is the shared source for current
-routes. It uses Opus/high for the established high-risk architecture stages,
-Sonnet/high for implementation, Luna/medium for first review, Terra/high for
-non-trivial deep review, GPT-5.4 Mini/high with Haiku/high fallback for
-inexpensive provider-diverse adversarial probes, and Sonnet/medium for
-reporting. Fable and Sol are not routine workflow stages; pass them only when
-the risk evidence meets the escalation rules above.

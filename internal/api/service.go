@@ -115,7 +115,7 @@ type Config struct {
 	Activities ActivityLister
 
 	// Orkers answers ActivityService.DescribeOrker — the pool-liveness probe
-	// that replaced ListPlugins (§6.5).
+	// (§6.5).
 	Orkers OrkerDescriber
 
 	// Catalog is the deployment's activity table (§4.2): the short names
@@ -204,7 +204,7 @@ type Config struct {
 }
 
 // Service implements OrkflowService, RunService, NamespaceService,
-// PluginService and SystemService.
+// ActivityService and SystemService.
 type Service struct {
 	orkflows engine.OrkflowStore
 	// namespaces is the durable registry. Nil means no registry is wired:
@@ -521,42 +521,45 @@ func (s *Service) ApplyOrkflow(
 // lands as the new head with the `current` pointer untouched — while the head
 // the editor saw is the only thing a competing apply can invalidate. Under one
 // token the server could not tell an edit derived from an old version on
-// purpose from one derived from a head that has since moved, so the first was
-// refused to catch the second.
+// purpose from one derived from a head that has since moved, and would have
+// to refuse the first to catch the second.
 //
 //	base    expected  condition
 //	----    --------  ---------
 //	""      ""        none — a plain `orkctl apply file.yaml`
-//	set     ""        head must be base (the pre-M11.2 rule)
 //	any     set       head must be expected; base, when set, must name a
 //	                  stored version (NotFound if not)
+//	set     ""        InvalidArgument naming both fields
 //
-// Row two is back-compatibility and nothing else: a caller written before this
-// slice sends only a base, and its base IS its concurrency token because
-// nothing else says which head it read. Keeping that row is what lets the two
-// contracts coexist with no version negotiation.
+// The last row is refused rather than guessed at. A base is provenance, not a
+// head claim: reading it as one refuses every deliberate fork from an old
+// version, and reading it as nothing stores an edit whose author plainly
+// fetched a head that nobody then checked. Every editor (`orkctl orkflow
+// edit`, the UI's editor) sends both tokens, so a base arriving alone is a
+// client bug and is answered as one.
 //
 // What this function does NOT do is decide the race. It reads the store to
 // answer the questions a read can answer — is there anything stored at all,
 // does the base exist, what should the refusal say — and hands the condition
 // to the store, which applies it in the same operation that writes. A check
 // here followed by a write there is a window, and the loser of that window
-// used to succeed: it checked head=2.0.0, a competing 3.0.0 landed, and its
-// own version was stored anyway with nothing refused.
+// would succeed: it checks head=2.0.0, a competing 3.0.0 lands, and its own
+// version is stored anyway with nothing refused.
 func (s *Service) checkEditTokens(
 	ctx context.Context,
 	namespace, name, base, expectedHead string,
 ) (artifacts.HeadExpectation, error) {
-	if base == "" && expectedHead == "" {
-		return artifacts.NoHeadExpectation(), nil
+	if expectedHead == "" {
+		if base == "" {
+			return artifacts.NoHeadExpectation(), nil
+		}
+		return artifacts.NoHeadExpectation(), connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"base_version %q was sent without expected_head_version: base_version says "+
+				"which version the edit was derived from, and only expected_head_version "+
+				"says which head it was fetched under; send both",
+			base))
 	}
-	// Which version the head must be for this apply to commit. Row two spends
-	// its base on the question; row three has a field for it.
-	required := expectedHead
-	if required == "" {
-		required = base
-	}
-	expected := artifacts.ExpectHead(required)
+	expected := artifacts.ExpectHead(expectedHead)
 
 	versions, err := s.orkflows.Versions(ctx, namespace, name)
 	if err != nil {
@@ -564,28 +567,24 @@ func (s *Service) checkEditTokens(
 			"read versions of orkflow %q in namespace %q", name, namespace)
 	}
 	if versions.Head == "" {
-		// Nothing is stored, so neither token can be true of anything. Say
-		// which claim failed rather than inventing a version to name.
-		claim := fmt.Sprintf("says it was derived from version %q", base)
-		if base == "" {
-			claim = fmt.Sprintf("expected version %q to be the newest applied one", expectedHead)
-		}
+		// Nothing is stored, so the head the editor claims to have seen
+		// cannot be true of anything. Say so rather than inventing a version
+		// to name.
 		return expected, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"this edit %s of orkflow %q, "+
+			"this edit expected version %q to be the newest applied one of orkflow %q, "+
 				"but that orkflow has no stored version in namespace %q",
-			claim, name, namespace))
+			expectedHead, name, namespace))
 	}
 	// Provenance is a claim about the store, so it is checked against the
 	// store: a base nobody applied is a typo, answered where it was made
 	// rather than recorded as the ancestry of a version that never existed.
-	// Row two's base is checked as a head below, not as provenance here.
-	if expectedHead != "" && base != "" && !storesVersion(versions, base) {
+	if base != "" && !storesVersion(versions, base) {
 		return expected, connect.NewError(connect.CodeNotFound, fmt.Errorf(
 			"this edit says it was derived from version %q of orkflow %q, "+
 				"but no such version is stored in namespace %q",
 			base, name, namespace))
 	}
-	if versions.Head != required {
+	if versions.Head != expectedHead {
 		return expected, editRaceRefusal(namespace, name, base, expectedHead, versions.Head)
 	}
 	return expected, nil
@@ -595,19 +594,10 @@ func (s *Service) checkEditTokens(
 // it was written against, wherever that was discovered — reading the store
 // before the write, or losing the store's own compare-and-set.
 //
-// Two wordings, because there are two contracts. A caller that sent only a
-// base is told its base is stale, which is what its base meant. A caller that
-// sent an expected head is told three things — where the edit came from, the
-// head it was fetched at, and the head that is there now — because the base is
-// not the problem and must not read as one.
+// It says three things — where the edit came from, the head it was fetched
+// at, and the head that is there now — because the base is not the problem
+// and must not read as one.
 func editRaceRefusal(namespace, name, base, expectedHead, head string) error {
-	if expectedHead == "" {
-		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"orkflow %q in namespace %q changed underneath this edit: it was derived from "+
-				"version %q but the newest applied version is now %q; "+
-				"run `orkctl orkflow diff %s %s %s` and re-apply",
-			name, namespace, base, head, name, base, head))
-	}
 	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 		"orkflow %q in namespace %q changed while this edit was open: %s"+
 			"the newest applied version was %q when the document was fetched "+
@@ -794,7 +784,7 @@ func (s *Service) SubmitRun(
 // This is where a run's routing is decided, and it is the last place that may
 // decide it: everything below is Temporal, and workflow code is deterministic
 // and may not read a namespace document, this process's configuration, or the
-// cluster (AGENTS.md §1.3). Three things happen here and nowhere else — a
+// cluster (AGENTS.md §2.1). Three things happen here and nowhere else — a
 // task's pool is resolved (its own, then its namespace's default, then the
 // built-in "main"), the namespace's allow-list is enforced, and each resolved
 // pool is checked for someone to run the work.
@@ -946,8 +936,8 @@ func (s *Service) submitClaimedRun(
 	})
 	if err != nil {
 		// The claim is the dedupe authority: starting a run without it would
-		// be the duplicate this milestone removes, so an unreachable authority
-		// fails the submission instead.
+		// be exactly the duplicate the claim exists to prevent, so an
+		// unreachable authority fails the submission instead.
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("claim idempotency key %q: %w", sub.key, err))
 	}
@@ -1271,7 +1261,7 @@ func (s *Service) LookupRun(ctx context.Context, runID string) (*orkstackv1.Run,
 // succeeded, and the tenant whose run it was learned about it from the run.
 //
 // The namespace is checked against the run the read model returned, never
-// against the id: nothing parses a run id (AGENTS.md §1.5), and the run's own
+// against the id: nothing parses a run id (AGENTS.md §7), and the run's own
 // namespace is a coordinate it carries (`Run.namespace`). A run of another
 // namespace is NotFound rather than PermissionDenied, on the same grounds the
 // WebSocket bridge checks its origin before it resolves the run: telling the
@@ -1475,8 +1465,8 @@ func (s *Service) StreamEvents(
 // start failed and there is no history at all. The reader reports a missing run
 // before it sends anything, so the fallback cannot duplicate an event.
 //
-// With no reader wired — a unit test — the process-local bus answers instead,
-// on the same terms as before this milestone.
+// With no reader wired — a unit test — the process-local bus answers instead;
+// it knows only this process's runs, which is all a unit test has.
 //
 // The namespace is resolved here rather than in the two entry points, for the
 // same reason the streaming is: a scope one caller enforces and the other
@@ -1570,64 +1560,4 @@ func IsTerminalEvent(event *orkstackv1.Event) bool {
 	default:
 		return false
 	}
-}
-
-// inventoryPools names every pool this deployment may have Orkers on from
-// durable namespace and orkflow state.
-//
-// IT RETURNS BOTH HALVES: the pools it learned, and what it could not read.
-// Not one or the other — the two are independent, and a catalog that fails on
-// the eighth of ten namespaces has still told this function about seven. It
-// used to return on the first failure and discard them, which cost the
-// inventory every OTHER tenant's pools; the reader then concluded a plugin was
-// not installed while a run using it was succeeding on the pool that holds it.
-//
-// So one namespace's failure is recorded and the scan continues, and the
-// caller decides what a partial answer means (appendOtherPoolPlugins logs it
-// and uses the names). The registry listing is the one exception: without it
-// there are no namespaces to scan, so nothing was learned and there is nothing
-// to keep.
-func (s *Service) inventoryPools(ctx context.Context) ([]string, error) {
-	if s.namespaces == nil {
-		return nil, nil
-	}
-	registered, err := s.namespaces.List(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read namespace registry: %w", err)
-	}
-	seen := map[string]struct{}{}
-	var pools []string
-	add := func(pool string) {
-		if pool == "" {
-			return
-		}
-		if _, ok := seen[pool]; ok {
-			return
-		}
-		seen[pool] = struct{}{}
-		pools = append(pools, pool)
-	}
-	// Every namespace's catalog is scanned in one batch, not one namespace
-	// after another: this is the deployment-wide read, so the serial form
-	// cost a round-trip per stored orkflow of every tenant.
-	named, scanned := s.poolsNamedByOrkflowsAcross(ctx, registered)
-	var lost []error
-	for i, ns := range registered {
-		// The namespace document's own pools come from the registry listing
-		// that already succeeded, so they are kept whatever the catalog does.
-		add(engine.DefaultPoolFor(ns))
-		for _, pool := range ns.GetAllowedPools() {
-			add(pool)
-		}
-		if err := scanned[i]; err != nil {
-			lost = append(lost,
-				fmt.Errorf("read orkflows for namespace %q: %w", ns.GetName(), err))
-			continue
-		}
-		for _, pool := range named[i] {
-			add(pool)
-		}
-	}
-	sort.Strings(pools)
-	return pools, errors.Join(lost...)
 }

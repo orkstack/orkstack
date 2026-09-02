@@ -17,7 +17,8 @@ import (
 // their full proto name ("STATUS_SUCCEEDED"), which is noise in every API
 // sample, every jq filter and every UI table: the enum's own type already says
 // "status". MarshalJSON drops that prefix; UnmarshalJSON accepts both spellings
-// so existing callers keep working during the migration.
+// so generated clients (which send the canonical name) and hand-written ones
+// (which may send the short form) both work.
 //
 // The rewrite is descriptor-driven, not textual: it walks the message schema
 // alongside the JSON tree and only touches values that sit in an enum-typed

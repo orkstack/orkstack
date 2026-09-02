@@ -32,15 +32,12 @@ ui/dist/
 .idea/
 .vscode/
 
-# Proof artifacts are committed intentionally; local scratch is not
-/proof/scratch/
+# Evidence produced by `make proof` (scripts/proof.sh) is regenerated per
+# change and summarised in the commit or PR; it is never committed.
+/proof/
 
-# Agent scratch (todos, research) is ignored, but project workflows are versioned.
-# Note: ignore .atomic CONTENTS, not the dir itself, or negations cannot re-include.
-.atomic/*
-!.atomic/workflows/
-!/proof/**/*.log
-!/proof/**/*.out
+# Agent scratch (todos, research).
+.atomic/
 
 # Process state written by scripts/stack.sh (make up).
 .run/

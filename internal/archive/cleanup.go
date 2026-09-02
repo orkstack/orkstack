@@ -12,12 +12,12 @@
 // content-addressed by logical name and digest, with no run id in the key. The
 // same object can therefore be referenced by another live or retained run;
 // deleting it by a run prefix could destroy that run's committed result.
-// The archive does now keep those reference counts, so a shared object can be
-// reclaimed once no archived run claims it — that is what
-// artifacts.DeleteUnreferencedObjects does. What remains deferred is this
-// worker calling it: reference accounting only exists for runs archived by a
-// build that has it, so an object referenced solely by an older run would look
-// unreferenced. Archive bodies and indexes are never deleted.
+// The archive keeps reference markers for those objects, so a shared object
+// can be reclaimed once no archived run claims it — that is what
+// artifacts.DeleteUnreferencedObjects does. This worker does not call it:
+// reclaiming shared objects is a scan of the whole reference index rather than
+// a delete under one run's prefixes, so it is not part of the per-run pass.
+// Archive bodies and indexes are never deleted.
 package archive
 
 import (

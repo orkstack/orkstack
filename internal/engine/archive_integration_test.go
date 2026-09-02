@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -174,8 +174,8 @@ func startEngine(
 	}
 }
 
-// TestIntegration_RunArchivesToS3AndSurvivesEngineRestart is the whole M7.6
-// claim on real infrastructure: a run executed on real Temporal is written to
+// TestIntegration_RunArchivesToS3AndSurvivesEngineRestart is the archive
+// contract on real infrastructure: a run executed on real Temporal is written to
 // real S3 as JSONL, and a second engine with an empty read model still answers
 // `run get` and `run list --status SUCCEEDED` for it.
 func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
@@ -257,7 +257,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 		t.Fatalf("last event = %s (%s), want RUN_SUCCEEDED", last.GetType(), last.GetMessage())
 	}
 
-	// ---- acceptance 1: the run is JSONL in S3, at the contract path ----------
+	// ---- the run is JSONL in S3, at the contract path -------------------------
 	uri, err := store.URI(runID)
 	if err != nil {
 		first.stop()
@@ -297,7 +297,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	// ---- the engine process dies --------------------------------------------
 	first.stop()
 
-	// ---- acceptance 3 + 4: a fresh engine still answers for that run ---------
+	// ---- a fresh engine still answers for that run ---------------------------
 	second := startEngine(t, temporalClient, archive, false)
 	defer second.stop()
 	if _, live := second.runs.Get(runID); live {
@@ -320,7 +320,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 		t.Fatal("recovered run lost its artifact references")
 	}
 
-	// ---- acceptance 2: `run list --status SUCCEEDED` is answered from S3 -----
+	// ---- `run list --status SUCCEEDED` is answered from S3 -------------------
 	listed, err := second.client.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 		OrkflowName: "hello-ork",
 		Status:      orkstackv1.Status_STATUS_SUCCEEDED,
@@ -416,8 +416,8 @@ func containsRun(runs []*orkstackv1.Run, runID string) bool {
 	return false
 }
 
-// writeArchiveProof records the M7.6 artifacts when ORK_PROOF_M76_DIR is set:
-// the run's raw JSONL, the recovered run, and the list query's answer.
+// writeArchiveProof records the archive evidence: the run's raw JSONL and its
+// URI, the run recovered by the second engine, and the list query's answer.
 func writeArchiveProof(
 	t *testing.T,
 	runID, uri string,
@@ -426,34 +426,21 @@ func writeArchiveProof(
 	listed []*orkstackv1.Run,
 ) {
 	t.Helper()
-	dir := os.Getenv("ORK_PROOF_M76_DIR")
-	if dir == "" {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
-
-	write := func(name string, data []byte) {
-		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	write("run-archive.jsonl", body)
-	write("run-archive-uri.txt", []byte(uri+"\n"))
+	proof.Write(t, "engine", "run-archive.jsonl", body)
+	proof.Write(t, "engine", "run-archive-uri.txt", []byte(uri+"\n"))
 
 	recoveredJSON, err := api.MarshalJSON(recovered)
 	if err != nil {
 		t.Fatalf("encode recovered run: %v", err)
 	}
-	write("run-get-after-restart.json", indentJSON(t, recoveredJSON))
+	proof.Write(t, "engine", "run-get-after-restart.json", indentJSON(t, recoveredJSON))
 
 	listJSON, err := api.MarshalJSON(&orkstackv1.ListRunsResponse{Runs: listed})
 	if err != nil {
 		t.Fatalf("encode run list: %v", err)
 	}
-	write("run-list-succeeded.json", indentJSON(t, listJSON))
-	t.Logf("wrote M7.6 proof artifacts for run %s to %s", runID, dir)
+	proof.Write(t, "engine", "run-list-succeeded.json", indentJSON(t, listJSON))
+	t.Logf("recorded archive evidence for run %s", runID)
 }
 
 func indentJSON(t *testing.T, data []byte) []byte {

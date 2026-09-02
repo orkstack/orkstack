@@ -10,9 +10,9 @@ import (
 
 // validate enforces the eight documented DSL rules (docs/DSL.md).
 func validate(wf *orkstackv1.Orkflow, opts Options) error {
-	// opts.KnownPlugins is no longer consulted: rule 6 checks that `uses:`
-	// is present and resolvable through the CATALOG, not that it names
-	// something this binary was compiled to know about.
+	// Rule 6 checks that `uses:` is present and resolvable through the
+	// CATALOG, not that it names something this binary was compiled to know
+	// about.
 	catalog := opts.catalog()
 
 	// Rule 1: an explicit namespace is a slug. Absent is legal and means the
@@ -62,8 +62,8 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		}
 		// Rule 6: `uses:` names the activity, and it is required.
 		//
-		// It is checked against the CATALOG, not against a list of plugin
-		// names this binary was compiled with. §4.2's four rules decide what
+		// It is checked against the CATALOG, not against anything compiled
+		// into this binary. §4.2's four rules decide what
 		// a value means: a template can never be pinned (rule 1); a slug that
 		// is a catalog key is that entry (rule 2); anything carrying `/`, `:`
 		// or `@` is a reference and is taken as itself (rule 3); anything

@@ -21,12 +21,11 @@ func TestWorkerOptions_StayActivityOnly(t *testing.T) {
 	}
 }
 
-// TestWorkerOptions_CarryTheConfiguredDeploymentVersion is acceptance 1 for the
-// Orker, and the precondition for acceptance 3. An Orker that does not carry
-// the engine's deployment version is not in a pinned run's version at all:
-// Temporal's exception clause then routes that run's tasks to whatever is
-// current on the queue, which is exactly the mid-run plugin swap this
-// milestone exists to prevent.
+// TestWorkerOptions_CarryTheConfiguredDeploymentVersion: an Orker that does
+// not carry the engine's deployment version is not in a pinned run's version
+// at all. Temporal's exception clause then routes that run's tasks to whatever
+// build is current on the queue — the mid-run version swap Worker Deployment
+// Versioning exists to prevent.
 func TestWorkerOptions_CarryTheConfiguredDeploymentVersion(t *testing.T) {
 	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
 	t.Setenv(task.EnvBuildID, "v2")
@@ -45,8 +44,8 @@ func TestWorkerOptions_CarryTheConfiguredDeploymentVersion(t *testing.T) {
 	}
 }
 
-// TestWorkerOptions_UnsetDeploymentEnvLeavesVersioningOff is acceptance 6 for
-// the Orker: `make run-orker` with no configuration behaves as it always did.
+// TestWorkerOptions_UnsetDeploymentEnvLeavesVersioningOff: `make run-orker`
+// with no ORK_DEPLOYMENT_NAME/ORK_BUILD_ID produces an unversioned worker.
 func TestWorkerOptions_UnsetDeploymentEnvLeavesVersioningOff(t *testing.T) {
 	t.Setenv(task.EnvDeploymentName, "")
 	t.Setenv(task.EnvBuildID, "")
@@ -75,12 +74,12 @@ func TestLoadConfig_RejectsADeploymentNameTheClusterWould(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_JoinsThePoolItWasToldToServe is acceptance 5 at the Orker's
-// own boot seam.
+// TestLoadConfig_JoinsThePoolItWasToldToServe is the Orker's half of the pool
+// contract, at its own boot seam.
 //
 // ORK_ORKER_POOL is the OrkStack setting: which set of Orkers is this.
 // ORK_ORKER_QUEUE is the operator escape hatch to the channel underneath, used
-// by the test harnesses to isolate concurrent runs (AGENTS.md §6). The engine
+// by the test harnesses to isolate concurrent runs (AGENTS.md §11.1). The engine
 // resolves the same two variables through the same function, because an Orker
 // polling one channel while the engine dispatches to another strands every run
 // in RUNNING with nothing to say why.
@@ -120,12 +119,12 @@ func TestLoadConfig_JoinsThePoolItWasToldToServe(t *testing.T) {
 
 	t.Run("a raw channel is nobody's pool", func(t *testing.T) {
 		t.Setenv("ORK_ORKER_POOL", "")
-		t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-m7-9")
+		t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-private")
 		cfg := loadConfig()
 		if cfg.poolErr != nil {
 			t.Fatalf("ORK_ORKER_QUEUE alone refused: %v", cfg.poolErr)
 		}
-		if cfg.queue != "ork-tasks-m7-9" {
+		if cfg.queue != "ork-tasks-private" {
 			t.Errorf("Orker polls %q, want the operator's channel verbatim", cfg.queue)
 		}
 		if cfg.pool != task.DefaultPool || !cfg.rawOverride {
@@ -136,7 +135,7 @@ func TestLoadConfig_JoinsThePoolItWasToldToServe(t *testing.T) {
 
 	t.Run("a pool and a channel that disagree refuse to boot", func(t *testing.T) {
 		t.Setenv("ORK_ORKER_POOL", "gpu")
-		t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-m7-9")
+		t.Setenv("ORK_ORKER_QUEUE", "ork-tasks-private")
 		cfg := loadConfig()
 		if cfg.poolErr == nil {
 			t.Fatalf("a disagreeing pair booted, serving pool %q on %q", cfg.pool, cfg.queue)

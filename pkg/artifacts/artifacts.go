@@ -14,11 +14,7 @@ import (
 
 // ArtifactRef is the reference every store returns.
 //
-// It used to be an alias of plugin.ArtifactRef, and it became the definition
-// when the OCI Activity Contract retired pkg/plugin (design §2.4). The shape
-// is unchanged, so every reference in every existing archive still decodes:
-// these are the json tags the run archive and the engine<->Orker seam have
-// always written.
+// These json tags are what the run archive and the engine<->Orker seam write.
 //
 // It mirrors orkstack.v1.ArtifactRef deliberately rather than being it. A
 // store is not a proto concern, and keeping the two apart is what lets the

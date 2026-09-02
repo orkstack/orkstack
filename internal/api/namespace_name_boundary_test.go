@@ -140,7 +140,7 @@ func TestNamespaceName_IsCheckedAtTheBoundaryOfEveryPathThatTakesOne(t *testing.
 // validatingRegistry refuses a name the way artifacts.S3NamespaceStore does:
 // the key cannot be rendered, so nothing is read. It exists to prove the
 // boundary check is not merely covering for a lenient double — with a store
-// that validates, the answer used to be Unavailable, which blames the
+// that validates, the answer would otherwise be Unavailable, which blames the
 // deployment for a caller's typo.
 type validatingRegistry struct{ inner *fakeRegistry }
 

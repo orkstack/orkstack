@@ -1,10 +1,15 @@
-# Activity image design: the `op` pattern
+# Activity images and the `op` convention
 
-> **v0.0.5:** the in-process Go plugin system is retired. Tasks now name OCI
-> images through `uses:` and every image implements the public filesystem ABI.
-> This page keeps its historical filename so old links resolve; it documents a
-> convention used by OrkStack's reference activity images, not a platform plugin
-> interface.
+An activity is an OCI image named by a task's `uses:` — a catalog name such
+as `http`, `shell`, or `file`, or a full registry reference. Every image
+implements the public filesystem ABI of the
+[OCI Activity Contract](OCI_ACTIVITY_CONTRACT.md); there is no extension
+interface inside the Orker, no OrkStack SDK, and no plugin registry. To add
+an activity, build an image that reads `/orkstack/input`, writes
+`/orkstack/output`, logs to stdout/stderr, and exits normally.
+
+This page documents one convention the first-party reference images share.
+It is not part of the platform contract.
 
 An activity image may expose one operation selector, spelled `op`, inside its
 `with:` configuration. `op` names what that image does; the other keys are the
@@ -30,9 +35,9 @@ tasks:
 ```
 
 The catalog name `http` resolves to the `activity-http` OCI image at apply time.
-A task may instead put a registry reference directly in `uses:`. The retired
-container selector has no alias: every activity already is a container, so a
-custom workload names its own image directly.
+A task may instead put a registry reference directly in `uses:`. There is no
+`container` activity: every activity already is a container, so a custom
+workload names its own image directly.
 
 ## Rules for reference activity authors
 

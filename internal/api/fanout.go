@@ -10,10 +10,10 @@ import "sync"
 // of every orkflow in it, then one cluster probe per pool those definitions
 // name. Issued one at a time, that is a round-trip per stored object, so the
 // read's latency grows with everything anyone has ever stored — and eventually
-// passes the client's deadline. `orkctl plugin list` did exactly that against
-// a bucket holding 90 namespaces and 628 orkflows: it spent its whole 30s in
-// the catalog scan, and every pool it had not yet probed was then reported as
-// "context canceled".
+// passes the client's deadline. Issued serially against a bucket holding ~90
+// namespaces and ~600 orkflows, the catalog scan alone exceeds a 30s client
+// deadline, and every pool not yet probed is then reported as "context
+// canceled".
 //
 // Nothing here makes the scan smaller. The same objects are read and the same
 // pools are probed; they are simply in flight together, so the cost is

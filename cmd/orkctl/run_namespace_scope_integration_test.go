@@ -18,11 +18,11 @@ import (
 // TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother is
 // the tenancy boundary on a run id, through the real binaries.
 //
-// A run id used to be a capability over the whole deployment: GetRun,
-// StreamEvents and CancelRun took an id and nothing else, so anybody holding
-// one read — and STOPPED — a run of a namespace they could not even list. An
-// id is not a secret: submit prints it, tickets quote it, CI transcripts echo
-// it. Cancel is the half that matters most, because it is a write.
+// A run id is an address inside a namespace, not a capability over the
+// deployment: GetRun, StreamEvents and CancelRun require the namespace, and an
+// id alone reads and cancels nothing. An id is not a secret: submit prints it,
+// tickets quote it, CI transcripts echo it. Cancel is the half that matters
+// most, because it is a write.
 //
 // The unit gate
 // (TestRunID_IsAnAddressInsideANamespaceNotACapabilityOverTheDeployment)
@@ -34,7 +34,7 @@ import (
 // with the run's own completion: a cancel refused because the run had already
 // succeeded would pass this test for the wrong reason.
 //
-// Isolation (AGENTS.md §6): its own Temporal namespace and its own pool.
+// Isolation (AGENTS.md §11.1): its own Temporal namespace and its own pool.
 func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t *testing.T) {
 	address := temporalAddress()
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
@@ -46,7 +46,7 @@ func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	temporalNamespace := isolatedTemporalNamespace("ork-m10-3-namespace-api-cli")
+	temporalNamespace := isolatedTemporalNamespace("ork-namespace-cli")
 	dialIsolatedNamespace(ctx, t, address, temporalNamespace)
 
 	pool := privateTaskPool()
@@ -73,8 +73,8 @@ func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t
 	waitForEngine(t, cli)
 
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
-	alpha := "m103-scope-alpha-" + token
-	bravo := "m103-scope-bravo-" + token
+	alpha := "scope-alpha-" + token
+	bravo := "scope-bravo-" + token
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cleanupCancel()
@@ -83,7 +83,7 @@ func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t
 
 	for _, ns := range []string{alpha, bravo} {
 		if stdout, stderr, code := cli("namespace", "create", ns,
-			"--description", "M10.3 run-id scope", "--default-pool", pool); code != 0 {
+			"--description", "run-id scope", "--default-pool", pool); code != 0 {
 			t.Fatalf("namespace create %s exit = %d\nstdout:\n%s\nstderr:\n%s",
 				ns, code, stdout, stderr)
 		}
@@ -94,6 +94,7 @@ func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t
 	if stdout, stderr, code := cli("apply", document, "-n", alpha); code != 0 {
 		t.Fatalf("apply into %s exit = %d\nstdout:\n%s\nstderr:\n%s", alpha, code, stdout, stderr)
 	}
+	waitForPoolLive(t, cli, alpha, pool)
 
 	stdout, stderr, code := cli("run", "submit", orkflowName, "-n", alpha)
 	if code != 0 {
@@ -149,12 +150,12 @@ func writeSleepingOrkflow(t *testing.T, name, pool string) string {
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
 	document := fmt.Sprintf(`name: %s
 version: 1.0.0
-description: M10.3 run-id scope
+description: run-id scope
 tasks:
   - id: wait
     uses: shell
     pool: %s
-    timeout: 120s
+    timeout_seconds: 120
     with:
       op: exec
       command: ["sh", "-c", "sleep 60"]

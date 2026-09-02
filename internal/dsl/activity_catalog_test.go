@@ -66,12 +66,11 @@ func TestCatalogResolveUses_CatalogNameBeatsDockerHubRepository(t *testing.T) {
 	}
 }
 
-// `container` is not in the catalog and must not be resolvable. removed.go
-// refuses it by name with a better message; this proves the catalog itself
-// offers no entry to fall back on.
+// `container` is not in the catalog and must not be resolvable: every task
+// already is a container, so a workload names the image it wants directly.
 func TestCatalogResolveUses_ContainerIsNotInTheCatalog(t *testing.T) {
 	if _, ok := BuiltinActivityCatalog()["container"]; ok {
-		t.Fatal("`container` is in the builtin catalog; §17 C6 retires it")
+		t.Fatal("`container` is in the builtin catalog")
 	}
 	if _, err := BuiltinActivityCatalog().ResolveUses("t1", "container"); err == nil {
 		t.Fatal("`uses: container` resolved through the catalog")

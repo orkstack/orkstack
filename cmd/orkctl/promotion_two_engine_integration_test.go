@@ -17,10 +17,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// M10.4's two acceptances that need real processes: promotion is safe when two
+// Two acceptances that need real processes: promotion is safe when two
 // replicas do it at once, and a run already in flight finishes on the version
 // it started with however the pointer moves underneath it.
 //
@@ -30,12 +31,13 @@ import (
 // isolatedNamespace), and two real processes are a strictly stronger claim
 // than two in-process engines.
 //
-// Isolation (AGENTS.md §6): a unique Temporal namespace per run, with the
+// Isolation (AGENTS.md §11.1): a unique Temporal namespace per run, with the
 // deliberate inversion the two-replica tests need — the pair SHARES it,
 // because sharing is the condition under test.
 
-// TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling is the
-// design's named test for acceptance 3.
+// TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling: two
+// replicas promote one orkflow at once, one lands, and the pointer never
+// dangles.
 //
 // Two real engines, one MinIO bucket, promotions interleaved from both at once,
 // and a reader on each replica running throughout. Three things must hold:
@@ -249,8 +251,8 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 	writePromotionRaceTranscript(t, namespace, name, finalA, landed, refused, seen)
 }
 
-// TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion is
-// acceptance 7.
+// TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion: a run in
+// flight finishes on the version it started with.
 //
 // A run is submitted while 1.0.0 is current, and the pointer is moved to 2.0.0
 // WHILE it is executing. The run must finish reporting the version it started
@@ -382,7 +384,7 @@ func TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion(t *testin
 func promotionOrkflowYAML(name, version, marker string) string {
 	return fmt.Sprintf(`name: %s
 version: "%s"
-description: M10.4 version %s
+description: version %s
 tasks:
   - id: report
     uses: shell
@@ -397,7 +399,7 @@ tasks:
 func slowPromotionOrkflowYAML(name, version string, seconds int) string {
 	return fmt.Sprintf(`name: %s
 version: "%s"
-description: M10.4 version %s (slow)
+description: version %s (slow)
 tasks:
   - id: report
     uses: shell
@@ -517,9 +519,9 @@ func countAll(counts map[string]int) int {
 	return total
 }
 
-// writePromotionRaceTranscript and writePinnedRunTranscript record the proof
-// artifacts when the milestone's reproduce.sh asks for them (ORK_PROOF_DIR).
-// A plain `go test -tags=integration ./...` writes nothing into the tree.
+// writePromotionRaceTranscript and writePinnedRunTranscript record the
+// transcripts under ORK_PROOF_DIR when scripts/proof.sh sets it; a plain
+// `go test -tags=integration ./...` logs them and writes nothing into the tree.
 func writePromotionRaceTranscript(
 	t *testing.T,
 	namespace, name, final string,
@@ -537,7 +539,7 @@ func writePromotionRaceTranscript(
 	fmt.Fprintf(&out, "                     every one named a stored version\n")
 	fmt.Fprintf(&out, "final answer         both replicas report %s\n", final)
 	fmt.Fprintf(&out, "unknown version      refused with NotFound on both replicas; pointer unmoved\n")
-	appendProofArtifact(t, "promotion-race.txt", out.String())
+	proof.Write(t, "orkctl", "promotion-race.txt", []byte(out.String()))
 }
 
 func writePinnedRunTranscript(t *testing.T, namespace, name, pinnedRun, laterRun, stdout string) {
@@ -552,25 +554,7 @@ func writePinnedRunTranscript(t *testing.T, namespace, name, pinnedRun, laterRun
 	fmt.Fprintf(&out, "pointer moved to 2.0.0 while that run was RUNNING on the cluster\n")
 	fmt.Fprintf(&out, "run %s submitted after the move, reported version 2.0.0\n", laterRun)
 	fmt.Fprintf(&out, "run %s finished SUCCEEDED, version 1.0.0, stdout %q\n", pinnedRun, stdout)
-	appendProofArtifact(t, "pinned-run.txt", out.String())
-}
-
-// appendProofArtifact writes one file into ORK_PROOF_DIR when the proof asks
-// for it.
-func appendProofArtifact(t *testing.T, filename, body string) {
-	t.Helper()
-	dir := os.Getenv("ORK_PROOF_DIR")
-	if dir == "" {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
-	path := dir + string(os.PathSeparator) + filename
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-	t.Logf("wrote %s", path)
+	proof.Write(t, "orkctl", "pinned-run.txt", []byte(out.String()))
 }
 
 // compile-time reminder that this file drives the same clients the CLI does.

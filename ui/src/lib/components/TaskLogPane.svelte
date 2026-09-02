@@ -404,7 +404,7 @@
 							Three renderings, in priority order: an ORKER notice
 							(amber) is about the log rather than in it, stderr
 							(red) is the task's other file descriptor as the
-							plugin marked it, and everything else is stdout.
+							Orker marked it, and everything else is stdout.
 							data-stream carries the decoded origin, so a test
 							asserts the fact rather than the colour.
 						-->

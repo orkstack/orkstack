@@ -25,7 +25,7 @@ import (
 // tenant's visibility. Pushed into the query, the cluster returns alpha's run
 // and nothing else, whatever bravo is doing.
 //
-// It runs in a Temporal namespace of its own (AGENTS.md §6), and it starts
+// It runs in a Temporal namespace of its own (AGENTS.md §11.1), and it starts
 // workflows with no worker anywhere: what is under test is the visibility
 // index, and a run's record exists from the moment it starts.
 func TestIntegration_AQuietNamespaceIsListedBesideABusyOne(t *testing.T) {

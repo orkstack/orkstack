@@ -19,14 +19,14 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// claimNamespace is the Temporal namespace these tests use. AGENTS.md §6: a
+// claimNamespace is the Temporal namespace these tests use. AGENTS.md §11.1: a
 // namespace is a hard partition, and these tests count executions inside it,
 // so they must not share one with another agent's runs.
 func claimNamespace() string {
 	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
 		return ns
 	}
-	return "ork-m8-2-idempotency"
+	return "ork-idempotency"
 }
 
 // claimQueue names a queue only this test's worker polls, so no other engine
@@ -98,11 +98,11 @@ func startClaimWorker(t *testing.T, c client.Client, queue string) {
 // claimKey names a key unique to this test run, so a rerun starts unbound.
 func claimKey(t *testing.T) string {
 	t.Helper()
-	return fmt.Sprintf("m8-2-%s-%d-%d", t.Name(), os.Getpid(), time.Now().UnixNano())
+	return fmt.Sprintf("claim-%s-%d-%d", t.Name(), os.Getpid(), time.Now().UnixNano())
 }
 
-// TestIntegration_ConcurrentClaimsConvergeOnOneRun is acceptance 2 against the
-// real server: many callers offering different candidate run ids for one key
+// TestIntegration_ConcurrentClaimsConvergeOnOneRun is the claim round trip
+// against the real server: many callers offering different candidate run ids for one key
 // at the same instant are all told the same answer, and the cluster holds one
 // claim.
 //

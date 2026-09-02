@@ -37,7 +37,7 @@ tools: ## Install codegen + lint tooling
 # with no git at all falls back to "dev", which is exactly what the source
 # default in cmd/ork and cmd/orkctl already says.
 #
-# Override it for a release build: `make build VERSION=v0.0.4`.
+# Override it for a release build: `make build VERSION=vMAJOR.MINOR.PATCH`.
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GO_LDFLAGS := -X main.version=$(VERSION)
 
@@ -62,10 +62,9 @@ test-race: ## Run tests with the race detector
 	go test ./... -race -count=1
 
 .PHONY: cover
-cover: ## Run tests with coverage -> proof/coverage.out
-	@mkdir -p proof
-	go test ./... -count=1 -coverprofile=proof/coverage.out
-	go tool cover -func=proof/coverage.out | tail -1
+cover: ## Run tests with coverage -> coverage.out
+	go test ./... -count=1 -coverprofile=coverage.out
+	go tool cover -func=coverage.out | tail -1
 
 ## ---- whole stack ----
 .PHONY: up
@@ -112,7 +111,7 @@ run-ork: ## Run the ork engine (Connect API + WS + Temporal client)
 	go run ./cmd/ork
 
 .PHONY: run-orker
-run-orker: ## Run an Orker (generic Temporal worker + plugins)
+run-orker: ## Run an Orker (Temporal activity worker + OCI runtime)
 	go run ./cmd/orker
 
 ## ---- quality ----
@@ -130,10 +129,18 @@ merge-check: build lint test ## Gate a merge: build + lint + unit tests + compil
 	go vet -tags=integration ./...
 	@echo "merge-check OK: the merged tree builds, passes lint and unit tests, and its integration suites compile"
 	@echo "NOTE: COMPILE, not run. merge-check needs no infrastructure, so an"
-	@echo "      integration test can be red while this gate is green — v0.0.5"
-	@echo "      shipped ten such files, all failing at apply. Run"
+	@echo "      integration test can be red while this gate is green. Run"
 	@echo "      'make test-integration' with the stack up before releasing."
 
 .PHONY: test-integration
 test-integration: ## Run the integration suites against live infra (needs: make infra-up && make -C images push)
 	ORK_REQUIRE_INFRA=1 go test -tags=integration -p 1 -timeout 60m -count=1 ./...
+
+## ---- evidence ----
+.PHONY: proof
+proof: ## Produce the evidence for a change under proof/<name>/ (gitignored): lint, build, unit, integration
+	@scripts/proof.sh $(NAME)
+
+.PHONY: proof-ui
+proof-ui: ## proof, plus the UI type-check, unit and Playwright suites with screenshots
+	@PROOF_GATES=unit,integration,ui scripts/proof.sh $(NAME)

@@ -180,20 +180,18 @@ const derivedVersionSeparator = 0x1F
 //
 //	hex(sha256(sourceYAML ‖ 0x1F ‖ canonicalImages(wf)))
 //
-// It is assigned AFTER image resolution, and this is the whole point. Today's
-// derivation ran inside Compile, before resolution, so a moved tag minted the
-// SAME version string for a DIFFERENT definition — and
-// pkg/artifacts.orkflow_store would refuse the apply as an attempt to rewrite
-// an immutable version. The author got a refusal instead of a new version.
+// It is assigned AFTER image resolution, and this is the whole point. Compile
+// stamps a provisional sourceHash, and the applier replaces it here once the
+// images are resolved: a version minted before resolution would name the SAME
+// string for a DIFFERENT definition whenever a tag moved, and
+// pkg/artifacts.orkflow_store would then refuse the apply as an attempt to
+// rewrite an immutable version. The author would get a refusal instead of a
+// new version.
 //
-// This does NOT re-open the question hash.go already settled. That comment
-// records that hashing normalized semantic YAML was tried and reverted,
-// because a comment-only edit then compiled to the stored version with
-// different source and could not be applied at all — "two notions of 'the same
-// document' in one system is one too many". The source bytes are still hashed
-// in FULL here, so a comment-only edit still mints a new version, exactly as
-// before. The only addition is the resolution, which is not a second notion of
-// the document but a second input to what runs.
+// This does NOT re-open the question hash.go settles — "two notions of 'the
+// same document' in one system is one too many". The source bytes are hashed
+// in FULL here, so a comment-only edit mints a new version. The resolution is
+// not a second notion of the document but a second input to what runs.
 func DerivedVersion(sourceYAML []byte, wf *orkstackv1.Orkflow) (string, error) {
 	images, err := canonicalImages(wf)
 	if err != nil {

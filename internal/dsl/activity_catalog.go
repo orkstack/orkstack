@@ -25,7 +25,8 @@ import (
 // `container` is deliberately absent and is not an oversight: under this
 // contract every task already IS a container, so a container-starting activity
 // would need the docker socket, which §9.1 forbids without exception. `uses:
-// container` is a compile error naming its replacement (removed.go, §17 C6/C7).
+// container` therefore names nothing (rule 4) and is a compile error; a
+// workload names the image it wants directly.
 func BuiltinActivityCatalog() Catalog {
 	return Catalog{
 		"shell": "ghcr.io/orkstack/activity-shell:0.1",

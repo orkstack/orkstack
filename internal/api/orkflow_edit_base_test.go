@@ -84,15 +84,14 @@ func storedVersions(
 	return strings.Join(rows, ","), versions.Head, versions.Current
 }
 
-// TestApplyOrkflow_ANonHeadBaseAppliesAsTheNewHead is the milestone's first
-// acceptance, and the owner's scenario in miniature: two versions, the OLDER
-// one promoted, then an edit of that promoted (current, non-head) version
-// applied as a new version.
+// TestApplyOrkflow_ANonHeadBaseAppliesAsTheNewHead is the editing scenario in
+// miniature: two versions, the OLDER one promoted, then an edit of that
+// promoted (current, non-head) version applied as a new version.
 //
 // It lands as the new head — head is "most recently applied", and this apply is
 // the most recent one — and the `current` pointer does not move, because
-// applying is not promoting. Before expected_head_version existed the apply was
-// refused outright (base 1.0.0 ≠ head 2.0.0), which is what made editing an old
+// applying is not promoting. Under a single token the apply would be refused
+// outright (base 1.0.0 ≠ head 2.0.0), which is what would make editing an old
 // version impossible rather than merely unusual.
 func TestApplyOrkflow_ANonHeadBaseAppliesAsTheNewHead(t *testing.T) {
 	svc, store := storedService(t)
@@ -250,56 +249,57 @@ func TestApplyOrkflow_RefusesABaseThatNamesNoStoredVersion(t *testing.T) {
 	}
 }
 
-// TestApplyOrkflow_EmptyExpectedHeadKeepsTheOldBaseCheck pins the back-compat
-// row of the rule table. A caller written before this slice sends a base and no
-// expected head; it must keep EXACTLY the check it had — base equals head, or
-// refused — because that caller's base is its concurrency token and nothing
-// else says which head it saw.
-func TestApplyOrkflow_EmptyExpectedHeadKeepsTheOldBaseCheck(t *testing.T) {
+// TestApplyOrkflow_TokensAreIndependent pins the rest of the rule table: no
+// token is a plain apply, an expected head alone is checked, and a base alone
+// is a malformed request. A base is provenance and nothing else — it says
+// which version the edit came from, never which head the editor saw — so a
+// base arriving without an expected head is refused as InvalidArgument naming
+// both fields rather than read as a head claim it does not make.
+func TestApplyOrkflow_TokensAreIndependent(t *testing.T) {
 	svc, store := storedService(t)
 	apply(t, svc, versionedDocument("deploy", "1.0.0", "one"))
 	apply(t, svc, versionedDocument("deploy", "2.0.0", "two"))
 
-	// base ≠ head, no expected head: the pre-M11.2 refusal, unchanged.
-	_, err := applyEdit(t, svc, versionedDocument("deploy", "3.0.0", "three"), "1.0.0", "")
-	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
-		t.Fatalf("an old caller's stale edit = %v (code %s), want FailedPrecondition",
-			err, connect.CodeOf(err))
-	}
-	for _, want := range []string{"1.0.0", "2.0.0", "orkctl orkflow diff"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not mention %q: %v", want, err)
+	// A base without an expected head is refused whether or not the base is
+	// the head: the request is malformed, and nothing is stored.
+	for _, base := range []string{"1.0.0", "2.0.0"} {
+		_, err := applyEdit(t, svc, versionedDocument("deploy", "3.0.0", "three"), base, "")
+		if connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("a base (%s) with no expected head = %v (code %s), want InvalidArgument",
+				base, err, connect.CodeOf(err))
+		}
+		for _, want := range []string{"base_version", "expected_head_version", base} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not mention %q: %v", want, err)
+			}
 		}
 	}
-
-	// base == head, no expected head: accepted, as it always was.
-	if _, err := applyEdit(t, svc,
-		versionedDocument("deploy", "3.0.0", "three"), "2.0.0", ""); err != nil {
-		t.Fatalf("an old caller's edit from the head was refused: %v", err)
+	if list, head, _ := storedVersions(t, store, "deploy"); list != "2.0.0,1.0.0" || head != "2.0.0" {
+		t.Fatalf("a refused apply stored something: %s (head %s)", list, head)
 	}
 
 	// Neither token: a plain `orkctl apply file.yaml`, unchecked.
 	if _, err := applyEdit(t, svc,
-		versionedDocument("deploy", "4.0.0", "four"), "", ""); err != nil {
+		versionedDocument("deploy", "3.0.0", "three"), "", ""); err != nil {
 		t.Fatalf("a plain apply was refused: %v", err)
 	}
 
-	// An expected head with NO base is checked too: the UI's "retarget" action
+	// An expected head with NO base is checked: the UI's "retarget" action
 	// sends one when the document it holds came from no stored version.
 	if _, err := applyEdit(t, svc,
-		versionedDocument("deploy", "5.0.0", "five"), "", "3.0.0"); connect.CodeOf(err) !=
+		versionedDocument("deploy", "4.0.0", "four"), "", "2.0.0"); connect.CodeOf(err) !=
 		connect.CodeFailedPrecondition {
 		t.Fatalf("an expected head that is stale = %v (code %s), want FailedPrecondition",
 			err, connect.CodeOf(err))
 	}
 	if _, err := applyEdit(t, svc,
-		versionedDocument("deploy", "5.0.0", "five"), "", "4.0.0"); err != nil {
+		versionedDocument("deploy", "4.0.0", "four"), "", "3.0.0"); err != nil {
 		t.Fatalf("an expected head that is the head was refused: %v", err)
 	}
 
-	if list, head, _ := storedVersions(t, store, "deploy"); list != "5.0.0,4.0.0,3.0.0,2.0.0,1.0.0" ||
-		head != "5.0.0" {
-		t.Errorf("the store holds %s (head %s), want the five applied versions with head 5.0.0",
+	if list, head, _ := storedVersions(t, store, "deploy"); list != "4.0.0,3.0.0,2.0.0,1.0.0" ||
+		head != "4.0.0" {
+		t.Errorf("the store holds %s (head %s), want the four applied versions with head 4.0.0",
 			list, head)
 	}
 }
@@ -392,10 +392,10 @@ func TestOrkflowReadPath_AnyVersionAnswersWithItsSourceAndTheListingMarksHeadAnd
 // gatedOrkflowStore holds one apply still, between the moment the service hands
 // it to the store and the moment the store answers.
 //
-// That instant is the whole of the race: it is where the service used to have
-// already checked the head and not yet written, and where a competing apply
-// therefore landed unseen. Gating it is how the interleaving becomes a test
-// rather than a description of one.
+// That instant is the whole of the race: it is where a service that checked
+// the head itself would have already checked and not yet written, and where a
+// competing apply would land unseen. Gating it is how the interleaving becomes
+// a test rather than a description of one.
 type gatedOrkflowStore struct {
 	*engine.MemoryOrkflowStore
 	version string
@@ -431,7 +431,7 @@ func (g *gatedOrkflowStore) Put(
 //
 // The difference is the whole of the concurrency guarantee. Reading the head in
 // the service and writing in the store are two operations, and between them a
-// competing apply fits: it did, and the stale edit was stored and reported as
+// competing apply fits: the stale edit would be stored and reported as
 // created, having "checked" a head that was two versions old by the time its
 // own bytes landed. The expected head is therefore a condition ON THE WRITE —
 // the store commits against it or refuses — and this test holds the edit inside

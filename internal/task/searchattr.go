@@ -26,7 +26,7 @@ import (
 //
 // The orkflow_ prefix is the memo's rule (engine.MemoNamespace) for the same
 // reason: an unqualified `namespace` sitting beside a Temporal client would
-// read as the Temporal namespace, which AGENTS.md §1.9 forbids. The memo stays
+// read as the Temporal namespace, which AGENTS.md §7 forbids. The memo stays
 // where it is — it carries the value back with each record, which a search
 // attribute also does, but the memo is what a run started before this index
 // existed has.

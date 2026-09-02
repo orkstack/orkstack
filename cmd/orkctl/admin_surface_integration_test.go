@@ -17,17 +17,18 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface is M11.3's
-// acceptance, live.
+// TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface proves the
+// admin surface live, on the production topology.
 //
 // Two real `ork` processes share one Temporal namespace, one execution channel
 // and one MinIO bucket — the production topology behind a load balancer. Every
 // WRITE goes to replica A. Every ADMIN READ goes to replica B, which registered
 // no namespace, applied no orkflow and started no run, so nothing it answers
-// can have come from its own memory (AGENTS.md §1.7):
+// can have come from its own memory (AGENTS.md §7):
 //
 //   - system information: B describes ITSELF, which is the one thing only the
 //     process can answer — and the two replicas of one release answer
@@ -35,13 +36,12 @@ import (
 //     to ask whichever replica the load balancer picked.
 //   - namespaces: from the durable registry in the bucket, including the one
 //     A created a moment ago.
-//   - pool health: live Orker counts from the cluster's poller information and
-//     the plugins asked of the Orkers themselves — a pool nothing serves is
-//     reported as empty rather than omitted.
-//   - plugin inventory: asked of the connected Orkers.
+//   - pool health: live Orker counts from the cluster's poller information —
+//     a pool nothing serves is reported as empty rather than omitted.
+//   - activity catalog: engine configuration, answered without asking an
+//     Orker.
 //
-// The topology covers the two shapes an earlier round of this slice broke, so
-// that neither can regress unnoticed:
+// The topology covers two shapes that must not regress unnoticed:
 //
 //   - a pool with SEVERAL live Orkers. A pool IS a set of Orkers, so two of
 //     them is the ordinary case and the one an operator scales into. Two real
@@ -51,13 +51,13 @@ import (
 //     cost the inventory its answer.
 //
 // Then the write-safety rules, exercised against B because a write refused only
-// by the replica that happens to hold state is not a rule (acceptance 5): the
+// by the replica that happens to hold state is not a rule: the
 // slug validated and never repaired, `default` undeletable, the etag
 // compare-and-swap, and a delete refused while the namespace still holds
 // orkflows, saying how many. Those refusals are the only writes B issues; it
 // registered no namespace and applied no orkflow before the reads above.
 //
-// Isolation (AGENTS.md §6): a Temporal namespace unique to this run, and a
+// Isolation (AGENTS.md §11.1): a Temporal namespace unique to this run, and a
 // pool unique to this process. Note the deliberate inversion of the usual rule
 // — the two replicas SHARE that namespace, because sharing it is the condition
 // under test.
@@ -75,7 +75,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	temporalNamespace := isolatedTemporalNamespace("ork-m11-3-admin-surface")
+	temporalNamespace := isolatedTemporalNamespace("ork-admin-surface")
 	t.Logf("temporal namespace %s", temporalNamespace)
 	dialIsolatedNamespace(ctx, t, address, temporalNamespace)
 
@@ -127,7 +127,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// deployment name is this run's, so `admin info` reporting it proves the
 	// value came from configuration rather than from a default that would
 	// look the same on any machine.
-	deployment := fmt.Sprintf("orkstack-m11-3-%d", os.Getpid())
+	deployment := fmt.Sprintf("orkstack-admin-%d", os.Getpid())
 	engineEnv := func(addr string) []string {
 		return []string{
 			"ORK_HTTP_ADDR=" + addr,
@@ -146,7 +146,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	configPath := filepath.Join(t.TempDir(), "orkctl.json")
 	// Two callers, one binary: `against` records into the transcript, `probe`
 	// does not. The readiness poll runs `orkflow list` against a bucket other
-	// milestones have been applying into all day, so recording it would bury
+	// test runs have been applying into all day, so recording it would bury
 	// this proof's fifteen commands under two hundred lines of somebody
 	// else's catalog.
 	probe := func(addr string) func(args ...string) (string, string, int) {
@@ -170,7 +170,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	waitForEngine(t, probe(addrB))
 
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
-	namespace := "m113-admin-" + token
+	namespace := "admin-" + token
 	orkflowName := "admin-probe-" + token
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -189,7 +189,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// is allow-listed too, so pool health has a LIVE non-default pool to
 	// report beside the empty one.
 	requireCLI(t, onA, "A registers the namespace", "namespace", "create", namespace,
-		"--description", "M11.3 admin surface probe",
+		"--description", "admin surface probe",
 		"--default-pool", pool,
 		"--allow-pool", pool,
 		"--allow-pool", auxPool,
@@ -317,10 +317,9 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 
 	// ---- the activity catalog, from B --------------------------------------
 	//
-	// v0.0.5 retired the per-Orker plugin inventory: an activity is an image,
-	// and which images exist is engine configuration. The read that replaced it
-	// is ActivityService.ListActivities, and B answers it having started
-	// nothing, exactly as it answers pool health.
+	// An activity is an image, and which images exist is engine configuration:
+	// ActivityService.ListActivities. B answers it having started nothing,
+	// exactly as it answers pool health.
 	catalog := requireCLI(t, onB, "B lists the activity catalog", "activity", "list")
 	for _, want := range []string{"shell", "http", "file"} {
 		if !strings.Contains(catalog, want) {
@@ -333,8 +332,8 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// 1. A name the rule forbids is refused, and NOT repaired into one that is
 	//    allowed: a name that has to be sanitized to be stored is a name that
 	//    can be spelled two ways, and a key built from it addresses somebody
-	//    else's tenant (AGENTS.md §1.10).
-	badName := "M113_Bad Name"
+	//    else's tenant (AGENTS.md §7).
+	badName := "Refused_Bad Name"
 	_, stderr, code := onB("namespace", "create", badName)
 	if code == 0 {
 		t.Fatal("a namespace name the rule forbids was accepted")
@@ -344,7 +343,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	}
 	afterBad := requireCLI(t, onB, "nothing was stored under a repaired name",
 		"namespace", "list")
-	for _, sanitized := range []string{"m113-bad-name", "m113_bad name", badName} {
+	for _, sanitized := range []string{"refused-bad-name", "refused_bad name", badName} {
 		if strings.Contains(afterBad, sanitized) {
 			t.Errorf("the refused name reached the registry as %q:\n%s", sanitized, afterBad)
 		}
@@ -442,21 +441,19 @@ func decodeSystemInfo(t *testing.T, stdout string) adminSystemInfo {
 // adminPoolList is `orkctl pool list --json`, decoded.
 type adminPoolList struct {
 	Pools []struct {
-		Name           string   `json:"name"`
-		LiveOrkerCount int      `json:"liveOrkerCount"`
-		Plugins        []string `json:"plugins"`
-		IsDefault      bool     `json:"isDefault"`
-		LastSeen       string   `json:"lastSeen"`
+		Name           string `json:"name"`
+		LiveOrkerCount int    `json:"liveOrkerCount"`
+		IsDefault      bool   `json:"isDefault"`
+		LastSeen       string `json:"lastSeen"`
 	} `json:"pools"`
 	DefaultPool string `json:"defaultPool"`
 }
 
 func (l adminPoolList) byName(name string) *struct {
-	Name           string   `json:"name"`
-	LiveOrkerCount int      `json:"liveOrkerCount"`
-	Plugins        []string `json:"plugins"`
-	IsDefault      bool     `json:"isDefault"`
-	LastSeen       string   `json:"lastSeen"`
+	Name           string `json:"name"`
+	LiveOrkerCount int    `json:"liveOrkerCount"`
+	IsDefault      bool   `json:"isDefault"`
+	LastSeen       string `json:"lastSeen"`
 } {
 	for i := range l.Pools {
 		if l.Pools[i].Name == name {
@@ -492,37 +489,6 @@ func decodeNamespaceDocument(t *testing.T, stdout string) adminNamespaceDocument
 		t.Fatalf("namespace get --json is not valid JSON: %v\n%s", err, stdout)
 	}
 	return document
-}
-
-// adminPluginList is `orkctl plugin list --json`, decoded.
-type adminPluginList struct {
-	Plugins []struct {
-		Name        string `json:"name"`
-		Version     string `json:"version"`
-		Description string `json:"description"`
-	} `json:"plugins"`
-}
-
-func (l adminPluginList) byName(name string) *struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
-} {
-	for i := range l.Plugins {
-		if l.Plugins[i].Name == name {
-			return &l.Plugins[i]
-		}
-	}
-	return nil
-}
-
-func decodePluginList(t *testing.T, stdout string) adminPluginList {
-	t.Helper()
-	var listing adminPluginList
-	if err := json.Unmarshal([]byte(stdout), &listing); err != nil {
-		t.Fatalf("plugin list --json is not valid JSON: %v\n%s", err, stdout)
-	}
-	return listing
 }
 
 // awaitLivePoolsOnB polls B's pool health until every named pool reports at
@@ -577,7 +543,7 @@ func writeAdminProbeOrkflow(t *testing.T, name, pool string) string {
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
 	document := fmt.Sprintf(`name: %s
 version: "1.0.0"
-description: M11.3 admin surface probe
+description: admin surface probe
 tasks:
   - id: report
     uses: shell
@@ -592,22 +558,13 @@ tasks:
 	return path
 }
 
-// publishAdminTranscript records the session when the milestone's reproduce.sh
-// asks for one (ORK_PROOF_DIR). A plain `go test -tags=integration ./...`
-// writes nothing into the tree.
+// publishAdminTranscript records the session under ORK_PROOF_DIR when
+// scripts/proof.sh sets it; a plain `go test -tags=integration ./...` logs it
+// and writes nothing into the tree.
 func publishAdminTranscript(t *testing.T, body string) {
 	t.Helper()
-	dir := os.Getenv(envProofDir)
-	if dir == "" {
-		t.Logf("%s is unset: the admin session was logged, not published.", envProofDir)
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Logf("cannot create %s: %v", dir, err)
-		return
-	}
 	header := fmt.Sprintf(
-		"# M11.3: the admin surface answered by a replica that started nothing (%s)\n"+
+		"# the admin surface answered by a replica that started nothing (%s)\n"+
 			"#\n"+
 			"# Two real `ork` processes share one Temporal namespace, one execution\n"+
 			"# channel and one MinIO bucket. Three real `orker` processes serve two\n"+
@@ -618,7 +575,7 @@ func publishAdminTranscript(t *testing.T, body string) {
 			"# SETUP write: it registered the namespace and applied the orkflow. Lines\n"+
 			"# marked #B are issued against replica B, which registered no namespace,\n"+
 			"# applied no orkflow and started no run, so every READ it answers comes\n"+
-			"# from the cluster or the bucket (AGENTS.md §1.7) — except `admin info`,\n"+
+			"# from the cluster or the bucket (AGENTS.md §7) — except `admin info`,\n"+
 			"# which describes B itself and says so.\n"+
 			"#\n"+
 			"# B does issue writes, on purpose, in the write-safety section below: a\n"+
@@ -628,10 +585,5 @@ func publishAdminTranscript(t *testing.T, body string) {
 			"# generated by: go test -tags=integration -p 1 ./cmd/orkctl/ \\\n"+
 			"#                 -run TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface\n\n",
 		time.Now().UTC().Format(time.RFC3339))
-	path := filepath.Join(dir, "admin-surface-session.txt")
-	if err := os.WriteFile(path, []byte(header+body), 0o644); err != nil {
-		t.Logf("cannot write %s: %v", path, err)
-		return
-	}
-	t.Logf("wrote %s", path)
+	proof.Write(t, "orkctl", "admin-surface-session.txt", []byte(header+body))
 }

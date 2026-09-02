@@ -20,7 +20,7 @@ import (
 //	workflow's Deployment Version, in which case the activity will be sent to
 //	the Current Deployment Version of its own task queue.
 //
-// So an in-flight run's tasks stay on the plugin code that started them only if
+// So an in-flight run's tasks stay on the Orker build that started them only if
 // the Orker polling the task queue carries the SAME (DeploymentName, BuildID)
 // as the engine hosting RunWorkflow. `ork` and `orker` are therefore released
 // in lockstep as one version. See docs/DEPLOY.md.

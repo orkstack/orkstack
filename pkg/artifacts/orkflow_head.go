@@ -257,15 +257,16 @@ func (s *S3OrkflowStore) readHead(
 // committed POINTER when there is one, and the head DERIVED from the stored
 // documents when there is not.
 //
-// The derived answer exists for one state, and it is a state real buckets are
-// in: an orkflow whose versions were applied by an engine built before
-// @head.json, so the documents are there and the pointer is not. A listing
-// already answers "head 1.0.0" for it (orkflowScan.headOf). Reading the absent
-// pointer as a head of "" HERE — while the listing says 1.0.0 — is what made
-// such a catalog readable and not editable: the service checked the derived
-// head, accepted the edit, and the store then refused it for expecting 1.0.0
-// of a head it called "". One rule, in both places, or the two disagree
-// exactly where a user is trying to work.
+// The derived answer exists because the bucket can hold version documents
+// and no pointer: Delete removes both pointers before the definitions, so a
+// Delete that fails part way leaves exactly that, and Put writes a version
+// before it moves the pointer, so a writer killed on an orkflow's first apply
+// leaves it too. A listing answers such a catalog "head 1.0.0"
+// (orkflowScan.headOf). Reading the absent pointer as a head of "" HERE —
+// while the listing says 1.0.0 — would make the catalog readable and not
+// editable: the service checks the derived head, accepts the edit, and the
+// store then refuses it for expecting 1.0.0 of a head it calls "". One rule,
+// in both places, or the two disagree exactly where a user is trying to work.
 //
 // The etag is empty in the derived case, which is the honest thing to swap
 // against: no pointer object exists yet, so the swap is IfAbsent and the first

@@ -27,7 +27,7 @@ func localActivityCatalogEnv(t *testing.T) string {
 // requireContainerCanReach proves a container can actually reach the test's
 // own HTTP origin before a run depends on it.
 //
-// Since v0.0.5 the http activity's request is made inside a container, so a
+// The http activity's request is made inside a container, so a
 // host address the container cannot route to is a missing prerequisite of the
 // MACHINE (a docker network without host.docker.internal), not a defect: it
 // skips by default and fails under ORK_REQUIRE_INFRA.

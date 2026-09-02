@@ -10,7 +10,7 @@ import (
 )
 
 // The registry stores two routing targets — default_pool and allowed_pools —
-// and M10.2 is the slice that reads them. A name this store accepts and
+// and the engine's pool resolver reads them. A name this store accepts and
 // dispatch refuses is a value nothing can ever honour, so the two rules must
 // be the same rule. They are not the same CODE, and the reason is layering,
 // not the compiler: nothing stops this package importing internal/task, but
@@ -20,7 +20,7 @@ import (
 //
 // The import above is the whole point of the file: it is the only place
 // pkg/artifacts names internal/task, and it exists to make drift a test
-// failure rather than a stored value M10.2 must reject.
+// failure rather than a stored value dispatch must reject.
 
 // poolCorpus is spelled out rather than generated, so a reader can see exactly
 // what is claimed. The four names in the first invalid group are the ones

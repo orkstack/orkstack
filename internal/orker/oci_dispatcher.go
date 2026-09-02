@@ -43,8 +43,8 @@ const (
 // carrier at all.
 const undecodableRereadDelay = 250 * time.Millisecond
 
-// OCIDispatcher runs every activity. plugin.Registry and registry.Get(name)
-// are gone: there is one implementation, and an activity is an image.
+// OCIDispatcher runs every activity: there is one implementation, and an
+// activity is an image.
 type OCIDispatcher struct {
 	// Runtime is the only Docker-aware seam in the repository.
 	Runtime ContainerRuntime
@@ -74,8 +74,8 @@ type OCIDispatcher struct {
 	// EnvAllowlist limits which variables the `env` template helper reads.
 	EnvAllowlist map[string]struct{}
 	// LayoutRoot is where embedded OCI image layouts live (§4.6). Empty
-	// disables the fallback, which is the Phase 1 state: Phase 3 supplies the
-	// layouts, and this seam exists so it has something to implement against.
+	// disables the embedded-layout fallback; cmd/orker fills it from
+	// ORK_ORKER_IMAGE_LAYOUT.
 	LayoutRoot string
 	// LogSinkObserver is an optional in-process observer of streamed lines.
 	LogSinkObserver func(in *orkstackv1.ExecuteTaskInput, line string)

@@ -5,10 +5,9 @@ import { namespaceFrom } from '$lib/namespace';
 import type { PageLoad } from './$types';
 
 // The activity catalog is GLOBAL: what this deployment can run, which is
-// engine configuration (design §4.2), not something scoped by namespace and
+// engine configuration (§4.2), not something scoped by namespace and
 // not something asked of an Orker. `namespace` still travels so a link out of
-// this page can carry the switcher's choice, exactly as the plugin inventory
-// this page replaces did.
+// this page can carry the switcher's choice.
 //
 // The catalog and the Orker description are read INDEPENDENTLY and reported
 // independently. They answer different questions from different places — the

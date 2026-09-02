@@ -44,10 +44,9 @@ const (
 // DockerRuntime drives the Docker CLI. It is the one ContainerRuntime that
 // ships.
 //
-// It shells out rather than linking the daemon SDK, exactly as today's
-// container plugin does: the CLI is the stable interface, it is what an
-// operator debugging a container will type, and it keeps the dependency
-// surface at zero.
+// It shells out rather than linking the daemon SDK: the CLI is the stable
+// interface, it is what an operator debugging a container will type, and it
+// keeps the dependency surface at zero.
 type DockerRuntime struct {
 	// Bin is the CLI to drive. Empty reads ORK_DOCKER_BIN, then "docker".
 	Bin string
@@ -682,9 +681,8 @@ func safeNameComponent(raw string) string {
 }
 
 // isUnbindable recognizes the daemon's own words for a source path it cannot
-// bind. It is the distinction today's container plugin already draws, and it
-// separates WORKSPACE_NOT_BINDABLE (a host misconfiguration retrying will not
-// fix) from RUNTIME_REFUSED (which is retryable).
+// bind. It separates WORKSPACE_NOT_BINDABLE (a host misconfiguration retrying
+// will not fix) from RUNTIME_REFUSED (which is retryable).
 func isUnbindable(message string) bool {
 	lowered := strings.ToLower(message)
 	return strings.Contains(lowered, "bind source path does not exist") ||

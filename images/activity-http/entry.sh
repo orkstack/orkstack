@@ -76,7 +76,7 @@ rc=$?
 
 # A transport failure is an activity failure: the request was not performed.
 # A non-2xx RESPONSE is not — see the README. That distinction is this image's
-# documented contract, carried over from the plugin it replaces.
+# documented contract, not a platform rule.
 if [ "$rc" -ne 0 ]; then
     fail "$method $url: curl exited $rc"
 fi

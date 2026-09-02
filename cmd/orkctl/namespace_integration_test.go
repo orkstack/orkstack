@@ -18,19 +18,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// envProofDir names where a run publishes its proof artifacts. It is an
-// argument, not a constant path, for the reason stated in
-// internal/engine/proof_artifact_integration_test.go: a test that wrote into a
-// committed proof directory on every `go test -tags=integration ./...` would
-// leave the tree dirty and make yesterday's artifact indistinguishable from
-// this run's.
-const envProofDir = "ORK_PROOF_DIR"
-
-// TestIntegration_TwoNamespacesStayDisjointThroughTheCLI is M10.3's end-to-end
-// acceptance, over a real Temporal cluster and a real bucket, driven by the
+// TestIntegration_TwoNamespacesStayDisjointThroughTheCLI is the end-to-end
+// namespace acceptance, over a real Temporal cluster and a real bucket, driven by the
 // real orkctl binary against the real ork and orker binaries.
 //
 // What it proves, in the order a user meets it:
@@ -50,10 +43,7 @@ const envProofDir = "ORK_PROOF_DIR"
 //  7. Submitting into a namespace nobody registered names it AND lists the ones
 //     that exist.
 //
-// It is the replacement for M10.1's interim guard, which refused a non-default
-// namespace outright because the read paths could not honour one.
-//
-// Isolation (AGENTS.md §6): its own Temporal namespace and its own pool, so a
+// Isolation (AGENTS.md §11.1): its own Temporal namespace and its own pool, so a
 // parallel agent's Orker can never pick up its tasks and its runs are invisible
 // to anyone else's listing.
 func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
@@ -69,7 +59,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 
 	// Provisions the namespace and waits until the frontend serves it; the
 	// client it returns is closed by its own t.Cleanup.
-	temporalNamespace := isolatedTemporalNamespace("ork-m10-3-namespace-api-cli")
+	temporalNamespace := isolatedTemporalNamespace("ork-namespace-cli")
 	dialIsolatedNamespace(ctx, t, address, temporalNamespace)
 
 	pool := privateTaskPool()
@@ -107,8 +97,8 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	// The two namespaces are named for this run: another agent's registry
 	// entries must not decide whether this test passes.
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
-	alpha := "m103-alpha-" + token
-	bravo := "m103-bravo-" + token
+	alpha := "alpha-" + token
+	bravo := "bravo-" + token
 	// The bucket is shared, so this run takes its own two namespaces away with
 	// it. It cannot do that through the CLI: `namespace delete` refuses one
 	// that still holds an orkflow, and nothing deletes an orkflow yet — so the
@@ -124,7 +114,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	// ── 1. create, and creating twice is idempotent ────────────────────────
 	for _, ns := range []string{alpha, bravo} {
 		stdout, stderr, code := cli("namespace", "create", ns,
-			"--description", "M10.3 acceptance", "--default-pool", pool)
+			"--description", "namespace acceptance", "--default-pool", pool)
 		if code != 0 {
 			t.Fatalf("namespace create %s exit = %d\nstdout:\n%s\nstderr:\n%s",
 				ns, code, stdout, stderr)
@@ -134,7 +124,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 		}
 	}
 	stdout, stderr, code := cli("namespace", "create", alpha,
-		"--description", "M10.3 acceptance", "--default-pool", pool)
+		"--description", "namespace acceptance", "--default-pool", pool)
 	if code != 0 {
 		t.Fatalf("repeating a create exit = %d, want 0 (it must be idempotent)"+
 			"\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
@@ -204,6 +194,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	const sharedKey = "nightly"
 	runIn := map[string]string{}
 	for _, ns := range []string{alpha, bravo} {
+		waitForPoolLive(t, cli, ns, pool)
 		stdout, stderr, code := cli("run", "submit", orkflowName, "-n", ns,
 			"--idempotency-key", sharedKey, "--watch")
 		if code != 0 {
@@ -296,7 +287,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 }
 
 // isolatedTemporalNamespace names a Temporal namespace this run alone uses
-// (AGENTS.md §6), keeping the operator's own value as the prefix so the
+// (AGENTS.md §11.1), keeping the operator's own value as the prefix so the
 // isolation choice stays visible in `temporal workflow list`.
 func isolatedTemporalNamespace(fallback string) string {
 	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
@@ -327,8 +318,8 @@ func startNamespacedOrker(
 //
 // Both binaries are pinned to ONE local artifact root. The namespace registry
 // and the run's commit records must be the same durable store for every process
-// in the test: since v0.0.5 the engine mints the commit URI and the Orker reads
-// it (§5.4), so two roots fail every activity with COMMIT_READ_FAILED.
+// in the test: the engine mints the commit URI and the Orker reads it (§5.4),
+// so two roots fail every activity with COMMIT_READ_FAILED.
 func startNamespacedEngine(
 	ctx context.Context,
 	t *testing.T,
@@ -359,7 +350,7 @@ func writeNamespacedOrkflow(t *testing.T, name, pool, taskID string) string {
 	path := filepath.Join(t.TempDir(), name+"-"+taskID+".ork.yaml")
 	document := fmt.Sprintf(`name: %s
 version: 1.0.0
-description: M10.3 namespace acceptance
+description: namespace acceptance
 tasks:
   - id: %s
     uses: shell
@@ -374,32 +365,17 @@ tasks:
 	return path
 }
 
-// publishTranscript writes a proof artifact when, and only when, a run asked
-// for one.
+// publishTranscript records the CLI session under ORK_PROOF_DIR when it is
+// set (scripts/proof.sh).
 func publishTranscript(t *testing.T, name, body string) {
 	t.Helper()
-	t.Logf("%s\n%s", name, body)
-	dir := os.Getenv(envProofDir)
-	if dir == "" {
-		t.Logf("%s is unset: %s was logged, not published.", envProofDir, name)
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Logf("cannot create %s: %v", dir, err)
-		return
-	}
 	header := fmt.Sprintf(
 		"# orkctl driving a real ork + orker + Temporal + MinIO (%s)\n"+
 			"# Two namespaces, one orkflow name, two real runs. Every command below is\n"+
 			"# the orkctl binary; nothing is simulated.\n"+
-			"# generated by: proof/M10.3/reproduce.sh\n\n",
+			"# generated by: cmd/orkctl/namespace_integration_test.go\n\n",
 		time.Now().UTC().Format(time.RFC3339))
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(header+body), 0o644); err != nil {
-		t.Logf("cannot write %s: %v", path, err)
-		return
-	}
-	t.Logf("wrote %s", path)
+	proof.Write(t, "orkctl", name, []byte(header+body))
 }
 
 // runBinaryWithEnv is runBinary with extra environment, so an invocation can be

@@ -80,14 +80,14 @@ func (s *Service) existingNamespaces(ctx context.Context) string {
 	return "; these do: " + strings.Join(names, ", ")
 }
 
-// ListPools reports the pools a namespace may dispatch onto, with the Orkers
-// serving each right now and the plugins those Orkers run.
+// ListPools reports the pools a namespace may dispatch onto and the Orkers
+// serving each right now.
 //
-// Liveness and plugins come from the cluster: the Orker count from what is
-// polling for the pool's work, the plugin names from the Orkers themselves.
+// Liveness comes from the cluster: the Orker count is what is polling for the
+// pool's work, and the DescribeOrker probe is whether anyone answers there.
 // Nothing is read from this process's memory, so any replica answers — one
 // that started nothing gives the same reply as the one that started
-// everything, which is the property AGENTS.md §1.7 asks of every read.
+// everything, which is the property AGENTS.md §7 asks of every read.
 //
 // It is the SAME report the dashboard renders (StatsHandler.pools), through
 // the same resolver, degrading the same way. Two paths to one question drift,
@@ -97,7 +97,7 @@ func (s *Service) existingNamespaces(ctx context.Context) string {
 // It NARROWS and does not refuse. Every source is best-effort and each one's
 // loss costs exactly what that source knew: a pool the cluster did not answer
 // for keeps its row and carries Pool.unavailable_reason; a pool whose Orkers
-// did not answer keeps its count and loses its plugin list; an unreadable
+// did not answer the probe keeps its count and is logged; an unreadable
 // orkflow store narrows the scope to the pools the namespace document itself
 // names. The one error left is the one that leaves nothing to report — a
 // namespace that cannot be resolved, or a default pool this deployment cannot
@@ -171,9 +171,9 @@ func (s *Service) poolsNamedByOrkflows(
 }
 
 // poolsNamedByOrkflowsAcross is that same scan over several namespaces, and
-// the only implementation of it: ListPools asks about one namespace and the
-// deployment-wide plugin inventory asks about all of them, so a second scan
-// would be a second answer to one question.
+// the only implementation of it: ListPools asks about one namespace through
+// poolsNamedByOrkflows, and a second scan would be a second answer to one
+// question.
 //
 // It reports POSITIONALLY — named[i] and errs[i] belong to nss[i] — which is
 // what preserves per-namespace degradation: one tenant's unreadable catalog

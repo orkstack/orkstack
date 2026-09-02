@@ -58,35 +58,6 @@ func TestProbeCommitStoreRepeatedCallsUseOneObjectOutsideCommitPrefix(t *testing
 	}
 }
 
-func TestProbeCommitStoreIgnoresDivergentLegacyProbeObject(t *testing.T) {
-	root := t.TempDir()
-	store, err := NewLocalCommitStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyKey := CommitProbePrefix + "/conditional-create/" + CommitObjectName
-	legacyPath := filepath.Join(root, filepath.FromSlash(legacyKey))
-	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	foreign, err := MarshalCommit(&orkstackv1.ActivityCommit{
-		SchemaVersion: CommitSchemaVersion + 1,
-		Namespace:     "foreign",
-		RunId:         "foreign",
-		TaskId:        "foreign",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(legacyPath, foreign, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := ProbeCommitStore(context.Background(), store); err != nil {
-		t.Fatalf("probe with divergent legacy object: %v", err)
-	}
-}
-
 func TestProbeCommitStoreStillRejectsBackendWithoutConditionalCreate(t *testing.T) {
 	store := &nonConditionalProbeStore{}
 	if err := ProbeCommitStore(context.Background(), store); err == nil {

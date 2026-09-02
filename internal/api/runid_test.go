@@ -98,9 +98,9 @@ func (f *runIDFixture) submit(t *testing.T, key string) (*orkstackv1.Run, error)
 	return resp.Msg.GetRun(), nil
 }
 
-// TestSubmitRun_DefaultRunIDDoesNotRestartAtOnePerProcess is acceptance 3 at
-// the API surface: before M8.1 the first run of every replica was
-// ork-<nanos>-1, so two replicas' logs read as if they were the same series.
+// TestSubmitRun_DefaultRunIDDoesNotRestartAtOnePerProcess pins, at the API
+// surface, that the first run of a replica is not ork-<nanos>-1: a per-process
+// counter starting at one makes two replicas' logs read as one series.
 func TestSubmitRun_DefaultRunIDDoesNotRestartAtOnePerProcess(t *testing.T) {
 	f := newRunIDFixture(t, &fakeStarter{}, nil)
 
@@ -256,8 +256,8 @@ func TestSubmitRun_FailsWhenTheReissuedRunIDIsAlsoTaken(t *testing.T) {
 	}
 }
 
-// TestSubmitRun_GeneratedRunIDSurvivesTheDurablePath is acceptance 5 where it
-// can actually break: the id is an object key in the archive, so the widened
+// TestSubmitRun_GeneratedRunIDSurvivesTheDurablePath pins the id's shape where
+// it can actually break: the id is an object key in the archive, so the widened
 // sequence has to encode, prefix-scan and decode back verbatim. The second
 // Service stands for a replica that never saw the run.
 func TestSubmitRun_GeneratedRunIDSurvivesTheDurablePath(t *testing.T) {
@@ -305,9 +305,9 @@ func TestSubmitRun_GeneratedRunIDSurvivesTheDurablePath(t *testing.T) {
 	}
 }
 
-// TestListRuns_OrdersRunsByTimeNotByRunID is acceptance 5 at the one place in
-// the codebase where a run id is compared to another: mergeRuns' tie-break
-// (internal/api/service.go:517-523). Ordering must come from the run's
+// TestListRuns_OrdersRunsByTimeNotByRunID pins the id's shape at the one place
+// in the codebase where a run id is compared to another: mergeRuns' tie-break
+// (internal/api/service.go). Ordering must come from the run's
 // timestamps, so a wider, no-longer-ascending sequence cannot reorder a page.
 // The two nonces stand for two replicas whose ids interleave in time.
 func TestListRuns_OrdersRunsByTimeNotByRunID(t *testing.T) {

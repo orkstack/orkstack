@@ -92,10 +92,10 @@ message ApplyOrkflowRequest {
   // base was chosen — so an edit made while somebody else applied is reported
   // instead of landing beside a newer version nobody looked at.
   //
-  // Empty with a non-empty base_version keeps the pre-M11.2 rule, base must
-  // equal head, so every caller written against that contract keeps exactly
-  // the check it had. Empty with an empty base_version is unchecked, which is
-  // what a plain `orkctl apply file.yaml` sends.
+  // Empty with an empty base_version is unchecked, which is what a plain
+  // `orkctl apply file.yaml` sends. Empty with a non-empty base_version is
+  // InvalidArgument naming both fields: a base is provenance, not a head
+  // claim, and an editor that read a base also read the head it was under.
   //
   // Two fields because there are two facts. With one, the server cannot tell
   // "derived from an old version on purpose" from "derived from a head that
@@ -382,7 +382,7 @@ service NamespaceService {
   // refused unconditionally — every orkflow that names none is in it.
   rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
   // ListPools reports every pool a namespace may dispatch onto, each with the
-  // number of Orkers serving it right now and the plugins those Orkers run.
+  // number of Orkers serving it right now.
   //
   // The answer is read from the cluster, never from process memory, so any
   // replica answers — including one that started nothing.
@@ -390,9 +390,8 @@ service NamespaceService {
   // It NARROWS rather than refusing. A source that cannot be reached costs
   // this read what that source knew and nothing else: a pool the cluster did
   // not answer for is still listed, carrying Pool.unavailable_reason instead
-  // of a count; a pool whose Orkers did not answer keeps its count and loses
-  // its plugin list; an orkflow store that cannot be read narrows the answer
-  // to the pools the namespace document itself names. An admin read is opened
+  // of a count; an orkflow store that cannot be read narrows the answer to
+  // the pools the namespace document itself names. An admin read is opened
   // when something is already wrong, and a refusal hides the healthy pools
   // beside the broken one.
   rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
@@ -431,19 +430,14 @@ message ListPoolsResponse {
   string default_pool = 2;               // where a task naming no pool runs
 }
 
-// ActivityService reports what this deployment can run. It replaces
-// PluginService: an activity is an image, and which images exist is engine
-// configuration (§4.2), not something to ask an Orker.
-//
-// PluginService, PluginInfo, ListPluginsRequest and ListPluginsResponse are
-// DELETED, not repurposed. This note records why, and no new message reuses
-// those names. Deleting whole messages is not a field-number reuse, so §2.1's
-// rule — field numbers are never reused or renumbered — is untouched.
+// ActivityService reports what this deployment can run: an activity is an
+// image, and which images exist is engine configuration (§4.2), not something
+// to ask an Orker.
 service ActivityService {
   rpc ListActivities(ListActivitiesRequest) returns (ListActivitiesResponse);
-  // DescribeOrker is the pool-liveness probe that replaces ListPlugins in
-  // that role (§6.5). It is dispatched as a Temporal activity on a pool's
-  // own channel, exactly where the ListPlugins probe went.
+  // DescribeOrker is the pool-liveness probe (§6.5). It is dispatched as a
+  // Temporal activity on a pool's own channel, so it answers only when an
+  // Orker is actually polling that pool.
   rpc DescribeOrker(DescribeOrkerRequest) returns (DescribeOrkerResponse);
 }
 

@@ -37,7 +37,7 @@ func privateOrkerQueue() string {
 // in the cluster's default namespace a parallel agent polling `ork-tasks` can
 // take its workflow tasks and its PASS becomes a fact about who else was on
 // the cluster. ORK_ORKER_QUEUE partitions task EXECUTION only; a namespace is
-// the hard partition, and the one AGENTS.md §6 tells a parallel agent to use.
+// the hard partition, and the one AGENTS.md §11.1 tells a parallel agent to use.
 // The operator's ORK_TEMPORAL_NAMESPACE stays as the prefix so the choice is
 // visible in `temporal workflow list`.
 func routingNamespace() string {
@@ -192,12 +192,12 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		Starter:  starter,
 		// RawQueue is the operator escape hatch, and it is what pins this
 		// engine's DEFAULT route — where a task that names no pool goes. The
-		// starter's own orker queue above is plugin discovery only; since
-		// M10.2 dispatch comes from the plan the submission builds, and this
-		// is the field that puts the private channel into it. `cmd/ork` sets
-		// the same value from ORK_ORKER_QUEUE (or ORK_ORKER_POOL).
+		// starter's own orker queue above is the liveness probe only;
+		// dispatch comes from the plan the submission builds, and this is the
+		// field that puts the private channel into it. `cmd/ork` sets the
+		// same value from ORK_ORKER_QUEUE (or ORK_ORKER_POOL).
 		RawQueue: orkerQueue,
-		// The real probe and the real plugin lister, as `cmd/ork` wires them.
+		// The real probe and the real Orker describer, as `cmd/ork` wires them.
 		// With RawQueue set they are the pair that can disagree: the submit
 		// below is checked against the private channel, and ListPools at the
 		// end has to report the same pool from the same channel.
@@ -302,7 +302,7 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	// that default must therefore reach the SAME Orkers — the ones on the
 	// private queue — or the word the client read named a pool the task never
 	// ran on. It is also the isolation guarantee: `pool: main` may not escape
-	// ORK_ORKER_QUEUE onto the shared queue (AGENTS.md §6).
+	// ORK_ORKER_QUEUE onto the shared queue (AGENTS.md §11.1).
 	pinnedSource := fmt.Sprintf(`
 name: pool-main-pinned
 version: "0.1.0"
@@ -360,7 +360,7 @@ tasks:
 	// The other half of the same configuration: an operator asking which pools
 	// exist must be told about the Orker that just ran this run's three tasks.
 	// Reported from the pool's own channel instead, the answer would be "0
-	// Orkers, no plugins" about a pool this engine dispatches to and accepts
+	// Orkers" about a pool this engine dispatches to and accepts
 	// submissions into — one process, one second, two answers.
 	pools, err := namespaceClient.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
 	if err != nil {
@@ -380,10 +380,9 @@ tasks:
 			"is on the engine's own orker queue %q and just executed %d tasks",
 			got, task.DefaultPool, orkerQueue, len(observedQueues))
 	}
-	// On the record, for proof/M10.2: one engine, one configuration, both
-	// answers.
+	// On the record: one engine, one configuration, both answers.
 	t.Logf("ORK_ORKER_QUEUE=%s: %d task(s) executed there, and ListPools reports "+
-		"pool %q with %d Orker(s) and plugins %v",
+		"pool %q with %d Orker(s)",
 		orkerQueue, len(observedQueues), task.DefaultPool,
-		main.GetLiveOrkerCount(), main.GetPlugins())
+		main.GetLiveOrkerCount())
 }

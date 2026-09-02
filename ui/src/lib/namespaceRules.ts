@@ -1,4 +1,4 @@
-// The Admin namespace forms' local validation (M11.6, design §6.2).
+// The Admin namespace forms' local validation.
 //
 // This is a UX PREFILTER, never a gate: the server (pkg/artifacts/namespace_store.go,
 // validNamespacePools / validPoolName / namespaceNamePattern) is the authority
@@ -10,14 +10,14 @@
 //
 // The slug rule is restated here rather than imported because there is
 // nothing to import across the browser/server boundary: this is TypeScript,
-// the server is Go. AGENTS.md §1.10 asks that the rule be "stated where each
+// the server is Go. AGENTS.md §7 asks that the rule be "stated where each
 // boundary needs it, over shared test vectors" — this is that restatement,
 // and namespaceRules.test.ts is what a reviewer diffs against the Go pattern
 // by hand.
 
 // SLUG_PATTERN mirrors internal/dsl.slugPattern / internal/task.poolPattern /
 // pkg/artifacts/namespace_store.go's namespaceNamePattern and poolNamePattern:
-// one rule, restated at every boundary that needs it (AGENTS.md §1.10).
+// one rule, restated at every boundary that needs it (AGENTS.md §7).
 export const SLUG_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 // MAX_SLUG mirrors dsl.MaxSlug / task.MaxPoolName / the store's maxPoolName —

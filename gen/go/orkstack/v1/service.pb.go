@@ -52,10 +52,10 @@ type ApplyOrkflowRequest struct {
 	// base was chosen — so an edit made while somebody else applied is reported
 	// instead of landing beside a newer version nobody looked at.
 	//
-	// Empty with a non-empty base_version keeps the pre-M11.2 rule, base must
-	// equal head, so every caller written against that contract keeps exactly
-	// the check it had. Empty with an empty base_version is unchecked, which is
-	// what a plain `orkctl apply file.yaml` sends.
+	// Empty with an empty base_version is unchecked, which is what a plain
+	// `orkctl apply file.yaml` sends. Empty with a non-empty base_version is
+	// InvalidArgument naming both fields: a base is provenance, not a head
+	// claim, and an editor that read a base also read the head it was under.
 	//
 	// Two fields because there are two facts. With one, the server cannot tell
 	// "derived from an old version on purpose" from "derived from a head that

@@ -13,7 +13,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// Serving a task's live log: the read half of M10.5.
+// Serving a task's live log: the read half of the log-chunk contract (the
+// Orker writes, this file reads).
 //
 // The Orker writes numbered chunks into the artifact store while the task runs
 // (internal/orker/logsink.go). This file reads them back — replay what exists,
@@ -24,7 +25,7 @@ import (
 // chunks, and the run READER, for the task's state. Both are shared by every
 // replica, so any replica serves any run's logs: one it never started, one
 // whose Orker has exited, one that finished before the reader connected
-// (AGENTS.md §1.7).
+// (AGENTS.md §7).
 //
 // Nothing here touches Temporal payloads or the Event stream. Bytes live in the
 // bucket; the run's history says only that a task ran.

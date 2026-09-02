@@ -411,27 +411,26 @@ operations may include `copy`, `checksum`, `gzip`, `gunzip`, `tar`, `untar`, and
 
 ## 10. Developer experience and contract testing
 
-Local development should be excellent. The intended command is:
+Local development should be excellent. One command starts the whole local
+stack (Temporal, MinIO, a registry, engine, Orker, and UI, health-checked):
 
 ```bash
-orkstack dev
+make up
 ```
 
-It starts the minimum local environment. OrkStack itself must not require an
-additional external database. Developers must be able to test an OCI activity
-without running a complete Orkflow.
-
-Maintain a reusable Activity Contract Test Suite with the intended UX:
+OrkStack itself must not require an additional external database. Developers
+must be able to test an OCI activity without running a complete Orkflow:
 
 ```bash
-orkstack activity test my-image
+orkctl activity test my-image
 ```
 
-It should check container startup, input filesystem and permissions, valid
-context, valid output, artifact-name rules, output-size limits, SIGTERM,
-exit-code handling, and activity timeout. Keep Bash, Go, and Python fixtures;
-the Bash fixture is mandatory. If Bash needs an SDK, the architecture has
-failed.
+It runs the image through the same dispatcher an Orker uses and checks
+container startup, input filesystem and permissions, valid context, valid
+output, artifact-name rules, output-size limits, SIGTERM, exit-code handling,
+and activity timeout. Keep the Bash, Go, and Python fixtures under
+`test/fixtures/`; the Bash fixture is mandatory. If Bash needs an SDK, the
+architecture has failed.
 
 ## 11. Reliability, observability, and evidence
 
@@ -464,23 +463,45 @@ Every code change follows this order:
 2. Write a behavior test that fails for the right reason.
 3. Implement until it passes.
 4. Run `make lint test`; for Temporal or storage changes, run integration tests
-   against `make infra-up`.
-5. Produce or refresh the proof artifact.
-6. Commit with a Conventional Commit and update the relevant milestone todo.
+   against `make infra-up` (`make test-integration`).
+5. Produce the evidence with `make proof` (see below) and quote it.
+6. Commit with a Conventional Commit.
 
 Unit tests are pure and table-driven. Temporal workflow tests use
 `WorkflowTestSuite` / `TestWorkflowEnvironment` with mocked activities.
 Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
-missing prerequisite skips by returning 77 and becomes a failure under
-`ORK_REQUIRE_INFRA=1`. E2E tests live in `test/e2e`. Do not use sleeps for
-synchronization; use deadlines or test helpers.
+missing prerequisite skips, and becomes a failure under `ORK_REQUIRE_INFRA=1`
+(`make test-integration` sets it). Browser end-to-end tests live in `ui/e2e`
+(Playwright, `cd ui && bun run test`) and drive the built UI against a real
+engine, Orker, Temporal, and MinIO; the activity fixtures live in
+`test/fixtures` and `test/tools` holds helpers those suites build. Do not use
+sleeps for synchronization; use deadlines or test helpers. A skip is never a
+pass: a harness must probe its prerequisites itself and fail, not skip, once
+they are present.
 
-Every milestone proof under `proof/<milestone>/` contains full test output,
-coverage where useful, a behavior trace, and a README with one reproduction
-command. Exit codes are 0 pass, 1 fail, and 77 skipped/incomplete. Proof scripts
-must probe prerequisites before opening output files, set `ORK_REQUIRE_INFRA=1`
-when infrastructure is present, and reject stale artifacts.
-No proof, no done.
+### 11.2 Evidence
+
+No proof, no done. A change is finished when its behavior has been observed,
+not when its code reads right. `make proof` (`scripts/proof.sh`) produces that
+evidence: it probes the prerequisites, then runs lint, build, the unit suites,
+the integration suites against the real Temporal and MinIO with
+`ORK_REQUIRE_INFRA=1`, and the activity contract fixture, keeping every log
+under `proof/<name>/` with a README naming the commit, the working tree, and
+each gate's outcome. `make proof-ui` adds the UI type-check, unit, and
+Playwright suites; their screenshots and transcripts land beside the logs.
+Integration tests that record a transcript or measurement write it under
+`ORK_PROOF_DIR`, which the script sets.
+
+`proof/` is gitignored and evidence is never committed: the repository keeps
+the reproduction (the test, spec, or script), and the commit message or pull
+request quotes the evidence — the proof directory name, the gates that ran,
+and the lines that support each claim. Exit codes are 0 pass, 1 fail, and 77
+prerequisite absent. A proof script probes prerequisites before opening any
+output file, so an absence never leaves a file that reads like evidence, and
+every run writes a fresh directory, so yesterday's output can never be
+mistaken for today's. A change to behavior that only a browser can show
+(rendering, live streams, an operator flow) is proven with a Playwright spec
+and its screenshots, never with a description.
 
 
 Parallel integration runs need a unique `ORK_TEMPORAL_NAMESPACE`; set the same
@@ -501,7 +522,7 @@ ps aux | grep -E 'bin/ork|bin/orker' | grep -v grep
 Before finalizing a merge, run `make merge-check` (`make build`, `make lint`,
 `make test`, and `go vet -tags=integration ./...`) on the merged tree. When both
 sides changed a file, resolve the union of behaviors against the merge base;
-do not take one side wholesale. Rerun affected proof scripts after a merge.
+do not take one side wholesale. Rerun affected integration suites after a merge.
 
 ## 12. Repository layout and engineering conventions
 
@@ -516,14 +537,16 @@ internal/api/          Connect services and WebSocket bridge
 internal/dsl/          YAML parse, validation, and Orkflow compilation
 internal/orker/        Orker runtime and OCI activity dispatch
 internal/task/         Temporal namespace, pool routing, and deployment identity
-images/                 First-party OCI activity images; public filesystem ABI, no required SDK
+internal/archive/      Archived-run cleanup worker
+images/                First-party OCI activity images; public filesystem ABI, no required SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
+pkg/logstream/         Live task-log line framing
 ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
-deploy/                Temporal and object-storage development stack
+deploy/                Temporal, object-storage, and registry development stack
 examples/              Example Orkflows
 docs/                  Design and reference material
-proof/                 Committed evidence
-scripts/               Development helpers
+test/                  Activity contract fixtures and test-only helper tools
+scripts/               Development helpers (`make up`, `make reset`)
 ```
 
 Use Go 1.25, one module `github.com/orkstack/orkstack`, `gofmt`, `go vet`, and

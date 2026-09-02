@@ -1,4 +1,4 @@
-engine:       v0.0.4
+engine:       v1.2.3
 go:           go1.25.6
 deployment:   orkstack
 versioning:   on (build 2026-01-02.1)

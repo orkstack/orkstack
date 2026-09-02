@@ -6,27 +6,24 @@ import (
 	"sync"
 )
 
-// Logger streams one line of a task's live output.
-//
-// It moved here with LineWriter, from the pkg/plugin package the OCI Activity
-// Contract retires (design §2.4): a LineWriter's whole job is to call one of
-// these, so the two could not be separated.
+// Logger streams one line of a task's live output. A LineWriter's whole job is
+// to call one of these, so the two live together.
 //
 // The line goes to the task's LOG stream — numbered chunks in the artifact
 // store, readable while the task runs through RunService.StreamTaskLogs — and
 // never onto the run's event stream: task output is bytes, and bytes travel as
-// stored objects rather than through Temporal (AGENTS.md §1.4).
+// stored objects rather than through Temporal (AGENTS.md §2.2).
 //
 // It is printf-shaped, so a caller streaming a line it did not compose passes
 // it as data: Log("%s", line), never Log(line).
 type Logger func(format string, args ...any)
 
-// StderrMarker prefixes every line a plugin streams from a task's STDERR, and
+// StderrMarker prefixes every line the Orker streams from a task's STDERR, and
 // StdoutMarker is the escape that keeps that marker unambiguous.
 //
 // One task attempt has ONE log stream — one Logger, one sink, one dense
 // sequence — because that is what makes a resume cursor a single number and
-// the ordering total and gap-free (M10.5). So the two file descriptors are
+// the ordering total and gap-free. So the two file descriptors are
 // told apart IN BAND, per line, rather than by a field on the chunk: a field
 // would force either one chunk per fd segment (a chunk per line, in an
 // interleaving stream) or a sequence space per fd (two cursors, and every
@@ -47,13 +44,13 @@ type Logger func(format string, args ...any)
 // DecodeStreamLine is the inverse, and no two (stream, line) pairs produce the
 // same wire line — which is the whole property: an application that prints
 // "[stderr] same text" on stdout while another writes "same text" on stderr
-// used to render identically, and no reader, CLI or UI, could tell their
-// origins apart. The cost is one prefix on a line that was already going to be
-// confusing, and stdout that does not collide is untouched.
+// would otherwise render identically, and no reader, CLI or UI, could tell
+// their origins apart. The cost is one prefix on a line that was already going
+// to be confusing, and stdout that does not collide is untouched.
 //
-// The plugin's own lifecycle lines travel bare — they are the plugin's voice,
-// like the Orker's `[ork] ` notices — and a plugin does not write itself a
-// line beginning with either marker.
+// The Orker's own lifecycle lines travel bare — they are the Orker's voice,
+// its `[ork] ` notices — and the Orker does not write itself a line beginning
+// with either marker.
 //
 // The byte-exact separation of the two streams is, as ever, the pair of
 // capture artifacts, which this does not touch: an escape belongs to the
@@ -70,9 +67,9 @@ const (
 // It is exported because every reader of a task log needs the same answer — a
 // pane that tints stderr, a CLI that filters it, a test that counts it — and a
 // second implementation of this rule is a second place for it to be wrong. A
-// line no plugin framed (the Orker's own `[ork] ` notices, a plugin's
-// lifecycle line) carries no marker and reads as stdout, which is where an
-// unmarked line has always belonged.
+// line no LineWriter framed (the Orker's own `[ork] ` notices, a lifecycle
+// line) carries no marker and reads as stdout, which is where an unmarked line
+// belongs.
 func DecodeStreamLine(line string) (text string, stderr bool) {
 	if rest, found := strings.CutPrefix(line, StderrMarker); found {
 		return rest, true
@@ -85,7 +82,7 @@ func DecodeStreamLine(line string) (text string, stderr bool) {
 
 // MaxStreamedLine bounds one streamed piece.
 //
-// An application that writes megabytes with no terminator is the plugin-side
+// An application that writes megabytes with no terminator is the writer-side
 // way to exhaust memory, so a LineWriter emits a piece every MaxStreamedLine
 // bytes instead of waiting for a terminator that may never come. It sits below
 // the Orker sink's own per-line limit (1 MiB), so the split happens ONCE, here,
@@ -131,11 +128,10 @@ const MaxStreamedLine = 64 << 10
 // reports the full length and a nil Logger (or a nil *LineWriter) is a working
 // no-op. It is safe for concurrent use, and safe to write to after Close: the
 // copying goroutine of a killed process may still be draining a pipe when the
-// plugin has already flushed.
+// runtime has already flushed.
 //
-// It lives in the SDK rather than in one plugin so that every plugin frames
-// lines the same way; pkg/plugins/shell carries the older private tee this was
-// promoted from (design v004 §1.2), which is the next caller to fold in.
+// It lives in this package rather than beside one caller so that every writer
+// frames lines the same way.
 type LineWriter struct {
 	log    Logger
 	prefix string

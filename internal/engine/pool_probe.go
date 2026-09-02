@@ -141,16 +141,14 @@ func (p *TemporalPoolProbe) now() time.Time {
 // OrkerOnPool asks one pool's Orkers who they are, by executing the Orker's
 // own DescribeOrker activity on that pool's channel.
 //
-// It replaces PluginsOnPool. The question changed — an Orker no longer has a
-// plugin list, because which images exist is engine configuration (§4.2) — but
-// the ROLE did not: a successful answer is how a pool proves it is alive, and
-// that is what the admin inventory renders.
+// A successful answer is how a pool proves it is alive, and that is what the
+// admin inventory renders.
 //
 // It is asked of a pool with live Orkers only. The activity has nowhere else
 // to run, so a pool with none would hold the request open until the timeout
 // and answer nothing.
 func (s *TemporalStarter) OrkerOnPool(ctx context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	return s.describeOrkerOn(ctx, queue, poolPluginTimeout)
+	return s.describeOrkerOn(ctx, queue, poolDescribeTimeout)
 }
 
 var _ PoolOrkerDescriber = (*TemporalStarter)(nil)

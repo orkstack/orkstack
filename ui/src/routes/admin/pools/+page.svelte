@@ -1,17 +1,12 @@
 <script lang="ts">
-	// Pool health (design §6.1, acceptance 3): live Orker counts, narrowed
-	// rather than refused (NamespaceService.ListPools, M11.3). A pool this
+	// Pool health: live Orker counts, narrowed rather than refused
+	// (NamespaceService.ListPools). A pool this
 	// read could not ask about is a THIRD state, distinct from both "healthy"
 	// and "empty" — Pool.unavailable_reason — and it is rendered as its own
 	// state rather than folded into a zero.
 	//
-	// Pool.plugins is NOT rendered. Under the OCI Activity Contract an
-	// activity is an image, not a Go type compiled into an Orker, so a pool
-	// has no plugin inventory to report and nothing in the engine populates
-	// that field any more. Rendering it produced a permanently-false caption
-	// ("this pool's Orkers did not answer the plugin inventory question")
-	// about a question that is no longer asked. What a deployment can run is
-	// on Admin → Activities; who is serving a pool is the count below.
+	// What a deployment can run is on Admin → Activities; who is serving a
+	// pool is the count below.
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -45,7 +40,7 @@
 	);
 	const busy = $derived(retrying || navigatingHere);
 
-	// Nothing unavailable is ever drawn as zero (acceptance 3): a pool the
+	// Nothing unavailable is ever drawn as zero: a pool the
 	// cluster could not answer for has NO number at all, only the reason.
 	function orkerLabel(pool: Pool): string {
 		if (pool.unavailableReason) return 'unknown';

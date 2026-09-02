@@ -183,8 +183,8 @@ the default pool, not one fixed set of Orkers, so wherever an operator has
 pointed the default, both spellings go there and a run reports both on the
 same pool. Within a run, one pool name means one set of Orkers and one set of
 Orkers has one name — so the pool a run reports a task on is a pool you can
-write to reach those same Orkers. A task that names a pool nothing serves
-waits for one; M10.2 refuses the submission up front instead.
+write to reach those same Orkers. A task that names a pool with no live
+Orkers is refused at submit rather than left waiting for one.
 
 ## Templating
 
@@ -212,10 +212,13 @@ referencing an unrelated task's output is a compile-time error.
 3. Task ids unique and slug-formatted.
 4. Every `needs` entry references an existing task id.
 5. The `needs` graph is acyclic (DAG).
-6. `uses` is a non-empty catalog activity name or OCI registry reference;
-   removed plugin-era selectors are refused rather than aliased.
+6. `uses` is a non-empty catalog activity name or OCI registry reference.
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks.
+
+Decoding is strict: a key the schema above does not define is refused, never
+ignored, so a misspelled or unsupported key cannot surface later as a run that
+behaves differently from its document.
 
 A slug is at most **200 bytes**, in every position above. The bound is half the
 rule and not a detail of it: a namespace, an orkflow name and a version are
@@ -231,7 +234,7 @@ direction — a test dependency costs an importer nothing.
 
 ## Example
 
-See `examples/hello.ork.yaml` for a fetch → transform → persist pipeline that
+See `examples/hello.ork.yaml` for a fetch → transform → checksum pipeline that
 uses the first-party `http`, `shell`, and `file` OCI activity images with
 artifact hand-off. Every shipped example is compiled by
 `TestCompile_AcceptsEveryShippedExample`.

@@ -20,7 +20,7 @@ const (
 	ClaimUpdateName = "claim"
 
 	// ClaimWorkflowIDPrefix marks a workflow id as a claim rather than a run.
-	// A run id is `ork-{timestamp}-{sequence}` (AGENTS.md §1.5) and can never
+	// A run id is `ork-{timestamp}-{sequence}` (AGENTS.md §7) and can never
 	// collide with this.
 	ClaimWorkflowIDPrefix = "ork-idem-"
 
@@ -105,7 +105,7 @@ func ClaimWorkflowID(key string) string {
 // claim execution (its id is ClaimWorkflowID(key)) frees one by hand. See
 // docs/DEPLOY.md §5.
 //
-// Determinism (AGENTS.md §1.3): the body sets an update handler, sleeps, and
+// Determinism (AGENTS.md §2.1): the body sets an update handler, sleeps, and
 // returns. No clock is read, no IO is done, nothing iterates a map, and the
 // key's digest is computed by the caller and arrives as the workflow id.
 func IdempotencyClaimWorkflow(ctx workflow.Context, in ClaimWorkflowInput) (Claim, error) {

@@ -28,7 +28,7 @@ func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T)
 	}
 	raw := newRawS3Client(t, cfg)
 	ctx := context.Background()
-	nsName := "m101-ns-" + uniqueToken(t)
+	nsName := "reg-ns-" + uniqueToken(t)
 	t.Cleanup(func() {
 		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, artifacts.NamespacePrefix+"/"+nsName+".json")
 		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, artifacts.OrkflowPrefix+"/"+nsName+"/")
@@ -36,7 +36,7 @@ func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T)
 
 	if _, err := store.Put(ctx, &orkstackv1.Namespace{
 		Name:         nsName,
-		Description:  "M10.1 namespace registry",
+		Description:  "namespace registry",
 		DefaultPool:  "main",
 		AllowedPools: []string{"main", "gpu"},
 	}, artifacts.PutConditions{}); err != nil {
@@ -59,7 +59,7 @@ func TestNamespaceStore_PutGetListAndDeleteRespectOrkflowOwnership(t *testing.T)
 	if err != nil {
 		t.Fatalf("Get(%s): %v", nsName, err)
 	}
-	if got.GetName() != nsName || got.GetDescription() != "M10.1 namespace registry" {
+	if got.GetName() != nsName || got.GetDescription() != "namespace registry" {
 		t.Fatalf("Get(%s) = %v, want the stored document", nsName, got)
 	}
 	defaultNS, err := store.Get(ctx, "")
@@ -157,7 +157,7 @@ func TestNamespaceStore_StampsCreatedAndUpdatedItself(t *testing.T) {
 		t.Fatalf("NewS3NamespaceStore: %v", err)
 	}
 	raw := newRawS3Client(t, cfg)
-	nsName := "m101-clock-" + uniqueToken(t)
+	nsName := "reg-clock-" + uniqueToken(t)
 	t.Cleanup(func() {
 		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket,
 			artifacts.NamespacePrefix+"/"+nsName+".json")
@@ -234,7 +234,7 @@ func TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters(t *testing.T
 	}
 	raw := newRawS3Client(t, cfg)
 	ctx := context.Background()
-	nsName := "m103-cas-" + uniqueToken(t)
+	nsName := "reg-cas-" + uniqueToken(t)
 	t.Cleanup(func() {
 		deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket,
 			artifacts.NamespacePrefix+"/"+nsName+".json")

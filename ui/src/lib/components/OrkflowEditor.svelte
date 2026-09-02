@@ -9,17 +9,13 @@
 	//    Every message in the error panel below is an ApplyOrkflow response.
 	//
 	// 2. Every apply carries TWO versions, because it states two facts
-	//    (proto/orkstack/v1/service.proto, M11.2):
+	//    (proto/orkstack/v1/service.proto, ApplyOrkflowRequest):
 	//      base_version          — the stored version this edit was DERIVED
 	//                              from. Any stored version is a valid base;
 	//                              editing an old one forks forward from it.
 	//      expected_head_version — the head this page OBSERVED when it fetched.
 	//                              It is the concurrency token, and the only
 	//                              thing a competing apply can invalidate.
-	//    With one field the server cannot tell "derived from an old version on
-	//    purpose" from "derived from a head that has since moved", so it had to
-	//    refuse the first to catch the second — which is why editing the
-	//    version that RUNS used to be impossible rather than merely unusual.
 	//
 	// 3. A refusal never costs the user their work. A head that moved is
 	//    REPORTED, with the diff of what arrived and a retarget that moves the
@@ -74,7 +70,7 @@
 	// And "once, ever" cannot be it either. Selecting another version navigates
 	// within this route, so the same instance is handed a new document; a seed
 	// that closed for good would keep showing the old one under the new
-	// version's name, which is this milestone's own bug wearing a hat.
+	// version's name.
 	//
 	// So the seed waits for a document to exist, and closes over the version it
 	// took — `seededFrom`, compared against the selection.

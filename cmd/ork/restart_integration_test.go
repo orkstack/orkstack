@@ -9,7 +9,7 @@
 //
 // The test skips (never fails) when Temporal or MinIO is not running. It starts
 // a real engine, which polls the shared ork-tasks queue for workflow tasks, so
-// run it with -p 1 (AGENTS.md §6). It submits no runs.
+// run it with -p 1 (AGENTS.md §11.1). It submits no runs.
 package main
 
 import (
@@ -31,6 +31,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -38,12 +39,12 @@ import (
 // stable; the VERSION is per-run, and that is not incidental. This document
 // changes every run — its description carries a nonce, which is what proves
 // the restarted engine served THIS run's apply and not an earlier leftover —
-// and since M10.4 a stored version is immutable: re-applying different content
+// and a stored version is immutable: re-applying different content
 // under one version is refused with artifacts.ErrVersionExists, never written.
 // So the nonce that makes the document new also has to make the version new.
 // Each run leaves one small JSON behind instead of rewriting one object; that
 // is the cost of a version meaning one document forever.
-const probeOrkflowName = "m75-engine-restart-probe"
+const probeOrkflowName = "engine-restart-probe"
 
 // probeOrkflowVersion is unique to this process and this instant, so two runs
 // — or two agents sharing the dev bucket — never contend for one version.
@@ -384,19 +385,8 @@ func findLogLine(log, needle string) string {
 	return ""
 }
 
-// writeRestartProof records the scenario when ORK_PROOF_RESTART_FILE is set,
-// producing the committed proof artifact.
+// writeRestartProof records the scenario under ORK_PROOF_DIR when it is set.
 func writeRestartProof(t *testing.T, transcript string) {
 	t.Helper()
-	path := os.Getenv("ORK_PROOF_RESTART_FILE")
-	if path == "" {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(transcript), 0o644); err != nil {
-		t.Fatalf("write restart proof: %v", err)
-	}
-	t.Logf("wrote restart proof to %s", path)
+	proof.Write(t, "ork", "engine-restart.txt", []byte(transcript))
 }

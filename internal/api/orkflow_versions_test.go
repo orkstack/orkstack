@@ -54,10 +54,10 @@ func apply(t *testing.T, svc *api.Service, document string) *orkstackv1.ApplyOrk
 	return resp.Msg
 }
 
-// TestOrkflowVersions_PointerDecidesWhatRunsAndListsIt is the milestone's first
-// acceptance at the API: versions are immutable, a pointer decides which one an
-// empty version means, and an orkflow nobody promoted answers exactly as it did
-// before the pointer existed.
+// TestOrkflowVersions_PointerDecidesWhatRunsAndListsIt is the versioning
+// contract at the API: versions are immutable, a pointer decides which one an
+// empty version means, and an orkflow nobody promoted answers with its newest
+// applied version.
 func TestOrkflowVersions_PointerDecidesWhatRunsAndListsIt(t *testing.T) {
 	svc := versionedService(t)
 	ctx := context.Background()
@@ -164,7 +164,7 @@ func TestSetCurrentOrkflowVersion_RefusesAVersionThatDoesNotExist(t *testing.T) 
 	}
 }
 
-// TestApplyOrkflow_NeverRewritesAStoredVersion is acceptance 4 at the API: an
+// TestApplyOrkflow_NeverRewritesAStoredVersion is immutability at the API: an
 // edit is a new version, a repeat writes nothing, and a changed document under
 // a stored version is refused rather than silently replacing what a pinned run
 // reads.
@@ -282,7 +282,7 @@ tasks:
 }
 
 // TestApplyOrkflow_ACommentOnlyEditOfAnUnpinnedDocumentIsANewVersion is
-// acceptance 4 for the edit that a version derived from less than the source
+// immutability for the edit that a version derived from less than the source
 // could not store at all.
 //
 // The two notions of "the same document" have to be one notion. An unpinned
@@ -355,9 +355,9 @@ tasks:
 	}
 }
 
-// TestApplyOrkflow_DetectsAnEditDerivedFromAStaleVersion is acceptance 5: an
-// edit that says which version it came from is refused when that is no longer
-// the head, and the refusal names both versions so the user can diff them.
+// TestApplyOrkflow_DetectsAnEditDerivedFromAStaleVersion: an edit that says
+// which head it was fetched under is refused when that is no longer the head,
+// and the refusal names both versions so the user can diff them.
 func TestApplyOrkflow_DetectsAnEditDerivedFromAStaleVersion(t *testing.T) {
 	svc := versionedService(t)
 	ctx := context.Background()
@@ -367,8 +367,9 @@ func TestApplyOrkflow_DetectsAnEditDerivedFromAStaleVersion(t *testing.T) {
 	apply(t, svc, versionedDocument("deploy", "2.0.0", "two"))
 
 	_, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml:        versionedDocument("deploy", "3.0.0", "three"),
-		BaseVersion: base.GetOrkflow().GetVersion(),
+		Yaml:                versionedDocument("deploy", "3.0.0", "three"),
+		BaseVersion:         base.GetOrkflow().GetVersion(),
+		ExpectedHeadVersion: base.GetOrkflow().GetVersion(),
 	}))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("a stale edit = %v (code %s), want FailedPrecondition", err, connect.CodeOf(err))
@@ -385,10 +386,11 @@ func TestApplyOrkflow_DetectsAnEditDerivedFromAStaleVersion(t *testing.T) {
 		t.Errorf("a refused stale edit stored 3.0.0 anyway: %v", err)
 	}
 
-	// The same edit, derived from the CURRENT head, is accepted.
+	// The same edit, fetched under the CURRENT head, is accepted.
 	if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml:        versionedDocument("deploy", "3.0.0", "three"),
-		BaseVersion: "2.0.0",
+		Yaml:                versionedDocument("deploy", "3.0.0", "three"),
+		BaseVersion:         "2.0.0",
+		ExpectedHeadVersion: "2.0.0",
 	})); err != nil {
 		t.Fatalf("an edit derived from the head was refused: %v", err)
 	}
@@ -402,18 +404,19 @@ func TestApplyOrkflow_DetectsAnEditDerivedFromAStaleVersion(t *testing.T) {
 		t.Fatalf("SetCurrentOrkflowVersion(1.0.0): %v", err)
 	}
 	if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
-		Yaml:        versionedDocument("deploy", "4.0.0", "four"),
-		BaseVersion: "3.0.0",
+		Yaml:                versionedDocument("deploy", "4.0.0", "four"),
+		BaseVersion:         "3.0.0",
+		ExpectedHeadVersion: "3.0.0",
 	})); err != nil {
 		t.Fatalf("an edit derived from the head was refused after a rollback: %v", err)
 	}
 
-	// An empty token stays unchecked: a plain `orkctl apply file.yaml` keeps
+	// Empty tokens stay unchecked: a plain `orkctl apply file.yaml` keeps
 	// working with no knowledge of versions at all.
 	if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: versionedDocument("deploy", "5.0.0", "five"),
 	})); err != nil {
-		t.Fatalf("an apply with no base_version was refused: %v", err)
+		t.Fatalf("an apply with no tokens was refused: %v", err)
 	}
 }
 

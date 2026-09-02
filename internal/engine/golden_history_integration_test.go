@@ -34,7 +34,7 @@ const goldenHistoryPath = "testdata/history/run-succeeded-v1.json"
 // routine suite. The point of the fixture is that it was recorded once, by an
 // older build, and never re-recorded: a guard that re-records before it
 // replays only ever proves that today's code agrees with itself, which is the
-// limitation this milestone's acceptance calls out. Re-record only when the
+// limitation the fixture exists to avoid. Re-record only when the
 // engine's contract legitimately changes, and say so in the commit.
 func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") == "" {
@@ -89,7 +89,7 @@ func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 				TaskId: in.TaskId,
 				ValuesJson: valuesJSON(map[string]any{
 					"echoed_task":    in.TaskId,
-					"echoed_plugin":  in.Image.GetReference(),
+					"echoed_image":   in.Image.GetReference(),
 					"upstream_count": float64(len(in.Upstream)),
 				}),
 				Artifacts: []*orkstackv1.ArtifactRef{{

@@ -224,10 +224,11 @@ func TestRunWorkflow_RecordsTheCommitAndExitCodeOnTheTaskRun(t *testing.T) {
 
 // TestRunWorkflow_ReadsTheOrkersFailureAsDataNotAsAString is §8.3.
 //
-// The engine used to flatten every failure into TASK_FAILED with a stringified
-// Go error. It now reads the ApplicationError type — which IS the category —
-// and the ActivityFailureDetail, so the UI can say "contract violation — this
-// image did not write values.json" instead of rendering an error string.
+// The engine reads the ApplicationError type — which IS the category — and
+// the ActivityFailureDetail, rather than flattening every failure into
+// TASK_FAILED with a stringified Go error, so the UI can say "contract
+// violation — this image did not write values.json" instead of rendering an
+// error string.
 func TestRunWorkflow_ReadsTheOrkersFailureAsDataNotAsAString(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {

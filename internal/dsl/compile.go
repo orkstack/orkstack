@@ -1,7 +1,10 @@
 package dsl
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
@@ -115,8 +118,8 @@ type taskDocument struct {
 
 	// Uses is the only image-selecting field in the DSL: a catalog activity
 	// name ("shell") or a registry reference ("ghcr.io/acme/migrate:v3",
-	// "repo@sha256:..."). It replaces `plugin:` outright — a task no longer
-	// names a Go type compiled into an Orker, it names an image (§4).
+	// "repo@sha256:..."). A task names an image, never a Go type compiled
+	// into an Orker (§4).
 	//
 	// It must NOT be a template. Resolution happens at APPLY, and a `uses:`
 	// selected from `{{ .inputs.image }}` cannot be pinned to a digest at
@@ -152,9 +155,6 @@ type taskDocument struct {
 	// workload writes, and it is opt-in because that breaks images which
 	// need their baked-in identity.
 	RunAsOrkerUser bool `yaml:"run_as_orker_user"`
-	// Removed carries keys this document may no longer use, decoded only so
-	// the compiler can refuse them by name (removed.go).
-	Removed removedTaskFields `yaml:",inline"`
 }
 
 // secretDocument is one secret's name and where the Orker gets it.
@@ -221,8 +221,14 @@ func Compile(source []byte) (*orkstackv1.Orkflow, error) {
 
 // CompileWithOptions is Compile with explicit options.
 func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error) {
+	// Strict: a key the schema does not define is refused, never ignored.
+	// yaml.v3 would otherwise drop what it cannot map, and an author would
+	// find out about a misspelled or unsupported key only when the run
+	// behaved differently.
 	var doc document
-	if err := yaml.Unmarshal(source, &doc); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(source))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parse yaml: %w", err)
 	}
 
@@ -244,12 +250,6 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	for _, td := range doc.Tasks {
-		if err := td.Removed.check(td.ID); err != nil {
-			return nil, err
-		}
-		if err := checkUses(td.ID, td.Uses); err != nil {
-			return nil, err
-		}
 		task := &orkstackv1.Task{
 			Id:             td.ID,
 			Uses:           td.Uses,
@@ -345,7 +345,7 @@ func normalizeValue(v any) any {
 		// keys can stringify to the same value (for example null and "<nil>").
 		// Sort by both the normalized key and a typed identity before applying
 		// the unavoidable last-value-wins conversion, so one document always
-		// compiles to one message. A version no longer depends on this — it is
+		// compiles to one message. A version does not depend on this — it is
 		// the source's hash — but the STORE compares the compiled document, so
 		// a compilation that varied with map iteration order would make
 		// re-applying an unchanged file a different document under a stored

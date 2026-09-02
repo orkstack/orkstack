@@ -51,7 +51,7 @@ var ErrReservedQueue = fmt.Errorf("reserved task queue")
 // for `main` regardless is how `pool: main` came to dispatch to ork-tasks
 // while a task naming no pool took the run's own channel — two disjoint sets
 // of Orkers under one reported pool, and, under the ORK_ORKER_QUEUE isolation
-// AGENTS.md §6 gives every parallel agent, an escape from it. The signature
+// AGENTS.md §11.1 gives every parallel agent, an escape from it. The signature
 // carries the fix: a caller cannot ask this question without saying what the
 // default channel is, so the answer cannot be wrong by omission.
 //
@@ -64,9 +64,9 @@ var ErrReservedQueue = fmt.Errorf("reserved task queue")
 // routed is EngineEventQueue, which carries the engine's own projection work
 // (ErrReservedQueue, and `ork` refuses to boot on it).
 //
-// What it is NOT is one-to-one from pool names onto queues. The comment here
-// used to say it was, and that was wrong for one shape: bind ork-pool-gpu as
-// the default channel and `main` and `gpu` answer the same queue, because the
+// What it is NOT is one-to-one from pool names onto queues, and one shape
+// shows why: bind ork-pool-gpu as the default channel and `main` and `gpu`
+// answer the same queue, because the
 // deployment made them one set of Orkers. One set of Orkers under two names is
 // a lie a client would read, so the resolution that also NAMES a pool
 // collapses them — RouteForPool, below, which is what every caller that
@@ -103,7 +103,7 @@ type Route struct {
 //
 // The pool is the bound channel's own name in the user's vocabulary:
 // PoolForQueue names the pool when an operator pointed the default channel at
-// one, and declines for a raw isolation channel (ORK_ORKER_QUEUE=ork-tasks-m7-9),
+// one, and declines for a raw isolation channel (ORK_ORKER_QUEUE=ork-tasks-agent),
 // which is nobody's pool and therefore reports the built-in default — the pool
 // a document that named none asked for.
 func DefaultRoute(defaultQueue string) (Route, error) {

@@ -39,15 +39,15 @@ const STDOUT_MARKER = '[stdout] ';
  * decodeStreamLine inverts that wire shape: it reports which descriptor a
  * streamed line came from, and the line the application actually wrote.
  *
- * It is the exact counterpart of `plugin.DecodeStreamLine`, and it is a
+ * It is the exact counterpart of `logstream.DecodeStreamLine`
+ * (pkg/logstream/linewriter.go), and it is a
  * DECODE rather than a guess — the producer already stated the origin, and a
  * reader that re-derived it from the text would disagree with the CLI reading
  * the same bytes. `[stdout] ` is the escape that makes the encoding
  * invertible: a stdout line that itself begins with a marker travels behind
- * it, so "[stderr] x" printed on stdout and "x" printed on stderr no longer
- * render as the same line. A line no plugin framed — the Orker's `[ork] `
- * notices, a plugin's own lifecycle lines — carries no marker and reads as
- * stdout, which is where an unmarked line has always belonged.
+ * it, so "[stderr] x" printed on stdout and "x" printed on stderr do not
+ * render as the same line. A line the Orker did not frame carries no marker
+ * and reads as stdout, which is where an unmarked line belongs.
  */
 export function decodeStreamLine(line: string): { text: string; stream: LogStream } {
 	if (line.startsWith(STDERR_MARKER)) {
@@ -71,7 +71,7 @@ export interface LogLine {
 	 */
 	notice: boolean;
 	/**
-	 * stream is the file descriptor the task wrote this line to, as the plugin
+	 * stream is the file descriptor the task wrote this line to, as the Orker
 	 * marked it — not as this module inferred it. A pane tints stderr; the CLI
 	 * prints the marker verbatim. Same information, two renderings.
 	 */

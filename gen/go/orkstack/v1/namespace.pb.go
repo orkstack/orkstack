@@ -187,20 +187,6 @@ type Pool struct {
 	// was computed. Zero means a task sent here would wait for an Orker that is
 	// not there, which is what a submit refuses.
 	LiveOrkerCount int32 `protobuf:"varint,2,opt,name=live_orker_count,json=liveOrkerCount,proto3" json:"live_orker_count,omitempty"`
-	// plugins are the plugins those Orkers can run, asked of the pool itself.
-	//
-	// It is a SAMPLE, and the caption a reader is owed says so: the question is
-	// one activity executed on the pool's own channel, so whichever of the
-	// pool's Orkers picks it up is the one that answers. The Orkers of one pool
-	// run one release by construction, which is what makes a sample worth
-	// showing; mid-rollout two of them can differ, and this field will show one
-	// of the two.
-	//
-	// Empty means "nobody was asked, or nobody answered" — a pool with no live
-	// Orkers has nobody to ask, and a pool whose Orkers did not answer in time
-	// keeps its count and loses its plugin list. It never means "these Orkers
-	// run no plugins".
-	Plugins []string `protobuf:"bytes,3,rep,name=plugins,proto3" json:"plugins,omitempty"`
 	// is_default marks the pool a task of this namespace runs on when it names
 	// none.
 	IsDefault bool `protobuf:"varint,4,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
@@ -278,13 +264,6 @@ func (x *Pool) GetLiveOrkerCount() int32 {
 	return 0
 }
 
-func (x *Pool) GetPlugins() []string {
-	if x != nil {
-		return x.Plugins
-	}
-	return nil
-}
-
 func (x *Pool) GetIsDefault() bool {
 	if x != nil {
 		return x.IsDefault
@@ -324,15 +303,14 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\x04etag\x18\b \x01(\tR\x04etag\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe5\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xda\x01\n" +
 	"\x04Pool\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12(\n" +
-	"\x10live_orker_count\x18\x02 \x01(\x05R\x0eliveOrkerCount\x12\x18\n" +
-	"\aplugins\x18\x03 \x03(\tR\aplugins\x12\x1d\n" +
+	"\x10live_orker_count\x18\x02 \x01(\x05R\x0eliveOrkerCount\x12\x1d\n" +
 	"\n" +
 	"is_default\x18\x04 \x01(\bR\tisDefault\x127\n" +
 	"\tlast_seen\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12-\n" +
-	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonB\xaa\x01\n" +
+	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonJ\x04\b\x03\x10\x04R\apluginsB\xaa\x01\n" +
 	"\x0fcom.orkstack.v1B\x0eNamespaceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (

@@ -20,7 +20,8 @@ const (
 
 // jsonCodec replaces Connect's built-in JSON codec with a decoder that accepts
 // enum values in either spelling — "SUCCEEDED" and "STATUS_SUCCEEDED" both
-// parse — so clients can migrate to the short form at their own pace.
+// parse — so a hand-written client may send the short form the CLI and the
+// WebSocket bridge emit.
 //
 // Responses keep protojson's canonical prefixed names. Generated browser
 // clients (protobuf-es `fromJson`) reject an enum value they do not declare,

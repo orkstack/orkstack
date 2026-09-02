@@ -31,7 +31,7 @@ import (
 //
 // Neither source is this process's memory. Two replicas therefore compute the
 // same numbers from the same bytes, including a replica that started nothing
-// (AGENTS.md §1.7).
+// (AGENTS.md §7).
 
 const (
 	// statsPageSize is one page of the execution index.

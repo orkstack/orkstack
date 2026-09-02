@@ -191,13 +191,8 @@
 									{pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}
 								</span>
 							</div>
-							<!--
-								Driven by the live Orker COUNT, not by Pool.plugins.
-								Under the OCI Activity Contract nothing populates
-								Pool.plugins any more, so the old `plugins.length > 0`
-								test always fell through and told a reader that a pool
-								with live Orkers had none serving it.
-							-->
+							<!-- Driven by the live Orker COUNT: an activity is an image,
+								so a pool carries no inventory of what it can run. -->
 							<div class="mt-1 text-xs text-zinc-500" data-testid="pool-serving-{pool.name}">
 								{#if pool.liveOrkerCount > 0}
 									serving now

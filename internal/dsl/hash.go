@@ -12,14 +12,13 @@ import (
 // That identity is the contract, not an implementation detail. A version names
 // ONE immutable document, and the store decides an apply is a repeat by
 // comparing what it holds — source included (pkg/artifacts.sameStoredOrkflow).
-// A derivation covering less than those bytes lets one version name two
-// different documents, and the store then refuses the second as an attempt to
-// rewrite an immutable version. This hash used to normalize the YAML and hash
-// only its semantic content, so a comment-only edit of an unpinned document
-// compiled to the stored version with different source and could not be
-// applied at all — and the refusal's advice, "publish a new version", was
-// unfollowable, because a derived version is not the author's to name. Two
-// notions of "the same document" in one system is one too many.
+// A derivation covering less than those bytes (a semantic hash that ignores
+// comments, say) would let one version name two different documents, and the
+// store would then refuse the second as an attempt to rewrite an immutable
+// version — with advice, "publish a new version", that the author of an
+// unpinned document cannot follow, because a derived version is not theirs to
+// name. Two notions of "the same document" in one system is one too many, so
+// the hash covers exactly what the store compares.
 //
 // The cost is that a cosmetic edit is a version too. For a store that keeps
 // the source that is the honest answer: the file a reader opens changed, so

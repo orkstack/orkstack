@@ -100,8 +100,8 @@ func claimOf(runID string) engine.Claim {
 	return engine.Claim{RunID: runID, Snapshot: []byte(runID)}
 }
 
-// TestTemporalIdempotency_JoinsTheKeysClaimInOneRoundTrip is acceptance 2:
-// the dedupe decision is taken by the server, in one call, using GA v1.47
+// TestTemporalIdempotency_JoinsTheKeysClaimInOneRoundTrip pins the claim
+// round trip: the dedupe decision is taken by the server, in one call, using GA v1.47
 // APIs. USE_EXISTING is what makes a second replica join the claim already
 // holding the key instead of starting a rival, and it is required by
 // UpdateWithStartWorkflow; waiting for Completed is what makes that same call
@@ -171,7 +171,7 @@ func TestTemporalIdempotency_TheClaimOutlivesItsTTLByAGraceOnly(t *testing.T) {
 			got, 2*time.Hour)
 	}
 	// The TTL reaches the workflow as an argument, never as an environment
-	// read inside workflow code (AGENTS.md §1.3).
+	// read inside workflow code (AGENTS.md §2.1).
 	if len(c.workflowArgs) != 1 {
 		t.Fatalf("claim workflow got %d args, want one input", len(c.workflowArgs))
 	}

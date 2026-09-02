@@ -273,8 +273,10 @@ func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID 
 	}
 	listObject, err := a.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(a.bucket), Key: aws.String(listKey)})
 	if isNotFound(err) {
-		// Archives written before reference accounting have no list. Falling
-		// back to a namespace-wide scan would make every cleanup unbounded.
+		// PutRun writes the object list before it publishes the index, so
+		// an archived run with no list is a corrupt archive. Do nothing rather
+		// than fall back to a namespace-wide scan, which would make every
+		// cleanup unbounded.
 		return result, nil
 	}
 	if err != nil {

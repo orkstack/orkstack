@@ -1,11 +1,11 @@
 <script lang="ts">
-	// The Admin area's own sub-navigation (design §6.1, D12).
+	// The Admin area's own sub-navigation.
 	//
 	// Every route under here carries `?ns=` like any other page — the
 	// namespace switcher stays visible on all four — but only Pools RESPECTS
 	// it. Namespaces, Activities and the overview are DEPLOYMENT-WIDE, and each
 	// says so in its own caption rather than hiding the switcher: hiding
-	// chrome per route was reviewed and rejected (design §6.3) because a
+	// chrome per route is deliberately not done, because a
 	// switcher that disappears on some pages and not others is one more thing
 	// to notice, where a sentence in the page is read once and settles it.
 	import { navigating, page } from '$app/state';

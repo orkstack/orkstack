@@ -31,8 +31,8 @@ which was lying.
 
 **Nothing is read from an engine's memory.** Both sources are shared, so a
 replica that started no runs answers exactly as the one that started them all
-(AGENTS.md §1.7). This is proven, live, on two real engine processes:
-`proof/M10.6/two-replica-stats.txt`.
+(AGENTS.md §7). `cmd/orkctl/stats_two_engine_integration_test.go` holds two
+real engine processes to that.
 
 **No aggregate reads a run body.** The archive index carries a run's namespace,
 orkflow, status and time in the object KEY, so counting is a prefix scan that
@@ -60,9 +60,9 @@ percentiles are taken over those of its runs that have since finished — so
 Creation is the coordinate because it is the only instant both records agree
 on: the archive index stamps a run by `created_at`
 (`internal/engine/archive.go`, `RunIndexTime`) and the cluster's execution
-index carries its start. The percentiles used to be selected by CLOSE time
-instead, and one answer then held two different sets of runs with nothing
-saying so — `orkctl stats --since 15m` over hour-long runs reported
+index carries its start. Selecting the percentiles by CLOSE time instead
+would make one answer hold two different sets of runs with nothing saying so —
+`orkctl stats --since 15m` over hour-long runs would report
 `succeeded 0 / failed 0 / rate unavailable` beside `p50 58m over 12 finished
 runs`. `TestExecutions_SamplesTheSameRunsTheArchiveCounts` puts one corpus
 through both records and requires the two counts to match.

@@ -12,9 +12,9 @@ import (
 //
 // The decision cannot live in the API process. Two engine replicas behind one
 // address hold two of everything, so a key that reached replica A is unseen at
-// replica B and each starts its own run — one key, two runs, which is the bug
-// M8.2 removes. `ork` therefore wires engine.TemporalIdempotency, which puts
-// the decision on the Temporal cluster both replicas already share.
+// replica B and each starts its own run — one key, two runs. So `ork` wires
+// engine.TemporalIdempotency, which puts the decision on the Temporal cluster
+// both replicas already share.
 //
 // Claim takes a callback rather than a candidate because the two
 // implementations need one at different moments: a server-side authority must
@@ -42,10 +42,9 @@ var _ IdempotencyClaimer = (*engine.TemporalIdempotency)(nil)
 //
 // It is correct for exactly one engine process, which makes it right for unit
 // tests and wrong for production — `cmd/ork` always wires the Temporal
-// claimer, so this type is unreachable there. It is what api.Service used to
-// do inline, kept as a named seam so the single-process behaviour it provides
-// is a deliberate test double rather than a fallback something could silently
-// degrade to.
+// claimer, so this type is unreachable there. It is a named seam so the
+// single-process behaviour it provides is a deliberate test double rather than
+// a fallback something could silently degrade to.
 type inMemoryClaimer struct {
 	mu     sync.Mutex
 	claims map[string]engine.Claim

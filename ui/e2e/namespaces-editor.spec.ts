@@ -6,15 +6,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catalogEnv, ensureActivityImages } from './harness';
 
-// M10.7 proof: the UI is namespace-aware, and an orkflow can be edited,
+// The UI is namespace-aware, and an orkflow can be edited,
 // versioned, promoted, rolled back and diffed without leaving the browser.
 //
 // Real engine (Connect API over real Temporal + real MinIO) and the real
 // production UI build. Nothing is stubbed: every version listed, every diff
 // rendered and every stale-edit refusal below is the engine's own answer.
 //
-// Isolation (AGENTS.md §6): the Temporal namespace is this milestone's own,
-// and the OrkStack namespaces are this milestone's own two. The orkflow name
+// Isolation (AGENTS.md §11.1): the Temporal namespace is this spec's own,
+// and the OrkStack namespaces are this spec's own two. The orkflow name
 // carries a per-run stamp, so a version list is never polluted by yesterday's
 // run and `promote` always has a lineage it can predict.
 
@@ -28,18 +28,20 @@ const ENGINE_WS = 'ws://127.0.0.1:18081';
 const UI_ORIGIN = 'http://127.0.0.1:14174';
 
 const TEMPORAL_NAMESPACE =
-	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-m10-7-ui-namespaces-editor';
+	process.env.ORK_TEMPORAL_NAMESPACE ?? 'ork-ui-namespaces-editor';
 
 // Two OrkStack namespaces, fixed so the registry does not grow by two on every
 // run, plus a per-run orkflow name so the version lineage is always fresh.
-const ALPHA = 'm10-7-alpha';
-const BETA = 'm10-7-beta';
+const ALPHA = 'editor-alpha';
+const BETA = 'editor-beta';
 const DEFAULT_NS = 'default';
 const STAMP = Date.now().toString(36);
 const ORKFLOW = `editable-${STAMP}`;
 const BETA_ORKFLOW = `beta-only-${STAMP}`;
 
-const PROOF_DIR = process.env.ORK_PROOF_DIR ?? path.join(uiDir, 'test-results', 'proof-m10-7');
+const PROOF_DIR = process.env.ORK_PROOF_DIR
+	? path.join(process.env.ORK_PROOF_DIR, 'namespaces-editor')
+	: path.join(uiDir, 'test-results', 'namespaces-editor');
 
 // The tests below are sequential and stateful ON PURPOSE: each builds on the
 // versions the last one applied, which is the only way to prove promote,
@@ -127,7 +129,7 @@ async function killAll(): Promise<void> {
 		}
 		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
 	}
-	// AGENTS.md §6: never leave a stray engine behind, and anchor the pattern —
+	// AGENTS.md §11.1: never leave a stray engine behind, and anchor the pattern —
 	// unanchored, `bin/ork` also matches `bin/orkctl`.
 	try {
 		execSync("pkill -f '/bin/ork$' || true", { timeout: 5_000 });
@@ -170,9 +172,9 @@ tasks:
 // A bare `expect(getByTestId('editor-base-version')).toHaveText('0.1.0')`
 // cannot tell "the head version could not be read" from "not painted yet":
 // both are an absent element, so a proof run that hits the first reports the
-// second and the transcript names no cause at all. A review of this milestone
-// found exactly that, once in thirteen runs, with nothing in the log to say
-// why. Nothing here retries and nothing here relaxes an assertion; the wait is
+// second and the transcript names no cause at all — a flake that has been
+// observed, once in thirteen runs, with nothing in the log to say why. Nothing
+// here retries and nothing here relaxes an assertion; the wait is
 // the same wait, and the failure is legible.
 //
 // An error panel whose own retry is in flight is NOT an end state: it still
@@ -256,7 +258,7 @@ test.beforeAll(async () => {
 	// show beta's orkflow and the other way round.
 	for (const name of [ALPHA, BETA]) {
 		await rpc('NamespaceService/CreateNamespace', {
-			namespace: { name, description: 'M10.7 UI proof' }
+			namespace: { name, description: 'namespaces-editor spec' }
 		});
 	}
 	await rpc('OrkflowService/ApplyOrkflow', {
@@ -273,7 +275,7 @@ test.afterAll(async () => {
 	await killAll();
 });
 
-// Acceptance 1: a namespace switcher scopes every page, the selection survives
+// A namespace switcher scopes every page, the selection survives
 // navigation and reload, and it is in the URL — so a pasted link opens the same
 // namespace in a browser that has never seen this app.
 test('the namespace switcher scopes every page, survives reload, and travels in the URL', async ({
@@ -296,7 +298,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
 	await shot(page, 'screenshot-namespace-alpha.png');
 
-	// Navigation preserves it, and every page the acceptance names is scoped by
+	// Navigation preserves it, and every page is scoped by
 	// it: the nav links carry the namespace and each destination reads inside it.
 	const nav = page.locator('header nav');
 	await nav.getByRole('link', { name: 'Runs', exact: true }).click();
@@ -329,7 +331,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await fresh.close();
 
 	// A bare URL in the browser that made the choice restores it and writes it
-	// back into the URL (design §1.9), instead of silently resetting to default.
+	// back into the URL, instead of silently resetting to default.
 	await page.goto(`${UI_ORIGIN}/orkflows`);
 	await page.waitForURL(new RegExp(`ns=${ALPHA}`));
 	await expect(page.getByTestId(`orkflow-row-${ORKFLOW}`)).toBeVisible();
@@ -350,7 +352,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	// The colleague case for `default` — the one an absent parameter breaks.
 	// A second browser whose last choice was BETA opens the sender's link and
 	// must land in DEFAULT. When `default` travelled as silence, this URL was
-	// bare, the reader's restore answered it with `m10-7-beta`, and the same
+	// bare, the reader's restore answered it with `editor-beta`, and the same
 	// address showed two people two different namespaces' data.
 	const other = await browser.newContext();
 	const otherPage = await other.newPage();
@@ -372,9 +374,8 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
 });
 
-// Acceptance 2 (editor + validation from the real ApplyOrkflow response) and
-// acceptance 3 (a stale edit is detected through M10.4's base_version, and
-// never overwrites).
+// The editor, with validation from the real ApplyOrkflow response, and a
+// stale edit detected through base_version that never overwrites.
 test('editing applies a new version, real validation errors, and a stale edit is refused', async ({
 	page
 }) => {
@@ -422,7 +423,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 
 	// The refusal is reported, names both versions, and nothing was written.
 	// This editor was opened with no `?version=`, so its base and its expected
-	// head are the same version (0.2.0) — the default M11.5 keeps.
+	// head are the same version (0.2.0) — the default.
 	await expect(page.getByTestId('editor-conflict')).toBeVisible();
 	await expect(page.getByTestId('editor-conflict')).toContainText('0.2.0');
 	await expect(page.getByTestId('editor-conflict-expected')).toHaveText('0.2.0');
@@ -443,7 +444,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 
 	// Retargeting is explicit, and it moves the CONCURRENCY TOKEN — the head
 	// this edit is checked against — while the provenance stays where the edit
-	// really came from (M11.5, design §5.2). Then the edit applies onto the new
+	// really came from. Then the edit applies onto the new
 	// head.
 	await page.getByTestId('editor-conflict-rebase').click();
 	await expect(page.getByTestId('editor-head-version')).toHaveText('0.3.0');
@@ -454,7 +455,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	await expect(page.getByTestId('version-row-0.2.5')).toBeVisible();
 });
 
-// Acceptance 2: promote with a confirmation step, and rollback is promoting the
+// Promote with a confirmation step, and rollback is promoting the
 // previous version. Nothing is optimistic — the badge moves only after the
 // engine says the pointer moved.
 test('promoting and rolling back moves the current version, behind a confirmation', async ({
@@ -498,7 +499,7 @@ test('promoting and rolling back moves the current version, behind a confirmatio
 	await expect(page.getByTestId('version-current-0.3.0')).toBeVisible();
 });
 
-// Acceptance 2: a diff between any two versions, rendered from the server's
+// A diff between any two versions, rendered from the server's
 // unified diff — one implementation, so the CLI and the UI cannot drift.
 test('diffing two versions renders the engine unified diff', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${ALPHA}&tab=versions`);
@@ -526,7 +527,7 @@ test('diffing two versions renders the engine unified diff', async ({ page }) =>
 	expect((await diff.innerText()).trim()).toBe(answer.unifiedDiff.trim());
 });
 
-// Acceptance 5: a failed request says what failed and offers a retry — no view
+// A failed request says what failed and offers a retry — no view
 // can sit on a spinner. The failure is injected at the network, so the loader
 // really fails and the retry really re-issues it.
 test('a failed load reports the failure and retries, instead of spinning', async ({ page }) => {
@@ -551,14 +552,14 @@ test('a failed load reports the failure and retries, instead of spinning', async
 	await expect(page.getByTestId('versions-error')).toHaveCount(0);
 });
 
-// Acceptance 5, the half a retry has to actually deliver: the Edit tab must
+// The half a retry has to actually deliver: the Edit tab must
 // COME BACK, not merely repaint.
 //
 // The editor is built out of the head version's document, so an instance built
 // while that read was failing holds nothing — and because it keeps its place in
 // the template, a SUCCESSFUL retry re-renders that same instance. An empty box
 // over an empty base version is a retry in name only: the browser's reload
-// button is then the real recovery, which is the state acceptance 5 forbids.
+// button is then the real recovery, which is the state this spec forbids.
 test('the Edit tab recovers its document and its base version on retry', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=${ALPHA}`);
 

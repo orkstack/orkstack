@@ -87,7 +87,6 @@ export type Task = Message<"orkstack.v1.Task"> & {
   needs: string[];
 
   /**
-   * if_ is an optional CEL-like expression gating execution (v0: simple truthy).
    * condition is an optional CEL-like expression gating execution (v0: simple truthy).
    *
    * @generated from field: string condition = 5;
@@ -109,8 +108,7 @@ export type Task = Message<"orkstack.v1.Task"> & {
   /**
    * pool names the set of Orkers this task runs on. Empty means the
    * deployment's default pool, which answers to the name "main";
-   * Namespace.default_pool joins that resolution in M10.2, which is the slice
-   * that reads it.
+   * Namespace.default_pool joins that resolution.
    *
    * Writing "main" and writing nothing are ONE route, always: "main" is a name
    * for the deployment's default pool and not for one fixed set of Orkers, so

@@ -28,7 +28,7 @@ and accepts it on the way in.
 | `orkctl … --json` (every data command) | short — `SUCCEEDED` | humans and `jq` read it |
 | WebSocket bridge `/ws/runs/{id}` | short — `RUNNING` | the browser's realtime feed |
 | Connect JSON **responses** | canonical — `STATUS_SUCCEEDED` | generated clients (protobuf-es `fromJson`) only know declared names and reject anything else |
-| Connect JSON **requests** | **both accepted** | migration: old and new clients both work |
+| Connect JSON **requests** | **both accepted** | generated clients send the canonical name; hand-written ones may send the short form |
 | proto / gRPC binary | unchanged | the contract in `proto/` still declares `STATUS_*` |
 
 The proto contract is untouched: `Status` and `EventType` keep their `STATUS_*`

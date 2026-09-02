@@ -171,11 +171,11 @@ func (p SecurityPolicy) AllowsSecretScheme(scheme string) bool {
 
 // Validate refuses a policy an operator cannot have meant.
 //
-// It exists because an unreadable cap used to be indistinguishable from an
-// absent one: ResolveResources guarded each comparison with `parseErr == nil`,
-// so "16GB" — the obvious typo for "16Gi", and a spelling parseMemory has
-// always rejected — did not refuse the request, it REMOVED the ceiling. A
-// workload could then ask for 1024Ti and get it.
+// It exists because an unreadable cap must never pass for an absent one: were
+// ResolveResources to skip a comparison whose cap failed to parse, "16GB" —
+// the obvious typo for "16Gi", and a spelling parseMemory rejects — would not
+// refuse the request, it would REMOVE the ceiling. A workload could then ask
+// for 1024Ti and get it.
 //
 // Boot is the right place to say so. An operator typo should stop the process
 // with a message naming the variable and the value, rather than surviving
@@ -263,8 +263,8 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 	}
 	capMem, memErr := parseMemory(p.MaxMemory)
 	if memErr != nil {
-		// Same defect, memory half: "16GB" is the obvious typo for "16Gi" and
-		// used to remove the ceiling instead of refusing.
+		// Same rule, memory half: "16GB" is the obvious typo for "16Gi" and
+		// must refuse rather than remove the ceiling.
 		return "", "", Fail(ReasonResourceRefused,
 			"this orker's memory cap %q (%s) is not a valid quantity: %v; the request is refused "+
 				"rather than run uncapped, because an operator typo must never widen a limit",

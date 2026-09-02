@@ -103,8 +103,8 @@ func serveAPI(
 	}
 }
 
-// TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt is the M7.5
-// contract at API level: apply writes the definition to
+// TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt is the
+// durable-store contract at API level: apply writes the definition to
 // s3://{bucket}/metadata/orkflows/{namespace}/{name}/{version}.json, and a service built
 // afterwards — with its own store, as a restarted engine has — serves it.
 // Nothing is carried over in memory.

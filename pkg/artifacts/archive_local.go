@@ -239,8 +239,10 @@ func (a *LocalRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, run
 	}
 	listBody, err := a.root.ReadFile(listKey)
 	if errors.Is(err, fs.ErrNotExist) {
-		// Archives written before reference accounting have no list. Falling
-		// back to a namespace-wide scan would make every cleanup unbounded.
+		// PutRun writes the object list before it publishes the index, so
+		// an archived run with no list is a corrupt archive. Do nothing rather
+		// than fall back to a namespace-wide scan, which would make every
+		// cleanup unbounded.
 		return result, nil
 	}
 	if err != nil {

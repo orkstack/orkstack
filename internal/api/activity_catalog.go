@@ -124,7 +124,7 @@ func (l *CatalogLister) ListActivities(ctx context.Context) ([]*orkstackv1.Activ
 //
 // It is a method on Service rather than a free function so that a Service with
 // no resolver configured has one documented behaviour: leave Task.image empty
-// and apply anyway. That is what a unit test and an air-gapped `orkstack dev`
+// and apply anyway. That is what a unit test and an air-gapped `make up`
 // both need, and it is honest — an engine that cannot reach a registry cannot
 // pin a digest, and pretending otherwise would be worse than not pinning.
 func (s *Service) resolveImages(ctx context.Context, wf *orkstackv1.Orkflow) error {

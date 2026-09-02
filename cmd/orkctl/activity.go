@@ -10,12 +10,9 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// newActivityCommand replaces `orkctl plugin`.
-//
-// The command changed because the concept did. `orkctl plugin list` asked a
-// live Orker which Go plugins it had been compiled with; `orkctl activity
-// list` asks the ENGINE which images its catalog holds, because an activity is
-// an image and which images exist is engine configuration (§4.2).
+// newActivityCommand inspects the deployment's activity catalog. An activity
+// is an OCI image and which images exist is engine configuration (§4.2), so
+// this asks the engine, never an Orker.
 func newActivityCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "activity",

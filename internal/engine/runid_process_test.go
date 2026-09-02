@@ -48,8 +48,8 @@ func TestRunIDHelperProcess(t *testing.T) {
 	}
 }
 
-// TestNewRunID_UniqueAcrossSeparateProcesses is the acceptance test for M8.1:
-// run ids must be unique across engine replicas, not merely within one
+// TestNewRunID_UniqueAcrossSeparateProcesses is the cross-replica uniqueness
+// test: run ids must be unique across engine replicas, not merely within one
 // process. It re-execs this binary runIDHelperProcesses times, concurrently,
 // and requires every id from every child to be distinct.
 func TestNewRunID_UniqueAcrossSeparateProcesses(t *testing.T) {

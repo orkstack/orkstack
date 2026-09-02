@@ -189,7 +189,7 @@ func (r *SingleRouter) For(namespace string) (Binding, error) {
 // It never inspects the run id, and that is the property GetRun rests on: with
 // one binding the answer is total by construction, so a read that carries no
 // namespace stays exactly as cheap as it was before the router existed. It is
-// also why a run id is never parsed for meaning (AGENTS.md §1.5) — the seam
+// also why a run id is never parsed for meaning (AGENTS.md §7) — the seam
 // that would have been tempted to is this one, and it declines.
 func (r *SingleRouter) Locate(context.Context, string) (Binding, error) {
 	return r.binding, nil

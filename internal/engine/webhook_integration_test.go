@@ -11,8 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
@@ -29,6 +27,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -38,7 +37,7 @@ const webhookOrkflowName = "webhook-ork"
 // webhookOrkflowYAML is a three-task orkflow assigned to one private pool.
 // Pinning matters: the shared execution channel is polled by every other worker
 // on the machine, and a stolen activity would look like a webhook bug
-// (AGENTS.md §6).
+// (AGENTS.md §11.1).
 func webhookOrkflowYAML(pool string) string {
 	return fmt.Sprintf(`name: %s
 version: "1.0.0"
@@ -60,7 +59,7 @@ tasks:
     needs: [transform]
     pool: %q
     with:
-      op: write
+      op: copy
 `, webhookOrkflowName, pool, pool, pool)
 }
 
@@ -76,10 +75,10 @@ func deliveryOrder(d receivedDelivery) int {
 	return len(webhooks.KnownEvents())
 }
 
-// TestIntegration_WebhookFiresOnRunStateTransitions is M7.8's acceptance: an
-// external system registers a callback through the engine's own API, a run
-// executes on a real Temporal cluster, and the engine POSTs a signed payload
-// for each of that run's state transitions.
+// TestIntegration_WebhookFiresOnRunStateTransitions is the webhook acceptance
+// on a real cluster: an external system registers a callback through the
+// engine's own API, a run executes on real Temporal, and the engine POSTs a
+// signed payload for each of that run's state transitions.
 //
 // Nothing here is stubbed on the webhook path: the registration goes through
 // the HTTP endpoint, the delivery goes through the real dispatcher, and the
@@ -105,7 +104,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	defer temporalClient.Close()
 
 	// A private task queue keeps this run's activities away from any other
-	// worker polling the shared queue (AGENTS.md §6).
+	// worker polling the shared queue (AGENTS.md §11.1).
 	pool := fmt.Sprintf("webhook-%d", time.Now().UnixNano())
 	runQueue, err := task.QueueForPool(pool, "")
 	if err != nil {
@@ -214,7 +213,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 
 	// 3. A real run on a real cluster. Every task names the private queue, so
 	// no other worker on the shared queue can steal this run's activities
-	// (AGENTS.md §6).
+	// (AGENTS.md §11.1).
 	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, origin)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, origin)
 	if _, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(
@@ -242,7 +241,7 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	stream.Close()
 
 	// The run must actually have succeeded. Saying so here turns a stolen
-	// activity (AGENTS.md §6) into a diagnosis instead of a webhook mystery.
+	// activity (AGENTS.md §11.1) into a diagnosis instead of a webhook mystery.
 	got, err := runClient.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
@@ -321,8 +320,8 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	writeWebhookProof(t, runID, registered, deliveries, results)
 }
 
-// TestIntegration_WebhookRetriesA5xxAgainstARealEngine is acceptance 5 on the
-// real path: a receiver that rejects the first two deliveries with 503 still
+// TestIntegration_WebhookRetriesUntilTheReceiverAccepts is the retry policy on
+// the real path: a receiver that rejects the first two deliveries with 503 still
 // gets the run, after exponential backoff.
 func TestIntegration_WebhookRetriesUntilTheReceiverAccepts(t *testing.T) {
 	address := temporalAddress()
@@ -632,8 +631,8 @@ func truncate(value string, size int) string {
 	return value[:size]
 }
 
-// writeWebhookProof records the delivered payloads when ORK_PROOF_WEBHOOK_DIR
-// is set, producing the committed M7.8 proof artifacts.
+// writeWebhookProof records the registration, the signed payloads the receiver
+// saw, and the delivery log as evidence.
 func writeWebhookProof(
 	t *testing.T,
 	runID string,
@@ -642,14 +641,6 @@ func writeWebhookProof(
 	results []webhooks.Result,
 ) {
 	t.Helper()
-	dir := os.Getenv("ORK_PROOF_WEBHOOK_DIR")
-	if dir == "" {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
-
 	// The registration, with the secret redacted to a fingerprint: the proof
 	// must be reproducible without leaking a live signing key.
 	registration := map[string]any{
@@ -659,7 +650,7 @@ func writeWebhookProof(
 		"createdAt": hook.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"secret":    "<redacted, " + strconv.Itoa(len(hook.Secret)) + " hex chars>",
 	}
-	writeProofJSON(t, filepath.Join(dir, "integration-registration.json"), registration)
+	proof.WriteJSON(t, "engine", "webhook-registration.json", registration)
 
 	type deliveryProof struct {
 		Event      string          `json:"event"`
@@ -682,26 +673,14 @@ func writeWebhookProof(
 			Body:       json.RawMessage(got.body),
 		})
 	}
-	writeProofJSON(t, filepath.Join(dir, "integration-signed-payloads.json"), map[string]any{
+	proof.WriteJSON(t, "engine", "webhook-signed-payloads.json", map[string]any{
 		"runId":      runID,
 		"captured":   time.Now().UTC().Format(time.RFC3339),
 		"deliveries": proofs,
 	})
-	writeProofJSON(t, filepath.Join(dir, "integration-delivery-log.json"), map[string]any{
+	proof.WriteJSON(t, "engine", "webhook-delivery-log.json", map[string]any{
 		"runId":    runID,
 		"captured": time.Now().UTC().Format(time.RFC3339),
 		"results":  results,
 	})
-	t.Logf("wrote webhook proof to %s", dir)
-}
-
-func writeProofJSON(t *testing.T, path string, value any) {
-	t.Helper()
-	encoded, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		t.Fatalf("encode %s: %v", path, err)
-	}
-	if err := os.WriteFile(path, append(encoded, '\n'), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
 }

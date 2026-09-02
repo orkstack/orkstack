@@ -1,5 +1,5 @@
-// Distinguishing an etag conflict from every other FailedPrecondition
-// (M11.6 round-2 review): UpdateNamespace answers FailedPrecondition for
+// Distinguishing an etag conflict from every other FailedPrecondition:
+// UpdateNamespace answers FailedPrecondition for
 // TWO unrelated conditions —
 //
 //   - a stale etag (the "two tabs" case): the object changed since this

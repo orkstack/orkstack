@@ -25,8 +25,8 @@ func lazyClient(t *testing.T) client.Client {
 }
 
 // TestDeploymentOptions_UnsetEnvLeavesVersioningOff is the §6 guarantee: a
-// developer running `make run-ork` with no configuration gets exactly the
-// worker they got before this milestone.
+// developer running `make run-ork` with no configuration gets an unversioned
+// worker, exactly as if the versioning options did not exist.
 //
 // The DefaultVersioningBehavior half is not cosmetic. The SDK panics when it
 // is set while UseVersioning is false

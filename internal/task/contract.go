@@ -6,12 +6,12 @@
 // and update both sides.
 //
 // Design note — the argument is a PROTO MESSAGE, not a Go struct:
-// orkstack.v1.ExecuteTaskInput is the whole activity argument. It replaced the
-// Go struct that lived here outright (design §2.3, §2.4). Temporal's data
-// converter encodes a top-level protobuf message with protojson and everything
-// else with encoding/json, so this change flips the recorded payload encoding
-// — which is exactly why the design permits ONE replay-fixture reset, at the
-// end of Phase 1, after the entire new wire shape has landed (§11.4).
+// orkstack.v1.ExecuteTaskInput is the whole activity argument (design §2.3,
+// §2.4). Temporal's data converter encodes a top-level protobuf message with
+// protojson and everything else with encoding/json, so the recorded payload
+// encoding is protojson and the golden fixture below is pinned to it — which
+// is why the design permits exactly ONE replay-fixture recording, made once,
+// after the entire wire shape had landed (§11.4).
 //
 // Design note — template rendering lives in the Orker, not the engine:
 // task `with` values may reference upstream artifacts via the
@@ -21,27 +21,13 @@
 // block plus the upstream references, and the Orker performs all template
 // rendering, artifact staging, container execution, and artifact upload.
 //
-// Fixture-reset history, kept because §11.4 calls a second reset a process
-// failure rather than an accident:
-//
-//	M10.1  Namespace and Pool were added to the activity input, and
-//	       internal/engine/testdata/history/run-succeeded-v1.json was
-//	       re-recorded once.
-//	M10.2  Per-task routing replaced the selected execution-channel string
-//	       with engine.RunPlan, and the fixture was re-recorded a second time.
-//	M11.1  The activity input became orkstack.v1.ExecuteTaskInput and the
-//	       recorded payload encoder flipped from encoding/json to protojson
-//	       (§2.5). The fixture was re-recorded a third time, LAST, after every
-//	       wire-visible change of Phase 1 had landed — the proto contract,
-//	       Error.category, the Task and TaskRun fields, RunPlan's CommitRoot,
-//	       Limits and TransferBudgetSeconds, ActivityFailureDetail, and the
-//	       ActivityOptions change that adds HeartbeatTimeout and
-//	       WaitForCancellation. Recorded by
-//	       TestIntegration_RecordGoldenRunHistory against a real cluster with
-//	       ORK_RECORD_GOLDEN_HISTORY=1.
-//
-// This is the last reset the design permits. Anything that would need another
-// one is a wire change that should have been in Phase 1.
+// Anything that changes what the engine puts into an activity input is a
+// wire change. The golden history fixture
+// (internal/engine/testdata/history/run-succeeded-v1.json) was recorded by
+// TestIntegration_RecordGoldenRunHistory against a real cluster
+// (ORK_RECORD_GOLDEN_HISTORY=1) after the ExecuteTaskInput wire shape landed,
+// and §11.4 permits no further reset: a change that would need one is a
+// change to the contract itself, not a refactor.
 package task
 
 import (
@@ -77,12 +63,9 @@ const (
 	// ActivityDescribeOrker is the registered activity name for the pool
 	// liveness probe.
 	//
-	// It replaces ActivityListPlugins one-for-one: the probe call site, its
-	// 5 s and 10 s timeouts, its MaximumAttempts: 2 and its
-	// default-pool-failure -> Unavailable mapping are all unchanged, and only
-	// the payload differs. A successful probe was never only a plugin list —
-	// it is how a pool proves it is alive, and proof/M11.6 fixed a bug in
-	// exactly that path (§6.5).
+	// It is how a pool proves it is alive: the engine executes it on the
+	// pool's queue with short timeouts and MaximumAttempts: 2, and a default
+	// pool that cannot answer maps to Unavailable (§6.5).
 	ActivityDescribeOrker = "DescribeOrker"
 )
 
@@ -154,12 +137,11 @@ const ReasonInputTooLarge = "INPUT_TOO_LARGE"
 //
 // It lives HERE, in the engine<->Orker seam, because the two packages cannot
 // share it any other way — internal/orker imports internal/engine, so the
-// engine cannot import the Orker back. It used to be declared twice, once in
-// each package, guarded only by a test asserting the engine's value against
-// itself. Two spellings of one contract is one too many: raising the Orker's
-// constant past three times the engine's would make the Orker tick more slowly
-// than Temporal's timeout and every activity would be declared dead, with
-// nothing in the tree failing first.
+// engine cannot import the Orker back. Two spellings of one contract, one in
+// each package, is one too many: raising the Orker's constant past three
+// times the engine's would make the Orker tick more slowly than Temporal's
+// timeout and every activity would be declared dead, with nothing in the tree
+// failing first.
 //
 // Temporal delivers cancellation to an activity ONLY through a heartbeat
 // response, so an activity that never heartbeats never observes ctx.Done()
@@ -178,12 +160,12 @@ const HeartbeatInterval = HeartbeatTimeout / 3
 // It measures the encoding TEMPORAL WILL ACTUALLY SEND, which is not the
 // binary one. Temporal's default data converter encodes a top-level protobuf
 // message with protojson (this package's own doc comment says so, and it is
-// why RunPlan is a plain Go struct). This check used to bound proto.Marshal
-// instead. Binary and protojson agree closely for plain ASCII, so the gap hid
-// in every ordinary input — but each quote, newline or backslash in a `with:`
+// why RunPlan is a plain Go struct). Bounding proto.Marshal instead would not
+// do: binary and protojson agree closely for plain ASCII, so the gap hides in
+// every ordinary input — but each quote, newline or backslash in a `with:`
 // value becomes a two-character JSON escape, and a measured input whose binary
-// form was 260174 bytes reached 520337 as a payload: the check returned nil
-// while the real payload was 1.98x a maximum AGENTS.md §2.2 calls HARD. A gate
+// form is 260174 bytes reaches 520337 as a payload: a binary check returns nil
+// while the real payload is 1.98x a maximum AGENTS.md §2.2 calls HARD. A gate
 // that can pass something Temporal rejects produces exactly the "Temporal-side
 // rejection nobody can attribute" this function exists to prevent.
 //

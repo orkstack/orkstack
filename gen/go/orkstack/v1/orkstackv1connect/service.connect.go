@@ -669,7 +669,7 @@ type NamespaceServiceClient interface {
 	// refused unconditionally — every orkflow that names none is in it.
 	DeleteNamespace(context.Context, *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error)
 	// ListPools reports every pool a namespace may dispatch onto, each with the
-	// number of Orkers serving it right now and the plugins those Orkers run.
+	// number of Orkers serving it right now.
 	//
 	// The answer is read from the cluster, never from process memory, so any
 	// replica answers — including one that started nothing.
@@ -677,9 +677,8 @@ type NamespaceServiceClient interface {
 	// It NARROWS rather than refusing. A source that cannot be reached costs
 	// this read what that source knew and nothing else: a pool the cluster did
 	// not answer for is still listed, carrying Pool.unavailable_reason instead
-	// of a count; a pool whose Orkers did not answer keeps its count and loses
-	// its plugin list; an orkflow store that cannot be read narrows the answer
-	// to the pools the namespace document itself names. An admin read is opened
+	// of a count; an orkflow store that cannot be read narrows the answer to
+	// the pools the namespace document itself names. An admin read is opened
 	// when something is already wrong, and a refusal hides the healthy pools
 	// beside the broken one.
 	ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error)
@@ -804,7 +803,7 @@ type NamespaceServiceHandler interface {
 	// refused unconditionally — every orkflow that names none is in it.
 	DeleteNamespace(context.Context, *connect.Request[v1.DeleteNamespaceRequest]) (*connect.Response[v1.DeleteNamespaceResponse], error)
 	// ListPools reports every pool a namespace may dispatch onto, each with the
-	// number of Orkers serving it right now and the plugins those Orkers run.
+	// number of Orkers serving it right now.
 	//
 	// The answer is read from the cluster, never from process memory, so any
 	// replica answers — including one that started nothing.
@@ -812,9 +811,8 @@ type NamespaceServiceHandler interface {
 	// It NARROWS rather than refusing. A source that cannot be reached costs
 	// this read what that source knew and nothing else: a pool the cluster did
 	// not answer for is still listed, carrying Pool.unavailable_reason instead
-	// of a count; a pool whose Orkers did not answer keeps its count and loses
-	// its plugin list; an orkflow store that cannot be read narrows the answer
-	// to the pools the namespace document itself names. An admin read is opened
+	// of a count; an orkflow store that cannot be read narrows the answer to
+	// the pools the namespace document itself names. An admin read is opened
 	// when something is already wrong, and a refusal hides the healthy pools
 	// beside the broken one.
 	ListPools(context.Context, *connect.Request[v1.ListPoolsRequest]) (*connect.Response[v1.ListPoolsResponse], error)
@@ -913,9 +911,9 @@ func (UnimplementedNamespaceServiceHandler) ListPools(context.Context, *connect.
 // ActivityServiceClient is a client for the orkstack.v1.ActivityService service.
 type ActivityServiceClient interface {
 	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
-	// DescribeOrker is the pool-liveness probe that replaces ListPlugins in
-	// that role (§6.5). It is dispatched as a Temporal activity on a pool's
-	// own channel, exactly where the ListPlugins probe went.
+	// DescribeOrker is the pool-liveness probe (§6.5). It is dispatched as a
+	// Temporal activity on a pool's own channel, so it answers only when an
+	// Orker is actually polling that pool.
 	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
 }
 
@@ -964,9 +962,9 @@ func (c *activityServiceClient) DescribeOrker(ctx context.Context, req *connect.
 // ActivityServiceHandler is an implementation of the orkstack.v1.ActivityService service.
 type ActivityServiceHandler interface {
 	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
-	// DescribeOrker is the pool-liveness probe that replaces ListPlugins in
-	// that role (§6.5). It is dispatched as a Temporal activity on a pool's
-	// own channel, exactly where the ListPlugins probe went.
+	// DescribeOrker is the pool-liveness probe (§6.5). It is dispatched as a
+	// Temporal activity on a pool's own channel, so it answers only when an
+	// Orker is actually polling that pool.
 	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
 }
 

@@ -1,7 +1,7 @@
 //go:build integration
 
-// M11.2, repaired: what an apply leaves behind when it LOSES, and what an
-// apply is checked against when the head pointer was never written.
+// What an apply leaves behind when it LOSES, and what an apply is checked
+// against when the head pointer is missing.
 //
 // Both are properties of the bucket, so both are measured against a real
 // MinIO (`make infra-up`):
@@ -145,18 +145,18 @@ func TestS3OrkflowStore_AnApplyRefusedInsideTheWriteLeavesNothingStored(t *testi
 }
 
 // TestS3OrkflowStore_AStoredCatalogWithNoHeadPointerIsStillEditable is the
-// state every bucket written before @head.json existed is in: the version
-// documents are there and the pointer is not.
+// state a Delete that failed after removing the pointers leaves a catalog in:
+// the version documents are there and the pointer is not.
 //
 // Listings answer such a catalog by DERIVING the head from the documents
 // (orkflowScan.headOf), so an editor is shown "head 2.0.0" and sends 2.0.0
-// back as the head it expects. Put used to read the absent pointer as a head
-// of "" and refuse that apply — the catalog was readable and not editable, on
-// the version-scoped path and on the plain one alike, because both send a head
-// they were shown.
+// back as the head it expects. Put must check against that same derived head:
+// reading the absent pointer as a head of "" would refuse the apply and leave
+// the catalog readable and not editable, on the version-scoped path and on the
+// plain one alike, because both send a head they were shown.
 //
-// The bucket is put in that state the way time put it there: apply the
-// versions, then remove the pointer object.
+// The bucket is put in that state directly: apply the versions, then remove
+// the pointer object.
 func TestS3OrkflowStore_AStoredCatalogWithNoHeadPointerIsStillEditable(t *testing.T) {
 	store, cfg := newS3OrkflowStore(t)
 	ctx := context.Background()
@@ -212,7 +212,7 @@ func TestS3OrkflowStore_AStoredCatalogWithNoHeadPointerIsStillEditable(t *testin
 	// version-scoped path and the plain one at once: both send a head they
 	// were shown, and the derived head is the head they were shown.
 	fork := testOrkflow(t, name, "2.1.0", applied.Add(2*time.Minute))
-	fork.Description = "an edit of a catalog stored before the head became a pointer"
+	fork.Description = "an edit of a catalog whose head pointer is missing"
 	stored, created, err := store.Put(ctx, fork, artifacts.ExpectHead("2.0.0"))
 	if err != nil || !created {
 		t.Fatalf("the edit of a pointer-less catalog = created %v, %v; want created", created, err)

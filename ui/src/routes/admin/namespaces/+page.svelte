@@ -1,8 +1,8 @@
 <script lang="ts">
-	// The Admin Namespaces view (design §6.1, §6.2): every namespace this
+	// The Admin Namespaces view: every namespace this
 	// deployment has, with create/edit/delete against the real registry.
 	//
-	// Writes are honest (acceptance 2): an update sends the etag it read, a
+	// Writes are honest: an update sends the etag it read, a
 	// conflict is a FailedPrecondition and is shown as one, a refused delete
 	// names the orkflow count the server refused it with (verbatim — the
 	// server already names them, so nothing here re-derives that sentence),
@@ -74,7 +74,7 @@
 			{ requireName: true }
 		);
 		// Local validation blocks the request entirely — no RPC is made for a
-		// slug the registry would refuse anyway (design §6.2, acceptance 6).
+		// slug the registry would refuse anyway.
 		if (Object.keys(createErrors).length > 0) return;
 
 		createBusy = true;
@@ -131,8 +131,8 @@
 		editServerError = '';
 	}
 	// editLabels carries a namespace's labels UNTOUCHED through an edit. This
-	// form has no control for them — design §6.1's Admin feature list does
-	// not ask for one — but UpdateNamespace is a full replace of the mutable
+	// form has no control for them, but UpdateNamespace is a full replace of
+	// the mutable
 	// document (internal/api/namespaces.go), so a submit that omitted them
 	// would silently erase whatever labels were there. They are read here and
 	// sent back exactly as read; only the fields this form DOES expose can
@@ -239,8 +239,8 @@
 			// exists. Leaving `?ns=` pointed at it would carry a coordinate the
 			// registry no longer answers for onto Pools, onto Orkflows, onto
 			// every link this page's own layout builds — the exact confusion
-			// acceptance 4 asks this area not to cause. Reset to `default`,
-			// which always resolves (AGENTS.md §1.10), rather than leaving a
+			// this area must not cause. Reset to `default`,
+			// which always resolves (AGENTS.md §7), rather than leaving a
 			// dangling selection for the next click to discover.
 			if (namespaceLabel(data.namespace) === deletedName) {
 				rememberNamespace(DEFAULT_NAMESPACE);

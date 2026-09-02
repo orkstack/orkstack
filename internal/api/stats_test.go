@@ -500,7 +500,7 @@ func TestGetStats_ReadsIndexKeysAndNeverARunBody(t *testing.T) {
 	_, _ = fixture.archive.GetRun(context.Background(), "ork-anything")
 }
 
-// TestGetStats_IgnoresTheRunsThisProcessRemembers is AGENTS.md §1.7 as a test.
+// TestGetStats_IgnoresTheRunsThisProcessRemembers is AGENTS.md §7 as a test.
 //
 // The in-process RunStore is filled with a run neither source knows about. A
 // replica that answered from its own memory would count it, and two replicas
@@ -751,7 +751,7 @@ func TestGetStats_ReportsPoolHealthFromTheCluster(t *testing.T) {
 		}},
 		Starter:    &fakeStarter{},
 		Pools:      livePools{poolQueue(t, "main"): 2, poolQueue(t, "gpu"): 1},
-		PoolOrkers: poolOrkers{poolQueue(t, "gpu"): {"shell"}},
+		PoolOrkers: poolOrkers{poolQueue(t, "gpu"): {}},
 		Now:        clock.Now,
 	})
 	handler := api.NewStatsHandler(svc, 0)

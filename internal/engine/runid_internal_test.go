@@ -23,7 +23,7 @@ func TestRunIDGenerator_KeepsTheDocumentedShape(t *testing.T) {
 	id := g.NewRunID()
 	parts := idShape.FindStringSubmatch(id)
 	if parts == nil {
-		t.Fatalf("run id = %q, want ork-{timestamp}-{sequence} (AGENTS.md §1.5)", id)
+		t.Fatalf("run id = %q, want ork-{timestamp}-{sequence} (AGENTS.md §7)", id)
 	}
 	if parts[1] != strconv.FormatInt(instant.UnixNano(), 10) {
 		t.Errorf("timestamp component = %q, want the clock's UnixNano %d",
@@ -61,7 +61,7 @@ func TestRunIDGenerator_SequenceIsMonotonicWithinAReplica(t *testing.T) {
 // in-process form of the cross-replica requirement: with the clock pinned to
 // one instant, two generators stand in for two engine replicas submitting in
 // the same nanosecond. A per-process counter makes both emit the identical
-// series, which is the collision M8.1 removes.
+// series; the nonce is what keeps two replicas' ids apart.
 func TestRunIDGenerator_TwoReplicasSharingAClockIssueDifferentIDs(t *testing.T) {
 	instant := time.Unix(0, 1786928035776242000)
 	replicaA, replicaB := NewRunIDGenerator(), NewRunIDGenerator()
@@ -80,9 +80,9 @@ func TestRunIDGenerator_TwoReplicasSharingAClockIssueDifferentIDs(t *testing.T) 
 	}
 }
 
-// TestRunIDGenerator_SequenceDoesNotRestartPerProcess is acceptance 3 stated
+// TestRunIDGenerator_SequenceDoesNotRestartPerProcess states the nonce's job
 // directly: a fresh generator stands for a fresh replica, and its first id
-// must not read as sequence 1 the way every process before M8.1 did.
+// must not read as sequence 1, the way a per-process counter would make it.
 func TestRunIDGenerator_SequenceDoesNotRestartPerProcess(t *testing.T) {
 	instant := time.Unix(0, 1786928035776242000)
 	firsts := map[string]int{}

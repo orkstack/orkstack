@@ -34,9 +34,8 @@ func newPoolListCommand(g *globalFlags) *cobra.Command {
 			"reason printed under the table — one unreachable pool must not hide the\n" +
 			"healthy ones. `unknown` and `0` are different answers: 0 means start an Orker,\n" +
 			"unknown means ask again.\n\n" +
-			"There is no PLUGINS column any more: an activity is an OCI image, and which\n" +
-			"images this deployment can run is engine configuration rather than something\n" +
-			"an Orker reports. Use `orkctl activity list` for the catalog; this command\n" +
+			"Which activities a pool can run is engine configuration, not something an\n" +
+			"Orker reports: use `orkctl activity list` for the catalog; this command\n" +
 			"answers who is available to run it.\n\n" +
 			"LAST SEEN is how fresh the count beside it is; a pool whose Orkers have all\n" +
 			"gone quiet shows no time at all rather than the moment the last one was\n" +

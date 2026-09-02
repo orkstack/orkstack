@@ -142,8 +142,8 @@ func (s *memoryLogStore) appendLocked(ref artifacts.LogRef) {
 }
 
 // logFixture is a Service reading a run out of the record and its logs out of
-// the store. Nothing is in process memory, which is the deployment this
-// milestone has to work in.
+// the store. Nothing is in process memory, which is the deployment live logs
+// have to work in.
 type logFixture struct {
 	*readerFixture
 	logs   *memoryLogStore
@@ -216,7 +216,7 @@ func TestStreamTaskLogs_ReplaysAFinishedTasksWholeLogInOrder(t *testing.T) {
 	}
 }
 
-// The milestone's claim, at the API: chunks written while the reader is
+// The live-log claim, at the API: chunks written while the reader is
 // attached arrive while the reader is attached. The task is left RUNNING until
 // the test has seen them, so an implementation that only replayed what existed
 // at connect time cannot pass.
@@ -454,8 +454,8 @@ func TestStreamTaskLogs_AttemptZeroSelectsTheLatestAttempt(t *testing.T) {
 	}
 }
 
-// A RETRY is the case a follower is most needed for and the one that used to
-// break it. The Orker keys chunks by the Temporal activity attempt
+// A RETRY is the case a follower is most needed for and the one most likely
+// to break it. The Orker keys chunks by the Temporal activity attempt
 // (internal/orker/activity.go), and a retry changes nothing a task's STATUS
 // shows: it stays RUNNING while try 2 starts under a new prefix. A stream that
 // resolved "the latest attempt" once therefore followed a dead attempt —

@@ -12,10 +12,10 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// The live log sink: the write half of M10.5.
+// The live log sink: the write half of live task logs.
 //
 // A task's output is bytes, so it goes to the artifact store and nowhere else —
-// never into a Temporal payload, never onto the Event stream (AGENTS.md §1.4).
+// never into a Temporal payload, never onto the Event stream (AGENTS.md §2.2).
 // The sink buffers lines and flushes them as numbered chunks WHILE the task
 // runs, which is the whole difference between a log you can watch and an
 // artifact you can read afterwards.
@@ -142,7 +142,7 @@ func LogOptionsFromEnv() LogOptions {
 
 // logChunkSink turns a task attempt's log lines into numbered store chunks.
 //
-// It is safe for concurrent use: the shell plugin tees stdout and stderr from
+// It is safe for concurrent use: the runtime streams stdout and stderr from
 // two goroutines, so concurrency is the normal case rather than an edge one.
 // The flush happens under the same lock, which is deliberate — a writer blocks
 // while a chunk uploads, and that backpressure is what makes the memory bound
@@ -379,9 +379,8 @@ func (s *logChunkSink) waitForPace(wait time.Duration) bool {
 // two numbers answer different questions: FlushBytes is how big a chunk this
 // deployment WANTS, and the ceiling is how much this process is willing to
 // hold. They are the same until someone tunes FlushBytes below the default —
-// which is what a test does to force chunk boundaries, and what used to turn
-// batching off. Below the default, shrinking FlushBytes buys smaller chunks
-// and never more uploads per second.
+// which is what a test does to force chunk boundaries. Below the default,
+// shrinking FlushBytes buys smaller chunks and never more uploads per second.
 func (s *logChunkSink) flushCeiling() int {
 	if s.opts.FlushBytes > DefaultLogFlushBytes {
 		return s.opts.FlushBytes

@@ -25,16 +25,17 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// versioningNamespace isolates this suite. AGENTS.md §6: a namespace is a hard
+// versioningNamespace isolates this suite. AGENTS.md §11.1: a namespace is a hard
 // partition, and this test sets a deployment's CURRENT version — a
 // namespace-wide routing change no other agent's runs may see.
 func versioningNamespace() string {
 	if ns := os.Getenv("ORK_TEMPORAL_NAMESPACE"); ns != "" {
 		return ns
 	}
-	return "ork-m8-4-worker-versioning"
+	return "ork-worker-versioning"
 }
 
 // dialVersioningCluster connects to a real Temporal, provisioning the isolated
@@ -201,8 +202,8 @@ func newReplica(
 	// Registered through the SHIPPED list, not a copy of it: this test's whole
 	// claim is that a run stays on the build that started it, and that claim
 	// belongs to whatever behaviour `bin/ork` declares. Declaring Pinned here
-	// would have made the test pass while the binary registered AutoUpgrade —
-	// measured: flipping engine.RegisterWorkflows used to leave this green.
+	// would make the test pass while the binary registered AutoUpgrade —
+	// measured: flipping engine.RegisterWorkflows must turn this red.
 	engine.RegisterWorkflows(r.run)
 	r.run.RegisterActivityWithOptions(
 		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
@@ -264,7 +265,7 @@ func (r *replica) startOrker(t *testing.T) {
 			return &orkstackv1.ExecuteTaskResult{
 				TaskId: in.TaskId,
 				ValuesJson: valuesJSON(map[string]any{
-					// The stamp is the plugin-code-level evidence: it says
+					// The stamp is the Orker-build-level evidence: it says
 					// which build's task implementation produced this result,
 					// and it is recorded in the run's own history.
 					"executed_by_build": r.deployment.BuildID,
@@ -324,7 +325,7 @@ func (r *replica) projectedEvents() map[string]string {
 //  1. the in-flight run stays PINNED to v1 and completes there;
 //  2. every task of that run executes on v1's Orker, INCLUDING the tasks
 //     scheduled after v2 became current — that is the "an Orker rollout cannot
-//     move an in-flight run's tasks onto new plugin code" property, read back
+//     move an in-flight run's tasks onto new Orker build" property, read back
 //     from the run's own history rather than from this test's bookkeeping;
 //  3. a run submitted after the switch executes wholly on v2.
 //
@@ -416,7 +417,7 @@ func TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn(t *testi
 
 	// The gate is the reason this is a rollout test and not a routing test:
 	// tasks downstream of it were scheduled AFTER v2 became current, and they
-	// still had to land on v1's plugin code.
+	// still had to land on v1's Orker build.
 	if _, ok := pinnedTasks["after-gate"]; !ok {
 		t.Fatal("the pinned run never ran a task downstream of the gate; " +
 			"nothing was scheduled after the version switch, so the rollout was not exercised")
@@ -488,7 +489,7 @@ func assertRunVersion(
 //     chose was a versioned one at all, not an unversioned poller that happened
 //     to be on the queue;
 //   - the build stamp the task implementation itself wrote into its result,
-//     which is the actual "did new plugin code run" question.
+//     which is the actual "did new Orker build run" question.
 //
 // It also checks the deliberate exception in the same pass: the run's
 // PublishEvent activities must be executed by UNVERSIONED workers, which is
@@ -557,7 +558,7 @@ func assertTaskBuilds(
 	for _, taskID := range sortedKeys(stamped) {
 		if stamped[taskID] != wantBuild {
 			t.Errorf("run %s task %q was executed by build %q, want %q: an in-flight run's task "+
-				"reached the wrong plugin code", runID, taskID, stamped[taskID], wantBuild)
+				"reached the wrong Orker build", runID, taskID, stamped[taskID], wantBuild)
 		}
 		if got := dispatchedTo[taskID]; got != wantBuild {
 			t.Errorf("run %s task %q was dispatched to worker build %q per ActivityTaskStarted, want %q",
@@ -606,7 +607,7 @@ func assertReplicaBookkeepingAgrees(
 		if strings.HasPrefix(key, pinnedRun+"/") {
 			ranPinnedOnV2++
 			t.Errorf("v2's Orker executed %s, a task of the run pinned to v1: a rollout moved an "+
-				"in-flight run onto new plugin code", key)
+				"in-flight run onto new Orker build", key)
 		}
 		if build != "v2" {
 			t.Errorf("v2's Orker reported build %q for %s", build, key)
@@ -709,7 +710,7 @@ func mustStruct(pairs map[string]any) *structpb.Struct {
 	return s
 }
 
-// rolloutTranscript records the run of the rollout for proof/M8.4.
+// rolloutTranscript records the run of the rollout.
 type rolloutTranscript struct {
 	lines   []string
 	started time.Time
@@ -718,7 +719,7 @@ type rolloutTranscript struct {
 func newRolloutTranscript(t *testing.T, namespace, deployment, runQueue, orkerQueue string) *rolloutTranscript {
 	tr := &rolloutTranscript{started: time.Now()}
 	tr.lines = append(tr.lines,
-		"OrkStack M8.4 — worker deployment versioning rollout transcript",
+		"OrkStack — worker deployment versioning rollout transcript",
 		"namespace:  "+namespace,
 		"deployment: "+deployment,
 		"queues:     run="+runQueue+" orker="+orkerQueue+" events="+engine.EventQueue+" (unversioned)",
@@ -738,23 +739,15 @@ func (tr *rolloutTranscript) result(message string) {
 
 // logOnly prints the transcript into the test log and nowhere else.
 //
-// proof/M8.4's rollout transcript belongs to the rollout test; a second writer
-// would leave whichever test finished last, and the file names one rollout.
+// The rollout transcript belongs to the rollout test; a second writer would
+// leave whichever test finished last, and the file names one rollout.
 func (tr *rolloutTranscript) logOnly(t *testing.T) {
 	t.Helper()
 	t.Log("\n" + strings.Join(tr.lines, "\n") + "\n")
 }
 
-// write saves the transcript when ORK_PROOF_ROLLOUT_FILE names a destination.
+// write records the transcript as evidence.
 func (tr *rolloutTranscript) write(t *testing.T) {
 	t.Helper()
-	body := strings.Join(tr.lines, "\n") + "\n"
-	t.Log("\n" + body)
-	path := os.Getenv("ORK_PROOF_ROLLOUT_FILE")
-	if path == "" {
-		return
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write rollout transcript to %s: %v", path, err)
-	}
+	proof.Write(t, "engine", "versioning-rollout-transcript.txt", []byte(strings.Join(tr.lines, "\n")+"\n"))
 }

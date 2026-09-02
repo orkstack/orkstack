@@ -11,7 +11,7 @@ import (
 )
 
 // A task's output is bytes, and bytes travel as stored objects — never inside a
-// Temporal payload and never on the Event stream (AGENTS.md §1.4). So the live
+// Temporal payload and never on the Event stream (AGENTS.md §2.2). So the live
 // log of a running task is a sequence of small objects in the artifact bucket:
 //
 //	metadata/logs/{run-id}/{task-id}/{attempt}/{seq}          one chunk
@@ -83,7 +83,7 @@ type LogChunk struct {
 //
 // Implementations hold no cache and no per-run state: the Orker that writes a
 // chunk and the engine replica that serves it are different processes, and any
-// replica must answer for any run (AGENTS.md §1.7).
+// replica must answer for any run (AGENTS.md §7).
 type LogStore interface {
 	// PutLogChunk writes one chunk. Chunks are immutable and written once;
 	// rewriting the same coordinates is allowed but pointless.

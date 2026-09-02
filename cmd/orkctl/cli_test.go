@@ -231,13 +231,9 @@ func TestRunCancel_IsAcceptedByTheServer(t *testing.T) {
 // activity + version
 // ---------------------------------------------------------------------------
 
-// TestActivityList_ReturnsTheEnginesCatalog is the replacement for
-// TestPluginList_ReturnsTheEnginesPlugins.
-//
-// The question changed with the concept: `plugin list` asked a live Orker
-// which Go plugins it had been compiled with, and `activity list` asks the
-// ENGINE which images its catalog holds. The columns say so — a reference and
-// the digest it resolved to, which is what actually runs.
+// TestActivityList_ReturnsTheEnginesCatalog: `activity list` asks the ENGINE
+// which images its catalog holds. The columns are a reference and the digest
+// it resolved to, which is what actually runs.
 func TestActivityList_ReturnsTheEnginesCatalog(t *testing.T) {
 	f := newFixture(t,
 		&orkstackv1.ActivityInfo{
@@ -534,7 +530,7 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 			Orkers:   map[string]int{task.DefaultPool: 1},
 			LastSeen: fixedNow,
 		}
-		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {"http"}}
+		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {}}
 	}, &orkstackv1.ActivityInfo{Name: "http", Reference: "ghcr.io/orkstack/activity-http:0.1"})
 	f.applyExample().requireExit(t, exitOK)
 
@@ -619,8 +615,8 @@ func TestJSONFlag_WatchDocumentCarriesEventsAndFinalRun(t *testing.T) {
 	}
 }
 
-// The headline of M7.2: what a machine reads from `run get` / `run list` is
-// the bare enum value, at every depth of the document.
+// What a machine reads from `run get` / `run list` is the bare enum value, at
+// every depth of the document.
 func TestJSONFlag_RunGetAndListNameStatusesWithoutTheEnumPrefix(t *testing.T) {
 	f := newFixture(t)
 	f.applyExample().requireExit(t, exitOK)
@@ -680,8 +676,7 @@ func TestJSONFlag_ApplyCarriesTheCompiledOrkflow(t *testing.T) {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 			Tasks   []struct {
-				ID     string `json:"id"`
-				Plugin string `json:"plugin"`
+				ID string `json:"id"`
 			} `json:"tasks"`
 		} `json:"orkflow"`
 	}
@@ -721,11 +716,8 @@ func (f *fixture) completeRunSnapshot(runID string) {
 	f.runs.Apply(run)
 }
 
-// newTaskRun builds a completed task in the read model.
-//
-// The second argument used to be the plugin name. TaskRun.plugin is reserved
-// and never reused (§2.1), so it is now the exit code — which is what a run
-// table actually shows about a container that finished.
+// newTaskRun builds a completed task in the read model with the given exit
+// code — which is what a run table shows about a container that finished.
 func newTaskRun(id string, exitCode int32) *orkstackv1.TaskRun {
 	return &orkstackv1.TaskRun{
 		TaskId:     id,

@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIqwCCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIp4BCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRIPCgdwbHVnaW5zGAMgAygJEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YBiABKAlCqgEKD2NvbS5vcmtzdGFjay52MUIOTmFtZXNwYWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIqwCCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIpwBCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRISCgppc19kZWZhdWx0GAQgASgIEi0KCWxhc3Rfc2VlbhgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGgoSdW5hdmFpbGFibGVfcmVhc29uGAYgASgJSgQIAxAEUgdwbHVnaW5zQqoBCg9jb20ub3Jrc3RhY2sudjFCDk5hbWVzcGFjZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -149,25 +149,6 @@ export type Pool = Message<"orkstack.v1.Pool"> & {
    * @generated from field: int32 live_orker_count = 2;
    */
   liveOrkerCount: number;
-
-  /**
-   * plugins are the plugins those Orkers can run, asked of the pool itself.
-   *
-   * It is a SAMPLE, and the caption a reader is owed says so: the question is
-   * one activity executed on the pool's own channel, so whichever of the
-   * pool's Orkers picks it up is the one that answers. The Orkers of one pool
-   * run one release by construction, which is what makes a sample worth
-   * showing; mid-rollout two of them can differ, and this field will show one
-   * of the two.
-   *
-   * Empty means "nobody was asked, or nobody answered" — a pool with no live
-   * Orkers has nobody to ask, and a pool whose Orkers did not answer in time
-   * keeps its count and loses its plugin list. It never means "these Orkers
-   * run no plugins".
-   *
-   * @generated from field: repeated string plugins = 3;
-   */
-  plugins: string[];
 
   /**
    * is_default marks the pool a task of this namespace runs on when it names

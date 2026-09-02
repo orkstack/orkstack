@@ -20,16 +20,17 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// M10.5's falsifying tests. Both run the production topology: two real `ork`
+// Two falsifying tests. Both run the production topology: two real `ork`
 // processes and one real `orker`, sharing one Temporal namespace, one execution
 // channel and one MinIO bucket — the deliberate exception to the per-agent
-// isolation rule (AGENTS.md §6), because sharing is the condition under test.
+// isolation rule (AGENTS.md §11.1), because sharing is the condition under test.
 
 // TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning is the
-// milestone's central claim, and the one a post-mortem read cannot satisfy.
+// central claim, and the one a post-mortem read cannot satisfy.
 //
 // A task emits a line a second for ten seconds. It is submitted to replica A.
 // Every log read below is issued against replica B, which accepted no
@@ -96,7 +97,7 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	t.Logf("replica B held %d ordered lines while the cluster reported RUNNING: %q",
 		len(liveLines), liveLines)
 
-	// ---- acceptance 7, against the real binaries ---------------------------
+	// ---- the CLI, against the real binaries --------------------------------
 	// `orkctl run logs -f` is started HERE, against replica B, while the
 	// cluster still reports the run RUNNING. It must print the task's output
 	// and return on its own when the run reaches a terminal state — with no
@@ -177,7 +178,7 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 		t.Fatalf("resuming after seq %d replayed the first chunk's body", resumeAt)
 	}
 
-	// ---- acceptance 7: the CLI returned on its own, with the whole log -----
+	// ---- the CLI returned on its own, with the whole log -------------------
 	var cli cliResult
 	select {
 	case cli = <-cliDone:
@@ -205,25 +206,19 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 }
 
 // TestIntegration_TaskLogBytesNeverEnterRunHistory is the invariant test for
-// AGENTS.md §1.4: the LOG PATH puts no bytes into Temporal's history and none
+// AGENTS.md §2.2: the LOG PATH puts no bytes into Temporal's history and none
 // onto the run's event stream.
 //
-// It uses TWO markers from one task, which is what makes "absent" a
-// measurement rather than a limitation of the scanner:
-//
-//   - headMarker is printed FIRST. It reaches history — not through the log
-//     path, but through the shell plugin's own documented payload echo:
-//     `output.stdout` carries the first MaxCapturedOutput (8 KiB) of the
-//     command's output, so a task's OUTPUT is an activity result and an
-//     activity result is history. That predates this milestone and is what
-//     `{{ .tasks.x.output.stdout }}` reads. Here it is the POSITIVE CONTROL:
-//     the same scan that reports the second marker absent finds this one.
-//   - tailMarker is printed after 15 KiB of filler, so the payload
-//     echo cannot reach it. Everything that could carry it to history is the
-//     log path — and it must be absent.
+// It uses TWO markers from one task, one printed first and one printed after
+// 15 KiB of filler, so that "absent" holds at both ends of the output: a task's
+// bytes travel as artifacts and logs, never as a payload, so NEITHER marker may
+// appear in history or on the event stream. The positive control is the
+// orkflow name: it is workflow input and therefore in history by construction,
+// so the same scan that reports both markers absent must find it — a scan that
+// cannot is reading nothing.
 //
 // The test therefore fails the moment somebody carries a log line on an Event
-// or into a payload: the design this milestone rejected, and the one that is a
+// or into a payload: the design AGENTS.md §2.2 rejects, and the one that is a
 // line of code away at all times (EVENT_TYPE_TASK_LOG already has a `message`
 // field). It ALSO fails if the scanner stops reading payloads, which is not
 // hypothetical — the first live run of this file scanned base64 and reported
@@ -300,13 +295,10 @@ func TestIntegration_TaskLogBytesNeverEnterRunHistory(t *testing.T) {
 	// Every event of the whole history is rendered AND its payloads decoded:
 	// activity inputs and results, the workflow argument, the completion.
 	//
-	// The control USED to be headMarker itself, because the retired shell
-	// plugin echoed the head of stdout onto its output payload. v0.0.5 removed
-	// that echo (§1.2: a task's bytes travel as artifacts and logs, never as a
-	// payload), so the standard here is now the stronger one: NEITHER marker
-	// may be in history. The control is the orkflow name, which is workflow
-	// input and is therefore in history by construction — a scan that cannot
-	// find it is reading nothing.
+	// A task's bytes travel as artifacts and logs, never as a payload, so the
+	// standard here is the strong one: NEITHER marker may be in history. The
+	// control is the orkflow name, which is workflow input and is therefore in
+	// history by construction — a scan that cannot find it is reading nothing.
 	events, size := historyText(ctx, t, temporalClient, runID)
 	if !strings.Contains(events, orkflowName) {
 		t.Fatalf("the history scan cannot even find the orkflow name %q, which is workflow "+
@@ -315,7 +307,7 @@ func TestIntegration_TaskLogBytesNeverEnterRunHistory(t *testing.T) {
 	for _, marker := range []string{headMarker, tailMarker} {
 		if strings.Contains(events, marker) {
 			t.Fatalf("%s is in run %s's Temporal history; a task's own bytes must never "+
-				"reach a payload or the history (AGENTS.md §1.4)", marker, runID)
+				"reach a payload or the history (AGENTS.md §2.2)", marker, runID)
 		}
 	}
 	t.Logf("scanned %d bytes of run %s's Temporal history: it carries the control (%s) "+
@@ -339,7 +331,7 @@ func TestIntegration_TaskLogBytesNeverEnterRunHistory(t *testing.T) {
 	t.Logf("scanned %d bytes of run %s's event stream: it carries the task id, and NEITHER "+
 		"marker", len(archived), runID)
 
-	writeMarkerTranscript(t, namespace, runID, headMarker, tailMarker,
+	writeMarkerTranscript(t, namespace, runID, orkflowName, headMarker, tailMarker,
 		logged, events, size, len(archived))
 }
 
@@ -657,7 +649,7 @@ func awaitArchivedEventText(
 func slowEmittingOrkflowYAML(name string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
-description: M10.5 slow-emitting task, followed live from a second replica.
+description: slow-emitting task, followed live from a second replica.
 tasks:
   - id: emit
     uses: shell
@@ -672,7 +664,7 @@ tasks:
 }
 
 // markerOrkflowYAML emits two unmistakable strings from one task, separated by
-// more than the shell plugin's payload echo can hold.
+// 15 KiB of filler.
 //
 // Two properties, both load-bearing:
 //
@@ -681,15 +673,13 @@ tasks:
 //     "ORKTAIL<tag>" exist only in the process's output. A definition is
 //     workflow input, so a marker spelled out here would be in history before
 //     the task ever ran.
-//   - The filler puts the SECOND marker out of reach of `output.stdout`, which
-//     the shell plugin caps at MaxCapturedOutput (8 KiB). 200 lines of ~76
-//     bytes is ~15 KiB, so the tail marker cannot be on the task payload — and
-//     therefore cannot be in history — by any path except the log one. The
-//     first marker is inside the cap, and is the scan's positive control.
+//   - The markers bracket the output. 200 lines of ~76 bytes is ~15 KiB between
+//     them, so a path that leaked only the head of a task's output, or only its
+//     tail, would still be caught by one of the two.
 func markerOrkflowYAML(name, tag string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
-description: M10.5 marker task, for the no-bytes-in-history invariant.
+description: marker task, for the no-bytes-in-history invariant.
 tasks:
   - id: emit
     uses: shell
@@ -705,8 +695,8 @@ tasks:
 
 // ---- proof transcripts ---------------------------------------------------------
 
-// writeTaskLogTranscript records the live-follow transcript the milestone's
-// proof needs: what arrived, and WHEN, against the run's own lifetime.
+// writeTaskLogTranscript records the live-follow transcript under ORK_PROOF_DIR
+// when it is set: what arrived, and WHEN, against the run's own lifetime.
 func writeTaskLogTranscript(
 	t *testing.T,
 	namespace, runID, orkflowName string,
@@ -768,7 +758,7 @@ func writeTaskLogTranscript(
 		"terminal state; exit 0)\n", cliRanFor.Round(time.Millisecond))
 	fmt.Fprintf(&out, "verdict: `orkctl run logs -f` follows live and exits on the run's "+
 		"terminal state.\n")
-	appendProofArtifact(t, "live-follow.txt", out.String())
+	proof.Write(t, "orkctl", "live-follow.txt", []byte(out.String()))
 }
 
 // writeMarkerTranscript records what the invariant scan measured, including
@@ -776,7 +766,7 @@ func writeTaskLogTranscript(
 // transcript a scan of nothing produces.
 func writeMarkerTranscript(
 	t *testing.T,
-	namespace, runID, headMarker, tailMarker string,
+	namespace, runID, orkflowName, headMarker, tailMarker string,
 	logged *logFollower,
 	history string,
 	historyBytes, archivedBytes int,
@@ -789,26 +779,25 @@ func writeMarkerTranscript(
 	fmt.Fprintf(&out, "temporal namespace     %s\n", namespace)
 	fmt.Fprintf(&out, "run                    %s\n", runID)
 	fmt.Fprintf(&out, "task                   emit — a marker, 15 KiB of filler, a marker\n\n")
-	fmt.Fprintf(&out, "control marker         %s   (printed first, inside the 8 KiB the shell\n",
-		headMarker)
-	fmt.Fprintf(&out, "                       plugin echoes onto output.stdout)\n")
-	fmt.Fprintf(&out, "log-only marker        %s   (printed after the filler, so no payload\n",
-		tailMarker)
-	fmt.Fprintf(&out, "                       can carry it)\n\n")
+	fmt.Fprintf(&out, "control (orkflow name) %s   (workflow input, so in history by construction)\n",
+		orkflowName)
+	fmt.Fprintf(&out, "head marker (log-only) %s   (printed first)\n", headMarker)
+	fmt.Fprintf(&out, "tail marker (log-only) %s   (printed after the filler)\n\n", tailMarker)
 	fmt.Fprintf(&out, "StreamTaskLogs         %d chunk(s), %d bytes: BOTH markers present\n",
 		logged.count(), len(body))
 	fmt.Fprintf(&out, "Temporal history       %d bytes scanned (payloads base64-decoded)\n",
 		historyBytes)
-	fmt.Fprintf(&out, "  control marker       PRESENT  — so the scan reads payloads\n")
-	fmt.Fprintf(&out, "  log-only marker      ABSENT   — the log path adds nothing to history\n")
+	fmt.Fprintf(&out, "  control              PRESENT  — so the scan reads payloads\n")
+	fmt.Fprintf(&out, "  head marker          ABSENT\n")
+	fmt.Fprintf(&out, "  tail marker          ABSENT   — the log path adds nothing to history\n")
 	fmt.Fprintf(&out, "event stream           %d bytes scanned\n", archivedBytes)
-	fmt.Fprintf(&out, "  control marker       ABSENT\n")
-	fmt.Fprintf(&out, "  log-only marker      ABSENT   — events announce, they do not carry\n")
+	fmt.Fprintf(&out, "  head marker          ABSENT\n")
+	fmt.Fprintf(&out, "  tail marker          ABSENT   — events announce, they do not carry\n")
 	// A verdict with no measurement in it, so a README can quote the CLAIM
 	// while the lines above carry the numbers. A quote whose byte count
 	// changed on every run could not be held to anything.
-	fmt.Fprintf(&out, "verdict: the whole log is in the stream; only the payload echo is "+
-		"in history, and neither marker is on the event stream.\n\n")
+	fmt.Fprintf(&out, "verdict: the whole log is in the stream, and no task byte is in "+
+		"history or on the event stream.\n\n")
 	fmt.Fprintf(&out, "the log's own boundaries, as StreamTaskLogs delivered them:\n")
 	for _, line := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
 		if strings.Contains(line, headMarker) || strings.Contains(line, tailMarker) ||
@@ -817,12 +806,12 @@ func writeMarkerTranscript(
 		}
 	}
 	fmt.Fprintf(&out, "  (%d lines in all)\n", strings.Count(body, "\n"))
-	fmt.Fprintf(&out, "\nand the history, at the point the control marker appears in it:\n")
+	fmt.Fprintf(&out, "\nand the history, at the point the control appears in it:\n")
 	for _, line := range strings.Split(history, "\n") {
-		if strings.Contains(line, headMarker) {
+		if strings.Contains(line, orkflowName) {
 			fmt.Fprintf(&out, "  %.200s…\n", strings.TrimSpace(line))
 			break
 		}
 	}
-	appendProofArtifact(t, "no-bytes-in-history.txt", out.String())
+	proof.Write(t, "orkctl", "no-bytes-in-history.txt", []byte(out.String()))
 }

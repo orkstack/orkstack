@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
-// TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI is
-// M11.2's acceptance end to end, and it is the owner's scenario verbatim:
+// TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI is the
+// version-scoped edit's acceptance end to end, and it is the owner's scenario
+// verbatim:
 //
 //  1. apply two versions;
 //  2. promote the OLDER one — head stays where it was, `current` moves;
@@ -23,17 +25,16 @@ import (
 //  4. head moves to the fork, `current` is exactly where the promotion left it,
 //     and an unpinned run still executes the promoted version.
 //
-// Step 3 was impossible before this slice: the CLI could only open the head,
-// and the server refused any base that was not the head. Both halves are here,
-// against a real `ork`, a real Orker and a real Temporal cluster, so the
-// acceptance is measured on the tree a user runs rather than on a fake.
+// Both halves are here, against a real `ork`, a real Orker and a real Temporal
+// cluster, so the acceptance is measured on the tree a user runs rather than
+// on a fake.
 //
 // It also runs the race the fork does NOT exempt anybody from: a competing
 // apply lands while the editor is open, and the apply is refused naming the
 // head that was fetched and the head that replaced it — with the edit kept on
 // disk, as it always was.
 //
-// Isolation (AGENTS.md §6): its own Temporal namespace and its own pool, so a
+// Isolation (AGENTS.md §11.1): its own Temporal namespace and its own pool, so a
 // parallel agent can neither steal its tasks nor decide its verdict.
 func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *testing.T) {
 	address := temporalAddress()
@@ -91,9 +92,9 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 
 	// ---- 1. two versions ---------------------------------------------------
 	requireCLI(t, cli, "apply 1.0.0", "apply",
-		writeM112Orkflow(t, name, "1.0.0", pool, "one"))
+		writeVersionScopedOrkflow(t, name, "1.0.0", pool, "one"))
 	requireCLI(t, cli, "apply 2.0.0", "apply",
-		writeM112Orkflow(t, name, "2.0.0", pool, "two"))
+		writeVersionScopedOrkflow(t, name, "2.0.0", pool, "two"))
 
 	// ---- 2. promote the OLDER one -----------------------------------------
 	requireCLI(t, cli, "promote the older version", "orkflow", "promote", name, "1.0.0")
@@ -105,8 +106,8 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 	// ---- 3. edit the CURRENT version, which is not the head ---------------
 	//
 	// The stub editor asserts what it was handed: 1.0.0's source. Handed the
-	// head's text it fails here, which is the bug this slice fixes stated as a
-	// test rather than as prose.
+	// head's text it fails here — the version-scoped open, stated as a test
+	// rather than as prose.
 	editor := writeCLIEditor(t, `grep -q 'echo one' "$1" || { echo "not 1.0.0's source" >&2; exit 1; }
 sed -i.bak -e 's/echo one/echo forked/' -e 's/1\.0\.0/1\.1\.0/' "$1"`)
 	forked := requireCLI(t, cli, "edit the CURRENT version and apply it as a new one",
@@ -166,7 +167,7 @@ sed -i.bak -e 's/echo one/echo forked/' -e 's/1\.0\.0/1\.1\.0/' "$1"`)
 	// 1.0.0 — deliberately not the head — and the refusal is about the HEAD
 	// that moved (1.1.0 -> 3.0.0), which is the only thing that changed
 	// underneath the edit.
-	competing := writeM112Orkflow(t, name, "3.0.0", pool, "competing")
+	competing := writeVersionScopedOrkflow(t, name, "3.0.0", pool, "competing")
 	racing := writeCLIEditor(t, fmt.Sprintf(
 		`%q --server %q apply %q >/dev/null; `+
 			`sed -i.bak -e 's/echo one/echo mine/' -e 's/1\.0\.0/1\.9\.0/' "$1"`,
@@ -204,14 +205,14 @@ sed -i.bak -e 's/echo one/echo forked/' -e 's/1\.0\.0/1\.1\.0/' "$1"`)
 	}
 }
 
-// writeM112Orkflow writes one version of a pool-pinned orkflow whose task
+// writeVersionScopedOrkflow writes one version of a pool-pinned orkflow whose task
 // prints a marker, so a run's output identifies the version that ran.
-func writeM112Orkflow(t *testing.T, name, version, pool, marker string) string {
+func writeVersionScopedOrkflow(t *testing.T, name, version, pool, marker string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+"-"+version+".ork.yaml")
 	document := fmt.Sprintf(`name: %s
 version: "%s"
-description: M11.2 %s
+description: %s
 tasks:
   - id: report
     uses: shell
@@ -226,20 +227,13 @@ tasks:
 	return path
 }
 
-// writeVersionScopedEditSession records the CLI transcript when the
-// milestone's reproduce.sh asks for it (ORK_PROOF_DIR). A plain
-// `go test -tags=integration ./...` writes nothing into the tree.
+// writeVersionScopedEditSession writes the CLI transcript under ORK_PROOF_DIR
+// when it is set (scripts/proof.sh). A plain `go test -tags=integration ./...`
+// logs it and writes nothing into the tree.
 func writeVersionScopedEditSession(t *testing.T, session *sessionRecorder) {
 	t.Helper()
-	dir := os.Getenv("ORK_PROOF_DIR")
-	if dir == "" {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
 	header := fmt.Sprintf(
-		"# M11.2: editing a version that is not the head, against a real ork +\n"+
+		"# editing a version that is not the head, against a real ork +\n"+
 			"# orker + Temporal (%s)\n"+
 			"# The owner's scenario, in order: apply two versions; promote the OLDER\n"+
 			"# one (head stays, current moves); edit the CURRENT version — not the\n"+
@@ -250,9 +244,5 @@ func writeVersionScopedEditSession(t *testing.T, session *sessionRecorder) {
 			"# generated by: go test -tags=integration -p 1 ./cmd/orkctl/ \\\n"+
 			"#                 -run TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI\n\n",
 		time.Now().UTC().Format(time.RFC3339))
-	path := filepath.Join(dir, "version-scoped-edit-session.txt")
-	if err := os.WriteFile(path, []byte(header+session.transcript.String()), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-	t.Logf("wrote %s", path)
+	proof.Write(t, "orkctl", "version-scoped-edit-session.txt", []byte(header+session.transcript.String()))
 }

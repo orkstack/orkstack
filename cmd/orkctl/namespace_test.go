@@ -89,7 +89,7 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestNamespaceFlag_ScopesApplyListGetAndSubmit is the CLI half of the
-// milestone's acceptance: -n reaches every command that names an orkflow or a
+// namespace contract: -n reaches every command that names an orkflow or a
 // run, and two namespaces holding the same name never see each other.
 func TestNamespaceFlag_ScopesApplyListGetAndSubmit(t *testing.T) {
 	f := newFixture(t)
@@ -192,8 +192,8 @@ func TestNamespaceUse_RefusesANamespaceTheEngineDoesNotHave(t *testing.T) {
 	}
 }
 
-// TestSubmitIntoAMissingNamespace_NamesItAndListsTheOnesThatExist is
-// acceptance 4, at the surface a person actually reads.
+// TestSubmitIntoAMissingNamespace_NamesItAndListsTheOnesThatExist measures the
+// refusal at the surface a person actually reads.
 func TestSubmitIntoAMissingNamespace_NamesItAndListsTheOnesThatExist(t *testing.T) {
 	f := newFixture(t)
 	f.run("namespace", "create", "payments").requireExit(t, exitOK)

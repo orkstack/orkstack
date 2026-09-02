@@ -106,7 +106,7 @@ type TaskRun struct {
 	// display only. values_ref is the authoritative reference.
 	Output     *Payload               `protobuf:"bytes,5,opt,name=output,proto3" json:"output,omitempty"`
 	Artifacts  []*ArtifactRef         `protobuf:"bytes,6,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
-	Error      *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"` // now carries FailureCategory
+	Error      *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"` // carries FailureCategory (§8)
 	StartedAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 	// pool names the set of Orkers this attempt was dispatched to, in the word

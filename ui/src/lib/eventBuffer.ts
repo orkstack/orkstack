@@ -6,9 +6,9 @@ import { EventType, type Event } from './gen/orkstack/v1/run_pb';
 // feeds two consumers — the task/run state reducer, and this buffer. The
 // reducer's work is a switch over the newest event and costs nothing to keep
 // running; the buffer is what a reader looks at, and it is the half that can
-// grow without limit. A run with a few thousand task events used to become a
-// few thousand deeply reactive proxies and a few thousand DOM rows, held for
-// the life of the tab.
+// grow without limit. Unbounded, a run with a few thousand task events becomes
+// a few thousand deeply reactive proxies and a few thousand DOM rows, held
+// for the life of the tab.
 //
 // So the buffer holds the last EVENT_BUFFER_CAP events and COUNTS the rest.
 // Bounded rendering is the property; a visible count is what keeps it honest.

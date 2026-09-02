@@ -1,13 +1,10 @@
 <script lang="ts">
-	// The activity catalog (design §4.2): what this deployment can run.
+	// The activity catalog (§4.2): what this deployment can run.
 	//
-	// This page replaces the plugin inventory. The difference is not cosmetic:
-	// a plugin was a Go type compiled into an Orker and the inventory was a
-	// question asked OF the Orkers, so it could disagree between pools and
-	// arrive partially filled. An activity is an IMAGE, and which images exist
-	// is engine configuration read in one place, so every row is complete or
-	// the whole read failed. There is no "partial row" state here because the
-	// wire can no longer produce one.
+	// An activity is an image, and which images exist is engine configuration
+	// read in one place (§4.2), so every row is complete or the whole read
+	// failed. There is no "partial row" state here because the wire cannot
+	// produce one.
 	//
 	// ROW ORDER IS THE RESPONSE'S OWN. §2.3 makes ListActivitiesResponse's
 	// ordering part of the contract, in as many words: "A stable order is part

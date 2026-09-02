@@ -20,9 +20,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -35,6 +33,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -141,7 +140,7 @@ func putS3(
 // below is derived from the spec rather than from the store's own helpers.
 var cleanSegmentForTest = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,55}$`)
 
-// s3URIForTest builds the URI M7.4 promises, independently of the store:
+// s3URIForTest builds the documented s3:// URI, independently of the store:
 //
 //	s3://{bucket}/orkflows/{orkflow-name}/{run-id}/{task-id}/{artifact-name}
 func s3URIForTest(t *testing.T, bucket string, prov artifacts.Provenance, name, digest string) string {
@@ -160,29 +159,26 @@ func runPrefixForTest(bucket string, prov artifacts.Provenance) string {
 	return fmt.Sprintf("s3://%s/orkflows/%s/%s/%s/", bucket, prov.Orkflow, prov.RunID, prov.TaskID)
 }
 
-// recordProofURI appends a sample to the committed M7.4 proof when
-// ORK_PROOF_M74_DIR is set.
-func recordProofURI(t *testing.T, label string, ref artifacts.ArtifactRef) {
+// recordProofURI records sample URIs the store produced as evidence
+// (proof.Write), one file per label, so `make proof` collects the s3://
+// layout as it was actually written.
+func recordProofURI(t *testing.T, label string, refs ...artifacts.ArtifactRef) {
 	t.Helper()
-	dir := os.Getenv("ORK_PROOF_M74_DIR")
-	if dir == "" {
-		return
+	var body strings.Builder
+	for _, ref := range refs {
+		fmt.Fprintf(&body, "%-34s %s\n", label, ref.URI)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
-	line := fmt.Sprintf("%-34s %s\n", label, ref.URI)
-	f, err := os.OpenFile(filepath.Join(dir, "artifact-uris.txt"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		t.Fatalf("open proof file: %v", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(line); err != nil {
-		t.Fatalf("write proof file: %v", err)
-	}
+	proof.Write(t, "artifacts", "uri-"+proofSlug(label)+".txt", []byte(body.String()))
 }
 
-// M7.4 acceptance 1: a run's artifact is addressed by the run that produced it.
+// proofSlug turns a human label into a file-name component.
+func proofSlug(label string) string {
+	return strings.Trim(nonSlugRunes.ReplaceAllString(strings.ToLower(label), "-"), "-")
+}
+
+var nonSlugRunes = regexp.MustCompile(`[^a-z0-9]+`)
+
+// A run's artifact is addressed by the run that produced it.
 func TestS3Store_PutsRunArtifactsUnderOrkflowTaskAndRun(t *testing.T) {
 	st, cfg := newS3Store(t)
 	ctx := context.Background()
@@ -199,7 +195,7 @@ func TestS3Store_PutsRunArtifactsUnderOrkflowTaskAndRun(t *testing.T) {
 		t.Errorf("URI %q does not carry the content digest as its sixth segment", ref.URI)
 	}
 	t.Logf("put uri=%s size=%d sha256=%s", ref.URI, ref.SizeBytes, ref.SHA256)
-	recordProofURI(t, "acceptance-1 run artifact", ref)
+	recordProofURI(t, "run artifact", ref)
 
 	// Every operation addresses the artifact by that readable URI.
 	if got := readAllS3(t, ctx, st, ref.URI); !bytes.Equal(got, data) {
@@ -229,7 +225,7 @@ func TestS3Store_PutsRunArtifactsUnderOrkflowTaskAndRun(t *testing.T) {
 	saveRef := putS3(t, st, artifacts.Provenance{
 		Orkflow: prov.Orkflow, TaskID: "save", RunID: prov.RunID,
 	}, "result.txt", []byte("Sample Slide Show"), artifacts.PutOptions{})
-	recordProofURI(t, "acceptance-1 sibling task", saveRef)
+	recordProofURI(t, "sibling task", saveRef)
 	orkflowPrefix := fmt.Sprintf("s3://%s/orkflows/%s/", cfg.S3Bucket, prov.Orkflow)
 	for _, r := range []artifacts.ArtifactRef{ref, saveRef} {
 		if !strings.HasPrefix(r.URI, orkflowPrefix) {
@@ -238,8 +234,8 @@ func TestS3Store_PutsRunArtifactsUnderOrkflowTaskAndRun(t *testing.T) {
 	}
 }
 
-// M7.4 acceptance 3: an S3 lifecycle rule scoped to one orkflow selects that
-// orkflow's artifacts and nothing else.
+// An S3 lifecycle rule scoped to one orkflow selects that orkflow's artifacts
+// and nothing else.
 func TestS3Store_LifecycleRuleExpiresExactlyOneOrkflow(t *testing.T) {
 	st, cfg := newS3Store(t)
 	ctx := context.Background()
@@ -270,10 +266,8 @@ func TestS3Store_LifecycleRuleExpiresExactlyOneOrkflow(t *testing.T) {
 		putS3(t, st, saveRun, "nested/report copy.txt", []byte("deprecated nested"), artifacts.PutOptions{}),
 	}
 	survivor := putS3(t, st, keptRun, "result.txt", []byte("kept result"), artifacts.PutOptions{})
-	for _, ref := range doomed {
-		recordProofURI(t, "acceptance-3 deprecated-flow", ref)
-	}
-	recordProofURI(t, "acceptance-3 kept-flow", survivor)
+	recordProofURI(t, "lifecycle deprecated-flow", doomed...)
+	recordProofURI(t, "lifecycle kept-flow", survivor)
 
 	// 1. The policy an operator would write, applied to the real server.
 	policy := &s3types.BucketLifecycleConfiguration{Rules: []s3types.LifecycleRule{
@@ -760,7 +754,8 @@ func TestS3Store_PreservesVeryLongNameWithBoundedKey(t *testing.T) {
 }
 
 // Two artifacts of one task run never share an object, however adversarial
-// their names — including a name shaped like the pre-M7.4 digest layout.
+// their names — including a name shaped like a content-hash layout this store
+// never writes.
 func TestS3Store_DistinctNamesNeverShareAnObject(t *testing.T) {
 	st, _ := newS3Store(t)
 	ctx := context.Background()
@@ -861,7 +856,7 @@ func TestS3Store_RejectsRawQueryAndFragmentInURI(t *testing.T) {
 	cases := []string{
 		ref.URI + "?raw=true",
 		ref.URI + "#raw",
-		// The pre-M7.4 content-hash layout is gone: M7.4 is a hard break.
+		// A content-hash layout this store never writes.
 		fmt.Sprintf("s3://%s/objects/%s/%s", cfg.S3Bucket, digest, digest),
 		fmt.Sprintf("s3://%s/orkflows/hello-ork/fetch/ork-1-1/dir/body", cfg.S3Bucket),
 		fmt.Sprintf("s3://%s/orkflows/hello-ork/fetch/body", cfg.S3Bucket),
@@ -945,17 +940,8 @@ func deleteByPrefix(t *testing.T, ctx context.Context, client *s3.Client, bucket
 	}
 }
 
+// recordProofLines records a transcript as evidence (proof.Write).
 func recordProofLines(t *testing.T, file string, lines []string) {
 	t.Helper()
-	dir := os.Getenv("ORK_PROOF_M74_DIR")
-	if dir == "" {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create proof dir: %v", err)
-	}
-	body := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", file, err)
-	}
+	proof.Write(t, "artifacts", file, []byte(strings.Join(lines, "\n")+"\n"))
 }

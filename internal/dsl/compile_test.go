@@ -84,7 +84,7 @@ func TestCompileFile_AcceptsHelloExample(t *testing.T) {
 // TestCompile_AcceptsEveryShippedExample keeps examples/ honest: every file we
 // ship as documentation must still compile, and every task in it must name the
 // generic `op` selector so the examples stay a faithful reference for
-// docs/PLUGIN_DESIGN.md.
+// docs/ACTIVITY_IMAGES.md.
 func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
 	paths, err := filepath.Glob("../../examples/*.ork.yaml")
 	if err != nil {
@@ -218,9 +218,8 @@ tasks:
 			wantMessage: "template parse error",
 		},
 		{
-			// `uses:` is REQUIRED. It replaced `plugin:` as the only
-			// image-selecting field, and a task that names no activity has
-			// nothing to run.
+			// `uses:` is REQUIRED: it is the only image-selecting field, and
+			// a task that names no activity has nothing to run.
 			name: "uses is missing",
 			yaml: `
 name: no-uses
@@ -247,34 +246,43 @@ tasks:
 			wantMessage: "cannot be a template",
 		},
 		{
-			// `plugin:` is refused BY NAME rather than ignored. yaml.v3 drops
-			// what it cannot map, so a field that merely disappeared from the
-			// struct would be accepted in silence and the author would find
-			// out when the run behaved differently.
-			name: "plugin was removed",
+			// A key the schema does not define is refused, never ignored:
+			// decoding is strict, so a misspelled or unsupported key cannot
+			// be accepted in silence and surface later as a run that behaves
+			// differently from its document.
+			name: "unknown task key is refused",
 			yaml: `
-name: retired-plugin
+name: unknown-key
 tasks:
   - id: a
+    uses: shell
     plugin: shell
     with: {command: "echo 1"}
 `,
-			wantMessage: "`plugin:` was removed",
+			wantMessage: "field plugin not found",
 		},
 		{
-			// `uses: container` names a capability that has no compliant
-			// image: a container that starts containers needs the docker
-			// socket, which §9.1 forbids without exception. It is an error
-			// naming the replacement rather than an alias, because the launch
-			// contract excludes compatibility shims (§17 C6, C7).
-			name: "uses container is refused with its replacement",
+			name: "unknown top-level key is refused",
 			yaml: `
-name: retired-container
+name: unknown-key
+queue: gpu
+tasks:
+  - id: a
+    uses: shell
+`,
+			wantMessage: "field queue not found",
+		},
+		{
+			// There is no `container` activity: every task already is a
+			// container, so a workload names the image it wants directly.
+			name: "uses container is an unknown activity",
+			yaml: `
+name: no-container-activity
 tasks:
   - id: a
     uses: container
 `,
-			wantMessage: "has no replacement alias",
+			wantMessage: "container",
 		},
 		{
 			// Exactly two network modes exist. A typo must not silently
@@ -844,8 +852,7 @@ tasks:
 // because it compares the whole compiled document, so a compilation that
 // varied would make re-applying an unchanged file a "different document under
 // a stored version" every few tries (pkg/artifacts.sameStoredOrkflow). The
-// assertion is therefore on the compiled message, not only on the version it
-// used to be derived through.
+// assertion is therefore on the compiled message, not only on the version.
 func TestCompile_CollidingNormalizedKeysCompileTheSameEveryTime(t *testing.T) {
 	const document = `
 name: colliding-keys

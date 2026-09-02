@@ -15,12 +15,12 @@ import (
 // machine with nothing started. Set ORK_REQUIRE_INFRA and it fails instead.
 //
 // WHY THE SWITCH EXISTS. `go test` exits 0 for a package whose every test
-// called t.Skip, so a proof script that reads only the exit code cannot tell
-// "proved" from "declined to run" — and proof/M8.5 was caught printing PASS
-// on a machine with no cluster. Every proof script under proof/ now probes
-// the infrastructure itself and exports ORK_REQUIRE_INFRA=1 once it is up.
-// From then on a skip is not a fact about the environment; it is a test
-// opting out of the proof, and it turns the run red.
+// called t.Skip, so a harness that reads only the exit code cannot tell
+// "proved" from "declined to run" — and one was once caught printing PASS
+// on a machine with no cluster. A harness therefore probes the
+// infrastructure itself and exports ORK_REQUIRE_INFRA=1 once it is up
+// (`make test-integration` does). From then on a skip is not a fact about
+// the environment; it is a test opting out, and it turns the run red.
 //
 // Only the reachability of infrastructure goes through here. A host
 // capability that starting the infrastructure would not fix — no directory

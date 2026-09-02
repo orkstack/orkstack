@@ -154,9 +154,6 @@ type ContainerRuntime interface {
 	// layout — the embedded fallback of §4.6 — and returns the PullInfo a Pull
 	// would have. A digest the layout does not hold returns an error matching
 	// ErrNotInLayout.
-	//
-	// Phase 3 supplies the layouts; this seam exists in Phase 1 so it has
-	// something to implement against.
 	LoadLayout(ctx context.Context, layoutPath, digest string) (PullInfo, error)
 	// Create builds a container from spec without starting it.
 	Create(ctx context.Context, spec ContainerSpec) (ContainerID, error)

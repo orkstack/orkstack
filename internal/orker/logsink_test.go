@@ -15,7 +15,7 @@ import (
 // recordingLogStore captures what the sink actually uploaded, in the order it
 // uploaded it. It is the whole observation: a sink that kept everything in
 // memory and wrote at the end would pass a test that only checked the final
-// bytes, and that sink is exactly the one this milestone exists to replace.
+// bytes, and that is exactly the sink this one must never be.
 type recordingLogStore struct {
 	mu     sync.Mutex
 	chunks []artifacts.LogChunk
@@ -201,16 +201,15 @@ func TestLogChunkSink_FlushesOnElapsedTime(t *testing.T) {
 	}
 }
 
-// TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask — F6.
+// TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask.
 //
 // The two bounds have to hold TOGETHER, and this is the case where asking the
-// size bound alone gave the wrong answer: `ORK_ORKER_LOG_FLUSH_BYTES=1` is
-// what a test sets to force chunk boundaries, and it used to mean one PUT per
-// line. Two thousand lines were two thousand objects — the write storm M11.1
-// acceptance 4 forbids, produced by a knob an operator or a proof script may
-// legitimately turn.
+// size bound alone gives the wrong answer: `ORK_ORKER_LOG_FLUSH_BYTES=1` is
+// what a test sets to force chunk boundaries, and it must not mean one PUT per
+// line — two thousand lines must not become two thousand objects, a write
+// storm produced by a knob an operator may legitimately turn.
 //
-// The rule that replaces it: however small the size bound, normal writes cost
+// The rule: however small the size bound, normal writes cost
 // at most once per FlushInterval (plus the one immediate first chunk, which
 // nothing should wait for, and the one final chunk Close writes). What arrives
 // is unchanged — every byte, in order.
@@ -641,7 +640,7 @@ func TestLogChunkSink_ALossBeforeTruncationRidesTheTruncationNotice(t *testing.T
 	}
 }
 
-// The shell plugin writes stdout and stderr from two goroutines, so the sink is
+// The runtime streams stdout and stderr from two goroutines, so the sink is
 // used concurrently by construction.
 func TestLogChunkSink_IsSafeUnderConcurrentWriters(t *testing.T) {
 	store := &recordingLogStore{}

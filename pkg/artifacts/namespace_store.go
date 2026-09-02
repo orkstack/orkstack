@@ -57,7 +57,7 @@ type NamespaceStore interface {
 // PutConditions is the compare-and-swap a registry write may demand.
 //
 // It exists because two engine replicas share one bucket and neither
-// coordinates with the other (AGENTS.md §1.7): an unconditional write is a
+// coordinates with the other (AGENTS.md §7): an unconditional write is a
 // last-writer-wins, and the loser never learns it lost. S3 and MinIO both
 // answer conditional PUTs natively, so the arbitration is the store's and
 // needs no lock, no lease and nothing in Temporal.
@@ -343,8 +343,8 @@ const DefaultPool = "main"
 // pool->queue translation in the tree (internal/task.QueueForPool) and by the
 // DSL. A registry that stores a routing target no dispatch can honour is the
 // same "stored field nothing can honour" defect as a namespace no read path
-// reaches — and M10.2 is the slice that reads default_pool, so it would be
-// the one handed the unroutable name.
+// reaches — and internal/engine.DefaultPoolFor is what reads default_pool, so
+// it would be the one handed the unroutable name.
 var poolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // maxPoolName bounds a pool name. It is internal/task.MaxPoolName and the

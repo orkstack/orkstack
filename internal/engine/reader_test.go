@@ -113,36 +113,22 @@ func startedEvent(t *testing.T, runID string, wf *orkstackv1.Orkflow) *historypb
 	}
 }
 
-// publishEventScheduled is what the engine records for every lifecycle event:
-// the scheduling of the projection activity, carrying the event and the run
-// snapshot as its input.
-func publishEventScheduled(
-	t *testing.T,
-	eventID int64,
-	event *orkstackv1.Event,
-	run *orkstackv1.Run,
-) *historypb.HistoryEvent {
-	t.Helper()
-	return &historypb.HistoryEvent{
-		EventId:   eventID,
-		EventTime: timestamppb.New(readerEpoch.Add(time.Duration(eventID) * time.Second)),
-		EventType: enumspb.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED,
-		Attributes: &historypb.HistoryEvent_ActivityTaskScheduledEventAttributes{
-			ActivityTaskScheduledEventAttributes: &historypb.ActivityTaskScheduledEventAttributes{
-				ActivityType: &commonpb.ActivityType{Name: ActivityPublishEvent},
-				Input: payloadsOf(t, event, run,
-					fmt.Sprintf("%s#%d", run.GetId(), event.GetSequence())),
-			},
-		},
-	}
+// snapshotURIFor is the object each lifecycle event's snapshot is written
+// under in a test history: one URI per (run, sequence), the way the snapshot
+// store keys them.
+func snapshotURIFor(runID string, sequence int64) string {
+	return fmt.Sprintf("memory://%s/%d", runID, sequence)
 }
 
 // helloRun is one run's history: created, started, task succeeded, succeeded —
-// the shape every OrkStack run has.
-func helloRun(t *testing.T, runID string) ([]*historypb.HistoryEvent, *orkstackv1.Orkflow) {
+// the shape every OrkStack run has. Each lifecycle event references the
+// snapshot written alongside it, and the returned store holds those objects,
+// so a reader wired with WithSnapshotStore resolves them.
+func helloRun(t *testing.T, runID string) ([]*historypb.HistoryEvent, *countingSnapshotStore) {
 	t.Helper()
 	wf := &orkstackv1.Orkflow{Name: "hello-ork", Version: "0.1.0"}
 	events := []*historypb.HistoryEvent{startedEvent(t, runID, wf)}
+	store := &countingSnapshotStore{objects: map[string][]byte{}}
 
 	kinds := []struct {
 		eventType orkstackv1.EventType
@@ -172,16 +158,28 @@ func helloRun(t *testing.T, runID string) ([]*historypb.HistoryEvent, *orkstackv
 		if runStatus == orkstackv1.Status_STATUS_SUCCEEDED {
 			snapshot.FinishedAt = timestamppb.New(readerEpoch.Add(10 * time.Second))
 		}
-		events = append(events, publishEventScheduled(t, sequence+1, &orkstackv1.Event{
+		uri := snapshotURIFor(runID, sequence)
+		store.objects[uri] = mustMarshalRun(t, snapshot)
+		events = append(events, publishEventWithURI(t, sequence+1, &orkstackv1.Event{
 			RunId:     runID,
 			Sequence:  sequence,
 			Type:      kind.eventType,
 			Status:    kind.status,
 			Message:   kind.eventType.String(),
 			Timestamp: timestamppb.New(readerEpoch.Add(time.Duration(sequence) * time.Second)),
-		}, snapshot))
+		}, uri))
 	}
-	return events, wf
+	return events, store
+}
+
+// mustMarshalRun encodes a run the way the snapshot store holds it.
+func mustMarshalRun(t *testing.T, run *orkstackv1.Run) []byte {
+	t.Helper()
+	data, err := proto.Marshal(run)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	return data
 }
 
 func closedEvent(eventID int64, eventType enumspb.EventType, at time.Time) *historypb.HistoryEvent {
@@ -385,10 +383,11 @@ func TestTemporalRunReader_EventReadsDoNotSynthesizeASecondTerminal(t *testing.T
 // are the run's stream, in order, on any replica.
 func TestTemporalRunReader_RebuildsTheOrderedStreamFromHistory(t *testing.T) {
 	const runID = "ork-read-1"
-	history, _ := helloRun(t, runID)
+	history, store := helloRun(t, runID)
 	history = append(history, closedEvent(7, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED,
 		readerEpoch.Add(10*time.Second)))
 	reader, _ := readerOver(history, runID)
+	reader.WithSnapshotStore(store)
 	ctx := context.Background()
 
 	events, err := reader.Events(ctx, runID, 0)
@@ -421,10 +420,11 @@ func TestTemporalRunReader_RebuildsTheOrderedStreamFromHistory(t *testing.T) {
 
 func TestTemporalRunReader_GetRunReturnsTheLatestPublishedSnapshot(t *testing.T) {
 	const runID = "ork-read-2"
-	history, _ := helloRun(t, runID)
+	history, store := helloRun(t, runID)
 	history = append(history, closedEvent(7, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED,
 		readerEpoch.Add(10*time.Second)))
 	reader, _ := readerOver(history, runID)
+	reader.WithSnapshotStore(store)
 
 	run, err := reader.GetRun(context.Background(), runID)
 	if err != nil {
@@ -445,8 +445,9 @@ func TestTemporalRunReader_GetRunReturnsTheLatestPublishedSnapshot(t *testing.T)
 // and proves the long poll is used: a live run's stream is the iterator.
 func TestTemporalRunReader_StreamEndsAtTheTerminalEvent(t *testing.T) {
 	const runID = "ork-read-3"
-	history, _ := helloRun(t, runID)
+	history, store := helloRun(t, runID)
 	reader, fake := readerOver(history, runID)
+	reader.WithSnapshotStore(store)
 
 	var delivered []*orkstackv1.Event
 	err := reader.StreamEvents(context.Background(), runID, 0, func(event *orkstackv1.Event) error {
@@ -473,12 +474,13 @@ func TestTemporalRunReader_StreamEndsAtTheTerminalEvent(t *testing.T) {
 // forever and its stream never terminates.
 func TestTemporalRunReader_ReportsATerminatedRunAsEnded(t *testing.T) {
 	const runID = "ork-read-4"
-	history, _ := helloRun(t, runID)
+	history, store := helloRun(t, runID)
 	// Keep only created + started, then terminate.
 	history = append(history[:3],
 		closedEvent(9, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED,
 			readerEpoch.Add(30*time.Second)))
 	reader, _ := readerOver(history, runID)
+	reader.WithSnapshotStore(store)
 	ctx := context.Background()
 
 	run, err := reader.GetRun(ctx, runID)

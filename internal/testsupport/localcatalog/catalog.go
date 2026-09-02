@@ -10,7 +10,7 @@
 // IMAGE_RESOLVE_UNAUTHORIZED. That refusal is correct — an unresolvable
 // reference must fail at apply — so the tests move to references that exist
 // rather than the default weakening to a laptop-only one. §4.6 prescribes
-// exactly this shape for local development: `make images` pushes each activity
+// exactly this shape for local development: `make -C images push` pushes each activity
 // to `localhost:5001/orkstack/activity-<name>:dev` and the local stack points
 // ORK_ACTIVITY_CATALOG at that registry.
 //

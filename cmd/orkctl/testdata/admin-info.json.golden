@@ -1,5 +1,5 @@
 {
-  "engineVersion": "v0.0.4",
+  "engineVersion": "v1.2.3",
   "goVersion": "go1.25.6",
   "deploymentName": "orkstack",
   "buildId": "2026-01-02.1",

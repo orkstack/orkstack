@@ -1,7 +1,7 @@
 // Package artifacts defines the artifact Store interface and providers, plus
 // the S3 stores that hold orkflow definitions and the namespace registry.
 //
-// Artifacts are the only way bytes travel between OrkStack tasks: a plugin
+// Artifacts are the only way bytes travel between OrkStack tasks: a task
 // returns files, the Orker stores them here, and downstream tasks receive
 // references (never inline bytes). Logical names remain opaque and appear
 // unchanged in ArtifactRef.Name.

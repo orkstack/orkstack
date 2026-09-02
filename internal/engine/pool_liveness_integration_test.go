@@ -18,6 +18,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
 
 // TestIntegration_APoolCountsTheOrkersPollingItAndNotTheOnesThatLeft is the
@@ -213,8 +214,8 @@ func dialable(address string) bool {
 	return true
 }
 
-// writeLiveCountMeasurement records the measurement for proof/M10.2: what the
-// cluster reported, and what the engine counted from it.
+// writeLiveCountMeasurement records the measurement: what the cluster
+// reported, and what the engine counted from it.
 func writeLiveCountMeasurement(
 	t *testing.T,
 	pool, queue string,
@@ -224,11 +225,7 @@ func writeLiveCountMeasurement(
 ) {
 	t.Helper()
 	lines := []string{
-		"# M10.2 — a live Orker count counts the Orkers that are live",
-		"#",
-		"# Written by TestIntegration_APoolCountsTheOrkersPollingItAndNotTheOnesThatLeft",
-		"# (internal/engine/pool_liveness_integration_test.go) against a real Temporal.",
-		"#",
+		"# a live Orker count counts the Orkers that are live",
 		"# recorded " + time.Now().UTC().Format(time.RFC3339),
 		"",
 		fmt.Sprintf("pool                       %s", pool),
@@ -252,10 +249,7 @@ func writeLiveCountMeasurement(
 		fmt.Sprintf("window                     %s", engine.DefaultPollerFreshness),
 		fmt.Sprintf("ObservePool reports        %d Orker(s), last seen %s ago",
 			live.Orkers, time.Since(live.LastSeen).Round(time.Second)),
-		"",
-		"Counting every record — the shape this replaced — would report "+
-			fmt.Sprintf("%d.", len(records)),
 	)
 
-	publishProofArtifact(t, "live-count-measurement.txt", strings.Join(lines, "\n")+"\n")
+	proof.Write(t, "engine", "live-count-measurement.txt", []byte(strings.Join(lines, "\n")+"\n"))
 }

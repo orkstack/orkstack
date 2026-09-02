@@ -22,15 +22,15 @@ import (
 // treating the collision as a failed submission.
 var ErrRunIDTaken = errors.New("run id already taken")
 
-// TemporalStarter starts and cancels runs on a Temporal cluster and discovers
-// Orker plugins. It is the production implementation of the API's run starter
-// and plugin-lister seams.
+// TemporalStarter starts and cancels runs on a Temporal cluster and probes
+// pool liveness. It is the production implementation of the API's run starter
+// and Orker-describer seams.
 type TemporalStarter struct {
 	client client.Client
 	queue  string
 	// orkerQueue is the queue Orkers poll for task activities. It defaults to
-	// queue (normally task.DefaultQueue) and can be overridden so both plugin
-	// discovery and task dispatch follow Orkers on a custom queue.
+	// queue (normally task.DefaultQueue) and can be overridden so both the
+	// liveness probe and task dispatch follow Orkers on a custom queue.
 	orkerQueue string
 
 	// namespaceIndexed reports that this cluster has the OrkflowNamespace
@@ -50,7 +50,7 @@ func NewTemporalStarter(c client.Client, queue string) *TemporalStarter {
 }
 
 // NewTemporalStarterWithOrkerQueue is NewTemporalStarter with an explicit
-// orker queue for plugin discovery, used when Orkers poll a custom queue.
+// orker queue for the liveness probe, used when Orkers poll a custom queue.
 func NewTemporalStarterWithOrkerQueue(c client.Client, runQueue, orkerQueue string) *TemporalStarter {
 	s := NewTemporalStarter(c, runQueue)
 	if orkerQueue != "" {
@@ -155,13 +155,8 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID, _ string) error 
 // default execution channel and returns the identity of whichever Orker
 // answered.
 //
-// It replaces ListPlugins in this role one-for-one (§6.5). ListPlugins was
-// never only a plugin list: a SUCCESSFUL probe is how a pool proves it is
-// alive, and proof/M11.6 fixed a bug in exactly this path. An Orker no longer
-// has a plugin list — which images exist is engine configuration, not
-// something to ask an Orker (§4.2) — but a pool still has to prove it is
-// alive, so the probe stays and only its payload changes. The call site, the
-// 5 s and 10 s timeouts and the MaximumAttempts: 2 are unchanged.
+// A successful answer is how a pool proves it is alive; which images exist is
+// engine configuration (§4.2), so the probe returns identity only.
 func (s *TemporalStarter) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrkerResult, error) {
 	return s.describeOrkerOn(ctx, s.orkerQueue, 10*time.Second)
 }

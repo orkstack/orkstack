@@ -16,7 +16,7 @@ import (
 
 // Webhook management is served as plain JSON over HTTP rather than as a
 // Connect service, because proto is the single source of truth for
-// cross-process types (AGENTS.md §1.1) and this milestone does not change it.
+// cross-process types (AGENTS.md §12) and webhooks have not been added to it.
 // The paths are versioned so a later proto-backed service can take them over
 // without breaking a registered subscriber.
 const (
