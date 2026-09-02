@@ -2,11 +2,17 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
 
 	"connectrpc.com/connect"
+	"go.temporal.io/api/serviceerror"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/engine"
 )
 
 // SystemInfo is what this replica was built and configured as — the values
@@ -88,4 +94,156 @@ func (s *Service) GetSystemInfo(
 		TemporalAddress:  s.system.TemporalAddress,
 		ServerTime:       timestamppb.New(s.now().UTC()),
 	}), nil
+}
+
+// retentionBinding resolves the deployment's sole router binding and the
+// retention seam on it — internal/engine/router.go's SingleRouter, the SAME
+// binding GetRun, ListRuns and CancelRun read through, so there is no second,
+// parallel path to a Temporal client here.
+//
+// It deliberately does NOT go through s.binding(namespace), which asks
+// router.For(namespace) whether the binding serves a given OrkStack
+// namespace (defaulting "" to "default" — see SingleRouter.For). Execution
+// retention has no OrkStack-namespace scope at all: a deployment whose one
+// binding is scoped to `Namespaces: []string{"payments"}` (Binding.serves)
+// still has exactly one Temporal namespace and exactly one retention
+// setting, and asking "does this binding serve the OrkStack namespace
+// `default`?" would wrongly refuse it. So this reads router.Bindings()
+// directly and takes the one binding a single-cluster deployment has —
+// the same binding s.binding("") would have resolved to, minus the
+// accidental OrkStack-namespace gate.
+func (s *Service) retentionBinding() (engine.RetentionAdmin, error) {
+	bindings := s.router.Bindings()
+	if len(bindings) != 1 {
+		return nil, connect.NewError(connect.CodeUnimplemented,
+			fmt.Errorf("execution retention requires exactly one router binding, this engine has %d", len(bindings)))
+	}
+	binding := bindings[0]
+	if binding.Retention == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented,
+			fmt.Errorf("this engine has no Temporal retention admin configured"))
+	}
+	return binding.Retention, nil
+}
+
+// GetExecutionRetention reads Temporal's CURRENT workflow-execution retention
+// for this deployment's one Temporal namespace, live from the cluster
+// (DescribeNamespace) — UNLIKE GetSystemInfo above, whose fields are all
+// configuration echoed back rather than observed. That guarantee is
+// unaffected by this RPC: it still holds for every field of
+// GetSystemInfoResponse, which gains none here.
+//
+// It is deployment-wide, never per-OrkStack-Namespace: see retentionBinding.
+func (s *Service) GetExecutionRetention(
+	ctx context.Context,
+	_ *connect.Request[orkstackv1.GetExecutionRetentionRequest],
+) (*connect.Response[orkstackv1.GetExecutionRetentionResponse], error) {
+	retention, err := s.retentionBinding()
+	if err != nil {
+		return nil, err
+	}
+	current, err := retention.NamespaceRetention(ctx, s.temporalNamespace)
+	if err != nil {
+		// err is passed straight through: Temporal's own message is what the
+		// caller sees via connect.Error.Message(), untouched by this layer.
+		return nil, connect.NewError(connect.CodeUnavailable, err)
+	}
+	return connect.NewResponse(&orkstackv1.GetExecutionRetentionResponse{
+		TemporalNamespace: s.temporalNamespace,
+		Retention:         durationpb.New(current),
+	}), nil
+}
+
+// UpdateExecutionRetention CHANGES that same cluster-wide setting through
+// Temporal's real UpdateNamespace RPC — UNLIKE GetSystemInfo, a live write
+// against the cluster, and again no claim about GetSystemInfoResponse's own
+// fields is affected by this RPC existing.
+//
+// A non-positive duration, a malformed protobuf Duration (CheckValid), or a
+// magnitude that cannot round-trip losslessly through Go's time.Duration is
+// rejected with InvalidArgument before any call leaves this process — see
+// validatePositiveRetention. A Temporal refusal of a value that passes that
+// check — including its own server-side minimum-retention rejection — is
+// returned to the caller untouched: never swallowed into a default, a zero
+// value, or a fabricated success.
+func (s *Service) UpdateExecutionRetention(
+	ctx context.Context,
+	req *connect.Request[orkstackv1.UpdateExecutionRetentionRequest],
+) (*connect.Response[orkstackv1.UpdateExecutionRetentionResponse], error) {
+	requested, err := validatePositiveRetention(req.Msg.GetRetention())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	retention, err := s.retentionBinding()
+	if err != nil {
+		return nil, err
+	}
+	confirmed, err := retention.SetNamespaceRetention(ctx, s.temporalNamespace, requested)
+	if err != nil {
+		// err is passed straight through: Temporal's own message — including
+		// its server-side minimum-retention rejection text — is what the
+		// caller sees via connect.Error.Message(), never rewritten here.
+		return nil, connect.NewError(temporalWriteErrorCode(err), err)
+	}
+	return connect.NewResponse(&orkstackv1.UpdateExecutionRetentionResponse{
+		TemporalNamespace: s.temporalNamespace,
+		Retention:         durationpb.New(confirmed),
+	}), nil
+}
+
+// validatePositiveRetention turns a requested protobuf Duration into a Go
+// time.Duration the same way the write path will actually use it, or
+// rejects it — never partially: every rejection here happens before
+// UpdateExecutionRetention resolves a binding or touches Temporal.
+//
+// Three distinct ways a Duration can be unusable, each caught explicitly:
+//
+//  1. nil — no duration was supplied at all.
+//  2. Malformed per the protobuf Duration spec — CheckValid catches
+//     out-of-range nanos and a seconds/nanos sign mismatch (e.g.
+//     seconds=1,nanos=-1), which durationpb.AsDuration would otherwise
+//     silently misinterpret rather than reject.
+//  3. In-range for protobuf's Duration (±10,000 years) but too large to
+//     represent losslessly as a Go time.Duration (±~292 years):
+//     Duration.AsDuration performs SATURATING arithmetic on overflow rather
+//     than erroring, so e.g. seconds=315576000000 (10,000 years) silently
+//     clamps to math.MaxInt64 nanoseconds — a different value than what was
+//     requested — and internal/engine/reader.go would then hand Temporal
+//     that clamped value instead. Guarding against this requires round-
+//     tripping the converted time.Duration back through durationpb.New and
+//     checking it reproduces the exact seconds/nanos requested; CheckValid
+//     alone does not catch it, since 10,000 years is a perfectly valid
+//     protobuf Duration.
+func validatePositiveRetention(requested *durationpb.Duration) (time.Duration, error) {
+	if requested == nil {
+		return 0, errors.New("retention must be a positive duration")
+	}
+	if err := requested.CheckValid(); err != nil {
+		return 0, fmt.Errorf("retention is not a valid duration: %w", err)
+	}
+	d := requested.AsDuration()
+	if roundtrip := durationpb.New(d); roundtrip.GetSeconds() != requested.GetSeconds() ||
+		roundtrip.GetNanos() != requested.GetNanos() {
+		return 0, fmt.Errorf(
+			"retention %s exceeds the range a Go duration can represent losslessly (max ~292 years)",
+			requested)
+	}
+	if d <= 0 {
+		return 0, errors.New("retention must be a positive duration")
+	}
+	return d, nil
+}
+
+// temporalWriteErrorCode classifies a Temporal write failure the way the
+// caller can act on it. Temporal's own validation refusals — the
+// server-side minimum-retention rejection is exactly this shape — surface as
+// *serviceerror.InvalidArgument, so those come back as InvalidArgument rather
+// than the Unavailable every other cluster-reachability failure here uses;
+// the message itself is always Temporal's own, untouched either way.
+func temporalWriteErrorCode(err error) connect.Code {
+	var invalid *serviceerror.InvalidArgument
+	if errors.As(err, &invalid) {
+		return connect.CodeInvalidArgument
+	}
+	return connect.CodeUnavailable
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -57,6 +58,30 @@ var ErrNoBinding = errors.New("no binding serves this namespace")
 // none: a Locate that guessed would answer for the wrong cluster.
 var ErrMultiBindingUnsupported = errors.New("multi-binding routing is not configured")
 
+// RetentionAdmin reads and writes Temporal's workflow-execution retention for
+// the ONE Temporal namespace a Binding's cluster uses — a live cluster
+// setting (DescribeNamespace / UpdateNamespace), never an
+// orkstack.v1.Namespace. It is declared beside RunReader for the same reason:
+// a Binding carries one of these per cluster, and TemporalRunReader satisfies
+// it with the same Temporal client every run read on that binding already
+// uses — never a second, parallel path to the cluster.
+//
+// This is deployment-wide, not per-OrkStack-Namespace: internal/engine's
+// SingleRouter serves every OrkStack namespace from one Binding, and this
+// interface describes that one Binding's one Temporal namespace's one
+// retention setting. It has nothing to do with orkstack.v1.Namespace,
+// NamespaceService or `orkctl namespace ...`, which is a separate,
+// already-shipped registry entity.
+type RetentionAdmin interface {
+	// NamespaceRetention reads the current retention, live from the cluster.
+	NamespaceRetention(ctx context.Context, namespace string) (time.Duration, error)
+	// SetNamespaceRetention writes a new retention and returns what the
+	// cluster confirmed. A non-positive retention is refused before any call
+	// reaches the cluster; a Temporal refusal of a positive one comes back
+	// untouched.
+	SetNamespaceRetention(ctx context.Context, namespace string, retention time.Duration) (time.Duration, error)
+}
+
 // Binding is one cluster, and the ork namespaces it serves.
 //
 // Everything a request needs from Temporal comes from a Binding: the reader
@@ -72,6 +97,11 @@ type Binding struct {
 	Reader  RunReader
 	Starter RunStarter
 	Pools   PoolProbe
+	// Retention is this binding's deployment-wide Temporal admin retention
+	// seam (see RetentionAdmin). Nil means no retention admin is wired: the
+	// SystemService retention RPCs answer Unimplemented rather than
+	// fabricating a value.
+	Retention RetentionAdmin
 }
 
 // serves reports whether this binding answers for a namespace.

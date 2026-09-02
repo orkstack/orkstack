@@ -44,6 +44,12 @@
 			testid: 'admin-card-activities',
 			title: 'Activities',
 			body: 'Every activity this deployment can run, each pinned to the image digest it resolved to.'
+		},
+		{
+			href: '/admin/retention',
+			testid: 'admin-card-retention',
+			title: 'Execution retention',
+			body: 'How long Temporal keeps a finished run\u2019s history \u2014 ONE deployment-wide cluster setting, not a namespace.'
 		}
 	];
 </script>
@@ -130,7 +136,7 @@
 
 <section>
 	<h2 class="mb-3 text-lg font-semibold text-zinc-100">Manage</h2>
-	<div class="grid gap-4 sm:grid-cols-3">
+	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 		{#each cards as card (card.testid)}
 			<a
 				href={withNamespace(card.href, data.namespace)}

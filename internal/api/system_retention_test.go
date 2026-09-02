@@ -1,0 +1,357 @@
+package api_test
+
+import (
+	"context"
+	"errors"
+	"math"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+	"go.temporal.io/api/serviceerror"
+	"google.golang.org/protobuf/types/known/durationpb"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
+)
+
+// fakeRetention stands in for engine.TemporalRunReader's retention seam: the
+// deployment-wide Temporal cluster setting, with no cluster in this process.
+// It records what it was asked so a test can prove the handler asked at all
+// (or, for the refused-before-any-call case, that it did NOT).
+type fakeRetention struct {
+	current  time.Duration
+	readErr  error
+	confirm  time.Duration
+	writeErr error
+
+	readNamespaces  []string
+	writeNamespaces []string
+	writeRequests   []time.Duration
+}
+
+func (f *fakeRetention) NamespaceRetention(_ context.Context, namespace string) (time.Duration, error) {
+	f.readNamespaces = append(f.readNamespaces, namespace)
+	if f.readErr != nil {
+		return 0, f.readErr
+	}
+	return f.current, nil
+}
+
+func (f *fakeRetention) SetNamespaceRetention(
+	_ context.Context,
+	namespace string,
+	retention time.Duration,
+) (time.Duration, error) {
+	f.writeNamespaces = append(f.writeNamespaces, namespace)
+	f.writeRequests = append(f.writeRequests, retention)
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	return f.confirm, nil
+}
+
+// retentionFixture wires a Service with a fake reader (satisfying the router
+// binding's other seams) and the given retention admin, over one fixed
+// Temporal namespace — exactly how `ork` wires Config.TemporalNamespace and
+// Config.Retention (cmd/ork/main.go).
+func retentionFixture(t *testing.T, retention *fakeRetention) *api.Service {
+	t.Helper()
+	return api.NewService(api.Config{
+		Reader:            &fakeReader{},
+		Retention:         retention,
+		TemporalNamespace: "ork-main",
+	})
+}
+
+// TestGetExecutionRetention_ReadsLiveFromTheCluster is the successful-read
+// case: the handler answers with what the fake reported, naming the TEMPORAL
+// namespace it asked about, through the same binding GetRun uses.
+func TestGetExecutionRetention_ReadsLiveFromTheCluster(t *testing.T) {
+	retention := &fakeRetention{current: 72 * time.Hour}
+	svc := retentionFixture(t, retention)
+
+	resp, err := svc.GetExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.GetExecutionRetentionRequest{}))
+	if err != nil {
+		t.Fatalf("GetExecutionRetention: %v", err)
+	}
+	if got := resp.Msg.GetTemporalNamespace(); got != "ork-main" {
+		t.Errorf("temporal_namespace = %q, want ork-main", got)
+	}
+	if got := resp.Msg.GetRetention().AsDuration(); got != 72*time.Hour {
+		t.Errorf("retention = %s, want 72h", got)
+	}
+	if len(retention.readNamespaces) != 1 || retention.readNamespaces[0] != "ork-main" {
+		t.Errorf("read namespaces = %v, want [ork-main]", retention.readNamespaces)
+	}
+}
+
+// TestGetExecutionRetention_UnavailableClusterIsNotSwallowed proves a read
+// failure surfaces rather than answering a fabricated zero value.
+func TestGetExecutionRetention_UnavailableClusterIsNotSwallowed(t *testing.T) {
+	boom := errors.New("temporal unreachable")
+	svc := retentionFixture(t, &fakeRetention{readErr: boom})
+
+	_, err := svc.GetExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.GetExecutionRetentionRequest{}))
+	if err == nil {
+		t.Fatal("GetExecutionRetention succeeded, want the cluster failure surfaced")
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("err = %v, want it to wrap %v", err, boom)
+	}
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		t.Fatalf("err = %v, want a *connect.Error", err)
+	}
+	if got := connectErr.Message(); got != boom.Error() {
+		t.Errorf("connect error message = %q, want Temporal's own message %q untouched", got, boom.Error())
+	}
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Errorf("code = %v, want Unavailable", connect.CodeOf(err))
+	}
+}
+
+// TestUpdateExecutionRetention_WritesThroughToTheCluster is the
+// successful-write case, and it also proves the response's retention is the
+// value the CLUSTER confirmed, not merely the request echoed back: they
+// differ here on purpose.
+func TestUpdateExecutionRetention_WritesThroughToTheCluster(t *testing.T) {
+	retention := &fakeRetention{confirm: 200 * time.Hour}
+	svc := retentionFixture(t, retention)
+
+	resp, err := svc.UpdateExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{
+			Retention: durationpb.New(168 * time.Hour),
+		}))
+	if err != nil {
+		t.Fatalf("UpdateExecutionRetention: %v", err)
+	}
+	if got := resp.Msg.GetTemporalNamespace(); got != "ork-main" {
+		t.Errorf("temporal_namespace = %q, want ork-main", got)
+	}
+	if got := resp.Msg.GetRetention().AsDuration(); got != 200*time.Hour {
+		t.Errorf("retention = %s, want the cluster-confirmed 200h, not the requested 168h", got)
+	}
+	if len(retention.writeRequests) != 1 || retention.writeRequests[0] != 168*time.Hour {
+		t.Errorf("write requests = %v, want [168h]", retention.writeRequests)
+	}
+	if len(retention.writeNamespaces) != 1 || retention.writeNamespaces[0] != "ork-main" {
+		t.Errorf("write namespaces = %v, want [ork-main]", retention.writeNamespaces)
+	}
+}
+
+// TestUpdateExecutionRetention_ARejectedWriteIsSurfacedNotSwallowed is
+// acceptance's "a rejected write (Temporal error surfaced, not swallowed)":
+// Temporal's own server-side minimum-retention rejection comes back to the
+// caller as InvalidArgument, carrying Temporal's own message, never a
+// fabricated success and never a silently accepted default.
+func TestUpdateExecutionRetention_ARejectedWriteIsSurfacedNotSwallowed(t *testing.T) {
+	rejection := serviceerror.NewInvalidArgument("retention period is below the cluster's configured minimum")
+	svc := retentionFixture(t, &fakeRetention{writeErr: rejection})
+
+	resp, err := svc.UpdateExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{
+			Retention: durationpb.New(time.Hour),
+		}))
+	if err == nil {
+		t.Fatalf("UpdateExecutionRetention succeeded with response %v, want Temporal's rejection surfaced", resp)
+	}
+	if !errors.Is(err, rejection) {
+		t.Errorf("err = %v, want it to wrap %v", err, rejection)
+	}
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		t.Fatalf("err = %v, want a *connect.Error", err)
+	}
+	if got := connectErr.Message(); got != rejection.Error() {
+		t.Errorf("connect error message = %q, want Temporal's own message %q untouched", got, rejection.Error())
+	}
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("code = %v, want InvalidArgument (Temporal's own classification)", connect.CodeOf(err))
+	}
+}
+
+// TestUpdateExecutionRetention_RefusesANonPositiveDurationBeforeAnyCall is
+// acceptance's other write refusal: a non-positive duration never reaches the
+// cluster at all.
+func TestUpdateExecutionRetention_RefusesANonPositiveDurationBeforeAnyCall(t *testing.T) {
+	for name, retention := range map[string]*durationpb.Duration{
+		"zero":     durationpb.New(0),
+		"negative": durationpb.New(-time.Hour),
+		"unset":    nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeRetention{}
+			svc := retentionFixture(t, fake)
+
+			_, err := svc.UpdateExecutionRetention(context.Background(),
+				connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{Retention: retention}))
+			if err == nil {
+				t.Fatal("UpdateExecutionRetention succeeded, want a refusal")
+			}
+			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+				t.Errorf("code = %v, want InvalidArgument", connect.CodeOf(err))
+			}
+			if len(fake.writeRequests) != 0 {
+				t.Errorf("SetNamespaceRetention was called with %v; a non-positive duration must never leave the process",
+					fake.writeRequests)
+			}
+		})
+	}
+}
+
+// TestUpdateExecutionRetention_RefusesAMalformedOrOverflowingDurationBeforeAnyCall
+// is the round-trip-safety half of validation, distinct from the plain
+// non-positive check above.
+//
+// durationpb.Duration.AsDuration performs SATURATING conversion on overflow
+// rather than erroring: a duration of 10,000 years (315,576,000,000
+// seconds) is a perfectly VALID protobuf Duration — CheckValid accepts it —
+// but silently clamps to math.MaxInt64 nanoseconds (~292 years) once
+// converted to a Go time.Duration. A handler that validated only
+// `requested.AsDuration() <= 0` would accept this value, and then
+// internal/engine/reader.go would hand Temporal a DIFFERENT number
+// (~9,223,372,036 seconds) than what the caller asked for
+// (315,576,000,000 seconds) — silently, with no error anywhere. This test
+// proves that specific case is refused, alongside protobuf-shape violations
+// AsDuration would otherwise silently misinterpret rather than reject: an
+// out-of-range nanos field, and a seconds/nanos sign mismatch.
+func TestUpdateExecutionRetention_RefusesAMalformedOrOverflowingDurationBeforeAnyCall(t *testing.T) {
+	for name, retention := range map[string]*durationpb.Duration{
+		"overflows time.Duration but is a valid protobuf Duration (10,000 years)": {
+			Seconds: 315576000000, // 10,000yr * 365.25d/yr * 24h/d * 60m/h * 60s/m — durationpb's own max.
+		},
+		"nanos out of range": {
+			Seconds: 1,
+			Nanos:   1_000_000_000, // must be strictly less than 1e9.
+		},
+		"seconds and nanos have different signs": {
+			Seconds: 1,
+			Nanos:   -1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeRetention{}
+			svc := retentionFixture(t, fake)
+
+			_, err := svc.UpdateExecutionRetention(context.Background(),
+				connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{Retention: retention}))
+			if err == nil {
+				t.Fatal("UpdateExecutionRetention succeeded, want a refusal")
+			}
+			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+				t.Errorf("code = %v, want InvalidArgument", connect.CodeOf(err))
+			}
+			if len(fake.writeRequests) != 0 {
+				t.Errorf(
+					"SetNamespaceRetention was called with %v; a malformed or overflowing duration must never leave the process",
+					fake.writeRequests)
+			}
+		})
+	}
+}
+
+// TestUpdateExecutionRetention_OverflowNeverReachesTemporalWithADifferentValue
+// is the precise regression this guards: without the round-trip check, the
+// 10,000-year request above would NOT be refused, and the fake would
+// receive a clamped ~292-year value instead of the ~10,000 years the caller
+// asked for — a silent value substitution, not a rejection. Asserting no
+// call happened at all (the case above) already proves the bug is fixed;
+// this test additionally pins what the unrepaired bug's write request would
+// have looked like, so a future regression that reintroduces a lossy check
+// is easy to recognize from its failure message.
+func TestUpdateExecutionRetention_OverflowNeverReachesTemporalWithADifferentValue(t *testing.T) {
+	fake := &fakeRetention{}
+	svc := retentionFixture(t, fake)
+	requested := &durationpb.Duration{Seconds: 315576000000}
+	// What a lossy `AsDuration() <= 0` check alone would let through: per
+	// durationpb's own saturating-conversion doc, an overflow this large
+	// clamps to math.MaxInt64 nanoseconds (~292 years), not an error.
+	clampedIfUnguarded := requested.AsDuration()
+	if clampedIfUnguarded != time.Duration(math.MaxInt64) {
+		t.Fatalf("test assumption broken: AsDuration(10,000yr) = %s, want the saturated math.MaxInt64 (%s); "+
+			"round-trip guard may be moot", clampedIfUnguarded, time.Duration(math.MaxInt64))
+	}
+
+	_, err := svc.UpdateExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{Retention: requested}))
+	if err == nil {
+		t.Fatal("UpdateExecutionRetention succeeded, want a refusal")
+	}
+	if len(fake.writeRequests) != 0 {
+		t.Fatalf("SetNamespaceRetention was called with %v, want no call at all — "+
+			"a lossy check would instead have called it with the clamped %s, not the requested 10,000 years",
+			fake.writeRequests, clampedIfUnguarded)
+	}
+}
+
+// TestExecutionRetention_WithNoRetentionAdminAnswersUnimplemented is what an
+// engine that never wired Config.Retention honestly knows: neither RPC
+// fabricates a value.
+func TestExecutionRetention_WithNoRetentionAdminAnswersUnimplemented(t *testing.T) {
+	svc := api.NewService(api.Config{Reader: &fakeReader{}, TemporalNamespace: "ork-main"})
+
+	if _, err := svc.GetExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.GetExecutionRetentionRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Errorf("GetExecutionRetention code = %v, want Unimplemented", connect.CodeOf(err))
+	}
+	if _, err := svc.UpdateExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{
+			Retention: durationpb.New(time.Hour),
+		})); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Errorf("UpdateExecutionRetention code = %v, want Unimplemented", connect.CodeOf(err))
+	}
+}
+
+// TestExecutionRetention_UsesTheSoleBindingEvenWhenItIsScopedToAnOrkStackNamespace
+// is the regression for retentionBinding's rule: execution retention has no
+// OrkStack-namespace scope, so a deployment whose one binding is restricted
+// to serving a single OrkStack namespace (Binding.Namespaces, e.g. because
+// the deployment only ever runs orkflows in the "payments" namespace) must
+// still answer both RPCs from that binding's retention seam. Before this
+// fix, retentionBinding asked s.binding(""), which SingleRouter.For
+// defaults to the OrkStack namespace "default" and then refuses because the
+// scoped binding does not serve "default" (see
+// engine.TestSingleRouter_ServesEveryNamespaceUntilOneIsNamed) — an
+// InvalidArgument that never reached Temporal at all, for a setting that
+// was never namespace-scoped to begin with.
+func TestExecutionRetention_UsesTheSoleBindingEvenWhenItIsScopedToAnOrkStackNamespace(t *testing.T) {
+	retention := &fakeRetention{current: 72 * time.Hour, confirm: 240 * time.Hour}
+	router := engine.NewSingleRouter(engine.Binding{
+		Namespaces: []string{"payments"},
+		Reader:     &fakeReader{},
+		Retention:  retention,
+	})
+	svc := api.NewService(api.Config{
+		Router:            router,
+		TemporalNamespace: "ork-main",
+	})
+
+	readResp, err := svc.GetExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.GetExecutionRetentionRequest{}))
+	if err != nil {
+		t.Fatalf("GetExecutionRetention on a namespace-scoped binding: %v", err)
+	}
+	if got := readResp.Msg.GetRetention().AsDuration(); got != 72*time.Hour {
+		t.Errorf("retention = %s, want 72h", got)
+	}
+
+	writeResp, err := svc.UpdateExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{
+			Retention: durationpb.New(168 * time.Hour),
+		}))
+	if err != nil {
+		t.Fatalf("UpdateExecutionRetention on a namespace-scoped binding: %v", err)
+	}
+	if got := writeResp.Msg.GetRetention().AsDuration(); got != 240*time.Hour {
+		t.Errorf("retention = %s, want the cluster-confirmed 240h", got)
+	}
+	if len(retention.writeRequests) != 1 || retention.writeRequests[0] != 168*time.Hour {
+		t.Errorf("write requests = %v, want [168h]", retention.writeRequests)
+	}
+}
+
+var _ engine.RetentionAdmin = (*fakeRetention)(nil)

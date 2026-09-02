@@ -3,14 +3,16 @@ package main
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// The admin surface from a terminal. The UI has the same four reads, but an
+// The admin surface from a terminal. The UI has the same reads, but an
 // operator running an incident check or a proof script has a shell, and a
 // deployment fact that can only be read by opening a browser is a fact that
 // does not reach a transcript.
@@ -21,6 +23,7 @@ func newAdminCommand(g *globalFlags) *cobra.Command {
 		Short: "Inspect the deployment: what it is made of, and what is serving it",
 	}
 	cmd.AddCommand(newAdminInfoCommand(g))
+	cmd.AddCommand(newAdminRetentionCommand(g))
 	return cmd
 }
 
@@ -87,4 +90,124 @@ func versioningLabel(info *orkstackv1.GetSystemInfoResponse) string {
 		return "off"
 	}
 	return "on (build " + info.GetBuildId() + ")"
+}
+
+// newAdminRetentionCommand groups the deployment-wide Temporal execution
+// retention read and write.
+//
+// It lives under `admin`, NOT under `namespace`, on purpose: this is ONE
+// Temporal cluster setting for the whole deployment
+// (internal/engine/router.go's SingleRouter serves every OrkStack namespace
+// from one binding), not a property of an orkstack.v1.Namespace. `orkctl
+// namespace` manages that other, already-shipped, per-tenant registry entity
+// — orkflow names, runs and pool defaults — and has nothing to do with how
+// long Temporal keeps workflow history.
+func newAdminRetentionCommand(g *globalFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "retention",
+		Short: "Read or change the deployment-wide Temporal execution retention",
+		Long: "retention reads or changes how long Temporal keeps a finished workflow's\n" +
+			"history for THIS DEPLOYMENT'S ONE Temporal cluster namespace.\n\n" +
+			"This is a single cluster-wide setting, not a per-OrkStack-namespace one, and\n" +
+			"it is unrelated to `orkctl namespace`: that command manages the OrkStack\n" +
+			"registry entity owning orkflow names, runs and pool defaults, of which this\n" +
+			"deployment may have several. There is exactly one Temporal namespace behind\n" +
+			"the whole deployment, and this is its one retention setting.",
+	}
+	cmd.AddCommand(newAdminRetentionGetCommand(g))
+	cmd.AddCommand(newAdminRetentionSetCommand(g))
+	return cmd
+}
+
+func newAdminRetentionGetCommand(g *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get",
+		Short: "Read the deployment-wide Temporal execution retention, live from the cluster",
+		Long: "Read the deployment-wide Temporal execution retention, live from the cluster\n" +
+			"(Temporal's DescribeNamespace) — unlike `orkctl admin info`, this leaves the\n" +
+			"process and asks Temporal directly.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
+
+			resp, err := g.systemClient().GetExecutionRetention(ctx, connect.NewRequest(
+				&orkstackv1.GetExecutionRetentionRequest{},
+			))
+			if err != nil {
+				return rpcError("admin retention get", err)
+			}
+			if g.json {
+				return writeJSON(cmd.OutOrStdout(), resp.Msg)
+			}
+			return renderExecutionRetention(cmd.OutOrStdout(),
+				resp.Msg.GetTemporalNamespace(), resp.Msg.GetRetention().AsDuration())
+		},
+	}
+}
+
+func newAdminRetentionSetCommand(g *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <duration>",
+		Short: "Change the deployment-wide Temporal execution retention",
+		Long: "Change the deployment-wide Temporal execution retention, through Temporal's\n" +
+			"real UpdateNamespace RPC.\n\n" +
+			"<duration> uses Go's time.ParseDuration syntax (\"168h\", \"24h30m\", …), the same\n" +
+			"flavour every ORK_*_TTL/ORK_*_INTERVAL environment variable in this deployment\n" +
+			"uses. It must be positive: a zero or negative duration is refused before any\n" +
+			"request leaves this process. Temporal may still refuse a positive value below\n" +
+			"its own configured minimum, and that refusal is printed as Temporal reported\n" +
+			"it, not translated or hidden.\n\n" +
+			"This changes ONE setting for the WHOLE deployment's one Temporal namespace —\n" +
+			"never a per-OrkStack-namespace value, and unrelated to `orkctl namespace`.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			retention, err := time.ParseDuration(args[0])
+			if err != nil {
+				return fmt.Errorf("parse duration %q: %w", args[0], err)
+			}
+			if retention <= 0 {
+				// Refused HERE, before a context is created or the Connect
+				// client is even asked for — nothing reaches the wire for a
+				// non-positive duration. The handler in internal/api also
+				// rejects one (it must, since it cannot trust a caller that
+				// isn't this CLI), but that is defense in depth, not where
+				// this promise is kept for `orkctl`.
+				return fmt.Errorf("retention must be a positive duration, got %s", retention)
+			}
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
+
+			resp, err := g.systemClient().UpdateExecutionRetention(ctx, connect.NewRequest(
+				&orkstackv1.UpdateExecutionRetentionRequest{
+					Retention: durationpb.New(retention),
+				},
+			))
+			if err != nil {
+				return rpcError("admin retention set", err)
+			}
+			if g.json {
+				return writeJSON(cmd.OutOrStdout(), resp.Msg)
+			}
+			return renderExecutionRetention(cmd.OutOrStdout(),
+				resp.Msg.GetTemporalNamespace(), resp.Msg.GetRetention().AsDuration())
+		},
+	}
+}
+
+// renderExecutionRetention prints the deployment-wide retention read or the
+// value a write just confirmed, in the same table style as `admin info`, and
+// says in words that this is one cluster setting, not a per-namespace one.
+func renderExecutionRetention(out io.Writer, temporalNamespace string, retention time.Duration) error {
+	table := newTable(out)
+	fmt.Fprintf(table, "temporal namespace:\t%s\n", orDash(temporalNamespace))
+	fmt.Fprintf(table, "execution retention:\t%s\n", retention)
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "This is ONE Temporal cluster setting for the whole deployment, not a")
+	fmt.Fprintln(out, "per-OrkStack-namespace value — see `orkctl namespace` for that, unrelated,")
+	fmt.Fprintln(out, "concept.")
+	return nil
 }

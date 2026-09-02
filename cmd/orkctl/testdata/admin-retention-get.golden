@@ -1,0 +1,6 @@
+temporal namespace:   ork-main
+execution retention:  72h0m0s
+
+This is ONE Temporal cluster setting for the whole deployment, not a
+per-OrkStack-namespace value — see `orkctl namespace` for that, unrelated,
+concept.

@@ -1090,6 +1090,64 @@ test('the activity catalog is global and resolved, and an Orker outage is report
 	await shot(page, 'screenshot-admin-activities-orker-unavailable.png');
 });
 
+// Execution retention (M-retention-admin): view and change how long Temporal
+// keeps this deployment's ONE Temporal namespace's history, from the Admin
+// UI, against the real engine and real Temporal this file already has
+// running. Placed here — after the activities test above and before the
+// pool-health test below that deletes this spec's own Temporal namespace
+// outright — because this test needs DescribeNamespace/UpdateNamespace to
+// keep working, and nothing after it needs a Temporal namespace that still
+// exists.
+//
+// The write is verified against a SEPARATE, direct `temporal operator
+// namespace describe` call — not merely by re-reading through the same
+// GetExecutionRetention RPC the UI itself used — so this test cannot pass on
+// a write that only updated in-process state.
+test('execution retention is read live from the cluster and a change through the UI reaches Temporal itself', async ({
+	page
+}) => {
+	await page.goto(`${UI_ORIGIN}/admin/retention?ns=${OPS_NS}`);
+	await expect(page.getByTestId('retention-scope-caption')).toContainText('whole deployment');
+	await expect(page.getByTestId('retention-temporal-namespace')).toHaveText(TEMPORAL_NAMESPACE);
+	// EnsureNamespace (internal/task/namespace.go) provisions a fresh
+	// namespace at 72h; nothing in this spec has changed it yet.
+	await expect(page.getByTestId('retention-current')).toHaveText('72h 0m');
+	await shot(page, 'screenshot-admin-retention.png');
+
+	await page.getByTestId('retention-set-hours').fill('2');
+	await page.getByTestId('retention-set-submit').click();
+	await expect(page.getByTestId('retention-set-success')).toBeVisible();
+	await expect(page.getByTestId('retention-current')).toHaveText('2h 0m');
+	note('set execution retention to 2h through the Admin UI');
+
+	// The independent check: `temporal operator namespace describe` talks to
+	// the cluster directly, never through `ork`'s Connect API, so this can
+	// only pass if the write actually reached Temporal.
+	const described = execFileSync(
+		'temporal',
+		[
+			'operator',
+			'namespace',
+			'describe',
+			'--namespace',
+			TEMPORAL_NAMESPACE,
+			'--address',
+			'127.0.0.1:7233'
+		],
+		{ stdio: 'pipe' }
+	).toString();
+	expect(described).toMatch(/WorkflowExecutionRetentionTtl\s+2h0m0s/);
+	note(`verified independently: temporal operator namespace describe reports 2h0m0s for ${TEMPORAL_NAMESPACE}`);
+	await shot(page, 'screenshot-admin-retention-changed.png');
+
+	// A non-positive duration is refused LOCALLY, before any RPC leaves the
+	// browser: no request is made, and the cluster value is untouched.
+	await page.getByTestId('retention-set-hours').fill('0');
+	await page.getByTestId('retention-set-submit').click();
+	await expect(page.getByTestId('retention-set-error')).toContainText('positive');
+	await expect(page.getByTestId('retention-current')).toHaveText('2h 0m');
+});
+
 // Acceptance 1 & 3: a pool health read that cannot reach the cluster AT ALL
 // renders every pool it asked about as UNKNOWN, never as a zero — proven
 // against a REAL Temporal outage, not a fabricated response.
