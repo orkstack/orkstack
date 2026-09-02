@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -199,6 +200,91 @@ func TestUpdateExecutionRetention_RefusesANonPositiveDurationBeforeAnyCall(t *te
 					fake.writeRequests)
 			}
 		})
+	}
+}
+
+// TestUpdateExecutionRetention_RefusesAMalformedOrOverflowingDurationBeforeAnyCall
+// is the round-trip-safety half of validation, distinct from the plain
+// non-positive check above.
+//
+// durationpb.Duration.AsDuration performs SATURATING conversion on overflow
+// rather than erroring: a duration of 10,000 years (315,576,000,000
+// seconds) is a perfectly VALID protobuf Duration — CheckValid accepts it —
+// but silently clamps to math.MaxInt64 nanoseconds (~292 years) once
+// converted to a Go time.Duration. A handler that validated only
+// `requested.AsDuration() <= 0` would accept this value, and then
+// internal/engine/reader.go would hand Temporal a DIFFERENT number
+// (~9,223,372,036 seconds) than what the caller asked for
+// (315,576,000,000 seconds) — silently, with no error anywhere. This test
+// proves that specific case is refused, alongside protobuf-shape violations
+// AsDuration would otherwise silently misinterpret rather than reject: an
+// out-of-range nanos field, and a seconds/nanos sign mismatch.
+func TestUpdateExecutionRetention_RefusesAMalformedOrOverflowingDurationBeforeAnyCall(t *testing.T) {
+	for name, retention := range map[string]*durationpb.Duration{
+		"overflows time.Duration but is a valid protobuf Duration (10,000 years)": {
+			Seconds: 315576000000, // 10,000yr * 365.25d/yr * 24h/d * 60m/h * 60s/m — durationpb's own max.
+		},
+		"nanos out of range": {
+			Seconds: 1,
+			Nanos:   1_000_000_000, // must be strictly less than 1e9.
+		},
+		"seconds and nanos have different signs": {
+			Seconds: 1,
+			Nanos:   -1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeRetention{}
+			svc := retentionFixture(t, fake)
+
+			_, err := svc.UpdateExecutionRetention(context.Background(),
+				connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{Retention: retention}))
+			if err == nil {
+				t.Fatal("UpdateExecutionRetention succeeded, want a refusal")
+			}
+			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+				t.Errorf("code = %v, want InvalidArgument", connect.CodeOf(err))
+			}
+			if len(fake.writeRequests) != 0 {
+				t.Errorf(
+					"SetNamespaceRetention was called with %v; a malformed or overflowing duration must never leave the process",
+					fake.writeRequests)
+			}
+		})
+	}
+}
+
+// TestUpdateExecutionRetention_OverflowNeverReachesTemporalWithADifferentValue
+// is the precise regression this guards: without the round-trip check, the
+// 10,000-year request above would NOT be refused, and the fake would
+// receive a clamped ~292-year value instead of the ~10,000 years the caller
+// asked for — a silent value substitution, not a rejection. Asserting no
+// call happened at all (the case above) already proves the bug is fixed;
+// this test additionally pins what the unrepaired bug's write request would
+// have looked like, so a future regression that reintroduces a lossy check
+// is easy to recognize from its failure message.
+func TestUpdateExecutionRetention_OverflowNeverReachesTemporalWithADifferentValue(t *testing.T) {
+	fake := &fakeRetention{}
+	svc := retentionFixture(t, fake)
+	requested := &durationpb.Duration{Seconds: 315576000000}
+	// What a lossy `AsDuration() <= 0` check alone would let through: per
+	// durationpb's own saturating-conversion doc, an overflow this large
+	// clamps to math.MaxInt64 nanoseconds (~292 years), not an error.
+	clampedIfUnguarded := requested.AsDuration()
+	if clampedIfUnguarded != time.Duration(math.MaxInt64) {
+		t.Fatalf("test assumption broken: AsDuration(10,000yr) = %s, want the saturated math.MaxInt64 (%s); "+
+			"round-trip guard may be moot", clampedIfUnguarded, time.Duration(math.MaxInt64))
+	}
+
+	_, err := svc.UpdateExecutionRetention(context.Background(),
+		connect.NewRequest(&orkstackv1.UpdateExecutionRetentionRequest{Retention: requested}))
+	if err == nil {
+		t.Fatal("UpdateExecutionRetention succeeded, want a refusal")
+	}
+	if len(fake.writeRequests) != 0 {
+		t.Fatalf("SetNamespaceRetention was called with %v, want no call at all — "+
+			"a lossy check would instead have called it with the clamped %s, not the requested 10,000 years",
+			fake.writeRequests, clampedIfUnguarded)
 	}
 }
 

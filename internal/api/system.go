@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"connectrpc.com/connect"
 	"go.temporal.io/api/serviceerror"
@@ -158,25 +159,26 @@ func (s *Service) GetExecutionRetention(
 // against the cluster, and again no claim about GetSystemInfoResponse's own
 // fields is affected by this RPC existing.
 //
-// A non-positive duration is rejected with InvalidArgument before any call
-// leaves this process. A Temporal refusal of a positive one — including its
-// own server-side minimum-retention rejection — is returned to the caller
-// untouched: never swallowed into a default, a zero value, or a fabricated
-// success.
+// A non-positive duration, a malformed protobuf Duration (CheckValid), or a
+// magnitude that cannot round-trip losslessly through Go's time.Duration is
+// rejected with InvalidArgument before any call leaves this process — see
+// validatePositiveRetention. A Temporal refusal of a value that passes that
+// check — including its own server-side minimum-retention rejection — is
+// returned to the caller untouched: never swallowed into a default, a zero
+// value, or a fabricated success.
 func (s *Service) UpdateExecutionRetention(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.UpdateExecutionRetentionRequest],
 ) (*connect.Response[orkstackv1.UpdateExecutionRetentionResponse], error) {
-	requested := req.Msg.GetRetention()
-	if requested == nil || requested.AsDuration() <= 0 {
-		return nil, connect.NewError(connect.CodeInvalidArgument,
-			fmt.Errorf("retention must be a positive duration"))
+	requested, err := validatePositiveRetention(req.Msg.GetRetention())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	retention, err := s.retentionBinding()
 	if err != nil {
 		return nil, err
 	}
-	confirmed, err := retention.SetNamespaceRetention(ctx, s.temporalNamespace, requested.AsDuration())
+	confirmed, err := retention.SetNamespaceRetention(ctx, s.temporalNamespace, requested)
 	if err != nil {
 		// err is passed straight through: Temporal's own message — including
 		// its server-side minimum-retention rejection text — is what the
@@ -187,6 +189,49 @@ func (s *Service) UpdateExecutionRetention(
 		TemporalNamespace: s.temporalNamespace,
 		Retention:         durationpb.New(confirmed),
 	}), nil
+}
+
+// validatePositiveRetention turns a requested protobuf Duration into a Go
+// time.Duration the same way the write path will actually use it, or
+// rejects it — never partially: every rejection here happens before
+// UpdateExecutionRetention resolves a binding or touches Temporal.
+//
+// Three distinct ways a Duration can be unusable, each caught explicitly:
+//
+//  1. nil — no duration was supplied at all.
+//  2. Malformed per the protobuf Duration spec — CheckValid catches
+//     out-of-range nanos and a seconds/nanos sign mismatch (e.g.
+//     seconds=1,nanos=-1), which durationpb.AsDuration would otherwise
+//     silently misinterpret rather than reject.
+//  3. In-range for protobuf's Duration (±10,000 years) but too large to
+//     represent losslessly as a Go time.Duration (±~292 years):
+//     Duration.AsDuration performs SATURATING arithmetic on overflow rather
+//     than erroring, so e.g. seconds=315576000000 (10,000 years) silently
+//     clamps to math.MaxInt64 nanoseconds — a different value than what was
+//     requested — and internal/engine/reader.go would then hand Temporal
+//     that clamped value instead. Guarding against this requires round-
+//     tripping the converted time.Duration back through durationpb.New and
+//     checking it reproduces the exact seconds/nanos requested; CheckValid
+//     alone does not catch it, since 10,000 years is a perfectly valid
+//     protobuf Duration.
+func validatePositiveRetention(requested *durationpb.Duration) (time.Duration, error) {
+	if requested == nil {
+		return 0, errors.New("retention must be a positive duration")
+	}
+	if err := requested.CheckValid(); err != nil {
+		return 0, fmt.Errorf("retention is not a valid duration: %w", err)
+	}
+	d := requested.AsDuration()
+	if roundtrip := durationpb.New(d); roundtrip.GetSeconds() != requested.GetSeconds() ||
+		roundtrip.GetNanos() != requested.GetNanos() {
+		return 0, fmt.Errorf(
+			"retention %s exceeds the range a Go duration can represent losslessly (max ~292 years)",
+			requested)
+	}
+	if d <= 0 {
+		return 0, errors.New("retention must be a positive duration")
+	}
+	return d, nil
 }
 
 // temporalWriteErrorCode classifies a Temporal write failure the way the

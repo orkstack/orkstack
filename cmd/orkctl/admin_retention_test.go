@@ -123,7 +123,12 @@ func TestAdminRetentionSet_ParsesGoDurationSyntax(t *testing.T) {
 
 // TestAdminRetentionSet_RefusesANonPositiveDurationLocally never reaches the
 // engine: 0h and a negative duration are refused before any RPC leaves the
-// process, so the fake records no call.
+// process. Both checks matter and are asserted separately: the fake's
+// SetNamespaceRetention is never called (the handler didn't act on a
+// request), AND — the stronger claim — the fixture's server never received
+// any HTTP request at all (no request crossed the wire in the first place).
+// A CLI that validated only in the handler after already sending the RPC
+// would pass the first assertion and fail the second.
 func TestAdminRetentionSet_RefusesANonPositiveDurationLocally(t *testing.T) {
 	for _, raw := range []string{"0h", "-1h"} {
 		admin := &retentionAdmin{current: 72 * time.Hour}
@@ -135,6 +140,11 @@ func TestAdminRetentionSet_RefusesANonPositiveDurationLocally(t *testing.T) {
 		}
 		if len(admin.requestedValues) != 0 {
 			t.Errorf("admin retention set %s called the engine, want no call for a non-positive duration", raw)
+		}
+		if reqs := f.requests(); len(reqs) != 0 {
+			t.Errorf("admin retention set %s sent %d HTTP request(s) to the server (%v), want zero: "+
+				"a non-positive duration must be refused before any request leaves the process",
+				raw, len(reqs), reqs)
 		}
 	}
 }

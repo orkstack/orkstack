@@ -137,12 +137,16 @@ func TestIntegration_CLISetsExecutionRetentionOnTheRealCluster(t *testing.T) {
 	}
 
 	// ---- a non-positive duration is refused before it reaches Temporal ---
+	// This refusal now happens LOCALLY in the CLI, before any RPC leaves
+	// the process (cmd/orkctl/admin.go), so the message is the CLI's own
+	// plain validation error, not a Connect InvalidArgument round-tripped
+	// from the server — there is no server round trip to round-trip from.
 	_, setZeroStderr, code := cli("admin", "retention", "set", "0s")
 	if code == 0 {
 		t.Fatal("admin retention set 0s succeeded, want a refusal")
 	}
-	if !strings.Contains(setZeroStderr, "invalid_argument") {
-		t.Errorf("the refusal is not an invalid argument:\n%s", setZeroStderr)
+	if !strings.Contains(setZeroStderr, "positive duration") {
+		t.Errorf("the refusal does not explain the positive-duration requirement:\n%s", setZeroStderr)
 	}
 	unchanged := describeIndependently()
 	if unchanged != want {

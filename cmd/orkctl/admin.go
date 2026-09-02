@@ -166,6 +166,15 @@ func newAdminRetentionSetCommand(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse duration %q: %w", args[0], err)
 			}
+			if retention <= 0 {
+				// Refused HERE, before a context is created or the Connect
+				// client is even asked for — nothing reaches the wire for a
+				// non-positive duration. The handler in internal/api also
+				// rejects one (it must, since it cannot trust a caller that
+				// isn't this CLI), but that is defense in depth, not where
+				// this promise is kept for `orkctl`.
+				return fmt.Errorf("retention must be a positive duration, got %s", retention)
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 

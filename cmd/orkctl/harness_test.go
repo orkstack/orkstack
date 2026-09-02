@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -196,6 +197,25 @@ type fixture struct {
 	// invocation is pointed at it, so a test never reads or writes the
 	// developer's real one.
 	configPath string
+	// requestsMu and requestLog record every HTTP request the fixture's
+	// listener actually received, in arrival order — the wire, not a fake
+	// behind a handler. A test proving a CLI command refused something
+	// LOCALLY, before any RPC left the process, asserts on requests()
+	// rather than on a handler-level fake never being called: the fake not
+	// being called only proves the Connect handler chose not to reach it,
+	// which a request that reached the server and got rejected there would
+	// also produce. Only an empty diff on requests() proves nothing
+	// crossed the wire at all.
+	requestsMu sync.Mutex
+	requestLog []string
+}
+
+// requests returns every HTTP request path this fixture's server has
+// received so far, in arrival order.
+func (f *fixture) requests() []string {
+	f.requestsMu.Lock()
+	defer f.requestsMu.Unlock()
+	return append([]string(nil), f.requestLog...)
 }
 
 // newFixture starts the real h2c Connect server in-process, mirroring
@@ -245,7 +265,26 @@ func newFixtureWith(
 	}
 	svc := api.NewService(cfg)
 
-	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
+	f := &fixture{
+		t:          t,
+		bus:        bus,
+		runs:       runs,
+		starter:    starter,
+		namespaces: namespaces,
+		configPath: configPath,
+	}
+
+	// recording wraps the real mux so requests() reflects exactly what hit
+	// the wire — see the field comment on fixture.requestLog.
+	mux := api.NewMux(svc, api.MuxOptions{})
+	recording := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.requestsMu.Lock()
+		f.requestLog = append(f.requestLog, r.URL.Path)
+		f.requestsMu.Unlock()
+		mux.ServeHTTP(w, r)
+	})
+
+	server := api.NewServer("127.0.0.1:0", recording)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -257,15 +296,8 @@ func newFixtureWith(
 		_ = server.Shutdown(ctx)
 	})
 
-	return &fixture{
-		t:          t,
-		baseURL:    "http://" + listener.Addr().String(),
-		bus:        bus,
-		runs:       runs,
-		starter:    starter,
-		namespaces: namespaces,
-		configPath: configPath,
-	}
+	f.baseURL = "http://" + listener.Addr().String()
+	return f
 }
 
 // result is one captured CLI invocation.
