@@ -101,6 +101,13 @@ func TestGetExecutionRetention_UnavailableClusterIsNotSwallowed(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Errorf("err = %v, want it to wrap %v", err, boom)
 	}
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		t.Fatalf("err = %v, want a *connect.Error", err)
+	}
+	if got := connectErr.Message(); got != boom.Error() {
+		t.Errorf("connect error message = %q, want Temporal's own message %q untouched", got, boom.Error())
+	}
 	if connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Errorf("code = %v, want Unavailable", connect.CodeOf(err))
 	}
@@ -153,6 +160,13 @@ func TestUpdateExecutionRetention_ARejectedWriteIsSurfacedNotSwallowed(t *testin
 	}
 	if !errors.Is(err, rejection) {
 		t.Errorf("err = %v, want it to wrap %v", err, rejection)
+	}
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		t.Fatalf("err = %v, want a *connect.Error", err)
+	}
+	if got := connectErr.Message(); got != rejection.Error() {
+		t.Errorf("connect error message = %q, want Temporal's own message %q untouched", got, rejection.Error())
 	}
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Errorf("code = %v, want InvalidArgument (Temporal's own classification)", connect.CodeOf(err))

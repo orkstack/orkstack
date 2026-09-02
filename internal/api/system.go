@@ -143,8 +143,9 @@ func (s *Service) GetExecutionRetention(
 	}
 	current, err := retention.NamespaceRetention(ctx, s.temporalNamespace)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("read temporal namespace %q retention: %w", s.temporalNamespace, err))
+		// err is passed straight through: Temporal's own message is what the
+		// caller sees via connect.Error.Message(), untouched by this layer.
+		return nil, connect.NewError(connect.CodeUnavailable, err)
 	}
 	return connect.NewResponse(&orkstackv1.GetExecutionRetentionResponse{
 		TemporalNamespace: s.temporalNamespace,
@@ -177,8 +178,10 @@ func (s *Service) UpdateExecutionRetention(
 	}
 	confirmed, err := retention.SetNamespaceRetention(ctx, s.temporalNamespace, requested.AsDuration())
 	if err != nil {
-		return nil, connect.NewError(temporalWriteErrorCode(err),
-			fmt.Errorf("update temporal namespace %q retention: %w", s.temporalNamespace, err))
+		// err is passed straight through: Temporal's own message — including
+		// its server-side minimum-retention rejection text — is what the
+		// caller sees via connect.Error.Message(), never rewritten here.
+		return nil, connect.NewError(temporalWriteErrorCode(err), err)
 	}
 	return connect.NewResponse(&orkstackv1.UpdateExecutionRetentionResponse{
 		TemporalNamespace: s.temporalNamespace,
