@@ -105,12 +105,12 @@ type runReadClient interface {
 	) (*workflowservice.ListWorkflowExecutionsResponse, error)
 }
 
-// namespaceRetentionClient is the slice of Temporal's WorkflowService the
-// admin retention read and write need. Narrowing it keeps both testable
-// with a fake and no live cluster, the same way internal/task/namespace.go's
-// namespaceRegistrar narrows DescribeNamespace/RegisterNamespace for
-// EnsureNamespace.
-type namespaceRetentionClient interface {
+// workflowServiceAdmin is the slice of Temporal's WorkflowService the admin
+// retention read/write and the active retirement path need. Narrowing it
+// keeps all four testable with a fake and no live cluster, the same way
+// internal/task/namespace.go's namespaceRegistrar narrows
+// DescribeNamespace/RegisterNamespace for EnsureNamespace.
+type workflowServiceAdmin interface {
 	DescribeNamespace(
 		ctx context.Context,
 		in *workflowservice.DescribeNamespaceRequest,
@@ -121,6 +121,16 @@ type namespaceRetentionClient interface {
 		in *workflowservice.UpdateNamespaceRequest,
 		opts ...grpc.CallOption,
 	) (*workflowservice.UpdateNamespaceResponse, error)
+	DescribeWorkflowExecution(
+		ctx context.Context,
+		in *workflowservice.DescribeWorkflowExecutionRequest,
+		opts ...grpc.CallOption,
+	) (*workflowservice.DescribeWorkflowExecutionResponse, error)
+	DeleteWorkflowExecution(
+		ctx context.Context,
+		in *workflowservice.DeleteWorkflowExecutionRequest,
+		opts ...grpc.CallOption,
+	) (*workflowservice.DeleteWorkflowExecutionResponse, error)
 }
 
 // TemporalRunReader answers run reads from Temporal, so any replica can answer
@@ -145,13 +155,13 @@ type TemporalRunReader struct {
 	converter converter.DataConverter
 	snapshots SnapshotStore
 
-	// retention is the narrowed seam NamespaceRetention and
-	// SetNamespaceRetention use. It is set from the same Temporal client as
-	// everything else on this reader (NewTemporalRunReader), so the admin
-	// retention read and write are never a second path to the cluster; a
-	// unit test sets it directly to a fake, with client and temporal left
-	// nil.
-	retention namespaceRetentionClient
+	// admin is the narrowed seam NamespaceRetention, SetNamespaceRetention,
+	// LookupWorkflow and DeleteWorkflow use. It is set from the same Temporal
+	// client as everything else on this reader (NewTemporalRunReader), so
+	// the admin retention read/write and the active retirement path are
+	// never a second connection to the cluster; a unit test sets it directly
+	// to a fake, with client and temporal left nil.
+	admin workflowServiceAdmin
 
 	// namespaceIndexed reports that this cluster has the OrkflowNamespace
 	// search attribute (task.EnsureRunSearchAttributes), so a namespace is a
@@ -165,17 +175,13 @@ type TemporalRunReader struct {
 // bus, which is the only way that body is whole under more than one replica.
 var _ RunEventSource = (*TemporalRunReader)(nil)
 
-// TemporalRunReader also satisfies RetentionAdmin, over the same client and
-// no second connection to the cluster.
-var _ RetentionAdmin = (*TemporalRunReader)(nil)
-
 // NewTemporalRunReader returns a reader over a Temporal client. It reads the
 // namespace the client is bound to, which is the hard partition every other
 // part of the engine already respects.
 func NewTemporalRunReader(c client.Client) *TemporalRunReader {
 	r := newRunReader(c, converter.GetDefaultDataConverter())
 	r.temporal = c
-	r.retention = c.WorkflowService()
+	r.admin = c.WorkflowService()
 	return r
 }
 
@@ -186,43 +192,66 @@ func (r *TemporalRunReader) WithSnapshotStore(store SnapshotStore) *TemporalRunR
 	return r
 }
 
-// WorkflowExists reports whether Temporal still retains workflowID. A timeout
-// or transport failure is returned, never interpreted as absence.
-func (r *TemporalRunReader) WorkflowExists(ctx context.Context, namespace, workflowID string) (bool, error) {
-	if r.temporal == nil {
-		return false, fmt.Errorf("engine: workflow existence reader has no Temporal client")
+// LookupWorkflow reports whether the cluster still holds workflowID and, when
+// it does, when the execution closed. A found execution with a zero
+// closeTime is still running. A transport failure is returned, never read as
+// absence. namespace is the deployment's Temporal partition, never an
+// orkstack.v1.Namespace name.
+func (r *TemporalRunReader) LookupWorkflow(ctx context.Context, namespace, workflowID string) (found bool, closeTime time.Time, err error) {
+	if r.admin == nil {
+		return false, time.Time{}, fmt.Errorf("engine: workflow lookup reader has no Temporal client")
 	}
-	if namespace == "" {
-		_, err := r.temporal.DescribeWorkflowExecution(ctx, workflowID, "")
-		return classifyWorkflowExists(err)
+	resp, err := r.admin.DescribeWorkflowExecution(ctx, &workflowservice.DescribeWorkflowExecutionRequest{
+		Namespace: namespace,
+		Execution: &commonpb.WorkflowExecution{WorkflowId: workflowID},
+	})
+	if err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return false, time.Time{}, nil
+		}
+		return false, time.Time{}, err
 	}
-	_, err := r.temporal.WorkflowService().DescribeWorkflowExecution(ctx,
-		&workflowservice.DescribeWorkflowExecutionRequest{
-			Namespace: namespace,
-			Execution: &commonpb.WorkflowExecution{WorkflowId: workflowID},
-		})
-	return classifyWorkflowExists(err)
+	info := resp.GetWorkflowExecutionInfo()
+	if ct := info.GetCloseTime(); ct != nil {
+		return true, ct.AsTime(), nil
+	}
+	return true, time.Time{}, nil
 }
 
-func classifyWorkflowExists(err error) (bool, error) {
-	if err == nil {
-		return true, nil
+// DeleteWorkflow removes one finished execution's history and visibility
+// record from the cluster now, ahead of the backstop retention. An execution
+// the cluster no longer holds is not an error: the outcome asked for is the
+// outcome. It must only be called for a closed execution — the cluster would
+// terminate a running one first — which LookupWorkflow establishes.
+// namespace is the deployment's Temporal partition, never an
+// orkstack.v1.Namespace name.
+func (r *TemporalRunReader) DeleteWorkflow(ctx context.Context, namespace, workflowID string) error {
+	if r.admin == nil {
+		return fmt.Errorf("engine: workflow deletion reader has no Temporal client")
 	}
-	var notFound *serviceerror.NotFound
-	if errors.As(err, &notFound) {
-		return false, nil
+	_, err := r.admin.DeleteWorkflowExecution(ctx, &workflowservice.DeleteWorkflowExecutionRequest{
+		Namespace:         namespace,
+		WorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: workflowID},
+	})
+	if err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return nil
+		}
+		return err
 	}
-	return false, err
+	return nil
 }
 
 // NamespaceRetention returns Temporal's configured workflow retention period,
 // read live from the cluster (DescribeNamespace). namespace is the TEMPORAL
 // namespace, never an orkstack.v1.Namespace name.
 func (r *TemporalRunReader) NamespaceRetention(ctx context.Context, namespace string) (time.Duration, error) {
-	if r.retention == nil {
+	if r.admin == nil {
 		return 0, fmt.Errorf("engine: namespace retention reader has no Temporal client")
 	}
-	response, err := r.retention.DescribeNamespace(ctx,
+	response, err := r.admin.DescribeNamespace(ctx,
 		&workflowservice.DescribeNamespaceRequest{Namespace: namespace})
 	if err != nil {
 		return 0, err
@@ -248,13 +277,13 @@ func (r *TemporalRunReader) SetNamespaceRetention(
 	namespace string,
 	retention time.Duration,
 ) (time.Duration, error) {
-	if r.retention == nil {
+	if r.admin == nil {
 		return 0, fmt.Errorf("engine: namespace retention writer has no Temporal client")
 	}
 	if retention <= 0 {
 		return 0, fmt.Errorf("engine: namespace retention must be positive, got %s", retention)
 	}
-	response, err := r.retention.UpdateNamespace(ctx, &workflowservice.UpdateNamespaceRequest{
+	response, err := r.admin.UpdateNamespace(ctx, &workflowservice.UpdateNamespaceRequest{
 		Namespace: namespace,
 		Config: &namespacepb.NamespaceConfig{
 			WorkflowExecutionRetentionTtl: durationpb.New(retention),

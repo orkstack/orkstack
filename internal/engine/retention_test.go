@@ -8,17 +8,19 @@ import (
 
 	namespacepb "go.temporal.io/api/namespace/v1"
 	"go.temporal.io/api/serviceerror"
+	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// fakeRetentionClient stands in for Temporal's WorkflowService, narrowed to
-// exactly what NamespaceRetention and SetNamespaceRetention call — the same
-// style internal/task/namespace_test.go's fakeNamespaceService uses for
-// EnsureNamespace, so both the read and the write are testable with no live
+// fakeWorkflowServiceAdmin stands in for Temporal's WorkflowService, narrowed
+// to exactly the four calls workflowServiceAdmin declares — the same style
+// internal/task/namespace_test.go's fakeNamespaceService uses for
+// EnsureNamespace, so every admin read and write is testable with no live
 // cluster.
-type fakeRetentionClient struct {
+type fakeWorkflowServiceAdmin struct {
 	describeErr         error
 	describeRetention   time.Duration
 	describeNoRetention bool
@@ -29,9 +31,17 @@ type fakeRetentionClient struct {
 
 	describedNamespaces []string
 	updateRequests      []*workflowservice.UpdateNamespaceRequest
+
+	describeExecutionErr   error
+	describeExecutionFound bool
+	describeExecutionClose time.Time
+	describeExecutionCalls []*workflowservice.DescribeWorkflowExecutionRequest
+
+	deleteExecutionErr   error
+	deleteExecutionCalls []*workflowservice.DeleteWorkflowExecutionRequest
 }
 
-func (f *fakeRetentionClient) DescribeNamespace(
+func (f *fakeWorkflowServiceAdmin) DescribeNamespace(
 	_ context.Context,
 	in *workflowservice.DescribeNamespaceRequest,
 	_ ...grpc.CallOption,
@@ -50,7 +60,7 @@ func (f *fakeRetentionClient) DescribeNamespace(
 	}, nil
 }
 
-func (f *fakeRetentionClient) UpdateNamespace(
+func (f *fakeWorkflowServiceAdmin) UpdateNamespace(
 	_ context.Context,
 	in *workflowservice.UpdateNamespaceRequest,
 	_ ...grpc.CallOption,
@@ -69,12 +79,43 @@ func (f *fakeRetentionClient) UpdateNamespace(
 	}, nil
 }
 
-func readerWithRetention(fake *fakeRetentionClient) *TemporalRunReader {
-	return &TemporalRunReader{retention: fake}
+func (f *fakeWorkflowServiceAdmin) DescribeWorkflowExecution(
+	_ context.Context,
+	in *workflowservice.DescribeWorkflowExecutionRequest,
+	_ ...grpc.CallOption,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	f.describeExecutionCalls = append(f.describeExecutionCalls, in)
+	if f.describeExecutionErr != nil {
+		return nil, f.describeExecutionErr
+	}
+	if !f.describeExecutionFound {
+		return nil, serviceerror.NewNotFound("gone")
+	}
+	info := &workflowpb.WorkflowExecutionInfo{}
+	if !f.describeExecutionClose.IsZero() {
+		info.CloseTime = timestamppb.New(f.describeExecutionClose)
+	}
+	return &workflowservice.DescribeWorkflowExecutionResponse{WorkflowExecutionInfo: info}, nil
+}
+
+func (f *fakeWorkflowServiceAdmin) DeleteWorkflowExecution(
+	_ context.Context,
+	in *workflowservice.DeleteWorkflowExecutionRequest,
+	_ ...grpc.CallOption,
+) (*workflowservice.DeleteWorkflowExecutionResponse, error) {
+	f.deleteExecutionCalls = append(f.deleteExecutionCalls, in)
+	if f.deleteExecutionErr != nil {
+		return nil, f.deleteExecutionErr
+	}
+	return &workflowservice.DeleteWorkflowExecutionResponse{}, nil
+}
+
+func readerWithRetention(fake *fakeWorkflowServiceAdmin) *TemporalRunReader {
+	return &TemporalRunReader{admin: fake}
 }
 
 func TestNamespaceRetention_ReadsTheClustersCurrentValue(t *testing.T) {
-	fake := &fakeRetentionClient{describeRetention: 72 * time.Hour}
+	fake := &fakeWorkflowServiceAdmin{describeRetention: 72 * time.Hour}
 	reader := readerWithRetention(fake)
 
 	got, err := reader.NamespaceRetention(context.Background(), "ork-main")
@@ -91,7 +132,7 @@ func TestNamespaceRetention_ReadsTheClustersCurrentValue(t *testing.T) {
 
 func TestNamespaceRetention_ReportsATemporalFailureUntouched(t *testing.T) {
 	boom := errors.New("temporal unavailable")
-	reader := readerWithRetention(&fakeRetentionClient{describeErr: boom})
+	reader := readerWithRetention(&fakeWorkflowServiceAdmin{describeErr: boom})
 
 	_, err := reader.NamespaceRetention(context.Background(), "ork-main")
 	if !errors.Is(err, boom) {
@@ -107,7 +148,7 @@ func TestNamespaceRetention_WithNoClientReportsItsOwnMisconfiguration(t *testing
 }
 
 func TestSetNamespaceRetention_WritesThroughUpdateNamespaceAndReturnsWhatTemporalConfirmed(t *testing.T) {
-	fake := &fakeRetentionClient{updateConfirmed: 168 * time.Hour}
+	fake := &fakeWorkflowServiceAdmin{updateConfirmed: 168 * time.Hour}
 	reader := readerWithRetention(fake)
 
 	got, err := reader.SetNamespaceRetention(context.Background(), "ork-main", 168*time.Hour)
@@ -135,7 +176,7 @@ func TestSetNamespaceRetention_WritesThroughUpdateNamespaceAndReturnsWhatTempora
 // it too and never asks the fake at all.
 func TestSetNamespaceRetention_RefusesANonPositiveDurationBeforeAnyCall(t *testing.T) {
 	for _, retention := range []time.Duration{0, -time.Hour} {
-		fake := &fakeRetentionClient{}
+		fake := &fakeWorkflowServiceAdmin{}
 		reader := readerWithRetention(fake)
 
 		if _, err := reader.SetNamespaceRetention(context.Background(), "ork-main", retention); err == nil {
@@ -153,7 +194,7 @@ func TestSetNamespaceRetention_RefusesANonPositiveDurationBeforeAnyCall(t *testi
 // swallowed into a default, a zero value, or a fabricated success.
 func TestSetNamespaceRetention_SurfacesTemporalsOwnRejectionUntouched(t *testing.T) {
 	rejection := serviceerror.NewInvalidArgument("retention period is below the cluster's configured minimum")
-	reader := readerWithRetention(&fakeRetentionClient{updateErr: rejection})
+	reader := readerWithRetention(&fakeWorkflowServiceAdmin{updateErr: rejection})
 
 	got, err := reader.SetNamespaceRetention(context.Background(), "ork-main", time.Hour)
 	if !errors.Is(err, rejection) {
