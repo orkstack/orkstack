@@ -239,19 +239,19 @@
 		onretry={reload}
 	/>
 {:else if reloading}
-	<p data-testid="versions-loading" class="text-sm text-zinc-400">Loading versions…</p>
+	<p data-testid="versions-loading" class="text-sm text-fg-muted">Loading versions…</p>
 {:else if versions.length === 0}
-	<p data-testid="versions-empty" class="text-sm text-zinc-400">
+	<p data-testid="versions-empty" class="text-sm text-fg-muted">
 		No stored versions. Apply this orkflow from the Edit tab to create one.
 	</p>
 {:else}
 	<div class="mb-4 flex items-start justify-between gap-4">
-		<p class="text-sm text-zinc-400" data-testid="versions-summary">
+		<p class="text-sm text-fg-secondary" data-testid="versions-summary">
 			{versions.length}
 			{versions.length === 1 ? 'version' : 'versions'}; runs execute
-			<span class="font-medium text-zinc-200" data-testid="versions-resolved">{resolved}</span>
+			<span class="font-medium text-fg" data-testid="versions-resolved">{resolved}</span>
 			{#if !currentVersion}
-				<span class="text-zinc-500">(nobody has promoted this orkflow, so the newest applies)</span>
+				<span class="text-fg-muted">(nobody has promoted this orkflow, so the newest applies)</span>
 			{/if}
 		</p>
 		<div class="flex flex-col items-end gap-2">
@@ -261,7 +261,7 @@
 					data-testid="versions-reload"
 					disabled={reloading}
 					onclick={reload}
-					class="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
 				>
 					{reloading ? 'Reloading…' : 'Reload'}
 				</button>
@@ -271,55 +271,62 @@
 					disabled={reloading || deleteSafety !== 'safe'}
 					title={deleteSafetyReason || 'Permanently delete this orkflow and every version'}
 					onclick={askToDelete}
-					class="rounded-md border border-red-700 px-3 py-1.5 text-sm text-red-300 hover:bg-red-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-danger-200 bg-surface px-3.5 text-sm font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
 				>
 					Delete Orkflow
 				</button>
 			</div>
 			{#if deleteSafetyReason}
-				<p data-testid="versions-delete-status" class="max-w-md text-right text-xs text-zinc-400">
+				<p data-testid="versions-delete-status" class="max-w-md text-right text-xs text-fg-muted">
 					{deleteSafetyReason}
 				</p>
 			{/if}
 		</div>
 	</div>
 
-	<div class="overflow-hidden rounded-lg border border-zinc-800">
-		<table class="w-full text-left text-sm" data-testid="version-list">
-			<thead class="bg-zinc-900 text-xs uppercase tracking-wide text-zinc-400">
+	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+		<table class="w-full min-w-[640px] border-collapse text-left text-sm" data-testid="version-list">
+			<thead class="bg-surface-sunken">
 				<tr>
-					<th class="px-4 py-3">Version</th>
-					<th class="px-4 py-3">Applied</th>
-					<th class="px-4 py-3">Description</th>
-					<th class="px-4 py-3 text-center">From</th>
-					<th class="px-4 py-3 text-center">To</th>
-					<th class="px-4 py-3"></th>
+					<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Version</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Applied</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Description</th>
+					<th class="h-10 px-4 text-center text-xs font-medium text-fg-muted">From</th>
+					<th class="h-10 px-4 text-center text-xs font-medium text-fg-muted">To</th>
+					<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted"></th>
 				</tr>
 			</thead>
-			<tbody class="divide-y divide-zinc-800">
+			<tbody>
 				{#each versions as version (version.version)}
-					<tr class="hover:bg-zinc-900/60" data-testid="version-row-{version.version}">
-						<td class="px-4 py-3">
-							<span class="font-medium text-zinc-100">{version.version}</span>
+					<tr
+						class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+						data-testid="version-row-{version.version}"
+					>
+						<td class="h-11 px-4 pl-5 align-middle">
+							<span class="font-medium text-fg">{version.version}</span>
 							{#if runsNow(version)}
 								<span
 									data-testid="version-current-{version.version}"
-									class="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-300"
+									class="ml-2 inline-flex items-center rounded-full border border-succeeded-border bg-succeeded-bg px-2 py-0.5 text-[11px] font-medium text-succeeded-fg"
 									title="runs when no version is named">current</span
 								>
 							{/if}
 							{#if version.version === headVersion}
 								<span
 									data-testid="version-head-{version.version}"
-									class="ml-2 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-300"
+									class="ml-2 inline-flex items-center rounded-full border border-info-200 bg-info-50 px-2 py-0.5 text-[11px] font-medium text-info-700"
 									title="the most recently applied version — what an edit is derived from"
 									>head</span
 								>
 							{/if}
 						</td>
-						<td class="px-4 py-3 text-zinc-400">{fmtTimestamp(version.appliedAt)}</td>
-						<td class="max-w-md truncate px-4 py-3 text-zinc-400">{version.description || '—'}</td>
-						<td class="px-4 py-3 text-center">
+						<td class="h-11 px-4 align-middle tabular-nums text-fg-muted"
+							>{fmtTimestamp(version.appliedAt)}</td
+						>
+						<td class="h-11 max-w-md truncate px-4 align-middle text-fg-secondary"
+							>{version.description || '—'}</td
+						>
+						<td class="h-11 px-4 text-center align-middle">
 							<input
 								type="radio"
 								name="diff-from"
@@ -327,10 +334,10 @@
 								data-testid="diff-from-{version.version}"
 								value={version.version}
 								bind:group={diffFrom}
-								class="accent-emerald-500"
+								class="accent-brand-600"
 							/>
 						</td>
-						<td class="px-4 py-3 text-center">
+						<td class="h-11 px-4 text-center align-middle">
 							<input
 								type="radio"
 								name="diff-to"
@@ -338,27 +345,27 @@
 								data-testid="diff-to-{version.version}"
 								value={version.version}
 								bind:group={diffTo}
-								class="accent-emerald-500"
+								class="accent-brand-600"
 							/>
 						</td>
-						<td class="px-4 py-3 text-right">
+						<td class="h-11 px-4 pr-5 align-middle">
 							<div class="flex items-center justify-end gap-2">
 								<a
 									href={editHref(version.version)}
 									data-testid="version-edit-{version.version}"
 									title="edit this version's source and apply it as a new version"
-									class="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
+									class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 								>
 									Edit
 								</a>
 								{#if runsNow(version)}
-									<span class="text-xs text-zinc-500">running</span>
+									<span class="text-xs text-fg-muted">running</span>
 								{:else}
 									<button
 										type="button"
 										data-testid="promote-{version.version}"
 										onclick={() => askToPromote(version.version)}
-										class="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
+										class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 									>
 										Promote
 									</button>
@@ -373,20 +380,20 @@
 
 	<div class="mt-6">
 		<div class="mb-3 flex items-center gap-3">
-			<h3 class="text-sm font-semibold text-zinc-200">Compare two versions</h3>
+			<h3 class="text-sm font-semibold text-fg">Compare two versions</h3>
 			<button
 				type="button"
 				data-testid="diff-run"
 				disabled={diffing}
 				onclick={runDiff}
-				class="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3 text-xs font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 			>
 				{diffing ? 'Diffing…' : `Diff ${diffFrom || '…'} → ${diffTo || '…'}`}
 			</button>
 		</div>
 
 		{#if diffing}
-			<p data-testid="diff-loading" class="text-sm text-zinc-400">Asking the engine for the diff…</p>
+			<p data-testid="diff-loading" class="text-sm text-fg-muted">Asking the engine for the diff…</p>
 		{:else if diffError}
 			<ErrorPanel
 				testid="diff-error"
@@ -397,16 +404,16 @@
 			/>
 		{:else if diffText !== null}
 			{#if diffText === ''}
-				<p data-testid="diff-identical" class="text-sm text-zinc-400">
+				<p data-testid="diff-identical" class="text-sm text-fg-muted">
 					{diffPair}: the two versions' source YAML is byte-identical.
 				</p>
 			{:else}
 				<DiffView diff={diffText} testid="version-diff" />
 			{/if}
 		{:else}
-			<p data-testid="diff-idle" class="text-sm text-zinc-500">
+			<p data-testid="diff-idle" class="text-sm text-fg-muted">
 				Pick a From and a To above, then Diff. The comparison is the engine's own, the same text
-				<code class="text-zinc-400">orkctl orkflow diff</code> prints.
+				<code>orkctl orkflow diff</code> prints.
 			</p>
 		{/if}
 	</div>
@@ -430,12 +437,12 @@
 		{#snippet body()}
 			<p>
 				Runs that name no version currently execute
-				<span class="font-medium text-zinc-100">{resolved || 'the newest applied version'}</span>.
+				<span class="font-medium text-fg">{resolved || 'the newest applied version'}</span>.
 				After this they execute
-				<span class="font-medium text-emerald-300">{pendingPromotion}</span>, in namespace
-				<span class="font-medium text-zinc-100">{namespaceLabel(namespace)}</span>.
+				<span class="font-medium text-brand-700">{pendingPromotion}</span>, in namespace
+				<span class="font-medium text-fg">{namespaceLabel(namespace)}</span>.
 			</p>
-			<p class="mt-2 text-zinc-400">
+			<p class="mt-2 text-fg-muted">
 				Runs already executing keep the version they pinned. Nothing stored changes — only which
 				version an unnamed one resolves to.
 			</p>
@@ -452,6 +459,7 @@
 		cancelTestid="delete-cancel"
 		busy={deleting}
 		error={deleteError}
+		destructive
 		onaccept={deleteOrkflow}
 		oncancel={() => {
 			pendingDelete = false;
@@ -459,14 +467,14 @@
 		}}
 	>
 		{#snippet body()}
-			<p class="font-bold text-red-400">
+			<p class="font-semibold text-danger-700">
 				This action will delete all versions and cannot be reversed.
 			</p>
 			<p class="mt-3">
-				Delete <span class="font-medium text-zinc-100">{name}</span> in namespace
-				<span class="font-medium text-zinc-100">{namespaceLabel(namespace)}</span>?
+				Delete <span class="font-medium text-fg">{name}</span> in namespace
+				<span class="font-medium text-fg">{namespaceLabel(namespace)}</span>?
 			</p>
-			<p class="mt-3 text-sm text-zinc-300">
+			<p class="mt-3 text-sm text-fg-secondary">
 				The engine will refuse deletion if a run is active or finished within the last 24 hours.
 			</p>
 		{/snippet}

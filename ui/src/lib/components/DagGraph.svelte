@@ -9,9 +9,9 @@
 </script>
 
 {#if tasks.length === 0}
-	<p class="text-sm text-zinc-500">No tasks.</p>
+	<p class="text-sm text-fg-muted">No tasks.</p>
 {:else}
-	<div class="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900/40 p-2">
+	<div class="overflow-x-auto rounded-lg border border-border bg-surface p-3 shadow-xs">
 		<svg
 			data-testid="orkflow-dag"
 			width={layout.width}
@@ -31,7 +31,7 @@
 					markerHeight="7"
 					orient="auto-start-reverse"
 				>
-					<path d="M 0 1 L 9 5 L 0 9 z" fill="#71717a" />
+					<path d="M 0 1 L 9 5 L 0 9 z" fill="var(--color-border-strong)" />
 				</marker>
 			</defs>
 			{#each layout.edges as edge (edge.fromId + '->' + edge.toId)}
@@ -40,7 +40,7 @@
 					d="M {edge.x1} {edge.y1} C {edge.x1 + 48} {edge.y1}, {edge.x2 - 48} {edge.y2}, {edge.x2 -
 						2} {edge.y2}"
 					fill="none"
-					stroke="#71717a"
+					stroke="var(--color-border-strong)"
 					stroke-width="1.5"
 					marker-end="url(#dag-arrow)"
 				/>
@@ -53,16 +53,25 @@
 						width={DAG_NODE_W}
 						height={DAG_NODE_H}
 						rx="8"
-						fill="#18181b"
-						stroke="#3f3f46"
+						fill="var(--color-surface)"
+						stroke="var(--color-border-strong)"
 						stroke-width="1.5"
 					/>
-					<text x={node.x + 12} y={node.y + 24} fill="#f4f4f5" font-size="13" font-weight="600">
-						{node.task.id}
-					</text>
-					<text x={node.x + 12} y={node.y + 43} fill="#a1a1aa" font-size="11">
-						{activityLabel(node.task) || '—'}
-					</text>
+					<text
+						x={node.x + 12}
+						y={node.y + 24}
+						fill="var(--color-fg)"
+						font-size="13"
+						font-weight="600"
+						font-family="var(--font-sans)">{node.task.id}</text
+					>
+					<text
+						x={node.x + 12}
+						y={node.y + 43}
+						fill="var(--color-fg-muted)"
+						font-size="11"
+						font-family="var(--font-mono)">{activityLabel(node.task) || '—'}</text
+					>
 				</g>
 			{/each}
 		</svg>

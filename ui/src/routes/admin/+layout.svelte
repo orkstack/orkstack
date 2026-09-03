@@ -54,21 +54,19 @@
 <svelte:head><title>Admin — OrkStack</title></svelte:head>
 
 <div class="mb-6">
-	<h1 class="text-2xl font-bold text-zinc-50">Admin</h1>
-	<p class="mt-1 text-sm text-zinc-400">
+	<h1 class="text-xl font-semibold tracking-tight text-fg">Admin</h1>
+	<p class="mt-1 text-sm text-fg-muted">
 		Manage namespaces, watch pool health, and read what this deployment is made of.
 	</p>
 </div>
 
-<nav class="mb-6 flex gap-1 border-b border-zinc-800" aria-label="Admin views" data-testid="admin-nav">
+<nav class="mb-6 flex gap-1 border-b border-border" aria-label="Admin views" data-testid="admin-nav">
 	{#each tabs as tab (tab.id)}
 		<a
 			href={link(tab.href)}
 			data-testid="admin-tab-{tab.id}"
 			aria-current={current === tab.id ? 'page' : undefined}
-			class="-mb-px border-b-2 px-4 py-2 text-sm {current === tab.id
-				? 'border-emerald-400 font-medium text-emerald-300'
-				: 'border-transparent text-zinc-400 hover:text-zinc-200'}"
+			class="-mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-fg-muted transition-colors duration-150 hover:text-fg current:border-brand-600 current:text-fg"
 		>
 			{tab.label}
 		</a>
@@ -76,7 +74,7 @@
 </nav>
 
 {#if navigatingWithinAdmin}
-	<p class="mb-4 text-sm text-zinc-400" data-testid="admin-nav-loading">Loading…</p>
+	<p class="mb-4 text-sm text-fg-muted" data-testid="admin-nav-loading">Loading…</p>
 {/if}
 
 {@render children()}

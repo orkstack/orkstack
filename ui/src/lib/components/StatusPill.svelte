@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Status } from '$lib/gen/orkstack/v1/common_pb';
+	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { statusClasses, statusLabel } from '$lib/status';
 
 	let { status, testid }: { status: Status | undefined; testid?: string } = $props();
@@ -7,9 +7,15 @@
 
 <span
 	data-testid={testid}
-	class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold tracking-wide ring-1 {statusClasses(
+	class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wide whitespace-nowrap uppercase leading-4 {statusClasses(
 		status
 	)}"
 >
+	{#if status === Status.RUNNING}
+		<span
+			class="size-1.5 rounded-full bg-running-solid animate-pulse-dot motion-reduce:animate-none"
+			aria-hidden="true"
+		></span>
+	{/if}
 	{statusLabel(status)}
 </span>

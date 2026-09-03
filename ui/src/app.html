@@ -3,9 +3,27 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script>
+			// Paint the right theme before the first frame. This mirrors
+			// $lib/theme.ts's own resolution (an explicit choice in
+			// localStorage, else the OS setting) because that module cannot
+			// run until the app hydrates — by which point an unstyled or
+			// wrong-themed flash has already happened. Kept deliberately
+			// tiny and duplicated rather than imported: this runs before any
+			// bundle exists to import from.
+			(function () {
+				try {
+					var stored = localStorage.getItem('ork-theme');
+					var dark =
+						stored === 'dark' ||
+						(stored !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+					document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+				} catch (e) {}
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover" class="bg-zinc-950 text-zinc-100 antialiased">
+	<body data-sveltekit-preload-data="hover" class="bg-canvas text-fg antialiased">
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

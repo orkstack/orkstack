@@ -51,7 +51,7 @@
 
 <svelte:head><title>Admin — Pools — OrkStack</title></svelte:head>
 
-<p class="mb-4 text-sm text-zinc-500" data-testid="pools-scope-caption">
+<p class="mb-4 text-sm text-fg-muted" data-testid="pools-scope-caption">
 	Pools namespace {namespaceLabel(data.namespace)} may dispatch onto — this view honours the namespace
 	selector above.
 </p>
@@ -66,27 +66,27 @@
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-zinc-400" data-testid="pools-loading">Loading pool health…</p>
+	<p class="text-sm text-fg-muted" data-testid="pools-loading">Loading pool health…</p>
 {:else if data.pools.length === 0}
-	<p class="text-sm text-zinc-400" data-testid="pools-empty">
+	<p class="text-sm text-fg-muted" data-testid="pools-empty">
 		No pools are in scope for namespace {namespaceLabel(data.namespace)}.
 	</p>
 {:else}
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="pool-list">
 		{#each data.pools as pool (pool.name)}
 			<div
-				class="rounded-lg border p-4 {pool.unavailableReason
-					? 'border-amber-500/40 bg-amber-500/5'
+				class="rounded-lg border bg-surface p-4 shadow-xs {pool.unavailableReason
+					? 'border-warning-200 bg-warning-50'
 					: pool.liveOrkerCount === 0
-						? 'border-rose-500/30 bg-rose-500/5'
-						: 'border-zinc-800'}"
+						? 'border-danger-200 bg-danger-50'
+						: 'border-border'}"
 				data-testid="pool-card-{pool.name}"
 			>
 				<div class="mb-2 flex items-center justify-between">
-					<h3 class="font-medium text-zinc-100">{pool.name}</h3>
+					<h3 class="font-medium text-fg">{pool.name}</h3>
 					{#if pool.isDefault}
 						<span
-							class="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-300"
+							class="rounded-full border border-info-200 bg-info-50 px-2 py-0.5 text-xs font-medium text-info-700"
 							data-testid="pool-default-{pool.name}"
 						>
 							default
@@ -96,30 +96,32 @@
 
 				{#if pool.unavailableReason}
 					<p
-						class="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-200"
+						class="rounded-md border border-warning-200 bg-warning-50 px-2 py-1.5 text-xs text-warning-800"
 						data-testid="pool-unavailable-{pool.name}"
 					>
 						Could not be reached: {pool.unavailableReason}. Orker count is <strong>unknown</strong
 						>, not zero — ask again rather than scaling.
 					</p>
 				{:else}
-					<p class="text-sm text-zinc-300">
+					<p class="text-sm text-fg-secondary">
 						<span
-							class="font-semibold {pool.liveOrkerCount === 0 ? 'text-rose-300' : 'text-emerald-300'}"
+							class="font-semibold {pool.liveOrkerCount === 0
+								? 'text-failed-fg'
+								: 'text-succeeded-fg'}"
 							data-testid="pool-orker-count-{pool.name}"
 						>
 							{orkerLabel(pool)}
 						</span>
 						{pool.liveOrkerCount === 1 ? 'live Orker' : 'live Orkers'}
 						{#if pool.liveOrkerCount === 0}
-							<span class="ml-1 text-xs text-rose-400" data-testid="pool-no-orkers-{pool.name}"
+							<span class="ml-1 text-xs text-failed-fg" data-testid="pool-no-orkers-{pool.name}"
 								>— no live Orkers; a task sent here waits</span
 							>
 						{/if}
 					</p>
 				{/if}
 
-				<p class="mt-2 text-xs text-zinc-500">
+				<p class="mt-2 text-xs text-fg-muted">
 					Last seen: <span data-testid="pool-last-seen-{pool.name}"
 						>{pool.lastSeen ? fmtTimestamp(pool.lastSeen) : 'never (or gone quiet)'}</span
 					>
@@ -127,7 +129,8 @@
 			</div>
 		{/each}
 	</div>
-	<p class="mt-4 text-xs text-zinc-500" data-testid="pools-default-note">
-		A task naming no pool runs on <span class="font-medium text-zinc-300">{data.defaultPool}</span>.
+	<p class="mt-4 text-xs text-fg-muted" data-testid="pools-default-note">
+		A task naming no pool runs on <span class="font-medium text-fg-secondary">{data.defaultPool}</span
+		>.
 	</p>
 {/if}

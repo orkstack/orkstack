@@ -13,13 +13,13 @@ export const STATUS_LABEL: Record<Status, string> = {
 };
 
 export const STATUS_CLASSES: Record<Status, string> = {
-	[Status.UNSPECIFIED]: 'bg-zinc-700/40 text-zinc-300 ring-zinc-500/40',
-	[Status.PENDING]: 'bg-zinc-600/30 text-zinc-200 ring-zinc-400/40',
-	[Status.RUNNING]: 'bg-sky-500/20 text-sky-300 ring-sky-400/50 animate-pulse',
-	[Status.SUCCEEDED]: 'bg-emerald-500/20 text-emerald-300 ring-emerald-400/50',
-	[Status.FAILED]: 'bg-rose-500/20 text-rose-300 ring-rose-400/50',
-	[Status.CANCELED]: 'bg-amber-500/20 text-amber-300 ring-amber-400/50',
-	[Status.SKIPPED]: 'bg-zinc-700/40 text-zinc-400 ring-zinc-500/40'
+	[Status.UNSPECIFIED]: 'border-dotted border-unspecified-border bg-unspecified-bg text-unspecified-fg',
+	[Status.PENDING]: 'border-pending-border bg-pending-bg text-pending-fg',
+	[Status.RUNNING]: 'border-running-border bg-running-bg text-running-fg',
+	[Status.SUCCEEDED]: 'border-succeeded-border bg-succeeded-bg text-succeeded-fg',
+	[Status.FAILED]: 'border-failed-border bg-failed-bg text-failed-fg',
+	[Status.CANCELED]: 'border-canceled-border bg-canceled-bg text-canceled-fg',
+	[Status.SKIPPED]: 'border-dashed border-skipped-border bg-skipped-bg text-skipped-fg'
 };
 
 export function statusLabel(status: Status | undefined): string {

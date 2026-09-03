@@ -83,11 +83,10 @@
 
 <svelte:head><title>Admin — Execution retention — OrkStack</title></svelte:head>
 
-<p class="mb-4 text-sm text-zinc-500" data-testid="retention-scope-caption">
+<p class="mb-4 text-sm text-fg-muted" data-testid="retention-scope-caption">
 	This is ONE Temporal cluster setting for the whole deployment, not scoped by the namespace
 	selector above and not a property of an orkstack.v1.Namespace — see
-	<code class="rounded bg-zinc-800 px-1 py-0.5 text-xs text-zinc-300">/admin/namespaces</code> for
-	that separate, per-tenant concept.
+	<code>/admin/namespaces</code> for that separate, per-tenant concept.
 </p>
 
 {#if data.retentionError}
@@ -100,37 +99,37 @@
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-zinc-400" data-testid="retention-loading">Loading execution retention…</p>
+	<p class="text-sm text-fg-muted" data-testid="retention-loading">Loading execution retention…</p>
 {:else if !data.retention}
-	<p class="text-sm text-zinc-400" data-testid="retention-empty">
+	<p class="text-sm text-fg-muted" data-testid="retention-empty">
 		The engine returned no execution retention.
 	</p>
 {:else}
 	<section class="mb-8" data-testid="retention-info">
-		<div class="overflow-hidden rounded-lg border border-zinc-800">
-			<dl class="divide-y divide-zinc-800 text-sm">
+		<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
+			<dl class="divide-y divide-border-subtle text-sm">
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Temporal namespace</dt>
-					<dd class="text-zinc-100" data-testid="retention-temporal-namespace">
+					<dt class="text-fg-muted">Temporal namespace</dt>
+					<dd class="text-fg" data-testid="retention-temporal-namespace">
 						{data.retention.temporalNamespace || '—'}
 					</dd>
 				</div>
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Execution retention</dt>
-					<dd class="text-zinc-100" data-testid="retention-current">
+					<dt class="text-fg-muted">Execution retention</dt>
+					<dd class="text-fg" data-testid="retention-current">
 						{fmtDuration(data.retention.retention)}
 					</dd>
 				</div>
 			</dl>
 		</div>
-		<p class="mt-2 text-xs text-zinc-500">
+		<p class="mt-2 text-xs text-fg-muted">
 			Read live from the cluster (Temporal's DescribeNamespace) — see
-			<code class="text-zinc-400">orkctl admin retention get</code>.
+			<code>orkctl admin retention get</code>.
 		</p>
 	</section>
 
-	<section class="rounded-lg border border-zinc-800 p-4">
-		<h2 class="mb-3 text-sm font-semibold text-zinc-200">Change execution retention</h2>
+	<section class="rounded-lg border border-border bg-surface p-5 shadow-xs">
+		<h2 class="mb-3 text-sm font-semibold text-fg">Change execution retention</h2>
 		<form
 			class="flex flex-wrap items-end gap-3"
 			onsubmit={(e) => {
@@ -138,39 +137,39 @@
 				void submitSet();
 			}}
 		>
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-zinc-400">New retention (hours)</span>
+			<label class="flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">New retention (hours)</span>
 				<input
 					data-testid="retention-set-hours"
 					bind:value={hours}
 					inputmode="decimal"
 					placeholder="168"
-					class="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100"
+					class="h-9 w-32 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 				/>
 			</label>
 			<button
 				type="submit"
 				data-testid="retention-set-submit"
 				disabled={setBusy}
-				class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 			>
 				{setBusy ? 'Setting…' : 'Set retention'}
 			</button>
 		</form>
 		{#if setError}
 			<p
-				class="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300"
+				class="mt-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
 				data-testid="retention-set-error"
 			>
 				{setError}
 			</p>
 		{/if}
 		{#if setSuccess}
-			<p class="mt-3 text-sm text-emerald-300" data-testid="retention-set-success">
+			<p class="mt-3 text-sm text-succeeded-fg" data-testid="retention-set-success">
 				{setSuccess}
 			</p>
 		{/if}
-		<p class="mt-3 text-xs text-zinc-500">
+		<p class="mt-3 text-xs text-fg-muted">
 			This changes Temporal's history retention for the WHOLE deployment's one cluster
 			namespace, taking effect for every OrkStack namespace this deployment has.
 		</p>

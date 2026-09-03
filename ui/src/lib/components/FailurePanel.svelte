@@ -36,9 +36,11 @@
 <div
 	data-testid={testid}
 	role="alert"
-	class="rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
+	class="rounded-lg border border-failed-border bg-surface shadow-xs"
 >
-	<div class="mb-1.5 flex flex-wrap items-center gap-2">
+	<div
+		class="flex flex-wrap items-center gap-2 rounded-t-lg border-b border-failed-border bg-failed-bg px-5 py-3 text-sm font-semibold text-failed-fg"
+	>
 		<!--
 			The badge is shown only when the wire actually carries a category.
 			A run-level RUN_FAILED wrapper carries FAILURE_CATEGORY_UNSPECIFIED —
@@ -50,7 +52,7 @@
 				data-testid="{testid}-category"
 				data-category={categoryTestid(category)}
 				title={failureCategoryBlurb(category)}
-				class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 {failureCategoryClasses(
+				class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium {failureCategoryClasses(
 					category
 				)}"
 			>
@@ -58,31 +60,35 @@
 			</span>
 		{/if}
 		{#if error.code}
-			<span class="font-mono text-xs text-rose-200/80" data-testid="{testid}-code">
+			<span class="font-mono text-xs font-normal text-failed-fg/80" data-testid="{testid}-code">
 				{error.code}
 			</span>
 		{/if}
 		<span
-			class="text-xs {error.retryable ? 'text-amber-300/80' : 'text-zinc-400'}"
+			class="text-xs font-normal {error.retryable ? 'text-warning-700' : 'text-fg-muted'}"
 			data-testid="{testid}-retryable"
 		>
 			{error.retryable ? 'retryable' : 'not retryable'}
 		</span>
 	</div>
 
-	{#if !compact && category !== FailureCategory.UNSPECIFIED}
-		<p class="mb-1.5 text-xs text-rose-200/70" data-testid="{testid}-blurb">
-			{failureCategoryBlurb(category)}
-		</p>
-	{/if}
+	<div class="p-5 text-sm">
+		{#if !compact && category !== FailureCategory.UNSPECIFIED}
+			<p class="mb-1.5 text-xs text-fg-muted" data-testid="{testid}-blurb">
+				{failureCategoryBlurb(category)}
+			</p>
+		{/if}
 
-	{#if error.message}
-		<p class="break-words whitespace-pre-wrap" data-testid="{testid}-message">{error.message}</p>
-	{/if}
+		{#if error.message}
+			<p class="break-words whitespace-pre-wrap text-fg" data-testid="{testid}-message">
+				{error.message}
+			</p>
+		{/if}
 
-	{#if error.details && !compact}
-		<pre
-			class="mt-2 overflow-x-auto rounded bg-zinc-950/60 p-2 text-xs text-zinc-400"
-			data-testid="{testid}-details">{error.details}</pre>
-	{/if}
+		{#if error.details && !compact}
+			<pre
+				class="mt-2 overflow-x-auto rounded-md border border-border-subtle bg-surface-sunken p-2 font-mono text-xs text-fg-secondary"
+				data-testid="{testid}-details">{error.details}</pre>
+		{/if}
+	</div>
 </div>

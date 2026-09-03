@@ -402,7 +402,7 @@ test('Admin is reachable from the nav, deep-linkable, and shows this replica\'s 
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=default`);
-	await page.locator('header nav').getByTestId('nav-admin').click();
+	await page.locator('nav[aria-label="Primary"]').getByTestId('nav-admin').click();
 	await expect(page).toHaveURL(/\/admin(\?|$)/);
 	await expect(page.getByTestId('admin-nav')).toBeVisible();
 	await expect(page.getByTestId('system-info')).toBeVisible();

@@ -23,16 +23,17 @@
 	});
 
 	function tone(line: string): string {
-		if (line.startsWith('+++') || line.startsWith('---')) return 'text-zinc-400';
-		if (line.startsWith('@@')) return 'text-sky-300';
-		if (line.startsWith('+')) return 'text-emerald-300';
-		if (line.startsWith('-')) return 'text-rose-300';
-		if (line.startsWith('\\')) return 'text-amber-300';
-		return 'text-zinc-300';
+		if (line.startsWith('+++') || line.startsWith('---'))
+			return 'bg-surface-sunken font-medium text-fg-muted';
+		if (line.startsWith('@@')) return 'bg-info-50 text-info-700';
+		if (line.startsWith('+')) return 'bg-succeeded-bg text-succeeded-fg';
+		if (line.startsWith('-')) return 'bg-failed-bg text-failed-fg';
+		if (line.startsWith('\\')) return 'text-warning-700 italic';
+		return 'text-fg-secondary';
 	}
 </script>
 
 <pre
 	data-testid={testid}
-	class="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-xs leading-relaxed"
->{#each lines as line, i (i)}<span class={tone(line)}>{line}</span>{'\n'}{/each}</pre>
+	class="overflow-x-auto rounded-lg border border-border bg-surface py-2 font-mono text-[13px] leading-5 shadow-xs [font-variant-ligatures:none]"
+>{#each lines as line, i (i)}<span class="inline-block min-w-full px-4 {tone(line)}">{line}</span>{'\n'}{/each}</pre>

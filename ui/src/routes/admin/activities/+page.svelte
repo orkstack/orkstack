@@ -43,10 +43,10 @@
 
 <svelte:head><title>Admin — Activities — OrkStack</title></svelte:head>
 
-<p class="mb-4 text-sm text-zinc-500" data-testid="activities-scope-caption">
+<p class="mb-4 text-sm text-fg-muted" data-testid="activities-scope-caption">
 	Every activity this deployment can run, as configured on the engine — deployment-wide, not scoped
 	by the namespace selector above. An activity is an OCI image; a task names one with
-	<code class="rounded bg-zinc-800 px-1 py-0.5 text-xs text-zinc-300">uses:</code>.
+	<code>uses:</code>.
 </p>
 
 <!--
@@ -57,64 +57,64 @@
 	fixed by starting one, not by asking again.
 -->
 <section class="mb-6" data-testid="orker-section">
-	<h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Orker</h2>
+	<h2 class="mb-2 text-[11px] font-medium tracking-wider text-fg-muted uppercase">Orker</h2>
 	{#if data.orkerError}
 		<div
-			class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300"
+			class="rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm"
 			data-testid="orker-unavailable"
 		>
-			<p class="font-medium text-amber-200">No Orker answered the default pool.</p>
-			<p class="mt-1 break-words text-amber-300/80">{data.orkerError}</p>
-			<p class="mt-1 text-xs text-amber-300/60">
+			<p class="font-medium text-warning-800">No Orker answered the default pool.</p>
+			<p class="mt-1 break-words text-warning-700">{data.orkerError}</p>
+			<p class="mt-1 text-xs text-warning-700/80">
 				Nothing was measured. Start an Orker for this deployment's default pool — this is not a
 				report that zero Orkers are healthy.
 			</p>
 		</div>
 	{:else if !data.orker}
-		<p class="text-sm text-zinc-400" data-testid="orker-empty">
+		<p class="text-sm text-fg-muted" data-testid="orker-empty">
 			The probe returned no Orker description.
 		</p>
 	{:else}
 		{@const orker = data.orker}
 		<div
-			class="grid grid-cols-2 gap-4 rounded-lg border border-zinc-800 p-4 text-sm sm:grid-cols-4"
+			class="grid grid-cols-2 gap-4 rounded-lg border border-border bg-surface p-4 text-sm shadow-xs sm:grid-cols-4"
 			data-testid="orker-card"
 		>
 			<div>
-				<div class="text-xs uppercase text-zinc-500">Orker</div>
-				<div class="mt-1 font-mono text-zinc-200" data-testid="orker-id">{orker.orkerId || '—'}</div>
+				<div class="text-xs font-medium text-fg-muted">Orker</div>
+				<div class="mt-1 font-mono text-fg-secondary" data-testid="orker-id">{orker.orkerId || '—'}</div>
 			</div>
 			<div>
-				<div class="text-xs uppercase text-zinc-500">Pool</div>
-				<div class="mt-1 text-zinc-200" data-testid="orker-pool">{orker.pool || '—'}</div>
+				<div class="text-xs font-medium text-fg-muted">Pool</div>
+				<div class="mt-1 text-fg-secondary" data-testid="orker-pool">{orker.pool || '—'}</div>
 			</div>
 			<div>
-				<div class="text-xs uppercase text-zinc-500">Runtime</div>
-				<div class="mt-1 text-zinc-200" data-testid="orker-runtime">
+				<div class="text-xs font-medium text-fg-muted">Runtime</div>
+				<div class="mt-1 text-fg-secondary" data-testid="orker-runtime">
 					{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}
 				</div>
 			</div>
 			<div>
-				<div class="text-xs uppercase text-zinc-500">Build</div>
-				<div class="mt-1 font-mono text-xs text-zinc-300" data-testid="orker-build">
+				<div class="text-xs font-medium text-fg-muted">Build</div>
+				<div class="mt-1 font-mono text-xs text-fg-secondary" data-testid="orker-build">
 					{orker.buildId || 'unversioned'}
 				</div>
 			</div>
 			<div>
-				<div class="text-xs uppercase text-zinc-500">Security profile</div>
-				<div class="mt-1 text-zinc-200" data-testid="orker-security-profile">
+				<div class="text-xs font-medium text-fg-muted">Security profile</div>
+				<div class="mt-1 text-fg-secondary" data-testid="orker-security-profile">
 					{orker.securityProfile || '—'}
 				</div>
 			</div>
 			<div>
-				<div class="text-xs uppercase text-zinc-500">Max concurrent</div>
-				<div class="mt-1 text-zinc-200" data-testid="orker-max-concurrent">
+				<div class="text-xs font-medium text-fg-muted">Max concurrent</div>
+				<div class="mt-1 text-fg-secondary" data-testid="orker-max-concurrent">
 					{orker.maxConcurrent}
 				</div>
 			</div>
 			<div>
-				<div class="text-xs uppercase text-zinc-500">Rootless</div>
-				<div class="mt-1 text-zinc-200" data-testid="orker-rootless">
+				<div class="text-xs font-medium text-fg-muted">Rootless</div>
+				<div class="mt-1 text-fg-secondary" data-testid="orker-rootless">
 					{orker.rootless ? 'yes' : 'no'}
 				</div>
 			</div>
@@ -122,7 +122,7 @@
 	{/if}
 </section>
 
-<h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Catalog</h2>
+<h2 class="mb-2 text-[11px] font-medium tracking-wider text-fg-muted uppercase">Catalog</h2>
 
 {#if data.activitiesError}
 	<ErrorPanel
@@ -134,33 +134,36 @@
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-zinc-400" data-testid="activities-loading">Loading activities…</p>
+	<p class="text-sm text-fg-muted" data-testid="activities-loading">Loading activities…</p>
 {:else if data.activities.length === 0}
-	<p class="text-sm text-zinc-400" data-testid="activities-empty">
+	<p class="text-sm text-fg-muted" data-testid="activities-empty">
 		This deployment has no activities configured. A task can still name any registry reference
-		directly with <code class="rounded bg-zinc-800 px-1 py-0.5 text-xs">uses:</code>.
+		directly with <code>uses:</code>.
 	</p>
 {:else}
-	<div class="overflow-hidden rounded-lg border border-zinc-800" data-testid="activity-list">
-		<table class="w-full text-left text-sm">
-			<thead class="bg-zinc-900 text-xs uppercase tracking-wide text-zinc-400">
+	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs" data-testid="activity-list">
+		<table class="w-full min-w-[860px] border-collapse text-left text-sm">
+			<thead class="bg-surface-sunken">
 				<tr>
-					<th class="px-4 py-3">Name</th>
-					<th class="px-4 py-3">Reference</th>
-					<th class="px-4 py-3">Index digest</th>
-					<th class="px-4 py-3">Media type</th>
-					<th class="px-4 py-3">Platforms</th>
-					<th class="px-4 py-3">Resolved</th>
+					<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Name</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Reference</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Index digest</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Media type</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Platforms</th>
+					<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Resolved</th>
 				</tr>
 			</thead>
-			<tbody class="divide-y divide-zinc-800">
+			<tbody>
 				{#each data.activities as activity (activity.name)}
-					<tr class="hover:bg-zinc-900/60" data-testid="activity-row-{activity.name}">
-						<td class="px-4 py-3 font-medium text-zinc-100" data-testid="activity-name-{activity.name}">
+					<tr
+						class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+						data-testid="activity-row-{activity.name}"
+					>
+						<td class="h-11 px-4 pl-5 align-middle font-medium text-fg" data-testid="activity-name-{activity.name}">
 							{activity.name}
 						</td>
 						<td
-							class="px-4 py-3 font-mono text-xs text-zinc-300"
+							class="h-11 px-4 align-middle font-mono text-xs text-fg-secondary"
 							data-testid="activity-reference-{activity.name}"
 						>
 							{activity.reference || '—'}
@@ -172,38 +175,38 @@
 							and in a data attribute, so nothing here is the only
 							copy of the value.
 						-->
-						<td class="px-4 py-3">
+						<td class="h-11 px-4 align-middle">
 							{#if activity.indexDigest}
 								<span
-									class="font-mono text-xs text-emerald-300"
+									class="font-mono text-xs text-brand-700"
 									title={activity.indexDigest}
 									data-digest={activity.indexDigest}
 									data-testid="activity-digest-{activity.name}">{shortDigest(activity.indexDigest)}</span
 								>
 							{:else}
 								<span
-									class="text-xs text-zinc-600"
+									class="text-xs text-fg-muted"
 									data-testid="activity-digest-unresolved-{activity.name}"
 									title="this reference has not been resolved to an index digest">unresolved</span
 								>
 							{/if}
 						</td>
 						<td
-							class="px-4 py-3 font-mono text-xs text-zinc-400"
+							class="h-11 px-4 align-middle font-mono text-xs text-fg-muted"
 							data-testid="activity-media-type-{activity.name}"
 						>
 							{activity.mediaType || '—'}
 						</td>
-						<td class="px-4 py-3 text-xs text-zinc-400" data-testid="activity-platforms-{activity.name}">
+						<td class="h-11 px-4 align-middle text-xs text-fg-muted" data-testid="activity-platforms-{activity.name}">
 							{#if activity.platforms.length > 0}
 								{activity.platforms.join(', ')}
 							{:else}
-								<span class="text-zinc-600" title="a single-manifest reference advertises no platform list"
+								<span title="a single-manifest reference advertises no platform list"
 									>single manifest</span
 								>
 							{/if}
 						</td>
-						<td class="px-4 py-3 text-xs text-zinc-500" data-testid="activity-resolved-at-{activity.name}">
+						<td class="h-11 px-4 pr-5 align-middle text-xs text-fg-muted" data-testid="activity-resolved-at-{activity.name}">
 							{fmtTimestamp(activity.resolvedAt)}
 						</td>
 					</tr>

@@ -245,7 +245,7 @@
 		onretry={reload}
 	/>
 {:else if reloading}
-	<p data-testid="editor-loading" class="text-sm text-zinc-400">Reloading the stored document…</p>
+	<p data-testid="editor-loading" class="text-sm text-fg-muted">Reloading the stored document…</p>
 {:else}
 	<form
 		class="space-y-4"
@@ -255,16 +255,16 @@
 			void apply();
 		}}
 	>
-		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-zinc-400">
+		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-fg-secondary">
 			<span>
-				Editing <span class="font-medium text-zinc-200">{name}</span> in namespace
-				<span class="font-medium text-zinc-200">{namespaceLabel(namespace)}</span>, derived from
+				Editing <span class="font-medium text-fg">{name}</span> in namespace
+				<span class="font-medium text-fg">{namespaceLabel(namespace)}</span>, derived from
 				version
-				<span class="font-medium text-emerald-300" data-testid="editor-base-version">{base}</span>.
+				<span class="font-medium text-brand-700" data-testid="editor-base-version">{base}</span>.
 			</span>
-			<span class="text-xs text-zinc-500">
+			<span class="text-xs text-fg-muted">
 				The newest applied version is
-				<span class="font-medium text-zinc-300" data-testid="editor-head-version"
+				<span class="font-medium text-fg-secondary" data-testid="editor-head-version"
 					>{expectedHead}</span
 				>{#if base === expectedHead}, which is what this edit is derived from.{:else}<span
 						data-testid="editor-fork-notice"
@@ -272,7 +272,7 @@
 						runs is unchanged until somebody promotes.</span
 					>{/if}
 			</span>
-			<span class="text-xs text-zinc-500">
+			<span class="text-xs text-fg-muted">
 				Applying stores a NEW version — change <code>version:</code> before you apply. Re-applying
 				the same version with different content is refused.
 			</span>
@@ -286,7 +286,7 @@
 			oninput={() => (noop = '')}
 			rows="24"
 			spellcheck="false"
-			class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100"
+			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs [font-variant-ligatures:none] [tab-size:2] whitespace-pre focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 		></textarea>
 
 		{#if applyError}
@@ -296,15 +296,13 @@
 			<p
 				data-testid="editor-noop"
 				role="status"
-				class="rounded-md border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-300"
+				class="rounded-md border border-border bg-surface-sunken px-4 py-2 text-sm text-fg-secondary"
 			>
 				{noop} Nothing was applied, and no new version was created.
 			</p>
 		{/if}
 		{#each warnings as warning, i (i)}
-			<div
-				class="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-300"
-			>
+			<div class="rounded-md border border-warning-200 bg-warning-50 px-4 py-2 text-sm text-warning-700">
 				{warning}
 			</div>
 		{/each}
@@ -313,12 +311,12 @@
 			<div
 				data-testid="editor-conflict"
 				role="alert"
-				class="space-y-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+				class="space-y-3 rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800"
 			>
 				<p class="font-medium">
 					{name} changed while this edit was open. Nothing was overwritten.
 				</p>
-				<p class="whitespace-pre-wrap text-amber-200/90">{conflict.message}</p>
+				<p class="whitespace-pre-wrap text-warning-700">{conflict.message}</p>
 				<p>
 					This edit is derived from
 					<span class="font-medium" data-testid="editor-conflict-base">{conflict.base}</span>; the
@@ -352,7 +350,7 @@
 						data-testid="editor-conflict-diff"
 						disabled={conflictBusy || !conflictHead}
 						onclick={showConflictDiff}
-						class="rounded-md border border-amber-400/50 px-3 py-1.5 text-sm font-medium text-amber-100 hover:bg-amber-500/20 disabled:opacity-50"
+						class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
 					>
 						{conflictBusy
 							? 'Working…'
@@ -363,7 +361,7 @@
 						data-testid="editor-conflict-rebase"
 						disabled={conflictBusy || !conflictHead}
 						onclick={retarget}
-						class="rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+						class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
 					>
 						Keep my edit and retarget head {conflictHead || '…'}
 					</button>
@@ -379,7 +377,7 @@
 					/>
 				{:else if conflictDiff !== null}
 					{#if conflictDiff === ''}
-						<p data-testid="conflict-diff-identical">
+						<p data-testid="conflict-diff-identical" class="text-sm text-fg-secondary">
 							The two versions' source YAML is byte-identical.
 						</p>
 					{:else}
@@ -393,7 +391,7 @@
 			type="submit"
 			data-testid="editor-apply"
 			disabled={applying}
-			class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+			class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 		>
 			{applying ? 'Applying…' : `Apply as a new version of ${name}`}
 		</button>

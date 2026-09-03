@@ -85,7 +85,7 @@
 
 <svelte:head><title>Submit run — OrkStack</title></svelte:head>
 
-<h1 class="mb-6 text-2xl font-bold">Submit a run</h1>
+<h1 class="mb-6 text-xl font-semibold tracking-tight text-fg">Submit a run</h1>
 
 {#if data.error}
 	<ErrorPanel
@@ -97,30 +97,30 @@
 		onretry={retry}
 	/>
 {:else if retrying}
-	<p class="text-sm text-zinc-400" data-testid="submit-loading">Loading orkflows…</p>
+	<p class="text-sm text-fg-muted" data-testid="submit-loading">Loading orkflows…</p>
 {:else if data.orkflows.length === 0}
-	<p class="text-sm text-zinc-400" data-testid="submit-empty">
+	<p class="text-sm text-fg-muted" data-testid="submit-empty">
 		No orkflows in namespace {namespaceLabel(data.namespace)} yet.
-		<a href={withNamespace('/apply', data.namespace)} class="text-emerald-300 hover:underline"
+		<a href={withNamespace('/apply', data.namespace)} class="font-medium text-brand-700 hover:underline"
 			>Apply one first.</a
 		>
 	</p>
 {:else}
 	<form
-		class="max-w-xl space-y-5"
+		class="max-w-3xl space-y-5"
 		data-testid="submit-form"
 		onsubmit={(e) => {
 			e.preventDefault();
 			void submit();
 		}}
 	>
-		<div>
-			<label for="orkflow" class="mb-1 block text-sm font-medium text-zinc-300">Orkflow</label>
+		<div class="flex flex-col gap-1.5">
+			<label for="orkflow" class="text-sm font-medium text-fg">Orkflow</label>
 			<select
 				id="orkflow"
 				data-testid="orkflow-select"
 				bind:value={selected}
-				class="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
+				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs transition-colors duration-150 hover:border-border-strong focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 			>
 				{#each data.orkflows as wf (wf.name + '@' + wf.version)}
 					<option value={wf.name}>{wf.name}@{wf.version} — {wf.description}</option>
@@ -128,20 +128,18 @@
 			</select>
 		</div>
 
-		<div>
-			<label for="inputs" class="mb-1 block text-sm font-medium text-zinc-300">
-				Inputs (JSON object)
-			</label>
+		<div class="flex flex-col gap-1.5">
+			<label for="inputs" class="text-sm font-medium text-fg"> Inputs (JSON object) </label>
 			<textarea
 				id="inputs"
 				data-testid="inputs-json"
 				bind:value={inputsJson}
 				rows="6"
 				spellcheck="false"
-				class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100"
+				class="min-h-[120px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 			></textarea>
 			{#if orkflow && declaredInputNames.length > 0}
-				<p class="mt-1 text-xs text-zinc-500">
+				<p class="text-xs text-fg-muted">
 					Declared inputs: {declaredInputNames.join(', ')}
 				</p>
 			{/if}
@@ -155,7 +153,7 @@
 			type="submit"
 			data-testid="submit-run"
 			disabled={submitting}
-			class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+			class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 		>
 			{submitting ? 'Submitting…' : 'Submit run'}
 		</button>

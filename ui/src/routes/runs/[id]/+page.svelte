@@ -332,18 +332,19 @@
 		onretry={retry}
 	/>
 {:else if retrying}
-	<p class="text-sm text-zinc-400" data-testid="run-loading">Loading the run…</p>
+	<p class="text-sm text-fg-muted" data-testid="run-loading">Loading the run…</p>
 {:else if run}
 	<div class="mb-6 flex flex-wrap items-center gap-4">
 		<div>
-			<h1 class="font-mono text-xl font-bold" data-testid="run-id">{run.id}</h1>
-			<p class="text-sm text-zinc-400">
-				<a href={withNamespace(`/orkflows/${run.orkflowName}`, data.namespace)} class="text-emerald-300 hover:underline"
-					>{run.orkflowName}</a
+			<h1 class="font-mono text-xl font-semibold text-fg" data-testid="run-id">{run.id}</h1>
+			<p class="text-sm text-fg-muted">
+				<a
+					href={withNamespace(`/orkflows/${run.orkflowName}`, data.namespace)}
+					class="font-medium text-brand-700 hover:underline">{run.orkflowName}</a
 				>@{run.orkflowVersion}
 			</p>
 			{#if statusTrail.length > 0}
-				<p class="mt-1 font-mono text-xs text-zinc-500" data-testid="run-status-trail">
+				<p class="mt-1 font-mono text-xs text-fg-muted" data-testid="run-status-trail">
 					{statusTrail.map(statusLabel).join(' -> ')}
 				</p>
 			{/if}
@@ -352,20 +353,20 @@
 			<StatusPill status={runStatus} testid="run-status" />
 			<span
 				data-testid="live-badge"
-				class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs ring-1 {isTerminal(
+				class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium {isTerminal(
 					runStatus
 				)
-					? 'bg-zinc-700/40 text-zinc-400 ring-zinc-500/40'
+					? 'border-border bg-surface-sunken text-fg-muted'
 					: socketState === 'open'
-						? 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/40'
-						: 'bg-amber-500/15 text-amber-300 ring-amber-400/40'}"
+						? 'border-succeeded-border bg-succeeded-bg text-succeeded-fg'
+						: 'border-warning-200 bg-warning-50 text-warning-700'}"
 			>
 				<span
 					class="h-1.5 w-1.5 rounded-full {isTerminal(runStatus)
-						? 'bg-zinc-500'
+						? 'bg-fg-muted'
 						: socketState === 'open'
-							? 'bg-emerald-400'
-							: 'bg-amber-400'}"
+							? 'bg-succeeded-solid animate-pulse-dot motion-reduce:animate-none'
+							: 'bg-warning-600'}"
 				></span>
 				{isTerminal(runStatus)
 					? 'ENDED'
@@ -390,28 +391,28 @@
 	{:else if runErrorMessage}
 		<div
 			data-testid="run-error"
-			class="mb-6 rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
+			class="mb-6 rounded-md border border-danger-200 bg-danger-50 px-4 py-3 text-sm text-danger-700"
 		>
 			{runErrorMessage}
 		</div>
 	{/if}
 
 	<div class="mb-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-		<div class="rounded-lg border border-zinc-800 p-3">
-			<div class="text-xs uppercase text-zinc-500">Created</div>
-			<div class="mt-1 text-zinc-200">{fmtTimestamp(run.createdAt)}</div>
+		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+			<div class="text-xs font-medium text-fg-muted">Created</div>
+			<div class="mt-1 text-fg-secondary">{fmtTimestamp(run.createdAt)}</div>
 		</div>
-		<div class="rounded-lg border border-zinc-800 p-3">
-			<div class="text-xs uppercase text-zinc-500">Started</div>
-			<div class="mt-1 text-zinc-200">{fmtTimestamp(startedAt ?? run.startedAt)}</div>
+		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+			<div class="text-xs font-medium text-fg-muted">Started</div>
+			<div class="mt-1 text-fg-secondary">{fmtTimestamp(startedAt ?? run.startedAt)}</div>
 		</div>
-		<div class="rounded-lg border border-zinc-800 p-3">
-			<div class="text-xs uppercase text-zinc-500">Finished</div>
-			<div class="mt-1 text-zinc-200">{fmtTimestamp(finishedAt ?? run.finishedAt)}</div>
+		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+			<div class="text-xs font-medium text-fg-muted">Finished</div>
+			<div class="mt-1 text-fg-secondary">{fmtTimestamp(finishedAt ?? run.finishedAt)}</div>
 		</div>
-		<div class="rounded-lg border border-zinc-800 p-3">
-			<div class="text-xs uppercase text-zinc-500">Tasks</div>
-			<div class="mt-1 text-zinc-200" data-testid="task-summary">
+		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+			<div class="text-xs font-medium text-fg-muted">Tasks</div>
+			<div class="mt-1 text-fg-secondary" data-testid="task-summary">
 				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded
 			</div>
 		</div>
@@ -419,22 +420,22 @@
 
 	<div class="space-y-6">
 		<section>
-			<h2 class="mb-3 text-lg font-semibold">Tasks</h2>
+			<h2 class="mb-3 text-sm font-semibold text-fg">Tasks</h2>
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
 					{@const def = taskDefs.get(task.id)}
 					<div
-						class="rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3"
+						class="rounded-lg border border-border bg-surface px-4 py-3 shadow-xs"
 						data-testid="task-{task.id}"
 					>
 						<div class="flex items-center justify-between gap-4">
 							<div class="min-w-0">
-								<div class="font-medium text-zinc-100">{task.id}</div>
-								<div class="text-xs text-zinc-500">
+								<div class="font-medium text-fg">{task.id}</div>
+								<div class="text-xs text-fg-muted">
 									<span data-testid="task-{task.id}-activity"
 										>{task.activity || 'activity not yet known'}</span
 									>{#if task.message}
-										· <span class="text-zinc-400">{task.message}</span>{/if}
+										· <span class="text-fg-secondary">{task.message}</span>{/if}
 								</div>
 							</div>
 							<StatusPill status={task.status} testid="task-{task.id}-status" />
@@ -457,14 +458,14 @@
 						-->
 						{#if def || task.exitCode !== undefined || task.commit}
 							<dl
-								class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-zinc-800 pt-3 text-xs sm:grid-cols-2"
+								class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs sm:grid-cols-2"
 								data-testid="task-{task.id}-detail"
 							>
 								{#if def?.image}
 									<div class="sm:col-span-2">
-										<dt class="uppercase text-zinc-500">Image</dt>
+										<dt class="text-fg-muted uppercase">Image</dt>
 										<dd
-											class="mt-0.5 font-mono break-all text-zinc-300"
+											class="mt-0.5 font-mono break-all text-fg-secondary"
 											data-testid="task-{task.id}-image"
 										>
 											{pinnedOrReference(def.image) || '—'}
@@ -472,7 +473,7 @@
 										{#if def.image.indexDigest}
 											<dd class="mt-0.5">
 												<span
-													class="font-mono text-emerald-300"
+													class="font-mono text-brand-700"
 													title={def.image.indexDigest}
 													data-digest={def.image.indexDigest}
 													data-testid="task-{task.id}-image-digest"
@@ -484,9 +485,9 @@
 								{/if}
 								{#if def && def.command.length > 0}
 									<div class="sm:col-span-2">
-										<dt class="uppercase text-zinc-500">Command</dt>
+										<dt class="text-fg-muted uppercase">Command</dt>
 										<dd
-											class="mt-0.5 font-mono break-all text-zinc-300"
+											class="mt-0.5 font-mono break-all text-fg-secondary"
 											data-testid="task-{task.id}-command"
 										>
 											{JSON.stringify(def.command)}
@@ -495,7 +496,7 @@
 								{/if}
 								{#if def && Object.keys(def.env).length > 0}
 									<div class="sm:col-span-2">
-										<dt class="uppercase text-zinc-500">Env</dt>
+										<dt class="text-fg-muted uppercase">Env</dt>
 										<!--
 											Env is shown as NAME=VALUE. It is
 											workload-supplied, non-secret configuration by
@@ -506,7 +507,7 @@
 											reaches the engine at all.
 										-->
 										<dd
-											class="mt-0.5 font-mono break-all text-zinc-300"
+											class="mt-0.5 font-mono break-all text-fg-secondary"
 											data-testid="task-{task.id}-env"
 										>
 											{Object.entries(def.env)
@@ -518,9 +519,9 @@
 								{/if}
 								{#if def && def.secrets.length > 0}
 									<div>
-										<dt class="uppercase text-zinc-500">Secrets</dt>
+										<dt class="text-fg-muted uppercase">Secrets</dt>
 										<dd
-											class="mt-0.5 font-mono text-zinc-300"
+											class="mt-0.5 font-mono text-fg-secondary"
 											title="names only — a secret's value is resolved on the Orker and never reaches this page"
 											data-testid="task-{task.id}-secrets"
 										>
@@ -529,13 +530,13 @@
 									</div>
 								{/if}
 								<div>
-									<dt class="uppercase text-zinc-500">Exit code</dt>
+									<dt class="text-fg-muted uppercase">Exit code</dt>
 									<dd
 										class="mt-0.5 font-mono {task.exitCode === undefined
-											? 'text-zinc-500'
+											? 'text-fg-muted'
 											: task.exitCode === 0
-												? 'text-zinc-300'
-												: 'text-rose-300'}"
+												? 'text-fg-secondary'
+												: 'text-failed-fg'}"
 										data-state={task.exitCode === undefined ? 'unknown' : 'measured'}
 										data-testid="task-{task.id}-exit-code"
 									>
@@ -544,9 +545,9 @@
 								</div>
 								{#if task.commit?.uri}
 									<div class="sm:col-span-2">
-										<dt class="uppercase text-zinc-500">Commit</dt>
+										<dt class="text-fg-muted uppercase">Commit</dt>
 										<dd
-											class="mt-0.5 font-mono break-all text-zinc-400"
+											class="mt-0.5 font-mono break-all text-fg-muted"
 											data-testid="task-{task.id}-commit"
 										>
 											{task.commit.uri}
@@ -589,13 +590,13 @@
 					data-testid="events-toggle"
 					data-sveltekit-noscroll
 					aria-expanded={eventsOpen}
-					class="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1 text-sm text-zinc-300 hover:bg-zinc-800"
+					class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 				>
-					<span class="text-zinc-500">{eventsOpen ? '▾' : '▸'}</span>
+					<span class="text-fg-muted">{eventsOpen ? '▾' : '▸'}</span>
 					{eventsOpen ? 'Hide events' : 'Inspect events'}
 				</a>
 				{#if !eventsOpen}
-					<span class="text-xs text-zinc-600" data-testid="events-teaser">
+					<span class="text-xs text-fg-muted" data-testid="events-teaser">
 						{buffer.total}
 						{buffer.total === 1 ? 'event' : 'events'} received on this page
 					</span>

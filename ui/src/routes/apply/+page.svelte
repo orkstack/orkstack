@@ -58,9 +58,9 @@ tasks:
 
 <svelte:head><title>Apply orkflow — OrkStack</title></svelte:head>
 
-<h1 class="mb-2 text-2xl font-bold">Apply an orkflow</h1>
-<p class="mb-6 text-sm text-zinc-400" data-testid="apply-namespace">
-	Into namespace <span class="font-medium text-zinc-200">{namespaceLabel(data.namespace)}</span>.
+<h1 class="mb-2 text-xl font-semibold tracking-tight text-fg">Apply an orkflow</h1>
+<p class="mb-6 text-sm text-fg-muted" data-testid="apply-namespace">
+	Into namespace <span class="font-medium text-fg">{namespaceLabel(data.namespace)}</span>.
 	A document that names a different one is refused rather than moved.
 </p>
 
@@ -72,10 +72,8 @@ tasks:
 		void apply();
 	}}
 >
-	<div>
-		<label for="yaml" class="mb-1 block text-sm font-medium text-zinc-300">
-			Orkflow YAML (DSL v0)
-		</label>
+	<div class="flex flex-col gap-1.5">
+		<label for="yaml" class="text-sm font-medium text-fg"> Orkflow YAML (DSL v0) </label>
 		<textarea
 			id="yaml"
 			data-testid="apply-yaml"
@@ -83,7 +81,7 @@ tasks:
 			rows="18"
 			spellcheck="false"
 			placeholder={PLACEHOLDER}
-			class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100 placeholder:text-zinc-600"
+			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs [font-variant-ligatures:none] placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 		></textarea>
 	</div>
 
@@ -91,9 +89,7 @@ tasks:
 		<ErrorPanel testid="apply-error" message={formError} />
 	{/if}
 	{#each warnings as warning, i (i)}
-		<div
-			class="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-300"
-		>
+		<div class="rounded-md border border-warning-200 bg-warning-50 px-4 py-2 text-sm text-warning-700">
 			{warning}
 		</div>
 	{/each}
@@ -102,7 +98,7 @@ tasks:
 		type="submit"
 		data-testid="apply-submit"
 		disabled={applying}
-		class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+		class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 	>
 		{applying ? 'Applying…' : 'Apply orkflow'}
 	</button>

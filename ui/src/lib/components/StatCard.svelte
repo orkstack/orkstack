@@ -19,27 +19,27 @@
 	const missing = $derived(value === UNAVAILABLE);
 	const valueClass = $derived(
 		missing
-			? 'text-zinc-500 italic'
+			? 'font-normal italic text-fg-muted'
 			: tone === 'good'
-				? 'text-emerald-300'
+				? 'text-succeeded-fg'
 				: tone === 'bad'
-					? 'text-rose-300'
+					? 'text-failed-fg'
 					: tone === 'busy'
-						? 'text-sky-300'
-						: 'text-zinc-100'
+						? 'text-running-fg'
+						: 'text-fg'
 	);
 </script>
 
-<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-	<div class="text-xs uppercase tracking-wide text-zinc-500">{label}</div>
+<div class="rounded-lg border border-border bg-surface p-4 shadow-xs">
+	<div class="text-xs font-medium text-fg-muted">{label}</div>
 	<div
 		data-testid={testid}
 		data-unavailable={missing ? 'true' : 'false'}
-		class="mt-1 text-2xl font-semibold {valueClass}"
+		class="mt-1.5 text-2xl font-semibold tracking-tight tabular-nums {valueClass}"
 	>
 		{value}
 	</div>
 	{#if note}
-		<div class="mt-1 text-xs text-zinc-500" data-testid="{testid}-note">{note}</div>
+		<div class="mt-1 text-xs text-fg-muted" data-testid="{testid}-note">{note}</div>
 	{/if}
 </div>

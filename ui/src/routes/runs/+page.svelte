@@ -21,15 +21,15 @@
 
 <svelte:head><title>Runs — OrkStack</title></svelte:head>
 
-<div class="mb-6 flex items-center justify-between">
-	<h1 class="text-2xl font-bold">
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+	<h1 class="text-xl font-semibold tracking-tight text-fg">
 		Runs{#if data.orkflowName}
-			<span class="ml-2 text-base font-normal text-zinc-400">for {data.orkflowName}</span>
+			<span class="ml-2 text-base font-normal text-fg-muted">for {data.orkflowName}</span>
 		{/if}
 	</h1>
 	<a
 		href={withNamespace('/submit', data.namespace)}
-		class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
+		class="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800"
 	>
 		Submit run
 	</a>
@@ -45,31 +45,44 @@
 		onretry={retry}
 	/>
 {:else if retrying}
-	<p class="text-sm text-zinc-400" data-testid="runs-loading">Loading runs…</p>
+	<p class="text-sm text-fg-muted" data-testid="runs-loading">Loading runs…</p>
 {:else if data.runs.length === 0}
-	<p class="text-sm text-zinc-400" data-testid="runs-empty">
+	<p
+		class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+		data-testid="runs-empty"
+	>
 		No runs in namespace {namespaceLabel(data.namespace)} yet.
 	</p>
 {:else}
-	<div class="overflow-hidden rounded-lg border border-zinc-800">
-		<table class="w-full text-left text-sm" data-testid="run-list">
-			<thead class="bg-zinc-900 text-xs uppercase tracking-wide text-zinc-400">
+	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+		<table class="w-full min-w-[640px] border-collapse text-left text-sm" data-testid="run-list">
+			<thead class="bg-surface-sunken">
 				<tr>
-					<th class="px-4 py-3">Run ID</th>
-					<th class="px-4 py-3">Orkflow</th>
-					<th class="px-4 py-3">Status</th>
-					<th class="px-4 py-3">Created</th>
+					<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Run ID</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Orkflow</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Status</th>
+					<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Created</th>
 				</tr>
 			</thead>
-			<tbody class="divide-y divide-zinc-800">
+			<tbody>
 				{#each data.runs as run (run.id)}
-					<tr class="hover:bg-zinc-900/60" data-testid="run-row-{run.id}">
-						<td class="px-4 py-3 font-medium">
-							<a href={withNamespace(`/runs/${run.id}`, data.namespace)} class="text-emerald-300 hover:underline">{run.id}</a>
+					<tr
+						class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+						data-testid="run-row-{run.id}"
+					>
+						<td class="h-11 px-4 pl-5 align-middle font-medium">
+							<a
+								href={withNamespace(`/runs/${run.id}`, data.namespace)}
+								class="font-mono text-xs text-fg hover:text-brand-700">{run.id}</a
+							>
 						</td>
-						<td class="px-4 py-3 text-zinc-300">{run.orkflowName}@{run.orkflowVersion}</td>
-						<td class="px-4 py-3"><StatusPill status={run.status} /></td>
-						<td class="px-4 py-3 text-zinc-400">{fmtTimestamp(run.createdAt)}</td>
+						<td class="h-11 px-4 align-middle text-fg-secondary"
+							>{run.orkflowName}@{run.orkflowVersion}</td
+						>
+						<td class="h-11 px-4 align-middle"><StatusPill status={run.status} /></td>
+						<td class="h-11 px-4 pr-5 align-middle text-fg-muted tabular-nums"
+							>{fmtTimestamp(run.createdAt)}</td
+						>
 					</tr>
 				{/each}
 			</tbody>

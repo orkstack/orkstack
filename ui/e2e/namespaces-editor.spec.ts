@@ -300,7 +300,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 
 	// Navigation preserves it, and every page is scoped by
 	// it: the nav links carry the namespace and each destination reads inside it.
-	const nav = page.locator('header nav');
+	const nav = page.locator('nav[aria-label="Primary"]');
 	await nav.getByRole('link', { name: 'Runs', exact: true }).click();
 	await page.waitForURL(new RegExp(`/runs\\?.*ns=${ALPHA}`));
 	await expect(page.getByTestId('namespace-picker')).toHaveValue(ALPHA);

@@ -54,28 +54,28 @@
 
 <div class="mb-6">
 	<div class="flex items-baseline gap-3">
-		<h1 class="text-2xl font-bold" data-testid="orkflow-name">{wf?.name ?? data.name}</h1>
+		<h1 class="text-xl font-semibold tracking-tight text-fg" data-testid="orkflow-name">
+			{wf?.name ?? data.name}
+		</h1>
 		{#if wf}
-			<span class="text-sm text-zinc-400" data-testid="orkflow-version">v{wf.version}</span>
+			<span class="text-sm text-fg-muted" data-testid="orkflow-version">v{wf.version}</span>
 		{/if}
 	</div>
 	{#if wf?.description}
-		<p class="mt-1 text-sm text-zinc-400">{wf.description}</p>
+		<p class="mt-1 text-sm text-fg-muted">{wf.description}</p>
 	{/if}
 	{#if wf}
-		<p class="mt-1 text-xs text-zinc-500">Applied {fmtTimestamp(wf.createdAt)}</p>
+		<p class="mt-1 text-xs text-fg-muted">Applied {fmtTimestamp(wf.createdAt)}</p>
 	{/if}
 </div>
 
-<nav class="mb-6 flex gap-1 border-b border-zinc-800" aria-label="Orkflow views">
+<nav class="mb-6 flex gap-1 border-b border-border" aria-label="Orkflow views">
 	{#each tabs as tab (tab.id)}
 		<a
 			href={tabHref(tab.id)}
 			data-testid="tab-{tab.id}"
 			aria-current={data.tab === tab.id ? 'page' : undefined}
-			class="-mb-px border-b-2 px-4 py-2 text-sm {data.tab === tab.id
-				? 'border-emerald-400 font-medium text-emerald-300'
-				: 'border-transparent text-zinc-400 hover:text-zinc-200'}"
+			class="-mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-fg-muted transition-colors duration-150 hover:text-fg current:border-brand-600 current:text-fg"
 		>
 			{tab.label}
 		</a>
@@ -93,36 +93,39 @@
 			onretry={reload}
 		/>
 	{:else if reloading}
-		<p data-testid="overview-loading" class="text-sm text-zinc-400">Loading the orkflow…</p>
+		<p data-testid="overview-loading" class="text-sm text-fg-muted">Loading the orkflow…</p>
 	{:else if !wf}
-		<p data-testid="overview-empty" class="text-sm text-zinc-400">
+		<p data-testid="overview-empty" class="text-sm text-fg-muted">
 			The engine returned no document for {data.name}.
 		</p>
 	{:else}
 		<section class="mb-8">
-			<h2 class="mb-3 text-lg font-semibold">Task DAG</h2>
+			<h2 class="mb-3 text-sm font-semibold text-fg">Task DAG</h2>
 			<DagGraph tasks={wf.tasks} />
 		</section>
 
 		<section class="mb-8">
-			<h2 class="mb-3 text-lg font-semibold">Tasks ({wf.tasks.length})</h2>
-			<div class="overflow-hidden rounded-lg border border-zinc-800">
-				<table class="w-full text-left text-sm">
-					<thead class="bg-zinc-900 text-xs uppercase tracking-wide text-zinc-400">
+			<h2 class="mb-3 text-sm font-semibold text-fg">Tasks ({wf.tasks.length})</h2>
+			<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+				<table class="w-full min-w-[720px] border-collapse text-left text-sm">
+					<thead class="bg-surface-sunken">
 						<tr>
-							<th class="px-4 py-3">ID</th>
-							<th class="px-4 py-3">Activity</th>
-							<th class="px-4 py-3">Image digest</th>
-							<th class="px-4 py-3">Pool</th>
-							<th class="px-4 py-3">Needs</th>
-							<th class="px-4 py-3">Timeout</th>
+							<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">ID</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Activity</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Image digest</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Pool</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Needs</th>
+							<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Timeout</th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-zinc-800">
+					<tbody>
 						{#each wf.tasks as task (task.id)}
-							<tr data-testid="task-row-{task.id}">
-								<td class="px-4 py-2.5 font-medium text-zinc-100">{task.id}</td>
-								<td class="px-4 py-2.5 text-zinc-300" data-testid="task-activity-{task.id}">
+							<tr
+								class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+								data-testid="task-row-{task.id}"
+							>
+								<td class="h-11 px-4 pl-5 align-middle font-medium text-fg">{task.id}</td>
+								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="task-activity-{task.id}">
 									{activityLabel(task) || '—'}
 								</td>
 								<!--
@@ -131,10 +134,10 @@
 									image, so the digest belongs beside the name it
 									resolved from, not hidden a click away.
 								-->
-								<td class="px-4 py-2.5">
+								<td class="h-11 px-4 align-middle">
 									{#if task.image?.indexDigest}
 										<span
-											class="font-mono text-xs text-emerald-300"
+											class="font-mono text-xs text-fg-secondary"
 											title={task.image.indexDigest}
 											data-digest={task.image.indexDigest}
 											data-testid="task-image-digest-{task.id}"
@@ -142,19 +145,19 @@
 										>
 									{:else}
 										<span
-											class="text-xs text-zinc-600"
+											class="text-xs text-fg-muted"
 											data-testid="task-image-unpinned-{task.id}"
 											title="this task's image was not resolved to a digest">unpinned</span
 										>
 									{/if}
 								</td>
-								<td class="px-4 py-2.5 text-zinc-400" data-testid="task-pool-{task.id}">
+								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="task-pool-{task.id}">
 									{task.pool || 'main'}
 								</td>
-								<td class="px-4 py-2.5 text-zinc-400" data-testid="task-needs-{task.id}">
+								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="task-needs-{task.id}">
 									{task.needs.length > 0 ? task.needs.join(', ') : '—'}
 								</td>
-								<td class="px-4 py-2.5 text-zinc-400">{task.timeoutSeconds}s</td>
+								<td class="h-11 px-4 pr-5 align-middle text-fg-secondary">{task.timeoutSeconds}s</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -165,13 +168,13 @@
 		<div class="flex gap-3">
 			<a
 				href={withNamespace(`/submit?orkflow=${wf.name}`, data.namespace)}
-				class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500"
+				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800"
 			>
 				Submit a run
 			</a>
 			<a
 				href={withNamespace(`/runs?orkflow=${wf.name}`, data.namespace)}
-				class="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 			>
 				View runs
 			</a>

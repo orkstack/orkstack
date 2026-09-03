@@ -31,13 +31,13 @@
 <div
 	data-testid={testid}
 	role="alert"
-	class="flex flex-wrap items-start gap-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
+	class="flex flex-wrap items-start gap-3 rounded-md border border-danger-200 bg-danger-50 px-4 py-3 text-sm"
 >
 	<div class="min-w-0 flex-1">
 		{#if subject}
-			<p class="font-medium text-rose-200">Could not load {subject}.</p>
+			<p class="font-medium text-danger-800">Could not load {subject}.</p>
 		{/if}
-		<p class="break-words whitespace-pre-wrap">{message}</p>
+		<p class="break-words whitespace-pre-wrap text-danger-700">{message}</p>
 	</div>
 	{#if onretry}
 		<button
@@ -45,7 +45,7 @@
 			data-testid={retryTestid || `${testid}-retry`}
 			disabled={busy}
 			onclick={() => onretry?.()}
-			class="shrink-0 rounded-md border border-rose-400/50 px-3 py-1.5 text-sm font-medium text-rose-100 hover:bg-rose-500/20 disabled:opacity-50"
+			class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50"
 		>
 			{busy ? 'Retrying…' : retryLabel}
 		</button>

@@ -103,15 +103,17 @@
 <svelte:head><title>Dashboard — OrkStack</title></svelte:head>
 
 <div class="mb-6 flex flex-wrap items-baseline gap-3">
-	<h1 class="text-xl font-bold" data-testid="dashboard-heading">Dashboard</h1>
-	<p class="text-sm text-zinc-400" data-testid="dashboard-namespace">
-		namespace <span class="font-mono text-zinc-200">{answeredFor}</span>
+	<h1 class="text-xl font-semibold tracking-tight text-fg" data-testid="dashboard-heading">
+		Dashboard
+	</h1>
+	<p class="text-sm text-fg-muted" data-testid="dashboard-namespace">
+		namespace <span class="font-mono text-fg-secondary">{answeredFor}</span>
 	</p>
 	{#if stats}
-		<p class="text-sm text-zinc-500" data-testid="dashboard-window">
+		<p class="text-sm text-fg-muted" data-testid="dashboard-window">
 			{fmtInstant(stats.windowSince)} → {fmtInstant(stats.windowUntil)}
 		</p>
-		<p class="ml-auto text-xs text-zinc-500" data-testid="dashboard-computed-at">
+		<p class="ml-auto text-xs text-fg-muted" data-testid="dashboard-computed-at">
 			measured {fmtAge(stats.computedAt, now)}
 		</p>
 	{/if}
@@ -128,7 +130,7 @@
 	/>
 {:else if stats}
 	<section class="mb-8">
-		<div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+		<div class="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-7">
 			<StatCard
 				label="Running"
 				value={fmtCount(counts['running'])}
@@ -157,35 +159,39 @@
 
 	<div class="grid gap-6 lg:grid-cols-2">
 		<section>
-			<h2 class="mb-3 text-lg font-semibold">Pool health</h2>
-			<p class="mb-3 text-sm text-zinc-500">
+			<h2 class="mb-3 text-sm font-semibold text-fg">Pool health</h2>
+			<p class="mb-3 text-sm text-fg-muted">
 				Where a task of this namespace can run, and how many Orkers are serving each pool right
 				now.
 			</p>
 			{#if pools.length === 0}
-				<p class="rounded-lg border border-zinc-800 p-4 text-sm text-zinc-500" data-testid="pools-empty">
+				<p
+					class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+					data-testid="pools-empty"
+				>
 					No pool could be read for {shown}.
 				</p>
 			{:else}
 				<div class="space-y-2" data-testid="pool-list">
 					{#each pools as pool (pool.name)}
 						<div
-							class="rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3"
+							class="rounded-lg border border-border bg-surface px-4 py-3 shadow-xs"
 							data-testid="pool-{pool.name}"
 						>
 							<div class="flex items-center justify-between gap-3">
-								<div class="font-mono text-sm text-zinc-100">
+								<div class="font-mono text-sm text-fg">
 									{pool.name}
 									{#if pool.isDefault}<span
-											class="ml-2 rounded-full bg-zinc-700/50 px-2 py-0.5 text-xs text-zinc-300"
+											class="ml-2 rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-xs text-fg-secondary"
 											data-testid="pool-default-{pool.name}">default</span
 										>{/if}
 								</div>
 								<span
 									data-testid="pool-orkers-{pool.name}"
-									class="rounded-full px-2.5 py-0.5 text-xs ring-1 {pool.liveOrkerCount > 0
-										? 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/40'
-										: 'bg-amber-500/15 text-amber-300 ring-amber-400/40'}"
+									class="rounded-full border px-2.5 py-0.5 text-xs font-medium {pool.liveOrkerCount >
+									0
+										? 'border-succeeded-border bg-succeeded-bg text-succeeded-fg'
+										: 'border-warning-200 bg-warning-50 text-warning-700'}"
 								>
 									{pool.liveOrkerCount}
 									{pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}
@@ -193,7 +199,7 @@
 							</div>
 							<!-- Driven by the live Orker COUNT: an activity is an image,
 								so a pool carries no inventory of what it can run. -->
-							<div class="mt-1 text-xs text-zinc-500" data-testid="pool-serving-{pool.name}">
+							<div class="mt-1 text-xs text-fg-muted" data-testid="pool-serving-{pool.name}">
 								{#if pool.liveOrkerCount > 0}
 									serving now
 								{:else}
@@ -207,52 +213,65 @@
 		</section>
 
 		<section>
-			<h2 class="mb-3 text-lg font-semibold">Recent failures</h2>
-			<p class="mb-3 text-sm text-zinc-500">
+			<h2 class="mb-3 text-sm font-semibold text-fg">Recent failures</h2>
+			<p class="mb-3 text-sm text-fg-muted">
 				Orkflows whose runs failed in this window, worst first.
 			</p>
 			{#if failures.length === 0}
 				<p
-					class="rounded-lg border border-zinc-800 p-4 text-sm text-zinc-500"
+					class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
 					data-testid="failures-empty"
 				>
 					No run failed in this window.
 				</p>
 			{:else}
-				<table class="w-full text-sm" data-testid="failure-table">
-					<thead class="text-xs uppercase text-zinc-500">
-						<tr>
-							<th class="py-2 text-left font-medium">Orkflow</th>
-							<th class="py-2 text-right font-medium">Failed</th>
-							<th class="py-2 text-right font-medium">Finished</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each failures as failure (failure.orkflowName)}
-							<tr class="border-t border-zinc-800" data-testid="failure-{failure.orkflowName}">
-								<td class="py-2">
-									<a
-										class="text-emerald-300 hover:underline"
-										href={withNamespace(
-											`/runs?orkflow=${encodeURIComponent(failure.orkflowName)}`,
-											data.namespace
-										)}>{failure.orkflowName}</a
-									>
-								</td>
-								<td class="py-2 text-right text-rose-300">{failure.failed.toString()}</td>
-								<td class="py-2 text-right text-zinc-400">{failure.total.toString()}</td>
+				<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+					<table class="w-full min-w-[420px] border-collapse text-sm" data-testid="failure-table">
+						<thead class="bg-surface-sunken">
+							<tr>
+								<th class="h-10 px-4 pl-5 text-left text-xs font-medium text-fg-muted">Orkflow</th>
+								<th class="h-10 px-4 text-right text-xs font-medium text-fg-muted">Failed</th>
+								<th class="h-10 px-4 pr-5 text-right text-xs font-medium text-fg-muted">Finished</th
+								>
 							</tr>
-						{/each}
-					</tbody>
-				</table>
+						</thead>
+						<tbody>
+							{#each failures as failure (failure.orkflowName)}
+								<tr
+									class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+									data-testid="failure-{failure.orkflowName}"
+								>
+									<td class="h-11 px-4 pl-5 align-middle">
+										<a
+											class="font-medium text-fg hover:text-brand-700"
+											href={withNamespace(
+												`/runs?orkflow=${encodeURIComponent(failure.orkflowName)}`,
+												data.namespace
+											)}>{failure.orkflowName}</a
+										>
+									</td>
+									<td class="h-11 px-4 text-right align-middle text-failed-fg tabular-nums"
+										>{failure.failed.toString()}</td
+									>
+									<td class="h-11 px-4 pr-5 text-right align-middle text-fg-muted tabular-nums"
+										>{failure.total.toString()}</td
+									>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			{/if}
 		</section>
 	</div>
 
 	<section class="mt-8">
-		<h2 class="mb-3 text-lg font-semibold">Running now</h2>
+		<h2 class="mb-3 text-sm font-semibold text-fg">Running now</h2>
 		{#if running.length === 0}
-			<p class="rounded-lg border border-zinc-800 p-4 text-sm text-zinc-500" data-testid="running-empty">
+			<p
+				class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
+				data-testid="running-empty"
+			>
 				Nothing is running in {shown}.
 			</p>
 		{:else}
@@ -260,12 +279,12 @@
 				{#each running as run (run.id)}
 					<a
 						href={withNamespace(`/runs/${run.id}`, data.namespace)}
-						class="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3 hover:border-zinc-700"
+						class="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3 shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 						data-testid="running-{run.id}"
 					>
 						<div>
-							<div class="font-mono text-sm text-zinc-100">{run.id}</div>
-							<div class="text-xs text-zinc-500">
+							<div class="font-mono text-sm text-fg">{run.id}</div>
+							<div class="text-xs text-fg-muted">
 								{run.orkflowName}{#if run.orkflowVersion}@{run.orkflowVersion}{/if} · started
 								{fmtTimestamp(run.startedAt ?? run.createdAt)}
 							</div>

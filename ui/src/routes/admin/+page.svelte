@@ -66,40 +66,40 @@
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-zinc-400" data-testid="system-loading">Loading system information…</p>
+	<p class="text-sm text-fg-muted" data-testid="system-loading">Loading system information…</p>
 {:else if !data.system}
-	<p class="text-sm text-zinc-400" data-testid="system-empty">
+	<p class="text-sm text-fg-muted" data-testid="system-empty">
 		The engine returned no system information.
 	</p>
 {:else}
 	<section class="mb-8" data-testid="system-info">
 		<div class="mb-3 flex items-baseline justify-between">
-			<h2 class="text-lg font-semibold text-zinc-100">This deployment</h2>
-			<span class="text-xs text-zinc-500">describes the replica that answered</span>
+			<h2 class="text-sm font-semibold text-fg">This deployment</h2>
+			<span class="text-xs text-fg-muted">describes the replica that answered</span>
 		</div>
-		<div class="overflow-hidden rounded-lg border border-zinc-800">
-			<dl class="divide-y divide-zinc-800 text-sm">
+		<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
+			<dl class="divide-y divide-border-subtle text-sm">
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Engine version</dt>
-					<dd class="text-zinc-100" data-testid="system-engine-version">
+					<dt class="text-fg-muted">Engine version</dt>
+					<dd class="text-fg" data-testid="system-engine-version">
 						{data.system.engineVersion || '—'}
 					</dd>
 				</div>
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Go version</dt>
-					<dd class="text-zinc-100" data-testid="system-go-version">
+					<dt class="text-fg-muted">Go version</dt>
+					<dd class="text-fg" data-testid="system-go-version">
 						{data.system.goVersion || '—'}
 					</dd>
 				</div>
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Deployment</dt>
-					<dd class="text-zinc-100" data-testid="system-deployment">
+					<dt class="text-fg-muted">Deployment</dt>
+					<dd class="text-fg" data-testid="system-deployment">
 						{data.system.deploymentName || '—'}
 					</dd>
 				</div>
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Versioning</dt>
-					<dd class="text-zinc-100" data-testid="system-versioning">
+					<dt class="text-fg-muted">Versioning</dt>
+					<dd class="text-fg" data-testid="system-versioning">
 						{#if data.system.versioningActive}
 							on (build {data.system.buildId})
 						{:else}
@@ -108,43 +108,43 @@
 					</dd>
 				</div>
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Artifacts</dt>
-					<dd class="text-zinc-100" data-testid="system-artifact-backend">
+					<dt class="text-fg-muted">Artifacts</dt>
+					<dd class="text-fg" data-testid="system-artifact-backend">
 						{data.system.artifactLocation || '—'} ({data.system.artifactBackend || '—'})
 					</dd>
 				</div>
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Temporal address</dt>
-					<dd class="text-zinc-100" data-testid="system-temporal-address">
+					<dt class="text-fg-muted">Temporal address</dt>
+					<dd class="text-fg" data-testid="system-temporal-address">
 						{data.system.temporalAddress || '—'}
 					</dd>
 				</div>
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-zinc-400">Server time</dt>
-					<dd class="text-zinc-100" data-testid="system-server-time">
+					<dt class="text-fg-muted">Server time</dt>
+					<dd class="text-fg" data-testid="system-server-time">
 						{fmtTimestamp(data.system.serverTime)}
 					</dd>
 				</div>
 			</dl>
 		</div>
-		<p class="mt-2 text-xs text-zinc-500">
+		<p class="mt-2 text-xs text-fg-muted">
 			Everything above except the server time is this replica's own configuration and build, not a
-			measurement of the cluster — see <code class="text-zinc-400">orkctl admin info</code>.
+			measurement of the cluster — see <code>orkctl admin info</code>.
 		</p>
 	</section>
 {/if}
 
 <section>
-	<h2 class="mb-3 text-lg font-semibold text-zinc-100">Manage</h2>
+	<h2 class="mb-3 text-sm font-semibold text-fg">Manage</h2>
 	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 		{#each cards as card (card.testid)}
 			<a
 				href={withNamespace(card.href, data.namespace)}
 				data-testid={card.testid}
-				class="rounded-lg border border-zinc-800 p-4 hover:border-emerald-500/50 hover:bg-zinc-900/60"
+				class="rounded-lg border border-border bg-surface p-4 shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 			>
-				<h3 class="font-medium text-zinc-100">{card.title}</h3>
-				<p class="mt-1 text-sm text-zinc-400">{card.body}</p>
+				<h3 class="font-medium text-fg">{card.title}</h3>
+				<p class="mt-1 text-sm text-fg-muted">{card.body}</p>
 			</a>
 		{/each}
 	</div>

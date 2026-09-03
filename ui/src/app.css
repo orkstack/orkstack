@@ -1,1 +1,330 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
+@theme {
+	/* ---------- Fonts ---------- */
+	--font-sans:
+		'Inter Variable', Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+		sans-serif;
+	--font-mono:
+		'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas,
+		monospace;
+
+	/* ---------- Neutral scale (cool gray; overrides Tailwind's gray) ---------- */
+	--color-gray-50: #f9fafb;
+	--color-gray-100: #f2f4f7;
+	--color-gray-200: #eaecf0;
+	--color-gray-300: #d0d5dd;
+	--color-gray-400: #98a2b3;
+	--color-gray-500: #667085;
+	--color-gray-600: #475467;
+	--color-gray-700: #344054;
+	--color-gray-800: #182230;
+	--color-gray-900: #101828;
+	--color-gray-950: #0c111d;
+
+	/* ---------- Surfaces ---------- */
+	--color-canvas: #f6f7f9; /* page background */
+	--color-surface: #ffffff; /* cards, tables, sidebar, inputs */
+	--color-surface-raised: #ffffff; /* popovers, dialogs (same fill, larger shadow) */
+	--color-surface-sunken: #f2f4f7; /* table headers, disabled inputs, inline code */
+	--color-surface-hover: #f9fafb; /* row/item hover */
+
+	/* ---------- Borders ---------- */
+	--color-border: #eaecf0; /* default: cards, tables, inputs */
+	--color-border-subtle: #f2f4f7; /* row dividers, inner separators */
+	--color-border-strong: #d0d5dd; /* input hover, focused-but-not-brand */
+
+	/* ---------- Text ---------- */
+	--color-fg: #101828; /* primary            17.4:1 on white */
+	--color-fg-secondary: #475467; /* body on cards       7.4:1 on white */
+	--color-fg-muted: #667085; /* labels, meta        5.0:1 on white, 4.8:1 on canvas */
+	--color-fg-placeholder: #667085;
+	--color-fg-inverse: #ffffff;
+
+	/* ---------- Brand (desaturated indigo) ---------- */
+	--color-brand-50: #eef0fb;
+	--color-brand-100: #dfe3f7;
+	--color-brand-200: #c3caef;
+	--color-brand-300: #9aa5e0;
+	--color-brand-400: #7681d7;
+	--color-brand-500: #6470d3; /* focus ring color only */
+	--color-brand-600: #4f5bc9; /* primary buttons, active nav icon; white text 5.7:1 */
+	--color-brand-700: #414cae; /* hover; links; text on brand-50 6.4:1 */
+	--color-brand-800: #353e8e; /* active/pressed */
+	--color-brand-900: #2a3170;
+
+	/* ---------- Semantic (used by banners/forms; statuses alias these) ---------- */
+	--color-success-50: #ecfdf3;
+	--color-success-200: #abefc6;
+	--color-success-300: #75e0a7;
+	--color-success-600: #079455;
+	--color-success-700: #067647;
+	--color-success-800: #085d3a;
+
+	--color-danger-50: #fef3f2;
+	--color-danger-200: #fecdca;
+	--color-danger-300: #fda29b;
+	--color-danger-500: #f04438;
+	--color-danger-600: #d92d20;
+	--color-danger-700: #b42318;
+	--color-danger-800: #912018;
+
+	--color-warning-50: #fffaeb;
+	--color-warning-200: #fedf89;
+	--color-warning-300: #fec84b;
+	--color-warning-600: #dc6803;
+	--color-warning-700: #b54708;
+	--color-warning-800: #93370d;
+
+	--color-info-50: #eff8ff;
+	--color-info-200: #b2ddff;
+	--color-info-300: #84caff;
+	--color-info-600: #1570ef;
+	--color-info-700: #175cd3;
+	--color-info-800: #1849a9;
+
+	/* ---------- Run / task status (bg, fg, border, solid) ---------- */
+	--color-pending-bg: #f2f4f7;
+	--color-pending-fg: #344054;
+	--color-pending-border: #d0d5dd;
+	--color-pending-solid: #667085;
+
+	--color-running-bg: #eff8ff;
+	--color-running-fg: #175cd3;
+	--color-running-border: #b2ddff;
+	--color-running-solid: #1570ef;
+
+	--color-succeeded-bg: #ecfdf3;
+	--color-succeeded-fg: #067647;
+	--color-succeeded-border: #abefc6;
+	--color-succeeded-solid: #079455;
+
+	--color-failed-bg: #fef3f2;
+	--color-failed-fg: #b42318;
+	--color-failed-border: #fecdca;
+	--color-failed-solid: #d92d20;
+
+	--color-canceled-bg: #fffaeb;
+	--color-canceled-fg: #b54708;
+	--color-canceled-border: #fedf89;
+	--color-canceled-solid: #dc6803;
+
+	--color-skipped-bg: #ffffff;
+	--color-skipped-fg: #667085;
+	--color-skipped-border: #d0d5dd;
+	--color-skipped-solid: #98a2b3;
+
+	--color-unspecified-bg: #fafaf9; /* warm neutral, deliberately "off" */
+	--color-unspecified-fg: #57534e;
+	--color-unspecified-border: #d6d3d1;
+	--color-unspecified-solid: #a8a29e;
+
+	/* ---------- Console (the one dark surface) ---------- */
+	--color-console-bg: #0c111d;
+	--color-console-header: #131a2b;
+	--color-console-border: #1f2a3d;
+	--color-console-fg: #e6eaf0; /* stdout   15.6:1 */
+	--color-console-muted: #8b96a8; /* gutter, ENDED, counts  6.1:1 */
+	--color-console-stderr: #fda29b; /* 9.4:1 */
+	--color-console-notice: #fec84b; /* 11.8:1 */
+	--color-console-live: #75e0a7; /* 11.0:1 */
+
+	/* ---------- Radius ---------- */
+	--radius-sm: 0.25rem; /* 4px  inline code, small chips */
+	--radius-md: 0.375rem; /* 6px  buttons, inputs, nav items */
+	--radius-lg: 0.5rem; /* 8px  cards, tables, panels, DAG nodes */
+	--radius-xl: 0.75rem; /* 12px dialogs only */
+	--radius-full: 9999px; /* pills, dots */
+
+	/* ---------- Shadow ---------- */
+	--shadow-xs: 0 1px 2px 0 rgb(16 24 40 / 0.05);
+	--shadow-sm: 0 1px 3px 0 rgb(16 24 40 / 0.08), 0 1px 2px -1px rgb(16 24 40 / 0.06);
+	--shadow-md: 0 4px 8px -2px rgb(16 24 40 / 0.1), 0 2px 4px -2px rgb(16 24 40 / 0.06);
+	--shadow-lg: 0 20px 24px -4px rgb(16 24 40 / 0.08), 0 8px 8px -4px rgb(16 24 40 / 0.03);
+
+	/* ---------- Motion ---------- */
+	--ease-standard: cubic-bezier(0.2, 0, 0, 1);
+	--animate-pulse-dot: pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+	--animate-dialog-in: dialog-in 200ms cubic-bezier(0.2, 0, 0, 1) both;
+	--animate-fade-in: fade-in 150ms linear both;
+}
+
+/* ---------- Dark theme ----------
+ *
+ * One selector, no media query: `theme.ts` always resolves the reader's
+ * choice ("system" included) to a real `data-theme="light"` or `"dark"`
+ * before paint (see the inline script in app.html for the first paint, and
+ * `applyTheme`/`watchSystemTheme` for every later change, OS included). CSS
+ * therefore only ever has to answer one question — is `data-theme` "dark" —
+ * not "dark, or unset-but-the-OS-prefers-dark".
+ *
+ * Every token above that has a light-mode reason to differ gets a dark-mode
+ * line here. Radius, shadow shape, motion and the fonts are unchanged; the
+ * console tokens are unchanged too, because they are the one surface this
+ * design already renders dark in EITHER page theme — nothing to invert. The
+ * raw --color-gray-* scale is also left alone: it is used only where
+ * something must stay whatever it already was regardless of theme (the
+ * wordmark's mark, a modal scrim) rather than as a themed surface.
+ */
+:root[data-theme='dark'] {
+	color-scheme: dark;
+
+	--color-canvas: #0a0d15;
+	--color-surface: #12151f;
+	--color-surface-raised: #171b27;
+	--color-surface-sunken: #0d0f17;
+	--color-surface-hover: #1b1f2c;
+
+	--color-border: #242938;
+	--color-border-subtle: #1a1e2a;
+	--color-border-strong: #3a415a;
+
+	--color-fg: #edeff4;
+	--color-fg-secondary: #b7bccb;
+	--color-fg-muted: #868da0;
+	--color-fg-placeholder: #5c6377;
+	--color-fg-inverse: #0a0d15;
+
+	--color-brand-50: #181c36;
+	--color-brand-100: #20254a;
+	--color-brand-200: #2e3570;
+	--color-brand-300: #4048a0;
+	--color-brand-400: #4f5bc0;
+	--color-brand-500: #838de0; /* focus ring color only */
+	--color-brand-600: #5865c6; /* primary buttons, active nav icon */
+	--color-brand-700: #6f7bdb; /* hover; links; text on brand-50 */
+	--color-brand-800: #4650ae; /* active/pressed */
+	--color-brand-900: #c4caf5;
+
+	--color-success-50: #0f2a1e;
+	--color-success-200: #1f6b45;
+	--color-success-300: #2f8f5c;
+	--color-success-600: #34c97c;
+	--color-success-700: #5fe29a;
+	--color-success-800: #8fefbb;
+
+	--color-danger-50: #2e1416;
+	--color-danger-200: #6b2320;
+	--color-danger-300: #8f2e29;
+	--color-danger-500: #e24c40;
+	--color-danger-600: #f0574a;
+	--color-danger-700: #ff9c93;
+	--color-danger-800: #ffc4bd;
+
+	--color-warning-50: #2c1f09;
+	--color-warning-200: #6b4a12;
+	--color-warning-300: #8f631a;
+	--color-warning-600: #e8940f;
+	--color-warning-700: #ffc46b;
+	--color-warning-800: #ffdca0;
+
+	--color-info-50: #10233b;
+	--color-info-200: #2c5490;
+	--color-info-300: #3a6bb0;
+	--color-info-600: #4c9aff;
+	--color-info-700: #7eb8ff;
+	--color-info-800: #acd3ff;
+
+	--color-pending-bg: #1a1e29;
+	--color-pending-fg: #b7bccb;
+	--color-pending-border: #3a415a;
+	--color-pending-solid: #8890a3;
+
+	--color-running-bg: #14233d;
+	--color-running-fg: #7eb8ff;
+	--color-running-border: #2c5490;
+	--color-running-solid: #4c9aff;
+
+	--color-succeeded-bg: #0f2a1e;
+	--color-succeeded-fg: #6fe0a0;
+	--color-succeeded-border: #1f6b45;
+	--color-succeeded-solid: #3fcb80;
+
+	--color-failed-bg: #351617;
+	--color-failed-fg: #ff9c93;
+	--color-failed-border: #7a2a28;
+	--color-failed-solid: #f0564a;
+
+	--color-canceled-bg: #332108;
+	--color-canceled-fg: #ffc46b;
+	--color-canceled-border: #7a5417;
+	--color-canceled-solid: #e8940f;
+
+	--color-skipped-bg: #12151f;
+	--color-skipped-fg: #868da0;
+	--color-skipped-border: #3a415a;
+	--color-skipped-solid: #6b7288;
+
+	--color-unspecified-bg: #1c1a17;
+	--color-unspecified-fg: #b8afa4;
+	--color-unspecified-border: #4a4238;
+	--color-unspecified-solid: #8c8175;
+
+	/* Tailwind's own orange/violet, used only by the failure-category badges
+	   (FailurePanel via $lib/activity.ts) that this design otherwise leaves
+	   unthemed. Overridden here so those two badges stay legible dark chips
+	   instead of Tailwind's light-mode pastels. */
+	--color-orange-50: #2c1a0c;
+	--color-orange-200: #7a4a1f;
+	--color-orange-700: #ffb373;
+	--color-violet-50: #201a3b;
+	--color-violet-200: #4a3f8f;
+	--color-violet-700: #c3b8ff;
+
+	--shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+	--shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+	--shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+	--shadow-lg: 0 20px 24px -4px rgb(0 0 0 / 0.55), 0 8px 8px -4px rgb(0 0 0 / 0.3);
+}
+
+@keyframes pulse-dot {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
+}
+@keyframes dialog-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+@keyframes fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@layer base {
+	html {
+		color-scheme: light;
+	}
+	body {
+		@apply bg-canvas text-fg antialiased;
+		font-feature-settings: 'cv11', 'ss01';
+	}
+	::selection {
+		background: var(--color-brand-100);
+	}
+	code,
+	kbd,
+	pre,
+	samp {
+		@apply font-mono;
+	}
+}
+
+/* Nav "current page" variant used in the sidebar recipe */
+@custom-variant current (&[aria-current='page']);

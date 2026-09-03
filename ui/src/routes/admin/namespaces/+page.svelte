@@ -265,7 +265,7 @@
 
 <svelte:head><title>Admin — Namespaces — OrkStack</title></svelte:head>
 
-<p class="mb-4 text-sm text-zinc-500" data-testid="namespaces-scope-caption">
+<p class="mb-4 text-sm text-fg-muted" data-testid="namespaces-scope-caption">
 	All namespaces this deployment has — the namespace selector above does not filter this view.
 </p>
 
@@ -279,8 +279,8 @@
 		onretry={retry}
 	/>
 {:else}
-	<section class="mb-8 rounded-lg border border-zinc-800 p-4">
-		<h2 class="mb-3 text-sm font-semibold text-zinc-200">Create a namespace</h2>
+	<section class="mb-8 rounded-lg border border-border bg-surface p-5 shadow-xs">
+		<h2 class="mb-3 text-sm font-semibold text-fg">Create a namespace</h2>
 		<form
 			class="grid gap-3 sm:grid-cols-2"
 			onsubmit={(e) => {
@@ -288,52 +288,52 @@
 				void submitCreate();
 			}}
 		>
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-zinc-400">Name</span>
+			<label class="flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Name</span>
 				<input
 					data-testid="ns-create-name"
 					bind:value={createName}
 					placeholder="payments"
-					class="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 				/>
 				{#if createErrors.name}
-					<span class="text-xs text-rose-400" data-testid="ns-create-error-name"
+					<span class="text-xs text-danger-700" data-testid="ns-create-error-name"
 						>{createErrors.name}</span
 					>
 				{/if}
 			</label>
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-zinc-400">Description</span>
+			<label class="flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Description</span>
 				<input
 					data-testid="ns-create-description"
 					bind:value={createDescription}
-					class="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 				/>
 			</label>
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-zinc-400">Default pool (blank = {DEFAULT_POOL_NAME})</span>
+			<label class="flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Default pool (blank = {DEFAULT_POOL_NAME})</span>
 				<input
 					data-testid="ns-create-default-pool"
 					bind:value={createDefaultPool}
 					placeholder={DEFAULT_POOL_NAME}
-					class="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 				/>
 				{#if createErrors.defaultPool}
-					<span class="text-xs text-rose-400" data-testid="ns-create-error-default-pool"
+					<span class="text-xs text-danger-700" data-testid="ns-create-error-default-pool"
 						>{createErrors.defaultPool}</span
 					>
 				{/if}
 			</label>
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-zinc-400">Allowed pools (comma-separated, blank = unrestricted)</span>
+			<label class="flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Allowed pools (comma-separated, blank = unrestricted)</span>
 				<input
 					data-testid="ns-create-allowed-pools"
 					bind:value={createAllowedPools}
 					placeholder="cpu, gpu"
-					class="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-100"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 				/>
 				{#if createErrors.allowedPools}
-					<span class="text-xs text-rose-400" data-testid="ns-create-error-allowed-pools"
+					<span class="text-xs text-danger-700" data-testid="ns-create-error-allowed-pools"
 						>{createErrors.allowedPools}</span
 					>
 				{/if}
@@ -343,7 +343,7 @@
 					type="submit"
 					data-testid="ns-create-submit"
 					disabled={createBusy}
-					class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+					class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 				>
 					{createBusy ? 'Creating…' : 'Create namespace'}
 				</button>
@@ -351,61 +351,70 @@
 		</form>
 		{#if createServerError}
 			<p
-				class="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300"
+				class="mt-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
 				data-testid="ns-create-server-error"
 			>
 				{createServerError}
 			</p>
 		{/if}
 		{#if createSuccess}
-			<p class="mt-3 text-sm text-emerald-300" data-testid="ns-create-success">{createSuccess}</p>
+			<p class="mt-3 text-sm text-succeeded-fg" data-testid="ns-create-success">{createSuccess}</p>
 		{/if}
 	</section>
 
 	{#if busy}
-		<p class="text-sm text-zinc-400" data-testid="namespaces-loading">Loading namespaces…</p>
+		<p class="text-sm text-fg-muted" data-testid="namespaces-loading">Loading namespaces…</p>
 	{:else}
 		{#if data.namespacesList.length <= 1}
-			<p class="mb-3 text-sm text-zinc-400" data-testid="namespaces-empty">
-				No namespaces beyond <code class="text-zinc-300">default</code> yet — it is undeletable
+			<p class="mb-3 text-sm text-fg-muted" data-testid="namespaces-empty">
+				No namespaces beyond <code>default</code> yet — it is undeletable
 				below because every orkflow that names no namespace is in it. Create one above.
 			</p>
 		{/if}
-		<div class="overflow-hidden rounded-lg border border-zinc-800">
-			<table class="w-full text-left text-sm" data-testid="namespace-list">
-				<thead class="bg-zinc-900 text-xs uppercase tracking-wide text-zinc-400">
+		<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+			<table class="w-full min-w-[720px] border-collapse text-left text-sm" data-testid="namespace-list">
+				<thead class="bg-surface-sunken">
 					<tr>
-						<th class="px-4 py-3">Name</th>
-						<th class="px-4 py-3">Description</th>
-						<th class="px-4 py-3">Default pool</th>
-						<th class="px-4 py-3">Allowed pools</th>
-						<th class="px-4 py-3">Updated</th>
-						<th class="px-4 py-3"></th>
+						<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Name</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Description</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Default pool</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed pools</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Updated</th>
+						<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted"></th>
 					</tr>
 				</thead>
-				<tbody class="divide-y divide-zinc-800">
+				<tbody>
 					{#each data.namespacesList as ns (ns.name)}
-						<tr class="hover:bg-zinc-900/60" data-testid="namespace-row-{ns.name}">
-							<td class="px-4 py-3 font-medium text-zinc-100">{ns.name}</td>
-							<td class="max-w-xs truncate px-4 py-3 text-zinc-400">{ns.description || '—'}</td>
-							<td class="px-4 py-3 text-zinc-300">{ns.defaultPool || DEFAULT_POOL_NAME}</td>
-							<td class="px-4 py-3 text-zinc-400">
+						<tr
+							class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+							data-testid="namespace-row-{ns.name}"
+						>
+							<td class="h-11 px-4 pl-5 align-middle font-medium text-fg">{ns.name}</td>
+							<td class="h-11 max-w-xs truncate px-4 align-middle text-fg-secondary"
+								>{ns.description || '—'}</td
+							>
+							<td class="h-11 px-4 align-middle text-fg-secondary"
+								>{ns.defaultPool || DEFAULT_POOL_NAME}</td
+							>
+							<td class="h-11 px-4 align-middle text-fg-secondary">
 								{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
 							</td>
-							<td class="px-4 py-3 text-zinc-400">{fmtTimestamp(ns.updatedAt)}</td>
-							<td class="px-4 py-3 text-right">
+							<td class="h-11 px-4 align-middle text-fg-muted tabular-nums"
+								>{fmtTimestamp(ns.updatedAt)}</td
+							>
+							<td class="h-11 px-4 pr-5 align-middle">
 								<div class="flex items-center justify-end gap-2">
 									<button
 										type="button"
 										data-testid="namespace-edit-{ns.name}"
 										onclick={() => openEdit(ns)}
-										class="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800"
+										class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
 									>
 										Edit
 									</button>
 									{#if ns.name === 'default'}
 										<span
-											class="text-xs text-zinc-500"
+											class="text-xs text-fg-muted"
 											data-testid="namespace-delete-default-reason"
 											title="every orkflow that names no namespace is in it"
 										>
@@ -416,7 +425,7 @@
 											data-testid="namespace-delete-default"
 											disabled
 											title="default cannot be deleted: every orkflow that names no namespace is in it"
-											class="cursor-not-allowed rounded-md border border-zinc-800 px-3 py-1.5 text-xs text-zinc-600"
+											class="inline-flex h-8 cursor-not-allowed items-center rounded-md border border-border px-3 text-xs text-fg-muted opacity-50"
 										>
 											Delete
 										</button>
@@ -425,7 +434,7 @@
 											type="button"
 											data-testid="namespace-delete-{ns.name}"
 											onclick={() => askToDelete(ns.name)}
-											class="rounded-md border border-rose-800 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-500/10"
+											class="inline-flex h-8 items-center rounded-md border border-danger-200 bg-surface px-3 text-xs font-medium text-danger-700 shadow-xs transition-colors duration-150 hover:border-danger-300 hover:bg-danger-50"
 										>
 											Delete
 										</button>
@@ -435,7 +444,7 @@
 						</tr>
 						{#if editingName === ns.name}
 							<tr>
-								<td colspan="6" class="bg-zinc-900/40 px-4 py-4">
+								<td colspan="6" class="bg-surface-sunken px-4 py-4">
 									<form
 										data-testid="namespace-edit-form-{ns.name}"
 										class="grid gap-3 sm:grid-cols-2"
@@ -444,34 +453,34 @@
 											void submitEdit();
 										}}
 									>
-										<label class="flex flex-col gap-1 text-sm">
-											<span class="text-zinc-400">Description</span>
+										<label class="flex flex-col gap-1.5 text-sm">
+											<span class="font-medium text-fg">Description</span>
 											<input
 												data-testid="ns-edit-description-{ns.name}"
 												bind:value={editDescription}
-												class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 											/>
 										</label>
-										<label class="flex flex-col gap-1 text-sm">
-											<span class="text-zinc-400">Default pool</span>
+										<label class="flex flex-col gap-1.5 text-sm">
+											<span class="font-medium text-fg">Default pool</span>
 											<input
 												data-testid="ns-edit-default-pool-{ns.name}"
 												bind:value={editDefaultPool}
-												class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 											/>
 											{#if editErrors.defaultPool}
-												<span class="text-xs text-rose-400">{editErrors.defaultPool}</span>
+												<span class="text-xs text-danger-700">{editErrors.defaultPool}</span>
 											{/if}
 										</label>
-										<label class="flex flex-col gap-1 text-sm sm:col-span-2">
-											<span class="text-zinc-400">Allowed pools (comma-separated)</span>
+										<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
+											<span class="font-medium text-fg">Allowed pools (comma-separated)</span>
 											<input
 												data-testid="ns-edit-allowed-pools-{ns.name}"
 												bind:value={editAllowedPools}
-												class="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-zinc-100"
+												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 											/>
 											{#if editErrors.allowedPools}
-												<span class="text-xs text-rose-400">{editErrors.allowedPools}</span>
+												<span class="text-xs text-danger-700">{editErrors.allowedPools}</span>
 											{/if}
 										</label>
 										<div class="flex items-center gap-2 sm:col-span-2">
@@ -479,7 +488,7 @@
 												type="submit"
 												data-testid="ns-edit-save-{ns.name}"
 												disabled={editBusy}
-												class="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+												class="inline-flex h-8 items-center rounded-md bg-brand-600 px-3 text-xs font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
 											>
 												{editBusy ? 'Saving…' : 'Save'}
 											</button>
@@ -488,7 +497,7 @@
 												data-testid="ns-edit-cancel-{ns.name}"
 												disabled={editBusy}
 												onclick={closeEdit}
-												class="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+												class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
 											>
 												Cancel
 											</button>
@@ -496,11 +505,11 @@
 									</form>
 									{#if editConflict}
 										<div
-											class="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+											class="mt-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-800"
 											data-testid="namespace-edit-conflict-{ns.name}"
 										>
 											<p>{editServerError}</p>
-											<p class="mt-1 text-xs text-amber-300/80">
+											<p class="mt-1 text-xs text-warning-700">
 												Namespace {ns.name} changed since it was read — reload and re-apply.
 											</p>
 											<button
@@ -508,14 +517,14 @@
 												data-testid="namespace-edit-conflict-retry-{ns.name}"
 												onclick={reloadEtagAndRetry}
 												disabled={editBusy}
-												class="mt-2 rounded-md border border-amber-500/50 px-3 py-1 text-xs text-amber-100 hover:bg-amber-500/20 disabled:opacity-50"
+												class="mt-2 inline-flex h-7 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs hover:bg-warning-50 disabled:pointer-events-none disabled:opacity-50"
 											>
 												Reload latest and re-apply my edit
 											</button>
 										</div>
 									{:else if editServerError}
 										<p
-											class="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300"
+											class="mt-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700"
 											data-testid="namespace-edit-error-{ns.name}"
 										>
 											{editServerError}
@@ -540,6 +549,7 @@
 		cancelTestid="namespace-delete-confirm-cancel"
 		busy={deleteBusy}
 		error={deleteError}
+		destructive
 		onaccept={confirmDelete}
 		oncancel={() => {
 			pendingDelete = '';
@@ -548,8 +558,7 @@
 	>
 		{#snippet body()}
 			<p>
-				This removes the registry entry for <span class="font-medium text-zinc-100"
-					>{pendingDelete}</span
+				This removes the registry entry for <span class="font-medium text-fg">{pendingDelete}</span
 				>. It is refused while any orkflow is still stored in it.
 			</p>
 		{/snippet}

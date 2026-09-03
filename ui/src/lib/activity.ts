@@ -79,12 +79,12 @@ const CATEGORY_BLURB: Record<FailureCategory, string> = {
 // violet for "this one will never succeed as written" — the category a reader
 // must not mistake for a transient blip.
 const CATEGORY_CLASSES: Record<FailureCategory, string> = {
-	[FailureCategory.UNSPECIFIED]: 'bg-zinc-700/40 text-zinc-300 ring-zinc-500/40',
-	[FailureCategory.ACTIVITY_FAILED]: 'bg-rose-500/15 text-rose-300 ring-rose-400/40',
-	[FailureCategory.INFRASTRUCTURE_ERROR]: 'bg-orange-500/15 text-orange-300 ring-orange-400/40',
-	[FailureCategory.CONTRACT_VIOLATION]: 'bg-violet-500/15 text-violet-300 ring-violet-400/40',
-	[FailureCategory.TIMED_OUT]: 'bg-amber-500/15 text-amber-300 ring-amber-400/40',
-	[FailureCategory.CANCELLED]: 'bg-zinc-600/30 text-zinc-300 ring-zinc-400/40'
+	[FailureCategory.UNSPECIFIED]: 'border-border bg-surface-sunken text-fg-secondary',
+	[FailureCategory.ACTIVITY_FAILED]: 'border-danger-200 bg-danger-50 text-danger-700',
+	[FailureCategory.INFRASTRUCTURE_ERROR]: 'border-orange-200 bg-orange-50 text-orange-700',
+	[FailureCategory.CONTRACT_VIOLATION]: 'border-violet-200 bg-violet-50 text-violet-700',
+	[FailureCategory.TIMED_OUT]: 'border-warning-200 bg-warning-50 text-warning-700',
+	[FailureCategory.CANCELLED]: 'border-border bg-surface-sunken text-fg-muted'
 };
 
 export function failureCategoryLabel(category: FailureCategory | undefined): string {
