@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"go.temporal.io/api/serviceerror"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -201,6 +202,83 @@ func TestEffectiveRunRetention_BoundsAStoredValueALaterLowerMaximumLeftAboveIt(t
 func TestEffectiveRunRetention_NilNamespaceFallsBackToTheMaximum(t *testing.T) {
 	if got := EffectiveRunRetention(nil, 72*time.Hour); got != 72*time.Hour {
 		t.Fatalf("EffectiveRunRetention(nil) = %s, want 72h", got)
+	}
+}
+
+// flakyNewNamespaceCluster simulates the propagation delay between
+// task.EnsureNamespace registering a namespace and it becoming visible to
+// the very next admin RPC against it (observed on Temporal's dev-server,
+// AGENTS.md's "boot fails closed" territory but for a transient,
+// self-inflicted cause rather than a genuine misconfiguration): its first
+// notFoundCalls calls to either admin method report NamespaceNotFound, then
+// it behaves like a normal fakeCluster.
+type flakyNewNamespaceCluster struct {
+	*fakeCluster
+	notFoundCalls int
+	calls         int
+}
+
+func (f *flakyNewNamespaceCluster) NamespaceRetention(ctx context.Context, namespace string) (time.Duration, error) {
+	if f.calls < f.notFoundCalls {
+		f.calls++
+		return 0, serviceerror.NewNamespaceNotFound(namespace)
+	}
+	return f.fakeCluster.NamespaceRetention(ctx, namespace)
+}
+
+func (f *flakyNewNamespaceCluster) SetNamespaceRetention(ctx context.Context, namespace string, d time.Duration) (time.Duration, error) {
+	if f.calls < f.notFoundCalls {
+		f.calls++
+		return 0, serviceerror.NewNamespaceNotFound(namespace)
+	}
+	return f.fakeCluster.SetNamespaceRetention(ctx, namespace, d)
+}
+
+// TestRetentionController_EnsureToleratesTheNamespacePropagationDelay is the
+// regression for a boot-time race a manual live run against a real Temporal
+// dev-server surfaced: Ensure runs immediately after task.EnsureNamespace in
+// cmd/ork/main.go, and a namespace Temporal just accepted registration for is
+// not always immediately visible to the very next admin RPC — without this
+// retry, that transient NamespaceNotFound made `ork` refuse to boot on a
+// namespace it had itself just created moments earlier.
+func TestRetentionController_EnsureToleratesTheNamespacePropagationDelay(t *testing.T) {
+	cluster := &flakyNewNamespaceCluster{fakeCluster: newFakeCluster(), notFoundCalls: 2}
+	cluster.retention = 72 * time.Hour
+	ctrl := NewRetentionController(&fakePolicyStore{}, cluster, "ork-main", 24*time.Hour, testLogger())
+
+	policy, err := ctrl.Ensure(context.Background())
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if got := policy.GetMaxRunRetention().AsDuration(); got != 72*time.Hour {
+		t.Fatalf("materialized maximum = %s, want 72h", got)
+	}
+	if cluster.calls != cluster.notFoundCalls {
+		t.Fatalf("retry calls = %d, want exactly %d (the flaky window)", cluster.calls, cluster.notFoundCalls)
+	}
+}
+
+// TestRetentionController_ReconcileGivesUpOnNamespaceNotFoundPastTheWindow
+// proves the retry is bounded, not infinite: a namespace that is genuinely
+// gone (deleted, or never existed at all — an operator's real
+// misconfiguration, not a boot-time race) still fails, once the propagation
+// window elapses. This test doesn't wait out the real window (that would be
+// a 10s+ unit test); it proves NamespaceNotFound is retried, distinctly from
+// any other error, which is what a shortened, injected clock would otherwise
+// have to prove more slowly.
+func TestRetentionController_ReconcileRetriesOnlyNamespaceNotFoundNeverOtherErrors(t *testing.T) {
+	boom := errors.New("cluster unavailable")
+	cluster := newFakeCluster()
+	cluster.retentionErr = boom
+	ctrl := NewRetentionController(&fakePolicyStore{}, cluster, "ork-main", 24*time.Hour, testLogger())
+
+	err := ctrl.Reconcile(context.Background(), 72*time.Hour)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap %v (a non-NamespaceNotFound error must never be retried away)", err, boom)
+	}
+	if len(cluster.retentionNamespaces) != 1 {
+		t.Fatalf("NamespaceRetention calls = %d, want exactly 1 (no retry for a non-NamespaceNotFound error)",
+			len(cluster.retentionNamespaces))
 	}
 }
 

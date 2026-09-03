@@ -7,11 +7,43 @@ import (
 	"log/slog"
 	"time"
 
+	"go.temporal.io/api/serviceerror"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
+
+// namespacePropagationWindow bounds how long Reconcile and Ensure tolerate a
+// NamespaceNotFound from the cluster before giving up. It exists because
+// Ensure runs immediately after task.EnsureNamespace in the same boot
+// sequence (cmd/ork/main.go), and a namespace Temporal's dev-server just
+// accepted a RegisterNamespace for is not always immediately visible to the
+// very next admin RPC against it — a propagation delay internal to the
+// cluster, observed in practice, not an operator misconfiguration. Any error
+// OTHER than NamespaceNotFound (including one that persists past this
+// window) is returned immediately, so a genuine failure still fails fast and
+// Ensure's fail-closed boot guarantee holds for everything except this one
+// transient, self-inflicted race.
+const namespacePropagationWindow = 10 * time.Second
+
+// retryOnNamespaceNotFound retries fn while it fails with NamespaceNotFound,
+// up to namespacePropagationWindow. See that constant's doc for why.
+func retryOnNamespaceNotFound(ctx context.Context, fn func() error) error {
+	deadline := time.Now().Add(namespacePropagationWindow)
+	for {
+		err := fn()
+		var notFound *serviceerror.NamespaceNotFound
+		if err == nil || !errors.As(err, &notFound) || !time.Now().Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
 
 // RetentionAdmin is the narrowed cluster seam RetentionController needs: the
 // same two admin-retention methods engine.TemporalRunReader already exposes
@@ -89,14 +121,21 @@ func (c *RetentionController) Enforced(max time.Duration) time.Duration {
 // reports that value.
 func (c *RetentionController) Reconcile(ctx context.Context, max time.Duration) error {
 	want := c.Enforced(max)
-	current, err := c.admin.NamespaceRetention(ctx, c.temporalNamespace)
-	if err != nil {
+	var current time.Duration
+	if err := retryOnNamespaceNotFound(ctx, func() error {
+		var err error
+		current, err = c.admin.NamespaceRetention(ctx, c.temporalNamespace)
+		return err
+	}); err != nil {
 		return fmt.Errorf("archive: read cluster retention for %q: %w", c.temporalNamespace, err)
 	}
 	if current == want {
 		return nil
 	}
-	if _, err := c.admin.SetNamespaceRetention(ctx, c.temporalNamespace, want); err != nil {
+	if err := retryOnNamespaceNotFound(ctx, func() error {
+		_, err := c.admin.SetNamespaceRetention(ctx, c.temporalNamespace, want)
+		return err
+	}); err != nil {
 		return fmt.Errorf("archive: set cluster retention for %q to %s: %w", c.temporalNamespace, want, err)
 	}
 	c.logger.Info("retention backstop reconciled",
@@ -133,8 +172,12 @@ func (c *RetentionController) Ensure(ctx context.Context) (*orkstackv1.Retention
 	default:
 		return nil, fmt.Errorf("archive: read retention policy: %w", err)
 	}
-	observed, err := c.admin.NamespaceRetention(ctx, c.temporalNamespace)
-	if err != nil {
+	var observed time.Duration
+	if err := retryOnNamespaceNotFound(ctx, func() error {
+		var err error
+		observed, err = c.admin.NamespaceRetention(ctx, c.temporalNamespace)
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("archive: observe cluster retention for %q: %w", c.temporalNamespace, err)
 	}
 	if observed <= 0 {
