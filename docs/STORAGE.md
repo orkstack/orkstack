@@ -4,9 +4,10 @@ OrkStack has two durable stores and no third:
 
 - **Temporal** holds every live run: workflow state, task state, the event
   stream, idempotency claims, and Worker Deployment versions. It is the read
-  model for a run until execution retention expires (72 h by default, set at
-  boot by `internal/task.EnsureNamespace`; read or change it with
-  `orkctl admin retention`).
+  model for a run until its run retention expires (72 h by default, set at
+  boot by `internal/task.EnsureNamespace`, and read or changed as the
+  deployment maximum with `orkctl admin retention`; a namespace may keep runs
+  for less with `orkctl namespace update --run-retention`).
 - **Object storage** holds everything that must outlive a process or a
   retention window: Orkflow definitions, the namespace registry, artifacts,
   task logs, run snapshots, activity completion records, and the archive of
@@ -89,9 +90,11 @@ run id is encoded, never parsed (AGENTS.md §7).
 `internal/archive/cleanup.go` runs inside `ork` when `ORK_CLEANUP_ENABLED=true`
 (`ORK_CLEANUP_INTERVAL` `1h`, `ORK_CLEANUP_RETENTION_BUFFER` `24h`,
 `ORK_CLEANUP_BATCH_SIZE` `100`). It walks the run index in key order, and for
-each archived run older than Temporal retention plus the buffer deletes its
-logs, snapshots, and commit record, releases its object markers, and writes
-the cleanup sidecar.
+each archived run past its OWN OrkStack namespace's run retention (falling
+back to the deployment maximum) it explicitly retires the execution — never
+waiting for anything to expire passively — then deletes the run's logs,
+snapshots, and commit record, releases its object markers, and writes the
+cleanup sidecar.
 
 Artifact objects themselves are not reclaimed automatically.
 `DeleteUnreferencedObjects` exists and is proven against live object storage,

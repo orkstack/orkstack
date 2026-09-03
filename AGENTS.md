@@ -311,6 +311,13 @@ The repository vocabulary is deliberate:
 - **Pool** means the user-facing set of Orkers.
 - **Queue** means only an internal Temporal task queue and never a user-facing
   OrkStack concept.
+- **Run retention** means how long a finished run of one OrkStack namespace
+  stays readable before it is retired, counted from when the run FINISHED,
+  never from submission. It is a field of `orkstack.v1.Namespace`
+  (`run_retention`), unset meaning inherit.
+- **Maximum run retention** means the deployment-wide ceiling every
+  namespace's run retention is bound by, and what a namespace that sets none
+  inherits (`orkstack.v1.RetentionPolicy.max_run_retention`).
 
 An Orkflow name is unique within a namespace. Names are validated, never
 sanitized, by the same rule at each boundary:
@@ -359,6 +366,14 @@ contract.
 The deployment's engine workflows use fixed internal channels: `RunWorkflow`
 uses `ork-tasks` and engine events use `ork-engine-events`, regardless of the
 `ORK_ORKER_QUEUE` override used for the default activity pool.
+
+The same rule extends to retention: the underlying cluster's own workflow
+execution retention TTL is likewise internal, never a user-facing setting. It
+is derived automatically from the maximum run retention plus an enforcement
+margin (`archive.RetentionController`) and is never read from, or written to,
+by a client. What a client sets is run retention and maximum run retention —
+OrkStack's own vocabulary — never anything named "Temporal" on the wire, in
+CLI help, or in the UI.
 
 
 ### 7.2 Versioning

@@ -294,9 +294,9 @@ deployment cares about.
 | `ORK_TRANSFER_BUDGET_SECONDS` | *(derived)* | `ork` | data-transfer slack inside `StartToCloseTimeout`. Unset derives `max(300, artifact_max_count × artifact_max_bytes ÷ floor throughput)`. An operator who knows their storage sets it directly |
 | `ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC` | `10 MiB/s` | `ork` | the denominator of that derivation. Only read when `ORK_TRANSFER_BUDGET_SECONDS` is unset |
 | `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts, the run archive and task logs live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
-| `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables retention-aware reclamation of run-scoped logs and completion commits. Default-off because it deletes durable data and an operator must opt in after choosing the retention policy |
+| `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables active per-namespace run retention: retires each finished run at its own namespace's run retention and reclaims its run-scoped logs and completion commits. Default-off because it deletes durable data; when off, every run is kept for the deployment maximum plus `ORK_CLEANUP_RETENTION_BUFFER` regardless of any namespace's own value |
 | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts |
-| `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | additional safety window after Temporal namespace retention before a run becomes eligible |
+| `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
 | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration |
 | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
@@ -441,26 +441,31 @@ sequence it ended on, so a replay of a 16 MiB attempt is whole. Size a replica
 for this per concurrently open pane or `orkctl run logs`, remembering that a
 run detail page opens one per expanded task.
 
-**Retention-aware cleanup is eventual and fail-closed.** With
-`ORK_CLEANUP_ENABLED=true`, `ork` periodically lists archived runs older than
-the deployment's `ORK_TEMPORAL_NAMESPACE` retention period plus
-`ORK_CLEANUP_RETENTION_BUFFER`. This Temporal runtime partition is distinct
-from the OrkStack namespace stored in each archived run. The cleaner asks
-Temporal about every eligible execution using only the runtime partition, then
-removes that run's `metadata/logs/{run-id}/` and
-`metadata/commits/{orkstack-namespace}/{run-id}/` objects only after Temporal
-reports the execution gone. The archive body, its index, and its cleanup marker
-remain permanent. There is therefore a bounded and deliberate window after a
-run finishes in which Temporal still has the execution and the bucket still
-has its run-scoped objects; there can be another interval after Temporal
-drops it but before the next cleanup scan. That is eventual consistency, not
-a stuck cleanup.
+**Retention-aware cleanup is active and fail-closed.** With
+`ORK_CLEANUP_ENABLED=true`, `ork` periodically lists archived runs whose
+CREATION time is old enough that they *could* be past retention — a cheap
+superset prefilter, using the shortest retention any configured namespace
+has, never the actual gate. For each candidate it asks the underlying cluster
+whether the execution still exists and, if so, when it CLOSED; a run whose
+close time is not yet past its OWN OrkStack namespace's run retention
+(falling back to the deployment maximum) is left alone. One past that cutoff
+is explicitly retired: the cleaner calls the cluster's delete RPC itself
+rather than waiting for anything to expire on its own, then removes that
+run's `metadata/logs/{run-id}/` and
+`metadata/commits/{orkstack-namespace}/{run-id}/` objects. An execution the
+cluster no longer holds (already removed by an earlier pass, or by the
+backstop TTL — see the run-retention section above) is treated as already
+retired: storage is reclaimed with no delete call. The archive body, its
+index, and its cleanup marker remain permanent.
 
-Cleanup fails closed. If namespace retention is unknown, or a Temporal
-description times out or returns any error other than NotFound, that check
-deletes nothing. Per-run storage failures are logged and retried by a later
-iteration. Repeating a successful pass is a no-op because the immutable
-`artifacts_cleaned` sidecar records when Temporal deletion was observed.
+Cleanup fails closed. If the retention policy or any namespace's own value is
+unreadable, that iteration deletes nothing. An archived run whose execution
+the cluster reports as STILL RUNNING is refused rather than retired — closing
+would terminate it, and archiving only ever happens after a run's terminal
+event, so this is a defect to surface, not a case to handle silently.
+Per-run storage failures are logged and retried by a later iteration.
+Repeating a successful pass is a no-op because the immutable
+`artifacts_cleaned` sidecar records when a run was retired.
 
 The cleaner deliberately does **not** remove workload artifacts under
 `objects/`. Those keys are content-addressed by logical name and digest, not by
@@ -550,9 +555,10 @@ them, even though the total keys they enumerate stays linear.
 
 **Bucket lifecycle rules are the independent retention policy.** Cleanup is
 off by default, so a deployment that has not set `ORK_CLEANUP_ENABLED=true`
-otherwise reclaims nothing. Even when enabled, cleanup waits for Temporal to
-drop the execution; a bucket lifecycle rule expires objects by age regardless
-of Temporal. The two mechanisms are complementary rather than alternatives.
+otherwise reclaims nothing. Even when enabled, cleanup retires an execution at
+its own namespace's run retention, actively; a bucket lifecycle rule expires
+objects by age regardless of that. The two mechanisms are complementary
+rather than alternatives.
 
 Lifecycle policy is also the only storage-level mechanism that can bound
 growth under `objects/`, because the cleaner intentionally leaves those shared
@@ -1104,17 +1110,16 @@ Runs already pinned to a version still need that version's workers.
 ### The admin surface: what a deployment is made of, and who is serving it
 
 Five reads answer every operational question about a deployment, and each is
-available from the CLI and over Connect. Three of them are answered from the
+available from the CLI and over Connect. Four of them are answered from the
 cluster or the bucket, so **any replica answers them and they all answer the
-same** (`AGENTS.md` §7). The fourth is deliberately not, and the fifth is a
-live cluster read with its own write counterpart (below).
+same** (`AGENTS.md` §7). The fifth is deliberately not.
 
 | read | CLI | where the answer comes from |
 |---|---|---|
 | system information | `orkctl admin info` | **this replica's own build and configuration** |
-| execution retention | `orkctl admin retention get \| set <duration>` | Temporal's `DescribeNamespace`/`UpdateNamespace` — **live, observed from the cluster**, and writable |
+| maximum run retention | `orkctl admin retention get \| set <duration>` | the retention policy document in the bucket — **any replica answers**, and writable |
 | pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
-| namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket |
+| namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket — each namespace's own `run_retention` lives here too |
 | activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests at apply time |
 
 `orkctl admin info` describes **the replica that answered**, and it says so in
@@ -1218,49 +1223,94 @@ namespace registered, no orkflow applied, no run — is proven live in
 `TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`
 (`cmd/orkctl/admin_surface_integration_test.go`).
 
-### Execution retention: one deployment-wide Temporal cluster setting
+### Run retention: a deployment maximum, a value per namespace
 
-`orkctl admin retention get` and `orkctl admin retention set <duration>` read
-and change how long Temporal keeps a finished workflow's history for **this
-deployment's ONE Temporal cluster namespace** — the same
-`ORK_TEMPORAL_NAMESPACE` retention already described above (§ "The bucket
-stops being optional…" and the cleanup section that follows it). It is a
-single cluster-wide setting, **never a per-OrkStack-Namespace one**: it has
-nothing to do with `orkctl namespace`, which manages the OrkStack registry
-entity owning orkflow names, runs and pool defaults, of which a deployment may
-have many. There is exactly one Temporal namespace behind the whole
-deployment (`internal/engine/router.go`'s `SingleRouter`), and this is its one
-retention setting.
+OrkStack keeps Temporal as an implementation detail an operator never has to
+think about (AGENTS.md §7) — including here. What an operator sets is **run
+retention**: how long a finished run stays readable before OrkStack retires
+it and reclaims its run-scoped storage (logs, completion commits, snapshots).
+There are two knobs, and they compose:
 
-Unlike `orkctl admin info`, both subcommands leave the process: `get` calls
-Temporal's `DescribeNamespace` and `set` calls Temporal's `UpdateNamespace`
-(`WorkflowExecutionRetentionPeriod`), live against the cluster, through the
-same `NamespaceRouter` binding every other admin/cluster read already uses —
-never a second, parallel Temporal client. `<duration>` uses Go's
-`time.ParseDuration` syntax (`168h`, `24h30m`, …), the same flavour every
-`ORK_*_TTL`/`ORK_*_INTERVAL` variable in the table above uses. A zero or
-negative duration is refused locally, before any request leaves this process;
-a positive duration Temporal itself refuses (for example, below the cluster's
-own configured minimum) is reported back exactly as Temporal worded it —
-never swallowed into a default, a zero value, or a fabricated success:
+- **A deployment maximum** (`orkctl admin retention get|set <duration>`,
+  `SystemService.GetRetentionPolicy`/`UpdateRetentionPolicy`): the ceiling no
+  namespace may exceed, and what a namespace that sets nothing inherits.
+  Deployment-wide, stored with the deployment (not a live cluster read), so
+  any replica answers the same.
+- **A run retention per namespace**
+  (`orkctl namespace create|update --run-retention <duration>`,
+  `orkstack.v1.Namespace.run_retention`): how long THAT namespace's finished
+  runs are kept. Unset inherits the deployment maximum. Setting one above the
+  current maximum is refused with `INVALID_ARGUMENT`, naming both values;
+  lowering the maximum below a namespace's explicit value is refused with
+  `FAILED_PRECONDITION`, naming that namespace — lower it first.
+
+Retention counts from when a run **finished**, never from when it was
+submitted: a run that executed for two days under a 72h retention is readable
+for 72h after it ended, not 72h after it started.
+
+**Enforcement needs `ORK_CLEANUP_ENABLED=true`** (§ "The bucket stops being
+optional…" above): the cleanup worker is what actually retires a run at its
+namespace's own retention. A deployment that never enables it keeps every run
+for the deployment maximum plus the enforcement margin
+(`ORK_CLEANUP_RETENTION_BUFFER`) regardless of what any namespace asks for —
+`orkctl admin retention get` and the Admin UI both say so plainly
+(`namespace retention: not enforced`).
+
+Internally — never exposed to an operator — OrkStack keeps the single
+Temporal namespace behind the deployment (`internal/engine/router.go`'s
+`SingleRouter`) at a retention TTL of `maximum + margin`, strictly above every
+namespace's own retention, so that TTL can never be what actually retires a
+run. The cleanup worker retires runs itself, explicitly, ahead of that TTL;
+the TTL is purely a backstop for worker downtime or a large backlog. See
+`internal/archive/retention.go` (`RetentionController`) and the cleanup
+worker's own doc comment (`internal/archive/cleanup.go`) for the mechanism.
+
+`<duration>` uses Go's `time.ParseDuration` syntax (`168h`, `24h30m`, …), the
+same flavour every `ORK_*_TTL`/`ORK_*_INTERVAL` variable in the table above
+uses. A zero or negative duration is refused locally, before any request
+leaves the process:
 
 ```
 $ orkctl admin retention get
-temporal namespace:   ork-main
-execution retention:  72h0m0s
+maximum run retention:  72h0m0s
+namespace retention:    not enforced (ORK_CLEANUP_ENABLED=false: every run is kept
+                        for the maximum plus the enforcement margin)
 
-This is ONE Temporal cluster setting for the whole deployment, not a
-per-OrkStack-namespace value — see `orkctl namespace` for that, unrelated,
-concept.
+Each namespace may keep runs for less — see `orkctl namespace update
+--run-retention`.
 
 $ orkctl admin retention set 168h
-temporal namespace:   ork-main
-execution retention:  168h0m0s
+maximum run retention:  168h0m0s
+namespace retention:    not enforced (ORK_CLEANUP_ENABLED=false: every run is kept
+                        for the maximum plus the enforcement margin)
+
+Each namespace may keep runs for less — see `orkctl namespace update
+--run-retention`.
+
+$ orkctl namespace update payments --run-retention 24h
+Updated namespace payments
+Name:           payments
+...
+Run retention:  24h0m0s
 ```
 
 The same reads and writes are the UI's Admin → Retention page
-(`ui/src/routes/admin/retention`), which carries the identical
-deployment-wide caption and sits apart from `/admin/namespaces`.
+(`ui/src/routes/admin/retention`) for the deployment maximum, and the Admin →
+Namespaces page for each namespace's own value — the ceiling sits apart from
+`/admin/namespaces` because it bounds all of them, not because it belongs to
+one.
+
+**Migration.** An existing deployment's current retention becomes the new
+deployment maximum automatically, the first time an upgraded `ork` boots: it
+observes the cluster's current retention TTL and stores it as the maximum
+unchanged (nothing is tightened), then raises the underlying TTL by the
+enforcement margin. Every existing namespace inherits that maximum until an
+operator gives it its own, tighter value — nobody is opted into shorter
+retention by upgrading. Enabling `ORK_CLEANUP_ENABLED` for the first time
+moves retirement from whenever the (now-hidden) backstop TTL would have fired
+to the moment each run actually crosses its own namespace's retention —
+sooner, by up to the enforcement margin, and namespace-aware for the first
+time.
 
 ---
 
