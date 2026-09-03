@@ -270,6 +270,9 @@ func (s *S3NamespaceStore) Put(
 	if err := validNamespacePools(ns); err != nil {
 		return nil, err
 	}
+	if err := validNamespaceRetention(ns); err != nil {
+		return nil, err
+	}
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
 	stored.Name = name
 	stored.Etag = ""
@@ -399,6 +402,27 @@ func validNamespacePools(ns *orkstackv1.Namespace) error {
 	}
 	return fmt.Errorf("artifacts: namespace %q allows pools %s but defaults to %q: %w",
 		ns.GetName(), strings.Join(allowed, ", "), defaultPool, ErrInvalidNamespace)
+}
+
+// validNamespaceRetention enforces what the document can be held to on its
+// own: an explicit run_retention must be a usable positive duration. The
+// store cannot check it against the deployment maximum — that ceiling lives
+// in RetentionPolicyStore, which this package does not depend on — so that
+// half of the rule is the API's (internal/api.validNamespaceRetention).
+func validNamespaceRetention(ns *orkstackv1.Namespace) error {
+	d := ns.GetRunRetention()
+	if d == nil {
+		return nil
+	}
+	if err := d.CheckValid(); err != nil {
+		return fmt.Errorf("artifacts: namespace %q run retention is not a valid duration: %w: %w",
+			ns.GetName(), err, ErrInvalidNamespace)
+	}
+	if d.AsDuration() <= 0 {
+		return fmt.Errorf("artifacts: namespace %q run retention must be a positive duration: %w",
+			ns.GetName(), ErrInvalidNamespace)
+	}
+	return nil
 }
 
 // Get reads one namespace. The default namespace always resolves.
