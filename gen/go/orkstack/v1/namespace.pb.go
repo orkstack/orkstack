@@ -9,6 +9,7 @@ package orkstackv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -82,7 +83,19 @@ type Namespace struct {
 	// shape, and a client only ever round-trips it. It is never stored inside
 	// the document — it names the document's stored bytes, so a copy inside
 	// them could only ever be the token of the write before.
-	Etag          string `protobuf:"bytes,8,opt,name=etag,proto3" json:"etag,omitempty"`
+	Etag string `protobuf:"bytes,8,opt,name=etag,proto3" json:"etag,omitempty"`
+	// run_retention is how long a finished run of this namespace stays readable
+	// before OrkStack retires it and reclaims its run-scoped storage. Unset
+	// means "the deployment maximum" (SystemService.GetRetentionPolicy), which
+	// is also the most any namespace may ask for: a value above the maximum is
+	// refused with INVALID_ARGUMENT, and the maximum applies even to a stored
+	// value that a later, lower maximum left above it.
+	//
+	// It counts from the moment the run finished, never from submission: a run
+	// that executed for two days under a 72h retention is readable for 72h after
+	// it ended. Resolution is archive.EffectiveRunRetention, the one place that
+	// implements it — the same shape default_pool has in DefaultPoolFor.
+	RunRetention  *durationpb.Duration `protobuf:"bytes,9,opt,name=run_retention,json=runRetention,proto3" json:"run_retention,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -171,6 +184,13 @@ func (x *Namespace) GetEtag() string {
 		return x.Etag
 	}
 	return ""
+}
+
+func (x *Namespace) GetRunRetention() *durationpb.Duration {
+	if x != nil {
+		return x.RunRetention
+	}
+	return nil
 }
 
 // Pool is a set of Orkers, observed live.
@@ -289,7 +309,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\x03\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xca\x03\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -300,7 +320,8 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
 	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x12\n" +
-	"\x04etag\x18\b \x01(\tR\x04etag\x1a9\n" +
+	"\x04etag\x18\b \x01(\tR\x04etag\x12>\n" +
+	"\rrun_retention\x18\t \x01(\v2\x19.google.protobuf.DurationR\frunRetention\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xda\x01\n" +
@@ -331,17 +352,19 @@ var file_orkstack_v1_namespace_proto_goTypes = []any{
 	(*Pool)(nil),                  // 1: orkstack.v1.Pool
 	nil,                           // 2: orkstack.v1.Namespace.LabelsEntry
 	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 4: google.protobuf.Duration
 }
 var file_orkstack_v1_namespace_proto_depIdxs = []int32{
 	2, // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
 	3, // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
 	3, // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
-	3, // 3: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	4, // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
+	3, // 4: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_namespace_proto_init() }

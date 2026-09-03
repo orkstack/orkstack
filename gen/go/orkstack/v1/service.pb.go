@@ -2710,26 +2710,26 @@ func (x *GetSystemInfoResponse) GetServerTime() *timestamppb.Timestamp {
 	return nil
 }
 
-type GetExecutionRetentionRequest struct {
+type GetRetentionPolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetExecutionRetentionRequest) Reset() {
-	*x = GetExecutionRetentionRequest{}
+func (x *GetRetentionPolicyRequest) Reset() {
+	*x = GetRetentionPolicyRequest{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetExecutionRetentionRequest) String() string {
+func (x *GetRetentionPolicyRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetExecutionRetentionRequest) ProtoMessage() {}
+func (*GetRetentionPolicyRequest) ProtoMessage() {}
 
-func (x *GetExecutionRetentionRequest) ProtoReflect() protoreflect.Message {
+func (x *GetRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2741,39 +2741,38 @@ func (x *GetExecutionRetentionRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetExecutionRetentionRequest.ProtoReflect.Descriptor instead.
-func (*GetExecutionRetentionRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetRetentionPolicyRequest.ProtoReflect.Descriptor instead.
+func (*GetRetentionPolicyRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{45}
 }
 
-type GetExecutionRetentionResponse struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// temporal_namespace is the Temporal namespace this retention describes:
-	// this deployment's ONE Temporal cluster namespace, never an
-	// orkstack.v1.Namespace name.
-	TemporalNamespace string `protobuf:"bytes,1,opt,name=temporal_namespace,json=temporalNamespace,proto3" json:"temporal_namespace,omitempty"`
-	// retention is Temporal's CURRENT workflow-execution retention, OBSERVED
-	// live from the cluster (DescribeNamespace) — not configuration echoed
-	// back, unlike every field of GetSystemInfoResponse above.
-	Retention     *durationpb.Duration `protobuf:"bytes,2,opt,name=retention,proto3" json:"retention,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+type GetRetentionPolicyResponse struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Policy *RetentionPolicy       `protobuf:"bytes,1,opt,name=policy,proto3" json:"policy,omitempty"`
+	// namespace_retention_enforced reports whether this deployment runs the
+	// worker that retires runs at their namespace's retention
+	// (ORK_CLEANUP_ENABLED). When false, every run is kept for the maximum
+	// plus the operator's enforcement margin and a tighter namespace value has
+	// no effect yet. CONFIGURATION-DERIVED, like GetSystemInfo's fields.
+	NamespaceRetentionEnforced bool `protobuf:"varint,2,opt,name=namespace_retention_enforced,json=namespaceRetentionEnforced,proto3" json:"namespace_retention_enforced,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
-func (x *GetExecutionRetentionResponse) Reset() {
-	*x = GetExecutionRetentionResponse{}
+func (x *GetRetentionPolicyResponse) Reset() {
+	*x = GetRetentionPolicyResponse{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetExecutionRetentionResponse) String() string {
+func (x *GetRetentionPolicyResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetExecutionRetentionResponse) ProtoMessage() {}
+func (*GetRetentionPolicyResponse) ProtoMessage() {}
 
-func (x *GetExecutionRetentionResponse) ProtoReflect() protoreflect.Message {
+func (x *GetRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2785,49 +2784,49 @@ func (x *GetExecutionRetentionResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetExecutionRetentionResponse.ProtoReflect.Descriptor instead.
-func (*GetExecutionRetentionResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetRetentionPolicyResponse.ProtoReflect.Descriptor instead.
+func (*GetRetentionPolicyResponse) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{46}
 }
 
-func (x *GetExecutionRetentionResponse) GetTemporalNamespace() string {
+func (x *GetRetentionPolicyResponse) GetPolicy() *RetentionPolicy {
 	if x != nil {
-		return x.TemporalNamespace
-	}
-	return ""
-}
-
-func (x *GetExecutionRetentionResponse) GetRetention() *durationpb.Duration {
-	if x != nil {
-		return x.Retention
+		return x.Policy
 	}
 	return nil
 }
 
-type UpdateExecutionRetentionRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// retention is the workflow-execution retention to set on this
-	// deployment's one Temporal cluster namespace. A non-positive value is
-	// rejected with INVALID_ARGUMENT before any call leaves this process.
-	Retention     *durationpb.Duration `protobuf:"bytes,1,opt,name=retention,proto3" json:"retention,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+func (x *GetRetentionPolicyResponse) GetNamespaceRetentionEnforced() bool {
+	if x != nil {
+		return x.NamespaceRetentionEnforced
+	}
+	return false
 }
 
-func (x *UpdateExecutionRetentionRequest) Reset() {
-	*x = UpdateExecutionRetentionRequest{}
+type UpdateRetentionPolicyRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// max_run_retention is the new deployment maximum. A non-positive or
+	// malformed value is rejected with INVALID_ARGUMENT before any call leaves
+	// this process.
+	MaxRunRetention *durationpb.Duration `protobuf:"bytes,1,opt,name=max_run_retention,json=maxRunRetention,proto3" json:"max_run_retention,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *UpdateRetentionPolicyRequest) Reset() {
+	*x = UpdateRetentionPolicyRequest{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UpdateExecutionRetentionRequest) String() string {
+func (x *UpdateRetentionPolicyRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UpdateExecutionRetentionRequest) ProtoMessage() {}
+func (*UpdateRetentionPolicyRequest) ProtoMessage() {}
 
-func (x *UpdateExecutionRetentionRequest) ProtoReflect() protoreflect.Message {
+func (x *UpdateRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2839,44 +2838,40 @@ func (x *UpdateExecutionRetentionRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UpdateExecutionRetentionRequest.ProtoReflect.Descriptor instead.
-func (*UpdateExecutionRetentionRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use UpdateRetentionPolicyRequest.ProtoReflect.Descriptor instead.
+func (*UpdateRetentionPolicyRequest) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{47}
 }
 
-func (x *UpdateExecutionRetentionRequest) GetRetention() *durationpb.Duration {
+func (x *UpdateRetentionPolicyRequest) GetMaxRunRetention() *durationpb.Duration {
 	if x != nil {
-		return x.Retention
+		return x.MaxRunRetention
 	}
 	return nil
 }
 
-type UpdateExecutionRetentionResponse struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// temporal_namespace is the Temporal namespace that was changed.
-	TemporalNamespace string `protobuf:"bytes,1,opt,name=temporal_namespace,json=temporalNamespace,proto3" json:"temporal_namespace,omitempty"`
-	// retention is the value Temporal CONFIRMED after the write — read back
-	// from Temporal's own UpdateNamespace response, not echoed from the
-	// request.
-	Retention     *durationpb.Duration `protobuf:"bytes,2,opt,name=retention,proto3" json:"retention,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+type UpdateRetentionPolicyResponse struct {
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	Policy                     *RetentionPolicy       `protobuf:"bytes,1,opt,name=policy,proto3" json:"policy,omitempty"`
+	NamespaceRetentionEnforced bool                   `protobuf:"varint,2,opt,name=namespace_retention_enforced,json=namespaceRetentionEnforced,proto3" json:"namespace_retention_enforced,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
-func (x *UpdateExecutionRetentionResponse) Reset() {
-	*x = UpdateExecutionRetentionResponse{}
+func (x *UpdateRetentionPolicyResponse) Reset() {
+	*x = UpdateRetentionPolicyResponse{}
 	mi := &file_orkstack_v1_service_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UpdateExecutionRetentionResponse) String() string {
+func (x *UpdateRetentionPolicyResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UpdateExecutionRetentionResponse) ProtoMessage() {}
+func (*UpdateRetentionPolicyResponse) ProtoMessage() {}
 
-func (x *UpdateExecutionRetentionResponse) ProtoReflect() protoreflect.Message {
+func (x *UpdateRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_orkstack_v1_service_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2888,30 +2883,30 @@ func (x *UpdateExecutionRetentionResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UpdateExecutionRetentionResponse.ProtoReflect.Descriptor instead.
-func (*UpdateExecutionRetentionResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use UpdateRetentionPolicyResponse.ProtoReflect.Descriptor instead.
+func (*UpdateRetentionPolicyResponse) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{48}
 }
 
-func (x *UpdateExecutionRetentionResponse) GetTemporalNamespace() string {
+func (x *UpdateRetentionPolicyResponse) GetPolicy() *RetentionPolicy {
 	if x != nil {
-		return x.TemporalNamespace
-	}
-	return ""
-}
-
-func (x *UpdateExecutionRetentionResponse) GetRetention() *durationpb.Duration {
-	if x != nil {
-		return x.Retention
+		return x.Policy
 	}
 	return nil
+}
+
+func (x *UpdateRetentionPolicyResponse) GetNamespaceRetentionEnforced() bool {
+	if x != nil {
+		return x.NamespaceRetentionEnforced
+	}
+	return false
 }
 
 var File_orkstack_v1_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x19orkstack/v1/service.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\x1a\x19orkstack/v1/orkflow.proto\x1a\x1borkstack/v1/namespace.proto\"\x9e\x01\n" +
+	"\x19orkstack/v1/service.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x15orkstack/v1/run.proto\x1a\x19orkstack/v1/orkflow.proto\x1a\x1borkstack/v1/namespace.proto\x1a\x1borkstack/v1/retention.proto\"\x9e\x01\n" +
 	"\x13ApplyOrkflowRequest\x12\x12\n" +
 	"\x04yaml\x18\x01 \x01(\tR\x04yaml\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12!\n" +
@@ -3084,16 +3079,16 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x11artifact_location\x18\a \x01(\tR\x10artifactLocation\x12)\n" +
 	"\x10temporal_address\x18\b \x01(\tR\x0ftemporalAddress\x12;\n" +
 	"\vserver_time\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"serverTime\"\x1e\n" +
-	"\x1cGetExecutionRetentionRequest\"\x87\x01\n" +
-	"\x1dGetExecutionRetentionResponse\x12-\n" +
-	"\x12temporal_namespace\x18\x01 \x01(\tR\x11temporalNamespace\x127\n" +
-	"\tretention\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\tretention\"Z\n" +
-	"\x1fUpdateExecutionRetentionRequest\x127\n" +
-	"\tretention\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\tretention\"\x8a\x01\n" +
-	" UpdateExecutionRetentionResponse\x12-\n" +
-	"\x12temporal_namespace\x18\x01 \x01(\tR\x11temporalNamespace\x127\n" +
-	"\tretention\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\tretention2\xae\x05\n" +
+	"serverTime\"\x1b\n" +
+	"\x19GetRetentionPolicyRequest\"\x94\x01\n" +
+	"\x1aGetRetentionPolicyResponse\x124\n" +
+	"\x06policy\x18\x01 \x01(\v2\x1c.orkstack.v1.RetentionPolicyR\x06policy\x12@\n" +
+	"\x1cnamespace_retention_enforced\x18\x02 \x01(\bR\x1anamespaceRetentionEnforced\"e\n" +
+	"\x1cUpdateRetentionPolicyRequest\x12E\n" +
+	"\x11max_run_retention\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxRunRetention\"\x97\x01\n" +
+	"\x1dUpdateRetentionPolicyResponse\x124\n" +
+	"\x06policy\x18\x01 \x01(\v2\x1c.orkstack.v1.RetentionPolicyR\x06policy\x12@\n" +
+	"\x1cnamespace_retention_enforced\x18\x02 \x01(\bR\x1anamespaceRetentionEnforced2\xae\x05\n" +
 	"\x0eOrkflowService\x12S\n" +
 	"\fApplyOrkflow\x12 .orkstack.v1.ApplyOrkflowRequest\x1a!.orkstack.v1.ApplyOrkflowResponse\x12M\n" +
 	"\n" +
@@ -3120,11 +3115,11 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\tListPools\x12\x1d.orkstack.v1.ListPoolsRequest\x1a\x1e.orkstack.v1.ListPoolsResponse2\xc4\x01\n" +
 	"\x0fActivityService\x12Y\n" +
 	"\x0eListActivities\x12\".orkstack.v1.ListActivitiesRequest\x1a#.orkstack.v1.ListActivitiesResponse\x12V\n" +
-	"\rDescribeOrker\x12!.orkstack.v1.DescribeOrkerRequest\x1a\".orkstack.v1.DescribeOrkerResponse2\xd0\x02\n" +
+	"\rDescribeOrker\x12!.orkstack.v1.DescribeOrkerRequest\x1a\".orkstack.v1.DescribeOrkerResponse2\xbe\x02\n" +
 	"\rSystemService\x12V\n" +
-	"\rGetSystemInfo\x12!.orkstack.v1.GetSystemInfoRequest\x1a\".orkstack.v1.GetSystemInfoResponse\x12n\n" +
-	"\x15GetExecutionRetention\x12).orkstack.v1.GetExecutionRetentionRequest\x1a*.orkstack.v1.GetExecutionRetentionResponse\x12w\n" +
-	"\x18UpdateExecutionRetention\x12,.orkstack.v1.UpdateExecutionRetentionRequest\x1a-.orkstack.v1.UpdateExecutionRetentionResponseB\xa8\x01\n" +
+	"\rGetSystemInfo\x12!.orkstack.v1.GetSystemInfoRequest\x1a\".orkstack.v1.GetSystemInfoResponse\x12e\n" +
+	"\x12GetRetentionPolicy\x12&.orkstack.v1.GetRetentionPolicyRequest\x1a'.orkstack.v1.GetRetentionPolicyResponse\x12n\n" +
+	"\x15UpdateRetentionPolicy\x12).orkstack.v1.UpdateRetentionPolicyRequest\x1a*.orkstack.v1.UpdateRetentionPolicyResponseB\xa8\x01\n" +
 	"\x0fcom.orkstack.v1B\fServiceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -3186,10 +3181,10 @@ var file_orkstack_v1_service_proto_goTypes = []any{
 	(*DescribeOrkerResponse)(nil),            // 42: orkstack.v1.DescribeOrkerResponse
 	(*GetSystemInfoRequest)(nil),             // 43: orkstack.v1.GetSystemInfoRequest
 	(*GetSystemInfoResponse)(nil),            // 44: orkstack.v1.GetSystemInfoResponse
-	(*GetExecutionRetentionRequest)(nil),     // 45: orkstack.v1.GetExecutionRetentionRequest
-	(*GetExecutionRetentionResponse)(nil),    // 46: orkstack.v1.GetExecutionRetentionResponse
-	(*UpdateExecutionRetentionRequest)(nil),  // 47: orkstack.v1.UpdateExecutionRetentionRequest
-	(*UpdateExecutionRetentionResponse)(nil), // 48: orkstack.v1.UpdateExecutionRetentionResponse
+	(*GetRetentionPolicyRequest)(nil),        // 45: orkstack.v1.GetRetentionPolicyRequest
+	(*GetRetentionPolicyResponse)(nil),       // 46: orkstack.v1.GetRetentionPolicyResponse
+	(*UpdateRetentionPolicyRequest)(nil),     // 47: orkstack.v1.UpdateRetentionPolicyRequest
+	(*UpdateRetentionPolicyResponse)(nil),    // 48: orkstack.v1.UpdateRetentionPolicyResponse
 	(*Orkflow)(nil),                          // 49: orkstack.v1.Orkflow
 	(*timestamppb.Timestamp)(nil),            // 50: google.protobuf.Timestamp
 	(*Payload)(nil),                          // 51: orkstack.v1.Payload
@@ -3198,8 +3193,9 @@ var file_orkstack_v1_service_proto_goTypes = []any{
 	(*Namespace)(nil),                        // 54: orkstack.v1.Namespace
 	(*Pool)(nil),                             // 55: orkstack.v1.Pool
 	(*DescribeOrkerResult)(nil),              // 56: orkstack.v1.DescribeOrkerResult
-	(*durationpb.Duration)(nil),              // 57: google.protobuf.Duration
-	(*Event)(nil),                            // 58: orkstack.v1.Event
+	(*RetentionPolicy)(nil),                  // 57: orkstack.v1.RetentionPolicy
+	(*durationpb.Duration)(nil),              // 58: google.protobuf.Duration
+	(*Event)(nil),                            // 59: orkstack.v1.Event
 }
 var file_orkstack_v1_service_proto_depIdxs = []int32{
 	49, // 0: orkstack.v1.ApplyOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
@@ -3226,9 +3222,9 @@ var file_orkstack_v1_service_proto_depIdxs = []int32{
 	39, // 21: orkstack.v1.ListActivitiesResponse.activities:type_name -> orkstack.v1.ActivityInfo
 	56, // 22: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
 	50, // 23: orkstack.v1.GetSystemInfoResponse.server_time:type_name -> google.protobuf.Timestamp
-	57, // 24: orkstack.v1.GetExecutionRetentionResponse.retention:type_name -> google.protobuf.Duration
-	57, // 25: orkstack.v1.UpdateExecutionRetentionRequest.retention:type_name -> google.protobuf.Duration
-	57, // 26: orkstack.v1.UpdateExecutionRetentionResponse.retention:type_name -> google.protobuf.Duration
+	57, // 24: orkstack.v1.GetRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
+	58, // 25: orkstack.v1.UpdateRetentionPolicyRequest.max_run_retention:type_name -> google.protobuf.Duration
+	57, // 26: orkstack.v1.UpdateRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
 	0,  // 27: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
 	2,  // 28: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
 	4,  // 29: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
@@ -3251,8 +3247,8 @@ var file_orkstack_v1_service_proto_depIdxs = []int32{
 	38, // 46: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
 	41, // 47: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
 	43, // 48: orkstack.v1.SystemService.GetSystemInfo:input_type -> orkstack.v1.GetSystemInfoRequest
-	45, // 49: orkstack.v1.SystemService.GetExecutionRetention:input_type -> orkstack.v1.GetExecutionRetentionRequest
-	47, // 50: orkstack.v1.SystemService.UpdateExecutionRetention:input_type -> orkstack.v1.UpdateExecutionRetentionRequest
+	45, // 49: orkstack.v1.SystemService.GetRetentionPolicy:input_type -> orkstack.v1.GetRetentionPolicyRequest
+	47, // 50: orkstack.v1.SystemService.UpdateRetentionPolicy:input_type -> orkstack.v1.UpdateRetentionPolicyRequest
 	1,  // 51: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
 	3,  // 52: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
 	5,  // 53: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
@@ -3264,7 +3260,7 @@ var file_orkstack_v1_service_proto_depIdxs = []int32{
 	18, // 59: orkstack.v1.RunService.GetRun:output_type -> orkstack.v1.GetRunResponse
 	20, // 60: orkstack.v1.RunService.ListRuns:output_type -> orkstack.v1.ListRunsResponse
 	22, // 61: orkstack.v1.RunService.CancelRun:output_type -> orkstack.v1.CancelRunResponse
-	58, // 62: orkstack.v1.RunService.StreamEvents:output_type -> orkstack.v1.Event
+	59, // 62: orkstack.v1.RunService.StreamEvents:output_type -> orkstack.v1.Event
 	25, // 63: orkstack.v1.RunService.StreamTaskLogs:output_type -> orkstack.v1.TaskLogChunk
 	27, // 64: orkstack.v1.NamespaceService.CreateNamespace:output_type -> orkstack.v1.CreateNamespaceResponse
 	29, // 65: orkstack.v1.NamespaceService.GetNamespace:output_type -> orkstack.v1.GetNamespaceResponse
@@ -3275,8 +3271,8 @@ var file_orkstack_v1_service_proto_depIdxs = []int32{
 	40, // 70: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
 	42, // 71: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
 	44, // 72: orkstack.v1.SystemService.GetSystemInfo:output_type -> orkstack.v1.GetSystemInfoResponse
-	46, // 73: orkstack.v1.SystemService.GetExecutionRetention:output_type -> orkstack.v1.GetExecutionRetentionResponse
-	48, // 74: orkstack.v1.SystemService.UpdateExecutionRetention:output_type -> orkstack.v1.UpdateExecutionRetentionResponse
+	46, // 73: orkstack.v1.SystemService.GetRetentionPolicy:output_type -> orkstack.v1.GetRetentionPolicyResponse
+	48, // 74: orkstack.v1.SystemService.UpdateRetentionPolicy:output_type -> orkstack.v1.UpdateRetentionPolicyResponse
 	51, // [51:75] is the sub-list for method output_type
 	27, // [27:51] is the sub-list for method input_type
 	27, // [27:27] is the sub-list for extension type_name
@@ -3294,6 +3290,7 @@ func file_orkstack_v1_service_proto_init() {
 	file_orkstack_v1_run_proto_init()
 	file_orkstack_v1_orkflow_proto_init()
 	file_orkstack_v1_namespace_proto_init()
+	file_orkstack_v1_retention_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

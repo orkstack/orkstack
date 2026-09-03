@@ -9,6 +9,7 @@ import "orkstack/v1/common.proto";
 import "orkstack/v1/run.proto";
 import "orkstack/v1/orkflow.proto";
 import "orkstack/v1/namespace.proto";
+import "orkstack/v1/retention.proto";
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
 // OrkflowService manages orkflow definitions (the compiled DSL).
@@ -483,37 +484,22 @@ service SystemService {
   // purpose, because that is what an operator behind a load balancer needs
   rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse);
 
-  // GetExecutionRetention reads Temporal's CURRENT workflow-execution
-  // retention for this deployment's ONE Temporal cluster namespace
-  // (internal/engine/router.go's SingleRouter serves every OrkStack
-  // namespace from that one binding). UNLIKE GetSystemInfo above, this RPC
-  // is a LIVE READ observed from the cluster right now (Temporal's
-  // DescribeNamespace) — it does NOT weaken or contradict GetSystemInfo's
-  // "every field is configuration-derived, not observed" guarantee, which
-  // still holds for every field of THAT message; this is a different RPC
-  // answering a different question.
+  // GetRetentionPolicy reads the deployment's maximum run retention: the
+  // ceiling on every namespace's run_retention, and what a namespace that
+  // sets none inherits. Read from the store, so any replica answers it.
   //
-  // This is deployment-wide, not per-OrkStack-Namespace: it has nothing to
-  // do with orkstack.v1.Namespace, NamespaceService or `orkctl namespace
-  // ...`, which is an already-shipped registry entity owning orkflow names,
-  // runs and pool defaults. There is exactly one Temporal namespace behind
-  // this whole deployment, and this RPC describes that one setting.
-  rpc GetExecutionRetention(GetExecutionRetentionRequest) returns (GetExecutionRetentionResponse);
+  // It is deployment-wide on purpose. Per-namespace retention is a field of
+  // orkstack.v1.Namespace (NamespaceService); this is the bound on all of
+  // them.
+  rpc GetRetentionPolicy(GetRetentionPolicyRequest) returns (GetRetentionPolicyResponse);
 
-  // UpdateExecutionRetention CHANGES that same cluster-wide setting. UNLIKE
-  // GetSystemInfo, this RPC is a LIVE WRITE against the cluster (Temporal's
-  // UpdateNamespace, WorkflowExecutionRetentionPeriod) — again, no claim
-  // about GetSystemInfo's own fields changes because of this RPC existing.
-  //
-  // A non-positive retention is rejected with INVALID_ARGUMENT before any
-  // call leaves this process. A positive retention Temporal itself refuses
-  // (for example, below the cluster's own configured minimum) comes back to
-  // the caller as Temporal reported it — never swallowed into a default, a
-  // zero value, or a fabricated success.
-  //
-  // Deployment-wide, not per-OrkStack-Namespace, for the same reason as
-  // GetExecutionRetention above.
-  rpc UpdateExecutionRetention(UpdateExecutionRetentionRequest) returns (UpdateExecutionRetentionResponse);
+  // UpdateRetentionPolicy changes the maximum. A non-positive or malformed
+  // duration is INVALID_ARGUMENT before anything is written. Lowering it
+  // below a namespace's explicit run_retention is FAILED_PRECONDITION naming
+  // that namespace — lower the namespace first. Namespaces that set nothing
+  // follow the new maximum immediately: finished runs already older than it
+  // are retired on the next cleanup pass.
+  rpc UpdateRetentionPolicy(UpdateRetentionPolicyRequest) returns (UpdateRetentionPolicyResponse);
 }
 message GetSystemInfoRequest {}
 message GetSystemInfoResponse {
@@ -554,29 +540,23 @@ message GetSystemInfoResponse {
   google.protobuf.Timestamp server_time = 9;
 }
 
-message GetExecutionRetentionRequest {}
-message GetExecutionRetentionResponse {
-  // temporal_namespace is the Temporal namespace this retention describes:
-  // this deployment's ONE Temporal cluster namespace, never an
-  // orkstack.v1.Namespace name.
-  string temporal_namespace = 1;
-  // retention is Temporal's CURRENT workflow-execution retention, OBSERVED
-  // live from the cluster (DescribeNamespace) — not configuration echoed
-  // back, unlike every field of GetSystemInfoResponse above.
-  google.protobuf.Duration retention = 2;
+message GetRetentionPolicyRequest {}
+message GetRetentionPolicyResponse {
+  RetentionPolicy policy = 1;
+  // namespace_retention_enforced reports whether this deployment runs the
+  // worker that retires runs at their namespace's retention
+  // (ORK_CLEANUP_ENABLED). When false, every run is kept for the maximum
+  // plus the operator's enforcement margin and a tighter namespace value has
+  // no effect yet. CONFIGURATION-DERIVED, like GetSystemInfo's fields.
+  bool namespace_retention_enforced = 2;
 }
-
-message UpdateExecutionRetentionRequest {
-  // retention is the workflow-execution retention to set on this
-  // deployment's one Temporal cluster namespace. A non-positive value is
-  // rejected with INVALID_ARGUMENT before any call leaves this process.
-  google.protobuf.Duration retention = 1;
+message UpdateRetentionPolicyRequest {
+  // max_run_retention is the new deployment maximum. A non-positive or
+  // malformed value is rejected with INVALID_ARGUMENT before any call leaves
+  // this process.
+  google.protobuf.Duration max_run_retention = 1;
 }
-message UpdateExecutionRetentionResponse {
-  // temporal_namespace is the Temporal namespace that was changed.
-  string temporal_namespace = 1;
-  // retention is the value Temporal CONFIRMED after the write — read back
-  // from Temporal's own UpdateNamespace response, not echoed from the
-  // request.
-  google.protobuf.Duration retention = 2;
+message UpdateRetentionPolicyResponse {
+  RetentionPolicy policy = 1;
+  bool namespace_retention_enforced = 2;
 }

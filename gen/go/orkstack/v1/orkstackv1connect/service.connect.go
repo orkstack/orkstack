@@ -102,12 +102,12 @@ const (
 	// SystemServiceGetSystemInfoProcedure is the fully-qualified name of the SystemService's
 	// GetSystemInfo RPC.
 	SystemServiceGetSystemInfoProcedure = "/orkstack.v1.SystemService/GetSystemInfo"
-	// SystemServiceGetExecutionRetentionProcedure is the fully-qualified name of the SystemService's
-	// GetExecutionRetention RPC.
-	SystemServiceGetExecutionRetentionProcedure = "/orkstack.v1.SystemService/GetExecutionRetention"
-	// SystemServiceUpdateExecutionRetentionProcedure is the fully-qualified name of the SystemService's
-	// UpdateExecutionRetention RPC.
-	SystemServiceUpdateExecutionRetentionProcedure = "/orkstack.v1.SystemService/UpdateExecutionRetention"
+	// SystemServiceGetRetentionPolicyProcedure is the fully-qualified name of the SystemService's
+	// GetRetentionPolicy RPC.
+	SystemServiceGetRetentionPolicyProcedure = "/orkstack.v1.SystemService/GetRetentionPolicy"
+	// SystemServiceUpdateRetentionPolicyProcedure is the fully-qualified name of the SystemService's
+	// UpdateRetentionPolicy RPC.
+	SystemServiceUpdateRetentionPolicyProcedure = "/orkstack.v1.SystemService/UpdateRetentionPolicy"
 )
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
@@ -1025,36 +1025,21 @@ type SystemServiceClient interface {
 	// the same reply. This one describes the replica in front of you, on
 	// purpose, because that is what an operator behind a load balancer needs
 	GetSystemInfo(context.Context, *connect.Request[v1.GetSystemInfoRequest]) (*connect.Response[v1.GetSystemInfoResponse], error)
-	// GetExecutionRetention reads Temporal's CURRENT workflow-execution
-	// retention for this deployment's ONE Temporal cluster namespace
-	// (internal/engine/router.go's SingleRouter serves every OrkStack
-	// namespace from that one binding). UNLIKE GetSystemInfo above, this RPC
-	// is a LIVE READ observed from the cluster right now (Temporal's
-	// DescribeNamespace) — it does NOT weaken or contradict GetSystemInfo's
-	// "every field is configuration-derived, not observed" guarantee, which
-	// still holds for every field of THAT message; this is a different RPC
-	// answering a different question.
+	// GetRetentionPolicy reads the deployment's maximum run retention: the
+	// ceiling on every namespace's run_retention, and what a namespace that
+	// sets none inherits. Read from the store, so any replica answers it.
 	//
-	// This is deployment-wide, not per-OrkStack-Namespace: it has nothing to
-	// do with orkstack.v1.Namespace, NamespaceService or `orkctl namespace
-	// ...`, which is an already-shipped registry entity owning orkflow names,
-	// runs and pool defaults. There is exactly one Temporal namespace behind
-	// this whole deployment, and this RPC describes that one setting.
-	GetExecutionRetention(context.Context, *connect.Request[v1.GetExecutionRetentionRequest]) (*connect.Response[v1.GetExecutionRetentionResponse], error)
-	// UpdateExecutionRetention CHANGES that same cluster-wide setting. UNLIKE
-	// GetSystemInfo, this RPC is a LIVE WRITE against the cluster (Temporal's
-	// UpdateNamespace, WorkflowExecutionRetentionPeriod) — again, no claim
-	// about GetSystemInfo's own fields changes because of this RPC existing.
-	//
-	// A non-positive retention is rejected with INVALID_ARGUMENT before any
-	// call leaves this process. A positive retention Temporal itself refuses
-	// (for example, below the cluster's own configured minimum) comes back to
-	// the caller as Temporal reported it — never swallowed into a default, a
-	// zero value, or a fabricated success.
-	//
-	// Deployment-wide, not per-OrkStack-Namespace, for the same reason as
-	// GetExecutionRetention above.
-	UpdateExecutionRetention(context.Context, *connect.Request[v1.UpdateExecutionRetentionRequest]) (*connect.Response[v1.UpdateExecutionRetentionResponse], error)
+	// It is deployment-wide on purpose. Per-namespace retention is a field of
+	// orkstack.v1.Namespace (NamespaceService); this is the bound on all of
+	// them.
+	GetRetentionPolicy(context.Context, *connect.Request[v1.GetRetentionPolicyRequest]) (*connect.Response[v1.GetRetentionPolicyResponse], error)
+	// UpdateRetentionPolicy changes the maximum. A non-positive or malformed
+	// duration is INVALID_ARGUMENT before anything is written. Lowering it
+	// below a namespace's explicit run_retention is FAILED_PRECONDITION naming
+	// that namespace — lower the namespace first. Namespaces that set nothing
+	// follow the new maximum immediately: finished runs already older than it
+	// are retired on the next cleanup pass.
+	UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error)
 }
 
 // NewSystemServiceClient constructs a client for the orkstack.v1.SystemService service. By default,
@@ -1074,16 +1059,16 @@ func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(systemServiceMethods.ByName("GetSystemInfo")),
 			connect.WithClientOptions(opts...),
 		),
-		getExecutionRetention: connect.NewClient[v1.GetExecutionRetentionRequest, v1.GetExecutionRetentionResponse](
+		getRetentionPolicy: connect.NewClient[v1.GetRetentionPolicyRequest, v1.GetRetentionPolicyResponse](
 			httpClient,
-			baseURL+SystemServiceGetExecutionRetentionProcedure,
-			connect.WithSchema(systemServiceMethods.ByName("GetExecutionRetention")),
+			baseURL+SystemServiceGetRetentionPolicyProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("GetRetentionPolicy")),
 			connect.WithClientOptions(opts...),
 		),
-		updateExecutionRetention: connect.NewClient[v1.UpdateExecutionRetentionRequest, v1.UpdateExecutionRetentionResponse](
+		updateRetentionPolicy: connect.NewClient[v1.UpdateRetentionPolicyRequest, v1.UpdateRetentionPolicyResponse](
 			httpClient,
-			baseURL+SystemServiceUpdateExecutionRetentionProcedure,
-			connect.WithSchema(systemServiceMethods.ByName("UpdateExecutionRetention")),
+			baseURL+SystemServiceUpdateRetentionPolicyProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("UpdateRetentionPolicy")),
 			connect.WithClientOptions(opts...),
 		),
 	}
@@ -1091,9 +1076,9 @@ func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 
 // systemServiceClient implements SystemServiceClient.
 type systemServiceClient struct {
-	getSystemInfo            *connect.Client[v1.GetSystemInfoRequest, v1.GetSystemInfoResponse]
-	getExecutionRetention    *connect.Client[v1.GetExecutionRetentionRequest, v1.GetExecutionRetentionResponse]
-	updateExecutionRetention *connect.Client[v1.UpdateExecutionRetentionRequest, v1.UpdateExecutionRetentionResponse]
+	getSystemInfo         *connect.Client[v1.GetSystemInfoRequest, v1.GetSystemInfoResponse]
+	getRetentionPolicy    *connect.Client[v1.GetRetentionPolicyRequest, v1.GetRetentionPolicyResponse]
+	updateRetentionPolicy *connect.Client[v1.UpdateRetentionPolicyRequest, v1.UpdateRetentionPolicyResponse]
 }
 
 // GetSystemInfo calls orkstack.v1.SystemService.GetSystemInfo.
@@ -1101,14 +1086,14 @@ func (c *systemServiceClient) GetSystemInfo(ctx context.Context, req *connect.Re
 	return c.getSystemInfo.CallUnary(ctx, req)
 }
 
-// GetExecutionRetention calls orkstack.v1.SystemService.GetExecutionRetention.
-func (c *systemServiceClient) GetExecutionRetention(ctx context.Context, req *connect.Request[v1.GetExecutionRetentionRequest]) (*connect.Response[v1.GetExecutionRetentionResponse], error) {
-	return c.getExecutionRetention.CallUnary(ctx, req)
+// GetRetentionPolicy calls orkstack.v1.SystemService.GetRetentionPolicy.
+func (c *systemServiceClient) GetRetentionPolicy(ctx context.Context, req *connect.Request[v1.GetRetentionPolicyRequest]) (*connect.Response[v1.GetRetentionPolicyResponse], error) {
+	return c.getRetentionPolicy.CallUnary(ctx, req)
 }
 
-// UpdateExecutionRetention calls orkstack.v1.SystemService.UpdateExecutionRetention.
-func (c *systemServiceClient) UpdateExecutionRetention(ctx context.Context, req *connect.Request[v1.UpdateExecutionRetentionRequest]) (*connect.Response[v1.UpdateExecutionRetentionResponse], error) {
-	return c.updateExecutionRetention.CallUnary(ctx, req)
+// UpdateRetentionPolicy calls orkstack.v1.SystemService.UpdateRetentionPolicy.
+func (c *systemServiceClient) UpdateRetentionPolicy(ctx context.Context, req *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error) {
+	return c.updateRetentionPolicy.CallUnary(ctx, req)
 }
 
 // SystemServiceHandler is an implementation of the orkstack.v1.SystemService service.
@@ -1126,36 +1111,21 @@ type SystemServiceHandler interface {
 	// the same reply. This one describes the replica in front of you, on
 	// purpose, because that is what an operator behind a load balancer needs
 	GetSystemInfo(context.Context, *connect.Request[v1.GetSystemInfoRequest]) (*connect.Response[v1.GetSystemInfoResponse], error)
-	// GetExecutionRetention reads Temporal's CURRENT workflow-execution
-	// retention for this deployment's ONE Temporal cluster namespace
-	// (internal/engine/router.go's SingleRouter serves every OrkStack
-	// namespace from that one binding). UNLIKE GetSystemInfo above, this RPC
-	// is a LIVE READ observed from the cluster right now (Temporal's
-	// DescribeNamespace) — it does NOT weaken or contradict GetSystemInfo's
-	// "every field is configuration-derived, not observed" guarantee, which
-	// still holds for every field of THAT message; this is a different RPC
-	// answering a different question.
+	// GetRetentionPolicy reads the deployment's maximum run retention: the
+	// ceiling on every namespace's run_retention, and what a namespace that
+	// sets none inherits. Read from the store, so any replica answers it.
 	//
-	// This is deployment-wide, not per-OrkStack-Namespace: it has nothing to
-	// do with orkstack.v1.Namespace, NamespaceService or `orkctl namespace
-	// ...`, which is an already-shipped registry entity owning orkflow names,
-	// runs and pool defaults. There is exactly one Temporal namespace behind
-	// this whole deployment, and this RPC describes that one setting.
-	GetExecutionRetention(context.Context, *connect.Request[v1.GetExecutionRetentionRequest]) (*connect.Response[v1.GetExecutionRetentionResponse], error)
-	// UpdateExecutionRetention CHANGES that same cluster-wide setting. UNLIKE
-	// GetSystemInfo, this RPC is a LIVE WRITE against the cluster (Temporal's
-	// UpdateNamespace, WorkflowExecutionRetentionPeriod) — again, no claim
-	// about GetSystemInfo's own fields changes because of this RPC existing.
-	//
-	// A non-positive retention is rejected with INVALID_ARGUMENT before any
-	// call leaves this process. A positive retention Temporal itself refuses
-	// (for example, below the cluster's own configured minimum) comes back to
-	// the caller as Temporal reported it — never swallowed into a default, a
-	// zero value, or a fabricated success.
-	//
-	// Deployment-wide, not per-OrkStack-Namespace, for the same reason as
-	// GetExecutionRetention above.
-	UpdateExecutionRetention(context.Context, *connect.Request[v1.UpdateExecutionRetentionRequest]) (*connect.Response[v1.UpdateExecutionRetentionResponse], error)
+	// It is deployment-wide on purpose. Per-namespace retention is a field of
+	// orkstack.v1.Namespace (NamespaceService); this is the bound on all of
+	// them.
+	GetRetentionPolicy(context.Context, *connect.Request[v1.GetRetentionPolicyRequest]) (*connect.Response[v1.GetRetentionPolicyResponse], error)
+	// UpdateRetentionPolicy changes the maximum. A non-positive or malformed
+	// duration is INVALID_ARGUMENT before anything is written. Lowering it
+	// below a namespace's explicit run_retention is FAILED_PRECONDITION naming
+	// that namespace — lower the namespace first. Namespaces that set nothing
+	// follow the new maximum immediately: finished runs already older than it
+	// are retired on the next cleanup pass.
+	UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error)
 }
 
 // NewSystemServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1171,26 +1141,26 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(systemServiceMethods.ByName("GetSystemInfo")),
 		connect.WithHandlerOptions(opts...),
 	)
-	systemServiceGetExecutionRetentionHandler := connect.NewUnaryHandler(
-		SystemServiceGetExecutionRetentionProcedure,
-		svc.GetExecutionRetention,
-		connect.WithSchema(systemServiceMethods.ByName("GetExecutionRetention")),
+	systemServiceGetRetentionPolicyHandler := connect.NewUnaryHandler(
+		SystemServiceGetRetentionPolicyProcedure,
+		svc.GetRetentionPolicy,
+		connect.WithSchema(systemServiceMethods.ByName("GetRetentionPolicy")),
 		connect.WithHandlerOptions(opts...),
 	)
-	systemServiceUpdateExecutionRetentionHandler := connect.NewUnaryHandler(
-		SystemServiceUpdateExecutionRetentionProcedure,
-		svc.UpdateExecutionRetention,
-		connect.WithSchema(systemServiceMethods.ByName("UpdateExecutionRetention")),
+	systemServiceUpdateRetentionPolicyHandler := connect.NewUnaryHandler(
+		SystemServiceUpdateRetentionPolicyProcedure,
+		svc.UpdateRetentionPolicy,
+		connect.WithSchema(systemServiceMethods.ByName("UpdateRetentionPolicy")),
 		connect.WithHandlerOptions(opts...),
 	)
 	return "/orkstack.v1.SystemService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SystemServiceGetSystemInfoProcedure:
 			systemServiceGetSystemInfoHandler.ServeHTTP(w, r)
-		case SystemServiceGetExecutionRetentionProcedure:
-			systemServiceGetExecutionRetentionHandler.ServeHTTP(w, r)
-		case SystemServiceUpdateExecutionRetentionProcedure:
-			systemServiceUpdateExecutionRetentionHandler.ServeHTTP(w, r)
+		case SystemServiceGetRetentionPolicyProcedure:
+			systemServiceGetRetentionPolicyHandler.ServeHTTP(w, r)
+		case SystemServiceUpdateRetentionPolicyProcedure:
+			systemServiceUpdateRetentionPolicyHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1204,10 +1174,10 @@ func (UnimplementedSystemServiceHandler) GetSystemInfo(context.Context, *connect
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.GetSystemInfo is not implemented"))
 }
 
-func (UnimplementedSystemServiceHandler) GetExecutionRetention(context.Context, *connect.Request[v1.GetExecutionRetentionRequest]) (*connect.Response[v1.GetExecutionRetentionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.GetExecutionRetention is not implemented"))
+func (UnimplementedSystemServiceHandler) GetRetentionPolicy(context.Context, *connect.Request[v1.GetRetentionPolicyRequest]) (*connect.Response[v1.GetRetentionPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.GetRetentionPolicy is not implemented"))
 }
 
-func (UnimplementedSystemServiceHandler) UpdateExecutionRetention(context.Context, *connect.Request[v1.UpdateExecutionRetentionRequest]) (*connect.Response[v1.UpdateExecutionRetentionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.UpdateExecutionRetention is not implemented"))
+func (UnimplementedSystemServiceHandler) UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.UpdateRetentionPolicy is not implemented"))
 }

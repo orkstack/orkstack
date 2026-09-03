@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package orkstack.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
@@ -66,6 +67,18 @@ message Namespace {
   // the document — it names the document's stored bytes, so a copy inside
   // them could only ever be the token of the write before.
   string etag = 8;
+  // run_retention is how long a finished run of this namespace stays readable
+  // before OrkStack retires it and reclaims its run-scoped storage. Unset
+  // means "the deployment maximum" (SystemService.GetRetentionPolicy), which
+  // is also the most any namespace may ask for: a value above the maximum is
+  // refused with INVALID_ARGUMENT, and the maximum applies even to a stored
+  // value that a later, lower maximum left above it.
+  //
+  // It counts from the moment the run finished, never from submission: a run
+  // that executed for two days under a 72h retention is readable for 72h after
+  // it ended. Resolution is archive.EffectiveRunRetention, the one place that
+  // implements it — the same shape default_pool has in DefaultPoolFor.
+  google.protobuf.Duration run_retention = 9;
 }
 
 // Pool is a set of Orkers, observed live.
