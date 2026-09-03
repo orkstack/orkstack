@@ -87,25 +87,33 @@ func TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster(t *testing.T) {
 	}
 	const margin = 24 * time.Hour // ork's ORK_CLEANUP_RETENTION_BUFFER default
 
-	// ---- orkctl admin retention get: the baseline `ork` materialized at boot
+	// ---- orkctl admin retention get: whatever `ork` currently reports -----
+	//
+	// The maximum run retention is a deployment-wide document
+	// (metadata/settings/retention-policy.json) in the SAME shared bucket
+	// every integration test in this package runs against — it is not scoped
+	// to this test's own isolated Temporal namespace the way the namespace's
+	// own provisioned TTL is (internal/engine/retention_integration_test.go
+	// covers that isolated case). So this test asserts the INVARIANT
+	// (independent backstop == whatever the maximum is, plus the margin) and
+	// the DELTA a CLI-driven write produces, never a specific starting
+	// number: a prior integration run against this same bucket may have left
+	// the maximum at anything.
 	getStdout, getStderr, code := cli("--json", "admin", "retention", "get")
 	if code != 0 {
 		t.Fatalf("admin retention get exit = %d\nstdout:\n%s\nstderr:\n%s", code, getStdout, getStderr)
 	}
-	baseline := decodeRetentionPolicy(t, getStdout)
-	if got := baseline.maxRunRetention(t); got != 72*time.Hour {
-		// EnsureNamespace's documented default is 72h, and Ensure's first-boot
-		// materialization copies it verbatim as the ceiling. Fail loudly if
-		// either baseline assumption this test rests on has changed elsewhere.
-		t.Fatalf("baseline maximum run retention = %s, want 72h; the default may have changed", got)
-	}
+	baseline := decodeRetentionPolicy(t, getStdout).maxRunRetention(t)
 	independentBefore := describeIndependently()
-	if independentBefore != 72*time.Hour+margin {
-		t.Fatalf("independent baseline backstop TTL = %s, want 72h + %s margin", independentBefore, margin)
+	if independentBefore != baseline+margin {
+		t.Fatalf("independent backstop TTL = %s, want the reported maximum %s + %s margin", independentBefore, baseline, margin)
 	}
 
 	// ---- orkctl admin retention set: the write under test, via the CLI ----
-	const want = 5 * time.Hour
+	// Guaranteed to differ from baseline (never equal, always positive), so
+	// the assertions below prove a real transition rather than a no-op that
+	// happened to already match.
+	want := baseline + time.Hour
 	setStdout, setStderr, code := cli("--json", "admin", "retention", "set", want.String())
 	if code != 0 {
 		t.Fatalf("admin retention set exit = %d\nstdout:\n%s\nstderr:\n%s", code, setStdout, setStderr)
