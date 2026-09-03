@@ -11,6 +11,7 @@ import (
 
 	"connectrpc.com/connect"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -170,28 +171,31 @@ type Config struct {
 	System SystemInfo
 
 	// Router resolves an ork namespace to the cluster serving it. Nil builds
-	// the one-binding router from Reader, Starter, Pools and Retention above,
-	// which is every deployment there is today.
+	// the one-binding router from Reader, Starter and Pools above, which is
+	// every deployment there is today.
 	Router engine.NamespaceRouter
 
-	// Retention reads and writes the deployment's ONE Temporal cluster
-	// namespace's workflow-execution retention (SystemService's
-	// GetExecutionRetention/UpdateExecutionRetention), through the same
-	// binding every other admin/cluster read uses. `ork` wires the same
-	// engine.TemporalRunReader as Reader above — one Temporal client, never a
-	// second path to the cluster. Nil answers both RPCs with Unimplemented.
+	// Retention owns the deployment's maximum run retention: the ceiling on
+	// every namespace's own run_retention (SystemService's
+	// GetRetentionPolicy/UpdateRetentionPolicy), and it is what keeps the
+	// underlying Temporal namespace's own retention TTL synced to that
+	// ceiling plus an enforcement margin. `ork` builds it over the same
+	// engine.TemporalRunReader wired as Reader above — one Temporal client,
+	// never a second path to the cluster. Nil answers both RPCs with
+	// Unimplemented.
 	//
-	// This is deployment-wide, not per-OrkStack-Namespace: it has nothing to
-	// do with Namespaces below, which is the OrkStack registry.
-	Retention engine.RetentionAdmin
+	// This is a deployment-wide ceiling, not a per-namespace value: each
+	// orkstack.v1.Namespace carries its own run_retention (Namespaces below);
+	// this is the bound on all of them, and — unlike that field — the word
+	// "Temporal" never reaches a user through this seam (AGENTS.md §7).
+	Retention *archive.RetentionController
 
-	// TemporalNamespace is the TEMPORAL namespace GetExecutionRetention and
-	// UpdateExecutionRetention describe — `ork`'s ORK_TEMPORAL_NAMESPACE, the
-	// same value it wires into archive cleanup's CleanupConfig.TemporalNamespace.
-	// It is never an orkstack.v1.Namespace name, and it is never read from the
-	// environment here: `ork` loads it once at boot and injects it, exactly
-	// like System above.
-	TemporalNamespace string
+	// RetentionEnforced reports whether this deployment runs the cleanup
+	// worker that retires runs at their namespace's own retention
+	// (ORK_CLEANUP_ENABLED). It only ever WIDENS what GetRetentionPolicy
+	// says: when false, every run is kept for the maximum plus the
+	// enforcement margin regardless of a tighter namespace value.
+	RetentionEnforced bool
 
 	// Logger records the decisions a submission makes that an operator would
 	// otherwise have to infer, such as an empty-pool override. Nil uses the
@@ -243,10 +247,11 @@ type Service struct {
 	system    SystemInfo
 	artifacts artifacts.Config
 	limits    engine.WorkspaceLimits
-	// temporalNamespace is the TEMPORAL namespace SystemService's execution-
-	// retention read and write describe (see Config.TemporalNamespace).
-	// Never an orkstack.v1.Namespace name.
-	temporalNamespace string
+	// retention owns the deployment's maximum run retention (see
+	// Config.Retention). Nil answers SystemService's retention RPCs with
+	// Unimplemented.
+	retention         *archive.RetentionController
+	retentionEnforced bool
 	transferBudget    int32
 	floorThroughput   int64
 	logger            *slog.Logger
@@ -276,7 +281,8 @@ func NewService(cfg Config) *Service {
 		notifier:          cfg.Notifier,
 		artifacts:         cfg.Artifacts,
 		limits:            cfg.Limits,
-		temporalNamespace: cfg.TemporalNamespace,
+		retention:         cfg.Retention,
+		retentionEnforced: cfg.RetentionEnforced,
 		transferBudget:    cfg.TransferBudgetSeconds,
 		floorThroughput:   cfg.FloorThroughputBytesPerSecond,
 		logger:            cfg.Logger,
@@ -284,14 +290,13 @@ func NewService(cfg Config) *Service {
 		newRunID:          cfg.NewRunID,
 	}
 	if svc.router == nil {
-		// One binding: this cluster, every namespace. Reader, Starter, Pools
-		// and Retention are the flat form of exactly that, kept because
-		// almost every caller has one cluster and nothing to route between.
+		// One binding: this cluster, every namespace. Reader, Starter and
+		// Pools are the flat form of exactly that, kept because almost every
+		// caller has one cluster and nothing to route between.
 		svc.router = engine.NewSingleRouter(engine.Binding{
-			Reader:    cfg.Reader,
-			Starter:   cfg.Starter,
-			Pools:     cfg.Pools,
-			Retention: cfg.Retention,
+			Reader:  cfg.Reader,
+			Starter: cfg.Starter,
+			Pools:   cfg.Pools,
 		})
 	}
 	if svc.logger == nil {

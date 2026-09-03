@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,7 +13,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/archive"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // SystemInfo is what this replica was built and configured as — the values
@@ -96,105 +98,103 @@ func (s *Service) GetSystemInfo(
 	}), nil
 }
 
-// retentionBinding resolves the deployment's sole router binding and the
-// retention seam on it — internal/engine/router.go's SingleRouter, the SAME
-// binding GetRun, ListRuns and CancelRun read through, so there is no second,
-// parallel path to a Temporal client here.
-//
-// It deliberately does NOT go through s.binding(namespace), which asks
-// router.For(namespace) whether the binding serves a given OrkStack
-// namespace (defaulting "" to "default" — see SingleRouter.For). Execution
-// retention has no OrkStack-namespace scope at all: a deployment whose one
-// binding is scoped to `Namespaces: []string{"payments"}` (Binding.serves)
-// still has exactly one Temporal namespace and exactly one retention
-// setting, and asking "does this binding serve the OrkStack namespace
-// `default`?" would wrongly refuse it. So this reads router.Bindings()
-// directly and takes the one binding a single-cluster deployment has —
-// the same binding s.binding("") would have resolved to, minus the
-// accidental OrkStack-namespace gate.
-func (s *Service) retentionBinding() (engine.RetentionAdmin, error) {
-	bindings := s.router.Bindings()
-	if len(bindings) != 1 {
+// retentionController resolves the deployment's retention controller — the
+// same one every namespace-retention validation (internal/api/namespaces.go)
+// and the cleanup worker (cmd/ork/main.go) share, so there is no second,
+// parallel path to the policy store or the cluster here.
+func (s *Service) retentionController() (*archive.RetentionController, error) {
+	if s.retention == nil {
 		return nil, connect.NewError(connect.CodeUnimplemented,
-			fmt.Errorf("execution retention requires exactly one router binding, this engine has %d", len(bindings)))
+			fmt.Errorf("this engine has no retention policy configured"))
 	}
-	binding := bindings[0]
-	if binding.Retention == nil {
-		return nil, connect.NewError(connect.CodeUnimplemented,
-			fmt.Errorf("this engine has no Temporal retention admin configured"))
-	}
-	return binding.Retention, nil
+	return s.retention, nil
 }
 
-// GetExecutionRetention reads Temporal's CURRENT workflow-execution retention
-// for this deployment's one Temporal namespace, live from the cluster
-// (DescribeNamespace) — UNLIKE GetSystemInfo above, whose fields are all
-// configuration echoed back rather than observed. That guarantee is
-// unaffected by this RPC: it still holds for every field of
-// GetSystemInfoResponse, which gains none here.
-//
-// It is deployment-wide, never per-OrkStack-Namespace: see retentionBinding.
-func (s *Service) GetExecutionRetention(
+// GetRetentionPolicy reads the deployment's maximum run retention: the
+// ceiling on every namespace's own run_retention, and what a namespace that
+// sets none inherits. It is read from the store, so any replica answers the
+// same thing — unlike GetSystemInfo's fields, which describe the replica
+// that answered, this describes the deployment.
+func (s *Service) GetRetentionPolicy(
 	ctx context.Context,
-	_ *connect.Request[orkstackv1.GetExecutionRetentionRequest],
-) (*connect.Response[orkstackv1.GetExecutionRetentionResponse], error) {
-	retention, err := s.retentionBinding()
+	_ *connect.Request[orkstackv1.GetRetentionPolicyRequest],
+) (*connect.Response[orkstackv1.GetRetentionPolicyResponse], error) {
+	ctrl, err := s.retentionController()
 	if err != nil {
 		return nil, err
 	}
-	current, err := retention.NamespaceRetention(ctx, s.temporalNamespace)
+	policy, err := ctrl.Policy(ctx)
 	if err != nil {
-		// err is passed straight through: Temporal's own message is what the
-		// caller sees via connect.Error.Message(), untouched by this layer.
+		if errors.Is(err, artifacts.ErrNotFound) {
+			return nil, connect.NewError(connect.CodeFailedPrecondition,
+				fmt.Errorf("no retention policy is stored; the engine writes one at boot"))
+		}
 		return nil, connect.NewError(connect.CodeUnavailable, err)
 	}
-	return connect.NewResponse(&orkstackv1.GetExecutionRetentionResponse{
-		TemporalNamespace: s.temporalNamespace,
-		Retention:         durationpb.New(current),
+	return connect.NewResponse(&orkstackv1.GetRetentionPolicyResponse{
+		Policy:                     policy,
+		NamespaceRetentionEnforced: s.retentionEnforced,
 	}), nil
 }
 
-// UpdateExecutionRetention CHANGES that same cluster-wide setting through
-// Temporal's real UpdateNamespace RPC — UNLIKE GetSystemInfo, a live write
-// against the cluster, and again no claim about GetSystemInfoResponse's own
-// fields is affected by this RPC existing.
+// UpdateRetentionPolicy changes the deployment's maximum run retention.
 //
 // A non-positive duration, a malformed protobuf Duration (CheckValid), or a
 // magnitude that cannot round-trip losslessly through Go's time.Duration is
 // rejected with InvalidArgument before any call leaves this process — see
-// validatePositiveRetention. A Temporal refusal of a value that passes that
-// check — including its own server-side minimum-retention rejection — is
-// returned to the caller untouched: never swallowed into a default, a zero
-// value, or a fabricated success.
-func (s *Service) UpdateExecutionRetention(
+// validateRetentionDuration. Lowering the maximum below a namespace's own
+// explicit run_retention is refused with FailedPrecondition, naming that
+// namespace: the namespace must be lowered first. Namespaces that set no
+// run_retention of their own follow the new maximum immediately.
+func (s *Service) UpdateRetentionPolicy(
 	ctx context.Context,
-	req *connect.Request[orkstackv1.UpdateExecutionRetentionRequest],
-) (*connect.Response[orkstackv1.UpdateExecutionRetentionResponse], error) {
-	requested, err := validatePositiveRetention(req.Msg.GetRetention())
+	req *connect.Request[orkstackv1.UpdateRetentionPolicyRequest],
+) (*connect.Response[orkstackv1.UpdateRetentionPolicyResponse], error) {
+	requested, err := validateRetentionDuration("maximum run retention", req.Msg.GetMaxRunRetention())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	retention, err := s.retentionBinding()
+	ctrl, err := s.retentionController()
 	if err != nil {
 		return nil, err
 	}
-	confirmed, err := retention.SetNamespaceRetention(ctx, s.temporalNamespace, requested)
-	if err != nil {
-		// err is passed straight through: Temporal's own message — including
-		// its server-side minimum-retention rejection text — is what the
-		// caller sees via connect.Error.Message(), never rewritten here.
-		return nil, connect.NewError(temporalWriteErrorCode(err), err)
+	if s.namespaces != nil {
+		docs, err := s.namespaces.List(ctx)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("maximum run retention cannot be checked against every namespace: %w", err))
+		}
+		var exceeding []string
+		for _, ns := range docs {
+			d := ns.GetRunRetention()
+			if d != nil && d.CheckValid() == nil && d.AsDuration() > requested {
+				exceeding = append(exceeding, fmt.Sprintf("%s (%s)", ns.GetName(), d.AsDuration()))
+			}
+		}
+		if len(exceeding) > 0 {
+			sort.Strings(exceeding)
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"maximum run retention %s is below the run retention of namespace(s) %s; lower them first",
+				requested, exceeding))
+		}
 	}
-	return connect.NewResponse(&orkstackv1.UpdateExecutionRetentionResponse{
-		TemporalNamespace: s.temporalNamespace,
-		Retention:         durationpb.New(confirmed),
+	policy, err := ctrl.SetMax(ctx, requested)
+	if err != nil {
+		return nil, connect.NewError(retentionWriteErrorCode(err),
+			fmt.Errorf("maximum run retention %s could not be applied: %w", requested, err))
+	}
+	return connect.NewResponse(&orkstackv1.UpdateRetentionPolicyResponse{
+		Policy:                     policy,
+		NamespaceRetentionEnforced: s.retentionEnforced,
 	}), nil
 }
 
-// validatePositiveRetention turns a requested protobuf Duration into a Go
-// time.Duration the same way the write path will actually use it, or
-// rejects it — never partially: every rejection here happens before
-// UpdateExecutionRetention resolves a binding or touches Temporal.
+// validateRetentionDuration turns a requested protobuf Duration into a Go
+// time.Duration the same way the write path will actually use it, or rejects
+// it — never partially: every rejection here happens before any store or
+// cluster write. field names what was being validated, so the same three
+// checks read correctly for the deployment maximum and for one namespace's
+// own run_retention.
 //
 // Three distinct ways a Duration can be unusable, each caught explicitly:
 //
@@ -208,39 +208,39 @@ func (s *Service) UpdateExecutionRetention(
 //     Duration.AsDuration performs SATURATING arithmetic on overflow rather
 //     than erroring, so e.g. seconds=315576000000 (10,000 years) silently
 //     clamps to math.MaxInt64 nanoseconds — a different value than what was
-//     requested — and internal/engine/reader.go would then hand Temporal
-//     that clamped value instead. Guarding against this requires round-
-//     tripping the converted time.Duration back through durationpb.New and
-//     checking it reproduces the exact seconds/nanos requested; CheckValid
-//     alone does not catch it, since 10,000 years is a perfectly valid
-//     protobuf Duration.
-func validatePositiveRetention(requested *durationpb.Duration) (time.Duration, error) {
+//     requested. Guarding against this requires round-tripping the
+//     converted time.Duration back through durationpb.New and checking it
+//     reproduces the exact seconds/nanos requested; CheckValid alone does
+//     not catch it, since 10,000 years is a perfectly valid protobuf
+//     Duration.
+func validateRetentionDuration(field string, requested *durationpb.Duration) (time.Duration, error) {
 	if requested == nil {
-		return 0, errors.New("retention must be a positive duration")
+		return 0, fmt.Errorf("%s must be a positive duration", field)
 	}
 	if err := requested.CheckValid(); err != nil {
-		return 0, fmt.Errorf("retention is not a valid duration: %w", err)
+		return 0, fmt.Errorf("%s is not a valid duration: %w", field, err)
 	}
 	d := requested.AsDuration()
 	if roundtrip := durationpb.New(d); roundtrip.GetSeconds() != requested.GetSeconds() ||
 		roundtrip.GetNanos() != requested.GetNanos() {
 		return 0, fmt.Errorf(
-			"retention %s exceeds the range a Go duration can represent losslessly (max ~292 years)",
-			requested)
+			"%s %s exceeds the range a Go duration can represent losslessly (max ~292 years)",
+			field, requested)
 	}
 	if d <= 0 {
-		return 0, errors.New("retention must be a positive duration")
+		return 0, fmt.Errorf("%s must be a positive duration", field)
 	}
 	return d, nil
 }
 
-// temporalWriteErrorCode classifies a Temporal write failure the way the
-// caller can act on it. Temporal's own validation refusals — the
-// server-side minimum-retention rejection is exactly this shape — surface as
-// *serviceerror.InvalidArgument, so those come back as InvalidArgument rather
-// than the Unavailable every other cluster-reachability failure here uses;
-// the message itself is always Temporal's own, untouched either way.
-func temporalWriteErrorCode(err error) connect.Code {
+// retentionWriteErrorCode classifies a retention write failure the way the
+// caller can act on it. The underlying cluster's own validation refusal —
+// its server-side minimum-retention rejection is exactly this shape —
+// surfaces as *serviceerror.InvalidArgument, so those come back as
+// InvalidArgument rather than the Unavailable every other reachability
+// failure here uses. The message is passed through untouched either way:
+// this classifies, it never rewrites what the underlying system said.
+func retentionWriteErrorCode(err error) connect.Code {
 	var invalid *serviceerror.InvalidArgument
 	if errors.As(err, &invalid) {
 		return connect.CodeInvalidArgument

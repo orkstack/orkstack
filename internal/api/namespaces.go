@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -67,6 +68,39 @@ func validNamespaceSelector(name string) error {
 	return validNamespaceName(name)
 }
 
+// validNamespaceRetention holds a client-supplied run_retention to the two
+// rules the write path enforces: it is a usable positive duration, and it is
+// within the deployment maximum. Unset is always fine — it means inherit.
+//
+// The ceiling check needs the retention controller, so unlike
+// validNamespaceName this is not a pure function: an engine with no
+// retention policy configured cannot tell whether a value exceeds one, and
+// answers Unimplemented rather than silently skipping the check.
+func (s *Service) validNamespaceRetention(ctx context.Context, spec *orkstackv1.Namespace) error {
+	if spec.GetRunRetention() == nil {
+		return nil
+	}
+	d, err := validateRetentionDuration(fmt.Sprintf("namespace %q run retention", spec.GetName()), spec.GetRunRetention())
+	if err != nil {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	ctrl, err := s.retentionController()
+	if err != nil {
+		return err
+	}
+	policy, err := ctrl.Policy(ctx)
+	if err != nil {
+		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+			"namespace %q run retention cannot be checked against the deployment maximum: %w", spec.GetName(), err))
+	}
+	if max := policy.GetMaxRunRetention().AsDuration(); d > max {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"namespace %q run retention %s exceeds the deployment maximum run retention %s",
+			spec.GetName(), d, max))
+	}
+	return nil
+}
+
 // CreateNamespace registers a namespace, idempotently for an identical spec.
 //
 // The write is conditional on the object being absent, so two replicas racing
@@ -85,6 +119,9 @@ func (s *Service) CreateNamespace(
 	}
 	spec := req.Msg.GetNamespace()
 	if err := validNamespaceName(spec.GetName()); err != nil {
+		return nil, err
+	}
+	if err := s.validNamespaceRetention(ctx, spec); err != nil {
 		return nil, err
 	}
 	if artifacts.ResolveNamespace(spec.GetName()) == artifacts.DefaultNamespace {
@@ -163,7 +200,20 @@ func specDifference(stored, requested *orkstackv1.Namespace) string {
 	if got, want := stored.GetLabels(), requested.GetLabels(); !equalLabels(got, want) {
 		return fmt.Sprintf("labels are %s, not %s", renderLabels(got), renderLabels(want))
 	}
+	if got, want := retentionLabel(stored.GetRunRetention()), retentionLabel(requested.GetRunRetention()); got != want {
+		return fmt.Sprintf("run_retention is %s, not %s", got, want)
+	}
 	return ""
+}
+
+// retentionLabel renders a namespace's run_retention for a difference
+// report: nil reads as "inherited (deployment maximum)", never as an empty
+// string that could be mistaken for a stored zero.
+func retentionLabel(d *durationpb.Duration) string {
+	if d == nil {
+		return "inherited (deployment maximum)"
+	}
+	return d.AsDuration().String()
 }
 
 func sortedCopy(values []string) []string {
@@ -274,6 +324,9 @@ func (s *Service) UpdateNamespace(
 	}
 	spec := req.Msg.GetNamespace()
 	if err := validNamespaceName(spec.GetName()); err != nil {
+		return nil, err
+	}
+	if err := s.validNamespaceRetention(ctx, spec); err != nil {
 		return nil, err
 	}
 	// An update is not a create: a name nobody registered is NotFound, naming

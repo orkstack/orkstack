@@ -300,6 +300,14 @@ func systemInfo(cfg config, artifactCfg artifacts.Config) api.SystemInfo {
 	}
 }
 
+// engine.TemporalRunReader satisfies both cluster seams archive's retention
+// machinery needs, over the same Temporal client every other read on it
+// already uses — never a second, parallel connection.
+var (
+	_ archivecleanup.RetentionAdmin = (*engine.TemporalRunReader)(nil)
+	_ archivecleanup.RunRetirer     = (*engine.TemporalRunReader)(nil)
+)
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(logger, loadConfig()); err != nil {
@@ -607,8 +615,31 @@ func run(logger *slog.Logger, cfg config) error {
 	reader := engine.NewTemporalRunReader(temporalClient).
 		WithSnapshotStore(snapshots).
 		WithNamespaceIndex(namespaceIndexed)
+
+	// The retention policy store and controller: the deployment's maximum run
+	// retention (never a user-facing Temporal setting, AGENTS.md §7) and the
+	// invariant that keeps the cluster's own retention TTL pinned to that
+	// maximum plus an enforcement margin, always at least as generous as any
+	// namespace's own run_retention. Built over the same reader as every
+	// other cluster read — never a second connection.
+	retentionPolicies, err := artifacts.NewS3RetentionPolicyStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open retention policy store: %w", err)
+	}
+	retention := archivecleanup.NewRetentionController(
+		retentionPolicies, reader, cfg.temporalNamespace, cfg.cleanup.RetentionBuffer, logger)
+	policy, err := retention.Ensure(ctx)
+	if err != nil {
+		// Fail closed: an engine that cannot establish the ceiling must not
+		// start deleting run history under one it never confirmed.
+		return fmt.Errorf("establish retention policy: %w", err)
+	}
+	logger.Info("retention policy ready",
+		"max_run_retention", policy.GetMaxRunRetention().AsDuration(),
+		"namespace_retention_enforced", cfg.cleanup.Enabled)
+
 	if cfg.cleanup.Enabled {
-		cleaner := archivecleanup.NewCleaner(cfg.cleanup, archiveStore, reader, logger)
+		cleaner := archivecleanup.NewCleaner(cfg.cleanup, archiveStore, reader, namespaces, retention, logger)
 		go cleaner.Run(ctx)
 		logger.Info("artifact cleanup worker started",
 			"interval", cfg.cleanup.Interval,
@@ -725,14 +756,14 @@ func run(logger *slog.Logger, cfg config) error {
 		Notifier:    runNotifier,
 		Logger:      logger,
 		System:      system,
-		// Retention and TemporalNamespace back SystemService's
-		// GetExecutionRetention/UpdateExecutionRetention. `reader` is the
-		// same engine.TemporalRunReader as Reader above — one Temporal
-		// client, never a second path to the cluster — and
-		// cfg.temporalNamespace is the same value already wired into
-		// cfg.cleanup.TemporalNamespace.
-		Retention:                     reader,
-		TemporalNamespace:             cfg.temporalNamespace,
+		// Retention backs SystemService's
+		// GetRetentionPolicy/UpdateRetentionPolicy, and also validates a
+		// namespace's own run_retention against the ceiling
+		// (NamespaceService). RetentionEnforced mirrors whether the cleanup
+		// worker above was actually started: without it, a namespace's own
+		// value has no effect yet, and GetRetentionPolicy says so.
+		Retention:                     retention,
+		RetentionEnforced:             cfg.cleanup.Enabled,
 		Artifacts:                     archiveConfig,
 		Limits:                        cfg.contractLimits,
 		TransferBudgetSeconds:         cfg.transferBudgetSeconds,
