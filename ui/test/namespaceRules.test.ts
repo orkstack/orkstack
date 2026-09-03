@@ -97,3 +97,38 @@ test('parsePoolList splits on commas and whitespace and drops blanks', () => {
 	expect(parsePoolList('')).toEqual([]);
 	expect(parsePoolList('  ,, cpu ,')).toEqual(['cpu']);
 });
+
+// runRetentionHours is a UX prefilter for the same rule
+// internal/api.validateRetentionDuration enforces (positive, finite); the
+// deployment-maximum check itself is the server's, never re-derived here.
+test('a blank run retention is inherit, never refused', () => {
+	const errors = validateNamespaceForm({
+		name: 'payments',
+		defaultPool: 'main',
+		allowedPools: [],
+		runRetentionHours: ''
+	});
+	expect(errors.runRetention).toBe(undefined);
+});
+
+test('a non-positive or unparseable run retention is refused', () => {
+	for (const raw of ['0', '-3', 'abc']) {
+		const errors = validateNamespaceForm({
+			name: 'payments',
+			defaultPool: 'main',
+			allowedPools: [],
+			runRetentionHours: raw
+		});
+		expect(errors.runRetention).not.toBe(undefined);
+	}
+});
+
+test('a positive run retention is accepted', () => {
+	const errors = validateNamespaceForm({
+		name: 'payments',
+		defaultPool: 'main',
+		allowedPools: [],
+		runRetentionHours: '168'
+	});
+	expect(errors.runRetention).toBe(undefined);
+});

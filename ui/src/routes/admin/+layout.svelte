@@ -2,12 +2,14 @@
 	// The Admin area's own sub-navigation.
 	//
 	// Every route under here carries `?ns=` like any other page — the
-	// namespace switcher stays visible on all four — but only Pools RESPECTS
-	// it. Namespaces, Activities and the overview are DEPLOYMENT-WIDE, and each
-	// says so in its own caption rather than hiding the switcher: hiding
-	// chrome per route is deliberately not done, because a
-	// switcher that disappears on some pages and not others is one more thing
-	// to notice, where a sentence in the page is read once and settles it.
+	// namespace switcher stays visible on all five — but only Pools RESPECTS
+	// it. Namespaces, Activities, Retention (the deployment MAXIMUM; a
+	// namespace's own run retention lives on the Namespaces page) and the
+	// overview are DEPLOYMENT-WIDE, and each says so in its own caption
+	// rather than hiding the switcher: hiding chrome per route is
+	// deliberately not done, because a switcher that disappears on some
+	// pages and not others is one more thing to notice, where a sentence in
+	// the page is read once and settles it.
 	import { navigating, page } from '$app/state';
 	import { withNamespace } from '$lib/namespace';
 	import type { LayoutProps } from './$types';
@@ -19,7 +21,7 @@
 	// navigatingWithinAdmin is true for the whole span between clicking a
 	// tab (or switching the namespace, or landing here from outside Admin
 	// entirely) and the destination route's `load` resolving. This layout
-	// is the shared ancestor across all four sub-routes, so it is the one
+	// is the shared ancestor across all five sub-routes, so it is the one
 	// place that stays mounted through a CROSS-tab transition — the
 	// destination `+page.svelte` does not exist yet, and the SOURCE page's
 	// own loading state (see its own `navigatingHere`) only fires for a

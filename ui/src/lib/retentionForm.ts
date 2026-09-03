@@ -1,10 +1,11 @@
-// The Admin Execution Retention form's local validation: an hours field must
-// parse to a positive, finite number before the browser ever asks
-// UpdateExecutionRetention for anything. This mirrors the engine's own rule
-// (internal/api/system.go: a non-positive duration is rejected with
-// InvalidArgument before any call leaves the process) at the layer above it,
-// so a bad value never reaches an RPC — the same "refuse locally first" shape
-// $lib/namespaceRules.ts uses for the Namespaces form.
+// The Admin retention forms' local validation, shared by the deployment
+// maximum (this page) and a namespace's own run retention
+// ($lib/namespaceRules.ts): an hours field must parse to a positive, finite
+// number before the browser ever asks UpdateRetentionPolicy or
+// CreateNamespace/UpdateNamespace for anything. This mirrors the engine's
+// own rule (internal/api/system.go: a non-positive duration is rejected
+// with InvalidArgument before any call leaves the process) at the layer
+// above it, so a bad value never reaches an RPC.
 
 /**
  * parseRetentionHours turns the form's raw text into a positive number of

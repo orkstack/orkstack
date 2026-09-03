@@ -15,6 +15,8 @@
 // and namespaceRules.test.ts is what a reviewer diffs against the Go pattern
 // by hand.
 
+import { parseRetentionHours } from './retentionForm';
+
 // SLUG_PATTERN mirrors internal/dsl.slugPattern / internal/task.poolPattern /
 // pkg/artifacts/namespace_store.go's namespaceNamePattern and poolNamePattern:
 // one rule, restated at every boundary that needs it (AGENTS.md §7).
@@ -56,12 +58,17 @@ export interface NamespaceFormValues {
 	name: string;
 	defaultPool: string;
 	allowedPools: string[];
+	// runRetentionHours is blank text, never a parsed value: blank means
+	// "inherit the deployment maximum", which is a value only the write path
+	// (this form's caller) can turn into "send no field at all".
+	runRetentionHours?: string;
 }
 
 export interface NamespaceFormErrors {
 	name?: string;
 	defaultPool?: string;
 	allowedPools?: string;
+	runRetention?: string;
 }
 
 // validateNamespaceForm holds a namespace create/update form to the same
@@ -96,6 +103,17 @@ export function validateNamespaceForm(
 			`allowed pools (${values.allowedPools.join(', ')}) must include the default pool ` +
 			`(${resolvedDefault}); an allow-list that excludes it would refuse every task ` +
 			'that names none';
+	}
+
+	// Blank means inherit — the same rule the deployment-maximum form
+	// ($lib/retentionForm.ts) uses, checked here only when the field carries
+	// something. This module is a prefilter, never a gate (see the file's
+	// own doc comment above): whether the value fits under the deployment
+	// maximum is the server's call (internal/api.validNamespaceRetention),
+	// shown verbatim from its own InvalidArgument, never re-derived here.
+	if (values.runRetentionHours !== undefined && values.runRetentionHours.trim() !== '') {
+		const parsed = parseRetentionHours(values.runRetentionHours);
+		if ('error' in parsed) errors.runRetention = parsed.error;
 	}
 
 	return errors;

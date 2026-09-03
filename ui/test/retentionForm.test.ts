@@ -1,10 +1,11 @@
 import { expect, test } from 'bun:test';
 import { hoursToMs, parseRetentionHours } from '../src/lib/retentionForm';
 
-// The Admin Execution Retention form's local validation mirrors the engine's
-// own rule (internal/api/system.go: a non-positive duration is refused with
-// InvalidArgument before any call leaves the process) one layer up, so a bad
-// value never reaches UpdateExecutionRetention at all.
+// The Admin retention forms' (deployment maximum and per-namespace) local
+// validation mirrors the engine's own rule (internal/api/system.go: a
+// non-positive duration is refused with InvalidArgument before any call
+// leaves the process) one layer up, so a bad value never reaches
+// UpdateRetentionPolicy or CreateNamespace/UpdateNamespace at all.
 
 test('a positive number of hours parses', () => {
 	const result = parseRetentionHours('168');

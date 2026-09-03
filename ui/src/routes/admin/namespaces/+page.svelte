@@ -22,8 +22,20 @@
 		validateNamespaceForm,
 		type NamespaceFormErrors
 	} from '$lib/namespaceRules';
+	import { hoursToMs, parseRetentionHours } from '$lib/retentionForm';
+	import { fmtDuration } from '$lib/stats';
 	import { fmtTimestamp } from '$lib/status';
+	import { durationFromMs } from '@bufbuild/protobuf/wkt';
+	import type { Duration } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
+
+	// runRetentionLabel renders an unset run_retention as what it means: this
+	// namespace inherits the deployment maximum, never a dash that could be
+	// mistaken for "no retention" (the same rule allowedPoolsLabel-style
+	// renderers in this file already follow for allowed_pools).
+	function runRetentionLabel(d: Duration | undefined): string {
+		return d ? fmtDuration(d) : 'inherited (deployment maximum)';
+	}
 
 	let { data }: PageProps = $props();
 
@@ -53,6 +65,7 @@
 	let createDescription = $state('');
 	let createDefaultPool = $state('');
 	let createAllowedPools = $state('');
+	let createRunRetentionHours = $state('');
 	let createErrors = $state<NamespaceFormErrors>({});
 	let createBusy = $state(false);
 	let createServerError = $state('');
@@ -63,6 +76,7 @@
 		createDescription = '';
 		createDefaultPool = '';
 		createAllowedPools = '';
+		createRunRetentionHours = '';
 	}
 
 	async function submitCreate() {
@@ -70,7 +84,12 @@
 		createSuccess = '';
 		const allowed = parsePoolList(createAllowedPools);
 		createErrors = validateNamespaceForm(
-			{ name: createName.trim(), defaultPool: createDefaultPool.trim(), allowedPools: allowed },
+			{
+				name: createName.trim(),
+				defaultPool: createDefaultPool.trim(),
+				allowedPools: allowed,
+				runRetentionHours: createRunRetentionHours
+			},
 			{ requireName: true }
 		);
 		// Local validation blocks the request entirely — no RPC is made for a
@@ -84,7 +103,14 @@
 					name: createName.trim(),
 					description: createDescription.trim(),
 					defaultPool: createDefaultPool.trim(),
-					allowedPools: allowed
+					allowedPools: allowed,
+					// Blank means inherit: omit the field entirely rather than send
+					// a zero duration, which validNamespaceRetention would refuse
+					// as non-positive.
+					runRetention:
+						createRunRetentionHours.trim() === ''
+							? undefined
+							: durationFromMs(hoursToMs(Number(createRunRetentionHours.trim())))
 				}
 			});
 			createSuccess = res.created
@@ -104,6 +130,7 @@
 	let editDescription = $state('');
 	let editDefaultPool = $state('');
 	let editAllowedPools = $state('');
+	let editRunRetentionHours = $state('');
 	let editEtag = $state('');
 	let editErrors = $state<NamespaceFormErrors>({});
 	let editBusy = $state(false);
@@ -118,6 +145,7 @@
 		editDescription = ns.description;
 		editDefaultPool = ns.defaultPool;
 		editAllowedPools = ns.allowedPools.join(', ');
+		editRunRetentionHours = ns.runRetention ? String(Number(ns.runRetention.seconds) / 3600) : '';
 		editEtag = ns.etag;
 		editLabels = { ...ns.labels };
 		editErrors = {};
@@ -144,7 +172,12 @@
 		editConflict = false;
 		const allowed = parsePoolList(editAllowedPools);
 		editErrors = validateNamespaceForm(
-			{ name: editingName, defaultPool: editDefaultPool.trim(), allowedPools: allowed },
+			{
+				name: editingName,
+				defaultPool: editDefaultPool.trim(),
+				allowedPools: allowed,
+				runRetentionHours: editRunRetentionHours
+			},
 			{ requireName: false }
 		);
 		if (Object.keys(editErrors).length > 0) return;
@@ -158,7 +191,16 @@
 					defaultPool: editDefaultPool.trim(),
 					allowedPools: allowed,
 					labels: editLabels,
-					etag: editEtag
+					etag: editEtag,
+					// Unlike labels (which this form never edits directly and so
+					// carries through untouched), this field IS user-editable —
+					// openEdit prefilled it from what was stored — so a blank
+					// here is a deliberate choice to inherit the deployment
+					// maximum, not an omission to preserve.
+					runRetention:
+						editRunRetentionHours.trim() === ''
+							? undefined
+							: durationFromMs(hoursToMs(Number(editRunRetentionHours.trim())))
 				}
 			});
 			closeEdit();
@@ -338,6 +380,22 @@
 					>
 				{/if}
 			</label>
+			<label class="flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Run retention (hours, blank = inherit)</span>
+				<input
+					data-testid="ns-create-run-retention"
+					bind:value={createRunRetentionHours}
+					inputmode="decimal"
+					placeholder="inherit"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				/>
+				<span class="text-xs text-fg-muted">Blank inherits the deployment maximum.</span>
+				{#if createErrors.runRetention}
+					<span class="text-xs text-danger-700" data-testid="ns-create-error-run-retention"
+						>{createErrors.runRetention}</span
+					>
+				{/if}
+			</label>
 			<div class="sm:col-span-2">
 				<button
 					type="submit"
@@ -379,6 +437,7 @@
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Description</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Default pool</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed pools</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Run retention</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Updated</th>
 						<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted"></th>
 					</tr>
@@ -399,6 +458,9 @@
 							<td class="h-11 px-4 align-middle text-fg-secondary">
 								{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
 							</td>
+							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-run-retention-{ns.name}"
+								>{runRetentionLabel(ns.runRetention)}</td
+							>
 							<td class="h-11 px-4 align-middle text-fg-muted tabular-nums"
 								>{fmtTimestamp(ns.updatedAt)}</td
 							>
@@ -444,7 +506,7 @@
 						</tr>
 						{#if editingName === ns.name}
 							<tr>
-								<td colspan="6" class="bg-surface-sunken px-4 py-4">
+								<td colspan="7" class="bg-surface-sunken px-4 py-4">
 									<form
 										data-testid="namespace-edit-form-{ns.name}"
 										class="grid gap-3 sm:grid-cols-2"
@@ -481,6 +543,19 @@
 											/>
 											{#if editErrors.allowedPools}
 												<span class="text-xs text-danger-700">{editErrors.allowedPools}</span>
+											{/if}
+										</label>
+										<label class="flex flex-col gap-1.5 text-sm">
+											<span class="font-medium text-fg">Run retention (hours, blank = inherit)</span>
+											<input
+												data-testid="ns-edit-run-retention-{ns.name}"
+												bind:value={editRunRetentionHours}
+												inputmode="decimal"
+												placeholder="inherit"
+												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+											/>
+											{#if editErrors.runRetention}
+												<span class="text-xs text-danger-700">{editErrors.runRetention}</span>
 											{/if}
 										</label>
 										<div class="flex items-center gap-2 sm:col-span-2">

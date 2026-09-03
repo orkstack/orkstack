@@ -1,14 +1,13 @@
 <script lang="ts">
-	// Execution retention (proto/orkstack/v1/service.proto's
-	// GetExecutionRetention/UpdateExecutionRetention): view and change how
-	// long Temporal keeps a finished workflow's history for THIS
-	// DEPLOYMENT'S ONE Temporal cluster namespace.
+	// Maximum run retention (proto/orkstack/v1/service.proto's
+	// GetRetentionPolicy/UpdateRetentionPolicy): view and change the ceiling
+	// on how long any namespace may keep a finished run, and what a
+	// namespace that sets none inherits.
 	//
 	// This is deliberately its own route, not a tab inside /admin/namespaces:
-	// that page manages orkstack.v1.Namespace, the OrkStack registry entity
-	// owning orkflow names, runs and pool defaults — a namespace this
-	// deployment can have many of. This page is the opposite shape, a single
-	// cluster-wide setting, and every label on it says so.
+	// that page manages each orkstack.v1.Namespace's OWN run retention — a
+	// value this page only bounds, never sets directly. This page is the
+	// single deployment-wide ceiling, and every label on it says so.
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -37,7 +36,7 @@
 	);
 	const busy = $derived(retrying || navigatingHere);
 
-	// ── change the retention ────────────────────────────────────────────
+	// ── change the maximum ──────────────────────────────────────────────
 	// The form asks for hours rather than replicating Go's
 	// time.ParseDuration syntax (what `orkctl admin retention set` accepts)
 	// in the browser: a plain, validated number is less to get wrong here,
@@ -62,18 +61,18 @@
 
 		setBusy = true;
 		try {
-			const res = await orkstack(fetch).system.updateExecutionRetention({
-				retention: durationFromMs(hoursToMs(result.hours))
+			const res = await orkstack(fetch).system.updateRetentionPolicy({
+				maxRunRetention: durationFromMs(hoursToMs(result.hours))
 			});
-			setSuccess = `Set to ${fmtDuration(res.retention)} on Temporal namespace ${res.temporalNamespace}.`;
+			setSuccess = `Maximum run retention is now ${fmtDuration(res.policy?.maxRunRetention)}.`;
 			resetForm();
 			await invalidateAll();
 		} catch (err) {
 			// A non-positive duration never reaches here (refused above), so
-			// whatever comes back is the CLUSTER's own refusal — for example
-			// Temporal's server-side minimum-retention rejection — shown
-			// verbatim, never translated into a generic message that would
-			// hide what an operator needs to change.
+			// whatever comes back is a genuine refusal — for example a
+			// namespace whose own run retention is above the requested
+			// maximum — shown verbatim, never translated into a generic
+			// message that would hide what an operator needs to change.
 			setError = errorMessage(err);
 		} finally {
 			setBusy = false;
@@ -81,55 +80,62 @@
 	}
 </script>
 
-<svelte:head><title>Admin — Execution retention — OrkStack</title></svelte:head>
+<svelte:head><title>Admin — Maximum run retention — OrkStack</title></svelte:head>
 
 <p class="mb-4 text-sm text-fg-muted" data-testid="retention-scope-caption">
-	This is ONE Temporal cluster setting for the whole deployment, not scoped by the namespace
-	selector above and not a property of an orkstack.v1.Namespace — see
-	<code>/admin/namespaces</code> for that separate, per-tenant concept.
+	The maximum any namespace may keep a finished run, and what a namespace that sets none
+	inherits. Deployment-wide: the namespace selector above does not scope it. Per-namespace values
+	are set on <code>/admin/namespaces</code>.
 </p>
 
 {#if data.retentionError}
 	<ErrorPanel
 		testid="retention-error"
 		retryTestid="retention-retry"
-		subject="this deployment's execution retention"
+		subject="this deployment's maximum run retention"
 		message={data.retentionError}
 		busy={retrying}
 		onretry={retry}
 	/>
 {:else if busy}
-	<p class="text-sm text-fg-muted" data-testid="retention-loading">Loading execution retention…</p>
+	<p class="text-sm text-fg-muted" data-testid="retention-loading">
+		Loading maximum run retention…
+	</p>
 {:else if !data.retention}
 	<p class="text-sm text-fg-muted" data-testid="retention-empty">
-		The engine returned no execution retention.
+		The engine returned no retention policy.
 	</p>
 {:else}
 	<section class="mb-8" data-testid="retention-info">
 		<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
 			<dl class="divide-y divide-border-subtle text-sm">
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-fg-muted">Temporal namespace</dt>
-					<dd class="text-fg" data-testid="retention-temporal-namespace">
-						{data.retention.temporalNamespace || '—'}
+					<dt class="text-fg-muted">Maximum run retention</dt>
+					<dd class="text-fg" data-testid="retention-current">
+						{fmtDuration(data.retention.policy?.maxRunRetention)}
 					</dd>
 				</div>
 				<div class="grid grid-cols-[10rem_1fr] px-4 py-2.5">
-					<dt class="text-fg-muted">Execution retention</dt>
-					<dd class="text-fg" data-testid="retention-current">
-						{fmtDuration(data.retention.retention)}
+					<dt class="text-fg-muted">Enforcement</dt>
+					<dd class="text-fg" data-testid="retention-enforcement">
+						{#if data.retention.namespaceRetentionEnforced}
+							Enforced per namespace
+						{:else}
+							Not enforced — every run is kept for the maximum plus the enforcement margin
+							(ORK_CLEANUP_ENABLED is off)
+						{/if}
 					</dd>
 				</div>
 			</dl>
 		</div>
 		<p class="mt-2 text-xs text-fg-muted">
-			Read live from the cluster (Temporal's DescribeNamespace) — see
+			Stored with the deployment, so every replica answers the same — see
 			<code>orkctl admin retention get</code>.
 		</p>
 	</section>
 
 	<section class="rounded-lg border border-border bg-surface p-5 shadow-xs">
-		<h2 class="mb-3 text-sm font-semibold text-fg">Change execution retention</h2>
+		<h2 class="mb-3 text-sm font-semibold text-fg">Change the maximum</h2>
 		<form
 			class="flex flex-wrap items-end gap-3"
 			onsubmit={(e) => {
@@ -138,7 +144,7 @@
 			}}
 		>
 			<label class="flex flex-col gap-1.5 text-sm">
-				<span class="font-medium text-fg">New retention (hours)</span>
+				<span class="font-medium text-fg">New maximum (hours)</span>
 				<input
 					data-testid="retention-set-hours"
 					bind:value={hours}
@@ -170,8 +176,8 @@
 			</p>
 		{/if}
 		<p class="mt-3 text-xs text-fg-muted">
-			This changes Temporal's history retention for the WHOLE deployment's one cluster
-			namespace, taking effect for every OrkStack namespace this deployment has.
+			Namespaces that set no run retention follow the new maximum at once; a namespace whose own
+			value is above it must be lowered first.
 		</p>
 	</section>
 {/if}

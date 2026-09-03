@@ -48,8 +48,8 @@
 		{
 			href: '/admin/retention',
 			testid: 'admin-card-retention',
-			title: 'Execution retention',
-			body: 'How long Temporal keeps a finished run\u2019s history \u2014 ONE deployment-wide cluster setting, not a namespace.'
+			title: 'Maximum run retention',
+			body: 'The longest any namespace may keep a finished run; each namespace may choose less.'
 		}
 	];
 </script>
