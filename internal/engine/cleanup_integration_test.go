@@ -18,11 +18,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	commonpb "go.temporal.io/api/common/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	archivecleanup "github.com/orkstack/orkstack/internal/archive"
@@ -31,13 +31,25 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// TestIntegration_CleanupAfterTemporalRetention proves the cleanup boundary
-// against a live Temporal cluster and a private real MinIO bucket. Temporal's
-// retention period is too long for a test, so the test deterministically
-// performs the two effects retention would eventually produce: it deletes one
-// closed execution through Temporal's service and advances only the cleanup
-// eligibility clock beyond namespace retention plus the safety buffer.
-func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
+// emptyNamespaceLister answers with no OrkStack namespace documents unless a
+// test seeds one, so every entry falls back to the deployment maximum.
+type staticNamespaceLister struct{ docs []*orkstackv1.Namespace }
+
+func (l staticNamespaceLister) List(context.Context) ([]*orkstackv1.Namespace, error) {
+	return l.docs, nil
+}
+
+// TestIntegration_CleanupRetiresARunAtItsNamespaceRetention proves the
+// ACTIVE retirement path against a live Temporal cluster and a private real
+// MinIO bucket: cleanup itself deletes a finished execution once it is past
+// its OWN OrkStack namespace's run retention — never by waiting on Temporal's
+// own passive TTL. Two OrkStack namespaces make the point: "short" has a
+// one-minute run retention and is retired; "long" inherits a much larger
+// deployment maximum and is untouched. An independent DescribeNamespace call
+// after the pass proves the underlying cluster's own backstop TTL is still
+// far above the one-minute window that actually did the work — i.e. OrkStack,
+// not the passive TTL, retired the run.
+func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 	address := temporalAddress()
 	if conn, err := net.DialTimeout("tcp", address, 2*time.Second); err != nil {
 		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
@@ -50,16 +62,35 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	cfg, raw := privateCleanupBucket(t, ctx)
 
 	namespace := fmt.Sprintf("%s-cleanup-%d-%d", baseNamespace(), os.Getpid(), time.Now().UnixNano()%1_000_000_000)
-	// The OrkStack namespace is an application coordinate and deliberately
-	// does not name a Temporal namespace. Cleanup must use namespace only for
-	// Temporal calls and orkNamespace only for archive/commit coordinates.
-	orkNamespace := "cleanup-e2e"
+	// The OrkStack namespaces are application coordinates and deliberately do
+	// not name a Temporal namespace. Cleanup must use `namespace` only for
+	// Temporal calls and each run's own OrkStack namespace only for
+	// archive/commit coordinates and its own retention.
+	const (
+		orkNamespaceShort = "cleanup-e2e-short"
+		orkNamespaceLong  = "cleanup-e2e-long"
+	)
 	temporalClient := cleanupTemporalClient(t, ctx, address, namespace)
 	reader := engine.NewTemporalRunReader(temporalClient)
-	retention, err := reader.NamespaceRetention(ctx, namespace)
+
+	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
 	if err != nil {
-		t.Fatalf("NamespaceRetention: %v", err)
+		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
 	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	retentionCtrl := archivecleanup.NewRetentionController(policies, reader, namespace, archivecleanup.DefaultRetentionBuffer, logger)
+	// A large deployment maximum, reconciled onto the real cluster's backstop
+	// TTL: this is what the independent check below proves was NOT what
+	// retired the short-lived run.
+	const deploymentMax = 999 * time.Hour
+	if _, err := retentionCtrl.SetMax(ctx, deploymentMax); err != nil {
+		t.Fatalf("SetMax: %v", err)
+	}
+	const shortRetention = time.Minute
+	namespaces := staticNamespaceLister{docs: []*orkstackv1.Namespace{
+		{Name: orkNamespaceShort, RunRetention: durationpb.New(shortRetention)},
+		{Name: orkNamespaceLong}, // inherits deploymentMax
+	}}
 
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
 	if err != nil {
@@ -93,6 +124,8 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 
 	var seededMu sync.Mutex
 	seeded := make(map[string]artifacts.ArtifactRef)
+	var runNamespacesMu sync.Mutex
+	runNamespaces := make(map[string]string)
 	taskWorker := worker.New(temporalClient, queue, worker.Options{
 		DisableRegistrationAliasing: true,
 		DisableWorkflowWorker:       true,
@@ -105,6 +138,9 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		}); err != nil {
 			return nil, err
 		}
+		runNamespacesMu.Lock()
+		orkNamespace := runNamespaces[in.GetRunId()]
+		runNamespacesMu.Unlock()
 		commitKey, err := artifacts.CommitKey(orkNamespace, in.GetRunId(), in.GetTaskId())
 		if err != nil {
 			return nil, err
@@ -145,8 +181,11 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		defer w.Stop()
 	}
 
-	start := func(label string) string {
+	start := func(label, orkNamespace string) string {
 		runID := fmt.Sprintf("ork-cleanup-%s-%d", label, time.Now().UnixNano())
+		runNamespacesMu.Lock()
+		runNamespaces[runID] = orkNamespace
+		runNamespacesMu.Unlock()
 		definition := &orkstackv1.Orkflow{
 			Name: "cleanup-" + label, Namespace: orkNamespace, Version: "1.0.0",
 			Tasks: []*orkstackv1.Task{{
@@ -166,10 +205,13 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		return runID
 	}
 
-	goneID := start("gone")
-	retainedID := start("retained")
-	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespace, goneID)
-	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespace, retainedID)
+	// "gone" belongs to the short-retention namespace and is retired by
+	// cleanup itself; "retained" belongs to the long (inherited, 999h)
+	// namespace and must survive the same pass untouched.
+	goneID := start("gone", orkNamespaceShort)
+	retainedID := start("retained", orkNamespaceLong)
+	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespaceShort, goneID)
+	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespaceLong, retainedID)
 
 	seededMu.Lock()
 	goneObject, ok := seeded[goneID]
@@ -178,17 +220,24 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		t.Fatal("cleaned run did not publish a content-addressed object")
 	}
 
-	if _, err := temporalClient.WorkflowService().DeleteWorkflowExecution(ctx, &workflowservice.DeleteWorkflowExecutionRequest{
-		Namespace: namespace, WorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: goneID},
-	}); err != nil {
-		t.Fatalf("DeleteWorkflowExecution: %v", err)
+	// Independent proof, BEFORE cleanup runs, that the underlying cluster's
+	// own backstop TTL is nowhere near what is about to retire "gone": it was
+	// just reconciled to deploymentMax + the enforcement margin, far longer
+	// than the test's lifetime.
+	backstopBefore, err := reader.NamespaceRetention(ctx, namespace)
+	if err != nil {
+		t.Fatalf("NamespaceRetention (independent check, before): %v", err)
 	}
-	awaitWorkflowGone(t, ctx, reader, namespace, goneID)
+	if backstopBefore < deploymentMax {
+		t.Fatalf("backstop TTL before cleanup = %s, want at least the %s deployment maximum", backstopBefore, deploymentMax)
+	}
 
 	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
 		TemporalNamespace: namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
-	}, runArchive, reader, slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time {
-		return time.Now().UTC().Add(retention + archivecleanup.DefaultRetentionBuffer + time.Hour)
+	}, runArchive, reader, namespaces, retentionCtrl, logger).WithClock(func() time.Time {
+		// Past "gone"'s one-minute namespace retention, nowhere near "retained"'s
+		// 999h inherited one.
+		return time.Now().UTC().Add(2 * shortRetention)
 	})
 	stats, err := cleaner.RunOnce(ctx)
 	if err != nil {
@@ -198,8 +247,25 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 		t.Fatalf("cleanup metrics = %+v, want one run and at least log+commit+snapshot", stats)
 	}
 
-	assertNoRunStorage(t, ctx, raw, cfg.S3Bucket, orkNamespace, goneID)
-	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespace, retainedID)
+	// THE assertion: the execution is gone, proven by a lookup independent of
+	// the cleanup worker's own call — DeleteWorkflowExecution is
+	// asynchronous, so this polls briefly rather than asserting instantly.
+	awaitWorkflowGone(t, ctx, reader, namespace, goneID)
+
+	// And independent proof AFTER cleanup that the backstop TTL never moved
+	// down to anything close to the one-minute window that actually did the
+	// work: OrkStack's active retirement did this, not Temporal's own TTL.
+	backstopAfter, err := reader.NamespaceRetention(ctx, namespace)
+	if err != nil {
+		t.Fatalf("NamespaceRetention (independent check, after): %v", err)
+	}
+	if backstopAfter < deploymentMax {
+		t.Fatalf("backstop TTL after cleanup = %s, want it unchanged at >= %s: "+
+			"the passive TTL must never be what retires a run", backstopAfter, deploymentMax)
+	}
+
+	assertNoRunStorage(t, ctx, raw, cfg.S3Bucket, orkNamespaceShort, goneID)
+	assertRunStoragePresent(t, ctx, raw, cfg.S3Bucket, orkNamespaceLong, retainedID)
 	if _, err := objectStore.Stat(ctx, goneObject.URI); err != nil {
 		t.Fatalf("shared content-addressed object %q was deleted: %v", goneObject.URI, err)
 	}
@@ -207,7 +273,7 @@ func TestIntegration_CleanupAfterTemporalRetention(t *testing.T) {
 	if err != nil || len(body) == 0 {
 		t.Fatalf("cleaned run archive body missing: bytes=%d error=%v", len(body), err)
 	}
-	listed, err := runArchive.ListRuns(ctx, artifacts.RunQuery{Namespace: orkNamespace, Orkflow: "cleanup-gone"})
+	listed, err := runArchive.ListRuns(ctx, artifacts.RunQuery{Namespace: orkNamespaceShort, Orkflow: "cleanup-gone"})
 	if err != nil || !containsArchivedRun(listed, goneID) {
 		t.Fatalf("cleaned run absent from archive index: entries=%v error=%v", listed, err)
 	}
@@ -307,11 +373,11 @@ func awaitWorkflowGone(t *testing.T, ctx context.Context, reader *engine.Tempora
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		exists, err := reader.WorkflowExists(ctx, namespace, runID)
+		found, _, err := reader.LookupWorkflow(ctx, namespace, runID)
 		if err != nil {
-			t.Fatalf("WorkflowExists after deletion: %v", err)
+			t.Fatalf("LookupWorkflow after deletion: %v", err)
 		}
-		if !exists {
+		if !found {
 			return
 		}
 		select {
@@ -435,7 +501,8 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 
 	// Four archived runs, each owning a real object and a real log chunk, all
 	// well past retention. None ever ran in Temporal, so the live
-	// WorkflowExists calls legitimately report them gone.
+	// LookupWorkflow calls legitimately report them gone (found=false), and
+	// cleanup reclaims their storage without ever calling DeleteWorkflow.
 	archived := time.Now().UTC().Add(-200 * time.Hour)
 	var runIDs []string
 	objectIDs := map[string]string{}
@@ -478,6 +545,17 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 		}
 	}
 
+	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	retentionCtrl := archivecleanup.NewRetentionController(policies, reader, namespace, 24*time.Hour, logger)
+	if _, err := retentionCtrl.SetMax(ctx, 72*time.Hour); err != nil {
+		t.Fatalf("SetMax: %v", err)
+	}
+	namespaces := staticNamespaceLister{} // no docs: "cleanup-cancel" inherits the 72h maximum
+
 	iterationCtx, cancelIteration := context.WithCancel(ctx)
 	defer cancelIteration()
 	wrapped := &cancelAfterFirstDelete{RunArchive: runArchive, cancel: cancelIteration}
@@ -485,9 +563,8 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 		Enabled: true, TemporalNamespace: namespace, Interval: time.Hour,
 		RetentionBuffer: 24 * time.Hour, BatchSize: len(runIDs),
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	stats, err := archivecleanup.NewCleaner(config, wrapped, reader, logger).RunOnce(iterationCtx)
+	stats, err := archivecleanup.NewCleaner(config, wrapped, reader, namespaces, retentionCtrl, logger).RunOnce(iterationCtx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled iteration error = %v, want context.Canceled", err)
 	}
@@ -537,7 +614,7 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 
 	// Restart on a fresh context and converge: cleaned runs are skipped through
 	// their sidecars, the interrupted remainder is retried and completes.
-	resumed, err := archivecleanup.NewCleaner(config, runArchive, reader, logger).RunOnce(ctx)
+	resumed, err := archivecleanup.NewCleaner(config, runArchive, reader, namespaces, retentionCtrl, logger).RunOnce(ctx)
 	if err != nil {
 		t.Fatalf("resumed iteration: %v", err)
 	}

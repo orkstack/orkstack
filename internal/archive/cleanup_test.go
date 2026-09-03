@@ -12,29 +12,120 @@ import (
 	"time"
 
 	"go.temporal.io/api/serviceerror"
+	"google.golang.org/protobuf/types/known/durationpb"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 var errInjected = errors.New("injected")
 
-type fakeTemporal struct {
+func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// fakeCluster stands in for the RunRetirer seam: NamespaceRetention and
+// SetNamespaceRetention back the backstop reconcile, LookupWorkflow and
+// DeleteWorkflow back active retirement.
+type fakeCluster struct {
+	// retention is what NamespaceRetention reports as the cluster's CURRENT
+	// backstop TTL. Defaulted by newFakeCluster to whatever the test's
+	// RetentionController would want, so Reconcile is a no-op unless a test
+	// deliberately sets it to something else.
 	retention           time.Duration
 	retentionErr        error
-	exists              map[string]bool
-	errors              map[string]error
+	setRetentionErr     error
+	setRetentionCalls   []time.Duration
 	retentionNamespaces []string
-	workflowNamespaces  []string
+
+	// found reports whether LookupWorkflow finds workflowID. Unset (the zero
+	// value, false) is "not found" — the default every paging-focused test
+	// below relies on, since a not-found execution needs no DeleteWorkflow
+	// call before storage is reclaimed.
+	found map[string]bool
+	// closeTime is the close time LookupWorkflow reports for a found
+	// execution. Unset means still running (the zero time).
+	closeTime        map[string]time.Time
+	lookupErr        map[string]error
+	lookupNamespaces []string
+
+	deleteErr        map[string]error
+	deleteCalls      map[string]int
+	deleteNamespaces []string
 }
 
-func (f *fakeTemporal) NamespaceRetention(_ context.Context, namespace string) (time.Duration, error) {
+func newFakeCluster() *fakeCluster {
+	return &fakeCluster{
+		found:       map[string]bool{},
+		closeTime:   map[string]time.Time{},
+		lookupErr:   map[string]error{},
+		deleteErr:   map[string]error{},
+		deleteCalls: map[string]int{},
+	}
+}
+
+func (f *fakeCluster) NamespaceRetention(_ context.Context, namespace string) (time.Duration, error) {
 	f.retentionNamespaces = append(f.retentionNamespaces, namespace)
 	return f.retention, f.retentionErr
 }
 
-func (f *fakeTemporal) WorkflowExists(_ context.Context, namespace, id string) (bool, error) {
-	f.workflowNamespaces = append(f.workflowNamespaces, namespace)
-	return f.exists[id], f.errors[id]
+func (f *fakeCluster) SetNamespaceRetention(_ context.Context, namespace string, d time.Duration) (time.Duration, error) {
+	f.setRetentionCalls = append(f.setRetentionCalls, d)
+	if f.setRetentionErr != nil {
+		return 0, f.setRetentionErr
+	}
+	f.retention = d
+	return d, nil
+}
+
+func (f *fakeCluster) LookupWorkflow(_ context.Context, namespace, workflowID string) (bool, time.Time, error) {
+	f.lookupNamespaces = append(f.lookupNamespaces, namespace)
+	if err := f.lookupErr[workflowID]; err != nil {
+		return false, time.Time{}, err
+	}
+	return f.found[workflowID], f.closeTime[workflowID], nil
+}
+
+func (f *fakeCluster) DeleteWorkflow(_ context.Context, namespace, workflowID string) error {
+	f.deleteNamespaces = append(f.deleteNamespaces, namespace)
+	f.deleteCalls[workflowID]++
+	return f.deleteErr[workflowID]
+}
+
+// fakePolicyStore is an in-memory artifacts.RetentionPolicyStore.
+type fakePolicyStore struct {
+	policy *orkstackv1.RetentionPolicy
+	getErr error
+	putErr error
+}
+
+func (f *fakePolicyStore) Get(context.Context) (*orkstackv1.RetentionPolicy, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	if f.policy == nil {
+		return nil, artifacts.ErrNotFound
+	}
+	return f.policy, nil
+}
+
+func (f *fakePolicyStore) Put(_ context.Context, p *orkstackv1.RetentionPolicy, _ artifacts.PutConditions) (*orkstackv1.RetentionPolicy, error) {
+	if f.putErr != nil {
+		return nil, f.putErr
+	}
+	f.policy = p
+	return p, nil
+}
+
+// fakeNamespaces is an in-memory NamespaceLister.
+type fakeNamespaces struct {
+	docs    []*orkstackv1.Namespace
+	listErr error
+}
+
+func (f *fakeNamespaces) List(context.Context) ([]*orkstackv1.Namespace, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.docs, nil
 }
 
 type fakeArchive struct {
@@ -182,52 +273,245 @@ func (f *fakeArchive) MarkArtifactsCleaned(_ context.Context, id string, at time
 	return nil
 }
 
-func testCleaner(store artifacts.RunArchive, temporal WorkflowReader, now time.Time) *Cleaner {
-	c := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}, store, temporal, slog.New(slog.NewTextHandler(io.Discard, nil)))
+// newTestController builds a RetentionController over an in-memory policy
+// store pre-set to maxRetention, and a 24h enforcement margin — the same
+// default DefaultRetentionBuffer uses. cluster's NamespaceRetention is
+// defaulted (by the caller, via newFakeCluster) so Reconcile is a no-op
+// unless a test wants otherwise.
+func newTestController(cluster RunRetirer, maxRetention time.Duration) *RetentionController {
+	policies := &fakePolicyStore{policy: &orkstackv1.RetentionPolicy{MaxRunRetention: durationpb.New(maxRetention)}}
+	return NewRetentionController(policies, cluster, "temporal-runtime", 24*time.Hour, testLogger())
+}
+
+// testCleaner builds a Cleaner with the defaults most tests want: no
+// namespace overrides (everything inherits maxRetention), a fixed clock, and
+// BatchSize 100.
+func testCleaner(store artifacts.RunArchive, cluster *fakeCluster, namespaces NamespaceLister, maxRetention time.Duration, now time.Time) *Cleaner {
+	if cluster.retention == 0 {
+		cluster.retention = maxRetention + 24*time.Hour // backstop already reconciled; Reconcile no-ops
+	}
+	if namespaces == nil {
+		namespaces = &fakeNamespaces{}
+	}
+	retention := newTestController(cluster, maxRetention)
+	c := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100},
+		store, cluster, namespaces, retention, testLogger())
 	c.now = func() time.Time { return now }
 	return c
 }
 
-func TestRunOnce_DeletesOnlyExpiredWorkflowsGoneFromTemporal(t *testing.T) {
+// TestRunOnce_RetiresAFoundClosedExecutionPastItsNamespaceRetention is the
+// core active-retirement path: a run whose execution the cluster still
+// holds, closed well before its namespace's retention, is explicitly deleted
+// from the cluster before its OrkStack storage is reclaimed.
+func TestRunOnce_RetiresAFoundClosedExecutionPastItsNamespaceRetention(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
-	old := now.Add(-97 * time.Hour)
-	recent := now.Add(-95 * time.Hour)
-	store := newFakeArchive(
-		artifacts.RunIndexEntry{RunID: "gone", Namespace: "default", Time: old},
-		artifacts.RunIndexEntry{RunID: "exists", Namespace: "default", Time: old},
-		artifacts.RunIndexEntry{RunID: "recent", Namespace: "default", Time: recent},
-	)
-	temporal := &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{"exists": true}}
-	stats, err := testCleaner(store, temporal, now).RunOnce(context.Background())
+	old := now.Add(-100 * time.Hour)
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "retire-me", Namespace: "default", Time: old})
+	cluster := newFakeCluster()
+	cluster.found["retire-me"] = true
+	cluster.closeTime["retire-me"] = old
+
+	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
 	if err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-	if len(store.queries) != 1 || store.queries[0].Limit != 200 || store.queries[0].Until.IsZero() {
-		t.Fatalf("bounded queries = %+v", store.queries)
+	if cluster.deleteCalls["retire-me"] != 1 {
+		t.Fatalf("DeleteWorkflow calls = %d, want 1", cluster.deleteCalls["retire-me"])
 	}
-	if stats.RunsCleaned != 1 || stats.ObjectsDeleted != 2 || stats.BytesReclaimed != 20 {
+	if store.deletes["retire-me"] != 1 || stats.RunsCleaned != 1 {
+		t.Fatalf("stats = %+v, deletes = %#v", stats, store.deletes)
+	}
+	if len(cluster.deleteNamespaces) != 1 || cluster.deleteNamespaces[0] != "temporal-runtime" {
+		t.Fatalf("delete namespace = %v, want [temporal-runtime]", cluster.deleteNamespaces)
+	}
+}
+
+// TestRunOnce_ReclaimsStorageWithNoDeleteCallWhenAlreadyGone covers the
+// !found path: the backstop or an earlier pass already removed the
+// execution, so no DeleteWorkflow call is made, but storage is still
+// reclaimed.
+func TestRunOnce_ReclaimsStorageWithNoDeleteCallWhenAlreadyGone(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "already-gone", Namespace: "default", Time: now.Add(-100 * time.Hour)})
+	cluster := newFakeCluster() // found defaults to false
+
+	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if cluster.deleteCalls["already-gone"] != 0 {
+		t.Fatalf("DeleteWorkflow was called for an execution already absent: %d", cluster.deleteCalls["already-gone"])
+	}
+	if store.deletes["already-gone"] != 1 || stats.RunsCleaned != 1 {
+		t.Fatalf("stats = %+v, deletes = %#v", stats, store.deletes)
+	}
+}
+
+// TestRunOnce_SkipsAFoundExecutionNotYetPastItsNamespaceRetention proves the
+// per-entry cutoff is the execution's own CLOSE time against ITS namespace's
+// retention, not merely "old enough to have been listed".
+func TestRunOnce_SkipsAFoundExecutionNotYetPastItsNamespaceRetention(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	// Created long ago (so the creation-time prefilter includes it) but
+	// closed recently — a long-running run.
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "long-runner", Namespace: "default", Time: now.Add(-1000 * time.Hour)})
+	cluster := newFakeCluster()
+	cluster.found["long-runner"] = true
+	cluster.closeTime["long-runner"] = now.Add(-time.Hour) // closed 1h ago, well inside 72h retention
+
+	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if cluster.deleteCalls["long-runner"] != 0 || store.deletes["long-runner"] != 0 {
+		t.Fatalf("a run inside its namespace's retention was retired: deletes=%d cluster_deletes=%d",
+			store.deletes["long-runner"], cluster.deleteCalls["long-runner"])
+	}
+	if stats.RunsCleaned != 0 {
 		t.Fatalf("stats = %+v", stats)
 	}
-	if store.deletes["gone"] != 1 || store.deletes["exists"] != 0 || store.deletes["recent"] != 0 {
-		t.Fatalf("deletes = %#v", store.deletes)
+}
+
+// TestRunOnce_RefusesAStillRunningArchivedRun covers the impossible-by-
+// construction case: an archived run whose execution the cluster reports as
+// still open (found, zero close time). Deleting it would TERMINATE a live
+// execution, so it is refused rather than risked.
+func TestRunOnce_RefusesAStillRunningArchivedRun(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "still-running", Namespace: "default", Time: now.Add(-100 * time.Hour)})
+	cluster := newFakeCluster()
+	cluster.found["still-running"] = true // closeTime left zero
+
+	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
+	if err == nil {
+		t.Fatal("RunOnce succeeded, want an error naming the still-running archived run")
 	}
-	if got := temporal.retentionNamespaces; len(got) != 1 || got[0] != "temporal-runtime" {
-		t.Fatalf("retention namespaces = %v", got)
+	if cluster.deleteCalls["still-running"] != 0 || store.deletes["still-running"] != 0 {
+		t.Fatalf("a still-running execution was retired: cluster_deletes=%d archive_deletes=%d",
+			cluster.deleteCalls["still-running"], store.deletes["still-running"])
 	}
-	for _, got := range temporal.workflowNamespaces {
-		if got != "temporal-runtime" {
-			t.Fatalf("workflow namespace = %q, want temporal-runtime", got)
+	if stats.Errors != 1 || stats.RunsCleaned != 0 {
+		t.Fatalf("stats = %+v", stats)
+	}
+}
+
+// TestRunOnce_UsesEachNamespacesOwnRetention is the multi-namespace scenario:
+// three namespaces under one 72h deployment maximum — one explicit and
+// tighter (24h), one explicit and at the ceiling (72h, same as inherit), and
+// one that inherits. Only entries past THEIR OWN namespace's retention are
+// retired.
+func TestRunOnce_UsesEachNamespacesOwnRetention(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	store := newFakeArchive(
+		// tight (24h): closed 30h ago is past its own retention.
+		artifacts.RunIndexEntry{RunID: "tight-expired", Namespace: "tight", Time: now.Add(-200 * time.Hour)},
+		// tight (24h): closed 1h ago is still inside its own retention.
+		artifacts.RunIndexEntry{RunID: "tight-fresh", Namespace: "tight", Time: now.Add(-200 * time.Hour)},
+		// inherit (falls to the 72h maximum): closed 30h ago is NOT past 72h.
+		artifacts.RunIndexEntry{RunID: "inherit-fresh", Namespace: "inherits", Time: now.Add(-200 * time.Hour)},
+		// inherit: closed 100h ago IS past the 72h maximum.
+		artifacts.RunIndexEntry{RunID: "inherit-expired", Namespace: "inherits", Time: now.Add(-200 * time.Hour)},
+	)
+	cluster := newFakeCluster()
+	for id, closed := range map[string]time.Time{
+		"tight-expired":   now.Add(-30 * time.Hour),
+		"tight-fresh":     now.Add(-1 * time.Hour),
+		"inherit-fresh":   now.Add(-30 * time.Hour),
+		"inherit-expired": now.Add(-100 * time.Hour),
+	} {
+		cluster.found[id] = true
+		cluster.closeTime[id] = closed
+	}
+	namespaces := &fakeNamespaces{docs: []*orkstackv1.Namespace{
+		{Name: "tight", RunRetention: durationpb.New(24 * time.Hour)},
+		{Name: "inherits"}, // no run_retention: falls to the 72h maximum
+	}}
+
+	stats, err := testCleaner(store, cluster, namespaces, 72*time.Hour, now).RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if stats.RunsCleaned != 2 {
+		t.Fatalf("runs cleaned = %d, want 2 (tight-expired, inherit-expired): stats=%+v", stats.RunsCleaned, stats)
+	}
+	for id, wantRetired := range map[string]bool{
+		"tight-expired":   true,
+		"tight-fresh":     false,
+		"inherit-fresh":   false,
+		"inherit-expired": true,
+	} {
+		got := store.deletes[id] == 1
+		if got != wantRetired {
+			t.Errorf("run %q retired = %v, want %v", id, got, wantRetired)
 		}
+	}
+}
+
+// TestRunOnce_ReconcileFailureIsLoggedButDoesNotBlockRetirement proves the
+// backstop reconcile is best-effort: active retirement never depends on the
+// cluster's own TTL, so a reconcile failure surfaces as a counted error but
+// the pass still retires eligible runs.
+func TestRunOnce_ReconcileFailureIsLoggedButDoesNotBlockRetirement(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "still-retires", Namespace: "default", Time: now.Add(-100 * time.Hour)})
+	cluster := newFakeCluster()
+	cluster.found["still-retires"] = true
+	cluster.closeTime["still-retires"] = now.Add(-100 * time.Hour)
+	// Force Reconcile to attempt a write (current != wanted) and fail it.
+	cluster.retention = time.Hour
+	cluster.setRetentionErr = errInjected
+
+	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v, want the reconcile failure counted rather than returned", err)
+	}
+	if stats.Errors != 1 {
+		t.Fatalf("stats.Errors = %d, want 1 for the reconcile failure", stats.Errors)
+	}
+	if stats.RunsCleaned != 1 || store.deletes["still-retires"] != 1 {
+		t.Fatalf("retirement was blocked by the reconcile failure: stats=%+v deletes=%#v", stats, store.deletes)
+	}
+	if len(cluster.setRetentionCalls) != 1 {
+		t.Fatalf("SetNamespaceRetention calls = %d, want 1", len(cluster.setRetentionCalls))
 	}
 }
 
 func TestRunOnce_EmptyTemporalNamespaceFailsClosed(t *testing.T) {
 	now := time.Now().UTC()
 	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "gone", Namespace: "archive-coordinate", Time: now.Add(-100 * time.Hour)})
-	cleaner := NewCleaner(CleanupConfig{Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}, store,
-		&fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cluster := newFakeCluster()
+	retention := newTestController(cluster, 72*time.Hour)
+	cleaner := NewCleaner(CleanupConfig{Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100},
+		store, cluster, &fakeNamespaces{}, retention, testLogger())
 	stats, err := cleaner.RunOnce(context.Background())
 	if err == nil || stats.RunsCleaned != 0 || len(store.deletes) != 0 {
+		t.Fatalf("stats=%+v error=%v deletes=%#v", stats, err, store.deletes)
+	}
+}
+
+func TestRunOnce_RetentionPolicyReadFailureSkipsIteration(t *testing.T) {
+	now := time.Now().UTC()
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "gone", Namespace: "default", Time: now.Add(-100 * time.Hour)})
+	cluster := newFakeCluster()
+	policies := &fakePolicyStore{getErr: errInjected}
+	retention := NewRetentionController(policies, cluster, "temporal-runtime", 24*time.Hour, testLogger())
+	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100},
+		store, cluster, &fakeNamespaces{}, retention, testLogger())
+	cleaner.now = func() time.Time { return now }
+	stats, err := cleaner.RunOnce(context.Background())
+	if !errors.Is(err, errInjected) || stats.Errors != 1 || len(store.deletes) != 0 {
+		t.Fatalf("stats=%+v error=%v deletes=%#v", stats, err, store.deletes)
+	}
+}
+
+func TestRunOnce_NamespaceListFailureSkipsIteration(t *testing.T) {
+	now := time.Now().UTC()
+	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "gone", Namespace: "default", Time: now.Add(-100 * time.Hour)})
+	cluster := newFakeCluster()
+	namespaces := &fakeNamespaces{listErr: errInjected}
+	stats, err := testCleaner(store, cluster, namespaces, 72*time.Hour, now).RunOnce(context.Background())
+	if !errors.Is(err, errInjected) || stats.Errors != 1 || len(store.deletes) != 0 {
 		t.Fatalf("stats=%+v error=%v deletes=%#v", stats, err, store.deletes)
 	}
 }
@@ -235,8 +519,9 @@ func TestRunOnce_EmptyTemporalNamespaceFailsClosed(t *testing.T) {
 func TestRunOnce_NamespaceNotFoundDeletesNothing(t *testing.T) {
 	now := time.Now().UTC()
 	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "gone", Namespace: "archive-coordinate", Time: now.Add(-100 * time.Hour)})
-	temporal := &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}, errors: map[string]error{"gone": serviceerror.NewNamespaceNotFound("temporal namespace missing")}}
-	stats, err := testCleaner(store, temporal, now).RunOnce(context.Background())
+	cluster := newFakeCluster()
+	cluster.lookupErr["gone"] = serviceerror.NewNamespaceNotFound("temporal namespace missing")
+	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
 	if err == nil || stats.Errors != 1 || stats.RunsCleaned != 0 || len(store.deletes) != 0 {
 		t.Fatalf("stats=%+v error=%v deletes=%#v", stats, err, store.deletes)
 	}
@@ -245,7 +530,8 @@ func TestRunOnce_NamespaceNotFoundDeletesNothing(t *testing.T) {
 func TestRunOnce_IsIdempotent(t *testing.T) {
 	now := time.Now().UTC()
 	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "gone", Namespace: "default", Time: now.Add(-100 * time.Hour)})
-	cleaner := testCleaner(store, &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, now)
+	cluster := newFakeCluster()
+	cleaner := testCleaner(store, cluster, nil, 72*time.Hour, now)
 	first, err := cleaner.RunOnce(context.Background())
 	if err != nil || first.RunsCleaned != 1 {
 		t.Fatalf("first = %+v, %v", first, err)
@@ -270,8 +556,9 @@ func TestRunOnce_ContinuesAfterPerRunFailures(t *testing.T) {
 	)
 	store.deleteErr["delete-error"] = errInjected
 	store.markErr["mark-error"] = errInjected
-	temporal := &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}, errors: map[string]error{"workflow-error": context.DeadlineExceeded}}
-	stats, err := testCleaner(store, temporal, now).RunOnce(context.Background())
+	cluster := newFakeCluster()
+	cluster.lookupErr["workflow-error"] = context.DeadlineExceeded
+	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errInjected) {
 		t.Fatalf("error = %v", err)
 	}
@@ -296,8 +583,11 @@ func TestRunOnce_PagesPastAlreadyCleanedRuns(t *testing.T) {
 	for i := 3; i < 7; i++ {
 		store.states[fmt.Sprintf("run-%d", i)] = artifacts.RunCleanupState{RunID: fmt.Sprintf("run-%d", i), ArtifactsCleaned: true}
 	}
-	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2}, store,
-		&fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time { return now })
+	cluster := newFakeCluster()
+	cluster.retention = 96 * time.Hour
+	retention := newTestController(cluster, 72*time.Hour)
+	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2},
+		store, cluster, &fakeNamespaces{}, retention, testLogger()).WithClock(func() time.Time { return now })
 	stats, err := cleaner.RunOnce(context.Background())
 	if err != nil || stats.RunsCleaned != 2 {
 		t.Fatalf("RunOnce = %+v, %v", stats, err)
@@ -328,8 +618,11 @@ func TestRunOnce_KeyCursorMakesPagesDisjoint(t *testing.T) {
 		store.add(artifacts.RunIndexEntry{RunID: id, Namespace: "default", Time: stamp.Add(-time.Duration(i/3) * time.Hour)})
 		store.states[id] = artifacts.RunCleanupState{RunID: id, ArtifactsCleaned: true}
 	}
-	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2}, store,
-		&fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time { return now })
+	cluster := newFakeCluster()
+	cluster.retention = 96 * time.Hour
+	retention := newTestController(cluster, 72*time.Hour)
+	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2},
+		store, cluster, &fakeNamespaces{}, retention, testLogger()).WithClock(func() time.Time { return now })
 	if _, err := cleaner.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -362,8 +655,11 @@ func TestRunOnce_SharedTimestampTerminates(t *testing.T) {
 		store.add(artifacts.RunIndexEntry{RunID: id, Namespace: "default", Time: stamp})
 		store.states[id] = artifacts.RunCleanupState{RunID: id, ArtifactsCleaned: true}
 	}
-	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2}, store,
-		&fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time { return now })
+	cluster := newFakeCluster()
+	cluster.retention = 96 * time.Hour
+	retention := newTestController(cluster, 72*time.Hour)
+	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 2},
+		store, cluster, &fakeNamespaces{}, retention, testLogger()).WithClock(func() time.Time { return now })
 	stats, err := cleaner.RunOnce(context.Background())
 	if err != nil || stats.RunsCleaned != 0 || stats.RunsScanned != 6 {
 		t.Fatalf("RunOnce = %+v, %v", stats, err)
@@ -398,8 +694,11 @@ func TestRunOnce_WholeIterationEnumeratesTheIndexOnce(t *testing.T) {
 	for _, entry := range store.entries {
 		store.states[entry.RunID] = artifacts.RunCleanupState{RunID: entry.RunID, ArtifactsCleaned: true}
 	}
-	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}, store,
-		&fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time { return now })
+	cluster := newFakeCluster()
+	cluster.retention = 96 * time.Hour
+	retention := newTestController(cluster, 72*time.Hour)
+	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100},
+		store, cluster, &fakeNamespaces{}, retention, testLogger()).WithClock(func() time.Time { return now })
 
 	stats, err := cleaner.RunOnce(context.Background())
 	if err != nil {
@@ -420,7 +719,7 @@ func TestRunOnce_WholeIterationEnumeratesTheIndexOnce(t *testing.T) {
 	// produced without sorting every key first.
 	newestFirst := newFakeArchive(entries...)
 	pages := 0
-	for until := cutoffFor(now, 72*time.Hour, 24*time.Hour); ; pages++ {
+	for until := now.Add(-72 * time.Hour); ; pages++ {
 		page, err := newestFirst.ListRuns(context.Background(), artifacts.RunQuery{Until: until, Limit: 200})
 		if err != nil {
 			t.Fatalf("newest-first page: %v", err)
@@ -441,11 +740,6 @@ func TestRunOnce_WholeIterationEnumeratesTheIndexOnce(t *testing.T) {
 		float64(newestFirst.keysEnumerated)/float64(store.keysEnumerated))
 }
 
-// cutoffFor mirrors the eligibility bound RunOnce computes.
-func cutoffFor(now time.Time, retention, buffer time.Duration) time.Time {
-	return now.Add(-(retention + buffer))
-}
-
 // Cleanup asks for runs outside the retention window, but the deletion it then
 // performs is irreversible and RunArchive is an exported interface, so the
 // eligibility of each entry is re-checked rather than trusted from the filter.
@@ -456,7 +750,8 @@ func TestRunOnce_RechecksRetentionAgainstEachReturnedEntry(t *testing.T) {
 		artifacts.RunIndexEntry{RunID: "still-retained", Namespace: "default", Time: now.Add(-time.Minute)},
 	)
 	store.ignoreUntil = true // a backend that honours every filter except Until
-	stats, err := testCleaner(store, &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, now).RunOnce(context.Background())
+	cluster := newFakeCluster()
+	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
 	if err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
@@ -478,8 +773,11 @@ func TestRunOnce_StopsAfterBatchSizeProcessedRuns(t *testing.T) {
 		entries = append(entries, artifacts.RunIndexEntry{RunID: fmt.Sprintf("batch-%d", i), Namespace: "default", Time: now.Add(time.Duration(-100-i) * time.Hour)})
 	}
 	store := newFakeArchive(entries...)
-	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 3}, store,
-		&fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time { return now })
+	cluster := newFakeCluster()
+	cluster.retention = 96 * time.Hour
+	retention := newTestController(cluster, 72*time.Hour)
+	cleaner := NewCleaner(CleanupConfig{TemporalNamespace: "temporal-runtime", Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 3},
+		store, cluster, &fakeNamespaces{}, retention, testLogger()).WithClock(func() time.Time { return now })
 	stats, err := cleaner.RunOnce(context.Background())
 	if err != nil || stats.RunsCleaned != 3 || len(store.deletes) != 3 {
 		t.Fatalf("RunOnce = %+v, deletes=%#v, error=%v", stats, store.deletes, err)
@@ -513,15 +811,6 @@ func TestCleanupConfigFromEnv(t *testing.T) {
 	}
 }
 
-func TestRunOnce_RetentionLookupFailureSkipsIteration(t *testing.T) {
-	now := time.Now().UTC()
-	store := newFakeArchive(artifacts.RunIndexEntry{RunID: "gone", Namespace: "default", Time: now.Add(-100 * time.Hour)})
-	stats, err := testCleaner(store, &fakeTemporal{retentionErr: errInjected}, now).RunOnce(context.Background())
-	if !errors.Is(err, errInjected) || stats.Errors != 1 || len(store.deletes) != 0 {
-		t.Fatalf("stats=%+v error=%v deletes=%#v", stats, err, store.deletes)
-	}
-}
-
 // TestRunOnce_CleanupStateFollowsSuccessfulDeletion pins the ordering the
 // durability contract depends on: the immutable `artifacts_cleaned` sidecar is
 // the claim that a run's storage is reclaimed, so it must never be written for
@@ -535,8 +824,9 @@ func TestRunOnce_CleanupStateFollowsSuccessfulDeletion(t *testing.T) {
 		artifacts.RunIndexEntry{RunID: "delete-succeeds", Namespace: "default", Time: old.Add(-time.Hour)},
 	)
 	store.deleteErr["delete-fails"] = errInjected
-	temporal := &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}
-	stats, err := testCleaner(store, temporal, now).RunOnce(context.Background())
+	cluster := newFakeCluster()
+	cleaner := testCleaner(store, cluster, nil, 72*time.Hour, now)
+	stats, err := cleaner.RunOnce(context.Background())
 	if !errors.Is(err, errInjected) {
 		t.Fatalf("error = %v, want the injected delete failure surfaced", err)
 	}
@@ -553,7 +843,7 @@ func TestRunOnce_CleanupStateFollowsSuccessfulDeletion(t *testing.T) {
 	// The failed run is still a candidate on the next pass, and converges once
 	// the transient failure clears.
 	delete(store.deleteErr, "delete-fails")
-	second, err := testCleaner(store, temporal, now).RunOnce(context.Background())
+	second, err := cleaner.RunOnce(context.Background())
 	if err != nil || second.RunsCleaned != 1 || !store.states["delete-fails"].ArtifactsCleaned {
 		t.Fatalf("retry = %+v, %v, states=%#v", second, err, store.states)
 	}
@@ -582,8 +872,9 @@ func TestRunOnce_CancellationStopsPromptlyAndLeavesStateConsistent(t *testing.T)
 	// strictly between two runs rather than inside one.
 	store.afterDelete = func(string) { cancel() }
 
-	temporal := &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}}
-	stats, err := testCleaner(store, temporal, now).RunOnce(ctx)
+	cluster := newFakeCluster()
+	cleaner := testCleaner(store, cluster, nil, 72*time.Hour, now)
+	stats, err := cleaner.RunOnce(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
@@ -605,7 +896,7 @@ func TestRunOnce_CancellationStopsPromptlyAndLeavesStateConsistent(t *testing.T)
 	// sidecar; the rest are retried. This is resumption, not cross-restart
 	// idempotence, and it must not corrupt anything.
 	store.afterDelete = nil
-	resumed, err := testCleaner(store, temporal, now).RunOnce(context.Background())
+	resumed, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -658,11 +949,13 @@ func TestRunOnce_AbsurdBatchSizeStillAsksForABoundedPage(t *testing.T) {
 	store := newFakeArchive(
 		artifacts.RunIndexEntry{RunID: "run-0", Namespace: "default", Orkflow: "flow", Status: "succeeded", Time: archived},
 	)
+	cluster := newFakeCluster()
+	cluster.retention = 96 * time.Hour
+	retention := newTestController(cluster, 72*time.Hour)
 	cleaner := NewCleaner(CleanupConfig{
 		TemporalNamespace: "temporal-runtime", Interval: time.Hour,
 		RetentionBuffer: 24 * time.Hour, BatchSize: 4611686018427387905,
-	}, store, &fakeTemporal{retention: 72 * time.Hour, exists: map[string]bool{}},
-		slog.New(slog.NewTextHandler(io.Discard, nil))).WithClock(func() time.Time { return now })
+	}, store, cluster, &fakeNamespaces{}, retention, testLogger()).WithClock(func() time.Time { return now })
 
 	stats, err := cleaner.RunOnce(context.Background())
 	if err != nil {
