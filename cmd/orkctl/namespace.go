@@ -5,9 +5,11 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -37,6 +39,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		defaultPool  string
 		allowedPools []string
 		labels       []string
+		runRetention string
 	)
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -50,6 +53,10 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			retention, err := parseRunRetentionFlag(runRetention)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -60,6 +67,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 					Labels:       parsed,
 					DefaultPool:  defaultPool,
 					AllowedPools: allowedPools,
+					RunRetention: retention,
 				}},
 			))
 			if err != nil {
@@ -77,7 +85,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			return renderNamespace(cmd.OutOrStdout(), resp.Msg.GetNamespace())
 		},
 	}
-	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels)
+	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention)
 	return cmd
 }
 
@@ -139,6 +147,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		defaultPool  string
 		allowedPools []string
 		labels       []string
+		runRetention string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <name>",
@@ -150,6 +159,10 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			parsed, err := parseLabels(labels)
+			if err != nil {
+				return err
+			}
+			retention, err := parseRunRetentionFlag(runRetention)
 			if err != nil {
 				return err
 			}
@@ -180,6 +193,9 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			if cmd.Flags().Changed("label") {
 				edited.Labels = parsed
 			}
+			if cmd.Flags().Changed("run-retention") {
+				edited.RunRetention = retention
+			}
 
 			resp, err := client.UpdateNamespace(ctx, connect.NewRequest(
 				&orkstackv1.UpdateNamespaceRequest{Namespace: edited},
@@ -195,7 +211,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			return renderNamespace(cmd.OutOrStdout(), resp.Msg.GetNamespace())
 		},
 	}
-	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels)
+	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention)
 	return cmd
 }
 
@@ -273,6 +289,7 @@ func namespaceSpecFlags(
 	cmd *cobra.Command,
 	description, defaultPool *string,
 	allowedPools, labels *[]string,
+	runRetention *string,
 ) {
 	cmd.Flags().StringVar(description, "description", "", "human description")
 	cmd.Flags().StringVar(defaultPool, "default-pool", "",
@@ -280,6 +297,29 @@ func namespaceSpecFlags(
 	cmd.Flags().StringArrayVar(allowedPools, "allow-pool", nil,
 		"pool this namespace may dispatch onto (repeatable; empty = unrestricted)")
 	cmd.Flags().StringArrayVar(labels, "label", nil, "label as key=value (repeatable)")
+	cmd.Flags().StringVar(runRetention, "run-retention", "",
+		"how long a finished run stays readable, e.g. \"168h\" "+
+			"(default: the deployment maximum; \"inherit\" clears a value)")
+}
+
+// parseRunRetentionFlag turns --run-retention's raw value into the proto
+// field it becomes. Blank or "inherit" means the namespace sets none of its
+// own — the deployment maximum applies, which create leaves unset and
+// update clears explicitly. Anything else is Go's time.ParseDuration syntax,
+// held to the same positive rule the write path (internal/api) enforces
+// again — refused here so a bad flag is a local error, not a round trip.
+func parseRunRetentionFlag(raw string) (*durationpb.Duration, error) {
+	if raw == "" || raw == "inherit" {
+		return nil, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse --run-retention %q: %w", raw, err)
+	}
+	if d <= 0 {
+		return nil, fmt.Errorf("--run-retention must be a positive duration, got %s", d)
+	}
+	return durationpb.New(d), nil
 }
 
 // parseLabels turns repeated key=value flags into a map.
@@ -304,11 +344,11 @@ func renderNamespaceList(out io.Writer, namespaces []*orkstackv1.Namespace) erro
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tCREATED\tDESCRIPTION")
+	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tRUN RETENTION\tCREATED\tDESCRIPTION")
 	for _, ns := range namespaces {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			ns.GetName(), defaultPoolLabel(ns), joinOrDash(ns.GetAllowedPools()),
-			formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
+			runRetentionLabel(ns), formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -322,6 +362,7 @@ func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	fmt.Fprintf(table, "Description:\t%s\n", orDash(ns.GetDescription()))
 	fmt.Fprintf(table, "Default pool:\t%s\n", defaultPoolLabel(ns))
 	fmt.Fprintf(table, "Allowed pools:\t%s\n", allowedPoolsLabel(ns))
+	fmt.Fprintf(table, "Run retention:\t%s\n", runRetentionLabel(ns))
 	fmt.Fprintf(table, "Labels:\t%s\n", labelsLabel(ns))
 	fmt.Fprintf(table, "Created:\t%s\n", formatTime(ns.GetCreatedAt()))
 	fmt.Fprintf(table, "Updated:\t%s\n", formatTime(ns.GetUpdatedAt()))
@@ -347,6 +388,16 @@ func allowedPoolsLabel(ns *orkstackv1.Namespace) string {
 		return strings.Join(pools, ",")
 	}
 	return "(unrestricted)"
+}
+
+// runRetentionLabel renders an unset run_retention as what it means: this
+// namespace inherits the deployment maximum, never a dash that could be
+// mistaken for "no retention".
+func runRetentionLabel(ns *orkstackv1.Namespace) string {
+	if d := ns.GetRunRetention(); d != nil {
+		return d.AsDuration().String()
+	}
+	return "inherited (deployment maximum)"
 }
 
 func labelsLabel(ns *orkstackv1.Namespace) string {

@@ -13,19 +13,25 @@ import (
 	"go.temporal.io/sdk/client"
 )
 
-// TestIntegration_CLISetsExecutionRetentionOnTheRealCluster is the end-to-end
-// case: it goes through the SAME path an operator does —
+// TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster is the
+// end-to-end case: it goes through the SAME path an operator does —
 // `orkctl admin retention get/set`, over Connect, into a real `ork` process,
-// into engine.TemporalRunReader.SetNamespaceRetention, into Temporal's real
-// UpdateNamespace RPC — and it verifies the change through a client this test
+// into archive.RetentionController, into engine.TemporalRunReader's
+// SetNamespaceRetention, into Temporal's real UpdateNamespace RPC — and it
+// verifies the underlying cluster's backstop TTL through a client this test
 // dials ITSELF and never hands to `orkctl` or `ork`, so it cannot pass on a
 // write that only updated in-process state.
 //
-// internal/engine/retention_integration_test.go covers the same write
-// directly against engine.TemporalRunReader, with no process boundary, to
-// isolate the engine seam from the Connect/CLI wiring. This test is the
+// internal/engine/retention_integration_test.go covers the same underlying
+// write directly against engine.TemporalRunReader, with no process boundary,
+// to isolate the engine seam from the Connect/CLI wiring. This test is the
 // other half: it never calls SetNamespaceRetention itself, only the CLI.
-func TestIntegration_CLISetsExecutionRetentionOnTheRealCluster(t *testing.T) {
+//
+// The CLI's own output NEVER names the underlying Temporal namespace or its
+// TTL (AGENTS.md §7): what it reports is the deployment's maximum run
+// retention. The independent check below is what proves the underlying
+// mechanism, precisely because the CLI itself must never be asked to.
+func TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster(t *testing.T) {
 	address := temporalAddress()
 	requireTemporal(t, address)
 
@@ -55,7 +61,10 @@ func TestIntegration_CLISetsExecutionRetentionOnTheRealCluster(t *testing.T) {
 
 	// A verification handle dialed independently of `ork` and of `orkctl`:
 	// nothing under test ever touches this client. It is the only thing
-	// that gets to say whether the write reached the cluster.
+	// that gets to say whether the underlying cluster's own TTL changed —
+	// which `ork` derives automatically as maximum + its enforcement margin
+	// (ORK_CLEANUP_RETENTION_BUFFER, default 24h), never the raw requested
+	// value.
 	independent, err := client.DialContext(ctx, client.Options{
 		HostPort: address, Namespace: temporalNamespace,
 	})
@@ -76,24 +85,23 @@ func TestIntegration_CLISetsExecutionRetentionOnTheRealCluster(t *testing.T) {
 		}
 		return ttl.AsDuration()
 	}
+	const margin = 24 * time.Hour // ork's ORK_CLEANUP_RETENTION_BUFFER default
 
-	// ---- orkctl admin retention get: the baseline EnsureNamespace set -----
+	// ---- orkctl admin retention get: the baseline `ork` materialized at boot
 	getStdout, getStderr, code := cli("--json", "admin", "retention", "get")
 	if code != 0 {
 		t.Fatalf("admin retention get exit = %d\nstdout:\n%s\nstderr:\n%s", code, getStdout, getStderr)
 	}
-	baseline := decodeExecutionRetention(t, getStdout)
-	if baseline.TemporalNamespace != temporalNamespace {
-		t.Errorf("temporal_namespace = %q, want %q", baseline.TemporalNamespace, temporalNamespace)
-	}
-	if got := baseline.retention(t); got != 72*time.Hour {
-		// EnsureNamespace's documented default is 72h. Fail loudly if the
-		// baseline assumption this test rests on has changed elsewhere.
-		t.Fatalf("baseline retention = %s, want 72h; EnsureNamespace's default may have changed", got)
+	baseline := decodeRetentionPolicy(t, getStdout)
+	if got := baseline.maxRunRetention(t); got != 72*time.Hour {
+		// EnsureNamespace's documented default is 72h, and Ensure's first-boot
+		// materialization copies it verbatim as the ceiling. Fail loudly if
+		// either baseline assumption this test rests on has changed elsewhere.
+		t.Fatalf("baseline maximum run retention = %s, want 72h; the default may have changed", got)
 	}
 	independentBefore := describeIndependently()
-	if independentBefore != 72*time.Hour {
-		t.Fatalf("independent baseline retention = %s, want 72h", independentBefore)
+	if independentBefore != 72*time.Hour+margin {
+		t.Fatalf("independent baseline backstop TTL = %s, want 72h + %s margin", independentBefore, margin)
 	}
 
 	// ---- orkctl admin retention set: the write under test, via the CLI ----
@@ -102,24 +110,22 @@ func TestIntegration_CLISetsExecutionRetentionOnTheRealCluster(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("admin retention set exit = %d\nstdout:\n%s\nstderr:\n%s", code, setStdout, setStderr)
 	}
-	confirmed := decodeExecutionRetention(t, setStdout)
-	if confirmed.TemporalNamespace != temporalNamespace {
-		t.Errorf("temporal_namespace = %q, want %q", confirmed.TemporalNamespace, temporalNamespace)
-	}
-	confirmedDuration := confirmed.retention(t)
+	confirmed := decodeRetentionPolicy(t, setStdout)
+	confirmedDuration := confirmed.maxRunRetention(t)
 	if confirmedDuration != want {
 		t.Fatalf("admin retention set reported %s, want %s", confirmedDuration, want)
 	}
 
 	// THE assertion: a SEPARATE, directly-dialed DescribeNamespace call
-	// confirms the cluster's own state changed. This is the check that
-	// cannot pass on a write that only updated something in-process — it
-	// never reuses `independent`'s earlier read, `ork`'s reader, or
-	// `orkctl`'s own echoed response.
+	// confirms the underlying cluster's own backstop TTL moved to want+margin
+	// — this is the check that cannot pass on a write that only updated
+	// something in-process — it never reuses `independent`'s earlier read,
+	// `ork`'s reader, or `orkctl`'s own echoed response.
 	independentAfter := describeIndependently()
-	if independentAfter != want {
+	if independentAfter != want+margin {
 		t.Fatalf("independent DescribeNamespace(%s) after `orkctl admin retention set` reports %s, "+
-			"want %s: the CLI write did not reach the cluster", temporalNamespace, independentAfter, want)
+			"want %s (%s + %s margin): the CLI write did not reach the cluster",
+			temporalNamespace, independentAfter, want+margin, want, margin)
 	}
 	t.Logf("EVIDENCE namespace=%s before=%s cli_set=%s cli_confirmed=%s independent_after=%s",
 		temporalNamespace, independentBefore, want, confirmedDuration, independentAfter)
@@ -130,13 +136,13 @@ func TestIntegration_CLISetsExecutionRetentionOnTheRealCluster(t *testing.T) {
 		t.Fatalf("admin retention get (after set) exit = %d\nstdout:\n%s\nstderr:\n%s",
 			code, reGetStdout, reGetStderr)
 	}
-	afterGet := decodeExecutionRetention(t, reGetStdout)
-	afterGetDuration := afterGet.retention(t)
+	afterGet := decodeRetentionPolicy(t, reGetStdout)
+	afterGetDuration := afterGet.maxRunRetention(t)
 	if afterGetDuration != want {
 		t.Fatalf("admin retention get after the write reports %s, want %s", afterGetDuration, want)
 	}
 
-	// ---- a non-positive duration is refused before it reaches Temporal ---
+	// ---- a non-positive duration is refused before it reaches the store --
 	// This refusal now happens LOCALLY in the CLI, before any RPC leaves
 	// the process (cmd/orkctl/admin.go), so the message is the CLI's own
 	// plain validation error, not a Connect InvalidArgument round-tripped
@@ -149,41 +155,43 @@ func TestIntegration_CLISetsExecutionRetentionOnTheRealCluster(t *testing.T) {
 		t.Errorf("the refusal does not explain the positive-duration requirement:\n%s", setZeroStderr)
 	}
 	unchanged := describeIndependently()
-	if unchanged != want {
-		t.Fatalf("retention after a refused CLI write = %s, want it unchanged at %s", unchanged, want)
+	if unchanged != want+margin {
+		t.Fatalf("backstop TTL after a refused CLI write = %s, want it unchanged at %s", unchanged, want+margin)
 	}
 }
 
-// executionRetentionJSON is `orkctl admin retention get/set --json`, decoded.
-// Retention is left as a raw string because durationpb's protojson rendering
-// (e.g. "18000s") is what the CLI actually prints; retention() below turns it
-// into a time.Duration for comparison.
-type executionRetentionJSON struct {
-	TemporalNamespace string `json:"temporalNamespace"`
-	Retention         string `json:"retention"`
+// retentionPolicyJSON is `orkctl admin retention get/set --json`, decoded.
+// maxRunRetention is left as a raw string because durationpb's protojson
+// rendering (e.g. "18000s") is what the CLI actually prints; maxRunRetention()
+// below turns it into a time.Duration for comparison.
+type retentionPolicyJSON struct {
+	Policy struct {
+		MaxRunRetention string `json:"maxRunRetention"`
+	} `json:"policy"`
+	NamespaceRetentionEnforced bool `json:"namespaceRetentionEnforced"`
 }
 
-func decodeExecutionRetention(t *testing.T, stdout string) executionRetentionJSON {
+func decodeRetentionPolicy(t *testing.T, stdout string) retentionPolicyJSON {
 	t.Helper()
-	var decoded executionRetentionJSON
+	var decoded retentionPolicyJSON
 	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
 		t.Fatalf("admin retention --json is not valid JSON: %v\n%s", err, stdout)
 	}
 	return decoded
 }
 
-// retention parses protojson's Duration rendering ("18000s", "1.5s"), which
-// is Go's time.ParseDuration syntax restricted to a trailing "s" and
+// maxRunRetention parses protojson's Duration rendering ("18000s", "1.5s"),
+// which is Go's time.ParseDuration syntax restricted to a trailing "s" and
 // (optionally) a fractional part — time.ParseDuration accepts exactly that
 // shape.
-func (e executionRetentionJSON) retention(t *testing.T) time.Duration {
+func (p retentionPolicyJSON) maxRunRetention(t *testing.T) time.Duration {
 	t.Helper()
-	if e.Retention == "" {
-		t.Fatalf("empty retention in %+v", e)
+	if p.Policy.MaxRunRetention == "" {
+		t.Fatalf("empty maxRunRetention in %+v", p)
 	}
-	d, err := time.ParseDuration(e.Retention)
+	d, err := time.ParseDuration(p.Policy.MaxRunRetention)
 	if err != nil {
-		t.Fatalf("parse retention %q: %v", e.Retention, err)
+		t.Fatalf("parse maxRunRetention %q: %v", p.Policy.MaxRunRetention, err)
 	}
 	return d
 }

@@ -1,3 +1,3 @@
-NAME      DEFAULT POOL  ALLOWED POOLS  CREATED               DESCRIPTION
-default   main          -              -                     the namespace every orkflow that names none belongs to
-payments  batch         batch,main     2026-01-02T03:04:05Z  the payments tenant
+NAME      DEFAULT POOL  ALLOWED POOLS  RUN RETENTION                   CREATED               DESCRIPTION
+default   main          -              inherited (deployment maximum)  -                     the namespace every orkflow that names none belongs to
+payments  batch         batch,main     inherited (deployment maximum)  2026-01-02T03:04:05Z  the payments tenant

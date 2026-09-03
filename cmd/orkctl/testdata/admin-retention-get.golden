@@ -1,6 +1,6 @@
-temporal namespace:   ork-main
-execution retention:  72h0m0s
+maximum run retention:  72h0m0s
+namespace retention:    not enforced (ORK_CLEANUP_ENABLED=false: every run is kept
+                        for the maximum plus the enforcement margin)
 
-This is ONE Temporal cluster setting for the whole deployment, not a
-per-OrkStack-namespace value — see `orkctl namespace` for that, unrelated,
-concept.
+Each namespace may keep runs for less — see `orkctl namespace update
+--run-retention`.

@@ -7,15 +7,18 @@ import (
 	"time"
 
 	"go.temporal.io/api/serviceerror"
+	"google.golang.org/protobuf/types/known/durationpb"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/archive"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
-// retentionAdmin stands in for engine.TemporalRunReader's retention seam —
-// the deployment-wide Temporal cluster setting, with no cluster in this
-// process. A successful write moves `current`, so `admin retention get`
-// after `admin retention set` proves the change stuck, the same shape the
-// proof transcript exercises against a real cluster.
+// retentionAdmin stands in for engine.TemporalRunReader's admin seam — the
+// underlying Temporal cluster's own backstop TTL, with no cluster in this
+// process. A successful write moves `current`, so RetentionController's
+// reconcile can be observed without a live cluster.
 type retentionAdmin struct {
 	current         time.Duration
 	writeErr        error
@@ -42,43 +45,66 @@ func (r *retentionAdmin) SetNamespaceRetention(
 	return retention, nil
 }
 
-// retentionFixture wires Config.Retention and Config.TemporalNamespace
-// exactly as `ork` wires them in cmd/ork/main.go: one Temporal namespace name
-// alongside the admin seam that answers for it.
-func retentionFixture(t *testing.T, admin *retentionAdmin) *fixture {
+// retentionPolicyStore is an in-memory artifacts.RetentionPolicyStore.
+type retentionPolicyStore struct {
+	policy *orkstackv1.RetentionPolicy
+}
+
+func (s *retentionPolicyStore) Get(context.Context) (*orkstackv1.RetentionPolicy, error) {
+	if s.policy == nil {
+		return nil, artifacts.ErrNotFound
+	}
+	return s.policy, nil
+}
+
+func (s *retentionPolicyStore) Put(_ context.Context, p *orkstackv1.RetentionPolicy, _ artifacts.PutConditions) (*orkstackv1.RetentionPolicy, error) {
+	s.policy = p
+	return p, nil
+}
+
+// retentionFixture wires Config.Retention exactly as `ork` wires it in
+// cmd/ork/main.go: a RetentionController over the admin seam that answers
+// for the cluster's backstop TTL and a policy store pre-set to
+// maxRunRetention. admin.current starts at the already-reconciled backstop
+// (maxRunRetention + the controller's margin) so a get/set round trip is not
+// itself confused for a reconcile.
+func retentionFixture(t *testing.T, admin *retentionAdmin, maxRunRetention time.Duration) *fixture {
 	t.Helper()
+	admin.current = maxRunRetention + 24*time.Hour
+	policies := &retentionPolicyStore{policy: &orkstackv1.RetentionPolicy{MaxRunRetention: durationpb.New(maxRunRetention)}}
+	ctrl := archive.NewRetentionController(policies, admin, "ork-main", 24*time.Hour, nil)
 	return newFixtureWith(t, func(cfg *api.Config) {
-		cfg.Retention = admin
-		cfg.TemporalNamespace = "ork-main"
+		cfg.Retention = ctrl
 	})
 }
 
 // TestAdminRetentionGet_GoldenHumanAndJSON pins both renderings of the
-// deployment-wide read, and that it says in words this is not per-namespace.
+// deployment's maximum run retention, and that it names namespace-level
+// enforcement rather than any Temporal concept.
 func TestAdminRetentionGet_GoldenHumanAndJSON(t *testing.T) {
-	f := retentionFixture(t, &retentionAdmin{current: 72 * time.Hour})
+	f := retentionFixture(t, &retentionAdmin{}, 72*time.Hour)
 
 	human := f.run("admin", "retention", "get").requireExit(t, exitOK)
 	requireGolden(t, "admin-retention-get.golden", human.stdout)
-	if !strings.Contains(human.stdout, "ork-main") {
-		t.Errorf("human output does not name the Temporal namespace:\n%s", human.stdout)
+	if strings.Contains(human.stdout, "Temporal") || strings.Contains(human.stdout, "temporal") {
+		t.Errorf("human output names Temporal, which is meant to stay abstracted from the user:\n%s", human.stdout)
 	}
-	if !strings.Contains(human.stdout, "whole deployment") {
-		t.Errorf("human output does not say this is deployment-wide, not per-namespace:\n%s", human.stdout)
+	if !strings.Contains(human.stdout, "maximum run retention") {
+		t.Errorf("human output does not name the maximum run retention:\n%s", human.stdout)
 	}
 
 	machine := f.run("--json", "admin", "retention", "get").requireExit(t, exitOK)
 	requireGolden(t, "admin-retention-get.json.golden", machine.stdout)
 }
 
-// TestAdminRetentionSet_ChangesTheClusterAndGetReflectsIt is the CLI-level
+// TestAdminRetentionSet_ChangesTheMaximumAndGetReflectsIt is the CLI-level
 // round trip acceptance asks for: get, set, get again, and the second get
-// shows the new value, proving the write actually took (against the fake
-// here; the integration test and proof transcript prove it against a real
-// cluster with an INDEPENDENT DescribeNamespace call).
-func TestAdminRetentionSet_ChangesTheClusterAndGetReflectsIt(t *testing.T) {
-	admin := &retentionAdmin{current: 72 * time.Hour}
-	f := retentionFixture(t, admin)
+// shows the new value, proving the write actually took. It also proves the
+// underlying backstop is reconciled to the new maximum plus the enforcement
+// margin, never the raw requested value.
+func TestAdminRetentionSet_ChangesTheMaximumAndGetReflectsIt(t *testing.T) {
+	admin := &retentionAdmin{}
+	f := retentionFixture(t, admin, 72*time.Hour)
 
 	before := f.run("admin", "retention", "get").requireExit(t, exitOK)
 	if !strings.Contains(before.stdout, "72h0m0s") {
@@ -87,8 +113,8 @@ func TestAdminRetentionSet_ChangesTheClusterAndGetReflectsIt(t *testing.T) {
 
 	set := f.run("admin", "retention", "set", "168h").requireExit(t, exitOK)
 	requireGolden(t, "admin-retention-set.golden", set.stdout)
-	if len(admin.requestedValues) != 1 || admin.requestedValues[0] != 168*time.Hour {
-		t.Fatalf("SetNamespaceRetention requests = %v, want [168h]", admin.requestedValues)
+	if len(admin.requestedValues) != 1 || admin.requestedValues[0] != 192*time.Hour {
+		t.Fatalf("backstop reconcile requests = %v, want [192h] (168h + 24h margin)", admin.requestedValues)
 	}
 	if admin.requestedNames[len(admin.requestedNames)-1] != "ork-main" {
 		t.Fatalf("SetNamespaceRetention namespace = %q, want ork-main", admin.requestedNames[len(admin.requestedNames)-1])
@@ -104,12 +130,12 @@ func TestAdminRetentionSet_ChangesTheClusterAndGetReflectsIt(t *testing.T) {
 // same duration flavour as ORK_*_TTL/ORK_*_INTERVAL — including a form with
 // more than one unit — and rejects garbage locally, before any RPC.
 func TestAdminRetentionSet_ParsesGoDurationSyntax(t *testing.T) {
-	admin := &retentionAdmin{current: 72 * time.Hour}
-	f := retentionFixture(t, admin)
+	admin := &retentionAdmin{}
+	f := retentionFixture(t, admin, 72*time.Hour)
 
 	f.run("admin", "retention", "set", "24h30m").requireExit(t, exitOK)
-	if got := admin.requestedValues[len(admin.requestedValues)-1]; got != 24*time.Hour+30*time.Minute {
-		t.Errorf("parsed duration = %s, want 24h30m", got)
+	if got := admin.requestedValues[len(admin.requestedValues)-1]; got != 24*time.Hour+30*time.Minute+24*time.Hour {
+		t.Errorf("reconciled backstop duration = %s, want 24h30m + the 24h margin", got)
 	}
 
 	garbage := f.run("admin", "retention", "set", "not-a-duration")
@@ -131,8 +157,8 @@ func TestAdminRetentionSet_ParsesGoDurationSyntax(t *testing.T) {
 // would pass the first assertion and fail the second.
 func TestAdminRetentionSet_RefusesANonPositiveDurationLocally(t *testing.T) {
 	for _, raw := range []string{"0h", "-1h"} {
-		admin := &retentionAdmin{current: 72 * time.Hour}
-		f := retentionFixture(t, admin)
+		admin := &retentionAdmin{}
+		f := retentionFixture(t, admin, 72*time.Hour)
 
 		result := f.run("admin", "retention", "set", raw)
 		if result.code == exitOK {
@@ -149,23 +175,27 @@ func TestAdminRetentionSet_RefusesANonPositiveDurationLocally(t *testing.T) {
 	}
 }
 
-// TestAdminRetentionSet_SurfacesARejectedWrite proves a write Temporal itself
-// refuses — the server-side minimum-retention rejection — reaches the
-// operator's terminal verbatim rather than being swallowed into a silent
-// success.
+// TestAdminRetentionSet_SurfacesARejectedWrite proves a write the underlying
+// cluster itself refuses — its own server-side minimum-retention rejection —
+// reaches the operator's terminal verbatim rather than being swallowed into
+// a silent success. The request RAISES the maximum (72h -> 240h), so the
+// backstop is reconciled BEFORE the new ceiling is stored: a rejection here
+// leaves the stored maximum genuinely unchanged, which is what this test
+// proves — a lowering request commits its new ceiling before reconciling and
+// is covered separately by the RetentionController tests.
 func TestAdminRetentionSet_SurfacesARejectedWrite(t *testing.T) {
 	rejection := serviceerror.NewInvalidArgument("retention period is below the cluster's configured minimum")
-	admin := &retentionAdmin{current: 72 * time.Hour, writeErr: rejection}
-	f := retentionFixture(t, admin)
+	admin := &retentionAdmin{writeErr: rejection}
+	f := retentionFixture(t, admin, 72*time.Hour)
 
-	result := f.run("admin", "retention", "set", "1m")
+	result := f.run("admin", "retention", "set", "240h")
 	if result.code == exitOK {
 		t.Fatalf("admin retention set succeeded despite the engine's rejection:\n%s", result.stdout)
 	}
 	if !strings.Contains(result.stderr, "configured minimum") {
-		t.Errorf("stderr does not carry Temporal's own refusal message:\n%s", result.stderr)
+		t.Errorf("stderr does not carry the underlying refusal message:\n%s", result.stderr)
 	}
-	// The cluster-side state (here, the fake's `current`) never moved.
+	// The stored maximum never moved.
 	after := f.run("admin", "retention", "get").requireExit(t, exitOK)
 	if !strings.Contains(after.stdout, "72h0m0s") {
 		t.Errorf("retention after a rejected write = %q, want it unchanged at 72h0m0s", after.stdout)

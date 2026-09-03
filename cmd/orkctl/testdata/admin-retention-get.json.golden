@@ -1,4 +1,5 @@
 {
-  "temporalNamespace": "ork-main",
-  "retention": "259200s"
+  "policy": {
+    "maxRunRetention": "259200s"
+  }
 }
