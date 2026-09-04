@@ -63,7 +63,10 @@ fi
 [ -n "$timeout" ] && set -- "$@" --max-time "$timeout"
 [ "$method" = "HEAD" ] && set -- "$@" --head
 
-echo "http $method $url" >&2
+# Informational, not diagnostic — stdout, so stderr stays reserved for
+# fail()'s actual error messages (a log viewer that tints stderr, this
+# platform's does, would otherwise paint a routine request red).
+echo "http $method $url"
 
 run_supervised curl \
     --silent --show-error \
@@ -127,5 +130,5 @@ if [ -n "$capture_as" ]; then
     chmod 0644 "$ARTIFACTS/$capture_as"
 fi
 
-echo "http $method $url -> $status ($size bytes)" >&2
+echo "http $method $url -> $status ($size bytes)"
 exit 0

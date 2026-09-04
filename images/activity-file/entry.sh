@@ -78,14 +78,17 @@ check_name() {
     [ "$_n" -le 128 ] || fail "artifact name is $_n bytes, limit is 128: $1"
 }
 
-# emit writes values.json for a path that is now final.
+# emit writes values.json for a path that is now final. This is the success
+# report, not a diagnostic, so it goes to stdout: stderr is reserved for
+# fail()'s actual error messages, and a log viewer that tints stderr (this
+# platform's does) would otherwise paint every successful op red.
 emit() {
     _path=$1
     _size=$(wc -c < "$_path" | tr -d ' ')
     _sha=$(sha256sum "$_path" | cut -d' ' -f1)
     jq -n --arg p "$_path" --argjson s "$_size" --arg h "$_sha" \
        '{path:$p, sizeBytes:$s, sha256:$h}' > "$VALUES"
-    echo "activity-file: $_path ($_size bytes, sha256:$_sha)" >&2
+    echo "activity-file: $_path ($_size bytes, sha256:$_sha)"
 }
 
 op=$(jq -r '.op // empty' "$CONFIG")
