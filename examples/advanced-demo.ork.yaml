@@ -1,0 +1,162 @@
+# OrkStack orkflow DSL
+#
+# A tour of every task-level feature in one DAG, not just the `with:` shape of
+# an activity: a Temporal retry policy against a genuinely flaky endpoint, a
+# wall-clock timeout, a boolean-gated secrets task, a pinned pool, resource
+# requests, network isolation, a cancellation grace period, and a task that
+# emits one line a second so a log-stream viewer has something continuous to
+# render instead of one final burst.
+name: advanced-demo
+version: "1.0.1"
+description: >-
+  Retries, timeouts, conditions, resources, network isolation, secrets, pool
+  pinning, and continuous log output, wired into one runnable DAG.
+
+labels:
+  purpose: reference
+  audience: platform-team
+
+inputs:
+  greeting:
+    type: string
+    default: "hello from advanced-demo"
+  # How many one-second ticks `logstream` emits. 120 is a full 2 minutes of
+  # continuous output, kept well under its own timeout_seconds so the task
+  # always finishes on its own.
+  log_lines:
+    type: number
+    default: 120
+  # `guarded` needs a real secret provisioned on the Orker (see its comment
+  # below), so it is off by default: the rest of the DAG runs clean with no
+  # setup. Flip this input to true once ADVANCED_DEMO_TOKEN is exported where
+  # the Orker process runs.
+  enable_secret_check:
+    type: boolean
+    default: false
+
+tasks:
+  # 1. warmup: the cheap, isolated case. No network needed, so `network: none`
+  #    actually buys something rather than being a no-op flag.
+  - id: warmup
+    uses: shell
+    timeout_seconds: 30
+    cancellation_grace_period_seconds: 5
+    network: none
+    resources:
+      cpu: "0.25"
+      memory: 64Mi
+    env:
+      STAGE: warmup
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - >-
+          printf 'warmup: %s\n' "{{ .inputs.greeting }}"
+
+  # 2. flaky: a `retry:` policy earning its keep. httpbin's /status endpoint
+  #    picks randomly among the codes given it, so this genuinely fails at
+  #    the rate the comma-separated list implies (~1 in 4 here) rather than
+  #    simulating a flake in the document. The shell activity image is bare
+  #    Alpine plus jq (no curl) — `wget` is the one HTTP client it actually
+  #    ships, and BusyBox's wget already fails (nonzero exit) on a non-2xx
+  #    response, so `op: exec` (unlike `op: eval`) turns that into a real
+  #    activity failure and lets Temporal's policy retry it.
+  - id: flaky
+    uses: shell
+    needs: [warmup]
+    timeout_seconds: 20
+    retry:
+      maximum_attempts: 5
+      initial_interval_seconds: 1
+      backoff_coefficient: 2.0
+      maximum_interval_seconds: 15
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - >-
+          wget -qO- -T 10
+          'https://httpbin.org/status/200,200,200,500' >/dev/null
+
+  # 3. logstream: the log-streaming exercise. One line a second, well inside
+  #    the log sink's 500ms flush interval, so a viewer (`orkctl run watch`,
+  #    the UI's log pane) sees a genuinely continuous feed across many
+  #    flushes instead of a single burst at exit.
+  - id: logstream
+    uses: shell
+    needs: [warmup]
+    timeout_seconds: 180
+    cancellation_grace_period_seconds: 10
+    resources:
+      cpu: "0.25"
+      memory: 64Mi
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        n="{{ .inputs.log_lines }}"
+        i=1
+        while [ "$i" -le "$n" ]; do
+          echo "[$(date -u +%H:%M:%S)] tick ${i}/${n} - streaming demo log line"
+          i=$((i + 1))
+          sleep 1
+        done
+        echo "log stream complete" > /orkstack/output/artifacts/logstream.txt
+
+  # 4. guarded: `secrets:`, a pinned `pool:`, and `run_as_orker_user:`,
+  #    gated by a boolean input rather than always-on. `source: env:...`
+  #    means the Orker process itself must export ADVANCED_DEMO_TOKEN — a
+  #    deployment-time secret this document cannot supply — so the task
+  #    stays off (`condition` false) until an operator wires that up and
+  #    submits with `enable_secret_check: true`.
+  - id: guarded
+    uses: shell
+    needs: [warmup]
+    condition: '{{ .inputs.enable_secret_check }}'
+    pool: main
+    run_as_orker_user: true
+    secrets:
+      - name: demo-token
+        source: "env:ADVANCED_DEMO_TOKEN"
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - wc -c < /orkstack/input/secrets/demo-token
+
+  # 5. summarize: a condition on an upstream task's OUTPUT (not just an
+  #    input), same pattern as examples/http-post.ork.yaml's `summarize`.
+  #    `needs` already guarantees `flaky` succeeded before this runs, so the
+  #    condition is belt-and-braces here — which is the point: it shows the
+  #    branch is available even when the DAG edge alone would suffice.
+  - id: summarize
+    uses: shell
+    needs: [flaky, logstream]
+    condition: '{{ eq .tasks.flaky.output.exitCode 0.0 }}'
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - >-
+          printf 'flaky_exit=%s\n'
+          "{{ .tasks.flaky.output.exitCode }}"
+          | tee /orkstack/output/artifacts/summary.txt
+
+  # 6. archive: tie the two artifacts together, same closing move as
+  #    examples/shell-eval.ork.yaml.
+  - id: archive
+    uses: file
+    needs: [summarize, logstream]
+    network: none
+    with:
+      op: tar
+      srcs:
+        - '{{ artifact "summarize/summary.txt" }}'
+        - '{{ artifact "logstream/logstream.txt" }}'
+      as: advanced-demo.tar.gz
