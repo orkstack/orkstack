@@ -60,6 +60,14 @@ type DockerRuntime struct {
 	// PullTimeout bounds one pull. Zero reads ORK_DOCKER_PULL_TIMEOUT, then
 	// DefaultPullTimeout.
 	PullTimeout time.Duration
+
+	// mu guards attaches.
+	mu sync.Mutex
+	// attaches tracks, per container, the `docker start --attach` process
+	// Start span. Wait consumes and removes its entry so it can block on the
+	// SAME attach draining fully before reporting the exit status — see
+	// dockerAttach and Wait for why that join is load-bearing.
+	attaches map[ContainerID]*dockerAttach
 }
 
 var _ ContainerRuntime = (*DockerRuntime)(nil)
@@ -364,6 +372,16 @@ func checkMount(m Mount) error {
 // outputs, find none, and blame the image; and a workload quick enough to
 // write its values.json first would have a fabricated success committed
 // durably. Found by TestIntegration_DispatcherRunsAReferenceImageEndToEnd.
+//
+// Start deliberately returns before the container exits (the interface
+// promises exactly that), which means the caller's Wait — a SEPARATE `docker
+// wait` invocation — can observe the container's exit before this attach's
+// own stdout/stderr copy has drained a buffered burst of output through the
+// daemon -> CLI -> Go io.Writer pipeline. A fast, high-output container could
+// exit before its own output finished landing in the durable log, truncating
+// it silently. So the attach is registered here and Wait joins on it before
+// reporting: see dockerAttach and Wait. Found via a truncated stdout.log on a
+// task that wrote ~10k lines in under a second.
 func (d *DockerRuntime) Start(ctx context.Context, id ContainerID, stdout, stderr io.Writer) error {
 	bin, err := d.bin()
 	if err != nil {
@@ -395,11 +413,53 @@ func (d *DockerRuntime) Start(ctx context.Context, id ContainerID, stdout, stder
 		return fmt.Errorf("start container %s: %w", id, err)
 	}
 	// The attach process outlives Start deliberately: Start returns once the
-	// container is running, and Wait is what blocks on the exit.
-	attachDone := make(chan error, 1)
-	go func() { attachDone <- cmd.Wait() }()
+	// container is running, and Wait is what blocks on the exit. Registered
+	// before awaitLeftCreated runs so Wait can find it even if this container
+	// exits (and Wait is called) before Start itself returns.
+	attach := newDockerAttach(cmd)
+	d.trackAttach(id, attach)
 
-	return d.awaitLeftCreated(ctx, id, attachDone, diagnostics)
+	return d.awaitLeftCreated(ctx, id, attach, diagnostics)
+}
+
+// dockerAttach tracks the goroutine draining `docker start --attach`'s
+// stdout/stderr copy. done closes once cmd.Wait() returns, at which point
+// every byte the container wrote has either reached the writers passed to
+// Start or failed trying — never left mid-copy. Unlike a value channel, done
+// can be observed by more than one reader (awaitLeftCreated and, later,
+// Wait) without either consuming the other's signal.
+type dockerAttach struct {
+	done chan struct{}
+	err  error
+}
+
+func newDockerAttach(cmd *exec.Cmd) *dockerAttach {
+	a := &dockerAttach{done: make(chan struct{})}
+	go func() {
+		a.err = cmd.Wait()
+		close(a.done)
+	}()
+	return a
+}
+
+func (d *DockerRuntime) trackAttach(id ContainerID, attach *dockerAttach) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.attaches == nil {
+		d.attaches = make(map[ContainerID]*dockerAttach)
+	}
+	d.attaches[id] = attach
+}
+
+// takeAttach returns and forgets the attach registered for id, so a second
+// Start for a reused (or, in tests, coincidentally repeated) id cannot join a
+// stale one.
+func (d *DockerRuntime) takeAttach(id ContainerID) *dockerAttach {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	attach := d.attaches[id]
+	delete(d.attaches, id)
+	return attach
 }
 
 // awaitLeftCreated blocks until the daemon reports the container is no longer
@@ -413,7 +473,7 @@ func (d *DockerRuntime) Start(ctx context.Context, id ContainerID, stdout, stder
 func (d *DockerRuntime) awaitLeftCreated(
 	ctx context.Context,
 	id ContainerID,
-	attachDone <-chan error,
+	attach *dockerAttach,
 	diagnostics *boundedBuffer,
 ) error {
 	deadline := time.Now().Add(startStateTimeout)
@@ -427,7 +487,7 @@ func (d *DockerRuntime) awaitLeftCreated(
 		}
 
 		select {
-		case attachErr := <-attachDone:
+		case <-attach.done:
 			// The attach process is gone. Re-observe once: a container that
 			// ran and exited very quickly is a success, not a refusal.
 			started, err := d.leftCreated(ctx, id)
@@ -438,7 +498,7 @@ func (d *DockerRuntime) awaitLeftCreated(
 				return nil
 			}
 			return fmt.Errorf("start container %s: the runtime exited without running it: %v: %s",
-				id, attachErr, strings.TrimSpace(diagnostics.String()))
+				id, attach.err, strings.TrimSpace(diagnostics.String()))
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(startStatePoll):
@@ -529,6 +589,15 @@ func (d *DockerRuntime) Signal(ctx context.Context, id ContainerID, sig Signal) 
 }
 
 // Wait blocks until the container exits.
+//
+// `docker wait` (below) reports PID 1's exit the instant it happens. That is
+// a DIFFERENT process from the `docker start --attach` Start registered,
+// draining stdout/stderr on its own schedule, and for a fast, high-output
+// container the two can finish in either order (see Start's doc comment).
+// So before reporting the exit status, Wait joins the attach registered for
+// id — the one belonging to THIS Start/Wait pair, via the map keyed by id —
+// which is what guarantees every byte the container wrote already reached
+// the writers Start was given by the time a caller acts on this result.
 func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, error) {
 	bin, err := d.bin()
 	if err != nil {
@@ -548,6 +617,23 @@ func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, e
 	}
 	status := ExitStatus{Code: int32(code)}
 	status.OOMKilled = d.oomKilled(ctx, id)
+
+	if attach := d.takeAttach(id); attach != nil {
+		select {
+		case <-attach.done:
+			// `docker start --attach` exits with the container's own exit
+			// code when attached, so an *exec.ExitError here is simply the
+			// workload's non-zero exit reported a second time — already
+			// captured in status above — not a failure to drain the copy.
+			var exitErr *exec.ExitError
+			if attach.err != nil && !errors.As(attach.err, &exitErr) {
+				return status, fmt.Errorf("wait for container %s: drain its attached output: %w", id, attach.err)
+			}
+		case <-ctx.Done():
+			return status, ctx.Err()
+		}
+	}
+
 	return status, nil
 }
 

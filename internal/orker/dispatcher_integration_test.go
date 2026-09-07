@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -267,6 +268,58 @@ func TestIntegration_DispatcherRunsAReferenceImageEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "a warning") {
 		t.Errorf("stderr.log does not carry what the workload printed to stderr: %q", stderr)
+	}
+}
+
+// TestIntegration_BurstOutputBeforeExitIsNotTruncated guards against a race
+// between two INDEPENDENT docker invocations: `docker start --attach`
+// (draining stdout/stderr into the durable log) and `docker wait` (reporting
+// the exit code). A container that writes a large burst and then exits
+// almost immediately can have `docker wait` return before the attach has
+// finished copying everything it buffered, and DockerRuntime.Wait used to
+// report the exit status without joining the attach at all — silently
+// losing whatever was still in flight, with the task reporting SUCCEEDED.
+//
+// This does not sleep between writes: the burst has to outrun the copy to
+// reproduce the race, which is exactly what a `sleep`-paced script would not
+// do. Run without the DockerRuntime.Wait fix, this reliably truncates
+// stdout.log at a different byte offset each run.
+func TestIntegration_BurstOutputBeforeExitIsNotTruncated(t *testing.T) {
+	requireDocker(t)
+	dispatcher, _ := newDispatcher(t)
+
+	const lineCount = 10000
+	const suffix = " of 10000 - the quick brown fox jumps over the lazy dog"
+
+	var want strings.Builder
+	for i := 1; i <= lineCount; i++ {
+		want.WriteString("line ")
+		want.WriteString(strconv.Itoa(i))
+		want.WriteString(suffix)
+		want.WriteByte('\n')
+	}
+
+	in := baseInput(t, "burst", "/bin/sh", "-c",
+		`set -eu; i=1; while [ "$i" -le `+strconv.Itoa(lineCount)+` ]; do `+
+			`echo "line $i`+suffix+`"; i=$((i + 1)); done; `+
+			`printf '{}' > /orkstack/output/values.json`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	result, err := dispatcher.Execute(ctx, in)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.GetExitCode() != 0 {
+		t.Fatalf("exit code = %d, want 0", result.GetExitCode())
+	}
+
+	stdout := readArtifact(t, ctx, dispatcher, result.GetSystemArtifacts(), orker.StdoutLogName)
+	if stdout != want.String() {
+		gotLines := strings.Count(stdout, "\n")
+		t.Fatalf("stdout.log has %d bytes across %d lines, want %d bytes across %d lines "+
+			"(durable log was truncated mid-burst)", len(stdout), gotLines, want.Len(), lineCount)
 	}
 }
 

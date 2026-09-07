@@ -1,9 +1,14 @@
 package orker
 
 import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // validSpec is a container specification that satisfies the whole §9.2
@@ -287,5 +292,85 @@ func TestDockerMemoryAndCPUs_TranslateTheContractSpelling(t *testing.T) {
 	// rather than being replaced by a limit nobody asked for.
 	if got := dockerMemory("lots"); got != "lots" {
 		t.Errorf("dockerMemory(\"lots\") = %q; an unparseable quantity must reach the daemon", got)
+	}
+}
+
+// fakeDockerBinary writes a stand-in `docker` CLI that lets a test control
+// the timing of `start --attach` independently of `wait`, without a real
+// daemon. `inspect` always reports the container as already running (so
+// Start returns as soon as it is called, the same as a container that starts
+// instantly), `start --attach` sleeps for attachDelay before printing output
+// so its copy provably outlives a `wait` that returns immediately, and `wait`
+// reports exit code 0 with no delay of its own — reproducing the two
+// independent, unsynchronized docker invocations described in
+// DockerRuntime.Wait's doc comment.
+func fakeDockerBinary(t *testing.T, attachDelay time.Duration, output string) string {
+	t.Helper()
+	script := "#!/bin/sh\nset -eu\ncase \"$1\" in\n" +
+		"  inspect) echo running ;;\n" +
+		"  start) sleep " + strconv.FormatFloat(attachDelay.Seconds(), 'f', -1, 64) +
+		"; printf '%s' " + shellQuote(output) + " ;;\n" +
+		"  wait) echo 0 ;;\n" +
+		"  *) exit 1 ;;\n" +
+		"esac\n"
+	path := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker binary: %v", err)
+	}
+	return path
+}
+
+// shellQuote wraps s in single quotes for embedding in the fake docker
+// script's own source, escaping any single quote s itself contains.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// TestDockerRuntime_WaitDrainsTheAttachBeforeReporting is the regression test
+// for a truncated durable stdout.log on a task that reports full success.
+//
+// `docker wait` and `docker start --attach`'s own stdout/stderr copy are two
+// independent processes (Start's doc comment). For a container that writes a
+// burst of output and exits almost immediately, `docker wait` can return
+// before the attach has finished draining what it buffered — and Wait used
+// to report the exit status the moment `docker wait` returned, with nothing
+// joining the attach at all. The caller (OCIDispatcher.runContainer) then
+// closes the durable log file, silently cutting off whatever the attach copy
+// had not yet delivered. This test's fake `wait` always returns instantly
+// while the fake attach sleeps first, so a Wait that does not join the
+// attach returns fast; one that does takes at least attachDelay.
+func TestDockerRuntime_WaitDrainsTheAttachBeforeReporting(t *testing.T) {
+	const attachDelay = 300 * time.Millisecond
+	const wantOutput = "the quick brown fox jumps over the lazy dog"
+	bin := fakeDockerBinary(t, attachDelay, wantOutput)
+	runtime := &DockerRuntime{Bin: bin}
+
+	ctx := context.Background()
+	var stdout, stderr bytes.Buffer
+	if err := runtime.Start(ctx, "fake-container", &stdout, &stderr); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	began := time.Now()
+	status, err := runtime.Wait(ctx, "fake-container")
+	elapsed := time.Since(began)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if status.Code != 0 {
+		t.Errorf("exit code = %d, want 0", status.Code)
+	}
+
+	// A generous margin under attachDelay: the point is distinguishing "Wait
+	// returned instantly, like the fake `wait` command does on its own" from
+	// "Wait actually blocked on the attach", not measuring exact timing.
+	if wantMinDelay := attachDelay * 2 / 3; elapsed < wantMinDelay {
+		t.Errorf("Wait returned after %s, less than the %s the attach needed to finish draining "+
+			"its output; Wait is not joining the attach and would let the caller close the durable "+
+			"log before every byte lands in it", elapsed, wantMinDelay)
+	}
+	if stdout.String() != wantOutput {
+		t.Errorf("stdout = %q, want %q (the durable log would be silently truncated)",
+			stdout.String(), wantOutput)
 	}
 }
