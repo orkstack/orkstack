@@ -96,6 +96,88 @@ services:
       timeout: 5s
       retries: 20
 
+  # ---- observability profile ----
+  #
+  # Off by default: `docker compose up` and `make infra-up` never start these.
+  # `make infra-up-observability` (or `--profile observability`) adds a Collector,
+  # Loki, Tempo, Prometheus and Grafana wired to receive whatever ork and orker
+  # export over standard OTEL_* (docs/DEPLOY.md, "Telemetry"). Same pinning rule
+  # as above; tags recorded here were current stable at the time this profile
+  # was written.
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    profiles: ["observability"]
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP/http — point OTEL_EXPORTER_OTLP_ENDPOINT here
+    depends_on:
+      - loki
+      - tempo
+      - prometheus
+
+  loki:
+    image: grafana/loki:3.7.7
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"   # native OTLP too: http://localhost:3100/otlp
+
+  tempo:
+    image: grafana/tempo:3.0.3
+    profiles: ["observability"]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # Tempo API (Grafana reads this)
+      - "4317:4317"   # OTLP/gRPC, direct or via the collector
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-otlp-receiver
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      # so the container can reach ork's and orker's ORK_ADMIN_ADDR on the
+      # host; docker-desktop resolves this on macOS/Windows without the entry,
+      # but Linux needs host-gateway explicitly.
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    profiles: ["observability"]
+    environment:
+      # Anonymous admin is for a local stack only — see deploy/observability/README.md.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - loki
+      - tempo
+      - prometheus
+
 volumes:
   minio-data:
   registry-data:
+  loki-data:
+  tempo-data:
+  prometheus-data:
+  grafana-data:
