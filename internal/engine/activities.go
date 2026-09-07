@@ -20,6 +20,19 @@ type RunNotifier interface {
 	NotifyRunTransition(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run)
 }
 
+// EventObserver sees every lifecycle event the FIRST time this replica
+// publishes it, with the run snapshot it belongs to. It is the seam telemetry
+// hangs on: counters and durations, never orchestration. It must not block.
+//
+// Counts are at-least-once across replicas: firstPublication is decided by
+// this process's own EventBus (AGENTS.md §7), so an activity retry that lands
+// on another replica announces the event again. Durations are taken from the
+// snapshot's own timestamps, so their VALUE is the same wherever they are
+// observed even when their COUNT is not.
+type EventObserver interface {
+	ObserveEvent(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run)
+}
+
 // RunEventSource reads a run's whole event stream from the system of record.
 // It is the seam that keeps an archive write complete under more than one
 // engine replica; engine.TemporalRunReader is the production implementation.
@@ -36,6 +49,7 @@ type EventActivities struct {
 	store     *RunStore
 	archive   *RunArchiver
 	notifier  RunNotifier
+	observer  EventObserver
 	events    RunEventSource
 	snapshots SnapshotStore
 }
@@ -56,6 +70,15 @@ func NewArchivingEventActivities(bus *EventBus, store *RunStore, archive *RunArc
 // returns the same activities so it can be chained onto a constructor.
 func (a *EventActivities) WithRunNotifier(notifier RunNotifier) *EventActivities {
 	a.notifier = notifier
+	return a
+}
+
+// WithEventObserver hands every published event, of any type, to o as well.
+// Unlike WithRunNotifier this is not limited to a run's own transitions: a
+// telemetry observer wants task events too, TASK_LOG included. It returns the
+// same activities so it can be chained onto a constructor.
+func (a *EventActivities) WithEventObserver(o EventObserver) *EventActivities {
+	a.observer = o
 	return a
 }
 
@@ -87,11 +110,13 @@ func (a *EventActivities) WithSnapshotStore(store SnapshotStore) *EventActivitie
 // the terminal event itself. The write is idempotent (the archive body is
 // immutable), which is what lets this activity be retried at all.
 //
-// A run state transition is announced to the RunNotifier, but only when the
-// bus reports that this publication was the first for its dedupe key. An
-// activity retry or a workflow replay therefore re-runs the projection without
-// re-announcing the transition, which is what keeps an external subscriber
-// from seeing the same run finish twice.
+// A run state transition is announced to the RunNotifier, and every event —
+// including task events and TASK_LOG — is announced to the EventObserver, but
+// only when the bus reports that this publication was the first for its
+// dedupe key. An activity retry or a workflow replay therefore re-runs the
+// projection without re-announcing anything, which is what keeps an external
+// subscriber from seeing the same run finish twice and a telemetry counter
+// from double-counting it.
 //
 // Arguments are passed separately (rather than in one struct) because the
 // Temporal data converter encodes top-level protobuf messages with protojson.
@@ -115,16 +140,23 @@ func (a *EventActivities) PublishEvent(
 		_, firstPublication = a.bus.Publish(event, dedupeKey)
 	}
 
-	if a.notifier != nil && firstPublication && IsRunTransitionEvent(event) {
-		if snapshot := a.mergedSnapshot(event.GetRunId(), run); snapshot != nil {
-			a.notifier.NotifyRunTransition(ctx, event, snapshot)
-		}
+	// Computed once and shared by every branch below: all three want the
+	// same run, resolved the same way (mergedSnapshot prefers the store's
+	// own copy, which still carries CreatedAt and Input), so there is
+	// nothing for a second or third call to recompute.
+	snapshot := a.mergedSnapshot(event.GetRunId(), run)
+
+	if a.notifier != nil && firstPublication && IsRunTransitionEvent(event) && snapshot != nil {
+		a.notifier.NotifyRunTransition(ctx, event, snapshot)
+	}
+
+	if a.observer != nil && firstPublication && snapshot != nil {
+		a.observer.ObserveEvent(ctx, event, snapshot)
 	}
 
 	if a.archive == nil || !isTerminalRunEvent(event) {
 		return nil
 	}
-	snapshot := a.mergedSnapshot(event.GetRunId(), run)
 	if snapshot == nil {
 		return nil
 	}

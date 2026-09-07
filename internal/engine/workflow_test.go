@@ -741,6 +741,81 @@ func mustWorkflowResult(t *testing.T, env *testsuite.TestWorkflowEnvironment) *o
 	return &run
 }
 
+// TestRunWorkflow_CarriesThePlanTelemetryOntoTheInputAndTheSnapshot is the
+// workflow half of the telemetry wire: a plan decided at submit
+// (pools.go telemetryFor) must reach both places an Orker or a client can see
+// it — the ExecuteTaskInput each task is dispatched with, and the Run
+// snapshot returned as the workflow's result — unchanged, since workflow code
+// only carries what the plan already decided (§2.1).
+func TestRunWorkflow_CarriesThePlanTelemetryOntoTheInputAndTheSnapshot(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
+	})
+
+	plan := defaultPlan()
+	plan.Telemetry = &engine.TelemetrySelection{
+		Sink:       "otel-prod",
+		TaskLogs:   "TASK_LOG_EXPORT_ENABLED",
+		Attributes: map[string]string{"ork.ns.team": "payments"},
+	}
+
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-telemetry-set", compile(t, dispatchDocument), payload(t, nil), plan)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+
+	in, ok := h.inputFor("build")
+	if !ok {
+		t.Fatal("build was never dispatched")
+	}
+	if got := in.GetTelemetry(); got.GetSink() != "otel-prod" ||
+		got.GetTaskLogs() != orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED ||
+		got.GetAttributes()["ork.ns.team"] != "payments" {
+		t.Errorf("ExecuteTaskInput.telemetry = %v, want the plan's selection", got)
+	}
+
+	run := mustWorkflowResult(t, h.env)
+	if got := run.GetTelemetry(); got.GetSink() != "otel-prod" ||
+		got.GetTaskLogs() != orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED ||
+		got.GetAttributes()["ork.ns.team"] != "payments" {
+		t.Errorf("Run.telemetry = %v, want the plan's selection", got)
+	}
+}
+
+// TestRunWorkflow_LeavesTelemetryUnsetWithNoPlanSelection is the golden-history
+// invariant restated at the workflow boundary: a plan with no telemetry
+// selection — every plan before this feature, and every plan for a namespace
+// with no policy and an orkflow with no labels today — produces NO telemetry
+// field on either the input or the snapshot, not a zero-value message.
+func TestRunWorkflow_LeavesTelemetryUnsetWithNoPlanSelection(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
+	})
+
+	plan := defaultPlan()
+	plan.Telemetry = nil
+
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-telemetry-unset", compile(t, dispatchDocument), payload(t, nil), plan)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+
+	in, ok := h.inputFor("build")
+	if !ok {
+		t.Fatal("build was never dispatched")
+	}
+	if in.GetTelemetry() != nil {
+		t.Errorf("ExecuteTaskInput.telemetry = %v, want nil", in.GetTelemetry())
+	}
+
+	run := mustWorkflowResult(t, h.env)
+	if run.GetTelemetry() != nil {
+		t.Errorf("Run.telemetry = %v, want nil", run.GetTelemetry())
+	}
+}
+
 // upstreamRef finds one ancestor's contribution in a task's upstream list.
 //
 // The list is a slice rather than a map because it is proto, and a repeated

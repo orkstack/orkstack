@@ -70,6 +70,14 @@ type RunPlan struct {
 	// ORK_-prefixed variables that the ENGINE would have to read, which is
 	// precisely the contradiction Limits' own comment rejects.
 	TransferBudgetSeconds int32 `json:"transfer_budget_seconds"`
+
+	// Telemetry is the run's telemetry selection, or nil when the namespace
+	// set no policy and the orkflow carries no labels. It is decided at
+	// SUBMIT (pools.go) for the reason CommitRoot is: which sink a namespace
+	// chose is deployment/registry state that workflow code may not read.
+	// omitempty, so a plan with none encodes exactly as it did before the
+	// field existed.
+	Telemetry *TelemetrySelection `json:"telemetry,omitempty"`
 }
 
 // WorkspaceLimits is the plan-side copy of orkstack.v1.WorkspaceLimits.
@@ -135,6 +143,54 @@ func (l WorkspaceLimits) Proto() *orkstackv1.WorkspaceLimits {
 		LogMaxBytes:      filled.LogMaxBytes,
 		CommitMaxBytes:   filled.CommitMaxBytes,
 	}
+}
+
+// TelemetrySelection is the plan-side copy of orkstack.v1.TelemetrySelection.
+//
+// It is a plain Go type for the same reason WorkspaceLimits is: the data
+// converter encodes a top-level protobuf message with protojson and
+// everything else with encoding/json, so nesting a proto message inside
+// RunPlan would silently change how the whole plan is encoded.
+//
+// TaskLogs is the enum's Go name ("TASK_LOG_EXPORT_ENABLED", ...) rather than
+// the orkstackv1 enum type, for the same reason: an enum value nested here
+// would still be a proto-generated type, and JSON-marshaling one directly
+// depends on protobuf details this plain struct is meant to stay clear of.
+// Empty means TASK_LOG_EXPORT_UNSPECIFIED.
+type TelemetrySelection struct {
+	Sink       string            `json:"sink,omitempty"`
+	TaskLogs   string            `json:"task_logs,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+}
+
+// Proto renders the selection as the wire message the Orker and the run
+// snapshot carry. Nil-safe: a nil selection (no policy, no labels) produces a
+// nil message, so ExecuteTaskInput.Telemetry and Run.Telemetry stay unset
+// exactly as they were before this field existed.
+func (s *TelemetrySelection) Proto() *orkstackv1.TelemetrySelection {
+	if s == nil {
+		return nil
+	}
+	return &orkstackv1.TelemetrySelection{
+		Sink:       s.Sink,
+		TaskLogs:   taskLogExportProto(s.TaskLogs),
+		Attributes: s.Attributes,
+	}
+}
+
+// taskLogExportProto maps the plan's plain-string enum name back to the wire
+// enum. An unrecognized name — which validation should never let through —
+// falls back to UNSPECIFIED rather than panicking: a plan is data a harness
+// can hand-build, and a permissive read matches how WorkspaceLimits.Proto
+// treats zero fields as "not set" rather than refusing them.
+func taskLogExportProto(name string) orkstackv1.TaskLogExport {
+	if name == "" {
+		return orkstackv1.TaskLogExport_TASK_LOG_EXPORT_UNSPECIFIED
+	}
+	if v, ok := orkstackv1.TaskLogExport_value[name]; ok {
+		return orkstackv1.TaskLogExport(v)
+	}
+	return orkstackv1.TaskLogExport_TASK_LOG_EXPORT_UNSPECIFIED
 }
 
 // Route answers where one pool's tasks go.

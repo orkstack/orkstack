@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -437,6 +438,11 @@ func (r *PoolResolver) Plan(
 	}
 
 	plan := RunPlan{Namespace: namespaceName(ns), Routes: routes}
+	telemetry, err := telemetryFor(ns, wf)
+	if err != nil {
+		return nil, RunPlan{}, err
+	}
+	plan.Telemetry = telemetry
 	if r.Probe == nil {
 		return planned, plan, nil
 	}
@@ -615,6 +621,96 @@ func (r *PoolResolver) Pools(
 		pools = append(pools, pool)
 	}
 	return pools, nil
+}
+
+// maxExportedLabels bounds how many of an orkflow's `labels:` telemetryFor
+// exports, taken in sorted-key order. Labels themselves are free-form and
+// unbounded at the DSL layer (docs/DSL.md) — this is the export boundary's
+// own limit, chosen so the namespace's attributes (already held to 16 by
+// internal/api and pkg/artifacts's write-path validation) plus the exported
+// labels can never together approach the 256 KiB ExecuteTaskInput wire cap
+// (AGENTS.md §2.2), regardless of how many labels an orkflow document
+// declares.
+const maxExportedLabels = 32
+
+// telemetryFor decides a run's telemetry selection at SUBMIT, from the
+// namespace's TelemetryPolicy and the orkflow's own labels. It lives here
+// rather than in workflow code for the reason CommitRoot does (RunPlan): which
+// sink a namespace chose is registry state a deterministic workflow may not
+// read.
+//
+// Nil, not a zero-value selection, when the namespace set no policy and the
+// orkflow carries no labels — this is what lets ExecuteTaskInput.Telemetry and
+// Run.Telemetry stay unset for such runs, and the golden history fixture
+// (internal/engine/testdata/history) match without re-recording.
+//
+// Attributes are the union of the namespace's own (stamped ork.ns.<key>) and
+// the orkflow's labels (stamped ork.label.<key>): the namespace's operator
+// and the orkflow's author both get to add signal, under keys that cannot
+// collide with each other by construction. On a collision within one side —
+// there is none across sides — the namespace's value wins, because the
+// operator's telemetry policy is deployment state and the orkflow is the
+// tenant's own document; the operator's word about their own deployment
+// outranks it.
+//
+// Labels are free-form (docs/DSL.md does not shape or bound them), so this is
+// also the boundary that makes them safe as telemetry: at most
+// maxExportedLabels of them, taken in sorted-key order so which labels
+// survive a large document is deterministic and not iteration-order noise;
+// each key folded into the attribute alphabet by dsl.SanitizeAttributeKey
+// (lowercased, non-alphabet bytes replaced, a non-letter first character
+// prefixed, capped at 64 bytes) and each value by dsl.SanitizeAttributeValue
+// (truncated to 256 bytes, control characters stripped). Two distinct label
+// keys can fold to the same sanitized key (`Team` and `team`, say); the
+// first one in sorted order wins and the rest are dropped rather than
+// silently overwriting it later in a way that depends on map iteration
+// order.
+func telemetryFor(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) (*TelemetrySelection, error) {
+	policy := ns.GetTelemetry()
+	labels := wf.GetLabels()
+	if policy == nil && len(labels) == 0 {
+		return nil, nil
+	}
+
+	exportedLabels := len(labels)
+	if exportedLabels > maxExportedLabels {
+		exportedLabels = maxExportedLabels
+	}
+	attributes := make(map[string]string, len(policy.GetAttributes())+exportedLabels)
+	if len(labels) > 0 {
+		keys := make([]string, 0, len(labels))
+		for key := range labels {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if len(keys) > maxExportedLabels {
+			keys = keys[:maxExportedLabels]
+		}
+		for _, key := range keys {
+			sanitized := "ork.label." + dsl.SanitizeAttributeKey(key)
+			if _, collision := attributes[sanitized]; collision {
+				continue
+			}
+			attributes[sanitized] = dsl.SanitizeAttributeValue(labels[key])
+		}
+	}
+	// After the labels, so the namespace's own attributes win any collision
+	// (there can be one only between the two prefixes' set of keys mapping to
+	// the same string, which does not happen here since the prefixes differ —
+	// stated anyway because it is the rule a reader should not have to derive
+	// from iteration order).
+	for key, value := range policy.GetAttributes() {
+		attributes["ork.ns."+key] = value
+	}
+	if len(attributes) == 0 {
+		attributes = nil
+	}
+
+	return &TelemetrySelection{
+		Sink:       policy.GetSink(),
+		TaskLogs:   policy.GetTaskLogs().String(),
+		Attributes: attributes,
+	}, nil
 }
 
 func namespaceName(ns *orkstackv1.Namespace) string {

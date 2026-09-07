@@ -506,6 +506,14 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		Upstream: s.upstreamFor(id),
 
 		RunAsOrkerUser: t.GetRunAsOrkerUser(),
+
+		// The selection was decided at SUBMIT (pools.go telemetryFor) from the
+		// namespace's policy and the orkflow's labels — both registry/document
+		// state a deterministic workflow may not read itself (§2.1) — and
+		// travels on the plan like CommitRoot and Limits. Nil-safe: a plan with
+		// no selection produces a nil field here, unchanged from before this
+		// field existed.
+		Telemetry: s.plan.Telemetry.Proto(),
 	}
 	// The wire bound is checked HERE, deterministically, before scheduling.
 	// The deployment's limit is replay-pinned on the plan; the checker also
@@ -779,6 +787,10 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		CreatedAt:               s.createdAt,
 		StartedAt:               s.startedAt,
 		FinishedAt:              s.finished,
+		// Same selection every ExecuteTaskInput of this run carried (§2.1: the
+		// plan is replay-pinned), so the run record shows what actually routed
+		// each task's signals. Nil-safe, same as above.
+		Telemetry: s.plan.Telemetry.Proto(),
 	}
 	for _, id := range s.order {
 		run.TaskRuns = append(run.TaskRuns, s.taskRuns[id])

@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -87,5 +88,76 @@ func TestRunPlan_RefusesAPoolItHasNoRouteFor(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %q", err, want)
 		}
+	}
+}
+
+// TestRunPlan_TelemetryOmittedWhenNil pins the golden-history invariant
+// straight to the wire bytes: a plan with no telemetry selection — every plan
+// before this field existed, and every plan today for a namespace with no
+// policy and an orkflow with no labels — must not grow a "telemetry" key at
+// all. `omitempty` alone does not prove that; only the marshaled bytes do.
+func TestRunPlan_TelemetryOmittedWhenNil(t *testing.T) {
+	plan := defaultPlan()
+	plan.Telemetry = nil
+
+	out, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(out), "telemetry") {
+		t.Fatalf("encoded plan names \"telemetry\" with a nil selection: %s", out)
+	}
+}
+
+// TestRunPlan_TelemetryRoundTrips is the companion case: a plan that DOES
+// carry a selection encodes it and reads it back unchanged, including a
+// non-default TaskLogs enum name and a populated attribute map.
+func TestRunPlan_TelemetryRoundTrips(t *testing.T) {
+	plan := defaultPlan()
+	plan.Telemetry = &engine.TelemetrySelection{
+		Sink:       "otel-prod",
+		TaskLogs:   "TASK_LOG_EXPORT_ENABLED",
+		Attributes: map[string]string{"ork.ns.team": "payments", "ork.label.tier": "gold"},
+	}
+
+	out, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(out), `"telemetry"`) {
+		t.Fatalf("encoded plan does not name \"telemetry\" with a selection set: %s", out)
+	}
+
+	var back engine.RunPlan
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if back.Telemetry == nil {
+		t.Fatal("round trip lost the telemetry selection entirely")
+	}
+	if got, want := *back.Telemetry, *plan.Telemetry; got.Sink != want.Sink ||
+		got.TaskLogs != want.TaskLogs || len(got.Attributes) != len(want.Attributes) {
+		t.Fatalf("round trip = %+v, want %+v", got, want)
+	}
+}
+
+// TestTelemetrySelection_ProtoIsNilSafe is the reason ExecuteTaskInput's and
+// Run's telemetry fields can be set unconditionally in workflow.go: a nil
+// *TelemetrySelection (the common case) renders as a nil proto message rather
+// than panicking or producing a zero-value message that would show up as
+// "telemetry": {} on the wire.
+func TestTelemetrySelection_ProtoIsNilSafe(t *testing.T) {
+	var nilSelection *engine.TelemetrySelection
+	if got := nilSelection.Proto(); got != nil {
+		t.Fatalf("nil selection Proto() = %v, want nil", got)
+	}
+
+	set := &engine.TelemetrySelection{Sink: "otel-prod", TaskLogs: "TASK_LOG_EXPORT_DISABLED"}
+	got := set.Proto()
+	if got.GetSink() != "otel-prod" {
+		t.Errorf("Proto().Sink = %q, want %q", got.GetSink(), "otel-prod")
+	}
+	if got.GetTaskLogs() != orkstackv1.TaskLogExport_TASK_LOG_EXPORT_DISABLED {
+		t.Errorf("Proto().TaskLogs = %v, want DISABLED", got.GetTaskLogs())
 	}
 }
