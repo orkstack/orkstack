@@ -14,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/archive"
+	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -231,6 +232,39 @@ func validateRetentionDuration(field string, requested *durationpb.Duration) (ti
 		return 0, fmt.Errorf("%s must be a positive duration", field)
 	}
 	return d, nil
+}
+
+// knownTelemetrySinks is every sink name a namespace's telemetry.sink may
+// legally name: this engine's declared table (Config.TelemetrySinks), plus
+// "default" always — an unset or empty table still has the OTEL_*
+// environment as its default destination, so "default" is never merely
+// aspirational. Sorted, so ListTelemetrySinks and every error message that
+// names them are deterministic.
+func (s *Service) knownTelemetrySinks() []string {
+	seen := map[string]bool{telemetry.DefaultSink: true}
+	names := []string{telemetry.DefaultSink}
+	for _, name := range s.telemetrySinks {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ListTelemetrySinks names the sinks this deployment declared
+// (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name without
+// this engine, or anything downstream of it, ever handing out an endpoint or
+// a header (AGENTS.md §6): those stay inside internal/telemetry and never
+// reach this seam.
+func (s *Service) ListTelemetrySinks(
+	_ context.Context,
+	_ *connect.Request[orkstackv1.ListTelemetrySinksRequest],
+) (*connect.Response[orkstackv1.ListTelemetrySinksResponse], error) {
+	return connect.NewResponse(&orkstackv1.ListTelemetrySinksResponse{
+		Names: s.knownTelemetrySinks(),
+	}), nil
 }
 
 // retentionWriteErrorCode classifies a retention write failure the way the

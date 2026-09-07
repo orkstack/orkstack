@@ -500,6 +500,12 @@ service SystemService {
   // follow the new maximum immediately: finished runs already older than it
   // are retired on the next cleanup pass.
   rpc UpdateRetentionPolicy(UpdateRetentionPolicyRequest) returns (UpdateRetentionPolicyResponse);
+
+  // ListTelemetrySinks names the telemetry sinks this deployment declared
+  // (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
+  // only: endpoints and headers are the operator's and never leave the
+  // process. CONFIGURATION-DERIVED; "default" is always present.
+  rpc ListTelemetrySinks(ListTelemetrySinksRequest) returns (ListTelemetrySinksResponse);
 }
 message GetSystemInfoRequest {}
 message GetSystemInfoResponse {
@@ -559,4 +565,13 @@ message UpdateRetentionPolicyRequest {
 message UpdateRetentionPolicyResponse {
   RetentionPolicy policy = 1;
   bool namespace_retention_enforced = 2;
+}
+
+message ListTelemetrySinksRequest {}
+message ListTelemetrySinksResponse {
+  // names is every sink this deployment declared, sorted
+  // (telemetry.SinkTable.Names). "default" is always present, whether or not
+  // ORK_TELEMETRY_SINKS names one explicitly, because it is what an unset
+  // TelemetryPolicy.sink resolves to.
+  repeated string names = 1;
 }

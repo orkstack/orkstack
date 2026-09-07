@@ -1,9 +1,12 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,6 +148,50 @@ func TestWebSocketBridge_AnAllowedOriginStillGets404ForAMissingRun(t *testing.T)
 	// my page" from "the engine refuses my origin" (403).
 	if got := handshake(t, server, "ork-does-not-exist", "http://localhost:5173"); got != http.StatusNotFound {
 		t.Fatalf("missing run from an allowed origin = %d, want %d", got, http.StatusNotFound)
+	}
+}
+
+// TestWebSocketBridge_RefusalIsLoggedThroughTheInjectedLogger pins the bridge
+// to svc.logger rather than the slog package-level logger. Every other
+// subsystem logs through the Service's injected *slog.Logger; a refusal
+// logged through the package-level default instead would be invisible to
+// whatever handler the deployment actually configured (`ork` wires its own
+// handler onto Config.Logger, never onto slog.SetDefault).
+func TestWebSocketBridge_RefusalIsLoggedThroughTheInjectedLogger(t *testing.T) {
+	var injected bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&injected, nil))
+
+	// The package-level default is swapped for its own recorder, so a refusal
+	// that (bug) still went through slog.Warn shows up here instead of in
+	// the injected logger's buffer, rather than the test just not noticing.
+	var fallenThrough bytes.Buffer
+	previousDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&fallenThrough, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousDefault) })
+
+	runs := engine.NewRunStore()
+	bus := engine.NewEventBus()
+	runID := "ork-logger-1"
+	runs.Save(&orkstackv1.Run{
+		Id:             runID,
+		OrkflowName:    "hello-ork",
+		OrkflowVersion: "0.1.0",
+		Status:         orkstackv1.Status_STATUS_SUCCEEDED,
+	})
+	svc := api.NewService(api.Config{Runs: runs, Bus: bus, Logger: logger})
+	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{AllowedOrigins: []string{"localhost:5173"}}))
+	t.Cleanup(server.Close)
+
+	if got := handshake(t, server, runID, "http://evil.example"); got != http.StatusForbidden {
+		t.Fatalf("cross-origin handshake = %d, want %d", got, http.StatusForbidden)
+	}
+
+	if !strings.Contains(injected.String(), "websocket upgrade refused") {
+		t.Fatalf("the Service's injected logger did not record the refusal; got %q", injected.String())
+	}
+	if strings.Contains(fallenThrough.String(), "websocket upgrade refused") {
+		t.Fatalf("the refusal was logged through the package-level default logger instead of "+
+			"svc.logger; got %q", fallenThrough.String())
 	}
 }
 

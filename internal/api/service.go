@@ -109,6 +109,12 @@ type Config struct {
 	// this covers the one that never did, when StartRun fails.
 	Notifier engine.RunNotifier
 
+	// Observer is the telemetry seam's counterpart to Notifier: it is
+	// announced the same synthesized RUN_FAILED event, so a run that never
+	// reached Temporal is still counted and logged like any other. The
+	// engine's own projection activity covers every run that did reach it.
+	Observer engine.EventObserver
+
 	// Activities is the deployment's activity catalog, served by
 	// ActivityService.ListActivities. Nil answers with an empty catalog:
 	// which images exist is engine configuration (§4.2), and an
@@ -169,6 +175,14 @@ type Config struct {
 	// fields, which is what an unconfigured Service honestly knows about
 	// itself.
 	System SystemInfo
+
+	// TelemetrySinks names every sink this engine's ORK_TELEMETRY_SINKS
+	// declared — `ork` wires cfg.Sinks.Names() (internal/telemetry.SinkTable)
+	// — for SystemService.ListTelemetrySinks and for validating a namespace's
+	// telemetry.sink at write time (validNamespaceTelemetry). "default" is
+	// always answered even when this is empty: an operator who configured no
+	// table still has the OTEL_* environment as the default destination.
+	TelemetrySinks []string
 
 	// Router resolves an ork namespace to the cluster serving it. Nil builds
 	// the one-binding router from Reader, Starter and Pools above, which is
@@ -242,11 +256,18 @@ type Service struct {
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
 	notifier    engine.RunNotifier
+	observer    engine.EventObserver
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
-	system    SystemInfo
-	artifacts artifacts.Config
-	limits    engine.WorkspaceLimits
+	system SystemInfo
+	// telemetrySinks names every sink this deployment declared (see
+	// Config.TelemetrySinks). Read by ListTelemetrySinks and by
+	// validNamespaceTelemetry; never by anything on the run-submission path,
+	// which only ever selects a name — the endpoint and headers stay inside
+	// internal/telemetry.
+	telemetrySinks []string
+	artifacts      artifacts.Config
+	limits         engine.WorkspaceLimits
 	// retention owns the deployment's maximum run retention (see
 	// Config.Retention). Nil answers SystemService's retention RPCs with
 	// Unimplemented.
@@ -272,6 +293,7 @@ func NewService(cfg Config) *Service {
 		catalog:           cfg.Catalog,
 		resolver:          cfg.Resolver,
 		system:            cfg.System,
+		telemetrySinks:    cfg.TelemetrySinks,
 		router:            cfg.Router,
 		archive:           cfg.Archive,
 		logs:              cfg.Logs,
@@ -279,6 +301,7 @@ func NewService(cfg Config) *Service {
 		idempotency:       cfg.Idempotency,
 		webhooks:          cfg.Webhooks,
 		notifier:          cfg.Notifier,
+		observer:          cfg.Observer,
 		artifacts:         cfg.Artifacts,
 		limits:            cfg.Limits,
 		retention:         cfg.Retention,
@@ -1146,28 +1169,34 @@ func (s *Service) recordFailedStart(
 }
 
 // notifyRunFailedToStart announces the terminal transition of a run that never
-// reached Temporal, so a subscriber sees the same RUN_FAILED it would have
-// seen had the run started and then failed.
+// reached Temporal, so a subscriber — and telemetry — sees the same
+// RUN_FAILED it would have seen had the run started and then failed.
 func (s *Service) notifyRunFailedToStart(
 	ctx context.Context,
 	runID string,
 	failedAt *timestamppb.Timestamp,
 	cause error,
 ) {
-	if s.notifier == nil {
+	if s.notifier == nil && s.observer == nil {
 		return
 	}
 	run, ok := s.runs.Get(runID)
 	if !ok {
 		return
 	}
-	s.notifier.NotifyRunTransition(ctx, &orkstackv1.Event{
+	event := &orkstackv1.Event{
 		RunId:     runID,
 		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 		Status:    orkstackv1.Status_STATUS_FAILED,
 		Message:   cause.Error(),
 		Timestamp: failedAt,
-	}, run)
+	}
+	if s.notifier != nil {
+		s.notifier.NotifyRunTransition(ctx, event, run)
+	}
+	if s.observer != nil {
+		s.observer.ObserveEvent(ctx, event, run)
+	}
 }
 
 // archiveRun writes a terminal run to the archive. Archiving is durability, not

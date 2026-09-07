@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -101,6 +102,82 @@ func (s *Service) validNamespaceRetention(ctx context.Context, spec *orkstackv1.
 	return nil
 }
 
+// validNamespaceTelemetry holds a client-supplied telemetry policy to the
+// full write-path rule set CreateNamespace enforces: the sink must be one
+// this engine actually declared, and the attributes must fit dsl's one
+// shared shape (internal/dsl.attributes.go) plus the reserved prefixes the
+// platform's own instrumentation uses.
+//
+// It is validNamespaceTelemetryDocument plus validNamespaceTelemetrySink.
+// UpdateNamespace does not call this directly — see validNamespaceTelemetrySink
+// for why the sink-existence half is conditional there.
+func (s *Service) validNamespaceTelemetry(spec *orkstackv1.Namespace) error {
+	if err := validNamespaceTelemetryDocument(spec); err != nil {
+		return err
+	}
+	return s.validNamespaceTelemetrySink(spec.GetTelemetry().GetSink())
+}
+
+// validNamespaceTelemetryDocument holds a client-supplied telemetry policy to
+// the rules a document can be judged on by itself, with no engine state: the
+// attributes must fit dsl's one shared shape (internal/dsl.attributes.go)
+// plus the reserved prefixes the platform's own instrumentation uses. This is
+// the half pkg/artifacts/namespace_store.go's validNamespaceTelemetry also
+// enforces, and it is a hard error on every write path, create or update —
+// unlike the sink-existence half, staleness is never a defense for a
+// malformed attribute map.
+func validNamespaceTelemetryDocument(spec *orkstackv1.Namespace) error {
+	policy := spec.GetTelemetry()
+	if policy == nil {
+		return nil
+	}
+	if err := validTelemetryAttributes(policy.GetAttributes()); err != nil {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return nil
+}
+
+// validNamespaceTelemetrySink holds a client-supplied telemetry.sink to the
+// one rule that needs engine state: the name must be one this deployment
+// actually declared.
+//
+// It is engine-side rather than pure (like validNamespaceName) for the same
+// reason validNamespaceRetention's ceiling check is: only the process that
+// parsed ORK_TELEMETRY_SINKS knows what exists, so a namespace document can
+// name a sink the store itself has no way to confirm.
+//
+// An empty sink is always fine — it means the default sink, which always
+// exists. CreateNamespace calls this unconditionally; UpdateNamespace calls
+// it only when the spec's sink differs from what is already stored, so a
+// namespace whose stored sink an operator later removed from
+// ORK_TELEMETRY_SINKS stays editable (docs/DEPLOY.md's fallback-to-default
+// promise) instead of being locked out of every future edit.
+func (s *Service) validNamespaceTelemetrySink(sink string) error {
+	if sink == "" {
+		return nil
+	}
+	known := s.knownTelemetrySinks()
+	for _, name := range known {
+		if name == sink {
+			return nil
+		}
+	}
+	return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+		"telemetry.sink %q is not a sink this deployment declared (known: %s)",
+		sink, strings.Join(known, ", ")))
+}
+
+// validTelemetryAttributes is dsl.ValidateAttributeMap plus
+// dsl.ValidateNoReservedPrefix, shared by the API's write path (this file)
+// and the store's document-only validation (pkg/artifacts/namespace_store.go)
+// so the two halves of the split enforce the identical attribute rule.
+func validTelemetryAttributes(attributes map[string]string) error {
+	if err := dsl.ValidateAttributeMap("telemetry.attributes", attributes, 16); err != nil {
+		return err
+	}
+	return dsl.ValidateNoReservedPrefix("telemetry.attributes", attributes)
+}
+
 // CreateNamespace registers a namespace, idempotently for an identical spec.
 //
 // The write is conditional on the object being absent, so two replicas racing
@@ -122,6 +199,9 @@ func (s *Service) CreateNamespace(
 		return nil, err
 	}
 	if err := s.validNamespaceRetention(ctx, spec); err != nil {
+		return nil, err
+	}
+	if err := s.validNamespaceTelemetry(spec); err != nil {
 		return nil, err
 	}
 	if artifacts.ResolveNamespace(spec.GetName()) == artifacts.DefaultNamespace {
@@ -202,6 +282,26 @@ func specDifference(stored, requested *orkstackv1.Namespace) string {
 	}
 	if got, want := retentionLabel(stored.GetRunRetention()), retentionLabel(requested.GetRunRetention()); got != want {
 		return fmt.Sprintf("run_retention is %s, not %s", got, want)
+	}
+	if diff := telemetryDifference(stored.GetTelemetry(), requested.GetTelemetry()); diff != "" {
+		return diff
+	}
+	return ""
+}
+
+// telemetryDifference is specDifference's telemetry half, broken out because
+// a policy has three independently-differing fields (sink, task_logs,
+// attributes) and each gets its own message, the same granularity
+// specDifference gives every other field.
+func telemetryDifference(stored, requested *orkstackv1.TelemetryPolicy) string {
+	if got, want := stored.GetSink(), requested.GetSink(); got != want {
+		return fmt.Sprintf("telemetry.sink is %q, not %q", got, want)
+	}
+	if got, want := stored.GetTaskLogs(), requested.GetTaskLogs(); got != want {
+		return fmt.Sprintf("telemetry.task_logs is %s, not %s", got, want)
+	}
+	if got, want := stored.GetAttributes(), requested.GetAttributes(); !equalLabels(got, want) {
+		return fmt.Sprintf("telemetry.attributes are %s, not %s", renderLabels(got), renderLabels(want))
 	}
 	return ""
 }
@@ -329,20 +429,44 @@ func (s *Service) UpdateNamespace(
 	if err := s.validNamespaceRetention(ctx, spec); err != nil {
 		return nil, err
 	}
+	if err := validNamespaceTelemetryDocument(spec); err != nil {
+		return nil, err
+	}
 	// An update is not a create: a name nobody registered is NotFound, naming
 	// the ones that do exist, rather than a namespace quietly brought into
-	// being by a typo.
-	if _, err := s.namespace(ctx, spec.GetName()); err != nil {
+	// being by a typo. The read is also what lets the sink check below tell a
+	// change from a repeat: reusing it (rather than reading twice) makes that
+	// comparison free.
+	stored, err := s.namespace(ctx, spec.GetName())
+	if err != nil {
 		return nil, err
+	}
+	// Sink existence is enforced only when the caller is actually changing
+	// it. A namespace whose stored sink an operator later removed from
+	// ORK_TELEMETRY_SINKS would otherwise be uneditable in every other way —
+	// description, pools, retention, labels — which contradicts
+	// docs/DEPLOY.md's promise that such a namespace merely falls back to the
+	// default sink. The caller round-tripping that stale name unchanged is
+	// not asking this deployment to bless it, only to leave it alone; logged
+	// so an operator watching this namespace can see it is still pointed at a
+	// sink that no longer exists.
+	newSink := spec.GetTelemetry().GetSink()
+	if newSink != stored.GetTelemetry().GetSink() {
+		if err := s.validNamespaceTelemetrySink(newSink); err != nil {
+			return nil, err
+		}
+	} else if newSink != "" && s.validNamespaceTelemetrySink(newSink) != nil {
+		s.logger.Warn("namespace update proceeding with a telemetry sink this deployment no longer declares",
+			"namespace", spec.GetName(), "telemetry_sink", newSink)
 	}
 	cond := artifacts.PutConditions{IfMatch: spec.GetEtag()}
 	if spec.GetEtag() == "" {
 		cond = artifacts.PutConditions{IfAbsent: true}
 	}
-	stored, err := registry.Put(ctx, proto.Clone(spec).(*orkstackv1.Namespace), cond)
+	updated, err := registry.Put(ctx, proto.Clone(spec).(*orkstackv1.Namespace), cond)
 	switch {
 	case err == nil:
-		return connect.NewResponse(&orkstackv1.UpdateNamespaceResponse{Namespace: stored}), nil
+		return connect.NewResponse(&orkstackv1.UpdateNamespaceResponse{Namespace: updated}), nil
 	case errors.Is(err, artifacts.ErrPreconditionFailed) && cond.IfAbsent:
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"namespace %q was written by somebody else since it was read "+

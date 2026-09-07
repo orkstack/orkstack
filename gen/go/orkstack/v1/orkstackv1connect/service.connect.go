@@ -108,6 +108,9 @@ const (
 	// SystemServiceUpdateRetentionPolicyProcedure is the fully-qualified name of the SystemService's
 	// UpdateRetentionPolicy RPC.
 	SystemServiceUpdateRetentionPolicyProcedure = "/orkstack.v1.SystemService/UpdateRetentionPolicy"
+	// SystemServiceListTelemetrySinksProcedure is the fully-qualified name of the SystemService's
+	// ListTelemetrySinks RPC.
+	SystemServiceListTelemetrySinksProcedure = "/orkstack.v1.SystemService/ListTelemetrySinks"
 )
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
@@ -1040,6 +1043,11 @@ type SystemServiceClient interface {
 	// follow the new maximum immediately: finished runs already older than it
 	// are retired on the next cleanup pass.
 	UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error)
+	// ListTelemetrySinks names the telemetry sinks this deployment declared
+	// (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
+	// only: endpoints and headers are the operator's and never leave the
+	// process. CONFIGURATION-DERIVED; "default" is always present.
+	ListTelemetrySinks(context.Context, *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error)
 }
 
 // NewSystemServiceClient constructs a client for the orkstack.v1.SystemService service. By default,
@@ -1071,6 +1079,12 @@ func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(systemServiceMethods.ByName("UpdateRetentionPolicy")),
 			connect.WithClientOptions(opts...),
 		),
+		listTelemetrySinks: connect.NewClient[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse](
+			httpClient,
+			baseURL+SystemServiceListTelemetrySinksProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("ListTelemetrySinks")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -1079,6 +1093,7 @@ type systemServiceClient struct {
 	getSystemInfo         *connect.Client[v1.GetSystemInfoRequest, v1.GetSystemInfoResponse]
 	getRetentionPolicy    *connect.Client[v1.GetRetentionPolicyRequest, v1.GetRetentionPolicyResponse]
 	updateRetentionPolicy *connect.Client[v1.UpdateRetentionPolicyRequest, v1.UpdateRetentionPolicyResponse]
+	listTelemetrySinks    *connect.Client[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse]
 }
 
 // GetSystemInfo calls orkstack.v1.SystemService.GetSystemInfo.
@@ -1094,6 +1109,11 @@ func (c *systemServiceClient) GetRetentionPolicy(ctx context.Context, req *conne
 // UpdateRetentionPolicy calls orkstack.v1.SystemService.UpdateRetentionPolicy.
 func (c *systemServiceClient) UpdateRetentionPolicy(ctx context.Context, req *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error) {
 	return c.updateRetentionPolicy.CallUnary(ctx, req)
+}
+
+// ListTelemetrySinks calls orkstack.v1.SystemService.ListTelemetrySinks.
+func (c *systemServiceClient) ListTelemetrySinks(ctx context.Context, req *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error) {
+	return c.listTelemetrySinks.CallUnary(ctx, req)
 }
 
 // SystemServiceHandler is an implementation of the orkstack.v1.SystemService service.
@@ -1126,6 +1146,11 @@ type SystemServiceHandler interface {
 	// follow the new maximum immediately: finished runs already older than it
 	// are retired on the next cleanup pass.
 	UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error)
+	// ListTelemetrySinks names the telemetry sinks this deployment declared
+	// (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
+	// only: endpoints and headers are the operator's and never leave the
+	// process. CONFIGURATION-DERIVED; "default" is always present.
+	ListTelemetrySinks(context.Context, *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error)
 }
 
 // NewSystemServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1153,6 +1178,12 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(systemServiceMethods.ByName("UpdateRetentionPolicy")),
 		connect.WithHandlerOptions(opts...),
 	)
+	systemServiceListTelemetrySinksHandler := connect.NewUnaryHandler(
+		SystemServiceListTelemetrySinksProcedure,
+		svc.ListTelemetrySinks,
+		connect.WithSchema(systemServiceMethods.ByName("ListTelemetrySinks")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.SystemService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SystemServiceGetSystemInfoProcedure:
@@ -1161,6 +1192,8 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 			systemServiceGetRetentionPolicyHandler.ServeHTTP(w, r)
 		case SystemServiceUpdateRetentionPolicyProcedure:
 			systemServiceUpdateRetentionPolicyHandler.ServeHTTP(w, r)
+		case SystemServiceListTelemetrySinksProcedure:
+			systemServiceListTelemetrySinksHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1180,4 +1213,8 @@ func (UnimplementedSystemServiceHandler) GetRetentionPolicy(context.Context, *co
 
 func (UnimplementedSystemServiceHandler) UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.UpdateRetentionPolicy is not implemented"))
+}
+
+func (UnimplementedSystemServiceHandler) ListTelemetrySinks(context.Context, *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.ListTelemetrySinks is not implemented"))
 }

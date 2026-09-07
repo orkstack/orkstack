@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -56,7 +55,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 		// this engine talk to the page I serve?" — which is what `make up` uses
 		// to refuse to report a stack that looks fine and never goes live.
 		if !originAllowed(r, allowedOrigins) {
-			slog.Warn("websocket upgrade refused",
+			svc.logger.Warn("websocket upgrade refused",
 				"run_id", runID,
 				"origin", r.Header.Get("Origin"),
 				"host", r.Host,
@@ -91,7 +90,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			// live and the engine says nothing at all. The common cause is an
 			// origin this engine was not told to allow, so name both sides and
 			// the setting that fixes it.
-			slog.Warn("websocket upgrade refused",
+			svc.logger.Warn("websocket upgrade refused",
 				"run_id", runID,
 				"origin", r.Header.Get("Origin"),
 				"host", r.Host,
@@ -252,7 +251,7 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 		// Origin first, for the reasons the run socket states: a foreign
 		// origin must not learn which run ids exist by telling 404 from 403.
 		if !originAllowed(r, allowedOrigins) {
-			slog.Warn("websocket upgrade refused",
+			svc.logger.Warn("websocket upgrade refused",
 				"run_id", runID, "task_id", taskID,
 				"origin", r.Header.Get("Origin"), "host", r.Host,
 				"allowed_origins", allowedOrigins,
@@ -279,7 +278,7 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 			OriginPatterns: allowedOrigins,
 		})
 		if err != nil {
-			slog.Warn("websocket upgrade refused",
+			svc.logger.Warn("websocket upgrade refused",
 				"run_id", runID, "task_id", taskID,
 				"origin", r.Header.Get("Origin"), "host", r.Host,
 				"allowed_origins", allowedOrigins,
