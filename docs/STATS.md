@@ -29,6 +29,14 @@ asked for. A stored counter would be a third record of facts two records
 already hold, and the day it disagreed with them there would be no way to say
 which was lying.
 
+This is also why `StatsService` is not where a time-series dashboard's counters
+come from: it answers "how is this namespace doing right now," derived on read
+from the two sources above, and stores nothing between one answer and the
+next. A counter you can graph over weeks — `ork.runs`, `ork.tasks`, and the
+rest — comes from the telemetry pipeline instead (`docs/DEPLOY.md`,
+"Lifecycle metrics"), which is the write path this service deliberately has
+none of.
+
 **Nothing is read from an engine's memory.** Both sources are shared, so a
 replica that started no runs answers exactly as the one that started them all
 (AGENTS.md §7). `cmd/orkctl/stats_two_engine_integration_test.go` holds two

@@ -11,7 +11,7 @@ applied to the `ork` engine with `orkctl apply`.
 | `name`        | yes      | Slug identifier, unique within its namespace.           |
 | `version`     | no       | Author-pinned version; defaults to the source's hash.  |
 | `description` | no       | Human description.                                     |
-| `labels`      | no       | `map[string]string` for organization/filtering.        |
+| `labels`      | no       | `map[string]string` for organization/filtering, free-form — no key shape, entry count, or value size is enforced here. When telemetry is on, at most 32 of them (sorted by key) are exported as `ork.label.<key>` telemetry attributes, each key and value sanitized for that boundary (`docs/DEPLOY.md`, "Per-namespace policy"). |
 | `inputs`      | no       | Declared input parameters (see below).                 |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
@@ -219,6 +219,27 @@ referencing an unrelated task's output is a compile-time error.
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
 behaves differently from its document.
+
+`labels:` is free-form: no key shape, entry count, or value size is enforced
+by the compiler. A namespace's own telemetry attributes remain bounded and
+shaped (`ValidateAttributeMap`, `internal/dsl`: at most 16 entries, each key
+`^[a-z][a-z0-9_.-]{0,63}$`, each value at most 256 bytes and free of control
+characters) because they are operator/admin input rendered verbatim in
+terminals and the UI; a label is the tenant's own document and an ordinary,
+widely-used key like `Team` or `app.kubernetes.io/name` should not be refused
+for not looking like an attribute.
+
+When telemetry is on, a namespace's operator-set attributes and an orkflow's
+own labels merge onto the same run's signals (`ork.ns.<key>` and
+`ork.label.<key>`, respectively; `docs/DEPLOY.md`, "Per-namespace policy").
+The merge is where labels are made safe as telemetry rather than where they
+are refused as a document: at most 32 labels are exported, taken in
+sorted-key order; each key is folded into the attribute alphabet
+(`dsl.SanitizeAttributeKey` — lowercased, every byte outside
+`[a-z0-9_.-]` replaced with `_`, a non-letter first character prefixed
+`l_`, capped at 64 bytes) and each value is truncated to 256 bytes with
+control characters stripped (`dsl.SanitizeAttributeValue`). Two label keys
+that fold to the same sanitized key keep only the one that sorts first.
 
 A slug is at most **200 bytes**, in every position above. The bound is half the
 rule and not a detail of it: a namespace, an orkflow name and a version are

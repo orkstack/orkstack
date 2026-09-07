@@ -79,6 +79,28 @@ effects remain at-least-once.
 - `ActivityService` exposes the configured activity catalog and live Orker
   description; there is no plugin service or registry.
 
+### Telemetry (`internal/telemetry`)
+
+OpenTelemetry is the only telemetry mechanism in the codebase, and OTLP plus a
+few standard scrape endpoints are the only way a signal leaves a process —
+there is no per-vendor code. Everything is off by default: with no `OTEL_*` or
+`ORK_ADMIN_ADDR`/`ORK_LOG_*` set, `ork` and `orker` behave exactly as they did
+before this package existed. The hooks live in three places only — activities,
+the Orker, and the API — so **workflow code never imports OpenTelemetry**: a
+`RunWorkflow` replay must stay a pure function of its history (§2, replay
+safety), and an instrumentation call is exactly the kind of side effect that
+would make it not one. Activity images stay SDK-free for the same reason
+`images/` needed no OrkStack SDK in the first place: stdout and stderr are
+already captured, already durable, and already enough (`docs/OCI_ACTIVITY_CONTRACT.md`).
+A run's telemetry selection — which sink, whether task logs export, which
+attributes — is decided once at submit from the namespace's policy and carried
+on the `RunPlan` like `CommitRoot` is: replay-pinned, and unset when nothing is
+configured. A namespace's chosen sink routes that run's task logs, spans and
+lifecycle metrics; the engine and Orker's own process-level signals — their
+own slog output, `/metrics`, the Temporal SDK's own metrics — stay on the
+default sink regardless of what any namespace selects.
+See `docs/DEPLOY.md`, "Telemetry", for the operator side.
+
 ## Data flow of a run
 
 1. `orkctl apply` compiles an Orkflow, resolves image references to digests, and

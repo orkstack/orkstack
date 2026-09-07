@@ -53,6 +53,11 @@ itself is untouched.
 The individual steps are still there when you want them: `make tools`,
 `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
 
+Configuration needs none of this for a laptop — `make up` runs on defaults
+alone. Past that, `ork` and `orker` read one shared YAML file (`--config
+PATH`), with `ORK_`/`OTEL_` environment variables overriding it; see
+[docs/DEPLOY.md](./docs/DEPLOY.md) §1.
+
 ## Repository layout
 
 See [AGENTS.md](./AGENTS.md) §12. The short version: `proto/` is the wire

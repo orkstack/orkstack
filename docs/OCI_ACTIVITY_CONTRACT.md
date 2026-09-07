@@ -863,10 +863,20 @@ absence rather than treating it as an error.
 | `secrets` | array | required | `[]` | never null; names and paths only, never values |
 | `secrets[].name` | string | required | — | `^[A-Za-z0-9._-]{1,128}$` |
 | `secrets[].path` | string | required | — | absolute container path |
+| `trace.traceparent` | string | optional | absent | present only when this deployment exports traces (§ below) |
+| `trace.tracestate` | string | optional | absent | present only alongside `traceparent`, and only when the propagator set one |
 
 An absent array is never written as `null`; the Orker emits `[]`. An absent
 optional scalar is omitted, never written as `""` — a workload distinguishes
 "no content type" from "empty content type" by presence.
+
+An optional `trace` object (`traceparent`, and `tracestate` when the
+propagator sets one, both in W3C header form) is present only when this
+deployment exports traces (`internal/telemetry`, off by default). It is
+purely informational, never ABI: it does not move `schemaVersion`, and a
+workload that has never heard of tracing loses nothing by ignoring it. One
+that wants to join the trace its own activity ran under propagates the two
+strings verbatim to whatever it calls next.
 
 #### Two policies the file itself cannot state
 
@@ -982,6 +992,15 @@ canceled attempt's output is retained and reachable — it simply is not a
 `system_artifacts` reference, and §3.6 no longer implies otherwise.
 
 Plain text works with no logging SDK. Structured JSON is not part of the ABI.
+
+Independently of the two uses above, an operator may have the Orker export
+each stdout/stderr line a third time, as an OpenTelemetry log record carrying
+that line's run id, task id, attempt, namespace and orkflow coordinates
+(`ORK_ORKER_TASK_LOG_EXPORT`, `docs/DEPLOY.md`, "Telemetry"). This changes
+nothing about framing, exit semantics or the ABI above — it is a copy of what
+already left the container. An image needs no agent, SDK, environment
+variable or file to be exported this way; the Orker does the whole thing from
+outside.
 
 ---
 

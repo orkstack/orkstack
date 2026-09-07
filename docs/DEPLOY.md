@@ -255,58 +255,130 @@ needs `ORK_S3_*` either way.
 
 ## 1. Configuration
 
-Every setting is an environment variable prefixed `ORK_`. These are the ones a
-deployment cares about.
+`ork` and `orker` read one shared YAML schema, in three layers: built-in
+defaults, then a config file, then the environment — each layer overriding
+only what the layer before it set. Environment stays the top layer on
+purpose: it is what a container orchestrator overrides per replica, and it
+is the one place a secret can always live even when the file itself is not
+trusted with one. Point either binary at a file with `--config PATH` (a
+flag) or `ORK_CONFIG_FILE=PATH` (an environment variable; the flag wins);
+with neither set, behavior is byte-identical to a deployment that has never
+heard of this section — no file, no default path, nothing implied.
 
-| variable | default | set on | effect |
-|---|---|---|---|
-| `ORK_TEMPORAL_ADDRESS` | `localhost:7233` | both | Temporal frontend. The default is the SDK's `client.DefaultHostPort` |
-| `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
-| `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
-| `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
-| `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file` → `ghcr.io/orkstack/activity-*:0.1` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
-| `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
-| `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one |
-| `ORK_ORKER_IMAGE_LAYOUT` | *(empty)* | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails |
-| `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI |
-| `ORK_DOCKER_PULL_TIMEOUT` | *(runtime default)* | `orker` | how long an image pull may take |
-| `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
-| `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
-| `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
-| `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
-| `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable |
-| `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
-| `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
-| `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
-| `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
-| `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
-| `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
-| `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
-| `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
-| `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
-| `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
-| `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
-| `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
-| `ORK_ARTIFACT_MAX_COUNT` | `256` | `ork` | contract limit: output artifacts per attempt |
-| `ORK_ARTIFACT_MAX_BYTES` | `5 GiB` | `ork` | contract limit: bytes per output artifact |
-| `ORK_LOG_MAX_BYTES` | `16 MiB` | `ork` | contract limit: durable `stdout.log`/`stderr.log` per stream per attempt. Distinct from `ORK_ORKER_LOG_MAX_BYTES`, which bounds the Orker's *live* stream |
-| `ORK_COMMIT_MAX_BYTES` | `4 MiB` | `ork` | contract limit: the serialized `ActivityCommit`. The Orker bounds the projected commit against this *before* uploading a byte |
-| `ORK_TRANSFER_BUDGET_SECONDS` | *(derived)* | `ork` | data-transfer slack inside `StartToCloseTimeout`. Unset derives `max(300, artifact_max_count × artifact_max_bytes ÷ floor throughput)`. An operator who knows their storage sets it directly |
-| `ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC` | `10 MiB/s` | `ork` | the denominator of that derivation. Only read when `ORK_TRANSFER_BUDGET_SECONDS` is unset |
-| `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts, the run archive and task logs live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
-| `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables active per-namespace run retention: retires each finished run at its own namespace's run retention and reclaims its run-scoped logs and completion commits. Default-off because it deletes durable data; when off, every run is kept for the deployment maximum plus `ORK_CLEANUP_RETENTION_BUFFER` regardless of any namespace's own value |
-| `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts |
-| `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
-| `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration |
-| `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
-| `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
-| `ORK_S3_REGION` | `us-east-1` | both | |
-| `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts, archived runs and task logs |
-| `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
-| `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
-| `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for temporary credentials |
-| `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
-| `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
+The file is YAML, decoded strictly: an unknown key is refused at boot,
+naming its full path. Any scalar leaf may instead be written as
+`{ork: X, orker: Y}` to give the two binaries different values from one
+file — the shape `telemetry.admin_addr`
+needs — and a plain scalar still applies to both. Any string leaf may be
+written as `{file: /path}` in place of a literal, to pull a secret from a
+file rather than the document itself (one trailing line ending, `\n` or
+`\r\n`, trimmed; a relative path resolves against the directory holding the
+config file itself, never the process's working directory, so the same
+file behaves the same way wherever the binary is launched from);
+`storage.s3.secret_key` and `telemetry.otlp.headers.*` are the ones that
+matter here, though a named sink's own headers already have their own
+`source:` for the same job (§7, "Named sinks"). A key whose documented
+default below is a real, non-empty value refuses an explicit empty value
+(`""`, `[]`, or `{}`) rather than accepting it, because every reader in this
+codebase treats an empty environment variable as unset and would silently
+fall back to that default instead — remove the key to get the default
+instead of writing an empty value that can never take effect. `--check`
+validates the file, prints the effective configuration for the binary you
+ran it on as YAML — secret leaves redacted to `***`, and every value
+labeled with where it came from: `file`, `env`, or `default` — then exits
+0, or 1 naming the first error. `--check` never starts anything.
+
+Two subtrees are documents rather than scalars: `activities:` and
+`telemetry.sinks:` carry their own nested schema — the same shapes
+`ORK_ACTIVITY_CATALOG` and `ORK_TELEMETRY_SINKS` always took — and are
+re-serialized to that variable's YAML text underneath, so a reader who
+already knows one of those two shapes need not learn a second one for the
+file. `OTEL_BSP_*` and `OTEL_BLRP_*` remain environment only: the config
+file has no keys for them, on either binary.
+
+Every other setting is an environment variable prefixed `ORK_`, or, for the
+telemetry block, the standard `OTEL_*` names — a config file sets the same
+variables underneath, so the table below gives both: the file key first,
+then the variable it becomes.
+
+| file key | variable | default | set on | effect |
+|---|---|---|---|---|
+| `temporal.address` | `ORK_TEMPORAL_ADDRESS` | `localhost:7233` | both | Temporal frontend. The default is the SDK's `client.DefaultHostPort` |
+| `temporal.namespace` | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
+| `pool.name` | `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
+| `pool.queue` | `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
+| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file` → `ghcr.io/orkstack/activity-*:0.1` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
+| `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
+| `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one |
+| `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
+| `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI |
+| `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
+| `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
+| `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
+| `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
+| `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
+| `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable |
+| `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
+| `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
+| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
+| `orker.log.flush_bytes` | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
+| `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
+| `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
+| `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
+| `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
+| `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
+| `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
+| `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
+| `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
+| `engine.limits.artifact_max_count` | `ORK_ARTIFACT_MAX_COUNT` | `256` | `ork` | contract limit: output artifacts per attempt |
+| `engine.limits.artifact_max_bytes` | `ORK_ARTIFACT_MAX_BYTES` | `5 GiB` | `ork` | contract limit: bytes per output artifact |
+| `engine.limits.log_max_bytes` | `ORK_LOG_MAX_BYTES` | `16 MiB` | `ork` | contract limit: durable `stdout.log`/`stderr.log` per stream per attempt. Distinct from `ORK_ORKER_LOG_MAX_BYTES`, which bounds the Orker's *live* stream |
+| `engine.limits.commit_max_bytes` | `ORK_COMMIT_MAX_BYTES` | `4 MiB` | `ork` | contract limit: the serialized `ActivityCommit`. The Orker bounds the projected commit against this *before* uploading a byte |
+| `engine.limits.transfer_budget_seconds` | `ORK_TRANSFER_BUDGET_SECONDS` | *(derived)* | `ork` | data-transfer slack inside `StartToCloseTimeout`. Unset derives `max(300, artifact_max_count × artifact_max_bytes ÷ floor throughput)`. An operator who knows their storage sets it directly |
+| `engine.limits.floor_throughput_bytes_per_sec` | `ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC` | `10 MiB/s` | `ork` | the denominator of that derivation. Only read when `ORK_TRANSFER_BUDGET_SECONDS` is unset |
+| `storage.backend` | `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts, the run archive and task logs live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
+| `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables active per-namespace run retention: retires each finished run at its own namespace's run retention and reclaims its run-scoped logs and completion commits. Default-off because it deletes durable data; when off, every run is kept for the deployment maximum plus `ORK_CLEANUP_RETENTION_BUFFER` regardless of any namespace's own value |
+| `engine.cleanup.interval` | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts |
+| `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
+| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration |
+| `storage.dir` | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
+| `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3 / MinIO endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
+| `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
+| `storage.s3.bucket` | `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts, archived runs and task logs |
+| `storage.s3.access_key` | `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
+| `storage.s3.secret_key` | `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
+| `storage.s3.session_token` | `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for temporary credentials |
+| `storage.s3.path_style` | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
+| `engine.stats_cache_ttl` | `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
+| `telemetry.log_format` | `ORK_LOG_FORMAT` | `text` | both | process log encoding: `text` or `json` |
+| `telemetry.log_level` | `ORK_LOG_LEVEL` | `info` | both | minimum process log level: `debug`, `info`, `warn`, `error` |
+| `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | *(empty = no listener)* | both | serves `/healthz`, `/readyz`, `/metrics` (only with the `prometheus` metrics exporter) and `/debug/pprof/` (only with `ORK_PPROF_ENABLED`). Never the API port — see §7 |
+| `telemetry.pprof_enabled` | `ORK_PPROF_ENABLED` | `false` | both | mounts `net/http/pprof` on the admin listener. Off by default: an Orker's heap holds resolved secret bytes |
+| `telemetry.high_cardinality` | `ORK_TELEMETRY_HIGH_CARDINALITY` | `false` | both | adds `ork.run_id`/`ork.task_id`/`ork.orkflow.name`/`ork.orkflow.version` labels to `ork_*` metrics — see §7, "High-cardinality labels" |
+| `orker.task_log_export` | `ORK_ORKER_TASK_LOG_EXPORT` | `false` | `orker` | exports every task stdout/stderr line as an OTel log record. Requires `OTEL_LOGS_EXPORTER=otlp` — see §7, "Task logs" |
+| `telemetry.service_name` | `OTEL_SERVICE_NAME` | `ork` / `orker` | both | `service.name` on every signal — the standard OpenTelemetry variable, not `ORK_`-prefixed, honored verbatim (§7) |
+| `telemetry.resource_attributes` | `OTEL_RESOURCE_ATTRIBUTES` | *(empty)* | both | standard resource attributes; overrides OrkStack's own `ork.*` attributes value-for-value (§7) |
+| `telemetry.exporters.metrics` | `OTEL_METRICS_EXPORTER` | `none` | both | comma list of `prometheus`, `otlp`, `none`. `prometheus` requires `ORK_ADMIN_ADDR` |
+| `telemetry.exporters.traces` | `OTEL_TRACES_EXPORTER` | `none` | both | `otlp` or `none`. `otlp` wires the Orkflow's spans end to end — see §7, "Traces" |
+| `telemetry.sampler.name` | `OTEL_TRACES_SAMPLER` | *(SDK default: `parentbased_always_on`)* | both | standard OpenTelemetry sampler selector, honored verbatim by the SDK — see §7, "Traces" |
+| `telemetry.sampler.arg` | `OTEL_TRACES_SAMPLER_ARG` | *(SDK default)* | both | the chosen sampler's argument, e.g. a ratio for `traceidratio` — see §7, "Traces" |
+| — | `OTEL_PROPAGATORS` | *(SDK default: `tracecontext,baggage`)* | both | standard propagator selector for the context a trace travels in, honored verbatim by the SDK. Not in the config file schema — set it in the environment |
+| `telemetry.exporters.logs` | `OTEL_LOGS_EXPORTER` | `none` | both | `otlp` or `none`. Also forwards the process's own log lines, including the Temporal SDK's |
+| `telemetry.otlp.{endpoint,protocol,headers,timeout,certificate}`, `telemetry.otlp.{traces,metrics,logs}.{endpoint,headers}` | `OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL`, `_HEADERS`, `_TIMEOUT`, `_CERTIFICATE`, and the per-signal `OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES}_*` | *(SDK defaults)* | both | standard OTLP exporter configuration, honored verbatim by the SDK — recipes in §7. Only `http/protobuf` is supported for `_PROTOCOL` |
+| `telemetry.batch.metric_export_interval` | `OTEL_METRIC_EXPORT_INTERVAL` | *(SDK default)* | both | the metric export interval |
+| environment only | `OTEL_BSP_*`, `OTEL_BLRP_*` | *(SDK defaults)* | both | batch/backpressure bounds on the span and log processors; a record that cannot be queued is dropped, never waited for. **Environment only** — no config file key exists for these |
+| `telemetry.sinks:` | `ORK_TELEMETRY_SINKS` | *(empty)* | both | YAML table of named OTLP destinations a namespace may select by name, in place of the deployment's single `OTEL_*` environment — see §7, "Named sinks" |
+
+The table above is the reference for what each key *means*; for the full,
+always-current set of every key at its exact built-in default, see the
+generated `deploy/orkstack.defaults.yaml` (regenerate it with `make
+config-defaults` after any Schema change, or read it straight from a
+binary with `ork --defaults` / `orker --defaults` — both print the
+identical file to stdout and exit, with no config file or environment
+needed) — every key present, in this table's order, each one commented out
+at its own default. `deploy/orkstack.example.yaml` stays the worked,
+hand-annotated example for a real deployment to start from; the generated
+file is the reference, not something to copy and edit by hand.
 
 ### The bucket stops being optional at the second replica
 
@@ -1359,3 +1431,410 @@ ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 go test -tags=integration -p 1 .
 
 Re-recording resets the guard to today. Do it deliberately, never to make a
 red test green.
+
+---
+
+## 7. Telemetry
+
+**Off by default.** With no `OTEL_*`, `ORK_ADMIN_ADDR`, or `ORK_LOG_*`
+variable set, `ork` and `orker` behave byte-identically to a deployment that
+has never heard of this section: text logs on stderr, no extra listener, no
+exporters, nothing registered with the Temporal client. Turning telemetry on
+is opt-in, one variable at a time, and never changes what a run does — an
+exporter that cannot reach its collector is logged and counted, never waited
+for, and a record that cannot be queued is dropped rather than blocking the
+process that produced it. Telemetry cannot fail a task or a run.
+
+**One mechanism.** OpenTelemetry plus OTLP and a couple of standard scrape
+endpoints is the only way a signal leaves `ork` or `orker` — there is no
+per-vendor code, and no other exporter to pick between. The exporter is
+selected by the standard `OTEL_*` environment (`OTEL_METRICS_EXPORTER`,
+`OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER`), honored verbatim, and where it
+goes is the standard `OTEL_EXPORTER_OTLP_*` family — this document adds no
+variables of its own for "which vendor," only for the handful of switches
+OpenTelemetry has no opinion on (§1's table, above).
+
+**The admin listener is separate from the API, on purpose.**
+`ORK_ADMIN_ADDR` — empty by default, so nothing opens — serves `/healthz`,
+`/readyz`, `/metrics` (only once the `prometheus` metrics exporter is asked
+for) and `/debug/pprof/` (only with `ORK_PPROF_ENABLED=true`). It is never
+`ORK_HTTP_ADDR`: the API port answers client traffic, the admin port answers
+an operator's scraper, and conflating them would mean a scrape config error
+or a slow `/debug/pprof/` request competing with a run's own requests. Bind it
+to a private network — a metrics scraper and a pprof profiler are not
+something to expose publicly, and `ORK_PPROF_ENABLED`'s own default reflects
+that an Orker's heap holds resolved secret bytes. Suggested addresses for a
+single-host deployment: `:9464` for `ork`, `:9465` for `orker`, so one host can
+run both without a collision.
+
+### Recipes
+
+Point `OTEL_EXPORTER_OTLP_ENDPOINT` (and, where noted, the per-signal
+`OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES}_ENDPOINT`) at whatever you already
+run. `OTEL_EXPORTER_OTLP_PROTOCOL` is `http/protobuf` — this is the only
+protocol the SDK here is configured for.
+
+- **Loki ≥ 3**, native OTLP ingestion: `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://loki:3100/otlp`.
+- **Prometheus ≥ 2.47**, started with `--web.enable-otlp-receiver`:
+  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://prometheus:9090/api/v1/otlp`
+  and `OTEL_METRICS_EXPORTER=otlp` — or skip OTLP for metrics entirely and
+  have Prometheus scrape `ORK_ADMIN_ADDR`'s `/metrics` with
+  `OTEL_METRICS_EXPORTER=prometheus`.
+- **Tempo or Jaeger**, OTLP/http on 4318: point
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` there and set
+  `OTEL_TRACES_EXPORTER=otlp`.
+- **Datadog Agent**, OTLP ingest on 4318: point `OTEL_EXPORTER_OTLP_ENDPOINT`
+  at the agent; no Datadog-specific variable exists, or is needed.
+- **An OTel Collector in front of any of the above**: point every endpoint at
+  the Collector instead and let its own pipelines fan out from there — this is
+  what `deploy/docker-compose.yml`'s `observability` profile does
+  (`deploy/observability/README.md`).
+- **Pyroscope, Grafana Alloy, or the Datadog Agent**, scraping profiles:
+  `ORK_PPROF_ENABLED=true` and point the scraper at
+  `ORK_ADMIN_ADDR/debug/pprof/` — see "Profiles", below.
+- **A second destination for one namespace's runs** — a tenant's own Datadog
+  account, a dedicated Loki/Tempo pair — without touching the `OTEL_*`
+  environment every other namespace uses: `ORK_TELEMETRY_SINKS` plus that
+  namespace's `--telemetry-sink`, see "Named sinks" and "Per-namespace policy",
+  below.
+
+A local, disposable stack for trying all of this — a Collector, Loki, Tempo,
+Prometheus and Grafana — is the `observability` compose profile:
+
+```bash
+make infra-up-observability
+```
+
+It never starts on its own. Point `ork`/`orker` at it with a config file
+(§1) — this is the Grafana profile in full, one file passed to both
+binaries with `--config`:
+
+```yaml
+telemetry:
+  log_format: json
+  admin_addr: {ork: ":9464", orker: ":9465"}
+  exporters:
+    logs: otlp
+    metrics: [prometheus, otlp]
+    traces: otlp
+  otlp:
+    endpoint: http://localhost:4318
+    protocol: http/protobuf
+  sinks:
+    laptop-collector:
+      endpoint: http://localhost:4318
+      headers:
+        X-Scope-OrgID: {source: "env:LOKI_ORG_ID"}
+orker:
+  task_log_export: true   # ship task stdout/stderr as log records too
+```
+
+`service_name` needs no entry here: it defaults to `ork` / `orker` per
+binary (§1), which is exactly what this profile wants. `deploy/observability/README.md`
+has the file to save and the `--telemetry-sink laptop-collector` walkthrough
+that goes with it — or, with environment variables instead of a file, see
+the recipe there under "or, with environment variables". `make
+proof-observability` is the evidence gate that proves the whole path —
+Collector, Loki, Tempo, Prometheus — actually carries a real run's signals,
+not just that the containers are up.
+
+### Traces
+
+`OTEL_TRACES_EXPORTER=otlp` turns on one trace that runs end to end through
+both binaries: the engine starts a span for the run's own workflow processing,
+`ork.task.attempt` is the Orker's span for one activity attempt, and
+`ork.task.phase` (attribute `ork.phase`) is its child for one phase of that
+attempt (image resolution, workspace setup, container run, artifact upload,
+…). The parent-child link between the engine's span and the Orker's is carried
+through Temporal's own headers by the tracing interceptor
+(`internal/telemetry.TemporalInterceptors`), not by any OrkStack code stitching
+the two together — see ARCHITECTURE.md, "Telemetry". Workflow code itself never
+imports OpenTelemetry (replay must stay a pure function of history), so the
+span the engine emits is started from the activity boundary, never from inside
+`RunWorkflow`.
+
+`OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` are the standard
+OpenTelemetry sampler selector and argument, honored verbatim by the SDK — set
+`traceidratio` with an argument below `1` to sample a fraction of runs on a
+busy deployment. `OTEL_PROPAGATORS` selects the context propagation format;
+the default (`tracecontext,baggage`) is what every recipe above assumes.
+
+Every process log line this package emits carries `trace_id` (and `span_id`)
+when one is live on the context it was logged from — the engine's structured
+"run event" line (§ "Lifecycle metrics", below) included — so a trace found in
+Tempo or Jaeger and a log line found in Loki are one click apart in either
+direction: search the trace ID as a LogQL label, or read `trace_id` off a log
+line and paste it into Tempo's search.
+
+A task's `task.json` carries an optional `trace` key —
+`{"traceparent": "...", "tracestate": "..."}` in the same shape the W3C
+`traceparent`/`tracestate` HTTP headers use — so a workload that wants its own
+work folded into the same trace can propagate it. This is informational, not
+part of the OCI Activity Contract's ABI (§3.2): it is present only when tracing
+is on and a real span exists, absent otherwise, and no image needs to read it
+to run correctly. A workload that does not recognize the key ignores it.
+
+### Profiles
+
+`ORK_PPROF_ENABLED=true` mounts Go's `net/http/pprof` on the admin listener
+(`ORK_ADMIN_ADDR`) — off by default because an Orker's heap holds resolved
+secret bytes, and a profile endpoint is not something to expose beside it
+without deciding to. With it on, point a continuous profiler at
+`ORK_ADMIN_ADDR/debug/pprof/`:
+
+- **Grafana Alloy**, with a `pyroscope.scrape` component:
+
+  ```river
+  pyroscope.scrape "ork" {
+    targets = [{"__address__" = "ork:9464", "service_name" = "ork"}]
+    forward_to = [pyroscope.write.default.receiver]
+    profiling_config {
+      profile.process_cpu { enabled = true }
+      profile.memory { enabled = true }
+      profile.goroutine { enabled = true }
+    }
+  }
+  ```
+
+- **Pyroscope's own agent-less scrape**, pointed directly at the same
+  `/debug/pprof/` path with `application_name: ork` (or `orker`) and the
+  matching `spy_name: gospy`.
+- **Datadog Agent**, continuous profiler, `PYROSCOPE`-style pull is not what
+  Datadog uses — instead enable `DD_PROFILING_ENABLED` in a small sidecar that
+  scrapes `/debug/pprof/profile` and `/debug/pprof/heap` and pushes them, or
+  point Datadog's own Go continuous profiler integration at the same paths per
+  its documented pprof-scrape mode.
+
+None of this needs any code change: `net/http/pprof`'s handlers are the
+standard library's, and every scraper above speaks pprof's wire format
+natively.
+
+### Metrics
+
+`ork_build_info{service.version,ork.deployment,ork.build_id,...}` is a
+constant `1`, so its labels are the identity of whatever answered the scrape —
+the same idea as `orkctl admin info` (§5), read as a time series instead of a
+CLI call. `ork_orker_task_log_records_total{outcome=emitted|truncated}` and
+`ork_orker_task_log_exports_total{outcome=ok|error}` account for the task-log
+export path below. The Temporal SDK's own `temporal_*` metrics — activity and
+workflow task latency, poll counts, failures — arrive via
+`client.Options.MetricsHandler`, and Go's runtime and process collectors ride
+along on the same `/metrics`.
+
+### Lifecycle metrics
+
+These are the run and task metrics a dashboard alerts on, distinct from the
+process-level metrics above: they are recorded from the engine's own lifecycle
+events and the Orker's own attempt spans, and — when a namespace's telemetry
+policy names one — they can land on a different sink than the process default
+(see "Named sinks" and "Per-namespace policy", below).
+
+| Metric | Labels | Emitted by |
+|---|---|---|
+| `ork.runs` | `status` | engine, once per terminal run (succeeded/failed/canceled) |
+| `ork.run.duration` | `status` | engine, same event, `finished_at - started_at` |
+| `ork.tasks` | `status`, `failure_category` | engine, once per terminal task (succeeded/failed) |
+| `ork.task.duration` | `status` | engine, same event, `finished_at - started_at` |
+| `ork.task.attempts` | `status` | engine, same event: the attempt number the task finished on |
+| `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Orker, once per attempt (`outcome`: `succeeded`, `failed`, `canceled`, or `adopted` for a retry that found an existing durable commit and ran no container) |
+| `ork.orker.task.duration` | `outcome` | Orker, same event |
+| `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
+| `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
+
+`ORK_TELEMETRY_HIGH_CARDINALITY=true` additionally puts `ork.run_id` and
+`ork.task_id` (and, on the engine's, `ork.orkflow.name`/`.version`) on the ones
+above that know them — see "High-cardinality labels".
+
+**At-least-once, not exactly-once.** A run or task's terminal metric is
+recorded from the projection that observes its lifecycle event; a replica that
+crashes and is retried, or an event redelivered after a partial failure, can
+record the same terminal transition more than once. Treat these as you would
+any other at-least-once counter: `rate()` and `increase()` over a window are
+stable under an occasional duplicate, a raw total compared across two points in
+time is not. Durations are likewise taken from the run or task record's own
+`started_at`/`finished_at` snapshot timestamps, not measured by a timer live in
+the process that recorded them, so a duration can be recorded once, late, well
+after the interval it describes actually elapsed — a metrics backend that
+prefers "arrived recently" over "happened recently" will place it there.
+
+### Named sinks
+
+`ORK_TELEMETRY_SINKS` declares every OTLP destination this deployment has,
+once, so a namespace can later pick one by name instead of every deployment
+carrying its own copy of the `OTEL_*` environment. Unset, or set to a document
+with no `default:` entry, the `OTEL_*` environment IS the default sink and
+nothing here changes anything above.
+
+```yaml
+sinks:
+  default:
+    endpoint: http://otel-collector.internal:4318
+  datadog:
+    endpoint: https://otlp.datadoghq.com
+    headers:
+      DD-API-KEY:
+        source: env:DD_API_KEY
+  loki-tempo:
+    logs_endpoint: http://loki.internal:3100/otlp
+    traces_endpoint: http://tempo.internal:4318/v1/traces
+    metrics_endpoint: http://otel-collector.internal:4318/v1/metrics
+```
+
+A sink name is a slug (`^[a-z][a-z0-9_-]{0,63}$`) — it becomes a label, a
+selector a namespace names, and eventually a file path segment, none of which
+forgive arbitrary punctuation. `endpoint` is the base URL used for any signal
+that has no more specific `logs_endpoint`/`traces_endpoint`/`metrics_endpoint`;
+at least one of the two must resolve for every signal this deployment has
+switched on for that sink, or boot refuses with the sink's name and the
+missing signal. A header's value is either a literal `value` or a `source` of
+`env:NAME` or `file:/path` — the same two schemes activity `secrets:` already
+use (`docs/DSL.md`) — and exactly one of the two, never both and never
+neither.
+
+**Secrets never appear in this document, in a boot log line, or in an error.**
+`SinkTable.String()`, used everywhere a sink table is logged, names a sink's
+endpoints and its header NAMES only, never a header's value or its source: a
+source names an environment variable or a file path, which is close enough to
+a value that printing it defeats the point. An unresolvable header — the named
+environment variable unset, the named file unreadable — refuses boot, naming
+the sink and the header: a collector silently receiving a blank `DD-API-KEY`
+and rejecting every export is a harder outage to diagnose than a process that
+never started.
+
+**Named sinks never open a listener.** `/metrics`, and the process's own logs
+and the Temporal SDK's own metrics, always stay on the default sink — a named
+sink only ever receives what a namespace's runs and tasks route to it (task
+spans, task-scoped metrics, and, with task-log export on, that namespace's
+task log lines). Set `ORK_TELEMETRY_SINKS` identically on `ork` and `orker`:
+a namespace's policy names a sink by the same string on both binaries, and a
+name only `orker` (or only `ork`) knows resolves nothing on the other.
+
+A few more behaviors worth stating precisely:
+
+- A named sink carries exactly the signals it declares an endpoint for — a
+  sink with no `logs_endpoint` (and no `endpoint` to fall back to) simply
+  exports no logs for the namespaces that select it, the same way it exports
+  no traces or metrics without those endpoints. A sink with *no* endpoint at
+  all (`endpoint`, `logs_endpoint`, `traces_endpoint`, and
+  `metrics_endpoint` all unset) is refused at boot, naming the sink: a named
+  destination that could never export anything is a configuration mistake,
+  not a signal-by-signal choice.
+- A sink is built, and can be selected, whenever `ORK_TELEMETRY_SINKS`
+  declares it — even when no `OTEL_*_EXPORTER` environment variable is set
+  at all. The two are independent: `OTEL_*` controls the deployment's
+  *default* sink, and a named sink's own table entry is what builds it. A
+  namespace can therefore enable task logs on a named sink alone, with no
+  `OTEL_*` variable set anywhere in the deployment.
+- The `default:` entry in `ORK_TELEMETRY_SINKS`, when present, merges
+  `OTEL_EXPORTER_OTLP_HEADERS` underneath its own headers rather than
+  replacing it: a header the `default:` entry sets wins on that key, and
+  every other header from `OTEL_EXPORTER_OTLP_HEADERS` still applies.
+- A namespace whose stored `telemetry.sink` names a sink no longer declared
+  in `ORK_TELEMETRY_SINKS` (the table shrank since the namespace was
+  configured) falls back to the default sink rather than failing the run.
+  The engine logs a warning at boot naming every such namespace, so the gap
+  is visible before it is silently swallowed one run at a time. The Orker
+  warns once per unknown sink name it encounters (not once per run) and
+  counts it on `ork.telemetry.sink_unknown`, so the drift is visible in
+  metrics even between the engine's own boot-time checks.
+
+### Per-namespace policy
+
+A namespace's `TelemetryPolicy` — set through `orkctl namespace create` /
+`update` — chooses **where among the deployment's declared sinks**, never a
+destination or a credential of its own:
+
+```bash
+orkctl namespace update payments \
+  --telemetry-sink datadog \
+  --task-logs enabled \
+  --telemetry-attribute team=payments \
+  --telemetry-attribute cost-center=eng-42
+```
+
+- `--telemetry-sink` names a sink from `ORK_TELEMETRY_SINKS` by name; unset or
+  empty means the deployment's default sink.
+- `--task-logs` is `enabled`, `disabled`, or `inherit` (the default): it
+  overrides the Orker's own `ORK_ORKER_TASK_LOG_EXPORT` for this namespace's
+  runs either way, or leaves the Orker's default in force.
+- `--telemetry-attribute key=value` (repeatable; a later `update` replaces the
+  whole set) is stamped as `ork.ns.<key>` on every signal of this namespace's
+  runs. At most 16 entries, keys `^[a-z][a-z0-9_.-]{0,63}$`, values at most 256
+  bytes and free of control characters — this is operator/admin input
+  rendered verbatim by `orkctl namespace get` and the UI's namespace page.
+
+**Precedence.** A run's sink and its attributes are decided once, at submit,
+from the namespace's policy — there is no per-run or per-orkflow override of
+either. An orkflow's own `labels:` (docs/DSL.md) ride along too, but only as
+attributes: at most 32 of them are stamped `ork.label.<key>` beside the
+namespace's `ork.ns.<key>` (see docs/DSL.md for the export boundary's
+sanitizing and 32-entry cap), and an orkflow author can add signal but never
+choose a sink.
+
+The task-log switch is the one exception to "decided once, at submit": with
+`task_logs: inherit` (the default — the namespace set no override), the
+*effective* switch for a given attempt is whichever Orker executes that
+attempt's own `ORK_ORKER_TASK_LOG_EXPORT`, read when the Orker picks up the
+task, not the namespace's policy at submit time. `enabled` and `disabled`
+still override every Orker's own setting outright; only `inherit` defers to
+the executing Orker. This means two attempts of the same task, retried onto
+two Orkers configured differently, can export task logs differently even
+though the namespace's policy never changed — and a rolling deploy that
+changes an Orker's `ORK_ORKER_TASK_LOG_EXPORT` mid-run can do the same across
+retries of one run. Set `ORK_ORKER_TASK_LOG_EXPORT` identically on every
+Orker of a pool to avoid this: a namespace relying on `inherit` is relying on
+the pool's Orkers agreeing with each other, not on any one of them.
+
+`orkctl namespace get` (and the namespace page in the UI) shows the resolved
+policy — sink, task-log override, attributes — exactly as stored. `inherit`
+(the `task-logs` default, and an unset `telemetry-sink`) means literally that:
+this namespace decided nothing, and the Orker's own default or the deployment
+default sink applies, the same shape `run_retention` already uses for "this
+namespace set no value of its own."
+
+**Validation errors an admin will see:** an unset or blank sink name resolves
+to default silently, but a sink name that is not in the deployment's own table
+is refused (`orkctl namespace create/update` reports it, naming the sink and,
+where the CLI can reach it, the sinks that do exist); an attribute key outside
+`^[a-z][a-z0-9_.-]{0,63}$`, a value over 256 bytes or containing a control
+character, or a key starting `ork.`, `service.`, or `host.` (reserved for the
+platform's own attributes) is likewise refused rather than silently dropped or
+truncated.
+
+A namespace can only ever *select* a sink an operator already declared, never
+name an endpoint or a credential of its own — the same reason `pool:` in an
+orkflow selects among Orkers the operator has running rather than naming a
+host: a tenant's own document is untrusted input, and untrusted input that
+could steer telemetry at an arbitrary destination is untrusted input that
+could exfiltrate the namespace's own attributes and task output to it.
+
+### High-cardinality labels
+
+`ORK_TELEMETRY_HIGH_CARDINALITY=true` adds `ork.run_id`, `ork.task_id`,
+`ork.orkflow.name` and `ork.orkflow.version` to every `ork_*` metric that
+knows them. This is a deliberate trade-off, not a strict improvement: every
+distinct run becomes its own time series, which is fine for a small
+deployment or a metrics backend with short retention, and expensive at scale —
+a busy deployment can turn one counter into millions of series. Off by
+default for that reason; turn it on when you want per-run metrics and have
+priced what your backend charges for the cardinality.
+
+### Task logs
+
+Task output is always durable, whether or not any of this is configured:
+every stdout/stderr line an activity container writes keeps flowing to object
+storage as numbered chunks and out through the streaming API and UI (§1,
+"Live task logs"), exactly as before this document's telemetry variables
+existed. `ORK_ORKER_TASK_LOG_EXPORT=true` adds a second, independent copy —
+each line is also emitted as an OTel log record (requires
+`OTEL_LOGS_EXPORTER=otlp`), carrying `ork.stream` (`stdout`, `stderr`, or
+`ork` for the Orker's own framing), `ork.run_id`, `ork.task_id`,
+`ork.attempt`, `ork.namespace`, `ork.orkflow.name`/`.version`/`.digest`, and
+`ork.pool`. It is off by default because its volume is exactly the workloads'
+own output — a chatty task doubles its log traffic the moment this is turned
+on.
+
+Nothing here touches the OCI Activity Contract. An activity image needs no
+agent, sidecar, SDK, environment variable, or file to have its logs exported
+this way — the Orker does the whole thing from outside
+(`docs/OCI_ACTIVITY_CONTRACT.md`, §3.6).
