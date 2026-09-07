@@ -67,6 +67,15 @@ type Options struct {
 	MaxConcurrent int32
 	// LayoutRoot is where embedded OCI image layouts live (§4.6).
 	LayoutRoot string
+	// TaskLogs exports every framed log line of every attempt, beside the
+	// durable chunk store. Nil exports nothing.
+	TaskLogs TaskLogExporter
+	// Phases observes one attempt's progress through the §7.1 sequence — the
+	// seam a tracer or a metrics recorder plugs into. Nil observes nothing.
+	Phases PhaseObserver
+	// TraceContext extracts the W3C trace carrier for the optional `trace`
+	// key in task.json (§3.2). Nil means task.json never carries one.
+	TraceContext func(ctx context.Context) map[string]string
 	// Logger records Orker lifecycle decisions such as durable commit adoption.
 	// Nil uses slog.Default.
 	Logger *slog.Logger
@@ -135,6 +144,9 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			BuildID:      buildID,
 			EnvAllowlist: allowlist,
 			LayoutRoot:   opts.LayoutRoot,
+			TaskLogs:     opts.TaskLogs,
+			Phases:       opts.Phases,
+			TraceContext: opts.TraceContext,
 			Logger:       opts.Logger,
 		},
 		pool:    opts.Pool,

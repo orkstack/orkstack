@@ -284,6 +284,21 @@ type taskJSON struct {
 	Paths          taskJSONPaths    `json:"paths"`
 	Inputs         taskJSONInputs   `json:"inputs"`
 	Secrets        []taskJSONSecret `json:"secrets"`
+	// Trace is present ONLY when this deployment exports traces. It is
+	// additive and informational, never ABI: it does not bump SchemaVersion,
+	// and a workload that ignores it loses nothing (internal/telemetry is the
+	// only OpenTelemetry-aware code in the repository; this package never
+	// imports it, and fills the field from a plain func the caller supplies).
+	Trace *taskJSONTrace `json:"trace,omitempty"`
+}
+
+// taskJSONTrace is the W3C trace carrier, in the same form `traceparent` and
+// `tracestate` HTTP headers use. A workload that wants to join the trace its
+// activity ran under propagates these verbatim; one that does not recognize
+// the key ignores it, per §3.2's unknown-field rule.
+type taskJSONTrace struct {
+	Traceparent string `json:"traceparent"`
+	Tracestate  string `json:"tracestate,omitempty"`
 }
 
 type taskJSONRun struct {
@@ -387,6 +402,10 @@ type TaskContext struct {
 	StagedInputs   []taskJSONInputArtifact
 	StagedUpstream []taskJSONUpstream
 	StagedSecrets  []taskJSONSecret
+	// Trace carries "traceparent" and optionally "tracestate" in W3C form.
+	// Nil or an empty "traceparent" means this deployment does not trace, and
+	// task.json omits the whole `trace` key (§3.2).
+	Trace map[string]string
 }
 
 // WriteTaskJSON renders /orkstack/input/task.json.
@@ -455,6 +474,13 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 	// means Orker default".
 	if tc.EffectiveCPU != "" || tc.EffectiveMem != "" {
 		doc.Resources = &taskJSONRes{CPU: tc.EffectiveCPU, Memory: tc.EffectiveMem}
+	}
+	// trace is written only when there is a real traceparent to carry
+	// (§3.2): an empty or absent Trace map must never produce a `trace: {}`
+	// or a `trace: {"traceparent": ""}` key for a deployment that never
+	// traces.
+	if traceparent := tc.Trace["traceparent"]; traceparent != "" {
+		doc.Trace = &taskJSONTrace{Traceparent: traceparent, Tracestate: tc.Trace["tracestate"]}
 	}
 	// Never null.
 	if doc.Inputs.Artifacts == nil {

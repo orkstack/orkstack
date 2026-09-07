@@ -79,8 +79,74 @@ type OCIDispatcher struct {
 	LayoutRoot string
 	// LogSinkObserver is an optional in-process observer of streamed lines.
 	LogSinkObserver func(in *orkstackv1.ExecuteTaskInput, line string)
+	// TaskLogs exports every framed line of every attempt, beside the durable
+	// chunk sink. Nil exports nothing; the chunk store is unaffected either
+	// way.
+	TaskLogs TaskLogExporter
+	// Phases observes one attempt's progress through the §7.1 sequence. Nil
+	// observes nothing: the dispatcher never learns what a span or a metric
+	// is, only that something wants to be told when a phase starts and how
+	// the attempt ended.
+	Phases PhaseObserver
+	// TraceContext extracts the W3C trace carrier from ctx, for the optional
+	// `trace` key in task.json (§3.2). Nil means task.json never carries one
+	// — an image that ignores the key loses nothing either way.
+	TraceContext func(ctx context.Context) map[string]string
 	// Logger records lifecycle decisions. Nil uses slog.Default.
 	Logger *slog.Logger
+}
+
+// PhaseObserver watches one attempt's progress through the §7.1 sequence: it
+// is told when the attempt begins, each time it enters a phase, and how it
+// ended. It is the seam spans and phase timings hang on; the Orker never
+// learns what is done with them. Implementations must not block.
+type PhaseObserver interface {
+	Begin(ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32) (context.Context, AttemptObserver)
+}
+
+// AttemptObserver is one attempt's observation. Phase is called from the
+// dispatcher's own sequence; End exactly once, with the failure reason (empty
+// on success or cancellation), whether the result was an adopted commit, and
+// the error the activity returns.
+type AttemptObserver interface {
+	Phase(name string)
+	End(outcome AttemptOutcome)
+}
+
+// AttemptOutcome is what one attempt ended with, as reported to
+// AttemptObserver.End.
+type AttemptOutcome struct {
+	Reason        string // Failure.Reason, or "" when none
+	Canceled      bool
+	CommitAdopted bool
+	ExitCode      int32 // when known
+	Err           error
+}
+
+// TaskLogExporter receives every framed line of one attempt, beside the
+// durable chunk sink. It is the seam an OpenTelemetry (or any other) log
+// forwarder plugs into; the Orker never learns where the lines go. It must
+// never block the container's streams and must never fail a task.
+type TaskLogExporter interface {
+	// Open begins one attempt's export stream.
+	Open(ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32) TaskLogWriter
+}
+
+// TaskLogWriter is one attempt's export stream. Close is called after the
+// last line, including the Orker's own [ork] teardown lines.
+type TaskLogWriter interface {
+	Write(line string)
+	Close()
+}
+
+// TaskLogExporterFunc adapts a function to TaskLogExporter.
+type TaskLogExporterFunc func(ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32) TaskLogWriter
+
+// Open calls f.
+func (f TaskLogExporterFunc) Open(
+	ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32,
+) TaskLogWriter {
+	return f(ctx, in, attempt)
 }
 
 // Execute runs one activity end to end, in the §7.1 order.
@@ -103,18 +169,46 @@ func (d *OCIDispatcher) Execute(
 	startedAt := timestamppb.New(time.Now().UTC())
 	attempt := attemptOf(ctx)
 
-	// STEP 1. The live log sink, first and always.
+	// STEP 1. The live log sink, first and always. Its Close is deferred
+	// IMMEDIATELY, before anything that could return or panic between here
+	// and the matching defer further down used to sit — a workdir failure,
+	// a panic out of d.execute — used to leave the sink open. sink is the
+	// durability barrier §7.1 STEP 1 promises, so it closing is not
+	// optional on any exit path.
 	sink := d.openLogSink(ctx, in, attempt)
 	defer sink.Close()
-	// emit fans one framed line out to the durable chunk sink AND to the
-	// in-process observer. The observer is what lets a caller inside this
-	// process watch a container's output while it runs — `orkctl activity
-	// test` uses it to cancel exactly when the workload is live, rather than
-	// sleeping and hoping. It fires whether or not a LogStore is configured,
-	// because openLogSink returns nil without one and an observer that went
-	// silent in that case would be a seam only production could use.
+	var export TaskLogWriter
+	if d.TaskLogs != nil {
+		export = d.TaskLogs.Open(ctx, in, attempt)
+		// export's Close is deferred separately, right after Open succeeds,
+		// for the same reason: it must run on every exit path, panic
+		// included. Defer's LIFO stack then closes export BEFORE sink, the
+		// opposite of what an earlier version of this comment claimed — and
+		// that is fine. The exporter is a best-effort MIRROR of the chunk
+		// sink, not a second durability barrier: every line, including the
+		// [ork] teardown lines, is written to both by emit() before any
+		// defer runs, so by the time either Close runs there is nothing left
+		// for either one to lose. Closing export first only stops it from
+		// accepting lines sooner; it is never seen to outlive what it
+		// mirrors, because nothing more is written to either after this
+		// point.
+		if export != nil {
+			defer export.Close()
+		}
+	}
+	// emit fans one framed line out to three places: the durable chunk sink,
+	// the optional export seam, and the in-process observer. The observer is
+	// what lets a caller inside this process watch a container's output while
+	// it runs — `orkctl activity test` uses it to cancel exactly when the
+	// workload is live, rather than sleeping and hoping. It fires whether or
+	// not a LogStore is configured, because openLogSink returns nil without
+	// one and an observer that went silent in that case would be a seam only
+	// production could use.
 	emit := func(line string) {
 		sink.Write(line)
+		if export != nil {
+			export.Write(line)
+		}
 		if d.LogSinkObserver != nil {
 			d.LogSinkObserver(in, line)
 		}
@@ -126,6 +220,39 @@ func (d *OCIDispatcher) Execute(
 		emit(fmt.Sprintf(format, args...))
 	}, logstream.StderrMarker)
 
+	// STEP 1.5. The phase observer, before the heartbeater — its returned ctx
+	// (which may carry a span) is what the rest of Execute uses, so child
+	// work and the trace-context file see it.
+	var attemptObs AttemptObserver
+	if d.Phases != nil {
+		ctx, attemptObs = d.Phases.Begin(ctx, in, attempt)
+	}
+
+	// end is the ONLY thing in Execute allowed to call attemptObs.End, and it
+	// enforces the AttemptObserver contract's "exactly once": the ended guard
+	// makes every call after the first a no-op, so the three ordinary exit
+	// sites below and the panic recovery immediately after this can each call
+	// it unconditionally without coordinating who got there first.
+	ended := false
+	end := func(outcome AttemptOutcome) {
+		if attemptObs != nil && !ended {
+			ended = true
+			attemptObs.End(outcome)
+		}
+	}
+	// A panic out of d.execute — a runtime library panicking instead of
+	// returning an error, say — must still produce exactly one End call
+	// before it propagates, or an observer wired to metrics/tracing loses the
+	// attempt with no terminal event at all. Re-panicking after end leaves
+	// Temporal's own activity panic handling exactly as it was; this defer
+	// only ensures the observer hears about it first.
+	defer func() {
+		if r := recover(); r != nil {
+			end(AttemptOutcome{Reason: ReasonPanic, Err: fmt.Errorf("panic: %v", r)})
+			panic(r)
+		}
+	}()
+
 	// STEP 2. The heartbeat loop, for the ENTIRE attempt.
 	//
 	// Temporal delivers cancellation to an activity only through a heartbeat
@@ -134,6 +261,9 @@ func (d *OCIDispatcher) Execute(
 	// cancellation to a container that is running, which is exactly when
 	// somebody presses cancel.
 	beat := NewHeartbeater(ctx)
+	if attemptObs != nil {
+		beat.onPhase = attemptObs.Phase
+	}
 	beat.Start(ctx)
 	defer beat.Stop()
 	beat.Phase("start")
@@ -158,11 +288,21 @@ func (d *OCIDispatcher) Execute(
 	// Returning nil here would be worse still: it would report success for
 	// work that was torn down, which §6.3 forbids outright.
 	if err := ctx.Err(); err != nil {
+		end(AttemptOutcome{Canceled: true, Err: err})
 		return nil, err
 	}
 	if failure != nil {
+		outcome := AttemptOutcome{Reason: failure.Reason, Err: failure.TemporalError()}
+		if failure.Detail != nil {
+			outcome.ExitCode = failure.Detail.GetExitCode()
+		}
+		end(outcome)
 		return nil, failure.TemporalError()
 	}
+	end(AttemptOutcome{
+		CommitAdopted: result.GetCommitAdopted(),
+		ExitCode:      result.GetExitCode(),
+	})
 	return result, nil
 }
 
@@ -289,6 +429,13 @@ func (d *OCIDispatcher) execute(
 	if err := ws.WriteRunJSON(payloadMapOf(in.GetRunInput())); err != nil {
 		return nil, FailCause(ReasonWorkdirFailed, err, "write run.json: %v", err)
 	}
+	// The trace key is optional and non-ABI (§3.2): d.TraceContext is nil in
+	// every deployment that does not trace, and ctx here is the one Phases.Begin
+	// returned, which is what may carry a span.
+	var traceCarrier map[string]string
+	if d.TraceContext != nil {
+		traceCarrier = d.TraceContext(ctx)
+	}
 	if err := ws.WriteTaskJSON(in, TaskContext{
 		Attempt:        attempt,
 		Pool:           resolvedPool(in.GetPool()),
@@ -301,6 +448,7 @@ func (d *OCIDispatcher) execute(
 		StagedInputs:   staged.artifacts,
 		StagedUpstream: staged.upstream,
 		StagedSecrets:  staged.secrets,
+		Trace:          traceCarrier,
 	}); err != nil {
 		return nil, FailCause(ReasonWorkdirFailed, err, "write task.json: %v", err)
 	}

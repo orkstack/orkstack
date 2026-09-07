@@ -70,6 +70,15 @@ const (
 	ReasonValuesRefetchFailed  = "VALUES_REFETCH_FAILED"
 	ReasonResourceRefused      = "RESOURCE_REQUEST_REFUSED"
 	ReasonNetworkModeRefused   = "NETWORK_MODE_REFUSED"
+
+	// ReasonPanic is not a Failure the Orker constructs and reports to the
+	// engine — a panic unwinds through Execute's own re-panic, and Temporal's
+	// activity worker turns that into its own error, never a Failure.
+	// AttemptObserver.End still needs a code for it: an observer wired to
+	// per-reason metrics must see something for the one exit path that isn't
+	// a normal return, rather than a blank Reason indistinguishable from
+	// success.
+	ReasonPanic = "PANIC"
 )
 
 // reasonCategory is the §8.2 table, as data.

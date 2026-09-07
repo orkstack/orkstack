@@ -37,8 +37,15 @@ const (
 	// budget: cleaning up after a kill is exactly when the context is already
 	// gone.
 	controlTimeout = 30 * time.Second
-	// defaultPullTimeout bounds one image pull.
-	defaultPullTimeout = 5 * time.Minute
+	// DefaultPullTimeout bounds one image pull. Exported so
+	// internal/config's Schema can bind ORK_DOCKER_PULL_TIMEOUT's
+	// documented default to the same constant pullTimeout falls back to.
+	DefaultPullTimeout = 5 * time.Minute
+	// DefaultDockerBin is the CLI name resolved on PATH when neither Bin
+	// nor ORK_DOCKER_BIN names one. Exported so internal/config's Schema
+	// can bind ORK_DOCKER_BIN's documented default to the same constant
+	// bin() falls back to.
+	DefaultDockerBin = "docker"
 )
 
 // DockerRuntime drives the Docker CLI. It is the one ContainerRuntime that
@@ -48,10 +55,10 @@ const (
 // interface, it is what an operator debugging a container will type, and it
 // keeps the dependency surface at zero.
 type DockerRuntime struct {
-	// Bin is the CLI to drive. Empty reads ORK_DOCKER_BIN, then "docker".
+	// Bin is the CLI to drive. Empty reads ORK_DOCKER_BIN, then DefaultDockerBin.
 	Bin string
 	// PullTimeout bounds one pull. Zero reads ORK_DOCKER_PULL_TIMEOUT, then
-	// defaultPullTimeout.
+	// DefaultPullTimeout.
 	PullTimeout time.Duration
 }
 
@@ -66,7 +73,7 @@ func (d *DockerRuntime) bin() (string, error) {
 		name = strings.TrimSpace(os.Getenv(DockerBinVar))
 	}
 	if name == "" {
-		name = "docker"
+		name = DefaultDockerBin
 	}
 	if strings.ContainsRune(name, os.PathSeparator) {
 		return name, nil
@@ -216,7 +223,7 @@ func (d *DockerRuntime) pullTimeout() time.Duration {
 			return parsed
 		}
 	}
-	return defaultPullTimeout
+	return DefaultPullTimeout
 }
 
 // Create builds the container. Every §9.2 constraint is materialized here as a

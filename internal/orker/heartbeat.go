@@ -64,6 +64,13 @@ type Heartbeater struct {
 	beat func(HeartbeatProgress)
 	// interval is the tick rate. Zero means HeartbeatInterval.
 	interval time.Duration
+	// onPhase optionally receives every phase transition, in the same order
+	// Phase is called. Execute sets it to an AttemptObserver's Phase method
+	// when one is configured, so a phase span or timing hangs off the exact
+	// sequence the dispatcher walks — never a second, drifting copy of it.
+	// It is set once, before Start, so it needs no synchronization of its
+	// own: Phase is only ever called from the dispatcher's own goroutine.
+	onPhase func(string)
 }
 
 // NewHeartbeater builds a loop that reports into the activity context.
@@ -126,6 +133,9 @@ func (h *Heartbeater) Stop() {
 // dispatcher's sequence, so a heartbeat always names the current step.
 func (h *Heartbeater) Phase(phase string) {
 	h.phase.Store(&phase)
+	if h.onPhase != nil {
+		h.onPhase(phase)
+	}
 }
 
 // Container records the container id once it exists.

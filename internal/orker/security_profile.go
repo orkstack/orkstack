@@ -40,15 +40,29 @@ const (
 )
 
 // Policy defaults. None of them is unlimited: a workload that requested
-// nothing still gets a bound (§9.3).
+// nothing still gets a bound (§9.3). Exported so internal/config's Schema
+// can bind ORK_ORKER_DEFAULT_CPU, _MEMORY, ORK_ORKER_MAX_CPU, _MEMORY,
+// ORK_ORKER_PIDS_LIMIT, ORK_ORKER_TMPFS_BYTES, ORK_ORKER_FORCE_USER and
+// ORK_ORKER_SECRET_SCHEMES's documented defaults to the same constants
+// DefaultSecurityPolicy itself falls back to, rather than a duplicated
+// literal.
 const (
-	defaultCPU        = "1"
-	defaultMemory     = "1Gi"
-	defaultMaxCPU     = "8"
-	defaultMaxMemory  = "16Gi"
-	defaultPidsLimit  = 512
-	defaultTmpfsBytes = 64 << 20
+	DefaultCPU              = "1"
+	DefaultMemory           = "1Gi"
+	DefaultMaxCPU           = "8"
+	DefaultMaxMemory        = "16Gi"
+	DefaultPidsLimit  int64 = 512
+	DefaultTmpfsBytes int64 = 64 << 20
+	// DefaultForceUser is DefaultSecurityPolicy's ForceUser: containers run
+	// as the image's own USER unless an operator opts in.
+	DefaultForceUser = false
 )
+
+// DefaultSecretSchemes is DefaultSecurityPolicy's SecretSchemes: the
+// SecretRef.source schemes an Orker resolves with no operator
+// configuration at all. A var, not a const, because Go has no constant
+// slice — treat it as read-only.
+var DefaultSecretSchemes = []string{"env", "file"}
 
 // SecurityPolicy is the Orker-local half of §9: the caps it enforces, the
 // defaults it supplies, and the secret sources it understands.
@@ -87,13 +101,14 @@ type SecurityPolicy struct {
 // configuration at all.
 func DefaultSecurityPolicy() SecurityPolicy {
 	return SecurityPolicy{
-		DefaultCPU:    defaultCPU,
-		DefaultMemory: defaultMemory,
-		MaxCPU:        defaultMaxCPU,
-		MaxMemory:     defaultMaxMemory,
-		PidsLimit:     defaultPidsLimit,
-		TmpfsBytes:    defaultTmpfsBytes,
-		SecretSchemes: []string{"env", "file"},
+		DefaultCPU:    DefaultCPU,
+		DefaultMemory: DefaultMemory,
+		MaxCPU:        DefaultMaxCPU,
+		MaxMemory:     DefaultMaxMemory,
+		PidsLimit:     DefaultPidsLimit,
+		TmpfsBytes:    DefaultTmpfsBytes,
+		ForceUser:     DefaultForceUser,
+		SecretSchemes: append([]string(nil), DefaultSecretSchemes...),
 	}
 }
 

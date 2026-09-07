@@ -252,6 +252,114 @@ func TestWorkspace_TaskJSONOmitsAbsentOptionalsAndKeepsRequiredZeroes(t *testing
 				"it instead of discovering it by failing", key)
 		}
 	}
+	// trace is optional and non-ABI: with no TaskContext.Trace at all (the
+	// TraceContext seam nil, or a deployment that does not trace), task.json
+	// must never carry the key.
+	if _, present := doc["trace"]; present {
+		t.Error("task.json carries trace with no traceparent supplied; absent means this " +
+			"deployment does not export traces")
+	}
+}
+
+// TestWorkspace_TaskJSONTraceIsOptionalAndNonABI is Part B of the telemetry
+// plan: `trace` is additive, never bumps schemaVersion, and is present only
+// when there is a real traceparent to carry (§3.2).
+func TestWorkspace_TaskJSONTraceIsOptionalAndNonABI(t *testing.T) {
+	baseInput := func() *orkstackv1.ExecuteTaskInput {
+		return &orkstackv1.ExecuteTaskInput{
+			RunId: "r", OrkflowName: "o", OrkflowVersion: "1", TaskId: "t",
+			Limits: testLimits(),
+		}
+	}
+	baseTC := func(trace map[string]string) TaskContext {
+		return TaskContext{
+			Attempt: 1, Pool: "main", Namespace: "default", Network: NetworkDefault,
+			Image: &orkstackv1.ImageRef{Reference: "shell", Pinned: "x@sha256:y", IndexDigest: "sha256:y"},
+			Trace: trace,
+		}
+	}
+	readDoc := func(t *testing.T, ws *Workspace) map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(ws.Input, "task.json"))
+		if err != nil {
+			t.Fatalf("read task.json: %v", err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return doc
+	}
+
+	t.Run("nil map means absent", func(t *testing.T) {
+		ws := newTestWorkspace(t)
+		if err := ws.WriteTaskJSON(baseInput(), baseTC(nil)); err != nil {
+			t.Fatalf("WriteTaskJSON: %v", err)
+		}
+		if _, present := readDoc(t, ws)["trace"]; present {
+			t.Error("trace is present with a nil Trace map; want absent")
+		}
+	})
+
+	t.Run("empty traceparent means absent", func(t *testing.T) {
+		ws := newTestWorkspace(t)
+		if err := ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": ""})); err != nil {
+			t.Fatalf("WriteTaskJSON: %v", err)
+		}
+		if _, present := readDoc(t, ws)["trace"]; present {
+			t.Error("trace is present with an empty traceparent; want absent")
+		}
+	})
+
+	t.Run("a real traceparent is carried, with tracestate", func(t *testing.T) {
+		ws := newTestWorkspace(t)
+		want := map[string]string{
+			"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			"tracestate":  "congo=t61rcWkgMzE",
+		}
+		if err := ws.WriteTaskJSON(baseInput(), baseTC(want)); err != nil {
+			t.Fatalf("WriteTaskJSON: %v", err)
+		}
+		trace, _ := readDoc(t, ws)["trace"].(map[string]any)
+		if trace == nil {
+			t.Fatal("trace is absent with a real traceparent supplied")
+		}
+		if got := trace["traceparent"]; got != want["traceparent"] {
+			t.Errorf("trace.traceparent = %v, want %q", got, want["traceparent"])
+		}
+		if got := trace["tracestate"]; got != want["tracestate"] {
+			t.Errorf("trace.tracestate = %v, want %q", got, want["tracestate"])
+		}
+	})
+
+	t.Run("a traceparent with no tracestate omits it", func(t *testing.T) {
+		ws := newTestWorkspace(t)
+		want := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+		if err := ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": want})); err != nil {
+			t.Fatalf("WriteTaskJSON: %v", err)
+		}
+		trace, _ := readDoc(t, ws)["trace"].(map[string]any)
+		if trace == nil {
+			t.Fatal("trace is absent with a real traceparent supplied")
+		}
+		if got := trace["traceparent"]; got != want {
+			t.Errorf("trace.traceparent = %v, want %q", got, want)
+		}
+		if _, present := trace["tracestate"]; present {
+			t.Error("trace.tracestate is present with none supplied; want omitted, not empty-string")
+		}
+	})
+
+	// schemaVersion is untouched: trace is additive, never a version bump.
+	t.Run("schemaVersion is unchanged", func(t *testing.T) {
+		ws := newTestWorkspace(t)
+		if err := ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": "x"})); err != nil {
+			t.Fatalf("WriteTaskJSON: %v", err)
+		}
+		if got := readDoc(t, ws)["schemaVersion"]; got != float64(TaskJSONSchemaVersion) {
+			t.Errorf("schemaVersion = %v, want %v", got, TaskJSONSchemaVersion)
+		}
+	})
 }
 
 type namedDirEntry string
