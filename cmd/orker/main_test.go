@@ -7,6 +7,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/telemetry"
 )
 
 // TestWorkerOptions_StayActivityOnly guards the property the shared queue
@@ -140,7 +141,7 @@ func TestLoadConfig_JoinsThePoolItWasToldToServe(t *testing.T) {
 		if cfg.poolErr == nil {
 			t.Fatalf("a disagreeing pair booted, serving pool %q on %q", cfg.pool, cfg.queue)
 		}
-		if err := run(nil, cfg); err == nil {
+		if err := run(nil, telemetry.Config{}, nil, cfg); err == nil {
 			t.Fatal("run() started with a disagreeing pool and channel")
 		}
 	})
