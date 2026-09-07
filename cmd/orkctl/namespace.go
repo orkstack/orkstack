@@ -35,11 +35,14 @@ func newNamespaceCommand(g *globalFlags) *cobra.Command {
 
 func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 	var (
-		description  string
-		defaultPool  string
-		allowedPools []string
-		labels       []string
-		runRetention string
+		description         string
+		defaultPool         string
+		allowedPools        []string
+		labels              []string
+		runRetention        string
+		telemetrySink       string
+		taskLogs            string
+		telemetryAttributes []string
 	)
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -57,6 +60,10 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			telemetry, err := applyTelemetryFlags(cmd, nil, telemetrySink, taskLogs, telemetryAttributes)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -68,6 +75,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 					DefaultPool:  defaultPool,
 					AllowedPools: allowedPools,
 					RunRetention: retention,
+					Telemetry:    telemetry,
 				}},
 			))
 			if err != nil {
@@ -85,7 +93,8 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			return renderNamespace(cmd.OutOrStdout(), resp.Msg.GetNamespace())
 		},
 	}
-	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention)
+	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention,
+		&telemetrySink, &taskLogs, &telemetryAttributes)
 	return cmd
 }
 
@@ -143,11 +152,14 @@ func newNamespaceGetCommand(g *globalFlags) *cobra.Command {
 
 func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 	var (
-		description  string
-		defaultPool  string
-		allowedPools []string
-		labels       []string
-		runRetention string
+		description         string
+		defaultPool         string
+		allowedPools        []string
+		labels              []string
+		runRetention        string
+		telemetrySink       string
+		taskLogs            string
+		telemetryAttributes []string
 	)
 	cmd := &cobra.Command{
 		Use:   "update <name>",
@@ -181,6 +193,10 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 				return rpcError("update namespace", err)
 			}
 			edited := current.Msg.GetNamespace()
+			telemetry, err := applyTelemetryFlags(cmd, edited.GetTelemetry(), telemetrySink, taskLogs, telemetryAttributes)
+			if err != nil {
+				return err
+			}
 			if cmd.Flags().Changed("description") {
 				edited.Description = description
 			}
@@ -196,6 +212,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			if cmd.Flags().Changed("run-retention") {
 				edited.RunRetention = retention
 			}
+			edited.Telemetry = telemetry
 
 			resp, err := client.UpdateNamespace(ctx, connect.NewRequest(
 				&orkstackv1.UpdateNamespaceRequest{Namespace: edited},
@@ -211,7 +228,8 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			return renderNamespace(cmd.OutOrStdout(), resp.Msg.GetNamespace())
 		},
 	}
-	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention)
+	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention,
+		&telemetrySink, &taskLogs, &telemetryAttributes)
 	return cmd
 }
 
@@ -290,6 +308,8 @@ func namespaceSpecFlags(
 	description, defaultPool *string,
 	allowedPools, labels *[]string,
 	runRetention *string,
+	telemetrySink, taskLogs *string,
+	telemetryAttributes *[]string,
 ) {
 	cmd.Flags().StringVar(description, "description", "", "human description")
 	cmd.Flags().StringVar(defaultPool, "default-pool", "",
@@ -300,6 +320,83 @@ func namespaceSpecFlags(
 	cmd.Flags().StringVar(runRetention, "run-retention", "",
 		"how long a finished run stays readable, e.g. \"168h\" "+
 			"(default: the deployment maximum; \"inherit\" clears a value)")
+	cmd.Flags().StringVar(telemetrySink, "telemetry-sink", "",
+		"telemetry sink this namespace's runs use, by name, from `orkctl system telemetry-sinks` "+
+			"(default: the deployment's default sink)")
+	cmd.Flags().StringVar(taskLogs, "task-logs", "inherit",
+		"override the Orker's task-log export for this namespace's runs: enabled, disabled, or inherit")
+	cmd.Flags().StringArrayVar(telemetryAttributes, "telemetry-attribute", nil,
+		"attribute stamped on every signal of this namespace's runs, as key=value (repeatable; "+
+			"on update, replaces the whole set)")
+}
+
+// parseTaskLogsFlag turns --task-logs's raw value into the TaskLogExport it
+// becomes. "inherit" (and, for create, simply leaving the flag out) means the
+// namespace overrides nothing — the Orker's own ORK_ORKER_TASK_LOG_EXPORT
+// applies — which is exactly what TASK_LOG_EXPORT_UNSPECIFIED means on the
+// wire (proto/orkstack/v1/telemetry.proto).
+func parseTaskLogsFlag(raw string) (orkstackv1.TaskLogExport, error) {
+	switch raw {
+	case "", "inherit":
+		return orkstackv1.TaskLogExport_TASK_LOG_EXPORT_UNSPECIFIED, nil
+	case "enabled":
+		return orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED, nil
+	case "disabled":
+		return orkstackv1.TaskLogExport_TASK_LOG_EXPORT_DISABLED, nil
+	default:
+		return orkstackv1.TaskLogExport_TASK_LOG_EXPORT_UNSPECIFIED, fmt.Errorf(
+			"invalid --task-logs %q: want one of enabled, disabled, inherit", raw)
+	}
+}
+
+// applyTelemetryFlags builds the TelemetryPolicy a create or update sends,
+// starting from base (nil for create; the namespace's current policy for
+// update) and overwriting only the fields whose flag the caller actually
+// passed — the same "a flag left out keeps its current value" rule
+// namespaceSpecFlags's other fields already follow, drawn per-field rather
+// than for the policy as a whole so `--telemetry-sink` alone does not reset
+// `--telemetry-attribute` back to empty.
+//
+// When none of the three flags were passed, base is returned unchanged
+// (nil for create, meaning "no policy at all" — inherited end to end).
+func applyTelemetryFlags(
+	cmd *cobra.Command,
+	base *orkstackv1.TelemetryPolicy,
+	sinkRaw, taskLogsRaw string,
+	attributePairs []string,
+) (*orkstackv1.TelemetryPolicy, error) {
+	sinkChanged := cmd.Flags().Changed("telemetry-sink")
+	taskLogsChanged := cmd.Flags().Changed("task-logs")
+	attributesChanged := cmd.Flags().Changed("telemetry-attribute")
+	if !sinkChanged && !taskLogsChanged && !attributesChanged {
+		return base, nil
+	}
+	policy := &orkstackv1.TelemetryPolicy{}
+	if base != nil {
+		policy.Sink = base.GetSink()
+		policy.TaskLogs = base.GetTaskLogs()
+		policy.Attributes = base.GetAttributes()
+	}
+	if sinkChanged {
+		// An explicit empty string is not "leave alone" — it is the
+		// documented reset to the deployment's default sink.
+		policy.Sink = sinkRaw
+	}
+	if taskLogsChanged {
+		taskLogs, err := parseTaskLogsFlag(taskLogsRaw)
+		if err != nil {
+			return nil, err
+		}
+		policy.TaskLogs = taskLogs
+	}
+	if attributesChanged {
+		attributes, err := parseKeyValuePairs("telemetry-attribute", attributePairs)
+		if err != nil {
+			return nil, err
+		}
+		policy.Attributes = attributes
+	}
+	return policy, nil
 }
 
 // parseRunRetentionFlag turns --run-retention's raw value into the proto
@@ -322,20 +419,27 @@ func parseRunRetentionFlag(raw string) (*durationpb.Duration, error) {
 	return durationpb.New(d), nil
 }
 
-// parseLabels turns repeated key=value flags into a map.
+// parseLabels turns repeated --label key=value flags into a map.
 func parseLabels(pairs []string) (map[string]string, error) {
+	return parseKeyValuePairs("label", pairs)
+}
+
+// parseKeyValuePairs turns any repeated key=value flag into a map. flag names
+// the flag in the error message, so --label and --telemetry-attribute each
+// report their own name rather than a generic one.
+func parseKeyValuePairs(flag string, pairs []string) (map[string]string, error) {
 	if len(pairs) == 0 {
 		return nil, nil
 	}
-	labels := make(map[string]string, len(pairs))
+	values := make(map[string]string, len(pairs))
 	for _, pair := range pairs {
 		key, value, found := strings.Cut(pair, "=")
 		if !found || key == "" {
-			return nil, fmt.Errorf("invalid --label %q: want key=value", pair)
+			return nil, fmt.Errorf("invalid --%s %q: want key=value", flag, pair)
 		}
-		labels[key] = value
+		values[key] = value
 	}
-	return labels, nil
+	return values, nil
 }
 
 func renderNamespaceList(out io.Writer, namespaces []*orkstackv1.Namespace) error {
@@ -363,6 +467,9 @@ func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	fmt.Fprintf(table, "Default pool:\t%s\n", defaultPoolLabel(ns))
 	fmt.Fprintf(table, "Allowed pools:\t%s\n", allowedPoolsLabel(ns))
 	fmt.Fprintf(table, "Run retention:\t%s\n", runRetentionLabel(ns))
+	fmt.Fprintf(table, "Telemetry sink:\t%s\n", telemetrySinkLabel(ns))
+	fmt.Fprintf(table, "Task logs:\t%s\n", taskLogsLabel(ns))
+	fmt.Fprintf(table, "Telemetry attributes:\t%s\n", telemetryAttributesLabel(ns))
 	fmt.Fprintf(table, "Labels:\t%s\n", labelsLabel(ns))
 	fmt.Fprintf(table, "Created:\t%s\n", formatTime(ns.GetCreatedAt()))
 	fmt.Fprintf(table, "Updated:\t%s\n", formatTime(ns.GetUpdatedAt()))
@@ -400,19 +507,59 @@ func runRetentionLabel(ns *orkstackv1.Namespace) string {
 	return "inherited (deployment maximum)"
 }
 
+// telemetrySinkLabel renders the sink a namespace's telemetry policy names:
+// an unset policy or an empty sink both mean the deployment's default sink,
+// so both print "default (inherited)" rather than a dash a reader could
+// mistake for "no telemetry".
+func telemetrySinkLabel(ns *orkstackv1.Namespace) string {
+	if sink := ns.GetTelemetry().GetSink(); sink != "" {
+		return sink
+	}
+	return "default (inherited)"
+}
+
+// taskLogsLabel renders a namespace's task-log override: UNSPECIFIED (no
+// policy, or a policy that does not set it) means the Orker's own default
+// applies, never "disabled" — an override this namespace never asked for is
+// not the same as one that explicitly turned logs off.
+func taskLogsLabel(ns *orkstackv1.Namespace) string {
+	switch ns.GetTelemetry().GetTaskLogs() {
+	case orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED:
+		return "enabled"
+	case orkstackv1.TaskLogExport_TASK_LOG_EXPORT_DISABLED:
+		return "disabled"
+	default:
+		return "inherited (Orker default)"
+	}
+}
+
+// telemetryAttributesLabel renders a namespace's telemetry attributes the
+// same way labelsLabel renders labels — sorted key=value pairs, or a dash
+// for none.
+func telemetryAttributesLabel(ns *orkstackv1.Namespace) string {
+	return sortedPairsLabel(ns.GetTelemetry().GetAttributes())
+}
+
 func labelsLabel(ns *orkstackv1.Namespace) string {
-	labels := ns.GetLabels()
-	if len(labels) == 0 {
+	return sortedPairsLabel(ns.GetLabels())
+}
+
+// sortedPairsLabel renders a string-to-string map as "key=value" pairs,
+// joined by commas in sorted-key order, or a dash for an empty map —
+// telemetryAttributesLabel's and labelsLabel's shared body, since both
+// render the identical shape for two different maps.
+func sortedPairsLabel(m map[string]string) string {
+	if len(m) == 0 {
 		return dash
 	}
-	keys := make([]string, 0, len(labels))
-	for key := range labels {
+	keys := make([]string, 0, len(m))
+	for key := range m {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	pairs := make([]string, 0, len(keys))
 	for _, key := range keys {
-		pairs = append(pairs, key+"="+labels[key])
+		pairs = append(pairs, key+"="+m[key])
 	}
 	return strings.Join(pairs, ",")
 }
