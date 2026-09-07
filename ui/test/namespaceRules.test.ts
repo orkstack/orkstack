@@ -1,8 +1,11 @@
 import { expect, test } from 'bun:test';
 import {
 	DEFAULT_POOL_NAME,
+	MAX_TELEMETRY_ATTRIBUTES,
+	parseAttributeLines,
 	parsePoolList,
 	slugError,
+	telemetryAttributesError,
 	validateNamespaceForm
 } from '../src/lib/namespaceRules';
 
@@ -131,4 +134,101 @@ test('a positive run retention is accepted', () => {
 		runRetentionHours: '168'
 	});
 	expect(errors.runRetention).toBe(undefined);
+});
+
+// ---------------------------------------------------------------------------
+// telemetry attributes
+//
+// This mirrors internal/dsl.ValidateAttributeMap (key pattern, 256-byte
+// values, entry count) plus the reserved prefixes
+// internal/api.validNamespaceTelemetry additionally refuses — the same
+// restatement-at-every-boundary rule the slug tests above already follow.
+// Sink NAME validity is deliberately untested here: this module never
+// checks it (the form instead selects from SystemService.ListTelemetrySinks),
+// so there is nothing of the server's own rule to restate.
+// ---------------------------------------------------------------------------
+
+test('parseAttributeLines splits key=value lines and drops blanks', () => {
+	expect(parseAttributeLines('team=payments\n\nservice=checkout\n')).toEqual({
+		attributes: { team: 'payments', service: 'checkout' }
+	});
+	expect(parseAttributeLines('')).toEqual({ attributes: {} });
+	expect(parseAttributeLines('  \n  \n')).toEqual({ attributes: {} });
+});
+
+test('parseAttributeLines refuses a line with no "="', () => {
+	const result = parseAttributeLines('team=payments\nno-equals-sign');
+	expect('error' in result).toBe(true);
+	if ('error' in result) {
+		expect(result.error).toContain('no-equals-sign');
+	}
+});
+
+test('a lowercase dotted attribute key is accepted, same as the server pattern', () => {
+	expect(telemetryAttributesError({ team: 'payments', 'app.tier': 'a' })).toBe(null);
+});
+
+test('an attribute key that starts with a digit or holds uppercase is refused, same as the server', () => {
+	expect(telemetryAttributesError({ Team: 'payments' })).toContain('must match');
+	expect(telemetryAttributesError({ '9team': 'payments' })).toContain('must match');
+});
+
+test('a reserved prefix (ork., service., host.) is refused and names the prefix', () => {
+	for (const prefix of ['ork.', 'service.', 'host.']) {
+		const err = telemetryAttributesError({ [`${prefix}x`]: '1' });
+		expect(err).toContain(prefix);
+		expect(err).toContain("platform's own");
+	}
+});
+
+test('an attribute value over the 256-byte bound is refused, naming the bound', () => {
+	const long = 'a'.repeat(257);
+	expect(telemetryAttributesError({ team: long })).toContain('256-byte limit');
+	expect(telemetryAttributesError({ team: 'a'.repeat(256) })).toBe(null);
+});
+
+test('more than 16 telemetry attributes are refused, naming the limit', () => {
+	const attrs: Record<string, string> = {};
+	for (let i = 0; i < MAX_TELEMETRY_ATTRIBUTES + 1; i++) {
+		attrs[`key${i}`] = 'v';
+	}
+	expect(telemetryAttributesError(attrs)).toContain(`${MAX_TELEMETRY_ATTRIBUTES}-entry limit`);
+});
+
+test('exactly 16 telemetry attributes are accepted', () => {
+	const attrs: Record<string, string> = {};
+	for (let i = 0; i < MAX_TELEMETRY_ATTRIBUTES; i++) {
+		attrs[`key${i}`] = 'v';
+	}
+	expect(telemetryAttributesError(attrs)).toBe(null);
+});
+
+test('a blank telemetry-attributes field is inherit, never refused', () => {
+	const errors = validateNamespaceForm({
+		name: 'payments',
+		defaultPool: 'main',
+		allowedPools: [],
+		telemetryAttributesText: ''
+	});
+	expect(errors.telemetryAttributes).toBe(undefined);
+});
+
+test('a malformed telemetry-attributes field surfaces on the form', () => {
+	const errors = validateNamespaceForm({
+		name: 'payments',
+		defaultPool: 'main',
+		allowedPools: [],
+		telemetryAttributesText: 'ork.reserved=1'
+	});
+	expect(errors.telemetryAttributes).toContain('ork.');
+});
+
+test('a well-formed telemetry-attributes field is accepted', () => {
+	const errors = validateNamespaceForm({
+		name: 'payments',
+		defaultPool: 'main',
+		allowedPools: [],
+		telemetryAttributesText: 'team=payments\napp.tier=checkout'
+	});
+	expect(errors.telemetryAttributes).toBe(undefined);
 });

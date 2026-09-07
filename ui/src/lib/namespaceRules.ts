@@ -62,6 +62,10 @@ export interface NamespaceFormValues {
 	// "inherit the deployment maximum", which is a value only the write path
 	// (this form's caller) can turn into "send no field at all".
 	runRetentionHours?: string;
+	// telemetryAttributesText is the raw textarea contents, one `key=value`
+	// per line — blank means the namespace sets none of its own, same as
+	// runRetentionHours's blank-means-inherit above.
+	telemetryAttributesText?: string;
 }
 
 export interface NamespaceFormErrors {
@@ -69,6 +73,79 @@ export interface NamespaceFormErrors {
 	defaultPool?: string;
 	allowedPools?: string;
 	runRetention?: string;
+	telemetryAttributes?: string;
+}
+
+// ATTRIBUTE_KEY_PATTERN mirrors internal/dsl.attributeKeyPattern — the one
+// rule internal/dsl.ValidateAttributeMap holds every bounded string-map in
+// the tree to, restated here the same way SLUG_PATTERN restates the
+// registry's own namespace/pool rule (AGENTS.md §7): this is TypeScript, the
+// server is Go, so there is nothing to import across the boundary.
+export const ATTRIBUTE_KEY_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
+
+// MAX_ATTRIBUTE_VALUE_BYTES and MAX_TELEMETRY_ATTRIBUTES mirror
+// internal/dsl's maxAttributeValueBytes (256) and the 16-entry limit
+// internal/api.validNamespaceTelemetry passes to ValidateAttributeMap for
+// telemetry.attributes specifically (a namespace's `labels` share the same
+// 256-byte value rule but a different, larger entry count).
+export const MAX_ATTRIBUTE_VALUE_BYTES = 256;
+export const MAX_TELEMETRY_ATTRIBUTES = 16;
+
+// RESERVED_ATTRIBUTE_PREFIXES mirrors internal/api.reservedAttributePrefixes
+// / pkg/artifacts.reservedTelemetryAttributePrefixes: the namespaces the
+// platform's own instrumentation stamps (internal/engine.telemetryFor and
+// OpenTelemetry's resource attributes), which a namespace admin cannot
+// shadow.
+export const RESERVED_ATTRIBUTE_PREFIXES = ['ork.', 'service.', 'host.'];
+
+// parseAttributeLines turns a textarea's `key=value` lines into the map a
+// request carries. Blank lines are dropped rather than validated as empty
+// entries — trailing whitespace in a textarea is a formatting slip, not an
+// attribute named "". A line with no "=" at all IS an error, unlike
+// parsePoolList's comma-separated slugs, because "key=value" has no sensible
+// reading of a bare token.
+export function parseAttributeLines(text: string): { attributes: Record<string, string>; error?: string } {
+	const attributes: Record<string, string> = {};
+	for (const raw of text.split('\n')) {
+		const line = raw.trim();
+		if (line === '') continue;
+		const at = line.indexOf('=');
+		if (at <= 0) {
+			return { attributes: {}, error: `invalid attribute ${JSON.stringify(line)}: want key=value` };
+		}
+		attributes[line.slice(0, at)] = line.slice(at + 1);
+	}
+	return { attributes };
+}
+
+// telemetryAttributesError holds a parsed attribute map to the same shape
+// internal/dsl.ValidateAttributeMap enforces, plus the reserved prefixes
+// internal/api.validNamespaceTelemetry additionally refuses. Returns the
+// FIRST violation, the same "one message, not a list" shape slugError and
+// the allowed-pools check above already follow.
+export function telemetryAttributesError(attributes: Record<string, string>): string | null {
+	const keys = Object.keys(attributes);
+	if (keys.length > MAX_TELEMETRY_ATTRIBUTES) {
+		return `${keys.length} telemetry attributes exceed the ${MAX_TELEMETRY_ATTRIBUTES}-entry limit`;
+	}
+	for (const key of keys) {
+		if (!ATTRIBUTE_KEY_PATTERN.test(key)) {
+			return `telemetry attribute key ${JSON.stringify(key)} must match ${ATTRIBUTE_KEY_PATTERN}`;
+		}
+		for (const prefix of RESERVED_ATTRIBUTE_PREFIXES) {
+			if (key.startsWith(prefix)) {
+				return (
+					`telemetry attribute key ${JSON.stringify(key)} uses prefix ${JSON.stringify(prefix)}, ` +
+					"which is the platform's own"
+				);
+			}
+		}
+		const bytes = new TextEncoder().encode(attributes[key]).length;
+		if (bytes > MAX_ATTRIBUTE_VALUE_BYTES) {
+			return `telemetry attribute ${JSON.stringify(key)} value of ${bytes} bytes exceeds the ${MAX_ATTRIBUTE_VALUE_BYTES}-byte limit`;
+		}
+	}
+	return null;
 }
 
 // validateNamespaceForm holds a namespace create/update form to the same
@@ -114,6 +191,23 @@ export function validateNamespaceForm(
 	if (values.runRetentionHours !== undefined && values.runRetentionHours.trim() !== '') {
 		const parsed = parseRetentionHours(values.runRetentionHours);
 		if ('error' in parsed) errors.runRetention = parsed.error;
+	}
+
+	// Blank means no telemetry attributes of this namespace's own, checked
+	// only when the field carries something — the same "blank means inherit"
+	// rule run_retention just above follows. Whether a SINK NAME is one this
+	// deployment declared is not checked here: that answer lives only on the
+	// server (SystemService.ListTelemetrySinks / internal/api.
+	// validNamespaceTelemetry), so the form instead offers a select fed from
+	// that RPC and has nothing of its own to validate for it.
+	if (values.telemetryAttributesText !== undefined && values.telemetryAttributesText.trim() !== '') {
+		const parsed = parseAttributeLines(values.telemetryAttributesText);
+		if (parsed.error) {
+			errors.telemetryAttributes = parsed.error;
+		} else {
+			const err = telemetryAttributesError(parsed.attributes);
+			if (err) errors.telemetryAttributes = err;
+		}
 	}
 
 	return errors;

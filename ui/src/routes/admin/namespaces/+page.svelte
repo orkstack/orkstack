@@ -12,12 +12,15 @@
 	import { navigating, page } from '$app/state';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import TelemetryFields from '$lib/components/TelemetryFields.svelte';
 	import { isStaleEtagConflict } from '$lib/adminErrors';
 	import { errorMessage, orkstack } from '$lib/client';
 	import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
+	import { TaskLogExport } from '$lib/gen/orkstack/v1/telemetry_pb';
 	import { DEFAULT_NAMESPACE, namespaceLabel, rememberNamespace, withNamespace } from '$lib/namespace';
 	import {
 		DEFAULT_POOL_NAME,
+		parseAttributeLines,
 		parsePoolList,
 		validateNamespaceForm,
 		type NamespaceFormErrors
@@ -29,12 +32,101 @@
 	import type { Duration } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
 
+	// NamespaceTelemetryPolicy is the loosely-typed shape this page builds and
+	// sends for `namespace.telemetry` — a plain object rather than the
+	// generated TelemetryPolicy message type (which carries its own
+	// `$typeName`), the same style the rest of this page's request bodies
+	// already use for `namespace` itself.
+	type NamespaceTelemetryPolicy = {
+		sink: string;
+		taskLogs: TaskLogExport;
+		attributes: Record<string, string>;
+	};
+
 	// runRetentionLabel renders an unset run_retention as what it means: this
 	// namespace inherits the deployment maximum, never a dash that could be
 	// mistaken for "no retention" (the same rule allowedPoolsLabel-style
 	// renderers in this file already follow for allowed_pools).
 	function runRetentionLabel(d: Duration | undefined): string {
 		return d ? fmtDuration(d) : 'inherited (deployment maximum)';
+	}
+
+	// telemetrySinkLabel, taskLogsLabel and attributeCountLabel render a
+	// namespace's telemetry policy for the list table, the same way
+	// runRetentionLabel above renders run_retention: an unset policy, or a
+	// field a policy leaves at its zero value, reads as what it MEANS
+	// ("inherited (default sink)", "inherited (Orker default)"), never a dash
+	// a reader could mistake for "no telemetry at all" — the CLI's
+	// telemetrySinkLabel/taskLogsLabel (cmd/orkctl/namespace.go) render the
+	// same three fields the same way.
+	function telemetrySinkLabel(policy: NamespaceTelemetryPolicy | undefined): string {
+		return policy?.sink ? policy.sink : 'inherited (default sink)';
+	}
+
+	function taskLogsLabel(policy: NamespaceTelemetryPolicy | undefined): string {
+		switch (policy?.taskLogs) {
+			case TaskLogExport.ENABLED:
+				return 'enabled';
+			case TaskLogExport.DISABLED:
+				return 'disabled';
+			default:
+				return 'inherited (Orker default)';
+		}
+	}
+
+	function attributeCountLabel(policy: NamespaceTelemetryPolicy | undefined): string {
+		const count = policy ? Object.keys(policy.attributes).length : 0;
+		return count === 0 ? '—' : `${count}`;
+	}
+
+	// taskLogsSelectValue/taskLogsFromSelectValue convert between the form's
+	// three-way select ("inherit" | "enabled" | "disabled") and the proto
+	// enum, the same mapping cmd/orkctl/namespace.go's parseTaskLogsFlag
+	// makes for --task-logs.
+	type TaskLogsChoice = 'inherit' | 'enabled' | 'disabled';
+
+	function taskLogsSelectValue(taskLogs: TaskLogExport | undefined): TaskLogsChoice {
+		switch (taskLogs) {
+			case TaskLogExport.ENABLED:
+				return 'enabled';
+			case TaskLogExport.DISABLED:
+				return 'disabled';
+			default:
+				return 'inherit';
+		}
+	}
+
+	function taskLogsFromSelectValue(choice: TaskLogsChoice): TaskLogExport {
+		switch (choice) {
+			case 'enabled':
+				return TaskLogExport.ENABLED;
+			case 'disabled':
+				return TaskLogExport.DISABLED;
+			default:
+				return TaskLogExport.UNSPECIFIED;
+		}
+	}
+
+	// buildTelemetryPolicy assembles the TelemetryPolicy a create/update
+	// request sends from the form's three fields, or undefined when all three
+	// are at their "no override" value — the difference between "inherited"
+	// and "explicitly asked for every default" (the same distinction
+	// applyTelemetryFlags draws in cmd/orkctl/namespace.go).
+	function buildTelemetryPolicy(
+		sink: string,
+		taskLogs: TaskLogsChoice,
+		attributesText: string
+	): NamespaceTelemetryPolicy | undefined {
+		const trimmedSink = sink.trim();
+		const { attributes } = parseAttributeLines(attributesText);
+		if (trimmedSink === '' && taskLogs === 'inherit' && Object.keys(attributes).length === 0) {
+			return undefined;
+		}
+		return {
+			sink: trimmedSink,
+			taskLogs: taskLogsFromSelectValue(taskLogs),
+			attributes
+		};
 	}
 
 	let { data }: PageProps = $props();
@@ -66,6 +158,9 @@
 	let createDefaultPool = $state('');
 	let createAllowedPools = $state('');
 	let createRunRetentionHours = $state('');
+	let createTelemetrySink = $state('');
+	let createTaskLogs = $state<TaskLogsChoice>('inherit');
+	let createTelemetryAttributesText = $state('');
 	let createErrors = $state<NamespaceFormErrors>({});
 	let createBusy = $state(false);
 	let createServerError = $state('');
@@ -77,6 +172,9 @@
 		createDefaultPool = '';
 		createAllowedPools = '';
 		createRunRetentionHours = '';
+		createTelemetrySink = '';
+		createTaskLogs = 'inherit';
+		createTelemetryAttributesText = '';
 	}
 
 	async function submitCreate() {
@@ -88,7 +186,8 @@
 				name: createName.trim(),
 				defaultPool: createDefaultPool.trim(),
 				allowedPools: allowed,
-				runRetentionHours: createRunRetentionHours
+				runRetentionHours: createRunRetentionHours,
+				telemetryAttributesText: createTelemetryAttributesText
 			},
 			{ requireName: true }
 		);
@@ -110,7 +209,15 @@
 					runRetention:
 						createRunRetentionHours.trim() === ''
 							? undefined
-							: durationFromMs(hoursToMs(Number(createRunRetentionHours.trim())))
+							: durationFromMs(hoursToMs(Number(createRunRetentionHours.trim()))),
+					// undefined when the sink, task-logs and attribute fields are
+					// all left at their "no override" value — inherited end to
+					// end, the same distinction buildTelemetryPolicy documents.
+					telemetry: buildTelemetryPolicy(
+						createTelemetrySink,
+						createTaskLogs,
+						createTelemetryAttributesText
+					)
 				}
 			});
 			createSuccess = res.created
@@ -131,6 +238,9 @@
 	let editDefaultPool = $state('');
 	let editAllowedPools = $state('');
 	let editRunRetentionHours = $state('');
+	let editTelemetrySink = $state('');
+	let editTaskLogs = $state<TaskLogsChoice>('inherit');
+	let editTelemetryAttributesText = $state('');
 	let editEtag = $state('');
 	let editErrors = $state<NamespaceFormErrors>({});
 	let editBusy = $state(false);
@@ -146,6 +256,13 @@
 		editDefaultPool = ns.defaultPool;
 		editAllowedPools = ns.allowedPools.join(', ');
 		editRunRetentionHours = ns.runRetention ? String(Number(ns.runRetention.seconds) / 3600) : '';
+		editTelemetrySink = ns.telemetry?.sink ?? '';
+		editTaskLogs = taskLogsSelectValue(ns.telemetry?.taskLogs);
+		editTelemetryAttributesText = ns.telemetry
+			? Object.entries(ns.telemetry.attributes)
+					.map(([key, value]) => `${key}=${value}`)
+					.join('\n')
+			: '';
 		editEtag = ns.etag;
 		editLabels = { ...ns.labels };
 		editErrors = {};
@@ -176,7 +293,8 @@
 				name: editingName,
 				defaultPool: editDefaultPool.trim(),
 				allowedPools: allowed,
-				runRetentionHours: editRunRetentionHours
+				runRetentionHours: editRunRetentionHours,
+				telemetryAttributesText: editTelemetryAttributesText
 			},
 			{ requireName: false }
 		);
@@ -200,7 +318,12 @@
 					runRetention:
 						editRunRetentionHours.trim() === ''
 							? undefined
-							: durationFromMs(hoursToMs(Number(editRunRetentionHours.trim())))
+							: durationFromMs(hoursToMs(Number(editRunRetentionHours.trim()))),
+					// Also user-editable, prefilled the same way: a submit with
+					// every telemetry field back at "no override" sends no
+					// policy at all, same as buildTelemetryPolicy documents for
+					// create.
+					telemetry: buildTelemetryPolicy(editTelemetrySink, editTaskLogs, editTelemetryAttributesText)
 				}
 			});
 			closeEdit();
@@ -396,6 +519,17 @@
 					>
 				{/if}
 			</label>
+			<TelemetryFields
+				bind:sink={createTelemetrySink}
+				bind:taskLogs={createTaskLogs}
+				bind:attributesText={createTelemetryAttributesText}
+				sinks={data.telemetrySinks}
+				sinksError={data.telemetrySinksError}
+				idPrefix="ns-create"
+				attributesHint="Stamped on every signal of this namespace's runs. Blank sets none of its own."
+				attributesError={createErrors.telemetryAttributes}
+				attributesErrorTestId="ns-create-error-telemetry-attributes"
+			/>
 			<div class="sm:col-span-2">
 				<button
 					type="submit"
@@ -438,6 +572,9 @@
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Default pool</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed pools</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Run retention</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Telemetry sink</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Task logs</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Attrs</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Updated</th>
 						<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted"></th>
 					</tr>
@@ -460,6 +597,15 @@
 							</td>
 							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-run-retention-{ns.name}"
 								>{runRetentionLabel(ns.runRetention)}</td
+							>
+							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
+								>{telemetrySinkLabel(ns.telemetry)}</td
+							>
+							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-task-logs-{ns.name}"
+								>{taskLogsLabel(ns.telemetry)}</td
+							>
+							<td class="h-11 px-4 align-middle text-fg-secondary tabular-nums" data-testid="namespace-telemetry-attribute-count-{ns.name}"
+								>{attributeCountLabel(ns.telemetry)}</td
 							>
 							<td class="h-11 px-4 align-middle text-fg-muted tabular-nums"
 								>{fmtTimestamp(ns.updatedAt)}</td
@@ -506,7 +652,7 @@
 						</tr>
 						{#if editingName === ns.name}
 							<tr>
-								<td colspan="7" class="bg-surface-sunken px-4 py-4">
+								<td colspan="10" class="bg-surface-sunken px-4 py-4">
 									<form
 										data-testid="namespace-edit-form-{ns.name}"
 										class="grid gap-3 sm:grid-cols-2"
@@ -558,6 +704,16 @@
 												<span class="text-xs text-danger-700">{editErrors.runRetention}</span>
 											{/if}
 										</label>
+										<TelemetryFields
+											bind:sink={editTelemetrySink}
+											bind:taskLogs={editTaskLogs}
+											bind:attributesText={editTelemetryAttributesText}
+											sinks={data.telemetrySinks}
+											sinksError={data.telemetrySinksError}
+											idPrefix="ns-edit"
+											testIdSuffix="-{ns.name}"
+											attributesError={editErrors.telemetryAttributes}
+										/>
 										<div class="flex items-center gap-2 sm:col-span-2">
 											<button
 												type="submit"
