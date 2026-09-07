@@ -283,8 +283,11 @@ type Run struct {
 	// run pinned (§4.4). A run that started before a pointer moved is still
 	// explainable by the exact bytes it ran.
 	OrkflowDefinitionDigest string `protobuf:"bytes,13,opt,name=orkflow_definition_digest,json=orkflowDefinitionDigest,proto3" json:"orkflow_definition_digest,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// telemetry is the selection this run was pinned with (see
+	// ExecuteTaskInput.telemetry). Unset when none was configured.
+	Telemetry     *TelemetrySelection `protobuf:"bytes,14,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Run) Reset() {
@@ -408,6 +411,13 @@ func (x *Run) GetOrkflowDefinitionDigest() string {
 	return ""
 }
 
+func (x *Run) GetTelemetry() *TelemetrySelection {
+	if x != nil {
+		return x.Telemetry
+	}
+	return nil
+}
+
 // Event is a single realtime update for a run, delivered over the
 // server-streaming RPC and the WebSocket bridge.
 type Event struct {
@@ -514,7 +524,7 @@ var File_orkstack_v1_run_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
-	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\"\xde\x04\n" +
+	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/telemetry.proto\"\xde\x04\n" +
 	"\aTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12+\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +
@@ -532,7 +542,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"values_ref\x18\v \x01(\v2\x18.orkstack.v1.ArtifactRefR\tvaluesRef\x12.\n" +
 	"\x06commit\x18\f \x01(\v2\x16.orkstack.v1.CommitRefR\x06commit\x12\x1b\n" +
 	"\texit_code\x18\r \x01(\x05R\bexitCode\x12C\n" +
-	"\x10system_artifacts\x18\x0e \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0fsystemArtifactsJ\x04\b\x02\x10\x03R\x06plugin\"\xd2\x04\n" +
+	"\x10system_artifacts\x18\x0e \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0fsystemArtifactsJ\x04\b\x02\x10\x03R\x06plugin\"\x91\x05\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
@@ -550,7 +560,8 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\vfinished_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12\x1c\n" +
 	"\tnamespace\x18\f \x01(\tR\tnamespace\x12:\n" +
-	"\x19orkflow_definition_digest\x18\r \x01(\tR\x17orkflowDefinitionDigest\"\xaa\x02\n" +
+	"\x19orkflow_definition_digest\x18\r \x01(\tR\x17orkflowDefinitionDigest\x12=\n" +
+	"\ttelemetry\x18\x0e \x01(\v2\x1f.orkstack.v1.TelemetrySelectionR\ttelemetry\"\xaa\x02\n" +
 	"\x05Event\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12*\n" +
@@ -600,6 +611,7 @@ var file_orkstack_v1_run_proto_goTypes = []any{
 	(*Error)(nil),                 // 7: orkstack.v1.Error
 	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
 	(*CommitRef)(nil),             // 9: orkstack.v1.CommitRef
+	(*TelemetrySelection)(nil),    // 10: orkstack.v1.TelemetrySelection
 }
 var file_orkstack_v1_run_proto_depIdxs = []int32{
 	4,  // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
@@ -619,15 +631,16 @@ var file_orkstack_v1_run_proto_depIdxs = []int32{
 	8,  // 14: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
 	8,  // 15: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
 	8,  // 16: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	0,  // 17: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
-	4,  // 18: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
-	5,  // 19: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
-	8,  // 20: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
-	21, // [21:21] is the sub-list for method output_type
-	21, // [21:21] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	10, // 17: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
+	0,  // 18: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
+	4,  // 19: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
+	5,  // 20: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
+	8,  // 21: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }
@@ -637,6 +650,7 @@ func file_orkstack_v1_run_proto_init() {
 	}
 	file_orkstack_v1_activity_proto_init()
 	file_orkstack_v1_common_proto_init()
+	file_orkstack_v1_telemetry_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

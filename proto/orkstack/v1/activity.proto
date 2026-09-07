@@ -5,6 +5,7 @@ package orkstack.v1;
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/common.proto";
+import "orkstack/v1/telemetry.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
@@ -191,6 +192,14 @@ message ExecuteTaskInput {
   // it owns every file the workload writes and can read them whatever umask
   // the image uses (§3.1). Opt-in, because it overrides the image's own USER.
   bool run_as_orker_user = 22;
+
+  // telemetry is the run's pinned telemetry selection, decided at submit from
+  // the namespace's policy and the orkflow's labels, and carried on the plan
+  // (engine.RunPlan). UNSET when the deployment configured none, which keeps
+  // recorded activity payloads byte-identical for such runs — the golden
+  // history fixture (internal/engine/testdata/history) has no telemetry and
+  // must keep matching without re-recording.
+  TelemetrySelection telemetry = 23;
 }
 
 // CommitRef points at a written ActivityCommit object.

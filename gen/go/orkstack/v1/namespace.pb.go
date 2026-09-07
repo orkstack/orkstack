@@ -95,7 +95,13 @@ type Namespace struct {
 	// that executed for two days under a 72h retention is readable for 72h after
 	// it ended. Resolution is archive.EffectiveRunRetention, the one place that
 	// implements it — the same shape default_pool has in DefaultPoolFor.
-	RunRetention  *durationpb.Duration `protobuf:"bytes,9,opt,name=run_retention,json=runRetention,proto3" json:"run_retention,omitempty"`
+	RunRetention *durationpb.Duration `protobuf:"bytes,9,opt,name=run_retention,json=runRetention,proto3" json:"run_retention,omitempty"`
+	// telemetry is this namespace's selection among the deployment's telemetry
+	// sinks. It names things the operator declared (ORK_TELEMETRY_SINKS) and
+	// can never name an endpoint or a credential (AGENTS.md §6): a namespace
+	// admin chooses WHERE among the operator's destinations, not the
+	// destination itself. Unset means "the default sink, deployment defaults".
+	Telemetry     *TelemetryPolicy `protobuf:"bytes,10,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -189,6 +195,13 @@ func (x *Namespace) GetEtag() string {
 func (x *Namespace) GetRunRetention() *durationpb.Duration {
 	if x != nil {
 		return x.RunRetention
+	}
+	return nil
+}
+
+func (x *Namespace) GetTelemetry() *TelemetryPolicy {
+	if x != nil {
+		return x.Telemetry
 	}
 	return nil
 }
@@ -309,7 +322,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xca\x03\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\x86\x04\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -321,7 +334,9 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x12\n" +
 	"\x04etag\x18\b \x01(\tR\x04etag\x12>\n" +
-	"\rrun_retention\x18\t \x01(\v2\x19.google.protobuf.DurationR\frunRetention\x1a9\n" +
+	"\rrun_retention\x18\t \x01(\v2\x19.google.protobuf.DurationR\frunRetention\x12:\n" +
+	"\ttelemetry\x18\n" +
+	" \x01(\v2\x1c.orkstack.v1.TelemetryPolicyR\ttelemetry\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xda\x01\n" +
@@ -353,18 +368,20 @@ var file_orkstack_v1_namespace_proto_goTypes = []any{
 	nil,                           // 2: orkstack.v1.Namespace.LabelsEntry
 	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
 	(*durationpb.Duration)(nil),   // 4: google.protobuf.Duration
+	(*TelemetryPolicy)(nil),       // 5: orkstack.v1.TelemetryPolicy
 }
 var file_orkstack_v1_namespace_proto_depIdxs = []int32{
 	2, // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
 	3, // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
 	3, // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
 	4, // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
-	3, // 4: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	5, // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
+	3, // 5: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_namespace_proto_init() }
@@ -372,6 +389,7 @@ func file_orkstack_v1_namespace_proto_init() {
 	if File_orkstack_v1_namespace_proto != nil {
 		return
 	}
+	file_orkstack_v1_telemetry_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

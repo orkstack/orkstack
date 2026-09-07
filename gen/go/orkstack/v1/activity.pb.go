@@ -553,8 +553,15 @@ type ExecuteTaskInput struct {
 	// it owns every file the workload writes and can read them whatever umask
 	// the image uses (§3.1). Opt-in, because it overrides the image's own USER.
 	RunAsOrkerUser bool `protobuf:"varint,22,opt,name=run_as_orker_user,json=runAsOrkerUser,proto3" json:"run_as_orker_user,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// telemetry is the run's pinned telemetry selection, decided at submit from
+	// the namespace's policy and the orkflow's labels, and carried on the plan
+	// (engine.RunPlan). UNSET when the deployment configured none, which keeps
+	// recorded activity payloads byte-identical for such runs — the golden
+	// history fixture (internal/engine/testdata/history) has no telemetry and
+	// must keep matching without re-recording.
+	Telemetry     *TelemetrySelection `protobuf:"bytes,23,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExecuteTaskInput) Reset() {
@@ -739,6 +746,13 @@ func (x *ExecuteTaskInput) GetRunAsOrkerUser() bool {
 		return x.RunAsOrkerUser
 	}
 	return false
+}
+
+func (x *ExecuteTaskInput) GetTelemetry() *TelemetrySelection {
+	if x != nil {
+		return x.Telemetry
+	}
+	return nil
 }
 
 // CommitRef points at a written ActivityCommit object.
@@ -1410,7 +1424,7 @@ var File_orkstack_v1_activity_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\n" +
-	"\x1aorkstack/v1/activity.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\"\xd0\x02\n" +
+	"\x1aorkstack/v1/activity.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/telemetry.proto\"\xd0\x02\n" +
 	"\bImageRef\x12\x1c\n" +
 	"\treference\x18\x01 \x01(\tR\treference\x12\x1a\n" +
 	"\bregistry\x18\x02 \x01(\tR\bregistry\x12\x1e\n" +
@@ -1443,7 +1457,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\n" +
 	"commit_uri\x18\x02 \x01(\tR\tcommitUri\x120\n" +
 	"\x06values\x18\x03 \x01(\v2\x18.orkstack.v1.ArtifactRefR\x06values\x126\n" +
-	"\tartifacts\x18\x04 \x03(\v2\x18.orkstack.v1.ArtifactRefR\tartifacts\"\x8a\b\n" +
+	"\tartifacts\x18\x04 \x03(\v2\x18.orkstack.v1.ArtifactRefR\tartifacts\"\xc9\b\n" +
 	"\x10ExecuteTaskInput\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
@@ -1468,7 +1482,8 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\x06limits\x18\x13 \x01(\v2\x1c.orkstack.v1.WorkspaceLimitsR\x06limits\x121\n" +
 	"\trun_input\x18\x14 \x01(\v2\x14.orkstack.v1.PayloadR\brunInput\x124\n" +
 	"\bupstream\x18\x15 \x03(\v2\x18.orkstack.v1.UpstreamRefR\bupstream\x12)\n" +
-	"\x11run_as_orker_user\x18\x16 \x01(\bR\x0erunAsOrkerUser\x1a6\n" +
+	"\x11run_as_orker_user\x18\x16 \x01(\bR\x0erunAsOrkerUser\x12=\n" +
+	"\ttelemetry\x18\x17 \x01(\v2\x1f.orkstack.v1.TelemetrySelectionR\ttelemetry\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x84\x01\n" +
@@ -1578,8 +1593,9 @@ var file_orkstack_v1_activity_proto_goTypes = []any{
 	(*ArtifactRef)(nil),           // 13: orkstack.v1.ArtifactRef
 	(*structpb.Struct)(nil),       // 14: google.protobuf.Struct
 	(*Payload)(nil),               // 15: orkstack.v1.Payload
-	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
-	(FailureCategory)(0),          // 17: orkstack.v1.FailureCategory
+	(*TelemetrySelection)(nil),    // 16: orkstack.v1.TelemetrySelection
+	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
+	(FailureCategory)(0),          // 18: orkstack.v1.FailureCategory
 }
 var file_orkstack_v1_activity_proto_depIdxs = []int32{
 	13, // 0: orkstack.v1.UpstreamRef.values:type_name -> orkstack.v1.ArtifactRef
@@ -1593,29 +1609,30 @@ var file_orkstack_v1_activity_proto_depIdxs = []int32{
 	4,  // 8: orkstack.v1.ExecuteTaskInput.limits:type_name -> orkstack.v1.WorkspaceLimits
 	15, // 9: orkstack.v1.ExecuteTaskInput.run_input:type_name -> orkstack.v1.Payload
 	5,  // 10: orkstack.v1.ExecuteTaskInput.upstream:type_name -> orkstack.v1.UpstreamRef
-	16, // 11: orkstack.v1.CommitRef.created_at:type_name -> google.protobuf.Timestamp
-	7,  // 12: orkstack.v1.ExecuteTaskResult.commit:type_name -> orkstack.v1.CommitRef
-	13, // 13: orkstack.v1.ExecuteTaskResult.artifacts:type_name -> orkstack.v1.ArtifactRef
-	13, // 14: orkstack.v1.ExecuteTaskResult.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	13, // 15: orkstack.v1.ExecuteTaskResult.values_ref:type_name -> orkstack.v1.ArtifactRef
-	1,  // 16: orkstack.v1.ExecuteTaskResult.image:type_name -> orkstack.v1.ImageRef
-	16, // 17: orkstack.v1.ExecuteTaskResult.started_at:type_name -> google.protobuf.Timestamp
-	16, // 18: orkstack.v1.ExecuteTaskResult.finished_at:type_name -> google.protobuf.Timestamp
-	1,  // 19: orkstack.v1.ActivityCommit.image:type_name -> orkstack.v1.ImageRef
-	13, // 20: orkstack.v1.ActivityCommit.values:type_name -> orkstack.v1.ArtifactRef
-	13, // 21: orkstack.v1.ActivityCommit.artifacts:type_name -> orkstack.v1.ArtifactRef
-	13, // 22: orkstack.v1.ActivityCommit.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	16, // 23: orkstack.v1.ActivityCommit.started_at:type_name -> google.protobuf.Timestamp
-	16, // 24: orkstack.v1.ActivityCommit.finished_at:type_name -> google.protobuf.Timestamp
-	17, // 25: orkstack.v1.ActivityFailureDetail.category:type_name -> orkstack.v1.FailureCategory
-	13, // 26: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
-	13, // 27: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	1,  // 28: orkstack.v1.ActivityFailureDetail.image:type_name -> orkstack.v1.ImageRef
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	16, // 11: orkstack.v1.ExecuteTaskInput.telemetry:type_name -> orkstack.v1.TelemetrySelection
+	17, // 12: orkstack.v1.CommitRef.created_at:type_name -> google.protobuf.Timestamp
+	7,  // 13: orkstack.v1.ExecuteTaskResult.commit:type_name -> orkstack.v1.CommitRef
+	13, // 14: orkstack.v1.ExecuteTaskResult.artifacts:type_name -> orkstack.v1.ArtifactRef
+	13, // 15: orkstack.v1.ExecuteTaskResult.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	13, // 16: orkstack.v1.ExecuteTaskResult.values_ref:type_name -> orkstack.v1.ArtifactRef
+	1,  // 17: orkstack.v1.ExecuteTaskResult.image:type_name -> orkstack.v1.ImageRef
+	17, // 18: orkstack.v1.ExecuteTaskResult.started_at:type_name -> google.protobuf.Timestamp
+	17, // 19: orkstack.v1.ExecuteTaskResult.finished_at:type_name -> google.protobuf.Timestamp
+	1,  // 20: orkstack.v1.ActivityCommit.image:type_name -> orkstack.v1.ImageRef
+	13, // 21: orkstack.v1.ActivityCommit.values:type_name -> orkstack.v1.ArtifactRef
+	13, // 22: orkstack.v1.ActivityCommit.artifacts:type_name -> orkstack.v1.ArtifactRef
+	13, // 23: orkstack.v1.ActivityCommit.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	17, // 24: orkstack.v1.ActivityCommit.started_at:type_name -> google.protobuf.Timestamp
+	17, // 25: orkstack.v1.ActivityCommit.finished_at:type_name -> google.protobuf.Timestamp
+	18, // 26: orkstack.v1.ActivityFailureDetail.category:type_name -> orkstack.v1.FailureCategory
+	13, // 27: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
+	13, // 28: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	1,  // 29: orkstack.v1.ActivityFailureDetail.image:type_name -> orkstack.v1.ImageRef
+	30, // [30:30] is the sub-list for method output_type
+	30, // [30:30] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_proto_init() }
@@ -1624,6 +1641,7 @@ func file_orkstack_v1_activity_proto_init() {
 		return
 	}
 	file_orkstack_v1_common_proto_init()
+	file_orkstack_v1_telemetry_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

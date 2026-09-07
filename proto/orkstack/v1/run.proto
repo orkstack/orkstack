@@ -5,6 +5,7 @@ package orkstack.v1;
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
+import "orkstack/v1/telemetry.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
@@ -78,6 +79,10 @@ message Run {
   // run pinned (§4.4). A run that started before a pointer moved is still
   // explainable by the exact bytes it ran.
   string orkflow_definition_digest = 13;
+
+  // telemetry is the selection this run was pinned with (see
+  // ExecuteTaskInput.telemetry). Unset when none was configured.
+  TelemetrySelection telemetry = 14;
 }
 
 // EventType classifies a run event on the realtime stream.

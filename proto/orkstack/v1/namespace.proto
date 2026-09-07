@@ -4,6 +4,7 @@ package orkstack.v1;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/telemetry.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
@@ -79,6 +80,13 @@ message Namespace {
   // it ended. Resolution is archive.EffectiveRunRetention, the one place that
   // implements it — the same shape default_pool has in DefaultPoolFor.
   google.protobuf.Duration run_retention = 9;
+
+  // telemetry is this namespace's selection among the deployment's telemetry
+  // sinks. It names things the operator declared (ORK_TELEMETRY_SINKS) and
+  // can never name an endpoint or a credential (AGENTS.md §6): a namespace
+  // admin chooses WHERE among the operator's destinations, not the
+  // destination itself. Unset means "the default sink, deployment defaults".
+  TelemetryPolicy telemetry = 10;
 }
 
 // Pool is a set of Orkers, observed live.

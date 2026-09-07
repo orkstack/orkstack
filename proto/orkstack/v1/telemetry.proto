@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// This file holds the telemetry vocabulary shared by Namespace, run
+// submission, and the run record. It is its own file rather than living in
+// namespace.proto or activity.proto because both of those need it:
+// TelemetryPolicy is a namespace field, and TelemetrySelection travels on
+// ExecuteTaskInput (activity.proto) and Run (run.proto). Putting either
+// message in one of those files would make the other import it AND (for
+// run.proto, which already imports activity.proto) risk a cycle the moment
+// activity.proto needed anything of run.proto's — a risk a shared file with
+// no dependents removes rather than merely avoids today.
+
+// TaskLogExport decides whether a namespace's task stdout/stderr lines are
+// exported as log records, independent of whatever the Orker's own
+// ORK_ORKER_TASK_LOG_EXPORT default is.
+enum TaskLogExport {
+  // Inherits the Orker's own default. This is the value an unset namespace
+  // policy carries, and the value an ExecuteTaskInput carries when no
+  // namespace or run ever set an override.
+  TASK_LOG_EXPORT_UNSPECIFIED = 0;
+  TASK_LOG_EXPORT_ENABLED = 1;
+  TASK_LOG_EXPORT_DISABLED = 2;
+}
+
+// TelemetryPolicy is a namespace's selection among the deployment's
+// telemetry sinks (AGENTS.md §6): a namespace admin chooses WHERE among the
+// operator's declared destinations, not the destination itself. It can never
+// name an endpoint or a credential.
+message TelemetryPolicy {
+  // sink is a name in the deployment's sink table (ORK_TELEMETRY_SINKS);
+  // empty means "default". Validated at write time against the engine's
+  // table, so a stored name is one the deployment knew — the same rule
+  // default_pool follows against the pool table.
+  string sink = 1;
+  // task_logs overrides the Orker's ORK_ORKER_TASK_LOG_EXPORT for this
+  // namespace's runs. UNSPECIFIED inherits it; ENABLED and DISABLED override
+  // it either way.
+  TaskLogExport task_logs = 2;
+  // attributes are exported on every signal of this namespace's runs as
+  // ork.ns.<key>. Bounded: at most 16 entries, key
+  // ^[a-z][a-z0-9_.-]{0,63}$, value at most 256 bytes, and a key under ork.,
+  // service., or host. is refused because those namespaces are the
+  // platform's own.
+  map<string, string> attributes = 3;
+}
+
+// TelemetrySelection is what an Orker needs to route one task's signals: the
+// sink by name, the task-log switch, and the attributes to stamp. Decided at
+// SUBMIT from the namespace's TelemetryPolicy and the orkflow's labels
+// (engine.RunPlan.Telemetry), and carried on both ExecuteTaskInput and Run so
+// the decision replays identically and is visible on the run record. Never
+// an endpoint, never a credential.
+message TelemetrySelection {
+  string sink = 1;
+  TaskLogExport task_logs = 2;
+  map<string, string> attributes = 3;
+}

@@ -6,13 +6,15 @@ import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Duration, Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_duration, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { TelemetryPolicy } from "./telemetry_pb";
+import { file_orkstack_v1_telemetry } from "./telemetry_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIt4CCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uGi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEinAEKBFBvb2wSDAoEbmFtZRgBIAEoCRIYChBsaXZlX29ya2VyX2NvdW50GAIgASgFEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YBiABKAlKBAgDEARSB3BsdWdpbnNCqgEKD2NvbS5vcmtzdGFjay52MUIOTmFtZXNwYWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIo8DCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIpwBCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRISCgppc19kZWZhdWx0GAQgASgIEi0KCWxhc3Rfc2VlbhgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGgoSdW5hdmFpbGFibGVfcmVhc29uGAYgASgJSgQIAxAEUgdwbHVnaW5zQqoBCg9jb20ub3Jrc3RhY2sudjFCDk5hbWVzcGFjZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -131,6 +133,17 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * @generated from field: google.protobuf.Duration run_retention = 9;
    */
   runRetention?: Duration | undefined;
+
+  /**
+   * telemetry is this namespace's selection among the deployment's telemetry
+   * sinks. It names things the operator declared (ORK_TELEMETRY_SINKS) and
+   * can never name an endpoint or a credential (AGENTS.md §6): a namespace
+   * admin chooses WHERE among the operator's destinations, not the
+   * destination itself. Unset means "the default sink, deployment defaults".
+   *
+   * @generated from field: orkstack.v1.TelemetryPolicy telemetry = 10;
+   */
+  telemetry?: TelemetryPolicy | undefined;
 };
 
 /**
