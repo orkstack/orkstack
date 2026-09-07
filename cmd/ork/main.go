@@ -28,12 +28,16 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	archivecleanup "github.com/orkstack/orkstack/internal/archive"
+	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -308,9 +312,109 @@ var (
 	_ archivecleanup.RunRetirer     = (*engine.TemporalRunReader)(nil)
 )
 
+// applyConfigFile is main()'s entire configuration-file mechanism
+// (docs/DEPLOY.md §1), factored out so a test can drive it against fake
+// lookup/setenv maps instead of the real process environment —
+// cfgfile.Document.Apply calls setenv, and this must not leak into other
+// tests' environment. It parses args the same way cfgfile.ParseArgs does,
+// loads the file for binary when one was named, and — unless --check was
+// given — applies it via setenv before returning, so loadConfig(), called
+// right after, sees exactly what the file set with the environment's own
+// values always winning (cfgfile.Document.Apply's whole precedence rule).
+// --check itself never calls Apply: it reports origins against the
+// environment as main found it, matching cfgfile.Document.Effective's own
+// tests (internal/config/effective_test.go), never against an environment
+// this call had already mutated.
+//
+// The two error shapes main must tell apart are distinguished by the
+// returned doc and path: doc == nil && path == "" is a usage error (a bad
+// flag, or --check with no file named) — exit 2, print err.Error() verbatim.
+// Anything else is a bad file or a setenv failure — exit 1, prefixed
+// "ork: " (the loader already prefixes "config:").
+func applyConfigFile(
+	args []string, binary cfgfile.Binary,
+	lookup func(string) (string, bool), setenv func(string, string) error,
+) (doc *cfgfile.Document, path string, check bool, set []string, err error) {
+	path, check, _, err = cfgfile.ParseArgs(args, lookup)
+	if err != nil {
+		return nil, "", check, nil, err
+	}
+	if path == "" {
+		if check {
+			return nil, "", true, nil, fmt.Errorf("--check requires --config or %s", cfgfile.ConfigFileVar)
+		}
+		return nil, "", false, nil, nil
+	}
+	doc, err = cfgfile.Load(path, binary)
+	if err != nil {
+		return nil, path, check, nil, err
+	}
+	if check {
+		return doc, path, true, nil, nil
+	}
+	set, err = doc.Apply(lookup, setenv)
+	if err != nil {
+		return doc, path, false, nil, err
+	}
+	return doc, path, false, set, nil
+}
+
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if err := run(logger, loadConfig()); err != nil {
+	// --defaults needs no config file, no environment, and nothing else
+	// this func does below: print config.RenderDefaults() and stop, before
+	// applyConfigFile's own cfgfile.ParseArgs call (which also sees this
+	// flag but, per its own doc, otherwise ignores it) does anything that
+	// could fail on a bad --config path irrelevant to this request.
+	if _, _, showDefaults, err := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv); err == nil && showDefaults {
+		fmt.Print(cfgfile.RenderDefaults())
+		os.Exit(0)
+	}
+
+	// The configuration file, if any, is resolved before loadConfig reads a
+	// single environment variable — see applyConfigFile — so every existing
+	// *FromEnv reader below (loadConfig included) works unchanged whether its
+	// value came from a file or, as always, straight from the environment.
+	cfgDoc, cfgPath, cfgCheck, cfgSet, err := applyConfigFile(
+		os.Args[1:], cfgfile.BinaryOrk, os.LookupEnv, os.Setenv)
+	if err != nil {
+		if cfgDoc == nil && cfgPath == "" {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "ork: %v\n", err)
+		os.Exit(1)
+	}
+	if cfgCheck {
+		fmt.Print(cfgDoc.Effective(cfgfile.BinaryOrk, os.LookupEnv))
+		os.Exit(0)
+	}
+
+	cfg := loadConfig()
+	// Telemetry configuration is resolved BEFORE the process logger exists,
+	// even though every other config error is reported through that logger:
+	// the logger's own encoding (text vs json, its level, whether OTLP logs
+	// are bridged in) is itself a telemetry setting. Building the logger
+	// first would mean rebuilding it the moment telemetry config turned out
+	// to say otherwise, and a malformed OTEL_* variable would then be
+	// reported through a logger that config never actually asked for.
+	tcfg, sinks, err := telemetry.Boot(telemetry.ServiceEngine, telemetry.ResourceAttrs(
+		engineVersion(), cfg.deployment.Name, cfg.deployment.BuildID, cfg.temporalNamespace)...)
+	if err != nil {
+		fallback := slog.New(slog.NewTextHandler(os.Stderr, nil))
+		fallback.Error("ork stopped", "error", err)
+		os.Exit(1)
+	}
+	logger := telemetry.NewLogger(tcfg, sinks.Default(), os.Stderr)
+	// Attached as soon as the logger exists, so a namespace naming a sink
+	// ORK_TELEMETRY_SINKS never declared logs a Warn from the very first
+	// call, rather than only from whichever caller happens to attach one.
+	sinks.WithLogger(logger)
+	// Logged only when a file was actually given, so a zero-config boot's
+	// log is unchanged from before this package existed.
+	if cfgPath != "" {
+		logger.Info("configuration file applied", "path", cfgPath, "applied", len(cfgSet))
+	}
+	if err := run(logger, tcfg, sinks, cfg); err != nil {
 		logger.Error("ork stopped", "error", err)
 		os.Exit(1)
 	}
@@ -414,6 +518,31 @@ func installServerShutdownContext(server *http.Server) context.CancelFunc {
 	return cancel
 }
 
+// bindAndServe binds server.Addr synchronously — so a port already in use,
+// or any other bind failure, comes back as an error naming the address
+// before the caller can act on it — then serves on a background goroutine
+// exactly as server.ListenAndServe would, reporting its outcome onto
+// serverErr the same way ListenAndServe's error would have. It exists so a
+// caller can safely mark the process ready immediately after it returns: the
+// listener already holds the port by then, which a bare `go
+// server.ListenAndServe()` never guaranteed.
+func bindAndServe(server *http.Server, logger *slog.Logger, serverErr chan<- error) (net.Listener, error) {
+	ln, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", server.Addr, err)
+	}
+	go func() {
+		logger.Info("serving connect api (h2c), websocket bridge and webhooks",
+			"addr", server.Addr, "webhooks", api.WebhookCollectionPath)
+		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+	return ln, nil
+}
+
 // openOrkflowStore connects the engine to the bucket that holds orkflow
 // definitions and reloads the catalog from it.
 //
@@ -482,9 +611,113 @@ func openNamespaceStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3
 	return store, nil
 }
 
-func run(logger *slog.Logger, cfg config) error {
+// wireEventObserver decides whether the engine's telemetry observer is wired
+// into the projection worker and the API. It is gated on SignalsEnabled, not
+// Enabled: ORK_ADMIN_ADDR alone must not change a single thing about
+// lifecycle logging, only whether /healthz, /readyz and /metrics answer.
+func wireEventObserver(tcfg telemetry.Config) bool {
+	return tcfg.SignalsEnabled()
+}
+
+// warnUndeclaredNamespaceSinks cross-checks every registered namespace's
+// telemetry policy against the sinks this deployment actually declared: a
+// namespace naming a sink ORK_TELEMETRY_SINKS does not carry is not a boot
+// failure — telemetry.Sinks.For already falls back to the default sink at
+// run time — but it is a misconfiguration an operator should learn about
+// before a run silently exports to the wrong destination, so one Warn is
+// logged per such namespace.
+//
+// A store error here is itself only a Warn: this check is a best-effort
+// cross-reference, and telemetry must never fail the deployment (§11).
+func warnUndeclaredNamespaceSinks(
+	ctx context.Context, logger *slog.Logger, namespaces artifacts.NamespaceStore, sinks *telemetry.Sinks,
+) {
+	registered, err := namespaces.List(ctx)
+	if err != nil {
+		logger.Warn("cross-check namespace telemetry sinks: list namespaces failed", "error", err)
+		return
+	}
+	known := sinks.Names()
+	for _, ns := range registered {
+		sink := ns.GetTelemetry().GetSink()
+		if sink == "" || sinks.Has(sink) {
+			continue
+		}
+		logger.Warn("namespace names a telemetry sink this deployment does not declare; its runs export to the default sink",
+			"namespace", ns.GetName(), "sink", sink, "known_sinks", known)
+	}
+}
+
+// wsPathPrefix is the prefix common to every WebSocket upgrade route NewMux
+// registers (internal/api/server.go): "/ws/runs/{id}" and
+// api.TaskLogSocketPath ("/ws/runs/{id}/tasks/{task}/logs") both start with
+// it. internal/api exports no constant naming just the prefix, so this
+// literal has to stay in lockstep with NewMux's own routes by hand.
+const wsPathPrefix = "/ws/"
+
+// traceAPIRequest is apiHandler's otelhttp filter: it reports whether a
+// request should carry a span and an http.server.request.duration sample. A
+// WebSocket upgrade's ServeHTTP blocks for the life of the connection, so
+// tracing it would produce a span — and a duration sample — as long as the
+// viewer keeps the run's log stream open, polluting API latency metrics and
+// traces with numbers that describe a browsing session, not a request. Every
+// other route is an ordinary request/response and is traced.
+func traceAPIRequest(r *http.Request) bool {
+	return !strings.HasPrefix(r.URL.Path, wsPathPrefix)
+}
+
+// apiHandler wraps mux with OpenTelemetry HTTP instrumentation when traces or
+// metrics are on, so a request into the Connect API and WebSocket bridge
+// carries a span and RED metrics on the same default-sink providers every
+// other process-level signal uses. With both off it returns mux itself,
+// unchanged — the zero-config path serves the exact *http.ServeMux this
+// binary always served, not a handler wrapping one. traceAPIRequest keeps the
+// two long-lived WebSocket routes out of tracing and metrics regardless: see
+// its doc comment.
+func apiHandler(tcfg telemetry.Config, sinks *telemetry.Sinks, mux *http.ServeMux) http.Handler {
+	if !tcfg.TracesEnabled() && !tcfg.MetricsEnabled() {
+		return mux
+	}
+	providers := sinks.Default()
+	return otelhttp.NewHandler(mux, "orkstack.api",
+		otelhttp.WithTracerProvider(providers.Tracer),
+		otelhttp.WithMeterProvider(providers.Meter),
+		otelhttp.WithPropagators(providers.Propagator),
+		otelhttp.WithFilter(traceAPIRequest))
+}
+
+func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// The admin listener opens before the Temporal dial, so /healthz answers
+	// during boot rather than only once the workers and the API are up —
+	// exactly when a slow S3 or Temporal endpoint most needs a liveness probe
+	// that already responds. It is wired to the default sink only: /healthz,
+	// /readyz and /metrics describe this process, never a namespace's own
+	// destination.
+	adminAddr, stopAdmin, err := telemetry.StartAdmin(tcfg, sinks.Default(), logger)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := stopAdmin(shutdownCtx); err != nil {
+			logger.Warn("admin listener shutdown", "error", err)
+		}
+	}()
+	// Registered here, before the worker Stop defers below, so it runs AFTER
+	// them: defers are LIFO, and every sink must keep flushing while the
+	// workers still hold in-flight spans and metrics, not before.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := sinks.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("telemetry shutdown", "error", err)
+		}
+	}()
+	telemetry.LogBoot(logger, tcfg, sinks, adminAddr)
 
 	// Refuse malformed contract-limit configuration before opening any
 	// infrastructure. Silently substituting a default would make an operator
@@ -516,6 +749,11 @@ func run(logger *slog.Logger, cfg config) error {
 	if err != nil {
 		return err
 	}
+	// Cheap, so it always runs rather than only when a sink is configured:
+	// a namespace's stored policy can name a sink this deployment dropped
+	// from ORK_TELEMETRY_SINKS since it was set, and that should surface
+	// even on a deployment that otherwise declares none at all.
+	warnUndeclaredNamespaceSinks(ctx, logger, namespaces, sinks)
 
 	// Same reason: an execution channel that is one of the engine's own queues
 	// is refused here, where the error can name the variable, rather than at
@@ -529,11 +767,11 @@ func run(logger *slog.Logger, cfg config) error {
 		return err
 	}
 
-	temporalClient, err := client.DialContext(ctx, client.Options{
-		HostPort:  cfg.temporalAddress,
-		Namespace: cfg.temporalNamespace,
-		Logger:    logger,
-	})
+	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
+	if err != nil {
+		return err
+	}
+	temporalClient, err := client.DialContext(ctx, temporalOptions)
 	if err != nil {
 		return err
 	}
@@ -660,17 +898,36 @@ func run(logger *slog.Logger, cfg config) error {
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
 
+	// The engine's telemetry observer: a run's spans, metrics and one log
+	// line per lifecycle event, routed per-run to whatever sink
+	// run.GetTelemetry() names. Built unconditionally — SetupSinks' own
+	// zero-config Sinks builds it against noop instruments at no real cost —
+	// but wired into the projection worker and the API only when telemetry
+	// is actually on, so the byte-identical zero-config activity wiring this
+	// binary always had is untouched.
+	observer, err := telemetry.NewEngineObserverForSinks(sinks, logger)
+	if err != nil {
+		return err
+	}
+	var eventObserver engine.EventObserver
+	if wireEventObserver(tcfg) {
+		eventObserver = observer
+	}
+
 	// Projection worker: engine-internal activities on a dedicated queue so
 	// Orkers never receive them. The archive body's event log is read back
 	// from Temporal, because with more than one replica polling this queue no
 	// single process executes all of a run's events.
+	eventActivities := engine.NewArchivingEventActivities(bus, runs, archive).
+		WithRunNotifier(runNotifier).
+		WithEventSource(reader).
+		WithSnapshotStore(snapshots)
+	if eventObserver != nil {
+		eventActivities = eventActivities.WithEventObserver(eventObserver)
+	}
 	eventWorker := worker.New(temporalClient, q.events, eventWorkerOptions(cfg))
 	eventWorker.RegisterActivityWithOptions(
-		engine.NewArchivingEventActivities(bus, runs, archive).
-			WithRunNotifier(runNotifier).
-			WithEventSource(reader).
-			WithSnapshotStore(snapshots).
-			PublishEvent,
+		eventActivities.PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
@@ -768,28 +1025,33 @@ func run(logger *slog.Logger, cfg config) error {
 		Limits:                        cfg.contractLimits,
 		TransferBudgetSeconds:         cfg.transferBudgetSeconds,
 		FloorThroughputBytesPerSecond: cfg.floorThroughputBytesPerSecond,
+		Observer:                      eventObserver,
+		TelemetrySinks:                tcfg.Sinks.Names(),
 	})
-	server := api.NewServer(cfg.httpAddr, api.NewMux(svc, api.MuxOptions{
+	mux := api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,
-	}))
+	})
+	server := api.NewServer(cfg.httpAddr, apiHandler(tcfg, sinks, mux))
 	cancelServerHandlers := installServerShutdownContext(server)
 	defer cancelServerHandlers()
 
 	serverErr := make(chan error, 1)
-	go func() {
-		logger.Info("serving connect api (h2c), websocket bridge and webhooks",
-			"addr", cfg.httpAddr, "webhooks", api.WebhookCollectionPath)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErr <- err
-			return
-		}
-		serverErr <- nil
-	}()
+	if _, err := bindAndServe(server, logger, serverErr); err != nil {
+		return err
+	}
+	// /readyz flips to 200 only once the API is actually serving — the point
+	// past which a load balancer should send this replica traffic.
+	// bindAndServe binds the port synchronously before returning, so this can
+	// never race an EADDRINUSE (or any other bind failure) that hasn't
+	// happened yet: by the time we get here, the listener already holds
+	// cfg.httpAddr.
+	sinks.Default().Ready.Set(true)
 
 	select {
 	case err := <-serverErr:
 		return err
 	case <-ctx.Done():
+		sinks.Default().Ready.Set(false)
 		logger.Info("shutting down")
 	}
 

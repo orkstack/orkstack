@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +23,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -135,7 +139,7 @@ func TestLoadConfigRefusesInvalidRunPlanLimitsAtBoot(t *testing.T) {
 			if message := cfg.limitsErr.Error(); !strings.Contains(message, tc.key) || !strings.Contains(message, tc.value) {
 				t.Errorf("boot error %q must name %s and its rejected value %q", message, tc.key, tc.value)
 			}
-			if err := run(nil, cfg); err == nil {
+			if err := run(nil, telemetry.Config{}, nil, cfg); err == nil {
 				t.Fatalf("engine booted with %s=%q", tc.key, tc.value)
 			}
 		})
@@ -511,7 +515,7 @@ func TestLoadConfig_RefusesAPoolAndAChannelThatDisagree(t *testing.T) {
 	if cfg.poolErr == nil {
 		t.Fatal("a disagreeing pool and channel booted")
 	}
-	if err := run(nil, cfg); err == nil {
+	if err := run(nil, telemetry.Config{}, nil, cfg); err == nil {
 		t.Fatal("run() started with a disagreeing pool and channel")
 	}
 }
@@ -587,5 +591,130 @@ func TestSystemInfo_LeavesVersioningOffWhenNoBuildIDIsConfigured(t *testing.T) {
 	}
 	if info.ArtifactLocation != "./.data/artifacts" {
 		t.Errorf("artifact location = %q, want the configured directory", info.ArtifactLocation)
+	}
+}
+
+// TestTraceAPIRequest_ExcludesWebSocketUpgrades pins apiHandler's filter: a
+// /ws/ route's ServeHTTP blocks for as long as the viewer keeps the tab open
+// (internal/api/server.go mounts /ws/runs/{id} and api.TaskLogSocketPath
+// there), so tracing it would produce a span, and an
+// http.server.request.duration sample, as long as the connection stays
+// open — polluting API latency metrics and traces with numbers that describe
+// a browser session, not a request. Every other route is a normal
+// request/response and must still be traced.
+func TestTraceAPIRequest_ExcludesWebSocketUpgrades(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"run event bridge", "/ws/runs/abc123", false},
+		{"task log socket", "/ws/runs/abc123/tasks/build/logs", false},
+		{"connect rpc", "/orkstack.v1.SystemService/GetSystemInfo", true},
+		{"admin healthz", "/healthz", true},
+		{"root", "/", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			if got := traceAPIRequest(r); got != tc.want {
+				t.Errorf("traceAPIRequest(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestApiHandler_WrapsOnlyWhenSignalsAreOn is apiHandler's zero-config
+// identity check plus its enabled-path sanity check: with both traces and
+// metrics off it must hand back the exact *http.ServeMux this binary always
+// served (no wrapper, no dependency on sinks at all — sinks is nil here and
+// must never be touched), and with tracing on it must return something other
+// than the bare mux.
+func TestApiHandler_WrapsOnlyWhenSignalsAreOn(t *testing.T) {
+	mux := http.NewServeMux()
+
+	t.Run("off", func(t *testing.T) {
+		got := apiHandler(telemetry.Config{}, nil, mux)
+		if got != http.Handler(mux) {
+			t.Fatalf("apiHandler with no signal enabled did not return mux unchanged")
+		}
+	})
+
+	t.Run("on", func(t *testing.T) {
+		tcfg := telemetry.Config{TracesExporter: telemetry.ExporterOTLP}
+		sinks, err := telemetry.SetupSinks(context.Background(), tcfg)
+		if err != nil {
+			t.Fatalf("SetupSinks: %v", err)
+		}
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = sinks.Shutdown(shutdownCtx)
+		}()
+
+		got := apiHandler(tcfg, sinks, mux)
+		if got == http.Handler(mux) {
+			t.Fatalf("apiHandler with tracing enabled returned the bare mux, want an instrumented wrapper")
+		}
+	})
+}
+
+// TestBindAndServe_ReturnsABootErrorWhenThePortIsTaken is the readiness-race
+// regression test: binding must happen synchronously, in bindAndServe itself,
+// not in the background goroutine that used to race Ready.Set(true). An
+// EADDRINUSE here must come back as a returned error naming the address, the
+// same turn the caller can still decide not to flip readiness.
+func TestBindAndServe_ReturnsABootErrorWhenThePortIsTaken(t *testing.T) {
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer blocker.Close()
+
+	server := &http.Server{Addr: blocker.Addr().String()}
+	serverErr := make(chan error, 1)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if _, err := bindAndServe(server, logger, serverErr); err == nil {
+		t.Fatal("bindAndServe bound an address already in use")
+	} else if !strings.Contains(err.Error(), blocker.Addr().String()) {
+		t.Errorf("boot error %q does not name the taken address %s", err, blocker.Addr().String())
+	}
+}
+
+// TestBindAndServe_AcceptsConnectionsAsSoonAsItReturns proves the port is
+// actually bound and serving the moment bindAndServe hands control back —
+// the property main's readiness flip now depends on: a caller that sets
+// Ready.Set(true) right after this call returns is not guessing.
+func TestBindAndServe_AcceptsConnectionsAsSoonAsItReturns(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	server := &http.Server{Addr: "127.0.0.1:0", Handler: mux}
+	serverErr := make(chan error, 1)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ln, err := bindAndServe(server, logger, serverErr)
+	if err != nil {
+		t.Fatalf("bindAndServe: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+		if err := <-serverErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("Serve: %v", err)
+		}
+	}()
+
+	resp, err := http.Get("http://" + ln.Addr().String() + "/ping")
+	if err != nil {
+		t.Fatalf("GET /ping right after bindAndServe returned: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 }
