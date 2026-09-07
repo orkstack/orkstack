@@ -53,6 +53,29 @@ if has_gate ui; then
 	need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"
 	need "the temporal CLI on PATH (ui/e2e/admin.spec.ts induces a real cluster failure with it)" command -v temporal
 fi
+if has_gate observability; then
+	need "a docker daemon (docker info)" docker info
+	need "Temporal on 127.0.0.1:7233 (make infra-up-observability)" tcp_open 7233
+	need "MinIO on 127.0.0.1:9000 (make infra-up-observability)" \
+		curl -sf -o /dev/null http://127.0.0.1:9000/minio/health/live
+	need "the local registry on $REGISTRY (make infra-up-observability)" \
+		curl -sf -o /dev/null "http://$REGISTRY/v2/"
+	for activity in shell http file; do
+		need "activity-$activity pushed to $REGISTRY (make -C images push)" \
+			curl -sf -o /dev/null -H 'Accept: application/vnd.oci.image.index.v1+json' \
+			"http://$REGISTRY/v2/orkstack/activity-$activity/manifests/dev"
+	done
+	need "the OTel Collector on 127.0.0.1:4318 (make infra-up-observability)" \
+		curl -s -o /dev/null http://127.0.0.1:4318/v1/logs
+	need "Loki on 127.0.0.1:3100 (make infra-up-observability)" \
+		curl -sf -o /dev/null http://127.0.0.1:3100/ready
+	need "Tempo on 127.0.0.1:3200 (make infra-up-observability)" \
+		curl -sf -o /dev/null http://127.0.0.1:3200/ready
+	need "Prometheus on 127.0.0.1:9090 (make infra-up-observability)" \
+		curl -sf -o /dev/null http://127.0.0.1:9090/-/ready
+	need "no stray bin/ork or bin/orker already running (they would steal this gate's admin ports and tasks — AGENTS.md §11.1)" \
+		bash -c "! pgrep -f '$REPO/bin/ork\$' >/dev/null && ! pgrep -f '$REPO/bin/orker' >/dev/null"
+fi
 if [ -n "$missing" ]; then
 	say "proof: prerequisites absent, nothing measured, nothing written:$missing"
 	exit 77
@@ -114,6 +137,14 @@ if has_gate integration; then
 	run integration integration.log env ORK_REQUIRE_INFRA=1 \
 		go test -tags=integration -p 1 -timeout 60m -count=1 ./... -v
 	run activity-fixture activity-fixture.log make -C images test
+fi
+if has_gate observability; then
+	# Opt-in (§11.2's evidence gates run against the real stack, but this one
+	# also needs the `observability` compose profile, which `integration`
+	# does not): one real run through ork and orker with telemetry switched
+	# on, then every signal it should have produced is queried back out of
+	# Loki, Tempo and Prometheus and asserted — see the script for what.
+	run observability observability.log scripts/proof-observability.sh
 fi
 in_ui() { (cd "$REPO/ui" && "$@"); }
 if has_gate ui; then

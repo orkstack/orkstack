@@ -15,6 +15,10 @@ proto: ## Regenerate Go/TS from proto
 	buf lint
 	buf generate
 
+.PHONY: config-defaults
+config-defaults: ## Regenerate deploy/orkstack.defaults.yaml from the code's defaults
+	go run ./internal/config/cmd/gendefaults > deploy/orkstack.defaults.yaml
+
 .PHONY: tsgen
 tsgen: ## Install UI codegen deps and regenerate Go+TS clients from proto
 	cd ui && bun install
@@ -105,6 +109,16 @@ infra-down: ## Stop infrastructure
 infra-logs: ## Tail infrastructure logs
 	$(COMPOSE) logs -f
 
+.PHONY: infra-up-observability
+infra-up-observability: ## Start Temporal + MinIO + the observability profile: collector, Loki, Tempo, Prometheus, Grafana
+	$(COMPOSE) --profile observability up -d
+	@echo "Temporal UI: http://localhost:8233  |  MinIO console: http://localhost:9001  |  Grafana: http://localhost:3000"
+	@echo "Point ork/orker at it: see docs/DEPLOY.md, \"Telemetry\", for the OTEL_*/ORK_ADMIN_ADDR env recipe."
+
+.PHONY: infra-down-observability
+infra-down-observability: ## Stop infrastructure, including the observability profile
+	$(COMPOSE) --profile observability down
+
 ## ---- run ----
 .PHONY: run-ork
 run-ork: ## Run the ork engine (Connect API + WS + Temporal client)
@@ -144,3 +158,7 @@ proof: ## Produce the evidence for a change under proof/<name>/ (gitignored): li
 .PHONY: proof-ui
 proof-ui: ## proof, plus the UI type-check, unit and Playwright suites with screenshots
 	@PROOF_GATES=unit,integration,ui scripts/proof.sh $(NAME)
+
+.PHONY: proof-observability
+proof-observability: ## proof (unit) + the observability gate against the compose profile (needs: make infra-up-observability)
+	@PROOF_GATES=unit,observability scripts/proof.sh $(NAME)
