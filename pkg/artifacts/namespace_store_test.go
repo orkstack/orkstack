@@ -78,3 +78,70 @@ func TestValidNamespacePools_UsesMainWhenDefaultIsUnset(t *testing.T) {
 		}
 	}
 }
+
+// TestValidNamespaceTelemetry_EnforcesOnlyTheDocumentOnlyRules is the store
+// half of the retention/pools split: shape and reserved prefixes are checked
+// here, sink existence is not — this package has no ORK_TELEMETRY_SINKS
+// table to check it against, only the engine that parsed one does
+// (internal/api.validNamespaceTelemetry). A sink name of any shape at all,
+// even one no deployment would ever declare, must pass here.
+func TestValidNamespaceTelemetry_EnforcesOnlyTheDocumentOnlyRules(t *testing.T) {
+	for _, ns := range []*orkstackv1.Namespace{
+		{Name: "payments"},
+		{Name: "payments", Telemetry: &orkstackv1.TelemetryPolicy{Sink: "no-such-sink-anywhere"}},
+		{Name: "payments", Telemetry: &orkstackv1.TelemetryPolicy{
+			Attributes: map[string]string{"team": "money"},
+		}},
+	} {
+		if err := validNamespaceTelemetry(ns); err != nil {
+			t.Errorf("validNamespaceTelemetry(%v) = %v, want nil (sink existence is the API's job)", ns, err)
+		}
+	}
+}
+
+// TestValidNamespaceTelemetry_RefusesAReservedAttributePrefix.
+func TestValidNamespaceTelemetry_RefusesAReservedAttributePrefix(t *testing.T) {
+	for _, prefix := range []string{"ork.", "service.", "host."} {
+		ns := &orkstackv1.Namespace{
+			Name: "payments",
+			Telemetry: &orkstackv1.TelemetryPolicy{
+				Attributes: map[string]string{prefix + "x": "1"},
+			},
+		}
+		if err := validNamespaceTelemetry(ns); !errors.Is(err, ErrInvalidNamespace) {
+			t.Errorf("validNamespaceTelemetry(prefix %q) = %v, want ErrInvalidNamespace", prefix, err)
+		}
+	}
+}
+
+// TestValidNamespaceTelemetry_RefusesAMalformedAttribute delegates key/value
+// shape to internal/dsl.ValidateAttributeMap; this pins that the store
+// actually calls it rather than silently accepting anything.
+func TestValidNamespaceTelemetry_RefusesAMalformedAttribute(t *testing.T) {
+	ns := &orkstackv1.Namespace{
+		Name: "payments",
+		Telemetry: &orkstackv1.TelemetryPolicy{
+			Attributes: map[string]string{"Not-Lowercase": "1"},
+		},
+	}
+	if err := validNamespaceTelemetry(ns); !errors.Is(err, ErrInvalidNamespace) {
+		t.Errorf("validNamespaceTelemetry(bad key) = %v, want ErrInvalidNamespace", err)
+	}
+}
+
+// TestValidNamespaceTelemetry_RefusesAControlCharacterInAValue: an attribute
+// value is rendered verbatim by `orkctl namespace get` and the UI's
+// namespace page, so a control character in it (an embedded newline, an
+// escape sequence) is refused at the same document-only boundary as a
+// malformed key.
+func TestValidNamespaceTelemetry_RefusesAControlCharacterInAValue(t *testing.T) {
+	ns := &orkstackv1.Namespace{
+		Name: "payments",
+		Telemetry: &orkstackv1.TelemetryPolicy{
+			Attributes: map[string]string{"team": "payments\ndrop table"},
+		},
+	}
+	if err := validNamespaceTelemetry(ns); !errors.Is(err, ErrInvalidNamespace) {
+		t.Errorf("validNamespaceTelemetry(control char value) = %v, want ErrInvalidNamespace", err)
+	}
+}

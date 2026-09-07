@@ -306,6 +306,64 @@ func TestNamespaceStore_ConditionalWritesArbitrateBetweenTwoWriters(t *testing.T
 	}
 }
 
+// TestNamespaceStore_RoundTripsATelemetryPolicyAndRefusesAReservedKey is the
+// store half of the telemetry contract: a policy with a sink, a task-log
+// override and attributes survives Put/Get unchanged, and a document whose
+// attributes shadow a platform prefix is refused before anything is written
+// — validNamespaceTelemetry's document-only rule, exercised through the real
+// S3-backed store rather than called directly.
+func TestNamespaceStore_RoundTripsATelemetryPolicyAndRefusesAReservedKey(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	store, err := artifacts.NewS3NamespaceStore(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	ctx := context.Background()
+	nsName := "reg-ns-telemetry-" + uniqueToken(t)
+	t.Cleanup(func() {
+		_ = store.Delete(ctx, nsName)
+	})
+
+	policy := &orkstackv1.TelemetryPolicy{
+		Sink:       "datadog",
+		TaskLogs:   orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED,
+		Attributes: map[string]string{"team": "payments"},
+	}
+	if _, err := store.Put(ctx, &orkstackv1.Namespace{
+		Name:      nsName,
+		Telemetry: policy,
+	}, artifacts.PutConditions{}); err != nil {
+		t.Fatalf("Put with a telemetry policy: %v", err)
+	}
+
+	got, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", nsName, err)
+	}
+	if got.GetTelemetry().GetSink() != "datadog" {
+		t.Errorf("sink = %q, want datadog", got.GetTelemetry().GetSink())
+	}
+	if got.GetTelemetry().GetTaskLogs() != orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED {
+		t.Errorf("task_logs = %v, want ENABLED", got.GetTelemetry().GetTaskLogs())
+	}
+	if got.GetTelemetry().GetAttributes()["team"] != "payments" {
+		t.Errorf("attributes = %v, want team=payments", got.GetTelemetry().GetAttributes())
+	}
+
+	// A reserved-prefix attribute is refused by the store itself: nothing
+	// downstream of internal/api gets to decide this differently.
+	_, err = store.Put(ctx, &orkstackv1.Namespace{
+		Name: "reg-ns-telemetry-reserved-" + uniqueToken(t),
+		Telemetry: &orkstackv1.TelemetryPolicy{
+			Attributes: map[string]string{"ork.reserved": "1"},
+		},
+	}, artifacts.PutConditions{})
+	if !errors.Is(err, artifacts.ErrInvalidNamespace) {
+		t.Fatalf("Put with a reserved attribute key = %v, want ErrInvalidNamespace", err)
+	}
+}
+
 // getObject reads one object's bytes through the raw client, so an assertion
 // about what was STORED is made against the bucket rather than against what
 // the store hands back.

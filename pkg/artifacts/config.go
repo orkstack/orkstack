@@ -28,6 +28,10 @@ const (
 	DefaultS3SecretKey = "orkstack-secret"
 )
 
+// DefaultS3PathStyle is ConfigFromEnv's fallback for ORK_S3_PATH_STYLE:
+// path-style addressing on, which MinIO requires and AWS S3 also accepts.
+const DefaultS3PathStyle = true
+
 // Config selects and configures an artifact backend.
 type Config struct {
 	// Backend is the registered backend name ("local", "s3", ...). Empty means
@@ -70,7 +74,7 @@ func ConfigFromEnv() Config {
 		S3AccessKey:    envOr("ORK_S3_ACCESS_KEY", DefaultS3AccessKey),
 		S3SecretKey:    envOr("ORK_S3_SECRET_KEY", DefaultS3SecretKey),
 		S3SessionToken: os.Getenv("ORK_S3_SESSION_TOKEN"),
-		S3PathStyle:    envBool("ORK_S3_PATH_STYLE", true),
+		S3PathStyle:    envBool("ORK_S3_PATH_STYLE", DefaultS3PathStyle),
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // NamespaceStore is the registry of namespaces: one JSON document per name,
@@ -273,6 +274,9 @@ func (s *S3NamespaceStore) Put(
 	if err := validNamespaceRetention(ns); err != nil {
 		return nil, err
 	}
+	if err := validNamespaceTelemetry(ns); err != nil {
+		return nil, err
+	}
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
 	stored.Name = name
 	stored.Etag = ""
@@ -421,6 +425,29 @@ func validNamespaceRetention(ns *orkstackv1.Namespace) error {
 	if d.AsDuration() <= 0 {
 		return fmt.Errorf("artifacts: namespace %q run retention must be a positive duration: %w",
 			ns.GetName(), ErrInvalidNamespace)
+	}
+	return nil
+}
+
+// validNamespaceTelemetry enforces what the document can be held to on its
+// own: attribute shape (internal/dsl.ValidateAttributeMap, the one rule
+// every bounded string-map in the tree shares) and the reserved prefixes
+// (internal/dsl.ReservedAttributePrefixes / ValidateNoReservedPrefix). It
+// deliberately does NOT check that telemetry.sink names a sink that exists —
+// this store has no ORK_TELEMETRY_SINKS table to check it against, only the
+// engine that parsed one does — so that half of the rule is the API's
+// (internal/api.validNamespaceTelemetry), the same retention/pools split
+// validNamespaceRetention and validNamespacePools already draw.
+func validNamespaceTelemetry(ns *orkstackv1.Namespace) error {
+	attributes := ns.GetTelemetry().GetAttributes()
+	if len(attributes) == 0 {
+		return nil
+	}
+	if err := dsl.ValidateAttributeMap("telemetry attribute", attributes, 16); err != nil {
+		return fmt.Errorf("artifacts: namespace %q %w: %w", ns.GetName(), err, ErrInvalidNamespace)
+	}
+	if err := dsl.ValidateNoReservedPrefix("telemetry attribute", attributes); err != nil {
+		return fmt.Errorf("artifacts: namespace %q %w: %w", ns.GetName(), err, ErrInvalidNamespace)
 	}
 	return nil
 }
