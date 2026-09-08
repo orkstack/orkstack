@@ -356,3 +356,28 @@ test('the truncation notice is a notice, not stderr', () => {
 	expect(lines[0].text).toBe('[ork] log truncated at 16 MiB');
 	f.stop();
 });
+
+// Download is an explicit replay, not whatever happened to survive the pane's
+// bounded scrollback. It shares the normal stream decoder so the same API
+// endpoint, namespace and attempt rules apply to both reads.
+test('a retained-log replay requests follow=false and preserves the stored bytes', () => {
+	fakeSocket.opened = [];
+	(globalThis as { WebSocket?: unknown }).WebSocket = fakeSocket;
+	const bytes: Uint8Array[] = [];
+	const states: LogSocketState[] = [];
+	const stop = followTaskLogs({
+		runId: 'ork-1', taskId: 'flaky', namespace: 'alpha', attempt: 2, follow: false,
+		onChunk: (chunk) => bytes.push(chunk.slice()),
+		onLines: () => {},
+		onState: (state) => states.push(state),
+		schedule: (flush) => { flush(); return () => {}; }
+	});
+	const socket = fakeSocket.opened[0];
+	expect(new URL(socket.url).searchParams.get('follow')).toBe('false');
+	expect(new URL(socket.url).searchParams.get('attempt')).toBe('2');
+	socket.deliver({ attempt: 2, seq: 1n, data: '[stdout] retained\n', truncated: true });
+	socket.deliver({ attempt: 2, seq: 1n, last: true });
+	expect(new TextDecoder().decode(bytes[0])).toBe('[stdout] retained\n');
+	expect(states).toContain('ended');
+	stop();
+});

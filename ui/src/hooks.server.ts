@@ -23,16 +23,22 @@ export const handle: Handle = async ({ event, resolve }) => {
 			body:
 				event.request.method === 'GET' || event.request.method === 'HEAD'
 					? undefined
-					: await event.request.arrayBuffer()
-		});
+					: event.request.body,
+			signal: event.request.signal,
+			// Node requires duplex when forwarding a streaming request body.
+			duplex: 'half'
+		} as RequestInit & { duplex: 'half' });
 		// undici has already decoded any content-encoding, so the upstream
 		// framing headers no longer describe the body we forward.
 		const responseHeaders = new Headers(upstream.headers);
 		responseHeaders.delete('content-length');
 		responseHeaders.delete('content-encoding');
 		responseHeaders.delete('transfer-encoding');
-		const body = await upstream.arrayBuffer();
-		return new Response(body, {
+		// Preserve the upstream ReadableStream. In particular, ReadArtifact's
+		// 64 KiB chunks must not be accumulated in the SvelteKit process before
+		// a browser can receive the first one; canceling the browser request also
+		// aborts the upstream fetch through event.request.signal above.
+		return new Response(upstream.body, {
 			status: upstream.status,
 			statusText: upstream.statusText,
 			headers: responseHeaders

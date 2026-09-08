@@ -23,6 +23,10 @@
 	let { data }: PageProps = $props();
 
 	let retrying = $state(false);
+	let copiedLocalTool = $state('');
+	function copyLocalTool(command: string, label: string) {
+		void navigator.clipboard?.writeText(command).then(() => (copiedLocalTool = label));
+	}
 	async function retry() {
 		retrying = true;
 		try {
@@ -120,6 +124,19 @@
 			</div>
 		</div>
 	{/if}
+</section>
+
+<section class="mb-6 rounded-lg border border-border bg-surface p-4 shadow-xs" data-testid="activity-local-tools">
+	<h2 class="text-sm font-semibold text-fg">Local activity tools</h2>
+	<p class="mt-1 text-sm text-fg-muted">
+		Builds and contract tests run on your machine with its OCI runtime. They are intentionally not browser actions.
+	</p>
+	<p class="mt-2 text-xs text-fg-muted">Prerequisites: a local build context, Docker or another supported OCI runtime, and access to the image registry when pushing.</p>
+	<div class="mt-3 grid gap-3 lg:grid-cols-2">
+		<div class="rounded-md bg-surface-sunken p-3"><p class="text-xs font-medium text-fg">Build an image</p><code data-testid="activity-build-command" class="mt-1 block break-all font-mono text-xs text-fg-secondary">orkctl activity build ./images/my-activity</code><button type="button" onclick={() => copyLocalTool('orkctl activity build ./images/my-activity', 'Build command copied')} class="mt-2 text-xs font-medium text-brand-700 hover:underline">Copy build command</button></div>
+		<div class="rounded-md bg-surface-sunken p-3"><p class="text-xs font-medium text-fg">Run the activity contract test</p><code data-testid="activity-test-command" class="mt-1 block break-all font-mono text-xs text-fg-secondary">orkctl activity test my-image</code><button type="button" onclick={() => copyLocalTool('orkctl activity test my-image', 'Test command copied')} class="mt-2 text-xs font-medium text-brand-700 hover:underline">Copy test command</button></div>
+	</div>
+	{#if copiedLocalTool}<p data-testid="activity-local-tool-copied" class="mt-2 text-xs text-fg-muted">{copiedLocalTool}</p>{/if}
 </section>
 
 <h2 class="mb-2 text-[11px] font-medium tracking-wider text-fg-muted uppercase">Catalog</h2>

@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { onDestroy, untrack } from 'svelte';
+	import { invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import EventInspector from '$lib/components/EventInspector.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { errorMessage, orkstack } from '$lib/client';
+	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, runCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
+	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
 	import { EventType, type Event, type TaskRun } from '$lib/gen/orkstack/v1/run_pb';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
@@ -16,6 +19,7 @@
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
 	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
+	import { ArtifactKind, type RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -51,6 +55,13 @@
 		// the page from drawing "0" before the terminal snapshot arrives.
 		exitCode?: number;
 		commit?: CommitRef;
+		output?: Payload;
+		artifacts: ArtifactRef[];
+		valuesRef?: ArtifactRef;
+		systemArtifacts: ArtifactRef[];
+		startedAt?: TaskRun['startedAt'];
+		finishedAt?: TaskRun['finishedAt'];
+		pool: string;
 	}
 
 	const run = $derived(data.run);
@@ -69,6 +80,15 @@
 	const taskDefs = $derived(
 		new Map((data.orkflow?.tasks ?? []).map((t) => [t.id, t]))
 	);
+	const artifactsByTask = $derived.by(() => {
+		const grouped = new Map<string, RunArtifact[]>();
+		for (const record of data.artifacts) {
+			const records = grouped.get(record.taskId) ?? [];
+			records.push(record);
+			grouped.set(record.taskId, records);
+		}
+		return grouped;
+	});
 
 	// Seed from the GetRun snapshot, then let the WebSocket stream drive live
 	// changes. Terminal per-attempt facts are the exception: events carry only
@@ -101,6 +121,25 @@
 	// every transition the page received — even when two events land in the
 	// same frame and the pill only ever paints the newer one.
 	let statusTrail = $state<Status[]>([]);
+	let cancelDialog = $state(false);
+	let cancelReason = $state('');
+	let cancelBusy = $state(false);
+	let cancelError = $state('');
+	let cancellationRequested = $state(false);
+	let copied = $state('');
+	let downloadingArtifact = $state('');
+	let artifactDownloadError = $state('');
+	let artifactDownloadAbort: AbortController | undefined;
+	onDestroy(() => artifactDownloadAbort?.abort());
+	let wallNow = $state(Date.now());
+	$effect(() => {
+		const timer = setInterval(() => (wallNow = Date.now()), 1000);
+		return () => clearInterval(timer);
+	});
+	const currentTimestamp = $derived({
+		seconds: BigInt(Math.floor(wallNow / 1000)),
+		nanos: (wallNow % 1000) * 1_000_000
+	});
 
 	const RUN_LEVEL = new Set<EventType>([
 		EventType.RUN_CREATED,
@@ -118,7 +157,10 @@
 				activity: activityLabel(task),
 				status: Status.PENDING,
 				attempt: 0,
-				message: ''
+				message: '',
+				artifacts: [],
+				systemArtifacts: [],
+				pool: ''
 			});
 		}
 		for (const tr of data.run?.taskRuns ?? []) {
@@ -131,7 +173,14 @@
 				message: tr.error?.message ?? '',
 				error: hasError(tr.error) ? tr.error : undefined,
 				exitCode: measuredExitCode(tr),
-				commit: tr.commit
+				commit: tr.commit,
+				output: tr.output,
+				artifacts: tr.artifacts,
+				valuesRef: tr.valuesRef,
+				systemArtifacts: tr.systemArtifacts,
+				startedAt: tr.startedAt,
+				finishedAt: tr.finishedAt,
+				pool: tr.pool
 			});
 		}
 		return [...views.values()];
@@ -154,7 +203,14 @@
 				message: tr.error?.message ?? '',
 				error: hasError(tr.error) ? tr.error : undefined,
 				exitCode: measuredExitCode(tr),
-				commit: tr.commit
+				commit: tr.commit,
+				output: tr.output,
+				artifacts: tr.artifacts,
+				valuesRef: tr.valuesRef,
+				systemArtifacts: tr.systemArtifacts,
+				startedAt: tr.startedAt,
+				finishedAt: tr.finishedAt,
+				pool: tr.pool
 			});
 		}
 	}
@@ -190,6 +246,9 @@
 			status: Status.PENDING,
 			attempt: 0,
 			message: '',
+			artifacts: [],
+			systemArtifacts: [],
+			pool: '',
 			...patch
 		});
 	}
@@ -313,6 +372,116 @@
 		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
 	}
 
+	const deepTask = $derived(page.url.searchParams.get('task') ?? '');
+	const deepAttempt = $derived(Number(page.url.searchParams.get('attempt') ?? '0'));
+	function taskHref(taskId: string, attempt = 0): string {
+		const params = new URLSearchParams(page.url.searchParams);
+		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
+		params.set('task', taskId);
+		if (attempt > 0) params.set('attempt', String(attempt));
+		else params.delete('attempt');
+		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
+	}
+	function setTaskAttempt(taskId: string, attempt: number | null): void {
+		replaceState(taskHref(taskId, attempt ?? 0), page.state);
+	}
+	function copy(value: string, label: string): void {
+		void navigator.clipboard?.writeText(value).then(
+			() => (copied = label),
+			() => (copied = 'Copy failed')
+		);
+	}
+	function downloadJson(name: string, value: unknown): void {
+		const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = name;
+		link.click();
+		URL.revokeObjectURL(url);
+	}
+	function taskExport(task: TaskView) {
+		return {
+			id: task.id, status: statusLabel(task.status), attempt: task.attempt,
+			pool: task.pool || undefined, startedAt: timestampJson(task.startedAt), finishedAt: timestampJson(task.finishedAt),
+			output: task.output?.data, values: task.valuesRef ? artifactMetadata(task.valuesRef) : undefined,
+			artifacts: task.artifacts.map(artifactMetadata),
+			systemArtifacts: task.systemArtifacts.map(artifactMetadata), error: task.error
+		};
+	}
+	function runExport() {
+		return {
+			id: run?.id, namespace: namespaceLabel(data.namespace),
+			orkflow: { name: run?.orkflowName, version: run?.orkflowVersion, definitionDigest: run?.orkflowDefinitionDigest },
+			status: statusLabel(runStatus), createdAt: timestampJson(run?.createdAt), startedAt: timestampJson(startedAt ?? run?.startedAt), finishedAt: timestampJson(finishedAt ?? run?.finishedAt),
+			input: run?.input?.data, output: run?.output?.data, error: runError, tasks: tasks.map(taskExport)
+		};
+	}
+	async function cancelRun(): Promise<void> {
+		if (!run) return;
+		cancelBusy = true;
+		cancelError = '';
+		try {
+			await orkstack(fetch).runs.cancelRun({ runId: run.id, namespace: data.namespace, reason: cancelReason.trim() });
+			cancellationRequested = true;
+			cancelDialog = false;
+			await invalidateAll();
+		} catch (err) {
+			cancelError = errorMessage(err);
+		} finally {
+			cancelBusy = false;
+		}
+	}
+	function artifactKindLabel(kind: ArtifactKind): string {
+		return ArtifactKind[kind] ?? 'UNSPECIFIED';
+	}
+	async function downloadArtifact(record: RunArtifact): Promise<void> {
+		if (!run || !record.artifact) return;
+		const key = `${record.taskId}:${record.kind}:${record.artifact.name}`;
+		downloadingArtifact = key;
+		artifactDownloadError = '';
+		artifactDownloadAbort?.abort();
+		const abort = new AbortController();
+		artifactDownloadAbort = abort;
+		try {
+			const parts: Uint8Array[] = [];
+			let receivedName = record.artifact.name;
+			let received = 0n;
+			let complete = false;
+			for await (const chunk of orkstack(fetch).runs.readArtifact({
+				runId: run.id, namespace: data.namespace, taskId: record.taskId, kind: record.kind, name: record.artifact.name
+			}, { signal: abort.signal })) {
+				if (chunk.artifact?.name) receivedName = chunk.artifact.name;
+				if (chunk.data.length) {
+					parts.push(chunk.data.slice());
+					received += BigInt(chunk.data.length);
+				}
+				if (chunk.last) complete = true;
+			}
+			if (!complete) throw new Error('Artifact stream ended before the engine confirmed a complete artifact.');
+			if (received !== record.artifact.sizeBytes) throw new Error(`Artifact size changed during download (expected ${record.artifact.sizeBytes} bytes, received ${received}).`);
+			const blob = new Blob(parts.map((part) => part.slice().buffer as ArrayBuffer), {
+				type: record.artifact.contentType || 'application/octet-stream'
+			});
+			if (record.artifact.sha256 && globalThis.crypto?.subtle) {
+				const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+				const actual = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+				if (actual !== record.artifact.sha256.toLowerCase()) throw new Error('Artifact checksum did not match the recorded SHA-256.');
+			}
+			const url = URL.createObjectURL(blob);
+			const link = document.createElement('a');
+			link.href = url;
+			link.download = downloadFilename(receivedName);
+			link.click();
+			URL.revokeObjectURL(url);
+		} catch (err) {
+			artifactDownloadError = errorMessage(err);
+		} finally {
+			if (artifactDownloadAbort === abort) artifactDownloadAbort = undefined;
+			downloadingArtifact = '';
+		}
+	}
+
 </script>
 
 <svelte:head><title>Run {run?.id ?? ''} — OrkStack</title></svelte:head>
@@ -334,7 +503,8 @@
 			<h1 class="font-mono text-xl font-semibold break-all text-fg" data-testid="run-id">{run.id}</h1>
 			<p class="text-sm break-all text-fg-muted">
 				<a
-					href={withNamespace(`/orkflows/${run.orkflowName}`, data.namespace)}
+					href={withNamespace(`/orkflows/${encodeURIComponent(run.orkflowName)}?version=${encodeURIComponent(run.orkflowVersion)}`, data.namespace)}
+					data-testid="pinned-orkflow-link"
 					class="font-medium text-brand-700 hover:underline">{run.orkflowName}</a
 				>@{run.orkflowVersion}
 			</p>
@@ -367,7 +537,33 @@
 							: 'CONNECTING'}
 			</span>
 		</div>
-		<div class="ml-auto">
+		<div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+			<a
+				href={withNamespace(`/submit?fromRun=${encodeURIComponent(run.id)}`, data.namespace)}
+				data-testid="run-again"
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+			>Run again</a>
+			<button
+				type="button"
+				data-testid="copy-run-inspect"
+				onclick={() => copy(runCommand(data.namespace, ['run', 'get', run.id]), 'Inspect command copied')}
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+			>Copy CLI</button>
+			<button
+				type="button"
+				data-testid="export-run-json"
+				onclick={() => downloadJson(`${run.id}.json`, runExport())}
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+			>Export JSON</button>
+			{#if !isTerminal(runStatus)}
+				<button
+					type="button"
+					data-testid="cancel-run"
+					disabled={cancellationRequested}
+					onclick={() => { cancelDialog = true; cancelError = ''; }}
+					class="inline-flex h-9 items-center rounded-md bg-danger-600 px-3 text-sm font-medium text-white shadow-xs hover:bg-danger-700 disabled:opacity-50"
+				>{cancellationRequested ? 'Cancellation requested' : 'Cancel run'}</button>
+			{/if}
 			<a
 				href={inspectHref(!inspectOpen)}
 				data-testid="inspect-toggle"
@@ -378,6 +574,14 @@
 			>{inspectOpen ? 'Close inspect' : 'Inspect'}</a>
 		</div>
 	</div>
+	{#if copied}
+		<p data-testid="copy-status" class="-mt-4 mb-4 text-xs text-fg-muted">{copied}</p>
+	{/if}
+	{#if cancellationRequested && !isTerminal(runStatus)}
+		<p data-testid="cancellation-requested" class="mb-4 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-700">
+			Cancellation requested. Waiting for the run to stop.
+		</p>
+	{/if}
 
 	<!--
 		The run's terminal error. The snapshot's Error carries the §8.1
@@ -397,7 +601,7 @@
 		</div>
 	{/if}
 
-	<div class="mb-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+	<div class="mb-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-5">
 		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
 			<div class="text-xs font-medium text-fg-muted">Created</div>
 			<div class="mt-1 text-fg-secondary">{fmtTimestamp(run.createdAt)}</div>
@@ -411,6 +615,10 @@
 			<div class="mt-1 text-fg-secondary">{fmtTimestamp(finishedAt ?? run.finishedAt)}</div>
 		</div>
 		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
+			<div class="text-xs font-medium text-fg-muted">Elapsed</div>
+			<div class="mt-1 text-fg-secondary" data-testid="run-elapsed">{formatDuration(startedAt ?? run.startedAt, finishedAt ?? run.finishedAt ?? (isTerminal(runStatus) ? undefined : currentTimestamp))}</div>
+		</div>
+		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
 			<div class="text-xs font-medium text-fg-muted">Tasks</div>
 			<div class="mt-1 text-fg-secondary" data-testid="task-summary">
 				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded
@@ -418,23 +626,80 @@
 		</div>
 	</div>
 
+	<section class="mb-6 grid gap-4 lg:grid-cols-2" aria-label="Run values">
+		<div class="min-w-0 rounded-lg border border-border bg-surface p-4 shadow-xs">
+			<div class="flex items-center justify-between gap-3">
+				<h2 class="text-sm font-semibold text-fg">Inputs</h2>
+				{#if run.input}
+					<button type="button" data-testid="copy-run-input" onclick={() => copy(payloadJson(run.input), 'Inputs copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
+				{/if}
+			</div>
+			<pre data-testid="run-input" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.input ? payloadJson(run.input) : 'No input values are recorded for this run.'}</pre>
+		</div>
+		<div class="min-w-0 rounded-lg border border-border bg-surface p-4 shadow-xs">
+			<div class="flex items-center justify-between gap-3">
+				<h2 class="text-sm font-semibold text-fg">Run output</h2>
+				{#if run.output}
+					<button type="button" data-testid="copy-run-output" onclick={() => copy(payloadJson(run.output), 'Run output copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
+				{/if}
+			</div>
+			<pre data-testid="run-output" class="mt-2 max-h-56 overflow-auto rounded-md bg-surface-sunken p-3 font-mono text-xs text-fg-secondary">{run.output ? payloadJson(run.output) : isTerminal(runStatus) ? 'This run finished without aggregated output values.' : 'Run output is not available yet.'}</pre>
+		</div>
+	</section>
+
 	<div class="space-y-6">
 		<section>
 			<h2 class="mb-3 text-sm font-semibold text-fg">Tasks</h2>
+			{#if data.artifactsError}
+				<p data-testid="artifacts-unavailable" class="mb-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-700">
+					Artifact metadata is unavailable: {data.artifactsError}. Downloads require the engine's recorded-artifact read API and are never linked directly to storage URIs.
+				</p>
+			{/if}
+			{#if artifactDownloadError}
+				<p data-testid="artifact-download-error" class="mb-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700">Artifact download failed: {artifactDownloadError}</p>
+			{/if}
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
+					{@const taskArtifacts = artifactsByTask.get(task.id) ?? []}
 					<div
 						class="rounded-lg border border-border bg-surface px-4 py-3 shadow-xs"
 						data-testid="task-{task.id}"
 					>
 						<div class="flex items-center justify-between gap-4">
 							<div class="min-w-0">
-								<div class="font-medium break-all text-fg">{task.id}</div>
+								<a href={taskHref(task.id, task.attempt)} class="font-medium break-all text-brand-700 hover:underline" data-testid="task-deep-link-{task.id}">{task.id}</a>
 								{#if task.message && !task.error}
 									<p class="text-xs break-words text-fg-secondary">{task.message}</p>
-								{/if}
+	{/if}
+
+{#if cancelDialog && run}
+	<ConfirmDialog
+		testid="cancel-run-confirm"
+		title="Cancel run {run.id}?"
+		acceptLabel="Request cancellation"
+		acceptTestid="cancel-run-accept"
+		cancelTestid="cancel-run-dismiss"
+		busy={cancelBusy}
+		error={cancelError}
+		destructive
+		onaccept={cancelRun}
+		oncancel={() => { cancelDialog = false; cancelError = ''; }}
+	>
+		{#snippet body()}
+			<p>The request is sent to the durable execution service. This page keeps the current status until that service records a transition.</p>
+			<label class="mt-3 block text-sm font-medium text-fg" for="cancel-reason">Reason <span class="font-normal text-fg-muted">(optional)</span></label>
+			<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg" placeholder="Why should this run stop?"></textarea>
+			<p class="mt-2 font-mono text-xs text-fg-muted">{runCommand(data.namespace, ['run', 'cancel', run.id, ...(cancelReason.trim() ? ['--reason', cancelReason.trim()] : [])])}</p>
+		{/snippet}
+	</ConfirmDialog>
+{/if}
 							</div>
 							<StatusPill status={task.status} testid="task-{task.id}-status" />
+						</div>
+						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
+							<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.startedAt, task.finishedAt ?? (task.status === Status.RUNNING ? currentTimestamp : undefined))}</span>
+							{#if task.pool}<span>Pool {task.pool}</span>{/if}
+							<button type="button" data-testid="copy-task-logs-{task.id}" onclick={() => copy(runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])]), 'Logs command copied')} class="font-medium text-brand-700 hover:underline">Copy logs CLI</button>
 						</div>
 
 						{#if task.error}
@@ -447,8 +712,36 @@
 							taskId={task.id}
 							namespace={data.namespace}
 							status={task.status}
-							attempt={0}
+							attempt={deepTask === task.id && Number.isFinite(deepAttempt) ? deepAttempt : 0}
+							deepLinked={deepTask === task.id}
+							onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt)}
 						/>
+						{#if task.output || task.valuesRef}
+							<div class="mt-3 rounded-md border border-border-subtle bg-surface-sunken p-3">
+								<div class="flex items-center justify-between gap-3">
+									<span class="text-xs font-medium text-fg">Task values</span>
+									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => copy(payloadJson(task.output), 'Task values copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>{/if}
+								</div>
+								<pre data-testid="task-values-{task.id}" class="mt-2 max-h-40 overflow-auto font-mono text-xs text-fg-secondary">{task.output ? payloadJson(task.output) : isTerminal(task.status) ? 'This task finished without inline values. Its recorded values artifact, if present, is listed below.' : 'Task values are not available yet.'}</pre>
+							</div>
+						{/if}
+						{#if taskArtifacts.length > 0}
+							<div class="mt-3" data-testid="task-artifacts-{task.id}">
+								<h3 class="text-xs font-medium text-fg">Artifacts</h3>
+								{#each taskArtifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
+									{#if record.artifact}
+										{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
+										<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle px-3 py-2 text-xs">
+											<span class="font-medium text-fg">{artifactKindLabel(record.kind)}</span>
+											<span class="font-mono break-all text-fg-secondary">{record.artifact.name}</span>
+											<span class="text-fg-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
+											<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="ml-auto font-medium text-brand-700 hover:underline disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
+											<details class="w-full min-w-0 text-fg-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
+										</div>
+									{/if}
+								{/each}
+							</div>
+						{/if}
 					</div>
 				{/each}
 			</div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { followTaskLogs, type LogLine, type LogSocketState } from '$lib/taskLogs';
@@ -22,6 +22,9 @@
 		 * pane's initial coordinate; the selector below pins it from here on.
 		 */
 		attempt?: number;
+		/** A task/attempt named in the URL opens this pane without changing normal browsing. */
+		deepLinked?: boolean;
+		onAttemptChange?: (attempt: number | null) => void;
 		/**
 		 * scrollback caps the lines KEPT AND RENDERED. A task may write far
 		 * more than a browser can hold as DOM; past this many lines the oldest
@@ -38,6 +41,8 @@
 		namespace,
 		status,
 		attempt = 0,
+		deepLinked = false,
+		onAttemptChange,
 		scrollback = 2000
 	}: Props = $props();
 
@@ -67,6 +72,10 @@
 	// and starts a fresh one — the same recovery ErrorPanel gives every other
 	// view on this site, without reloading the page.
 	let retryNonce = $state(0);
+	let downloading = $state(false);
+	let downloadError = $state('');
+	let downloadStop: (() => void) | undefined;
+	let search = $state('');
 
 	// pinned is the reader's CHOICE of attempt, and null means they have not
 	// made one: the pane shows whatever `attempt` says, which is the latest
@@ -76,6 +85,13 @@
 	// is still running.
 	let pinned = $state<number | null>(null);
 	const viewedAttempt = $derived(pinned ?? attempt);
+	let openedForLink = $state(false);
+	$effect(() => {
+		if (deepLinked && !openedForLink) {
+			open = true;
+			openedForLink = true;
+		}
+	});
 
 	// maxAttempt LATCHES the highest try anybody has named, and in this tree
 	// exactly two can name one: the engine's answer on THIS pane's stream,
@@ -90,13 +106,19 @@
 	// retried does not un-retry.
 	let maxAttempt = $state(0);
 	$effect(() => {
-		const seen = Math.max(shownAttempt, pinned ?? 0);
+		const seen = Math.max(shownAttempt, pinned ?? 0, attempt);
 		if (seen > maxAttempt) maxAttempt = seen;
 	});
 
 	// stderr is shown in red, and the legend appears only once a red line has
 	// actually arrived: a colour nobody can see needs no key.
 	const hasStderr = $derived(lines.some((line) => line.stream === 'stderr'));
+	const filteredLines = $derived.by(() => {
+		const needle = search.trim().toLocaleLowerCase();
+		return needle ? lines.filter((line) => line.text.toLocaleLowerCase().includes(needle)) : lines;
+	});
+
+	onDestroy(() => downloadStop?.());
 
 	// A task with no attempt on record has no log prefix to read, and the
 	// engine answers NotFound for it rather than an empty pane. Wait for it to
@@ -257,11 +279,47 @@
 	function selectAttempt(value: string) {
 		const next = Number(value);
 		pinned = Number.isFinite(next) && next > 0 ? next : null;
+		onAttemptChange?.(pinned);
 	}
 
 	function toggle() {
 		open = !open;
 		if (open) following = true;
+	}
+
+	function downloadRetained(): void {
+		if (downloading) return;
+		downloading = true;
+		downloadError = '';
+		const parts: Uint8Array[] = [];
+		const target = untrack(() => ({ runId, taskId, namespace, attempt: viewedAttempt }));
+		let resolvedAttempt = target.attempt;
+		const decoder = new TextDecoder();
+		downloadStop = followTaskLogs({
+			...target,
+			follow: false,
+			onChunk: (bytes) => parts.push(bytes.slice()),
+			onLines: (delivery) => { if (delivery.attempt > 0) resolvedAttempt = delivery.attempt; },
+			onState: (state, detail) => {
+				if (state === 'ended') {
+					const text = parts.map((part) => decoder.decode(part, { stream: true })).join('') + decoder.decode();
+					const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+					const url = URL.createObjectURL(blob);
+					const link = document.createElement('a');
+					link.href = url;
+					link.download = `${target.runId}-${target.taskId}-attempt-${resolvedAttempt || 'latest'}.log`;
+					link.click();
+					URL.revokeObjectURL(url);
+					downloading = false;
+					downloadStop = undefined;
+				}
+				if (state === 'failed') {
+					downloadError = detail ?? 'Could not replay the retained logs.';
+					downloading = false;
+					downloadStop = undefined;
+				}
+			}
+		});
 	}
 </script>
 
@@ -354,7 +412,25 @@
 				<span class="ml-auto text-console-muted normal-case tracking-normal" data-testid="task-log-count-{taskId}">
 					{lines.length} lines
 				</span>
+				<button
+					type="button"
+					data-testid="task-log-download-{taskId}"
+					disabled={downloading || !dispatched}
+					onclick={downloadRetained}
+					class="h-6 rounded-sm border border-console-border px-2 text-console-fg normal-case tracking-normal hover:bg-white/5 disabled:opacity-50"
+				>
+					{downloading ? 'Preparing download…' : 'Download retained logs'}
+				</button>
+				<label class="flex items-center gap-1 text-console-muted normal-case tracking-normal">
+					Search
+					<input data-testid="task-log-search-{taskId}" bind:value={search} placeholder="loaded lines" class="h-6 w-28 rounded-sm border border-console-border bg-console-bg px-1.5 text-console-fg placeholder:text-console-muted" />
+				</label>
 			</div>
+			{#if downloadError}
+				<p data-testid="task-log-download-error-{taskId}" class="border-b border-console-border px-3 py-1.5 font-mono text-xs text-console-stderr">
+					{downloadError}
+				</p>
+			{/if}
 
 			{#if dropped > 0}
 				<p
@@ -414,8 +490,10 @@
 							Waiting for output…
 						{/if}
 					</p>
+				{:else if filteredLines.length === 0}
+					<p data-testid="task-log-no-match-{taskId}" class="text-console-muted">No loaded lines match this search.</p>
 				{:else}
-					{#each lines as line (line.n)}
+					{#each filteredLines as line (line.n)}
 						<!--
 							Three renderings, in priority order: an ORKER notice
 							(amber) is about the log rather than in it, stderr

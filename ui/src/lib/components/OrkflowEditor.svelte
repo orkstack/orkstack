@@ -21,11 +21,13 @@
 	//    REPORTED, with the diff of what arrived and a retarget that moves the
 	//    token and leaves the text exactly as it was typed.
 	import { untrack } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { Code, ConnectError } from '@connectrpc/connect';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
+	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/service_pb';
 	import { namespaceLabel } from '$lib/namespace';
 
 	interface Props {
@@ -75,6 +77,7 @@
 	// So the seed waits for a document to exist, and closes over the version it
 	// took — `seededFrom`, compared against the selection.
 	let yaml = $state(untrack(() => sourceYaml));
+	let cleanYaml = $state(untrack(() => sourceYaml));
 	let base = $state(untrack(() => baseVersion));
 	let expectedHead = $state(untrack(() => headVersion));
 	let seededFrom = $state<string | null>(
@@ -82,9 +85,12 @@
 	);
 
 	let applying = $state(false);
+	let validating = $state(false);
 	let reloading = $state(false);
 	let applyError = $state('');
 	let warnings = $state<string[]>([]);
+	let issues = $state<ValidationIssue[]>([]);
+	let applied = $state<{ name: string; version: string } | null>(null);
 	// The no-op report: an apply that stored nothing, said out loud. Silence
 	// here would be indistinguishable from success, and navigating away would
 	// be worse — it would show a version list nobody changed as the result of
@@ -111,6 +117,7 @@
 		if (untrack(() => seededFrom) === baseVersion) return;
 		yaml = sourceYaml;
 		base = baseVersion;
+		cleanYaml = sourceYaml;
 		expectedHead = headVersion;
 		seededFrom = baseVersion;
 		noop = '';
@@ -120,6 +127,38 @@
 	});
 
 	const client = () => orkstack(fetch);
+	const dirty = $derived(yaml !== cleanYaml);
+
+	onMount(() => {
+		const warn = (event: BeforeUnloadEvent) => {
+			if (!dirty) return;
+			event.preventDefault();
+			event.returnValue = '';
+		};
+		window.addEventListener('beforeunload', warn);
+		return () => window.removeEventListener('beforeunload', warn);
+	});
+	beforeNavigate((navigation) => {
+		if (dirty && navigation.type !== 'leave' && !confirm('Discard unsaved orkflow YAML?')) navigation.cancel();
+	});
+
+	async function validate(): Promise<boolean> {
+		applyError = '';
+		issues = [];
+		if (!yaml.trim()) { applyError = 'Paste an orkflow YAML document first.'; return false; }
+		const validatedYaml = yaml;
+		const validatedNamespace = namespace;
+		validating = true;
+		try {
+			const res = await client().orkflows.validateOrkflow({ yaml: validatedYaml, namespace: validatedNamespace });
+			if (yaml !== validatedYaml || namespace !== validatedNamespace) return false;
+			issues = res.issues;
+			return !res.issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
+		} catch (err) {
+			applyError = errorMessage(err);
+			return false;
+		} finally { validating = false; }
+	}
 
 	async function reload() {
 		reloading = true;
@@ -133,6 +172,7 @@
 	async function apply() {
 		applyError = '';
 		warnings = [];
+		applied = null;
 		noop = '';
 		conflict = null;
 		conflictDiff = null;
@@ -152,10 +192,12 @@
 			return;
 		}
 		applying = true;
+		const submittedYaml = yaml;
+		const submittedNamespace = namespace;
 		try {
 			const res = await client().orkflows.applyOrkflow({
-				yaml,
-				namespace,
+				yaml: submittedYaml,
+				namespace: submittedNamespace,
 				baseVersion: base,
 				expectedHeadVersion: expectedHead
 			});
@@ -169,6 +211,12 @@
 					'source.';
 				return;
 			}
+			if (res.warnings.length > 0 && res.orkflow) {
+				applied = { name: res.orkflow.name, version: res.orkflow.version };
+				if (yaml === submittedYaml) cleanYaml = submittedYaml;
+				return;
+			}
+			if (yaml === submittedYaml) cleanYaml = submittedYaml;
 			await goto(versionsHref, { invalidateAll: true });
 		} catch (err) {
 			if (err instanceof ConnectError && err.code === Code.FailedPrecondition) {
@@ -180,6 +228,21 @@
 		} finally {
 			applying = false;
 		}
+	}
+
+	async function importYaml(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		yaml = await file.text();
+		input.value = '';
+	}
+	function exportYaml() {
+		const link = document.createElement('a');
+		link.href = URL.createObjectURL(new Blob([yaml], { type: 'application/yaml' }));
+		link.download = `${name}.yaml`;
+		link.click();
+		URL.revokeObjectURL(link.href);
 	}
 
 	// readHead answers the only question a conflict raises: what is there now.
@@ -288,6 +351,11 @@
 			spellcheck="false"
 			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs [font-variant-ligatures:none] [tab-size:2] whitespace-pre focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 		></textarea>
+		<div class="flex flex-wrap gap-3 text-sm">
+			<label class="cursor-pointer font-medium text-brand-700">Import YAML<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
+			<button type="button" data-testid="editor-export" onclick={exportYaml} class="font-medium text-brand-700">Export YAML</button>
+			{#if dirty}<span data-testid="editor-unsaved" class="text-warning-700">Unsaved changes</span>{/if}
+		</div>
 
 		{#if applyError}
 			<ErrorPanel testid="editor-error" message={applyError} />
@@ -306,6 +374,17 @@
 				{warning}
 			</div>
 		{/each}
+		{#if issues.length > 0}
+			<div data-testid="editor-validation-issues" class="space-y-2 rounded-md border border-border bg-surface-sunken p-3 text-sm">
+				<p class="font-medium text-fg">Validation results</p>
+				{#each issues as issue, i (`${issue.field}-${i}`)}
+					<p class={issue.severity === ValidationSeverity.ERROR ? 'text-danger-700' : 'text-warning-700'}><span class="font-medium">{issue.field || 'document'}</span>: {issue.message}</p>
+				{/each}
+			</div>
+		{/if}
+		{#if applied}
+			<p data-testid="editor-apply-success" class="rounded-md border border-success-200 bg-success-50 px-4 py-2 text-sm text-success-700">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="font-medium underline" href={versionsHref}>Open versions</a></p>
+		{/if}
 
 		{#if conflict}
 			<div
@@ -387,10 +466,11 @@
 			</div>
 		{/if}
 
+		<button type="button" data-testid="editor-validate" disabled={validating || applying} onclick={() => void validate()} class="mr-3 inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg disabled:opacity-50">{validating ? 'Validating…' : 'Validate'}</button>
 		<button
 			type="submit"
 			data-testid="editor-apply"
-			disabled={applying}
+			disabled={applying || validating}
 			class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
 		>
 			{applying ? 'Applying…' : `Apply as a new version of ${name}`}

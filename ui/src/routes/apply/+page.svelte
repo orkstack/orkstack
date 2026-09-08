@@ -1,7 +1,9 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { errorMessage, orkstack } from '$lib/client';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/service_pb';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
@@ -30,29 +32,86 @@ tasks:
 
 	let yaml = $state('');
 	let applying = $state(false);
+	let validating = $state(false);
 	let formError = $state('');
 	let warnings = $state<string[]>([]);
+	let issues = $state<ValidationIssue[]>([]);
+	let applied = $state<{ name: string; version: string } | null>(null);
+	let cleanYaml = $state('');
+	let permitNavigation = $state(false);
+	const dirty = $derived(yaml !== cleanYaml);
+
+	onMount(() => {
+		const warn = (event: BeforeUnloadEvent) => {
+			if (!dirty) return;
+			event.preventDefault();
+			event.returnValue = '';
+		};
+		window.addEventListener('beforeunload', warn);
+		return () => window.removeEventListener('beforeunload', warn);
+	});
+	beforeNavigate((navigation) => {
+		if (dirty && !permitNavigation && navigation.type !== 'leave' && !confirm('Discard unsaved orkflow YAML?')) navigation.cancel();
+	});
+
+	async function validate(): Promise<boolean> {
+		formError = '';
+		issues = [];
+		if (!yaml.trim()) { formError = 'Paste an orkflow YAML document first.'; return false; }
+		const validatedYaml = yaml;
+		const validatedNamespace = data.namespace;
+		validating = true;
+		try {
+			const result = await orkstack(fetch).orkflows.validateOrkflow({ yaml: validatedYaml, namespace: validatedNamespace });
+			if (yaml !== validatedYaml || data.namespace !== validatedNamespace) return false;
+			issues = result.issues;
+			return !result.issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
+		} catch (err) {
+			formError = errorMessage(err);
+			return false;
+		} finally { validating = false; }
+	}
 
 	async function apply() {
 		formError = '';
 		warnings = [];
-		if (!yaml.trim()) {
-			formError = 'Paste an orkflow YAML document first.';
-			return;
-		}
+		applied = null;
+		if (!yaml.trim()) { formError = 'Paste an orkflow YAML document first.'; return; }
+		const submittedYaml = yaml;
+		const submittedNamespace = data.namespace;
 		applying = true;
 		try {
-			const res = await orkstack(fetch).orkflows.applyOrkflow({ yaml, namespace: data.namespace });
+			const res = await orkstack(fetch).orkflows.applyOrkflow({ yaml: submittedYaml, namespace: submittedNamespace });
 			warnings = res.warnings;
 			if (res.orkflow) {
-				await goto(withNamespace(`/orkflows/${res.orkflow.name}`, data.namespace));
+				if (res.warnings.length > 0) {
+					applied = { name: res.orkflow.name, version: res.orkflow.version };
+					if (yaml === submittedYaml) cleanYaml = submittedYaml;
+					return;
+				}
+				permitNavigation = yaml === submittedYaml;
+				await goto(withNamespace(`/orkflows/${res.orkflow.name}`, submittedNamespace));
 				return;
 			}
 			throw new Error('engine returned no orkflow');
 		} catch (err) {
 			formError = errorMessage(err);
-			applying = false;
-		}
+		} finally { applying = false; }
+	}
+
+	async function importYaml(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		yaml = await file.text();
+		input.value = '';
+	}
+	function exportYaml() {
+		const link = document.createElement('a');
+		link.href = URL.createObjectURL(new Blob([yaml], { type: 'application/yaml' }));
+		link.download = 'orkflow.yaml';
+		link.click();
+		URL.revokeObjectURL(link.href);
 	}
 </script>
 
@@ -83,6 +142,11 @@ tasks:
 			placeholder={PLACEHOLDER}
 			class="min-h-[360px] w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs [font-variant-ligatures:none] placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 		></textarea>
+		<div class="flex flex-wrap gap-3 text-sm">
+			<label class="cursor-pointer font-medium text-brand-700">Import YAML<input data-testid="apply-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
+			<button type="button" data-testid="apply-export" onclick={exportYaml} class="font-medium text-brand-700">Export YAML</button>
+			{#if dirty}<span data-testid="apply-unsaved" class="text-warning-700">Unsaved changes</span>{/if}
+		</div>
 	</div>
 
 	{#if formError}
@@ -93,7 +157,19 @@ tasks:
 			{warning}
 		</div>
 	{/each}
+	{#if issues.length > 0}
+		<div data-testid="apply-validation-issues" class="space-y-2 rounded-md border border-border bg-surface-sunken p-3 text-sm">
+			<p class="font-medium text-fg">Validation results</p>
+			{#each issues as issue, i (`${issue.field}-${i}`)}
+				<p class={issue.severity === ValidationSeverity.ERROR ? 'text-danger-700' : 'text-warning-700'}><span class="font-medium">{issue.field || 'document'}</span>: {issue.message}</p>
+			{/each}
+		</div>
+	{/if}
+	{#if applied}
+		<p data-testid="apply-success" class="rounded-md border border-success-200 bg-success-50 px-4 py-2 text-sm text-success-700">Applied {applied.name}@{applied.version}. <a class="font-medium underline" href={withNamespace(`/orkflows/${applied.name}`, data.namespace)}>Open orkflow</a></p>
+	{/if}
 
+	<button type="button" data-testid="apply-validate" disabled={validating || applying} onclick={() => void validate()} class="mr-3 inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg disabled:opacity-50">{validating ? 'Validating…' : 'Validate'}</button>
 	<button
 		type="submit"
 		data-testid="apply-submit"

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { invalidate } from '$app/navigation';
+	import { goto, invalidate } from '$app/navigation';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
@@ -15,6 +15,7 @@
 		timestampMs
 	} from '$lib/stats';
 	import { fmtTimestamp } from '$lib/status';
+	import { shellQuote } from '$lib/runDetail';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -98,6 +99,11 @@
 			refreshing = false;
 		}
 	}
+	function windowHref(window: string, since = '') { return withNamespace(`/?window=${encodeURIComponent(window)}${since ? `&since=${encodeURIComponent(since)}` : ''}`, data.namespace); }
+	function setCustom(event: SubmitEvent) { event.preventDefault(); const since = String(new FormData(event.currentTarget as HTMLFormElement).get('since') ?? ''); if (since) void goto(windowHref('custom', new Date(since).toISOString())); }
+	const statsCli = $derived(`orkctl --namespace ${shellQuote(namespaceLabel(data.namespace))} stats --since ${shellQuote(data.window === 'custom' && data.sinceParam ? data.sinceParam : data.window)}`);
+	let copied = $state(false);
+	async function copyCli() { await navigator.clipboard.writeText(statsCli); copied = true; }
 </script>
 
 <svelte:head><title>Dashboard — OrkStack</title></svelte:head>
@@ -118,6 +124,15 @@
 		</p>
 	{/if}
 </div>
+
+<section class="mb-6 flex flex-wrap items-end gap-3" data-testid="dashboard-window-controls">
+	<span class="text-sm font-medium text-fg">Window</span>
+	{#each ['15m', '6h', '24h'] as preset}
+		<a data-testid="dashboard-window-{preset}" aria-current={data.window === preset ? 'page' : undefined} class="rounded border border-border px-2 py-1 text-sm text-fg" href={windowHref(preset)}>{preset}</a>
+	{/each}
+	<form class="flex items-end gap-2" onsubmit={setCustom}><label class="text-sm text-fg-secondary">Since<input name="since" type="datetime-local" class="ml-1 h-8 rounded border border-border bg-surface px-2 text-fg" /></label><button class="h-8 rounded border border-border px-2 text-sm text-fg">Custom</button></form>
+	<details class="ml-auto"><summary class="cursor-pointer text-sm text-brand-700">CLI equivalent</summary><pre data-testid="dashboard-cli" class="mt-2 rounded bg-surface-sunken p-2 text-xs text-fg"><code>{statsCli}</code></pre><button type="button" onclick={copyCli} class="text-sm text-brand-700">{copied ? 'Copied' : 'Copy command'}</button></details>
+</section>
 
 {#if data.error}
 	<ErrorPanel

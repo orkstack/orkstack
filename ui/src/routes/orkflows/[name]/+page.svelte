@@ -167,7 +167,7 @@
 
 		<div class="flex gap-3">
 			<a
-				href={withNamespace(`/submit?orkflow=${wf.name}`, data.namespace)}
+				href={withNamespace(`/submit?orkflow=${wf.name}&version=${wf.version}`, data.namespace)}
 				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800"
 			>
 				Submit a run

@@ -1,5 +1,6 @@
 import { errorMessage, orkstack } from '$lib/client';
 import { namespaceFrom } from '$lib/namespace';
+import type { RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, params, url }) => {
@@ -11,8 +12,16 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 	try {
 		const res = await client.runs.getRun({ runId: params.id, namespace });
 		const run = res.run ?? null;
+		let artifacts: RunArtifact[] = [];
+		let artifactsError: string | null = null;
 		let orkflow = null;
 		if (run) {
+			try {
+				const artifactRes = await client.runs.listRunArtifacts({ runId: run.id, namespace, taskId: '' });
+				artifacts = artifactRes.artifacts;
+			} catch (err) {
+				artifactsError = errorMessage(err);
+			}
 			try {
 				const wfRes = await client.orkflows.getOrkflow({
 					name: run.orkflowName,
@@ -24,12 +33,14 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 				orkflow = null; // orkflow may have been superseded; statuses still render
 			}
 		}
-		return { runId: params.id, run, orkflow, namespace, error: null as string | null };
+		return { runId: params.id, run, orkflow, artifacts, artifactsError, namespace, error: null as string | null };
 	} catch (err) {
 		return {
 			runId: params.id,
 			run: null,
 			orkflow: null,
+			artifacts: [],
+			artifactsError: null,
 			namespace,
 			error: errorMessage(err)
 		};

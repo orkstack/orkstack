@@ -106,6 +106,10 @@ export interface FollowTaskLogsOptions {
 	namespace: string;
 	/** 0 = the latest attempt that wrote anything. */
 	attempt?: number;
+	/** false replays the bytes retained so far and then ends; it never follows. */
+	follow?: boolean;
+	/** Raw retained bytes, for an explicit download. The pane still receives decoded lines. */
+	onChunk?: (data: Uint8Array) => void;
 	onLines: (delivery: LogDelivery) => void;
 	/**
 	 * onState reports the socket's state. `failed` is TERMINAL — nothing will
@@ -327,7 +331,7 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 	const connect = () => {
 		if (stopped) return;
 		setState('connecting');
-		const query = new URLSearchParams({ follow: 'true', from_seq: lastSeq.toString() });
+		const query = new URLSearchParams({ follow: String(opts.follow ?? true), from_seq: lastSeq.toString() });
 		// The cursor's other half. Without it the engine cannot tell a resume
 		// of THIS attempt from a cursor left over from the one before it
 		// (proto StreamTaskLogsRequest.from_attempt).
@@ -361,6 +365,7 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 			// exempt: it repeats the cursor's own seq by contract and carries
 			// no data, so it is the end of the stream, not a duplicate of it.
 			if (!chunk.last && chunk.attempt === attempt && chunk.seq <= lastSeq) return;
+			if (chunk.data.length > 0) opts.onChunk?.(chunk.data);
 			consume(chunk);
 			if (chunk.last) {
 				// Everything first, then the news that there is no more.

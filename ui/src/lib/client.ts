@@ -5,6 +5,7 @@ import {
 	OrkflowService,
 	RunService,
 	ActivityService,
+	WebhookService,
 	NamespaceService,
 	SystemService
 } from './gen/orkstack/v1/service_pb';
@@ -22,6 +23,7 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 		// can run is engine configuration, not something to ask an Orker) and
 		// DescribeOrker, the pool-liveness probe (§6.5).
 		activities: createClient(ActivityService, transport),
+		webhooks: createClient(WebhookService, transport),
 		namespaces: createClient(NamespaceService, transport),
 		stats: createClient(StatsService, transport),
 		// system answers GetSystemInfo — the one admin read that describes the

@@ -240,6 +240,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	await page.goto(`${UI_ORIGIN}/submit?orkflow=hello-ork`);
 	await expect(page.getByTestId('submit-form')).toBeVisible();
 	await page.getByTestId('orkflow-select').selectOption('hello-ork');
+	await page.getByTestId('input-json-mode').click();
 	await page
 		.getByTestId('inputs-json')
 		.fill(JSON.stringify({ url: `http://${containerHost}:${stubPort}/data.json` }, null, 2));
