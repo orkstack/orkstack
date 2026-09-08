@@ -82,17 +82,13 @@ const ENGINE = 'http://127.0.0.1:18085';
 const ENGINE_WS = 'ws://127.0.0.1:18085';
 const UI_ORIGIN = 'http://127.0.0.1:14177';
 
-// FORCED, never taken from the environment: this spec deletes this exact
-// namespace outright in its last-but-one test (a genuine Temporal outage,
-// see that test's own comment) to prove pool health renders every pool as
-// unavailable rather than zero. An inherited `ORK_TEMPORAL_NAMESPACE`
-// naming something else would move BOTH what this spec's own engine and
-// Orkers run against AND what that test destroys onto whatever the caller's
-// environment happened to name — reading it here would make this spec's
-// most destructive step only as safe as everything that ever set that
-// variable in a shell it might inherit from. The namespace is fixed here so
-// the destructive test below only ever destroys this spec's own.
-const TEMPORAL_NAMESPACE = 'ork-ui-admin';
+const STAMP = Date.now().toString(36);
+// Owned by this invocation, never taken from ORK_TEMPORAL_NAMESPACE: the
+// outage test deletes it. A fresh namespace also keeps a previous failed
+// run's backstop TTL out of this run's initial retention policy. The bucket
+// is fresh too, so reusing a namespace would import its already-adjusted TTL
+// as the new deployment maximum instead of starting from 72h.
+const TEMPORAL_NAMESPACE = `ork-ui-admin-${STAMP}`;
 // The image every container task here runs. It is activity-shell rather than a
 // bare `alpine:3.20`, because an activity must write
 // /orkstack/output/values.json and a stock base image does not — an image that
@@ -100,7 +96,6 @@ const TEMPORAL_NAMESPACE = 'ork-ui-admin';
 // built by `docker build` and pulled by digest.
 const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
 
-const STAMP = Date.now().toString(36);
 const OPS_NS = `admin-ops-${STAMP}`;
 const HOLDS_NS = `admin-holds-${STAMP}`;
 const HOLDS_ORKFLOW = `admin-holds-orkflow-${STAMP}`;
@@ -1096,7 +1091,7 @@ test('maximum run retention is read from the store and a change through the UI r
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/admin/retention?ns=${OPS_NS}`);
-	await expect(page.getByTestId('retention-scope-caption')).toContainText('deployment-wide');
+	await expect(page.getByTestId('retention-scope-caption')).toContainText(/deployment-wide/i);
 	await expect(page.getByTestId('retention-enforcement')).toBeVisible();
 	// EnsureNamespace (internal/task/namespace.go) provisions a fresh
 	// namespace at 72h, and archive.RetentionController.Ensure materializes
@@ -1192,6 +1187,7 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 	// in this session, and page.route (unused here) would not see the Node
 	// SSR server's first fetch of a page.goto anyway. The namespace picker's
 	// switch handler already calls goto(..., { invalidateAll: true }).
+	const pools = ['main', 'cpu', 'gpu', 'deaf'];
 	await waitFor(
 		'pool health reports every pool as unavailable once Temporal is gone',
 		async () => {
@@ -1199,13 +1195,17 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 			await page.waitForURL(/ns=default/);
 			await page.getByTestId('namespace-picker').selectOption(OPS_NS);
 			await page.waitForURL(new RegExp(`ns=${OPS_NS}`));
-			const unavailable = page.getByTestId('pool-unavailable-main');
-			return (await unavailable.count()) > 0;
+			// The independent pool probes can observe the deletion at different
+			// times. Keep refreshing until the whole asserted snapshot is ready.
+			const unavailable = await Promise.all(
+				pools.map((pool) => page.getByTestId(`pool-unavailable-${pool}`).isVisible())
+			);
+			return unavailable.every(Boolean);
 		},
 		60_000
 	);
 
-	for (const pool of ['main', 'cpu', 'gpu', 'deaf']) {
+	for (const pool of pools) {
 		const card = page.getByTestId(`pool-card-${pool}`);
 		await expect(card).toBeVisible();
 		const unavailable = card.getByTestId(`pool-unavailable-${pool}`);
