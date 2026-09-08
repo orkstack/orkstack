@@ -273,6 +273,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	// 5b. The status trail is built from the streamed run-level events, so it
 	//     records every transition even when two land in the same frame. This
 	//     is the PENDING -> RUNNING -> SUCCEEDED proof, straight off the wire.
+	await page.getByTestId('inspect-toggle').click();
 	await expect(page.getByTestId('run-status-trail')).toHaveText('PENDING -> RUNNING -> SUCCEEDED');
 
 	// 6. All three tasks show succeeded — updated in place by the stream.

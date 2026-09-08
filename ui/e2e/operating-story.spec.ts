@@ -377,6 +377,7 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 
 	// The event inspector: opened while the container may still be writing,
 	// closed once the task is done — task status keeps updating through both.
+	await page.getByTestId('inspect-toggle').click();
 	await page.getByTestId('events-toggle').click();
 	await page.waitForURL(/events=1/);
 	await expect(page.getByTestId('event-inspector')).toBeVisible();

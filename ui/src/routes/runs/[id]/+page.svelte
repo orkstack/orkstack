@@ -299,25 +299,20 @@
 		return stop;
 	});
 
-	// The inspector's open/closed state is a coordinate of the page, so it
-	// lives in the URL beside the namespace — the doctrine this repo's other
-	// pages already follow. A pasted link to "this run with the inspector
-	// open" works, a reload keeps it, the back button closes it, and a test
-	// can deep-link it. A local `let open = $state(false)` has none of those.
-	//
-	// The navigation is a plain link on the same route. The loader reads only
-	// `?ns`, and SvelteKit re-runs a load only for the search params it
-	// actually read, so toggling `?events` re-fetches nothing and rebuilds no
-	// component: the socket above, the task panes and their own sockets all
-	// survive the toggle.
-	const EVENTS_PARAM = 'events';
-	const eventsOpen = $derived(page.url.searchParams.get(EVENTS_PARAM) === '1');
-	function eventsHref(open: boolean): string {
-		const params = new URLSearchParams();
+	// Inspection is URL state, independent of the live subscriptions. Keep old
+	// ?events=1 links working by opening their containing panel as well.
+	const eventsOpen = $derived(page.url.searchParams.get('events') === '1');
+	const inspectOpen = $derived(page.url.searchParams.get('inspect') === '1' || eventsOpen);
+	function inspectHref(open: boolean, events = false): string {
+		const params = new URLSearchParams(page.url.searchParams);
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
-		if (open) params.set(EVENTS_PARAM, '1');
+		params.delete('inspect');
+		params.delete('events');
+		if (open) params.set('inspect', '1');
+		if (open && events) params.set('events', '1');
 		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
 	}
+
 </script>
 
 <svelte:head><title>Run {run?.id ?? ''} — OrkStack</title></svelte:head>
@@ -336,18 +331,13 @@
 {:else if run}
 	<div class="mb-6 flex flex-wrap items-center gap-4">
 		<div>
-			<h1 class="font-mono text-xl font-semibold text-fg" data-testid="run-id">{run.id}</h1>
-			<p class="text-sm text-fg-muted">
+			<h1 class="font-mono text-xl font-semibold break-all text-fg" data-testid="run-id">{run.id}</h1>
+			<p class="text-sm break-all text-fg-muted">
 				<a
 					href={withNamespace(`/orkflows/${run.orkflowName}`, data.namespace)}
 					class="font-medium text-brand-700 hover:underline">{run.orkflowName}</a
 				>@{run.orkflowVersion}
 			</p>
-			{#if statusTrail.length > 0}
-				<p class="mt-1 font-mono text-xs text-fg-muted" data-testid="run-status-trail">
-					{statusTrail.map(statusLabel).join(' -> ')}
-				</p>
-			{/if}
 		</div>
 		<div class="flex items-center gap-3">
 			<StatusPill status={runStatus} testid="run-status" />
@@ -376,6 +366,16 @@
 							? 'NOT CONNECTED'
 							: 'CONNECTING'}
 			</span>
+		</div>
+		<div class="ml-auto">
+			<a
+				href={inspectHref(!inspectOpen)}
+				data-testid="inspect-toggle"
+				data-sveltekit-noscroll
+				aria-expanded={inspectOpen}
+				aria-controls="run-inspector"
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-brand-700"
+			>{inspectOpen ? 'Close inspect' : 'Inspect'}</a>
 		</div>
 	</div>
 
@@ -423,139 +423,19 @@
 			<h2 class="mb-3 text-sm font-semibold text-fg">Tasks</h2>
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
-					{@const def = taskDefs.get(task.id)}
 					<div
 						class="rounded-lg border border-border bg-surface px-4 py-3 shadow-xs"
 						data-testid="task-{task.id}"
 					>
 						<div class="flex items-center justify-between gap-4">
 							<div class="min-w-0">
-								<div class="font-medium text-fg">{task.id}</div>
-								<div class="text-xs text-fg-muted">
-									<span data-testid="task-{task.id}-activity"
-										>{task.activity || 'activity not yet known'}</span
-									>{#if task.message}
-										· <span class="text-fg-secondary">{task.message}</span>{/if}
-								</div>
+								<div class="font-medium break-all text-fg">{task.id}</div>
+								{#if task.message && !task.error}
+									<p class="text-xs break-words text-fg-secondary">{task.message}</p>
+								{/if}
 							</div>
 							<StatusPill status={task.status} testid="task-{task.id}-status" />
 						</div>
-
-						<!--
-							WHAT RAN, AND WHAT IT PRODUCED.
-
-							The definition half (image, command, env, secret NAMES)
-							comes from the Orkflow this run pinned; the attempt half
-							(exit code, commit) comes from the TaskRun. They are shown
-							together because a reader debugging a task needs both, and
-							the pin — the resolved index digest — is the point: it is
-							what makes this run explainable after a tag moves.
-
-							SECRET VALUES ARE NEVER HERE. A SecretRef carries a name
-							and a SOURCE; the value is resolved on the Orker, into the
-							container, and never travels to the engine or this page.
-							Only names are rendered, and nothing renders `source`.
-						-->
-						{#if def || task.exitCode !== undefined || task.commit}
-							<dl
-								class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs sm:grid-cols-2"
-								data-testid="task-{task.id}-detail"
-							>
-								{#if def?.image}
-									<div class="sm:col-span-2">
-										<dt class="text-fg-muted uppercase">Image</dt>
-										<dd
-											class="mt-0.5 font-mono break-all text-fg-secondary"
-											data-testid="task-{task.id}-image"
-										>
-											{pinnedOrReference(def.image) || '—'}
-										</dd>
-										{#if def.image.indexDigest}
-											<dd class="mt-0.5">
-												<span
-													class="font-mono text-brand-700"
-													title={def.image.indexDigest}
-													data-digest={def.image.indexDigest}
-													data-testid="task-{task.id}-image-digest"
-													>{shortDigest(def.image.indexDigest)}</span
-												>
-											</dd>
-										{/if}
-									</div>
-								{/if}
-								{#if def && def.command.length > 0}
-									<div class="sm:col-span-2">
-										<dt class="text-fg-muted uppercase">Command</dt>
-										<dd
-											class="mt-0.5 font-mono break-all text-fg-secondary"
-											data-testid="task-{task.id}-command"
-										>
-											{JSON.stringify(def.command)}
-										</dd>
-									</div>
-								{/if}
-								{#if def && Object.keys(def.env).length > 0}
-									<div class="sm:col-span-2">
-										<dt class="text-fg-muted uppercase">Env</dt>
-										<!--
-											Env is shown as NAME=VALUE. It is
-											workload-supplied, non-secret configuration by
-											construction: the platform puts nothing here
-											(Task.env's own contract), and anything that
-											must not be read travels as a `secrets:` entry,
-											whose value is resolved on the Orker and never
-											reaches the engine at all.
-										-->
-										<dd
-											class="mt-0.5 font-mono break-all text-fg-secondary"
-											data-testid="task-{task.id}-env"
-										>
-											{Object.entries(def.env)
-												.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-												.map(([k, v]) => `${k}=${v}`)
-												.join('  ')}
-										</dd>
-									</div>
-								{/if}
-								{#if def && def.secrets.length > 0}
-									<div>
-										<dt class="text-fg-muted uppercase">Secrets</dt>
-										<dd
-											class="mt-0.5 font-mono text-fg-secondary"
-											title="names only — a secret's value is resolved on the Orker and never reaches this page"
-											data-testid="task-{task.id}-secrets"
-										>
-											{def.secrets.map((s) => s.name).join(', ')}
-										</dd>
-									</div>
-								{/if}
-								<div>
-									<dt class="text-fg-muted uppercase">Exit code</dt>
-									<dd
-										class="mt-0.5 font-mono {task.exitCode === undefined
-											? 'text-fg-muted'
-											: task.exitCode === 0
-												? 'text-fg-secondary'
-												: 'text-failed-fg'}"
-										data-state={task.exitCode === undefined ? 'unknown' : 'measured'}
-										data-testid="task-{task.id}-exit-code"
-									>
-										{task.exitCode === undefined ? 'Not measured' : task.exitCode}
-									</dd>
-								</div>
-								{#if task.commit?.uri}
-									<div class="sm:col-span-2">
-										<dt class="text-fg-muted uppercase">Commit</dt>
-										<dd
-											class="mt-0.5 font-mono break-all text-fg-muted"
-											data-testid="task-{task.id}-commit"
-										>
-											{task.commit.uri}
-										</dd>
-									</div>
-								{/if}
-							</dl>
-						{/if}
 
 						{#if task.error}
 							<div class="mt-3">
@@ -574,45 +454,179 @@
 			</div>
 		</section>
 
-		<!--
-			THE EVENT STREAM IS AN INSPECTION VIEW, NOT THE PAGE.
+		{#if inspectOpen}
+			<section
+				id="run-inspector"
+				aria-labelledby="inspect-title"
+				data-testid="run-inspector"
+				class="space-y-5 rounded-lg border border-border bg-surface-sunken p-4 sm:p-5"
+			>
+				<div>
+					<h2 id="inspect-title" class="text-sm font-semibold text-fg">Inspect</h2>
+					<p class="mt-1 text-xs text-fg-muted">Execution details and event history for this run.</p>
+					{#if statusTrail.length > 0}
+						<p class="mt-1 font-mono text-xs text-fg-muted" data-testid="run-status-trail">
+							{statusTrail.map(statusLabel).join(' -> ')}
+						</p>
+					{/if}
+				</div>
+				<div class="space-y-3">
+					{#each tasks as task (task.id)}
+						{@const def = taskDefs.get(task.id)}
+						<div class="rounded-lg border border-border bg-surface p-4">
+							<h3 class="text-sm font-medium break-all text-fg">{task.id}</h3>
+							<p class="mt-1 text-xs break-all text-fg-muted" data-testid="task-{task.id}-activity">{task.activity || 'activity not yet known'}</p>
+							<!--
+								WHAT RAN, AND WHAT IT PRODUCED.
 
-			What a reader comes here for is the tasks and their output, so the
-			page loads with no event list in the DOM at all. This link is the
-			way in, and its `?events=1` is the whole of the state: see the
-			socket effect above for why opening and closing it cannot cost a
-			live update.
-		-->
-		<section>
-			<div class="mb-3 flex flex-wrap items-center gap-3">
-				<a
-					href={eventsHref(!eventsOpen)}
-					data-testid="events-toggle"
-					data-sveltekit-noscroll
-					aria-expanded={eventsOpen}
-					class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
-				>
-					<span class="text-fg-muted">{eventsOpen ? '▾' : '▸'}</span>
-					{eventsOpen ? 'Hide events' : 'Inspect events'}
-				</a>
-				{#if !eventsOpen}
-					<span class="text-xs text-fg-muted" data-testid="events-teaser">
-						{buffer.total}
-						{buffer.total === 1 ? 'event' : 'events'} received on this page
-					</span>
-				{/if}
-			</div>
+								The definition half (image, command, env, secret NAMES)
+								comes from the Orkflow this run pinned; the attempt half
+								(exit code, commit) comes from the TaskRun. They are shown
+								together because a reader debugging a task needs both, and
+								the pin — the resolved index digest — is the point: it is
+								what makes this run explainable after a tag moves.
 
-			{#if eventsOpen}
-				<EventInspector
-					events={buffer.events}
-					dropped={buffer.dropped}
-					total={buffer.total}
-					{streamBroken}
-					runId={run.id}
-					cap={EVENT_BUFFER_CAP}
-				/>
-			{/if}
-		</section>
+								SECRET VALUES ARE NEVER HERE. A SecretRef carries a name
+								and a SOURCE; the value is resolved on the Orker, into the
+								container, and never travels to the engine or this page.
+								Only names are rendered, and nothing renders `source`.
+							-->
+							{#if def || task.exitCode !== undefined || task.commit}
+								<dl
+									class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs sm:grid-cols-2"
+									data-testid="task-{task.id}-detail"
+								>
+									{#if def?.image}
+										<div class="sm:col-span-2">
+											<dt class="text-fg-muted uppercase">Image</dt>
+											<dd
+												class="mt-0.5 font-mono break-all text-fg-secondary"
+												data-testid="task-{task.id}-image"
+											>
+												{pinnedOrReference(def.image) || '—'}
+											</dd>
+											{#if def.image.indexDigest}
+												<dd class="mt-0.5">
+													<span
+														class="font-mono text-brand-700"
+														title={def.image.indexDigest}
+														data-digest={def.image.indexDigest}
+														data-testid="task-{task.id}-image-digest"
+														>{shortDigest(def.image.indexDigest)}</span
+													>
+												</dd>
+											{/if}
+										</div>
+									{/if}
+									{#if def && def.command.length > 0}
+										<div class="sm:col-span-2">
+											<dt class="text-fg-muted uppercase">Command</dt>
+											<dd
+												class="mt-0.5 font-mono break-all text-fg-secondary"
+												data-testid="task-{task.id}-command"
+											>
+												{JSON.stringify(def.command)}
+											</dd>
+										</div>
+									{/if}
+									{#if def && Object.keys(def.env).length > 0}
+										<div class="sm:col-span-2">
+											<dt class="text-fg-muted uppercase">Environment</dt>
+											<!--
+												Env is shown as NAME=VALUE. It is
+												workload-supplied, non-secret configuration by
+												construction: the platform puts nothing here
+												(Task.env's own contract), and anything that
+												must not be read travels as a `secrets:` entry,
+												whose value is resolved on the Orker and never
+												reaches the engine at all.
+											-->
+											<dd
+												class="mt-0.5 font-mono break-all text-fg-secondary"
+												data-testid="task-{task.id}-env"
+											>
+												{Object.entries(def.env)
+													.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+													.map(([k, v]) => `${k}=${v}`)
+													.join('  ')}
+											</dd>
+										</div>
+									{/if}
+									{#if def && def.secrets.length > 0}
+										<div>
+											<dt class="text-fg-muted uppercase">Secrets</dt>
+											<dd
+												class="mt-0.5 font-mono text-fg-secondary"
+												title="names only — a secret's value is resolved on the Orker and never reaches this page"
+												data-testid="task-{task.id}-secrets"
+											>
+												{def.secrets.map((s) => s.name).join(', ')}
+											</dd>
+										</div>
+									{/if}
+									<div>
+										<dt class="text-fg-muted uppercase">Exit code</dt>
+										<dd
+											class="mt-0.5 font-mono {task.exitCode === undefined
+												? 'text-fg-muted'
+												: task.exitCode === 0
+													? 'text-fg-secondary'
+													: 'text-failed-fg'}"
+											data-state={task.exitCode === undefined ? 'unknown' : 'measured'}
+											data-testid="task-{task.id}-exit-code"
+										>
+											{task.exitCode === undefined ? 'Not measured' : task.exitCode}
+										</dd>
+									</div>
+									{#if task.commit?.uri}
+										<div class="sm:col-span-2">
+											<dt class="text-fg-muted uppercase">Commit</dt>
+											<dd
+												class="mt-0.5 font-mono break-all text-fg-muted"
+												data-testid="task-{task.id}-commit"
+											>
+												{task.commit.uri}
+											</dd>
+										</div>
+									{/if}
+								</dl>
+							{/if}
+						</div>
+					{/each}
+				</div>
+
+				<section>
+					<div class="mb-3 flex flex-wrap items-center gap-3">
+						<a
+							href={inspectHref(true, !eventsOpen)}
+							data-testid="events-toggle"
+							data-sveltekit-noscroll
+							aria-expanded={eventsOpen}
+							class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+						>
+							<span class="text-fg-muted">{eventsOpen ? '▾' : '▸'}</span>
+							{eventsOpen ? 'Hide events' : 'Show events'}
+						</a>
+						{#if !eventsOpen}
+							<span class="text-xs text-fg-muted" data-testid="events-teaser">
+								{buffer.total}
+								{buffer.total === 1 ? 'event' : 'events'} received on this page
+							</span>
+						{/if}
+					</div>
+
+					{#if eventsOpen}
+						<EventInspector
+							events={buffer.events}
+							dropped={buffer.dropped}
+							total={buffer.total}
+							{streamBroken}
+							runId={run.id}
+							cap={EVENT_BUFFER_CAP}
+						/>
+					{/if}
+				</section>
+			</section>
+		{/if}
 	</div>
 {/if}

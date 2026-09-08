@@ -242,6 +242,55 @@ async function paneLines(
 		);
 }
 
+test('Inspect keeps details separate and preserves navigation and logs', async ({ page }) => {
+	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
+	const run = submitted.run.id;
+	const sockets: string[] = [];
+	page.on('websocket', (ws) => sockets.push(ws.url()));
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 120_000 });
+	await expect(page.getByTestId('task-boom-error')).toBeVisible();
+	await expect(page.getByTestId('run-inspector')).toHaveCount(0);
+	await expect(page.getByTestId('task-ok-image')).toHaveCount(0);
+	await expect(page.getByTestId('task-ok-exit-code')).toHaveCount(0);
+	await expect(page.getByTestId('run-status-trail')).toHaveCount(0);
+	await shot(page, 'screenshot-run-overview.png');
+	await page.getByTestId('task-log-toggle-boom').click();
+	await expect(page.getByTestId('task-log-state-boom')).toHaveText('ENDED');
+	const socketCount = sockets.length;
+	await page.getByRole('link', { name: 'Inspect', exact: true }).click();
+	await expect(page).toHaveURL(/ns=default&inspect=1/);
+	await expect(page.getByRole('region', { name: 'Inspect', exact: true })).toBeVisible();
+	await expect(page.getByTestId('task-ok-image')).toContainText('@sha256:');
+	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
+	await expect(page.getByTestId('task-ok-commit')).toContainText('commit.json');
+	await expect(page.getByTestId('task-log-boom')).toBeVisible();
+	await shot(page, 'screenshot-run-inspect.png');
+	await page.goBack();
+	await expect(page.getByTestId('run-inspector')).toHaveCount(0);
+	await expect(page.getByTestId('task-log-boom')).toBeVisible();
+	await page.goForward();
+	await expect(page.getByTestId('run-inspector')).toBeVisible();
+	expect(sockets).toHaveLength(socketCount);
+	await page.reload();
+	await expect(page.getByTestId('run-inspector')).toBeVisible();
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
+	await page.getByTestId('events-toggle').click();
+	await expect(page.getByTestId('event-inspector')).toBeVisible();
+	await page.getByRole('link', { name: 'Close inspect', exact: true }).click();
+	await expect(page).not.toHaveURL(/inspect=1|events=1/);
+	await expect(page.getByTestId('run-inspector')).toHaveCount(0);
+	await expect(page.getByTestId('task-boom-error')).toBeVisible();
+	await page.setViewportSize({ width: 390, height: 844 });
+	await shot(page, 'screenshot-run-overview-mobile.png');
+	await page.getByRole('link', { name: 'Inspect', exact: true }).click();
+	await expect(page.getByTestId('task-ok-image')).toBeVisible();
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	await shot(page, 'screenshot-run-inspect-mobile.png');
+	note('overview hides image/exit/commit/history; Inspect reveals pinned details; back/forward preserve logs and sockets; reload, close and mobile layout verified');
+});
+
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	writeFileSync(
@@ -369,8 +418,8 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
 	await expect(page.getByTestId('event-log')).toHaveCount(0);
 	await expect(page.getByTestId('event-entry')).toHaveCount(0);
-	await expect(page.getByTestId('events-toggle')).toBeVisible();
-	note('the run page loaded with no event list in the DOM and an "Inspect events" control');
+	await expect(page.getByTestId('inspect-toggle')).toBeVisible();
+	note('the run page loaded with no event list in the DOM and an "Inspect" control');
 	await shot(page, 'screenshot-run-page-loaded.png');
 
 	// SCOPED: a pane per task, opened one at a time, holding one task's output
@@ -593,6 +642,7 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-id')).toHaveText(run);
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
+	await page.getByTestId('inspect-toggle').click();
 	// A generated proto3 int32 reads as 0 even before an attempt finishes. The
 	// page must not draw that absence as a successful measurement.
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('Not measured');
@@ -739,7 +789,7 @@ test('a task watched live acquires its real exit code and Error.category without
 }) => {
 	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
 	const run = submitted.run.id;
-	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&inspect=1`);
 	await expect(page.getByTestId('run-status')).toHaveText(/PENDING|RUNNING/);
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('Not measured');
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'unknown');
