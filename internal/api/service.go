@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -95,6 +97,10 @@ type Config struct {
 	// FailedPrecondition rather than an empty stream: an operator who never
 	// configured a store must be told, not shown a quiet task.
 	Logs artifacts.LogStore
+	// ArtifactStore holds committed activity outputs, values and retained
+	// stdout/stderr. It is deliberately separate from Logs because log chunks
+	// have their own attempt index and streaming read contract.
+	ArtifactStore artifacts.Store
 
 	// LogPoll tunes how often a log follower re-lists the store. The zero
 	// value is the documented default.
@@ -251,12 +257,13 @@ type Service struct {
 	archive  RunArchive
 	// logs is the durable task-log store, read by StreamTaskLogs. It is the
 	// same bucket the Orker wrote into and belongs to no process.
-	logs        artifacts.LogStore
-	logPoll     LogPollOptions
-	idempotency IdempotencyClaimer
-	webhooks    *webhooks.Registry
-	notifier    engine.RunNotifier
-	observer    engine.EventObserver
+	logs          artifacts.LogStore
+	artifactStore artifacts.Store
+	logPoll       LogPollOptions
+	idempotency   IdempotencyClaimer
+	webhooks      *webhooks.Registry
+	notifier      engine.RunNotifier
+	observer      engine.EventObserver
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system SystemInfo
@@ -297,6 +304,7 @@ func NewService(cfg Config) *Service {
 		router:            cfg.Router,
 		archive:           cfg.Archive,
 		logs:              cfg.Logs,
+		artifactStore:     cfg.ArtifactStore,
 		logPoll:           cfg.LogPoll,
 		idempotency:       cfg.Idempotency,
 		webhooks:          cfg.Webhooks,
@@ -430,78 +438,10 @@ func (s *Service) ApplyOrkflow(
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
 ) (*connect.Response[orkstackv1.ApplyOrkflowResponse], error) {
 	source := []byte(req.Msg.GetYaml())
-	wf, err := dsl.CompileWithOptions(source, dsl.Options{Catalog: s.activityCatalog()})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	// Whether the AUTHOR pinned a version has to be read from the document,
-	// because Compile fills Version either way (§4.4(b)).
-	pinsVersion, err := dsl.DocumentPinsVersion(source)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	selected, err := applyNamespace(req.Msg.GetNamespace(), wf.GetNamespace())
+	wf, ns, err := s.prepareOrkflow(ctx, source, req.Msg.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
-	// Gate one of two on allowed_pools: the authoring gate, with the file in
-	// hand, so an author is told now rather than at the first submit. It is
-	// deliberately not the only gate — SubmitRun enforces the same rule again
-	// (submitPlan), because a client can submit a definition applied when the
-	// allow-list was wider, and because nothing forces a client through
-	// apply at all.
-	//
-	// Not in the DSL compiler either: the compiler has no namespace registry
-	// to consult, and it is one `curl` away from being skipped.
-	ns, err := s.namespace(ctx, selected)
-	if err != nil {
-		return nil, err
-	}
-	// The resolver, not a free function: the allow-list is checked in the
-	// vocabulary this deployment dispatches in (PoolResolver.CheckAllowedPools),
-	// which is a property of the process's own routing.
-	if err := s.pools.CheckAllowedPools(ns, wf); err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	// The stored document names the namespace it lives in, whichever of the
-	// two said so, so a reader needs no key to know where it came from.
-	wf.Namespace = ns.GetName()
-
-	// §4.3: resolution runs HERE — after Compile, before Put. Not in the
-	// compiler, which stays pure so `orkctl orkflow validate` needs no
-	// registry; and not in workflow code, which may perform no IO at all.
-	//
-	// It runs after the namespace and allow-list checks on purpose: a
-	// document that this namespace may not dispatch is refused without
-	// touching a registry, so a misrouted apply costs no network round trip
-	// and leaks no repository name to a registry it was never meant for.
-	if err := s.resolveImages(ctx, wf); err != nil {
-		return nil, applyResolveError(err)
-	}
-	// §4.4(b): the derived version is assigned AFTER resolution and covers
-	// it. Deriving before resolution — which is what Compile did — mints the
-	// SAME version for a DIFFERENT definition when a tag moves, and the store
-	// then refuses the apply as an attempt to rewrite an immutable version.
-	// The author would get a refusal instead of a new version.
-	//
-	// A document that pins its own `version:` keeps it. A moved tag under a
-	// pinned version is an ALREADY_EXISTS conflict from the store, which is
-	// correct and intended: an immutable version cannot mean two definitions.
-	if !pinsVersion {
-		derived, err := dsl.DerivedVersion(source, wf)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-		wf.Version = derived
-	}
-	// The definition digest is stamped LAST, because canonicalOrkflow hashes
-	// `version` and the version was only just decided. It is not part of the
-	// canonical form itself, so stamping it does not invalidate it.
-	digest, err := dsl.DefinitionDigest(wf)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	wf.DefinitionDigest = digest
 	expected, err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
 		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion())
 	if err != nil {
@@ -537,6 +477,78 @@ func (s *Service) ApplyOrkflow(
 		Orkflow: stored,
 		Created: created,
 	}), nil
+}
+
+// ValidateOrkflow performs exactly ApplyOrkflow's preparation without reading
+// edit tokens or writing a definition. A document error is a returned issue;
+// unavailable registries and namespace stores remain RPC failures.
+func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orkstackv1.ValidateOrkflowRequest]) (*connect.Response[orkstackv1.ValidateOrkflowResponse], error) {
+	wf, _, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
+	if err == nil {
+		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{Orkflow: wf}), nil
+	}
+	if connect.CodeOf(err) == connect.CodeInvalidArgument {
+		field := ""
+		var validation *dsl.ValidationError
+		if errors.As(err, &validation) {
+			field = validation.Field
+		}
+		var requestField *validationFieldError
+		if errors.As(err, &requestField) {
+			field = requestField.Field
+		}
+		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{Issues: []*orkstackv1.ValidationIssue{{Field: field, Message: err.Error(), Severity: orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR}}}), nil
+	}
+	return nil, err
+}
+
+type validationFieldError struct {
+	Field string
+	Err   error
+}
+
+func (e *validationFieldError) Error() string { return e.Err.Error() }
+func (e *validationFieldError) Unwrap() error { return e.Err }
+
+// prepareOrkflow is the common apply/validate pipeline. Keep all mutation
+// after this function so validation cannot create a pointer or a definition.
+func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNamespace string) (*orkstackv1.Orkflow, *orkstackv1.Namespace, error) {
+	wf, err := dsl.CompileWithOptions(source, dsl.Options{Catalog: s.activityCatalog()})
+	if err != nil {
+		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	pinsVersion, err := dsl.DocumentPinsVersion(source)
+	if err != nil {
+		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	selected, err := applyNamespace(requestedNamespace, wf.GetNamespace())
+	if err != nil {
+		return nil, nil, err
+	}
+	ns, err := s.namespace(ctx, selected)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.pools.CheckAllowedPools(ns, wf); err != nil {
+		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	wf.Namespace = ns.GetName()
+	if err := s.resolveImages(ctx, wf); err != nil {
+		return nil, nil, applyResolveError(err)
+	}
+	if !pinsVersion {
+		derived, err := dsl.DerivedVersion(source, wf)
+		if err != nil {
+			return nil, nil, connect.NewError(connect.CodeInternal, err)
+		}
+		wf.Version = derived
+	}
+	digest, err := dsl.DefinitionDigest(wf)
+	if err != nil {
+		return nil, nil, connect.NewError(connect.CodeInternal, err)
+	}
+	wf.DefinitionDigest = digest
+	return wf, ns, nil
 }
 
 // checkEditTokens reads the two things an edit says about itself — which
@@ -668,10 +680,10 @@ func applyNamespace(selector, document string) (string, error) {
 	if document == "" || artifacts.ResolveNamespace(document) == artifacts.ResolveNamespace(selector) {
 		return selector, nil
 	}
-	return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+	return "", connect.NewError(connect.CodeInvalidArgument, &validationFieldError{Field: "namespace", Err: fmt.Errorf(
 		"the document names namespace %q but it was applied into %q; "+
 			"remove one of the two so there is a single answer",
-		document, selector))
+		document, selector)})
 }
 
 // GetOrkflow reads a stored orkflow from one namespace; an empty version means
@@ -712,10 +724,63 @@ func (s *Service) ListOrkflows(
 	if err != nil {
 		return nil, orkflowStoreError(err, "list orkflows in namespace %q", ns.GetName())
 	}
-	if size := int(req.Msg.GetPageSize()); size > 0 && size < len(orkflows) {
-		orkflows = orkflows[:size]
+	size := int(req.Msg.GetPageSize())
+	if size < 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size cannot be negative"))
 	}
-	return connect.NewResponse(&orkstackv1.ListOrkflowsResponse{Orkflows: orkflows}), nil
+	if size == 0 {
+		size = engine.DefaultRunPageSize
+	}
+	if token := req.Msg.GetPageToken(); token != "" {
+		cursor, err := decodeOrkflowCursor(token, ns.GetName())
+		if err != nil {
+			return nil, err
+		}
+		filtered := orkflows[:0]
+		for _, wf := range orkflows {
+			if wf.GetName() > cursor {
+				filtered = append(filtered, wf)
+			}
+		}
+		orkflows = filtered
+	}
+	response := &orkstackv1.ListOrkflowsResponse{}
+	if len(orkflows) > size {
+		response.Orkflows = orkflows[:size]
+		token, err := encodeOrkflowCursor(ns.GetName(), response.Orkflows[len(response.Orkflows)-1].GetName())
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		response.NextPageToken = token
+	} else {
+		response.Orkflows = orkflows
+	}
+	return connect.NewResponse(response), nil
+}
+
+type orkflowCursor struct {
+	Version   int    `json:"v"`
+	Namespace string `json:"n"`
+	Name      string `json:"name"`
+}
+
+func encodeOrkflowCursor(namespace, name string) (string, error) {
+	raw, err := json.Marshal(orkflowCursor{Version: 1, Namespace: namespace, Name: name})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+func decodeOrkflowCursor(token, namespace string) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	var c orkflowCursor
+	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Namespace != namespace || c.Name == "" {
+		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_token does not match this namespace"))
+	}
+	return c.Name, nil
 }
 
 // orkflowStoreError maps a store failure onto a Connect code. A missing
@@ -1361,6 +1426,16 @@ func (s *Service) ListRuns(
 	req *connect.Request[orkstackv1.ListRunsRequest],
 ) (*connect.Response[orkstackv1.ListRunsResponse], error) {
 	size := int(req.Msg.GetPageSize())
+	if size < 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size cannot be negative"))
+	}
+	if size == 0 {
+		size = engine.DefaultRunPageSize
+	}
+	since, until, err := listRunBounds(req.Msg.GetCreatedAfter(), req.Msg.GetCreatedBefore())
+	if err != nil {
+		return nil, err
+	}
 	var (
 		runs       []*orkstackv1.Run
 		fromMemory bool
@@ -1371,16 +1446,27 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
+	cursor, err := decodeRunCursor(req.Msg.GetPageToken(), ns.GetName(), req.Msg.GetOrkflowName(), req.Msg.GetStatus(), since, until)
+	if err != nil {
+		return nil, err
+	}
 	binding, err := s.binding(ns.GetName())
 	if err != nil {
 		return nil, err
 	}
 	if binding.Reader != nil {
+		beforeCreated, beforeID := time.Time{}, ""
+		if cursor != nil {
+			beforeCreated, beforeID = parseCursorTime(cursor.LastCreated), cursor.LastID
+		}
 		listed, err := binding.Reader.ListRuns(ctx, engine.RunQuery{
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
-			Limit:       size,
+			// Visibility does not promise ID ordering inside equal timestamps.
+			// Complete collects its bounded metadata scan before applying Limit,
+			// so a later higher-ID tie cannot disappear behind this cursor.
+			Since: since, Until: until, BeforeCreated: beforeCreated, BeforeID: beforeID, Limit: size + 1, Complete: true,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable,
@@ -1393,14 +1479,22 @@ func (s *Service) ListRuns(
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
 		})
+		runs = filterRunTimes(runs, since, until)
+		if cursor != nil {
+			runs = afterRunCursor(runs, cursor.LastCreated, cursor.LastID)
+		}
 		fromMemory = true
 	}
 	if s.archive != nil {
+		beforeCreated, beforeID := time.Time{}, ""
+		if cursor != nil {
+			beforeCreated, beforeID = parseCursorTime(cursor.LastCreated), cursor.LastID
+		}
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
-			Limit:       size,
+			Since:       since, Until: until, BeforeCreated: beforeCreated, BeforeID: beforeID, Limit: size + 1,
 		})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal,
@@ -1414,10 +1508,106 @@ func (s *Service) ListRuns(
 			runs = mergeRuns(archived, runs)
 		}
 	}
-	if size > 0 && size < len(runs) {
-		runs = runs[:size]
+	response := &orkstackv1.ListRunsResponse{}
+	if len(runs) > size {
+		page := runs[:size]
+		last := page[len(page)-1]
+		token, err := encodeRunCursor(runCursor{Version: 1, Namespace: ns.GetName(), Orkflow: req.Msg.GetOrkflowName(), Status: int32(req.Msg.GetStatus()), Since: timeString(since), Until: timeString(until), LastCreated: engine.RunIndexTime(last).UTC().Format(time.RFC3339Nano), LastID: last.GetId()})
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode run page token: %w", err))
+		}
+		response.Runs, response.NextPageToken = page, token
+	} else {
+		response.Runs = runs
 	}
-	return connect.NewResponse(&orkstackv1.ListRunsResponse{Runs: runs}), nil
+	return connect.NewResponse(response), nil
+}
+
+type runCursor struct {
+	Version     int    `json:"v"`
+	Namespace   string `json:"n"`
+	Orkflow     string `json:"o"`
+	Status      int32  `json:"s"`
+	Since       string `json:"a,omitempty"`
+	Until       string `json:"b,omitempty"`
+	LastCreated string `json:"c"`
+	LastID      string `json:"i"`
+}
+
+func timeString(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+func listRunBounds(after, before *timestamppb.Timestamp) (time.Time, time.Time, error) {
+	var a, b time.Time
+	if after != nil {
+		if !after.IsValid() {
+			return a, b, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("created_after is invalid"))
+		}
+		a = after.AsTime()
+	}
+	if before != nil {
+		if !before.IsValid() {
+			return a, b, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("created_before is invalid"))
+		}
+		b = before.AsTime()
+	}
+	if !a.IsZero() && !b.IsZero() && !a.Before(b) {
+		return a, b, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("created_after must be before created_before"))
+	}
+	return a, b, nil
+}
+func encodeRunCursor(c runCursor) (string, error) {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status, since, until time.Time) (*runCursor, error) {
+	if token == "" {
+		return nil, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	var c runCursor
+	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Namespace != namespace || c.Orkflow != orkflow || c.Status != int32(status) || c.Since != timeString(since) || c.Until != timeString(until) || c.LastCreated == "" || c.LastID == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_token does not match these run filters"))
+	}
+	if _, err := time.Parse(time.RFC3339Nano, c.LastCreated); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
+	}
+	return &c, nil
+}
+func afterRunCursor(runs []*orkstackv1.Run, created, id string) []*orkstackv1.Run {
+	at, _ := time.Parse(time.RFC3339Nano, created)
+	out := runs[:0]
+	for _, run := range runs {
+		t := engine.RunIndexTime(run)
+		if t.Before(at) || (t.Equal(at) && run.GetId() < id) {
+			out = append(out, run)
+		}
+	}
+	return out
+}
+func parseCursorTime(value string) time.Time {
+	parsed, _ := time.Parse(time.RFC3339Nano, value)
+	return parsed
+}
+func filterRunTimes(runs []*orkstackv1.Run, since, until time.Time) []*orkstackv1.Run {
+	out := runs[:0]
+	for _, run := range runs {
+		t := engine.RunIndexTime(run)
+		if (!since.IsZero() && t.Before(since)) || (!until.IsZero() && !t.Before(until)) {
+			continue
+		}
+		out = append(out, run)
+	}
+	return out
 }
 
 // mergeRuns folds two sources of runs into one page, newest first. preferred

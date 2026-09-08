@@ -64,11 +64,20 @@ func NewWebhookHandler(registry *webhooks.Registry) http.Handler {
 	mux.HandleFunc("POST "+WebhookCollectionPath, func(w http.ResponseWriter, r *http.Request) {
 		registerWebhook(w, r, registry)
 	})
-	mux.HandleFunc("GET "+WebhookCollectionPath, func(w http.ResponseWriter, _ *http.Request) {
-		writeWebhookJSON(w, http.StatusOK, webhookListEnvelope{Webhooks: registry.List()})
+	mux.HandleFunc("GET "+WebhookCollectionPath, func(w http.ResponseWriter, r *http.Request) {
+		hooks, err := registry.ListContext(r.Context())
+		if err != nil {
+			writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
+			return
+		}
+		writeWebhookJSON(w, http.StatusOK, webhookListEnvelope{Webhooks: hooks})
 	})
 	mux.HandleFunc("GET "+WebhookItemPath, func(w http.ResponseWriter, r *http.Request) {
-		hook, ok := registry.Get(r.PathValue("id"))
+		hook, ok, err := registry.GetContext(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
+			return
+		}
 		if !ok {
 			writeWebhookError(w, http.StatusNotFound, "not_found",
 				fmt.Sprintf("webhook %q not found", r.PathValue("id")))
@@ -77,7 +86,12 @@ func NewWebhookHandler(registry *webhooks.Registry) http.Handler {
 		writeWebhookJSON(w, http.StatusOK, webhookEnvelope{Webhook: hook})
 	})
 	mux.HandleFunc("DELETE "+WebhookItemPath, func(w http.ResponseWriter, r *http.Request) {
-		if !registry.Delete(r.PathValue("id")) {
+		ok, err := registry.DeleteContext(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
+			return
+		}
+		if !ok {
 			writeWebhookError(w, http.StatusNotFound, "not_found",
 				fmt.Sprintf("webhook %q not found", r.PathValue("id")))
 			return
@@ -105,13 +119,17 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 		}
 		events = append(events, event)
 	}
-	hook, err := registry.Register(webhooks.Registration{
+	if _, err := webhooks.ValidateURL(body.URL); err != nil {
+		writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
+		return
+	}
+	hook, err := registry.RegisterContext(r.Context(), webhooks.Registration{
 		URL:    body.URL,
 		Events: events,
 		Secret: body.Secret,
 	})
 	if err != nil {
-		writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
+		writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
 		return
 	}
 	writeWebhookJSON(w, http.StatusCreated, webhookEnvelope{Webhook: hook})

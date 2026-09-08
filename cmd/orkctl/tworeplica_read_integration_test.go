@@ -144,6 +144,40 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 			len(finished.GetTaskRuns()))
 	}
 
+	// The completion references are shared object-store records too. B did not
+	// start this run, yet it must list and stream the committed values without
+	// accepting an object URI from the client.
+	listedArtifacts, err := replicaB.runs.ListRunArtifacts(ctx, connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{RunId: runID, TaskId: "after"}))
+	if err != nil {
+		t.Fatalf("ListRunArtifacts on replica B: %v", err)
+	}
+	var values *orkstackv1.RunArtifact
+	for _, artifact := range listedArtifacts.Msg.GetArtifacts() {
+		if artifact.GetKind() == orkstackv1.ArtifactKind_ARTIFACT_KIND_VALUES {
+			values = artifact
+			break
+		}
+	}
+	if values == nil {
+		t.Fatalf("replica B did not list values.json for completed task: %#v", listedArtifacts.Msg.GetArtifacts())
+	}
+	artifactStream, err := replicaB.runs.ReadArtifact(ctx, connect.NewRequest(&orkstackv1.ReadArtifactRequest{RunId: runID, TaskId: values.GetTaskId(), Kind: values.GetKind(), Name: values.GetArtifact().GetName()}))
+	if err != nil {
+		t.Fatalf("ReadArtifact on replica B: %v", err)
+	}
+	var bytesRead int
+	complete := false
+	for artifactStream.Receive() {
+		bytesRead += len(artifactStream.Msg().GetData())
+		complete = complete || artifactStream.Msg().GetLast()
+	}
+	if err := artifactStream.Err(); err != nil {
+		t.Fatalf("ReadArtifact stream on replica B: %v", err)
+	}
+	if !complete || bytesRead == 0 {
+		t.Fatalf("replica B artifact stream complete=%v bytes=%d, want a verified values artifact", complete, bytesRead)
+	}
+
 	// ---- the two replicas agree, field for field ---------------------------
 	// This is the scheduling-independent half of the falsification. A run's
 	// projection activities are executed exactly once each, by whichever

@@ -151,8 +151,10 @@ type ArchiveQuery struct {
 	Status      orkstackv1.Status
 	// Since is the inclusive lower bound, Until the exclusive upper bound, on
 	// the run's creation time.
-	Since time.Time
-	Until time.Time
+	Since         time.Time
+	Until         time.Time
+	BeforeCreated time.Time
+	BeforeID      string
 	// Limit caps the runs returned, newest first. 0 means DefaultArchivePageSize
 	// unless Exhaustive is set, in which case zero means every matching entry.
 	Limit      int
@@ -268,12 +270,14 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		limit = DefaultArchivePageSize
 	}
 	entries, err := a.archive.ListRuns(ctx, artifacts.RunQuery{
-		Namespace: q.Namespace,
-		Orkflow:   q.OrkflowName,
-		Status:    archiveStatus(q.Status),
-		Since:     q.Since,
-		Until:     q.Until,
-		Limit:     limit,
+		Namespace:   q.Namespace,
+		Orkflow:     q.OrkflowName,
+		Status:      archiveStatus(q.Status),
+		Since:       q.Since,
+		Until:       q.Until,
+		BeforeTime:  q.BeforeCreated,
+		BeforeRunID: q.BeforeID,
+		Limit:       limit,
 	})
 	if err != nil {
 		return nil, err
@@ -325,12 +329,21 @@ func archiveStatus(status orkstackv1.Status) string {
 // created, so a date range means "runs submitted in this window". It never
 // reads the clock — a retried archive write must address the same index key as
 // the first attempt, and list ordering must not drift between calls.
+//
+// Truncated to microseconds because the SAME run reports two different
+// precisions depending on which source answers: freshly submitted, its
+// CreatedAt carries the full nanosecond value ork stamped at SubmitRun; once
+// archived, the value has round-tripped through Temporal's own persistence,
+// which keeps only microseconds. Without normalizing, a run that transitions
+// from "live only" to "also archived" between two page fetches compares as
+// strictly earlier than the cursor built from its own live-precision
+// timestamp, and reappears as a duplicate on the next page.
 func RunIndexTime(run *orkstackv1.Run) time.Time {
 	for _, ts := range []*timestamppb.Timestamp{
 		run.GetCreatedAt(), run.GetStartedAt(), run.GetFinishedAt(),
 	} {
 		if ts != nil {
-			return ts.AsTime()
+			return ts.AsTime().Truncate(time.Microsecond)
 		}
 	}
 	return time.Time{}

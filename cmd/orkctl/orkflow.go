@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -22,6 +23,7 @@ func newOrkflowCommand(g *globalFlags) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newOrkflowListCommand(g),
+		newOrkflowValidateCommand(g),
 		newOrkflowGetCommand(g),
 		newOrkflowVersionsCommand(g),
 		newOrkflowPromoteCommand(g),
@@ -30,6 +32,36 @@ func newOrkflowCommand(g *globalFlags) *cobra.Command {
 		newOrkflowDeleteCommand(g),
 	)
 	return cmd
+}
+
+func newOrkflowValidateCommand(g *globalFlags) *cobra.Command {
+	return &cobra.Command{Use: "validate <file.ork.yaml>", Short: "Validate an orkflow without storing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		source, err := os.ReadFile(args[0])
+		if err != nil {
+			return fmt.Errorf("read orkflow file: %w", err)
+		}
+		ctx, cancel := g.unaryContext(cmd)
+		defer cancel()
+		response, err := g.orkflowClient().ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: string(source), Namespace: g.namespace}))
+		if err != nil {
+			return rpcError("validate orkflow", err)
+		}
+		if g.json {
+			return writeJSON(cmd.OutOrStdout(), response.Msg)
+		}
+		if len(response.Msg.GetIssues()) == 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "Valid orkflow %s (version %s)\n", response.Msg.GetOrkflow().GetName(), response.Msg.GetOrkflow().GetVersion())
+			return nil
+		}
+		for _, issue := range response.Msg.GetIssues() {
+			if issue.GetField() != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", issue.GetField(), issue.GetMessage())
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), issue.GetMessage())
+			}
+		}
+		return fmt.Errorf("orkflow validation failed")
+	}}
 }
 
 func newOrkflowListCommand(g *globalFlags) *cobra.Command {

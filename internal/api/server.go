@@ -65,6 +65,9 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 		NewStatsHandler(svc, statsTTL), handlerOptions...)
 	mux.Handle(statsPath, statsHandler)
 
+	webhookPath, webhookHandler := orkstackv1connect.NewWebhookServiceHandler(svc, handlerOptions...)
+	mux.Handle(webhookPath, webhookHandler)
+
 	mux.Handle(WebhookCollectionPath, NewWebhookHandler(svc.Webhooks()))
 	mux.Handle(WebhookItemPath, NewWebhookHandler(svc.Webhooks()))
 

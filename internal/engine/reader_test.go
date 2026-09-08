@@ -701,6 +701,23 @@ func TestTemporalRunReader_ExhaustiveListStillHonoursLimit(t *testing.T) {
 	}
 }
 
+func TestTemporalRunReader_CompletePageSortsEqualTimestampIDsAcrossVisibilityPages(t *testing.T) {
+	// Temporal's visibility page order is intentionally reversed here. The API
+	// contract is created_at descending then ID descending, so stopping after
+	// the first two rows would permanently skip ork-c behind the page boundary.
+	pages := [][]*workflowpb.WorkflowExecutionInfo{
+		{visibilityRecord(t, "ork-a", "hello-ork", "1.0.0", enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, readerEpoch), visibilityRecord(t, "ork-b", "hello-ork", "1.0.0", enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, readerEpoch)},
+		{visibilityRecord(t, "ork-c", "hello-ork", "1.0.0", enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, readerEpoch)},
+	}
+	got, err := newRunReader(&pagedReadClient{pages: pages}, converter.GetDefaultDataConverter()).ListRuns(context.Background(), RunQuery{Limit: 2, Complete: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].GetId() != "ork-c" || got[1].GetId() != "ork-b" {
+		t.Fatalf("complete page = %v, want [ork-c ork-b]", got)
+	}
+}
+
 // pagedReadClient serves one visibility page per call, so a walk that stops at
 // the first page is observable.
 type pagedReadClient struct {
@@ -818,6 +835,17 @@ func TestTemporalRunReader_OrdinaryListStaysOnTheBoundedBudget(t *testing.T) {
 	if client.calls != maxRunListPages {
 		t.Fatalf("ordinary ListRuns read %d pages, want the bounded %d; a wire request "+
 			"must not reach the %d-page scan budget", client.calls, maxRunListPages, maxRunScanPages)
+	}
+}
+
+func TestTemporalRunReader_CompletePageFailsWhenContinuationCannotBeDetermined(t *testing.T) {
+	client := &endlessReadClient{page: []*workflowpb.WorkflowExecutionInfo{visibilityRecord(t, "ork-a", "hello-ork", "1.0.0", enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, readerEpoch)}}
+	_, err := newRunReader(client, converter.GetDefaultDataConverter()).ListRuns(context.Background(), RunQuery{Limit: 1, Complete: true})
+	if err == nil || !strings.Contains(err.Error(), "could not determine whether history continues") {
+		t.Fatalf("complete page error = %v", err)
+	}
+	if client.calls != maxRunScanPages {
+		t.Fatalf("complete page scanned %d pages, want %d", client.calls, maxRunScanPages)
 	}
 }
 

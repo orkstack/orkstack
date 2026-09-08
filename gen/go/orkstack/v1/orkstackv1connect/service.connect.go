@@ -25,6 +25,8 @@ const (
 	OrkflowServiceName = "orkstack.v1.OrkflowService"
 	// RunServiceName is the fully-qualified name of the RunService service.
 	RunServiceName = "orkstack.v1.RunService"
+	// WebhookServiceName is the fully-qualified name of the WebhookService service.
+	WebhookServiceName = "orkstack.v1.WebhookService"
 	// NamespaceServiceName is the fully-qualified name of the NamespaceService service.
 	NamespaceServiceName = "orkstack.v1.NamespaceService"
 	// ActivityServiceName is the fully-qualified name of the ActivityService service.
@@ -41,6 +43,9 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// OrkflowServiceValidateOrkflowProcedure is the fully-qualified name of the OrkflowService's
+	// ValidateOrkflow RPC.
+	OrkflowServiceValidateOrkflowProcedure = "/orkstack.v1.OrkflowService/ValidateOrkflow"
 	// OrkflowServiceApplyOrkflowProcedure is the fully-qualified name of the OrkflowService's
 	// ApplyOrkflow RPC.
 	OrkflowServiceApplyOrkflowProcedure = "/orkstack.v1.OrkflowService/ApplyOrkflow"
@@ -75,6 +80,20 @@ const (
 	// RunServiceStreamTaskLogsProcedure is the fully-qualified name of the RunService's StreamTaskLogs
 	// RPC.
 	RunServiceStreamTaskLogsProcedure = "/orkstack.v1.RunService/StreamTaskLogs"
+	// RunServiceListRunArtifactsProcedure is the fully-qualified name of the RunService's
+	// ListRunArtifacts RPC.
+	RunServiceListRunArtifactsProcedure = "/orkstack.v1.RunService/ListRunArtifacts"
+	// RunServiceReadArtifactProcedure is the fully-qualified name of the RunService's ReadArtifact RPC.
+	RunServiceReadArtifactProcedure = "/orkstack.v1.RunService/ReadArtifact"
+	// WebhookServiceRegisterWebhookProcedure is the fully-qualified name of the WebhookService's
+	// RegisterWebhook RPC.
+	WebhookServiceRegisterWebhookProcedure = "/orkstack.v1.WebhookService/RegisterWebhook"
+	// WebhookServiceListWebhooksProcedure is the fully-qualified name of the WebhookService's
+	// ListWebhooks RPC.
+	WebhookServiceListWebhooksProcedure = "/orkstack.v1.WebhookService/ListWebhooks"
+	// WebhookServiceDeleteWebhookProcedure is the fully-qualified name of the WebhookService's
+	// DeleteWebhook RPC.
+	WebhookServiceDeleteWebhookProcedure = "/orkstack.v1.WebhookService/DeleteWebhook"
 	// NamespaceServiceCreateNamespaceProcedure is the fully-qualified name of the NamespaceService's
 	// CreateNamespace RPC.
 	NamespaceServiceCreateNamespaceProcedure = "/orkstack.v1.NamespaceService/CreateNamespace"
@@ -115,6 +134,8 @@ const (
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
 type OrkflowServiceClient interface {
+	// ValidateOrkflow performs the same non-mutating preparation as apply.
+	ValidateOrkflow(context.Context, *connect.Request[v1.ValidateOrkflowRequest]) (*connect.Response[v1.ValidateOrkflowResponse], error)
 	// ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
 	//
 	// It never rewrites a stored version: identical YAML under an existing
@@ -171,6 +192,12 @@ func NewOrkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 	baseURL = strings.TrimRight(baseURL, "/")
 	orkflowServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("OrkflowService").Methods()
 	return &orkflowServiceClient{
+		validateOrkflow: connect.NewClient[v1.ValidateOrkflowRequest, v1.ValidateOrkflowResponse](
+			httpClient,
+			baseURL+OrkflowServiceValidateOrkflowProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("ValidateOrkflow")),
+			connect.WithClientOptions(opts...),
+		),
 		applyOrkflow: connect.NewClient[v1.ApplyOrkflowRequest, v1.ApplyOrkflowResponse](
 			httpClient,
 			baseURL+OrkflowServiceApplyOrkflowProcedure,
@@ -218,6 +245,7 @@ func NewOrkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // orkflowServiceClient implements OrkflowServiceClient.
 type orkflowServiceClient struct {
+	validateOrkflow          *connect.Client[v1.ValidateOrkflowRequest, v1.ValidateOrkflowResponse]
 	applyOrkflow             *connect.Client[v1.ApplyOrkflowRequest, v1.ApplyOrkflowResponse]
 	getOrkflow               *connect.Client[v1.GetOrkflowRequest, v1.GetOrkflowResponse]
 	listOrkflows             *connect.Client[v1.ListOrkflowsRequest, v1.ListOrkflowsResponse]
@@ -225,6 +253,11 @@ type orkflowServiceClient struct {
 	setCurrentOrkflowVersion *connect.Client[v1.SetCurrentOrkflowVersionRequest, v1.SetCurrentOrkflowVersionResponse]
 	diffOrkflowVersions      *connect.Client[v1.DiffOrkflowVersionsRequest, v1.DiffOrkflowVersionsResponse]
 	deleteOrkflow            *connect.Client[v1.DeleteOrkflowRequest, v1.DeleteOrkflowResponse]
+}
+
+// ValidateOrkflow calls orkstack.v1.OrkflowService.ValidateOrkflow.
+func (c *orkflowServiceClient) ValidateOrkflow(ctx context.Context, req *connect.Request[v1.ValidateOrkflowRequest]) (*connect.Response[v1.ValidateOrkflowResponse], error) {
+	return c.validateOrkflow.CallUnary(ctx, req)
 }
 
 // ApplyOrkflow calls orkstack.v1.OrkflowService.ApplyOrkflow.
@@ -264,6 +297,8 @@ func (c *orkflowServiceClient) DeleteOrkflow(ctx context.Context, req *connect.R
 
 // OrkflowServiceHandler is an implementation of the orkstack.v1.OrkflowService service.
 type OrkflowServiceHandler interface {
+	// ValidateOrkflow performs the same non-mutating preparation as apply.
+	ValidateOrkflow(context.Context, *connect.Request[v1.ValidateOrkflowRequest]) (*connect.Response[v1.ValidateOrkflowResponse], error)
 	// ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
 	//
 	// It never rewrites a stored version: identical YAML under an existing
@@ -316,6 +351,12 @@ type OrkflowServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	orkflowServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("OrkflowService").Methods()
+	orkflowServiceValidateOrkflowHandler := connect.NewUnaryHandler(
+		OrkflowServiceValidateOrkflowProcedure,
+		svc.ValidateOrkflow,
+		connect.WithSchema(orkflowServiceMethods.ByName("ValidateOrkflow")),
+		connect.WithHandlerOptions(opts...),
+	)
 	orkflowServiceApplyOrkflowHandler := connect.NewUnaryHandler(
 		OrkflowServiceApplyOrkflowProcedure,
 		svc.ApplyOrkflow,
@@ -360,6 +401,8 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 	)
 	return "/orkstack.v1.OrkflowService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case OrkflowServiceValidateOrkflowProcedure:
+			orkflowServiceValidateOrkflowHandler.ServeHTTP(w, r)
 		case OrkflowServiceApplyOrkflowProcedure:
 			orkflowServiceApplyOrkflowHandler.ServeHTTP(w, r)
 		case OrkflowServiceGetOrkflowProcedure:
@@ -382,6 +425,10 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 
 // UnimplementedOrkflowServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedOrkflowServiceHandler struct{}
+
+func (UnimplementedOrkflowServiceHandler) ValidateOrkflow(context.Context, *connect.Request[v1.ValidateOrkflowRequest]) (*connect.Response[v1.ValidateOrkflowResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ValidateOrkflow is not implemented"))
+}
 
 func (UnimplementedOrkflowServiceHandler) ApplyOrkflow(context.Context, *connect.Request[v1.ApplyOrkflowRequest]) (*connect.Response[v1.ApplyOrkflowResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ApplyOrkflow is not implemented"))
@@ -435,6 +482,8 @@ type RunServiceClient interface {
 	// chunks are in the shared store and the task's state comes from the shared
 	// cluster, so a replica that started nothing serves a run to completion.
 	StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest]) (*connect.ServerStreamForClient[v1.TaskLogChunk], error)
+	ListRunArtifacts(context.Context, *connect.Request[v1.ListRunArtifactsRequest]) (*connect.Response[v1.ListRunArtifactsResponse], error)
+	ReadArtifact(context.Context, *connect.Request[v1.ReadArtifactRequest]) (*connect.ServerStreamForClient[v1.ArtifactChunk], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -484,17 +533,31 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("StreamTaskLogs")),
 			connect.WithClientOptions(opts...),
 		),
+		listRunArtifacts: connect.NewClient[v1.ListRunArtifactsRequest, v1.ListRunArtifactsResponse](
+			httpClient,
+			baseURL+RunServiceListRunArtifactsProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ListRunArtifacts")),
+			connect.WithClientOptions(opts...),
+		),
+		readArtifact: connect.NewClient[v1.ReadArtifactRequest, v1.ArtifactChunk](
+			httpClient,
+			baseURL+RunServiceReadArtifactProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ReadArtifact")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // runServiceClient implements RunServiceClient.
 type runServiceClient struct {
-	submitRun      *connect.Client[v1.SubmitRunRequest, v1.SubmitRunResponse]
-	getRun         *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
-	listRuns       *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
-	cancelRun      *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
-	streamEvents   *connect.Client[v1.StreamEventsRequest, v1.Event]
-	streamTaskLogs *connect.Client[v1.StreamTaskLogsRequest, v1.TaskLogChunk]
+	submitRun        *connect.Client[v1.SubmitRunRequest, v1.SubmitRunResponse]
+	getRun           *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
+	listRuns         *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	cancelRun        *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
+	streamEvents     *connect.Client[v1.StreamEventsRequest, v1.Event]
+	streamTaskLogs   *connect.Client[v1.StreamTaskLogsRequest, v1.TaskLogChunk]
+	listRunArtifacts *connect.Client[v1.ListRunArtifactsRequest, v1.ListRunArtifactsResponse]
+	readArtifact     *connect.Client[v1.ReadArtifactRequest, v1.ArtifactChunk]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -527,6 +590,16 @@ func (c *runServiceClient) StreamTaskLogs(ctx context.Context, req *connect.Requ
 	return c.streamTaskLogs.CallServerStream(ctx, req)
 }
 
+// ListRunArtifacts calls orkstack.v1.RunService.ListRunArtifacts.
+func (c *runServiceClient) ListRunArtifacts(ctx context.Context, req *connect.Request[v1.ListRunArtifactsRequest]) (*connect.Response[v1.ListRunArtifactsResponse], error) {
+	return c.listRunArtifacts.CallUnary(ctx, req)
+}
+
+// ReadArtifact calls orkstack.v1.RunService.ReadArtifact.
+func (c *runServiceClient) ReadArtifact(ctx context.Context, req *connect.Request[v1.ReadArtifactRequest]) (*connect.ServerStreamForClient[v1.ArtifactChunk], error) {
+	return c.readArtifact.CallServerStream(ctx, req)
+}
+
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
 type RunServiceHandler interface {
 	SubmitRun(context.Context, *connect.Request[v1.SubmitRunRequest]) (*connect.Response[v1.SubmitRunResponse], error)
@@ -551,6 +624,8 @@ type RunServiceHandler interface {
 	// chunks are in the shared store and the task's state comes from the shared
 	// cluster, so a replica that started nothing serves a run to completion.
 	StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest], *connect.ServerStream[v1.TaskLogChunk]) error
+	ListRunArtifacts(context.Context, *connect.Request[v1.ListRunArtifactsRequest]) (*connect.Response[v1.ListRunArtifactsResponse], error)
+	ReadArtifact(context.Context, *connect.Request[v1.ReadArtifactRequest], *connect.ServerStream[v1.ArtifactChunk]) error
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -596,6 +671,18 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("StreamTaskLogs")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceListRunArtifactsHandler := connect.NewUnaryHandler(
+		RunServiceListRunArtifactsProcedure,
+		svc.ListRunArtifacts,
+		connect.WithSchema(runServiceMethods.ByName("ListRunArtifacts")),
+		connect.WithHandlerOptions(opts...),
+	)
+	runServiceReadArtifactHandler := connect.NewServerStreamHandler(
+		RunServiceReadArtifactProcedure,
+		svc.ReadArtifact,
+		connect.WithSchema(runServiceMethods.ByName("ReadArtifact")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -610,6 +697,10 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceStreamEventsHandler.ServeHTTP(w, r)
 		case RunServiceStreamTaskLogsProcedure:
 			runServiceStreamTaskLogsHandler.ServeHTTP(w, r)
+		case RunServiceListRunArtifactsProcedure:
+			runServiceListRunArtifactsHandler.ServeHTTP(w, r)
+		case RunServiceReadArtifactProcedure:
+			runServiceReadArtifactHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -641,6 +732,136 @@ func (UnimplementedRunServiceHandler) StreamEvents(context.Context, *connect.Req
 
 func (UnimplementedRunServiceHandler) StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest], *connect.ServerStream[v1.TaskLogChunk]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.StreamTaskLogs is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ListRunArtifacts(context.Context, *connect.Request[v1.ListRunArtifactsRequest]) (*connect.Response[v1.ListRunArtifactsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ListRunArtifacts is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ReadArtifact(context.Context, *connect.Request[v1.ReadArtifactRequest], *connect.ServerStream[v1.ArtifactChunk]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ReadArtifact is not implemented"))
+}
+
+// WebhookServiceClient is a client for the orkstack.v1.WebhookService service.
+type WebhookServiceClient interface {
+	RegisterWebhook(context.Context, *connect.Request[v1.RegisterWebhookRequest]) (*connect.Response[v1.RegisterWebhookResponse], error)
+	ListWebhooks(context.Context, *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error)
+	DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error)
+}
+
+// NewWebhookServiceClient constructs a client for the orkstack.v1.WebhookService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewWebhookServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) WebhookServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	webhookServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("WebhookService").Methods()
+	return &webhookServiceClient{
+		registerWebhook: connect.NewClient[v1.RegisterWebhookRequest, v1.RegisterWebhookResponse](
+			httpClient,
+			baseURL+WebhookServiceRegisterWebhookProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("RegisterWebhook")),
+			connect.WithClientOptions(opts...),
+		),
+		listWebhooks: connect.NewClient[v1.ListWebhooksRequest, v1.ListWebhooksResponse](
+			httpClient,
+			baseURL+WebhookServiceListWebhooksProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("ListWebhooks")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteWebhook: connect.NewClient[v1.DeleteWebhookRequest, v1.DeleteWebhookResponse](
+			httpClient,
+			baseURL+WebhookServiceDeleteWebhookProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("DeleteWebhook")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// webhookServiceClient implements WebhookServiceClient.
+type webhookServiceClient struct {
+	registerWebhook *connect.Client[v1.RegisterWebhookRequest, v1.RegisterWebhookResponse]
+	listWebhooks    *connect.Client[v1.ListWebhooksRequest, v1.ListWebhooksResponse]
+	deleteWebhook   *connect.Client[v1.DeleteWebhookRequest, v1.DeleteWebhookResponse]
+}
+
+// RegisterWebhook calls orkstack.v1.WebhookService.RegisterWebhook.
+func (c *webhookServiceClient) RegisterWebhook(ctx context.Context, req *connect.Request[v1.RegisterWebhookRequest]) (*connect.Response[v1.RegisterWebhookResponse], error) {
+	return c.registerWebhook.CallUnary(ctx, req)
+}
+
+// ListWebhooks calls orkstack.v1.WebhookService.ListWebhooks.
+func (c *webhookServiceClient) ListWebhooks(ctx context.Context, req *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error) {
+	return c.listWebhooks.CallUnary(ctx, req)
+}
+
+// DeleteWebhook calls orkstack.v1.WebhookService.DeleteWebhook.
+func (c *webhookServiceClient) DeleteWebhook(ctx context.Context, req *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error) {
+	return c.deleteWebhook.CallUnary(ctx, req)
+}
+
+// WebhookServiceHandler is an implementation of the orkstack.v1.WebhookService service.
+type WebhookServiceHandler interface {
+	RegisterWebhook(context.Context, *connect.Request[v1.RegisterWebhookRequest]) (*connect.Response[v1.RegisterWebhookResponse], error)
+	ListWebhooks(context.Context, *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error)
+	DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error)
+}
+
+// NewWebhookServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewWebhookServiceHandler(svc WebhookServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	webhookServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("WebhookService").Methods()
+	webhookServiceRegisterWebhookHandler := connect.NewUnaryHandler(
+		WebhookServiceRegisterWebhookProcedure,
+		svc.RegisterWebhook,
+		connect.WithSchema(webhookServiceMethods.ByName("RegisterWebhook")),
+		connect.WithHandlerOptions(opts...),
+	)
+	webhookServiceListWebhooksHandler := connect.NewUnaryHandler(
+		WebhookServiceListWebhooksProcedure,
+		svc.ListWebhooks,
+		connect.WithSchema(webhookServiceMethods.ByName("ListWebhooks")),
+		connect.WithHandlerOptions(opts...),
+	)
+	webhookServiceDeleteWebhookHandler := connect.NewUnaryHandler(
+		WebhookServiceDeleteWebhookProcedure,
+		svc.DeleteWebhook,
+		connect.WithSchema(webhookServiceMethods.ByName("DeleteWebhook")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/orkstack.v1.WebhookService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case WebhookServiceRegisterWebhookProcedure:
+			webhookServiceRegisterWebhookHandler.ServeHTTP(w, r)
+		case WebhookServiceListWebhooksProcedure:
+			webhookServiceListWebhooksHandler.ServeHTTP(w, r)
+		case WebhookServiceDeleteWebhookProcedure:
+			webhookServiceDeleteWebhookHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedWebhookServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedWebhookServiceHandler struct{}
+
+func (UnimplementedWebhookServiceHandler) RegisterWebhook(context.Context, *connect.Request[v1.RegisterWebhookRequest]) (*connect.Response[v1.RegisterWebhookResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.RegisterWebhook is not implemented"))
+}
+
+func (UnimplementedWebhookServiceHandler) ListWebhooks(context.Context, *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.ListWebhooks is not implemented"))
+}
+
+func (UnimplementedWebhookServiceHandler) DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.DeleteWebhook is not implemented"))
 }
 
 // NamespaceServiceClient is a client for the orkstack.v1.NamespaceService service.

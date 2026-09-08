@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +75,18 @@ type RunQuery struct {
 	Namespace   string
 	OrkflowName string
 	Status      orkstackv1.Status
+	// Since is inclusive and Until exclusive on RunIndexTime.
+	Since time.Time
+	Until time.Time
+	// BeforeCreated/BeforeID continue after a descending cursor. They are
+	// selected before Limit so a paged caller does not receive a short page
+	// merely because the source's first rows preceded its cursor.
+	BeforeCreated time.Time
+	BeforeID      string
+	// Complete orders a bounded full visibility walk before applying Limit.
+	// Temporal's visibility order is not a contract for equal creation times,
+	// so API cursor pages set this to retain every created_at/ID tie.
+	Complete bool
 	// Limit caps the runs RETURNED, newest first. 0 means DefaultRunPageSize,
 	// except under Exhaustive, where 0 means every match.
 	Limit int
@@ -397,7 +410,7 @@ func runListBudget(q RunQuery, exhaustive bool) (limit, batch, pages int) {
 		limit = DefaultRunPageSize
 	}
 	batch = limit
-	if batch <= 0 || q.Exhaustive {
+	if batch <= 0 || q.Exhaustive || q.Complete {
 		batch = DefaultRunPageSize
 	}
 	pages = maxRunListPages
@@ -449,7 +462,7 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	// The same fail-closed walk is required when the namespace could not be
 	// pushed into visibility: another tenant's traffic must not create a short
 	// answer for this one.
-	exhaustive := q.Exhaustive || (q.Namespace != "" && !scoped)
+	exhaustive := q.Exhaustive || q.Complete || (q.Namespace != "" && !scoped)
 
 	limit, batch, pages := runListBudget(q, exhaustive)
 	out := make([]*orkstackv1.Run, 0, batch)
@@ -473,13 +486,16 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 			// walk can stop even when it was asked to be exhaustive. What it
 			// must never do is stop SHORT — that is the ambiguity the error
 			// below exists to prevent.
-			if limit > 0 && len(out) >= limit {
+			if limit > 0 && len(out) >= limit && !q.Complete {
 				return out, nil
 			}
 		}
+		if q.Complete && limit > 0 && len(out) > limit {
+			out = completeRunPage(out, RunQuery{Limit: limit, Complete: true})
+		}
 		token = response.GetNextPageToken()
 		if len(token) == 0 {
-			return out, nil
+			return completeRunPage(out, q), nil
 		}
 	}
 	if q.Namespace != "" && !scoped {
@@ -490,6 +506,9 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 				"boot) and the namespace becomes a query predicate",
 			q.Namespace, task.SearchAttrOrkflowNamespace, pages)
 	}
+	if q.Complete {
+		return nil, fmt.Errorf("engine: complete run page for orkflow %q in namespace %q could not determine whether history continues after %d visibility pages", q.OrkflowName, q.Namespace, pages)
+	}
 	if exhaustive {
 		return nil, fmt.Errorf(
 			"engine: exhaustive run list for orkflow %q in namespace %q did not reach the "+
@@ -497,7 +516,24 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 				"decided from a partial answer",
 			q.OrkflowName, q.Namespace, pages)
 	}
-	return out, nil
+	return completeRunPage(out, q), nil
+}
+
+func completeRunPage(runs []*orkstackv1.Run, q RunQuery) []*orkstackv1.Run {
+	if !q.Complete {
+		return runs
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		left, right := RunIndexTime(runs[i]), RunIndexTime(runs[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		return runs[i].GetId() > runs[j].GetId()
+	})
+	if q.Limit > 0 && len(runs) > q.Limit {
+		return runs[:q.Limit]
+	}
+	return runs
 }
 
 // listQuery is the visibility query for one RunQuery, and whether the
@@ -947,6 +983,16 @@ func matchesRunQuery(run *orkstackv1.Run, q RunQuery) bool {
 		return false
 	}
 	if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != q.Status {
+		return false
+	}
+	created := RunIndexTime(run)
+	if !q.Since.IsZero() && created.Before(q.Since) {
+		return false
+	}
+	if !q.Until.IsZero() && !created.Before(q.Until) {
+		return false
+	}
+	if !q.BeforeCreated.IsZero() && !(created.Before(q.BeforeCreated) || (created.Equal(q.BeforeCreated) && run.GetId() < q.BeforeID)) {
 		return false
 	}
 	return true

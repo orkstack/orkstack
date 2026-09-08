@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -21,9 +23,23 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunListCommand(g),
 		newRunWatchCommand(g),
 		newRunLogsCommand(g),
+		newRunArtifactsCommand(g),
+		newRunArtifactCommand(g),
+		newRunAgainCommand(g),
 		newRunCancelCommand(g),
 	)
 	return cmd
+}
+
+func parseRFC3339Bound(flag, value string) (*timestamppb.Timestamp, error) {
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be RFC3339: %w", flag, err)
+	}
+	return timestamppb.New(parsed), nil
 }
 
 func newRunSubmitCommand(g *globalFlags) *cobra.Command {
@@ -33,6 +49,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 		version        string
 		idempotencyKey string
 		watch          bool
+		allowEmptyPool bool
 	)
 	cmd := &cobra.Command{
 		Use:   "submit <orkflow>",
@@ -56,6 +73,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 				Input:          payload,
 				IdempotencyKey: idempotencyKey,
 				Namespace:      g.namespace,
+				AllowEmptyPool: allowEmptyPool,
 			}))
 			if err != nil {
 				return rpcError("submit run", err)
@@ -86,6 +104,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "",
 		"dedupe key for repeated submissions, scoped to this namespace")
 	cmd.Flags().BoolVar(&watch, "watch", false, "stream events until the run reaches a terminal state")
+	cmd.Flags().BoolVar(&allowEmptyPool, "allow-empty-pool", false, "submit even when the selected pool has no live Orkers")
 	return cmd
 }
 
@@ -120,6 +139,9 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 		orkflowName  string
 		statusFilter string
 		limit        int32
+		pageToken    string
+		sinceText    string
+		untilText    string
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -127,6 +149,14 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			status, err := parseStatus(statusFilter)
+			if err != nil {
+				return err
+			}
+			since, err := parseRFC3339Bound("--since", sinceText)
+			if err != nil {
+				return err
+			}
+			until, err := parseRFC3339Bound("--until", untilText)
 			if err != nil {
 				return err
 			}
@@ -138,6 +168,7 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 				Status:      status,
 				PageSize:    limit,
 				Namespace:   g.namespace,
+				PageToken:   pageToken, CreatedAfter: since, CreatedBefore: until,
 			}))
 			if err != nil {
 				return rpcError("list runs", err)
@@ -145,13 +176,23 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			return renderRunList(cmd.OutOrStdout(), resp.Msg.GetRuns())
+			if err := renderRunList(cmd.OutOrStdout(), resp.Msg.GetRuns()); err != nil {
+				return err
+			}
+			if next := resp.Msg.GetNextPageToken(); next != "" {
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "\nNext page: orkctl -n %s run list --page-token %s\n", g.namespace, next)
+				return err
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&orkflowName, "orkflow", "", "only runs of this orkflow")
 	cmd.Flags().StringVar(&statusFilter, "status", "",
 		"only runs with this status (pending, running, succeeded, failed, canceled, skipped)")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "maximum number of runs to return (0 = server default)")
+	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous list")
+	cmd.Flags().StringVar(&sinceText, "since", "", "created at or after RFC3339 timestamp")
+	cmd.Flags().StringVar(&untilText, "until", "", "created before RFC3339 timestamp")
 	return cmd
 }
 

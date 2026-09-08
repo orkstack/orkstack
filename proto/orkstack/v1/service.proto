@@ -20,6 +20,8 @@ option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1"
 // empty version resolves to, and moving it is the only mutation this service
 // performs on an existing orkflow.
 service OrkflowService {
+  // ValidateOrkflow performs the same non-mutating preparation as apply.
+  rpc ValidateOrkflow(ValidateOrkflowRequest) returns (ValidateOrkflowResponse);
   // ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
   //
   // It never rewrites a stored version: identical YAML under an existing
@@ -102,6 +104,24 @@ message ApplyOrkflowRequest {
   // "derived from an old version on purpose" from "derived from a head that
   // has since moved", and the first is the whole point of this contract.
   string expected_head_version = 4;
+}
+enum ValidationSeverity {
+  VALIDATION_SEVERITY_UNSPECIFIED = 0;
+  VALIDATION_SEVERITY_ERROR = 1;
+  VALIDATION_SEVERITY_WARNING = 2;
+}
+message ValidationIssue {
+  string field = 1;
+  string message = 2;
+  ValidationSeverity severity = 3;
+}
+message ValidateOrkflowRequest {
+  string yaml = 1;
+  string namespace = 2;
+}
+message ValidateOrkflowResponse {
+  Orkflow orkflow = 1;
+  repeated ValidationIssue issues = 2;
 }
 message ApplyOrkflowResponse {
   Orkflow orkflow = 1;
@@ -225,7 +245,38 @@ service RunService {
   // chunks are in the shared store and the task's state comes from the shared
   // cluster, so a replica that started nothing serves a run to completion.
   rpc StreamTaskLogs(StreamTaskLogsRequest) returns (stream TaskLogChunk);
+  rpc ListRunArtifacts(ListRunArtifactsRequest) returns (ListRunArtifactsResponse);
+  rpc ReadArtifact(ReadArtifactRequest) returns (stream ArtifactChunk);
 }
+
+// WebhookService manages deployment-wide run-event subscriptions. Delivery is
+// deliberately outside this management contract; callers never receive the
+// stored signing secret after registration.
+service WebhookService {
+  rpc RegisterWebhook(RegisterWebhookRequest) returns (RegisterWebhookResponse);
+  rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse);
+  rpc DeleteWebhook(DeleteWebhookRequest) returns (DeleteWebhookResponse);
+}
+
+message Webhook {
+  string id = 1;
+  string url = 2;
+  repeated EventType events = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+message RegisterWebhookRequest {
+  string url = 1;
+  repeated EventType events = 2;
+  string secret = 3;
+}
+message RegisterWebhookResponse {
+  Webhook webhook = 1;
+  string secret = 2;
+}
+message ListWebhooksRequest {}
+message ListWebhooksResponse { repeated Webhook webhooks = 1; }
+message DeleteWebhookRequest { string id = 1; }
+message DeleteWebhookResponse {}
 
 message SubmitRunRequest {
   string orkflow_name = 1;               // orkflow name
@@ -263,10 +314,43 @@ message ListRunsRequest {
   int32 page_size = 3;
   string page_token = 4;
   string namespace = 5;                  // empty = the default namespace
+  google.protobuf.Timestamp created_after = 6;  // inclusive
+  google.protobuf.Timestamp created_before = 7; // exclusive
 }
 message ListRunsResponse {
   repeated Run runs = 1;
   string next_page_token = 2;
+}
+enum ArtifactKind {
+  ARTIFACT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_KIND_OUTPUT = 1;
+  ARTIFACT_KIND_VALUES = 2;
+  ARTIFACT_KIND_STDOUT = 3;
+  ARTIFACT_KIND_STDERR = 4;
+}
+message RunArtifact {
+  string task_id = 1;
+  ArtifactKind kind = 2;
+  ArtifactRef artifact = 3;
+  int32 attempt = 4;
+}
+message ListRunArtifactsRequest {
+  string run_id = 1;
+  string namespace = 2;
+  string task_id = 3;
+}
+message ListRunArtifactsResponse { repeated RunArtifact artifacts = 1; }
+message ReadArtifactRequest {
+  string run_id = 1;
+  string namespace = 2;
+  string task_id = 3;
+  ArtifactKind kind = 4;
+  string name = 5;
+}
+message ArtifactChunk {
+  bytes data = 1;
+  ArtifactRef artifact = 2;
+  bool last = 3;
 }
 message CancelRunRequest {
   string run_id = 1;

@@ -800,9 +800,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
 
-	// Webhooks: the outbound half of the API. The registry holds who is
-	// subscribed, the notifier fans a run's state transitions out to them.
-	webhookRegistry := webhooks.NewRegistry()
+	// Webhooks: registrations live in the same shared object store as every
+	// other control-plane record. The registry reads that store on every
+	// management operation and delivery lookup, so replicas and restarts see
+	// the same subscriptions without a startup cache.
+	webhookStore, err := artifacts.NewWebhookStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open webhook store: %w", err)
+	}
+	webhookRegistry := webhooks.NewDurableRegistry(webhookStore)
 	webhookNotifier := webhooks.NewNotifier(
 		webhookRegistry,
 		webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
@@ -846,6 +852,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	logger.Info("task log store ready",
 		"backend", archiveConfig.Backend, "location", logLocation(archiveConfig))
+	artifactStore, err := artifacts.New(archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open artifact store: %w", err)
+	}
 
 	// The read model. Every run read leaves this process: a run's history is
 	// its event log, and Temporal hands the same answer to every replica, for
@@ -993,26 +1003,27 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	activities := &api.CatalogLister{Catalog: cfg.activityCatalog, Resolver: resolver}
 
 	svc := api.NewService(api.Config{
-		Orkflows:    orkflows,
-		Namespaces:  namespaces,
-		Reader:      reader,
-		Runs:        runs,
-		Bus:         bus,
-		Starter:     starter,
-		Pools:       pools,
-		PoolOrkers:  starter,
-		Orkers:      starter,
-		Catalog:     cfg.activityCatalog,
-		Resolver:    resolver,
-		Activities:  activities,
-		RawQueue:    cfg.defaultRouteOverride,
-		Archive:     archive,
-		Logs:        logStore,
-		Idempotency: idempotency,
-		Webhooks:    webhookRegistry,
-		Notifier:    runNotifier,
-		Logger:      logger,
-		System:      system,
+		Orkflows:      orkflows,
+		Namespaces:    namespaces,
+		Reader:        reader,
+		Runs:          runs,
+		Bus:           bus,
+		Starter:       starter,
+		Pools:         pools,
+		PoolOrkers:    starter,
+		Orkers:        starter,
+		Catalog:       cfg.activityCatalog,
+		Resolver:      resolver,
+		Activities:    activities,
+		RawQueue:      cfg.defaultRouteOverride,
+		Archive:       archive,
+		Logs:          logStore,
+		ArtifactStore: artifactStore,
+		Idempotency:   idempotency,
+		Webhooks:      webhookRegistry,
+		Notifier:      runNotifier,
+		Logger:        logger,
+		System:        system,
 		// Retention backs SystemService's
 		// GetRetentionPolicy/UpdateRetentionPolicy, and also validates a
 		// namespace's own run_retention against the ceiling

@@ -67,7 +67,8 @@ func (n *Notifier) Observe(observer func(Result)) {
 }
 
 // Notify queues delivery to every matching subscription and returns how many
-// it queued. The delivery's own ID is assigned per subscription.
+// it queued for an in-memory registry. For a durable registry lookup happens
+// asynchronously, so it returns zero because the count is not yet known.
 //
 // The caller's context supplies values and nothing else: it is stripped of
 // cancellation, because the activity that observed the transition returns long
@@ -76,15 +77,47 @@ func (n *Notifier) Notify(ctx context.Context, delivery Delivery) int {
 	if n == nil || n.registry == nil {
 		return 0
 	}
-	hooks := n.registry.Matching(delivery.Event)
+	if n.registry.Durable() {
+		// A durable lookup may wait on object storage. It must never occupy the
+		// workflow projection activity, because notifications are observability
+		// and a registry outage cannot stall a run transition.
+		n.wg.Add(1)
+		go func() {
+			defer n.wg.Done()
+			lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			hooks, err := n.registry.MatchingContext(lookupCtx, delivery.Event)
+			cancel()
+			if err != nil {
+				n.logger.Error("webhook lookup failed", "event", delivery.Event, "run_id", delivery.RunID, "error", err)
+				return
+			}
+			n.queue(ctx, delivery, hooks)
+		}()
+		return 0
+	}
+	// Registry lookup is deliberately bounded and detached from the workflow
+	// transition. A shared-store outage loses only this best-effort fanout; it
+	// cannot delay or fail a run.
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	hooks, err := n.registry.MatchingContext(lookupCtx, delivery.Event)
+	cancel()
+	if err != nil {
+		n.logger.Error("webhook lookup failed", "event", delivery.Event, "run_id", delivery.RunID, "error", err)
+		return 0
+	}
 	if len(hooks) == 0 {
 		return 0
 	}
+	return n.queue(ctx, delivery, hooks)
+}
+
+// queue starts one delivery per supplied hook. Lookup has already completed;
+// this routine has no storage operation and returns immediately.
+func (n *Notifier) queue(ctx context.Context, delivery Delivery, hooks []Webhook) int {
 	if delivery.Timestamp.IsZero() {
 		delivery.Timestamp = time.Now().UTC()
 	}
 	detached := context.WithoutCancel(ctx)
-
 	queued := 0
 	for _, hook := range hooks {
 		id, err := n.newID()

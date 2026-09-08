@@ -1,40 +1,27 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	"github.com/orkstack/orkstack/internal/api"
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
-// Webhook management is the one part of the engine API that is not a Connect
-// service: proto stays the source of truth for cross-process types, and this
-// surface does not appear there. These commands therefore speak plain JSON
-// over the same base URL and the same transport as every other command.
-
-// webhookEnvelope and webhookListEnvelope mirror the server's response bodies.
+// webhookEnvelope and webhookListEnvelope preserve the established CLI JSON
+// shape while the wire protocol uses the generated WebhookService.
 type webhookEnvelope struct {
 	Webhook webhooks.Webhook `json:"webhook"`
 }
 
 type webhookListEnvelope struct {
 	Webhooks []webhooks.Webhook `json:"webhooks"`
-}
-
-type webhookErrorEnvelope struct {
-	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
 }
 
 func newWebhookCommand(g *globalFlags) *cobra.Command {
@@ -69,7 +56,7 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Reject an unknown event before a round trip, and normalize the
 			// spelling so the server sees canonical names.
-			selected := make([]string, 0, len(events))
+			selected := make([]orkstackv1.EventType, 0, len(events))
 			for _, raw := range events {
 				for _, part := range strings.Split(raw, ",") {
 					if strings.TrimSpace(part) == "" {
@@ -79,7 +66,7 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 					if err != nil {
 						return err
 					}
-					selected = append(selected, string(event))
+					selected = append(selected, eventType(event))
 				}
 			}
 			if _, err := webhooks.ValidateURL(args[0]); err != nil {
@@ -89,18 +76,16 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			var response webhookEnvelope
-			if err := g.webhookRequest(ctx, http.MethodPost, api.WebhookCollectionPath, map[string]any{
-				"url":    args[0],
-				"events": selected,
-				"secret": secret,
-			}, &response); err != nil {
+			response, err := g.webhookClient().RegisterWebhook(ctx, connect.NewRequest(&orkstackv1.RegisterWebhookRequest{Url: args[0], Events: selected, Secret: secret}))
+			if err != nil {
 				return err
 			}
+			hook := webhookFromProto(response.Msg.GetWebhook())
+			hook.Secret = response.Msg.GetSecret()
 			if g.json {
-				return writeIndentedJSON(cmd.OutOrStdout(), response)
+				return writeIndentedJSON(cmd.OutOrStdout(), webhookEnvelope{Webhook: hook})
 			}
-			return renderWebhookRegistered(cmd.OutOrStdout(), response.Webhook)
+			return renderWebhookRegistered(cmd.OutOrStdout(), hook)
 		},
 	}
 	cmd.Flags().StringArrayVar(&events, "event", nil,
@@ -119,14 +104,18 @@ func newWebhookListCommand(g *globalFlags) *cobra.Command {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			var response webhookListEnvelope
-			if err := g.webhookRequest(ctx, http.MethodGet, api.WebhookCollectionPath, nil, &response); err != nil {
+			response, err := g.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{}))
+			if err != nil {
 				return err
 			}
-			if g.json {
-				return writeIndentedJSON(cmd.OutOrStdout(), response)
+			hooks := make([]webhooks.Webhook, 0, len(response.Msg.GetWebhooks()))
+			for _, hook := range response.Msg.GetWebhooks() {
+				hooks = append(hooks, webhookFromProto(hook))
 			}
-			return renderWebhookList(cmd.OutOrStdout(), response.Webhooks)
+			if g.json {
+				return writeIndentedJSON(cmd.OutOrStdout(), webhookListEnvelope{Webhooks: hooks})
+			}
+			return renderWebhookList(cmd.OutOrStdout(), hooks)
 		},
 	}
 }
@@ -140,8 +129,7 @@ func newWebhookDeleteCommand(g *globalFlags) *cobra.Command {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
-			path := strings.Replace(api.WebhookItemPath, "{id}", args[0], 1)
-			if err := g.webhookRequest(ctx, http.MethodDelete, path, nil, nil); err != nil {
+			if _, err := g.webhookClient().DeleteWebhook(ctx, connect.NewRequest(&orkstackv1.DeleteWebhookRequest{Id: args[0]})); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Deleted webhook %s\n", args[0])
@@ -150,61 +138,25 @@ func newWebhookDeleteCommand(g *globalFlags) *cobra.Command {
 	}
 }
 
-// webhookRequest performs one JSON call against the engine and decodes the
-// response into out (nil discards it). A non-2xx answer is rendered as the
-// same short, actionable error rpcError produces for Connect calls.
-func (g *globalFlags) webhookRequest(
-	ctx context.Context,
-	method, path string,
-	body any,
-	out any,
-) error {
-	var reader io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("encode request: %w", err)
-		}
-		reader = bytes.NewReader(encoded)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, g.baseURL()+path, reader)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := g.httpClient().Do(req)
-	if err != nil {
-		return fmt.Errorf("%s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-	payload, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("%s %s: read response: %w", method, path, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return webhookHTTPError(method, path, resp.StatusCode, payload)
-	}
-	if out == nil || len(bytes.TrimSpace(payload)) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(payload, out); err != nil {
-		return fmt.Errorf("%s %s: decode response: %w", method, path, err)
-	}
-	return nil
+func eventType(event webhooks.Event) orkstackv1.EventType {
+	return orkstackv1.EventType(orkstackv1.EventType_value["EVENT_TYPE_"+string(event)])
 }
 
-// webhookHTTPError turns a failure body into a one-line message, falling back
-// to the status when the body is not the API's error envelope.
-func webhookHTTPError(method, path string, status int, payload []byte) error {
-	var envelope webhookErrorEnvelope
-	if err := json.Unmarshal(payload, &envelope); err == nil && envelope.Error.Message != "" {
-		return fmt.Errorf("%s %s: %s: %s", method, path, envelope.Error.Code, envelope.Error.Message)
+func webhookFromProto(hook *orkstackv1.Webhook) webhooks.Webhook {
+	if hook == nil {
+		return webhooks.Webhook{}
 	}
-	return fmt.Errorf("%s %s: %s", method, path, strings.TrimSpace(http.StatusText(status)))
+	events := make([]webhooks.Event, 0, len(hook.GetEvents()))
+	for _, event := range hook.GetEvents() {
+		if parsed, err := webhooks.ParseEvent(event.String()); err == nil {
+			events = append(events, parsed)
+		}
+	}
+	created := time.Time{}
+	if hook.GetCreatedAt() != nil {
+		created = hook.GetCreatedAt().AsTime().UTC()
+	}
+	return webhooks.Webhook{ID: hook.GetId(), URL: hook.GetUrl(), Events: events, CreatedAt: created}
 }
 
 func renderWebhookRegistered(out io.Writer, hook webhooks.Webhook) error {

@@ -144,6 +144,11 @@ type RunQuery struct {
 	Since time.Time
 	// Until is the exclusive upper bound on RunRecord.Time.
 	Until time.Time
+	// BeforeTime/BeforeRunID continue after a newest-first cursor. Filtering
+	// happens during the index scan, before finish applies Limit and before an
+	// engine hydrates any run bodies.
+	BeforeTime  time.Time
+	BeforeRunID string
 	// KeyOrder switches the scan from "newest first, then truncate" to a
 	// resumable walk in index-key order that stops as soon as Limit matching
 	// entries are collected.
@@ -457,6 +462,9 @@ func (q RunQuery) Matches(entry RunIndexEntry) bool {
 		return false
 	}
 	if !q.Until.IsZero() && !entry.Time.Before(q.Until) {
+		return false
+	}
+	if !q.BeforeTime.IsZero() && !(entry.Time.Before(q.BeforeTime) || (entry.Time.Equal(q.BeforeTime) && entry.RunID < q.BeforeRunID)) {
 		return false
 	}
 	return true

@@ -238,6 +238,10 @@ func (g *globalFlags) statsClient() orkstackv1connect.StatsServiceClient {
 	return orkstackv1connect.NewStatsServiceClient(g.httpClient(), g.baseURL())
 }
 
+func (g *globalFlags) webhookClient() orkstackv1connect.WebhookServiceClient {
+	return orkstackv1connect.NewWebhookServiceClient(g.httpClient(), g.baseURL())
+}
+
 func (g *globalFlags) baseURL() string {
 	return strings.TrimRight(g.server, "/")
 }

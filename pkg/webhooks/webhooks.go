@@ -1,6 +1,7 @@
 package webhooks
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,17 @@ import (
 	"sync"
 	"time"
 )
+
+// Store is the durable subscription registry. Production implementations read
+// on every operation so registrations made through another engine replica are
+// visible both to management and delivery. Registry remains the lightweight
+// in-memory implementation used by focused unit tests.
+type Store interface {
+	Register(context.Context, Registration) (Webhook, error)
+	List(context.Context) ([]Webhook, error)
+	Get(context.Context, string) (Webhook, bool, error)
+	Delete(context.Context, string) (bool, error)
+}
 
 // Event names a run state transition a subscriber can ask for. The values are
 // the run lifecycle event types without their proto prefix, which is how every
@@ -110,7 +122,19 @@ type Registry struct {
 	newID     func() (string, error)
 	newSecret func() (string, error)
 	now       func() time.Time
+	store     Store
 }
+
+// NewDurableRegistry adapts a shared store to the existing registry API. It
+// deliberately retains no subscription cache.
+func NewDurableRegistry(store Store) *Registry {
+	return &Registry{store: store}
+}
+
+// Durable reports whether reads leave this process. It lets the notifier keep
+// the historical synchronous queued-count contract for unit-test registries
+// while ensuring object-store lookup never runs on a workflow transition.
+func (r *Registry) Durable() bool { return r != nil && r.store != nil }
 
 // RegistryOption tunes a Registry. The generators and clock are injectable so
 // tests can pin ids, secrets and timestamps.
@@ -148,6 +172,15 @@ func NewRegistry(options ...RegistryOption) *Registry {
 // Register validates and stores a subscription, returning it with its assigned
 // id and its secret. This is the only time the secret is disclosed.
 func (r *Registry) Register(reg Registration) (Webhook, error) {
+	return r.RegisterContext(context.Background(), reg)
+}
+
+// RegisterContext persists one subscription when Registry is backed by a
+// Store. The in-memory fallback is retained for unit tests.
+func (r *Registry) RegisterContext(ctx context.Context, reg Registration) (Webhook, error) {
+	if r.store != nil {
+		return r.store.Register(ctx, reg)
+	}
 	target, err := ValidateURL(reg.URL)
 	if err != nil {
 		return Webhook{}, err
@@ -189,29 +222,55 @@ func (r *Registry) Register(reg Registration) (Webhook, error) {
 
 // List returns every subscription in registration order, without secrets.
 func (r *Registry) List() []Webhook {
+	hooks, _ := r.ListContext(context.Background())
+	return hooks
+}
+
+// ListContext returns public subscriptions. It returns storage failures so an
+// API never turns an unavailable shared registry into an empty deployment.
+func (r *Registry) ListContext(ctx context.Context) ([]Webhook, error) {
+	if r.store != nil {
+		return r.store.List(ctx)
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]Webhook, 0, len(r.order))
 	for _, id := range r.order {
 		out = append(out, r.byID[id].Public())
 	}
-	return out
+	return out, nil
 }
 
 // Get returns one subscription without its secret.
 func (r *Registry) Get(id string) (Webhook, bool) {
+	hook, ok, _ := r.GetContext(context.Background(), id)
+	return hook, ok
+}
+
+func (r *Registry) GetContext(ctx context.Context, id string) (Webhook, bool, error) {
+	if r.store != nil {
+		return r.store.Get(ctx, id)
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	hook, ok := r.byID[id]
-	return hook.Public(), ok
+	return hook.Public(), ok, nil
 }
 
 // Delete removes a subscription, reporting whether it existed.
 func (r *Registry) Delete(id string) bool {
+	ok, _ := r.DeleteContext(context.Background(), id)
+	return ok
+}
+
+func (r *Registry) DeleteContext(ctx context.Context, id string) (bool, error) {
+	if r.store != nil {
+		return r.store.Delete(ctx, id)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.byID[id]; !ok {
-		return false
+		return false, nil
 	}
 	delete(r.byID, id)
 	for i, existing := range r.order {
@@ -220,12 +279,33 @@ func (r *Registry) Delete(id string) bool {
 			break
 		}
 	}
-	return true
+	return true, nil
 }
 
 // Matching returns the subscriptions that want event, secrets included: this
 // is the dispatcher's read, not an API response.
 func (r *Registry) Matching(event Event) []Webhook {
+	hooks, _ := r.MatchingContext(context.Background(), event)
+	return hooks
+}
+
+// MatchingContext performs the lookup against the shared registry. Callers
+// that dispatch run notifications should bound this context and treat errors
+// as best-effort delivery failures.
+func (r *Registry) MatchingContext(ctx context.Context, event Event) ([]Webhook, error) {
+	if r.store != nil {
+		hooks, err := r.store.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := hooks[:0]
+		for _, hook := range hooks {
+			if hook.Subscribes(event) {
+				out = append(out, hook)
+			}
+		}
+		return out, nil
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]Webhook, 0, len(r.order))
@@ -234,7 +314,7 @@ func (r *Registry) Matching(event Event) []Webhook {
 			out = append(out, hook)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // ValidateURL accepts the absolute http(s) URLs a delivery can actually reach

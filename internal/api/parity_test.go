@@ -1,0 +1,105 @@
+package api_test
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+func TestValidateOrkflowDoesNotWriteAndReturnsDocumentIssues(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	svc := api.NewService(api.Config{Orkflows: store})
+	valid := "name: validate-only\ntasks:\n  - id: one\n    uses: busybox:latest\n"
+	response, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: valid}))
+	if err != nil || response.Msg.GetOrkflow().GetDefinitionDigest() == "" {
+		t.Fatalf("ValidateOrkflow = %v, %v", response, err)
+	}
+	if _, err := store.Get(context.Background(), "default", "validate-only", ""); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Fatalf("validation wrote a definition: %v", err)
+	}
+	invalid, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: "name: bad\ntasks:\n - id: a\n   uses: busybox\n   needs: [missing]\n"}))
+	if err != nil || len(invalid.Msg.GetIssues()) != 1 || invalid.Msg.GetIssues()[0].GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR || invalid.Msg.GetIssues()[0].GetField() != "tasks[0].needs[0]" {
+		t.Fatalf("invalid validation = %#v, %v", invalid, err)
+	}
+	missingName, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: "tasks:\n - id: a\n   uses: busybox\n"}))
+	if err != nil || missingName.Msg.GetIssues()[0].GetField() != "name" {
+		t.Fatalf("missing name issue = %#v, %v", missingName, err)
+	}
+}
+
+func TestListRunsCursorKeepsTiesAndRejectsChangedFilters(t *testing.T) {
+	runs := engine.NewRunStore()
+	at := time.Date(2026, 9, 8, 9, 0, 0, 0, time.UTC)
+	for _, id := range []string{"ork-a", "ork-b", "ork-c"} {
+		runs.Save(&orkstackv1.Run{Id: id, OrkflowName: "deploy", Status: orkstackv1.Status_STATUS_SUCCEEDED, CreatedAt: timestamppb.New(at)})
+	}
+	svc := api.NewService(api.Config{Runs: runs})
+	first, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: 2}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := first.Msg.GetRuns(); len(got) != 2 || got[0].GetId() != "ork-c" || got[1].GetId() != "ork-b" || first.Msg.GetNextPageToken() == "" {
+		t.Fatalf("first page = %#v", first.Msg)
+	}
+	second, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageSize: 2, PageToken: first.Msg.GetNextPageToken()}))
+	if err != nil || len(second.Msg.GetRuns()) != 1 || second.Msg.GetRuns()[0].GetId() != "ork-a" {
+		t.Fatalf("second = %#v, %v", second, err)
+	}
+	_, err = svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{PageToken: first.Msg.GetNextPageToken(), Status: orkstackv1.Status_STATUS_SUCCEEDED}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("changed filters = %v, want InvalidArgument", err)
+	}
+}
+
+func TestReadArtifactRequiresRecordedReferenceAndDoesNotConfirmCorruptBytes(t *testing.T) {
+	ctx := context.Background()
+	store, err := artifacts.New(artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Put(ctx, "report.txt", strings.NewReader("body"), artifacts.PutOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately record the wrong checksum: clients may receive bytes but can
+	// never receive last=true, which is the completion signal downloads trust.
+	ref.SHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte("other")))
+	runs := engine.NewRunStore()
+	runs.Save(&orkstackv1.Run{Id: "ork-artifact", Status: orkstackv1.Status_STATUS_SUCCEEDED, TaskRuns: []*orkstackv1.TaskRun{{TaskId: "task", Attempt: 1, Artifacts: []*orkstackv1.ArtifactRef{{Name: ref.Name, Uri: ref.URI, SizeBytes: ref.SizeBytes, Sha256: ref.SHA256}}}}})
+	svc := api.NewService(api.Config{Runs: runs, ArtifactStore: store})
+	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
+	defer server.Close()
+	client := orkstackv1connect.NewRunServiceClient(server.Client(), server.URL)
+	missing, err := client.ReadArtifact(ctx, connect.NewRequest(&orkstackv1.ReadArtifactRequest{RunId: "ork-artifact", TaskId: "task", Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Name: "nope"}))
+	if err == nil {
+		defer missing.Close()
+		if missing.Receive() {
+			t.Fatal("unrecorded artifact yielded bytes")
+		}
+	}
+	stream, err := client.ReadArtifact(ctx, connect.NewRequest(&orkstackv1.ReadArtifactRequest{RunId: "ork-artifact", TaskId: "task", Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Name: "report.txt"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	last := false
+	for stream.Receive() {
+		last = last || stream.Msg().GetLast()
+	}
+	if last || connect.CodeOf(stream.Err()) != connect.CodeDataLoss {
+		t.Fatalf("corrupt read last=%v err=%v", last, stream.Err())
+	}
+}

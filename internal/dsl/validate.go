@@ -20,13 +20,13 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	// the store resolves it where the name becomes a key.
 	if ns := wf.GetNamespace(); ns != "" {
 		if err := checkSlug("namespace", ns); err != nil {
-			return err
+			return validationError("namespace", err)
 		}
 	}
 
 	// Rule 2: orkflow name present and slug-formatted.
 	if wf.GetName() == "" {
-		return fmt.Errorf("orkflow name is required")
+		return validationError("name", fmt.Errorf("orkflow name is required"))
 	}
 	if err := checkSlug("orkflow name", wf.GetName()); err != nil {
 		return err
@@ -50,14 +50,14 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		byID[task.GetId()] = task
 	}
 
-	for _, task := range wf.GetTasks() {
+	for taskIndex, task := range wf.GetTasks() {
 		// Rule 4: every needs entry references an existing task id.
-		for _, need := range task.GetNeeds() {
+		for needIndex, need := range task.GetNeeds() {
 			if _, ok := byID[need]; !ok {
-				return fmt.Errorf("task %q needs unknown task %q", task.GetId(), need)
+				return validationError(fmt.Sprintf("tasks[%d].needs[%d]", taskIndex, needIndex), fmt.Errorf("task %q needs unknown task %q", task.GetId(), need))
 			}
 			if need == task.GetId() {
-				return fmt.Errorf("task %q needs itself (cycle)", task.GetId())
+				return validationError(fmt.Sprintf("tasks[%d].needs[%d]", taskIndex, needIndex), fmt.Errorf("task %q needs itself (cycle)", task.GetId()))
 			}
 		}
 		// Rule 6: `uses:` names the activity, and it is required.
