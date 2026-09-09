@@ -816,6 +816,110 @@ func TestRunWorkflow_LeavesTelemetryUnsetWithNoPlanSelection(t *testing.T) {
 	}
 }
 
+const cancelSiblingsDocument = `
+name: cancel-siblings
+tasks:
+  - id: doomed
+    uses: shell
+    with: {command: "exit 1"}
+  - id: sibling
+    uses: shell
+    with: {command: "sleep 999"}
+  - id: downstream
+    uses: shell
+    needs: [doomed]
+    with: {command: "echo never"}
+`
+
+// TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails pins the
+// fail-fast contract's other half: a run that ends because one task failed must
+// also END its other tasks. Before this, the workflow returned the moment any
+// future errored, which left every sibling activity genuinely running — Temporal
+// does not cancel activities a workflow abandons by returning, only an explicit
+// cancellation on the context they were scheduled with does — and left every
+// task the loop never reached sitting at PENDING forever, which reads as "still
+// queued" for a run that is already over.
+func TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	siblingCanceled := make(chan struct{})
+
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(60 * time.Second)
+	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
+	snapshots := newTestSnapshotStore()
+	env.RegisterActivityWithOptions(engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot})
+	bus := engine.NewEventBus()
+	store := engine.NewRunStore()
+	env.RegisterActivityWithOptions(engine.NewEventActivities(bus, store).WithSnapshotStore(snapshots).PublishEvent,
+		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
+	env.RegisterActivityWithOptions(
+		func(actCtx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			switch in.TaskId {
+			case "doomed":
+				return &orkstackv1.ExecuteTaskResult{}, errors.New("workload exited 1")
+			case "sibling":
+				// Temporal delivers cancellation to an activity ONLY through a
+				// heartbeat response (see workflow.go's orkerHeartbeatTimeout
+				// comment) — this must heartbeat in a loop, exactly like the
+				// real Orker does, or it will never observe actCtx.Done().
+				ticker := time.NewTicker(10 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-actCtx.Done():
+						close(siblingCanceled)
+						return &orkstackv1.ExecuteTaskResult{}, actCtx.Err()
+					case <-ticker.C:
+						activity.RecordHeartbeat(actCtx, "waiting")
+					}
+				}
+			default:
+				t.Errorf("task %q ran, want it never scheduled", in.TaskId)
+				return &orkstackv1.ExecuteTaskResult{}, nil
+			}
+		},
+		activity.RegisterOptions{Name: task.ActivityExecuteTask},
+	)
+
+	started := time.Now()
+	env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-siblings", compile(t, cancelSiblingsDocument), payload(t, nil), defaultPlan())
+
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("workflow did not complete")
+	}
+	if err := env.GetWorkflowError(); err == nil {
+		t.Fatal("workflow error = nil, want doomed's failure to fail the run")
+	}
+	// A deadline, not a non-blocking read: cancellation reaches an activity
+	// asynchronously through its heartbeat, and the test environment resolves
+	// the workflow-side future the moment it issues the cancel — it does not
+	// honour WaitForCancellation for activities the way a real server does. So
+	// the workflow can complete a few milliseconds before the activity
+	// goroutine observes actCtx.Done(). Waiting is the only correct read; the
+	// deadline is what makes "never canceled" a failure rather than a hang.
+	select {
+	case <-siblingCanceled:
+		t.Logf("sibling observed cancellation %s after the run was submitted", time.Since(started))
+	case <-time.After(30 * time.Second):
+		t.Fatal("sibling never observed cancellation: it was left running after the run failed")
+	}
+
+	stored, ok := store.Get("run-cancel-siblings")
+	if !ok {
+		t.Fatal("run read model was not populated")
+	}
+	if stored.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		t.Errorf("run status = %v, want FAILED", stored.GetStatus())
+	}
+	if got := statusOf(stored, "sibling"); got != orkstackv1.Status_STATUS_CANCELED {
+		t.Errorf("sibling status = %v, want CANCELED, not left RUNNING", got)
+	}
+	if got := statusOf(stored, "downstream"); got != orkstackv1.Status_STATUS_CANCELED {
+		t.Errorf("downstream status = %v, want CANCELED (never started), not left PENDING", got)
+	}
+}
+
 // upstreamRef finds one ancestor's contribution in a task's upstream list.
 //
 // The list is a slice rather than a map because it is proto, and a repeated

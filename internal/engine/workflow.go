@@ -104,6 +104,12 @@ func RunWorkflow(
 	}
 
 	state := newRunState(ctx, runID, wf, input, plan)
+	// Every task activity is scheduled on runCtx, never on ctx directly, so the
+	// run has one handle that ends all of them at once. Temporal does NOT
+	// cancel activities a workflow function abandons by returning: only an
+	// explicit cancellation on the context they were scheduled with reaches a
+	// running container (§3.3). fail() is what pulls it.
+	runCtx, cancelRun := workflow.WithCancel(ctx)
 	// RUN_CREATED is emitted here, by the run itself, and not by whichever API
 	// process accepted the submission. It is event 1 of every run that reaches
 	// Temporal, so a replica rebuilding the stream from history starts at 1 with
@@ -128,14 +134,14 @@ func RunWorkflow(
 		for _, id := range state.readyTasks() {
 			run, err := state.classify(ctx, id)
 			if err != nil {
-				return state.fail(ctx, id, err)
+				return state.fail(ctx, cancelRun, inFlight, id, err)
 			}
 			if !run {
 				continue
 			}
-			future, err := state.schedule(ctx, id)
+			future, err := state.schedule(runCtx, id)
 			if err != nil {
-				return state.fail(ctx, id, err)
+				return state.fail(ctx, cancelRun, inFlight, id, err)
 			}
 			inFlight[id] = future
 		}
@@ -168,7 +174,7 @@ func RunWorkflow(
 		future := inFlight[selectedID]
 		delete(inFlight, selectedID)
 		if err := state.collect(ctx, selectedID, future); err != nil {
-			return state.fail(ctx, selectedID, err)
+			return state.fail(ctx, cancelRun, inFlight, selectedID, err)
 		}
 	}
 
@@ -555,8 +561,11 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 	result := &orkstackv1.ExecuteTaskResult{}
 	if err := future.Get(ctx, result); err != nil {
 		s.recordFailure(ctx, id, err)
+		// taskRun.Status, not a hardcoded FAILED: recordFailure just decided
+		// between FAILED and CANCELED, and the event must say the same thing
+		// the snapshot does.
 		if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
-			orkstackv1.Status_STATUS_FAILED, err.Error()); emitErr != nil {
+			taskRun.Status, err.Error()); emitErr != nil {
 			// The task's own cause is this run's machine-readable reason
 			// (AGENTS.md §15). A snapshot-write failure on the way out is
 			// logged, never allowed to replace what the Orker actually said.
@@ -605,6 +614,49 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 
 	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, id,
 		orkstackv1.Status_STATUS_SUCCEEDED, "task succeeded")
+}
+
+// cancelInFlight ends every task this run never got to finish because the
+// run itself is ending: every task still actually executing is canceled so
+// the Orker stops its container (AGENTS.md §3.3) instead of leaving it
+// running against a run that already closed; every task that never even
+// started is marked CANCELED instead of staying PENDING forever.
+//
+// ctx must already be safe to make activity calls on — the caller passes its
+// disconnected substitution when the workflow's own context is done,
+// unchanged otherwise (see fail).
+func (s *runState) cancelInFlight(ctx workflow.Context, inFlight map[string]workflow.Future) {
+	// s.order, never the map's own range: workflow code must stay
+	// deterministic, and Go's map iteration order is randomized on purpose.
+	for _, id := range s.order {
+		future, ok := inFlight[id]
+		if !ok {
+			continue
+		}
+		_ = s.collect(ctx, id, future)
+	}
+	for _, id := range s.order {
+		if s.taskRuns[id].GetStatus() == orkstackv1.Status_STATUS_PENDING {
+			if err := s.markCanceled(ctx, id, "run ended before this task started"); err != nil {
+				workflow.GetLogger(ctx).Error("mark canceled failed",
+					"run_id", s.runID, "task_id", id, "error", err)
+			}
+		}
+	}
+}
+
+// markCanceled records a task that never started because the run ended
+// first. Mirrors markSkipped: the Event contract has no task-canceled type,
+// so this is a task log event carrying STATUS_CANCELED; TaskRun.Status is the
+// authoritative record.
+func (s *runState) markCanceled(ctx workflow.Context, id, reason string) error {
+	now := timestamppb.New(workflow.Now(ctx))
+	taskRun := s.taskRuns[id]
+	taskRun.Status = orkstackv1.Status_STATUS_CANCELED
+	taskRun.StartedAt = now
+	taskRun.FinishedAt = now
+	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG, id,
+		orkstackv1.Status_STATUS_CANCELED, "task canceled: "+reason)
 }
 
 // recordFailure reads what the Orker actually said and records it as DATA.
@@ -678,6 +730,10 @@ func (s *runState) recordFailure(ctx workflow.Context, id string, cause error) {
 		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
 		failure.Code = "TASK_CANCELED"
 		failure.Retryable = false
+		// A task that was CANCELED did not FAIL, and the outer status is what
+		// every client reads. Categorizing the nested Error while leaving the
+		// status at FAILED said two different things about one task.
+		taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 	}
 	taskRun.Error = failure
 }
@@ -703,7 +759,22 @@ func categoryEnumFor(category string) orkstackv1.FailureCategory {
 }
 
 // fail terminates the run after a task failure or cancellation.
-func (s *runState) fail(ctx workflow.Context, taskID string, cause error) (*orkstackv1.Run, error) {
+//
+// It ends the OTHER tasks too. Fail-fast is this engine's only failure mode —
+// there is no continue-on-error — so the moment one task's future errors the
+// run is over, and every task still executing has to stop with it rather than
+// keep a container alive against a closed run (§3.3), while every task that
+// never started has to say so rather than sit at PENDING forever.
+//
+// cancelRun is the cancel half of the context every activity was scheduled on
+// (see RunWorkflow); inFlight is the loop's live future set, which fail drains.
+func (s *runState) fail(
+	ctx workflow.Context,
+	cancelRun workflow.CancelFunc,
+	inFlight map[string]workflow.Future,
+	taskID string,
+	cause error,
+) (*orkstackv1.Run, error) {
 	s.finished = timestamppb.New(workflow.Now(ctx))
 	s.runError = &orkstackv1.Error{
 		Code:    "RUN_FAILED",
@@ -726,6 +797,22 @@ func (s *runState) fail(ctx workflow.Context, taskID string, cause error) (*orks
 		if taskRun, ok := s.taskRuns[taskID]; ok {
 			taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 		}
+	}
+
+	// Gated because it changes the COMMAND stream: a run that is genuinely
+	// open and mid-failure when this build is deployed would otherwise be
+	// replayed against brand-new RequestCancelActivity commands and awaits at
+	// a point where the old code simply returned — a determinism break for
+	// that in-flight run (see replay_test.go, testdata/history/README.md).
+	if v := workflow.GetVersion(ctx, "cancel-siblings-on-run-end", workflow.DefaultVersion, 1); v >= 1 {
+		cancelRun()
+		// eventCtx, not ctx: when the operator canceled the whole run, ctx is
+		// already done and eventCtx is the disconnected substitution chosen
+		// above precisely so the remaining activity calls are not rejected as
+		// canceled. cancelInFlight makes such calls too (collect emits), so it
+		// needs the same context. In the ordinary task-failure case ctx was
+		// never canceled and eventCtx == ctx.
+		s.cancelInFlight(eventCtx, inFlight)
 	}
 
 	if err := s.emit(eventCtx, eventType, taskID, s.status, s.runError.GetMessage()); err != nil {
