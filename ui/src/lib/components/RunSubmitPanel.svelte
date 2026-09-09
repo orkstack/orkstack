@@ -1,0 +1,420 @@
+<script lang="ts">
+	// The submission draft, for one orkflow the caller has already named.
+	//
+	// This is what the standalone Submit Run page used to be, minus its orkflow
+	// PICKER: both places that open it — an Orkflow's own page, and a run's
+	// "Run again" — already know which orkflow they mean, so choosing one
+	// again would be a question with a single correct answer. What is left is
+	// the part that genuinely varies: WHICH VERSION runs, WHAT INPUT it gets,
+	// and the two advanced switches (idempotency key, empty-pool override).
+	//
+	// It renders no modal of its own. The caller owns the Dialog (or renders
+	// this inline) and owns what happens after a successful submit: this
+	// component reports the new run's id through `onsubmitted` and never
+	// navigates, which is why the identical component works both as the
+	// Orkflow page's "Submit a run" dialog and as the run page's "Run again".
+	import { untrack } from 'svelte';
+	import { create } from '@bufbuild/protobuf';
+	import type { JsonObject } from '@bufbuild/protobuf';
+	import { errorMessage, orkstack } from '$lib/client';
+	import { defaultsForInputs, inputSpecs, parseInputObject, submitCli } from '$lib/authoring';
+	import CliEquivalent from './CliEquivalent.svelte';
+	import DeclaredInputs from './DeclaredInputs.svelte';
+	import ErrorPanel from './ErrorPanel.svelte';
+	import Select from './Select.svelte';
+	import { PayloadSchema } from '$lib/gen/orkstack/v1/common_pb';
+	import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
+	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/service_pb';
+
+	interface Props {
+		namespace: string;
+		orkflowName: string;
+		/** Omitted or empty pins nothing: the engine resolves "current" at submit. */
+		initialVersion?: string;
+		/** Seeds the draft; omitted means the version's declared defaults. */
+		initialInput?: JsonObject;
+		/** Set by "Run again" — names the run this draft was copied from. */
+		replayFromRunId?: string;
+		/** The caller navigates (or closes); this component never does. */
+		onsubmitted: (runId: string) => void;
+	}
+
+	let {
+		namespace,
+		orkflowName,
+		initialVersion = '',
+		initialInput = undefined,
+		replayFromRunId = '',
+		onsubmitted
+	}: Props = $props();
+
+	// CURRENT is the sentinel for "do not pin a version". It cannot be the
+	// empty string: an empty <select>/Select value is indistinguishable from
+	// an unset control, and this choice — pin, or follow the pointer — is the
+	// one thing a reader of this form must not have to guess about.
+	const CURRENT = '__current__';
+
+	let selectedVersion = $state(untrack(() => initialVersion || CURRENT));
+	let selectedOrkflow = $state<Orkflow | null>(null);
+	let versions = $state<OrkflowVersion[]>([]);
+	let versionsLoading = $state(false);
+	let selectionError = $state('');
+	let inputsValue = $state<JsonObject>(untrack(() => initialInput ?? {}));
+	let inputsJson = $state(untrack(() => JSON.stringify(initialInput ?? {}, null, 2)));
+	let inputMode = $state<'form' | 'json'>('form');
+	let idempotencyKey = $state('');
+	let allowEmptyPool = $state(false);
+	let submitting = $state(false);
+	let formError = $state('');
+	let typedInputError = $state('');
+	let loadedCoordinate = $state('');
+	let selectionRequest = $state(0);
+
+	async function loadSelection(version: string, preserveInput = false) {
+		const name = orkflowName;
+		if (!name) return;
+		const request = ++selectionRequest;
+		const requested = namespace;
+		versionsLoading = true;
+		selectionError = '';
+		selectedOrkflow = null;
+		try {
+			const client = orkstack(fetch);
+			const [catalog, detail] = await Promise.all([
+				client.orkflows.listOrkflowVersions({ name, namespace: requested }),
+				client.orkflows.getOrkflow({
+					name,
+					version: version === CURRENT ? '' : version,
+					namespace: requested
+				})
+			]);
+			// A slower earlier request must not overwrite a newer selection —
+			// the version dropdown is the control an operator changes twice in
+			// a row while the first answer is still in flight.
+			if (!stillWanted(request, requested, name, version)) return;
+			versions = catalog.versions;
+			selectedOrkflow = detail.orkflow ?? null;
+			if (!preserveInput) setInputs(defaultsForInputs(detail.orkflow?.inputs));
+		} catch (err) {
+			if (stillWanted(request, requested, name, version)) {
+				selectedOrkflow = null;
+				selectionError = errorMessage(err);
+			}
+		} finally {
+			if (stillWanted(request, requested, name, version)) versionsLoading = false;
+		}
+	}
+
+	function stillWanted(request: number, forNamespace: string, name: string, version: string) {
+		return (
+			request === selectionRequest &&
+			forNamespace === namespace &&
+			name === orkflowName &&
+			version === selectedVersion
+		);
+	}
+
+	$effect(() => {
+		// The coordinate is the whole identity of the draft the caller asked
+		// for. When it changes the draft is a DIFFERENT one, so everything the
+		// operator typed against the old one goes — including the idempotency
+		// key, which belongs to the submission it was typed for and to no other.
+		//
+		// Joined on NUL because the separator has to be a character none of the
+		// four parts can contain: two different coordinates that spelled one
+		// string would skip the reset and keep the previous draft.
+		const coordinate = `${namespace}\u0000${orkflowName}\u0000${initialVersion}\u0000${replayFromRunId}`;
+		if (coordinate !== loadedCoordinate) {
+			loadedCoordinate = coordinate;
+			selectedVersion = initialVersion || CURRENT;
+			selectedOrkflow = null;
+			versions = [];
+			selectionError = '';
+			formError = '';
+			typedInputError = '';
+			idempotencyKey = '';
+			allowEmptyPool = false;
+			setInputs(initialInput ?? {});
+		}
+		const version = selectedVersion;
+		if (!orkflowName) return;
+		// The seeded input survives only for the coordinate it was seeded FOR.
+		// Picking a different version asks a different question — that version's
+		// declared defaults — and answering it with the previous version's
+		// values would put fields the new one never declared into the payload.
+		const preserveInput = initialInput !== undefined && version === (initialVersion || CURRENT);
+		// untrack: loadSelection's synchronous prefix reads/writes selectionRequest,
+		// versionsLoading and selectedOrkflow. Left tracked, this effect would depend
+		// on its own call's side effects and retrigger itself without end.
+		untrack(() => {
+			void loadSelection(version, preserveInput);
+		});
+	});
+
+	function setInputs(next: JsonObject) {
+		inputsValue = next;
+		inputsJson = JSON.stringify(next, null, 2);
+	}
+
+	function setInputMode(mode: 'form' | 'json') {
+		if (mode === 'json' && typedInputError) {
+			formError = 'Fix the invalid declared input before switching to JSON so the draft is not lost.';
+			return;
+		}
+		if (mode === 'form') {
+			// The JSON text is the authority in JSON mode, so it has to parse
+			// before the fields can show it. Refusing here is what keeps a
+			// half-typed object from being silently discarded by the switch.
+			const parsed = parseInputObject(inputsJson);
+			if ('error' in parsed) {
+				formError = parsed.error;
+				return;
+			}
+			inputsValue = parsed.value;
+		}
+		inputMode = mode;
+	}
+
+	// Two utilities that set the same property cannot both be written on one
+	// element and trusted to resolve in source order, so the active and idle
+	// recipes are whole class strings rather than a base plus an override.
+	function modeClass(active: boolean): string {
+		const tone = active ? 'font-semibold text-fg' : 'text-fg-secondary hover:text-fg';
+		return `rounded px-1.5 py-0.5 transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none ${tone}`;
+	}
+
+	function currentVersionLabel() {
+		return versions.find((entry) => entry.isCurrent)?.version ?? selectedOrkflow?.version ?? '…';
+	}
+
+	const chosenVersion = $derived(selectedVersion === CURRENT ? '' : selectedVersion);
+	const specs = $derived(inputSpecs(selectedOrkflow?.inputs));
+	const versionOptions = $derived([
+		{ value: CURRENT, label: `Current (${currentVersionLabel()}) — resolves when submitted` },
+		...versions.map((version) => ({
+			value: version.version,
+			label: `${version.version}${version.isCurrent ? ' — current' : ''}${version.description ? ` — ${version.description}` : ''}`
+		}))
+	]);
+	const cliParsedInput = $derived(parseInputObject(inputsJson));
+	const cli = $derived(
+		'value' in cliParsedInput
+			? submitCli({
+					name: orkflowName,
+					namespace,
+					version: chosenVersion,
+					input: cliParsedInput.value,
+					idempotencyKey,
+					allowEmptyPool
+				})
+			: ''
+	);
+
+	async function submit() {
+		formError = '';
+		const parsed = parseInputObject(inputsJson);
+		if ('error' in parsed) {
+			formError = parsed.error;
+			return;
+		}
+		if (typedInputError) {
+			formError = typedInputError;
+			return;
+		}
+		if (!selectedOrkflow) {
+			formError = 'This orkflow version has not loaded yet.';
+			return;
+		}
+		inputsValue = parsed.value;
+		submitting = true;
+		let runId: string;
+		try {
+			const res = await orkstack(fetch).runs.submitRun({
+				orkflowName: selectedOrkflow.name,
+				orkflowVersion: chosenVersion,
+				namespace,
+				idempotencyKey,
+				allowEmptyPool,
+				input: create(PayloadSchema, { data: parsed.value })
+			});
+			if (!res.run) throw new Error('engine returned no run');
+			runId = res.run.id;
+		} catch (err) {
+			// The key is deliberately left in the field: a submission whose
+			// result is uncertain is retried with the SAME key, which is the
+			// only way the second attempt can deduplicate against the first.
+			formError = errorMessage(err);
+			submitting = false;
+			return;
+		}
+		// Reported outside the try, because the run already exists: a caller
+		// that throws while navigating must not be told the submission failed.
+		// `submitting` stays true for the same reason — the caller is closing
+		// this panel or leaving for the run, and re-enabling the button here
+		// would offer a second submission of a draft that already succeeded.
+		onsubmitted(runId);
+	}
+</script>
+
+<form
+	class="space-y-5"
+	data-testid="run-submit-panel"
+	onsubmit={(event) => {
+		event.preventDefault();
+		void submit();
+	}}
+>
+	{#if replayFromRunId}
+		<section
+			data-testid="run-submit-replay-banner"
+			class="rounded-md border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800"
+		>
+			<strong>Reviewing a new run from {replayFromRunId}.</strong>
+			It starts {orkflowName}@{chosenVersion || currentVersionLabel()} with that run’s input. Submitting
+			creates a new run and does not reuse its idempotency key.
+		</section>
+	{/if}
+
+	<div class="flex flex-col gap-1.5">
+		<label for="run-submit-version" class="text-sm font-medium text-fg">Version</label>
+		<Select
+			id="run-submit-version"
+			testid="run-submit-version"
+			value={selectedVersion}
+			options={versionOptions}
+			disabled={versionsLoading}
+			onchange={(next) => (selectedVersion = next)}
+		/>
+		<p data-testid="run-submit-version-mode" class="text-xs text-fg-muted">
+			{chosenVersion
+				? `Pinned explicitly to ${chosenVersion}.`
+				: `Current pointer (${currentVersionLabel()}) will be resolved by the engine.`}
+		</p>
+	</div>
+
+	{#if selectionError}
+		<ErrorPanel
+			testid="run-submit-selection-error"
+			subject="the versions of {orkflowName}"
+			message={selectionError}
+		/>
+	{:else if versionsLoading && !selectedOrkflow}
+		<p data-testid="run-submit-loading" class="text-sm text-fg-muted">Loading {orkflowName}…</p>
+	{/if}
+
+	{#if selectedOrkflow}
+		<div class="flex items-center justify-between gap-3 border-b border-border pb-2">
+			<h3 class="text-sm font-medium text-fg">Input</h3>
+			<div class="flex gap-2 text-xs">
+				<button
+					type="button"
+					data-testid="run-submit-input-form-mode"
+					onclick={() => setInputMode('form')}
+					class={modeClass(inputMode === 'form')}
+				>
+					Fields
+				</button>
+				<button
+					type="button"
+					data-testid="run-submit-input-json-mode"
+					onclick={() => setInputMode('json')}
+					class={modeClass(inputMode === 'json')}
+				>
+					JSON
+				</button>
+			</div>
+		</div>
+
+		{#if inputMode === 'form'}
+			<DeclaredInputs
+				inputs={selectedOrkflow.inputs}
+				value={inputsValue}
+				onchange={setInputs}
+				oninvalid={(message) => (typedInputError = message)}
+				resetKey={`${selectedOrkflow.name}@${selectedOrkflow.version}:${inputMode}`}
+			/>
+			{#if typedInputError}
+				<p data-testid="run-submit-declared-input-error" class="text-sm text-danger-700">
+					{typedInputError}
+				</p>
+			{/if}
+			{#if specs.length === 0}
+				<p class="text-sm text-fg-muted">
+					This orkflow declares no inputs. Use JSON to send an explicit object.
+				</p>
+			{/if}
+		{:else}
+			<div class="flex flex-col gap-1.5">
+				<label for="run-submit-inputs-json" class="text-sm font-medium text-fg"
+					>Inputs (JSON object)</label
+				>
+				<textarea
+					id="run-submit-inputs-json"
+					data-testid="run-submit-inputs-json"
+					bind:value={inputsJson}
+					rows="8"
+					spellcheck="false"
+					class="min-h-[160px] rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				></textarea>
+				<p class="text-xs text-fg-muted">
+					JSON is lossless: it retains values and keys beyond the declared form fields.
+				</p>
+			</div>
+		{/if}
+	{/if}
+
+	<details class="rounded-md border border-border bg-surface p-3">
+		<summary class="cursor-pointer text-sm font-medium text-fg">Advanced submission options</summary>
+		<div class="mt-3 space-y-3">
+			<div class="flex flex-col gap-1.5">
+				<label for="run-submit-idempotency-key" class="text-sm text-fg">
+					Idempotency key <span class="text-fg-muted">(optional)</span>
+				</label>
+				<input
+					id="run-submit-idempotency-key"
+					data-testid="run-submit-idempotency-key"
+					bind:value={idempotencyKey}
+					class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				/>
+				<p class="text-xs text-fg-muted">
+					If the result is uncertain, retry with this same key. It is retained after an error.
+				</p>
+			</div>
+			<label class="flex items-start gap-2 text-sm text-fg">
+				<input
+					data-testid="run-submit-allow-empty-pool"
+					type="checkbox"
+					bind:checked={allowEmptyPool}
+					class="mt-0.5 accent-brand-600"
+				/>
+				Submit even if a resolved pool currently has no live Orker.
+			</label>
+		</div>
+	</details>
+
+	{#if formError}
+		<ErrorPanel testid="run-submit-error" message={formError} />
+	{/if}
+
+	<div class="flex items-center justify-between gap-3">
+		<button
+			type="submit"
+			data-testid="run-submit-submit"
+			disabled={submitting ||
+				versionsLoading ||
+				!!selectionError ||
+				!!typedInputError ||
+				!selectedOrkflow}
+			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+		>
+			{submitting ? 'Submitting…' : 'Submit run'}
+		</button>
+		{#if cli}
+			<CliEquivalent command={cli} testid="run-submit-cli" label="CLI equivalent of this submission" />
+		{:else}
+			<span data-testid="run-submit-cli-unavailable" class="text-xs text-warning-700">
+				Fix the input JSON to export a CLI command.
+			</span>
+		{/if}
+	</div>
+</form>
