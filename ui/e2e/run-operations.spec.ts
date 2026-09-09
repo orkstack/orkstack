@@ -131,8 +131,17 @@ test('cancel confirmation, authoritative status, pinned version, deep links and 
 	await expect(page.getByTestId('task-log-wait')).toBeVisible({ timeout: 30_000 });
 	await page.getByTestId('task-log-search-wait').fill('begin');
 	await expect(page.getByTestId('task-log-wait')).toContainText('begin operation');
+	// "Run again" opens a review on THIS page, seeded from the run already
+	// loaded here rather than from a URL that would have to carry the input.
+	// The coordinates it retains are still checkable: the banner names the run
+	// it was copied from, and the draft pins that run's own version.
 	await page.getByTestId('run-again').click();
-	await expect(page).toHaveURL(new RegExp(`/submit\\?fromRun=${runId}.*ns=default`));
+	await expect(page.getByTestId('run-again-dialog')).toBeVisible();
+	await expect(page.getByTestId('run-submit-panel')).toBeVisible();
+	await expect(page.getByTestId('run-submit-replay-banner')).toContainText(runId);
+	await expect(page.getByTestId('run-submit-version-mode')).toContainText(
+		'Pinned explicitly to 0.1.0'
+	);
 	await page.screenshot({ path: out('screenshot-rerun-review.png'), fullPage: true });
 });
 

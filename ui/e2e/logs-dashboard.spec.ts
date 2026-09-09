@@ -5,6 +5,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catalogEnv, ensureActivityImages, orkerEnv } from './harness';
+import { selectNamespace } from './uiHelpers';
 
 // The whole logs-dashboard story, in one browser session against the real
 // stack.
@@ -849,7 +850,7 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 	// ---- beta: a namespace where the numbers cannot be answered ------------
 	// The switcher is the way in, so the scoping proven here is the one a user
 	// gets.
-	await page.getByTestId('namespace-picker').selectOption(BETA);
+	await selectNamespace(page, BETA);
 	await page.waitForURL(new RegExp(`ns=${BETA}`));
 	await expect(page.getByTestId('dashboard-namespace')).toContainText(BETA);
 

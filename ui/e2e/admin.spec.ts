@@ -20,6 +20,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { expectNamespace, selectNamespace } from './uiHelpers';
 
 // The Admin section: namespaces, pool health, the activity catalog and
 // system information, in a browser, against the real stack.
@@ -781,7 +782,7 @@ test('deleting the currently-selected namespace resets the selection to default'
 	note(`namespace ${DOOMED_NS} created, holding no orkflow, to prove the self-delete reset`);
 
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${DOOMED_NS}`);
-	await expect(page.getByTestId('namespace-picker')).toHaveValue(DOOMED_NS);
+	await expectNamespace(page, DOOMED_NS);
 
 	const row = page.getByTestId(`namespace-row-${DOOMED_NS}`);
 	await expect(row).toBeVisible();
@@ -793,7 +794,7 @@ test('deleting the currently-selected namespace resets the selection to default'
 	// URL and the picker both move to `default` rather than stranding the
 	// selection on a name that no longer resolves.
 	await expect(page).toHaveURL(/ns=default/);
-	await expect(page.getByTestId('namespace-picker')).toHaveValue('default');
+	await expectNamespace(page, 'default');
 	await expect(page.getByTestId(`namespace-row-${DOOMED_NS}`)).toHaveCount(0);
 	await shot(page, 'screenshot-admin-namespace-selection-reset.png');
 });
@@ -954,7 +955,7 @@ test('switching namespace while on Pools shows this page\'s own loading state, n
 		await route.continue();
 	});
 
-	await page.getByTestId('namespace-picker').selectOption('default');
+	await selectNamespace(page, 'default');
 	await expect(page.getByTestId('pools-loading')).toBeVisible();
 	// This page's OWN loading branch takes over, exactly as on the manual
 	// Retry path — SvelteKit itself does not
@@ -1191,9 +1192,9 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 	await waitFor(
 		'pool health reports every pool as unavailable once Temporal is gone',
 		async () => {
-			await page.getByTestId('namespace-picker').selectOption('default');
+			await selectNamespace(page, 'default');
 			await page.waitForURL(/ns=default/);
-			await page.getByTestId('namespace-picker').selectOption(OPS_NS);
+			await selectNamespace(page, OPS_NS);
 			await page.waitForURL(new RegExp(`ns=${OPS_NS}`));
 			// The independent pool probes can observe the deletion at different
 			// times. Keep refreshing until the whole asserted snapshot is ready.

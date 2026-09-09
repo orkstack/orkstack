@@ -5,6 +5,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catalogEnv, ensureActivityImages } from './harness';
+import { expectNamespace, selectNamespace } from './uiHelpers';
 
 // The UI is namespace-aware, and an orkflow can be edited,
 // versioned, promoted, rolled back and diffed without leaving the browser.
@@ -287,12 +288,12 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	// copied out of it carries the sender's namespace rather than leaving the
 	// reader's browser to answer for them.
 	await page.goto(`${UI_ORIGIN}/orkflows`);
-	await expect(page.getByTestId('namespace-picker')).toHaveValue(DEFAULT_NS);
+	await expectNamespace(page, DEFAULT_NS);
 	await expect(page).toHaveURL(/[?&]ns=default(&|$)/);
 	await expect(page.getByTestId(`orkflow-row-${ORKFLOW}`)).toHaveCount(0);
 
 	// Switching scopes the list and writes the choice into the URL.
-	await page.getByTestId('namespace-picker').selectOption(ALPHA);
+	await selectNamespace(page, ALPHA);
 	await page.waitForURL(new RegExp(`ns=${ALPHA}`));
 	await expect(page.getByTestId(`orkflow-row-${ORKFLOW}`)).toBeVisible();
 	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
@@ -303,14 +304,23 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	const nav = page.locator('nav[aria-label="Primary"]');
 	await nav.getByRole('link', { name: 'Runs', exact: true }).click();
 	await page.waitForURL(new RegExp(`/runs\\?.*ns=${ALPHA}`));
-	await expect(page.getByTestId('namespace-picker')).toHaveValue(ALPHA);
+	await expectNamespace(page, ALPHA);
 	await expect(page.getByTestId('runs-empty')).toContainText(ALPHA);
 
-	await nav.getByRole('link', { name: 'Submit run', exact: true }).click();
-	await page.waitForURL(new RegExp(`/submit\\?.*ns=${ALPHA}`));
-	// The picker offers alpha's orkflow and not beta's: submit is scoped too.
-	await expect(page.getByTestId('orkflow-select')).toContainText(ORKFLOW);
-	await expect(page.getByTestId('orkflow-select')).not.toContainText(BETA_ORKFLOW);
+	// Submitting lives on each orkflow's own page rather than on a route that
+	// asks which orkflow it is looking at, so "submit is scoped" is now the
+	// same claim as "the list is scoped, and its links carry the namespace":
+	// alpha's list offers alpha's orkflow and not beta's, the link to it keeps
+	// the namespace, and the submit dialog opens on that page.
+	await nav.getByRole('link', { name: 'Orkflows', exact: true }).click();
+	await page.waitForURL(new RegExp(`/orkflows\\?.*ns=${ALPHA}`));
+	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
+	await page.getByTestId(`orkflow-row-${ORKFLOW}`).getByRole('link').click();
+	await page.waitForURL(new RegExp(`/orkflows/${ORKFLOW}\\?.*ns=${ALPHA}`));
+	await page.getByTestId('orkflow-submit-run').click();
+	await expect(page.getByTestId('orkflow-submit-dialog')).toBeVisible();
+	await expect(page.getByTestId('run-submit-panel')).toBeVisible();
+	await page.getByTestId('orkflow-submit-dialog-close').click();
 
 	await nav.getByRole('link', { name: 'Apply orkflow', exact: true }).click();
 	await page.waitForURL(new RegExp(`/apply\\?.*ns=${ALPHA}`));
@@ -319,14 +329,14 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	// Reload preserves it.
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=${ALPHA}`);
 	await page.reload();
-	await expect(page.getByTestId('namespace-picker')).toHaveValue(ALPHA);
+	await expectNamespace(page, ALPHA);
 
 	// A pasted link opens the same namespace in a browser with no localStorage.
 	const pasted = `${UI_ORIGIN}/orkflows?ns=${ALPHA}`;
 	const fresh = await browser.newContext();
 	const colleague = await fresh.newPage();
 	await colleague.goto(pasted);
-	await expect(colleague.getByTestId('namespace-picker')).toHaveValue(ALPHA);
+	await expectNamespace(colleague, ALPHA);
 	await expect(colleague.getByTestId(`orkflow-row-${ORKFLOW}`)).toBeVisible();
 	await fresh.close();
 
@@ -339,12 +349,12 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	// The other namespace is scoped too, and `default` is a choice like any
 	// other: it is written into the URL, so the link a user copies out of the
 	// address bar says which namespace they were looking at.
-	await page.getByTestId('namespace-picker').selectOption(BETA);
+	await selectNamespace(page, BETA);
 	await page.waitForURL(new RegExp(`ns=${BETA}`));
 	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toBeVisible();
 	await expect(page.getByTestId(`orkflow-row-${ORKFLOW}`)).toHaveCount(0);
 
-	await page.getByTestId('namespace-picker').selectOption(DEFAULT_NS);
+	await selectNamespace(page, DEFAULT_NS);
 	await page.waitForURL(/[?&]ns=default(&|$)/);
 	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
 	const senderLink = page.url();
@@ -357,11 +367,11 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	const other = await browser.newContext();
 	const otherPage = await other.newPage();
 	await otherPage.goto(`${UI_ORIGIN}/orkflows`);
-	await otherPage.getByTestId('namespace-picker').selectOption(BETA);
+	await selectNamespace(otherPage, BETA);
 	await otherPage.waitForURL(new RegExp(`ns=${BETA}`));
 	await expect(otherPage.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toBeVisible();
 	await otherPage.goto(senderLink);
-	await expect(otherPage.getByTestId('namespace-picker')).toHaveValue(DEFAULT_NS);
+	await expectNamespace(otherPage, DEFAULT_NS);
 	await expect(otherPage.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
 	await expect(otherPage).toHaveURL(/[?&]ns=default(&|$)/);
 	await other.close();
@@ -369,7 +379,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	// And the choice sticks in the browser that made it: a bare URL restores
 	// `default` rather than dragging the user back to the namespace they left.
 	await page.goto(`${UI_ORIGIN}/orkflows`);
-	await expect(page.getByTestId('namespace-picker')).toHaveValue(DEFAULT_NS);
+	await expectNamespace(page, DEFAULT_NS);
 	await expect(page).toHaveURL(/[?&]ns=default(&|$)/);
 	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
 });

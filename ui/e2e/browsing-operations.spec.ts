@@ -88,7 +88,7 @@ test('dashboard presets and custom since are visible, addressable, and export a 
 	await page.locator('input[name="since"]').fill(new Date(Date.now() - 5 * 60_000).toISOString().slice(0, 16));
 	await page.getByRole('button', { name: 'Custom' }).click();
 	await expect(page).toHaveURL(/window=custom.*since=/);
-	await page.getByText('CLI equivalent').click();
-	await expect(page.getByTestId('dashboard-cli')).toContainText('orkctl --namespace');
+	await page.getByTestId('dashboard-cli-trigger').click();
+	await expect(page.getByTestId('dashboard-cli-command')).toContainText('orkctl --namespace');
 	await page.screenshot({ path: out('screenshot-dashboard-window.png'), fullPage: true });
 });
