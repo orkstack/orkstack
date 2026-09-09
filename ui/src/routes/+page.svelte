@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto, invalidate } from '$app/navigation';
+	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
@@ -102,8 +103,6 @@
 	function windowHref(window: string, since = '') { return withNamespace(`/?window=${encodeURIComponent(window)}${since ? `&since=${encodeURIComponent(since)}` : ''}`, data.namespace); }
 	function setCustom(event: SubmitEvent) { event.preventDefault(); const since = String(new FormData(event.currentTarget as HTMLFormElement).get('since') ?? ''); if (since) void goto(windowHref('custom', new Date(since).toISOString())); }
 	const statsCli = $derived(`orkctl --namespace ${shellQuote(namespaceLabel(data.namespace))} stats --since ${shellQuote(data.window === 'custom' && data.sinceParam ? data.sinceParam : data.window)}`);
-	let copied = $state(false);
-	async function copyCli() { await navigator.clipboard.writeText(statsCli); copied = true; }
 </script>
 
 <svelte:head><title>Dashboard — OrkStack</title></svelte:head>
@@ -127,11 +126,25 @@
 
 <section class="mb-6 flex flex-wrap items-end gap-3" data-testid="dashboard-window-controls">
 	<span class="text-sm font-medium text-fg">Window</span>
-	{#each ['15m', '6h', '24h'] as preset}
-		<a data-testid="dashboard-window-{preset}" aria-current={data.window === preset ? 'page' : undefined} class="rounded border border-border px-2 py-1 text-sm text-fg" href={windowHref(preset)}>{preset}</a>
-	{/each}
-	<form class="flex items-end gap-2" onsubmit={setCustom}><label class="text-sm text-fg-secondary">Since<input name="since" type="datetime-local" class="ml-1 h-8 rounded border border-border bg-surface px-2 text-fg" /></label><button class="h-8 rounded border border-border px-2 text-sm text-fg">Custom</button></form>
-	<details class="ml-auto"><summary class="cursor-pointer text-sm text-brand-700">CLI equivalent</summary><pre data-testid="dashboard-cli" class="mt-2 rounded bg-surface-sunken p-2 text-xs text-fg"><code>{statsCli}</code></pre><button type="button" onclick={copyCli} class="text-sm text-brand-700">{copied ? 'Copied' : 'Copy command'}</button></details>
+	<!-- One control, three mutually exclusive choices: a connected group says
+		that plainly, where three separate bordered links read as three
+		independent buttons any number of which could be on. The active member is
+		still marked with `aria-current="page"` (they are links, and the URL is
+		the state), and `current:` — app.css's `&[aria-current='page']` variant —
+		gives it the same brand-50/brand-700 treatment the nav already uses for
+		"you are here". -->
+	<div role="group" aria-label="Stats window preset" class="inline-flex h-9 overflow-hidden rounded-md border border-border bg-surface shadow-xs">
+		{#each ['15m', '6h', '24h'] as preset (preset)}
+			<a
+				data-testid="dashboard-window-{preset}"
+				aria-current={data.window === preset ? 'page' : undefined}
+				href={windowHref(preset)}
+				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors duration-150 last:border-r-0 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+			>{preset}</a>
+		{/each}
+	</div>
+	<form class="flex items-end gap-2" onsubmit={setCustom}><label class="flex items-center gap-2 text-sm text-fg-secondary">Since<input name="since" type="datetime-local" class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" /></label><button type="submit" class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none">Custom</button></form>
+	<div class="ml-auto"><CliEquivalent command={statsCli} testid="dashboard-cli" /></div>
 </section>
 
 {#if data.error}

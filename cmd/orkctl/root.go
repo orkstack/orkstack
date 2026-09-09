@@ -130,6 +130,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newRunCommand(g),
 		newActivityCommand(g),
 		newStatsCommand(g),
+		newTriggerCommand(g),
 		newWebhookCommand(g),
 		newVersionCommand(g),
 	)
@@ -240,6 +241,12 @@ func (g *globalFlags) statsClient() orkstackv1connect.StatsServiceClient {
 
 func (g *globalFlags) webhookClient() orkstackv1connect.WebhookServiceClient {
 	return orkstackv1connect.NewWebhookServiceClient(g.httpClient(), g.baseURL())
+}
+
+// triggerClient reaches TriggerService, the inbound mirror of WebhookService:
+// a trigger is what an external caller invokes to start a run.
+func (g *globalFlags) triggerClient() orkstackv1connect.TriggerServiceClient {
+	return orkstackv1connect.NewTriggerServiceClient(g.httpClient(), g.baseURL())
 }
 
 func (g *globalFlags) baseURL() string {

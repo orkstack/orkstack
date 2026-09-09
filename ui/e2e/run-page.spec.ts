@@ -580,8 +580,15 @@ test('a retried task offers its attempts, and attempt 1 still reads back', async
 	// The selector appears because the task retried, and it offers `latest`
 	// plus every try by number.
 	const selector = page.getByTestId('task-log-attempt-select-flaky');
+	const attempts = page.getByTestId('task-log-attempt-select-flaky-listbox');
 	await expect(selector).toBeVisible({ timeout: 60_000 });
-	expect(await selector.locator('option').allInnerTexts()).toEqual(['latest', '1', '2']);
+	// The tries are read from the open panel: this is the app's own Select, so
+	// its options exist while it is open and nowhere else. Escape closes it
+	// again without choosing anything — the same guarantee a reader gets.
+	await selector.click();
+	expect(await attempts.getByRole('option').allInnerTexts()).toEqual(['latest', '1', '2']);
+	await page.keyboard.press('Escape');
+	await expect(attempts).toHaveCount(0);
 
 	// `latest` is the default and shows the try that ran last: the one that
 	// reached the stub and got an answer. Two requests, one completion.
@@ -602,7 +609,8 @@ test('a retried task offers its attempts, and attempt 1 still reads back', async
 	// Attempt 1 — the try that FAILED — is still in the store and reads back.
 	// The same task, the same pane, a different attempt: the request that
 	// never got an answer, with no completion behind it.
-	await selector.selectOption('1');
+	await selector.click();
+	await page.getByTestId('task-log-attempt-select-flaky-option-1').click();
 	await expect
 		.poll(
 			async () =>
@@ -620,7 +628,8 @@ test('a retried task offers its attempts, and attempt 1 still reads back', async
 	await shot(page, 'screenshot-attempt-one.png');
 
 	// And back: the selector is a view, not a one-way door.
-	await selector.selectOption('0');
+	await selector.click();
+	await page.getByTestId('task-log-attempt-select-flaky-option-0').click();
 	await expect
 		.poll(async () => (await paneLines(page, 'flaky')).some((l) => l.text.includes('-> 200')), {
 			timeout: 60_000

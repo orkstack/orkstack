@@ -1,5 +1,29 @@
 # JSON reference — OrkStack's enum dialect
 
+## Why JSON, not YAML
+
+Run input, task/run output, and `values.json` are JSON — never YAML — even
+though the Orkflow DSL itself is YAML (`docs/DSL.md`). The two formats do
+different jobs: YAML is for a document a person authors, with comments and
+multi-line blocks — an Orkflow. JSON is for runtime data a system exchanges —
+what a run was submitted with, what it produced — validated against a proto
+`Struct` and carried over the API and CLI with no authoring step in between.
+
+JSON's explicit `null`, `true`, `false`, number, and string types have no
+implicit coercion to catch a reader by surprise. YAML's unquoted `no`, `yes`,
+`on`, `off`, and octal-looking numbers are exactly the silent-coercion class
+of bug the browser's typed input editor is built to avoid — see
+`docs/UI_CLI_PARITY.md`'s "false/zero/empty string not dropped" and "invalid
+numeric/JSON data cannot silently coerce" requirements. Standardizing on one
+format also keeps the "CLI equivalent" honest: `orkctl run submit
+--input-json`, the Connect API's `Payload`, and the browser's JSON/Fields
+editor all agree on this one wire shape, so a copied command reproduces
+exactly what the UI would have sent — a second, YAML, input mode would need
+its own YAML→JSON translation step, and a gap between what a reader typed and
+what was actually submitted is exactly what this dialect exists to prevent.
+
+## The enum dialect
+
 Proto names every enum value with its type as a prefix: `STATUS_SUCCEEDED`,
 `EVENT_TYPE_RUN_FAILED`. That prefix is dead weight in JSON, where the field
 name already says which enum you are reading. OrkStack strips it on the way out

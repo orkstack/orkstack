@@ -237,14 +237,20 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	await page.screenshot({ path: logPath('screenshot-orkflow-dag.png'), fullPage: true });
 
 	// 3. Submit hello-ork via the UI form with the hermetic stub URL.
-	await page.goto(`${UI_ORIGIN}/submit?orkflow=hello-ork`);
-	await expect(page.getByTestId('submit-form')).toBeVisible();
-	await page.getByTestId('orkflow-select').selectOption('hello-ork');
-	await page.getByTestId('input-json-mode').click();
+	//
+	//    Submitting is a dialog on the orkflow's OWN page — the page step 2
+	//    just rendered — rather than a standalone route that would ask again
+	//    which orkflow this is. There is no orkflow picker any more for the
+	//    same reason: the answer is the page the button was pressed on.
+	await page.goto(`${UI_ORIGIN}/orkflows/hello-ork`);
+	await page.getByTestId('orkflow-submit-run').click();
+	await expect(page.getByTestId('orkflow-submit-dialog')).toBeVisible();
+	await expect(page.getByTestId('run-submit-panel')).toBeVisible();
+	await page.getByTestId('run-submit-input-json-mode').click();
 	await page
-		.getByTestId('inputs-json')
+		.getByTestId('run-submit-inputs-json')
 		.fill(JSON.stringify({ url: `http://${containerHost}:${stubPort}/data.json` }, null, 2));
-	await page.getByTestId('submit-run').click();
+	await page.getByTestId('run-submit-submit').click();
 
 	// 4. The browser lands on the run page; from here on NO navigation or
 	//    refresh may occur — all updates must arrive over the WebSocket.

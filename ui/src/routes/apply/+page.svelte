@@ -123,6 +123,36 @@ tasks:
 	A document that names a different one is refused rather than moved.
 </p>
 
+<!--
+	The gallery is the repo's `examples/` directory, read at build time by
+	+page.ts. "Use this example" is the same plain assignment `importYaml` makes,
+	so it flows through the existing dirty check: the change is flagged as
+	unsaved and the beforeNavigate guard still protects it, but loading an
+	example is not itself a navigation and does not prompt.
+-->
+<section class="mb-6 max-w-3xl">
+	<h2 class="mb-3 text-sm font-semibold text-fg">Start from an example</h2>
+	<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="apply-examples">
+		{#each data.examples as example (example.slug)}
+			<div
+				data-testid="apply-example-{example.slug}"
+				class="flex flex-col rounded-lg border border-border bg-surface p-4 shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+			>
+				<h3 class="font-medium text-fg">{example.name}</h3>
+				<p class="mt-1 grow text-sm text-fg-muted">{example.description}</p>
+				<button
+					type="button"
+					data-testid="apply-example-use-{example.slug}"
+					onclick={() => (yaml = example.yaml)}
+					class="mt-3 self-start text-sm font-medium text-brand-700 hover:underline"
+				>
+					Use this example
+				</button>
+			</div>
+		{/each}
+	</div>
+</section>
+
 <form
 	class="max-w-3xl space-y-4"
 	data-testid="apply-form"

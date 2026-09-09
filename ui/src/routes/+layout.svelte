@@ -3,6 +3,7 @@
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import {
 		DEFAULT_NAMESPACE,
 		hasNamespaceParam,
@@ -165,16 +166,12 @@
 		<div class="mb-1.5 px-0.5 text-[11px] font-medium tracking-wider text-fg-muted uppercase">
 			Namespace
 		</div>
-		<select
-			data-testid="namespace-picker"
-			class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+		<Select
+			testid="namespace-picker"
 			value={namespaceLabel(data.namespace)}
-			onchange={(e) => switchTo(e.currentTarget.value)}
-		>
-			{#each options as name (name)}
-				<option value={name}>{name}</option>
-			{/each}
-		</select>
+			options={options.map((name) => ({ value: name, label: name }))}
+			onchange={switchTo}
+		/>
 	</div>
 {/snippet}
 
@@ -193,11 +190,6 @@
 		>
 
 		<div class={GROUP_LABEL}>Author</div>
-		<a
-			href={link('/submit')}
-			aria-current={isActive('/submit') ? 'page' : undefined}
-			class={NAV_ITEM}>Submit run</a
-		>
 		<a href={link('/apply')} aria-current={isActive('/apply') ? 'page' : undefined} class={NAV_ITEM}
 			>Apply orkflow</a
 		>

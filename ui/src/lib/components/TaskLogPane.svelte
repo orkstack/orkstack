@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
 	import { followTaskLogs, type LogLine, type LogSocketState } from '$lib/taskLogs';
 
@@ -282,6 +283,16 @@
 		onAttemptChange?.(pinned);
 	}
 
+	// `latest` is 0 — the same wire value the old <option value="0"> carried,
+	// so what `selectAttempt` reads has not changed.
+	const attemptOptions = $derived([
+		{ value: '0', label: 'latest' },
+		...Array.from({ length: maxAttempt }, (_, i) => ({
+			value: String(i + 1),
+			label: String(i + 1)
+		}))
+	]);
+
 	function toggle() {
 		open = !open;
 		if (open) following = true;
@@ -371,17 +382,13 @@
 					-->
 					<label class="flex items-center gap-1.5 text-console-muted normal-case">
 						Attempt:
-						<select
-							data-testid="task-log-attempt-select-{taskId}"
+						<Select
+							testid="task-log-attempt-select-{taskId}"
+							variant="console"
 							value={String(pinned ?? 0)}
-							onchange={(e) => selectAttempt(e.currentTarget.value)}
-							class="h-6 rounded-sm border border-console-border bg-console-bg px-1.5 text-[11px] text-console-fg"
-						>
-							<option value="0">latest</option>
-							{#each Array.from({ length: maxAttempt }, (_, i) => i + 1) as n (n)}
-								<option value={String(n)}>{n}</option>
-							{/each}
-						</select>
+							options={attemptOptions}
+							onchange={selectAttempt}
+						/>
 					</label>
 				{/if}
 				{#if shownAttempt > 1 || pinned !== null}

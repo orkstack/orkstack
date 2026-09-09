@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { invalidateAll, replaceState } from '$app/navigation';
+	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
+	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
+	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import EventInspector from '$lib/components/EventInspector.svelte';
+	import RunSubmitPanel from '$lib/components/RunSubmitPanel.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
@@ -122,6 +125,11 @@
 	// same frame and the pill only ever paints the newer one.
 	let statusTrail = $state<Status[]>([]);
 	let cancelDialog = $state(false);
+	// "Run again" is a DIALOG, not a route. The draft it opens is seeded from
+	// the run this page already loaded — its pinned version and its exact
+	// input — so there is no second GetRun and, deliberately, no URL that
+	// carries an input payload for someone to paste into a chat window.
+	let runAgainDialogOpen = $state(false);
 	let cancelReason = $state('');
 	let cancelBusy = $state(false);
 	let cancelError = $state('');
@@ -538,17 +546,17 @@
 			</span>
 		</div>
 		<div class="ml-auto flex flex-wrap items-center justify-end gap-2">
-			<a
-				href={withNamespace(`/submit?fromRun=${encodeURIComponent(run.id)}`, data.namespace)}
-				data-testid="run-again"
-				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
-			>Run again</a>
 			<button
 				type="button"
-				data-testid="copy-run-inspect"
-				onclick={() => copy(runCommand(data.namespace, ['run', 'get', run.id]), 'Inspect command copied')}
+				data-testid="run-again"
+				onclick={() => (runAgainDialogOpen = true)}
 				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
-			>Copy CLI</button>
+			>Run again</button>
+			<CliEquivalent
+				command={runCommand(data.namespace, ['run', 'get', run.id])}
+				testid="run-inspect-cli"
+				label="Copy CLI"
+			/>
 			<button
 				type="button"
 				data-testid="export-run-json"
@@ -671,35 +679,17 @@
 								{#if task.message && !task.error}
 									<p class="text-xs break-words text-fg-secondary">{task.message}</p>
 	{/if}
-
-{#if cancelDialog && run}
-	<ConfirmDialog
-		testid="cancel-run-confirm"
-		title="Cancel run {run.id}?"
-		acceptLabel="Request cancellation"
-		acceptTestid="cancel-run-accept"
-		cancelTestid="cancel-run-dismiss"
-		busy={cancelBusy}
-		error={cancelError}
-		destructive
-		onaccept={cancelRun}
-		oncancel={() => { cancelDialog = false; cancelError = ''; }}
-	>
-		{#snippet body()}
-			<p>The request is sent to the durable execution service. This page keeps the current status until that service records a transition.</p>
-			<label class="mt-3 block text-sm font-medium text-fg" for="cancel-reason">Reason <span class="font-normal text-fg-muted">(optional)</span></label>
-			<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg" placeholder="Why should this run stop?"></textarea>
-			<p class="mt-2 font-mono text-xs text-fg-muted">{runCommand(data.namespace, ['run', 'cancel', run.id, ...(cancelReason.trim() ? ['--reason', cancelReason.trim()] : [])])}</p>
-		{/snippet}
-	</ConfirmDialog>
-{/if}
 							</div>
 							<StatusPill status={task.status} testid="task-{task.id}-status" />
 						</div>
 						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
 							<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.startedAt, task.finishedAt ?? (task.status === Status.RUNNING ? currentTimestamp : undefined))}</span>
 							{#if task.pool}<span>Pool {task.pool}</span>{/if}
-							<button type="button" data-testid="copy-task-logs-{task.id}" onclick={() => copy(runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])]), 'Logs command copied')} class="font-medium text-brand-700 hover:underline">Copy logs CLI</button>
+							<CliEquivalent
+								command={runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])])}
+								testid="run-task-{task.id}-logs-cli"
+								label="Copy logs CLI"
+							/>
 						</div>
 
 						{#if task.error}
@@ -746,6 +736,33 @@
 				{/each}
 			</div>
 		</section>
+		{#if cancelDialog && run}
+			<ConfirmDialog
+				testid="cancel-run-confirm"
+				title="Cancel run {run.id}?"
+				acceptLabel="Request cancellation"
+				acceptTestid="cancel-run-accept"
+				cancelTestid="cancel-run-dismiss"
+				busy={cancelBusy}
+				error={cancelError}
+				destructive
+				onaccept={cancelRun}
+				oncancel={() => { cancelDialog = false; cancelError = ''; }}
+			>
+				{#snippet body()}
+					<p>The request is sent to the durable execution service. This page keeps the current status until that service records a transition.</p>
+					<label class="mt-3 block text-sm font-medium text-fg" for="cancel-reason">Reason <span class="font-normal text-fg-muted">(optional)</span></label>
+					<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg" placeholder="Why should this run stop?"></textarea>
+					<!--
+						Deliberately NOT a CliEquivalent popover. This is a live preview of
+						the exact destructive command this dialog is about to run, and it
+						stays visible while the reason field is typed into. Styled to match
+						the popover's command block; not hidden behind its icon.
+					-->
+					<p class="mt-3 overflow-x-auto rounded bg-surface-sunken p-2 font-mono text-xs text-fg-muted">{runCommand(data.namespace, ['run', 'cancel', run.id, ...(cancelReason.trim() ? ['--reason', cancelReason.trim()] : [])])}</p>
+				{/snippet}
+			</ConfirmDialog>
+		{/if}
 
 		{#if inspectOpen}
 			<section
@@ -922,4 +939,24 @@
 			</section>
 		{/if}
 	</div>
+
+	{#if runAgainDialogOpen}
+		<Dialog
+			testid="run-again-dialog"
+			title="Run again from {run.id}"
+			widthClass="max-w-2xl"
+			onclose={() => (runAgainDialogOpen = false)}
+		>
+			{#snippet body()}
+				<RunSubmitPanel
+					namespace={data.namespace}
+					orkflowName={run.orkflowName}
+					initialVersion={run.orkflowVersion}
+					initialInput={run.input?.data ?? {}}
+					replayFromRunId={run.id}
+					onsubmitted={(newRunId) => goto(withNamespace(`/runs/${newRunId}`, data.namespace))}
+				/>
+			{/snippet}
+		</Dialog>
+	{/if}
 {/if}

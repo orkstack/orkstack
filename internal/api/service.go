@@ -17,6 +17,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -109,6 +110,13 @@ type Config struct {
 	// Webhooks holds the registered callbacks. Nil builds an empty registry,
 	// so the management endpoints exist whether or not anything is wired.
 	Webhooks *webhooks.Registry
+
+	// Triggers holds the inbound run starters. `ork` wires the durable store
+	// on the same shared backend the webhook registry uses, so a trigger
+	// created on one replica is invocable on every other one. Nil builds the
+	// in-process store, which is correct for one process and therefore for
+	// unit tests only — exactly the terms Webhooks above is on.
+	Triggers triggers.Store
 
 	// Notifier announces run state transitions this service observes itself.
 	// The engine announces every transition of a run that reached Temporal;
@@ -262,6 +270,7 @@ type Service struct {
 	logPoll       LogPollOptions
 	idempotency   IdempotencyClaimer
 	webhooks      *webhooks.Registry
+	triggers      triggers.Store
 	notifier      engine.RunNotifier
 	observer      engine.EventObserver
 	// system is this replica's own build and configuration, echoed by
@@ -308,6 +317,7 @@ func NewService(cfg Config) *Service {
 		logPoll:           cfg.LogPoll,
 		idempotency:       cfg.Idempotency,
 		webhooks:          cfg.Webhooks,
+		triggers:          cfg.Triggers,
 		notifier:          cfg.Notifier,
 		observer:          cfg.Observer,
 		artifacts:         cfg.Artifacts,
@@ -366,6 +376,9 @@ func NewService(cfg Config) *Service {
 	if svc.webhooks == nil {
 		svc.webhooks = webhooks.NewRegistry()
 	}
+	if svc.triggers == nil {
+		svc.triggers = triggers.NewMemoryStore()
+	}
 	if svc.now == nil {
 		svc.now = time.Now
 	}
@@ -416,6 +429,11 @@ func (s *Service) Runs() *engine.RunStore { return s.runs }
 
 // Webhooks exposes the callback registry (used by the management endpoints).
 func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
+
+// Triggers exposes the inbound run-starter registry, on the same terms: the
+// management RPCs and the plain-HTTP invoke adapter both read it, and it is
+// the shared store rather than anything this process remembers.
+func (s *Service) Triggers() triggers.Store { return s.triggers }
 
 // ApplyOrkflow compiles a DSL document and writes the resulting orkflow to the
 // durable store, so it outlives this process.

@@ -76,7 +76,9 @@ test.beforeAll(async () => {
 	spawnLogged(proof('orker.log'), './bin/orker', [], { ...cluster, ...s3Env, ...orkerEnv('authoring-operations') });
 	await waitForEngine(ENGINE);
 	spawnLogged(proof('ui.log'), 'node', ['build'], { HOST: '127.0.0.1', PORT: '14182', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') }, uiDir);
-	await waitFor('built UI', async () => (await fetch(`${UI}/submit?ns=${NS}`)).ok);
+	// A readiness probe only: any always-present route answers it, and this one
+	// needs no namespace to exist yet (CreateNamespace is the next line).
+	await waitFor('built UI', async () => (await fetch(`${UI}/orkflows`)).ok);
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'authoring operations' } });
 	await waitFor('a live default pool', async () => {
 		const answer = await rpc<{ pools: { liveOrkerCount: number }[] }>('NamespaceService/ListPools', { namespace: NS });
@@ -89,43 +91,59 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await killAll(); });
 
 test('version-pinned submit, typed inputs, CLI, and run-again retain author intent', async ({ page }) => {
-	await page.goto(`${UI}/submit?ns=${NS}&orkflow=${FLOW}&version=1.0.0`);
-	await expect(page.getByTestId('submit-form')).toBeVisible();
-	await expect(page.getByTestId('submit-version-mode')).toContainText('Pinned explicitly to 1.0.0');
+	// The orkflow's own page IS the submit surface: `?version=` selects the
+	// version the page shows, and the dialog it opens pins that same version,
+	// so the definition being filled in is the one the reader is looking at.
+	await page.goto(`${UI}/orkflows/${FLOW}?ns=${NS}&version=1.0.0`);
+	await expect(page.getByTestId('orkflow-version')).toHaveText('v1.0.0');
+	await page.getByTestId('orkflow-submit-run').click();
+	await expect(page.getByTestId('orkflow-submit-dialog')).toBeVisible();
+	await expect(page.getByTestId('run-submit-version-mode')).toContainText(
+		'Pinned explicitly to 1.0.0'
+	);
 	await expect(page.getByTestId('declared-input-message')).toHaveValue('one');
 	await page.getByTestId('declared-input-message').fill('from typed form');
-	await page.getByTestId('input-json-mode').click();
-	await expect(page.getByTestId('inputs-json')).toHaveValue(/from typed form/);
-	await page.getByTestId('input-form-mode').click();
+	await page.getByTestId('run-submit-input-json-mode').click();
+	await expect(page.getByTestId('run-submit-inputs-json')).toHaveValue(/from typed form/);
+	await page.getByTestId('run-submit-input-form-mode').click();
 	await page.getByTestId('declared-input-config').fill('{');
 	await page.getByTestId('declared-input-metadata').fill('{}');
-	await expect(page.getByTestId('declared-input-error')).toBeVisible();
-	await expect(page.getByTestId('submit-run')).toBeDisabled();
-	await page.getByTestId('input-json-mode').click();
+	await expect(page.getByTestId('run-submit-declared-input-error')).toBeVisible();
+	await expect(page.getByTestId('run-submit-submit')).toBeDisabled();
+	await page.getByTestId('run-submit-input-json-mode').click();
 	await expect(page.getByTestId('declared-input-config')).toHaveValue('{');
-	await expect(page.getByTestId('inputs-json')).toHaveCount(0);
+	await expect(page.getByTestId('run-submit-inputs-json')).toHaveCount(0);
 	await page.getByTestId('declared-input-config').fill('{}');
 	await page.getByTestId('declared-input-scale').fill('1.5');
 	await page.getByTestId('declared-input-message').fill('');
-	await page.getByTestId('input-json-mode').click();
-	await expect(page.getByTestId('inputs-json')).toHaveValue(/"message": ""/);
-	await expect(page.getByTestId('inputs-json')).toHaveValue(/"scale": 1.5/);
-	await page.getByTestId('input-form-mode').click();
+	await page.getByTestId('run-submit-input-json-mode').click();
+	await expect(page.getByTestId('run-submit-inputs-json')).toHaveValue(/"message": ""/);
+	await expect(page.getByTestId('run-submit-inputs-json')).toHaveValue(/"scale": 1.5/);
+	await page.getByTestId('run-submit-input-form-mode').click();
 	await page.getByText('Advanced submission options').click();
-	await page.getByTestId('idempotency-key').fill('authoring-retry-key');
-	await page.getByText('CLI equivalent').click();
-	await expect(page.getByTestId('submit-cli')).toContainText("--version '1.0.0'");
+	await page.getByTestId('run-submit-idempotency-key').fill('authoring-retry-key');
+	await page.getByTestId('run-submit-cli-trigger').click();
+	await expect(page.getByTestId('run-submit-cli-command')).toContainText("--version '1.0.0'");
 	await shot(page, 'screenshot-version-pinned-submit.png');
 
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', {
 		orkflowName: FLOW, orkflowVersion: '1.0.0', namespace: NS, idempotencyKey: 'authoring-source', input: { data: { message: 'original', enabled: false } }
 	});
-	await page.goto(`${UI}/submit?ns=${NS}&fromRun=${encodeURIComponent(submitted.run.id)}`);
-	await expect(page.getByTestId('replay-review')).toContainText(`Review a new run from ${submitted.run.id}`);
-	await expect(page.getByTestId('submit-version-mode')).toContainText('Pinned explicitly to 1.0.0');
-	await page.getByTestId('input-json-mode').click();
-	await expect(page.getByTestId('inputs-json')).toHaveValue(/original/);
-	await expect(page.getByTestId('idempotency-key')).toHaveValue('');
+	// Replay is a dialog on the run's own page, seeded from the run that page
+	// already loaded: no URL carries the input, and the version the new draft
+	// pins is the one the source run actually ran.
+	await page.goto(`${UI}/runs/${encodeURIComponent(submitted.run.id)}?ns=${NS}`);
+	await page.getByTestId('run-again').click();
+	await expect(page.getByTestId('run-again-dialog')).toBeVisible();
+	await expect(page.getByTestId('run-submit-replay-banner')).toContainText(
+		`Reviewing a new run from ${submitted.run.id}`
+	);
+	await expect(page.getByTestId('run-submit-version-mode')).toContainText(
+		'Pinned explicitly to 1.0.0'
+	);
+	await page.getByTestId('run-submit-input-json-mode').click();
+	await expect(page.getByTestId('run-submit-inputs-json')).toHaveValue(/original/);
+	await expect(page.getByTestId('run-submit-idempotency-key')).toHaveValue('');
 	await shot(page, 'screenshot-run-again-review.png');
 });
 

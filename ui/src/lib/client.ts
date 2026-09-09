@@ -6,6 +6,7 @@ import {
 	RunService,
 	ActivityService,
 	WebhookService,
+	TriggerService,
 	NamespaceService,
 	SystemService
 } from './gen/orkstack/v1/service_pb';
@@ -24,6 +25,9 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 		// DescribeOrker, the pool-liveness probe (§6.5).
 		activities: createClient(ActivityService, transport),
 		webhooks: createClient(WebhookService, transport),
+		// triggers is the inbound counterpart to webhooks: one bound to a
+		// specific orkflow+namespace rather than a deployment-wide subscription.
+		triggers: createClient(TriggerService, transport),
 		namespaces: createClient(NamespaceService, transport),
 		stats: createClient(StatsService, transport),
 		// system answers GetSystemInfo — the one admin read that describes the
