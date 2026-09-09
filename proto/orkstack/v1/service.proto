@@ -278,6 +278,51 @@ message ListWebhooksResponse { repeated Webhook webhooks = 1; }
 message DeleteWebhookRequest { string id = 1; }
 message DeleteWebhookResponse {}
 
+// TriggerService manages inbound run starters. A trigger is bound to ONE
+// orkflow in one namespace, and an external caller presents that trigger's
+// bearer token over plain HTTP to start a run of it.
+//
+// It is the mirror image of WebhookService, not a variant of it. A webhook is
+// OUTBOUND and deployment-wide: OrkStack calls the subscriber when any run
+// changes state. A trigger is INBOUND and orkflow-scoped: the caller calls
+// OrkStack, authenticating as the trigger. The orkflow coordinates come from
+// the stored record and never from the request, so whoever holds a token can
+// only start the orkflow the trigger was created for.
+//
+// The secret is handed back exactly once, at creation, on the same terms as
+// RegisterWebhookResponse.secret: a listing never carries it again.
+service TriggerService {
+  rpc CreateTrigger(CreateTriggerRequest) returns (CreateTriggerResponse);
+  rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
+  rpc DeleteTrigger(DeleteTriggerRequest) returns (DeleteTriggerResponse);
+}
+
+message Trigger {
+  string id = 1;
+  string namespace = 2;
+  string orkflow_name = 3;
+  string orkflow_version = 4;              // empty = current pointer, resolved at invoke time
+  string description = 5;                  // optional operator label
+  google.protobuf.Timestamp created_at = 6;
+}
+message CreateTriggerRequest {
+  string namespace = 1;
+  string orkflow_name = 2;
+  string orkflow_version = 3;
+  string description = 4;
+}
+message CreateTriggerResponse {
+  Trigger trigger = 1;
+  string secret = 2;                       // shown exactly once, like RegisterWebhookResponse.secret
+}
+message ListTriggersRequest {
+  string namespace = 1;
+  string orkflow_name = 2;                 // empty = every trigger in the namespace
+}
+message ListTriggersResponse { repeated Trigger triggers = 1; }
+message DeleteTriggerRequest { string id = 1; string namespace = 2; }
+message DeleteTriggerResponse {}
+
 message SubmitRunRequest {
   string orkflow_name = 1;               // orkflow name
   string orkflow_version = 2;            // orkflow version; empty = latest

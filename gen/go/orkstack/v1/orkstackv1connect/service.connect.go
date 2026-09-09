@@ -27,6 +27,8 @@ const (
 	RunServiceName = "orkstack.v1.RunService"
 	// WebhookServiceName is the fully-qualified name of the WebhookService service.
 	WebhookServiceName = "orkstack.v1.WebhookService"
+	// TriggerServiceName is the fully-qualified name of the TriggerService service.
+	TriggerServiceName = "orkstack.v1.TriggerService"
 	// NamespaceServiceName is the fully-qualified name of the NamespaceService service.
 	NamespaceServiceName = "orkstack.v1.NamespaceService"
 	// ActivityServiceName is the fully-qualified name of the ActivityService service.
@@ -94,6 +96,15 @@ const (
 	// WebhookServiceDeleteWebhookProcedure is the fully-qualified name of the WebhookService's
 	// DeleteWebhook RPC.
 	WebhookServiceDeleteWebhookProcedure = "/orkstack.v1.WebhookService/DeleteWebhook"
+	// TriggerServiceCreateTriggerProcedure is the fully-qualified name of the TriggerService's
+	// CreateTrigger RPC.
+	TriggerServiceCreateTriggerProcedure = "/orkstack.v1.TriggerService/CreateTrigger"
+	// TriggerServiceListTriggersProcedure is the fully-qualified name of the TriggerService's
+	// ListTriggers RPC.
+	TriggerServiceListTriggersProcedure = "/orkstack.v1.TriggerService/ListTriggers"
+	// TriggerServiceDeleteTriggerProcedure is the fully-qualified name of the TriggerService's
+	// DeleteTrigger RPC.
+	TriggerServiceDeleteTriggerProcedure = "/orkstack.v1.TriggerService/DeleteTrigger"
 	// NamespaceServiceCreateNamespaceProcedure is the fully-qualified name of the NamespaceService's
 	// CreateNamespace RPC.
 	NamespaceServiceCreateNamespaceProcedure = "/orkstack.v1.NamespaceService/CreateNamespace"
@@ -862,6 +873,128 @@ func (UnimplementedWebhookServiceHandler) ListWebhooks(context.Context, *connect
 
 func (UnimplementedWebhookServiceHandler) DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.DeleteWebhook is not implemented"))
+}
+
+// TriggerServiceClient is a client for the orkstack.v1.TriggerService service.
+type TriggerServiceClient interface {
+	CreateTrigger(context.Context, *connect.Request[v1.CreateTriggerRequest]) (*connect.Response[v1.CreateTriggerResponse], error)
+	ListTriggers(context.Context, *connect.Request[v1.ListTriggersRequest]) (*connect.Response[v1.ListTriggersResponse], error)
+	DeleteTrigger(context.Context, *connect.Request[v1.DeleteTriggerRequest]) (*connect.Response[v1.DeleteTriggerResponse], error)
+}
+
+// NewTriggerServiceClient constructs a client for the orkstack.v1.TriggerService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewTriggerServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) TriggerServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	triggerServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("TriggerService").Methods()
+	return &triggerServiceClient{
+		createTrigger: connect.NewClient[v1.CreateTriggerRequest, v1.CreateTriggerResponse](
+			httpClient,
+			baseURL+TriggerServiceCreateTriggerProcedure,
+			connect.WithSchema(triggerServiceMethods.ByName("CreateTrigger")),
+			connect.WithClientOptions(opts...),
+		),
+		listTriggers: connect.NewClient[v1.ListTriggersRequest, v1.ListTriggersResponse](
+			httpClient,
+			baseURL+TriggerServiceListTriggersProcedure,
+			connect.WithSchema(triggerServiceMethods.ByName("ListTriggers")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteTrigger: connect.NewClient[v1.DeleteTriggerRequest, v1.DeleteTriggerResponse](
+			httpClient,
+			baseURL+TriggerServiceDeleteTriggerProcedure,
+			connect.WithSchema(triggerServiceMethods.ByName("DeleteTrigger")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// triggerServiceClient implements TriggerServiceClient.
+type triggerServiceClient struct {
+	createTrigger *connect.Client[v1.CreateTriggerRequest, v1.CreateTriggerResponse]
+	listTriggers  *connect.Client[v1.ListTriggersRequest, v1.ListTriggersResponse]
+	deleteTrigger *connect.Client[v1.DeleteTriggerRequest, v1.DeleteTriggerResponse]
+}
+
+// CreateTrigger calls orkstack.v1.TriggerService.CreateTrigger.
+func (c *triggerServiceClient) CreateTrigger(ctx context.Context, req *connect.Request[v1.CreateTriggerRequest]) (*connect.Response[v1.CreateTriggerResponse], error) {
+	return c.createTrigger.CallUnary(ctx, req)
+}
+
+// ListTriggers calls orkstack.v1.TriggerService.ListTriggers.
+func (c *triggerServiceClient) ListTriggers(ctx context.Context, req *connect.Request[v1.ListTriggersRequest]) (*connect.Response[v1.ListTriggersResponse], error) {
+	return c.listTriggers.CallUnary(ctx, req)
+}
+
+// DeleteTrigger calls orkstack.v1.TriggerService.DeleteTrigger.
+func (c *triggerServiceClient) DeleteTrigger(ctx context.Context, req *connect.Request[v1.DeleteTriggerRequest]) (*connect.Response[v1.DeleteTriggerResponse], error) {
+	return c.deleteTrigger.CallUnary(ctx, req)
+}
+
+// TriggerServiceHandler is an implementation of the orkstack.v1.TriggerService service.
+type TriggerServiceHandler interface {
+	CreateTrigger(context.Context, *connect.Request[v1.CreateTriggerRequest]) (*connect.Response[v1.CreateTriggerResponse], error)
+	ListTriggers(context.Context, *connect.Request[v1.ListTriggersRequest]) (*connect.Response[v1.ListTriggersResponse], error)
+	DeleteTrigger(context.Context, *connect.Request[v1.DeleteTriggerRequest]) (*connect.Response[v1.DeleteTriggerResponse], error)
+}
+
+// NewTriggerServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewTriggerServiceHandler(svc TriggerServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	triggerServiceMethods := v1.File_orkstack_v1_service_proto.Services().ByName("TriggerService").Methods()
+	triggerServiceCreateTriggerHandler := connect.NewUnaryHandler(
+		TriggerServiceCreateTriggerProcedure,
+		svc.CreateTrigger,
+		connect.WithSchema(triggerServiceMethods.ByName("CreateTrigger")),
+		connect.WithHandlerOptions(opts...),
+	)
+	triggerServiceListTriggersHandler := connect.NewUnaryHandler(
+		TriggerServiceListTriggersProcedure,
+		svc.ListTriggers,
+		connect.WithSchema(triggerServiceMethods.ByName("ListTriggers")),
+		connect.WithHandlerOptions(opts...),
+	)
+	triggerServiceDeleteTriggerHandler := connect.NewUnaryHandler(
+		TriggerServiceDeleteTriggerProcedure,
+		svc.DeleteTrigger,
+		connect.WithSchema(triggerServiceMethods.ByName("DeleteTrigger")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/orkstack.v1.TriggerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case TriggerServiceCreateTriggerProcedure:
+			triggerServiceCreateTriggerHandler.ServeHTTP(w, r)
+		case TriggerServiceListTriggersProcedure:
+			triggerServiceListTriggersHandler.ServeHTTP(w, r)
+		case TriggerServiceDeleteTriggerProcedure:
+			triggerServiceDeleteTriggerHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedTriggerServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedTriggerServiceHandler struct{}
+
+func (UnimplementedTriggerServiceHandler) CreateTrigger(context.Context, *connect.Request[v1.CreateTriggerRequest]) (*connect.Response[v1.CreateTriggerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.TriggerService.CreateTrigger is not implemented"))
+}
+
+func (UnimplementedTriggerServiceHandler) ListTriggers(context.Context, *connect.Request[v1.ListTriggersRequest]) (*connect.Response[v1.ListTriggersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.TriggerService.ListTriggers is not implemented"))
+}
+
+func (UnimplementedTriggerServiceHandler) DeleteTrigger(context.Context, *connect.Request[v1.DeleteTriggerRequest]) (*connect.Response[v1.DeleteTriggerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.TriggerService.DeleteTrigger is not implemented"))
 }
 
 // NamespaceServiceClient is a client for the orkstack.v1.NamespaceService service.
