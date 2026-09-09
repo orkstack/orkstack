@@ -647,6 +647,12 @@ type runProjection struct {
 	events         []*orkstackv1.Event
 	snapshotURI    string
 	snapshotLoaded bool
+	// priorSnapshotURI is the snapshot URI referenced by the SECOND-newest
+	// lifecycle event. Every publish writes its own snapshot before it
+	// publishes (workflow.go's emit), so this object is nearly as complete as
+	// the newest one — it is what a live-run miss falls back to rather than
+	// dropping straight to startedRun, which carries no TaskRuns at all.
+	priorSnapshotURI string
 	// sawTerminal records that the run published its own terminal lifecycle
 	// event. closeRun consults it so an event read can decide "no synthetic
 	// terminal needed" from history alone, without fetching the snapshot the
@@ -712,6 +718,7 @@ func (r *TemporalRunReader) scan(
 				return nil, err
 			}
 			if snapshotURI != "" {
+				projection.priorSnapshotURI = projection.snapshotURI
 				projection.snapshotURI = snapshotURI
 			}
 			if event == nil {
@@ -720,7 +727,7 @@ func (r *TemporalRunReader) scan(
 			if isTerminalRunEvent(event) {
 				projection.sawTerminal = true
 			}
-			if event.GetTaskId() == "" && event.GetStatus() != orkstackv1.Status_STATUS_UNSPECIFIED {
+			if isRunLevelEvent(event) && event.GetStatus() != orkstackv1.Status_STATUS_UNSPECIFIED {
 				projection.lastRunStatus = event.GetStatus()
 			}
 			if _, duplicate := seen[event.GetSequence()]; duplicate {
@@ -791,6 +798,18 @@ func (r *TemporalRunReader) scan(
 		if err := r.loadSnapshot(ctx, runID, projection); err != nil {
 			if !errors.Is(err, artifacts.ErrNotFound) {
 				return nil, err
+			}
+			// The newest snapshot is gone, but every lifecycle event writes its
+			// own snapshot before it publishes (workflow.go's emit), so the
+			// object written alongside the SECOND-newest event is nearly as
+			// complete — in particular it still carries TaskRuns, which
+			// startedRun never has at all. One bounded fallback attempt, not a
+			// walk further back: the point is to survive one miss on the object
+			// an event's own publish just wrote, not to paper over a store that
+			// is actually down.
+			if prior, priorErr := r.readSnapshotAt(ctx, runID, projection.priorSnapshotURI); priorErr == nil {
+				projection.run = mergeRunSnapshot(projection.run, prior)
+				projection.snapshotLoaded = true
 			}
 			// Degrade with what history already recorded: the newest published
 			// lifecycle event's run status, so a run that got past PENDING is
@@ -896,20 +915,39 @@ func (r *TemporalRunReader) loadSnapshot(
 	if projection.snapshotLoaded || projection.snapshotURI == "" {
 		return nil
 	}
-	if r.snapshots == nil {
-		return fmt.Errorf("engine: read snapshot of run %s: snapshot store is not configured", runID)
-	}
-	data, err := r.snapshots.ReadSnapshot(ctx, projection.snapshotURI)
+	run, err := r.readSnapshotAt(ctx, runID, projection.snapshotURI)
 	if err != nil {
-		return fmt.Errorf("engine: read snapshot of run %s: %w", runID, err)
-	}
-	run := &orkstackv1.Run{}
-	if err := proto.Unmarshal(data, run); err != nil {
-		return fmt.Errorf("engine: decode snapshot of run %s at %s: %w", runID, projection.snapshotURI, err)
+		return err
 	}
 	projection.run = mergeRunSnapshot(projection.run, run)
 	projection.snapshotLoaded = true
 	return nil
+}
+
+// readSnapshotAt fetches and decodes one snapshot object. It is the shared
+// primitive behind loadSnapshot's newest-object read and the live-run
+// fallback to the prior one; neither call site's own tolerance for a miss
+// lives here.
+func (r *TemporalRunReader) readSnapshotAt(
+	ctx context.Context,
+	runID string,
+	uri string,
+) (*orkstackv1.Run, error) {
+	if uri == "" {
+		return nil, artifacts.ErrNotFound
+	}
+	if r.snapshots == nil {
+		return nil, fmt.Errorf("engine: read snapshot of run %s: snapshot store is not configured", runID)
+	}
+	data, err := r.snapshots.ReadSnapshot(ctx, uri)
+	if err != nil {
+		return nil, fmt.Errorf("engine: read snapshot of run %s: %w", runID, err)
+	}
+	run := &orkstackv1.Run{}
+	if err := proto.Unmarshal(data, run); err != nil {
+		return nil, fmt.Errorf("engine: decode snapshot of run %s at %s: %w", runID, uri, err)
+	}
+	return run, nil
 }
 
 // startedRun is the run as it exists before its first lifecycle event: the

@@ -290,6 +290,35 @@ func uriRunHistory(t *testing.T, runID string, withClose bool) []*historypb.Hist
 	return history
 }
 
+// taskFailureRunHistory is a run that fails because ONE OF ITS TASKS failed —
+// the overwhelmingly common shape of a failed run, and the one
+// runState.fail (workflow.go) actually produces: RUN_FAILED there is emitted
+// with the failing task's id, not an empty one (workflow.go:706-739). Every
+// lifecycle event carries its own snapshot URI, same as uriRunHistory.
+func taskFailureRunHistory(t *testing.T, runID string, withClose bool) []*historypb.HistoryEvent {
+	t.Helper()
+	wf := &orkstackv1.Orkflow{Name: "task-failure-ork", Version: "1.0.0"}
+	history := []*historypb.HistoryEvent{
+		startedEvent(t, runID, wf),
+		publishEventWithURI(t, 2, &orkstackv1.Event{RunId: runID, Sequence: 1,
+			Type:   orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
+			Status: orkstackv1.Status_STATUS_RUNNING}, "memory://started"),
+		publishEventWithURI(t, 3, &orkstackv1.Event{RunId: runID, Sequence: 2,
+			TaskId: "boom",
+			Type:   orkstackv1.EventType_EVENT_TYPE_TASK_FAILED,
+			Status: orkstackv1.Status_STATUS_FAILED}, "memory://task-failed"),
+		publishEventWithURI(t, 4, &orkstackv1.Event{RunId: runID, Sequence: 3,
+			TaskId: "boom",
+			Type:   orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+			Status: orkstackv1.Status_STATUS_FAILED}, "memory://last"),
+	}
+	if withClose {
+		history = append(history, closedEvent(5, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED,
+			readerEpoch.Add(10*time.Second)))
+	}
+	return history
+}
+
 // TestTemporalRunReader_EventReadsSurviveAnUnreadableSnapshot is the
 // regression for the live-run inversion: the events are complete in Temporal
 // history, so an event read must succeed — and fetch nothing from object
@@ -1073,8 +1102,80 @@ func TestTemporalRunReader_GetRunSurvivesAMissingSnapshotOnALiveRun(t *testing.T
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("status = %v, want the last published event's SUCCEEDED", run.GetStatus())
 	}
-	if store.reads != 1 {
-		t.Fatalf("snapshot reads = %d, want exactly 1 attempted fetch", store.reads)
+	// 2, not 1: the newest snapshot ("last") misses, so the reader falls back
+	// to the one written alongside the PRIOR lifecycle event ("first") before
+	// giving up — which also misses here, since the store is empty either way.
+	if store.reads != 2 {
+		t.Fatalf("snapshot reads = %d, want exactly 2: the missing newest, then the prior fallback", store.reads)
+	}
+}
+
+// TestTemporalRunReader_GetRunSurvivesAMissingSnapshotAfterATaskCausedFailure
+// pins the same tolerance as the SUCCEEDED case above, but for the shape a
+// failed run actually has: RUN_FAILED carries the failing task's id
+// (workflow.go:706-739, runState.fail). Before the fix, the degraded status
+// was read only from the newest event with an EMPTY task id — RUN_STARTED —
+// so a task-caused failure was reported stuck at RUNNING instead of FAILED.
+func TestTemporalRunReader_GetRunSurvivesAMissingSnapshotAfterATaskCausedFailure(t *testing.T) {
+	const runID = "ork-evrev-task-failure"
+	store := &countingSnapshotStore{objects: map[string][]byte{}}
+	reader, _ := readerOver(taskFailureRunHistory(t, runID, false), runID)
+	reader.WithSnapshotStore(store)
+
+	run, err := reader.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun on a live run with a missing snapshot: %v", err)
+	}
+	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		t.Fatalf("status = %v, want FAILED: RUN_FAILED is the newest lifecycle event "+
+			"even though it carries the failing task's id", run.GetStatus())
+	}
+}
+
+// TestTemporalRunReader_GetRunFallsBackToThePriorSnapshotWhenTheNewestIsMissing
+// is the TaskRuns half of the same scenario: every lifecycle event writes its
+// OWN snapshot before it publishes (workflow.go's emit), so the object written
+// alongside TASK_FAILED already has boom's exit code and slow's complete
+// TaskRun. When only the very newest object (RUN_FAILED's) is unreadable,
+// GetRun must fall back to that one rather than dropping straight to
+// startedRun, which carries no TaskRuns at all.
+func TestTemporalRunReader_GetRunFallsBackToThePriorSnapshotWhenTheNewestIsMissing(t *testing.T) {
+	const runID = "ork-evrev-prior-snapshot"
+	prior := &orkstackv1.Run{
+		Id:     runID,
+		Status: orkstackv1.Status_STATUS_RUNNING,
+		TaskRuns: []*orkstackv1.TaskRun{
+			{TaskId: "slow", Status: orkstackv1.Status_STATUS_SUCCEEDED, ExitCode: 0},
+			{TaskId: "boom", Status: orkstackv1.Status_STATUS_FAILED, ExitCode: 3},
+		},
+	}
+	store := &countingSnapshotStore{objects: map[string][]byte{
+		"memory://task-failed": mustMarshalRun(t, prior),
+	}}
+	reader, _ := readerOver(taskFailureRunHistory(t, runID, false), runID)
+	reader.WithSnapshotStore(store)
+
+	run, err := reader.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun with only the newest snapshot missing: %v", err)
+	}
+	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		t.Fatalf("status = %v, want FAILED overlaid from history", run.GetStatus())
+	}
+	if len(run.GetTaskRuns()) != 2 {
+		t.Fatalf("task runs = %+v, want the 2 carried by the prior snapshot", run.GetTaskRuns())
+	}
+	var boom *orkstackv1.TaskRun
+	for _, tr := range run.GetTaskRuns() {
+		if tr.GetTaskId() == "boom" {
+			boom = tr
+		}
+	}
+	if boom == nil || boom.GetStatus() != orkstackv1.Status_STATUS_FAILED || boom.GetExitCode() != 3 {
+		t.Fatalf("boom task run = %+v, want FAILED with exit code 3 from the prior snapshot", boom)
+	}
+	if store.reads != 2 {
+		t.Fatalf("snapshot reads = %d, want exactly 2: the missing newest, then the prior fallback", store.reads)
 	}
 }
 
