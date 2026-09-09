@@ -184,6 +184,25 @@ func isTerminalRunEvent(event *orkstackv1.Event) bool {
 	}
 }
 
+// isRunLevelEvent reports whether an event belongs to the run's own
+// lifecycle rather than to one task within it. This must be decided from the
+// event's TYPE, not from GetTaskId() being empty: RUN_FAILED is a run-level
+// event that still carries a task id whenever a task caused the failure —
+// runState.fail (workflow.go) passes the failing task's id through to emit
+// for diagnostics — so a task-caused run failure is a run-level event too.
+func isRunLevelEvent(event *orkstackv1.Event) bool {
+	switch event.GetType() {
+	case orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED:
+		return true
+	default:
+		return false
+	}
+}
+
 // subscription buffers events for one subscriber without blocking publishers.
 type subscription struct {
 	out          chan *orkstackv1.Event
