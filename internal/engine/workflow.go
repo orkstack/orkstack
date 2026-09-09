@@ -19,7 +19,9 @@ import (
 )
 
 // orkerHeartbeatTimeout is what the engine sets in ActivityOptions, and the
-// number the Orker's heartbeat tick rate is derived from.
+// CEILING on the Orker's heartbeat tick rate (task.MaxHeartbeatInterval is a
+// third of it). The tick itself is the Orker's own setting,
+// ORK_ORKER_HEARTBEAT_INTERVAL, and nothing here depends on its value.
 //
 // The two halves must agree or cancellation silently stops working: Temporal
 // delivers cancellation to an activity ONLY through a heartbeat response, so
@@ -27,6 +29,12 @@ import (
 // Before this, no HeartbeatTimeout was set anywhere in the tree and the Orker
 // heartbeated only between phases, which meant cancellation could not reach a
 // running container at all — the largest correctness gap in the system (§6.3).
+//
+// This number is the DEAD-ORKER detector and nothing else. How fast a live
+// Orker learns it was cancelled is set entirely Orker-side, by that tick and
+// the matching MaxHeartbeatThrottleInterval cap on its worker; raising or
+// lowering the timeout here would change replay-visible ActivityOptions
+// without making cancellation any quicker.
 const orkerHeartbeatTimeout = task.HeartbeatTimeout
 
 const (
@@ -456,9 +464,10 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		TaskQueue:           queue,
 		StartToCloseTimeout: startToClose,
 		// Temporal delivers cancellation to an activity ONLY through a
-		// heartbeat response. Without this timeout the SDK throttles
-		// heartbeats to a 30 s default and cancellation cannot reach a
-		// running container at all.
+		// heartbeat response, so an Orker that never heartbeats can never be
+		// cancelled. This timeout is the DEAD-ORKER detector; how quickly a
+		// live one hears about a cancellation is set Orker-side, by its tick
+		// and the matching MaxHeartbeatThrottleInterval cap on its worker.
 		HeartbeatTimeout: orkerHeartbeatTimeout,
 		// Without this the workflow may mark the task terminal before the
 		// Orker has finished killing the container and cleaning up.

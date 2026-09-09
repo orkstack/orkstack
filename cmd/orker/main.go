@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.temporal.io/sdk/activity"
@@ -68,6 +69,14 @@ type config struct {
 	// than silently treated as false — the same rule this config applies to
 	// poolErr.
 	telemetryErr error
+	// heartbeatInterval is orker.HeartbeatIntervalVar: how often a running
+	// task's heartbeat actually reaches Temporal, and therefore how long a
+	// cancellation waits before the Orker acts on it. It is used TWICE, and
+	// both uses must carry the same number — see workerOptions.
+	heartbeatInterval time.Duration
+	// heartbeatErr is a malformed or out-of-range heartbeat interval, refused
+	// at boot rather than clamped, by the same rule as the two errors above.
+	heartbeatErr error
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -81,6 +90,7 @@ const TaskLogExportVar = "ORK_ORKER_TASK_LOG_EXPORT"
 func loadConfig() config {
 	binding, err := task.ResolvePoolBinding(env("ORK_ORKER_POOL", ""), env("ORK_ORKER_QUEUE", ""))
 	taskLogExport, taskLogExportErr := envBool(TaskLogExportVar, false)
+	heartbeatInterval, heartbeatErr := envHeartbeatInterval()
 	return config{
 		imageLayoutRoot:   env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
@@ -91,8 +101,53 @@ func loadConfig() config {
 		poolErr:           err,
 		taskLogExport:     taskLogExport,
 		telemetryErr:      taskLogExportErr,
+		heartbeatInterval: heartbeatInterval,
+		heartbeatErr:      heartbeatErr,
 		deployment:        task.DeploymentFromEnv(),
 	}
+}
+
+// envHeartbeatInterval reads ORK_ORKER_HEARTBEAT_INTERVAL.
+//
+// Unset is the documented default. A value this process cannot read, or one
+// outside the bounds the heartbeat contract can honor, comes back as an error
+// for run() to refuse boot with: an operator who wrote `500ms` believing they
+// had bought a half-second cancellation must not get a silently clamped 5 s
+// instead, and one who wrote `1h` must not get an Orker Temporal declares dead
+// on every task.
+func envHeartbeatInterval() (time.Duration, error) {
+	raw := env(orker.HeartbeatIntervalVar, "")
+	if raw == "" {
+		return orker.DefaultHeartbeatInterval, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return orker.DefaultHeartbeatInterval, fmt.Errorf(
+			"%s=%q is not a duration (want e.g. 5s, 2s, 1500ms)", orker.HeartbeatIntervalVar, raw)
+	}
+	// A written-out zero is not "unset": orker.ValidateHeartbeatInterval reads
+	// zero as "the caller filled in no field", which is the right answer for a
+	// Go struct and the wrong one for a variable somebody typed.
+	if parsed <= 0 {
+		return orker.DefaultHeartbeatInterval, fmt.Errorf(
+			"%s=%q must be a positive duration between %s and %s",
+			orker.HeartbeatIntervalVar, raw, orker.MinHeartbeatInterval, orker.MaxHeartbeatInterval)
+	}
+	if err := orker.ValidateHeartbeatInterval(parsed); err != nil {
+		return orker.DefaultHeartbeatInterval, err
+	}
+	return parsed, nil
+}
+
+// tick is the heartbeat interval this Orker runs at, normalized. A zero field
+// — a config nobody filled in — is the documented default, so the two places
+// that must carry the SAME number (the worker's throttle cap and the
+// dispatcher's loop) can never disagree about what "unset" means.
+func (c config) tick() time.Duration {
+	if c.heartbeatInterval <= 0 {
+		return orker.DefaultHeartbeatInterval
+	}
+	return c.heartbeatInterval
 }
 
 func env(key, fallback string) string {
@@ -217,10 +272,21 @@ func main() {
 // the engine's exact (ORK_DEPLOYMENT_NAME, ORK_BUILD_ID) is invisible to a
 // pinned run's routing, and a rollout would move an in-flight run's tasks onto
 // a newer Orker build. `ork` and `orker` ship as one version: docs/DEPLOY.md.
+//
+// MaxHeartbeatThrottleInterval is the OTHER half of the heartbeat contract, and
+// it is invisible until somebody cancels. The SDK does not send every
+// RecordHeartbeat: it batches them into windows of
+// min(0.8 × HeartbeatTimeout, MaxHeartbeatThrottleInterval) and delivers
+// cancellation only in a heartbeat RPC's response. Left unset, that window is
+// 24 s whatever rate the dispatcher's loop ticks at — measured: a failing run
+// took 23.9 s to stop its still-running sibling, all of it waiting for one
+// heartbeat. Capping it to the SAME number orkerOptions gives the dispatcher is
+// what makes the tick mean anything.
 func workerOptions(cfg config) worker.Options {
 	return cfg.deployment.Apply(worker.Options{
-		DisableRegistrationAliasing: true,
-		DisableWorkflowWorker:       true,
+		DisableRegistrationAliasing:  true,
+		DisableWorkflowWorker:        true,
+		MaxHeartbeatThrottleInterval: cfg.tick(),
 	})
 }
 
@@ -270,6 +336,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// "task logs are not exported".
 	if cfg.telemetryErr != nil {
 		return cfg.telemetryErr
+	}
+	// Same rule again for the heartbeat tick. It is refused rather than
+	// clamped because both the cancellation latency and the frontend-outage
+	// tolerance an operator is choosing depend on it, and a silently corrected
+	// value would make the boot log below disagree with what they asked for.
+	if cfg.heartbeatErr != nil {
+		return cfg.heartbeatErr
 	}
 
 	store, err := artifacts.NewFromEnv()
@@ -351,7 +424,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"activity", task.ActivityExecuteTask,
 		"probe", task.ActivityDescribeOrker,
 		"orker_id", activities.Dispatcher().OrkerID,
-		"security_profile", activities.Dispatcher().Policy.ProfileID())
+		"security_profile", activities.Dispatcher().Policy.ProfileID(),
+		// The cancellation latency an operator is running with, said out loud:
+		// this is how long a running container can keep running after the
+		// engine asks for it to stop, and the longest Temporal outage one
+		// survives.
+		"heartbeat_interval", cfg.tick())
 	logger.Info("task log streaming ready",
 		"flush_bytes", logOptions.FlushBytes,
 		"flush_interval", logOptions.FlushInterval,
@@ -402,7 +480,11 @@ func orkerOptions(
 		// (§14.15), so a filename is a claim rather than a digest. An absent
 		// directory simply disables the fallback.
 		LayoutRoot: cfg.imageLayoutRoot,
-		Logger:     logger,
+		// The dispatcher's half of the pairing workerOptions describes. Both
+		// read cfg.tick(), so there is one number and no way for the loop and
+		// the SDK's batch window to drift apart.
+		HeartbeatInterval: cfg.tick(),
+		Logger:            logger,
 	}
 
 	// Task log export: an ADDITIONAL best-effort path from a task's

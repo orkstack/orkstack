@@ -2,6 +2,7 @@ package orker
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,25 +12,82 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
+// HeartbeatIntervalVar is the operator setting for the tick below. It is
+// spelled here, beside the bounds it must satisfy, for the same reason
+// OrkerIDVar and BuildIDVar are spelled in this package: the validator that
+// refuses a bad value has to be able to name the variable that carried it.
+const HeartbeatIntervalVar = "ORK_ORKER_HEARTBEAT_INTERVAL"
+
 // HeartbeatTimeout is the value the ENGINE must set in ActivityOptions, and
-// the number this package's tick rate is derived from.
+// the number this package's tick ceiling is derived from.
 //
 // It is exported and lives here rather than in internal/engine because the two
 // halves must agree or cancellation silently stops working: Temporal delivers
 // cancellation to an activity ONLY through a heartbeat response, so an
-// activity that never calls RecordHeartbeat never observes ctx.Done(). Today's
-// Orker heartbeats four fixed phase strings and none during the container run,
-// and no HeartbeatTimeout is set anywhere — which means cancellation cannot
-// reach a running container at all. That is the largest correctness gap in the
-// current system (§6.3).
+// activity that never calls RecordHeartbeat never observes ctx.Done(). The
+// Orker therefore runs one heartbeat loop for the ENTIRE attempt — every
+// phase, the container run included — rather than beating between phases,
+// which could not reach a container that is running, which is exactly when
+// somebody presses cancel (§6.3).
 const HeartbeatTimeout = task.HeartbeatTimeout
 
-// HeartbeatInterval is how often the loop ticks: HeartbeatTimeout/3.
+// The Orker's tick rate: its default, and the bounds an operator may move it
+// between with ORK_ORKER_HEARTBEAT_INTERVAL (docs/DEPLOY.md §1).
 //
-// A third is the standard margin — it tolerates two consecutive lost
-// heartbeats before Temporal declares the worker dead, without a rate that
-// would make the heartbeat itself the load.
-const HeartbeatInterval = HeartbeatTimeout / 3
+// THE PAIRING RULE. The task worker's worker.Options.MaxHeartbeatThrottleInterval
+// MUST be set to the same value as the tick this package runs at. The Go SDK
+// batches RecordHeartbeat calls into windows of
+// min(0.8 × HeartbeatTimeout, MaxHeartbeatThrottleInterval) — inside a window a
+// heartbeat only overwrites the pending detail and no RPC leaves the process —
+// and cancellation arrives only in a heartbeat RPC's RESPONSE. So a fast tick
+// with the SDK's default throttle is not a fast cancellation: it is a 24 s one
+// (0.8 × 30 s), which is what a measured run showed. Lowering only the throttle
+// is equally useless, since there would be no beat to carry. cmd/orker sets
+// both from one value; a test harness that runs this dispatcher against a real
+// Temporal must do the same or it measures the SDK's default.
+//
+// The tick is also THE LONGEST TEMPORAL FRONTEND OUTAGE A RUNNING CONTAINER
+// SURVIVES: the SDK uses the same window as the heartbeat RPC's deadline and
+// cancels the activity locally when the RPC still fails a retryable status
+// after it, on the assumption the server is about to time the activity out.
+// That is the tradeoff which makes this an operator setting rather than a
+// constant — the right value depends on how a deployment runs Temporal.
+const (
+	// DefaultHeartbeatInterval is the tick an unconfigured Orker uses: fast
+	// enough that a failed run stops its siblings in about five seconds,
+	// slow enough to ride out a brief frontend blip.
+	DefaultHeartbeatInterval = 5 * time.Second
+	// MinHeartbeatInterval is the SDK's own floor on an RPC deadline
+	// (minRPCTimeout). Below it the SDK clamps the deadline anyway, so a
+	// smaller number would only be a lie in the boot log.
+	MinHeartbeatInterval = time.Second
+	// MaxHeartbeatInterval keeps two missed ticks inside the dead-worker
+	// window: tick more slowly than a third of HeartbeatTimeout and Temporal
+	// declares live activities dead.
+	MaxHeartbeatInterval = task.MaxHeartbeatInterval
+)
+
+// ValidateHeartbeatInterval answers whether an operator's tick is one this
+// Orker can honor. Zero is fine and means DefaultHeartbeatInterval; anything
+// else must sit inside the two bounds above, and the error says WHY rather
+// than only that a bound exists — a clamped-in-silence value would make the
+// boot log disagree with the running process.
+func ValidateHeartbeatInterval(d time.Duration) error {
+	switch {
+	case d == 0:
+		return nil
+	case d < MinHeartbeatInterval:
+		return fmt.Errorf(
+			"%s=%s is below %s: Temporal's SDK clamps a heartbeat RPC deadline at that floor, so a smaller tick cannot be honored",
+			HeartbeatIntervalVar, d, MinHeartbeatInterval)
+	case d > MaxHeartbeatInterval:
+		return fmt.Errorf(
+			"%s=%s is above %s (a third of the %s heartbeat timeout): a slower tick leaves no margin for two missed heartbeats and Temporal would declare live activities dead",
+			HeartbeatIntervalVar, d, MaxHeartbeatInterval, HeartbeatTimeout)
+	default:
+		return nil
+	}
+}
 
 // DefaultCancellationGrace is the SIGTERM→SIGKILL window when a task does not
 // set its own (AGENTS.md §3.3).
@@ -62,7 +120,10 @@ type Heartbeater struct {
 	// beat is the heartbeat sink. It is a field so tests can observe the
 	// sequence without a Temporal environment.
 	beat func(HeartbeatProgress)
-	// interval is the tick rate. Zero means HeartbeatInterval.
+	// interval is the tick rate. Zero means DefaultHeartbeatInterval. It is
+	// filled from OCIDispatcher.HeartbeatInterval, which cmd/orker sets from
+	// the same value it caps the worker's MaxHeartbeatThrottleInterval with —
+	// see the pairing rule above.
 	interval time.Duration
 	// onPhase optionally receives every phase transition, in the same order
 	// Phase is called. Execute sets it to an AttemptObserver's Phase method
@@ -92,7 +153,7 @@ func (h *Heartbeater) Start(ctx context.Context) {
 	h.stopped = make(chan struct{})
 	interval := h.interval
 	if interval <= 0 {
-		interval = HeartbeatInterval
+		interval = DefaultHeartbeatInterval
 	}
 	go func() {
 		defer close(h.stopped)

@@ -328,10 +328,12 @@ func TestRunWorkflow_SetsTheHeartbeatAndCancellationOptions(t *testing.T) {
 					info.HeartbeatTimeout, task.HeartbeatTimeout)
 			}
 			// The Orker must tick at least three times inside the window, or
-			// Temporal declares a live activity dead.
-			if task.HeartbeatInterval*3 > task.HeartbeatTimeout {
-				t.Errorf("the Orker ticks every %v inside a %v timeout; a live activity "+
-					"would be declared dead", task.HeartbeatInterval, task.HeartbeatTimeout)
+			// Temporal declares a live activity dead. The tick itself is an
+			// Orker-side setting; what the engine's timeout has to leave room
+			// for is the CEILING that setting is bounded by.
+			if task.MaxHeartbeatInterval*3 > task.HeartbeatTimeout {
+				t.Errorf("the Orker may tick as slowly as %v inside a %v timeout; a live activity "+
+					"would be declared dead", task.MaxHeartbeatInterval, task.HeartbeatTimeout)
 			}
 			// StartToClose has to leave room for staging, the pull, hashing
 			// and uploads on top of the task's own wall clock (§6.3).

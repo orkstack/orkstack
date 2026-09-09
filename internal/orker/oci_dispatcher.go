@@ -77,6 +77,15 @@ type OCIDispatcher struct {
 	// disables the embedded-layout fallback; cmd/orker fills it from
 	// ORK_ORKER_IMAGE_LAYOUT.
 	LayoutRoot string
+	// HeartbeatInterval is how often an attempt's heartbeat loop ticks. Zero
+	// means DefaultHeartbeatInterval.
+	//
+	// Whoever sets this MUST cap the task worker's
+	// worker.Options.MaxHeartbeatThrottleInterval to the same value, or the
+	// SDK batches these ticks into 0.8 × HeartbeatTimeout windows and a
+	// running container waits that long to learn it was cancelled — see the
+	// pairing rule in heartbeat.go.
+	HeartbeatInterval time.Duration
 	// LogSinkObserver is an optional in-process observer of streamed lines.
 	LogSinkObserver func(in *orkstackv1.ExecuteTaskInput, line string)
 	// TaskLogs exports every framed line of every attempt, beside the durable
@@ -261,6 +270,7 @@ func (d *OCIDispatcher) Execute(
 	// cancellation to a container that is running, which is exactly when
 	// somebody presses cancel.
 	beat := NewHeartbeater(ctx)
+	beat.interval = d.HeartbeatInterval
 	if attemptObs != nil {
 		beat.onPhase = attemptObs.Phase
 	}

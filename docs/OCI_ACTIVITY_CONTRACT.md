@@ -1821,18 +1821,36 @@ to an activity **only through a heartbeat response**: an activity that never
 calls `RecordHeartbeat` never observes `ctx.Done()`, so an Orker that stopped
 heartbeating during the container run could never cancel it.
 
-Required, all three together (`internal/orker/heartbeat.go`):
+Required, all four together (`internal/orker/heartbeat.go`):
 
 1. **Engine** sets `HeartbeatTimeout: 30 * time.Second` and
    `WaitForCancellation: true` in `ActivityOptions`
-   (`internal/engine/workflow.go:361-366`). Without the timeout the SDK
-   throttles heartbeats to a 30 s default and a dead worker is only noticed at
-   `StartToCloseTimeout`. Without `WaitForCancellation` the workflow may mark
-   the task terminal before the Orker finishes killing and cleaning up.
+   (`internal/engine/workflow.go`, `schedule()`). Without the timeout a dead
+   worker is only noticed at `StartToCloseTimeout`. Without
+   `WaitForCancellation` the workflow may mark the task terminal before the
+   Orker finishes killing and cleaning up.
 2. **Orker** runs a heartbeat goroutine for the **entire** container lifetime,
-   ticking every `HeartbeatTimeout/3` (10 s), carrying a small progress detail
+   ticking every `ORK_ORKER_HEARTBEAT_INTERVAL` (default 5 s, bounded to
+   `1s`–`10s`; docs/DEPLOY.md §1), carrying a small progress detail
    (`phase`, `container id`, `bytes logged`).
-3. **Orker** reacts to `ctx.Done()` with the §3.3 sequence:
+3. **Orker** caps its task worker's `worker.Options.MaxHeartbeatThrottleInterval`
+   to that same interval (`cmd/orker/main.go`, `workerOptions`). This is the
+   half that is invisible until somebody cancels. The Go SDK does not send
+   every `RecordHeartbeat`: it batches them into windows of
+   `min(0.8 × HeartbeatTimeout, MaxHeartbeatThrottleInterval)` — inside a window
+   a heartbeat only overwrites the pending detail, and no RPC leaves the
+   process. Since cancellation rides the RPC's *response*, that window **is**
+   the cancellation latency: with the cap unset it is 24 s no matter how fast
+   the loop above ticks. Measured on a real cluster before the cap existed: a
+   failing task's still-running sibling was asked to stop 52 ms after the
+   failure and learned of it 23.86 s later; SIGTERM to cleanup then took
+   296 ms, and the task's 10 s grace period never engaged. The same window is
+   also the RPC's own deadline, which makes the interval the longest Temporal
+   frontend outage a running container survives — the tradeoff that makes it an
+   operator setting rather than a constant. A test harness that runs the real
+   dispatcher against a real Temporal must set both, or it measures the SDK's
+   default.
+4. **Orker** reacts to `ctx.Done()` with the §3.3 sequence:
 
 ```
 cancellation observed
@@ -1928,7 +1946,7 @@ something to ask an Orker.
 
 ```
  1. OPEN LOG SINK                     first, always; deferred Close before return
- 2. HEARTBEAT LOOP START              10 s tick, runs until step 15
+ 2. HEARTBEAT LOOP START              5 s tick (configurable), until step 15
  3. COMMIT CHECK      GET commit_uri  → adopt and jump to 15, or proceed  (§5.4)
  4. WORKSPACE         mkdir per-attempt 0700; input/ 0555, output/ 1777, tmp/ 1777
  5. INPUT STAGE       download upstream artifacts   → /orkstack/input/artifacts/

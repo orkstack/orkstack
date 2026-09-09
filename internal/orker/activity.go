@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // WorkRootVar overrides the parent directory for per-attempt workspaces.
@@ -67,6 +68,12 @@ type Options struct {
 	MaxConcurrent int32
 	// LayoutRoot is where embedded OCI image layouts live (§4.6).
 	LayoutRoot string
+	// HeartbeatInterval is how often an attempt's heartbeat loop ticks, and
+	// therefore how long a running container waits to observe a cancellation.
+	// Zero means DefaultHeartbeatInterval. The caller MUST cap its task
+	// worker's MaxHeartbeatThrottleInterval to the same value — heartbeat.go's
+	// pairing rule.
+	HeartbeatInterval time.Duration
 	// TaskLogs exports every framed log line of every attempt, beside the
 	// durable chunk store. Nil exports nothing.
 	TaskLogs TaskLogExporter
@@ -132,22 +139,23 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 
 	return &Activities{
 		dispatcher: &OCIDispatcher{
-			Runtime:      runtime,
-			Store:        store,
-			Commits:      opts.Commits,
-			Refs:         opts.Refs,
-			Logs:         opts.Logs,
-			LogOpts:      opts.Log,
-			Policy:       policy,
-			WorkRoot:     workRoot,
-			OrkerID:      orkerID,
-			BuildID:      buildID,
-			EnvAllowlist: allowlist,
-			LayoutRoot:   opts.LayoutRoot,
-			TaskLogs:     opts.TaskLogs,
-			Phases:       opts.Phases,
-			TraceContext: opts.TraceContext,
-			Logger:       opts.Logger,
+			Runtime:           runtime,
+			Store:             store,
+			Commits:           opts.Commits,
+			Refs:              opts.Refs,
+			Logs:              opts.Logs,
+			LogOpts:           opts.Log,
+			Policy:            policy,
+			WorkRoot:          workRoot,
+			OrkerID:           orkerID,
+			BuildID:           buildID,
+			EnvAllowlist:      allowlist,
+			LayoutRoot:        opts.LayoutRoot,
+			HeartbeatInterval: opts.HeartbeatInterval,
+			TaskLogs:          opts.TaskLogs,
+			Phases:            opts.Phases,
+			TraceContext:      opts.TraceContext,
+			Logger:            opts.Logger,
 		},
 		pool:    opts.Pool,
 		maxConc: opts.MaxConcurrent,

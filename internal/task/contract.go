@@ -148,10 +148,22 @@ const ReasonInputTooLarge = "INPUT_TOO_LARGE"
 // (§6.3).
 const HeartbeatTimeout = 30 * time.Second
 
-// HeartbeatInterval is how often the Orker's loop ticks. A third of the
-// timeout leaves room for two missed ticks before Temporal declares the
+// MaxHeartbeatInterval is the CEILING on how often the Orker's loop may tick,
+// not the tick itself: the tick is an operator setting
+// (ORK_ORKER_HEARTBEAT_INTERVAL, orker.DefaultHeartbeatInterval). A third of
+// the timeout leaves room for two missed ticks before Temporal declares the
 // activity dead.
-const HeartbeatInterval = HeartbeatTimeout / 3
+//
+// The tick is ALSO the cancellation latency, and that is the non-obvious half.
+// The Go SDK does not send every RecordHeartbeat: it batches them into windows
+// of min(0.8 × HeartbeatTimeout, worker.Options.MaxHeartbeatThrottleInterval),
+// overwriting the pending detail inside a window and issuing one RPC when it
+// closes. Cancellation is delivered only in a heartbeat RPC's RESPONSE, so the
+// interval an activity actually observes cancellation at is that batch window,
+// not this ceiling and not the loop's own ticker. An Orker MUST therefore cap
+// MaxHeartbeatThrottleInterval to its own tick, or a 10 s tick still means a
+// 24 s wait before a running container learns it was cancelled.
+const MaxHeartbeatInterval = HeartbeatTimeout / 3
 
 // CheckInputSize enforces the deployment's replay-pinned input bound without
 // ever exceeding Temporal's hard 256 KiB ceiling. A zero or omitted plan limit
