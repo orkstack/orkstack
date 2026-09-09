@@ -1,12 +1,61 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { fmtTimestamp } from '$lib/status';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	const statusOptions = [
+		{ value: '', label: 'All statuses' },
+		{ value: 'pending', label: 'Pending' },
+		{ value: 'running', label: 'Running' },
+		{ value: 'succeeded', label: 'Succeeded' },
+		{ value: 'failed', label: 'Failed' },
+		{ value: 'canceled', label: 'Canceled' },
+		{ value: 'skipped', label: 'Skipped' }
+	];
+	const sizeOptions = [10, 25, 50, 100].map((size) => ({ value: String(size), label: String(size) }));
+
+	// The filter form is a DRAFT of the URL, not a second source of truth: the
+	// URL still carries the filter (href/filter/nextHref below are unchanged),
+	// and this only holds what has been typed but not applied yet.
+	//
+	// It exists because status and page size are no longer native controls —
+	// Select is a button and a listbox, which FormData cannot see — and a form
+	// split between FormData and component state would be two half-mechanisms
+	// to keep in step. One draft, read by filter(), beats a hidden input
+	// mirroring a component's value.
+	function draftFromUrl() {
+		return {
+			orkflow: data.orkflowName,
+			status: data.status,
+			size: String(data.size),
+			since: data.createdAfter,
+			until: data.createdBefore
+		};
+	}
+	let draft = $state(draftFromUrl());
+	// Any navigation that moves the filter coordinates — Clear, Next, Previous,
+	// a pasted link — refills the fields from what the page actually loaded, so
+	// a stale draft never sits above results it does not describe.
+	$effect(() => {
+		draft = draftFromUrl();
+	});
+
+	// The standalone Submit Run page is gone: a run is started from the Orkflow
+	// it belongs to. A list
+	// filtered to one orkflow knows which page that is; an unfiltered one can
+	// only offer the picker.
+	const submitHref = $derived(
+		withNamespace(
+			data.orkflowName ? `/orkflows/${encodeURIComponent(data.orkflowName)}` : '/orkflows',
+			data.namespace
+		)
+	);
 
 	let retrying = $state(false);
 	async function retry() {
@@ -25,8 +74,7 @@
 	}
 	function filter(event: SubmitEvent) {
 		event.preventDefault();
-		const form = new FormData(event.currentTarget as HTMLFormElement);
-		void goto(href({ orkflow: String(form.get('orkflow') ?? ''), status: String(form.get('status') ?? ''), size: String(form.get('size') ?? '25'), since: String(form.get('since') ?? ''), until: String(form.get('until') ?? ''), cursor: '', history: '' }));
+		void goto(href({ orkflow: draft.orkflow, status: draft.status, size: draft.size || '25', since: draft.since, until: draft.until, cursor: '', history: '' }));
 	}
 	function nextHref() { return href({ cursor: data.nextPageToken, history: JSON.stringify([...data.history, data.cursor]) }); }
 	function previousHref() { const previous = data.history.at(-1) ?? ''; return href({ cursor: previous, history: JSON.stringify(data.history.slice(0, -1)) }); }
@@ -41,20 +89,87 @@
 		{/if}
 	</h1>
 	<a
-		href={withNamespace('/submit', data.namespace)}
+		href={submitHref}
+		data-testid="runs-submit-run"
 		class="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800"
 	>
-		Submit run
+		{data.orkflowName ? 'Submit a run' : 'Browse orkflows'}
 	</a>
 </div>
 
-<form class="mb-5 grid gap-3 rounded-lg border border-border bg-surface p-4 sm:grid-cols-3" data-testid="run-filters" onsubmit={filter}>
-	<label class="text-sm text-fg-secondary">Orkflow<input name="orkflow" value={data.orkflowName} class="mt-1 h-9 w-full rounded border border-border bg-surface px-2 text-fg" /></label>
-	<label class="text-sm text-fg-secondary">Status<select name="status" value={data.status} class="mt-1 h-9 w-full rounded border border-border bg-surface px-2 text-fg"><option value="">All statuses</option><option value="pending">Pending</option><option value="running">Running</option><option value="succeeded">Succeeded</option><option value="failed">Failed</option><option value="canceled">Canceled</option><option value="skipped">Skipped</option></select></label>
-	<label class="text-sm text-fg-secondary">Page size<select name="size" value={String(data.size)} class="mt-1 h-9 w-full rounded border border-border bg-surface px-2 text-fg"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>
-	<label class="text-sm text-fg-secondary">Created since (inclusive)<input name="since" type="datetime-local" value={data.createdAfter} class="mt-1 h-9 w-full rounded border border-border bg-surface px-2 text-fg" /></label>
-	<label class="text-sm text-fg-secondary">Created until (exclusive)<input name="until" type="datetime-local" value={data.createdBefore} class="mt-1 h-9 w-full rounded border border-border bg-surface px-2 text-fg" /></label>
-	<div class="flex items-end gap-3"><button data-testid="run-filters-apply" class="h-9 rounded bg-brand-600 px-3 text-sm font-medium text-white">Apply filters</button><a href={href({ orkflow: '', status: '', size: '25', since: '', until: '', cursor: '', history: '' })} class="pb-2 text-sm text-brand-700">Clear</a></div>
+<form
+	class="mb-5 rounded-lg border border-border bg-surface p-4 shadow-xs"
+	data-testid="run-filters"
+	onsubmit={filter}
+>
+	<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+		<label class="flex flex-col gap-1.5 text-sm">
+			<span class="font-medium text-fg">Orkflow</span>
+			<input
+				name="orkflow"
+				data-testid="run-filter-orkflow"
+				bind:value={draft.orkflow}
+				placeholder="All orkflows"
+				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			/>
+		</label>
+		<div class="flex flex-col gap-1.5 text-sm">
+			<label class="font-medium text-fg" for="run-filter-status">Status</label>
+			<Select
+				id="run-filter-status"
+				testid="run-filter-status"
+				value={draft.status}
+				options={statusOptions}
+				onchange={(next) => (draft.status = next)}
+			/>
+		</div>
+		<div class="flex flex-col gap-1.5 text-sm">
+			<label class="font-medium text-fg" for="run-filter-size">Page size</label>
+			<Select
+				id="run-filter-size"
+				testid="run-filter-size"
+				value={draft.size}
+				options={sizeOptions}
+				onchange={(next) => (draft.size = next)}
+			/>
+		</div>
+		<label class="flex flex-col gap-1.5 text-sm">
+			<span class="font-medium text-fg"
+				>Created since <span class="font-normal text-fg-muted">(inclusive)</span></span
+			>
+			<input
+				name="since"
+				type="datetime-local"
+				data-testid="run-filter-since"
+				bind:value={draft.since}
+				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			/>
+		</label>
+		<label class="flex flex-col gap-1.5 text-sm">
+			<span class="font-medium text-fg"
+				>Created until <span class="font-normal text-fg-muted">(exclusive)</span></span
+			>
+			<input
+				name="until"
+				type="datetime-local"
+				data-testid="run-filter-until"
+				bind:value={draft.until}
+				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			/>
+		</label>
+	</div>
+	<div class="mt-4 flex items-center gap-4 border-t border-border-subtle pt-4">
+		<button
+			type="submit"
+			data-testid="run-filters-apply"
+			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800"
+			>Apply filters</button
+		>
+		<a
+			href={href({ orkflow: '', status: '', size: '25', since: '', until: '', cursor: '', history: '' })}
+			class="text-sm font-medium text-brand-700 hover:underline">Clear</a
+		>
+	</div>
 </form>
 
 {#if data.error}
