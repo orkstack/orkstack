@@ -162,11 +162,21 @@ test('apply validates without writing, imports and exports exact YAML, and guard
 	const download = page.waitForEvent('download');
 	await page.getByTestId('apply-export').click();
 	expect(await (await download).createReadStream()).toBeTruthy();
-	page.once('dialog', (dialog) => void dialog.dismiss());
-	await page.getByRole('link', { name: 'Orkflows' }).click();
+	// The dirty-draft guard's confirm() fires synchronously from inside the
+	// click, so the listener must be registered in the same tick the click is
+	// issued (Promise.all) and its resolution awaited before moving on —
+	// otherwise a `page.once` can miss the dialog and Playwright auto-dismisses
+	// it, leaving a later accept()/dismiss() call to fire on an already-handled
+	// dialog.
+	await Promise.all([
+		page.waitForEvent('dialog').then((dialog) => dialog.dismiss()),
+		page.getByRole('link', { name: 'Orkflows' }).click()
+	]);
 	await expect(page).toHaveURL(/\/apply/);
-	page.once('dialog', (dialog) => void dialog.accept());
-	await page.getByRole('link', { name: 'Orkflows' }).click();
+	await Promise.all([
+		page.waitForEvent('dialog').then((dialog) => dialog.accept()),
+		page.getByRole('link', { name: 'Orkflows' }).click()
+	]);
 	await expect(page).toHaveURL(/\/orkflows/);
 	await shot(page, 'screenshot-dirty-draft-guard.png');
 });
