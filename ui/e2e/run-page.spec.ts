@@ -203,7 +203,16 @@ tasks:
 `;
 }
 
-/** A focused live-watch regression: measured exit 0, then measured exit 3. */
+/**
+ * A focused live-watch regression: measured exit 0, then measured exit 3.
+ *
+ * `never` is the third case, and the only one that never runs: the run fails
+ * on `boom`, so `never` is resolved without ever reaching an Orker. The engine
+ * records STATUS_CANCELED for it — correct, that IS what ended it — with no
+ * started_at, and that absence is what the page must render as "never
+ * started" rather than as a CANCELED badge indistinguishable from a task that
+ * was killed mid-run.
+ */
 function liveFailureOrkflow(): string {
 	return `name: ${LIVE_FAILURE_ORKFLOW}
 version: "0.1.0"
@@ -223,6 +232,13 @@ tasks:
     with:
       op: exec
       command: ["sh", "-c", "sleep 5; exit 3"]
+  - id: never
+    uses: shell
+    needs: [boom]
+    timeout_seconds: 60
+    with:
+      op: exec
+      command: ["sh", "-c", "echo unreachable"]
 `;
 }
 
@@ -735,6 +751,23 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-id')).toHaveText(run);
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
+
+	// A TASK THAT HAS NOT STARTED SAYS SO, AND SHOWS NO STATUS.
+	//
+	// `boom` needs `slow`, so for the first ten seconds of this run it is not
+	// queued anywhere and no Orker has seen it. It used to draw a "PENDING"
+	// pill, which is a status about something that is not happening. The card
+	// now says which dependency it is waiting on, greyed, with no pill — and
+	// the SUCCEEDED/FAILED assertions further down are the other half of the
+	// proof: the pill appears the moment the task is really dispatched.
+	const boomStatus = page.getByTestId('task-boom-status');
+	await expect(boomStatus).toHaveAttribute('data-state', 'not-started');
+	await expect(boomStatus).toHaveText(/Waiting for slow/);
+	await expect(page.getByTestId('task-boom')).toHaveAttribute('data-dispatched', 'false');
+	await expect(page.getByTestId('task-boom')).not.toContainText('PENDING');
+	await shot(page, 'screenshot-task-waiting.png');
+	note('task boom rendered as "Waiting for slow" with no status pill');
+
 	await page.getByTestId('task-inspect-toggle-boom').click();
 	// A generated proto3 int32 reads as 0 even before an attempt finishes. The
 	// page must not draw that absence as a successful measurement. Read it from
@@ -917,6 +950,21 @@ test('a task watched live acquires its real exit code and Error.category without
 	note(`live-watched run ${run}: ok measured 0; boom measured 3 / Activity failed without reload`);
 	await shot(page, 'screenshot-live-terminal-facts.png');
 
+	// A TASK THE RUN ENDED BEFORE IT EVER STARTED SHOWS NO STATUS AT ALL.
+	//
+	// `never` carries STATUS_CANCELED on the wire, deliberately — that is the
+	// lifecycle truth. But it never reached an Orker, so it has no started_at,
+	// and drawing the same CANCELED badge a killed task gets said something
+	// false about it. The card is greyed, says "Never started", and the word
+	// CANCELED appears nowhere inside it.
+	const neverStatus = page.getByTestId('task-never-status');
+	await expect(neverStatus).toHaveAttribute('data-state', 'not-started', { timeout: 60_000 });
+	await expect(neverStatus).toHaveText(/Never started/);
+	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
+	await expect(page.getByTestId('task-never')).not.toContainText('CANCELED');
+	await shot(page, 'screenshot-task-never-started.png');
+	note('task never: rendered greyed as "Never started", with no CANCELED badge');
+
 	await page.reload();
 	// Both disclosures are re-opened: a reload keeps the URL's state and not a
 	// card's, and what is being checked here is the reloaded FACTS.
@@ -925,4 +973,11 @@ test('a task watched live acquires its real exit code and Error.category without
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
 	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	// THE SNAPSHOT PATH, not just the live one: a reload re-reads GetRun, and
+	// the "never started" rendering has to survive it. That is the read that
+	// broke before — the snapshot carried a stamped started_at, so a reloaded
+	// page could not tell the two CANCELED cases apart at all.
+	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
+	await expect(page.getByTestId('task-never-status')).toHaveText(/Never started/);
+	await expect(page.getByTestId('task-never')).not.toContainText('CANCELED');
 });

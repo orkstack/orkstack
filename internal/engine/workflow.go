@@ -360,11 +360,16 @@ func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
 // markSkipped records a skip. The Event contract has no task-skipped type, so
 // a skip is reported as a task log event carrying STATUS_SKIPPED; the
 // authoritative record is TaskRun.Status.
+//
+// started_at stays UNSET, because the task never reached an Orker. Only
+// schedule() stamps it, and that absence is how a client tells "never started"
+// from "started, then ended": a skipped task has a finished_at (when the run
+// resolved it) and no started_at, so nothing downstream has to invent a
+// zero-length execution that did not happen.
 func (s *runState) markSkipped(ctx workflow.Context, id, reason string) error {
 	now := timestamppb.New(workflow.Now(ctx))
 	taskRun := s.taskRuns[id]
 	taskRun.Status = orkstackv1.Status_STATUS_SKIPPED
-	taskRun.StartedAt = now
 	taskRun.FinishedAt = now
 	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG, id,
 		orkstackv1.Status_STATUS_SKIPPED, "task skipped: "+reason)
@@ -658,11 +663,17 @@ func (s *runState) cancelInFlight(ctx workflow.Context, inFlight map[string]work
 // first. Mirrors markSkipped: the Event contract has no task-canceled type,
 // so this is a task log event carrying STATUS_CANCELED; TaskRun.Status is the
 // authoritative record.
+//
+// started_at stays UNSET for the same reason as markSkipped: this task never
+// reached an Orker. That absence is load-bearing here rather than merely
+// tidy — CANCELED is also the status of a task that WAS running and was then
+// killed, and started_at is the only thing on the snapshot that tells the two
+// apart. Stamping it made a task that never ran read as one that started and
+// was cancelled, which is what the run page drew.
 func (s *runState) markCanceled(ctx workflow.Context, id, reason string) error {
 	now := timestamppb.New(workflow.Now(ctx))
 	taskRun := s.taskRuns[id]
 	taskRun.Status = orkstackv1.Status_STATUS_CANCELED
-	taskRun.StartedAt = now
 	taskRun.FinishedAt = now
 	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG, id,
 		orkstackv1.Status_STATUS_CANCELED, "task canceled: "+reason)

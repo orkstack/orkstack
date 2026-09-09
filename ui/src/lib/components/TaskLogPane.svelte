@@ -2,7 +2,9 @@
 	import { onDestroy, untrack } from 'svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
+	import type { Status } from '$lib/gen/orkstack/v1/common_pb';
+	import type { Timestamp } from '@bufbuild/protobuf/wkt';
+	import { taskDispatched } from '$lib/status';
 	import { followTaskLogs, type LogLine, type LogSocketState } from '$lib/taskLogs';
 
 	// One task's output, followed live.
@@ -17,6 +19,13 @@
 		/** Wire value: empty is the default namespace. */
 		namespace: string;
 		status: Status;
+		/**
+		 * startedAt is the engine's dispatch stamp, and the only thing that
+		 * tells a CANCELED task that RAN from one the run ended before it ever
+		 * reached an Orker. Without it this pane opened a socket for an
+		 * attempt that does not exist and the engine answered NotFound.
+		 */
+		startedAt?: Timestamp;
 		/**
 		 * attempt is the try to SHOW, and 0 means "the latest that wrote
 		 * anything" — which follows the task onto its retries. It is the
@@ -41,6 +50,7 @@
 		taskId,
 		namespace,
 		status,
+		startedAt,
 		attempt = 0,
 		deepLinked = false,
 		onAttemptChange,
@@ -124,9 +134,12 @@
 	// A task with no attempt on record has no log prefix to read, and the
 	// engine answers NotFound for it rather than an empty pane. Wait for it to
 	// be dispatched; the run's event stream flips this the moment it is.
-	const started = $derived(
-		status !== Status.PENDING && status !== Status.UNSPECIFIED && status !== Status.SKIPPED
-	);
+	//
+	// CANCELED is the case a status alone cannot answer, which is why
+	// taskDispatched reads the dispatch stamp too: a task killed mid-run has
+	// output worth reading, and one the run canceled before it started has no
+	// attempt at all.
+	const started = $derived(taskDispatched(status, startedAt));
 
 	// dispatched latches `started`: a task that has been dispatched once has
 	// output to read for ever, so a later status reading as not-started must

@@ -18,7 +18,7 @@
 	import { EventType, type Event, type TaskRun } from '$lib/gen/orkstack/v1/run_pb';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
-	import { fmtTimestamp, isTerminal, statusLabel } from '$lib/status';
+	import { fmtTimestamp, isTerminal, statusLabel, taskDispatched } from '$lib/status';
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
 	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
@@ -282,12 +282,25 @@
 				finishedAt = event.timestamp;
 				refreshTerminalFacts();
 				break;
+			// TASK_SCHEDULED and TASK_STARTED are the live "this task reached an
+			// Orker" signal, and the page needs it as a TIMESTAMP, not only a
+			// status: CANCELED alone cannot say whether a task ever ran, and
+			// `startedAt` is what the snapshot uses to answer that. The engine
+			// stamps TaskRun.started_at from the same workflow.Now it emits
+			// TASK_SCHEDULED with, so the value here agrees with the one the
+			// terminal re-read brings back. Written only when the task has none,
+			// so a retry's later event cannot move a task's first start.
 			case EventType.TASK_SCHEDULED:
-				upsertTask(event.taskId, { status: status ?? Status.PENDING });
+			case EventType.TASK_STARTED: {
+				const fallback =
+					event.type === EventType.TASK_SCHEDULED ? Status.PENDING : Status.RUNNING;
+				const known = tasks.find((t) => t.id === event.taskId);
+				upsertTask(event.taskId, {
+					status: status ?? fallback,
+					...(known?.startedAt ? {} : { startedAt: event.timestamp })
+				});
 				break;
-			case EventType.TASK_STARTED:
-				upsertTask(event.taskId, { status: status ?? Status.RUNNING });
-				break;
+			}
 			case EventType.TASK_SUCCEEDED:
 				upsertTask(event.taskId, { status: status ?? Status.SUCCEEDED });
 				break;
@@ -304,7 +317,21 @@
 				// travel from the Orker to the artifact store and reach this page
 				// over the log socket instead (TaskLogPane), which is what keeps
 				// a chatty task out of Temporal history for ever.
-				if (event.message) upsertTask(event.taskId, { message: event.message });
+				//
+				// The status is applied too, but ONLY for the two the engine
+				// actually resolves a task with here: markSkipped and
+				// markCanceled are its only TASK_LOG emitters, and there is no
+				// TASK_SKIPPED/TASK_CANCELED event type for them to use
+				// instead. Gating on those two means a future informational
+				// TASK_LOG cannot silently reset a task's status. Without this
+				// a skipped or never-started task sat at PENDING until the
+				// terminal snapshot re-read landed.
+				{
+					const patch: Partial<TaskView> = {};
+					if (event.message) patch.message = event.message;
+					if (status === Status.SKIPPED || status === Status.CANCELED) patch.status = status;
+					if (Object.keys(patch).length > 0) upsertTask(event.taskId, patch);
+				}
 				break;
 		}
 	}
@@ -374,6 +401,25 @@
 
 	const deepTask = $derived(page.url.searchParams.get('task') ?? '');
 	const deepAttempt = $derived(Number(page.url.searchParams.get('attempt') ?? '0'));
+	// WHAT A CARD SAYS BEFORE ITS TASK HAS RUN.
+	//
+	// A task waiting on its dependencies is not "PENDING" in any sense a
+	// reader can act on — nothing is queued, no Orker has seen it — and a task
+	// the run resolved without ever dispatching carries STATUS_CANCELED, which
+	// on its own reads as "this was running and got killed". Neither deserves
+	// a status pill. So a card that has not been dispatched draws a muted
+	// caption in the pill's place saying what is actually true: which of its
+	// needs has not finished yet, or that the run ended before it ever
+	// started. `taskDispatched` is the test, and it leans on the engine
+	// stamping started_at ONLY at real dispatch.
+	function notStartedCaption(task: TaskView): string {
+		if (task.status === Status.CANCELED || isTerminal(runStatus)) return 'Never started';
+		const blocking = (taskDefs.get(task.id)?.needs ?? []).filter(
+			(need) => !isTerminal(tasks.find((t) => t.id === need)?.status)
+		);
+		return blocking.length > 0 ? `Waiting for ${blocking.join(', ')}` : 'Waiting to start';
+	}
+
 	function taskHref(taskId: string, attempt = 0): string {
 		const params = new URLSearchParams(page.url.searchParams);
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
@@ -679,9 +725,13 @@
 			{/if}
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
+					{@const dispatched = taskDispatched(task.status, task.startedAt)}
 					<div
-						class="rounded-lg border border-border bg-surface px-4 py-3 shadow-xs"
+						class="rounded-lg border bg-surface px-4 py-3 shadow-xs {dispatched
+							? 'border-border'
+							: 'border-dashed border-border-subtle opacity-60'}"
 						data-testid="task-{task.id}"
+						data-dispatched={dispatched}
 					>
 						<div class="flex items-center justify-between gap-4">
 							<div class="min-w-0">
@@ -690,10 +740,27 @@
 									<p class="text-xs break-words text-fg-secondary">{task.message}</p>
 	{/if}
 							</div>
-							<StatusPill status={task.status} testid="task-{task.id}-status" />
+							<!--
+								SKIPPED keeps its pill: a skip is a DAG decision the reader
+								should see, not the absence of one. Everything else that was
+								never dispatched gets the caption instead of a pill — and
+								keeps the same data-testid, because "what does this task say"
+								is one question whichever of the two answers it.
+							-->
+							{#if dispatched || task.status === Status.SKIPPED}
+								<StatusPill status={task.status} testid="task-{task.id}-status" />
+							{:else}
+								<span
+									data-testid="task-{task.id}-status"
+									data-state="not-started"
+									class="text-[11px] whitespace-nowrap text-fg-muted"
+								>{notStartedCaption(task)}</span>
+							{/if}
 						</div>
 						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
-							<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.startedAt, task.finishedAt ?? (task.status === Status.RUNNING ? currentTimestamp : undefined))}</span>
+							{#if dispatched}
+								<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.startedAt, task.finishedAt ?? (task.status === Status.RUNNING ? currentTimestamp : undefined))}</span>
+							{/if}
 							{#if task.pool}<span>Pool {task.pool}</span>{/if}
 							<CliEquivalent
 								command={runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])])}
@@ -712,6 +779,7 @@
 							taskId={task.id}
 							namespace={data.namespace}
 							status={task.status}
+							startedAt={task.startedAt}
 							attempt={deepTask === task.id && Number.isFinite(deepAttempt) ? deepAttempt : 0}
 							deepLinked={deepTask === task.id}
 							onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt)}

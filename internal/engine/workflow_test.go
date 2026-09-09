@@ -132,6 +132,20 @@ func statusOf(run *orkstackv1.Run, taskID string) orkstackv1.Status {
 	return orkstackv1.Status_STATUS_UNSPECIFIED
 }
 
+// taskRunOf is statusOf's sibling for the tests that read more of a TaskRun
+// than its status — started_at above all, which is the only field that tells
+// "this task ran" from "the run resolved it without ever dispatching it".
+func taskRunOf(t *testing.T, run *orkstackv1.Run, taskID string) *orkstackv1.TaskRun {
+	t.Helper()
+	for _, tr := range run.GetTaskRuns() {
+		if tr.GetTaskId() == taskID {
+			return tr
+		}
+	}
+	t.Fatalf("run has no task run for %q", taskID)
+	return nil
+}
+
 const linearDocument = `
 name: linear
 tasks:
@@ -449,6 +463,20 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 	}
 	if got := statusOf(&run, "after"); got != orkstackv1.Status_STATUS_SKIPPED {
 		t.Errorf("after status = %v, want SKIPPED (skip propagates downstream)", got)
+	}
+	// A skipped task NEVER reached an Orker, so it has no start. Stamping one
+	// made every reader — the run page, orkctl, the duration histogram —
+	// believe a zero-length execution happened. finished_at stays: the run did
+	// resolve these tasks, at that moment.
+	for _, id := range []string{"maybe", "after"} {
+		tr := taskRunOf(t, &run, id)
+		if tr.GetStartedAt() != nil {
+			t.Errorf("%s started_at = %v, want unset: a skipped task never reached an Orker",
+				id, tr.GetStartedAt().AsTime())
+		}
+		if tr.GetFinishedAt() == nil {
+			t.Errorf("%s finished_at is unset; the run did resolve this task", id)
+		}
 	}
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Errorf("run status = %v, want SUCCEEDED", run.GetStatus())
@@ -917,6 +945,23 @@ func TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails(t *test
 	}
 	if got := statusOf(stored, "downstream"); got != orkstackv1.Status_STATUS_CANCELED {
 		t.Errorf("downstream status = %v, want CANCELED (never started), not left PENDING", got)
+	}
+
+	// BOTH tasks read CANCELED, and that is correct — it is the lifecycle
+	// truth for each. started_at is the ONLY thing on the snapshot that tells
+	// them apart, so it has to be honest: `sibling` was dispatched and killed,
+	// `downstream` never reached an Orker at all. Stamping both made a task
+	// that never ran render with the same CANCELED badge as one that did, on
+	// the run page and everywhere else that reads the snapshot.
+	if tr := taskRunOf(t, stored, "downstream"); tr.GetStartedAt() != nil {
+		t.Errorf("downstream started_at = %v, want unset: the run ended before it was dispatched",
+			tr.GetStartedAt().AsTime())
+	} else if tr.GetFinishedAt() == nil {
+		t.Error("downstream finished_at is unset; the run did resolve this task")
+	}
+	if tr := taskRunOf(t, stored, "sibling"); tr.GetStartedAt() == nil {
+		t.Error("sibling started_at is unset; it really did run before it was canceled, and a " +
+			"client cannot tell it from downstream without that stamp")
 	}
 }
 

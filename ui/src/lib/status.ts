@@ -32,8 +32,52 @@ export function statusClasses(status: Status | undefined): string {
 
 export function isTerminal(status: Status | undefined): boolean {
 	return (
-		status === Status.SUCCEEDED || status === Status.FAILED || status === Status.CANCELED
+		status === Status.SUCCEEDED ||
+		status === Status.FAILED ||
+		status === Status.CANCELED ||
+		// SKIPPED is terminal too: the DAG decided this task will not run, and
+		// nothing after that decision moves it. Leaving it out made a skipped
+		// task read as still-pending for ever — the run page kept promising
+		// "values are not available yet" for a task that will never have any.
+		status === Status.SKIPPED
 	);
+}
+
+/**
+ * taskDispatched reports whether a task ever actually reached an Orker — which
+ * is NOT the same question as whether its status is terminal.
+ *
+ * It relies on one backend guarantee: the engine stamps `TaskRun.started_at`
+ * only in `schedule()`, the single place a task is really dispatched. A task
+ * the run resolved without ever running it (skipped by its condition, or
+ * canceled because the run ended first) carries a `finished_at` and no
+ * `started_at`. That absence is the only thing distinguishing "canceled
+ * before it started" from "was running, then canceled" — both are
+ * `STATUS_CANCELED`, deliberately, since both are the truth about the
+ * lifecycle.
+ *
+ * SKIPPED answers false as well, but callers usually want to keep showing its
+ * pill: a skip is a decision a reader should see, not an absence.
+ *
+ * Old runs, archived while the engine still stamped `started_at` on both, read
+ * as dispatched and keep their old pill. That degradation is deliberate: a
+ * timestamp is evidence, and this function will not fabricate its absence.
+ */
+export function taskDispatched(
+	status: Status | undefined,
+	startedAt: Timestamp | undefined
+): boolean {
+	switch (status) {
+		case undefined:
+		case Status.UNSPECIFIED:
+		case Status.PENDING:
+		case Status.SKIPPED:
+			return false;
+		case Status.CANCELED:
+			return startedAt !== undefined;
+		default:
+			return true;
+	}
 }
 
 export const EVENT_TYPE_LABEL: Record<EventType, string> = {
