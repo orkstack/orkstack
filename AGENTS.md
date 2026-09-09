@@ -110,6 +110,18 @@ sockets, and FIFOs. A directory hierarchy must be archived by the workload,
 for example as `workspace.tar.gz`; the artifact layer has no directory
 semantics. Artifacts remain opaque.
 
+Structured runtime data — `values.json`, a run's submitted input, and its
+recorded output — is always JSON, never YAML. JSON is the one format the
+Temporal `Payload`, the Connect API, `orkctl --json`, and the browser's typed
+input editor already share (`docs/JSON.md`), so a copied CLI command
+reproduces exactly what was submitted. JSON's `null`/`true`/`false`/number/
+string types have no implicit coercion to trip a reader — YAML's unquoted
+`no`, `yes`, `on`, and octal-looking numbers are exactly the silent-coercion
+class of bug the typed-input UI exists to prevent. This does not change the
+Orkflow DSL: a document a person authors — the Orkflow itself, with its
+declared input schema — stays YAML (`docs/DSL.md`); only the runtime data a
+system exchanges is JSON. Do not add a YAML input mode to the UI or CLI.
+
 ### 3.2 Exit status and logs
 
 Exit code `0` means computation succeeded; the Orker then validates and commits

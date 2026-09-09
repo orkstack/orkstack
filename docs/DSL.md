@@ -127,6 +127,11 @@ inputs:
 
 Provided at submit time and referenced as `{{ .inputs.<name> }}`.
 
+The schema above is YAML, like the rest of this document — but the VALUES a
+run is submitted with are JSON, never YAML, and stay JSON in the recorded
+output too. The DSL declares shape; the submission carries data. See
+`docs/JSON.md` for why.
+
 ## Tasks
 
 ```yaml
