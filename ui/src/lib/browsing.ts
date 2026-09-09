@@ -30,20 +30,6 @@ export function cursorHistory(value: string): string[] {
 }
 export function pushCursor(history: string[], cursor: string): string[] { return cursor ? [...history, cursor] : history; }
 
-export async function collectPages<T>(read: (pageToken: string) => Promise<{ items: T[]; nextPageToken: string }>): Promise<T[]> {
-	const all: T[] = [];
-	let token = '';
-	const seen = new Set<string>();
-	for (;;) {
-		const page = await read(token);
-		all.push(...page.items);
-		if (!page.nextPageToken) return all;
-		if (seen.has(page.nextPageToken)) throw new Error('page cursor repeated while listing orkflows');
-		seen.add(page.nextPageToken);
-		token = page.nextPageToken;
-	}
-}
-
 export function statsWindowError(window: string, since: string): string | null {
 	if (!['15m', '6h', '24h', 'custom'].includes(window)) return `Unknown dashboard window ${window}.`;
 	if (window === 'custom' && !since) return 'Custom dashboard windows require a valid since timestamp.';
