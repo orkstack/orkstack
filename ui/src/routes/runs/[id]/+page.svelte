@@ -119,11 +119,6 @@
 	let tasks = $state<TaskView[]>(untrack(seedTasks));
 	let finishedAt = $state(untrack(() => data.run?.finishedAt));
 	let startedAt = $state(untrack(() => data.run?.startedAt));
-	// The run's status timeline, built purely from the streamed run-level
-	// events. The bridge replays from sequence 0, so the trail always shows
-	// every transition the page received — even when two events land in the
-	// same frame and the pill only ever paints the newer one.
-	let statusTrail = $state<Status[]>([]);
 	let cancelDialog = $state(false);
 	// "Run again" is a DIALOG, not a route. The draft it opens is seeded from
 	// the run this page already loaded — its pinned version and its exact
@@ -134,6 +129,13 @@
 	let cancelBusy = $state(false);
 	let cancelError = $state('');
 	let cancellationRequested = $state(false);
+	// Which task cards have their Inspect open, keyed by task id. It is the
+	// same shape as a log pane's own `open`: component-lifetime state for a
+	// disclosure inside one card, deliberately NOT in the URL. A per-card
+	// toggle is not a view somebody sends to somebody else, and putting it in
+	// the address would make a link's meaning depend on which cards the sender
+	// happened to have expanded.
+	let inspectOpenByTask = $state<Record<string, boolean>>({});
 	let copied = $state('');
 	let downloadingArtifact = $state('');
 	let artifactDownloadError = $state('');
@@ -148,14 +150,6 @@
 		seconds: BigInt(Math.floor(wallNow / 1000)),
 		nanos: (wallNow % 1000) * 1_000_000
 	});
-
-	const RUN_LEVEL = new Set<EventType>([
-		EventType.RUN_CREATED,
-		EventType.RUN_STARTED,
-		EventType.RUN_SUCCEEDED,
-		EventType.RUN_FAILED,
-		EventType.RUN_CANCELED
-	]);
 
 	function seedTasks(): TaskView[] {
 		const views = new Map<string, TaskView>();
@@ -313,9 +307,6 @@
 				if (event.message) upsertTask(event.taskId, { message: event.message });
 				break;
 		}
-		if (RUN_LEVEL.has(event.type) && statusTrail[statusTrail.length - 1] !== runStatus) {
-			statusTrail.push(runStatus);
-		}
 	}
 
 	// ONE SOCKET, TWO CONSUMERS, AND ONLY THE RENDERING IS ON DEMAND.
@@ -323,15 +314,15 @@
 	// This is the page's single subscription to the run's event stream, and
 	// its callback feeds two things that are NOT the same thing:
 	//
-	//   1. the reducer above (`onEvent`'s switch) — the run's status, its
-	//      status trail, and every task's status and message. It runs on every
-	//      event, always, whatever the page is showing.
-	//   2. the capped event buffer — what the inspector renders when it is
-	//      open. It is filled always too, so opening the inspector later shows
-	//      the backlog rather than only what arrived after the click.
+	//   1. the reducer above (`onEvent`'s switch) — the run's status and every
+	//      task's status and message. It runs on every event, always, whatever
+	//      the page is showing.
+	//   2. the capped event buffer — what the event list renders when it is
+	//      open. It is filled always too, so opening the list later shows the
+	//      backlog rather than only what arrived after the click.
 	//
 	// Only the LIST RENDERING is conditional (`?events=1`, below). Closing the
-	// inspector removes rows from the DOM and nothing else: the socket is not
+	// event list removes rows from the DOM and nothing else: the socket is not
 	// touched, so task cards keep updating with it closed, and reopening it
 	// needs no second replay path. Subscribing only while it was open was
 	// rejected for exactly that — the reducer needs these events anyway.
@@ -341,7 +332,7 @@
 	// re-render or a loader that hands back an equal run cannot tear this
 	// socket down. A teardown here is not free — the stream replays from
 	// sequence 0, and a replay into a buffer that already holds those events
-	// would duplicate every row the inspector renders.
+	// would duplicate every row the event list renders.
 	//
 	// A socket that never opens is the failure this page must not hide. It
 	// looked identical to a quiet run: an amber CONNECTING badge and an empty
@@ -366,17 +357,18 @@
 		return stop;
 	});
 
-	// Inspection is URL state, independent of the live subscriptions. Keep old
-	// ?events=1 links working by opening their containing panel as well.
+	// The event list is URL state — `?events=1`, and nothing else — independent
+	// of the live subscription above. There is no containing panel to open
+	// first and no second parameter gating it: the header's link IS the list's
+	// state, so it can be sent to someone else and it survives a reload. What
+	// each task card discloses about ITSELF is deliberately not here; that is
+	// `inspectOpenByTask`, component state, and a link carries none of it.
 	const eventsOpen = $derived(page.url.searchParams.get('events') === '1');
-	const inspectOpen = $derived(page.url.searchParams.get('inspect') === '1' || eventsOpen);
-	function inspectHref(open: boolean, events = false): string {
+	function eventsHref(open: boolean): string {
 		const params = new URLSearchParams(page.url.searchParams);
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
-		params.delete('inspect');
 		params.delete('events');
-		if (open) params.set('inspect', '1');
-		if (open && events) params.set('events', '1');
+		if (open) params.set('events', '1');
 		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
 	}
 
@@ -573,13 +565,13 @@
 				>{cancellationRequested ? 'Cancellation requested' : 'Cancel run'}</button>
 			{/if}
 			<a
-				href={inspectHref(!inspectOpen)}
-				data-testid="inspect-toggle"
+				href={eventsHref(!eventsOpen)}
+				data-testid="events-toggle"
 				data-sveltekit-noscroll
-				aria-expanded={inspectOpen}
-				aria-controls="run-inspector"
+				aria-expanded={eventsOpen}
+				aria-controls="run-events"
 				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-brand-700"
-			>{inspectOpen ? 'Close inspect' : 'Inspect'}</a>
+			>{eventsOpen ? 'Hide events' : 'Show events'}</a>
 		</div>
 	</div>
 	{#if copied}
@@ -656,6 +648,25 @@
 	</section>
 
 	<div class="space-y-6">
+		<!--
+			The run's history reads BEFORE the tasks it produced. It is the
+			run-level account of what happened, so it belongs beside the run's
+			own header rather than under a task list a reader has to scroll
+			past — and it is what subsumed the old status trail: every row
+			carries a sequence number and a timestamp the trail never had.
+		-->
+		{#if eventsOpen}
+			<section id="run-events" aria-label="Run events" data-testid="run-events">
+				<EventInspector
+					events={buffer.events}
+					dropped={buffer.dropped}
+					total={buffer.total}
+					{streamBroken}
+					runId={run.id}
+					cap={EVENT_BUFFER_CAP}
+				/>
+			</section>
+		{/if}
 		<section>
 			<h2 class="mb-3 text-sm font-semibold text-fg">Tasks</h2>
 			{#if data.artifactsError}
@@ -705,6 +716,165 @@
 							deepLinked={deepTask === task.id}
 							onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt)}
 						/>
+						<div class="mt-2">
+							<button
+								type="button"
+								data-testid="task-inspect-toggle-{task.id}"
+								aria-expanded={inspectOpenByTask[task.id] ?? false}
+								onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}
+								class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+							>
+								<span class="text-fg-muted">{inspectOpenByTask[task.id] ? '▾' : '▸'}</span>
+								{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}
+							</button>
+						</div>
+						{#if inspectOpenByTask[task.id]}
+							{@const def = taskDefs.get(task.id)}
+							{@const taskArtifacts = artifactsByTask.get(task.id) ?? []}
+							<div
+								class="mt-2 rounded-md border border-border-subtle bg-surface-sunken p-3"
+								data-testid="task-{task.id}-inspect"
+							>
+								<p class="text-xs break-all text-fg-muted" data-testid="task-{task.id}-activity">{task.activity || 'activity not yet known'}</p>
+								<!--
+									WHAT RAN, AND WHAT IT PRODUCED.
+
+									The definition half (image, command, env, secret NAMES)
+									comes from the Orkflow this run pinned; the attempt half
+									(exit code, commit) comes from the TaskRun. They are shown
+									together because a reader debugging a task needs both, and
+									the pin — the resolved index digest — is the point: it is
+									what makes this run explainable after a tag moves.
+
+									SECRET VALUES ARE NEVER HERE. A SecretRef carries a name
+									and a SOURCE; the value is resolved on the Orker, into the
+									container, and never travels to the engine or this page.
+									Only names are rendered, and nothing renders `source`.
+								-->
+								{#if def || task.exitCode !== undefined || task.commit}
+									<dl
+										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs sm:grid-cols-2"
+										data-testid="task-{task.id}-detail"
+									>
+										{#if def?.image}
+											<div class="sm:col-span-2">
+												<dt class="text-fg-muted uppercase">Image</dt>
+												<dd
+													class="mt-0.5 font-mono break-all text-fg-secondary"
+													data-testid="task-{task.id}-image"
+												>
+													{pinnedOrReference(def.image) || '—'}
+												</dd>
+												{#if def.image.indexDigest}
+													<dd class="mt-0.5">
+														<span
+															class="font-mono text-brand-700"
+															title={def.image.indexDigest}
+															data-digest={def.image.indexDigest}
+															data-testid="task-{task.id}-image-digest"
+															>{shortDigest(def.image.indexDigest)}</span
+														>
+													</dd>
+												{/if}
+											</div>
+										{/if}
+										{#if def && def.command.length > 0}
+											<div class="sm:col-span-2">
+												<dt class="text-fg-muted uppercase">Command</dt>
+												<dd
+													class="mt-0.5 font-mono break-all text-fg-secondary"
+													data-testid="task-{task.id}-command"
+												>
+													{JSON.stringify(def.command)}
+												</dd>
+											</div>
+										{/if}
+										{#if def && Object.keys(def.env).length > 0}
+											<div class="sm:col-span-2">
+												<dt class="text-fg-muted uppercase">Environment</dt>
+												<!--
+													Env is shown as NAME=VALUE. It is
+													workload-supplied, non-secret configuration by
+													construction: the platform puts nothing here
+													(Task.env's own contract), and anything that
+													must not be read travels as a `secrets:` entry,
+													whose value is resolved on the Orker and never
+													reaches the engine at all.
+												-->
+												<dd
+													class="mt-0.5 font-mono break-all text-fg-secondary"
+													data-testid="task-{task.id}-env"
+												>
+													{Object.entries(def.env)
+														.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+														.map(([k, v]) => `${k}=${v}`)
+														.join('  ')}
+												</dd>
+											</div>
+										{/if}
+										{#if def && def.secrets.length > 0}
+											<div>
+												<dt class="text-fg-muted uppercase">Secrets</dt>
+												<dd
+													class="mt-0.5 font-mono text-fg-secondary"
+													title="names only — a secret's value is resolved on the Orker and never reaches this page"
+													data-testid="task-{task.id}-secrets"
+												>
+													{def.secrets.map((s) => s.name).join(', ')}
+												</dd>
+											</div>
+										{/if}
+										<div>
+											<dt class="text-fg-muted uppercase">Exit code</dt>
+											<dd
+												class="mt-0.5 font-mono {task.exitCode === undefined
+													? 'text-fg-muted'
+													: task.exitCode === 0
+														? 'text-fg-secondary'
+														: 'text-failed-fg'}"
+												data-state={task.exitCode === undefined ? 'unknown' : 'measured'}
+												data-testid="task-{task.id}-exit-code"
+											>
+												{task.exitCode === undefined ? 'Not measured' : task.exitCode}
+											</dd>
+										</div>
+										{#if task.commit?.uri}
+											<div class="sm:col-span-2">
+												<dt class="text-fg-muted uppercase">Commit</dt>
+												<dd
+													class="mt-0.5 font-mono break-all text-fg-muted"
+													data-testid="task-{task.id}-commit"
+												>
+													{task.commit.uri}
+												</dd>
+											</div>
+										{/if}
+									</dl>
+								{/if}
+								<!--
+									Gated on their own presence, not on the definition
+									block above: a task that produced artifacts and has
+									no pinned definition still lists them.
+								-->
+								{#if taskArtifacts.length > 0}
+									<div class="mt-3 border-t border-border-subtle pt-3" data-testid="task-artifacts-{task.id}">
+										<h4 class="text-xs text-fg-muted uppercase">Artifacts</h4>
+										{#each taskArtifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
+											{#if record.artifact}
+												{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
+												<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle px-3 py-2 text-xs">
+													<span class="font-medium text-fg">{artifactKindLabel(record.kind)}</span>
+													<span class="font-mono break-all text-fg-secondary">{record.artifact.name}</span>
+													<span class="text-fg-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
+													<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="ml-auto font-medium text-brand-700 hover:underline disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
+													<details class="w-full min-w-0 text-fg-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
+												</div>
+											{/if}
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{/if}
 						{#if task.output || task.valuesRef}
 							<div class="mt-3 rounded-md border border-border-subtle bg-surface-sunken p-3">
 								<div class="flex items-center justify-between gap-3">
@@ -744,204 +914,6 @@
 					<p class="mt-3 overflow-x-auto rounded bg-surface-sunken p-2 font-mono text-xs text-fg-muted">{runCommand(data.namespace, ['run', 'cancel', run.id, ...(cancelReason.trim() ? ['--reason', cancelReason.trim()] : [])])}</p>
 				{/snippet}
 			</ConfirmDialog>
-		{/if}
-
-		{#if inspectOpen}
-			<section
-				id="run-inspector"
-				aria-labelledby="inspect-title"
-				data-testid="run-inspector"
-				class="space-y-5 rounded-lg border border-border bg-surface-sunken p-4 sm:p-5"
-			>
-				<div>
-					<h2 id="inspect-title" class="text-sm font-semibold text-fg">Inspect</h2>
-					<p class="mt-1 text-xs text-fg-muted">Execution details and event history for this run.</p>
-					{#if statusTrail.length > 0}
-						<p class="mt-1 font-mono text-xs text-fg-muted" data-testid="run-status-trail">
-							{statusTrail.map(statusLabel).join(' -> ')}
-						</p>
-					{/if}
-				</div>
-				<div class="space-y-3">
-					{#each tasks as task (task.id)}
-						{@const def = taskDefs.get(task.id)}
-						{@const taskArtifacts = artifactsByTask.get(task.id) ?? []}
-						<div class="rounded-lg border border-border bg-surface p-4">
-							<h3 class="text-sm font-medium break-all text-fg">{task.id}</h3>
-							<p class="mt-1 text-xs break-all text-fg-muted" data-testid="task-{task.id}-activity">{task.activity || 'activity not yet known'}</p>
-							<!--
-								WHAT RAN, AND WHAT IT PRODUCED.
-
-								The definition half (image, command, env, secret NAMES)
-								comes from the Orkflow this run pinned; the attempt half
-								(exit code, commit) comes from the TaskRun. They are shown
-								together because a reader debugging a task needs both, and
-								the pin — the resolved index digest — is the point: it is
-								what makes this run explainable after a tag moves.
-
-								SECRET VALUES ARE NEVER HERE. A SecretRef carries a name
-								and a SOURCE; the value is resolved on the Orker, into the
-								container, and never travels to the engine or this page.
-								Only names are rendered, and nothing renders `source`.
-							-->
-							{#if def || task.exitCode !== undefined || task.commit}
-								<dl
-									class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs sm:grid-cols-2"
-									data-testid="task-{task.id}-detail"
-								>
-									{#if def?.image}
-										<div class="sm:col-span-2">
-											<dt class="text-fg-muted uppercase">Image</dt>
-											<dd
-												class="mt-0.5 font-mono break-all text-fg-secondary"
-												data-testid="task-{task.id}-image"
-											>
-												{pinnedOrReference(def.image) || '—'}
-											</dd>
-											{#if def.image.indexDigest}
-												<dd class="mt-0.5">
-													<span
-														class="font-mono text-brand-700"
-														title={def.image.indexDigest}
-														data-digest={def.image.indexDigest}
-														data-testid="task-{task.id}-image-digest"
-														>{shortDigest(def.image.indexDigest)}</span
-													>
-												</dd>
-											{/if}
-										</div>
-									{/if}
-									{#if def && def.command.length > 0}
-										<div class="sm:col-span-2">
-											<dt class="text-fg-muted uppercase">Command</dt>
-											<dd
-												class="mt-0.5 font-mono break-all text-fg-secondary"
-												data-testid="task-{task.id}-command"
-											>
-												{JSON.stringify(def.command)}
-											</dd>
-										</div>
-									{/if}
-									{#if def && Object.keys(def.env).length > 0}
-										<div class="sm:col-span-2">
-											<dt class="text-fg-muted uppercase">Environment</dt>
-											<!--
-												Env is shown as NAME=VALUE. It is
-												workload-supplied, non-secret configuration by
-												construction: the platform puts nothing here
-												(Task.env's own contract), and anything that
-												must not be read travels as a `secrets:` entry,
-												whose value is resolved on the Orker and never
-												reaches the engine at all.
-											-->
-											<dd
-												class="mt-0.5 font-mono break-all text-fg-secondary"
-												data-testid="task-{task.id}-env"
-											>
-												{Object.entries(def.env)
-													.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-													.map(([k, v]) => `${k}=${v}`)
-													.join('  ')}
-											</dd>
-										</div>
-									{/if}
-									{#if def && def.secrets.length > 0}
-										<div>
-											<dt class="text-fg-muted uppercase">Secrets</dt>
-											<dd
-												class="mt-0.5 font-mono text-fg-secondary"
-												title="names only — a secret's value is resolved on the Orker and never reaches this page"
-												data-testid="task-{task.id}-secrets"
-											>
-												{def.secrets.map((s) => s.name).join(', ')}
-											</dd>
-										</div>
-									{/if}
-									<div>
-										<dt class="text-fg-muted uppercase">Exit code</dt>
-										<dd
-											class="mt-0.5 font-mono {task.exitCode === undefined
-												? 'text-fg-muted'
-												: task.exitCode === 0
-													? 'text-fg-secondary'
-													: 'text-failed-fg'}"
-											data-state={task.exitCode === undefined ? 'unknown' : 'measured'}
-											data-testid="task-{task.id}-exit-code"
-										>
-											{task.exitCode === undefined ? 'Not measured' : task.exitCode}
-										</dd>
-									</div>
-									{#if task.commit?.uri}
-										<div class="sm:col-span-2">
-											<dt class="text-fg-muted uppercase">Commit</dt>
-											<dd
-												class="mt-0.5 font-mono break-all text-fg-muted"
-												data-testid="task-{task.id}-commit"
-											>
-												{task.commit.uri}
-											</dd>
-										</div>
-									{/if}
-								</dl>
-							{/if}
-							<!--
-								Gated on their own presence, not on the definition
-								block above: a task that produced artifacts and has
-								no pinned definition still lists them.
-							-->
-							{#if taskArtifacts.length > 0}
-								<div class="mt-3 border-t border-border-subtle pt-3" data-testid="task-artifacts-{task.id}">
-									<h4 class="text-xs text-fg-muted uppercase">Artifacts</h4>
-									{#each taskArtifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
-										{#if record.artifact}
-											{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
-											<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle px-3 py-2 text-xs">
-												<span class="font-medium text-fg">{artifactKindLabel(record.kind)}</span>
-												<span class="font-mono break-all text-fg-secondary">{record.artifact.name}</span>
-												<span class="text-fg-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
-												<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="ml-auto font-medium text-brand-700 hover:underline disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
-												<details class="w-full min-w-0 text-fg-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
-											</div>
-										{/if}
-									{/each}
-								</div>
-							{/if}
-						</div>
-					{/each}
-				</div>
-
-				<section>
-					<div class="mb-3 flex flex-wrap items-center gap-3">
-						<a
-							href={inspectHref(true, !eventsOpen)}
-							data-testid="events-toggle"
-							data-sveltekit-noscroll
-							aria-expanded={eventsOpen}
-							class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
-						>
-							<span class="text-fg-muted">{eventsOpen ? '▾' : '▸'}</span>
-							{eventsOpen ? 'Hide events' : 'Show events'}
-						</a>
-						{#if !eventsOpen}
-							<span class="text-xs text-fg-muted" data-testid="events-teaser">
-								{buffer.total}
-								{buffer.total === 1 ? 'event' : 'events'} received on this page
-							</span>
-						{/if}
-					</div>
-
-					{#if eventsOpen}
-						<EventInspector
-							events={buffer.events}
-							dropped={buffer.dropped}
-							total={buffer.total}
-							{streamBroken}
-							runId={run.id}
-							cap={EVENT_BUFFER_CAP}
-						/>
-					{/if}
-				</section>
-			</section>
 		{/if}
 	</div>
 

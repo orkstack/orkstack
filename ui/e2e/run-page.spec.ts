@@ -242,7 +242,9 @@ async function paneLines(
 		);
 }
 
-test('Inspect keeps details separate and preserves navigation and logs', async ({ page }) => {
+test('per-task Inspect reveals that task alone, and Show events opens the event list above the tasks', async ({
+	page
+}) => {
 	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
 	const run = submitted.run.id;
 	const sockets: string[] = [];
@@ -250,62 +252,119 @@ test('Inspect keeps details separate and preserves navigation and logs', async (
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 120_000 });
 	await expect(page.getByTestId('task-boom-error')).toBeVisible();
+
+	// THE OVERVIEW. There is no page-level inspector of any kind any more —
+	// not the old bottom section, not a status trail, not an event list — and
+	// no task's debug detail is on screen until that task is asked.
+	await expect(page.getByTestId('inspect-toggle')).toHaveCount(0);
 	await expect(page.getByTestId('run-inspector')).toHaveCount(0);
+	await expect(page.getByTestId('run-events')).toHaveCount(0);
+	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
+	await expect(page.getByTestId('task-ok-inspect')).toHaveCount(0);
+	await expect(page.getByTestId('task-boom-inspect')).toHaveCount(0);
 	await expect(page.getByTestId('task-ok-image')).toHaveCount(0);
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveCount(0);
-	await expect(page.getByTestId('run-status-trail')).toHaveCount(0);
 	// Recorded artifacts are DEBUG DETAIL, not overview. The always-visible
 	// card carries status, id, elapsed and "Show output" — a task that
 	// produced VALUES/STDOUT/STDERR does not push a download list into it.
 	await expect(page.getByTestId('task-artifacts-ok')).toHaveCount(0);
 	await expect(page.getByTestId('task-artifacts-boom')).toHaveCount(0);
 	await expect(page.getByTestId('task-ok')).not.toContainText('Artifacts');
+	// The one page-level control left is the event list's, and it says so.
+	await expect(page.getByTestId('events-toggle')).toBeVisible();
+	await expect(page.getByTestId('events-toggle')).toHaveText('Show events');
 	await shot(page, 'screenshot-run-overview.png');
+
 	await page.getByTestId('task-log-toggle-boom').click();
 	await expect(page.getByTestId('task-log-state-boom')).toHaveText('ENDED');
 	const socketCount = sockets.length;
-	await page.getByRole('link', { name: 'Inspect', exact: true }).click();
-	await expect(page).toHaveURL(/ns=default&inspect=1/);
-	await expect(page.getByRole('region', { name: 'Inspect', exact: true })).toBeVisible();
+
+	// PER TASK, IN THAT TASK'S OWN CARD. `ok`'s Inspect reveals what `ok` ran
+	// and what `ok` produced, inside `ok`'s card — the same disclosure shape
+	// as its "Show output", not a separate section elsewhere on the page.
+	await page.getByTestId('task-inspect-toggle-ok').click();
+	await expect(page.getByTestId('task-ok').getByTestId('task-ok-inspect')).toBeVisible();
 	await expect(page.getByTestId('task-ok-image')).toContainText('@sha256:');
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
 	await expect(page.getByTestId('task-ok-commit')).toContainText('commit.json');
-	// …and the artifacts arrive with them, INSIDE the inspector rather than
-	// in the task's own card, with their metadata expandables intact.
-	const artifactsOk = page.getByTestId('task-artifacts-ok');
+	const artifactsOk = page.getByTestId('task-ok').getByTestId('task-artifacts-ok');
 	await expect(artifactsOk).toBeVisible();
 	await expect(artifactsOk).toContainText('VALUES');
 	await expect(artifactsOk).toContainText('STDOUT');
 	await expect(artifactsOk).toContainText('STDERR');
 	await expect(artifactsOk).toContainText('Metadata');
-	await expect(page.getByTestId('run-inspector').getByTestId('task-artifacts-ok')).toBeVisible();
-	await expect(page.getByTestId('task-ok').getByTestId('task-artifacts-ok')).toHaveCount(0);
+	// SCOPED: one task's disclosure is one task's. `boom`'s stayed shut.
+	await expect(page.getByTestId('task-boom-inspect')).toHaveCount(0);
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveCount(0);
+	// And it is LOCAL state, not URL state — a per-card disclosure, like
+	// "Show output", is not something anybody sends to somebody else.
+	await expect(page).not.toHaveURL(/inspect=1|events=1/);
+
+	// The sibling opens on its own, and nothing already on screen moves.
+	await page.getByTestId('task-inspect-toggle-boom').click();
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
 	await expect(page.getByTestId('task-log-boom')).toBeVisible();
-	await shot(page, 'screenshot-run-inspect.png');
-	await page.goBack();
+	await expect(page.getByTestId('task-boom-error')).toBeVisible();
+	expect(sockets).toHaveLength(socketCount);
+
+	// INDEPENDENT: closing one leaves the other open.
+	await page.getByTestId('task-inspect-toggle-ok').click();
+	await expect(page.getByTestId('task-ok-inspect')).toHaveCount(0);
+	await expect(page.getByTestId('task-boom-inspect')).toBeVisible();
+	await shot(page, 'screenshot-task-inspect.png');
+
+	// SHOW EVENTS is the page-level control, and what it opens renders ABOVE
+	// the task list — the run's history reads before the tasks it produced,
+	// not after a scroll past all of them.
+	await page.getByTestId('events-toggle').click();
+	await page.waitForURL(/events=1/);
+	await expect(page.getByTestId('run-events')).toBeVisible();
+	await expect(page.getByTestId('event-inspector')).toBeVisible();
+	await expect(page.getByTestId('events-toggle')).toHaveText('Hide events');
+	expect(
+		await page.evaluate(() => {
+			const events = document.querySelector('[data-testid="run-events"]');
+			const tasks = document.querySelector('[data-testid="task-list"]');
+			if (!events || !tasks) return null;
+			return Boolean(events.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING);
+		})
+	).toBe(true);
 	await expect(page.getByTestId('run-inspector')).toHaveCount(0);
+
+	// The event list is the URL's, so history moves it and nothing else.
+	await page.goBack();
+	await expect(page).not.toHaveURL(/events=1/);
+	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
 	await expect(page.getByTestId('task-log-boom')).toBeVisible();
 	await page.goForward();
-	await expect(page.getByTestId('run-inspector')).toBeVisible();
-	expect(sockets).toHaveLength(socketCount);
-	await page.reload();
-	await expect(page.getByTestId('run-inspector')).toBeVisible();
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
-	await page.getByTestId('events-toggle').click();
 	await expect(page.getByTestId('event-inspector')).toBeVisible();
-	await page.getByRole('link', { name: 'Close inspect', exact: true }).click();
-	await expect(page).not.toHaveURL(/inspect=1|events=1/);
-	await expect(page.getByTestId('run-inspector')).toHaveCount(0);
-	await expect(page.getByTestId('task-artifacts-ok')).toHaveCount(0);
+	expect(sockets).toHaveLength(socketCount);
+
+	// A RELOAD tells the two kinds of state apart: `?events=1` is in the
+	// address and comes back with it; a per-task disclosure is component
+	// state and does not, exactly like "Show output".
+	await page.reload();
+	await expect(page.getByTestId('event-inspector')).toBeVisible();
+	await expect(page.getByTestId('task-boom-inspect')).toHaveCount(0);
+	await page.getByTestId('events-toggle').click();
+	await expect(page).not.toHaveURL(/events=1/);
+	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
 	await expect(page.getByTestId('task-boom-error')).toBeVisible();
+
 	await page.setViewportSize({ width: 390, height: 844 });
 	await shot(page, 'screenshot-run-overview-mobile.png');
-	await page.getByRole('link', { name: 'Inspect', exact: true }).click();
+	await page.getByTestId('task-inspect-toggle-ok').click();
 	await expect(page.getByTestId('task-ok-image')).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-	await shot(page, 'screenshot-run-inspect-mobile.png');
-	note('overview hides image/exit/commit/history/artifacts; Inspect reveals pinned details and the recorded artifacts (VALUES/STDOUT/STDERR with metadata), which live inside the inspector and leave with it; back/forward preserve logs and sockets; reload, close and mobile layout verified');
+	await shot(page, 'screenshot-task-inspect-mobile.png');
+	note(
+		'the overview hides image/exit/commit/artifacts and carries no page-level inspector; each ' +
+			"task's own Inspect reveals that task's pinned details and recorded artifacts " +
+			'(VALUES/STDOUT/STDERR with metadata) inside its own card, independently of its ' +
+			'siblings and without touching the URL; "Show events" opens the event list ABOVE the ' +
+			'task list as ?events=1, survives back/forward/reload without a second socket, and the ' +
+			'per-task disclosures — component state, like "Show output" — do not survive a reload'
+	);
 });
 
 test.beforeAll(async () => {
@@ -435,8 +494,16 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
 	await expect(page.getByTestId('event-log')).toHaveCount(0);
 	await expect(page.getByTestId('event-entry')).toHaveCount(0);
-	await expect(page.getByTestId('inspect-toggle')).toBeVisible();
-	note('the run page loaded with no event list in the DOM and an "Inspect" control');
+	await expect(page.getByTestId('events-toggle')).toBeVisible();
+	await expect(page.getByTestId('events-toggle')).toHaveText('Show events');
+	// …and each task's own Inspect is present and SHUT: the control is on the
+	// card, the detail it discloses is not.
+	await expect(page.getByTestId('task-inspect-toggle-talk')).toBeVisible();
+	await expect(page.getByTestId('task-talk-inspect')).toHaveCount(0);
+	note(
+		'the run page loaded with no event list in the DOM, a "Show events" control, and a ' +
+			'closed per-task "Inspect" on the task card'
+	);
 	await shot(page, 'screenshot-run-page-loaded.png');
 
 	// SCOPED: a pane per task, opened one at a time, holding one task's output
@@ -668,11 +735,13 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-id')).toHaveText(run);
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
-	await page.getByTestId('inspect-toggle').click();
+	await page.getByTestId('task-inspect-toggle-boom').click();
 	// A generated proto3 int32 reads as 0 even before an attempt finishes. The
-	// page must not draw that absence as a successful measurement.
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('Not measured');
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'unknown');
+	// page must not draw that absence as a successful measurement. Read it from
+	// boom's OWN card — that is the only place this fact is rendered now.
+	const boomExitCode = page.getByTestId('task-boom').getByTestId('task-boom-exit-code');
+	await expect(boomExitCode).toHaveText('Not measured');
+	await expect(boomExitCode).toHaveAttribute('data-state', 'unknown');
 
 	// A marker that survives only if the page never reloads: the toggle is a
 	// same-route navigation, so nothing below may re-enter the loader.
@@ -750,7 +819,9 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'measured');
 	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
 	await expect(page.getByTestId('task-boom-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
-	// A genuine successful exit 0 is still a measurement, not "unknown".
+	// A genuine successful exit 0 is still a measurement, not "unknown" — read
+	// from the succeeded task's own Inspect, opened here for the first time.
+	await page.getByTestId('task-inspect-toggle-slow').click();
 	await expect(page.getByTestId('task-slow-exit-code')).toHaveText('0');
 	await expect(page.getByTestId('task-slow-exit-code')).toHaveAttribute('data-state', 'measured');
 	note('live terminal refresh rendered boom exit 3 / Activity failed and slow exit 0 without reload');
@@ -802,9 +873,13 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&events=1`);
 	await expect(page.getByTestId('event-inspector')).toBeVisible();
 	note('a fresh load of ?events=1 opens the inspector: the URL is the state');
+	await page.getByTestId('task-inspect-toggle-boom').click();
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
 	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
 	await page.reload();
+	// The per-task disclosure is component state and a reload discards it, so
+	// it is asked for again — the FACT behind it is what has to survive.
+	await page.getByTestId('task-inspect-toggle-boom').click();
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
 	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
 	note('a reload of the finished run kept exit 3 and the Activity failed category');
@@ -815,8 +890,10 @@ test('a task watched live acquires its real exit code and Error.category without
 }) => {
 	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
 	const run = submitted.run.id;
-	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&inspect=1`);
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-status')).toHaveText(/PENDING|RUNNING/);
+	await page.getByTestId('task-inspect-toggle-boom').click();
+	await page.getByTestId('task-inspect-toggle-ok').click();
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('Not measured');
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'unknown');
 
@@ -841,6 +918,10 @@ test('a task watched live acquires its real exit code and Error.category without
 	await shot(page, 'screenshot-live-terminal-facts.png');
 
 	await page.reload();
+	// Both disclosures are re-opened: a reload keeps the URL's state and not a
+	// card's, and what is being checked here is the reloaded FACTS.
+	await page.getByTestId('task-inspect-toggle-boom').click();
+	await page.getByTestId('task-inspect-toggle-ok').click();
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
 	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');

@@ -277,12 +277,6 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 		.toBe('SUCCEEDED');
 	console.log(`run-status pill sampled states: ${[...seenStatuses].join(' -> ')}`);
 
-	// 5b. The status trail is built from the streamed run-level events, so it
-	//     records every transition even when two land in the same frame. This
-	//     is the PENDING -> RUNNING -> SUCCEEDED proof, straight off the wire.
-	await page.getByTestId('inspect-toggle').click();
-	await expect(page.getByTestId('run-status-trail')).toHaveText('PENDING -> RUNNING -> SUCCEEDED');
-
 	// 6. All three tasks show succeeded — updated in place by the stream.
 	for (const taskId of ['fetch', 'transform', 'verify']) {
 		await expect(page.getByTestId(`task-${taskId}-status`)).toHaveText('SUCCEEDED');
@@ -297,6 +291,13 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	//    socket has been filling since the page loaded — every event below
 	//    arrived long before this click, which is the property that lets the
 	//    list be on demand at all.
+	//
+	//    EVERY run transition is a row here, each with its own sequence number
+	//    and timestamp, including two that land in the same frame — which the
+	//    status pill, sampled above, can only ever paint the newer of. The
+	//    ordering assertions below are therefore the whole
+	//    PENDING -> RUNNING -> SUCCEEDED proof, straight off the wire, and are
+	//    why the page needs no separate status trail beside them.
 	await expect(page.getByTestId('event-log')).toHaveCount(0);
 	await page.getByTestId('events-toggle').click();
 	await expect(page.getByTestId('event-inspector')).toBeVisible();
