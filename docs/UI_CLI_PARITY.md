@@ -134,8 +134,9 @@ pinned version and inputs. Never reuse its original idempotency key; allow a
 fresh explicitly supplied key. A new run gets a new ID. Explain before submit
 that this starts a new execution and may repeat external side effects. If the
 pinned definition is unavailable, fail with its coordinates; never silently
-switch to current. Share original inputs by run ID in the URL, not embedded
-input JSON that may contain secrets.
+switch to current. Original inputs may contain secrets and never belong in a
+shareable or bookmarkable URL; a run is shared by its ID alone, and the
+seeded draft exists only in the page that already holds that run.
 
 ## Capability and acceptance matrix
 
