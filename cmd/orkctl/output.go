@@ -60,6 +60,22 @@ func statusLabel(status orkstackv1.Status) string {
 	return strings.TrimPrefix(status.String(), "STATUS_")
 }
 
+// taskStatusLabel renders a task run's status the way statusLabel does,
+// except a CANCELED task that never reached an Orker reads as "CANCELED
+// (never started)" instead of a bare CANCELED. STATUS_CANCELED is the
+// engine's status for both a task that was running and got killed, and one
+// that never ran because the run ended first (markCanceled never stamps
+// started_at for the latter) — a bare label can't tell them apart, which is
+// what made a run's unstarted tasks read as if they had been running.
+// Mirrors ui/src/lib/status.ts's taskDispatched.
+func taskStatusLabel(taskRun *orkstackv1.TaskRun) string {
+	label := statusLabel(taskRun.GetStatus())
+	if taskRun.GetStatus() == orkstackv1.Status_STATUS_CANCELED && formatTime(taskRun.GetStartedAt()) == dash {
+		return label + " (never started)"
+	}
+	return label
+}
+
 // eventLabel renders an EventType without its enum prefix.
 func eventLabel(eventType orkstackv1.EventType) string {
 	return strings.TrimPrefix(eventType.String(), "EVENT_TYPE_")

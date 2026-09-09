@@ -267,7 +267,7 @@ func renderRun(out io.Writer, run *orkstackv1.Run) error {
 	fmt.Fprintln(table, "TASK\tSTATUS\tATTEMPT\tEXIT\tSTARTED\tFINISHED\tERROR")
 	for _, taskRun := range run.GetTaskRuns() {
 		fmt.Fprintf(table, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
-			taskRun.GetTaskId(), statusLabel(taskRun.GetStatus()),
+			taskRun.GetTaskId(), taskStatusLabel(taskRun),
 			taskRun.GetAttempt(), taskRun.GetExitCode(), formatTime(taskRun.GetStartedAt()),
 			formatTime(taskRun.GetFinishedAt()), errorLine(taskRun.GetError()))
 	}
