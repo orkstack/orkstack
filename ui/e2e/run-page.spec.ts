@@ -254,6 +254,12 @@ test('Inspect keeps details separate and preserves navigation and logs', async (
 	await expect(page.getByTestId('task-ok-image')).toHaveCount(0);
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveCount(0);
 	await expect(page.getByTestId('run-status-trail')).toHaveCount(0);
+	// Recorded artifacts are DEBUG DETAIL, not overview. The always-visible
+	// card carries status, id, elapsed and "Show output" — a task that
+	// produced VALUES/STDOUT/STDERR does not push a download list into it.
+	await expect(page.getByTestId('task-artifacts-ok')).toHaveCount(0);
+	await expect(page.getByTestId('task-artifacts-boom')).toHaveCount(0);
+	await expect(page.getByTestId('task-ok')).not.toContainText('Artifacts');
 	await shot(page, 'screenshot-run-overview.png');
 	await page.getByTestId('task-log-toggle-boom').click();
 	await expect(page.getByTestId('task-log-state-boom')).toHaveText('ENDED');
@@ -265,6 +271,16 @@ test('Inspect keeps details separate and preserves navigation and logs', async (
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
 	await expect(page.getByTestId('task-ok-commit')).toContainText('commit.json');
+	// …and the artifacts arrive with them, INSIDE the inspector rather than
+	// in the task's own card, with their metadata expandables intact.
+	const artifactsOk = page.getByTestId('task-artifacts-ok');
+	await expect(artifactsOk).toBeVisible();
+	await expect(artifactsOk).toContainText('VALUES');
+	await expect(artifactsOk).toContainText('STDOUT');
+	await expect(artifactsOk).toContainText('STDERR');
+	await expect(artifactsOk).toContainText('Metadata');
+	await expect(page.getByTestId('run-inspector').getByTestId('task-artifacts-ok')).toBeVisible();
+	await expect(page.getByTestId('task-ok').getByTestId('task-artifacts-ok')).toHaveCount(0);
 	await expect(page.getByTestId('task-log-boom')).toBeVisible();
 	await shot(page, 'screenshot-run-inspect.png');
 	await page.goBack();
@@ -281,6 +297,7 @@ test('Inspect keeps details separate and preserves navigation and logs', async (
 	await page.getByRole('link', { name: 'Close inspect', exact: true }).click();
 	await expect(page).not.toHaveURL(/inspect=1|events=1/);
 	await expect(page.getByTestId('run-inspector')).toHaveCount(0);
+	await expect(page.getByTestId('task-artifacts-ok')).toHaveCount(0);
 	await expect(page.getByTestId('task-boom-error')).toBeVisible();
 	await page.setViewportSize({ width: 390, height: 844 });
 	await shot(page, 'screenshot-run-overview-mobile.png');
@@ -288,7 +305,7 @@ test('Inspect keeps details separate and preserves navigation and logs', async (
 	await expect(page.getByTestId('task-ok-image')).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 	await shot(page, 'screenshot-run-inspect-mobile.png');
-	note('overview hides image/exit/commit/history; Inspect reveals pinned details; back/forward preserve logs and sockets; reload, close and mobile layout verified');
+	note('overview hides image/exit/commit/history/artifacts; Inspect reveals pinned details and the recorded artifacts (VALUES/STDOUT/STDERR with metadata), which live inside the inspector and leave with it; back/forward preserve logs and sockets; reload, close and mobile layout verified');
 });
 
 test.beforeAll(async () => {

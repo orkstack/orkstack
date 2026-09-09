@@ -181,6 +181,12 @@ test('completed values, bounded pane replay, JSON export and recorded artifacts 
 	expect(retained).toContain('retained line 1');
 	expect(retained).toContain('retained line 2105');
 
+	// Recorded artifacts are inspection detail: the overview above carries the
+	// task's values and logs, and the download list is behind Inspect. Open it
+	// through the page's own toggle rather than by rewriting the URL, so
+	// everything asserted so far was read from the plain view.
+	await page.getByRole('link', { name: 'Inspect', exact: true }).click();
+	await expect(page.getByTestId('run-inspector')).toBeVisible();
 	const artifactDownload = page.waitForEvent('download');
 	await page.getByTestId('download-artifact-completed-report.txt').click();
 	const artifactFile = await artifactDownload;

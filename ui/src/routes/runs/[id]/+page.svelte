@@ -668,7 +668,6 @@
 			{/if}
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
-					{@const taskArtifacts = artifactsByTask.get(task.id) ?? []}
 					<div
 						class="rounded-lg border border-border bg-surface px-4 py-3 shadow-xs"
 						data-testid="task-{task.id}"
@@ -712,24 +711,7 @@
 									<span class="text-xs font-medium text-fg">Task values</span>
 									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => copy(payloadJson(task.output), 'Task values copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>{/if}
 								</div>
-								<pre data-testid="task-values-{task.id}" class="mt-2 max-h-40 overflow-auto font-mono text-xs text-fg-secondary">{task.output ? payloadJson(task.output) : isTerminal(task.status) ? 'This task finished without inline values. Its recorded values artifact, if present, is listed below.' : 'Task values are not available yet.'}</pre>
-							</div>
-						{/if}
-						{#if taskArtifacts.length > 0}
-							<div class="mt-3" data-testid="task-artifacts-{task.id}">
-								<h3 class="text-xs font-medium text-fg">Artifacts</h3>
-								{#each taskArtifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
-									{#if record.artifact}
-										{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
-										<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle px-3 py-2 text-xs">
-											<span class="font-medium text-fg">{artifactKindLabel(record.kind)}</span>
-											<span class="font-mono break-all text-fg-secondary">{record.artifact.name}</span>
-											<span class="text-fg-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
-											<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="ml-auto font-medium text-brand-700 hover:underline disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
-											<details class="w-full min-w-0 text-fg-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
-										</div>
-									{/if}
-								{/each}
+								<pre data-testid="task-values-{task.id}" class="mt-2 max-h-40 overflow-auto font-mono text-xs text-fg-secondary">{task.output ? payloadJson(task.output) : isTerminal(task.status) ? 'This task finished without inline values. Its recorded values artifact, if present, is listed under Inspect.' : 'Task values are not available yet.'}</pre>
 							</div>
 						{/if}
 					</div>
@@ -783,6 +765,7 @@
 				<div class="space-y-3">
 					{#each tasks as task (task.id)}
 						{@const def = taskDefs.get(task.id)}
+						{@const taskArtifacts = artifactsByTask.get(task.id) ?? []}
 						<div class="rounded-lg border border-border bg-surface p-4">
 							<h3 class="text-sm font-medium break-all text-fg">{task.id}</h3>
 							<p class="mt-1 text-xs break-all text-fg-muted" data-testid="task-{task.id}-activity">{task.activity || 'activity not yet known'}</p>
@@ -900,6 +883,28 @@
 										</div>
 									{/if}
 								</dl>
+							{/if}
+							<!--
+								Gated on their own presence, not on the definition
+								block above: a task that produced artifacts and has
+								no pinned definition still lists them.
+							-->
+							{#if taskArtifacts.length > 0}
+								<div class="mt-3 border-t border-border-subtle pt-3" data-testid="task-artifacts-{task.id}">
+									<h4 class="text-xs text-fg-muted uppercase">Artifacts</h4>
+									{#each taskArtifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
+										{#if record.artifact}
+											{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
+											<div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle px-3 py-2 text-xs">
+												<span class="font-medium text-fg">{artifactKindLabel(record.kind)}</span>
+												<span class="font-mono break-all text-fg-secondary">{record.artifact.name}</span>
+												<span class="text-fg-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
+												<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="ml-auto font-medium text-brand-700 hover:underline disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
+												<details class="w-full min-w-0 text-fg-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
+											</div>
+										{/if}
+									{/each}
+								</div>
 							{/if}
 						</div>
 					{/each}
