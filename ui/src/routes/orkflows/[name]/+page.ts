@@ -1,14 +1,15 @@
 import { errorMessage, orkstack } from '$lib/client';
 import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
-import type { OrkflowVersion } from '$lib/gen/orkstack/v1/service_pb';
+import type { OrkflowVersion, Trigger } from '$lib/gen/orkstack/v1/service_pb';
 import { namespaceFrom } from '$lib/namespace';
 import type { PageLoad } from './$types';
 
-// The three views of one orkflow live under one route and one loader: what it
-// does (Overview), what versions of it exist and which one runs (Versions), and
-// its source (Edit). The tab is in the URL so a reload, a back button and a
-// pasted link all land where the sender was.
-const TABS = ['overview', 'versions', 'edit'] as const;
+// The four views of one orkflow live under one route and one loader: what it
+// does (Overview), what versions of it exist and which one runs (Versions), who
+// outside this deployment may start it (Triggers), and its source (Edit). The
+// tab is in the URL so a reload, a back button and a pasted link all land where
+// the sender was.
+const TABS = ['overview', 'versions', 'triggers', 'edit'] as const;
 export type OrkflowTab = (typeof TABS)[number];
 
 function tabFrom(value: string | null): OrkflowTab {
@@ -25,12 +26,18 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 	const tab = tabFrom(url.searchParams.get('tab'));
 	const client = orkstack(fetch);
 
-	// The two reads are independent and are reported independently: a version
+	// The reads are independent and are reported independently: a version
 	// listing the engine will not answer must not blank the DAG, and a document
 	// that cannot be read must not hide the versions that do exist. Each failure
 	// carries its own retry (see the components), so one broken request costs
 	// one request, not the page.
-	const [detail, catalog] = await Promise.all([
+	//
+	// The trigger listing is read HERE rather than in the tab, the way the Admin
+	// Webhooks page reads its own: the loader owns the list, and a create or a
+	// delete refreshes it through invalidateAll() instead of a second copy of
+	// the same fact living in the component. It is fetched only for the tab that
+	// shows it — the other three would pay a request for a list nobody renders.
+	const [detail, catalog, triggerList] = await Promise.all([
 		client.orkflows
 			.getOrkflow({ name, version, namespace })
 			.then((res) => ({ orkflow: res.orkflow ?? null, error: null as string | null }))
@@ -48,7 +55,13 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 				currentVersion: '',
 				headVersion: '',
 				error: errorMessage(err)
-			}))
+			})),
+		tab === 'triggers'
+			? client.triggers
+					.listTriggers({ namespace, orkflowName: name })
+					.then((res) => ({ triggers: res.triggers, error: null as string | null }))
+					.catch((err) => ({ triggers: [] as Trigger[], error: errorMessage(err) }))
+			: Promise.resolve({ triggers: [] as Trigger[], error: null as string | null })
 	]);
 
 	// The editor is seeded from the SELECTED version — `?version=` when the URL
@@ -102,6 +115,8 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		currentVersion: catalog.currentVersion,
 		headVersion: catalog.headVersion,
 		versionsError: catalog.error,
+		triggers: triggerList.triggers,
+		triggersError: triggerList.error,
 		editVersion,
 		editYaml,
 		editError
