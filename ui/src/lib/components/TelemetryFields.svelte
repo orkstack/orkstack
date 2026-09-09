@@ -11,6 +11,7 @@
 	// extraction, kept verbatim so nothing that reads them (Playwright specs,
 	// unit tests) has to change.
 	import type { TaskLogExport } from '$lib/gen/orkstack/v1/telemetry_pb';
+	import Select from './Select.svelte';
 
 	export type TaskLogsChoice = 'inherit' | 'enabled' | 'disabled';
 
@@ -41,6 +42,20 @@
 		attributesHint = '',
 		attributesErrorTestId = ''
 	}: Props = $props();
+
+	// The blank entry is the deployment default, and it is first for the same
+	// reason it was the first <option> before: it is what a namespace that has
+	// never been told otherwise already uses.
+	const sinkOptions = $derived([
+		{ value: '', label: '(deployment default)' },
+		...sinks.map((name) => ({ value: name, label: name }))
+	]);
+
+	const taskLogsOptions = [
+		{ value: 'inherit', label: 'Inherit (Orker default)' },
+		{ value: 'enabled', label: 'Enabled' },
+		{ value: 'disabled', label: 'Disabled' }
+	];
 </script>
 
 <label class="flex flex-col gap-1.5 text-sm">
@@ -55,29 +70,22 @@
 			class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 		/>
 	{:else}
-		<select
-			data-testid="{idPrefix}-telemetry-sink{testIdSuffix}"
-			bind:value={sink}
-			class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-		>
-			<option value="">(deployment default)</option>
-			{#each sinks as s (s)}
-				<option value={s}>{s}</option>
-			{/each}
-		</select>
+		<Select
+			testid="{idPrefix}-telemetry-sink{testIdSuffix}"
+			value={sink}
+			options={sinkOptions}
+			onchange={(next) => (sink = next)}
+		/>
 	{/if}
 </label>
 <label class="flex flex-col gap-1.5 text-sm">
 	<span class="font-medium text-fg">Task logs</span>
-	<select
-		data-testid="{idPrefix}-task-logs{testIdSuffix}"
-		bind:value={taskLogs}
-		class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
-	>
-		<option value="inherit">Inherit (Orker default)</option>
-		<option value="enabled">Enabled</option>
-		<option value="disabled">Disabled</option>
-	</select>
+	<Select
+		testid="{idPrefix}-task-logs{testIdSuffix}"
+		value={taskLogs}
+		options={taskLogsOptions}
+		onchange={(next) => (taskLogs = next as TaskLogsChoice)}
+	/>
 </label>
 <label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
 	<span class="font-medium text-fg">Telemetry attributes (one key=value per line)</span>
