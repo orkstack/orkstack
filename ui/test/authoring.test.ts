@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { defaultsForInputs, parseInputObject, replayPinError, submitCli } from '../src/lib/authoring';
+import { defaultsForInputs, parseInputObject, submitCli } from '../src/lib/authoring';
 import { shellQuote } from '../src/lib/runDetail';
 
 declare const Bun: {
@@ -30,10 +30,4 @@ test('POSIX shell quoting round-trips apostrophes, substitutions, whitespace, an
 		expect(result.exitCode).toBe(0);
 		expect(new TextDecoder().decode(result.stdout)).toBe(original);
 	}
-});
-
-test('a run-again source must name its immutable pinned version', () => {
-	expect(replayPinError('ork-1', 'deploy', '')).toContain('no pinned');
-	expect(replayPinError('ork-1', '', '1.0.0')).toContain('no pinned');
-	expect(replayPinError('ork-1', 'deploy', '1.0.0')).toBe(null);
 });

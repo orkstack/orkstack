@@ -56,11 +56,6 @@ export function parseInputObject(text: string): { value: JsonObject } | { error:
 	}
 }
 
-export function replayPinError(runID: string, orkflowName: string, version: string): string | null {
-	if (!orkflowName || !version) return `Run ${runID} has no pinned orkflow coordinates and cannot be run again.`;
-	return null;
-}
-
 export function setInput(value: JsonObject, name: string, next: JsonValue | undefined): JsonObject {
 	const copy = { ...value };
 	if (next === undefined) delete copy[name];
