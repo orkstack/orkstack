@@ -68,8 +68,18 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	webhookPath, webhookHandler := orkstackv1connect.NewWebhookServiceHandler(svc, handlerOptions...)
 	mux.Handle(webhookPath, webhookHandler)
 
+	// TriggerService manages inbound run starters — the mirror image of
+	// WebhookService: a webhook is outbound and deployment-wide, a trigger is
+	// inbound and bound to one orkflow in one namespace.
+	triggerPath, triggerHandler := orkstackv1connect.NewTriggerServiceHandler(svc, handlerOptions...)
+	mux.Handle(triggerPath, triggerHandler)
+
 	mux.Handle(WebhookCollectionPath, NewWebhookHandler(svc.Webhooks()))
 	mux.Handle(WebhookItemPath, NewWebhookHandler(svc.Webhooks()))
+
+	// The invoke route is plain JSON so an arbitrary external caller — a CI
+	// job, a cron host, one curl line — starts a run without a Connect client.
+	mux.Handle(TriggerInvokePath, NewTriggerHandler(svc))
 
 	mux.Handle("/ws/runs/{id}", NewWebSocketBridge(svc, opts.AllowedOrigins))
 	mux.Handle(TaskLogSocketPath, NewTaskLogSocket(svc, opts.AllowedOrigins))

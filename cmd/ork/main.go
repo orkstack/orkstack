@@ -532,8 +532,9 @@ func bindAndServe(server *http.Server, logger *slog.Logger, serverErr chan<- err
 		return nil, fmt.Errorf("listen on %s: %w", server.Addr, err)
 	}
 	go func() {
-		logger.Info("serving connect api (h2c), websocket bridge and webhooks",
-			"addr", server.Addr, "webhooks", api.WebhookCollectionPath)
+		logger.Info("serving connect api (h2c), websocket bridge, webhooks and triggers",
+			"addr", server.Addr, "webhooks", api.WebhookCollectionPath,
+			"triggers", api.TriggerInvokePath)
 		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return
@@ -815,6 +816,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		webhooks.NotifierOptions{Logger: logger},
 	)
 	runNotifier := api.NewWebhookNotifier(webhookNotifier, logger)
+
+	// Triggers: the inbound mirror of the webhooks above, in the same shared
+	// object store and read on every management call and every invoke, so a
+	// trigger created through one replica starts runs through any of them.
+	triggerStore, err := artifacts.NewTriggerStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open trigger store: %w", err)
+	}
 	defer func() {
 		drainCtx, cancelDrain := context.WithTimeout(context.Background(), webhookDrainTimeout)
 		defer cancelDrain()
@@ -1021,6 +1030,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		ArtifactStore: artifactStore,
 		Idempotency:   idempotency,
 		Webhooks:      webhookRegistry,
+		Triggers:      triggerStore,
 		Notifier:      runNotifier,
 		Logger:        logger,
 		System:        system,

@@ -24,6 +24,14 @@ const (
 	WebhookCollectionPath = "/v1/webhooks"
 	// WebhookItemPath addresses one subscription.
 	WebhookItemPath = "/v1/webhooks/{id}"
+
+	// httpRequestBodyLimit bounds every plain-HTTP request body this package
+	// reads: a webhook registration here, and a trigger invocation's input
+	// object (triggers.go). It is one number rather than one per adapter, so
+	// the surfaces cannot drift apart — and 1 MiB is already far above the
+	// 256 KiB an input payload may occupy in a Temporal payload (AGENTS.md
+	// §2.2), which is the real limit a large body meets next.
+	httpRequestBodyLimit = 1 << 20
 )
 
 // webhookEnvelope is the response body for a single subscription.
@@ -105,7 +113,7 @@ func NewWebhookHandler(registry *webhooks.Registry) http.Handler {
 // only time the signing secret is disclosed.
 func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.Registry) {
 	var body registerWebhookRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, httpRequestBodyLimit)).Decode(&body); err != nil {
 		writeWebhookError(w, http.StatusBadRequest, "invalid_argument",
 			fmt.Sprintf("decode request body: %v", err))
 		return
