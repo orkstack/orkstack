@@ -23,6 +23,11 @@ declare module 'bun:test' {
 		toEqual(expected: unknown): void;
 		toContain(expected: unknown): void;
 		toHaveLength(expected: number): void;
+		// Absence, asserted as itself: a helper that answers "there is nothing
+		// to say" returns null, and a synthesized attempt record carries
+		// undefined for every field no Orker filled in.
+		toBeNull(): void;
+		toBeUndefined(): void;
 		not: {
 			toBe(expected: T): void;
 			toContain(expected: unknown): void;

@@ -47,6 +47,11 @@ type Options struct {
 	// Log bounds that stream — flush size, flush interval and the per-attempt
 	// cap. The zero value is the documented default in every field.
 	Log LogOptions
+	// Attempts is where the immutable per-attempt record is written at the end
+	// of every attempt. Nil leaves an Orker that executes tasks and records no
+	// retry history: like Logs, it is observability, and losing it must never
+	// lose the work.
+	Attempts artifacts.AttemptStore
 	// Commits is the durable completion store. Nil disables the commit
 	// protocol, which is a TEST-ONLY configuration: a deployment without it
 	// cannot honor "a durably committed activity result cannot become pending
@@ -145,6 +150,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Refs:              opts.Refs,
 			Logs:              opts.Logs,
 			LogOpts:           opts.Log,
+			Attempts:          opts.Attempts,
 			Policy:            policy,
 			WorkRoot:          workRoot,
 			OrkerID:           orkerID,

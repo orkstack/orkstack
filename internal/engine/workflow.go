@@ -702,6 +702,25 @@ func (s *runState) recordFailure(ctx workflow.Context, id string, cause error) {
 		Details: fmt.Sprintf("task %q", id),
 	}
 
+	// WHY RETRYING STOPPED, as data on the snapshot.
+	//
+	// Temporal owns retries, so the workflow never sees the attempts it did not
+	// get: what it does get, on the *ActivityError wrapping every activity
+	// failure, is the reason the scheduler gave up — retries exhausted, a
+	// non-retryable category, a timeout, a cancellation. Reading it is the
+	// difference between "this task failed" and "this task failed three times
+	// and then Temporal stopped".
+	//
+	// NO workflow.GetVersion GATE. This is a read of the error the workflow
+	// already holds, written onto the local snapshot — the same kind of
+	// derived, data-only change the ApplicationError and TimeoutError branches
+	// immediately below already are. It issues no command, changes no decision
+	// and reaches history through nothing: a replay of an old execution takes
+	// exactly the same path and merely fills one more field of a message that
+	// was never in history to begin with. Gating it would put a version marker
+	// in history for a field that cannot affect it.
+	taskRun.RetryState = retryStateOf(cause)
+
 	var applicationErr *temporal.ApplicationError
 	if errors.As(cause, &applicationErr) {
 		category := applicationErr.Type()
@@ -756,6 +775,53 @@ func (s *runState) recordFailure(ctx workflow.Context, id string, cause error) {
 		taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 	}
 	taskRun.Error = failure
+}
+
+// retryStateOf reads why Temporal stopped retrying, off the *ActivityError that
+// wraps every activity failure the workflow sees.
+//
+// errors.As, not a type assertion: the SDK nests the cause inside the
+// ActivityError, and a caller may have wrapped the whole thing again on the way
+// here. An error that is not an activity failure at all — a workflow-side
+// contract check, say — has no retry state to report and yields UNSPECIFIED.
+func retryStateOf(cause error) orkstackv1.RetryState {
+	var activityErr *temporal.ActivityError
+	if !errors.As(cause, &activityErr) {
+		return orkstackv1.RetryState_RETRY_STATE_UNSPECIFIED
+	}
+	return retryStateEnumFor(activityErr.RetryState())
+}
+
+// retryStateEnumFor maps Temporal's RetryState onto OrkStack's own.
+//
+// The two enums are NOT numerically compatible and must never be bridged by a
+// cast: temporal's RETRY_STATE_IN_PROGRESS is 1, where OrkStack's 1 is
+// NON_RETRYABLE_FAILURE, so every value from 1 up would be reported as the
+// wrong one. The switch is exhaustive over the SDK's enum, and an unknown value
+// from a future SDK degrades to UNSPECIFIED — "OrkStack does not know" is an
+// honest answer, and it is what a snapshot written before this field existed
+// already says.
+//
+// IN_PROGRESS maps to UNSPECIFIED rather than getting a member of its own: it
+// names a retry that has not finished, and this is only ever read from the
+// error of a task that already reached a terminal outcome.
+func retryStateEnumFor(state enumspb.RetryState) orkstackv1.RetryState {
+	switch state {
+	case enumspb.RETRY_STATE_NON_RETRYABLE_FAILURE:
+		return orkstackv1.RetryState_RETRY_STATE_NON_RETRYABLE_FAILURE
+	case enumspb.RETRY_STATE_TIMEOUT:
+		return orkstackv1.RetryState_RETRY_STATE_TIMEOUT
+	case enumspb.RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED:
+		return orkstackv1.RetryState_RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED
+	case enumspb.RETRY_STATE_RETRY_POLICY_NOT_SET:
+		return orkstackv1.RetryState_RETRY_STATE_RETRY_POLICY_NOT_SET
+	case enumspb.RETRY_STATE_CANCEL_REQUESTED:
+		return orkstackv1.RetryState_RETRY_STATE_CANCEL_REQUESTED
+	case enumspb.RETRY_STATE_INTERNAL_SERVER_ERROR:
+		return orkstackv1.RetryState_RETRY_STATE_INTERNAL_SERVER_ERROR
+	default:
+		return orkstackv1.RetryState_RETRY_STATE_UNSPECIFIED
+	}
 }
 
 // categoryEnumFor maps an ApplicationError type string to the proto enum.

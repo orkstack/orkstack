@@ -59,6 +59,12 @@ type OCIDispatcher struct {
 	Refs artifacts.RefPredictor
 	// Logs is where a task attempt's live output is streamed while it runs.
 	Logs artifacts.LogStore
+	// Attempts is where the immutable per-attempt record goes at the end of
+	// every attempt — the durable answer to "what did attempt 1 do", which
+	// Temporal discards when it schedules attempt 2. Nil writes nothing,
+	// exactly like Logs and Commits, and the write is best-effort on every
+	// path: a record that cannot be stored is logged, never a task failure.
+	Attempts artifacts.AttemptStore
 	// LogOpts bounds that stream.
 	LogOpts LogOptions
 	// Policy is the Orker-local half of §9.
@@ -237,17 +243,38 @@ func (d *OCIDispatcher) Execute(
 		ctx, attemptObs = d.Phases.Begin(ctx, in, attempt)
 	}
 
+	// beat, result and failure are DECLARED here and assigned below, so end can
+	// read all three. end is defined before them because the panic recovery
+	// that calls it must be the outermost thing in this function; nothing
+	// between this declaration and the assignments can panic.
+	var (
+		beat    *Heartbeater
+		result  *orkstackv1.ExecuteTaskResult
+		failure *Failure
+	)
+
 	// end is the ONLY thing in Execute allowed to call attemptObs.End, and it
 	// enforces the AttemptObserver contract's "exactly once": the ended guard
 	// makes every call after the first a no-op, so the three ordinary exit
 	// sites below and the panic recovery immediately after this can each call
 	// it unconditionally without coordinating who got there first.
+	//
+	// It has a SECOND consumer: the durable attempt record. Both hang off this
+	// one seam because it is the exactly-once-per-attempt point — the observer
+	// is the optional, in-process one (a span, a metric) and the record is the
+	// always-on, durable one. The record is written INSIDE the guard, so a
+	// panic path writes exactly one record and the three ordinary exits write
+	// exactly one each.
 	ended := false
 	end := func(outcome AttemptOutcome) {
-		if attemptObs != nil && !ended {
-			ended = true
+		if ended {
+			return
+		}
+		ended = true
+		if attemptObs != nil {
 			attemptObs.End(outcome)
 		}
+		d.recordAttempt(ctx, in, attempt, startedAt, beat, result, failure, outcome)
 	}
 	// A panic out of d.execute — a runtime library panicking instead of
 	// returning an error, say — must still produce exactly one End call
@@ -269,7 +296,7 @@ func (d *OCIDispatcher) Execute(
 	// ctx.Done(). A loop that only beat between phases could not deliver
 	// cancellation to a container that is running, which is exactly when
 	// somebody presses cancel.
-	beat := NewHeartbeater(ctx)
+	beat = NewHeartbeater(ctx)
 	beat.interval = d.HeartbeatInterval
 	if attemptObs != nil {
 		beat.onPhase = attemptObs.Phase
@@ -278,7 +305,7 @@ func (d *OCIDispatcher) Execute(
 	defer beat.Stop()
 	beat.Phase("start")
 
-	result, failure := d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink)
+	result, failure = d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink)
 
 	// The line writers are flushed before the sink closes, so a workload's
 	// last unterminated line is not lost.
@@ -1531,6 +1558,143 @@ func (c *runCapture) exitCode() int32 {
 		return 0
 	}
 	return c.status.Code
+}
+
+// ---------------------------------------------------------------- step 16
+
+// attemptRecordTimeout bounds the one small PUT the attempt record costs.
+//
+// It is short on purpose. The record is written after the attempt's outcome is
+// already decided, on a context that has usually just been cancelled or has
+// just passed its deadline — so the only question is whether the store answers
+// promptly, and a slow store must not hold an activity's worker slot open. A
+// write that does not finish in this window is logged and dropped, which is
+// the same trade every other best-effort path in this file makes.
+const attemptRecordTimeout = 5 * time.Second
+
+// recordAttempt writes the immutable record of ONE attempt (§7.1 step 16).
+//
+// WHY IT EXISTS. Temporal owns retries, so the workflow only ever sees a task's
+// final outcome: when attempt 1 fails, its ApplicationError is consumed by the
+// scheduler for attempt 2 and nothing durable is left behind. The Orker is the
+// only process that observes every attempt, and end() is its exactly-once
+// per-attempt seam, so this is the one place a complete retry timeline can be
+// written from. SUCCEEDED and adopted attempts get a record too: a timeline
+// with no final row would force every reader to synthesize one from TaskRun and
+// commit.json, and two producers of one row is how they come to disagree.
+//
+// IT IS BEST-EFFORT, ALWAYS. A record that cannot be written is a Warn and
+// nothing else. This function returns nothing and touches neither the result
+// nor the failure, because an observability write that could fail a task would
+// make retry visibility a new way for work to fail — the same projection-not-
+// orchestration rule the engine's emit() already applies to PublishEvent.
+//
+// THE CONTEXT IS DETACHED. A CANCELED attempt is exactly the attempt somebody
+// most wants the record of, and its ctx is already done; attachFailureDetail
+// detaches for the same reason one step earlier.
+func (d *OCIDispatcher) recordAttempt(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	attempt int32,
+	startedAt *timestamppb.Timestamp,
+	beat *Heartbeater,
+	result *orkstackv1.ExecuteTaskResult,
+	failure *Failure,
+	outcome AttemptOutcome,
+) {
+	if d.Attempts == nil || in == nil {
+		return
+	}
+	record := d.attemptRecord(in, attempt, startedAt, beat, result, failure, outcome)
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), attemptRecordTimeout)
+	defer cancel()
+	if err := d.Attempts.PutAttempt(writeCtx, record); err != nil {
+		d.logger().Warn("task attempt record not written",
+			"run_id", in.GetRunId(),
+			"task_id", in.GetTaskId(),
+			"attempt", attempt,
+			"outcome", record.GetOutcome().String(),
+			"error", err)
+	}
+}
+
+// attemptRecord projects one attempt onto the TaskAttempt message. It is split
+// from recordAttempt so a test can assert the projection without a store.
+func (d *OCIDispatcher) attemptRecord(
+	in *orkstackv1.ExecuteTaskInput,
+	attempt int32,
+	startedAt *timestamppb.Timestamp,
+	beat *Heartbeater,
+	result *orkstackv1.ExecuteTaskResult,
+	failure *Failure,
+	outcome AttemptOutcome,
+) *orkstackv1.TaskAttempt {
+	record := &orkstackv1.TaskAttempt{
+		SchemaVersion: artifacts.AttemptSchemaVersion,
+		RunId:         in.GetRunId(),
+		TaskId:        in.GetTaskId(),
+		Attempt:       attempt,
+		ExitCode:      outcome.ExitCode,
+		StartedAt:     startedAt,
+		FinishedAt:    timestamppb.New(time.Now().UTC()),
+		OrkerId:       d.OrkerID,
+		BuildId:       d.BuildID,
+		// The routing REQUEST, as TaskRun.pool spells it — resolvedPool is the
+		// same helper task.json is composed with, so the record names the pool
+		// the workload was told it ran in.
+		Pool:          resolvedPool(in.GetPool()),
+		CommitAdopted: outcome.CommitAdopted,
+	}
+	if beat != nil {
+		// The phase the attempt ENDED in, straight off the heartbeater rather
+		// than a second copy of the sequence: "run" and "commit" are different
+		// stories about the same non-zero exit code.
+		record.Phase = beat.progress().Phase
+	}
+
+	// The branch order is Execute's own, and it is load-bearing there for the
+	// reason §6.3 gives: a cancelled attempt is CANCELED whatever failure was
+	// in flight when the teardown reached it.
+	switch {
+	case outcome.Canceled:
+		record.Outcome = orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_CANCELED
+	case failure != nil:
+		record.Outcome = orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED
+		record.Error = failure.ErrorProto(in.GetTaskId())
+	case outcome.Err != nil:
+		// The panic path: Execute recovers, calls end with ReasonPanic and
+		// re-panics, so there is no *Failure to read. A record with no error at
+		// all would report the one exit path that is not a normal return as
+		// indistinguishable from a clean one.
+		record.Outcome = orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED
+		record.Error = (&Failure{
+			Reason:  outcome.Reason,
+			Message: outcome.Err.Error(),
+		}).ErrorProto(in.GetTaskId())
+	case result != nil:
+		record.Outcome = orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED
+	}
+
+	// The image AS EXECUTED and the streams this attempt managed to upload,
+	// from whichever of the two carriers exists. Neither is reachable from
+	// Execute's own scope: the image is resolved inside execute(), and a
+	// failure's stream refs are attached by attachFailureDetail.
+	switch {
+	case result != nil:
+		record.Image = result.GetImage()
+		record.SystemArtifacts = result.GetSystemArtifacts()
+		if record.ExitCode == 0 {
+			record.ExitCode = result.GetExitCode()
+		}
+		record.CommitAdopted = record.CommitAdopted || result.GetCommitAdopted()
+	case failure.GetDetail() != nil:
+		record.Image = failure.Detail.GetImage()
+		record.SystemArtifacts = failure.Detail.GetSystemArtifacts()
+		if record.ExitCode == 0 {
+			record.ExitCode = failure.Detail.GetExitCode()
+		}
+	}
+	return record
 }
 
 // ---------------------------------------------------------------- helpers

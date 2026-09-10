@@ -4,12 +4,14 @@
 // disappear on its own, then reclaims that run's OrkStack-owned storage.
 //
 // Cleanup deliberately removes only metadata/logs/{run-id}/,
-// metadata/commits/{namespace}/{run-id}/ and
+// metadata/attempts/{run-id}/, metadata/commits/{namespace}/{run-id}/ and
 // metadata/snapshots/{namespace}/{run-id}/. The snapshot prefix matters as
-// much as the other two: every lifecycle emit externalizes one run snapshot,
+// much as the others: every lifecycle emit externalizes one run snapshot,
 // and once the execution's history is gone, nothing else can ever reach
 // them — reads for a retired run fall through to the archive body, never to
-// snapshots.
+// snapshots. The attempt prefix holds the per-attempt records the Orker wrote
+// (pkg/artifacts/attempts.go); they are diagnosis for the logs they sit beside,
+// so they are reclaimed with them and never outlive them.
 // Workload artifacts under objects/ are
 // content-addressed by logical name and digest, with no run id in the key. The
 // same object can therefore be referenced by another live or retained run;

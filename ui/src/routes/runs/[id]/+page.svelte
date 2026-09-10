@@ -10,12 +10,21 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
+	import RetryBadge from '$lib/components/RetryBadge.svelte';
+	import AttemptTimeline from '$lib/components/AttemptTimeline.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, runCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
-	import { EventType, type Event, type TaskRun } from '$lib/gen/orkstack/v1/run_pb';
+	import {
+		EventType,
+		type Event,
+		type RetryState,
+		type TaskAttempt,
+		type TaskRun
+	} from '$lib/gen/orkstack/v1/run_pb';
+	import { attemptsSeen, groupAttemptsByTask, runRetryCount } from '$lib/attempts';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp, isTerminal, statusLabel, taskDispatched } from '$lib/status';
@@ -51,6 +60,10 @@
 		// page can render its §8.1 category and §8.2 reason code rather than
 		// only the sentence. Absent while a task has not failed.
 		error?: OrkError;
+		// retryState is why the platform stopped trying, straight off the
+		// snapshot (Temporal's own ActivityError.RetryState). It qualifies the
+		// error above and is absent for everything that did not fail.
+		retryState?: RetryState;
 		// exitCode has presence HERE even though proto3 int32 does not. A task
 		// that has not completed has no measured exit code; 0 is a real result
 		// only once a task succeeded. A failed task's non-zero value is likewise
@@ -117,6 +130,86 @@
 	// a chatty run's page heavy.
 	let buffer = $state.raw(emptyEventBuffer());
 	let tasks = $state<TaskView[]>(untrack(seedTasks));
+	// EVERY TRY OF EVERY TASK, KEPT PER TASK.
+	//
+	// The loader reads the whole run's timeline in one call, and from then on
+	// it is REPLACED PER TASK by the refetch below, because that is the grain
+	// the live triggers have: a task reached its terminal status, or its log
+	// pane saw a higher attempt. $state.raw and a fresh Map per write — the
+	// value is swapped wholesale, and a deep proxy over every attempt record of
+	// a thirty-task run buys nothing.
+	let attemptsByTask = $state.raw<Map<string, TaskAttempt[]>>(
+		untrack(() => groupAttemptsByTask(data.attempts))
+	);
+	// What the timeline could not be read for, if anything. It starts as the
+	// loader's tolerant answer and is updated by the refetches, so a store that
+	// came back reachable stops apologising.
+	let attemptsError = $state<string | null>(untrack(() => data.attemptsError));
+	// The rows this page last seeded from, by reference. Every later loader
+	// answer — a retry, a cancel, the terminal re-read — comes back through
+	// `data`, and re-seeding on a CHANGED reference keeps the timeline fresh
+	// without a second request and without discarding a live refetch on a
+	// re-render that changed nothing.
+	let seededAttempts = $state.raw<TaskAttempt[]>(untrack(() => data.attempts));
+	$effect(() => {
+		const rows = data.attempts;
+		if (rows === untrack(() => seededAttempts)) return;
+		seededAttempts = rows;
+		attemptsByTask = groupAttemptsByTask(rows);
+		attemptsError = data.attemptsError;
+	});
+	// Refetches in flight, so a task whose terminal event and whose log pane
+	// speak in the same tick asks once. Deliberately a plain Set: it is
+	// bookkeeping for the request, not something the page renders.
+	const attemptsInFlight = new Set<string>();
+
+	/**
+	 * refreshAttempts re-reads ONE task's attempt records.
+	 *
+	 * Attempt records are written by the Orker, outside the run's event stream
+	 * (event sequence numbers are the workflow's to assign, so an Orker cannot
+	 * add to it). There is therefore nothing to subscribe to — but there is no
+	 * need for a polling loop either: the page already learns the two moments a
+	 * task's timeline can change, and asks then.
+	 */
+	async function refreshAttempts(taskId: string): Promise<void> {
+		if (!run || !taskId || attemptsInFlight.has(taskId)) return;
+		attemptsInFlight.add(taskId);
+		try {
+			const res = await orkstack(fetch).runs.listTaskAttempts({
+				runId: run.id,
+				namespace: data.namespace,
+				taskId
+			});
+			const next = new Map(attemptsByTask);
+			next.set(taskId, res.attempts);
+			attemptsByTask = next;
+			attemptsError = null;
+		} catch (err) {
+			// Never fatal, exactly like the loader's read: the rest of this page
+			// does not depend on knowing what a task's earlier tries did.
+			attemptsError = errorMessage(err);
+		} finally {
+			attemptsInFlight.delete(taskId);
+		}
+	}
+
+	/**
+	 * attemptSeen is the log pane reporting the highest try IT has been served.
+	 * That is the earliest live evidence in the browser that a task retried —
+	 * the engine resolves the log stream onto the new attempt while the run is
+	 * still going — but it is only worth a request when it names a try the
+	 * timeline does not already hold.
+	 */
+	function attemptSeen(taskId: string, attempt: number): void {
+		if (attempt <= attemptsSeen(attemptsByTask.get(taskId) ?? [])) return;
+		void refreshAttempts(taskId);
+	}
+
+	// The run header's chip: how many times anything in this run had to be
+	// tried again. Zero draws nothing — a run that never retried should not
+	// have to say so.
+	const runRetries = $derived(runRetryCount([...attemptsByTask.values()].flat()));
 	let finishedAt = $state(untrack(() => data.run?.finishedAt));
 	let startedAt = $state(untrack(() => data.run?.startedAt));
 	let cancelDialog = $state(false);
@@ -174,6 +267,7 @@
 				attempt: tr.attempt,
 				message: tr.error?.message ?? '',
 				error: hasError(tr.error) ? tr.error : undefined,
+				retryState: tr.retryState,
 				exitCode: measuredExitCode(tr),
 				commit: tr.commit,
 				output: tr.output,
@@ -204,6 +298,7 @@
 				attempt: tr.attempt,
 				message: tr.error?.message ?? '',
 				error: hasError(tr.error) ? tr.error : undefined,
+				retryState: tr.retryState,
 				exitCode: measuredExitCode(tr),
 				commit: tr.commit,
 				output: tr.output,
@@ -301,14 +396,21 @@
 				});
 				break;
 			}
+			// A task's terminal transition is the moment its LAST attempt record
+			// exists — the Orker files one as every attempt ends, including the
+			// one that ended the task. Re-read that task's timeline here so the
+			// badge and the timeline are right the instant the card turns, not
+			// only after the run's own terminal snapshot lands.
 			case EventType.TASK_SUCCEEDED:
 				upsertTask(event.taskId, { status: status ?? Status.SUCCEEDED });
+				void refreshAttempts(event.taskId);
 				break;
 			case EventType.TASK_FAILED:
 				upsertTask(event.taskId, {
 					status: status ?? Status.FAILED,
 					message: event.message
 				});
+				void refreshAttempts(event.taskId);
 				break;
 			case EventType.TASK_LOG:
 				// A run event, not the task's output. EVENT_TYPE_TASK_LOG carries
@@ -430,6 +532,20 @@
 	}
 	function setTaskAttempt(taskId: string, attempt: number | null): void {
 		replaceState(taskHref(taskId, attempt ?? 0), page.state);
+	}
+	// The pin requests handed to each task's log pane, newest nonce last.
+	//
+	// `setTaskAttempt` alone cannot do this job: a shallow replaceState writes
+	// the ADDRESS — which is what makes the view sendable — but it deliberately
+	// does not re-run the loader or move `page.url`, so nothing downstream of
+	// it hears anything. The pane is therefore asked directly, and the address
+	// is written beside it so the two agree.
+	let logPinByTask = $state<Record<string, { attempt: number; nonce: number }>>({});
+	let pinNonce = 0;
+	function viewTaskAttemptLogs(taskId: string, attempt: number): void {
+		pinNonce += 1;
+		logPinByTask[taskId] = { attempt, nonce: pinNonce };
+		setTaskAttempt(taskId, attempt);
 	}
 	function copy(value: string, label: string): void {
 		void navigator.clipboard?.writeText(value).then(
@@ -557,6 +673,21 @@
 		</div>
 		<div class="flex items-center gap-3">
 			<StatusPill status={runStatus} testid="run-status" />
+			<!--
+				RETRIES, WHEN THERE WERE ANY. A run whose tasks all passed first
+				time says nothing here; one that got there by trying again says
+				how many times, because "it succeeded" and "it succeeded on the
+				fourth go" are different facts about a deployment.
+			-->
+			{#if runRetries > 0}
+				<span
+					data-testid="run-retries"
+					title="Total task retries in this run. Each task's own attempts are under its Inspect."
+					class="inline-flex items-center rounded-full border border-warning-200 bg-warning-50 px-2.5 py-0.5 text-xs font-medium whitespace-nowrap text-warning-700"
+				>
+					Retries: {runRetries}
+				</span>
+			{/if}
 			<span
 				data-testid="live-badge"
 				class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium {isTerminal(
@@ -720,12 +851,25 @@
 					Artifact metadata is unavailable: {data.artifactsError}. Downloads require the engine's recorded-artifact read API and are never linked directly to storage URIs.
 				</p>
 			{/if}
+			<!--
+				The attempt store is not the run: a deployment that has none, or
+				one whose store is unreachable, still renders every status, every
+				log and every artifact on this page. Say what is missing and what
+				it costs — nothing else changes.
+			-->
+			{#if attemptsError}
+				<p data-testid="attempts-unavailable" class="mb-3 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-700">
+					Attempt history is not available: {attemptsError}. Task statuses, output and artifacts
+					are unaffected; what each earlier try of a retried task did cannot be shown.
+				</p>
+			{/if}
 			{#if artifactDownloadError}
 				<p data-testid="artifact-download-error" class="mb-3 rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700">Artifact download failed: {artifactDownloadError}</p>
 			{/if}
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
 					{@const dispatched = taskDispatched(task.status, task.startedAt)}
+					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
 					<div
 						class="rounded-lg border bg-surface px-4 py-3 shadow-xs {dispatched
 							? 'border-border'
@@ -747,15 +891,27 @@
 								keeps the same data-testid, because "what does this task say"
 								is one question whichever of the two answers it.
 							-->
-							{#if dispatched || task.status === Status.SKIPPED}
-								<StatusPill status={task.status} testid="task-{task.id}-status" />
-							{:else}
-								<span
-									data-testid="task-{task.id}-status"
-									data-state="not-started"
-									class="text-[11px] whitespace-nowrap text-fg-muted"
-								>{notStartedCaption(task)}</span>
-							{/if}
+							<div class="flex flex-wrap items-center justify-end gap-2">
+								{#if dispatched || task.status === Status.SKIPPED}
+									<StatusPill status={task.status} testid="task-{task.id}-status" />
+								{:else}
+									<span
+										data-testid="task-{task.id}-status"
+										data-state="not-started"
+										class="text-[11px] whitespace-nowrap text-fg-muted"
+									>{notStartedCaption(task)}</span>
+								{/if}
+								<!--
+									A retry is invisible in a status — SUCCEEDED is SUCCEEDED
+									whether it took one try or four — so it is said beside the
+									pill rather than folded into it.
+								-->
+								<RetryBadge
+									attempts={taskAttempts}
+									terminal={isTerminal(task.status)}
+									testid="task-{task.id}-retries"
+								/>
+							</div>
 						</div>
 						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
 							{#if dispatched}
@@ -771,7 +927,13 @@
 
 						{#if task.error}
 							<div class="mt-3">
-								<FailurePanel error={task.error} testid="task-{task.id}-error" compact />
+								<FailurePanel
+									error={task.error}
+									testid="task-{task.id}-error"
+									compact
+									retryState={task.retryState}
+									attemptCount={attemptsSeen(taskAttempts)}
+								/>
 							</div>
 						{/if}
 						<TaskLogPane
@@ -782,7 +944,9 @@
 							startedAt={task.startedAt}
 							attempt={deepTask === task.id && Number.isFinite(deepAttempt) ? deepAttempt : 0}
 							deepLinked={deepTask === task.id}
+							pinRequest={logPinByTask[task.id]}
 							onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt)}
+							onAttemptSeen={(attempt) => attemptSeen(task.id, attempt)}
 						/>
 						<div class="mt-2">
 							<button
@@ -918,6 +1082,26 @@
 											</div>
 										{/if}
 									</dl>
+								{/if}
+								<!--
+									WHAT EVERY TRY DID. The block above describes the
+									task's FINAL attempt — its exit code, its commit —
+									because that is all a TaskRun carries. The timeline
+									is the rest of the story: the tries that failed, why
+									they failed, and which Orker was holding each one.
+									It is drawn only when the store had something to
+									say; a deployment with no attempt store shows the
+									page-level notice instead of an empty disclosure in
+									every card.
+								-->
+								{#if !data.attemptsError || taskAttempts.length > 0}
+									<AttemptTimeline
+										runId={run.id}
+										taskId={task.id}
+										namespace={data.namespace}
+										attempts={taskAttempts}
+										onViewLogs={(attempt) => viewTaskAttemptLogs(task.id, attempt)}
+									/>
 								{/if}
 								<!--
 									Gated on their own presence, not on the definition

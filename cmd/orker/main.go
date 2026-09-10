@@ -373,7 +373,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	logOptions := orker.LogOptionsFromEnv()
 
-	opts := orkerOptions(cfg, tcfg, sinks, logStore, logOptions, commitStore, refPredictor, logger)
+	// The per-attempt records, in the SAME backend as everything else — one
+	// ORK_ARTIFACT_BACKEND, no setting of its own. An engine replica reading a
+	// task's retry history reads the bucket this process wrote it into.
+	attemptStore, err := artifacts.NewAttemptStoreFromEnv()
+	if err != nil {
+		return err
+	}
+
+	opts := orkerOptions(cfg, tcfg, sinks, logStore, logOptions, attemptStore, commitStore, refPredictor, logger)
 	logger.Info("task log export ready", "enabled", opts.TaskLogs != nil)
 
 	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
@@ -463,16 +471,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 func orkerOptions(
 	cfg config, tcfg telemetry.Config, sinks *telemetry.Sinks,
 	logStore artifacts.LogStore, logOptions orker.LogOptions,
+	attemptStore artifacts.AttemptStore,
 	commitStore artifacts.CommitStore, refPredictor artifacts.RefPredictor,
 	logger *slog.Logger,
 ) orker.Options {
 	opts := orker.Options{
-		Logs:    logStore,
-		Log:     logOptions,
-		Commits: commitStore,
-		Refs:    refPredictor,
-		Pool:    cfg.pool,
-		BuildID: cfg.deployment.BuildID,
+		Logs:     logStore,
+		Log:      logOptions,
+		Attempts: attemptStore,
+		Commits:  commitStore,
+		Refs:     refPredictor,
+		Pool:     cfg.pool,
+		BuildID:  cfg.deployment.BuildID,
 		// The embedded OCI-layout fallback (§4.6). It is used ONLY when a
 		// pull of an already-pinned digest fails, and only after OrkStack has
 		// hashed the layout's root blob itself and matched it against the

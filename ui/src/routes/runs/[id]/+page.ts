@@ -1,6 +1,7 @@
 import { errorMessage, orkstack } from '$lib/client';
 import { namespaceFrom } from '$lib/namespace';
 import type { RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
+import type { TaskAttempt } from '$lib/gen/orkstack/v1/run_pb';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, params, url }) => {
@@ -14,6 +15,8 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		const run = res.run ?? null;
 		let artifacts: RunArtifact[] = [];
 		let artifactsError: string | null = null;
+		let attempts: TaskAttempt[] = [];
+		let attemptsError: string | null = null;
 		let orkflow = null;
 		if (run) {
 			try {
@@ -21,6 +24,23 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 				artifacts = artifactRes.artifacts;
 			} catch (err) {
 				artifactsError = errorMessage(err);
+			}
+			// The retry history of EVERY task in one call — `taskId: ''` selects
+			// them all, and the response already arrives in the order this page
+			// draws them. It is read as tolerantly as the artifacts above and for
+			// the same reason: an engine with no attempt store configured answers
+			// FailedPrecondition, and a deployment that cannot say what a task's
+			// earlier tries did must still render the run, its statuses and its
+			// logs.
+			try {
+				const attemptRes = await client.runs.listTaskAttempts({
+					runId: run.id,
+					namespace,
+					taskId: ''
+				});
+				attempts = attemptRes.attempts;
+			} catch (err) {
+				attemptsError = errorMessage(err);
 			}
 			try {
 				const wfRes = await client.orkflows.getOrkflow({
@@ -33,7 +53,17 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 				orkflow = null; // orkflow may have been superseded; statuses still render
 			}
 		}
-		return { runId: params.id, run, orkflow, artifacts, artifactsError, namespace, error: null as string | null };
+		return {
+			runId: params.id,
+			run,
+			orkflow,
+			artifacts,
+			artifactsError,
+			attempts,
+			attemptsError,
+			namespace,
+			error: null as string | null
+		};
 	} catch (err) {
 		return {
 			runId: params.id,
@@ -41,6 +71,8 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			orkflow: null,
 			artifacts: [],
 			artifactsError: null,
+			attempts: [] as TaskAttempt[],
+			attemptsError: null,
 			namespace,
 			error: errorMessage(err)
 		};

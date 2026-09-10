@@ -87,6 +87,9 @@ const (
 	RunServiceListRunArtifactsProcedure = "/orkstack.v1.RunService/ListRunArtifacts"
 	// RunServiceReadArtifactProcedure is the fully-qualified name of the RunService's ReadArtifact RPC.
 	RunServiceReadArtifactProcedure = "/orkstack.v1.RunService/ReadArtifact"
+	// RunServiceListTaskAttemptsProcedure is the fully-qualified name of the RunService's
+	// ListTaskAttempts RPC.
+	RunServiceListTaskAttemptsProcedure = "/orkstack.v1.RunService/ListTaskAttempts"
 	// WebhookServiceRegisterWebhookProcedure is the fully-qualified name of the WebhookService's
 	// RegisterWebhook RPC.
 	WebhookServiceRegisterWebhookProcedure = "/orkstack.v1.WebhookService/RegisterWebhook"
@@ -495,6 +498,21 @@ type RunServiceClient interface {
 	StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest]) (*connect.ServerStreamForClient[v1.TaskLogChunk], error)
 	ListRunArtifacts(context.Context, *connect.Request[v1.ListRunArtifactsRequest]) (*connect.Response[v1.ListRunArtifactsResponse], error)
 	ReadArtifact(context.Context, *connect.Request[v1.ReadArtifactRequest]) (*connect.ServerStreamForClient[v1.ArtifactChunk], error)
+	// ListTaskAttempts reads back what every attempt of a task did, including
+	// the attempts that lost.
+	//
+	// Temporal owns retries, so a run's snapshot only ever carries a task's
+	// FINAL outcome: the error of each earlier attempt is discarded when the
+	// next one is scheduled. The Orker writes one immutable TaskAttempt record
+	// per attempt (metadata/attempts/…), and this RPC serves them — from the
+	// shared store, so any replica answers for any run, on exactly the terms
+	// StreamTaskLogs and ListRunArtifacts are on.
+	//
+	// A missing record is REPORTED, never hidden: an attempt number the store
+	// has nothing for comes back as ATTEMPT_OUTCOME_UNREPORTED, so a timeline
+	// never has a silent hole where an Orker died. There is no stream: a client
+	// refetches on the events it already follows.
+	ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -556,6 +574,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("ReadArtifact")),
 			connect.WithClientOptions(opts...),
 		),
+		listTaskAttempts: connect.NewClient[v1.ListTaskAttemptsRequest, v1.ListTaskAttemptsResponse](
+			httpClient,
+			baseURL+RunServiceListTaskAttemptsProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ListTaskAttempts")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -569,6 +593,7 @@ type runServiceClient struct {
 	streamTaskLogs   *connect.Client[v1.StreamTaskLogsRequest, v1.TaskLogChunk]
 	listRunArtifacts *connect.Client[v1.ListRunArtifactsRequest, v1.ListRunArtifactsResponse]
 	readArtifact     *connect.Client[v1.ReadArtifactRequest, v1.ArtifactChunk]
+	listTaskAttempts *connect.Client[v1.ListTaskAttemptsRequest, v1.ListTaskAttemptsResponse]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -611,6 +636,11 @@ func (c *runServiceClient) ReadArtifact(ctx context.Context, req *connect.Reques
 	return c.readArtifact.CallServerStream(ctx, req)
 }
 
+// ListTaskAttempts calls orkstack.v1.RunService.ListTaskAttempts.
+func (c *runServiceClient) ListTaskAttempts(ctx context.Context, req *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error) {
+	return c.listTaskAttempts.CallUnary(ctx, req)
+}
+
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
 type RunServiceHandler interface {
 	SubmitRun(context.Context, *connect.Request[v1.SubmitRunRequest]) (*connect.Response[v1.SubmitRunResponse], error)
@@ -637,6 +667,21 @@ type RunServiceHandler interface {
 	StreamTaskLogs(context.Context, *connect.Request[v1.StreamTaskLogsRequest], *connect.ServerStream[v1.TaskLogChunk]) error
 	ListRunArtifacts(context.Context, *connect.Request[v1.ListRunArtifactsRequest]) (*connect.Response[v1.ListRunArtifactsResponse], error)
 	ReadArtifact(context.Context, *connect.Request[v1.ReadArtifactRequest], *connect.ServerStream[v1.ArtifactChunk]) error
+	// ListTaskAttempts reads back what every attempt of a task did, including
+	// the attempts that lost.
+	//
+	// Temporal owns retries, so a run's snapshot only ever carries a task's
+	// FINAL outcome: the error of each earlier attempt is discarded when the
+	// next one is scheduled. The Orker writes one immutable TaskAttempt record
+	// per attempt (metadata/attempts/…), and this RPC serves them — from the
+	// shared store, so any replica answers for any run, on exactly the terms
+	// StreamTaskLogs and ListRunArtifacts are on.
+	//
+	// A missing record is REPORTED, never hidden: an attempt number the store
+	// has nothing for comes back as ATTEMPT_OUTCOME_UNREPORTED, so a timeline
+	// never has a silent hole where an Orker died. There is no stream: a client
+	// refetches on the events it already follows.
+	ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error)
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -694,6 +739,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("ReadArtifact")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceListTaskAttemptsHandler := connect.NewUnaryHandler(
+		RunServiceListTaskAttemptsProcedure,
+		svc.ListTaskAttempts,
+		connect.WithSchema(runServiceMethods.ByName("ListTaskAttempts")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -712,6 +763,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceListRunArtifactsHandler.ServeHTTP(w, r)
 		case RunServiceReadArtifactProcedure:
 			runServiceReadArtifactHandler.ServeHTTP(w, r)
+		case RunServiceListTaskAttemptsProcedure:
+			runServiceListTaskAttemptsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -751,6 +804,10 @@ func (UnimplementedRunServiceHandler) ListRunArtifacts(context.Context, *connect
 
 func (UnimplementedRunServiceHandler) ReadArtifact(context.Context, *connect.Request[v1.ReadArtifactRequest], *connect.ServerStream[v1.ArtifactChunk]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ReadArtifact is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ListTaskAttempts is not implemented"))
 }
 
 // WebhookServiceClient is a client for the orkstack.v1.WebhookService service.

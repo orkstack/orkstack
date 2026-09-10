@@ -737,6 +737,119 @@ test('a retried task offers its attempts, and attempt 1 still reads back', async
 		.toBe(true);
 });
 
+// The retry, said IN THE STATUS AREA rather than only in the log pane.
+//
+// This is the claim the comment on `flaky` above used to end on: a Temporal
+// retry is invisible in a task's status, so a task that failed once and passed
+// on its second try renders exactly like one that passed immediately. The
+// attempt records the Orker files per attempt are what closes that, and here
+// they are read back through the page: a badge on the card, a count in the run
+// header, and a timeline that carries the ERROR of the try that failed — the
+// one thing Temporal itself discards when it schedules the next attempt.
+test('a retried task shows its retry on the card, in the header, and as a timeline', async ({
+	page
+}) => {
+	await waitFor(
+		'the flaky task succeeds on its second attempt',
+		async () => {
+			const answer = await rpc<{ run?: { taskRuns?: { taskId: string; status: string }[] } }>(
+				'RunService/GetRun',
+				{ runId: liveRun }
+			);
+			return (answer.run?.taskRuns ?? []).some(
+				(t) => t.taskId === 'flaky' && t.status === 'STATUS_SUCCEEDED'
+			);
+		},
+		180_000
+	);
+
+	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
+	await expect(page.getByTestId('run-id')).toHaveText(liveRun);
+
+	// THE CARD. `flaky` succeeded — its pill says so — and the badge beside it
+	// says that took two goes. `talk` succeeded first time and says nothing:
+	// the badge exists to mark the exception, not to decorate every task.
+	await expect(page.getByTestId('task-flaky-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-flaky-retries')).toHaveText('retried ×1', {
+		timeout: 60_000
+	});
+	await expect(page.getByTestId('task-talk-retries')).toHaveCount(0);
+
+	// THE HEADER. One retry in this run, counted from the records rather than
+	// from TaskRun.attempt (which is 0 for a Temporal timeout and the
+	// committing attempt for an adopted commit).
+	await expect(page.getByTestId('run-retries')).toHaveText(/Retries:\s*1/);
+
+	// THE TIMELINE, inside the task's own Inspect — the same disclosure the
+	// image, exit code and artifacts live behind.
+	await page.getByTestId('task-inspect-toggle-flaky').click();
+	const timeline = page.getByTestId('task-flaky-attempts');
+	await expect(timeline).toBeVisible();
+	await expect(timeline).toContainText('Attempts (2)');
+
+	// Attempt 1 is the try whose connection the stub destroyed: FAILED, with
+	// the error that reached nothing before these records existed.
+	const first = page.getByTestId('task-flaky-attempt-1');
+	await expect(first).toHaveAttribute('data-outcome', 'FAILED');
+	await expect(page.getByTestId('task-flaky-attempt-1-outcome')).toHaveText('FAILED');
+	// The error is disclosed, not shouted: a timeline row is a summary until
+	// the reader asks for the failure behind it.
+	await expect(page.getByTestId('task-flaky-attempt-1-error')).toHaveCount(0);
+	await page.getByTestId('task-flaky-attempt-1-error-toggle').click();
+	const failure = page.getByTestId('task-flaky-attempt-1-error');
+	await expect(failure).toBeVisible();
+	// The whole Error, as the rest of the page renders one: a §8.2 reason code
+	// and the Orker's own sentence, not a flattened string.
+	await expect(page.getByTestId('task-flaky-attempt-1-error-code')).not.toBeEmpty();
+	const attemptOneMessage = (
+		await page.getByTestId('task-flaky-attempt-1-error-message').innerText()
+	).trim();
+	expect(attemptOneMessage.length).toBeGreaterThan(0);
+
+	// Attempt 2 is the try that got its 200. It has no error to disclose.
+	const second = page.getByTestId('task-flaky-attempt-2');
+	await expect(second).toHaveAttribute('data-outcome', 'SUCCEEDED');
+	await expect(page.getByTestId('task-flaky-attempt-2-error-toggle')).toHaveCount(0);
+	note(
+		`attempt timeline on flaky: #1 FAILED (${attemptOneMessage}) and #2 SUCCEEDED, with the ` +
+			'failed try\'s error read back from the record its Orker filed'
+	);
+	await shot(page, 'screenshot-attempt-timeline.png');
+
+	// "View logs" PINS THE PANE to that try. It is the same control the pane's
+	// own selector uses — URL state — so what the reader ends up looking at is
+	// a link they can send: the request that never got an answer, with no
+	// completion behind it.
+	await page.getByTestId('task-flaky-attempt-1-logs').click();
+	await page.waitForURL(/task=flaky/);
+	await expect(page).toHaveURL(/attempt=1/);
+	await expect(page.getByTestId('task-log-attempt-flaky')).toHaveText('attempt 1', {
+		timeout: 60_000
+	});
+	await expect
+		.poll(
+			async () =>
+				(await paneLines(page, 'flaky')).map((l) => l.text).filter((t) => t.startsWith('http ')),
+			{ timeout: 60_000 }
+		)
+		.toEqual([`http GET ${probeUrl}`]);
+	note('"View logs" on attempt 1 pinned the pane to attempt 1 and put it in the address');
+	await shot(page, 'screenshot-attempt-timeline-pinned.png');
+
+	// AND IT SURVIVES A RELOAD: the badge, the header chip and the timeline
+	// come from the store through ListTaskAttempts, not from anything the live
+	// socket happened to deliver into this tab.
+	await page.reload();
+	await expect(page.getByTestId('task-flaky-retries')).toHaveText('retried ×1');
+	await expect(page.getByTestId('run-retries')).toHaveText(/Retries:\s*1/);
+	await page.getByTestId('task-inspect-toggle-flaky').click();
+	await expect(page.getByTestId('task-flaky-attempt-1')).toHaveAttribute('data-outcome', 'FAILED');
+	await expect(page.getByTestId('task-flaky-attempt-2')).toHaveAttribute(
+		'data-outcome',
+		'SUCCEEDED'
+	);
+});
+
 // Claims 2, 3 and 4: the inspector opens on request, closes without taking
 // the live updates with it, and is legible when it is open.
 test('the event view opens and closes while task state keeps updating', async ({ page }) => {

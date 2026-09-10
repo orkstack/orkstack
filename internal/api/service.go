@@ -103,6 +103,15 @@ type Config struct {
 	// have their own attempt index and streaming read contract.
 	ArtifactStore artifacts.Store
 
+	// Attempts is where the Orker filed one immutable record per task attempt.
+	// It is the same bucket, wired from the same ORK_ARTIFACT_BACKEND, for the
+	// same reason Logs is: the process that observed a retry is not the process
+	// asked about it later, and any replica must answer for any run. Nil
+	// answers ListTaskAttempts with FailedPrecondition rather than an empty
+	// timeline — an operator who configured no store must be told that, not
+	// shown a task that looks like it never retried.
+	Attempts artifacts.AttemptStore
+
 	// LogPoll tunes how often a log follower re-lists the store. The zero
 	// value is the documented default.
 	LogPoll LogPollOptions
@@ -267,12 +276,15 @@ type Service struct {
 	// same bucket the Orker wrote into and belongs to no process.
 	logs          artifacts.LogStore
 	artifactStore artifacts.Store
-	logPoll       LogPollOptions
-	idempotency   IdempotencyClaimer
-	webhooks      *webhooks.Registry
-	triggers      triggers.Store
-	notifier      engine.RunNotifier
-	observer      engine.EventObserver
+	// attempts is the durable per-attempt record store, read by
+	// ListTaskAttempts. Written by Orkers, owned by no process.
+	attempts    artifacts.AttemptStore
+	logPoll     LogPollOptions
+	idempotency IdempotencyClaimer
+	webhooks    *webhooks.Registry
+	triggers    triggers.Store
+	notifier    engine.RunNotifier
+	observer    engine.EventObserver
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system SystemInfo
@@ -314,6 +326,7 @@ func NewService(cfg Config) *Service {
 		archive:           cfg.Archive,
 		logs:              cfg.Logs,
 		artifactStore:     cfg.ArtifactStore,
+		attempts:          cfg.Attempts,
 		logPoll:           cfg.LogPoll,
 		idempotency:       cfg.Idempotency,
 		webhooks:          cfg.Webhooks,

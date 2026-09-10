@@ -247,6 +247,21 @@ service RunService {
   rpc StreamTaskLogs(StreamTaskLogsRequest) returns (stream TaskLogChunk);
   rpc ListRunArtifacts(ListRunArtifactsRequest) returns (ListRunArtifactsResponse);
   rpc ReadArtifact(ReadArtifactRequest) returns (stream ArtifactChunk);
+  // ListTaskAttempts reads back what every attempt of a task did, including
+  // the attempts that lost.
+  //
+  // Temporal owns retries, so a run's snapshot only ever carries a task's
+  // FINAL outcome: the error of each earlier attempt is discarded when the
+  // next one is scheduled. The Orker writes one immutable TaskAttempt record
+  // per attempt (metadata/attempts/…), and this RPC serves them — from the
+  // shared store, so any replica answers for any run, on exactly the terms
+  // StreamTaskLogs and ListRunArtifacts are on.
+  //
+  // A missing record is REPORTED, never hidden: an attempt number the store
+  // has nothing for comes back as ATTEMPT_OUTCOME_UNREPORTED, so a timeline
+  // never has a silent hole where an Orker died. There is no stream: a client
+  // refetches on the events it already follows.
+  rpc ListTaskAttempts(ListTaskAttemptsRequest) returns (ListTaskAttemptsResponse);
 }
 
 // WebhookService manages deployment-wide run-event subscriptions. Delivery is
@@ -396,6 +411,18 @@ message ArtifactChunk {
   bytes data = 1;
   ArtifactRef artifact = 2;
   bool last = 3;
+}
+message ListTaskAttemptsRequest {
+  string run_id = 1;
+  string namespace = 2; // empty = the default namespace
+  string task_id = 3;   // empty selects every task of the run
+}
+message ListTaskAttemptsResponse {
+  // attempts is every attempt of every selected task: tasks in the order
+  // Run.task_runs lists them, and within a task ascending by attempt with no
+  // gaps — an attempt number the store has no record for is present as
+  // ATTEMPT_OUTCOME_UNREPORTED rather than absent.
+  repeated TaskAttempt attempts = 1;
 }
 message CancelRunRequest {
   string run_id = 1;

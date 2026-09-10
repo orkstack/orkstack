@@ -178,6 +178,38 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 		t.Fatalf("replica B artifact stream complete=%v bytes=%d, want a verified values artifact", complete, bytesRead)
 	}
 
+	// ---- B serves the retry history of a task it never dispatched -----------
+	// The attempt records are the Orker's, filed to the shared bucket; the
+	// replica that never started the run reads them the same way it reads the
+	// commit references above. Every task of this orkflow succeeds first try,
+	// so the timeline is one SUCCEEDED row per task — and it must name the
+	// Orker that ran it, which is the field a process-local answer could not
+	// have.
+	listedAttempts, err := replicaB.runs.ListTaskAttempts(ctx, connect.NewRequest(
+		&orkstackv1.ListTaskAttemptsRequest{RunId: runID}))
+	if err != nil {
+		t.Fatalf("ListTaskAttempts on replica B: %v", err)
+	}
+	gotAttempts := listedAttempts.Msg.GetAttempts()
+	if len(gotAttempts) != 2 {
+		t.Errorf("replica B lists %d attempts, want one per task of the run: %#v",
+			len(gotAttempts), gotAttempts)
+	}
+	for _, attempt := range gotAttempts {
+		if attempt.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED {
+			t.Errorf("replica B reports attempt %d of task %q as %s, want SUCCEEDED",
+				attempt.GetAttempt(), attempt.GetTaskId(), attempt.GetOutcome())
+		}
+		if attempt.GetAttempt() != 1 {
+			t.Errorf("task %q attempt number is %d, want 1 for a first-try success",
+				attempt.GetTaskId(), attempt.GetAttempt())
+		}
+		if attempt.GetOrkerId() == "" {
+			t.Errorf("the record of task %q names no orker, so it did not come from one",
+				attempt.GetTaskId())
+		}
+	}
+
 	// ---- the two replicas agree, field for field ---------------------------
 	// This is the scheduling-independent half of the falsification. A run's
 	// projection activities are executed exactly once each, by whichever

@@ -54,6 +54,97 @@ message TaskRun {
   int32 exit_code = 13;
   // system_artifacts are stdout.log and stderr.log for this attempt.
   repeated ArtifactRef system_artifacts = 14;
+
+  // retry_state says why Temporal stopped retrying this task, read off
+  // temporal.ActivityError.RetryState() when the task ended in an error. It is
+  // DERIVED data on the snapshot — the engine records what Temporal already
+  // decided, it does not decide anything with it.
+  //
+  // Unset for SUCCEEDED and SKIPPED tasks, for a failure that never reached an
+  // activity, and for snapshots written before this field existed.
+  RetryState retry_state = 15;
+}
+
+// AttemptOutcome is how one Temporal attempt of a task ended.
+enum AttemptOutcome {
+  ATTEMPT_OUTCOME_UNSPECIFIED = 0;
+  // SUCCEEDED: the attempt returned an ExecuteTaskResult, fresh or adopted.
+  ATTEMPT_OUTCOME_SUCCEEDED = 1;
+  // FAILED: the attempt returned an ApplicationError; error is set.
+  ATTEMPT_OUTCOME_FAILED = 2;
+  // CANCELED: the attempt's context was cancelled (§6.3).
+  ATTEMPT_OUTCOME_CANCELED = 3;
+  // UNREPORTED is never written by an Orker. A reader synthesizes it for an
+  // attempt number that has no record, which means the Orker running it died
+  // or lost its heartbeat before it could write one.
+  ATTEMPT_OUTCOME_UNREPORTED = 4;
+}
+
+// TaskAttempt is the immutable record of ONE Temporal attempt of one task,
+// written by the Orker that ran it at the end of the attempt (§7.1). It is the
+// failure-side sibling of ActivityCommit: a commit says what the winning
+// attempt produced, an attempt record says what EVERY attempt did, including
+// the ones that lost.
+//
+// Temporal owns retries, so the workflow only ever sees a task's final
+// outcome — an intermediate attempt's error reaches nothing that outlives the
+// Orker process. This record is what makes it durable, and it is written
+// best-effort: a record that cannot be stored is logged, never allowed to
+// change what the attempt itself reported.
+message TaskAttempt {
+  // schema_version is 1. A reader that does not know the value ignores the
+  // record rather than guessing, exactly as ActivityCommit's does.
+  int32 schema_version = 1;
+
+  string run_id = 2;
+  string task_id = 3;
+  // attempt is activity.GetInfo(ctx).Attempt, 1-based.
+  int32 attempt = 4;
+  AttemptOutcome outcome = 5;
+  // error is set only for FAILED, and carries the same shape TaskRun.error
+  // does: the §8.2 reason as code, the category, retryability, the Orker's
+  // message, and its scan notes as details.
+  Error error = 6;
+  // exit_code is the container's exit status, 0 when the container never ran.
+  int32 exit_code = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp finished_at = 9;
+  // orker_id is the Orker that executed this attempt. "Which Orker failed" is
+  // the retry question, so the record answers it without a log search.
+  string orker_id = 10;
+  // pool is the routing request this attempt was dispatched with, as
+  // TaskRun.pool spells it.
+  string pool = 11;
+  // phase is the §7.1 phase the attempt ended in: "pull", "run", "commit", …
+  string phase = 12;
+  // image is the ImageRef as executed, with platform_digest and delivery set.
+  ImageRef image = 13;
+  // system_artifacts are the stdout.log/stderr.log references, when this
+  // attempt got as far as uploading them.
+  repeated ArtifactRef system_artifacts = 14;
+  // commit_adopted is true when this attempt found an existing commit and
+  // returned it without running the container (§5.4).
+  bool commit_adopted = 15;
+  // build_id is ORK_BUILD_ID of the Orker that ran the attempt.
+  string build_id = 16;
+}
+
+// RetryState is why Temporal stopped retrying a task. It mirrors
+// temporal.api.enums.v1.RetryState with its own numbering, because a value of
+// another proto package's enum may not be carried by number: the mapping is
+// explicit, in internal/engine/workflow.go.
+//
+// temporal's RETRY_STATE_IN_PROGRESS has no member here on purpose. It names a
+// retry that has not finished, and this field is only ever set from the error
+// of a task that already reached a terminal outcome; it maps to UNSPECIFIED.
+enum RetryState {
+  RETRY_STATE_UNSPECIFIED = 0;
+  RETRY_STATE_NON_RETRYABLE_FAILURE = 1;
+  RETRY_STATE_TIMEOUT = 2;
+  RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED = 3;
+  RETRY_STATE_RETRY_POLICY_NOT_SET = 4;
+  RETRY_STATE_CANCEL_REQUESTED = 5;
+  RETRY_STATE_INTERNAL_SERVER_ERROR = 6;
 }
 
 // Run is one execution of an Orkflow.

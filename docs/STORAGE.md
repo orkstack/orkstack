@@ -58,6 +58,7 @@ place each shape is spelled.
 | `metadata/cleanup/runs/{run-id}.json` | a sidecar recording that the run's artifacts were cleaned (`RunCleanupKey`) | once, by the cleanup worker | nothing |
 | `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind each projected event, kept out of Temporal history (`RunSnapshotKey`, `snapshots.go`) | by the workflow's snapshot local activity | the cleanup worker |
 | `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` (and `.trunc`) | live task stdout/stderr chunks; order is the zero-padded key (`LogChunkKey`, `logs.go`) | by the Orker while the task runs | the cleanup worker, or a bucket lifecycle rule |
+| `metadata/attempts/{run-id}/{task-id}/{attempt}.json` | one `TaskAttempt`: the outcome, error, exit code and §7.1 phase of ONE attempt; order is the zero-padded key (`AttemptKey`, `attempts.go`) | by the Orker at the end of every attempt, best-effort, plain put | the cleanup worker, or a bucket lifecycle rule |
 | `metadata/commits/{ns}/{run-id}/{task-id}/commit.json` | the immutable activity completion record (`CommitKey`, `commit_store.go`) | conditional create-if-absent | the cleanup worker |
 | `metadata/probes/commit-store/…/commit.json` | the boot-time probe proving conditional create works on this store | at boot | nothing |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`, `s3_manifest.go`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
@@ -81,9 +82,15 @@ run id is encoded, never parsed (AGENTS.md §7).
 - **Any replica answers for any run.** Every read of a finished run, a log, a
   definition, or a namespace goes to this layout or to Temporal, never to the
   memory of the process that started it.
+- **Every attempt is recorded, not just the winner.** Temporal discards a
+  failed attempt's error when it schedules the next one, so the Orker writes
+  one `TaskAttempt` per attempt beside the logs that attempt produced. The
+  write is best-effort: a record that cannot be stored is logged and never
+  changes what the attempt reported.
 - **The archive is append-only.** Bodies and index rows are never deleted;
-  what the cleanup worker reclaims is the run's logs, snapshots, commit record,
-  and object markers, and it records that in the cleanup sidecar.
+  what the cleanup worker reclaims is the run's logs, attempt records,
+  snapshots, commit record, and object markers, and it records that in the
+  cleanup sidecar.
 
 ## Reclaiming space
 
@@ -93,8 +100,8 @@ run id is encoded, never parsed (AGENTS.md §7).
 each archived run past its OWN OrkStack namespace's run retention (falling
 back to the deployment maximum) it explicitly retires the execution — never
 waiting for anything to expire passively — then deletes the run's logs,
-snapshots, and commit record, releases its object markers, and writes the
-cleanup sidecar.
+attempt records, snapshots, and commit record, releases its object markers, and
+writes the cleanup sidecar.
 
 Artifact objects themselves are not reclaimed automatically.
 `DeleteUnreferencedObjects` exists and is proven against live object storage,

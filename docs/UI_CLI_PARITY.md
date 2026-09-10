@@ -96,6 +96,66 @@ downloads one. Write a temporary sibling and rename on success; refuse an
 existing output unless an explicit overwrite flag is supplied. UI presents
 the same task/kind/name/size/checksum metadata and download actions.
 
+### Task attempts
+
+Temporal owns retries, so a run snapshot carries only a task's final outcome:
+`TaskRun.attempt` and `TaskRun.error` describe the last attempt, and every
+earlier attempt's error is discarded when the next one is scheduled. The Orker
+writes one immutable `TaskAttempt` record per attempt to the shared store
+(`metadata/attempts/{run-id}/{task-id}/{attempt}.json`, `docs/STORAGE.md`), and
+one RPC reads them back.
+
+Add `RunService.ListTaskAttempts(ListTaskAttemptsRequest)` returning
+`ListTaskAttemptsResponse`:
+
+- Request: `string run_id = 1`, `string namespace = 2` (empty = `default`),
+  `string task_id = 3` (empty selects every task of the run).
+- Response: `repeated TaskAttempt attempts = 1`.
+- `TaskAttempt` (`proto/orkstack/v1/run.proto`): `int32 schema_version = 1`,
+  `string run_id = 2`, `string task_id = 3`, `int32 attempt = 4` (1-based),
+  `AttemptOutcome outcome = 5`, `Error error = 6` (set only for FAILED),
+  `int32 exit_code = 7`, `google.protobuf.Timestamp started_at = 8`,
+  `finished_at = 9`, `string orker_id = 10`, `string pool = 11`,
+  `string phase = 12`, `ImageRef image = 13`,
+  `repeated ArtifactRef system_artifacts = 14`, `bool commit_adopted = 15`,
+  `string build_id = 16`.
+- `AttemptOutcome`: UNSPECIFIED, SUCCEEDED, FAILED, CANCELED, UNREPORTED.
+
+There is no new stream. Clients refetch on triggers they already follow — a
+task terminal event, the run's terminal event, and a higher attempt observed
+on the log stream. The WebSocket bridge is unchanged.
+
+Ordering is the response's contract, not a client's sort: tasks in the order
+`Run.task_runs` lists them, then ascending by attempt within a task. Both
+clients render that order as given.
+
+Gaps are reported, never hidden. The highest attempt number is the maximum of
+`TaskRun.attempt`, the highest stored record, and the log store's latest
+attempt for that task; every number from 1 to that maximum with no record is
+returned as `ATTEMPT_OUTCOME_UNREPORTED` carrying only `run_id`, `task_id` and
+`attempt`, so no attempt is silently renumbered when an Orker dies before
+filing its record. Clients must present an UNREPORTED row as missing evidence
+("no record from the orker — it crashed or lost its heartbeat"), never as a
+failure, and must not invent timing, an error, or a retry schedule for it.
+`TaskRun.attempt` alone is not the attempt count: it is 0 for a task Temporal
+timed out and is the committing attempt for an adopted commit.
+
+A task that has not been attempted returns an empty list, which is not an
+error and is distinct from a task whose attempts were reclaimed. Records live
+on the same lifecycle as logs, so a run past cleanup returns empty. Scoping
+matches every other run read: another namespace's run is NotFound, an unknown
+`task_id` is NotFound, a missing `run_id` is InvalidArgument, and an engine
+with no attempt store configured answers FailedPrecondition rather than a
+timeline of UNREPORTED rows. `GetRun` and `ListRuns` are unchanged.
+
+CLI: `run attempts RUN [--task TASK] [--json]` renders the timeline, and
+`run get RUN --attempts` appends the same table; `--json` is the raw
+`ListTaskAttemptsResponse` envelope. Two responses cannot share one JSON
+document, so `run get --attempts --json` is refused and points at
+`run attempts --json`. UI presents a per-task retry badge and an
+attempt timeline with each failed attempt's error and a link that pins the log
+pane to that attempt, retaining namespace, task and attempt.
+
 ### Webhook administration
 
 Add a proto `WebhookService` with `RegisterWebhook`, `ListWebhooks`, and
@@ -154,6 +214,7 @@ seeded draft exists only in the page that already holds that run.
 | Typed inputs | String/number/boolean controls, required/default hints; object/array JSON editors; JSON alternative | Same submitted JSON values as `run submit --input` | Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce |
 | Editor protection | Warn on navigation with unsaved YAML; import local YAML; export current draft/source; conflict handling preserved | Existing file-based apply/edit/get | Import and export round-trip; dirty navigation guarded; successful save clears dirty state; validation alone does not clear it |
 | Deep links/CLI copies | Preserve namespace, task, attempt, inspector tab; copy commands beside corresponding actions | Shell-escaped actual CLI syntax | Reload restores selection; copied commands include required namespace/version; quotes in values cannot become shell syntax |
+| Task attempts | Per-task retry badge and attempt timeline; failed attempts show their own error; a row links to that attempt's logs | `run attempts RUN [--task]` and `run get --attempts`, same order and `--json` envelope | Retried fixture shows every attempt with its own outcome and error; an attempt with no record renders as UNREPORTED, not as a failure or a gap; another namespace's run is NotFound; a replica that ran nothing answers identically |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new

@@ -6,7 +6,7 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { CommitRef } from "./activity_pb";
+import type { CommitRef, ImageRef } from "./activity_pb";
 import { file_orkstack_v1_activity } from "./activity_pb";
 import type { ArtifactRef, Error, Payload, Status } from "./common_pb";
 import { file_orkstack_v1_common } from "./common_pb";
@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/run.proto.
  */
 export const file_orkstack_v1_run: GenFile = /*@__PURE__*/
-  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIuADCgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZkoECAIQA1IGcGx1Z2luIvcDCgNSdW4SCgoCaWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIjCgZzdGF0dXMYBCABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSIwoFaW5wdXQYBSABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEiQKBm91dHB1dBgGIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchInCgl0YXNrX3J1bnMYCCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEi4KCmNyZWF0ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnN0YXJ0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYDCABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgNIAEoCRIyCgl0ZWxlbWV0cnkYDiABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24i6QEKBUV2ZW50Eg4KBnJ1bl9pZBgBIAEoCRIQCghzZXF1ZW5jZRgCIAEoAxIkCgR0eXBlGAMgASgOMhYub3Jrc3RhY2sudjEuRXZlbnRUeXBlEg8KB3Rhc2tfaWQYBCABKAkSIwoGc3RhdHVzGAUgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB21lc3NhZ2UYBiABKAkSIgoEZGF0YRgHIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSLQoJdGltZXN0YW1wGAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCrFAgoJRXZlbnRUeXBlEhoKFkVWRU5UX1RZUEVfVU5TUEVDSUZJRUQQABIaChZFVkVOVF9UWVBFX1JVTl9DUkVBVEVEEAESGgoWRVZFTlRfVFlQRV9SVU5fU1RBUlRFRBACEh0KGUVWRU5UX1RZUEVfVEFTS19TQ0hFRFVMRUQQAxIbChdFVkVOVF9UWVBFX1RBU0tfU1RBUlRFRBAEEhcKE0VWRU5UX1RZUEVfVEFTS19MT0cQBRIdChlFVkVOVF9UWVBFX1RBU0tfU1VDQ0VFREVEEAYSGgoWRVZFTlRfVFlQRV9UQVNLX0ZBSUxFRBAHEhwKGEVWRU5UX1RZUEVfUlVOX1NVQ0NFRURFRBAIEhkKFUVWRU5UX1RZUEVfUlVOX0ZBSUxFRBAJEhsKF0VWRU5UX1RZUEVfUlVOX0NBTkNFTEVEEApCpAEKD2NvbS5vcmtzdGFjay52MUIIUnVuUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
+  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIo4ECgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgtyZXRyeV9zdGF0ZRgPIAEoDjIXLm9ya3N0YWNrLnYxLlJldHJ5U3RhdGVKBAgCEANSBnBsdWdpbiLPAwoLVGFza0F0dGVtcHQSFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSDgoGcnVuX2lkGAIgASgJEg8KB3Rhc2tfaWQYAyABKAkSDwoHYXR0ZW1wdBgEIAEoBRIsCgdvdXRjb21lGAUgASgOMhsub3Jrc3RhY2sudjEuQXR0ZW1wdE91dGNvbWUSIQoFZXJyb3IYBiABKAsyEi5vcmtzdGFjay52MS5FcnJvchIRCglleGl0X2NvZGUYByABKAUSLgoKc3RhcnRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCG9ya2VyX2lkGAogASgJEgwKBHBvb2wYCyABKAkSDQoFcGhhc2UYDCABKAkSJAoFaW1hZ2UYDSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIyChBzeXN0ZW1fYXJ0aWZhY3RzGA4gAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSFgoOY29tbWl0X2Fkb3B0ZWQYDyABKAgSEAoIYnVpbGRfaWQYECABKAki9wMKA1J1bhIKCgJpZBgBIAEoCRIUCgxvcmtmbG93X25hbWUYAiABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAMgASgJEiMKBnN0YXR1cxgEIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIjCgVpbnB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSJAoGb3V0cHV0GAYgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEicKCXRhc2tfcnVucxgIIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SLgoKY3JlYXRlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgMIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GA0gASgJEjIKCXRlbGVtZXRyeRgOIAEoCzIfLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVNlbGVjdGlvbiLpAQoFRXZlbnQSDgoGcnVuX2lkGAEgASgJEhAKCHNlcXVlbmNlGAIgASgDEiQKBHR5cGUYAyABKA4yFi5vcmtzdGFjay52MS5FdmVudFR5cGUSDwoHdGFza19pZBgEIAEoCRIjCgZzdGF0dXMYBSABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSDwoHbWVzc2FnZRgGIAEoCRIiCgRkYXRhGAcgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBItCgl0aW1lc3RhbXAYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKqoBCg5BdHRlbXB0T3V0Y29tZRIfChtBVFRFTVBUX09VVENPTUVfVU5TUEVDSUZJRUQQABIdChlBVFRFTVBUX09VVENPTUVfU1VDQ0VFREVEEAESGgoWQVRURU1QVF9PVVRDT01FX0ZBSUxFRBACEhwKGEFUVEVNUFRfT1VUQ09NRV9DQU5DRUxFRBADEh4KGkFUVEVNUFRfT1VUQ09NRV9VTlJFUE9SVEVEEAQqggIKClJldHJ5U3RhdGUSGwoXUkVUUllfU1RBVEVfVU5TUEVDSUZJRUQQABIlCiFSRVRSWV9TVEFURV9OT05fUkVUUllBQkxFX0ZBSUxVUkUQARIXChNSRVRSWV9TVEFURV9USU1FT1VUEAISKAokUkVUUllfU1RBVEVfTUFYSU1VTV9BVFRFTVBUU19SRUFDSEVEEAMSJAogUkVUUllfU1RBVEVfUkVUUllfUE9MSUNZX05PVF9TRVQQBBIgChxSRVRSWV9TVEFURV9DQU5DRUxfUkVRVUVTVEVEEAUSJQohUkVUUllfU1RBVEVfSU5URVJOQUxfU0VSVkVSX0VSUk9SEAYqxQIKCUV2ZW50VHlwZRIaChZFVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRVZFTlRfVFlQRV9SVU5fQ1JFQVRFRBABEhoKFkVWRU5UX1RZUEVfUlVOX1NUQVJURUQQAhIdChlFVkVOVF9UWVBFX1RBU0tfU0NIRURVTEVEEAMSGwoXRVZFTlRfVFlQRV9UQVNLX1NUQVJURUQQBBIXChNFVkVOVF9UWVBFX1RBU0tfTE9HEAUSHQoZRVZFTlRfVFlQRV9UQVNLX1NVQ0NFRURFRBAGEhoKFkVWRU5UX1RZUEVfVEFTS19GQUlMRUQQBxIcChhFVkVOVF9UWVBFX1JVTl9TVUNDRUVERUQQCBIZChVFVkVOVF9UWVBFX1JVTl9GQUlMRUQQCRIbChdFVkVOVF9UWVBFX1JVTl9DQU5DRUxFRBAKQqQBCg9jb20ub3Jrc3RhY2sudjFCCFJ1blByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
 
 /**
  * TaskRun is the execution record of a single Task within a Run.
@@ -121,6 +121,19 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    * @generated from field: repeated orkstack.v1.ArtifactRef system_artifacts = 14;
    */
   systemArtifacts: ArtifactRef[];
+
+  /**
+   * retry_state says why Temporal stopped retrying this task, read off
+   * temporal.ActivityError.RetryState() when the task ended in an error. It is
+   * DERIVED data on the snapshot — the engine records what Temporal already
+   * decided, it does not decide anything with it.
+   *
+   * Unset for SUCCEEDED and SKIPPED tasks, for a failure that never reached an
+   * activity, and for snapshots written before this field existed.
+   *
+   * @generated from field: orkstack.v1.RetryState retry_state = 15;
+   */
+  retryState: RetryState;
 };
 
 /**
@@ -129,6 +142,139 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
  */
 export const TaskRunSchema: GenMessage<TaskRun> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_run, 0);
+
+/**
+ * TaskAttempt is the immutable record of ONE Temporal attempt of one task,
+ * written by the Orker that ran it at the end of the attempt (§7.1). It is the
+ * failure-side sibling of ActivityCommit: a commit says what the winning
+ * attempt produced, an attempt record says what EVERY attempt did, including
+ * the ones that lost.
+ *
+ * Temporal owns retries, so the workflow only ever sees a task's final
+ * outcome — an intermediate attempt's error reaches nothing that outlives the
+ * Orker process. This record is what makes it durable, and it is written
+ * best-effort: a record that cannot be stored is logged, never allowed to
+ * change what the attempt itself reported.
+ *
+ * @generated from message orkstack.v1.TaskAttempt
+ */
+export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
+  /**
+   * schema_version is 1. A reader that does not know the value ignores the
+   * record rather than guessing, exactly as ActivityCommit's does.
+   *
+   * @generated from field: int32 schema_version = 1;
+   */
+  schemaVersion: number;
+
+  /**
+   * @generated from field: string run_id = 2;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: string task_id = 3;
+   */
+  taskId: string;
+
+  /**
+   * attempt is activity.GetInfo(ctx).Attempt, 1-based.
+   *
+   * @generated from field: int32 attempt = 4;
+   */
+  attempt: number;
+
+  /**
+   * @generated from field: orkstack.v1.AttemptOutcome outcome = 5;
+   */
+  outcome: AttemptOutcome;
+
+  /**
+   * error is set only for FAILED, and carries the same shape TaskRun.error
+   * does: the §8.2 reason as code, the category, retryability, the Orker's
+   * message, and its scan notes as details.
+   *
+   * @generated from field: orkstack.v1.Error error = 6;
+   */
+  error?: Error | undefined;
+
+  /**
+   * exit_code is the container's exit status, 0 when the container never ran.
+   *
+   * @generated from field: int32 exit_code = 7;
+   */
+  exitCode: number;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp started_at = 8;
+   */
+  startedAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp finished_at = 9;
+   */
+  finishedAt?: Timestamp | undefined;
+
+  /**
+   * orker_id is the Orker that executed this attempt. "Which Orker failed" is
+   * the retry question, so the record answers it without a log search.
+   *
+   * @generated from field: string orker_id = 10;
+   */
+  orkerId: string;
+
+  /**
+   * pool is the routing request this attempt was dispatched with, as
+   * TaskRun.pool spells it.
+   *
+   * @generated from field: string pool = 11;
+   */
+  pool: string;
+
+  /**
+   * phase is the §7.1 phase the attempt ended in: "pull", "run", "commit", …
+   *
+   * @generated from field: string phase = 12;
+   */
+  phase: string;
+
+  /**
+   * image is the ImageRef as executed, with platform_digest and delivery set.
+   *
+   * @generated from field: orkstack.v1.ImageRef image = 13;
+   */
+  image?: ImageRef | undefined;
+
+  /**
+   * system_artifacts are the stdout.log/stderr.log references, when this
+   * attempt got as far as uploading them.
+   *
+   * @generated from field: repeated orkstack.v1.ArtifactRef system_artifacts = 14;
+   */
+  systemArtifacts: ArtifactRef[];
+
+  /**
+   * commit_adopted is true when this attempt found an existing commit and
+   * returned it without running the container (§5.4).
+   *
+   * @generated from field: bool commit_adopted = 15;
+   */
+  commitAdopted: boolean;
+
+  /**
+   * build_id is ORK_BUILD_ID of the Orker that ran the attempt.
+   *
+   * @generated from field: string build_id = 16;
+   */
+  buildId: string;
+};
+
+/**
+ * Describes the message orkstack.v1.TaskAttempt.
+ * Use `create(TaskAttemptSchema)` to create a new message.
+ */
+export const TaskAttemptSchema: GenMessage<TaskAttempt> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 1);
 
 /**
  * Run is one execution of an Orkflow.
@@ -228,7 +374,7 @@ export type Run = Message<"orkstack.v1.Run"> & {
  * Use `create(RunSchema)` to create a new message.
  */
 export const RunSchema: GenMessage<Run> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 1);
+  messageDesc(file_orkstack_v1_run, 2);
 
 /**
  * Event is a single realtime update for a run, delivered over the
@@ -291,7 +437,110 @@ export type Event = Message<"orkstack.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 2);
+  messageDesc(file_orkstack_v1_run, 3);
+
+/**
+ * AttemptOutcome is how one Temporal attempt of a task ended.
+ *
+ * @generated from enum orkstack.v1.AttemptOutcome
+ */
+export enum AttemptOutcome {
+  /**
+   * @generated from enum value: ATTEMPT_OUTCOME_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * SUCCEEDED: the attempt returned an ExecuteTaskResult, fresh or adopted.
+   *
+   * @generated from enum value: ATTEMPT_OUTCOME_SUCCEEDED = 1;
+   */
+  SUCCEEDED = 1,
+
+  /**
+   * FAILED: the attempt returned an ApplicationError; error is set.
+   *
+   * @generated from enum value: ATTEMPT_OUTCOME_FAILED = 2;
+   */
+  FAILED = 2,
+
+  /**
+   * CANCELED: the attempt's context was cancelled (§6.3).
+   *
+   * @generated from enum value: ATTEMPT_OUTCOME_CANCELED = 3;
+   */
+  CANCELED = 3,
+
+  /**
+   * UNREPORTED is never written by an Orker. A reader synthesizes it for an
+   * attempt number that has no record, which means the Orker running it died
+   * or lost its heartbeat before it could write one.
+   *
+   * @generated from enum value: ATTEMPT_OUTCOME_UNREPORTED = 4;
+   */
+  UNREPORTED = 4,
+}
+
+/**
+ * Describes the enum orkstack.v1.AttemptOutcome.
+ */
+export const AttemptOutcomeSchema: GenEnum<AttemptOutcome> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_run, 0);
+
+/**
+ * RetryState is why Temporal stopped retrying a task. It mirrors
+ * temporal.api.enums.v1.RetryState with its own numbering, because a value of
+ * another proto package's enum may not be carried by number: the mapping is
+ * explicit, in internal/engine/workflow.go.
+ *
+ * temporal's RETRY_STATE_IN_PROGRESS has no member here on purpose. It names a
+ * retry that has not finished, and this field is only ever set from the error
+ * of a task that already reached a terminal outcome; it maps to UNSPECIFIED.
+ *
+ * @generated from enum orkstack.v1.RetryState
+ */
+export enum RetryState {
+  /**
+   * @generated from enum value: RETRY_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: RETRY_STATE_NON_RETRYABLE_FAILURE = 1;
+   */
+  NON_RETRYABLE_FAILURE = 1,
+
+  /**
+   * @generated from enum value: RETRY_STATE_TIMEOUT = 2;
+   */
+  TIMEOUT = 2,
+
+  /**
+   * @generated from enum value: RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED = 3;
+   */
+  MAXIMUM_ATTEMPTS_REACHED = 3,
+
+  /**
+   * @generated from enum value: RETRY_STATE_RETRY_POLICY_NOT_SET = 4;
+   */
+  RETRY_POLICY_NOT_SET = 4,
+
+  /**
+   * @generated from enum value: RETRY_STATE_CANCEL_REQUESTED = 5;
+   */
+  CANCEL_REQUESTED = 5,
+
+  /**
+   * @generated from enum value: RETRY_STATE_INTERNAL_SERVER_ERROR = 6;
+   */
+  INTERNAL_SERVER_ERROR = 6,
+}
+
+/**
+ * Describes the enum orkstack.v1.RetryState.
+ */
+export const RetryStateSchema: GenEnum<RetryState> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_run, 1);
 
 /**
  * EventType classifies a run event on the realtime stream.
@@ -359,5 +608,5 @@ export enum EventType {
  * Describes the enum orkstack.v1.EventType.
  */
 export const EventTypeSchema: GenEnum<EventType> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 0);
+  enumDesc(file_orkstack_v1_run, 2);
 

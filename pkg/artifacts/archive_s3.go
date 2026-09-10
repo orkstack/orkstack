@@ -233,12 +233,18 @@ func (a *S3RunArchive) MarkArtifactsCleaned(ctx context.Context, runID string, d
 	return nil
 }
 
-// DeleteRunArtifacts removes run-owned logs, commits, snapshots, and reference
-// markers. Removing a marker only drops this run's claim: shared workload
-// objects stay untouched until DeleteUnreferencedObjects observes that no
-// claims remain.
+// DeleteRunArtifacts removes run-owned logs, attempt records, commits,
+// snapshots, and reference markers. Removing a marker only drops this run's
+// claim: shared workload objects stay untouched until
+// DeleteUnreferencedObjects observes that no claims remain.
 func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error) {
 	logPrefix, err := RunLogPrefix(runID)
+	if err != nil {
+		return CleanupResult{}, err
+	}
+	// Attempt records explain the logs they sit beside, so they are reclaimed
+	// on the same pass and therefore have exactly the log prefix's lifetime.
+	attemptPrefix, err := RunAttemptPrefix(runID)
 	if err != nil {
 		return CleanupResult{}, err
 	}
@@ -251,7 +257,7 @@ func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID 
 		return CleanupResult{}, err
 	}
 	var result CleanupResult
-	for _, prefix := range []string{logPrefix, commitPrefix, snapshotPrefix} {
+	for _, prefix := range []string{logPrefix, attemptPrefix, commitPrefix, snapshotPrefix} {
 		pager := s3.NewListObjectsV2Paginator(a.client, &s3.ListObjectsV2Input{Bucket: aws.String(a.bucket), Prefix: aws.String(prefix)})
 		for pager.HasMorePages() {
 			page, err := pager.NextPage(ctx)

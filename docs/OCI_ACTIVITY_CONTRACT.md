@@ -1972,7 +1972,40 @@ something to ask an Orker.
                       (`ActivityFailureDetail`, §2.2)
 15. CLEANUP           Remove container (detached ctx), RemoveAll workdir,
                       stop heartbeat, close log sink, return
+16. ATTEMPT RECORD    write one TaskAttempt to
+                      metadata/attempts/{run}/{task}/{attempt}.json — outcome,
+                      error, exit code, the phase this attempt ended in, the
+                      image as executed, orker/pool/build; detached ctx,
+                      BEST-EFFORT (a write failure is a Warn and nothing else)
 ```
+
+**Step 16 changes nothing for a container.** It is an Orker-side projection:
+`task.json`, the environment, the exit-code semantics and every other part of
+this contract are untouched, and an activity image needs to do nothing to
+participate. It exists because Temporal owns retries, so the workflow only ever
+sees a task's FINAL outcome — when attempt 1 fails, its error is consumed by the
+scheduler for attempt 2 and nothing durable is left behind. The Orker is the
+only process that observes every attempt, and `end()` in `Execute` is its
+exactly-once-per-attempt seam, so that is where the record is written
+(`internal/orker/oci_dispatcher.go`, `recordAttempt`; the store is
+`pkg/artifacts/attempts.go`, and `docs/STORAGE.md` carries the key family).
+
+It runs on a DETACHED context, like the container removal above it: a CANCELED
+attempt is exactly the attempt somebody most wants the record of, and its own
+context is already done. Succeeded and adopted attempts get a record too, so a
+reader never has to synthesize the last row of a timeline from `TaskRun` and
+`commit.json` — two producers of one row is how they come to disagree.
+
+**A record is never a failure.** `Attempts` unset writes nothing, and a write
+that fails is logged at Warn with the attempt's coordinates. The attempt's own
+outcome — the `ExecuteTaskResult` or the `ApplicationError` — is what the
+engine reports, unchanged. Retry *visibility* must not become a new way for
+work to fail, which is the same projection-not-orchestration rule the engine's
+`emit()` already applies to `PublishEvent`.
+
+§5.4's "no cross-attempt state" rule still holds: an Orker WRITES this record
+and never reads one. Nothing an attempt does depends on what an earlier attempt
+recorded.
 
 **IMAGE comes before RENDER, and the order is load-bearing.** An earlier draft
 rendered at step 6 and pulled at step 7. But `task.json` carries
@@ -2158,6 +2191,20 @@ stays `TASK_FAILED`; the category is data on the error, so the UI can say
 error string. Cancellation keeps its existing special case
 (`temporal.IsCanceledError` → `STATUS_CANCELED`, projected on a disconnected
 context).
+
+It also records **why retrying stopped**: `*temporal.ActivityError` carries a
+`RetryState()`, and `recordFailure` maps it onto `TaskRun.retry_state`
+(`RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED`, `_NON_RETRYABLE_FAILURE`, `_TIMEOUT`,
+`_CANCEL_REQUESTED`, …). Three attempts and a terminal failure otherwise look
+identical on the snapshot to one non-retryable attempt. It is derived, data-only
+and unversioned: it issues no command, changes no decision, and reaches
+Temporal history through nothing.
+
+The Orker's own §8.2 reason for each individual attempt — including the ones
+Temporal discarded — is in that attempt's record (step 16), spelled in the same
+`Error{code, message, details, retryable, category}` shape this section
+describes, so a timeline's intermediate rows and its final row use one
+vocabulary (`Failure.ErrorProto`, `internal/orker/failure.go`).
 
 ---
 

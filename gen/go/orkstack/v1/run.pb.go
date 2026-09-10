@@ -22,6 +22,137 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// AttemptOutcome is how one Temporal attempt of a task ended.
+type AttemptOutcome int32
+
+const (
+	AttemptOutcome_ATTEMPT_OUTCOME_UNSPECIFIED AttemptOutcome = 0
+	// SUCCEEDED: the attempt returned an ExecuteTaskResult, fresh or adopted.
+	AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED AttemptOutcome = 1
+	// FAILED: the attempt returned an ApplicationError; error is set.
+	AttemptOutcome_ATTEMPT_OUTCOME_FAILED AttemptOutcome = 2
+	// CANCELED: the attempt's context was cancelled (§6.3).
+	AttemptOutcome_ATTEMPT_OUTCOME_CANCELED AttemptOutcome = 3
+	// UNREPORTED is never written by an Orker. A reader synthesizes it for an
+	// attempt number that has no record, which means the Orker running it died
+	// or lost its heartbeat before it could write one.
+	AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED AttemptOutcome = 4
+)
+
+// Enum value maps for AttemptOutcome.
+var (
+	AttemptOutcome_name = map[int32]string{
+		0: "ATTEMPT_OUTCOME_UNSPECIFIED",
+		1: "ATTEMPT_OUTCOME_SUCCEEDED",
+		2: "ATTEMPT_OUTCOME_FAILED",
+		3: "ATTEMPT_OUTCOME_CANCELED",
+		4: "ATTEMPT_OUTCOME_UNREPORTED",
+	}
+	AttemptOutcome_value = map[string]int32{
+		"ATTEMPT_OUTCOME_UNSPECIFIED": 0,
+		"ATTEMPT_OUTCOME_SUCCEEDED":   1,
+		"ATTEMPT_OUTCOME_FAILED":      2,
+		"ATTEMPT_OUTCOME_CANCELED":    3,
+		"ATTEMPT_OUTCOME_UNREPORTED":  4,
+	}
+)
+
+func (x AttemptOutcome) Enum() *AttemptOutcome {
+	p := new(AttemptOutcome)
+	*p = x
+	return p
+}
+
+func (x AttemptOutcome) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AttemptOutcome) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_run_proto_enumTypes[0].Descriptor()
+}
+
+func (AttemptOutcome) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_run_proto_enumTypes[0]
+}
+
+func (x AttemptOutcome) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AttemptOutcome.Descriptor instead.
+func (AttemptOutcome) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{0}
+}
+
+// RetryState is why Temporal stopped retrying a task. It mirrors
+// temporal.api.enums.v1.RetryState with its own numbering, because a value of
+// another proto package's enum may not be carried by number: the mapping is
+// explicit, in internal/engine/workflow.go.
+//
+// temporal's RETRY_STATE_IN_PROGRESS has no member here on purpose. It names a
+// retry that has not finished, and this field is only ever set from the error
+// of a task that already reached a terminal outcome; it maps to UNSPECIFIED.
+type RetryState int32
+
+const (
+	RetryState_RETRY_STATE_UNSPECIFIED              RetryState = 0
+	RetryState_RETRY_STATE_NON_RETRYABLE_FAILURE    RetryState = 1
+	RetryState_RETRY_STATE_TIMEOUT                  RetryState = 2
+	RetryState_RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED RetryState = 3
+	RetryState_RETRY_STATE_RETRY_POLICY_NOT_SET     RetryState = 4
+	RetryState_RETRY_STATE_CANCEL_REQUESTED         RetryState = 5
+	RetryState_RETRY_STATE_INTERNAL_SERVER_ERROR    RetryState = 6
+)
+
+// Enum value maps for RetryState.
+var (
+	RetryState_name = map[int32]string{
+		0: "RETRY_STATE_UNSPECIFIED",
+		1: "RETRY_STATE_NON_RETRYABLE_FAILURE",
+		2: "RETRY_STATE_TIMEOUT",
+		3: "RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED",
+		4: "RETRY_STATE_RETRY_POLICY_NOT_SET",
+		5: "RETRY_STATE_CANCEL_REQUESTED",
+		6: "RETRY_STATE_INTERNAL_SERVER_ERROR",
+	}
+	RetryState_value = map[string]int32{
+		"RETRY_STATE_UNSPECIFIED":              0,
+		"RETRY_STATE_NON_RETRYABLE_FAILURE":    1,
+		"RETRY_STATE_TIMEOUT":                  2,
+		"RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED": 3,
+		"RETRY_STATE_RETRY_POLICY_NOT_SET":     4,
+		"RETRY_STATE_CANCEL_REQUESTED":         5,
+		"RETRY_STATE_INTERNAL_SERVER_ERROR":    6,
+	}
+)
+
+func (x RetryState) Enum() *RetryState {
+	p := new(RetryState)
+	*p = x
+	return p
+}
+
+func (x RetryState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RetryState) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_run_proto_enumTypes[1].Descriptor()
+}
+
+func (RetryState) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_run_proto_enumTypes[1]
+}
+
+func (x RetryState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RetryState.Descriptor instead.
+func (RetryState) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{1}
+}
+
 // EventType classifies a run event on the realtime stream.
 type EventType int32
 
@@ -80,11 +211,11 @@ func (x EventType) String() string {
 }
 
 func (EventType) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[0].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[2].Descriptor()
 }
 
 func (EventType) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[0]
+	return &file_orkstack_v1_run_proto_enumTypes[2]
 }
 
 func (x EventType) Number() protoreflect.EnumNumber {
@@ -93,7 +224,7 @@ func (x EventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EventType.Descriptor instead.
 func (EventType) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{0}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
 }
 
 // TaskRun is the execution record of a single Task within a Run.
@@ -135,8 +266,16 @@ type TaskRun struct {
 	ExitCode int32 `protobuf:"varint,13,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	// system_artifacts are stdout.log and stderr.log for this attempt.
 	SystemArtifacts []*ArtifactRef `protobuf:"bytes,14,rep,name=system_artifacts,json=systemArtifacts,proto3" json:"system_artifacts,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// retry_state says why Temporal stopped retrying this task, read off
+	// temporal.ActivityError.RetryState() when the task ended in an error. It is
+	// DERIVED data on the snapshot — the engine records what Temporal already
+	// decided, it does not decide anything with it.
+	//
+	// Unset for SUCCEEDED and SKIPPED tasks, for a failure that never reached an
+	// activity, and for snapshots written before this field existed.
+	RetryState    RetryState `protobuf:"varint,15,opt,name=retry_state,json=retryState,proto3,enum=orkstack.v1.RetryState" json:"retry_state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TaskRun) Reset() {
@@ -260,6 +399,206 @@ func (x *TaskRun) GetSystemArtifacts() []*ArtifactRef {
 	return nil
 }
 
+func (x *TaskRun) GetRetryState() RetryState {
+	if x != nil {
+		return x.RetryState
+	}
+	return RetryState_RETRY_STATE_UNSPECIFIED
+}
+
+// TaskAttempt is the immutable record of ONE Temporal attempt of one task,
+// written by the Orker that ran it at the end of the attempt (§7.1). It is the
+// failure-side sibling of ActivityCommit: a commit says what the winning
+// attempt produced, an attempt record says what EVERY attempt did, including
+// the ones that lost.
+//
+// Temporal owns retries, so the workflow only ever sees a task's final
+// outcome — an intermediate attempt's error reaches nothing that outlives the
+// Orker process. This record is what makes it durable, and it is written
+// best-effort: a record that cannot be stored is logged, never allowed to
+// change what the attempt itself reported.
+type TaskAttempt struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// schema_version is 1. A reader that does not know the value ignores the
+	// record rather than guessing, exactly as ActivityCommit's does.
+	SchemaVersion int32  `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	RunId         string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	TaskId        string `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// attempt is activity.GetInfo(ctx).Attempt, 1-based.
+	Attempt int32          `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Outcome AttemptOutcome `protobuf:"varint,5,opt,name=outcome,proto3,enum=orkstack.v1.AttemptOutcome" json:"outcome,omitempty"`
+	// error is set only for FAILED, and carries the same shape TaskRun.error
+	// does: the §8.2 reason as code, the category, retryability, the Orker's
+	// message, and its scan notes as details.
+	Error *Error `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	// exit_code is the container's exit status, 0 when the container never ran.
+	ExitCode   int32                  `protobuf:"varint,7,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	StartedAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	// orker_id is the Orker that executed this attempt. "Which Orker failed" is
+	// the retry question, so the record answers it without a log search.
+	OrkerId string `protobuf:"bytes,10,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	// pool is the routing request this attempt was dispatched with, as
+	// TaskRun.pool spells it.
+	Pool string `protobuf:"bytes,11,opt,name=pool,proto3" json:"pool,omitempty"`
+	// phase is the §7.1 phase the attempt ended in: "pull", "run", "commit", …
+	Phase string `protobuf:"bytes,12,opt,name=phase,proto3" json:"phase,omitempty"`
+	// image is the ImageRef as executed, with platform_digest and delivery set.
+	Image *ImageRef `protobuf:"bytes,13,opt,name=image,proto3" json:"image,omitempty"`
+	// system_artifacts are the stdout.log/stderr.log references, when this
+	// attempt got as far as uploading them.
+	SystemArtifacts []*ArtifactRef `protobuf:"bytes,14,rep,name=system_artifacts,json=systemArtifacts,proto3" json:"system_artifacts,omitempty"`
+	// commit_adopted is true when this attempt found an existing commit and
+	// returned it without running the container (§5.4).
+	CommitAdopted bool `protobuf:"varint,15,opt,name=commit_adopted,json=commitAdopted,proto3" json:"commit_adopted,omitempty"`
+	// build_id is ORK_BUILD_ID of the Orker that ran the attempt.
+	BuildId       string `protobuf:"bytes,16,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskAttempt) Reset() {
+	*x = TaskAttempt{}
+	mi := &file_orkstack_v1_run_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskAttempt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskAttempt) ProtoMessage() {}
+
+func (x *TaskAttempt) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskAttempt.ProtoReflect.Descriptor instead.
+func (*TaskAttempt) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TaskAttempt) GetSchemaVersion() int32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *TaskAttempt) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *TaskAttempt) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskAttempt) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *TaskAttempt) GetOutcome() AttemptOutcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return AttemptOutcome_ATTEMPT_OUTCOME_UNSPECIFIED
+}
+
+func (x *TaskAttempt) GetError() *Error {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+func (x *TaskAttempt) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *TaskAttempt) GetStartedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.StartedAt
+	}
+	return nil
+}
+
+func (x *TaskAttempt) GetFinishedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return nil
+}
+
+func (x *TaskAttempt) GetOrkerId() string {
+	if x != nil {
+		return x.OrkerId
+	}
+	return ""
+}
+
+func (x *TaskAttempt) GetPool() string {
+	if x != nil {
+		return x.Pool
+	}
+	return ""
+}
+
+func (x *TaskAttempt) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *TaskAttempt) GetImage() *ImageRef {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+func (x *TaskAttempt) GetSystemArtifacts() []*ArtifactRef {
+	if x != nil {
+		return x.SystemArtifacts
+	}
+	return nil
+}
+
+func (x *TaskAttempt) GetCommitAdopted() bool {
+	if x != nil {
+		return x.CommitAdopted
+	}
+	return false
+}
+
+func (x *TaskAttempt) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
 // Run is one execution of an Orkflow.
 type Run struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -292,7 +631,7 @@ type Run struct {
 
 func (x *Run) Reset() {
 	*x = Run{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[1]
+	mi := &file_orkstack_v1_run_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -304,7 +643,7 @@ func (x *Run) String() string {
 func (*Run) ProtoMessage() {}
 
 func (x *Run) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[1]
+	mi := &file_orkstack_v1_run_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -317,7 +656,7 @@ func (x *Run) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Run.ProtoReflect.Descriptor instead.
 func (*Run) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{1}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Run) GetId() string {
@@ -436,7 +775,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[2]
+	mi := &file_orkstack_v1_run_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -448,7 +787,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[2]
+	mi := &file_orkstack_v1_run_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -461,7 +800,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Event) GetRunId() string {
@@ -524,7 +863,7 @@ var File_orkstack_v1_run_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
-	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/telemetry.proto\"\xde\x04\n" +
+	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/telemetry.proto\"\x98\x05\n" +
 	"\aTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12+\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +
@@ -542,7 +881,29 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"values_ref\x18\v \x01(\v2\x18.orkstack.v1.ArtifactRefR\tvaluesRef\x12.\n" +
 	"\x06commit\x18\f \x01(\v2\x16.orkstack.v1.CommitRefR\x06commit\x12\x1b\n" +
 	"\texit_code\x18\r \x01(\x05R\bexitCode\x12C\n" +
-	"\x10system_artifacts\x18\x0e \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0fsystemArtifactsJ\x04\b\x02\x10\x03R\x06plugin\"\x91\x05\n" +
+	"\x10system_artifacts\x18\x0e \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0fsystemArtifacts\x128\n" +
+	"\vretry_state\x18\x0f \x01(\x0e2\x17.orkstack.v1.RetryStateR\n" +
+	"retryStateJ\x04\b\x02\x10\x03R\x06plugin\"\xed\x04\n" +
+	"\vTaskAttempt\x12%\n" +
+	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
+	"\atask_id\x18\x03 \x01(\tR\x06taskId\x12\x18\n" +
+	"\aattempt\x18\x04 \x01(\x05R\aattempt\x125\n" +
+	"\aoutcome\x18\x05 \x01(\x0e2\x1b.orkstack.v1.AttemptOutcomeR\aoutcome\x12(\n" +
+	"\x05error\x18\x06 \x01(\v2\x12.orkstack.v1.ErrorR\x05error\x12\x1b\n" +
+	"\texit_code\x18\a \x01(\x05R\bexitCode\x129\n" +
+	"\n" +
+	"started_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
+	"\vfinished_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"finishedAt\x12\x19\n" +
+	"\borker_id\x18\n" +
+	" \x01(\tR\aorkerId\x12\x12\n" +
+	"\x04pool\x18\v \x01(\tR\x04pool\x12\x14\n" +
+	"\x05phase\x18\f \x01(\tR\x05phase\x12+\n" +
+	"\x05image\x18\r \x01(\v2\x15.orkstack.v1.ImageRefR\x05image\x12C\n" +
+	"\x10system_artifacts\x18\x0e \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0fsystemArtifacts\x12%\n" +
+	"\x0ecommit_adopted\x18\x0f \x01(\bR\rcommitAdopted\x12\x19\n" +
+	"\bbuild_id\x18\x10 \x01(\tR\abuildId\"\x91\x05\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
@@ -570,7 +931,22 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x06status\x18\x05 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +
 	"\amessage\x18\x06 \x01(\tR\amessage\x12(\n" +
 	"\x04data\x18\a \x01(\v2\x14.orkstack.v1.PayloadR\x04data\x128\n" +
-	"\ttimestamp\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp*\xc5\x02\n" +
+	"\ttimestamp\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp*\xaa\x01\n" +
+	"\x0eAttemptOutcome\x12\x1f\n" +
+	"\x1bATTEMPT_OUTCOME_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19ATTEMPT_OUTCOME_SUCCEEDED\x10\x01\x12\x1a\n" +
+	"\x16ATTEMPT_OUTCOME_FAILED\x10\x02\x12\x1c\n" +
+	"\x18ATTEMPT_OUTCOME_CANCELED\x10\x03\x12\x1e\n" +
+	"\x1aATTEMPT_OUTCOME_UNREPORTED\x10\x04*\x82\x02\n" +
+	"\n" +
+	"RetryState\x12\x1b\n" +
+	"\x17RETRY_STATE_UNSPECIFIED\x10\x00\x12%\n" +
+	"!RETRY_STATE_NON_RETRYABLE_FAILURE\x10\x01\x12\x17\n" +
+	"\x13RETRY_STATE_TIMEOUT\x10\x02\x12(\n" +
+	"$RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED\x10\x03\x12$\n" +
+	" RETRY_STATE_RETRY_POLICY_NOT_SET\x10\x04\x12 \n" +
+	"\x1cRETRY_STATE_CANCEL_REQUESTED\x10\x05\x12%\n" +
+	"!RETRY_STATE_INTERNAL_SERVER_ERROR\x10\x06*\xc5\x02\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16EVENT_TYPE_RUN_CREATED\x10\x01\x12\x1a\n" +
@@ -598,49 +974,60 @@ func file_orkstack_v1_run_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_run_proto_rawDescData
 }
 
-var file_orkstack_v1_run_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_orkstack_v1_run_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_orkstack_v1_run_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_orkstack_v1_run_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_orkstack_v1_run_proto_goTypes = []any{
-	(EventType)(0),                // 0: orkstack.v1.EventType
-	(*TaskRun)(nil),               // 1: orkstack.v1.TaskRun
-	(*Run)(nil),                   // 2: orkstack.v1.Run
-	(*Event)(nil),                 // 3: orkstack.v1.Event
-	(Status)(0),                   // 4: orkstack.v1.Status
-	(*Payload)(nil),               // 5: orkstack.v1.Payload
-	(*ArtifactRef)(nil),           // 6: orkstack.v1.ArtifactRef
-	(*Error)(nil),                 // 7: orkstack.v1.Error
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
-	(*CommitRef)(nil),             // 9: orkstack.v1.CommitRef
-	(*TelemetrySelection)(nil),    // 10: orkstack.v1.TelemetrySelection
+	(AttemptOutcome)(0),           // 0: orkstack.v1.AttemptOutcome
+	(RetryState)(0),               // 1: orkstack.v1.RetryState
+	(EventType)(0),                // 2: orkstack.v1.EventType
+	(*TaskRun)(nil),               // 3: orkstack.v1.TaskRun
+	(*TaskAttempt)(nil),           // 4: orkstack.v1.TaskAttempt
+	(*Run)(nil),                   // 5: orkstack.v1.Run
+	(*Event)(nil),                 // 6: orkstack.v1.Event
+	(Status)(0),                   // 7: orkstack.v1.Status
+	(*Payload)(nil),               // 8: orkstack.v1.Payload
+	(*ArtifactRef)(nil),           // 9: orkstack.v1.ArtifactRef
+	(*Error)(nil),                 // 10: orkstack.v1.Error
+	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
+	(*CommitRef)(nil),             // 12: orkstack.v1.CommitRef
+	(*ImageRef)(nil),              // 13: orkstack.v1.ImageRef
+	(*TelemetrySelection)(nil),    // 14: orkstack.v1.TelemetrySelection
 }
 var file_orkstack_v1_run_proto_depIdxs = []int32{
-	4,  // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
-	5,  // 1: orkstack.v1.TaskRun.output:type_name -> orkstack.v1.Payload
-	6,  // 2: orkstack.v1.TaskRun.artifacts:type_name -> orkstack.v1.ArtifactRef
-	7,  // 3: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
-	8,  // 4: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
-	8,  // 5: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	6,  // 6: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
-	9,  // 7: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
-	6,  // 8: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	4,  // 9: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
-	5,  // 10: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
-	5,  // 11: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
-	7,  // 12: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
-	1,  // 13: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
-	8,  // 14: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	8,  // 15: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	8,  // 16: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	10, // 17: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
-	0,  // 18: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
-	4,  // 19: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
-	5,  // 20: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
-	8,  // 21: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
-	22, // [22:22] is the sub-list for method output_type
-	22, // [22:22] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	7,  // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
+	8,  // 1: orkstack.v1.TaskRun.output:type_name -> orkstack.v1.Payload
+	9,  // 2: orkstack.v1.TaskRun.artifacts:type_name -> orkstack.v1.ArtifactRef
+	10, // 3: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
+	11, // 4: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
+	11, // 5: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
+	9,  // 6: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
+	12, // 7: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
+	9,  // 8: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	1,  // 9: orkstack.v1.TaskRun.retry_state:type_name -> orkstack.v1.RetryState
+	0,  // 10: orkstack.v1.TaskAttempt.outcome:type_name -> orkstack.v1.AttemptOutcome
+	10, // 11: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
+	11, // 12: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
+	11, // 13: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
+	13, // 14: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
+	9,  // 15: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	7,  // 16: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
+	8,  // 17: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
+	8,  // 18: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
+	10, // 19: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
+	3,  // 20: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
+	11, // 21: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	11, // 22: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	11, // 23: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	14, // 24: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
+	2,  // 25: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
+	7,  // 26: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
+	8,  // 27: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
+	11, // 28: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }
@@ -656,8 +1043,8 @@ func file_orkstack_v1_run_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_run_proto_rawDesc), len(file_orkstack_v1_run_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   3,
+			NumEnums:      3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

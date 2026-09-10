@@ -2,6 +2,7 @@ package orker
 
 import (
 	"fmt"
+	"strings"
 
 	"go.temporal.io/sdk/temporal"
 
@@ -220,6 +221,17 @@ func (f *Failure) Unwrap() error { return f.Cause }
 // Category is the §8.1 category this failure's reason belongs to.
 func (f *Failure) Category() string { return CategoryFor(f.Reason) }
 
+// GetDetail is the nil-safe accessor, spelled the way the generated proto
+// getters are: a Failure is nil on the success and panic paths, and a caller
+// projecting an attempt reads the detail without first asking which path it is
+// on.
+func (f *Failure) GetDetail() *orkstackv1.ActivityFailureDetail {
+	if f == nil {
+		return nil
+	}
+	return f.Detail
+}
+
 // Fail builds a Failure with a formatted message.
 func Fail(reason string, format string, args ...any) *Failure {
 	return &Failure{Reason: reason, Message: fmt.Sprintf(format, args...)}
@@ -239,6 +251,42 @@ func (f *Failure) WithDetail(detail *orkstackv1.ActivityFailureDetail) *Failure 
 	}
 	f.Detail = detail
 	return f
+}
+
+// ErrorProto renders this failure as the shared Error message, in exactly the
+// shape the engine's recordFailure produces for the same failure once it has
+// crossed Temporal: code is the §8.2 reason, category the §8.1 category,
+// retryable comes from RetryableReason, message from Error(), and details are
+// the scan notes attached to the task's own name.
+//
+// It exists so the attempt record (§7.1, pkg/artifacts/attempts.go) says
+// exactly what TaskRun.error will say for the LAST attempt — a timeline whose
+// intermediate rows were spelled differently from its final row would make an
+// operator compare two vocabularies. The engine cannot call this: by the time
+// it records a failure, the Failure is gone and what it holds is a Temporal
+// ApplicationError carrying an ActivityFailureDetail. Two producers of one
+// shape, kept in step by TestFailureErrorProto_MatchesTheEngineShape.
+//
+// taskID is a parameter rather than a field because a Failure names the reason
+// and the message, not the coordinates: every construction site would have had
+// to remember to fill one.
+func (f *Failure) ErrorProto(taskID string) *orkstackv1.Error {
+	if f == nil {
+		return nil
+	}
+	details := fmt.Sprintf("task %q", taskID)
+	if notes := f.Detail.GetScanNotes(); len(notes) > 0 {
+		// Scan notes are notes ON the workload's error, never a replacement
+		// for it (§7.1 step 14).
+		details = details + "; " + strings.Join(notes, "; ")
+	}
+	return &orkstackv1.Error{
+		Code:      f.Reason,
+		Message:   f.Error(),
+		Details:   details,
+		Retryable: RetryableReason(f.Reason),
+		Category:  CategoryEnum(f.Category()),
+	}
 }
 
 // TemporalError converts a Failure into the error an activity returns.

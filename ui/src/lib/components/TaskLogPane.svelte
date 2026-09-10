@@ -34,7 +34,32 @@
 		attempt?: number;
 		/** A task/attempt named in the URL opens this pane without changing normal browsing. */
 		deepLinked?: boolean;
+		/**
+		 * pinRequest is the PAGE asking this pane to open on one attempt — the
+		 * attempt timeline's "View logs", today.
+		 *
+		 * It is a request and not a coordinate because the two things a caller
+		 * wants are not otherwise expressible: `attempt` alone cannot open a
+		 * closed pane, and a reader who already chose an attempt from the
+		 * selector below has a `pinned` value that would win over any prop. So
+		 * the request carries a nonce, is served at most once, and lands as if
+		 * the reader had opened the pane and picked that try themselves —
+		 * leaving the selector showing what is on screen rather than
+		 * disagreeing with it.
+		 */
+		pinRequest?: { attempt: number; nonce: number };
 		onAttemptChange?: (attempt: number | null) => void;
+		/**
+		 * onAttemptSeen fires when this pane learns of a HIGHER attempt than it
+		 * had seen before — the engine's own answer on the log stream, which is
+		 * the earliest live signal anywhere in the browser that a task retried.
+		 *
+		 * It is a notification, not a control: nothing in this pane depends on
+		 * what the listener does with it. The run page uses it to re-read the
+		 * task's attempt records so the retry badge and the attempt timeline
+		 * move with the run instead of waiting for its terminal snapshot.
+		 */
+		onAttemptSeen?: (attempt: number) => void;
 		/**
 		 * scrollback caps the lines KEPT AND RENDERED. A task may write far
 		 * more than a browser can hold as DOM; past this many lines the oldest
@@ -53,7 +78,9 @@
 		startedAt,
 		attempt = 0,
 		deepLinked = false,
+		pinRequest,
 		onAttemptChange,
+		onAttemptSeen,
 		scrollback = 2000
 	}: Props = $props();
 
@@ -104,6 +131,24 @@
 		}
 	});
 
+	// The page's pin request, served at most once per nonce.
+	//
+	// A nonce and not a value comparison: asking for the SAME attempt again is
+	// a real ask — a reader who closed the pane and clicked "View logs" on that
+	// row again means it, and an effect keyed on the attempt number would sit
+	// there having already seen it. The address is written by the caller;
+	// `page.url` does not move on a shallow replaceState, so the pane cannot
+	// learn about the pin from the URL and is told instead.
+	let servedPin = $state(0);
+	$effect(() => {
+		const request = pinRequest;
+		if (!request || request.nonce <= untrack(() => servedPin)) return;
+		servedPin = request.nonce;
+		open = true;
+		following = true;
+		pinned = request.attempt > 0 ? request.attempt : null;
+	});
+
 	// maxAttempt LATCHES the highest try anybody has named, and in this tree
 	// exactly two can name one: the engine's answer on THIS pane's stream,
 	// which arrives with the first chunk and is the only source of the attempt
@@ -118,7 +163,13 @@
 	let maxAttempt = $state(0);
 	$effect(() => {
 		const seen = Math.max(shownAttempt, pinned ?? 0, attempt);
-		if (seen > maxAttempt) maxAttempt = seen;
+		if (seen > maxAttempt) {
+			maxAttempt = seen;
+			// Told, not asked: the latch only ever grows, so this fires once per
+			// newly observed try and cannot loop. What the listener does with it
+			// is none of this pane's business — see onAttemptSeen above.
+			onAttemptSeen?.(seen);
+		}
 	});
 
 	// stderr is shown in red, and the legend appears only once a red line has

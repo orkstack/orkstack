@@ -25,6 +25,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunLogsCommand(g),
 		newRunArtifactsCommand(g),
 		newRunArtifactCommand(g),
+		newRunAttemptsCommand(g),
 		newRunAgainCommand(g),
 		newRunCancelCommand(g),
 	)
@@ -109,14 +110,28 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 }
 
 func newRunGetCommand(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var withAttempts bool
+	cmd := &cobra.Command{
 		Use:   "get <run-id>",
 		Short: "Show one run",
 		Long: "get shows one run of the namespace this command acts in. A run id\n" +
 			"addresses a run inside a namespace, so a run of another one is not found\n" +
-			"here even when its id is known.",
+			"here even when its id is known.\n\n" +
+			"The task table shows each task's FINAL outcome, which is all Temporal\n" +
+			"keeps: a try that failed and was retried away is not in it. --attempts\n" +
+			"adds the per-attempt timeline underneath, the same table\n" +
+			"`orkctl run attempts` prints.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if withAttempts && g.json {
+				// Two responses cannot share one JSON document, and printing
+				// them one after another would hand a script two concatenated
+				// objects. The machine-readable timeline has its own command.
+				return fmt.Errorf(
+					"--attempts is a second response and cannot be added to --json output; "+
+						"read the timeline with: %s",
+					orkctlCommand(g.namespace, "run", "attempts", args[0], "--json"))
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -129,9 +144,37 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			return renderRun(cmd.OutOrStdout(), resp.Msg.GetRun())
+			if err := renderRun(cmd.OutOrStdout(), resp.Msg.GetRun()); err != nil {
+				return err
+			}
+			if !withAttempts {
+				return nil
+			}
+			return appendRunAttempts(cmd, g, args[0])
 		},
 	}
+	cmd.Flags().BoolVar(&withAttempts, "attempts", false,
+		"also print every attempt of every task, including the ones that were retried away")
+	return cmd
+}
+
+// appendRunAttempts prints the attempt timeline under a rendered run.
+//
+// It is a second RPC, made only when the flag asks for it: `run get` is the
+// command an operator types constantly, and the retry history is a read of the
+// object store that most of those invocations do not need.
+func appendRunAttempts(cmd *cobra.Command, g *globalFlags, runID string) error {
+	ctx, cancel := g.unaryContext(cmd)
+	defer cancel()
+
+	resp, err := g.runClient().ListTaskAttempts(ctx, connect.NewRequest(
+		&orkstackv1.ListTaskAttemptsRequest{RunId: runID, Namespace: g.namespace},
+	))
+	if err != nil {
+		return attemptsError(err)
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	return renderAttemptList(cmd.OutOrStdout(), resp.Msg.GetAttempts())
 }
 
 func newRunListCommand(g *globalFlags) *cobra.Command {

@@ -67,9 +67,9 @@ larger must be an Artifact. Never put large bytes in Temporal payloads or the
 event stream.
 
 Object storage holds artifacts, logs, immutable Orkflow-definition snapshots,
-and immutable activity completion records. Object-store data is not mutable
-workflow execution state (Temporal workflow state) and must never become a second
-state machine. Temporal remains authoritative for execution state.
+and immutable activity completion and per-attempt records. Object-store data is
+not mutable workflow execution state (Temporal workflow state) and must never
+become a second state machine. Temporal remains authoritative for execution state.
 
 An Orkflow keeps its existing user-facing `name` and `version` identity, but
 its canonical definition also has a SHA-256 digest. The immutable definition is

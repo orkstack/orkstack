@@ -861,6 +861,16 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	logger.Info("task log store ready",
 		"backend", archiveConfig.Backend, "location", logLocation(archiveConfig))
+
+	// Task attempts: the record an Orker filed for every try of a task,
+	// including the ones Temporal retried away. Same bucket, same
+	// ORK_ARTIFACT_BACKEND, no setting of its own — and read here rather than
+	// written, so this engine serves the retry history of a run it never
+	// started and of an Orker that has long exited.
+	attemptStore, err := artifacts.NewAttemptStore(archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open task attempt store: %w", err)
+	}
 	artifactStore, err := artifacts.New(archiveConfig)
 	if err != nil {
 		return fmt.Errorf("open artifact store: %w", err)
@@ -1028,6 +1038,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Archive:       archive,
 		Logs:          logStore,
 		ArtifactStore: artifactStore,
+		Attempts:      attemptStore,
 		Idempotency:   idempotency,
 		Webhooks:      webhookRegistry,
 		Triggers:      triggerStore,

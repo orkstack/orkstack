@@ -94,7 +94,7 @@ func TestBootTelemetryZeroConfig(t *testing.T) {
 	// orkerOptions is where the wiring pass adds three telemetry-derived
 	// seams (TaskLogs, Phases, TraceContext): with no telemetry env set, all
 	// three must stay nil, the same as before this package existed.
-	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, logger)
+	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
 	if opts.TaskLogs != nil {
 		t.Fatalf("orkerOptions.TaskLogs = %v, want nil with no telemetry env set", opts.TaskLogs)
 	}
@@ -122,7 +122,7 @@ func TestOrkerOptionsWithTracingOn(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := config{temporalAddress: client.DefaultHostPort, temporalNamespace: "default"}
 
-	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, logger)
+	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
 	if opts.TaskLogs == nil {
 		t.Fatal("orkerOptions.TaskLogs = nil, want non-nil with OTEL_LOGS_EXPORTER=otlp")
 	}

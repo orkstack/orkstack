@@ -20,15 +20,29 @@
 		failureCategoryClasses,
 		failureCategoryLabel
 	} from '$lib/activity';
+	import { retryStateLabel } from '$lib/attempts';
+	import { RetryState } from '$lib/gen/orkstack/v1/run_pb';
 
 	interface Props {
 		error: OrkError;
 		testid: string;
 		/** Compact drops the explanatory blurb, for a dense list row. */
 		compact?: boolean;
+		/**
+		 * retryState is why the platform stopped trying, when the snapshot
+		 * carries it. `retryable` above says whether this failure COULD be
+		 * retried; this says what actually happened to the retries — a budget
+		 * that ran out reads very differently from a failure nothing would ever
+		 * have tried again.
+		 */
+		retryState?: RetryState;
+		/** How many tries the attempt timeline knows of, for the exhausted-budget phrasing. */
+		attemptCount?: number;
 	}
 
-	let { error, testid, compact = false }: Props = $props();
+	let { error, testid, compact = false, retryState, attemptCount = 0 }: Props = $props();
+
+	const retryNote = $derived(retryStateLabel(retryState, attemptCount));
 
 	const category = $derived(error.category ?? FailureCategory.UNSPECIFIED);
 </script>
@@ -70,6 +84,11 @@
 		>
 			{error.retryable ? 'retryable' : 'not retryable'}
 		</span>
+		{#if retryNote}
+			<span class="text-xs font-normal text-fg-muted" data-testid="{testid}-retry-state">
+				{retryNote}
+			</span>
+		{/if}
 	</div>
 
 	<div class="p-5 text-sm">

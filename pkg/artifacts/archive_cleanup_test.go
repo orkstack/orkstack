@@ -27,10 +27,20 @@ func TestLocalRunArchive_CleanupSidecarAndRunScopedDeletion(t *testing.T) {
 	}
 
 	logPrefix, _ := RunLogPrefix(rec.RunID)
+	// The attempt records live on the log prefix's lifecycle: they are the
+	// diagnosis for the very logs cleanup is reclaiming, so a pass that took
+	// the logs and left the records would leave a retry timeline pointing at
+	// output nobody can read.
+	attemptPrefix, _ := RunAttemptPrefix(rec.RunID)
+	attemptKey, err := AttemptKey(AttemptRef{RunID: rec.RunID, TaskID: "task", Attempt: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
 	commitPrefix, _ := RunCommitPrefix(rec.Namespace, rec.RunID)
 	snapshotPrefix, _ := RunSnapshotPrefix(rec.Namespace, rec.RunID)
 	for name, body := range map[string][]byte{
 		filepath.Join(root, filepath.FromSlash(logPrefix), "task", "attempt", "chunk"):  []byte("logs"),
+		filepath.Join(root, filepath.FromSlash(attemptKey)):                             []byte("attempt!"),
 		filepath.Join(root, filepath.FromSlash(commitPrefix), "task", CommitObjectName): []byte("commit"),
 		filepath.Join(root, filepath.FromSlash(snapshotPrefix), "7.pb"):                 []byte("snapshot"),
 		filepath.Join(root, "objects", "shared"):                                        []byte("shared"),
@@ -47,11 +57,18 @@ func TestLocalRunArchive_CleanupSidecarAndRunScopedDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.ObjectsDeleted != 3 || result.BytesReclaimed != int64(len("logs")+len("commit")+len("snapshot")) {
+	if result.ObjectsDeleted != 4 ||
+		result.BytesReclaimed != int64(len("logs")+len("attempt!")+len("commit")+len("snapshot")) {
 		t.Fatalf("result = %+v", result)
 	}
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(snapshotPrefix), "7.pb")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("run snapshot survived cleanup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(attemptKey))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("task attempt record survived cleanup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(attemptPrefix, "/")))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("run attempt prefix survived cleanup: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "objects", "shared")); err != nil {
 		t.Fatalf("shared object: %v", err)

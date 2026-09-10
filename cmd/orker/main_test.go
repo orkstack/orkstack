@@ -214,7 +214,7 @@ func TestOrkerOptions_TickTheSameNumberTheWorkerThrottlesAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("telemetry.Boot: %v", err)
 	}
-	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, logger)
+	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
 
 	if opts.HeartbeatInterval != 4*time.Second {
 		t.Errorf("orker.Options.HeartbeatInterval = %v, want the configured 4s", opts.HeartbeatInterval)
