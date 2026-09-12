@@ -66,10 +66,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
-	namespace := os.Getenv("ORK_TEMPORAL_NAMESPACE")
-	if namespace == "" {
-		namespace = task.DefaultNamespace
-	}
+	namespace := privateNamespaceForCommitE2E(t)
 	temporalClient, err := client.DialContext(ctx, client.Options{
 		HostPort: address, Namespace: namespace,
 	})
@@ -314,6 +311,27 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	}
 	t.Logf("EVIDENCE commit_adopted=%t committing_attempt=%d exit_code=%d",
 		adopted.GetCommitAdopted(), adopted.GetAttempt(), adopted.GetExitCode())
+}
+
+// privateNamespaceForCommitE2E names a Temporal namespace unique to this test
+// run.
+//
+// The run and event workers below poll the shared task.DefaultQueue and
+// engine.EventQueue exactly as `ork` does, and neither queue name is
+// test-configurable. Temporal task queues are namespace-scoped, so without a
+// private namespace a dev stack (or another test process) polling the
+// operator's actual namespace would steal this run's workflow or event tasks
+// and reproduce "engine: publish event: read snapshot: artifact not found"
+// against a snapshot store this test never wrote to (AGENTS.md §11.1). The
+// operator's ORK_TEMPORAL_NAMESPACE, if set, stays as the prefix so the
+// choice is still visible in `temporal workflow list`.
+func privateNamespaceForCommitE2E(t *testing.T) string {
+	t.Helper()
+	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
+	if base == "" {
+		base = task.DefaultNamespace
+	}
+	return fmt.Sprintf("%s-e2e-%d-%d", base, os.Getpid(), time.Now().UnixNano())
 }
 
 // awaitNamespaceReadyForCommitE2E blocks until a namespace-scoped call stops

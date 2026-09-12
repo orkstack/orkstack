@@ -56,14 +56,14 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	temporalClient, err := client.DialContext(ctx, client.Options{
-		HostPort:  address,
-		Namespace: client.DefaultNamespace,
-	})
-	if err != nil {
-		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
-	}
-	defer temporalClient.Close()
+	// A private namespace, not client.DefaultNamespace: this worker polls the
+	// shared task.DefaultQueue/engine.EventQueue exactly as `ork` does, and
+	// those names are not test-configurable, so a dev stack or another test
+	// process polling the operator's actual default namespace would steal
+	// this run's workflow and event tasks (AGENTS.md §11.1). routingNamespace
+	// and dialRoutingCluster are shared with queue_integration_test.go.
+	namespace := routingNamespace()
+	temporalClient := dialRoutingCluster(t, ctx, address, namespace)
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()

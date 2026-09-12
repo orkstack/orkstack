@@ -101,8 +101,9 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	enginePath := buildBinary(t, repoRoot, binDir, "ork")
 	orkerPath := buildBinary(t, repoRoot, binDir, "orker")
 
-	startOrker(ctx, t, orkerPath, address, taskQueue)
-	engineAddr := startEngine(ctx, t, enginePath, address, taskQueue)
+	temporalNamespace := privateTemporalNamespace()
+	startOrker(ctx, t, orkerPath, address, temporalNamespace, taskQueue)
+	engineAddr := startEngine(ctx, t, enginePath, address, temporalNamespace, taskQueue)
 
 	session := &sessionRecorder{}
 	cli := func(args ...string) (string, string, int) {
@@ -297,6 +298,22 @@ func privateTaskPool() string {
 	return fmt.Sprintf("orkctl-%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
+// privateTemporalNamespace names a Temporal namespace unique to this test
+// run.
+//
+// The ork binary started below has no flag or env var to change the queue its
+// workflow worker polls — task.DefaultQueue and engine.EngineEventQueue are
+// fixed, exactly as a locally running dev-stack `ork` would use them. Temporal
+// task queues are namespace-scoped, so without a private namespace a
+// concurrently running dev stack (or another test process) in the operator's
+// actual namespace would steal this run's workflow or event tasks. Both `ork`
+// and `orker` already call task.EnsureNamespace at startup (cmd/ork/main.go,
+// cmd/orker/main.go), so passing this through ORK_TEMPORAL_NAMESPACE is
+// enough to provision it — no separate bootstrap call is needed here.
+func privateTemporalNamespace() string {
+	return fmt.Sprintf("orkctl-%d-%d", os.Getpid(), time.Now().UnixNano())
+}
+
 // bindableOrkerWorkRoot returns a work root the container runtime can bind.
 //
 // Every task is a container under the OCI Activity Contract, and the macOS
@@ -342,10 +359,11 @@ func sharedLocalArtifactDir(t *testing.T) string {
 
 // startOrker runs the real orker binary against the private task queue, with a
 // local-filesystem artifact store so the test needs no object storage.
-func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, queue string) {
+func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, temporalNamespace, queue string) {
 	t.Helper()
 	startProcess(ctx, t, "orker", orkerPath,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
+		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
 		"ORK_ORKER_QUEUE="+queue,
 		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 		"ORK_ARTIFACT_BACKEND=local",
@@ -356,12 +374,13 @@ func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, queu
 // startEngine runs the real ork binary on a free loopback port. The
 // orkerQueue is passed through so task dispatch and the pool probe target the
 // private queue the test's Orker polls.
-func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, orkerQueue string) string {
+func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, temporalNamespace, orkerQueue string) string {
 	t.Helper()
 	addr := freeAddress(t)
 	startProcess(ctx, t, "ork", enginePath,
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
+		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
 		"ORK_ORKER_QUEUE="+orkerQueue,
 		"ORK_ARTIFACT_BACKEND=local",
 		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),

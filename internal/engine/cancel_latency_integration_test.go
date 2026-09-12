@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -65,10 +64,7 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
-	namespace := os.Getenv("ORK_TEMPORAL_NAMESPACE")
-	if namespace == "" {
-		namespace = task.DefaultNamespace
-	}
+	namespace := privateNamespaceForCommitE2E(t)
 	temporalClient, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
