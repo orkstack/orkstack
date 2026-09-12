@@ -102,7 +102,19 @@ type document struct {
 	Description string            `yaml:"description"`
 	Labels      map[string]string `yaml:"labels"`
 	Inputs      map[string]any    `yaml:"inputs"`
-	Tasks       []taskDocument    `yaml:"tasks"`
+
+	// Pins declares every pin a task may name, by name, each with a
+	// (possibly empty) options object — `pins: {build: {}}` is legal.
+	//
+	// The declaration is what makes a pin a REFERENCE rather than a name that
+	// creates itself: a task's `pin:` must be a key of this map, so `pin:
+	// buidl` is refused instead of silently opening a second, one-task pin
+	// (§4.2). It is also where the pin's own option lives, because a lifetime
+	// is a property of the group and not of any one member — asking which
+	// task's value wins is the shape of question the compiler exists to
+	// refuse.
+	Pins  map[string]pinDocument `yaml:"pins"`
+	Tasks []taskDocument         `yaml:"tasks"`
 }
 
 type taskDocument struct {
@@ -113,7 +125,19 @@ type taskDocument struct {
 	Retry          *retryDocument `yaml:"retry"`
 	// Pool is the set of Orkers this task runs on. Absent means the
 	// namespace's default pool, then the built-in pool "main".
-	Pool string         `yaml:"pool"`
+	Pool string `yaml:"pool"`
+
+	// Pin is the name of the declared pin (document.Pins) this task joins, or
+	// empty. Where Pool says WHICH ORKERS a task may run on, Pin says which
+	// ONE member of that set — for this named group of tasks, together, with
+	// one read-write /orkstack/shared for the life of the group (§1, §4.2).
+	//
+	// A bare name, exactly like Pool: the group's own options live on the
+	// declaration, not here. And the word is "pin", not "session": the
+	// Temporal Worker Session that implements it is internal, precisely as a
+	// queue is internal to a pool (AGENTS.md §7.1).
+	Pin string `yaml:"pin"`
+
 	With map[string]any `yaml:"with"`
 
 	// Uses is the only image-selecting field in the DSL: a catalog activity
@@ -167,6 +191,20 @@ type secretDocument struct {
 type resourceDocument struct {
 	CPU    string `yaml:"cpu"`
 	Memory string `yaml:"memory"`
+}
+
+// pinDocument is one declared pin's options.
+//
+// TimeoutSeconds is a pointer for the same reason taskDocument's is: so
+// "absent" and "written" are two states here, at the YAML layer. It bounds the
+// whole group's life, from the dispatch of its first task to the end of its
+// last. Compiled, 0 means DERIVED — the sum of every member's own wall-clock
+// budget, which is the sequential worst case (§6.3) — and that is why the
+// pointer does not survive compilation: Pin.timeout_seconds is a plain int32
+// where 0 and absent are one value, deliberately, because they mean the same
+// thing to the engine.
+type pinDocument struct {
+	TimeoutSeconds *int32 `yaml:"timeout_seconds"`
 }
 
 type retryDocument struct {
@@ -249,6 +287,34 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		wf.Inputs = inputs
 	}
 
+	// Pins compile SORTED BY NAME, and a document that declares none leaves
+	// the field absent rather than empty-but-allocated.
+	//
+	// Sorted because a Go map has no order to preserve: ranging doc.Pins
+	// directly would let one document compile to two different messages, and
+	// the message is what both the definition digest (canonicalPins) and the
+	// store's "is this apply a repeat?" comparison read (proto.Equal in
+	// pkg/artifacts.sameStoredOrkflow). Two authors who type the same two pin
+	// keys in either order must get the same bytes; so must one author twice.
+	// Absent rather than empty for the same reason normalizeMap is careful
+	// about presence: an unpinned document's message must be exactly what it
+	// was before pins existed.
+	if len(doc.Pins) > 0 {
+		names := make([]string, 0, len(doc.Pins))
+		for name := range doc.Pins {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		wf.Pins = make([]*orkstackv1.Pin, 0, len(names))
+		for _, name := range names {
+			pin := &orkstackv1.Pin{Name: name}
+			if seconds := doc.Pins[name].TimeoutSeconds; seconds != nil {
+				pin.TimeoutSeconds = *seconds
+			}
+			wf.Pins = append(wf.Pins, pin)
+		}
+	}
+
 	for _, td := range doc.Tasks {
 		task := &orkstackv1.Task{
 			Id:             td.ID,
@@ -261,6 +327,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			Condition:      td.Condition,
 			TimeoutSeconds: DefaultTimeoutSeconds,
 			Pool:           td.Pool,
+			Pin:            td.Pin,
 		}
 		if td.TimeoutSeconds != nil {
 			task.TimeoutSeconds = *td.TimeoutSeconds

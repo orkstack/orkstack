@@ -168,6 +168,70 @@ func (e *PoolEmptyError) Error() string {
 		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.Pool)
 }
 
+// PinPoolMismatchError reports a pin whose tasks resolved onto two different
+// pools.
+//
+// A pin is ONE Orker process sharing ONE directory, and a session is created
+// on one task queue (design §4.3), so a pin that spans two pools is not
+// something the engine could implement — it is a document that contradicts
+// itself.
+//
+// The compiler already refuses this as rule 10, on the LITERAL `pool:` values.
+// This is the same invariant enforced again on the pool each task actually
+// RESOLVED to, after the namespace default and this deployment's route
+// collapse have been applied — mirroring how rule 7 is split between compiler
+// and server today (design §4.3). The compile-time check cannot stand alone:
+// it is skipped entirely by a hand-built SubmitRun that never went through the
+// DSL, and this is the path such a request cannot avoid.
+type PinPoolMismatchError struct {
+	Namespace string
+	Pin       string
+	Task      string
+	Pool      string
+	OtherTask string
+	OtherPool string
+}
+
+func (e *PinPoolMismatchError) Error() string {
+	return fmt.Sprintf(
+		"pin %q (namespace %q) resolves onto two pools: task %q onto %q and task %q onto %q. "+
+			"A pin is one Orker process, so every task of one pin must name the same pool",
+		e.Pin, e.Namespace, e.Task, e.Pool, e.OtherTask, e.OtherPool)
+}
+
+// PoolNoPinHostError reports a submit refused because the pool a pinned task
+// resolved to has live Orkers, but not one of them hosts pins.
+//
+// It is PoolEmptyError's sibling, for the narrower question a pin asks: not
+// "is anything serving this pool" but "can anything serving this pool OPEN a
+// pin". Without the check the run would be accepted, the session's creation
+// activity would sit on `<queue>__internal_session_creation` that nobody
+// polls, and the pin's tasks would wait out pinCreationTimeout before failing
+// with PIN_UNAVAILABLE — a stranded run, which is exactly what a submit-time
+// probe exists to prevent (design §7.4).
+//
+// Pin hosting is a POOL-WIDE property: one Orker answers the probe, and the
+// documented deployment rule is that every Orker of a pool sets the same
+// ORK_ORKER_MAX_PINS (design §12.6).
+type PoolNoPinHostError struct {
+	Namespace string
+	Pool      string
+	Pins      []string
+	Tasks     []string
+}
+
+func (e *PoolNoPinHostError) Error() string {
+	pins := fmt.Sprintf("pin %q", strings.Join(e.Pins, ", "))
+	if len(e.Pins) > 1 {
+		pins = fmt.Sprintf("pins: %s", strings.Join(e.Pins, ", "))
+	}
+	return fmt.Sprintf(
+		"pool %q (namespace %q, %s, tasks: %s) has live Orkers but none of them hosts pins, "+
+			"so the pin could never open. Start one with ORK_ORKER_POOL=%s ORK_ORKER_MAX_PINS=1, "+
+			"or submit with allow_empty_pool to wait for one",
+		e.Pool, e.Namespace, pins, strings.Join(e.Tasks, ", "), e.Pool)
+}
+
 // PoolUnreachableError reports that the cluster could not be asked whether a
 // pool has Orkers.
 //
@@ -410,6 +474,13 @@ func (r *PoolResolver) Plan(
 	// Ordered, so the error a submit reports is the same one every time.
 	var order []string
 	tasksByPool := map[string][]string{}
+	// The pin view of the same walk, in first-seen order for the same reason.
+	// pinPool answers rule 10 on the RESOLVED pool; pinsByPool and
+	// pinnedTasksByPool are what the pin-host refusal below names.
+	pinPool := map[string]string{}
+	pinFirstTask := map[string]string{}
+	pinsByPool := map[string][]string{}
+	pinnedTasksByPool := map[string][]string{}
 
 	for _, t := range planned.GetTasks() {
 		requested := PoolFor(ns, t)
@@ -435,6 +506,31 @@ func (r *PoolResolver) Plan(
 			order = append(order, route.Pool)
 		}
 		tasksByPool[route.Pool] = append(tasksByPool[route.Pool], t.GetId())
+
+		// Rule 10, on the resolved pool (see PinPoolMismatchError). Every task
+		// of one pin must have landed on the same pool, because a pin is one
+		// process out of one pool's set.
+		pin := t.GetPin()
+		if pin == "" {
+			continue
+		}
+		if first, seen := pinPool[pin]; seen {
+			if first != route.Pool {
+				return nil, RunPlan{}, &PinPoolMismatchError{
+					Namespace: namespaceName(ns),
+					Pin:       pin,
+					Task:      pinFirstTask[pin],
+					Pool:      first,
+					OtherTask: t.GetId(),
+					OtherPool: route.Pool,
+				}
+			}
+		} else {
+			pinPool[pin] = route.Pool
+			pinFirstTask[pin] = t.GetId()
+			pinsByPool[route.Pool] = append(pinsByPool[route.Pool], pin)
+		}
+		pinnedTasksByPool[route.Pool] = append(pinnedTasksByPool[route.Pool], t.GetId())
 	}
 
 	plan := RunPlan{Namespace: namespaceName(ns), Routes: routes}
@@ -455,6 +551,23 @@ func (r *PoolResolver) Plan(
 			return nil, RunPlan{}, &PoolUnreachableError{Pool: pool, Err: err}
 		}
 		if live.Fresh(r.now(), r.freshness()) {
+			// A live pool that carries a pinned task is asked one more
+			// question: can anything here OPEN a pin (§7.4). Asked only of a
+			// live pool with a pinned task, so an unpinned submit runs no
+			// describe call it did not run before (§10.4), and a deserted pool
+			// has already failed below with PoolEmptyError — what its Orkers
+			// host is moot when it has none.
+			if err := r.checkPinHost(ctx, checkPinHostRequest{
+				namespace:  namespaceName(ns),
+				orkflow:    wf.GetName(),
+				pool:       pool,
+				queue:      routes[pool],
+				pins:       pinsByPool[pool],
+				tasks:      pinnedTasksByPool[pool],
+				allowEmpty: allowEmpty,
+			}); err != nil {
+				return nil, RunPlan{}, err
+			}
 			continue
 		}
 		empty := &PoolEmptyError{
@@ -476,6 +589,86 @@ func (r *PoolResolver) Plan(
 			"override", "allow_empty_pool")
 	}
 	return planned, plan, nil
+}
+
+// checkPinHostRequest is one pool's pin question, gathered while Plan walked
+// the tasks. It is a struct rather than seven parameters because every field
+// is a coordinate of the same refusal message.
+type checkPinHostRequest struct {
+	namespace  string
+	orkflow    string
+	pool       string
+	queue      string
+	pins       []string
+	tasks      []string
+	allowEmpty bool
+}
+
+// checkPinHost refuses a live pool that hosts no pins but was asked to.
+//
+// It asks the pool's own Orker, through the same OrkerOnPool seam the
+// inventory uses, and reads DescribeOrkerResult.max_concurrent_pins — the
+// Orker's ORK_ORKER_MAX_PINS. Zero means the process starts no session
+// pollers at all, so the pin's session could never be created there.
+//
+// Three ways it declines to refuse, and each is a different fact:
+//
+//   - No pinned task on this pool: there is no question to ask, and asking
+//     would add a describe call to an unpinned submit (§10.4).
+//   - No describer wired (r.Orkers == nil): no authority to ask, the same
+//     reason a nil Probe disables the liveness check rather than inventing an
+//     answer. A process with no seam must not refuse every pinned submit.
+//   - The describe call failed: nothing was MEASURED. The pool's liveness was,
+//     and stands; only the Orker's self-description was lost, which is how
+//     Pools() treats the same failure. Turning a describe blip into a refused
+//     submit would invent a new failure, and the in-workflow backstop already
+//     covers a pool that genuinely cannot open a pin: the session's creation
+//     activity times out at pinCreationTimeout and the task fails with
+//     PIN_UNAVAILABLE.
+//
+// allowEmpty downgrades a real refusal to a warning exactly as it does for an
+// empty pool: the operator who overrides has been told what they are waiting
+// for (§7.4).
+func (r *PoolResolver) checkPinHost(ctx context.Context, req checkPinHostRequest) error {
+	if len(req.pins) == 0 || r.Orkers == nil {
+		return nil
+	}
+	// Bounded here as well as inside the production seam: a hand-wired
+	// describer is not obliged to bound itself, and a submit must not be held
+	// open by one.
+	describeCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
+	defer cancel()
+	described, err := r.Orkers.OrkerOnPool(describeCtx, req.queue)
+	if err != nil {
+		r.logger().Warn("submit: a live pool with a pinned task did not answer the "+
+			"describe-orker probe, so whether it hosts pins is unknown",
+			"namespace", req.namespace,
+			"pool", req.pool,
+			"orkflow", req.orkflow,
+			"pins", strings.Join(req.pins, ","),
+			"error", err)
+		return nil
+	}
+	if described.GetMaxConcurrentPins() > 0 {
+		return nil
+	}
+	noHost := &PoolNoPinHostError{
+		Namespace: req.namespace,
+		Pool:      req.pool,
+		Pins:      req.pins,
+		Tasks:     req.tasks,
+	}
+	if !req.allowEmpty {
+		return noHost
+	}
+	r.logger().Warn("submit into a pool with no pin host",
+		"namespace", noHost.Namespace,
+		"pool", noHost.Pool,
+		"orkflow", req.orkflow,
+		"pins", strings.Join(noHost.Pins, ","),
+		"tasks", strings.Join(noHost.Tasks, ","),
+		"override", "allow_empty_pool")
+	return nil
 }
 
 // routeFor resolves one pool against the channel this deployment bound as its

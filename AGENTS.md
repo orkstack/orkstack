@@ -234,6 +234,13 @@ it.
 The Orker should be stateless and disposable. Persistent local state is limited
 to an OCI image cache, ephemeral execution directories, and optional transient
 download cache. If an Orker disappears, Temporal must be able to retry elsewhere.
+A pin's shared directory is an ephemeral execution directory whose lifetime is
+the pin's, bounded by a lease and reaped at Orker boot. A pinned task is the one
+deliberate exception to retry-elsewhere: if its host disappears, the pin and its
+run fail explicitly (`PIN_HOST_LOST`), and they are never re-opened on another
+Orker, because the shared directory would not be there. Retrying elsewhere with
+an empty `/orkstack/shared` would be a silently wrong result, which §14 ranks
+below explicit failure.
 
 The Orker is responsible for:
 
@@ -323,6 +330,16 @@ The repository vocabulary is deliberate:
 - **Pool** means the user-facing set of Orkers.
 - **Queue** means only an internal Temporal task queue and never a user-facing
   OrkStack concept.
+- **Pin** means a named group of tasks of one Orkflow that execute on one Orker
+  process and share `/orkstack/shared`. It is the user-facing word: it appears
+  in the DSL, the proto, `orkctl`, the UI, and every error message.
+- **Session** means Temporal's Worker Session, the mechanism a pin is
+  implemented with. It is internal, exactly as **queue** is internal to
+  **pool** (§7.1): no user-facing surface names a session, a session id, or a
+  session task queue.
+- **Pin host** means an Orker configured to accept pins
+  (`ORK_ORKER_MAX_PINS` above zero). Every Orker still runs ordinary tasks;
+  only a pin host runs pinned ones.
 - **Run retention** means how long a finished run of one OrkStack namespace
   stays readable before it is retired, counted from when the run FINISHED,
   never from submission. It is a field of `orkstack.v1.Namespace`
@@ -371,10 +388,12 @@ by sequence from another replica.
 
 ### 7.1 Pools and Temporal task queues
 
-`pool:` is the only user-facing execution selector. No user-facing surface may
-expose `queue:` or a queue name. The translation is centralized in
-`internal/task/pool.go`: `QueueForPool`, `RouteForPool`, `PoolForQueue`, and the
-single `ork-pool-` prefix construction are the complete mapping.
+`pool:` is the only user-facing selector of *which Orkers*; `pin:` constrains a
+group of tasks to *one* member of that set. Neither exposes a queue, a session,
+or a host name. No user-facing surface may expose `queue:` or a queue name. The
+translation is centralized in `internal/task/pool.go`: `QueueForPool`,
+`RouteForPool`, `PoolForQueue`, and the single `ork-pool-` prefix construction
+are the complete mapping.
 
 An empty pool and `main` both mean the deployment's configured default pool.
 Other valid pools resolve to `ork-pool-<slug>`. The reserved
@@ -410,7 +429,13 @@ Versioning is off unless `ORK_BUILD_ID` is set; leave
 `DefaultVersioningBehavior` unset when it is off. A version must drain before
 its workers are decommissioned. A pinned workflow uses its own activity-worker
 version only while that version has workers polling its activity channel;
-otherwise Temporal falls through to that channel's current version. Old
+otherwise Temporal falls through to that channel's current version. A task pin
+(§7.1) is the one exception to that rule, and it is stricter rather than looser:
+its session is opened through a version-routed activity, but its member
+activities ride the session's own per-host channel, which is unversioned and
+polled by exactly one process — so a pin stays on the process that opened it
+across a rollout and never falls through to the current version
+(`internal/engine/versioning_pin_integration_test.go`, `docs/DEPLOY.md`). Old
 histories must replay against new code; `internal/engine/replay_test.go`
 protects this contract.
 
@@ -477,7 +502,29 @@ includes:
   failure;
 - exit `1`, exit `0` without `values.json`, malformed JSON, output-size excess,
   timeout, cancellation, ignored SIGTERM, unavailable input artifact, failed
-  image pull, and a tag changing between executions.
+  image pull, and a tag changing between executions;
+- every task of a pin landing on ONE Orker while three real pin hosts poll the
+  same pool, and no failover when that host is killed mid-container: the run
+  fails `PIN_HOST_LOST`, and the survivors' own execution records and work
+  roots show they were never handed the lost pin's tasks;
+- a pin host lost in the gap BETWEEN two members: the member that already
+  committed stays `SUCCEEDED` with its commit, values ref and artifact bytes
+  still in the store, and only the member that could not continue fails;
+- a pinned attempt that wrote `commit.json` and then died: the retry adopts
+  that commit instead of running the container again, and a pinned retry after
+  a non-committing failure still sees the `/orkstack/shared` its failed
+  predecessor left;
+- a run terminated from outside the workflow while a pin is open: no workflow
+  code runs, so the pin's directory survives and the lease sweep is the only
+  collector — and only once that lease has expired;
+- every pin host in the pool saturated: the triggering task fails
+  `PIN_UNAVAILABLE` after the full creation timeout rather than immediately,
+  no pin directory is created for it, and the run already holding the slot is
+  undisturbed;
+- a Worker Deployment Version rollout while a task pin is open: the pin's
+  remaining members must stay on the process that opened it, never move to the
+  new version's Orker, and the run's unpinned tasks must keep their own
+  version's routing (§7.2).
 
 Every execution must eventually reach either a correct durable state or an
 explicit actionable failure. There is no documented third state such as stuck,

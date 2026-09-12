@@ -156,6 +156,49 @@ document, so `run get --attempts --json` is refused and points at
 attempt timeline with each failed attempt's error and a link that pins the log
 pane to that attempt, retaining namespace, task and attempt.
 
+### Task pins
+
+A **pin** is a named group of tasks of one orkflow that execute on one Orker
+and share `/orkstack/shared`. Two fields on `TaskRun` (`proto/orkstack/v1/run.proto`)
+carry that to both clients, and no new RPC, stream or `EventType` is added:
+
+- `string pin = 16` — the pin this task belongs to, spelled as the author
+  wrote it in `pin:`, and empty for a task that is not pinned.
+- `string orker_id = 17` — the Orker that produced this task's outcome. It is
+  populated for **every** task that reached an Orker, pinned or not, and is
+  empty only when the task never got to one (skipped, canceled before
+  dispatch) or its host died before reporting. An empty `orker_id` therefore
+  means "never reached an Orker", never "not pinned". A member lost with its
+  pin (`PIN_HOST_LOST`, `PIN_TIMEOUT`) reports nothing, so the engine backfills
+  its `orker_id` from another member of the same pin — a pin never moves, so a
+  sibling's value is that task's by construction. It stays empty only when no
+  member of that pin ever reported one, and the failure's `error.details` then
+  carries the Temporal session's raw OS host name as an explicitly labelled
+  best-effort lead, which is not an `orker_id`.
+
+Read together the two are the client-visible proof that a pin held: the
+members of one pin show one `pin` and one `orker_id`. Neither field names a
+queue, a session or a session id — `pin` is the user-facing word and Temporal's
+Worker Session underneath it stays internal, exactly as **queue** stays
+internal to **pool**.
+
+Parity expectation: both clients show the same two fields for the same task.
+`orkctl run get RUN` renders `POOL`, `PIN` and `ORKER` in the task table
+between the status and the attempt, each rendering an absent value as `-`, and
+`--json` carries them as protojson names them (`pin`, `orkerId`, omitted when
+empty) off the unchanged `GetRunResponse` envelope. The UI run page states
+`Pin <name>` and `Orker <id>` beside `Pool <pool>` on the task card, and tints
+each pin's member cards with one accent colour derived from the pin name, so
+"these ran together" is legible without reading the labels.
+
+`orkctl run watch` needs no new column: it streams events, and the
+`TASK_SCHEDULED` message the engine emits already reads
+`task scheduled on pool <pool>, pin <name>` for a pinned task and
+`task scheduled on pool <pool>` for an unpinned one.
+
+`TaskAttempt` already carried `orker_id` and `pool` (see "Task attempts"); a
+`pin` field there is additive and not part of this contract.
+
 ### Webhook administration
 
 Add a proto `WebhookService` with `RegisterWebhook`, `ListWebhooks`, and

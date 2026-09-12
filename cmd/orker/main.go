@@ -77,6 +77,15 @@ type config struct {
 	// heartbeatErr is a malformed or out-of-range heartbeat interval, refused
 	// at boot rather than clamped, by the same rule as the two errors above.
 	heartbeatErr error
+	// maxPins is MaxPinsVar: how many task pins this Orker hosts at once, and
+	// therefore whether it is a PIN HOST at all. Zero — the default — leaves an
+	// Orker that runs exactly as it did before pins existed: no session
+	// pollers, no extra task queue, and DescribeOrker reporting that a pinned
+	// submit to its pool must be refused rather than left waiting (§7.1, §7.2).
+	maxPins int32
+	// maxPinsErr is a malformed or negative pin cap, refused at boot by the
+	// same rule as the three errors above.
+	maxPinsErr error
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -87,10 +96,20 @@ type config struct {
 // exporting nothing.
 const TaskLogExportVar = "ORK_ORKER_TASK_LOG_EXPORT"
 
+// MaxPinsVar is orker.pins.max_concurrent: how many task pins this Orker hosts
+// at once (docs/DEPLOY.md §1).
+//
+// The default is 0 rather than "on" because EnableSessionWorker adds two
+// pollers and two task queues to the process (the SDK's session creation
+// worker and its per-host session activity worker), and a deployment that never
+// set the key must not acquire them.
+const MaxPinsVar = "ORK_ORKER_MAX_PINS"
+
 func loadConfig() config {
 	binding, err := task.ResolvePoolBinding(env("ORK_ORKER_POOL", ""), env("ORK_ORKER_QUEUE", ""))
 	taskLogExport, taskLogExportErr := envBool(TaskLogExportVar, false)
 	heartbeatInterval, heartbeatErr := envHeartbeatInterval()
+	maxPins, maxPinsErr := envMaxPins()
 	return config{
 		imageLayoutRoot:   env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
@@ -103,8 +122,36 @@ func loadConfig() config {
 		telemetryErr:      taskLogExportErr,
 		heartbeatInterval: heartbeatInterval,
 		heartbeatErr:      heartbeatErr,
+		maxPins:           maxPins,
+		maxPinsErr:        maxPinsErr,
 		deployment:        task.DeploymentFromEnv(),
 	}
+}
+
+// envMaxPins reads ORK_ORKER_MAX_PINS.
+//
+// Unset is the documented default of 0 — an Orker that hosts no pins. A value
+// this process cannot read, or a negative one, comes back as an error for run()
+// to refuse boot with, by the same rule envHeartbeatInterval applies: an
+// operator who wrote `two` or `-1` believing they had opted a pool into pins
+// must not get a silent 0, because every pinned submit to that pool would then
+// be refused with a message about no pin host existing — the one error that
+// would not name the cause.
+func envMaxPins() (int32, error) {
+	raw := env(MaxPinsVar, "")
+	if raw == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"%s=%q is not a whole number of pins (want e.g. 0, 1, 4)", MaxPinsVar, raw)
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf(
+			"%s=%q must be zero or more; 0 hosts no pins and is the default", MaxPinsVar, raw)
+	}
+	return int32(parsed), nil
 }
 
 // envHeartbeatInterval reads ORK_ORKER_HEARTBEAT_INTERVAL.
@@ -282,11 +329,22 @@ func main() {
 // took 23.9 s to stop its still-running sibling, all of it waiting for one
 // heartbeat. Capping it to the SAME number orkerOptions gives the dispatcher is
 // what makes the tick mean anything.
+// EnableSessionWorker is what makes this Orker a pin host, and it is the reason
+// ORK_ORKER_MAX_PINS defaults to 0. With it set the SDK starts two more pollers
+// beside the ordinary activity worker — a creation worker on
+// <queue>__internal_session_creation and a session activity worker on
+// <uuid>@<hostname> — and the second of those queue names is why no pin can
+// survive a restart: the uuid is minted fresh per worker start. With it unset
+// the SDK builds no session worker at all, so an Orker that never asked for
+// pins acquires no poller and no queue it did not have before this feature.
 func workerOptions(cfg config) worker.Options {
 	return cfg.deployment.Apply(worker.Options{
 		DisableRegistrationAliasing:  true,
 		DisableWorkflowWorker:        true,
 		MaxHeartbeatThrottleInterval: cfg.tick(),
+
+		EnableSessionWorker:               cfg.maxPins > 0,
+		MaxConcurrentSessionExecutionSize: int(cfg.maxPins),
 	})
 }
 
@@ -343,6 +401,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// value would make the boot log below disagree with what they asked for.
 	if cfg.heartbeatErr != nil {
 		return cfg.heartbeatErr
+	}
+	// And once more for the pin cap. An operator who asked for pins and got a
+	// silently-zero cap would have an Orker that refuses every pinned submit to
+	// its pool with a message about no pin host existing, which names the
+	// symptom and not the typo.
+	if cfg.maxPinsErr != nil {
+		return cfg.maxPinsErr
 	}
 
 	store, err := artifacts.NewFromEnv()
@@ -409,6 +474,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err := activities.Boot(ctx); err != nil {
 		return fmt.Errorf("orker boot checks failed: %w", err)
 	}
+	// The pin lease sweep: the backstop for a pin directory whose run was
+	// terminated from outside, where Temporal frees the session and no OrkStack
+	// code ever runs (§8.4). It ticks on ctx — the process's own signal context
+	// — so it stops at shutdown rather than outliving run(), and it never
+	// blocks this function's return.
+	//
+	// Started unconditionally, not only for a pin host. See
+	// orker.Activities.SweepPinLeases for why: it is one ReadDir a minute, the
+	// boot reap above is unconditional for the same reason, and gating it would
+	// leave the one case nothing else collects — a pinned input that reached a
+	// non-pin-hosting Orker's ordinary queue — with no collector at all.
+	go activities.SweepPinLeases(ctx)
 	taskWorker := worker.New(temporalClient, cfg.queue, workerOptions(cfg))
 	taskWorker.RegisterActivityWithOptions(
 		activities.ExecuteTask,
@@ -417,6 +494,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	taskWorker.RegisterActivityWithOptions(
 		activities.DescribeOrker,
 		activity.RegisterOptions{Name: task.ActivityDescribeOrker},
+	)
+	// Registered unconditionally, on the ordinary worker. The engine schedules
+	// it on the pin's own SESSION context, which is what routes it to the host
+	// that owns the directory (§8.5); an Orker with no pins registers a name
+	// nobody will ever schedule, which costs nothing and keeps the registration
+	// block one shape.
+	taskWorker.RegisterActivityWithOptions(
+		activities.ReleasePin,
+		activity.RegisterOptions{Name: task.ActivityReleasePin},
 	)
 
 	if err := taskWorker.Start(); err != nil {
@@ -433,6 +519,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"probe", task.ActivityDescribeOrker,
 		"orker_id", activities.Dispatcher().OrkerID,
 		"security_profile", activities.Dispatcher().Policy.ProfileID(),
+		// Whether this Orker is a pin host, and for how many pins at once. 0 is
+		// said out loud rather than omitted: it is the answer to "why was my
+		// pinned run refused at submit".
+		"max_pins", cfg.maxPins,
 		// The cancellation latency an operator is running with, said out loud:
 		// this is how long a running container can keep running after the
 		// engine asks for it to stop, and the longest Temporal outage one
@@ -483,6 +573,11 @@ func orkerOptions(
 		Refs:     refPredictor,
 		Pool:     cfg.pool,
 		BuildID:  cfg.deployment.BuildID,
+		// What DescribeOrker reports, and therefore what submit reads to decide
+		// whether a pinned task's pool could ever open its pin (§7.3, §7.4). It
+		// is the SAME number workerOptions turns EnableSessionWorker on with, so
+		// an Orker cannot advertise a capacity its worker does not poll for.
+		MaxPins: cfg.maxPins,
 		// The embedded OCI-layout fallback (§4.6). It is used ONLY when a
 		// pull of an already-pinned digest fails, and only after OrkStack has
 		// hashed the layout's root blob itself and matched it against the

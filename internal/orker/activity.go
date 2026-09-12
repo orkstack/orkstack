@@ -71,6 +71,11 @@ type Options struct {
 	Pool string
 	// MaxConcurrent is reported by DescribeOrker.
 	MaxConcurrent int32
+	// MaxPins is reported by DescribeOrker. Zero — the default — means this
+	// Orker hosts no pins, and a submit that pins a task to its pool is refused
+	// at submit rather than left waiting for a slot that does not exist (§7.1,
+	// §7.4).
+	MaxPins int32
 	// LayoutRoot is where embedded OCI image layouts live (§4.6).
 	LayoutRoot string
 	// HeartbeatInterval is how often an attempt's heartbeat loop ticks, and
@@ -101,6 +106,7 @@ type Activities struct {
 	dispatcher *OCIDispatcher
 	pool       string
 	maxConc    int32
+	maxPins    int32
 	// identityLock is held for the process's lifetime once Boot claims this
 	// Orker's identity, so no second live Orker can reap by the same label.
 	identityLock *os.File
@@ -165,6 +171,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		},
 		pool:    opts.Pool,
 		maxConc: opts.MaxConcurrent,
+		maxPins: opts.MaxPins,
 	}
 }
 
@@ -195,11 +202,12 @@ func (a *Activities) ExecuteTask(
 // report.
 func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrkerResult, error) {
 	result := &orkstackv1.DescribeOrkerResult{
-		OrkerId:         a.dispatcher.OrkerID,
-		BuildId:         a.dispatcher.BuildID,
-		Pool:            a.pool,
-		SecurityProfile: a.dispatcher.Policy.ProfileID(),
-		MaxConcurrent:   a.maxConc,
+		OrkerId:           a.dispatcher.OrkerID,
+		BuildId:           a.dispatcher.BuildID,
+		Pool:              a.pool,
+		SecurityProfile:   a.dispatcher.Policy.ProfileID(),
+		MaxConcurrent:     a.maxConc,
+		MaxConcurrentPins: a.maxPins,
 	}
 	if a.dispatcher.Runtime != nil {
 		info, err := a.dispatcher.Runtime.Describe(ctx)
@@ -216,6 +224,116 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		result.Rootless = info.Rootless
 	}
 	return result, nil
+}
+
+// ReleasePin removes one pin's shared directory (§8.5).
+//
+// The engine schedules it on the pin's OWN session, so it lands on the host
+// that owns the directory or nowhere at all — there is no branch here that
+// could remove another host's anything. It is idempotent: an absent directory
+// is a success, because release genuinely races the other two ways a pin ends
+// (a replacement Orker's boot reap, the lease sweep), and its failure is logged
+// by the engine's coroutine rather than failing the run. Cleanup is not
+// orchestration.
+//
+// The instance id is validated before any filesystem call, inside
+// ReleasePinDirectory: a malformed one is refused rather than rewritten, and it
+// is refused BEFORE anything is stat'ed, so a bad id can never be an
+// accidental removal.
+func (a *Activities) ReleasePin(ctx context.Context, in *orkstackv1.ReleasePinInput) error {
+	removed, err := ReleasePinDirectory(
+		a.dispatcher.WorkRoot, in.GetRunId(), in.GetPin().GetName(), in.GetPin().GetInstanceId())
+	if err != nil {
+		return err
+	}
+	if removed == "" {
+		// The boring path. Nothing happened, so nothing is logged: an absent
+		// directory is the expected outcome whenever a reap or a sweep got
+		// there first, and logging it would make the common case look like an
+		// event.
+		return nil
+	}
+	a.dispatcher.logger().Info("pin released",
+		"run", in.GetRunId(),
+		"pin", in.GetPin().GetName(),
+		"instance", in.GetPin().GetInstanceId(),
+		"path", removed)
+	return nil
+}
+
+// PinLeaseSweepInterval is how often SweepPinLeases ticks (§8.4).
+const PinLeaseSweepInterval = time.Minute
+
+// SweepPinLeases removes expired pin directories until ctx is done, and is the
+// third and last of §8.4's three ways a pin's directory ends.
+//
+// It runs UNCONDITIONALLY — whether or not this Orker hosts pins. Three reasons,
+// and the third is the one that makes it more than tidiness:
+//
+//   - It is cheap: one ReadDir of a directory the Orker already owns, once a
+//     minute, and on a non-pin-hosting Orker it finds nothing every time.
+//   - An operator who sets ORK_ORKER_MAX_PINS back to 0 restarts the process,
+//     and the boot reap (which is also unconditional) has already removed the
+//     previous life's directories — but a sweep gated on max_pins would be the
+//     one piece of that story that silently stopped, for no gain.
+//   - AcquirePin is driven by ExecuteTaskInput.pin, not by this Orker's own
+//     setting. A pinned input that reaches a max_pins=0 Orker's ORDINARY queue
+//     — which the engine will not send, but which nothing in the Orker refuses
+//     — still creates a directory, and a gated sweeper would be the only thing
+//     that could have collected it.
+//
+// The caller passes the process's own cancellable context, so the loop stops at
+// shutdown rather than outliving it.
+func (a *Activities) SweepPinLeases(ctx context.Context) {
+	ticker := time.NewTicker(PinLeaseSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			a.sweepPinLeasesOnce(now)
+		}
+	}
+}
+
+// sweepPinLeasesOnce is one tick, split out so a test can drive it without a
+// clock.
+func (a *Activities) sweepPinLeasesOnce(now time.Time) {
+	root := a.dispatcher.WorkRoot
+	if root == "" {
+		root = os.TempDir()
+	}
+	removed, err := SweepExpiredPinLeases(root, now)
+	for _, path := range removed {
+		a.dispatcher.logger().Info("pin lease expired", "path", path)
+	}
+	if err != nil {
+		// Warn, never fatal: the sweep is a backstop for a directory nothing
+		// will read again, and the next tick tries the same paths.
+		a.dispatcher.logger().Warn("pin lease sweep", "error", err)
+	}
+}
+
+// reapPinDirectories removes every pin directory found at boot (§8.4).
+//
+// It is UNCONDITIONAL, and deliberately so: a directory left behind by a
+// PREVIOUS life that did host pins must still be cleaned up by a boot that does
+// not, or turning ORK_ORKER_MAX_PINS back to 0 would strand the last run's
+// shared trees on disk with nothing left that would ever look for them.
+//
+// A removal failure is logged and does NOT fail Boot. The directory is dead by
+// construction — a fresh session-resource id is minted per worker start, so no
+// pin survives a restart — and refusing to accept work over a tree nothing will
+// ever read again is worse than starting; the lease sweep will try again.
+func (a *Activities) reapPinDirectories(root string) {
+	removed, err := ReapPinDirectories(root)
+	for _, path := range removed {
+		a.dispatcher.logger().Info("pin reaped", "path", path)
+	}
+	if err != nil {
+		a.dispatcher.logger().Warn("pin boot reap", "error", err)
+	}
 }
 
 // Boot performs the checks an Orker must pass before it accepts work.
@@ -266,6 +384,11 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if _, err := a.dispatcher.Runtime.Reap(ctx, a.dispatcher.OrkerID); err != nil {
 		return fmt.Errorf("reap orphaned containers: %w", err)
 	}
+	// And its own previous life's pin directories, beside the containers, for
+	// the same reason and with a stronger guarantee: a pin cannot outlive the
+	// worker process that opened its session, so every ork-pin-* under the work
+	// root is dead by construction rather than by heuristic (§8.4).
+	a.reapPinDirectories(root)
 	return nil
 }
 

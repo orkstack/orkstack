@@ -8,7 +8,7 @@ Finished:  2026-01-02T03:04:05Z
 Input:     {"url":"https://httpbin.org/json"}
 Output:    {"saved":"result.txt"}
 
-TASK       STATUS     ATTEMPT  EXIT  STARTED               FINISHED              ERROR
-fetch      SUCCEEDED  1        0     2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
-transform  SUCCEEDED  1        0     2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
-save       SUCCEEDED  1        0     2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
+TASK       STATUS     POOL  PIN  ORKER  ATTEMPT  EXIT  STARTED               FINISHED              ERROR
+fetch      SUCCEEDED  -     -    -      1        0     2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
+transform  SUCCEEDED  -     -    -      1        0     2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -
+save       SUCCEEDED  -     -    -      1        0     2026-01-02T03:04:05Z  2026-01-02T03:04:05Z  -

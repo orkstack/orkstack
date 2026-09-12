@@ -164,6 +164,13 @@ var Schema = []Var{
 	{Path: "orker.task_log_export", Env: "ORK_ORKER_TASK_LOG_EXPORT", Binaries: usesOrker, Kind: KindBool, Default: "false"},
 	{Path: "orker.heartbeat_interval", Env: "ORK_ORKER_HEARTBEAT_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultHeartbeatInterval)},
 
+	// orker.pins.max_concurrent is 0 (no default constant) rather than a
+	// derived-from-code literal: hosting zero pins is the deliberate
+	// zero-config default (docs/design/task-pinning-worker-session.md §7.1)
+	// — an Orker that never sets this starts no session pollers and behaves
+	// exactly as it did before pins existed.
+	{Path: "orker.pins.max_concurrent", Env: "ORK_ORKER_MAX_PINS", Binaries: usesOrker, Kind: KindInt, Default: "0"},
+
 	{Path: "orker.log.flush_bytes", Env: "ORK_ORKER_LOG_FLUSH_BYTES", Binaries: usesOrker, Kind: KindInt, Default: formatBytes(int64(orker.DefaultLogFlushBytes))},
 	{Path: "orker.log.flush_interval", Env: "ORK_ORKER_LOG_FLUSH_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultLogFlushInterval)},
 	{Path: "orker.log.max_bytes", Env: "ORK_ORKER_LOG_MAX_BYTES", Binaries: usesOrker, Kind: KindInt, Default: formatBytes(int64(orker.DefaultLogMaxBytes))},

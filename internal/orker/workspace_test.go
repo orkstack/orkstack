@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -111,6 +112,415 @@ func TestWorkspace_SealMakesInputReadOnlyBeforeTheContainerStarts(t *testing.T) 
 			t.Errorf("input/%s is %04o, want %04o", name, got, ModeInputFile)
 		}
 	}
+}
+
+// ------------------------------------------------------------- pin workspace
+
+// testInstanceID is the shape the engine mints through workflow.SideEffect: a
+// lowercase uuid, 36 bytes of [0-9a-f-].
+const testInstanceID = "3f9c1a2e-7b40-4d51-9a6f-2c8e5b71d0aa"
+
+// TestPinWorkspace_PermissionsMatchTheLayout is §8.2's tree, held on disk, and
+// it is the same two-halves argument TestWorkspace_PermissionsMatchTheLayout
+// makes about the per-attempt root: shared/ is 1777 with the sticky bit because
+// the workload may run as ANY uid, and that is only safe because the pin root
+// above it is 0700 and owned by the Orker's user.
+//
+// lease.json's 0600 is the third half. It lives in the 0700 parent BESIDE the
+// bind-mounted child rather than inside it, so nothing a workload can reach can
+// forge or extend a lease.
+func TestPinWorkspace_PermissionsMatchTheLayout(t *testing.T) {
+	workRoot := t.TempDir()
+	pin, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600)
+	if err != nil {
+		t.Fatalf("AcquirePin: %v", err)
+	}
+	t.Cleanup(func() { _ = removeSealedTree(pin.Root) })
+
+	if got := modeOf(t, pin.Root); got != ModeAttempt {
+		t.Errorf("the pin root is %04o, want %04o — 0700 is what makes the 1777 shared/ child "+
+			"safe from other host users", got, ModeAttempt)
+	}
+	if got := modeOf(t, pin.Shared); got != ModeWritableDir {
+		t.Errorf("shared/ is %04o, want %04o — every task of the pin may run as a different uid "+
+			"and each must be able to create here without being able to delete another's files",
+			got, ModeWritableDir)
+	}
+	if got := modeOf(t, pin.LeasePath); got != ModePinLease {
+		t.Errorf("lease.json is %04o, want %04o", got, ModePinLease)
+	}
+	// The directory name is the (run, pin, instance) triple, which is what makes
+	// two members of one pin land on one directory and two openings of it land
+	// on two.
+	if want := filepath.Join(workRoot, "ork-pin-ork-1-build-"+testInstanceID); pin.Root != want {
+		t.Errorf("pin root = %q, want %q", pin.Root, want)
+	}
+	if want := filepath.Join(pin.Root, "shared"); pin.Shared != want {
+		t.Errorf("shared = %q, want %q", pin.Shared, want)
+	}
+}
+
+// TestAcquirePin_IsIdempotentAcrossAttempts is the property the whole feature
+// rests on: every member attempt of one pin calls AcquirePin, and they must all
+// succeed with the SAME directory. A second call that failed "already exists"
+// would break the pin on its second task; one that moved the lease forward
+// would break the backstop.
+func TestAcquirePin_IsIdempotentAcrossAttempts(t *testing.T) {
+	workRoot := t.TempDir()
+	first := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+	clone, err := acquirePinAt(workRoot, "ork-1", "build", testInstanceID, 3600, first)
+	if err != nil {
+		t.Fatalf("first AcquirePin: %v", err)
+	}
+	t.Cleanup(func() { _ = removeSealedTree(clone.Root) })
+	leaseAfterFirst, err := os.ReadFile(clone.LeasePath)
+	if err != nil {
+		t.Fatalf("read lease.json: %v", err)
+	}
+
+	// A file the first member wrote is what the second member is entitled to
+	// find. It survives the second Acquire, which is the sharing itself.
+	mustWrite(t, filepath.Join(clone.Shared, "src.txt"), "cloned")
+
+	// Two more arrivals an hour apart: a concurrent sibling and a retry.
+	for i, at := range []time.Time{first.Add(time.Minute), first.Add(time.Hour)} {
+		again, err := acquirePinAt(workRoot, "ork-1", "build", testInstanceID, 3600, at)
+		if err != nil {
+			t.Fatalf("AcquirePin %d: %v", i+2, err)
+		}
+		if again.Root != clone.Root || again.Shared != clone.Shared {
+			t.Fatalf("arrival %d got %+v, want the first arrival's %+v", i+2, again, clone)
+		}
+		if got := modeOf(t, again.Shared); got != ModeWritableDir {
+			t.Errorf("arrival %d left shared/ at %04o, want %04o", i+2, got, ModeWritableDir)
+		}
+		content, err := os.ReadFile(filepath.Join(again.Shared, "src.txt"))
+		if err != nil || string(content) != "cloned" {
+			t.Errorf("arrival %d cannot see what the first member wrote (%q, %v); a pin whose "+
+				"second task finds an empty shared/ is the wrong-result outcome the design refuses",
+				i+2, content, err)
+		}
+	}
+
+	// The lease is anchored to the FIRST arrival, not re-armed per call: it must
+	// never outlive a session Temporal has already declared dead.
+	leaseAfterThird, err := os.ReadFile(clone.LeasePath)
+	if err != nil {
+		t.Fatalf("read lease.json: %v", err)
+	}
+	if string(leaseAfterThird) != string(leaseAfterFirst) {
+		t.Errorf("lease.json moved on a later arrival:\nfirst: %s\nthird: %s\n"+
+			"the lease is anchored to when the pin OPENED, because the session's own "+
+			"ExecutionTimeout is", leaseAfterFirst, leaseAfterThird)
+	}
+	var lease pinLease
+	if err := json.Unmarshal(leaseAfterFirst, &lease); err != nil {
+		t.Fatalf("lease.json is not valid JSON: %v\n%s", err, leaseAfterFirst)
+	}
+	wantExpiry := first.Add(3600*time.Second + pinLeaseSlack).UTC().Format(time.RFC3339Nano)
+	if lease.ExpiresAt != wantExpiry {
+		t.Errorf("lease expiresAt = %q, want %q (first arrival + timeout + slack)",
+			lease.ExpiresAt, wantExpiry)
+	}
+	if lease.RunID != "ork-1" || lease.Pin != "build" {
+		t.Errorf("lease = %+v, want the run and pin it belongs to", lease)
+	}
+}
+
+// TestAcquirePin_RejectsAnInstanceIDItCannotTrust is §8.2's "validated, never
+// sanitized" — the same discipline ValidSecretName applies, for the same
+// reason: the id becomes a path component, and a REWRITTEN id would silently
+// name a different pin's shared directory instead of failing.
+//
+// The refusal happens before any filesystem call, which the empty work root
+// afterwards is the proof of.
+func TestAcquirePin_RejectsAnInstanceIDItCannotTrust(t *testing.T) {
+	for _, id := range []string{
+		"",                                      // nothing at all
+		"3f9c1a2e-7b40-4d51-9a6f-2c8e5b71d0a",   // 35 bytes: one short of a uuid
+		"3f9c1a2e-7b40-4d51-9a6f-2c8e5b71d0aab", // 37 bytes
+		"3F9C1A2E-7B40-4D51-9A6F-2C8E5B71D0AA",  // uppercase, so not what SideEffect mints
+		"3f9c1a2e-7b40-4d51-9a6f-2c8e5b71d0a/",  // a separator, at exactly 36 bytes
+		"../../../../../../tmp/pwned-aaaaaaaa",  // traversal, at exactly 36 bytes
+	} {
+		t.Run(id, func(t *testing.T) {
+			workRoot := t.TempDir()
+			if pin, err := AcquirePin(workRoot, "ork-1", "build", id, 3600); err == nil {
+				t.Fatalf("AcquirePin accepted instance id %q and built %s", id, pin.Root)
+			}
+			entries, err := os.ReadDir(workRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("a refused instance id still touched the filesystem: %v", entries)
+			}
+			// The removal path refuses it too, on the same check, so a bad id
+			// can never be an accidental removal either.
+			if _, err := ReleasePinDirectory(workRoot, "ork-1", "build", id); err == nil {
+				t.Errorf("ReleasePinDirectory accepted instance id %q", id)
+			}
+		})
+	}
+}
+
+// TestReleasePinDirectory_RemovesOnceAndThenSaysNothingHappened covers §8.5's
+// two halves: it removes the directory, and an absent directory is a SUCCESS.
+// The second half is not politeness — release genuinely races the boot reap and
+// the lease sweep, and cleanup is not orchestration.
+func TestReleasePinDirectory_RemovesOnceAndThenSaysNothingHappened(t *testing.T) {
+	workRoot := t.TempDir()
+	pin, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600)
+	if err != nil {
+		t.Fatalf("AcquirePin: %v", err)
+	}
+	// A 0500 directory under shared/ is what a workload can genuinely leave
+	// behind, and it is why removal is the chmod-then-RemoveAll walk rather
+	// than a plain RemoveAll.
+	locked := filepath.Join(pin.Shared, "locked")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(locked, "artifact"), "bytes")
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := ReleasePinDirectory(workRoot, "ork-1", "build", testInstanceID)
+	if err != nil {
+		t.Fatalf("ReleasePinDirectory: %v", err)
+	}
+	if removed != pin.Root {
+		t.Errorf("removed %q, want %q", removed, pin.Root)
+	}
+	if _, err := os.Stat(pin.Root); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the pin directory survived release: %v", err)
+	}
+
+	removed, err = ReleasePinDirectory(workRoot, "ork-1", "build", testInstanceID)
+	if err != nil {
+		t.Fatalf("a repeated release is an error: %v", err)
+	}
+	if removed != "" {
+		t.Errorf("a repeated release reported removing %q; nothing was there", removed)
+	}
+}
+
+// TestReapPinDirectories_RemovesEveryPinDirectoryAndNothingElse is the boot
+// reap of §8.4. It is unconditional by construction: a fresh session-resource
+// id is minted per worker start, so every pin directory found at boot is dead,
+// and no lease has to be read to know it.
+//
+// The per-attempt tree beside it is the control. Nothing removes a crashed
+// predecessor's attempt directories today, and this sweep must not start.
+func TestReapPinDirectories_RemovesEveryPinDirectoryAndNothingElse(t *testing.T) {
+	workRoot := t.TempDir()
+	live, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600)
+	if err != nil {
+		t.Fatalf("AcquirePin: %v", err)
+	}
+	other, err := AcquirePin(workRoot, "ork-2", "test", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 60)
+	if err != nil {
+		t.Fatalf("AcquirePin: %v", err)
+	}
+	attemptDir := filepath.Join(workRoot, "ork-run1-build-1-XXXX")
+	if err := os.Mkdir(attemptDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := ReapPinDirectories(workRoot)
+	if err != nil {
+		t.Fatalf("ReapPinDirectories: %v", err)
+	}
+	if len(removed) != 2 {
+		t.Errorf("reaped %v, want both pin directories", removed)
+	}
+	for _, root := range []string{live.Root, other.Root} {
+		if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s survived the boot reap: %v", root, err)
+		}
+	}
+	if _, err := os.Stat(attemptDir); err != nil {
+		t.Errorf("the boot reap removed a per-attempt directory (%v); its prefix is ork-, not "+
+			"ork-pin-, and nothing in this phase changes what happens to it", err)
+	}
+}
+
+// TestSweepExpiredPinLeases_RemovesOnlyWhatIsDead covers the third way a pin
+// ends (§8.4): the backstop for a run terminated from outside, where Temporal
+// frees the session and no OrkStack code ever runs.
+//
+// The four cases together are the whole decision, including the documented
+// judgment call: a missing or undecodable lease reads as ABANDONED, but only
+// after pinLeaseSlack, so a sweep tick landing in the sub-millisecond window
+// between AcquirePin's MkdirAll and its lease write cannot delete a pin that is
+// about to be used.
+func TestSweepExpiredPinLeases_RemovesOnlyWhatIsDead(t *testing.T) {
+	workRoot := t.TempDir()
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+	// Alive: opened a minute ago with an hour's budget.
+	alive, err := acquirePinAt(workRoot, "ork-1", "alive", testInstanceID, 3600, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Dead: opened two hours ago with a minute's budget.
+	dead, err := acquirePinAt(workRoot, "ork-2", "dead",
+		"bbbbbbbb-1111-2222-3333-444444444444", 60, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No lease, just created: the race window. Must survive.
+	fresh := filepath.Join(workRoot, "ork-pin-ork-3-fresh-cccccccc-1111-2222-3333-444444444444")
+	if err := os.Mkdir(fresh, ModeAttempt); err != nil {
+		t.Fatal(err)
+	}
+	// No lease, and old: abandoned by an attempt that died between the mkdir
+	// and the lease write. Nothing will ever repair it, so the sweep collects
+	// it rather than leaking it until the next restart.
+	orphan := filepath.Join(workRoot, "ork-pin-ork-4-orphan-dddddddd-1111-2222-3333-444444444444")
+	if err := os.Mkdir(orphan, ModeAttempt); err != nil {
+		t.Fatal(err)
+	}
+	// An UNDECODABLE lease, and old: a torn write. Treated exactly as a
+	// missing one.
+	torn := filepath.Join(workRoot, "ork-pin-ork-5-torn-eeeeeeee-1111-2222-3333-444444444444")
+	if err := os.Mkdir(torn, ModeAttempt); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(torn, "lease.json"), `{"expiresAt": "not-a-`)
+	for _, dir := range []string{orphan, torn} {
+		old := now.Add(-time.Hour)
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removed, err := SweepExpiredPinLeases(workRoot, now)
+	if err != nil {
+		t.Fatalf("SweepExpiredPinLeases: %v", err)
+	}
+	gone := map[string]bool{}
+	for _, path := range removed {
+		gone[path] = true
+	}
+	for _, want := range []string{dead.Root, orphan, torn} {
+		if !gone[want] {
+			t.Errorf("%s survived the sweep; removed = %v", want, removed)
+		}
+	}
+	for _, keep := range []string{alive.Root, fresh} {
+		if gone[keep] {
+			t.Errorf("the sweep removed %s, which is still live", keep)
+		}
+		if _, err := os.Stat(keep); err != nil {
+			t.Errorf("stat %s after the sweep: %v", keep, err)
+		}
+	}
+}
+
+// TestWorkspace_MountsAddTheSharedBindOnlyWhenPinned is the backward
+// compatibility proof at the mount level: an attempt that is not pinned renders
+// exactly the four binds it rendered before pins existed, in the same order.
+func TestWorkspace_MountsAddTheSharedBindOnlyWhenPinned(t *testing.T) {
+	ws := newTestWorkspace(t)
+
+	unpinned := ws.Mounts()
+	want := []Mount{
+		{Source: ws.Input, Destination: ContainerInput, ReadOnly: true},
+		{Source: ws.Secrets, Destination: ContainerSecrets, ReadOnly: true},
+		{Source: ws.Output, Destination: ContainerOutput},
+		{Source: ws.Tmp, Destination: ContainerTmp},
+	}
+	if len(unpinned) != len(want) {
+		t.Fatalf("an unpinned attempt renders %d mounts, want the same %d as before pins existed: %+v",
+			len(unpinned), len(want), unpinned)
+	}
+	for i := range want {
+		if unpinned[i] != want[i] {
+			t.Errorf("mount %d = %+v, want %+v", i, unpinned[i], want[i])
+		}
+	}
+
+	ws.Shared = filepath.Join(t.TempDir(), "shared")
+	pinned := ws.Mounts()
+	if len(pinned) != len(want)+1 {
+		t.Fatalf("a pinned attempt renders %d mounts, want %d: %+v", len(pinned), len(want)+1, pinned)
+	}
+	shared := pinned[len(pinned)-1]
+	if shared.Source != ws.Shared || shared.Destination != ContainerShared {
+		t.Errorf("the shared mount is %+v, want source %q at %q", shared, ws.Shared, ContainerShared)
+	}
+	if shared.ReadOnly {
+		t.Error("/orkstack/shared is mounted read-only; the whole point is that the next task of " +
+			"the pin finds what this one wrote")
+	}
+}
+
+// TestWorkspace_TaskJSONCarriesThePinOnlyWhenPinned is §3.2's additive rule
+// held as data. Both keys are ABSENT — not empty — for an unpinned task, which
+// is what keeps schemaVersion at 1 and costs a workload that has never heard of
+// pins nothing.
+func TestWorkspace_TaskJSONCarriesThePinOnlyWhenPinned(t *testing.T) {
+	base := func() (*orkstackv1.ExecuteTaskInput, TaskContext) {
+		return &orkstackv1.ExecuteTaskInput{
+			RunId: "ork-1", OrkflowName: "o", OrkflowVersion: "1", TaskId: "compile",
+			Limits: testLimits(),
+		}, TaskContext{
+			Attempt: 2, Pool: "main", Namespace: "default", Network: NetworkNone,
+			Image: &orkstackv1.ImageRef{Reference: "shell", Pinned: "x@sha256:y", IndexDigest: "sha256:y"},
+		}
+	}
+	read := func(t *testing.T, ws *Workspace) (task, paths map[string]any) {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(ws.Input, "task.json"))
+		if err != nil {
+			t.Fatalf("read task.json: %v", err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("task.json is not valid JSON: %v\n%s", err, raw)
+		}
+		task, _ = doc["task"].(map[string]any)
+		paths, _ = doc["paths"].(map[string]any)
+		return task, paths
+	}
+
+	t.Run("unpinned omits both keys", func(t *testing.T) {
+		ws := newTestWorkspace(t)
+		in, tc := base()
+		if err := ws.WriteTaskJSON(in, tc); err != nil {
+			t.Fatalf("WriteTaskJSON: %v", err)
+		}
+		task, paths := read(t, ws)
+		if _, present := task["pin"]; present {
+			t.Errorf("task.pin is present for an unpinned task: %v", task["pin"])
+		}
+		if _, present := paths["shared"]; present {
+			t.Errorf("paths.shared is present for an unpinned task: %v — the mount does not "+
+				"exist, so naming its path would be a lie", paths["shared"])
+		}
+	})
+
+	t.Run("pinned carries the pin and the path", func(t *testing.T) {
+		ws := newTestWorkspace(t)
+		in, tc := base()
+		tc.Pin = &orkstackv1.PinContext{
+			Name: "build", InstanceId: testInstanceID, TimeoutSeconds: 3600,
+		}
+		if err := ws.WriteTaskJSON(in, tc); err != nil {
+			t.Fatalf("WriteTaskJSON: %v", err)
+		}
+		task, paths := read(t, ws)
+		pin, _ := task["pin"].(map[string]any)
+		if pin["name"] != "build" || pin["instanceId"] != testInstanceID {
+			t.Errorf("task.pin = %v, want name build and instanceId %s", pin, testInstanceID)
+		}
+		if paths["shared"] != ContainerShared {
+			t.Errorf("paths.shared = %v, want %q", paths["shared"], ContainerShared)
+		}
+	})
 }
 
 // TestWorkspace_TaskJSONMatchesTheSchema walks the §3.2 table.

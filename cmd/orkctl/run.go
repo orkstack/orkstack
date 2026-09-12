@@ -307,10 +307,16 @@ func renderRun(out io.Writer, run *orkstackv1.Run) error {
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "TASK\tSTATUS\tATTEMPT\tEXIT\tSTARTED\tFINISHED\tERROR")
+	// POOL/PIN/ORKER sit between the identity and the outcome: WHERE a task ran
+	// is the question asked right after WHAT it is and HOW it ended. PIN and
+	// ORKER together are the client-visible proof a pin held — same pin, same
+	// orker. ORKER is filled for every task that reached an Orker, pinned or
+	// not; a dash therefore means "never got there", not "not pinned".
+	fmt.Fprintln(table, "TASK\tSTATUS\tPOOL\tPIN\tORKER\tATTEMPT\tEXIT\tSTARTED\tFINISHED\tERROR")
 	for _, taskRun := range run.GetTaskRuns() {
-		fmt.Fprintf(table, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
 			taskRun.GetTaskId(), taskStatusLabel(taskRun),
+			orDash(taskRun.GetPool()), orDash(taskRun.GetPin()), orDash(taskRun.GetOrkerId()),
 			taskRun.GetAttempt(), taskRun.GetExitCode(), formatTime(taskRun.GetStartedAt()),
 			formatTime(taskRun.GetFinishedAt()), errorLine(taskRun.GetError()))
 	}

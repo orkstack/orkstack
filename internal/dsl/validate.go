@@ -6,9 +6,16 @@ import (
 	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	// taskpool is imported for ONE constant: the name of the default pool.
+	// Rule 10 has to know that an absent pool and "main" are one pool, and
+	// QueueForPool (internal/task/pool.go:82) is where that is already true.
+	// Reading the name from there rather than writing "main" here is what
+	// keeps the compiler's idea of "the same pool" from drifting from the
+	// router's.
+	taskpool "github.com/orkstack/orkstack/internal/task"
 )
 
-// validate enforces the eight documented DSL rules (docs/DSL.md).
+// validate enforces the thirteen documented DSL rules (docs/DSL.md).
 func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	// Rule 6 checks that `uses:` is present and resolvable through the
 	// CATALOG, not that it names something this binary was compiled to know
@@ -48,6 +55,52 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 			return fmt.Errorf("duplicate task id %q", task.GetId())
 		}
 		byID[task.GetId()] = task
+	}
+
+	// Rule 9 (declarations) and rule 13: every declared pin is named once, by
+	// a slug, and carries a timeout that is not negative.
+	//
+	// A pin name is slug-bounded for a reason the other slugs do not have: it
+	// becomes a directory component on the pin host
+	// (<workdir>/ork-pin-<run>-<pin>-<instance>, §8.2), and a slug is exactly
+	// what safeComponent would not have to rewrite. A name the Orker would
+	// have to sanitize is a name the author did not write.
+	//
+	// The duplicate check cannot fire for a compiled document — document.Pins
+	// is a Go map, so YAML cannot hand us the same key twice — and it is here
+	// because validate also guards a HAND-BUILT Orkflow arriving at
+	// internal/api, which never met the YAML decoder. Rule 3 makes the same
+	// bet about task ids and for the same reason.
+	byPin := make(map[string]*orkstackv1.Pin, len(wf.GetPins()))
+	for pinIndex, pin := range wf.GetPins() {
+		field := fmt.Sprintf("pins[%d]", pinIndex)
+		if err := checkSlug("pin name", pin.GetName()); err != nil {
+			return validationError(field, err)
+		}
+		if _, dup := byPin[pin.GetName()]; dup {
+			return validationError(field, fmt.Errorf("duplicate pin %q", pin.GetName()))
+		}
+		// Rule 13: reject a NEGATIVE timeout only.
+		//
+		// docs/DSL.md phrases the rule as "when present, at least 1", and 0 is
+		// how "not present" arrives here: Pin.timeout_seconds is a plain
+		// proto int32, so by the time validate sees it, an author who wrote
+		// `timeout_seconds: 0` and an author who wrote nothing are one value —
+		// and the design gives that value one meaning, DERIVED (§4.4's
+		// "optional; default derived", §6.3's "or when 0: Σ over members").
+		// Enforcing ">= 1 if the author typed something" would need the
+		// *int32 that only pinDocument has, i.e. a rule the YAML front end
+		// could apply and a hand-built request could skip — two answers to
+		// one question, in the class validate exists to close. So 0 is
+		// accepted as "derived" however it was written, and the only value
+		// that names no lifetime at all is refused.
+		if pin.GetTimeoutSeconds() < 0 {
+			return validationError(field+".timeout_seconds", fmt.Errorf(
+				"pin %q: timeout_seconds %d is negative — omit it (or 0) for the derived "+
+					"default, which is the sum of the pin's tasks' own budgets",
+				pin.GetName(), pin.GetTimeoutSeconds()))
+		}
+		byPin[pin.GetName()] = pin
 	}
 
 	for taskIndex, task := range wf.GetTasks() {
@@ -114,6 +167,23 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 				return err
 			}
 		}
+		// Rule 9 (references): a task's pin names a DECLARED pin.
+		//
+		// This is rule 4's rule for a different reference: `needs: [ghost]` is
+		// refused rather than ignored, and so is `pin: buidl`. It is the whole
+		// argument for declaring pins at the top level (§4.2) — an implicit
+		// group is a reference that cannot be found to be missing, so a typo
+		// would quietly run one task alone on its own host instead of with
+		// the group its author meant.
+		if pin := task.GetPin(); pin != "" {
+			if err := checkSlug(fmt.Sprintf("task %q: pin", task.GetId()), pin); err != nil {
+				return validationError(fmt.Sprintf("tasks[%d].pin", taskIndex), err)
+			}
+			if _, ok := byPin[pin]; !ok {
+				return validationError(fmt.Sprintf("tasks[%d].pin", taskIndex),
+					fmt.Errorf("task %q pins to unknown pin %q", task.GetId(), pin))
+			}
+		}
 	}
 
 	// Rule 5: the needs graph is acyclic.
@@ -142,7 +212,86 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 			return err
 		}
 	}
+
+	// Rules 10, 11 and 12: what one pin's members must agree on, and that
+	// every declaration has members. A cross-task pass, like rules 5 and 8
+	// above, because each answer is a property of the GROUP and no single task
+	// carries it.
+	//
+	// The comparison is against the FIRST member in declaration order, so the
+	// error always names the same two tasks for the same document.
+	firstOf := make(map[string]*orkstackv1.Task, len(byPin))
+	for taskIndex, task := range wf.GetTasks() {
+		pin := task.GetPin()
+		if pin == "" {
+			continue
+		}
+		first, seen := firstOf[pin]
+		if !seen {
+			firstOf[pin] = task
+			continue
+		}
+		// Rule 10: one pin, one pool — necessarily, because a pin is one
+		// process answering from one pool's queue, so a pin spanning two
+		// pools is not implementable rather than merely unwise (§4.3).
+		//
+		// Compared NORMALIZED: an absent pool and "main" are one pool here
+		// because they are one route in QueueForPool, so a document that
+		// spells the default two ways is not refused for a difference that
+		// does not exist. This is the compile-time check on the LITERAL
+		// values only. The same rule is checked again in
+		// PoolResolver.Plan (internal/engine/pools.go) after namespace-default
+		// resolution, on the resolved route's pool — two tasks whose literal
+		// pools agree can still resolve apart, and a hand-built request skips
+		// this file entirely. Rule 7 is split between compiler and server the
+		// same way, for the same reason.
+		if normalizedPool(first.GetPool()) != normalizedPool(task.GetPool()) {
+			return validationError(fmt.Sprintf("tasks[%d].pool", taskIndex), fmt.Errorf(
+				"pin %q spans two pools: task %q names pool %q and task %q names pool %q — "+
+					"a pin is ONE Orker out of one pool's set, so every task of a pin must name "+
+					"the same pool (an absent pool and %q are the same pool)",
+				pin, first.GetId(), first.GetPool(), task.GetId(), task.GetPool(), taskpool.DefaultPool))
+		}
+		// Rule 11: one pin, one run_as_orker_user.
+		//
+		// /orkstack/shared is 1777 with the sticky bit, like output/, so two
+		// members running as different uids can each create files the other
+		// cannot delete or overwrite — the classic sticky-bit failure, and the
+		// most common way for a pin to break on its SECOND task. Agreement
+		// does not remove the difference between two images' baked-in USERs
+		// when the flag is false; that residue is what internal/api's
+		// all-false WARNING is for (§4.4).
+		if first.GetRunAsOrkerUser() != task.GetRunAsOrkerUser() {
+			return validationError(fmt.Sprintf("tasks[%d].run_as_orker_user", taskIndex), fmt.Errorf(
+				"pin %q disagrees on run_as_orker_user: task %q has %t and task %q has %t — "+
+					"/orkstack/shared is sticky-bit 1777, so members running as different users "+
+					"can each create files the other cannot replace",
+				pin, first.GetId(), first.GetRunAsOrkerUser(), task.GetId(), task.GetRunAsOrkerUser()))
+		}
+	}
+	// Rule 12: a declaration nothing references is a typo, and refusing it
+	// costs less than a pin that would open a session for nobody. It cannot
+	// open one — opening is lazy, on the first member that is ready — but the
+	// document is still wrong, and the author who wrote `pins: {buidl: {}}`
+	// alongside `pin: build` is told which half is unreferenced.
+	for _, pin := range wf.GetPins() {
+		if _, used := firstOf[pin.GetName()]; !used {
+			return validationError(fmt.Sprintf("pins.%s", pin.GetName()),
+				fmt.Errorf("pin %q is declared but no task references it", pin.GetName()))
+		}
+	}
 	return nil
+}
+
+// normalizedPool collapses the two spellings of the default pool into one, the
+// way QueueForPool does when it routes them (internal/task/pool.go:82). An
+// absent pool and "main" are one set of Orkers, so a rule about "the same
+// pool" must not see two.
+func normalizedPool(pool string) string {
+	if pool == "" {
+		return taskpool.DefaultPool
+	}
+	return pool
 }
 
 func sortedKeys(set map[string]struct{}) []string {

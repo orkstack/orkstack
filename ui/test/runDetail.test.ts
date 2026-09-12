@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { ArtifactRefSchema, PayloadSchema } from '../src/lib/gen/orkstack/v1/common_pb';
-import { artifactMetadata, downloadFilename, formatDuration, payloadJson, runCommand, shellQuote, timestampJson } from '../src/lib/runDetail';
+import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, shellQuote, timestampJson } from '../src/lib/runDetail';
 
 test('copyable run commands quote every page-derived coordinate and name the namespace', () => {
 	expect(shellQuote("a' b")).toBe("'a'\"'\"' b'");
@@ -17,6 +17,35 @@ test('payloads and artifact metadata export values without treating storage URIs
 		name: 'report.csv', uri: 's3://private/report.csv', contentType: 'text/csv', sizeBytes: 12n, sha256: 'abc', metadata: { source: 'task' }
 	}))).toEqual({ name: 'report.csv', contentType: 'text/csv', sizeBytes: '12', sha256: 'abc', metadata: { source: 'task' } });
 	expect(downloadFilename('../private\u0000report.csv')).toBe('.._private_report.csv');
+});
+
+test('one pin gets one accent, and an unpinned task gets none', () => {
+	// The claim the run page rests on: members of one pin are tinted alike, so
+	// "these ran together" is visible without reading each label.
+	expect(pinAccent('build')).toBe(pinAccent('build'));
+	// Stable across calls in any order, because it hashes the NAME and not the
+	// task's position — a run streaming its tasks in must not recolour cards
+	// already on screen as later pins arrive.
+	const first = pinAccent('build');
+	pinAccent('publish');
+	expect(pinAccent('build')).toBe(first);
+
+	// An unpinned task is not a group of one and is left untinted.
+	expect(pinAccent('')).toBeUndefined();
+
+	// Every accent is one of the declared --color-pin-* token families, so a
+	// name can never compose a var() that resolves to nothing.
+	const accents = ['pin-a', 'pin-b', 'pin-c', 'pin-d', 'pin-e', 'pin-f'];
+	for (const name of ['build', 'publish', 'a', 'zzz', 'pin with spaces', '🍕', 'x'.repeat(500)]) {
+		expect(accents).toContain(pinAccent(name));
+	}
+
+	// Two names must actually be able to land on different accents, or the
+	// tint says nothing. `build` and `verify` specifically, because
+	// ui/e2e/run-page-pins.spec.ts asserts on screen that those two pins are
+	// drawn apart — if this pair ever collided, that spec would be testing a
+	// coincidence.
+	expect(pinAccent('build')).not.toBe(pinAccent('verify'));
 });
 
 test('durations only use two authoritative timestamps', () => {

@@ -325,6 +325,7 @@ then the variable it becomes.
 | `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat actually reaches Temporal. Two consequences, both real: it is the longest a **cancellation** waits before the Orker acts on it — Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long — and it is the longest **Temporal frontend outage** a running container survives, since the SDK gives up on an activity whose heartbeat RPC keeps failing for a whole interval. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` where Temporal is local or highly available; raise it where the frontend is flaky |
+| `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no session pollers, so an Orker that never set the key runs exactly as it does today; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
 | `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
@@ -380,6 +381,48 @@ needed) — every key present, in this table's order, each one commented out
 at its own default. `deploy/orkstack.example.yaml` stays the worked,
 hand-annotated example for a real deployment to start from; the generated
 file is the reference, not something to copy and edit by hand.
+
+### Pin hosting is a pool-wide setting
+
+Pin hosting is a property of a **pool**, not of a process: set the same
+`ORK_ORKER_MAX_PINS` on every Orker of a pool, because the submit-time probe
+that refuses a pin with no host to open it on asks one Orker of the pool and
+takes that answer as representative — a mixed pool is refused or accepted
+depending on who answered, and a pin accepted onto Orkers that in fact set `0`
+waits for a slot that never appears and then fails the run.
+
+### Pins on a versioned deployment
+
+Pins work with Worker Deployment Versioning (`ORK_BUILD_ID`, §2), and what
+holds a pin in place is **not** the routing versioning uses. Measured on a real
+cluster by `internal/engine/versioning_pin_integration_test.go`
+(`TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout`), with a pin
+host on v1, a second on v2, and the Current Version rolled forward while a pin
+was open:
+
+- the pin's session **creation** activity is routed by version exactly like any
+  other activity of a pinned run: scheduled on
+  `<pool queue>__internal_session_creation` and dispatched to a pin host of the
+  run's own version, with versioning in effect;
+- the pin's **member** activities ride the session's own `<uuid>@<hostname>`
+  queue, which the SDK polls *unversioned*, and reach the one process that
+  polls it. The member scheduled after v2 became Current still executed on v1's
+  Orker, as did the pin's release and the SDK's session completion activity;
+- the run's unpinned tasks kept the ordinary version-pinned routing, and a
+  pinned run submitted after the switch opened its pin on v2 — so the older
+  pin stayed put by routing, not because the newer version was idle.
+
+Two consequences for a rollout. First, a pin is bound to a **process**, not to
+a version, so §3 step 5's wait for `Drained` is what keeps an open pin's host
+alive; and restarting that same process — even at the same build id — loses the
+pin rather than moving it, because the per-host session queue name is minted
+fresh on every worker start. Second, the SDK's own doc comment still says
+`DeploymentOptions.UseVersioning` "cannot be enabled at the same time as
+`EnableSessionWorker`" (`temporalio/sdk-go#1227`), while the only enforced panic
+covers the deprecated `UseBuildIDForVersioning` flag. The combination OrkStack
+produces is therefore accepted and behaves as above, but it is not a supported
+upstream configuration — which is why that integration test, not the doc
+comment, is the contract, and why it runs on every proof.
 
 ### The bucket stops being optional at the second replica
 

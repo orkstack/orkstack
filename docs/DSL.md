@@ -13,6 +13,7 @@ applied to the `ork` engine with `orkctl apply`.
 | `description` | no       | Human description.                                     |
 | `labels`      | no       | `map[string]string` for organization/filtering, free-form — no key shape, entry count, or value size is enforced here. When telemetry is on, at most 32 of them (sorted by key) are exported as `ork.label.<key>` telemetry attributes, each key and value sanitized for that boundary (`docs/DEPLOY.md`, "Per-namespace policy"). |
 | `inputs`      | no       | Declared input parameters (see below).                 |
+| `pins`        | no       | Declared task pins (see below).                        |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
 ### `namespace`
@@ -147,6 +148,7 @@ tasks:
       backoff_coefficient: 2.0
       maximum_interval_seconds: 100
     pool: ""              # optional Orker pool; absent means the default pool
+    pin: ""               # optional declared pin; absent means unpinned
     command: ["curl", "--version"] # optional image ENTRYPOINT/CMD override; argv
     env:                  # workload environment only; no platform state
       MODE: probe
@@ -191,6 +193,104 @@ Orkers has one name — so the pool a run reports a task on is a pool you can
 write to reach those same Orkers. A task that names a pool with no live
 Orkers is refused at submit rather than left waiting for one.
 
+## Pins
+
+A **pin** is a named group of tasks that execute on one Orker process and share
+one read-write directory, `/orkstack/shared`, for the life of the group. Where
+`pool:` says *which Orkers* a task may run on, `pin:` says *which one member of
+that set*, for these tasks, together.
+
+```yaml
+name: build-and-test
+version: "1.0.0"
+
+pins:
+  build:                       # a pin is declared once, by name
+    timeout_seconds: 3600      # optional: the pin's whole lifetime
+
+tasks:
+  - id: clone
+    uses: git
+    pin: build                 # a task joins a pin by name, like `pool:`
+    run_as_orker_user: true
+    with: { op: clone, url: "{{ .inputs.repo }}", dest: /orkstack/shared/src }
+
+  - id: compile
+    uses: golang
+    pin: build
+    needs: [clone]             # `needs:` is unchanged and still required for order
+    run_as_orker_user: true
+    command: [sh, -c, "cd /orkstack/shared/src && go build -o /orkstack/shared/bin/app ./..."]
+
+  - id: test
+    uses: golang
+    pin: build
+    needs: [compile]
+    run_as_orker_user: true
+    command: [sh, -c, "cd /orkstack/shared/src && go test ./... > /orkstack/output/artifacts/report.txt"]
+
+  - id: publish                # unpinned: runs wherever the pool sends it and
+    uses: file                 # sees `test` only through its committed artifacts
+    needs: [test]
+    with: { op: checksum, src: '{{ artifact "test/report.txt" }}' }
+```
+
+The `uses:` names above are illustrative — a deployment's catalog decides what
+they resolve to. For a pin written against the first-party activity images and
+compiled by the test suite, see `examples/pinned-build.ork.yaml`.
+
+`pins:` is a top-level map from pin name to a (possibly empty) options object;
+`pins: { build: {} }` is legal. `pin:` on a task is a bare name and must name a
+declared pin — a name nothing declared is refused at compile, exactly as a
+`needs` entry that names no task is, so a typo cannot silently create a second,
+one-task group. A pin's only option today is `timeout_seconds`, the whole
+group's lifetime from the moment its first task is dispatched until its last
+task ends; `0` or absent means derived, as the sum of every member task's own
+wall-clock budget, which is the sequential worst case. The lifetime is declared
+on the pin rather than on a task because it is a property of the group, and
+asking which task's value wins is the shape of question the compiler exists to
+refuse.
+
+Every task of one pin must name the same pool and the same
+`run_as_orker_user`. A pin cannot span two pools: it is one process out of one
+pool's set. `/orkstack/shared` is `1777` with the sticky bit, like `output/`, so
+two members running as different UIDs can each create files the other cannot
+delete or overwrite; agreeing on `run_as_orker_user` removes the most common way
+for a pin to break on its second task, and `run_as_orker_user: true` across a
+pin is the recommendation.
+
+A pin needs a host to open on, and it never moves once opened. A task pinned
+into a pool whose Orkers host no pins is refused at submit, the way a pool with
+no live Orkers is (`docs/DEPLOY.md` §1). If a pin's host is lost mid-run, its
+unfinished tasks fail with an infrastructure error naming the pin and the run
+fails: the alternative would be restarting them somewhere with an empty
+`/orkstack/shared`, which is a wrong answer rather than a slow one.
+
+**A pin imposes no ordering.** The `needs` graph is the one scheduling model,
+and membership in a pin adds no edge to it: two tasks in a pin with no `needs:`
+edge between them run concurrently, on the same Orker, sharing
+`/orkstack/shared` concurrently — the author's own concurrency contract with
+their filesystem, exactly as it would be for two processes on one machine. This
+is the one place the familiar `workingDir` analogy misleads: Kestra serializes
+the tasks that share one working directory, and OrkStack's pin does not.
+
+`/orkstack/shared` is an additive convenience, never a replacement for the
+commit protocol. It is visible only within one pin: an unpinned downstream
+task — and a task in a *different* pin — sees a pinned task's work only through
+its committed `values.json` and artifacts, which is unchanged and remains the
+only cross-task channel the engine knows about. A pinned task is not required
+to touch `/orkstack/shared` at all. The platform does not keep the two channels
+consistent with each other, so a task that wants something under
+`/orkstack/shared` to outlive the pin also writes it to
+`/orkstack/output/artifacts/`, where it becomes an artifact like any other. A
+retried attempt gets a fresh per-attempt workspace but the **same**
+`/orkstack/shared`, as the previous attempt left it, so a step that mutates
+shared state should be idempotent or attempt-aware (`task.json` carries
+`task.attempt` and `idempotencyKey`) — the same at-least-once caveat that
+already applies to a task's external side effects, now applied to the host's
+own disk. Do not copy a secret into `/orkstack/shared`: that puts it on disk
+for the pin's lifetime, the same warning that applies to `output/`.
+
 ## Templating
 
 Task `with` values and `condition` are rendered with Go `text/template` against
@@ -220,6 +320,17 @@ referencing an unrelated task's output is a compile-time error.
 6. `uses` is a non-empty catalog activity name or OCI registry reference.
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks.
+9. Every `pin:` names a key of `pins:`; each pin name is slug-formatted.
+10. Every task of one pin names the same pool, treating an absent pool and
+    `main` as equal.
+11. Every task of one pin has the same `run_as_orker_user`.
+12. Every declared pin is used by at least one task. A declaration nothing
+    references is a typo.
+13. `pins.<name>.timeout_seconds` is not negative. `0` and absent are one
+    value — both mean derived — so a literal `timeout_seconds: 0` is accepted
+    and means the same thing as omitting the key; the compiled field is a plain
+    integer in which the two cannot be told apart, and every rule the compiler
+    applies must also hold for a request that never met this YAML.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
@@ -248,9 +359,9 @@ that fold to the same sanitized key keep only the one that sorts first.
 
 A slug is at most **200 bytes**, in every position above. The bound is half the
 rule and not a detail of it: a namespace, an orkflow name and a version are
-path components of a stored object key, and a pool becomes an execution
-channel, so a longer name is one the compiler could accept and nothing could
-store. It is the same 200 the orkflow store and the namespace registry enforce
+path components of a stored object key, a pool becomes an execution channel,
+and a pin name becomes a directory component on the Orker, so a longer name is
+one the compiler could accept and nothing could store. It is the same 200 the orkflow store and the namespace registry enforce
 (`pkg/artifacts`), and the two are held together by measurement rather than by
 a shared constant: the artifact store is a public package and the compiler is
 not, so the store does not depend on the compiler and does not drag it into

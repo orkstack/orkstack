@@ -60,7 +60,7 @@ func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	// NOT source_yaml and NOT created_at (§4.4). The source is not part of
 	// what runs, and the stamp is per-apply — including either would make a
 	// re-apply of an unchanged document mint a different digest.
-	return canonicalJSON(map[string]any{
+	out := map[string]any{
 		"namespace":   wf.GetNamespace(),
 		"name":        wf.GetName(),
 		"version":     wf.GetVersion(),
@@ -68,7 +68,54 @@ func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 		"labels":      canonicalStringMap(wf.GetLabels()),
 		"inputs":      inputs,
 		"tasks":       tasks,
-	})
+	}
+	// pins is emitted ONLY when non-empty — see canonicalPins for why this one
+	// key breaks the "whether or not zero" rule the rest of this file follows.
+	if pins := canonicalPins(wf.GetPins()); pins != nil {
+		out["pins"] = pins
+	}
+	return canonicalJSON(out)
+}
+
+// canonicalPins renders Orkflow.pins, sorted by name, and returns nil when
+// there are none.
+//
+// THE DOCUMENTED EXCEPTION TO "EMITTED WHETHER OR NOT ZERO". Every other key in
+// this file appears in the canonical form regardless of its value, which is
+// what makes the whitelist auditable. `pins` — and `pin` on the task, below —
+// do not: an orkflow that declares no pin gets no `pins` key at all, and a task
+// that names no pin gets no `pin` key at all.
+//
+// The reason is that the digest is STAMPED INTO the document it describes.
+// Emitting `"pins": []` and `"pin": ""` unconditionally would move the digest
+// of EVERY definition already stored, and the move is not cosmetic:
+// sameStoredOrkflow (pkg/artifacts/orkflow_store.go) decides "this apply is a
+// repeat of an unchanged document" with proto.Equal after clearing only
+// created_at. A re-apply of an unchanged, source-hash-versioned document would
+// then carry a moved definition_digest, compare unequal, and be refused as an
+// attempt to rewrite an immutable version — the author would get
+// `already_exists` for a document they did not change. Making the two new keys
+// conditional keeps every unpinned definition's digest exactly where it is,
+// which the golden vector in canonical_test.go proves, and still hashes the
+// fields for every definition that actually uses them.
+//
+// See docs/design/task-pinning-worker-session.md §5.4 (and §12.7, which records
+// the deviation as a decision).
+func canonicalPins(pins []*orkstackv1.Pin) []any {
+	if len(pins) == 0 {
+		return nil
+	}
+	sorted := make([]*orkstackv1.Pin, len(pins))
+	copy(sorted, pins)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].GetName() < sorted[j].GetName() })
+	out := make([]any, 0, len(sorted))
+	for _, p := range sorted {
+		out = append(out, map[string]any{
+			"name":           p.GetName(),
+			"timeoutSeconds": int64(p.GetTimeoutSeconds()),
+		})
+	}
+	return out
 }
 
 // canonicalTask renders the enumerated Task fields of §4.4.
@@ -97,7 +144,7 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	if r := t.GetResources(); r != nil {
 		resources = map[string]any{"cpu": r.GetCpu(), "memory": r.GetMemory()}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"id":                             t.GetId(),
 		"uses":                           t.GetUses(),
 		"image":                          canonicalImageRef(t.GetImage()),
@@ -114,7 +161,13 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 		"network":                        int64(t.GetNetwork()),
 		"cancellationGracePeriodSeconds": int64(t.GetCancellationGracePeriodSeconds()),
 		"runAsOrkerUser":                 t.GetRunAsOrkerUser(),
-	}, nil
+	}
+	// pin is emitted ONLY when set — the same exception, for the same reason,
+	// as `pins` on the orkflow (canonicalPins).
+	if t.GetPin() != "" {
+		out["pin"] = t.GetPin()
+	}
+	return out, nil
 }
 
 // canonicalImageRef renders the seven enumerated ImageRef fields of §4.4.

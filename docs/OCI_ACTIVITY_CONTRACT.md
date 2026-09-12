@@ -634,12 +634,30 @@ a redirect. If it needs anything else, this section is wrong.
 ├── output/                         read-write bind, mode 1777
 │   ├── values.json                 written by the workload — REQUIRED
 │   └── artifacts/                  1777  one regular file per output artifact
+├── shared/                         read-write bind, mode 1777 — PINNED TASKS ONLY
 └── tmp/                            read-write bind, mode 1777
 ```
 
 The container's working directory is `/orkstack`. The container root filesystem
 is read-only (§9), so `/orkstack/tmp` is the workload's scratch space; `/tmp`
 inside the container is a separate small tmpfs the Orker also provides.
+
+**`/orkstack/shared` is present only for a pinned task**, and it is the one
+mount whose lifetime is not the attempt's. Every task of one pin, and every
+attempt of every such task, sees the same directory with the same contents for
+the life of the pin (`docs/DSL.md`, "Pins"). It is bind-mounted read-write,
+`1777` with the sticky bit like `output/`, from the pin host's own
+`ork-pin-<run>-<pin>-<instance>/shared/` directory under `ORK_ORKER_WORKDIR`;
+that parent is `0700` and owned by the Orker's user, which is what makes the
+`1777` child safe, exactly as it is for a per-attempt directory. Every
+component of the path is Orker-constructed — a run id, a slug, and an instance
+id validated before it becomes a path segment — so no definition can name a
+host path and §9.1 is intact. For an unpinned task the mount does not exist and
+`paths.shared` is absent from `task.json` (§3.2). The directory is neither an
+input tree (it is never sealed) nor an output tree (nothing in it is scanned,
+hashed, uploaded or committed), and no secret is ever written under it; a file
+that must outlive the pin is copied to `/orkstack/output/artifacts/` and
+becomes an artifact like any other.
 
 **Permissions rationale.** The host per-attempt directory is `0700`, owned by
 the Orker's user, so no other host user can traverse into a `1777` child. Inside
@@ -795,6 +813,33 @@ lowerCamelCase, matching every other JSON surface OrkStack emits
 `paths` is redundant with the fixed layout on purpose: a workload that reads it
 never hardcodes a path, and a future layout change stays a data change.
 
+**A pinned task gets two more keys, and only a pinned task.** A task that
+belongs to a pin (`docs/DSL.md`, "Pins") carries `paths.shared` and a
+`task.pin` object:
+
+```jsonc
+  "task": {
+    "id": "compile",
+    "attempt": 2,
+    "pool": "main",
+    "pin": { "name": "build", "instanceId": "3f9c1a2e-7b40-4d51-9a6f-2c8e5b71d0aa" }
+  },
+
+  "paths": {
+    "…": "…",
+    "shared": "/orkstack/shared"
+  }
+```
+
+Both are **omitted** — absent as keys, not written empty — for an unpinned
+task, which is what makes this addition additive: `schemaVersion` stays `1`
+under the rule below that the platform may only add optional fields within one
+major version, and a workload that has never heard of pins loses nothing by
+ignoring them. `task.pin.name` is the pin as its author named it.
+`task.pin.instanceId` identifies one opening of that pin within one run; it is
+what the Orker keys the shared directory by, and it is informational to the
+workload.
+
 **Artifact names are UTF-8; paths are derived and lossy.** `path` is produced
 by the existing `safeComponent` rule (`internal/orker/resolver.go:127-151`),
 which rewrites separators, dot segments and long names, so it cannot carry the
@@ -832,6 +877,9 @@ absence rather than treating it as an error.
 | `task.attempt` | integer | required | — | 1-based Temporal attempt |
 | `task.pool` | string | required | `"main"` | resolved pool name |
 | `task.runAsOrkerUser` | boolean | optional | absent = false | present and true when the Orker overrode the image's `USER` (§3.1), so a workload can see why its UID is not the one its image declared |
+| `task.pin` | object | optional | absent | present only for a pinned task; absent means unpinned |
+| `task.pin.name` | string | required in `task.pin` | — | slug; the pin as its author named it |
+| `task.pin.instanceId` | string | required in `task.pin` | — | one opening of that pin within one run; what the Orker keys the shared directory by |
 | `image.reference` | string | required | — | as authored |
 | `image.pinned` | string | required | — | `{registry}/{repo}@sha256:…` — what ran |
 | `image.indexDigest` | string | required | — | `sha256:<64 hex>` |
@@ -848,7 +896,8 @@ absence rather than treating it as an error.
 | `resources.cpu` | string | optional | absent | as requested/capped; absent means Orker default |
 | `resources.memory` | string | optional | absent | as requested/capped |
 | `network` | string | required | `"default"` | `"default"` or `"none"` only |
-| `paths.*` | string | required | — | all eight keys always present (§3.1) |
+| `paths.*` | string | required | — | all eight fixed keys always present (§3.1) |
+| `paths.shared` | string | optional | absent | `/orkstack/shared`, present only for a pinned task (§3.1) |
 | `inputs.artifacts` | array | required | `[]` | never null |
 | `inputs.artifacts[].producer` | string | required | — | upstream task id |
 | `inputs.artifacts[].name` | string | optional | absent | present only when the exact name is valid UTF-8 |
@@ -1142,10 +1191,12 @@ serializer:
 > digest.
 >
 > `Orkflow`: `namespace`, `name`, `version`, `description`, `labels`, `inputs`,
-> `tasks`. **Not** `source_yaml`, **not** `created_at`.
+> `pins` (only when non-empty — the exception below), `tasks`. **Not**
+> `source_yaml`, **not** `created_at`.
 > `Task`: `id`, `uses`, `image`, `with`, `needs`, `condition`,
 > `timeout_seconds`, `retry`, `pool`, `command`, `env`, `secrets`, `resources`,
-> `network`, `cancellation_grace_period_seconds`, `run_as_orker_user`.
+> `network`, `cancellation_grace_period_seconds`, `run_as_orker_user`,
+> `pin` (only when non-empty — the exception below).
 > `ImageRef`: `reference`, `registry`, `repository`, `index_digest`, `pinned`,
 > `media_type`, `platforms`, in the index's own order (§4.3 step 4).
 > (`resolved_at` no longer exists; `platform_digest`, `platform` and `delivery`
@@ -1156,6 +1207,19 @@ serializer:
 
 This lives beside `internal/dsl/hash.go` with its own golden-vector test, so a
 digest change is a test failure rather than a silent incompatibility.
+
+**The one documented exception to "emitted whether or not they are zero" is
+`pin` and `pins`.** Both change what runs and where, so both are in the digest,
+but each is emitted **only when non-empty**. Emitting `"pin": ""` on every task
+unconditionally would move the digest of every existing definition on its next
+apply, and that is not cosmetic: `pkg/artifacts.sameStoredOrkflow` decides
+"unchanged document" by comparing after clearing only `created_at`, so an
+unchanged, source-hash-versioned document stamped with a moved digest becomes a
+*changed* document under an *existing* version and is refused with
+`ALREADY_EXISTS`. The exception is deliberate and named here so a later reader
+does not read it as an oversight; the existing golden vector passing unchanged
+is the proof that no unpinned digest moved, and a second golden vector with a
+pin covers the emitted form.
 
 **(b) The derived version is assigned after resolution, and covers the
 resolution.** Today `internal/dsl/compile.go:190-192` sets
@@ -1927,6 +1991,18 @@ OCI image cache, per-attempt execution directories (removed on every exit path),
 and an optional transient artifact download cache. If an Orker disappears,
 Temporal retries elsewhere and the commit protocol decides whether the container
 runs again.
+
+A pin's shared directory (§3.1) is a second, longer-lived kind of ephemeral
+execution directory: its lifetime is the pin's rather than one attempt's, so it
+survives between two tasks and between two attempts of one task. It is still
+ephemeral, local, disposable and reconstructible by re-running. It is bounded by
+a lease written beside it, removed explicitly once every member task is
+terminal, and reaped at Orker boot — a pin can never outlive the worker process
+that opened its Temporal session, because a fresh session-resource id is minted
+per worker start, so every pin directory found at boot is dead by construction
+rather than by heuristic. The pinned task is also the one place where "Temporal
+retries elsewhere" does not apply: the pin and its run fail explicitly
+(`PIN_HOST_LOST`) instead (AGENTS.md §5).
 
 ### 6.5 Pool liveness
 

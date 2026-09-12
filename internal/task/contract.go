@@ -67,6 +67,17 @@ const (
 	// pool's queue with short timeouts and MaximumAttempts: 2, and a default
 	// pool that cannot answer maps to Unavailable (§6.5).
 	ActivityDescribeOrker = "DescribeOrker"
+
+	// ActivityReleasePin is the registered activity name for removing a pin's
+	// shared directory on the Orker that hosts it.
+	//
+	// It lives beside the other two for the same reason they are here: the
+	// engine schedules it and the Orker registers it, so a second spelling in
+	// either package would be a second spelling of a shared contract. The
+	// engine schedules it on the pin's own Temporal session, which routes it
+	// to the host that owns the directory; a host with no such directory
+	// returns success (docs/design/task-pinning-worker-session.md §8.5).
+	ActivityReleasePin = "ReleasePin"
 )
 
 // The five failure categories of the OCI Activity Contract (design §8.1).

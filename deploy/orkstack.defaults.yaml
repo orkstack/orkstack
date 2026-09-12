@@ -73,6 +73,8 @@ orker:
   secret_schemes: [env, file]  # orker
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
+  pins:
+    max_concurrent: 0  # orker
   log:
     flush_bytes: 65536  # 64 KiB; orker
     flush_interval: 500ms  # orker

@@ -63,6 +63,26 @@ message TaskRun {
   // Unset for SUCCEEDED and SKIPPED tasks, for a failure that never reached an
   // activity, and for snapshots written before this field existed.
   RetryState retry_state = 15;
+
+  // pin is the Pin this task belongs to, as the author named it, or empty.
+  // Two TaskRuns of one run with the same pin ran on the same Orker.
+  string pin = 16;
+
+  // orker_id is the Orker that produced this task's final outcome, read off
+  // ExecuteTaskResult.orker_id or ActivityFailureDetail.orker_id. Set for
+  // every task that reached an Orker, pinned or not; empty when the task
+  // never reached one (skipped, canceled before dispatch) or when the Orker
+  // died before reporting (heartbeat timeout).
+  //
+  // One exception to "reported by this task's own attempt": a task recorded
+  // PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — its host died — so
+  // the engine BACKFILLS this from another member of the same pin. A pin never
+  // moves: every member executes on the same Orker process for the pin's whole
+  // life, so a sibling's orker_id is this task's by construction. It stays
+  // empty only when no member of that pin ever reported one, in which case the
+  // failure's error.details carries the Temporal session's raw OS host name as
+  // an explicitly labelled best-effort lead, which is NOT an orker_id.
+  string orker_id = 17;
 }
 
 // AttemptOutcome is how one Temporal attempt of a task ended.

@@ -843,3 +843,172 @@ func poolNames(pools []*orkstackv1.Pool) []string {
 	sort.Strings(names)
 	return names
 }
+
+// ---------------------------------------------------------------------------
+// Task pins at submit (docs/design/task-pinning-worker-session.md §7.4)
+// ---------------------------------------------------------------------------
+
+const pinnedGpuOrkflow = `
+name: pinned-gpu-job
+version: 0.1.0
+pins:
+  build: {}
+tasks:
+  - id: clone
+    uses: shell
+    pin: build
+    pool: gpu
+    run_as_orker_user: true
+    with: {command: "echo clone"}
+  - id: compile
+    uses: shell
+    pin: build
+    pool: gpu
+    needs: [clone]
+    run_as_orker_user: true
+    with: {command: "echo compile"}
+`
+
+// pinHostPools answers the DescribeOrker probe with each channel's
+// ORK_ORKER_MAX_PINS. A channel it does not map has nobody to answer.
+type pinHostPools map[string]int32
+
+func (p pinHostPools) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
+	maxPins, serving := p[queue]
+	if !serving {
+		return nil, fmt.Errorf("no orker is polling %q", queue)
+	}
+	return &orkstackv1.DescribeOrkerResult{
+		OrkerId:           "orker-" + queue,
+		RuntimeName:       "docker",
+		MaxConcurrentPins: maxPins,
+	}, nil
+}
+
+// TestSubmitRun_RefusesAPinnedRunWhosePoolHostsNoPins is PoolNoPinHostError
+// reaching a client, in the code that tells them what to do about it.
+//
+// FailedPrecondition, the same code PoolEmptyError maps to, and for the same
+// reason (design §7.4): the request is well formed and the DEPLOYMENT is not
+// ready for it, so it becomes submittable the moment an operator sets
+// ORK_ORKER_MAX_PINS on that pool's Orkers. InvalidArgument would have told
+// the caller to fix a document that has nothing wrong with it.
+func TestSubmitRun_RefusesAPinnedRunWhosePoolHostsNoPins(t *testing.T) {
+	starter := &fakeStarter{}
+	gpuQueue := poolQueue(t, "gpu")
+	svc := api.NewService(api.Config{
+		Starter: starter,
+		// The pool is LIVE — this is not the empty-pool refusal — but the
+		// Orker serving it hosts no pins.
+		Pools:      livePools{gpuQueue: 1},
+		PoolOrkers: pinHostPools{gpuQueue: 0},
+	})
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: pinnedGpuOrkflow})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	_, err := svc.SubmitRun(context.Background(),
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "pinned-gpu-job"}))
+	if err == nil {
+		t.Fatal("submitting a pinned run onto a pool that hosts no pins succeeded; " +
+			"the pin could never open and the run would strand")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeFailedPrecondition {
+		t.Errorf("submit refused with %v, want FailedPrecondition — the same code an empty pool "+
+			"gets, because the remedy is the same kind of thing: configure an Orker", code)
+	}
+	for _, want := range []string{"gpu", "build", "ORK_ORKER_MAX_PINS=1", "allow_empty_pool"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if len(starter.startedRuns()) != 0 {
+		t.Errorf("a refused submission still started %v", starter.startedRuns())
+	}
+}
+
+// TestSubmitRun_AcceptsAPinnedRunWhosePoolHostsPins is the same wiring with an
+// Orker that IS a pin host: nothing about the submit changes.
+func TestSubmitRun_AcceptsAPinnedRunWhosePoolHostsPins(t *testing.T) {
+	starter := &fakeStarter{}
+	gpuQueue := poolQueue(t, "gpu")
+	svc := api.NewService(api.Config{
+		Starter:    starter,
+		Pools:      livePools{gpuQueue: 1},
+		PoolOrkers: pinHostPools{gpuQueue: 2},
+	})
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: pinnedGpuOrkflow})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if _, err := svc.SubmitRun(context.Background(),
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "pinned-gpu-job"})); err != nil {
+		t.Fatalf("SubmitRun: %v", err)
+	}
+	if len(starter.startedRuns()) != 1 {
+		t.Fatalf("started %d runs, want 1", len(starter.startedRuns()))
+	}
+}
+
+// TestSubmitRun_RefusesAPinThatResolvesOntoTwoPoolsAsAnInvalidArgument is the
+// rule-10 re-check reaching a client.
+//
+// InvalidArgument, not FailedPrecondition: this is the caller's own definition
+// contradicting itself — the same class as a pool the namespace forbids — and
+// no change to the deployment could make it submittable. The document COMPILES
+// (the literal pools agree, `main` and an absent pool being one pool to the
+// compiler) and only resolution against the namespace's default_pool splits
+// them apart.
+func TestSubmitRun_RefusesAPinThatResolvesOntoTwoPoolsAsAnInvalidArgument(t *testing.T) {
+	const document = `
+name: pin-split-job
+version: 0.1.0
+pins:
+  build: {}
+tasks:
+  - id: alpha
+    uses: shell
+    pin: build
+    pool: main
+    run_as_orker_user: true
+    with: {command: "echo alpha"}
+  - id: beta
+    uses: shell
+    pin: build
+    needs: [alpha]
+    run_as_orker_user: true
+    with: {command: "echo beta"}
+`
+	starter := &fakeStarter{}
+	gpuQueue := poolQueue(t, "gpu")
+	svc := api.NewService(api.Config{
+		Starter:    starter,
+		Namespaces: registry{"ci": {Name: "ci", DefaultPool: "gpu"}},
+		Pools:      livePools{gpuQueue: 1, task.DefaultQueue: 1},
+		PoolOrkers: pinHostPools{gpuQueue: 1, task.DefaultQueue: 1},
+	})
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+			Yaml: document, Namespace: "ci"})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	_, err := svc.SubmitRun(context.Background(),
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{
+			OrkflowName: "pin-split-job", Namespace: "ci"}))
+	if err == nil {
+		t.Fatal("a pin whose tasks resolve onto two pools was accepted; a pin is one Orker process")
+	}
+	if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+		t.Errorf("submit refused with %v, want InvalidArgument — the document conflicts with "+
+			"itself, and no Orker anyone starts would fix it", code)
+	}
+	if !strings.Contains(err.Error(), "resolves onto two pools") {
+		t.Errorf("error %q does not say what is wrong", err)
+	}
+	if len(starter.startedRuns()) != 0 {
+		t.Errorf("a refused submission still started %v", starter.startedRuns())
+	}
+}

@@ -14,7 +14,7 @@
 	import AttemptTimeline from '$lib/components/AttemptTimeline.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
-	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, runCommand, timestampJson } from '$lib/runDetail';
+	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
 	import {
@@ -78,6 +78,17 @@
 		startedAt?: TaskRun['startedAt'];
 		finishedAt?: TaskRun['finishedAt'];
 		pool: string;
+		// pin is the group of tasks this one was held on ONE Orker with, as its
+		// author named it, and is empty for an unpinned task. Unlike pool it is
+		// seeded from the DEFINITION and then confirmed by the snapshot: a pin
+		// is declared before anything runs, so the grouping can be drawn on a
+		// pending task, whereas which Orker it landed on cannot.
+		pin: string;
+		// orkerId is the Orker that produced this task's outcome. It is set for
+		// every task that reached one, pinned or not, so empty here means "never
+		// reached an Orker" — not "not pinned". Read beside pin it is the proof a
+		// pin held: one pin, one orker across its members.
+		orkerId: string;
 	}
 
 	const run = $derived(data.run);
@@ -255,7 +266,13 @@
 				message: '',
 				artifacts: [],
 				systemArtifacts: [],
-				pool: ''
+				pool: '',
+				// The pin is seeded from the DEFINITION, the way activity is: a
+				// pin is declared, not discovered, so the grouping is legible from
+				// page load rather than appearing only once tasks dispatch. The
+				// snapshot below overwrites it with what the run recorded.
+				pin: task.pin,
+				orkerId: ''
 			});
 		}
 		for (const tr of data.run?.taskRuns ?? []) {
@@ -276,7 +293,13 @@
 				systemArtifacts: tr.systemArtifacts,
 				startedAt: tr.startedAt,
 				finishedAt: tr.finishedAt,
-				pool: tr.pool
+				pool: tr.pool,
+				// The snapshot is authoritative, but a run recorded before the
+				// engine copied pin onto TaskRun still has a definition that
+				// declares it — so keep the seeded value rather than dropping the
+				// grouping. Same fall-through as activity above.
+				pin: tr.pin || existing?.pin || '',
+				orkerId: tr.orkerId
 			});
 		}
 		return [...views.values()];
@@ -307,7 +330,12 @@
 				systemArtifacts: tr.systemArtifacts,
 				startedAt: tr.startedAt,
 				finishedAt: tr.finishedAt,
-				pool: tr.pool
+				pool: tr.pool,
+				orkerId: tr.orkerId,
+				// Patched only when the snapshot carries one: upsertTask assigns
+				// every key present in the patch, so an empty pin here would
+				// erase the pin the definition already seeded.
+				...(tr.pin ? { pin: tr.pin } : {})
 			});
 		}
 	}
@@ -346,6 +374,8 @@
 			artifacts: [],
 			systemArtifacts: [],
 			pool: '',
+			pin: '',
+			orkerId: '',
 			...patch
 		});
 	}
@@ -565,7 +595,8 @@
 	function taskExport(task: TaskView) {
 		return {
 			id: task.id, status: statusLabel(task.status), attempt: task.attempt,
-			pool: task.pool || undefined, startedAt: timestampJson(task.startedAt), finishedAt: timestampJson(task.finishedAt),
+			pool: task.pool || undefined, pin: task.pin || undefined, orkerId: task.orkerId || undefined,
+			startedAt: timestampJson(task.startedAt), finishedAt: timestampJson(task.finishedAt),
 			output: task.output?.data, values: task.valuesRef ? artifactMetadata(task.valuesRef) : undefined,
 			artifacts: task.artifacts.map(artifactMetadata),
 			systemArtifacts: task.systemArtifacts.map(artifactMetadata), error: task.error
@@ -870,12 +901,36 @@
 				{#each tasks as task (task.id)}
 					{@const dispatched = taskDispatched(task.status, task.startedAt)}
 					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
+					{@const accent = pinAccent(task.pin)}
+					<!--
+						A pinned task's card carries its pin's accent as a thicker
+						left edge and a faint fill, so the members of one pin read as
+						a block in the list without being re-sorted — the DAG order
+						is the order, and regrouping the list would hide it.
+
+						The accent is applied as an inline style rather than a class
+						because the token is chosen at runtime: Tailwind's scanner
+						only sees literal class names in source, so a composed
+						`border-l-{accent}` would emit no CSS at all. The tokens it
+						reads are therefore declared in a plain `:root` in app.css
+						and NOT in `@theme`, which drops variables no utility class
+						references — see the note there.
+
+						It is decoration on top of the status pill, never a
+						substitute for it, and the `Pin <name>` label below says the
+						same thing in words.
+					-->
 					<div
 						class="rounded-lg border bg-surface px-4 py-3 shadow-xs {dispatched
 							? 'border-border'
 							: 'border-dashed border-border-subtle opacity-60'}"
+						style={accent
+							? `border-left-width:3px;border-left-style:solid;border-left-color:var(--color-${accent}-line);background-color:var(--color-${accent}-fill)`
+							: undefined}
 						data-testid="task-{task.id}"
 						data-dispatched={dispatched}
+						data-pin={task.pin || undefined}
+						data-pin-accent={accent}
 					>
 						<div class="flex items-center justify-between gap-4">
 							<div class="min-w-0">
@@ -918,6 +973,26 @@
 								<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.startedAt, task.finishedAt ?? (task.status === Status.RUNNING ? currentTimestamp : undefined))}</span>
 							{/if}
 							{#if task.pool}<span>Pool {task.pool}</span>{/if}
+							<!--
+								Pin and Orker are stated the same way Pool is: when the
+								run knows one. Orker is filled for every task that
+								reached one, pinned or not, so it is NOT gated on the
+								pin — its absence means the task never got to an Orker.
+								Together they are the proof a pin held, which is why the
+								pin's own accent dot is drawn beside its name.
+							-->
+							{#if task.pin}
+								<span data-testid="task-{task.id}-pin" class="inline-flex items-center gap-1.5">
+									<span
+										class="inline-block size-2 shrink-0 rounded-full"
+										style="background-color:var(--color-{pinAccent(task.pin)}-line)"
+									></span>
+									Pin {task.pin}
+								</span>
+							{/if}
+							{#if task.orkerId}
+								<span data-testid="task-{task.id}-orker">Orker {task.orkerId}</span>
+							{/if}
 							<CliEquivalent
 								command={runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])])}
 								testid="run-task-{task.id}-logs-cli"

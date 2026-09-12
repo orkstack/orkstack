@@ -516,7 +516,10 @@ func (s *Service) ApplyOrkflow(
 func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orkstackv1.ValidateOrkflowRequest]) (*connect.Response[orkstackv1.ValidateOrkflowResponse], error) {
 	wf, _, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
 	if err == nil {
-		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{Orkflow: wf}), nil
+		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{
+			Orkflow: wf,
+			Issues:  pinUserParityWarnings(wf),
+		}), nil
 	}
 	if connect.CodeOf(err) == connect.CodeInvalidArgument {
 		field := ""
@@ -531,6 +534,68 @@ func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orks
 		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{Issues: []*orkstackv1.ValidationIssue{{Field: field, Message: err.Error(), Severity: orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR}}}), nil
 	}
 	return nil, err
+}
+
+// pinUserParityWarnings reports every pin whose tasks all leave
+// run_as_orker_user false, as a WARNING and never as an error.
+//
+// It is what is LEFT of rule 11 after the compiler has done its half. Rule 11
+// refuses a pin whose tasks DISAGREE about the flag, because
+// /orkstack/shared is 1777 with the sticky bit and two members running as
+// different uids can each create files the other cannot delete or overwrite.
+// Agreeing on false does not remove that hazard, it only hides it: with the
+// flag false each container keeps its image's own baked-in USER, so a pin of
+// three images can still run as three different uids and hit the same
+// sticky-bit failure on its second task. The platform cannot know an image's
+// USER at compile time — that is the registry's answer, and only after a pull
+// — so this is advice and not a refusal (docs/design/task-pinning-worker-
+// session.md §4.4, §12.9: a documented author responsibility, not a platform
+// guarantee).
+//
+// A document with no pin produces nothing, so an unpinned author's validate
+// response is exactly what it was before pins existed.
+func pinUserParityWarnings(wf *orkstackv1.Orkflow) []*orkstackv1.ValidationIssue {
+	if len(wf.GetPins()) == 0 {
+		return nil
+	}
+	// Counted per pin, so the condition reads as what it is — every member
+	// leaves the flag false, and there is at least one member. Rule 11 has
+	// already made "every member" and "the first member" the same answer, and
+	// this does not need to depend on that.
+	type tally struct{ members, orkerUser int }
+	counts := make(map[string]*tally, len(wf.GetPins()))
+	for _, pin := range wf.GetPins() {
+		counts[pin.GetName()] = &tally{}
+	}
+	for _, task := range wf.GetTasks() {
+		count, declared := counts[task.GetPin()]
+		if !declared {
+			continue
+		}
+		count.members++
+		if task.GetRunAsOrkerUser() {
+			count.orkerUser++
+		}
+	}
+	var issues []*orkstackv1.ValidationIssue
+	// wf.Pins is sorted by name at compile, so the issues come out in one
+	// order for one document.
+	for _, pin := range wf.GetPins() {
+		count := counts[pin.GetName()]
+		if count.members == 0 || count.orkerUser > 0 {
+			continue
+		}
+		issues = append(issues, &orkstackv1.ValidationIssue{
+			Field: fmt.Sprintf("pins.%s", pin.GetName()),
+			Message: fmt.Sprintf("pin %q: every task leaves run_as_orker_user false, so each "+
+				"container keeps its image's own USER — two members with different baked-in "+
+				"users can each write files under the sticky-bit /orkstack/shared that the "+
+				"other cannot replace. Set run_as_orker_user: true across the pin.",
+				pin.GetName()),
+			Severity: orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING,
+		})
+	}
+	return issues
 }
 
 type validationFieldError struct {
@@ -1030,8 +1095,23 @@ func poolPlanError(err error) error {
 	if errors.As(err, &notAllowed) {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	// A pin whose tasks resolved onto two pools is the caller's own document
+	// contradicting itself — the same class as a forbidden pool, so the same
+	// code: InvalidArgument, fix the document.
+	var pinMismatch *engine.PinPoolMismatchError
+	if errors.As(err, &pinMismatch) {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	var empty *engine.PoolEmptyError
 	if errors.As(err, &empty) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	// A live pool that hosts no pins is PoolEmptyError's sibling and gets its
+	// code (design §7.4): the request is well formed and the deployment is not
+	// ready for it, so it is retryable once an operator sets
+	// ORK_ORKER_MAX_PINS on that pool's Orkers.
+	var noPinHost *engine.PoolNoPinHostError
+	if errors.As(err, &noPinHost) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	var unreachable *engine.PoolUnreachableError

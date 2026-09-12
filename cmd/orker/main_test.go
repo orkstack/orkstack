@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -269,5 +273,213 @@ func TestLoadConfig_AcceptsAnIntervalInsideTheBounds(t *testing.T) {
 				t.Errorf("interval = %v, want %v", cfg.heartbeatInterval, want)
 			}
 		})
+	}
+}
+
+// TestWorkerOptions_BecomeAPinHostOnlyWhenAsked is §7.2 plus §10 check 3: an
+// Orker that never set ORK_ORKER_MAX_PINS must build the same worker.Options it
+// built before pins existed, plus two zero-valued fields.
+//
+// The zero matters more than the non-zero. EnableSessionWorker starts two more
+// pollers and two more task queues per process (the SDK's session creation
+// worker and its per-host session activity worker), and the SDK builds no
+// session worker at all when the flag is false — so "off" really is "acquires
+// nothing", which is what lets the default be 0 rather than on.
+func TestWorkerOptions_BecomeAPinHostOnlyWhenAsked(t *testing.T) {
+	t.Run("unset acquires no session worker", func(t *testing.T) {
+		t.Setenv(MaxPinsVar, "")
+		cfg := loadConfig()
+		if cfg.maxPinsErr != nil {
+			t.Fatalf("an unset pin cap was refused: %v", cfg.maxPinsErr)
+		}
+		if cfg.maxPins != 0 {
+			t.Errorf("maxPins = %d with nothing set, want 0", cfg.maxPins)
+		}
+		options := workerOptions(cfg)
+		if options.EnableSessionWorker {
+			t.Error("an Orker that never asked for pins enabled the session worker, and with it " +
+				"two pollers and two task queues it did not have before")
+		}
+		if options.MaxConcurrentSessionExecutionSize != 0 {
+			t.Errorf("MaxConcurrentSessionExecutionSize = %d, want 0",
+				options.MaxConcurrentSessionExecutionSize)
+		}
+	})
+
+	t.Run("a pin host polls for as many pins as it was given", func(t *testing.T) {
+		t.Setenv(MaxPinsVar, "3")
+		cfg := loadConfig()
+		if cfg.maxPinsErr != nil {
+			t.Fatalf("3 was refused: %v", cfg.maxPinsErr)
+		}
+		options := workerOptions(cfg)
+		if !options.EnableSessionWorker {
+			t.Fatal("ORK_ORKER_MAX_PINS=3 did not enable the session worker, so no pin could ever open")
+		}
+		if options.MaxConcurrentSessionExecutionSize != 3 {
+			t.Errorf("MaxConcurrentSessionExecutionSize = %d, want 3 — anything larger lets a "+
+				"fourth pin open on a host the operator capped at three",
+				options.MaxConcurrentSessionExecutionSize)
+		}
+		// The pin cap must not disturb what the shared queue depends on.
+		if !options.DisableWorkflowWorker || !options.DisableRegistrationAliasing {
+			t.Error("a pin host stopped being activity-only")
+		}
+	})
+
+	t.Run("versioning does not drop it", func(t *testing.T) {
+		t.Setenv(task.EnvDeploymentName, "orkstack-prod")
+		t.Setenv(task.EnvBuildID, "v2")
+		t.Setenv(MaxPinsVar, "2")
+		options := workerOptions(loadConfig())
+		if !options.DeploymentOptions.UseVersioning {
+			t.Fatal("versioning did not apply; this subtest asserts nothing")
+		}
+		if !options.EnableSessionWorker || options.MaxConcurrentSessionExecutionSize != 2 {
+			t.Errorf("Deployment.Apply dropped the session options (%v, %d)",
+				options.EnableSessionWorker, options.MaxConcurrentSessionExecutionSize)
+		}
+	})
+}
+
+// TestWorkerOptions_APinHostOnAVersionedDeploymentIsAcceptedByTheSDK is the
+// cheap half of design §12.1: does the SDK accept the one configuration whose
+// two halves its own documentation says cannot be combined?
+//
+// The SDK's doc comment on `DeploymentOptions.UseVersioning` says it "NOTE:
+// Cannot be enabled at the same time as [WorkerOptions.EnableSessionWorker]"
+// (sdk@v1.47.0/internal/worker.go:80), but the only enforced panic covers the
+// DEPRECATED flag — `options.EnableSessionWorker && options.UseBuildIDForVersioning`
+// (internal_worker.go:2312-2316, citing temporalio/sdk-go#1227) — which
+// task.Deployment.Apply never sets. So a pin host on a versioned deployment
+// builds a real worker, and this test is what says so without a cluster:
+// worker.New is where every WorkerOptions panic lives, and a lazy client makes
+// reaching it free.
+//
+// It is a REGRESSION guard, not a claim about routing. Routing is measured
+// against a real cluster by internal/engine's
+// TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout; if a future SDK
+// starts panicking here, that measurement is unreachable and docs/DEPLOY.md's
+// "Pins on a versioned deployment" has to become a refusal to boot instead.
+func TestWorkerOptions_APinHostOnAVersionedDeploymentIsAcceptedByTheSDK(t *testing.T) {
+	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
+	t.Setenv(task.EnvBuildID, "v2")
+	t.Setenv(MaxPinsVar, "2")
+
+	options := workerOptions(loadConfig())
+	if !options.DeploymentOptions.UseVersioning || !options.EnableSessionWorker {
+		t.Fatalf("this test asserts nothing: UseVersioning=%v EnableSessionWorker=%v",
+			options.DeploymentOptions.UseVersioning, options.EnableSessionWorker)
+	}
+	//lint:ignore SA1019 asserting the deprecated flag stays unset is the point
+	if options.UseBuildIDForVersioning {
+		t.Fatal("Deployment.Apply set the deprecated UseBuildIDForVersioning; the SDK panics on " +
+			"that flag together with EnableSessionWorker, so a pin host could not boot versioned")
+	}
+
+	// Lazy: no dial, no poller, and still the whole of worker.New — which is
+	// where the SDK validates WorkerOptions and panics if it refuses them.
+	c, err := client.NewLazyClient(client.Options{
+		HostPort:  "127.0.0.1:1",
+		Namespace: task.DefaultNamespace,
+	})
+	if err != nil {
+		t.Fatalf("lazy client: %v", err)
+	}
+	defer c.Close()
+
+	// run()'s own registrations, in run()'s order: a pin host registers
+	// ReleasePin beside ExecuteTask, and registration is another panic path.
+	w := worker.New(c, task.DefaultQueue, options)
+	w.RegisterActivityWithOptions(
+		func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			return nil, nil
+		},
+		activity.RegisterOptions{Name: task.ActivityExecuteTask},
+	)
+	w.RegisterActivityWithOptions(
+		func(context.Context, *orkstackv1.ReleasePinInput) error { return nil },
+		activity.RegisterOptions{Name: task.ActivityReleasePin},
+	)
+}
+
+// TestLoadConfig_RefusesAPinCapItCannotRead applies the same rule as the
+// heartbeat interval and ORK_ORKER_TASK_LOG_EXPORT: a value this process cannot
+// read is a configuration error, not a quiet default.
+//
+// The consequence of getting this wrong is specific and confusing. A silently
+// zero cap leaves an Orker that looks healthy and refuses every pinned submit
+// to its pool with a message about no pin host existing — an error that names
+// the symptom and never the typo.
+func TestLoadConfig_RefusesAPinCapItCannotRead(t *testing.T) {
+	for _, raw := range []string{"two", "-1", "1.5", "3 pins", "0x2"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv(MaxPinsVar, raw)
+			cfg := loadConfig()
+			if cfg.maxPinsErr == nil {
+				t.Fatalf("%s=%s booted, hosting %d pins", MaxPinsVar, raw, cfg.maxPins)
+			}
+			if !strings.Contains(cfg.maxPinsErr.Error(), MaxPinsVar) {
+				t.Errorf("refusal %q does not name %s", cfg.maxPinsErr, MaxPinsVar)
+			}
+			if err := run(nil, telemetry.Config{}, nil, cfg); err == nil {
+				t.Fatal("run() started with a pin cap it cannot read")
+			}
+		})
+	}
+}
+
+// TestLoadConfig_AcceptsAPinCapItCanHonor is the other side, so the refusal
+// above is a bound rather than a rejection of everything.
+func TestLoadConfig_AcceptsAPinCapItCanHonor(t *testing.T) {
+	for raw, want := range map[string]int32{"0": 0, "1": 1, "16": 16} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv(MaxPinsVar, raw)
+			cfg := loadConfig()
+			if cfg.maxPinsErr != nil {
+				t.Fatalf("%s refused: %v", raw, cfg.maxPinsErr)
+			}
+			if cfg.maxPins != want {
+				t.Errorf("maxPins = %d, want %d", cfg.maxPins, want)
+			}
+			// An explicit 0 is exactly an unset one: it hosts no pins.
+			if (cfg.maxPins > 0) != workerOptions(cfg).EnableSessionWorker {
+				t.Errorf("maxPins = %d but EnableSessionWorker = %v", cfg.maxPins,
+					workerOptions(cfg).EnableSessionWorker)
+			}
+		})
+	}
+}
+
+// TestOrkerOptions_AdvertiseThePinCapTheWorkerPollsFor is the pairing, and it
+// is the same shape as the heartbeat pairing above: either half alone is
+// misleading.
+//
+// DescribeOrker's max_concurrent_pins is what submit reads to decide whether a
+// pinned run's pool could ever open its pin (§7.4). An Orker that advertised a
+// capacity its worker does not poll for would accept the submit and then leave
+// the run waiting out CreationTimeout for a slot that does not exist — the one
+// outcome the submit-time probe exists to prevent. One config value must reach
+// both.
+func TestOrkerOptions_AdvertiseThePinCapTheWorkerPollsFor(t *testing.T) {
+	clearTelemetryEnv(t)
+	t.Setenv(MaxPinsVar, "5")
+	cfg := loadConfig()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tcfg, sinks, err := telemetry.Boot(telemetry.ServiceOrker)
+	if err != nil {
+		t.Fatalf("telemetry.Boot: %v", err)
+	}
+	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
+
+	if opts.MaxPins != 5 {
+		t.Errorf("orker.Options.MaxPins = %d, want the configured 5", opts.MaxPins)
+	}
+	options := workerOptions(cfg)
+	if int(opts.MaxPins) != options.MaxConcurrentSessionExecutionSize {
+		t.Errorf("DescribeOrker will advertise %d pins while the worker polls for %d; the two "+
+			"must be one number or submit accepts a run that can never open its pin",
+			opts.MaxPins, options.MaxConcurrentSessionExecutionSize)
 	}
 }

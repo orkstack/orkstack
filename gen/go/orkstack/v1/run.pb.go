@@ -273,7 +273,25 @@ type TaskRun struct {
 	//
 	// Unset for SUCCEEDED and SKIPPED tasks, for a failure that never reached an
 	// activity, and for snapshots written before this field existed.
-	RetryState    RetryState `protobuf:"varint,15,opt,name=retry_state,json=retryState,proto3,enum=orkstack.v1.RetryState" json:"retry_state,omitempty"`
+	RetryState RetryState `protobuf:"varint,15,opt,name=retry_state,json=retryState,proto3,enum=orkstack.v1.RetryState" json:"retry_state,omitempty"`
+	// pin is the Pin this task belongs to, as the author named it, or empty.
+	// Two TaskRuns of one run with the same pin ran on the same Orker.
+	Pin string `protobuf:"bytes,16,opt,name=pin,proto3" json:"pin,omitempty"`
+	// orker_id is the Orker that produced this task's final outcome, read off
+	// ExecuteTaskResult.orker_id or ActivityFailureDetail.orker_id. Set for
+	// every task that reached an Orker, pinned or not; empty when the task
+	// never reached one (skipped, canceled before dispatch) or when the Orker
+	// died before reporting (heartbeat timeout).
+	//
+	// One exception to "reported by this task's own attempt": a task recorded
+	// PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — its host died — so
+	// the engine BACKFILLS this from another member of the same pin. A pin never
+	// moves: every member executes on the same Orker process for the pin's whole
+	// life, so a sibling's orker_id is this task's by construction. It stays
+	// empty only when no member of that pin ever reported one, in which case the
+	// failure's error.details carries the Temporal session's raw OS host name as
+	// an explicitly labelled best-effort lead, which is NOT an orker_id.
+	OrkerId       string `protobuf:"bytes,17,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -404,6 +422,20 @@ func (x *TaskRun) GetRetryState() RetryState {
 		return x.RetryState
 	}
 	return RetryState_RETRY_STATE_UNSPECIFIED
+}
+
+func (x *TaskRun) GetPin() string {
+	if x != nil {
+		return x.Pin
+	}
+	return ""
+}
+
+func (x *TaskRun) GetOrkerId() string {
+	if x != nil {
+		return x.OrkerId
+	}
+	return ""
 }
 
 // TaskAttempt is the immutable record of ONE Temporal attempt of one task,
@@ -863,7 +895,7 @@ var File_orkstack_v1_run_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
-	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/telemetry.proto\"\x98\x05\n" +
+	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/telemetry.proto\"\xc5\x05\n" +
 	"\aTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12+\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +
@@ -883,7 +915,9 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\texit_code\x18\r \x01(\x05R\bexitCode\x12C\n" +
 	"\x10system_artifacts\x18\x0e \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0fsystemArtifacts\x128\n" +
 	"\vretry_state\x18\x0f \x01(\x0e2\x17.orkstack.v1.RetryStateR\n" +
-	"retryStateJ\x04\b\x02\x10\x03R\x06plugin\"\xed\x04\n" +
+	"retryState\x12\x10\n" +
+	"\x03pin\x18\x10 \x01(\tR\x03pin\x12\x19\n" +
+	"\borker_id\x18\x11 \x01(\tR\aorkerIdJ\x04\b\x02\x10\x03R\x06plugin\"\xed\x04\n" +
 	"\vTaskAttempt\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +

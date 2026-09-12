@@ -16,6 +16,19 @@ message RetryPolicy {
   int32 maximum_interval_seconds = 4;    // default 100
 }
 
+// Pin is a named group of tasks that execute on ONE Orker process and share
+// /orkstack/shared for the group's lifetime (docs/design/task-pinning-
+// worker-session.md). It is the user-facing word; the Temporal session that
+// implements it is internal, as a queue is to a pool.
+message Pin {
+  string name = 1;                       // slug, unique within the orkflow
+
+  // timeout_seconds bounds the whole pin, from the moment its first task is
+  // dispatched until its last task ends. 0 means derived: the sum of every
+  // member task's wall-clock budget, which is the sequential worst case.
+  int32 timeout_seconds = 2;
+}
+
 // Task is a single node in the orkflow DAG. It maps to exactly one activity
 // execution on an Orker, and an activity is an OCI image.
 message Task {
@@ -72,6 +85,12 @@ message Task {
   // run_as_orker_user is the §3.1 escape hatch, per task. It changes what
   // runs, so it is part of canonicalOrkflow(Task) (§4.4).
   bool run_as_orker_user = 18;
+
+  // pin names the Pin this task belongs to, or is empty. Every task of one
+  // pin runs on one Orker process and sees the same /orkstack/shared. It
+  // changes what runs and where, so it is part of canonicalOrkflow(Task) —
+  // emitted ONLY when set, so a definition with no pin keeps its digest.
+  string pin = 19;
 }
 
 // Orkflow is the compiled, validated form of a DSL document.
@@ -113,4 +132,9 @@ message Orkflow {
   // activity-payload bytes and would force a SECOND replay-fixture reset —
   // which §11.4 calls a process failure.
   string definition_digest = 10;
+
+  // pins declares every Pin a task may name, sorted by name at compile so
+  // one document always compiles to one message. Part of canonicalOrkflow,
+  // emitted ONLY when non-empty (see Task.pin).
+  repeated Pin pins = 11;
 }

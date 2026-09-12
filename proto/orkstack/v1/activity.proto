@@ -123,6 +123,25 @@ message UpstreamRef {
   repeated ArtifactRef artifacts = 4;
 }
 
+// ---------------------------------------------------------------- pins
+
+// PinContext tells an Orker that this attempt belongs to a pin, and which
+// opening of it. It is set ONLY on a pinned task's input, so an unpinned
+// task's recorded payload is byte-identical to what it was before this field
+// existed (the golden history fixture has no pins and must keep matching
+// without re-recording).
+message PinContext {
+  string name = 1;
+  // instance_id identifies ONE opening of the pin within one run. The engine
+  // takes it from the session it opened; the Orker keys the shared directory
+  // by it and trusts nothing else to name that directory.
+  string instance_id = 2;
+  // timeout_seconds is the pin's lifetime bound as the engine set it
+  // (Pin.timeout_seconds or the derived sum). The Orker derives the shared
+  // directory's lease from it (§8.4).
+  int32 timeout_seconds = 3;
+}
+
 // ---------------------------------------------------------------- the seam
 
 // ExecuteTaskInput is the argument of the ExecuteTask Temporal activity. It
@@ -200,6 +219,21 @@ message ExecuteTaskInput {
   // history fixture (internal/engine/testdata/history) has no telemetry and
   // must keep matching without re-recording.
   TelemetrySelection telemetry = 23;
+
+  // pin tells the Orker this attempt belongs to a pin, and which opening of
+  // it. UNSET for an unpinned task, which keeps such a task's recorded
+  // payload byte-identical to what it was before this field existed.
+  PinContext pin = 24;
+}
+
+// ReleasePinInput asks the pin host to remove the pin's shared directory.
+// Scheduled by the engine on the pin's own session, so it lands on the host
+// that owns the directory; a host that has no such directory returns success
+// (idempotent).
+message ReleasePinInput {
+  string run_id = 1;
+  string namespace = 2;
+  PinContext pin = 3;
 }
 
 // CommitRef points at a written ActivityCommit object.
@@ -338,4 +372,8 @@ message DescribeOrkerResult {
   string security_profile = 6;  // the profile id the Orker enforces (§9.2)
   int32 max_concurrent = 7;
   bool rootless = 8;
+  // max_concurrent_pins is ORK_ORKER_MAX_PINS: how many pins this Orker hosts
+  // at once. 0 means it hosts none, and a submit that pins a task to this
+  // Orker's pool is refused at submit rather than left waiting.
+  int32 max_concurrent_pins = 9;
 }

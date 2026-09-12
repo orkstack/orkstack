@@ -40,6 +40,74 @@ func TestValidateOrkflowDoesNotWriteAndReturnsDocumentIssues(t *testing.T) {
 	}
 }
 
+// TestValidateOrkflowWarnsAboutAPinThatKeepsEveryImagesOwnUser covers what is
+// left of rule 11 after the compiler has done its half: the compiler REFUSES a
+// pin whose tasks disagree about run_as_orker_user, and a pin that agrees on
+// false is still exposed to the same sticky-bit hazard, because each container
+// then keeps its image's own baked-in USER. That is advice, not a refusal —
+// the compiler cannot know an image's USER — so it arrives as a WARNING beside
+// a successfully validated document.
+func TestValidateOrkflowWarnsAboutAPinThatKeepsEveryImagesOwnUser(t *testing.T) {
+	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore()})
+	const allDefault = `
+name: pin-default-user
+pins:
+  build: {}
+tasks:
+  - id: write
+    uses: busybox:latest
+    pin: build
+  - id: read
+    uses: busybox:latest
+    pin: build
+    needs: [write]
+`
+	warned, err := svc.ValidateOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: allDefault}))
+	if err != nil {
+		t.Fatalf("ValidateOrkflow = %v", err)
+	}
+	if warned.Msg.GetOrkflow().GetDefinitionDigest() == "" {
+		t.Fatalf("a warning must not cost the validated document: %#v", warned.Msg)
+	}
+	issues := warned.Msg.GetIssues()
+	if len(issues) != 1 {
+		t.Fatalf("issues = %#v, want exactly one warning", issues)
+	}
+	if issues[0].GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING {
+		t.Errorf("severity = %v, want WARNING", issues[0].GetSeverity())
+	}
+	if issues[0].GetField() != "pins.build" {
+		t.Errorf("field = %q, want pins.build", issues[0].GetField())
+	}
+	if !strings.Contains(issues[0].GetMessage(), "run_as_orker_user: true") {
+		t.Errorf("message %q does not recommend run_as_orker_user: true", issues[0].GetMessage())
+	}
+
+	// The recommendation taken is the recommendation gone: a pin whose tasks
+	// all opt in has nothing left to warn about.
+	agreed := strings.ReplaceAll(allDefault, "    pin: build", "    pin: build\n    run_as_orker_user: true")
+	quiet, err := svc.ValidateOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: agreed}))
+	if err != nil {
+		t.Fatalf("ValidateOrkflow (run_as_orker_user: true) = %v", err)
+	}
+	if len(quiet.Msg.GetIssues()) != 0 {
+		t.Errorf("issues = %#v, want none once the pin opts in", quiet.Msg.GetIssues())
+	}
+
+	// And an unpinned document's response is exactly what it was before pins
+	// existed: no pins, no issues.
+	unpinned, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(
+		&orkstackv1.ValidateOrkflowRequest{Yaml: "name: unpinned-doc\ntasks:\n  - id: a\n    uses: busybox:latest\n"}))
+	if err != nil {
+		t.Fatalf("ValidateOrkflow (unpinned) = %v", err)
+	}
+	if len(unpinned.Msg.GetIssues()) != 0 {
+		t.Errorf("unpinned issues = %#v, want none", unpinned.Msg.GetIssues())
+	}
+}
+
 func TestListRunsCursorKeepsTiesAndRejectsChangedFilters(t *testing.T) {
 	runs := engine.NewRunStore()
 	at := time.Date(2026, 9, 8, 9, 0, 0, 0, time.UTC)

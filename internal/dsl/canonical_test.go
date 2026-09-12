@@ -86,6 +86,197 @@ func TestDefinitionDigest_GoldenVector(t *testing.T) {
 	}
 }
 
+// pinnedOrkflow is goldenOrkflow with a pin declared and both tasks joined to
+// it. It is built by hand rather than compiled, because `pins:`/`pin:` have no
+// DSL support yet (Phase 2); this file only pins the wire and the digest.
+func pinnedOrkflow(t *testing.T) *orkstackv1.Orkflow {
+	t.Helper()
+	wf := goldenOrkflow(t)
+	wf.Name = "golden-pinned"
+	wf.Pins = []*orkstackv1.Pin{{Name: "build", TimeoutSeconds: 3600}}
+	wf.Tasks[0].Id = "clone"
+	wf.Tasks[0].Pin = "build"
+	compile := &orkstackv1.Task{
+		Id:             "compile",
+		Uses:           "shell",
+		Image:          wf.Tasks[0].GetImage(),
+		Needs:          []string{"clone"},
+		TimeoutSeconds: 300,
+		Pool:           "main",
+		Pin:            "build",
+		Command:        []string{"sh", "-c", "true"},
+		RunAsOrkerUser: true,
+	}
+	wf.Tasks = append(wf.Tasks, compile)
+	return wf
+}
+
+// GoldenPinnedDefinitionDigest is the pinned digest of pinnedOrkflow, frozen
+// the day pins landed on the wire. It carries the same contract
+// GoldenDefinitionDigest does: a change here is wire-visible.
+const GoldenPinnedDefinitionDigest = "sha256:16f3d7f278d4632d31f9a7a682f6045972efb48d6e4457f4e24fc3e6f3f74c7c"
+
+func TestDefinitionDigest_GoldenPinnedVector(t *testing.T) {
+	got, err := DefinitionDigest(pinnedOrkflow(t))
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if got != GoldenPinnedDefinitionDigest {
+		t.Fatalf("pinned definition digest changed.\n got: %s\nwant: %s\n\n"+
+			"Pins are part of the canonical form (design §5.4). Update the "+
+			"constant only if changing the canonical form was the intent.",
+			got, GoldenPinnedDefinitionDigest)
+	}
+}
+
+// The canonical form of a pinned orkflow carries `pins` on the document, sorted
+// by name, and `pin` on each member task (design §5.4).
+func TestCanonicalOrkflow_EmitsPinsAndPinWhenSet(t *testing.T) {
+	canonical, err := CanonicalOrkflow(pinnedOrkflow(t))
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	var decoded struct {
+		Pins []struct {
+			Name           string `json:"name"`
+			TimeoutSeconds int64  `json:"timeoutSeconds"`
+		} `json:"pins"`
+		Tasks []struct {
+			ID  string `json:"id"`
+			Pin string `json:"pin"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(canonical, &decoded); err != nil {
+		t.Fatalf("decode %s: %v", canonical, err)
+	}
+	if len(decoded.Pins) != 1 {
+		t.Fatalf("want one pin, got %d in %s", len(decoded.Pins), canonical)
+	}
+	if decoded.Pins[0].Name != "build" || decoded.Pins[0].TimeoutSeconds != 3600 {
+		t.Fatalf("pin canonicalized as %+v, want {build 3600}", decoded.Pins[0])
+	}
+	for _, task := range decoded.Tasks {
+		if task.Pin != "build" {
+			t.Fatalf("task %q canonicalized with pin %q, want \"build\"", task.ID, task.Pin)
+		}
+	}
+}
+
+// pins are sorted by name, so the order they arrive in cannot change a digest.
+func TestCanonicalOrkflow_SortsPinsByName(t *testing.T) {
+	wf := pinnedOrkflow(t)
+	wf.Pins = []*orkstackv1.Pin{
+		{Name: "build", TimeoutSeconds: 3600},
+		{Name: "acceptance", TimeoutSeconds: 60},
+	}
+	first, err := CanonicalOrkflow(wf)
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	wf.Pins = []*orkstackv1.Pin{
+		{Name: "acceptance", TimeoutSeconds: 60},
+		{Name: "build", TimeoutSeconds: 3600},
+	}
+	second, err := CanonicalOrkflow(wf)
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("pin order changed the canonical form:\n%s\n%s", first, second)
+	}
+	if at := strings.Index(string(first), `"acceptance"`); at < 0 || at > strings.Index(string(first), `"build"`) {
+		t.Fatalf("pins are not sorted by name: %s", first)
+	}
+}
+
+// A pin changes what runs and WHERE, so it is in the digest: the same document
+// with its pins stripped is a different definition.
+func TestDefinitionDigest_ChangesWhenAPinIsAddedOrRemoved(t *testing.T) {
+	pinned, err := DefinitionDigest(pinnedOrkflow(t))
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+
+	stripped := pinnedOrkflow(t)
+	stripped.Pins = nil
+	for _, task := range stripped.GetTasks() {
+		task.Pin = ""
+	}
+	unpinned, err := DefinitionDigest(stripped)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if pinned == unpinned {
+		t.Fatal("stripping pins produced the same definition digest, so the pin " +
+			"is not part of the hash")
+	}
+
+	t.Run("the pin's own timeout is hashed", func(t *testing.T) {
+		moved := pinnedOrkflow(t)
+		moved.Pins[0].TimeoutSeconds = 7200
+		got, err := DefinitionDigest(moved)
+		if err != nil {
+			t.Fatalf("digest: %v", err)
+		}
+		if got == pinned {
+			t.Fatal("changing Pin.timeout_seconds did not change the digest")
+		}
+	})
+
+	t.Run("moving one task out of the pin is a different definition", func(t *testing.T) {
+		moved := pinnedOrkflow(t)
+		moved.Tasks[1].Pin = ""
+		got, err := DefinitionDigest(moved)
+		if err != nil {
+			t.Fatalf("digest: %v", err)
+		}
+		if got == pinned {
+			t.Fatal("unpinning one task did not change the digest")
+		}
+	})
+}
+
+// THE BACKWARD-COMPATIBILITY CRUX (design §5.4, §10.1). An orkflow that
+// declares no pin must canonicalize with NO `pins` key and NO `pin` key —
+// not present, not empty, not null — because the digest is stamped into the
+// document and a moved digest turns a re-apply of an unchanged document into
+// `already_exists` (see canonicalPins). GoldenDefinitionDigest is the other
+// half of this proof; this test says WHY it still holds.
+func TestCanonicalOrkflow_OmitsPinKeysEntirelyWhenThereAreNoPins(t *testing.T) {
+	canonical, err := CanonicalOrkflow(goldenOrkflow(t))
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	// ImageRef.pinned is a legitimate key that starts with "pin", so the two
+	// new keys are looked for exactly.
+	for _, key := range []string{`"pins"`, `"pin":`} {
+		if strings.Contains(string(canonical), key) {
+			t.Fatalf("an unpinned orkflow emitted %s: %s", key, canonical)
+		}
+	}
+
+	var document map[string]any
+	if err := json.Unmarshal(canonical, &document); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := document["pins"]; ok {
+		t.Fatalf("an unpinned orkflow carries a \"pins\" key: %s", canonical)
+	}
+	tasks, ok := document["tasks"].([]any)
+	if !ok || len(tasks) == 0 {
+		t.Fatalf("no tasks in %s", canonical)
+	}
+	for _, task := range tasks {
+		fields, ok := task.(map[string]any)
+		if !ok {
+			t.Fatalf("task is not an object in %s", canonical)
+		}
+		if _, ok := fields["pin"]; ok {
+			t.Fatalf("an unpinned task carries a \"pin\" key: %s", canonical)
+		}
+	}
+}
+
 func TestCanonicalOrkflow_IsValidCompactSortedJSON(t *testing.T) {
 	canonical, err := CanonicalOrkflow(goldenOrkflow(t))
 	if err != nil {

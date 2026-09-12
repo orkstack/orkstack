@@ -14,7 +14,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/orkflow.proto.
  */
 export const file_orkstack_v1_orkflow: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiqwQKBFRhc2sSCgoCaWQYASABKAkSJQoEd2l0aBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDQoFbmVlZHMYBCADKAkSEQoJY29uZGl0aW9uGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoBRInCgVyZXRyeRgHIAEoCzIYLm9ya3N0YWNrLnYxLlJldHJ5UG9saWN5EgwKBHBvb2wYCSABKAkSDAoEdXNlcxgKIAEoCRIkCgVpbWFnZRgLIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEg8KB2NvbW1hbmQYDCADKAkSJwoDZW52GA0gAygLMhoub3Jrc3RhY2sudjEuVGFzay5FbnZFbnRyeRInCgdzZWNyZXRzGA4gAygLMhYub3Jrc3RhY2sudjEuU2VjcmV0UmVmEi8KCXJlc291cmNlcxgPIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBAgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBEgASgFEhkKEXJ1bl9hc19vcmtlcl91c2VyGBIgASgIGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFKBAgCEANKBAgIEAlSBnBsdWdpblIFcXVldWUi3AIKB09ya2Zsb3cSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEjAKBmxhYmVscxgEIAMoCzIgLm9ya3N0YWNrLnYxLk9ya2Zsb3cuTGFiZWxzRW50cnkSJwoGaW5wdXRzGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV0YXNrcxgGIAMoCzIRLm9ya3N0YWNrLnYxLlRhc2sSEwoLc291cmNlX3lhbWwYByABKAkSLgoKY3JlYXRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAkgASgJEhkKEWRlZmluaXRpb25fZGlnZXN0GAogASgJGi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCqAEKD2NvbS5vcmtzdGFjay52MUIMT3JrZmxvd1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
+  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiLAoDUGluEgwKBG5hbWUYASABKAkSFwoPdGltZW91dF9zZWNvbmRzGAIgASgFIrgECgRUYXNrEgoKAmlkGAEgASgJEiUKBHdpdGgYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Eg0KBW5lZWRzGAQgAygJEhEKCWNvbmRpdGlvbhgFIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYBiABKAUSJwoFcmV0cnkYByABKAsyGC5vcmtzdGFjay52MS5SZXRyeVBvbGljeRIMCgRwb29sGAkgASgJEgwKBHVzZXMYCiABKAkSJAoFaW1hZ2UYCyABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAwgAygJEicKA2VudhgNIAMoCzIaLm9ya3N0YWNrLnYxLlRhc2suRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIvCglyZXNvdXJjZXMYDyABKAsyHC5vcmtzdGFjay52MS5SZXNvdXJjZVJlcXVlc3QSKQoHbmV0d29yaxgQIAEoDjIYLm9ya3N0YWNrLnYxLk5ldHdvcmtNb2RlEikKIWNhbmNlbGxhdGlvbl9ncmFjZV9wZXJpb2Rfc2Vjb25kcxgRIAEoBRIZChFydW5fYXNfb3JrZXJfdXNlchgSIAEoCBILCgNwaW4YEyABKAkaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUoECAIQA0oECAgQCVIGcGx1Z2luUgVxdWV1ZSL8AgoHT3JrZmxvdxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSMAoGbGFiZWxzGAQgAygLMiAub3Jrc3RhY2sudjEuT3JrZmxvdy5MYWJlbHNFbnRyeRInCgZpbnB1dHMYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXRhc2tzGAYgAygLMhEub3Jrc3RhY2sudjEuVGFzaxITCgtzb3VyY2VfeWFtbBgHIAEoCRIuCgpjcmVhdGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYCSABKAkSGQoRZGVmaW5pdGlvbl9kaWdlc3QYCiABKAkSHgoEcGlucxgLIAMoCzIQLm9ya3N0YWNrLnYxLlBpbhotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQqgBCg9jb20ub3Jrc3RhY2sudjFCDE9ya2Zsb3dQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
 
 /**
  * RetryPolicy mirrors Temporal retry semantics for a task.
@@ -57,6 +57,39 @@ export type RetryPolicy = Message<"orkstack.v1.RetryPolicy"> & {
  */
 export const RetryPolicySchema: GenMessage<RetryPolicy> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_orkflow, 0);
+
+/**
+ * Pin is a named group of tasks that execute on ONE Orker process and share
+ * /orkstack/shared for the group's lifetime (docs/design/task-pinning-
+ * worker-session.md). It is the user-facing word; the Temporal session that
+ * implements it is internal, as a queue is to a pool.
+ *
+ * @generated from message orkstack.v1.Pin
+ */
+export type Pin = Message<"orkstack.v1.Pin"> & {
+  /**
+   * slug, unique within the orkflow
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * timeout_seconds bounds the whole pin, from the moment its first task is
+   * dispatched until its last task ends. 0 means derived: the sum of every
+   * member task's wall-clock budget, which is the sequential worst case.
+   *
+   * @generated from field: int32 timeout_seconds = 2;
+   */
+  timeoutSeconds: number;
+};
+
+/**
+ * Describes the message orkstack.v1.Pin.
+ * Use `create(PinSchema)` to create a new message.
+ */
+export const PinSchema: GenMessage<Pin> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_orkflow, 1);
 
 /**
  * Task is a single node in the orkflow DAG. It maps to exactly one activity
@@ -176,6 +209,16 @@ export type Task = Message<"orkstack.v1.Task"> & {
    * @generated from field: bool run_as_orker_user = 18;
    */
   runAsOrkerUser: boolean;
+
+  /**
+   * pin names the Pin this task belongs to, or is empty. Every task of one
+   * pin runs on one Orker process and sees the same /orkstack/shared. It
+   * changes what runs and where, so it is part of canonicalOrkflow(Task) —
+   * emitted ONLY when set, so a definition with no pin keeps its digest.
+   *
+   * @generated from field: string pin = 19;
+   */
+  pin: string;
 };
 
 /**
@@ -183,7 +226,7 @@ export type Task = Message<"orkstack.v1.Task"> & {
  * Use `create(TaskSchema)` to create a new message.
  */
 export const TaskSchema: GenMessage<Task> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 1);
+  messageDesc(file_orkstack_v1_orkflow, 2);
 
 /**
  * Orkflow is the compiled, validated form of a DSL document.
@@ -275,6 +318,15 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
    * @generated from field: string definition_digest = 10;
    */
   definitionDigest: string;
+
+  /**
+   * pins declares every Pin a task may name, sorted by name at compile so
+   * one document always compiles to one message. Part of canonicalOrkflow,
+   * emitted ONLY when non-empty (see Task.pin).
+   *
+   * @generated from field: repeated orkstack.v1.Pin pins = 11;
+   */
+  pins: Pin[];
 };
 
 /**
@@ -282,5 +334,5 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
  * Use `create(OrkflowSchema)` to create a new message.
  */
 export const OrkflowSchema: GenMessage<Orkflow> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 2);
+  messageDesc(file_orkstack_v1_orkflow, 3);
 

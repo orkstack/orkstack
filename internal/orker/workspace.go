@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -34,7 +35,13 @@ const (
 	ContainerOutput         = ContainerRoot + "/output"
 	ContainerValuesJSON     = ContainerOutput + "/values.json"
 	ContainerArtifacts      = ContainerOutput + "/artifacts"
-	ContainerTmp            = ContainerRoot + "/tmp"
+	// ContainerShared is the pin's shared directory, and it is present ONLY for
+	// a pinned task (§3.1). It is the one mount whose lifetime is not the
+	// attempt's: every task of one pin, and every attempt of every such task,
+	// sees this path with the same contents for the life of the pin. For an
+	// unpinned task the mount does not exist and task.json omits paths.shared.
+	ContainerShared = ContainerRoot + "/shared"
+	ContainerTmp    = ContainerRoot + "/tmp"
 	// ContainerScratchTmp is the small tmpfs at /tmp, separate from the
 	// workload's /orkstack/tmp scratch bind. The container root filesystem is
 	// read-only (§9.2), so a workload that writes to /tmp out of habit needs
@@ -68,6 +75,10 @@ const (
 	// world-writable with NO sticky bit, and any container uid can delete
 	// another's outputs. Caught by TestWorkspace_PermissionsMatchTheLayout.
 	ModeWritableDir os.FileMode = 0o777 | os.ModeSticky
+	// ModePinLease is a pin's lease.json. It is written by the Orker and read
+	// by the Orker; no container ever sees it, because it lives in the 0700 pin
+	// root BESIDE the bind-mounted shared/ child rather than inside it (§8.2).
+	ModePinLease os.FileMode = 0o600
 )
 
 // TaskJSONSchemaVersion is the major version of task.json this Orker writes.
@@ -95,6 +106,16 @@ type Workspace struct {
 	Artifacts string
 	// Tmp is bind-mounted read-write at /orkstack/tmp.
 	Tmp string
+	// Shared is the PIN's shared directory, bind-mounted read-write at
+	// /orkstack/shared. It is empty for an unpinned attempt, which is the whole
+	// of the conditional: an unpinned attempt renders exactly the four mounts
+	// it rendered before pins existed.
+	//
+	// It is deliberately NOT created, sealed or removed by this type. It is
+	// created by AcquirePin, it outlives this attempt, and Remove must never
+	// touch it — the next task of the same pin is entitled to find it intact
+	// (§7.5, §8.1).
+	Shared string
 }
 
 // NewWorkspace creates the per-attempt tree with the §3.1 modes.
@@ -210,18 +231,41 @@ func (w *Workspace) SealSecrets() error {
 }
 
 // Mounts renders the §9.2 bind set. Every source is a path this Orker created
-// for this attempt; there is no branch that could produce a host path from a
-// definition.
+// for this attempt OR for this attempt's pin; there is no branch that could
+// produce a host path from a definition.
+//
+// The pin half of that promise is what §7.5 widened the sentence for, and it is
+// no weaker: AcquirePin builds its path from a run id, a compiler-enforced slug
+// and an instance id validated before it becomes a path segment, so a
+// definition still cannot name a host path (§9.1).
 func (w *Workspace) Mounts() []Mount {
-	return []Mount{
+	mounts := []Mount{
 		{Source: w.Input, Destination: ContainerInput, ReadOnly: true},
 		{Source: w.Secrets, Destination: ContainerSecrets, ReadOnly: true},
 		{Source: w.Output, Destination: ContainerOutput},
 		{Source: w.Tmp, Destination: ContainerTmp},
 	}
+	// Read-WRITE, and only when this attempt is pinned. The whole point of the
+	// directory is that the next task of the pin finds what this one wrote.
+	if w.Shared != "" {
+		mounts = append(mounts, Mount{Source: w.Shared, Destination: ContainerShared})
+	}
+	return mounts
 }
 
 // Remove deletes the whole per-attempt tree.
+//
+// It deletes w.Root only. w.Shared belongs to the PIN and outlives every
+// attempt of it, so a pinned attempt's cleanup must not reach it — the mount's
+// source is a sibling of this tree, not a child of it (§8.1).
+//
+// Called on EVERY exit path: success, failure, panic and cancellation alike
+// (§6.2).
+func (w *Workspace) Remove() error {
+	return removeSealedTree(w.Root)
+}
+
+// removeSealedTree deletes a tree the Orker itself made unremovable.
 //
 // It exists because os.RemoveAll CANNOT do it. Seal leaves input/ at 0555, and
 // unlinking a file needs write and execute on its DIRECTORY, not on the file:
@@ -231,10 +275,13 @@ func (w *Workspace) Mounts() []Mount {
 // cleanup could not delete what the test had sealed.
 //
 // So every directory is made writable on the way down before anything is
-// unlinked. Called on EVERY exit path: success, failure, panic and
-// cancellation alike (§6.2).
-func (w *Workspace) Remove() error {
-	_ = filepath.WalkDir(w.Root, func(path string, entry os.DirEntry, err error) error {
+// unlinked. A pin directory needs the identical walk for a different reason: a
+// workload writing into the 1777 shared/ tree as its own uid may have left a
+// 0500 directory behind, which no removal can traverse either (§8.4). One walk
+// serves both, because two removal implementations would mean one of them
+// eventually stops matching the other.
+func removeSealedTree(root string) error {
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			// A path that cannot be walked cannot be chmod'ed either;
 			// RemoveAll below reports what actually remains.
@@ -245,7 +292,7 @@ func (w *Workspace) Remove() error {
 		}
 		return nil
 	})
-	return os.RemoveAll(w.Root)
+	return os.RemoveAll(root)
 }
 
 // RemoveSecrets deletes the per-attempt secrets directory. It is called on
@@ -261,6 +308,362 @@ func (w *Workspace) RemoveSecrets() error {
 		}
 	}
 	return os.RemoveAll(w.Secrets)
+}
+
+// ------------------------------------------------------------- pin workspace
+
+// pinDirPrefix is what every pin directory's name starts with, and therefore
+// what the boot reap and the lease sweep list by (§8.2).
+const pinDirPrefix = "ork-pin-"
+
+// pinLeaseFileName is the lease written beside — never inside — the shared
+// directory, so nothing a workload can reach can forge or extend it.
+const pinLeaseFileName = "lease.json"
+
+// pinSharedDirName is the child that gets bind-mounted at /orkstack/shared.
+const pinSharedDirName = "shared"
+
+// pinReleaseBudget mirrors the engine's constant of the same name
+// (internal/engine/workflow.go): the slice of a pin's lifetime reserved for the
+// ReleasePin activity. It is duplicated rather than imported because the Orker
+// never imports the engine, and it is duplicated as a NUMBER the lease only
+// adds slack on top of — nothing here has to agree with the engine to be
+// correct, only to be generous.
+const pinReleaseBudget = 60 * time.Second
+
+// pinLeaseSlack is how much longer a pin's lease outlives the pin's own
+// timeout: the release budget plus five minutes (§8.4).
+//
+// The lease is a pure BACKSTOP and never the primary removal path. The session's
+// ExecutionTimeout already bounds the pin's life and is measured from session
+// CREATION, which strictly precedes the first attempt's arrival here — so by
+// the time a lease could expire, Temporal has provably already declared the
+// session dead and neither ReleasePin nor a boot reap nor anything else will
+// ever use the directory again. The slack exists only so that the backstop can
+// never fire on a pin that is merely slow.
+const pinLeaseSlack = pinReleaseBudget + 5*time.Minute
+
+// PinWorkspace is one opening of one pin, on the host that hosts it.
+//
+// It is the second, longer-lived kind of ephemeral execution directory (§8.1):
+// still bounded, local, disposable and reconstructible by re-running, but with
+// the PIN's lifetime rather than one attempt's. It is neither an input tree (it
+// is never sealed) nor an output tree (nothing in it is scanned, hashed,
+// uploaded or committed), and no secret is ever written under it.
+type PinWorkspace struct {
+	// Root is ork-pin-<run>-<pin>-<instance>, mode 0700 and owned by the
+	// Orker's user — which is what makes the 1777 child safe, exactly as it is
+	// for a per-attempt root.
+	Root string
+	// Shared is Root/shared, mode 1777 with the sticky bit. This is the path
+	// bind-mounted read-write at /orkstack/shared.
+	Shared string
+	// LeasePath is Root/lease.json, mode 0600 (§8.4).
+	LeasePath string
+}
+
+// pinLease is what lease.json holds.
+//
+// expiresAt is RFC 3339 with nanosecond precision, in UTC. A timestamp rather
+// than a duration or a unix integer because the only readers are this Orker's
+// own sweep and an operator looking at a directory wondering when it dies, and
+// both are better served by a string that says so.
+type pinLease struct {
+	ExpiresAt string `json:"expiresAt"`
+	RunID     string `json:"runId"`
+	Pin       string `json:"pin"`
+}
+
+// AcquirePin resolves or creates the shared directory of one opening of one pin
+// (§8.2, §8.4). Every member attempt of the pin calls it, and they all get the
+// same paths back — that sharing IS the feature.
+//
+// It is therefore IDEMPOTENT by construction rather than by a lock: a second
+// task of the pin, a second concurrent member, and a retry of a member that
+// already ran all call it with the same (run, pin, instance) triple, and none
+// of them may fail because the directory already exists. Every step is an
+// MkdirAll or a conditional write.
+//
+// The instance id is VALIDATED, never sanitized, because it becomes a path
+// segment — the same discipline ValidSecretName applies for the same reason.
+// The engine mints it as a uuid through workflow.SideEffect, so a rejection
+// here means the wire was not carrying what the engine sends, and rewriting it
+// would be the one way to turn that into a silently wrong directory.
+func AcquirePin(workRoot, runID, pinName, instanceID string, pinTimeoutSeconds int32) (*PinWorkspace, error) {
+	return acquirePinAt(workRoot, runID, pinName, instanceID, pinTimeoutSeconds, time.Now())
+}
+
+// acquirePinAt is AcquirePin with the clock injected, so a test can assert what
+// the lease says without waiting for it.
+func acquirePinAt(
+	workRoot, runID, pinName, instanceID string,
+	pinTimeoutSeconds int32,
+	now time.Time,
+) (*PinWorkspace, error) {
+	root, err := pinDirectory(workRoot, runID, pinName, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	pin := &PinWorkspace{
+		Root:      root,
+		Shared:    filepath.Join(root, pinSharedDirName),
+		LeasePath: filepath.Join(root, pinLeaseFileName),
+	}
+	if err := os.MkdirAll(pin.Root, ModeAttempt); err != nil {
+		return nil, fmt.Errorf("create pin directory %s: %w", pin.Root, err)
+	}
+	if err := os.MkdirAll(pin.Shared, ModeWritableDir); err != nil {
+		return nil, fmt.Errorf("create pin shared directory %s: %w", pin.Shared, err)
+	}
+	// Chmod rather than trusting MkdirAll's mode argument, and for both
+	// directories, exactly as NewWorkspace does: MkdirAll applies the process
+	// umask, 1777 is the mode a restrictive umask quietly reduces, and 0700 is
+	// what makes the 1777 child safe from other host users. On a second call
+	// these also REASSERT the modes, so a workload that chmod'ed its own view
+	// of shared/ cannot leave the next member locked out.
+	if err := os.Chmod(pin.Root, ModeAttempt); err != nil {
+		return nil, fmt.Errorf("set mode on %s: %w", pin.Root, err)
+	}
+	if err := os.Chmod(pin.Shared, ModeWritableDir); err != nil {
+		return nil, fmt.Errorf("set mode on %s: %w", pin.Shared, err)
+	}
+	if err := writePinLease(pin, runID, pinName, pinTimeoutSeconds, now); err != nil {
+		return nil, err
+	}
+	return pin, nil
+}
+
+// writePinLease writes lease.json on FIRST arrival and leaves it alone on every
+// later one.
+//
+// The lease is anchored to when the pin opened, NOT to the most recent
+// activity, because the session's own ExecutionTimeout is likewise anchored to
+// its creation rather than to recent use. Re-arming the lease on every
+// AcquirePin call would let a directory outlive a session Temporal has already
+// declared dead — which is the exact leak the lease exists to close, so
+// extending it per call would quietly cost the feature its backstop.
+func writePinLease(pin *PinWorkspace, runID, pinName string, pinTimeoutSeconds int32, now time.Time) error {
+	if raw, err := os.ReadFile(pin.LeasePath); err == nil {
+		var existing pinLease
+		if json.Unmarshal(raw, &existing) == nil && existing.ExpiresAt != "" {
+			return nil
+		}
+		// A lease that does not decode is rewritten rather than trusted. The
+		// sweep reads an undecodable lease as abandoned, and a LIVE pin whose
+		// lease write was torn by a dying host must not be swept out from
+		// under the member that is about to arrive.
+	}
+	// A non-positive timeout leaves the slack as the whole lease. The engine
+	// always sends a positive one (Pin.timeout_seconds or the derived sum), so
+	// this only decides what a malformed wire gets: the shortest safe lease,
+	// never a lease already in the past.
+	if pinTimeoutSeconds < 0 {
+		pinTimeoutSeconds = 0
+	}
+	expires := now.Add(time.Duration(pinTimeoutSeconds)*time.Second + pinLeaseSlack)
+	encoded, err := json.MarshalIndent(pinLease{
+		ExpiresAt: expires.UTC().Format(time.RFC3339Nano),
+		RunID:     runID,
+		Pin:       pinName,
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode pin lease: %w", err)
+	}
+	encoded = append(encoded, '\n')
+	if err := os.WriteFile(pin.LeasePath, encoded, ModePinLease); err != nil {
+		return fmt.Errorf("write pin lease %s: %w", pin.LeasePath, err)
+	}
+	// WriteFile's mode applies only when it CREATES the file, and the umask
+	// reduces it either way; the chmod is what actually holds 0600.
+	if err := os.Chmod(pin.LeasePath, ModePinLease); err != nil {
+		return fmt.Errorf("set mode on %s: %w", pin.LeasePath, err)
+	}
+	return nil
+}
+
+// ReleasePinDirectory removes one pin's directory, and it is the ONE removal
+// path all three of §8.4's ways to end a pin go through.
+//
+// It returns the path it removed, or "" when the directory was already gone —
+// which is what lets a caller log a real removal and stay silent on the boring
+// one. An absent directory is a SUCCESS, not an error: release genuinely races
+// the other two ways a pin ends, and an Orker that restarted between the last
+// member finishing and the release landing has already reaped it.
+func ReleasePinDirectory(workRoot, runID, pinName, instanceID string) (string, error) {
+	root, err := pinDirectory(workRoot, runID, pinName, instanceID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(root); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("stat pin directory %s: %w", root, err)
+	}
+	if err := removeSealedTree(root); err != nil {
+		return "", fmt.Errorf("remove pin directory %s: %w", root, err)
+	}
+	return root, nil
+}
+
+// ReapPinDirectories removes EVERY pin directory under the work root, and is
+// the boot reap of §8.4.
+//
+// It is not a heuristic. A pin lives inside a Temporal Worker Session whose
+// resource id is a fresh uuid minted per worker start, so no session — and
+// therefore no pin — can survive an Orker restart: every ork-pin-* found at
+// boot is dead by construction.
+//
+// It returns what it removed and joins whatever it could not, so the caller can
+// log both. A failure here must never fail a boot: cleanup is not orchestration
+// (§8.5), the lease sweep will try again, and refusing to start over a
+// directory nothing will ever read again is worse than starting.
+func ReapPinDirectories(workRoot string) ([]string, error) {
+	dirs, err := pinDirectories(workRoot)
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	var failures []error
+	for _, dir := range dirs {
+		if err := removeSealedTree(dir); err != nil {
+			failures = append(failures, fmt.Errorf("remove pin directory %s: %w", dir, err))
+			continue
+		}
+		removed = append(removed, dir)
+	}
+	return removed, errors.Join(failures...)
+}
+
+// SweepExpiredPinLeases removes every pin directory whose lease has expired as
+// of now, and is the third way a pin ends (§8.4).
+//
+// It covers the one leak the other two cannot: an Orker that stays alive while
+// its run is terminated from outside, where Temporal frees the session but no
+// OrkStack code runs at all.
+func SweepExpiredPinLeases(workRoot string, now time.Time) ([]string, error) {
+	dirs, err := pinDirectories(workRoot)
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	var failures []error
+	for _, dir := range dirs {
+		if !pinLeaseExpired(dir, now) {
+			continue
+		}
+		if err := removeSealedTree(dir); err != nil {
+			failures = append(failures, fmt.Errorf("remove expired pin directory %s: %w", dir, err))
+			continue
+		}
+		removed = append(removed, dir)
+	}
+	return removed, errors.Join(failures...)
+}
+
+// pinLeaseExpired decides whether one pin directory is dead.
+//
+// A lease that decodes answers directly. A MISSING or UNDECODABLE one is the
+// judgment call, and it is resolved as "abandoned, after a grace period".
+// AcquirePin writes a valid lease before it returns, so a directory without one
+// either lost the race between its own MkdirAll and that write — in which case
+// the attempt that created it failed — or had its lease truncated by a host
+// that died mid-write. Neither is ever repaired, because nothing else writes a
+// lease, so skipping it forever would leak exactly the directory the sweep
+// exists to collect.
+//
+// The grace period is what makes that safe rather than merely tidy. The window
+// between MkdirAll and the lease write is sub-millisecond, but it is not zero,
+// and a sweep tick landing inside it must not delete a pin that is about to be
+// used. pinLeaseSlack is a generous multiple of that window and is already the
+// constant this file reasons about pin lifetimes with, so it is reused rather
+// than a second number nobody would keep in step.
+func pinLeaseExpired(dir string, now time.Time) bool {
+	if raw, err := os.ReadFile(filepath.Join(dir, pinLeaseFileName)); err == nil {
+		var lease pinLease
+		if err := json.Unmarshal(raw, &lease); err == nil && lease.ExpiresAt != "" {
+			if expires, err := time.Parse(time.RFC3339Nano, lease.ExpiresAt); err == nil {
+				return now.After(expires)
+			}
+		}
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		// Unstattable is not evidence of anything. Leave it for the boot reap,
+		// which removes every pin directory unconditionally.
+		return false
+	}
+	return now.Sub(info.ModTime()) >= pinLeaseSlack
+}
+
+// pinDirectories lists the pin directories under a work root. One lister serves
+// the boot reap and the lease sweep, so the two can never disagree about what
+// counts as a pin directory.
+func pinDirectories(workRoot string) ([]string, error) {
+	root := workRoot
+	if root == "" {
+		root = os.TempDir()
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// A root that does not exist holds no pin directories. Boot creates
+			// it moments later; nothing here needs to.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list the workspace root %s: %w", root, err)
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), pinDirPrefix) {
+			continue
+		}
+		dirs = append(dirs, filepath.Join(root, entry.Name()))
+	}
+	return dirs, nil
+}
+
+// pinDirectory renders ork-pin-<run>-<pin>-<instance> under the work root, and
+// is the single place that name is spelled.
+//
+// safeComponent is defensive on both of its arguments rather than load-bearing:
+// a pin name is a compiler-enforced slug and is already safe, and a run id is
+// Orker-facing but engine-minted. The instance id is the one component that is
+// checked and refused instead, because it is the one the directory's identity
+// depends on.
+func pinDirectory(workRoot, runID, pinName, instanceID string) (string, error) {
+	if !validPinInstanceID(instanceID) {
+		return "", fmt.Errorf(
+			"pin instance id %q must match ^[0-9a-f-]{36}$; it becomes a path component and is "+
+				"validated rather than rewritten, because a rewritten id would name a DIFFERENT "+
+				"pin's shared directory", instanceID)
+	}
+	root := workRoot
+	if root == "" {
+		root = os.TempDir()
+	}
+	name := pinDirPrefix + safeComponent(runID) + "-" + safeComponent(pinName) + "-" + instanceID
+	return filepath.Join(root, name), nil
+}
+
+// validPinInstanceID holds an instance id to ^[0-9a-f-]{36}$ (§8.2), the shape
+// of the lowercase uuid the engine mints through workflow.SideEffect.
+//
+// Hand-rolled for the same reason ValidSecretName is: the grammar is the
+// contract, and reading it as a loop makes it obvious that "." and ".." and
+// every separator are outside it rather than merely unlikely.
+func validPinInstanceID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------- task.json
@@ -321,6 +724,22 @@ type taskJSONTask struct {
 	// image's own USER, so a workload can see WHY its uid is not the one its
 	// image declared. omitempty is the "absent = false" the table specifies.
 	RunAsOrkerUser bool `json:"runAsOrkerUser,omitempty"`
+	// Pin is present ONLY for a pinned task, absent as a key rather than
+	// written empty — which is what makes the addition additive under the rule
+	// above (a major version may only ADD optional fields), keeps
+	// SchemaVersion at 1, and costs a workload that has never heard of pins
+	// nothing (§3.2).
+	Pin *taskJSONPin `json:"pin,omitempty"`
+}
+
+// taskJSONPin names the pin this task belongs to and which opening of it.
+//
+// InstanceID is what the Orker keys the shared directory by; to the workload it
+// is informational, and it is the value an operator correlates a run's
+// directories and Temporal history with.
+type taskJSONPin struct {
+	Name       string `json:"name"`
+	InstanceID string `json:"instanceId"`
 }
 
 type taskJSONImage struct {
@@ -356,6 +775,10 @@ type taskJSONPaths struct {
 	Values    string `json:"values"`
 	Artifacts string `json:"artifacts"`
 	Tmp       string `json:"tmp"`
+	// Shared is /orkstack/shared, present only for a pinned task — the mount
+	// itself does not exist for an unpinned one, so naming its path would be a
+	// lie rather than a convenience (§3.1).
+	Shared string `json:"shared,omitempty"`
 }
 
 type taskJSONInputs struct {
@@ -406,6 +829,10 @@ type TaskContext struct {
 	// Nil or an empty "traceparent" means this deployment does not trace, and
 	// task.json omits the whole `trace` key (§3.2).
 	Trace map[string]string
+	// Pin is the pin context off ExecuteTaskInput, or nil for an unpinned task.
+	// Nil is what keeps paths.shared and task.pin out of an unpinned task's
+	// task.json entirely.
+	Pin *orkstackv1.PinContext
 }
 
 // WriteTaskJSON renders /orkstack/input/task.json.
@@ -481,6 +908,13 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 	// traces.
 	if traceparent := tc.Trace["traceparent"]; traceparent != "" {
 		doc.Trace = &taskJSONTrace{Traceparent: traceparent, Tracestate: tc.Trace["tracestate"]}
+	}
+	// paths.shared and task.pin exist only for a pinned task, and are set
+	// TOGETHER: the path is meaningful exactly when the mount is there, and the
+	// mount is there exactly when this attempt belongs to a pin (§3.1, §3.2).
+	if tc.Pin != nil {
+		doc.Paths.Shared = ContainerShared
+		doc.Task.Pin = &taskJSONPin{Name: tc.Pin.GetName(), InstanceID: tc.Pin.GetInstanceId()}
 	}
 	// Never null.
 	if doc.Inputs.Artifacts == nil {

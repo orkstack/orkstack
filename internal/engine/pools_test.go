@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -566,4 +568,322 @@ func (f fakePoolOrkers) OrkerOnPool(_ context.Context, queue string) (*orkstackv
 		return nil, fmt.Errorf("no orker is polling %q", queue)
 	}
 	return &orkstackv1.DescribeOrkerResult{OrkerId: "orker-" + queue, RuntimeName: "docker"}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Task pins at submit (docs/design/task-pinning-worker-session.md §4.3, §7.4)
+// ---------------------------------------------------------------------------
+
+// pinHostPools answers the DescribeOrker probe with each channel's
+// ORK_ORKER_MAX_PINS, which is the one thing the submit-time pin check reads.
+// A channel it does not map has no Orker to answer at all.
+type pinHostPools map[string]int32
+
+func (p pinHostPools) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
+	maxPins, serving := p[queue]
+	if !serving {
+		return nil, fmt.Errorf("no orker is polling %q", queue)
+	}
+	return &orkstackv1.DescribeOrkerResult{
+		OrkerId:           "orker-" + queue,
+		RuntimeName:       "docker",
+		MaxConcurrentPins: maxPins,
+	}, nil
+}
+
+// refusingDescriber fails the test if it is asked anything. It is how a test
+// proves the describe call was NOT made — §10.4's promise that an unpinned
+// submit runs no probe it did not run before this feature.
+type refusingDescriber struct{ t *testing.T }
+
+func (r refusingDescriber) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
+	r.t.Errorf("the describe-orker probe was made for %q, want no describe call at all", queue)
+	return nil, errors.New("unexpected describe")
+}
+
+const pinnedSubmitDocument = `
+name: pinned-submit
+pins:
+  build: {}
+tasks:
+  - id: clone
+    uses: shell
+    pin: build
+    pool: gpu
+    run_as_orker_user: true
+    with: {command: "echo clone"}
+  - id: compile
+    uses: shell
+    pin: build
+    pool: gpu
+    needs: [clone]
+    run_as_orker_user: true
+    with: {command: "echo compile"}
+  - id: publish
+    uses: shell
+    pool: gpu
+    needs: [compile]
+    with: {command: "echo publish"}
+`
+
+// TestPoolResolver_RefusesAPinnedSubmitOntoAPoolThatHostsNoPins is §7.4.
+//
+// The pool is LIVE — an Orker is polling it — so PoolEmptyError has nothing to
+// say. The narrower question a pin asks is whether anything serving the pool
+// could OPEN one, and the answer is on the Orker's own DescribeOrker:
+// ORK_ORKER_MAX_PINS. Zero means the process starts no session pollers, so the
+// pin's creation request would sit on a channel nobody polls until
+// pinCreationTimeout ran out and the run failed with PIN_UNAVAILABLE. That is
+// the stranded run the submit-time probe exists to prevent, so it is refused
+// here instead — with both remedies named, because a caller who cannot act on
+// an error is left where they were.
+func TestPoolResolver_RefusesAPinnedSubmitOntoAPoolThatHostsNoPins(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	resolver := &engine.PoolResolver{
+		Probe:  livePools{gpuQueue: 2},
+		Orkers: pinHostPools{gpuQueue: 0},
+	}
+	ns := &orkstackv1.Namespace{Name: "ci"}
+
+	_, _, err := resolver.Plan(context.Background(), ns, compile(t, pinnedSubmitDocument), false)
+	var noHost *engine.PoolNoPinHostError
+	if !errors.As(err, &noHost) {
+		t.Fatalf("Plan error = %v, want PoolNoPinHostError", err)
+	}
+	if noHost.Pool != "gpu" || noHost.Namespace != "ci" {
+		t.Errorf("refusal names pool %q of namespace %q, want gpu of ci", noHost.Pool, noHost.Namespace)
+	}
+	if fmt.Sprint(noHost.Pins) != fmt.Sprint([]string{"build"}) {
+		t.Errorf("refusal names pins %v, want [build]", noHost.Pins)
+	}
+	// The PINNED tasks, not every task on the pool: `publish` runs on gpu too
+	// and is perfectly happy there.
+	if fmt.Sprint(noHost.Tasks) != fmt.Sprint([]string{"clone", "compile"}) {
+		t.Errorf("refusal names tasks %v, want the pinned ones in declaration order", noHost.Tasks)
+	}
+	message := err.Error()
+	for _, want := range []string{
+		"has live Orkers but none of them hosts pins",
+		"ORK_ORKER_POOL=gpu ORK_ORKER_MAX_PINS=1",
+		"allow_empty_pool",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("refusal message = %q, want it to contain %q", message, want)
+		}
+	}
+}
+
+// TestPoolResolver_AcceptsAPinnedSubmitWhenThePoolHostsPins is the other side
+// of the same probe: an Orker with ORK_ORKER_MAX_PINS above zero is a pin
+// host, and nothing about the submit changes.
+func TestPoolResolver_AcceptsAPinnedSubmitWhenThePoolHostsPins(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	resolver := &engine.PoolResolver{
+		Probe:  livePools{gpuQueue: 1},
+		Orkers: pinHostPools{gpuQueue: 1},
+	}
+	ns := &orkstackv1.Namespace{Name: "ci"}
+
+	planned, plan, err := resolver.Plan(context.Background(), ns, compile(t, pinnedSubmitDocument), false)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if plan.Routes["gpu"] != gpuQueue {
+		t.Errorf("plan routes gpu to %q, want %q", plan.Routes["gpu"], gpuQueue)
+	}
+	for _, task := range planned.GetTasks() {
+		if task.GetPool() != "gpu" {
+			t.Errorf("task %q resolved to pool %q, want gpu", task.GetId(), task.GetPool())
+		}
+	}
+}
+
+// TestPoolResolver_DowngradesTheNoPinHostRefusalUnderAllowEmptyPool holds the
+// override to the same shape it has for an empty pool (§7.4): the operator who
+// overrides is TOLD what they are waiting for, and the fact goes on the record
+// rather than being suppressed.
+func TestPoolResolver_DowngradesTheNoPinHostRefusalUnderAllowEmptyPool(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	var logged strings.Builder
+	resolver := &engine.PoolResolver{
+		Probe:  livePools{gpuQueue: 1},
+		Orkers: pinHostPools{gpuQueue: 0},
+		Logger: slog.New(slog.NewTextHandler(&logged, nil)),
+	}
+	ns := &orkstackv1.Namespace{Name: "ci"}
+
+	if _, _, err := resolver.Plan(
+		context.Background(), ns, compile(t, pinnedSubmitDocument), true); err != nil {
+		t.Fatalf("Plan with allow_empty_pool = %v, want the refusal downgraded", err)
+	}
+	record := logged.String()
+	for _, want := range []string{"no pin host", "pool=gpu", "pins=build", "allow_empty_pool"} {
+		if !strings.Contains(record, want) {
+			t.Errorf("override was not recorded with %q: %s", want, record)
+		}
+	}
+}
+
+// TestPoolResolver_AsksNothingAboutPinsForAnUnpinnedSubmit is §10.4 stated as
+// a test: pinning must cost a deployment that does not use it nothing at all,
+// including one extra round trip on every submit.
+func TestPoolResolver_AsksNothingAboutPinsForAnUnpinnedSubmit(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	resolver := &engine.PoolResolver{
+		Probe:  livePools{gpuQueue: 1, task.DefaultQueue: 1},
+		Orkers: refusingDescriber{t: t},
+	}
+	ns := &orkstackv1.Namespace{Name: "ci"}
+
+	if _, _, err := resolver.Plan(context.Background(), ns, compile(t, twoPoolDocument), false); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+}
+
+// TestPoolResolver_KeepsTheEmptyPoolAnswerForAPinnedSubmit keeps the two
+// refusals in the right order. A pool with NO live Orkers is answered by
+// PoolEmptyError, and what its absent Orkers would have hosted is moot: the
+// remedy is to start one, and telling a caller about pin hosting first would
+// send them to configure a process that does not exist.
+func TestPoolResolver_KeepsTheEmptyPoolAnswerForAPinnedSubmit(t *testing.T) {
+	resolver := &engine.PoolResolver{
+		Probe:  livePools{},
+		Orkers: pinHostPools{},
+	}
+	ns := &orkstackv1.Namespace{Name: "ci"}
+
+	_, _, err := resolver.Plan(context.Background(), ns, compile(t, pinnedSubmitDocument), false)
+	var empty *engine.PoolEmptyError
+	if !errors.As(err, &empty) {
+		t.Fatalf("Plan error = %v, want PoolEmptyError for a deserted pool", err)
+	}
+}
+
+// TestPoolResolver_DoesNotRefusePinsWithNoAuthorityToAsk covers the two ways
+// the check declines to have an opinion, and why each is right.
+//
+// A process with no describer wired has no authority to ask, exactly as one
+// with no Probe has none about liveness — inventing an answer would refuse
+// every pinned submit in a deployment that simply never wired the seam. And a
+// describe call that FAILED measured nothing: the pool's liveness was measured
+// and stands, and turning a describe blip into a refused submit would invent a
+// failure the deployment does not have. The in-workflow backstop still covers
+// a pool that genuinely cannot open a pin (PIN_UNAVAILABLE).
+func TestPoolResolver_DoesNotRefusePinsWithNoAuthorityToAsk(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	ns := &orkstackv1.Namespace{Name: "ci"}
+	wf := compile(t, pinnedSubmitDocument)
+
+	t.Run("no describer wired", func(t *testing.T) {
+		resolver := &engine.PoolResolver{Probe: livePools{gpuQueue: 1}}
+		if _, _, err := resolver.Plan(context.Background(), ns, wf, false); err != nil {
+			t.Fatalf("Plan = %v, want no refusal from a process with nothing to ask", err)
+		}
+	})
+
+	t.Run("the describe call failed", func(t *testing.T) {
+		resolver := &engine.PoolResolver{
+			Probe: livePools{gpuQueue: 1},
+			// Maps no channel, so every describe fails.
+			Orkers: pinHostPools{},
+			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+		if _, _, err := resolver.Plan(context.Background(), ns, wf, false); err != nil {
+			t.Fatalf("Plan = %v, want a describe failure to narrow the answer, not refuse it", err)
+		}
+	})
+}
+
+// TestPoolResolver_RefusesAPinWhoseTasksRESOLVEOntoTwoPools is rule 10's
+// second half (§4.3), and it is not a duplicate of the compiler's.
+//
+// The compiler compares the LITERAL `pool:` values and treats an absent pool
+// and `main` as one, because QueueForPool does. This document therefore
+// compiles: `alpha` says `pool: main` and `beta` says nothing. But `beta`
+// resolves through its NAMESPACE's default_pool, so the two land on different
+// pools — and a pin is one Orker process out of one pool's set, which two
+// pools cannot be. Only this check, on the resolved route, can see it.
+func TestPoolResolver_RefusesAPinWhoseTasksRESOLVEOntoTwoPools(t *testing.T) {
+	const document = `
+name: pin-split-by-default
+pins:
+  build: {}
+tasks:
+  - id: alpha
+    uses: shell
+    pin: build
+    pool: main
+    run_as_orker_user: true
+    with: {command: "echo alpha"}
+  - id: beta
+    uses: shell
+    pin: build
+    needs: [alpha]
+    run_as_orker_user: true
+    with: {command: "echo beta"}
+`
+	// It really does compile: the literal values agree under the compiler's
+	// normalization, which is what makes this check load-bearing rather than
+	// defensive.
+	wf := compile(t, document)
+
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	resolver := &engine.PoolResolver{
+		Probe:  livePools{gpuQueue: 1, task.DefaultQueue: 1},
+		Orkers: pinHostPools{gpuQueue: 1, task.DefaultQueue: 1},
+	}
+	ns := &orkstackv1.Namespace{Name: "ci", DefaultPool: "gpu"}
+
+	_, _, err := resolver.Plan(context.Background(), ns, wf, false)
+	var mismatch *engine.PinPoolMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Plan error = %v, want PinPoolMismatchError", err)
+	}
+	if mismatch.Pin != "build" || mismatch.Namespace != "ci" {
+		t.Errorf("refusal names pin %q of namespace %q, want build of ci", mismatch.Pin, mismatch.Namespace)
+	}
+	if mismatch.Task != "alpha" || mismatch.Pool != "main" {
+		t.Errorf("refusal's first task = %q on %q, want alpha on main", mismatch.Task, mismatch.Pool)
+	}
+	if mismatch.OtherTask != "beta" || mismatch.OtherPool != "gpu" {
+		t.Errorf("refusal's second task = %q on %q, want beta on gpu",
+			mismatch.OtherTask, mismatch.OtherPool)
+	}
+	if !strings.Contains(err.Error(), "every task of one pin must name the same pool") {
+		t.Errorf("refusal message = %q, want it to say what the caller must do", err.Error())
+	}
+}
+
+// TestPoolResolver_RefusesAPinSpanningTwoPoolsOnAHandBuiltRequest is the same
+// invariant on the path that skips the compiler entirely.
+//
+// SubmitRun accepts an Orkflow message, and a client that never applied a
+// document — or one built by a harness — never ran validate.go. Every rule
+// that protects an invariant rather than an author's convenience has to be
+// enforced somewhere a request cannot go around, which is what this is.
+func TestPoolResolver_RefusesAPinSpanningTwoPoolsOnAHandBuiltRequest(t *testing.T) {
+	wf := &orkstackv1.Orkflow{
+		Name:    "hand-built",
+		Version: "0.1.0",
+		Pins:    []*orkstackv1.Pin{{Name: "build"}},
+		Tasks: []*orkstackv1.Task{
+			{Id: "alpha", Pin: "build", Pool: "gpu"},
+			{Id: "beta", Pin: "build", Pool: "cpu"},
+		},
+	}
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	cpuQueue, _ := task.QueueForPool("cpu", "")
+	resolver := &engine.PoolResolver{
+		Probe:  livePools{gpuQueue: 1, cpuQueue: 1},
+		Orkers: pinHostPools{gpuQueue: 1, cpuQueue: 1},
+	}
+
+	_, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "ci"}, wf, false)
+	var mismatch *engine.PinPoolMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Plan error = %v, want PinPoolMismatchError", err)
+	}
+	if mismatch.Pool != "gpu" || mismatch.OtherPool != "cpu" {
+		t.Errorf("refusal names pools %q and %q, want gpu and cpu", mismatch.Pool, mismatch.OtherPool)
+	}
 }

@@ -151,6 +151,42 @@
 	--animate-fade-in: fade-in 150ms linear both;
 }
 
+/* ---------- Pin identity accents ----------
+ *
+ * A pin is a GROUP of tasks held on one Orker, not a state, so it gets its
+ * own family rather than borrowing the status palette: `--color-succeeded-*`
+ * and `--color-failed-*` already mean an outcome on the very task card being
+ * tinted, and a green or red edge there would say something about how the
+ * task ended. Each accent is a mid-chroma line over a near-white fill, with
+ * hues spaced around the wheel and kept clear of the succeeded green and the
+ * failed red. Neither is ever the only signal: the pin's name is written
+ * beside it.
+ *
+ * These sit in a plain `:root` and NOT in `@theme` above, because the run
+ * page picks one at runtime and reads it with `var()` from an inline style.
+ * Tailwind drops `@theme` variables no generated utility references, so a
+ * token here that never appears as a literal class name would be tree-shaken
+ * out of the stylesheet and every `var()` would silently fall back to
+ * `currentColor`. A plain custom property is always emitted. (`ui/e2e/
+ * run-page-pins.spec.ts` asserts the computed border colour for exactly this
+ * reason — the first cut of this block was inside `@theme` and painted the
+ * foreground colour.)
+ */
+:root {
+	--color-pin-a-line: #7681d7; /* indigo (brand-400) */
+	--color-pin-a-fill: #f4f5fc;
+	--color-pin-b-line: #b15fc0; /* orchid */
+	--color-pin-b-fill: #fbf4fc;
+	--color-pin-c-line: #2e9c9c; /* teal */
+	--color-pin-c-fill: #f0fafa;
+	--color-pin-d-line: #c77c2b; /* amber-brown */
+	--color-pin-d-fill: #fdf7f0;
+	--color-pin-e-line: #5d84c4; /* steel blue */
+	--color-pin-e-fill: #f3f7fc;
+	--color-pin-f-line: #8b8f5e; /* olive */
+	--color-pin-f-fill: #f8f8f2;
+}
+
 /* ---------- Dark theme ----------
  *
  * One selector, no media query: `theme.ts` always resolves the reader's
@@ -277,6 +313,22 @@
 	--shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
 	--shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.4);
 	--shadow-lg: 0 20px 24px -4px rgb(0 0 0 / 0.55), 0 8px 8px -4px rgb(0 0 0 / 0.3);
+
+	/* Pin accents: the lines lift so they read against a dark card, and the
+	   fills invert to a barely-there wash of the same hue rather than the
+	   near-whites above, which would blow a hole in the surface. */
+	--color-pin-a-line: #9aa5e0;
+	--color-pin-a-fill: #171a2a;
+	--color-pin-b-line: #d08ede;
+	--color-pin-b-fill: #241a28;
+	--color-pin-c-line: #5fc4c4;
+	--color-pin-c-fill: #122223;
+	--color-pin-d-line: #e0a463;
+	--color-pin-d-fill: #241d13;
+	--color-pin-e-line: #8fadd9;
+	--color-pin-e-fill: #151d29;
+	--color-pin-f-line: #b4b884;
+	--color-pin-f-fill: #1d1f16;
 }
 
 @keyframes pulse-dot {

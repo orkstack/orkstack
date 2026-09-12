@@ -429,6 +429,30 @@ func (d *OCIDispatcher) execute(
 	// path (§9.4).
 	defer func() { _ = ws.RemoveSecrets() }()
 
+	// STEP 4b. The pin's shared directory, for a pinned attempt only (§7.5).
+	//
+	// There is NO defer beside the two above, and that is the whole difference
+	// between this directory and the attempt's own: it must outlive this
+	// attempt, because the next task of the pin — and the next attempt of this
+	// one — is entitled to find what this container wrote. It ends by
+	// ReleasePin, a boot reap or its lease, never by an attempt (§8.4).
+	//
+	// A failure here fails the attempt exactly as a workspace failure does,
+	// because it is the same class of failure: the Orker could not build the
+	// filesystem the contract promises the workload.
+	if pin := in.GetPin(); pin != nil {
+		pinWS, err := AcquirePin(
+			d.WorkRoot, in.GetRunId(), pin.GetName(), pin.GetInstanceId(), pin.GetTimeoutSeconds())
+		if err != nil {
+			return nil, FailCause(ReasonWorkdirFailed, err,
+				"task %q: acquire the shared directory of pin %q: %v", in.GetTaskId(), pin.GetName(), err)
+		}
+		// Set BEFORE containerSpec builds the mount set, which is the only
+		// thing that reads it. Mounts() appends /orkstack/shared exactly when
+		// this field is non-empty.
+		ws.Shared = pinWS.Shared
+	}
+
 	// STEP 5. Input staging.
 	beat.Phase("stage-inputs")
 	staged, failure := d.stageInputs(ctx, in, ws)
@@ -486,6 +510,9 @@ func (d *OCIDispatcher) execute(
 		StagedUpstream: staged.upstream,
 		StagedSecrets:  staged.secrets,
 		Trace:          traceCarrier,
+		// Nil for an unpinned task, which is what keeps paths.shared and
+		// task.pin out of its task.json entirely (§3.2).
+		Pin: in.GetPin(),
 	}); err != nil {
 		return nil, FailCause(ReasonWorkdirFailed, err, "write task.json: %v", err)
 	}
@@ -1093,6 +1120,13 @@ func (d *OCIDispatcher) containerSpec(
 		// container's own budget has to be enforced by something inside its
 		// own lifetime.
 		StopTimeoutSeconds: int(graceSecondsOf(in)),
+	}
+	// ork.pin names the opening of the pin this container belongs to, for a
+	// pinned attempt only. It is not a reaper key — ork.orker already is — but
+	// it is what lets an operator ask the runtime which containers are sharing
+	// one directory, which is exactly the question a pin raises (§7.5, §9).
+	if pin := in.GetPin(); pin != nil {
+		spec.Labels["ork.pin"] = pin.GetInstanceId()
 	}
 	if runAsOrkerUser {
 		spec.User = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())

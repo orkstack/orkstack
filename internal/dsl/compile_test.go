@@ -382,6 +382,132 @@ tasks:
 			yaml:        "name: [oops\n",
 			wantMessage: "parse yaml",
 		},
+		{
+			// Rule 9: a pin is a REFERENCE, so a typo is a missing pin and
+			// never a second, one-task group.
+			name: "task pins to an undeclared pin",
+			yaml: `
+name: unknown-pin
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: buidl
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: `task "a" pins to unknown pin "buidl"`,
+		},
+		{
+			// Rule 9: a pin name becomes a directory component on the pin
+			// host, so it is held to the slug rule like every other name.
+			name: "declared pin name is not a slug",
+			yaml: `
+name: bad-pin-slug
+pins:
+  Build_1: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: Build_1
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: `pin name "Build_1" is not a slug`,
+		},
+		{
+			// Rule 10: a pin is one process out of ONE pool's set.
+			name: "pin spans two pools",
+			yaml: `
+name: pin-two-pools
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    pool: gpu
+    with: {op: exec, command: "echo 1"}
+  - id: b
+    uses: shell
+    pin: build
+    pool: cpu
+    with: {op: exec, command: "echo 2"}
+`,
+			wantMessage: `pin "build" spans two pools`,
+		},
+		{
+			// Rule 11: the sticky-bit failure mode, refused before it can
+			// break the pin's second task.
+			name: "pin disagrees on run_as_orker_user",
+			yaml: `
+name: pin-two-users
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    run_as_orker_user: true
+    with: {op: exec, command: "echo 1"}
+  - id: b
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 2"}
+`,
+			wantMessage: `pin "build" disagrees on run_as_orker_user`,
+		},
+		{
+			// Rule 12: a declaration nothing references is a typo, and the
+			// error names the half that is unreferenced.
+			name: "declared pin nothing references",
+			yaml: `
+name: unused-pin
+pins:
+  build: {}
+  buidl: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: `pin "buidl" is declared but no task references it`,
+		},
+		{
+			// Rule 13: 0 means derived, so the only value that names no
+			// lifetime at all is a negative one.
+			name: "negative pin timeout",
+			yaml: `
+name: negative-pin-timeout
+pins:
+  build:
+    timeout_seconds: -1
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: `pin "build": timeout_seconds -1 is negative`,
+		},
+		{
+			// Strict decoding covers the new keys like every other: `pins:` is
+			// a known field, and a key inside it that the schema does not
+			// define is refused rather than ignored.
+			name: "unknown key inside a pin declaration",
+			yaml: `
+name: unknown-pin-option
+pins:
+  build:
+    timeout_second: 60
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+			wantMessage: "field timeout_second not found",
+		},
 	}
 
 	for _, tc := range tests {
@@ -617,6 +743,226 @@ tasks:
 				t.Errorf("error %q does not name %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+// TestCompile_CompilesPinsSortedByNameWhateverTheSourceOrder is the
+// determinism half of the pins compilation.
+//
+// A YAML mapping decodes into a Go map, which has no order to hand on, so
+// ranging it would let ONE document compile to two different messages. That
+// matters twice: the definition digest is computed over the compiled message
+// (dsl.canonicalPins), and the store decides "this apply is a repeat of an
+// unchanged document" by comparing the message it holds
+// (pkg/artifacts.sameStoredOrkflow). A compilation that varied with map
+// iteration order would make re-applying an unchanged file a different
+// document under a stored version.
+func TestCompile_CompilesPinsSortedByNameWhateverTheSourceOrder(t *testing.T) {
+	const doc = `
+name: sorted-pins
+pins:
+  zebra: {}
+  build:
+    timeout_seconds: 900
+  alpha: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: zebra
+    with: {op: exec, command: "echo a"}
+  - id: b
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo b"}
+  - id: c
+    uses: shell
+    pin: alpha
+    with: {op: exec, command: "echo c"}
+`
+	wf, err := dsl.Compile([]byte(doc))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	var got []string
+	for _, pin := range wf.GetPins() {
+		got = append(got, pin.GetName())
+	}
+	want := []string{"alpha", "build", "zebra"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("pins = %v, want them sorted by name: %v", got, want)
+	}
+
+	// The same keys typed in a different order are the same message, which is
+	// the property the digest and the store depend on.
+	reordered := strings.Replace(doc,
+		"  zebra: {}\n  build:\n    timeout_seconds: 900\n  alpha: {}\n",
+		"  alpha: {}\n  zebra: {}\n  build:\n    timeout_seconds: 900\n", 1)
+	if reordered == doc {
+		t.Fatal("test setup: the reordered document is identical to the original")
+	}
+	again, err := dsl.Compile([]byte(reordered))
+	if err != nil {
+		t.Fatalf("Compile (reordered): %v", err)
+	}
+	if !proto.Equal(&orkstackv1.Orkflow{Pins: wf.GetPins()}, &orkstackv1.Orkflow{Pins: again.GetPins()}) {
+		t.Errorf("reordering the pins keys changed the compiled pins: %v vs %v",
+			wf.GetPins(), again.GetPins())
+	}
+
+	// The declared option travels; an empty options object is a zero timeout,
+	// which means DERIVED and not "no lifetime".
+	byName := map[string]int32{}
+	for _, pin := range wf.GetPins() {
+		byName[pin.GetName()] = pin.GetTimeoutSeconds()
+	}
+	if byName["build"] != 900 {
+		t.Errorf("build.timeout_seconds = %d, want 900", byName["build"])
+	}
+	if byName["alpha"] != 0 {
+		t.Errorf("alpha.timeout_seconds = %d, want 0 (derived)", byName["alpha"])
+	}
+	if got, want := wf.GetTasks()[0].GetPin(), "zebra"; got != want {
+		t.Errorf("task a pin = %q, want %q carried verbatim", got, want)
+	}
+}
+
+// TestCompile_LeavesPinsAbsentWhenTheDocumentDeclaresNone is the backward
+// compatibility half: a document with no `pins:` key compiles to the message
+// it compiled to before pins existed. An empty-but-allocated slice would be a
+// difference nothing wanted — canonicalPins already refuses to emit a `pins`
+// key for it, and this keeps the message itself unchanged too.
+func TestCompile_LeavesPinsAbsentWhenTheDocumentDeclaresNone(t *testing.T) {
+	const doc = `
+name: unpinned-doc
+tasks:
+  - id: a
+    uses: shell
+    with: {op: exec, command: "echo 1"}
+`
+	wf, err := dsl.Compile([]byte(doc))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if wf.GetPins() != nil {
+		t.Errorf("pins = %#v, want nil for a document that declares none", wf.GetPins())
+	}
+	if got := wf.GetTasks()[0].GetPin(); got != "" {
+		t.Errorf("task pin = %q, want empty", got)
+	}
+}
+
+// TestCompile_AcceptsPinsAtTheirDefaults covers the three acceptances the
+// rules must not overshoot: a pin with no timeout at all, a pin whose author
+// wrote `timeout_seconds: 0` explicitly (both mean DERIVED, because
+// Pin.timeout_seconds is a plain int32 in which the two are one value), and a
+// pin whose members spell the default pool two different ways — absent and
+// `main` are one route in QueueForPool, so rule 10 must not see two pools.
+func TestCompile_AcceptsPinsAtTheirDefaults(t *testing.T) {
+	cases := []struct{ name, doc string }{
+		{
+			name: "absent timeout",
+			doc: `
+name: pin-no-timeout
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+		},
+		{
+			name: "explicit zero timeout means derived",
+			doc: `
+name: pin-zero-timeout
+pins:
+  build:
+    timeout_seconds: 0
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    with: {op: exec, command: "echo 1"}
+`,
+		},
+		{
+			name: "absent pool and main are the same pool",
+			doc: `
+name: pin-default-pool-two-spellings
+pins:
+  build: {}
+tasks:
+  - id: a
+    uses: shell
+    pin: build
+    pool: main
+    run_as_orker_user: true
+    with: {op: exec, command: "echo 1"}
+  - id: b
+    uses: shell
+    pin: build
+    needs: [a]
+    run_as_orker_user: true
+    with: {op: exec, command: "echo 2"}
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wf, err := dsl.Compile([]byte(tc.doc))
+			if err != nil {
+				t.Fatalf("Compile() = error %v, want acceptance", err)
+			}
+			if got := wf.GetPins()[0].GetTimeoutSeconds(); got < 0 {
+				t.Errorf("timeout_seconds = %d, want a non-negative value", got)
+			}
+		})
+	}
+}
+
+// TestCompile_AcceptsThePinnedBuildExample reads the shipped example as an
+// author would and checks the two fields a pin actually is: the group on the
+// orkflow and the membership on each task. The shipped-examples sweep only
+// proves it compiles; this proves it compiles to the pin it documents.
+func TestCompile_AcceptsThePinnedBuildExample(t *testing.T) {
+	wf, err := dsl.CompileFile("../../examples/pinned-build.ork.yaml")
+	if err != nil {
+		t.Fatalf("CompileFile(pinned-build.ork.yaml) = error %v, want success", err)
+	}
+	if got := len(wf.GetPins()); got != 1 {
+		t.Fatalf("pins = %d, want 1", got)
+	}
+	if got := wf.GetPins()[0].GetName(); got != "build" {
+		t.Errorf("pin name = %q, want build", got)
+	}
+	if got := wf.GetPins()[0].GetTimeoutSeconds(); got != 900 {
+		t.Errorf("pin timeout_seconds = %d, want 900", got)
+	}
+
+	wantPin := map[string]string{"write": "build", "read": "build", "checksum": ""}
+	if got, want := len(wf.GetTasks()), len(wantPin); got != want {
+		t.Fatalf("tasks = %d, want %d", got, want)
+	}
+	for _, task := range wf.GetTasks() {
+		want, known := wantPin[task.GetId()]
+		if !known {
+			t.Errorf("unexpected task %q", task.GetId())
+			continue
+		}
+		if task.GetPin() != want {
+			t.Errorf("task %q pin = %q, want %q", task.GetId(), task.GetPin(), want)
+		}
+		// Rules 10 and 11 hold in the example itself: the pinned tasks agree
+		// on the pool (both absent) and on run_as_orker_user (both true).
+		if task.GetPin() != "" {
+			if task.GetPool() != "" {
+				t.Errorf("task %q pool = %q, want absent", task.GetId(), task.GetPool())
+			}
+			if !task.GetRunAsOrkerUser() {
+				t.Errorf("task %q run_as_orker_user = false, want true across the pin", task.GetId())
+			}
+		}
 	}
 }
 

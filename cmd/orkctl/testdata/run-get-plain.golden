@@ -8,6 +8,6 @@ Finished:  2026-01-02T03:04:05Z
 Input:     -
 Output:    -
 
-TASK   STATUS     ATTEMPT  EXIT  STARTED               FINISHED              ERROR
-flaky  SUCCEEDED  2        0     2026-01-02T03:04:05Z  2026-01-02T03:04:08Z  -
-build  FAILED     1        0     2026-01-02T03:04:05Z  -                     ORKER_HEARTBEAT_TIMEOUT: the orker stopped heartbeating
+TASK   STATUS     POOL  PIN  ORKER  ATTEMPT  EXIT  STARTED               FINISHED              ERROR
+flaky  SUCCEEDED  -     -    -      2        0     2026-01-02T03:04:05Z  2026-01-02T03:04:08Z  -
+build  FAILED     -     -    -      1        0     2026-01-02T03:04:05Z  -                     ORKER_HEARTBEAT_TIMEOUT: the orker stopped heartbeating
