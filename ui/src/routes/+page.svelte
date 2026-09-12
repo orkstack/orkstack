@@ -2,8 +2,10 @@
 	import { goto, invalidate } from '$app/navigation';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import Popover from '$lib/components/Popover.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
+	import { sinceInputValue } from '$lib/browsing';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import {
 		UNAVAILABLE,
@@ -12,6 +14,7 @@
 		fmtCount,
 		fmtDuration,
 		fmtInstant,
+		fmtInstantMs,
 		fmtPercent,
 		timestampMs
 	} from '$lib/stats';
@@ -101,7 +104,22 @@
 		}
 	}
 	function windowHref(window: string, since = '') { return withNamespace(`/?window=${encodeURIComponent(window)}${since ? `&since=${encodeURIComponent(since)}` : ''}`, data.namespace); }
-	function setCustom(event: SubmitEvent) { event.preventDefault(); const since = String(new FormData(event.currentTarget as HTMLFormElement).get('since') ?? ''); if (since) void goto(windowHref('custom', new Date(since).toISOString())); }
+
+	// The custom window is the fourth member of the window group, and the
+	// segment states the range it applied: `Since 9/10/2026, 2:30:00 AM`, in
+	// the same fmtInstant format as the header line above it, so the two can
+	// never disagree about one instant. The draft in the popover is refilled
+	// from the URL on every navigation — a field left empty beside a window
+	// that is in force was the whole complaint.
+	let customOpen = $state(false);
+	function sinceDraft() { return sinceInputValue(data.sinceParam); }
+	let customSince = $state(sinceDraft());
+	$effect(() => {
+		customSince = sinceDraft();
+	});
+	const customLabel = $derived(data.window === 'custom' && data.sinceParam ? `Since ${fmtInstantMs(Date.parse(data.sinceParam))}` : 'Custom');
+	const customValid = $derived(!Number.isNaN(Date.parse(customSince)));
+	function applyCustom(event: SubmitEvent) { event.preventDefault(); if (!customValid) return; customOpen = false; void goto(windowHref('custom', new Date(customSince).toISOString())); }
 	const statsCli = $derived(`orkctl --namespace ${shellQuote(namespaceLabel(data.namespace))} stats --since ${shellQuote(data.window === 'custom' && data.sinceParam ? data.sinceParam : data.window)}`);
 </script>
 
@@ -126,24 +144,66 @@
 
 <section class="mb-6 flex flex-wrap items-end gap-3" data-testid="dashboard-window-controls">
 	<span class="text-sm font-medium text-fg">Window</span>
-	<!-- One control, three mutually exclusive choices: a connected group says
-		that plainly, where three separate bordered links read as three
-		independent buttons any number of which could be on. The active member is
-		still marked with `aria-current="page"` (they are links, and the URL is
-		the state), and `current:` — app.css's `&[aria-current='page']` variant —
-		gives it the same brand-50/brand-700 treatment the nav already uses for
-		"you are here". -->
-	<div role="group" aria-label="Stats window preset" class="inline-flex h-9 overflow-hidden rounded-md border border-border bg-surface shadow-xs">
+	<!-- One control, FOUR mutually exclusive choices: a connected group says
+		that plainly, where separate bordered links read as independent buttons
+		any number of which could be on. The active member is marked with
+		`aria-current="page"`, and `current:` — app.css's `&[aria-current='page']`
+		variant — gives it the same brand-50/brand-700 treatment the nav already
+		uses for "you are here".
+
+		The fourth member is a <button> and not an <a> because it has no address
+		to offer until a range has been typed: it opens the range picker and the
+		picker navigates. `aria-current` is valid on a button and the `current:`
+		variant keys off the attribute rather than the element, so the custom
+		window paints as current exactly like the presets — which is the point,
+		since a window in force with nothing marked was a control that hid its
+		own state. The group no longer clips its overflow: the popover hangs out
+		of it. -->
+	<div role="group" aria-label="Stats window" class="inline-flex h-9 rounded-md border border-border bg-surface shadow-xs">
 		{#each ['15m', '6h', '24h'] as preset (preset)}
 			<a
 				data-testid="dashboard-window-{preset}"
 				aria-current={data.window === preset ? 'page' : undefined}
 				href={windowHref(preset)}
-				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors duration-150 last:border-r-0 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+				class="inline-flex items-center border-r border-border px-3 text-sm font-medium text-fg-muted transition-colors duration-150 first:rounded-l-md hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
 			>{preset}</a>
 		{/each}
+		<Popover open={customOpen} onOpenChange={(open) => (customOpen = open)} align="end" testid="dashboard-window-custom-popover">
+			{#snippet trigger()}
+				<button
+					type="button"
+					data-testid="dashboard-window-custom"
+					aria-current={data.window === 'custom' ? 'page' : undefined}
+					aria-expanded={customOpen}
+					aria-haspopup="dialog"
+					onclick={() => (customOpen = !customOpen)}
+					class="inline-flex h-full items-center rounded-r-md px-3 text-sm font-medium text-fg-muted transition-colors duration-150 hover:bg-surface-hover hover:text-fg current:bg-brand-50 current:text-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+				>{customLabel}</button>
+			{/snippet}
+			{#snippet content()}
+				<!-- No "until": GetStats takes a `since` and answers with the
+					`until` it used, which the header line states. An end this
+					request cannot carry would be a control that does nothing. -->
+				<form class="flex w-64 flex-col gap-2 text-sm" onsubmit={applyCustom}>
+					<label class="font-medium text-fg" for="dashboard-window-custom-since">Show runs created since</label>
+					<input
+						id="dashboard-window-custom-since"
+						data-testid="dashboard-window-custom-since"
+						type="datetime-local"
+						bind:value={customSince}
+						max={sinceInputValue(new Date(now).toISOString())}
+						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					/>
+					<button
+						type="submit"
+						data-testid="dashboard-window-custom-apply"
+						disabled={!customValid}
+						class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 disabled:pointer-events-none disabled:opacity-50"
+					>Apply</button>
+				</form>
+			{/snippet}
+		</Popover>
 	</div>
-	<form class="flex items-end gap-2" onsubmit={setCustom}><label class="flex items-center gap-2 text-sm text-fg-secondary">Since<input name="since" type="datetime-local" class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" /></label><button type="submit" class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none">Custom</button></form>
 	<div class="ml-auto"><CliEquivalent command={statsCli} testid="dashboard-cli" /></div>
 </section>
 

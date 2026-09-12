@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
+	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
 	import { fmtTimestamp } from '$lib/status';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
@@ -66,18 +68,46 @@
 			retrying = false;
 		}
 	}
-	function href(changes: Record<string, string>) {
-		const params = new URLSearchParams();
-		params.set('ns', namespaceLabel(data.namespace));
-		for (const [key, value] of Object.entries({ orkflow: data.orkflowName, status: data.status, size: String(data.size), since: data.createdAfter, until: data.createdBefore, ...changes })) if (value) params.set(key, value);
-		return `/runs?${params.toString()}`;
-	}
+	// The coordinates of what this list is showing, exactly as the address bar
+	// spells them, and one builder over them. listHref only ever `set`s, so no
+	// gesture here can leave two of the same key in the URL.
+	const coordinates = $derived({ ns: namespaceLabel(data.namespace), orkflow: data.orkflowName, status: data.status, size: String(data.size), since: data.createdAfter, until: data.createdBefore, cursor: data.cursor, page: String(data.page) });
+	function href(changes: Record<string, string>) { return listHref('/runs', { ...coordinates, ...changes }); }
 	function filter(event: SubmitEvent) {
 		event.preventDefault();
-		void goto(href({ orkflow: draft.orkflow, status: draft.status, size: draft.size || '25', since: draft.since, until: draft.until, cursor: '', history: '' }));
+		void goto(href({ orkflow: draft.orkflow, status: draft.status, size: draft.size || '25', since: draft.since, until: draft.until, cursor: '', page: '' }));
 	}
-	function nextHref() { return href({ cursor: data.nextPageToken, history: JSON.stringify([...data.history, data.cursor]) }); }
-	function previousHref() { const previous = data.history.at(-1) ?? ''; return href({ cursor: previous, history: JSON.stringify(data.history.slice(0, -1)) }); }
+
+	// The cursors BEHIND this page: per filter set, per tab, in sessionStorage
+	// rather than in the URL, which used to grow by one escaped engine cursor
+	// per Next click (docs/design/pagination-and-timerange-ui.md §3.2).
+	//
+	// Read in an `$effect` and not a `$derived`: the first render is the
+	// server's, where there is no sessionStorage, and a derived computed there
+	// would keep its empty answer through hydration.
+	const stackKey = $derived(pageStackKey('/runs', coordinates));
+	let stack = $state<string[]>([]);
+	$effect(() => {
+		stack = readPageStack(stackKey);
+	});
+	// Next records the path it is about to take before the router follows the
+	// href: this page's cursor at this page's index, the token being followed
+	// at the next one. Holes are filled with '' so the stored array stays a
+	// list of strings.
+	function next() {
+		const ahead = Array.from({ length: Math.max(stack.length, data.page + 1) }, (_, at) => stack[at] ?? '');
+		[ahead[data.page - 1], ahead[data.page]] = [data.cursor, data.nextPageToken];
+		writePageStack(stackKey, ahead);
+		stack = ahead;
+	}
+	// Previous is offered only when the stack describes THIS page. "There is an
+	// earlier page" was never "the stack is non-empty": a pasted page-3 link
+	// has an earlier page and no way to name its cursor, and it is handed
+	// First page instead of a Previous that would have to invent one.
+	const walked = $derived(data.page > 1 && stack[data.page - 1] === data.cursor);
+	const previousHref = $derived(walked ? href({ cursor: stack[data.page - 2] ?? '', page: String(data.page - 1) }) : undefined);
+	const nextHref = $derived(data.nextPageToken ? href({ cursor: data.nextPageToken, page: String(data.page + 1) }) : undefined);
+	const firstHref = $derived(href({ cursor: '', page: '' }));
 </script>
 
 <svelte:head><title>Runs — OrkStack</title></svelte:head>
@@ -166,7 +196,7 @@
 			>Apply filters</button
 		>
 		<a
-			href={href({ orkflow: '', status: '', size: '25', since: '', until: '', cursor: '', history: '' })}
+			href={href({ orkflow: '', status: '', size: '25', since: '', until: '', cursor: '', page: '' })}
 			class="text-sm font-medium text-brand-700 hover:underline">Clear</a
 		>
 	</div>
@@ -225,9 +255,5 @@
 			</tbody>
 		</table>
 	</div>
-	<div class="mt-4 flex items-center gap-3" data-testid="run-pagination">
-		<a data-testid="runs-previous" aria-disabled={data.history.length === 0} class:opacity-50={data.history.length === 0} href={data.history.length ? previousHref() : undefined}>Previous</a>
-		<span class="text-sm text-fg-muted">{data.cursor ? 'Later page' : 'First page'}</span>
-		<a data-testid="runs-next" aria-disabled={!data.nextPageToken} class:opacity-50={!data.nextPageToken} href={data.nextPageToken ? nextHref() : undefined}>Next</a>
-	</div>
+	<Pagination testid="runs" noun="run" page={data.page} count={data.runs.length} {previousHref} {nextHref} {firstHref} onnext={next} />
 {/if}

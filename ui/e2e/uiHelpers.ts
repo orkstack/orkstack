@@ -37,6 +37,21 @@ export async function selectNamespace(page: Page, name: string): Promise<void> {
 }
 
 /**
+ * Choose `value` from any Select (ui/src/lib/components/Select.svelte) by its
+ * testid — the page-size picker, a status filter, anything built out of it.
+ *
+ * The gesture is the trigger, then the row, exactly as selectNamespace spells
+ * it out above: the options are option BUTTONS that only exist while the
+ * listbox is open, so Playwright's `selectOption` has nothing to act on. The
+ * value, not the label, names the row — the component builds each option's
+ * testid from its value.
+ */
+export async function selectOption(page: Page, testid: string, value: string): Promise<void> {
+	await page.getByTestId(testid).click();
+	await page.getByTestId(`${testid}-option-${value}`).click();
+}
+
+/**
  * Assert the namespace picker currently displays `name`.
  *
  * The trigger is a button, so `toHaveValue` does not apply to it at all. Its

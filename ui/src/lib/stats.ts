@@ -54,10 +54,22 @@ export function fmtCount(value: bigint | undefined): string {
 	return value === undefined ? UNAVAILABLE : value.toString();
 }
 
+/**
+ * fmtInstantMs renders a moment in milliseconds.
+ *
+ * Split out so that a window read from the URL — `?since=<iso>`, which is not
+ * a proto Timestamp — is shown in the SAME format as the window the engine
+ * answered with. Two spellings of one instant on one page is how a control and
+ * the header line come to disagree about the same number.
+ */
+export function fmtInstantMs(ms: number): string {
+	return Number.isFinite(ms) ? new Date(ms).toLocaleString() : UNAVAILABLE;
+}
+
 /** fmtWindow renders the question that was answered: "since X, until Y". */
 export function fmtInstant(ts: Timestamp | undefined): string {
 	const ms = timestampMs(ts);
-	return ms === null ? UNAVAILABLE : new Date(ms).toLocaleString();
+	return ms === null ? UNAVAILABLE : fmtInstantMs(ms);
 }
 
 /** fmtAge renders how old a measurement is, in words. */
