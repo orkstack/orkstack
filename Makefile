@@ -1,7 +1,19 @@
 # OrkStack — developer entrypoints. Single Go module; UI is a Bun project.
 SHELL := /bin/bash
-GOPATH_BIN := $(shell go env GOPATH)/bin
-export PATH := $(GOPATH_BIN):$(PATH)
+# Where `make tools` installs the codegen binaries, and therefore what
+# `make proto` and `make tsgen` have to find on PATH. `go install` writes to
+# GOBIN when it is set and to GOPATH/bin otherwise — and those are different
+# directories the moment a toolchain manager is involved, because mise and
+# friends export GOBIN to a version-specific path while GOPATH still points at
+# $HOME/go. Assuming GOPATH/bin put the tools on PATH only by accident: it held
+# when the manager's GOBIN happened to be on PATH already, and left `buf: not
+# found` behind when it was not. GOPATH defaults to $HOME/go, so the fallback
+# is the same directory `go install` would have chosen.
+GOBIN_DIR := $(shell go env GOBIN)
+ifeq ($(GOBIN_DIR),)
+GOBIN_DIR := $(HOME)/go/bin
+endif
+export PATH := $(GOBIN_DIR):$(PATH)
 
 COMPOSE := docker compose -f deploy/docker-compose.yml
 

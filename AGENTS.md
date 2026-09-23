@@ -646,7 +646,7 @@ test/                  Activity contract fixtures and test-only helper tools
 scripts/               Development helpers (`make up`, `make reset`)
 ```
 
-Use Go 1.25, one module `github.com/orkstack/orkstack`, `gofmt`, `go vet`, and
+Use Go 1.27, one module `github.com/orkstack/orkstack`, `gofmt`, `go vet`, and
 wrapped errors. Prefer `context.Context` first and no panics in library code.
 Connect serves h2c on `:8080` by default and the WebSocket bridge serves
 `/ws/runs/{id}`. The UI uses Bun and Svelte 5 runes; generated clients live in

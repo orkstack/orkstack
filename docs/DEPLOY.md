@@ -1244,7 +1244,7 @@ request:
 
 ```
 engine:       a1b2c3d
-go:           go1.25.6
+go:           go1.27.1
 deployment:   orkstack
 versioning:   off
 artifacts:    s3://orkstack-artifacts (s3)
