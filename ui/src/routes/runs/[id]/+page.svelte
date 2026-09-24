@@ -12,6 +12,8 @@
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
 	import RetryBadge from '$lib/components/RetryBadge.svelte';
 	import AttemptTimeline from '$lib/components/AttemptTimeline.svelte';
+	import TimingBar from '$lib/components/TimingBar.svelte';
+	import { taskTiming } from '$lib/timing';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, timestampJson } from '$lib/runDetail';
@@ -75,6 +77,10 @@
 		artifacts: ArtifactRef[];
 		valuesRef?: ArtifactRef;
 		systemArtifacts: ArtifactRef[];
+		// scheduledAt is the engine's dispatch instant (TASK_SCHEDULED's own
+		// timestamp); startedAt is when the Orker began the attempt that
+		// decided the task, and reaches the page only with a snapshot.
+		scheduledAt?: TaskRun['scheduledAt'];
 		startedAt?: TaskRun['startedAt'];
 		finishedAt?: TaskRun['finishedAt'];
 		pool: string;
@@ -291,6 +297,7 @@
 				artifacts: tr.artifacts,
 				valuesRef: tr.valuesRef,
 				systemArtifacts: tr.systemArtifacts,
+				scheduledAt: tr.scheduledAt,
 				startedAt: tr.startedAt,
 				finishedAt: tr.finishedAt,
 				pool: tr.pool,
@@ -328,6 +335,7 @@
 				artifacts: tr.artifacts,
 				valuesRef: tr.valuesRef,
 				systemArtifacts: tr.systemArtifacts,
+				scheduledAt: tr.scheduledAt,
 				startedAt: tr.startedAt,
 				finishedAt: tr.finishedAt,
 				pool: tr.pool,
@@ -410,11 +418,16 @@
 			// TASK_SCHEDULED and TASK_STARTED are the live "this task reached an
 			// Orker" signal, and the page needs it as a TIMESTAMP, not only a
 			// status: CANCELED alone cannot say whether a task ever ran, and
-			// `startedAt` is what the snapshot uses to answer that. The engine
-			// stamps TaskRun.started_at from the same workflow.Now it emits
+			// `scheduledAt` is what the snapshot uses to answer that. The engine
+			// stamps TaskRun.scheduled_at from the same workflow.Now it emits
 			// TASK_SCHEDULED with, so the value here agrees with the one the
 			// terminal re-read brings back. Written only when the task has none,
-			// so a retry's later event cannot move a task's first start.
+			// so a retry's later event cannot move a task's dispatch.
+			//
+			// startedAt is NOT written here: it is the Orker's own start of the
+			// attempt that decided the task, which no event carries. It reaches
+			// the page only through a snapshot — the terminal re-read
+			// (refreshTerminalFacts) — never from the workflow's clock.
 			case EventType.TASK_SCHEDULED:
 			case EventType.TASK_STARTED: {
 				const fallback =
@@ -422,7 +435,7 @@
 				const known = tasks.find((t) => t.id === event.taskId);
 				upsertTask(event.taskId, {
 					status: status ?? fallback,
-					...(known?.startedAt ? {} : { startedAt: event.timestamp })
+					...(known?.scheduledAt ? {} : { scheduledAt: event.timestamp })
 				});
 				break;
 			}
@@ -596,7 +609,7 @@
 		return {
 			id: task.id, status: statusLabel(task.status), attempt: task.attempt,
 			pool: task.pool || undefined, pin: task.pin || undefined, orkerId: task.orkerId || undefined,
-			startedAt: timestampJson(task.startedAt), finishedAt: timestampJson(task.finishedAt),
+			scheduledAt: timestampJson(task.scheduledAt), startedAt: timestampJson(task.startedAt), finishedAt: timestampJson(task.finishedAt),
 			output: task.output?.data, values: task.valuesRef ? artifactMetadata(task.valuesRef) : undefined,
 			artifacts: task.artifacts.map(artifactMetadata),
 			systemArtifacts: task.systemArtifacts.map(artifactMetadata), error: task.error
@@ -899,8 +912,9 @@
 			{/if}
 			<div class="space-y-2" data-testid="task-list">
 				{#each tasks as task (task.id)}
-					{@const dispatched = taskDispatched(task.status, task.startedAt)}
+					{@const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt)}
 					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
+					{@const timing = taskTiming(task, data.attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
 					{@const accent = pinAccent(task.pin)}
 					<!--
 						A pinned task's card carries its pin's accent as a thicker
@@ -969,8 +983,22 @@
 							</div>
 						</div>
 						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
-							{#if dispatched}
-								<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.startedAt, task.finishedAt ?? (task.status === Status.RUNNING ? currentTimestamp : undefined))}</span>
+							<!--
+								WAITING OR SLOW. While the task has not finished, the only
+								honest number is how long ago it was scheduled — no
+								per-phase or wait/run split exists yet. Once it has, the
+								bar splits its time into the wait for an Orker and the
+								run on one. The Orker's start reaches the page with the
+								run's terminal snapshot, so until then a finished task
+								shows its scheduled-to-finished span rather than a bar
+								that would call the start unknown.
+							-->
+							{#if dispatched && !isTerminal(task.status)}
+								<span data-testid="task-{task.id}-elapsed">Since scheduled {formatDuration(task.scheduledAt ?? task.startedAt, currentTimestamp)}</span>
+							{:else if timing.scheduled && isTerminal(task.status) && (task.startedAt || isTerminal(runStatus))}
+								<TimingBar taskId={task.id} {timing} />
+							{:else if timing.scheduled && isTerminal(task.status)}
+								<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.scheduledAt ?? task.startedAt, task.finishedAt)}</span>
 							{/if}
 							{#if task.pool}<span>Pool {task.pool}</span>{/if}
 							<!--
@@ -998,6 +1026,13 @@
 								testid="run-task-{task.id}-logs-cli"
 								label="Copy logs CLI"
 							/>
+							{#if timing.scheduled}
+								<CliEquivalent
+									command={runCommand(data.namespace, ['run', 'timing', run.id, '--task', task.id])}
+									testid="run-task-{task.id}-timing-cli"
+									label="Copy timing CLI"
+								/>
+							{/if}
 						</div>
 
 						{#if task.error}
@@ -1016,7 +1051,7 @@
 							taskId={task.id}
 							namespace={data.namespace}
 							status={task.status}
-							startedAt={task.startedAt}
+							scheduledAt={task.scheduledAt ?? task.startedAt}
 							attempt={deepTask === task.id && Number.isFinite(deepAttempt) ? deepAttempt : 0}
 							deepLinked={deepTask === task.id}
 							pinRequest={logPinByTask[task.id]}
@@ -1175,6 +1210,9 @@
 										taskId={task.id}
 										namespace={data.namespace}
 										attempts={taskAttempts}
+										pool={task.pool}
+										decidedOn={task.attempt}
+										{timing}
 										onViewLogs={(attempt) => viewTaskAttemptLogs(task.id, attempt)}
 									/>
 								{/if}

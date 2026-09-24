@@ -47,25 +47,27 @@ export function isTerminal(status: Status | undefined): boolean {
  * taskDispatched reports whether a task ever actually reached an Orker — which
  * is NOT the same question as whether its status is terminal.
  *
- * It relies on one backend guarantee: the engine stamps `TaskRun.started_at`
+ * It relies on one backend guarantee: the engine stamps `TaskRun.scheduled_at`
  * only in `schedule()`, the single place a task is really dispatched. A task
  * the run resolved without ever running it (skipped by its condition, or
  * canceled because the run ended first) carries a `finished_at` and no
- * `started_at`. That absence is the only thing distinguishing "canceled
+ * `scheduled_at`. That absence is the only thing distinguishing "canceled
  * before it started" from "was running, then canceled" — both are
  * `STATUS_CANCELED`, deliberately, since both are the truth about the
- * lifecycle.
+ * lifecycle. `started_at` cannot answer it: it is the Orker's own report, and
+ * a task canceled while it ran has none.
  *
  * SKIPPED answers false as well, but callers usually want to keep showing its
  * pill: a skip is a decision a reader should see, not an absence.
  *
- * Old runs, archived while the engine still stamped `started_at` on both, read
- * as dispatched and keep their old pill. That degradation is deliberate: a
- * timestamp is evidence, and this function will not fabricate its absence.
+ * A run recorded before `scheduled_at` existed held the dispatch instant in
+ * `started_at`; callers pass `scheduledAt ?? startedAt` so it keeps reading as
+ * it always did. A timestamp is evidence, and this function will not fabricate
+ * its absence.
  */
 export function taskDispatched(
 	status: Status | undefined,
-	startedAt: Timestamp | undefined
+	scheduledAt: Timestamp | undefined
 ): boolean {
 	switch (status) {
 		case undefined:
@@ -74,7 +76,7 @@ export function taskDispatched(
 		case Status.SKIPPED:
 			return false;
 		case Status.CANCELED:
-			return startedAt !== undefined;
+			return scheduledAt !== undefined;
 		default:
 			return true;
 	}

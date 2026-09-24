@@ -103,13 +103,22 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
 	}
+	attemptStore, err := artifacts.NewAttemptStore(cfg)
+	if err != nil {
+		t.Fatalf("open attempt store: %v", err)
+	}
+	// A tap on the real attempt store: every record still lands in MinIO, and
+	// the test also keeps the last one written, which is how it reads the
+	// adopted attempt's record below without it being overwritten by key.
+	attempts := &tappedAttemptStore{AttemptStore: attemptStore}
 
 	// The real Orker: real Docker runtime, real commit store, real bucket.
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{
-		Logs:    logStore,
-		Commits: commitStore,
-		Refs:    refs,
-		Pool:    task.DefaultPool,
+		Logs:     logStore,
+		Commits:  commitStore,
+		Attempts: attempts,
+		Refs:     refs,
+		Pool:     task.DefaultPool,
 		OrkerID: "commit-e2e-" + token,
 		// ORK_ORKER_WORKDIR must be bind-mountable by the daemon; on macOS
 		// /var/folders is not shared with a VM daemon (§3.1).
@@ -311,6 +320,59 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	}
 	t.Logf("EVIDENCE commit_adopted=%t committing_attempt=%d exit_code=%d",
 		adopted.GetCommitAdopted(), adopted.GetAttempt(), adopted.GetExitCode())
+
+	// (d) I3 (task-timing-breakdown): the adopted attempt's record lists
+	//     exactly the phases it passed through — it returned at the commit
+	//     check, so [start, commit-check] — and the snapshot's started_at is
+	//     the COMMITTING attempt's start, read back out of commit.json.
+	adoptedRecord := attempts.last()
+	if adoptedRecord == nil || !adoptedRecord.GetCommitAdopted() {
+		t.Fatalf("no adopted attempt record was written: %v", adoptedRecord)
+	}
+	var phaseNames []string
+	for _, span := range adoptedRecord.GetPhases() {
+		phaseNames = append(phaseNames, span.GetPhase())
+	}
+	if strings.Join(phaseNames, ",") != "start,commit-check" {
+		t.Errorf("adopted attempt phases = %v, want [start commit-check]", phaseNames)
+	}
+	commitRecord, err := commitStore.Get(ctx, wantURI)
+	if err != nil {
+		t.Fatalf("read commit.json: %v", err)
+	}
+	commitStart := commitRecord.Commit.GetStartedAt()
+	if commitStart == nil || taskRun.GetStartedAt() == nil ||
+		!taskRun.GetStartedAt().AsTime().Equal(commitStart.AsTime()) {
+		t.Errorf("TaskRun.started_at = %v, want commit.started_at %v", taskRun.GetStartedAt(), commitStart)
+	}
+	if !adopted.GetStartedAt().AsTime().Equal(commitStart.AsTime()) {
+		t.Errorf("the adopted result's started_at = %v, want the committing attempt's %v",
+			adopted.GetStartedAt(), commitStart)
+	}
+	t.Logf("EVIDENCE I3 adopted_phases=%v snapshot_started_at=%s commit_started_at=%s",
+		phaseNames, taskRun.GetStartedAt().AsTime().Format(time.RFC3339Nano),
+		commitStart.AsTime().Format(time.RFC3339Nano))
+}
+
+// tappedAttemptStore delegates to a real AttemptStore and remembers the last
+// record written.
+type tappedAttemptStore struct {
+	artifacts.AttemptStore
+	mu     sync.Mutex
+	latest *orkstackv1.TaskAttempt
+}
+
+func (s *tappedAttemptStore) PutAttempt(ctx context.Context, record *orkstackv1.TaskAttempt) error {
+	s.mu.Lock()
+	s.latest = record
+	s.mu.Unlock()
+	return s.AttemptStore.PutAttempt(ctx, record)
+}
+
+func (s *tappedAttemptStore) last() *orkstackv1.TaskAttempt {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.latest
 }
 
 // privateNamespaceForCommitE2E names a Temporal namespace unique to this test

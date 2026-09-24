@@ -156,6 +156,43 @@ document, so `run get --attempts --json` is refused and points at
 attempt timeline with each failed attempt's error and a link that pins the log
 pane to that attempt, retaining namespace, task and attempt.
 
+### Task timing
+
+Two facts an operator needs first — *was this task slow, or was it
+waiting?* — are read off one snapshot and the attempt records, and no new
+RPC, stream or `EventType` is added. `TaskRun.scheduled_at` (18) is the
+instant the engine scheduled the task, the same `workflow.Now` the
+`TASK_SCHEDULED` event carries; `TaskRun.started_at` (8) is when the Orker
+began the attempt that decided the task (`ExecuteTaskResult.started_at`, or
+`ActivityFailureDetail.started_at` for a failure), unset while the task runs
+and for a task no Orker reported on. Each `TaskAttempt` lists
+`phases` (17): every §7.1 phase the attempt passed through, contiguous, the
+last ending at `finished_at`, the last one's name equal to `phase`.
+
+Both clients derive, with one rule (`cmd/orkctl/timing.go`,
+`ui/src/lib/timing.ts`): WAIT = `started_at − scheduled_at`, RUN =
+`finished_at − started_at`, TOTAL = `finished_at − scheduled_at`, and for a
+task decided on a retry the queue wait `attempts[1].started_at −
+scheduled_at` on its pool. A quantity that does not apply (never scheduled,
+not finished) is `-`/absent; a quantity that happened but cannot be known is
+`unavailable`, never `0s`, with exactly one of seven reasons: `no orker
+reported a start`, `clock skew`, `recorded before scheduled time existed`,
+`attempt records reclaimed`, `no attempt record`, `record predates phase
+spans`, `no task attempt store`. A snapshot with `started_at` and no
+`scheduled_at` was written before the field existed: its TOTAL is dispatch to
+finish and is labelled so.
+
+CLI: `run timing RUN [--task TASK] [--json]` prints the table, the run's
+summed wait and every scheduled task's attempts with their phases;
+`run get RUN --timing` appends the same output, and `run get` gains a
+`SCHEDULED` column. `--json` is a CLI-owned derived document, not a proto
+envelope, so `run get --timing --json` is refused and points at
+`run timing --json`. UI: a RUNNING task's card reads `Since scheduled …`; a
+finished one draws a two-segment wait/run bar (an unavailable segment is
+hatched and names its reason) with the `run timing --task` command beside
+it; the attempt timeline lists each attempt's phases and, for a task decided
+on a retry, its queue wait.
+
 ### Task pins
 
 A **pin** is a named group of tasks of one orkflow that execute on one Orker
@@ -258,6 +295,7 @@ seeded draft exists only in the page that already holds that run.
 | Editor protection | Warn on navigation with unsaved YAML; import local YAML; export current draft/source; conflict handling preserved | Existing file-based apply/edit/get | Import and export round-trip; dirty navigation guarded; successful save clears dirty state; validation alone does not clear it |
 | Deep links/CLI copies | Preserve namespace, task, attempt, inspector tab; copy commands beside corresponding actions | Shell-escaped actual CLI syntax | Reload restores selection; copied commands include required namespace/version; quotes in values cannot become shell syntax |
 | Task attempts | Per-task retry badge and attempt timeline; failed attempts show their own error; a row links to that attempt's logs | `run attempts RUN [--task]` and `run get --attempts`, same order and `--json` envelope | Retried fixture shows every attempt with its own outcome and error; an attempt with no record renders as UNREPORTED, not as a failure or a gap; another namespace's run is NotFound; a replica that ran nothing answers identically |
+| Task timing | Running card reads "Since scheduled"; finished card draws a wait/run bar with unavailable segments hatched and named; attempt timeline lists each attempt's phases and a retried task's queue wait | `run timing RUN [--task] [--json]`, `run get --timing`, `SCHEDULED` column on `run get` | A task submitted with no Orker polling waits at least the stimulus and its wait segment is wider than its run; every attempt lists its phases; a retried task shows both attempts and its queue wait; a reclaimed, pre-contract, skewed or unreported value renders `unavailable` with its reason, never `0s`; a replica that ran nothing prints the identical document |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new

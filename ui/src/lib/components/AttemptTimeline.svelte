@@ -28,6 +28,7 @@
 	import { hasError } from '$lib/activity';
 	import { formatDuration, runCommand } from '$lib/runDetail';
 	import { fmtTime } from '$lib/status';
+	import { attemptPhases, formatQuantity, phasesLine, type TaskTiming } from '$lib/timing';
 
 	interface Props {
 		runId: string;
@@ -38,9 +39,24 @@
 		attempts: TaskAttempt[];
 		/** Pins the task's log pane to one attempt — the same control its selector uses. */
 		onViewLogs: (attempt: number) => void;
+		/** The pool the task was dispatched to, for the queue-wait line. */
+		pool?: string;
+		/** The attempt that decided the task (TaskRun.attempt). */
+		decidedOn?: number;
+		/** The task's derived timing ($lib/timing), for the queue wait. */
+		timing?: TaskTiming;
 	}
 
-	let { runId, taskId, namespace, attempts, onViewLogs }: Props = $props();
+	let {
+		runId,
+		taskId,
+		namespace,
+		attempts,
+		onViewLogs,
+		pool = '',
+		decidedOn = 0,
+		timing
+	}: Props = $props();
 
 	// Open by default: this disclosure already lives INSIDE the card's Inspect,
 	// and a reader who opened Inspect on a task that retried is asking exactly
@@ -94,6 +110,23 @@
 	</div>
 
 	{#if open}
+		<!--
+			QUEUE WAIT, only for a task decided on a retry. For a task decided on
+			its first attempt the card's Wait segment already IS the queue wait,
+			and saying it twice would suggest two different numbers. For a retried
+			task Wait includes the earlier attempts and the backoff between them,
+			so the time before attempt 1 started is stated here, off attempt 1's
+			own record — the same rule and reasons as `orkctl run timing`.
+		-->
+		{#if timing && decidedOn > 1 && timing.queueWait.kind !== 'na'}
+			<p class="mt-2 text-xs text-fg-secondary" data-testid="attempt-{taskId}-queue-wait">
+				{#if timing.queueWait.kind === 'value'}
+					Queue wait {formatQuantity(timing.queueWait)}{pool ? ` on pool ${pool}` : ''}
+				{:else}
+					Queue wait unavailable ({timing.queueWait.reason})
+				{/if}
+			</p>
+		{/if}
 		{#if attempts.length === 0}
 			<!--
 				An empty list is a valid answer, not an error — and it is not the
@@ -174,6 +207,24 @@
 								data-testid="task-{taskId}-attempt-{attempt.attempt}-unreported"
 							>
 								{UNREPORTED_CAPTION}
+							</p>
+						{:else}
+							<!--
+								Every §7.1 phase the attempt passed through, in order,
+								with how long each took — the Orker's own record. An
+								UNREPORTED row has nothing here (rule 3); a record
+								written before phases were recorded says so.
+							-->
+							{@const phases = attemptPhases(attempt)}
+							<p
+								class="mt-1 font-mono text-[11px] break-words text-fg-muted"
+								data-testid="attempt-{taskId}-{attempt.attempt}-phases"
+							>
+								{#if phases.kind === 'phases'}
+									{phasesLine(phases.phases)}
+								{:else}
+									phases unavailable ({phases.reason})
+								{/if}
 							</p>
 						{/if}
 						{#if failure && errorOpen[attempt.attempt]}

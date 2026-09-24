@@ -13,9 +13,9 @@ test('a task that never reached an Orker is not dispatched, whatever its status 
 	expect(taskDispatched(Status.PENDING, undefined)).toBe(false);
 	expect(taskDispatched(Status.CANCELED, undefined)).toBe(false);
 
-	// CANCELED is ALSO the status of a task that ran and was killed. started_at
-	// is the only thing separating the two, which is why the engine stamps it
-	// exclusively at real dispatch.
+	// CANCELED is ALSO the status of a task that ran and was killed.
+	// scheduled_at is the only thing separating the two, which is why the
+	// engine stamps it exclusively at real dispatch.
 	expect(taskDispatched(Status.CANCELED, AT)).toBe(true);
 
 	// A skip is a DAG decision, not an execution: not dispatched, and the card
@@ -41,4 +41,12 @@ test('SKIPPED is terminal: nothing moves a task the DAG decided not to run', () 
 	expect(isTerminal(Status.RUNNING)).toBe(false);
 	expect(isTerminal(Status.PENDING)).toBe(false);
 	expect(isTerminal(undefined)).toBe(false);
+});
+
+// U9 (task-timing-breakdown): the dispatch stamp is scheduled_at. A task
+// canceled while it ran has scheduled_at and NO started_at — no Orker reported
+// a start — and it did run.
+test('taskDispatched keys on scheduledAt, not on the Orker-reported start', () => {
+	expect(taskDispatched(Status.CANCELED, AT)).toBe(true);
+	expect(taskDispatched(Status.CANCELED, undefined)).toBe(false);
 });
