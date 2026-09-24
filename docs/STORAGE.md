@@ -53,7 +53,7 @@ place each shape is spelled.
 | `metadata/namespaces/{name}.json` | the namespace registry entry (`NamespaceKey`, `namespace_store.go`) | conditional PUT with an etag | `orkctl namespace delete`, refused while the namespace holds anything |
 | `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`, `archive.go`) | once, at the run's terminal event | nothing; archive bodies are never deleted |
 | `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row (`RunIndexKey`) | with the archive body | nothing |
-| `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`) | with the archive body | the cleanup worker, when it releases the run's claims |
+| `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`); read keys-only by `RunService.GetArtifactProvenance` (`ListObjectReferences`) as well as by cleanup | with the archive body | the cleanup worker, when it releases the run's claims |
 | `metadata/index/run-objects/{run-id}.json` | the list of object ids the run references (`RunObjectListKey`) | with the archive body | the cleanup worker |
 | `metadata/cleanup/runs/{run-id}.json` | a sidecar recording that the run's artifacts were cleaned (`RunCleanupKey`) | once, by the cleanup worker | nothing |
 | `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind each projected event, kept out of Temporal history (`RunSnapshotKey`, `snapshots.go`) | by the workflow's snapshot local activity | the cleanup worker |
@@ -91,6 +91,37 @@ run id is encoded, never parsed (AGENTS.md §7).
   what the cleanup worker reclaims is the run's logs, attempt records,
   snapshots, commit record, and object markers, and it records that in the
   cleanup sidecar.
+
+## Artifact provenance
+
+`RunService.GetArtifactProvenance` (`orkctl run artifact provenance`, and the
+**Provenance** disclosure on each artifact row of the run page) is the one
+user-facing reader of the object index. It writes nothing. For one artifact,
+addressed by its run, task, kind and recorded name and resolved against the
+namespace-checked run — never by a caller-supplied URI or key — it answers:
+
+- **`bytes_present`** — a `Stat` of the recorded object, no bytes
+  transferred. `false` means a lifecycle rule, an operator, or
+  `DeleteUnreferencedObjects` removed the bytes while the references stand. A
+  store that cannot answer fails the call; it never reports `false`.
+- **`own_reference`** — the addressed run's marker: `HELD`; `RELEASED`, with
+  `released_at` from the cleanup sidecar's `temporal_deleted_at`; or `ABSENT`,
+  meaning no marker and no sidecar (not archived yet, or archived before the
+  index existed).
+- **`references`** — every marker under the object's prefix whose run is in
+  the calling namespace, newest `created_at` first. Markers of other
+  namespaces are dropped and not counted; a marker whose run body is missing
+  is counted in `references_unreadable` and listed nowhere. More than
+  `MaxObjectReferences` (1000) markers is `ResourceExhausted`, never a
+  truncated list.
+
+What the list holds follows from the object key, not from a flag. An `s3`
+object key embeds its run id, so its prefix holds the producing run alone —
+OrkStack never dedupes across runs there. A `local` object key is
+name-and-digest, so every run that produced identical bytes under one name is
+listed. Markers record a run's own task outputs only (artifacts, values, and
+stdout/stderr); nothing records consumption, and a bare content digest cannot
+be looked up, because the marker's object segment is one-way.
 
 ## Reclaiming space
 

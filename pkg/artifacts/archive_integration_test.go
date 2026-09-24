@@ -15,11 +15,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go/middleware"
 
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -648,4 +651,76 @@ func TestS3RunArchive_KeyOrderPagingIsOnePassOverTheIndex(t *testing.T) {
 
 	t.Logf("EVIDENCE s3_keyorder runs=%d unpaged_keys=%d %s newest_first_pages=%d newest_first_keys=%d",
 		runs, wantKeys, strings.Join(evidence, " "), defaultPages, newestFirstKeys)
+}
+
+// TestS3RunArchive_ListObjectReferencesReadsMarkerKeysOnly is the keys-only
+// property of the provenance read against real object storage: each of one
+// run's objects lists exactly that run, and the archive issues ListObjectsV2
+// and nothing else — no GetObject of a marker or of a body.
+func TestS3RunArchive_ListObjectReferencesReadsMarkerKeysOnly(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	operations := map[string]int{}
+	counting := func(o *s3.Options) {
+		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+			return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("CountOperations",
+				func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
+					mu.Lock()
+					operations[awsmiddleware.GetOperationName(ctx)]++
+					mu.Unlock()
+					return next.HandleInitialize(ctx, in)
+				}), middleware.After)
+		})
+	}
+	writer, err := artifacts.NewS3RunArchive(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3RunArchive: %v", err)
+	}
+	reader, err := artifacts.NewS3RunArchiveWithOptions(ctx, cfg, counting)
+	if err != nil {
+		t.Fatalf("NewS3RunArchiveWithOptions: %v", err)
+	}
+
+	runID := archiveTestRun(t, "-provenance")
+	cleanupArchivedRun(t, cfg, runID)
+	token := uniqueToken(t)[:8]
+	objectIDs := []string{
+		fmt.Sprintf("orkflows/provenance/%s/task/report-%s.txt/%s", runID, token, strings.Repeat("a", 64)),
+		fmt.Sprintf("orkflows/provenance/%s/task/values.json/%s", runID, strings.Repeat("b", 64)),
+		fmt.Sprintf("orkflows/provenance/%s/task/stdout.log/%s", runID, strings.Repeat("c", 64)),
+	}
+	if err := writer.PutRun(ctx, artifacts.RunRecord{
+		RunID: runID, Namespace: "default", Orkflow: "provenance", Status: "succeeded",
+		Time: time.Now().UTC(), ObjectIDs: objectIDs, JSONL: []byte(runID + "\n"),
+	}); err != nil {
+		t.Fatalf("PutRun: %v", err)
+	}
+
+	for _, objectID := range objectIDs {
+		got, err := reader.ListObjectReferences(ctx, objectID)
+		if err != nil {
+			t.Fatalf("ListObjectReferences(%s): %v", objectID, err)
+		}
+		if len(got) != 1 || got[0] != runID {
+			t.Fatalf("ListObjectReferences(%s) = %v, want [%s]", objectID, got, runID)
+		}
+	}
+	unreferenced := fmt.Sprintf("orkflows/provenance/%s/task/never/%s", runID, strings.Repeat("d", 64))
+	if got, err := reader.ListObjectReferences(ctx, unreferenced); err != nil || len(got) != 0 {
+		t.Fatalf("ListObjectReferences(unreferenced) = %v, %v; want empty", got, err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if operations["GetObject"] != 0 || operations["HeadObject"] != 0 {
+		t.Fatalf("provenance listing read object bodies or heads: %v", operations)
+	}
+	if operations["ListObjectsV2"] != len(objectIDs)+1 {
+		t.Fatalf("ListObjectsV2 calls = %d, want %d (one page per object): %v", operations["ListObjectsV2"], len(objectIDs)+1, operations)
+	}
+	t.Logf("EVIDENCE s3_provenance_keys_only objects=%d references_per_object=1 list_objects_v2=%d get_object=%d head_object=%d",
+		len(objectIDs), operations["ListObjectsV2"], operations["GetObject"], operations["HeadObject"])
 }
