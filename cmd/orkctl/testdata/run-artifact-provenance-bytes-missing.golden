@@ -1,0 +1,6 @@
+ARTIFACT   report.txt  OUTPUT  6 bytes  sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03
+BYTES      MISSING from the object store — a lifecycle rule or an operator removed them; the references below still stand
+REFERENCE  held — this run's archive holds its marker on the object
+
+REFERENCED BY  ORKFLOW    VERSION  TASK       KIND    STATUS     CREATED
+ork-1-a1       completed  0.1.0    completed  OUTPUT  SUCCEEDED  2026-01-02T03:04:05Z
