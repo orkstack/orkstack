@@ -11,11 +11,13 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
@@ -25,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
 	archivecleanup "github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
@@ -663,4 +666,204 @@ func mustListRuns(t *testing.T, ctx context.Context, archive artifacts.RunArchiv
 		t.Fatalf("ListRuns(%q): %v", namespace, err)
 	}
 	return entries
+}
+
+// TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup is the
+// RELEASED state observed end to end: a real run on a live cluster, archived
+// to a private MinIO bucket, answers HELD through the API; the cleanup pass
+// retires it at its namespace retention; the same question then answers
+// RELEASED with released_at equal to the cleanup sidecar's
+// temporal_deleted_at, and the object's marker prefix is empty. The run is
+// read back from the archive by then — its Temporal history is gone — so the
+// answer also proves the read survives retirement.
+func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T) {
+	address := temporalAddress()
+	if conn, err := net.DialTimeout("tcp", address, 2*time.Second); err != nil {
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
+	} else {
+		_ = conn.Close()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cfg, raw := privateCleanupBucket(t, ctx)
+
+	namespace := fmt.Sprintf("%s-provenance-%d-%d", baseNamespace(), os.Getpid(), time.Now().UnixNano()%1_000_000_000)
+	const orkNamespace = "provenance-e2e"
+	temporalClient := cleanupTemporalClient(t, ctx, address, namespace)
+	reader := engine.NewTemporalRunReader(temporalClient)
+
+	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	retentionCtrl := archivecleanup.NewRetentionController(policies, reader, namespace, archivecleanup.DefaultRetentionBuffer, logger)
+	if _, err := retentionCtrl.SetMax(ctx, 999*time.Hour); err != nil {
+		t.Fatalf("SetMax: %v", err)
+	}
+	const shortRetention = time.Minute
+	nsDoc := &orkstackv1.Namespace{Name: orkNamespace, RunRetention: durationpb.New(shortRetention)}
+
+	registry, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	if _, err := registry.Put(ctx, nsDoc, artifacts.PutConditions{IfAbsent: true}); err != nil {
+		t.Fatalf("register namespace: %v", err)
+	}
+	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3RunArchive: %v", err)
+	}
+	objectStore, err := artifacts.New(cfg)
+	if err != nil {
+		t.Fatalf("artifact store: %v", err)
+	}
+	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("snapshot store: %v", err)
+	}
+	reader.WithSnapshotStore(snapshots)
+	archiver := engine.NewRunArchiver(runArchive)
+
+	queue := fmt.Sprintf("ork-provenance-e2e-%d", time.Now().UnixNano())
+	runWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		LocalActivityWorkerOnly:     true,
+	})
+	engine.RegisterWorkflows(runWorker)
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	taskWorker := worker.New(temporalClient, queue, worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	})
+	taskWorker.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		ref, err := objectStore.Put(actx, "report.txt", strings.NewReader("REPORT"), artifacts.PutOptions{
+			Metadata: artifacts.Provenance{RunID: in.GetRunId(), TaskID: in.GetTaskId(), Orkflow: in.GetOrkflowName()}.Metadata(nil),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &orkstackv1.ExecuteTaskResult{
+			TaskId: in.GetTaskId(), ValuesJson: []byte(`{}`),
+			Artifacts: []*orkstackv1.ArtifactRef{{Name: ref.Name, Uri: ref.URI, Sha256: ref.SHA256, SizeBytes: ref.SizeBytes}},
+		}, nil
+	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	})
+	eventWorker.RegisterActivityWithOptions(
+		engine.NewArchivingEventActivities(engine.NewEventBus(), engine.NewRunStore(), archiver).WithSnapshotStore(snapshots).PublishEvent,
+		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
+	)
+	for name, w := range map[string]worker.Worker{"run": runWorker, "task": taskWorker, "event": eventWorker} {
+		if err := w.Start(); err != nil {
+			t.Fatalf("start %s worker: %v", name, err)
+		}
+		defer w.Stop()
+	}
+
+	runID := fmt.Sprintf("ork-provenance-%d", time.Now().UnixNano())
+	definition := &orkstackv1.Orkflow{
+		Name: "provenance-cleanup", Namespace: orkNamespace, Version: "1.0.0",
+		Tasks: []*orkstackv1.Task{{
+			Id: "completed", Uses: "provenance-test", Image: &orkstackv1.ImageRef{Reference: "provenance-test", Pinned: "provenance-test"},
+			TimeoutSeconds: 30,
+		}},
+	}
+	if err := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, queue).StartRun(ctx, runID, definition, nil, engine.RunPlan{
+		Namespace: orkNamespace, Routes: map[string]string{task.DefaultPool: queue},
+	}); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
+		t.Fatalf("wait for run: %v", err)
+	}
+	awaitArchivedRun(t, ctx, runArchive, runID)
+
+	// The API as `ork` wires it: the cluster reader first, the archive behind
+	// it, the shared object store — nothing from this process's memory.
+	svc := api.NewService(api.Config{
+		Reader:        reader,
+		Namespaces:    registry,
+		Archive:       archiver,
+		ArtifactStore: objectStore,
+		Logger:        logger,
+	})
+	ask := func() *orkstackv1.GetArtifactProvenanceResponse {
+		t.Helper()
+		resp, err := svc.GetArtifactProvenance(ctx, connect.NewRequest(&orkstackv1.GetArtifactProvenanceRequest{
+			RunId: runID, Namespace: orkNamespace, TaskId: "completed",
+			Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Name: "report.txt",
+		}))
+		if err != nil {
+			t.Fatalf("GetArtifactProvenance: %v", err)
+		}
+		return resp.Msg
+	}
+
+	before := ask()
+	if before.GetOwnReference() != orkstackv1.ReferenceState_REFERENCE_STATE_HELD || !before.GetBytesPresent() ||
+		len(before.GetReferences()) != 1 || before.GetReferences()[0].GetRunId() != runID {
+		t.Fatalf("before cleanup: own=%s bytes=%t references=%v; want HELD, present, exactly %s",
+			before.GetOwnReference(), before.GetBytesPresent(), before.GetReferences(), runID)
+	}
+	objectID, ok := artifacts.ObjectIDFromURI(before.GetArtifact().GetUri())
+	if !ok {
+		t.Fatalf("ObjectIDFromURI(%s)", before.GetArtifact().GetUri())
+	}
+
+	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
+		TemporalNamespace: namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
+	}, runArchive, reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{nsDoc}}, retentionCtrl, logger).WithClock(func() time.Time {
+		return time.Now().UTC().Add(2 * shortRetention)
+	})
+	stats, err := cleaner.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if stats.RunsCleaned != 1 {
+		t.Fatalf("cleanup metrics = %+v, want the one run retired", stats)
+	}
+	awaitWorkflowGone(t, ctx, reader, namespace, runID)
+
+	state, err := runArchive.CleanupState(ctx, runID)
+	if err != nil || state.TemporalDeletedAt.IsZero() {
+		t.Fatalf("cleanup state = %+v, %v", state, err)
+	}
+	after := ask()
+	if after.GetOwnReference() != orkstackv1.ReferenceState_REFERENCE_STATE_RELEASED {
+		t.Fatalf("after cleanup: own_reference = %s; want RELEASED", after.GetOwnReference())
+	}
+	if after.GetReleasedAt() == nil || !after.GetReleasedAt().AsTime().Equal(state.TemporalDeletedAt) {
+		t.Fatalf("released_at = %v; want the sidecar's temporal_deleted_at %v", after.GetReleasedAt(), state.TemporalDeletedAt)
+	}
+	if len(after.GetReferences()) != 0 || after.GetReferencesUnreadable() != 0 {
+		t.Fatalf("after cleanup: references = %v unreadable = %d; want none", after.GetReferences(), after.GetReferencesUnreadable())
+	}
+	markerPrefix := path.Dir(mustRunObjectRefKey(t, objectID, runID)) + "/"
+	page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(cfg.S3Bucket), Prefix: aws.String(markerPrefix)})
+	if err != nil {
+		t.Fatalf("list marker prefix: %v", err)
+	}
+	if len(page.Contents) != 0 {
+		t.Fatalf("marker prefix %s still holds %d keys after cleanup", markerPrefix, len(page.Contents))
+	}
+	t.Logf("EVIDENCE provenance_after_cleanup run=%s before=%s after=%s released_at=%s temporal_deleted_at=%s marker_prefix_keys=%d bytes_present=%t",
+		runID, before.GetOwnReference(), after.GetOwnReference(), after.GetReleasedAt().AsTime().Format(time.RFC3339Nano),
+		state.TemporalDeletedAt.Format(time.RFC3339Nano), len(page.Contents), after.GetBytesPresent())
+}
+
+func mustRunObjectRefKey(t *testing.T, objectID, runID string) string {
+	t.Helper()
+	key, err := artifacts.RunObjectRefKey(objectID, runID)
+	if err != nil {
+		t.Fatalf("RunObjectRefKey: %v", err)
+	}
+	return key
 }
