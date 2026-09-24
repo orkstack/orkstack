@@ -2,6 +2,7 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
+	import ArtifactProvenance from '$lib/components/ArtifactProvenance.svelte';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -1194,6 +1195,7 @@
 													<span class="font-mono break-all text-fg-secondary">{record.artifact.name}</span>
 													<span class="text-fg-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
 													<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="ml-auto font-medium text-brand-700 hover:underline disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
+													<ArtifactProvenance runId={run.id} namespace={data.namespace} taskId={task.id} kind={record.kind} name={record.artifact.name} />
 													<details class="w-full min-w-0 text-fg-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
 												</div>
 											{/if}
