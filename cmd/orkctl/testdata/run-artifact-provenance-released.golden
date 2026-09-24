@@ -1,0 +1,5 @@
+ARTIFACT   report.txt  OUTPUT  6 bytes  sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03
+BYTES      present in the object store
+REFERENCE  released — cleanup released this run's object claims at 2026-01-09T03:04:05Z
+
+No archived run of this namespace references this object.

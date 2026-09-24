@@ -204,6 +204,52 @@ type RunArchive interface {
 	MarkArtifactsCleaned(ctx context.Context, runID string, temporalDeletedAt time.Time) error
 }
 
+// ObjectReferenceLister reads the reverse index PutRun maintains: which
+// archived runs hold a marker on one physical object. It is separate from
+// RunArchive so a fake that stands in for the archive need not implement it,
+// on the terms RunIndexTallier is separate in internal/api.
+type ObjectReferenceLister interface {
+	// ListObjectReferences returns the run ids holding a marker under
+	// metadata/index/objects/{sha256(objectID)}/, in key order, reading keys
+	// only. More than MaxObjectReferences markers is ErrTooManyReferences:
+	// a list cut short is not the list.
+	ListObjectReferences(ctx context.Context, objectID string) ([]string, error)
+}
+
+// MaxObjectReferences bounds one provenance read. One S3 listing page is
+// 1000 keys, and a production object (S3 layout, run id in the key) has at
+// most one marker; the bound exists for the local layout, where identical
+// bytes under one name share an object, and refuses rather than truncates.
+const MaxObjectReferences = 1000
+
+// ErrTooManyReferences reports an object held by more archived runs than
+// ListObjectReferences will enumerate.
+var ErrTooManyReferences = errors.New("artifacts: object is referenced by more runs than provenance will list")
+
+// objectReferenceCollector gathers marker keys into run ids for one
+// ListObjectReferences call. Both backends feed it keys in key order; it
+// skips keys this package did not write (as ListRuns skips foreign index
+// keys) and refuses, rather than truncates, past MaxObjectReferences.
+type objectReferenceCollector struct {
+	runIDs []string
+}
+
+func newObjectReferenceCollector() *objectReferenceCollector {
+	return &objectReferenceCollector{runIDs: []string{}}
+}
+
+func (c *objectReferenceCollector) add(key string) error {
+	runID, ok := ParseRunObjectRefRunID(key)
+	if !ok {
+		return nil
+	}
+	if len(c.runIDs) == MaxObjectReferences {
+		return fmt.Errorf("%w: more than %d markers", ErrTooManyReferences, MaxObjectReferences)
+	}
+	c.runIDs = append(c.runIDs, runID)
+	return nil
+}
+
 // RunCleanupKey renders the immutable cleanup-state key for a run id.
 func RunCleanupKey(runID string) (string, error) {
 	segment, err := encodeArchiveSegment(runID)

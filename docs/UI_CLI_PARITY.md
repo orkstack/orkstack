@@ -96,6 +96,44 @@ downloads one. Write a temporary sibling and rename on success; refuse an
 existing output unless an explicit overwrite flag is supplied. UI presents
 the same task/kind/name/size/checksum metadata and download actions.
 
+### Artifact provenance
+
+Add `RunService.GetArtifactProvenance(GetArtifactProvenanceRequest)` returning
+`GetArtifactProvenanceResponse` — a unary read of the object index the run
+archive keeps for cleanup (`docs/STORAGE.md`, "Artifact provenance"):
+
+- Request: `string run_id = 1`, `string namespace = 2` (empty = `default`),
+  `string task_id = 3`, `ArtifactKind kind = 4`, `string name = 5`,
+  `string expect_sha256 = 6` (optional; a mismatch with the recorded digest is
+  FailedPrecondition naming both).
+- Response: `ArtifactRef artifact = 1` (as recorded on the run),
+  `bool bytes_present = 2`, `ReferenceState own_reference = 3`
+  (HELD, RELEASED, ABSENT), `google.protobuf.Timestamp released_at = 4`,
+  `repeated ArtifactReference references = 5`,
+  `int64 references_unreadable = 6`, `google.protobuf.Timestamp computed_at = 7`.
+- `ArtifactReference`: `run_id`, `orkflow_name`, `orkflow_version`,
+  `task_id`, `kind`, `run_status`, `run_created_at`.
+
+The artifact is addressed exactly as a download is and resolved against the
+authoritative, namespace-checked run; a URI or key is never accepted. Order is
+the response's contract: `run_created_at` descending, ties by run id
+descending, then `Run.task_runs` order and kind within one run. Three absences
+are never conflated: bytes gone (`bytes_present=false`), reference released
+by cleanup (RELEASED with `released_at`), and no evidence either way
+(ABSENT). A store or listing failure is Unavailable, never `false` or an empty
+list; more than 1000 markers is ResourceExhausted; an engine with no archive
+or no artifact store answers FailedPrecondition. There is no stream and no
+cache: a client asks when a person opens the disclosure.
+
+CLI: `run artifact provenance RUN --task TASK --kind KIND --name NAME
+[--expect-sha256 HEX] [--json]` prints the artifact, a BYTES line, a
+REFERENCE line in one of three fixed wordings, and a REFERENCED BY table;
+`--json` is the raw response. Missing bytes exit 0 — they are a finding, not
+an error. UI: a **Provenance** toggle beside each artifact row's Download,
+opening a panel with the same BYTES and REFERENCE wordings, one row per
+reference linking to that run in the same namespace with the addressed run
+marked `this run`, the unreadable footer, and the CLI equivalent.
+
 ### Task attempts
 
 Temporal owns retries, so a run snapshot carries only a task's final outcome:
@@ -258,6 +296,7 @@ seeded draft exists only in the page that already holds that run.
 | Editor protection | Warn on navigation with unsaved YAML; import local YAML; export current draft/source; conflict handling preserved | Existing file-based apply/edit/get | Import and export round-trip; dirty navigation guarded; successful save clears dirty state; validation alone does not clear it |
 | Deep links/CLI copies | Preserve namespace, task, attempt, inspector tab; copy commands beside corresponding actions | Shell-escaped actual CLI syntax | Reload restores selection; copied commands include required namespace/version; quotes in values cannot become shell syntax |
 | Task attempts | Per-task retry badge and attempt timeline; failed attempts show their own error; a row links to that attempt's logs | `run attempts RUN [--task]` and `run get --attempts`, same order and `--json` envelope | Retried fixture shows every attempt with its own outcome and error; an attempt with no record renders as UNREPORTED, not as a failure or a gap; another namespace's run is NotFound; a replica that ran nothing answers identically |
+| Artifact provenance | Per-row **Provenance** disclosure under Inspect: bytes line, reference line, referencing runs linked in the page's namespace with `this run` marked, unreadable footer, CLI equivalent; fetched on open, re-fetched on every open | `run artifact provenance RUN --task --kind --name [--expect-sha256] [--json]`, same wordings and order | Bytes present and missing both render; HELD, RELEASED and ABSENT each render their own wording; another namespace's runs are neither listed nor counted; a replica that started nothing answers identically; a second S3 run with identical bytes lists only itself |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new
