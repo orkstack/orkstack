@@ -119,7 +119,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 		Attempts: attempts,
 		Refs:     refs,
 		Pool:     task.DefaultPool,
-		OrkerID: "commit-e2e-" + token,
+		OrkerID:  "commit-e2e-" + token,
 		// ORK_ORKER_WORKDIR must be bind-mountable by the daemon; on macOS
 		// /var/folders is not shared with a VM daemon (§3.1).
 		WorkRoot: bindableWorkRootForCommitE2E(t),
