@@ -2050,8 +2050,10 @@ something to ask an Orker.
                       stop heartbeat, close log sink, return
 16. ATTEMPT RECORD    write one TaskAttempt to
                       metadata/attempts/{run}/{task}/{attempt}.json — outcome,
-                      error, exit code, the phase this attempt ended in, the
-                      image as executed, orker/pool/build; detached ctx,
+                      error, exit code, the phase this attempt ended in and
+                      the phases it passed through (each with its own start
+                      and end, contiguous, the last closing at finished_at),
+                      the image as executed, orker/pool/build; detached ctx,
                       BEST-EFFORT (a write failure is a Warn and nothing else)
 ```
 

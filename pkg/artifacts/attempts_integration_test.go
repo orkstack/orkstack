@@ -15,9 +15,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -152,6 +155,40 @@ func TestIntegration_S3AttemptStore_TruncatesAnOversizedErrorAndStillStoresIt(t 
 	// what the record exists for and must always survive.
 	if record.GetError().GetCode() != "CONTAINER_EXIT_NONZERO" || record.GetPhase() != "run" {
 		t.Errorf("bounding lost the reason or the phase: %v", record)
+	}
+}
+
+// TestIntegration_S3AttemptStore_PhasesRoundTrip is S1's S3 half: the phase
+// spans an Orker writes come back from a real MinIO listing unchanged.
+func TestIntegration_S3AttemptStore_PhasesRoundTrip(t *testing.T) {
+	store, cfg := newS3AttemptStore(t)
+	ctx := context.Background()
+	runID := fmt.Sprintf("ork-attempt-%s", uniqueToken(t))
+	cleanupAttemptRecords(t, cfg, runID, "spans")
+
+	base := time.Date(2026, 9, 22, 9, 14, 4, 0, time.UTC)
+	record := &orkstackv1.TaskAttempt{
+		SchemaVersion: artifacts.AttemptSchemaVersion,
+		RunId:         runID,
+		TaskId:        "spans",
+		Attempt:       1,
+		Outcome:       orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED,
+		Phase:         "run",
+		Phases: []*orkstackv1.PhaseSpan{
+			{Phase: "start", StartedAt: timestamppb.New(base), FinishedAt: timestamppb.New(base.Add(3 * time.Millisecond))},
+			{Phase: "image", StartedAt: timestamppb.New(base.Add(3 * time.Millisecond)), FinishedAt: timestamppb.New(base.Add(time.Second))},
+			{Phase: "run", StartedAt: timestamppb.New(base.Add(time.Second)), FinishedAt: timestamppb.New(base.Add(61 * time.Second))},
+		},
+	}
+	if err := store.PutAttempt(ctx, record); err != nil {
+		t.Fatalf("PutAttempt: %v", err)
+	}
+	got, err := store.ListAttempts(ctx, runID, "spans")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ListAttempts = %d records, %v", len(got), err)
+	}
+	if !proto.Equal(got[0], record) {
+		t.Fatalf("S3 round trip changed the record:\n got %v\nwant %v", got[0], record)
 	}
 }
 
