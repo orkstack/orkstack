@@ -1,0 +1,7 @@
+Registered webhook wh-0000000000000001
+URL     https://example.test/hooks
+EVENTS  TASK_SUCCEEDED
+SCOPE   analytics/nightly-etl/extract
+SECRET  fixed-secret
+
+The secret is shown once. Deliveries sign the request body with it (X-Ork-Signature).
