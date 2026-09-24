@@ -264,7 +264,9 @@ service RunService {
   rpc ListTaskAttempts(ListTaskAttemptsRequest) returns (ListTaskAttemptsResponse);
 }
 
-// WebhookService manages deployment-wide run-event subscriptions. Delivery is
+// WebhookService manages run-event subscriptions. A subscription is
+// deployment-wide unless it names a scope: a namespace, an orkflow, a task,
+// each an exact match and each empty meaning "every". Delivery is
 // deliberately outside this management contract; callers never receive the
 // stored signing secret after registration.
 service WebhookService {
@@ -276,13 +278,38 @@ service WebhookService {
 message Webhook {
   string id = 1;
   string url = 2;
+  // events selects the transitions this subscription wants. Empty means
+  // every RUN transition — and only those: a task outcome event
+  // (TASK_SCHEDULED, TASK_STARTED, TASK_SUCCEEDED, TASK_FAILED) is delivered
+  // only to a subscription that names it. TASK_LOG is never accepted.
   repeated EventType events = 3;
   google.protobuf.Timestamp created_at = 4;
+  // namespace narrows this subscription to runs of one namespace. Empty
+  // means every namespace, which is what every subscription registered
+  // before this field existed is. A run that names no namespace is in
+  // "default", so a subscription written as "default" matches it.
+  string namespace = 5;
+  // orkflow_name narrows to runs of one orkflow, by the name the author
+  // wrote. Empty means every orkflow. It composes with namespace by
+  // conjunction and does not require it: a name alone matches that name in
+  // every namespace.
+  string orkflow_name = 6;
+  // task_id narrows the task outcome events to one task. Empty means every
+  // task. It is consulted only for TASK_* events: a RUN_* event has no task
+  // and passes this filter unconditionally, so one subscription can want
+  // TASK_SUCCEEDED of `extract` and RUN_FAILED of the whole run. Registration
+  // refuses a task_id when events names no TASK_* event, because the filter
+  // could then never be consulted.
+  string task_id = 7;
 }
 message RegisterWebhookRequest {
   string url = 1;
   repeated EventType events = 2;
   string secret = 3;
+  // The scope, on exactly the terms Webhook states them.
+  string namespace = 4;
+  string orkflow_name = 5;
+  string task_id = 6;
 }
 message RegisterWebhookResponse {
   Webhook webhook = 1;
