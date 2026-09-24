@@ -313,6 +313,34 @@ func (a *S3RunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID 
 	return result, nil
 }
 
+// ListObjectReferences pages one object's marker prefix — the prefix
+// DeleteUnreferencedObjects probes with MaxKeys 1 — to the end or until the
+// bound is exceeded. It reads keys only: no marker (they are zero bytes) and
+// no run body is fetched.
+func (a *S3RunArchive) ListObjectReferences(ctx context.Context, objectID string) ([]string, error) {
+	_, _, localOK := splitKey(objectID)
+	_, s3OK := splitS3ObjectKey(objectID)
+	if !localOK && !s3OK {
+		return nil, fmt.Errorf("%w: %q is not a canonical object id", ErrInvalidURI, objectID)
+	}
+	collector := newObjectReferenceCollector()
+	paginator := s3.NewListObjectsV2Paginator(a.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(a.bucket), Prefix: aws.String(runObjectRefPrefix(objectID)),
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: s3 list references of %q: %w", objectID, err)
+		}
+		for _, object := range page.Contents {
+			if err := collector.add(aws.ToString(object.Key)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return collector.runIDs, nil
+}
+
 // DeleteUnreferencedObjects removes S3 content-addressed objects only after
 // their reference prefix is empty. Missing objects make retries a no-op.
 func (a *S3RunArchive) DeleteUnreferencedObjects(ctx context.Context, objectIDs []string) (CleanupResult, error) {
