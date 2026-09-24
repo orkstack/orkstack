@@ -137,6 +137,14 @@ func runLogs(cmd *cobra.Command, g *globalFlags, req logsRequest) error {
 	defer cancel()
 
 	if req.taskID != "" {
+		if req.follow && len(run.GetTaskRuns()) == 0 && !isRunTerminal(run) {
+			// A just-accepted run has no task runs until its first workflow
+			// step records them; a follower attaching in that window waits
+			// for them instead of calling the task a typo.
+			if run, err = awaitTaskRuns(ctx, cmd, g, req.runID); err != nil {
+				return err
+			}
+		}
 		if !runHasTask(run, req.taskID) {
 			return fmt.Errorf("run %s has no task %q (tasks: %s)",
 				req.runID, req.taskID, joinTaskIDs(run))
@@ -386,5 +394,28 @@ func isRunTerminal(run *orkstackv1.Run) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// awaitTaskRuns re-reads a run until it has task runs, reaches a terminal
+// state, or ctx ends, and returns the last run it read.
+func awaitTaskRuns(ctx context.Context, cmd *cobra.Command, g *globalFlags, runID string) (*orkstackv1.Run, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(logDiscoveryInterval):
+		}
+		lookupCtx, cancelLookup := g.unaryContext(cmd)
+		resp, err := g.runClient().GetRun(lookupCtx, connect.NewRequest(
+			&orkstackv1.GetRunRequest{RunId: runID, Namespace: g.namespace}))
+		cancelLookup()
+		if err != nil {
+			return nil, rpcError("read run", err)
+		}
+		run := resp.Msg.GetRun()
+		if len(run.GetTaskRuns()) > 0 || isRunTerminal(run) {
+			return run, nil
+		}
 	}
 }

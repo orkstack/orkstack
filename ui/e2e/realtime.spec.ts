@@ -188,6 +188,19 @@ test.beforeAll(async () => {
 	);
 	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
 
+	// The engine refuses a submit to a pool with no live Orker, and the Orker
+	// polls only after its boot probes, so the first submit waits for it.
+	await waitFor('the main pool reports a live Orker', async () => {
+		const res = await fetch(`${ENGINE_HTTP}/orkstack.v1.NamespaceService/ListPools`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: '{}'
+		});
+		if (!res.ok) return false;
+		const answer = (await res.json()) as { pools?: { name: string; liveOrkerCount?: number }[] };
+		return answer.pools?.some((p) => p.name === 'main' && (p.liveOrkerCount ?? 0) > 0) ?? false;
+	});
+
 	// Register hello-ork through the UI proxy (the same path the browser uses).
 	//
 	// Its `version:` is stamped for this run. The example pins a fixed version,

@@ -79,6 +79,7 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 			append(args, "--server", "http://"+engineAddr)...)
 	})
 	t.Cleanup(func() { writeVersionSession(t, session) })
+	waitForPoolLive(t, cli, "default", pool)
 
 	name := fmt.Sprintf("versions-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	first := writeVersionedCLIOrkflow(t, name, "1.0.0", pool, "one")

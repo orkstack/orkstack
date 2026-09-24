@@ -87,6 +87,7 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 			append(args, "--server", "http://"+engineAddr)...)
 	})
 	t.Cleanup(func() { writeVersionScopedEditSession(t, session) })
+	waitForPoolLive(t, cli, "default", pool)
 
 	name := fmt.Sprintf("forked-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 

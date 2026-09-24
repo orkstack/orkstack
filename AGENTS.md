@@ -574,6 +574,13 @@ sleeps for synchronization; use deadlines or test helpers. A skip is never a
 pass: a harness must probe its prerequisites itself and fail, not skip, once
 they are present.
 
+On a Linux host with plain Docker Engine, `host.docker.internal` does not
+exist by default; add it to `/etc/hosts` as `172.17.0.1` and, if ufw denies
+input by default, allow TCP from `docker0` (see the README's "Linux hosts").
+This is host setup, not Orker behavior: the Orker must not add `--add-host`
+or any host-network configuration to activity containers (§6). On macOS,
+Docker Desktop provides the name and nothing changes.
+
 ### 11.2 Evidence
 
 No proof, no done. A change is finished when its behavior has been observed,

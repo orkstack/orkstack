@@ -450,3 +450,50 @@ func awaitOutput(t *testing.T, out *syncBuffer, want string) {
 	}
 	t.Fatalf("%q never appeared in the followed output; it holds %q", want, out.String())
 }
+
+// A run SubmitRun has just accepted has no task runs yet: they are filled in
+// by the run's first workflow step, a moment later. A follower that attaches
+// in that window is not asking about a typo, so it must wait for the task to
+// appear rather than exit — the window is exactly when a CLI user who
+// submitted and then followed would land.
+func TestRunLogs_FollowWaitsForAJustAcceptedRunsTasksToAppear(t *testing.T) {
+	f, logs := newLogFixture(t)
+	seedLoggedRun(t, f, "run-logs-new", orkstackv1.Status_STATUS_PENDING)
+
+	out := &syncBuffer{}
+	done := make(chan result, 1)
+	go func() { done <- f.runTo(out, "run", "logs", "run-logs-new", "--task", "build", "-f") }()
+
+	time.Sleep(quietGap)
+	select {
+	case outcome := <-done:
+		t.Fatalf("the follower gave up on a PENDING run with no tasks yet: %+v", outcome)
+	default:
+	}
+
+	seedLoggedRun(t, f, "run-logs-new", orkstackv1.Status_STATUS_RUNNING, "build")
+	logs.write("run-logs-new", "build", 1, "hello\n")
+	awaitOutput(t, out, "hello")
+
+	seedLoggedRun(t, f, "run-logs-new", orkstackv1.Status_STATUS_SUCCEEDED, "build")
+	select {
+	case outcome := <-done:
+		if outcome.code != 0 {
+			t.Fatalf("exit code = %d, want 0\nstderr: %s", outcome.code, outcome.stderr)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatalf("the follower never exited after the run finished; it printed %q", out.String())
+	}
+}
+
+// Once a run has its tasks, a name that is not among them IS a typo, and a
+// follower says so at once rather than waiting for a task that cannot come.
+func TestRunLogs_FollowRejectsAnUnknownTaskOnceTheRunHasTasks(t *testing.T) {
+	f, _ := newLogFixture(t)
+	seedLoggedRun(t, f, "run-logs-typo", orkstackv1.Status_STATUS_RUNNING, "build")
+
+	out := f.run("run", "logs", "run-logs-typo", "--task", "biuld", "-f").requireExit(t, 1)
+	if !strings.Contains(out.stderr, `no task "biuld"`) {
+		t.Fatalf("stderr = %q, want the unknown-task error", out.stderr)
+	}
+}

@@ -53,6 +53,33 @@ itself is untouched.
 The individual steps are still there when you want them: `make tools`,
 `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
 
+### Linux hosts
+
+Docker Desktop (macOS, Windows) provides `host.docker.internal` inside
+containers automatically; plain Docker Engine on Linux does not. Several
+integration and Playwright tests start a stub server on the host and have an
+activity container call it at `host.docker.internal`, so on Linux run once:
+
+```bash
+# make the name resolve inside containers (containers use the host's
+# resolver on the docker0 gateway, which serves /etc/hosts)
+echo '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts
+
+# if ufw is active with a default-deny input policy, let containers on the
+# default bridge reach host TCP ports
+sudo ufw allow in on docker0 from 172.17.0.0/16 proto tcp
+```
+
+Verify:
+
+```bash
+docker run --rm alpine:3.20 getent hosts host.docker.internal
+```
+
+`172.17.0.1` is the gateway of Docker's default bridge subnet; a host with a
+customized `docker0` uses its own gateway address. macOS needs none of this;
+Docker Desktop already provides the name.
+
 Configuration needs none of this for a laptop — `make up` runs on defaults
 alone. Past that, `ork` and `orker` read one shared YAML file (`--config
 PATH`), with `ORK_`/`OTEL_` environment variables overriding it; see
