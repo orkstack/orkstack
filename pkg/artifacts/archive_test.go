@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -538,6 +539,28 @@ func TestRunObjectRefKey_CarriesHashedObjectAndExactRun(t *testing.T) {
 	for _, foreign := range []string{"metadata/index/runs/x", key + "/extra", artifacts.RunObjectRefNamespace + "/bad"} {
 		if _, ok := artifacts.ParseRunObjectRefRunID(foreign); ok {
 			t.Fatalf("ParseRunObjectRefRunID(%q) accepted a foreign key", foreign)
+		}
+	}
+}
+
+// Provenance reads a marker's run id back out of its key, so every run id the
+// writer can encode — including one that is not a clean segment — must decode
+// to exactly itself.
+func TestParseRunObjectRefRunID_RoundTripsAnEncodedRunID(t *testing.T) {
+	objectID := "objects/n-cmVwb3J0LnR4dA/" + strings.Repeat("ab", 32)
+	for _, runID := range []string{
+		"ork-1786856120616785000-1",
+		"run/with/awkward bytes",
+		"~looks-encoded",
+		"ünïcødé run",
+	} {
+		key, err := artifacts.RunObjectRefKey(objectID, runID)
+		if err != nil {
+			t.Fatalf("RunObjectRefKey(%q): %v", runID, err)
+		}
+		got, ok := artifacts.ParseRunObjectRefRunID(key)
+		if !ok || got != runID {
+			t.Fatalf("ParseRunObjectRefRunID(RunObjectRefKey(%q)) = %q, %v", runID, got, ok)
 		}
 	}
 }

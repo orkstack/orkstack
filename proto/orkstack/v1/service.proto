@@ -262,6 +262,23 @@ service RunService {
   // never has a silent hole where an Orker died. There is no stream: a client
   // refetches on the events it already follows.
   rpc ListTaskAttempts(ListTaskAttemptsRequest) returns (ListTaskAttemptsResponse);
+  // GetArtifactProvenance answers, for ONE recorded artifact, whether its
+  // bytes are still in the object store and which archived runs of the
+  // calling namespace recorded the same physical object.
+  //
+  // It is a READ of the reverse index the archive already maintains for
+  // cleanup refcounting (metadata/index/objects/…, docs/STORAGE.md): a
+  // keys-only prefix scan whose keys are the answer, then one body read per
+  // referencing run to check its namespace. It writes nothing and creates
+  // no key family.
+  //
+  // The artifact is addressed exactly as ReadArtifact addresses it — by the
+  // run, task, kind and recorded name — and resolved against the
+  // authoritative run. A caller never names an object key or a URI. On the
+  // S3 backend an object key embeds its run id, so `references` is the
+  // producing run alone; on the local backend identical bytes under one
+  // name are one object, so every run that produced them is listed.
+  rpc GetArtifactProvenance(GetArtifactProvenanceRequest) returns (GetArtifactProvenanceResponse);
 }
 
 // WebhookService manages run-event subscriptions. A subscription is
@@ -450,6 +467,80 @@ message ListTaskAttemptsResponse {
   // gaps — an attempt number the store has no record for is present as
   // ATTEMPT_OUTCOME_UNREPORTED rather than absent.
   repeated TaskAttempt attempts = 1;
+}
+
+// ReferenceState is the addressed run's OWN standing in the object index.
+// It exists so an empty `references` list can be read: "released" and
+// "never recorded" are different facts that would otherwise render alike.
+enum ReferenceState {
+  REFERENCE_STATE_UNSPECIFIED = 0;
+  // HELD: the run is archived and its marker on this object is present.
+  REFERENCE_STATE_HELD = 1;
+  // RELEASED: no marker, and the run's cleanup record exists — the cleanup
+  // worker released its object claims (docs/STORAGE.md, "Reclaiming space").
+  // released_at carries the record's timestamp.
+  REFERENCE_STATE_RELEASED = 2;
+  // ABSENT: no marker and no cleanup record. The run has not reached its
+  // terminal event, its archive write has not completed, it was archived
+  // before the object index existed, or cleanup released its markers and had
+  // not yet written its record. The server does not guess which; a client
+  // renders "no reference recorded", never "released" and never "held".
+  REFERENCE_STATE_ABSENT = 3;
+}
+
+message GetArtifactProvenanceRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+  string task_id = 3;
+  ArtifactKind kind = 4;
+  // name is the exact recorded artifact name, as ReadArtifactRequest.name.
+  string name = 5;
+  // expect_sha256 is optional: the lowercase hex digest a caller obtained
+  // elsewhere (a downstream system, an evidence bundle). When set and
+  // different from the recorded ArtifactRef.sha256, the call fails
+  // FailedPrecondition naming both, so a chain-of-custody check is one
+  // command rather than a copy-and-compare.
+  string expect_sha256 = 6;
+}
+
+// ArtifactReference is one recording of the object by one archived run: the
+// run, and the task and kind under which that run recorded it. A run that
+// recorded the same object under two tasks yields two references.
+message ArtifactReference {
+  string run_id = 1;
+  string orkflow_name = 2;
+  string orkflow_version = 3;
+  string task_id = 4;
+  ArtifactKind kind = 5;
+  Status run_status = 6;
+  google.protobuf.Timestamp run_created_at = 7;
+}
+
+message GetArtifactProvenanceResponse {
+  // artifact is the reference as recorded on the addressed run — never a
+  // value re-read from the store.
+  ArtifactRef artifact = 1;
+  // bytes_present is whether the object itself is in the store (Stat, no
+  // bytes transferred). false means the object is gone — a lifecycle rule,
+  // an operator, or DeleteUnreferencedObjects — while its references may
+  // still stand. A store that cannot answer fails the call; it never sets
+  // this false.
+  bool bytes_present = 2;
+  ReferenceState own_reference = 3;
+  // released_at is set only with REFERENCE_STATE_RELEASED.
+  google.protobuf.Timestamp released_at = 4;
+  // references is every marker on this object whose run is in the calling
+  // namespace, newest run_created_at first. It includes the addressed run
+  // when own_reference is HELD. Runs of other namespaces are omitted and
+  // not counted.
+  repeated ArtifactReference references = 5;
+  // references_unreadable counts markers whose run body is not in the
+  // archive (the crash window between the marker writes and the index
+  // publish, docs/STORAGE.md). Such a marker's namespace cannot be known, so
+  // it is counted here and listed nowhere. A body that fails to read for
+  // any other reason fails the call.
+  int64 references_unreadable = 6;
+  google.protobuf.Timestamp computed_at = 7;
 }
 message CancelRunRequest {
   string run_id = 1;

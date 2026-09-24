@@ -230,6 +230,36 @@ func runObjectIDs(run *orkstackv1.Run) []string {
 	return ids
 }
 
+// ErrNoObjectIndex reports an archive backend that cannot list object
+// references. Neither shipped backend is one; a fake may be.
+var ErrNoObjectIndex = fmt.Errorf("run archive has no object reference index")
+
+// ObjectReferences lists the run ids holding a marker on objectID: the
+// reverse index PutRun maintains for cleanup refcounting, read keys only.
+//
+// A nil archiver is ErrNoRunArchive, not an empty list, on TallyRuns's terms:
+// "no archive" and "no reference" are opposite facts and must not render
+// alike.
+func (a *RunArchiver) ObjectReferences(ctx context.Context, objectID string) ([]string, error) {
+	if a == nil {
+		return nil, ErrNoRunArchive
+	}
+	lister, ok := a.archive.(artifacts.ObjectReferenceLister)
+	if !ok {
+		return nil, ErrNoObjectIndex
+	}
+	return lister.ListObjectReferences(ctx, objectID)
+}
+
+// CleanupState returns a run's immutable cleanup record, or an error
+// matching artifacts.ErrNotFound when cleanup has not released it.
+func (a *RunArchiver) CleanupState(ctx context.Context, runID string) (artifacts.RunCleanupState, error) {
+	if a == nil {
+		return artifacts.RunCleanupState{}, ErrNoRunArchive
+	}
+	return a.archive.CleanupState(ctx, runID)
+}
+
 // Load returns the archived run and its events.
 func (a *RunArchiver) Load(ctx context.Context, runID string) (*orkstackv1.Run, []*orkstackv1.Event, error) {
 	if a == nil {
