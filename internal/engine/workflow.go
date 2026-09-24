@@ -1140,7 +1140,18 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	t := s.tasks[id]
 	taskRun := s.taskRuns[id]
 	taskRun.Status = orkstackv1.Status_STATUS_RUNNING
-	taskRun.StartedAt = timestamppb.New(workflow.Now(ctx))
+	// The dispatch instant, on the workflow's own clock. The TASK_SCHEDULED
+	// event emitted below is stamped by emit() from workflow.Now in this same
+	// workflow task, so the two are equal by construction: scheduled_at is a
+	// PROJECTION of that event onto the snapshot. started_at is NOT set here —
+	// it is the Orker's own start of the deciding attempt, and only an
+	// Orker's report (collect, recordFailure) fills it.
+	//
+	// No GetVersion gate, for the reason retry_state needed none: the
+	// snapshot is a local activity's input, which history does not persist,
+	// so a replay takes this same path and fills a field of a message that
+	// was never in history.
+	taskRun.ScheduledAt = timestamppb.New(workflow.Now(ctx))
 
 	// Two words for one decision: the queue is how the engine dispatches, the
 	// pool is what the author wrote. Both come out of routeForTask, so
@@ -1401,6 +1412,11 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 	// For a pin it is the client-visible proof the pin held: same pin, same
 	// orker_id across every member.
 	taskRun.OrkerId = result.GetOrkerId()
+	// When the Orker began the attempt that produced this result — for an
+	// adopted commit the COMMITTING attempt's start, exactly as Attempt below
+	// is the committing attempt. Nil-safe: a result without one leaves the
+	// field unset, which is "not known", never zero.
+	taskRun.StartedAt = result.GetStartedAt()
 	if result.GetAttempt() > 0 {
 		taskRun.Attempt = result.GetAttempt()
 	}
@@ -1549,6 +1565,10 @@ func (s *runState) recordFailure(ctx workflow.Context, id string, cause error) {
 			// without one leaves the field empty, which is what it already
 			// said.
 			taskRun.OrkerId = detail.GetOrkerId()
+			// When the Orker began the failed attempt, read on the same rule
+			// and at the same place as orker_id. A detail without one (an
+			// older Orker) leaves it unset.
+			taskRun.StartedAt = detail.GetStartedAt()
 		}
 		if detail.GetReasonCode() != "" {
 			failure.Code = detail.GetReasonCode()
