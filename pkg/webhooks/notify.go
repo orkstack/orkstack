@@ -85,7 +85,7 @@ func (n *Notifier) Notify(ctx context.Context, delivery Delivery) int {
 		go func() {
 			defer n.wg.Done()
 			lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			hooks, err := n.registry.MatchingContext(lookupCtx, delivery.Event)
+			hooks, err := n.registry.MatchingContext(lookupCtx, delivery.match())
 			cancel()
 			if err != nil {
 				n.logger.Error("webhook lookup failed", "event", delivery.Event, "run_id", delivery.RunID, "error", err)
@@ -99,7 +99,7 @@ func (n *Notifier) Notify(ctx context.Context, delivery Delivery) int {
 	// transition. A shared-store outage loses only this best-effort fanout; it
 	// cannot delay or fail a run.
 	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	hooks, err := n.registry.MatchingContext(lookupCtx, delivery.Event)
+	hooks, err := n.registry.MatchingContext(lookupCtx, delivery.match())
 	cancel()
 	if err != nil {
 		n.logger.Error("webhook lookup failed", "event", delivery.Event, "run_id", delivery.RunID, "error", err)
@@ -179,4 +179,9 @@ func (n *Notifier) Wait(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// match is what the registry filters a delivery on.
+func (d Delivery) match() Match {
+	return Match{Event: d.Event, Namespace: d.Namespace, OrkflowName: d.OrkflowName, TaskID: d.TaskID}
 }

@@ -434,6 +434,7 @@ func TestIntegration_WebhookRetriesUntilTheReceiverAccepts(t *testing.T) {
 // receivedDelivery is one POST as the subscriber saw it.
 type receivedDelivery struct {
 	event      string
+	taskHeader string
 	webhookID  string
 	deliveryID string
 	attempt    string
@@ -443,18 +444,24 @@ type receivedDelivery struct {
 }
 
 // webhookPayload is the contracted body: {runId, orkflowName, status,
-// timestamp, run}.
+// timestamp, [taskId, attempt,] run}. taskId and attempt appear only on a task
+// outcome delivery.
 type webhookPayload struct {
 	RunID       string `json:"runId"`
 	OrkflowName string `json:"orkflowName"`
 	Status      string `json:"status"`
 	Timestamp   string `json:"timestamp"`
+	TaskID      string `json:"taskId"`
+	Attempt     int32  `json:"attempt"`
 	Run         struct {
-		ID       string `json:"id"`
-		Status   string `json:"status"`
-		TaskRuns []struct {
-			TaskID string `json:"taskId"`
-			Status string `json:"status"`
+		ID        string `json:"id"`
+		Namespace string `json:"namespace"`
+		Status    string `json:"status"`
+		TaskRuns  []struct {
+			TaskID    string          `json:"taskId"`
+			Status    string          `json:"status"`
+			StartedAt string          `json:"startedAt"`
+			ValuesRef json.RawMessage `json:"valuesRef"`
 		} `json:"taskRuns"`
 	} `json:"run"`
 }
@@ -487,6 +494,7 @@ func newWebhookSubscriber(t *testing.T) *webhookSubscriber {
 		s.mu.Lock()
 		s.received = append(s.received, receivedDelivery{
 			event:      r.Header.Get(webhooks.EventHeader),
+			taskHeader: r.Header.Get(webhooks.TaskHeader),
 			webhookID:  r.Header.Get(webhooks.WebhookHeader),
 			deliveryID: r.Header.Get(webhooks.DeliveryHeader),
 			attempt:    r.Header.Get(webhooks.AttemptHeader),
@@ -641,19 +649,38 @@ func writeWebhookProof(
 	results []webhooks.Result,
 ) {
 	t.Helper()
+	writeWebhookProofNamed(t, "webhook", runID, hook, deliveries, results)
+}
+
+// writeWebhookProofNamed is writeWebhookProof under its own file prefix, so
+// each acceptance test keeps its own transcript rather than overwriting
+// another's.
+func writeWebhookProofNamed(
+	t *testing.T,
+	prefix string,
+	runID string,
+	hook webhooks.Webhook,
+	deliveries []receivedDelivery,
+	results []webhooks.Result,
+) {
+	t.Helper()
 	// The registration, with the secret redacted to a fingerprint: the proof
 	// must be reproducible without leaking a live signing key.
 	registration := map[string]any{
-		"id":        hook.ID,
-		"url":       hook.URL,
-		"events":    hook.Events,
+		"id":     hook.ID,
+		"url":    hook.URL,
+		"events": hook.Events,
+		"scope": map[string]string{
+			"namespace": hook.Namespace, "orkflowName": hook.OrkflowName, "taskId": hook.TaskID,
+		},
 		"createdAt": hook.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"secret":    "<redacted, " + strconv.Itoa(len(hook.Secret)) + " hex chars>",
 	}
-	proof.WriteJSON(t, "engine", "webhook-registration.json", registration)
+	proof.WriteJSON(t, "engine", prefix+"-registration.json", registration)
 
 	type deliveryProof struct {
 		Event      string          `json:"event"`
+		TaskHeader string          `json:"taskIdHeader,omitempty"`
 		WebhookID  string          `json:"webhookId"`
 		DeliveryID string          `json:"deliveryId"`
 		Attempt    string          `json:"attempt"`
@@ -665,6 +692,7 @@ func writeWebhookProof(
 	for _, got := range deliveries {
 		proofs = append(proofs, deliveryProof{
 			Event:      got.event,
+			TaskHeader: got.taskHeader,
 			WebhookID:  got.webhookID,
 			DeliveryID: got.deliveryID,
 			Attempt:    got.attempt,
@@ -673,12 +701,12 @@ func writeWebhookProof(
 			Body:       json.RawMessage(got.body),
 		})
 	}
-	proof.WriteJSON(t, "engine", "webhook-signed-payloads.json", map[string]any{
+	proof.WriteJSON(t, "engine", prefix+"-signed-payloads.json", map[string]any{
 		"runId":      runID,
 		"captured":   time.Now().UTC().Format(time.RFC3339),
 		"deliveries": proofs,
 	})
-	proof.WriteJSON(t, "engine", "webhook-delivery-log.json", map[string]any{
+	proof.WriteJSON(t, "engine", prefix+"-delivery-log.json", map[string]any{
 		"runId":    runID,
 		"captured": time.Now().UTC().Format(time.RFC3339),
 		"results":  results,

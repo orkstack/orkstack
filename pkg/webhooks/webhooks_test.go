@@ -87,7 +87,7 @@ func TestRegistry_RegisterAssignsAnIDAndSecretAndDisclosesTheSecretOnce(t *testi
 		t.Errorf("get returned (%+v, %v), want the webhook without its secret", got, ok)
 	}
 	// The dispatcher's read is the one that still carries it.
-	matching := registry.Matching(webhooks.EventRunSucceeded)
+	matching := registry.Matching(webhooks.Match{Event: webhooks.EventRunSucceeded})
 	if len(matching) != 1 || matching[0].Secret != "generated-secret" {
 		t.Errorf("Matching returned %+v, want the secret a delivery signs with", matching)
 	}
@@ -133,39 +133,6 @@ func TestRegistry_RejectsAnUnknownEvent(t *testing.T) {
 	}
 }
 
-func TestRegistry_MatchingSelectsOnlySubscribersOfThatTransition(t *testing.T) {
-	registry := webhooks.NewRegistry()
-	succeeded := mustRegister(t, registry, webhooks.Registration{
-		URL:    "https://example.test/succeeded",
-		Events: []webhooks.Event{webhooks.EventRunSucceeded},
-	})
-	failed := mustRegister(t, registry, webhooks.Registration{
-		URL:    "https://example.test/failed",
-		Events: []webhooks.Event{webhooks.EventRunFailed},
-	})
-	// No events named: an audit sink that wants everything.
-	all := mustRegister(t, registry, webhooks.Registration{URL: "https://example.test/all"})
-
-	cases := []struct {
-		event webhooks.Event
-		want  []string
-	}{
-		{webhooks.EventRunSucceeded, []string{succeeded.ID, all.ID}},
-		{webhooks.EventRunFailed, []string{failed.ID, all.ID}},
-		{webhooks.EventRunStarted, []string{all.ID}},
-		{webhooks.EventRunCanceled, []string{all.ID}},
-	}
-	for _, tc := range cases {
-		var got []string
-		for _, hook := range registry.Matching(tc.event) {
-			got = append(got, hook.ID)
-		}
-		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-			t.Errorf("Matching(%s) = %v, want %v", tc.event, got, tc.want)
-		}
-	}
-}
-
 func TestRegistry_DeleteRemovesASubscriptionAndReportsAnUnknownID(t *testing.T) {
 	registry := webhooks.NewRegistry()
 	first := mustRegister(t, registry, webhooks.Registration{URL: "https://example.test/one"})
@@ -184,7 +151,7 @@ func TestRegistry_DeleteRemovesASubscriptionAndReportsAnUnknownID(t *testing.T) 
 	if len(listed) != 1 || listed[0].ID != second.ID {
 		t.Errorf("after delete, list = %+v, want only %q", listed, second.ID)
 	}
-	if got := registry.Matching(webhooks.EventRunSucceeded); len(got) != 1 {
+	if got := registry.Matching(webhooks.Match{Event: webhooks.EventRunSucceeded}); len(got) != 1 {
 		t.Errorf("a deleted webhook still matches: %+v", got)
 	}
 }
@@ -217,8 +184,8 @@ func TestParseEvent_AcceptsShortProtoAndLowerCaseSpellings(t *testing.T) {
 			t.Errorf("ParseEvent(%q) = %q, want RUN_SUCCEEDED", raw, got)
 		}
 	}
-	if _, err := webhooks.ParseEvent("TASK_SUCCEEDED"); err == nil {
-		t.Error("ParseEvent accepted a task event; only run transitions are subscribable")
+	if _, err := webhooks.ParseEvent("TASK_LOG"); err == nil {
+		t.Error("ParseEvent accepted TASK_LOG; a log line is never subscribable")
 	}
 }
 

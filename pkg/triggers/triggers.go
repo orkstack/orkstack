@@ -3,8 +3,8 @@
 // implementation focused unit tests use.
 //
 // A trigger is the mirror image of a webhook (pkg/webhooks). A webhook is
-// OUTBOUND and deployment-wide: OrkStack calls the subscriber when a run
-// changes state. A trigger is INBOUND and orkflow-scoped: an external caller
+// OUTBOUND and deployment-wide unless it names a scope: OrkStack calls the
+// subscriber when a run it covers changes state. A trigger is INBOUND and orkflow-scoped: an external caller
 // presents the trigger's bearer token and one run of exactly one orkflow
 // starts. The orkflow coordinates live on the stored record and never on the
 // request, so a token can only ever start the orkflow its trigger was created

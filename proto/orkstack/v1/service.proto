@@ -325,8 +325,8 @@ message DeleteWebhookResponse {}
 // bearer token over plain HTTP to start a run of it.
 //
 // It is the mirror image of WebhookService, not a variant of it. A webhook is
-// OUTBOUND and deployment-wide: OrkStack calls the subscriber when any run
-// changes state. A trigger is INBOUND and orkflow-scoped: the caller calls
+// OUTBOUND and deployment-wide unless it names a scope: OrkStack calls the
+// subscriber when a run it covers changes state. A trigger is INBOUND and orkflow-scoped: the caller calls
 // OrkStack, authenticating as the trigger. The orkflow coordinates come from
 // the stored record and never from the request, so whoever holds a token can
 // only start the orkflow the trigger was created for.

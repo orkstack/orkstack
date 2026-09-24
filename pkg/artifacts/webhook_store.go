@@ -27,7 +27,8 @@ import (
 )
 
 // WebhookPrefix is a deployment-wide registry, deliberately outside a
-// namespace. Each immutable subscription has its own object so registration
+// namespace: a subscription's scope lives inside its record, so the key
+// layout stays flat. Each immutable subscription has its own object so registration
 // can use object-store conditional create rather than a process-local lock.
 const WebhookPrefix = "metadata/webhooks"
 
@@ -68,8 +69,11 @@ func parseWebhookKey(key string) (string, bool) {
 // It is never returned from List or Get.
 func marshalWebhookRecord(hook webhooks.Webhook) ([]byte, error) {
 	message := &orkstackv1.RegisterWebhookResponse{
-		Webhook: &orkstackv1.Webhook{Id: hook.ID, Url: hook.URL, Events: eventsToProto(hook.Events), CreatedAt: timestamppb.New(hook.CreatedAt)},
-		Secret:  hook.Secret,
+		Webhook: &orkstackv1.Webhook{
+			Id: hook.ID, Url: hook.URL, Events: eventsToProto(hook.Events), CreatedAt: timestamppb.New(hook.CreatedAt),
+			Namespace: hook.Namespace, OrkflowName: hook.OrkflowName, TaskId: hook.TaskID,
+		},
+		Secret: hook.Secret,
 	}
 	raw, err := protojson.Marshal(message)
 	if err != nil {
@@ -106,7 +110,16 @@ func unmarshalWebhookRecord(raw []byte) (webhooks.Webhook, error) {
 	if !w.GetCreatedAt().IsValid() {
 		return webhooks.Webhook{}, fmt.Errorf("decode webhook %q: invalid created_at", id)
 	}
-	return webhooks.Webhook{ID: id, URL: w.GetUrl(), Events: events, Secret: message.GetSecret(), CreatedAt: w.GetCreatedAt().AsTime().UTC()}, nil
+	// A record written before scope existed has none, which is
+	// deployment-wide: what it meant when it was written. A record edited by
+	// hand into an invalid scope is refused, never silently widened.
+	if err := webhooks.ValidateScope(w.GetNamespace(), w.GetOrkflowName(), w.GetTaskId(), events); err != nil {
+		return webhooks.Webhook{}, fmt.Errorf("decode webhook %q: %w", id, err)
+	}
+	return webhooks.Webhook{
+		ID: id, URL: w.GetUrl(), Events: events, Secret: message.GetSecret(), CreatedAt: w.GetCreatedAt().AsTime().UTC(),
+		Namespace: w.GetNamespace(), OrkflowName: w.GetOrkflowName(), TaskID: w.GetTaskId(),
+	}, nil
 }
 
 func eventsToProto(events []webhooks.Event) []orkstackv1.EventType {
@@ -165,6 +178,9 @@ func preparedWebhook(reg webhooks.Registration) (webhooks.Webhook, error) {
 			events = append(events, event)
 		}
 	}
+	if err := webhooks.ValidateScope(reg.Namespace, reg.OrkflowName, reg.TaskID, events); err != nil {
+		return webhooks.Webhook{}, err
+	}
 	secret := reg.Secret
 	if secret == "" {
 		secret, err = webhookToken("", 32)
@@ -176,7 +192,10 @@ func preparedWebhook(reg webhooks.Registration) (webhooks.Webhook, error) {
 	if err != nil {
 		return webhooks.Webhook{}, err
 	}
-	return webhooks.Webhook{ID: id, URL: url, Events: events, Secret: secret, CreatedAt: time.Now().UTC()}, nil
+	return webhooks.Webhook{
+		ID: id, URL: url, Events: events, Secret: secret, CreatedAt: time.Now().UTC(),
+		Namespace: reg.Namespace, OrkflowName: reg.OrkflowName, TaskID: reg.TaskID,
+	}, nil
 }
 
 func webhookToken(prefix string, bytes int) (string, error) {
@@ -225,7 +244,19 @@ func (s *S3WebhookStore) Register(ctx context.Context, reg webhooks.Registration
 	}
 	return webhooks.Webhook{}, errors.New("artifacts: register webhook: repeated id collision")
 }
+
+// List returns every subscription without its secret.
 func (s *S3WebhookStore) List(ctx context.Context) ([]webhooks.Webhook, error) {
+	return s.list(ctx, true)
+}
+
+// ListForDelivery returns every subscription with its signing secret, for the
+// dispatcher only.
+func (s *S3WebhookStore) ListForDelivery(ctx context.Context) ([]webhooks.Webhook, error) {
+	return s.list(ctx, false)
+}
+
+func (s *S3WebhookStore) list(ctx context.Context, public bool) ([]webhooks.Webhook, error) {
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(WebhookPrefix + "/")})
 	var out []webhooks.Webhook
 	for pager.HasMorePages() {
@@ -243,7 +274,10 @@ func (s *S3WebhookStore) List(ctx context.Context) ([]webhooks.Webhook, error) {
 				return nil, err
 			}
 			if found {
-				out = append(out, hook.Public())
+				if public {
+					hook = hook.Public()
+				}
+				out = append(out, hook)
 			}
 		}
 	}
@@ -385,7 +419,19 @@ func (s *LocalWebhookStore) syncDir(key string) error {
 	defer dir.Close()
 	return dir.Sync()
 }
+
+// List returns every subscription without its secret.
 func (s *LocalWebhookStore) List(ctx context.Context) ([]webhooks.Webhook, error) {
+	return s.list(ctx, true)
+}
+
+// ListForDelivery returns every subscription with its signing secret, for the
+// dispatcher only.
+func (s *LocalWebhookStore) ListForDelivery(ctx context.Context) ([]webhooks.Webhook, error) {
+	return s.list(ctx, false)
+}
+
+func (s *LocalWebhookStore) list(ctx context.Context, public bool) ([]webhooks.Webhook, error) {
 	var out []webhooks.Webhook
 	err := fs.WalkDir(s.root.FS(), WebhookPrefix, func(key string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -408,7 +454,10 @@ func (s *LocalWebhookStore) List(ctx context.Context) ([]webhooks.Webhook, error
 			return err
 		}
 		if ok {
-			out = append(out, hook.Public())
+			if public {
+				hook = hook.Public()
+			}
+			out = append(out, hook)
 		}
 		return nil
 	})
