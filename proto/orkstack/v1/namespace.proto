@@ -87,6 +87,57 @@ message Namespace {
   // admin chooses WHERE among the operator's destinations, not the
   // destination itself. Unset means "the default sink, deployment defaults".
   TelemetryPolicy telemetry = 10;
+
+  // hold, when set, refuses every new run of this namespace at submit with
+  // FAILED_PRECONDITION, naming the reason and since. Unset means accepting,
+  // which is what every namespace has today and what an upgrade preserves.
+  //
+  // It is enforced in exactly one place — SubmitRun's preparation, the gate
+  // every door into a namespace already goes through (orkctl, the UI, `run
+  // again`, a trigger invoke) — and read from the registry on every submit,
+  // so a hold set through one replica is honoured by every other on its
+  // next request.
+  NamespaceHold hold = 11;
+
+  // max_running bounds how many runs of this namespace may be in flight at
+  // once — accepted and not finished, which is exactly the population
+  // GetStatsResponse.running reports. 0 means unlimited, which is the
+  // inherited default and what every namespace has today.
+  //
+  // It is evaluated by reading the cluster's execution index at submit — the
+  // same read GetStats.running performs (docs/STATS.md §1) — so no OrkStack
+  // counter exists to disagree with it tomorrow. That makes it best-effort
+  // under simultaneous submits against several replicas: each reads, then
+  // acts, with no lock between, and the overshoot is bounded by the number
+  // of submits racing through the window between one replica's read and the
+  // cluster indexing its start. A lock would remove the overshoot and
+  // AGENTS.md §2.1 forbids building one, which is the right trade — a guard
+  // that is occasionally one over is worth far more than a lock service. A
+  // namespace that sets 0 never pays the read at all.
+  int32 max_running = 12;
+}
+
+// NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
+// decision and never a retroactive one: a run already accepted continues, is
+// readable, and finishes normally (AGENTS.md §15). Releasing a hold starts
+// nothing that was refused while it was set — a refused submit was refused,
+// not queued.
+//
+// It is a message rather than two scalars on Namespace so that "held" is one
+// presence check (hold != nil) and a hold can never be half-set.
+message NamespaceHold {
+  // reason is required. A hold with no reason is refused by the registry:
+  // the next operator to read this document is the one who has to decide
+  // whether to release it, and "on hold" with no why is not a decision they
+  // can make. It is a short human line, bounded at 512 bytes with no control
+  // characters, never a secret and never machine-parsed.
+  string reason = 1;
+  // since is written by the registry on the write that SET the hold and
+  // preserved on every later write while it stays set, never supplied by a
+  // client — the same rule created_at/updated_at follow. Editing the reason
+  // of a hold does not move it: the door has been closed since the first
+  // write, whatever the sign on it now says.
+  google.protobuf.Timestamp since = 2;
 }
 
 // Pool is a set of Orkers, observed live.
