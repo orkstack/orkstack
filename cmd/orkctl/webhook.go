@@ -73,6 +73,7 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 			// Reject an unknown event before a round trip, and normalize the
 			// spelling so the server sees canonical names.
 			selected := make([]orkstackv1.EventType, 0, len(events))
+			parsed := make([]webhooks.Event, 0, len(events))
 			for _, raw := range events {
 				for _, part := range strings.Split(raw, ",") {
 					if strings.TrimSpace(part) == "" {
@@ -83,6 +84,7 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 						return err
 					}
 					selected = append(selected, eventType(event))
+					parsed = append(parsed, event)
 				}
 			}
 			if _, err := webhooks.ValidateURL(args[0]); err != nil {
@@ -94,10 +96,6 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 			namespace := ""
 			if cmd.Flags().Changed("namespace") {
 				namespace = g.namespace
-			}
-			parsed := make([]webhooks.Event, 0, len(selected))
-			for _, event := range selected {
-				parsed = append(parsed, webhooks.Event(strings.TrimPrefix(event.String(), "EVENT_TYPE_")))
 			}
 			if err := webhooks.ValidateScope(namespace, orkflowName, taskID, parsed); err != nil {
 				return err
