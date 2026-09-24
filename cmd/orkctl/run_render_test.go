@@ -43,7 +43,7 @@ func TestRenderRun_TaskTableSaysPoolPinAndOrker(t *testing.T) {
 				},
 			},
 			wantRows: []string{
-				"fetch SUCCEEDED main - orker-a 1 0 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z -",
+				"fetch SUCCEEDED main - orker-a 1 0 - 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z -",
 			},
 		},
 		{
@@ -68,9 +68,9 @@ func TestRenderRun_TaskTableSaysPoolPinAndOrker(t *testing.T) {
 				},
 			},
 			wantRows: []string{
-				"prep SUCCEEDED main build orker-a 1 0 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z -",
-				"build SUCCEEDED main build orker-a 1 0 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z -",
-				"publish SUCCEEDED main - orker-b 1 0 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z -",
+				"prep SUCCEEDED main build orker-a 1 0 - 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z -",
+				"build SUCCEEDED main build orker-a 1 0 - 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z -",
+				"publish SUCCEEDED main - orker-b 1 0 - 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z -",
 			},
 		},
 		{
@@ -84,7 +84,7 @@ func TestRenderRun_TaskTableSaysPoolPinAndOrker(t *testing.T) {
 				},
 			},
 			wantRows: []string{
-				"skipped SKIPPED - - - 0 0 - - -",
+				"skipped SKIPPED - - - 0 0 - - - -",
 			},
 		},
 		{
@@ -104,7 +104,7 @@ func TestRenderRun_TaskTableSaysPoolPinAndOrker(t *testing.T) {
 				},
 			},
 			wantRows: []string{
-				"build FAILED main build orker-a 1 0 2026-01-02T03:04:05Z - " +
+				"build FAILED main build orker-a 1 0 - 2026-01-02T03:04:05Z - " +
 					"PIN_HOST_LOST: the orker hosting this pin disappeared",
 			},
 		},
@@ -125,7 +125,7 @@ func TestRenderRun_TaskTableSaysPoolPinAndOrker(t *testing.T) {
 				t.Fatalf("task table has %d rows, want %d (header + %d tasks):\n%s",
 					len(rows), len(test.wantRows)+1, len(test.wantRows), out.String())
 			}
-			wantHeader := "TASK STATUS POOL PIN ORKER ATTEMPT EXIT STARTED FINISHED ERROR"
+			wantHeader := "TASK STATUS POOL PIN ORKER ATTEMPT EXIT SCHEDULED STARTED FINISHED ERROR"
 			if rows[0] != wantHeader {
 				t.Errorf("header = %q, want %q", rows[0], wantHeader)
 			}
