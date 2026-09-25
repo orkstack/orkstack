@@ -478,16 +478,34 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 			}
 			e.drainRun(t, ctx, runID, "")
 
-			// The bus holds the event the guard refused: the interpreter did
-			// emit TASK_FAILED carrying CANCELED for sibling.
+			// The bus holds the event the guard refused: the interpreter
+			// emitted TASK_FAILED carrying CANCELED for sibling.
+			//
+			// When a task fails, sibling is always collected by
+			// cancelInFlight on a live context, so the event is always there.
+			// When the operator cancels, it is there only if partner's
+			// cancellation was collected first: whichever task the main loop
+			// collects first is collected on the already-canceled workflow
+			// context, where emit's publish activity cannot be scheduled, so
+			// that task's TASK_FAILED never reaches the bus at all — which
+			// of the two it is depends on which cancellation Temporal reports
+			// first. Either way no sibling TASK_FAILED may carry FAILED, and
+			// the delivery counts below are the contract.
 			var refused *orkstackv1.Event
 			for _, event := range e.bus.Events(runID, 0) {
 				if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_FAILED && event.GetTaskId() == "sibling" {
 					refused = event
 				}
 			}
-			if refused == nil || refused.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
+			switch {
+			case refused != nil && refused.GetStatus() != orkstackv1.Status_STATUS_CANCELED:
 				t.Fatalf("the bus holds sibling's TASK_FAILED as %v, want one carrying CANCELED", refused)
+			case refused == nil && !tc.cancel:
+				t.Fatalf("the bus holds no TASK_FAILED for sibling, want one carrying CANCELED: cancelInFlight collects it on a live context")
+			}
+			busStatus := "absent"
+			if refused != nil {
+				busStatus = refused.GetStatus().String()
 			}
 
 			// Every projection before the terminal one completed before it
@@ -543,7 +561,7 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 				t.Errorf("%s run reads doomed as %q, want FAILED", tc.terminal, statuses["doomed"])
 			}
 			t.Logf("EVIDENCE case=%q bus_task_failed_status=%s deliveries=%d task_failed_posts=%d terminal=%s sibling=%s",
-				tc.name, refused.GetStatus(), len(deliveries), len(failed), tc.terminal, statuses["sibling"])
+				tc.name, busStatus, len(deliveries), len(failed), tc.terminal, statuses["sibling"])
 			prefix := "webhook-canceled-operator"
 			if !tc.cancel {
 				prefix = "webhook-canceled-sibling"
