@@ -19,7 +19,7 @@ type recordingNotifier struct {
 	runs   []*orkstackv1.Run
 }
 
-func (n *recordingNotifier) NotifyRunTransition(
+func (n *recordingNotifier) NotifyRunEvent(
 	_ context.Context,
 	event *orkstackv1.Event,
 	run *orkstackv1.Run,
@@ -50,7 +50,7 @@ func runEvent(runID string, eventType orkstackv1.EventType, status orkstackv1.St
 	}
 }
 
-func TestPublishEvent_AnnouncesRunTransitionsAndIgnoresTaskEvents(t *testing.T) {
+func TestPublishEvent_AnnouncesRunTransitionsAndTaskOutcomesButNeverLogs(t *testing.T) {
 	notifier := &recordingNotifier{}
 	activities, snapshots := eventActivitiesWithSnapshots(
 		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithRunNotifier(notifier))
@@ -64,8 +64,13 @@ func TestPublishEvent_AnnouncesRunTransitionsAndIgnoresTaskEvents(t *testing.T) 
 		{orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, orkstackv1.Status_STATUS_RUNNING},
 		{orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, orkstackv1.Status_STATUS_RUNNING},
 		{orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, orkstackv1.Status_STATUS_RUNNING},
-		{orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED},
 		{orkstackv1.EventType_EVENT_TYPE_TASK_LOG, orkstackv1.Status_STATUS_RUNNING},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, orkstackv1.Status_STATUS_FAILED},
+		// A skipped task and a task that never started before its run ended
+		// are recorded as log lines; neither is ever announced.
+		{orkstackv1.EventType_EVENT_TYPE_TASK_LOG, orkstackv1.Status_STATUS_SKIPPED},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_LOG, orkstackv1.Status_STATUS_CANCELED},
 		{orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED},
 	}
 	for i, step := range sequence {
@@ -78,16 +83,140 @@ func TestPublishEvent_AnnouncesRunTransitionsAndIgnoresTaskEvents(t *testing.T) 
 
 	want := []orkstackv1.EventType{
 		orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_STARTED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_FAILED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 	}
 	got := notifier.types()
 	if len(got) != len(want) {
-		t.Fatalf("announced %v, want only the run's own transitions %v", got, want)
+		t.Fatalf("announced %v, want the run transitions and task outcomes %v", got, want)
 	}
 	for i, eventType := range want {
 		if got[i] != eventType {
 			t.Errorf("announcement %d = %v, want %v", i, got[i], eventType)
 		}
+	}
+}
+
+func TestPublishEvent_AnnouncesATaskOutcomeOnceAcrossActivityRetries(t *testing.T) {
+	notifier := &recordingNotifier{}
+	activities, snapshots := eventActivitiesWithSnapshots(
+		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithRunNotifier(notifier))
+
+	const runID = "ork-1755302400123456789-6"
+	run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_RUNNING}
+	event := runEvent(runID, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED)
+	event.TaskId = "extract"
+	for range 3 {
+		if err := activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), runID+"#9"); err != nil {
+			t.Fatalf("PublishEvent: %v", err)
+		}
+	}
+	if got := notifier.types(); len(got) != 1 {
+		t.Errorf("announced the same task outcome %d times (%v); a retry must not re-announce it", len(got), got)
+	}
+}
+
+func TestPublishEvent_NeverAnnouncesATaskFailedEventCarryingCanceled(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    orkstackv1.Status
+		announced bool
+	}{
+		{"a task running when its run was canceled", orkstackv1.Status_STATUS_CANCELED, false},
+		{"a task that failed on its own terms", orkstackv1.Status_STATUS_FAILED, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			notifier := &recordingNotifier{}
+			activities, snapshots := eventActivitiesWithSnapshots(
+				engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithRunNotifier(notifier))
+			const runID = "ork-1755302400123456789-7"
+			sequence := []struct {
+				eventType orkstackv1.EventType
+				status    orkstackv1.Status
+				taskID    string
+			}{
+				{orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, orkstackv1.Status_STATUS_RUNNING, ""},
+				{orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, orkstackv1.Status_STATUS_RUNNING, "sibling"},
+				{orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, orkstackv1.Status_STATUS_RUNNING, "sibling"},
+				{orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, tc.status, "sibling"},
+				{orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED, orkstackv1.Status_STATUS_CANCELED, ""},
+			}
+			for i, step := range sequence {
+				event := runEvent(runID, step.eventType, step.status)
+				event.TaskId = step.taskID
+				run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_RUNNING}
+				if err := activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), dedupe(runID, i)); err != nil {
+					t.Fatalf("PublishEvent %v: %v", step.eventType, err)
+				}
+			}
+			announcedFailure := false
+			for _, eventType := range notifier.types() {
+				if eventType == orkstackv1.EventType_EVENT_TYPE_TASK_FAILED {
+					announcedFailure = true
+				}
+			}
+			if announcedFailure != tc.announced {
+				t.Errorf("TASK_FAILED carrying %v announced = %v, want %v (announcements %v)",
+					tc.status, announcedFailure, tc.announced, notifier.types())
+			}
+			wantCount := 4
+			if tc.announced {
+				wantCount = 5
+			}
+			if got := notifier.types(); len(got) != wantCount {
+				t.Errorf("announced %v, want %d announcements", got, wantCount)
+			}
+		})
+	}
+}
+
+func TestIsSubscribableEvent_SelectsRunTransitionsAndTaskOutcomes(t *testing.T) {
+	for typeValue := range orkstackv1.EventType_name {
+		eventType := orkstackv1.EventType(typeValue)
+		for statusValue := range orkstackv1.Status_name {
+			status := orkstackv1.Status(statusValue)
+			var want bool
+			switch eventType {
+			case orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED,
+				orkstackv1.EventType_EVENT_TYPE_TASK_STARTED,
+				orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED:
+				want = true
+			case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
+				want = status == orkstackv1.Status_STATUS_FAILED
+			case orkstackv1.EventType_EVENT_TYPE_TASK_LOG:
+				want = false
+			default:
+				want = engine.IsRunTransitionEvent(&orkstackv1.Event{Type: eventType, Status: status})
+			}
+			if got := engine.IsSubscribableEvent(&orkstackv1.Event{Type: eventType, Status: status}); got != want {
+				t.Errorf("IsSubscribableEvent(%v, %v) = %v, want %v", eventType, status, got, want)
+			}
+		}
+	}
+	// The rows that carry the contract, stated outright.
+	rows := []struct {
+		eventType orkstackv1.EventType
+		status    orkstackv1.Status
+		want      bool
+	}{
+		{orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, orkstackv1.Status_STATUS_FAILED, true},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, orkstackv1.Status_STATUS_CANCELED, false},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_LOG, orkstackv1.Status_STATUS_SKIPPED, false},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_LOG, orkstackv1.Status_STATUS_CANCELED, false},
+		{orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, orkstackv1.Status_STATUS_PENDING, false},
+		{orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, orkstackv1.Status_STATUS_RUNNING, true},
+		{orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED, orkstackv1.Status_STATUS_CANCELED, true},
+	}
+	for _, row := range rows {
+		if got := engine.IsSubscribableEvent(&orkstackv1.Event{Type: row.eventType, Status: row.status}); got != row.want {
+			t.Errorf("IsSubscribableEvent(%v, %v) = %v, want %v", row.eventType, row.status, got, row.want)
+		}
+	}
+	if engine.IsSubscribableEvent(nil) {
+		t.Error("IsSubscribableEvent(nil) = true")
 	}
 }
 

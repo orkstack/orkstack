@@ -625,3 +625,53 @@ func TestListAuditRecords_ScanBudgetIsResourceExhausted(t *testing.T) {
 		t.Fatalf("store outage = %v, want Unavailable", err)
 	}
 }
+
+// A scoped subscription's audit detail names its scope the way `orkctl webhook
+// list` renders it (namespace/orkflow/task, "*" per unset component), through
+// both the Connect service and the legacy adapter; an unscoped one carries no
+// scope, so its detail is unchanged.
+func TestAuditWebhookRegister_DetailNamesScope(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	hooks := orkstackv1connect.NewWebhookServiceClient(f.server.Client(), f.server.URL)
+	if _, err := hooks.RegisterWebhook(ctx, connect.NewRequest(&orkstackv1.RegisterWebhookRequest{
+		Url:       "https://hooks.example.test/scoped",
+		Events:    []orkstackv1.EventType{orkstackv1.EventType_EVENT_TYPE_TASK_FAILED},
+		Namespace: "payments",
+		TaskId:    "migrate",
+	})); err != nil {
+		t.Fatalf("RegisterWebhook: %v", err)
+	}
+	body := `{"url":"https://hooks.example.test/legacy-scoped","events":["run_failed"],"orkflowName":"nightly"}`
+	post, err := http.NewRequest(http.MethodPost, f.server.URL+api.WebhookCollectionPath, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post.Header.Set("Content-Type", "application/json")
+	resp, err := f.server.Client().Do(post)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST status = %d, want 201", resp.StatusCode)
+	}
+	want := map[string]string{
+		orkstackv1connect.WebhookServiceRegisterWebhookProcedure: "url=https://hooks.example.test/scoped events=[TASK_FAILED] scope=payments/*/migrate",
+		"POST /v1/webhooks": "url=https://hooks.example.test/legacy-scoped events=[RUN_FAILED] scope=*/nightly/*",
+	}
+	got := map[string]string{}
+	for _, rec := range f.records(t) {
+		if rec.GetAction() == "webhook.register" {
+			got[rec.GetProcedure()] = rec.GetDetail()
+			if rec.GetNamespace() != "" {
+				t.Errorf("record %v: namespace = %q, want empty (a registration is deployment-wide)", rec, rec.GetNamespace())
+			}
+		}
+	}
+	for procedure, detail := range want {
+		if got[procedure] != detail {
+			t.Errorf("%s detail = %q, want %q", procedure, got[procedure], detail)
+		}
+	}
+}

@@ -13,6 +13,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -65,6 +66,11 @@ type registerWebhookRequest struct {
 	URL    string   `json:"url"`
 	Events []string `json:"events,omitempty"`
 	Secret string   `json:"secret,omitempty"`
+	// The scope, spelled as webhooks.Webhook spells it, so the envelope a GET
+	// returns is what a POST accepts.
+	Namespace   string `json:"namespace,omitempty"`
+	OrkflowName string `json:"orkflowName,omitempty"`
+	TaskID      string `json:"taskId,omitempty"`
 }
 
 // NewWebhookHandler serves webhook registration, listing and deletion against
@@ -135,7 +141,7 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 			fmt.Sprintf("decode request body: %v", err))
 		return entry
 	}
-	entry.Detail = webhookAuditDetail(body.URL, body.Events)
+	entry.Detail = webhookAuditDetail(body.URL, body.Events, body.Namespace, body.OrkflowName, body.TaskID)
 	events := make([]webhooks.Event, 0, len(body.Events))
 	for _, raw := range body.Events {
 		event, err := webhooks.ParseEvent(raw)
@@ -149,10 +155,17 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 		writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return entry
 	}
+	if err := webhooks.ValidateScope(body.Namespace, body.OrkflowName, body.TaskID, events); err != nil {
+		writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
+		return entry
+	}
 	hook, err := registry.RegisterContext(r.Context(), webhooks.Registration{
-		URL:    body.URL,
-		Events: events,
-		Secret: body.Secret,
+		URL:         body.URL,
+		Events:      events,
+		Secret:      body.Secret,
+		Namespace:   body.Namespace,
+		OrkflowName: body.OrkflowName,
+		TaskID:      body.TaskID,
 	})
 	if err != nil {
 		writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
@@ -244,7 +257,7 @@ func writeWebhookError(w http.ResponseWriter, status int, code, message string) 
 	writeWebhookJSON(w, status, webhookErrorEnvelope{Error: webhookError{Code: code, Message: message}})
 }
 
-// WebhookNotifier adapts the engine's run-transition seam to pkg/webhooks. It
+// WebhookNotifier adapts the engine's run-event seam to pkg/webhooks. It
 // lives here because it is the point where a Run becomes wire JSON, and this
 // package owns that dialect (json.go): a subscriber reads "SUCCEEDED" in a
 // delivery exactly as it does in every other OrkStack response.
@@ -269,15 +282,17 @@ func NewWebhookNotifier(notifier *webhooks.Notifier, logger *slog.Logger) *Webho
 	return &WebhookNotifier{notifier: notifier, logger: logger, now: time.Now}
 }
 
-// NotifyRunTransition queues one delivery per matching subscription. It never
-// blocks and never fails the caller: a run's progress does not depend on a
-// third party answering its HTTP.
-func (n *WebhookNotifier) NotifyRunTransition(
+// NotifyRunEvent queues one delivery per matching subscription, for a run
+// transition or a task outcome. It never blocks and never fails the caller: a
+// run's progress does not depend on a third party answering its HTTP.
+func (n *WebhookNotifier) NotifyRunEvent(
 	ctx context.Context,
 	event *orkstackv1.Event,
 	run *orkstackv1.Run,
 ) {
-	if n == nil || !engine.IsRunTransitionEvent(event) {
+	// The engine already gates on this; the same check here is the boundary
+	// where the event turns into wire JSON, and it must hold on its own.
+	if n == nil || !engine.IsSubscribableEvent(event) {
 		return
 	}
 	transition, err := webhooks.ParseEvent(event.GetType().String())
@@ -299,10 +314,31 @@ func (n *WebhookNotifier) NotifyRunTransition(
 		Event:       transition,
 		RunID:       event.GetRunId(),
 		OrkflowName: run.GetOrkflowName(),
+		// The one place an unset namespace becomes "default", so a
+		// subscription scoped to "default" matches a run that named none.
+		Namespace: artifacts.ResolveNamespace(run.GetNamespace()),
 		// The event's status is the transition itself, which is what a
 		// subscriber filtered on.
 		Status:    strings.TrimPrefix(event.GetStatus().String(), "STATUS_"),
 		Timestamp: timestamp,
+		TaskID:    event.GetTaskId(),
+		Attempt:   taskAttempt(run, event.GetTaskId()),
 		Run:       encoded,
 	})
+}
+
+// taskAttempt is the attempt TaskRun records for taskID: the attempt that
+// produced a final outcome, and 0 — omitted from the body — for a task
+// Temporal has not numbered yet, a run transition, or a task the run does not
+// carry. It is never invented.
+func taskAttempt(run *orkstackv1.Run, taskID string) int32 {
+	if taskID == "" {
+		return 0
+	}
+	for _, taskRun := range run.GetTaskRuns() {
+		if taskRun.GetTaskId() == taskID {
+			return taskRun.GetAttempt()
+		}
+	}
+	return 0
 }

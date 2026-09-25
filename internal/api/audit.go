@@ -233,7 +233,7 @@ var auditedProcedures = map[string]auditExtractor{
 		entry := auditEntry{
 			Action: "webhook.register",
 			Target: auditNoTarget,
-			Detail: webhookAuditDetail(in.GetUrl(), names),
+			Detail: webhookAuditDetail(in.GetUrl(), names, in.GetNamespace(), in.GetOrkflowName(), in.GetTaskId()),
 		}
 		if out, ok := resp.(*orkstackv1.RegisterWebhookResponse); ok && out != nil && out.GetWebhook().GetId() != "" {
 			entry.Target = out.GetWebhook().GetId()
@@ -326,9 +326,11 @@ var unauditedWrites = map[string]string{
 }
 
 // webhookAuditDetail renders a registration's detail from the fields that are
-// not secret: the URL (its userinfo password redacted) and the event names.
-// The signing secret is never an argument, so it cannot reach a record.
-func webhookAuditDetail(rawURL string, events []string) string {
+// not secret: the URL (its userinfo password redacted), the event names and,
+// for a scoped subscription, its scope as `orkctl webhook list` renders it
+// (namespace/orkflow/task, "*" per unset component). The signing secret is
+// never an argument, so it cannot reach a record.
+func webhookAuditDetail(rawURL string, events []string, namespace, orkflowName, taskID string) string {
 	shown := rawURL
 	if parsed, err := url.Parse(rawURL); err == nil {
 		shown = parsed.Redacted()
@@ -341,7 +343,17 @@ func webhookAuditDetail(rawURL string, events []string) string {
 	if len(names) > 0 {
 		rendered = "[" + strings.Join(names, " ") + "]"
 	}
-	return "url=" + shown + " events=" + rendered
+	detail := "url=" + shown + " events=" + rendered
+	if namespace == "" && orkflowName == "" && taskID == "" {
+		return detail
+	}
+	part := func(value string) string {
+		if value == "" {
+			return "*"
+		}
+		return value
+	}
+	return detail + " scope=" + part(namespace) + "/" + part(orkflowName) + "/" + part(taskID)
 }
 
 // namespaceSpecSummary renders the requested spec's mutable fields as

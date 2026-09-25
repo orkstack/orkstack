@@ -264,7 +264,7 @@ func TestWebhookNotifier_PostsASignedPayloadNamingTheRunAndItsStatus(t *testing.
 			Status: orkstackv1.Status_STATUS_SUCCEEDED,
 		}},
 	}
-	f.adapter.NotifyRunTransition(context.Background(), &orkstackv1.Event{
+	f.adapter.NotifyRunEvent(context.Background(), &orkstackv1.Event{
 		RunId:     run.GetId(),
 		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		Status:    orkstackv1.Status_STATUS_SUCCEEDED,
@@ -329,31 +329,6 @@ func TestWebhookNotifier_PostsASignedPayloadNamingTheRunAndItsStatus(t *testing.
 	}
 }
 
-func TestWebhookNotifier_IgnoresEventsThatAreNotRunTransitions(t *testing.T) {
-	f := newNotifierFixture(t)
-	if _, err := f.registry.Register(webhooks.Registration{URL: f.server.URL}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	run := &orkstackv1.Run{Id: "ork-1-1", OrkflowName: "hello-ork"}
-	for _, eventType := range []orkstackv1.EventType{
-		orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
-		orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED,
-		orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED,
-		orkstackv1.EventType_EVENT_TYPE_TASK_LOG,
-	} {
-		f.adapter.NotifyRunTransition(context.Background(),
-			&orkstackv1.Event{RunId: run.GetId(), Type: eventType}, run)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := f.notifier.Wait(ctx); err != nil {
-		t.Fatalf("deliveries did not settle: %v", err)
-	}
-	if f.count() != 0 {
-		t.Errorf("%d deliveries went out for events that are not run transitions", f.count())
-	}
-}
-
 func TestWebhookNotifier_NilAdapterIsInert(t *testing.T) {
 	var adapter *api.WebhookNotifier
 	if api.NewWebhookNotifier(nil, nil) != nil {
@@ -361,7 +336,7 @@ func TestWebhookNotifier_NilAdapterIsInert(t *testing.T) {
 	}
 	// Calling through a nil adapter must not panic: it is what "webhooks are
 	// switched off" looks like at every call site.
-	adapter.NotifyRunTransition(context.Background(),
+	adapter.NotifyRunEvent(context.Background(),
 		&orkstackv1.Event{Type: orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED},
 		&orkstackv1.Run{Id: "ork-1-1"})
 }

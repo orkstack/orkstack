@@ -1,0 +1,20 @@
+{
+  "webhooks": [
+    {
+      "id": "wh-0000000000000001",
+      "url": "https://example.test/audit",
+      "createdAt": "2025-08-16T00:00:00Z"
+    },
+    {
+      "id": "wh-0000000000000002",
+      "url": "https://example.test/etl",
+      "events": [
+        "TASK_SUCCEEDED"
+      ],
+      "createdAt": "2025-08-16T00:00:00Z",
+      "namespace": "analytics",
+      "orkflowName": "nightly-etl",
+      "taskId": "extract"
+    }
+  ]
+}

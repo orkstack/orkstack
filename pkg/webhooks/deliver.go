@@ -11,7 +11,8 @@ import (
 	"time"
 )
 
-// Delivery is one run transition on its way to one subscriber.
+// Delivery is one run transition or task outcome on its way to one
+// subscriber.
 type Delivery struct {
 	// ID is unique per (transition, subscription) pair and stays the same
 	// across retries, so a receiver can deduplicate.
@@ -23,18 +24,31 @@ type Delivery struct {
 	OrkflowName string
 	Status      string
 	Timestamp   time.Time
+	// Namespace is the run's resolved namespace, used to match; it is not
+	// part of the body (the embedded run already carries it).
+	Namespace string
+	// TaskID and Attempt are set for a task outcome event and empty/zero for
+	// a run transition. They are the body's taskId and attempt; an attempt
+	// Temporal has not numbered is zero and omitted, never invented.
+	TaskID  string
+	Attempt int32
 	// Run is the full run, already encoded in OrkStack's JSON dialect.
 	Run json.RawMessage
 }
 
 // payload is the wire body, in the field order the contract states:
 //
-//	{"runId":…,"orkflowName":…,"status":…,"timestamp":…,"run":{…}}
+//	{"runId":…,"orkflowName":…,"status":…,"timestamp":…,"taskId":…,"attempt":…,"run":{…}}
+//
+// taskId and attempt are omitted when empty, so a run transition's body is
+// byte-identical to what it was before task outcomes were deliverable.
 type payload struct {
 	RunID       string          `json:"runId"`
 	OrkflowName string          `json:"orkflowName"`
 	Status      string          `json:"status"`
 	Timestamp   string          `json:"timestamp"`
+	TaskID      string          `json:"taskId,omitempty"`
+	Attempt     int32           `json:"attempt,omitempty"`
 	Run         json.RawMessage `json:"run"`
 }
 
@@ -46,6 +60,8 @@ func (d Delivery) Body() ([]byte, error) {
 		OrkflowName: d.OrkflowName,
 		Status:      d.Status,
 		Timestamp:   d.Timestamp.UTC().Format(time.RFC3339Nano),
+		TaskID:      d.TaskID,
+		Attempt:     d.Attempt,
 		Run:         d.Run,
 	})
 	if err != nil {
@@ -248,6 +264,9 @@ func (d *Dispatcher) send(
 	req.Header.Set(DeliveryHeader, delivery.ID)
 	req.Header.Set(WebhookHeader, hook.ID)
 	req.Header.Set(RunHeader, delivery.RunID)
+	if delivery.TaskID != "" {
+		req.Header.Set(TaskHeader, delivery.TaskID)
+	}
 	req.Header.Set(TimestampHeader, delivery.Timestamp.UTC().Format(time.RFC3339Nano))
 	req.Header.Set(AttemptHeader, strconv.Itoa(attempt))
 	if signature != "" {

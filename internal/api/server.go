@@ -75,8 +75,9 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	mux.Handle(webhookPath, webhookHandler)
 
 	// TriggerService manages inbound run starters — the mirror image of
-	// WebhookService: a webhook is outbound and deployment-wide, a trigger is
-	// inbound and bound to one orkflow in one namespace.
+	// WebhookService: a webhook is outbound and deployment-wide unless it
+	// names a scope, a trigger is inbound and bound to one orkflow in one
+	// namespace.
 	triggerPath, triggerHandler := orkstackv1connect.NewTriggerServiceHandler(svc, handlerOptions...)
 	mux.Handle(triggerPath, triggerHandler)
 

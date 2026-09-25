@@ -29,9 +29,10 @@ func newTriggerCommand(g *globalFlags) *cobra.Command {
 		Long: "A trigger lets an external caller start a run over plain HTTP:\n" +
 			"POST /v1/triggers/<id> with the trigger's bearer token.\n\n" +
 			"It is the mirror image of a webhook. A webhook is outbound and\n" +
-			"deployment-wide; a trigger is inbound and bound to one orkflow in one\n" +
-			"namespace. The orkflow a trigger starts comes from the stored trigger\n" +
-			"and never from the request, so a token cannot be redirected.",
+			"deployment-wide unless scoped; a trigger is inbound and bound to one\n" +
+			"orkflow in one namespace. The orkflow a trigger starts comes from the\n" +
+			"stored trigger and never from the request, so a token cannot be\n" +
+			"redirected.",
 	}
 	cmd.AddCommand(
 		newTriggerCreateCommand(g),
