@@ -1,0 +1,55 @@
+{
+  "groups": [
+    {
+      "orkflowName": "payments",
+      "taskId": "ingest",
+      "code": "IMAGE_PULL_FAILED",
+      "category": "INFRASTRUCTURE_ERROR",
+      "runCount": "3",
+      "firstSeen": "2026-01-02T02:14:05Z",
+      "lastSeen": "2026-01-02T02:34:05Z",
+      "exampleRunIds": [
+        "ork-ingest-1",
+        "ork-ingest-2",
+        "ork-ingest-3"
+      ]
+    },
+    {
+      "orkflowName": "reconcile",
+      "taskId": "reconcile",
+      "code": "CONTAINER_EXIT_NONZERO",
+      "category": "ACTIVITY_FAILED",
+      "runCount": "2",
+      "firstSeen": "2026-01-02T00:04:05Z",
+      "lastSeen": "2026-01-02T01:04:05Z",
+      "exampleRunIds": [
+        "ork-reconcile-1",
+        "ork-reconcile-2"
+      ]
+    },
+    {
+      "orkflowName": "nightly",
+      "code": "RUN_START_FAILED",
+      "runCount": "1",
+      "firstSeen": "2026-01-01T22:04:05Z",
+      "lastSeen": "2026-01-01T22:04:05Z",
+      "exampleRunIds": [
+        "ork-nightly-1"
+      ]
+    }
+  ],
+  "failedRunsInWindow": "6",
+  "failedRunsScanned": "6",
+  "failedRunsGrouped": "6",
+  "groupsTotal": "3",
+  "groupBy": [
+    "ORKFLOW",
+    "TASK",
+    "CODE",
+    "CATEGORY"
+  ],
+  "namespace": "default",
+  "windowSince": "2026-01-01T03:04:05Z",
+  "windowUntil": "2026-01-02T03:04:05Z",
+  "computedAt": "2026-01-02T03:04:05Z"
+}

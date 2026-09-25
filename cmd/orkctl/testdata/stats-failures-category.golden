@@ -1,0 +1,10 @@
+Namespace:   default
+Window:      2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:    2026-01-02T03:04:05Z
+Grouped by:  orkflow, task, code, category
+
+ORKFLOW    TASK       CODE                    CATEGORY         RUNS  FIRST                 LAST                  EXAMPLE
+reconcile  reconcile  CONTAINER_EXIT_NONZERO  ACTIVITY_FAILED  2     2026-01-02T00:04:05Z  2026-01-02T01:04:05Z  ork-reconcile-1
+
+scanned 6 of 6 failed runs in the window; 2 grouped into 1 group
+category ACTIVITY_FAILED: 2 of 6 failed runs
