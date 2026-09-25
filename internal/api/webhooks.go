@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -66,11 +68,16 @@ type registerWebhookRequest struct {
 }
 
 // NewWebhookHandler serves webhook registration, listing and deletion against
-// registry.
-func NewWebhookHandler(registry *webhooks.Registry) http.Handler {
+// registry. The adapter is plain HTTP, outside Connect, so the audit
+// interceptor cannot see it: its two writes record themselves through
+// recorder, with the same actions the Connect WebhookService records and the
+// HTTP route as the procedure. A nil recorder records nothing.
+func NewWebhookHandler(registry *webhooks.Registry, recorder *AuditRecorder) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+WebhookCollectionPath, func(w http.ResponseWriter, r *http.Request) {
-		registerWebhook(w, r, registry)
+		status := &statusWriter{ResponseWriter: w}
+		entry := registerWebhook(status, r, registry)
+		recordLegacyWebhook(r, recorder, "POST "+WebhookCollectionPath, entry, status.status())
 	})
 	mux.HandleFunc("GET "+WebhookCollectionPath, func(w http.ResponseWriter, r *http.Request) {
 		hooks, err := registry.ListContext(r.Context())
@@ -94,42 +101,53 @@ func NewWebhookHandler(registry *webhooks.Registry) http.Handler {
 		writeWebhookJSON(w, http.StatusOK, webhookEnvelope{Webhook: hook})
 	})
 	mux.HandleFunc("DELETE "+WebhookItemPath, func(w http.ResponseWriter, r *http.Request) {
-		ok, err := registry.DeleteContext(r.Context(), r.PathValue("id"))
-		if err != nil {
-			writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
-			return
-		}
-		if !ok {
-			writeWebhookError(w, http.StatusNotFound, "not_found",
-				fmt.Sprintf("webhook %q not found", r.PathValue("id")))
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+		status := &statusWriter{ResponseWriter: w}
+		deleteWebhook(status, r, registry)
+		recordLegacyWebhook(r, recorder, "DELETE "+WebhookItemPath,
+			auditEntry{Action: "webhook.delete", Target: r.PathValue("id")}, status.status())
 	})
 	return mux
 }
 
+func deleteWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.Registry) {
+	ok, err := registry.DeleteContext(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		return
+	}
+	if !ok {
+		writeWebhookError(w, http.StatusNotFound, "not_found",
+			fmt.Sprintf("webhook %q not found", r.PathValue("id")))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // registerWebhook validates and stores one subscription. The response is the
-// only time the signing secret is disclosed.
-func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.Registry) {
+// only time the signing secret is disclosed. It returns the audit entry for
+// the call, which is built from the URL and the event names only — the secret
+// never reaches it.
+func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.Registry) auditEntry {
+	entry := auditEntry{Action: "webhook.register", Target: auditNoTarget}
 	var body registerWebhookRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, httpRequestBodyLimit)).Decode(&body); err != nil {
 		writeWebhookError(w, http.StatusBadRequest, "invalid_argument",
 			fmt.Sprintf("decode request body: %v", err))
-		return
+		return entry
 	}
+	entry.Detail = webhookAuditDetail(body.URL, body.Events)
 	events := make([]webhooks.Event, 0, len(body.Events))
 	for _, raw := range body.Events {
 		event, err := webhooks.ParseEvent(raw)
 		if err != nil {
 			writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
-			return
+			return entry
 		}
 		events = append(events, event)
 	}
 	if _, err := webhooks.ValidateURL(body.URL); err != nil {
 		writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
-		return
+		return entry
 	}
 	hook, err := registry.RegisterContext(r.Context(), webhooks.Registration{
 		URL:    body.URL,
@@ -138,9 +156,77 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 	})
 	if err != nil {
 		writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
+		return entry
+	}
+	entry.Target = hook.ID
+	writeWebhookJSON(w, http.StatusCreated, webhookEnvelope{Webhook: hook})
+	return entry
+}
+
+// statusWriter remembers the status a handler wrote, so the adapter can
+// record whether its write succeeded without reaching into the handler.
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	if w.code == 0 {
+		w.code = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(p []byte) (int, error) {
+	if w.code == 0 {
+		w.code = http.StatusOK
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *statusWriter) status() int {
+	if w.code == 0 {
+		return http.StatusOK
+	}
+	return w.code
+}
+
+// recordLegacyWebhook writes the adapter's audit record after the handler
+// answered: the same record shape the interceptor writes, with the HTTP route
+// as the procedure and the TCP peer as the source address.
+func recordLegacyWebhook(r *http.Request, recorder *AuditRecorder, procedure string, entry auditEntry, status int) {
+	if recorder == nil {
 		return
 	}
-	writeWebhookJSON(w, http.StatusCreated, webhookEnvelope{Webhook: hook})
+	rec := &orkstackv1.AuditRecord{
+		Principal:     r.Header.Get(AuditPrincipalHeader),
+		SourceAddress: r.RemoteAddr,
+		Action:        entry.Action,
+		Procedure:     procedure,
+		Namespace:     entry.Namespace,
+		Target:        entry.Target,
+		Detail:        entry.Detail,
+		Succeeded:     status >= 200 && status < 300,
+	}
+	if !rec.Succeeded {
+		rec.ErrorCode = legacyWebhookErrorCode(status)
+	}
+	recorder.Record(r.Context(), rec)
+}
+
+// legacyWebhookErrorCode names a refused adapter call in the Connect code
+// vocabulary every other record uses: the adapter's statuses are exactly
+// these three, and each maps to what the Connect WebhookService returns for
+// the same refusal.
+func legacyWebhookErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
+		return connect.CodeInvalidArgument.String()
+	case http.StatusNotFound:
+		return connect.CodeNotFound.String()
+	default:
+		return connect.CodeInternal.String()
+	}
 }
 
 func writeWebhookJSON(w http.ResponseWriter, status int, body any) {

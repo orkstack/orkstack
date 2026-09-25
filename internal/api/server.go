@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"time"
 
+	"connectrpc.com/connect"
+
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 )
 
@@ -28,7 +30,11 @@ type MuxOptions struct {
 // NewMux mounts the Connect handlers and the WebSocket bridge.
 func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	mux := http.NewServeMux()
-	handlerOptions := HandlerOptions()
+	// Every handler shares one interceptor chain: the audit interceptor sees
+	// every unary call, records the audited writes, and passes everything else
+	// through untouched (audit.go). HandlerOptions itself is unchanged, so its
+	// other callers keep exactly the codec they had.
+	handlerOptions := append(HandlerOptions(), connect.WithInterceptors(svc.auditInterceptor()))
 
 	orkflowPath, orkflowHandler := orkstackv1connect.NewOrkflowServiceHandler(svc, handlerOptions...)
 	mux.Handle(orkflowPath, orkflowHandler)
@@ -74,8 +80,15 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	triggerPath, triggerHandler := orkstackv1connect.NewTriggerServiceHandler(svc, handlerOptions...)
 	mux.Handle(triggerPath, triggerHandler)
 
-	mux.Handle(WebhookCollectionPath, NewWebhookHandler(svc.Webhooks()))
-	mux.Handle(WebhookItemPath, NewWebhookHandler(svc.Webhooks()))
+	// AuditService reads the control-plane audit trail back from the shared
+	// store. It is itself a read and is never recorded.
+	auditPath, auditHandler := orkstackv1connect.NewAuditServiceHandler(svc, handlerOptions...)
+	mux.Handle(auditPath, auditHandler)
+
+	// The legacy webhook adapter is plain HTTP, outside Connect, so the
+	// interceptor cannot see it: it records its two writes itself.
+	mux.Handle(WebhookCollectionPath, NewWebhookHandler(svc.Webhooks(), svc.audit))
+	mux.Handle(WebhookItemPath, NewWebhookHandler(svc.Webhooks(), svc.audit))
 
 	// The invoke route is plain JSON so an arbitrary external caller — a CI
 	// job, a cron host, one curl line — starts a run without a Connect client.

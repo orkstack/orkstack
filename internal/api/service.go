@@ -127,6 +127,18 @@ type Config struct {
 	// unit tests only — exactly the terms Webhooks above is on.
 	Triggers triggers.Store
 
+	// AuditStore is where the control-plane audit trail lives: one immutable
+	// record per call of a write RPC (audit.go), in the same bucket, through
+	// the same ORK_ARTIFACT_BACKEND, as attempts and triggers — so any replica
+	// lists a write another replica recorded. Nil records nothing and answers
+	// ListAuditRecords with FailedPrecondition; that is a unit-test
+	// convenience, never a production fallback: `ork` refuses to boot without
+	// one.
+	AuditStore artifacts.AuditStore
+	// AuditCounter counts every audit write by outcome (written, dropped).
+	// Nil counts nothing.
+	AuditCounter AuditCounter
+
 	// Notifier announces run state transitions this service observes itself.
 	// The engine announces every transition of a run that reached Temporal;
 	// this covers the one that never did, when StartRun fails.
@@ -283,8 +295,13 @@ type Service struct {
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
 	triggers    triggers.Store
-	notifier    engine.RunNotifier
-	observer    engine.EventObserver
+	// audit writes the control-plane audit trail and auditStore reads it
+	// back. Both are nil when no store is wired: nothing is recorded and
+	// ListAuditRecords is refused.
+	audit      *AuditRecorder
+	auditStore artifacts.AuditStore
+	notifier   engine.RunNotifier
+	observer   engine.EventObserver
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system SystemInfo
@@ -394,6 +411,10 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.now == nil {
 		svc.now = time.Now
+	}
+	if cfg.AuditStore != nil {
+		svc.auditStore = cfg.AuditStore
+		svc.audit = NewAuditRecorder(cfg.AuditStore, cfg.AuditCounter, svc.logger, svc.now)
 	}
 	if svc.newRunID == nil {
 		// One generator serves the whole process, so its nonce covers every

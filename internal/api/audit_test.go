@@ -1,0 +1,627 @@
+package api_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+)
+
+// fakeAuditCounter records every CountAudit call.
+type fakeAuditCounter struct {
+	mu    sync.Mutex
+	calls []string // "action/outcome"
+}
+
+func (c *fakeAuditCounter) CountAudit(_ context.Context, action, outcome string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, action+"/"+outcome)
+}
+
+func (c *fakeAuditCounter) seen() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.calls...)
+}
+
+// failingAuditStore refuses every write and every read.
+type failingAuditStore struct{ err error }
+
+func (f failingAuditStore) PutAuditRecord(context.Context, *orkstackv1.AuditRecord) error {
+	return f.err
+}
+
+func (f failingAuditStore) ListAuditRecords(context.Context, artifacts.AuditQuery) (artifacts.AuditPage, error) {
+	return artifacts.AuditPage{}, f.err
+}
+
+// lockedBuffer is a goroutine-safe log sink.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+type auditFixture struct {
+	svc     *api.Service
+	store   *artifacts.MemoryAuditStore
+	counter *fakeAuditCounter
+	logs    *lockedBuffer
+	server  *httptest.Server
+	now     time.Time
+}
+
+type auditOptions struct {
+	store artifacts.AuditStore // nil = a fresh memory store
+	none  bool                 // wire no audit store at all
+}
+
+func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
+	t.Helper()
+	f := &auditFixture{
+		counter: &fakeAuditCounter{},
+		logs:    &lockedBuffer{},
+		now:     time.Date(2026, 3, 14, 11, 2, 44, 0, time.UTC),
+	}
+	var store artifacts.AuditStore
+	switch {
+	case opts.none:
+	case opts.store != nil:
+		store = opts.store
+	default:
+		f.store = artifacts.NewMemoryAuditStore()
+		store = f.store
+	}
+	counter := 0
+	f.svc = api.NewService(api.Config{
+		Orkflows:     engine.NewMemoryOrkflowStore(),
+		Namespaces:   newFakeRegistry(),
+		Runs:         engine.NewRunStore(),
+		Bus:          engine.NewEventBus(),
+		Starter:      &fakeStarter{},
+		AuditStore:   store,
+		AuditCounter: f.counter,
+		Logger:       slog.New(slog.NewTextHandler(f.logs, nil)),
+		Now:          func() time.Time { return f.now },
+		NewRunID: func() string {
+			counter++
+			return fmt.Sprintf("run-%03d", counter)
+		},
+	})
+	f.server = httptest.NewServer(api.NewMux(f.svc, api.MuxOptions{}))
+	t.Cleanup(f.server.Close)
+	return f
+}
+
+// withPrincipal returns a request carrying the Ork-Principal header.
+func withPrincipal[T any](msg *T, principal string) *connect.Request[T] {
+	req := connect.NewRequest(msg)
+	if principal != "" {
+		req.Header().Set(api.AuditPrincipalHeader, principal)
+	}
+	return req
+}
+
+func (f *auditFixture) namespaces() orkstackv1connect.NamespaceServiceClient {
+	return orkstackv1connect.NewNamespaceServiceClient(f.server.Client(), f.server.URL)
+}
+
+func (f *auditFixture) orkflows() orkstackv1connect.OrkflowServiceClient {
+	return orkstackv1connect.NewOrkflowServiceClient(f.server.Client(), f.server.URL)
+}
+
+// records returns every stored record, newest first, straight from the store.
+func (f *auditFixture) records(t *testing.T) []*orkstackv1.AuditRecord {
+	t.Helper()
+	page, err := f.store.ListAuditRecords(context.Background(), artifacts.AuditQuery{
+		Since: f.now.Add(-time.Hour), Until: f.now.Add(time.Hour), Limit: 1000,
+	})
+	if err != nil {
+		t.Fatalf("list audit records: %v", err)
+	}
+	return page.Records
+}
+
+func TestAuditInterceptor_RecordsSuccessfulWrite(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	created, err := f.svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "payments"},
+	}))
+	if err != nil {
+		t.Fatalf("CreateNamespace (direct, unaudited): %v", err)
+	}
+	_, err = f.namespaces().UpdateNamespace(ctx, withPrincipal(&orkstackv1.UpdateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{
+			Name: "payments", Description: "card rails", Labels: map[string]string{"team": "payments"},
+			Etag: created.Msg.GetNamespace().GetEtag(),
+		},
+	}, "dsantos"))
+	if err != nil {
+		t.Fatalf("UpdateNamespace: %v", err)
+	}
+	records := f.records(t)
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want exactly one", len(records))
+	}
+	rec := records[0]
+	if rec.GetAction() != "namespace.update" || rec.GetNamespace() != "payments" || rec.GetTarget() != "payments" ||
+		!rec.GetSucceeded() || rec.GetErrorCode() != "" ||
+		rec.GetProcedure() != orkstackv1connect.NamespaceServiceUpdateNamespaceProcedure ||
+		rec.GetPrincipal() != "dsantos" || rec.GetSourceAddress() == "" ||
+		rec.GetSchemaVersion() != artifacts.AuditSchemaVersion || !rec.GetAt().AsTime().Equal(f.now) {
+		t.Fatalf("record = %v, want a successful namespace.update of payments by dsantos", rec)
+	}
+	if !strings.Contains(rec.GetDetail(), "labels={team=payments}") || !strings.Contains(rec.GetDetail(), "default_pool=main") {
+		t.Errorf("detail = %q, want the requested spec summary", rec.GetDetail())
+	}
+	if got := f.counter.seen(); len(got) != 1 || got[0] != "namespace.update/written" {
+		t.Errorf("counter = %v, want [namespace.update/written]", got)
+	}
+}
+
+func TestAuditInterceptor_RecordsRefusedWrite(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	_, direct := f.svc.DeleteNamespace(ctx, connect.NewRequest(&orkstackv1.DeleteNamespaceRequest{Name: "default"}))
+	_, err := f.namespaces().DeleteNamespace(ctx, connect.NewRequest(&orkstackv1.DeleteNamespaceRequest{Name: "default"}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("DeleteNamespace(default) = %v, want FailedPrecondition", err)
+	}
+	var viaWire, viaHandler *connect.Error
+	if !errors.As(err, &viaWire) || !errors.As(direct, &viaHandler) || viaWire.Message() != viaHandler.Message() {
+		t.Errorf("error through the interceptor %v differs from the handler's %v", err, direct)
+	}
+	records := f.records(t)
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want one refusal", len(records))
+	}
+	rec := records[0]
+	if rec.GetSucceeded() || rec.GetErrorCode() != "failed_precondition" || rec.GetAction() != "namespace.delete" ||
+		rec.GetNamespace() != "default" || rec.GetTarget() != "default" {
+		t.Fatalf("record = %v, want a refused namespace.delete of default", rec)
+	}
+}
+
+func TestAuditInterceptor_ReadsAreNeverRecorded(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	client := f.server.Client()
+	_, _ = f.namespaces().GetNamespace(ctx, connect.NewRequest(&orkstackv1.GetNamespaceRequest{Name: "default"}))
+	_, _ = orkstackv1connect.NewRunServiceClient(client, f.server.URL).ListRuns(ctx,
+		connect.NewRequest(&orkstackv1.ListRunsRequest{}))
+	_, _ = f.orkflows().ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: helloYAML(t)}))
+	_, _ = orkstackv1connect.NewStatsServiceClient(client, f.server.URL).GetStats(ctx,
+		connect.NewRequest(&orkstackv1.GetStatsRequest{}))
+	_, _ = orkstackv1connect.NewAuditServiceClient(client, f.server.URL).ListAuditRecords(ctx,
+		connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{}))
+	if records := f.records(t); len(records) != 0 {
+		t.Fatalf("reads produced %d audit records: %v", len(records), records)
+	}
+	if got := f.counter.seen(); len(got) != 0 {
+		t.Errorf("counter saw %v after reads only", got)
+	}
+}
+
+func TestAuditInterceptor_SubmitRunIsNotRecorded(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	if _, err := f.orkflows().ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
+		t.Fatalf("ApplyOrkflow: %v", err)
+	}
+	if _, err := orkstackv1connect.NewRunServiceClient(f.server.Client(), f.server.URL).SubmitRun(ctx,
+		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err != nil {
+		t.Fatalf("SubmitRun: %v", err)
+	}
+	for _, rec := range f.records(t) {
+		if rec.GetProcedure() == orkstackv1connect.RunServiceSubmitRunProcedure {
+			t.Fatalf("SubmitRun was recorded: %v", rec)
+		}
+	}
+	if n := len(f.records(t)); n != 1 {
+		t.Errorf("records = %d, want only the apply", n)
+	}
+}
+
+func TestAuditInterceptor_NeverRecordsSecrets(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	const requestSecret = "whsec-request-7f3a9c1d2e4b"
+	hook, err := orkstackv1connect.NewWebhookServiceClient(f.server.Client(), f.server.URL).RegisterWebhook(ctx,
+		connect.NewRequest(&orkstackv1.RegisterWebhookRequest{
+			Url:    "https://hooks.example.test/ork",
+			Events: []orkstackv1.EventType{orkstackv1.EventType_EVENT_TYPE_RUN_FAILED},
+			Secret: requestSecret,
+		}))
+	if err != nil {
+		t.Fatalf("RegisterWebhook: %v", err)
+	}
+	if _, err := f.orkflows().ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
+		t.Fatalf("ApplyOrkflow: %v", err)
+	}
+	trigger, err := orkstackv1connect.NewTriggerServiceClient(f.server.Client(), f.server.URL).CreateTrigger(ctx,
+		connect.NewRequest(&orkstackv1.CreateTriggerRequest{OrkflowName: "hello-ork"}))
+	if err != nil {
+		t.Fatalf("CreateTrigger: %v", err)
+	}
+	secrets := []string{requestSecret, hook.Msg.GetSecret(), trigger.Msg.GetSecret()}
+	for key, document := range f.store.Documents() {
+		for _, secret := range secrets {
+			if secret != "" && bytes.Contains(document, []byte(secret)) {
+				t.Errorf("audit record %s contains a secret:\n%s", key, document)
+			}
+		}
+	}
+	var sawTrigger, sawWebhook bool
+	for _, rec := range f.records(t) {
+		switch rec.GetAction() {
+		case "trigger.create":
+			sawTrigger = true
+			if rec.GetDetail() != "hello-ork@current" || rec.GetTarget() != trigger.Msg.GetTrigger().GetId() ||
+				rec.GetNamespace() != "default" {
+				t.Errorf("trigger record = %v, want detail hello-ork@current on the created id", rec)
+			}
+		case "webhook.register":
+			sawWebhook = true
+			if rec.GetNamespace() != "" || rec.GetTarget() != hook.Msg.GetWebhook().GetId() ||
+				rec.GetDetail() != "url=https://hooks.example.test/ork events=[RUN_FAILED]" {
+				t.Errorf("webhook record = %v, want a deployment-wide registration", rec)
+			}
+		}
+	}
+	if !sawTrigger || !sawWebhook {
+		t.Fatalf("records = %v, want a trigger.create and a webhook.register", f.records(t))
+	}
+}
+
+func TestAuditInterceptor_ApplyDetailDistinguishesNoOp(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	for range 2 {
+		if _, err := f.orkflows().ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
+			t.Fatalf("ApplyOrkflow: %v", err)
+		}
+	}
+	records := f.records(t)
+	if len(records) != 2 {
+		t.Fatalf("records = %d, want 2", len(records))
+	}
+	// Both share one instant (a fixed clock), so order by detail rather than time.
+	details := map[string]bool{}
+	for _, rec := range records {
+		details[rec.GetDetail()] = true
+		if rec.GetTarget() != "hello-ork@0.2.0" || rec.GetNamespace() != "default" {
+			t.Errorf("apply record = %v, want target hello-ork@0.2.0 in default", rec)
+		}
+	}
+	if !details["no-op: version already stored"] {
+		t.Errorf("details = %v, want the re-apply recorded as a no-op", details)
+	}
+	var created bool
+	for detail := range details {
+		created = created || strings.HasPrefix(detail, "created digest=sha256:")
+	}
+	if !created {
+		t.Errorf("details = %v, want the first apply recorded as created with its digest", details)
+	}
+
+	// A refused apply names no target: the document never compiled.
+	_, err := f.orkflows().ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: "not: [valid", Namespace: ""}))
+	if err == nil {
+		t.Fatal("ApplyOrkflow of garbage succeeded")
+	}
+	for _, rec := range f.records(t) {
+		if !rec.GetSucceeded() && (rec.GetTarget() != "-" || rec.GetNamespace() != "default" || rec.GetErrorCode() == "") {
+			t.Errorf("refused apply record = %v, want target - in default with an error code", rec)
+		}
+	}
+}
+
+func TestAuditInterceptor_PrincipalVerbatimAndUnattributed(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	const principal = "Dan Santos (ops@corp.example)"
+	if _, err := f.namespaces().CreateNamespace(ctx, withPrincipal(&orkstackv1.CreateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "attributed"},
+	}, principal)); err != nil {
+		t.Fatalf("CreateNamespace: %v", err)
+	}
+	if _, err := f.namespaces().CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "anonymous"},
+	})); err != nil {
+		t.Fatalf("CreateNamespace: %v", err)
+	}
+	byTarget := map[string]*orkstackv1.AuditRecord{}
+	for _, rec := range f.records(t) {
+		byTarget[rec.GetTarget()] = rec
+	}
+	if got := byTarget["attributed"].GetPrincipal(); got != principal {
+		t.Errorf("principal = %q, want %q verbatim", got, principal)
+	}
+	if got := byTarget["anonymous"].GetPrincipal(); got != "" {
+		t.Errorf("principal = %q with no header, want empty", got)
+	}
+	if !strings.HasPrefix(byTarget["attributed"].GetDetail(), "created ") {
+		t.Errorf("detail = %q, want it to start with created", byTarget["attributed"].GetDetail())
+	}
+}
+
+func TestAuditInterceptor_StoreFailureIsNotFatal(t *testing.T) {
+	broken := newAuditFixture(t, auditOptions{store: failingAuditStore{err: errors.New("bucket is on fire")}})
+	working := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	req := func() *connect.Request[orkstackv1.CreateNamespaceRequest] {
+		return connect.NewRequest(&orkstackv1.CreateNamespaceRequest{Namespace: &orkstackv1.Namespace{Name: "incident"}})
+	}
+	brokenResp, brokenErr := broken.namespaces().CreateNamespace(ctx, req())
+	workingResp, workingErr := working.namespaces().CreateNamespace(ctx, req())
+	if brokenErr != nil || workingErr != nil {
+		t.Fatalf("CreateNamespace = %v / %v, want both to succeed", brokenErr, workingErr)
+	}
+	if brokenResp.Msg.GetCreated() != workingResp.Msg.GetCreated() ||
+		brokenResp.Msg.GetNamespace().GetName() != workingResp.Msg.GetNamespace().GetName() {
+		t.Errorf("responses differ: %v vs %v", brokenResp.Msg, workingResp.Msg)
+	}
+	if got := broken.counter.seen(); len(got) != 1 || got[0] != "namespace.create/dropped" {
+		t.Errorf("broken counter = %v, want [namespace.create/dropped]", got)
+	}
+	if got := working.counter.seen(); len(got) != 1 || got[0] != "namespace.create/written" {
+		t.Errorf("working counter = %v, want [namespace.create/written]", got)
+	}
+	logs := broken.logs.String()
+	if strings.Count(logs, "audit record dropped") != 1 || !strings.Contains(logs, "level=WARN") ||
+		!strings.Contains(logs, "bucket is on fire") || !strings.Contains(logs, "action=namespace.create") {
+		t.Errorf("engine log = %q, want one warn line naming the action and the error", logs)
+	}
+}
+
+func TestLegacyWebhookAdapter_RecordsAudit(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	const secret = "legacy-secret-5a6b7c8d"
+	body := `{"url":"https://hooks.example.test/legacy","events":["run_succeeded"],"secret":"` + secret + `"}`
+	post, err := http.NewRequest(http.MethodPost, f.server.URL+api.WebhookCollectionPath, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post.Header.Set("Content-Type", "application/json")
+	post.Header.Set(api.AuditPrincipalHeader, "legacy-operator")
+	resp, err := f.server.Client().Do(post)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST status = %d, want 201", resp.StatusCode)
+	}
+	hooks, err := f.svc.Webhooks().ListContext(context.Background())
+	if err != nil || len(hooks) != 1 {
+		t.Fatalf("webhooks = %v, %v; want one", hooks, err)
+	}
+	id := hooks[0].ID
+
+	del, _ := http.NewRequest(http.MethodDelete, f.server.URL+"/v1/webhooks/"+id, nil)
+	resp, err = f.server.Client().Do(del)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204", resp.StatusCode)
+	}
+	// A second delete is refused, and recorded as a refusal.
+	del2, _ := http.NewRequest(http.MethodDelete, f.server.URL+"/v1/webhooks/"+id, nil)
+	resp, err = f.server.Client().Do(del2)
+	if err != nil {
+		t.Fatalf("DELETE again: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	byProcedure := map[string][]*orkstackv1.AuditRecord{}
+	for _, rec := range f.records(t) {
+		byProcedure[rec.GetProcedure()] = append(byProcedure[rec.GetProcedure()], rec)
+	}
+	register := byProcedure["POST /v1/webhooks"]
+	if len(register) != 1 || register[0].GetAction() != "webhook.register" || register[0].GetTarget() != id ||
+		register[0].GetPrincipal() != "legacy-operator" || !register[0].GetSucceeded() ||
+		register[0].GetSourceAddress() == "" || register[0].GetDetail() != "url=https://hooks.example.test/legacy events=[RUN_SUCCEEDED]" {
+		t.Errorf("register records = %v, want one attributed webhook.register of %s", register, id)
+	}
+	deletes := byProcedure["DELETE /v1/webhooks/{id}"]
+	if len(deletes) != 2 {
+		t.Fatalf("delete records = %v, want two", deletes)
+	}
+	var ok, refused int
+	for _, rec := range deletes {
+		if rec.GetAction() != "webhook.delete" || rec.GetTarget() != id {
+			t.Errorf("delete record = %v", rec)
+		}
+		if rec.GetSucceeded() {
+			ok++
+		} else if rec.GetErrorCode() == "not_found" {
+			refused++
+		}
+	}
+	if ok != 1 || refused != 1 {
+		t.Errorf("deletes = %d ok / %d refused not_found, want 1/1", ok, refused)
+	}
+	for key, document := range f.store.Documents() {
+		if bytes.Contains(document, []byte(secret)) {
+			t.Errorf("audit record %s contains the legacy webhook secret", key)
+		}
+	}
+}
+
+func (f *auditFixture) audit() orkstackv1connect.AuditServiceClient {
+	return orkstackv1connect.NewAuditServiceClient(f.server.Client(), f.server.URL)
+}
+
+func TestListAuditRecords_WindowDefaultsAndValidation(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{}))
+	if err != nil {
+		t.Fatalf("ListAuditRecords: %v", err)
+	}
+	if !resp.Msg.GetUntil().AsTime().Equal(f.now) || !resp.Msg.GetSince().AsTime().Equal(f.now.Add(-7*24*time.Hour)) {
+		t.Errorf("window = [%s, %s), want [now-7d, now)", resp.Msg.GetSince().AsTime(), resp.Msg.GetUntil().AsTime())
+	}
+	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		Since: timestamppb.New(f.now), Until: timestamppb.New(f.now.Add(-time.Hour)),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "must be after since") {
+		t.Errorf("inverted window = %v, want InvalidArgument naming both", err)
+	}
+	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{PageSize: 201}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("page_size 201 = %v, want InvalidArgument", err)
+	}
+	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{PageSize: -1}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("page_size -1 = %v, want InvalidArgument", err)
+	}
+}
+
+// seed writes records directly into the fixture's store, one second apart,
+// newest last.
+func (f *auditFixture) seed(t *testing.T, specs ...[2]string) []*orkstackv1.AuditRecord {
+	t.Helper()
+	var out []*orkstackv1.AuditRecord
+	for i, spec := range specs {
+		at := f.now.Add(-time.Duration(len(specs)-i) * time.Second)
+		rec := &orkstackv1.AuditRecord{
+			SchemaVersion: artifacts.AuditSchemaVersion,
+			Id:            artifacts.NewAuditID(at),
+			At:            timestamppb.New(at),
+			Namespace:     spec[0],
+			Action:        spec[1],
+			Succeeded:     true,
+		}
+		if err := f.store.PutAuditRecord(context.Background(), rec); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func TestListAuditRecords_CursorBindsFilters(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	seeded := f.seed(t, [2]string{"a", "namespace.update"}, [2]string{"a", "namespace.update"}, [2]string{"a", "namespace.update"})
+	first, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		ActionPrefix: "namespace.", PageSize: 1,
+	}))
+	if err != nil || len(first.Msg.GetRecords()) != 1 || first.Msg.GetNextPageToken() == "" {
+		t.Fatalf("first page = %v, %v; want one record and a token", first, err)
+	}
+	if !strings.HasPrefix(first.Msg.GetNextPageToken(), "v1:") {
+		t.Errorf("token %q is not versioned", first.Msg.GetNextPageToken())
+	}
+	_, err = f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		ActionPrefix: "orkflow.", PageSize: 1, PageToken: first.Msg.GetNextPageToken(),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "filters changed") {
+		t.Errorf("token replayed with another action_prefix = %v, want InvalidArgument (filters changed)", err)
+	}
+	// The same filters continue — and the page size may change between pages.
+	// The clock moves between pages: the token, not "now", fixes the window.
+	f.now = f.now.Add(time.Hour)
+	second, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		ActionPrefix: "namespace.", PageSize: 5, PageToken: first.Msg.GetNextPageToken(),
+	}))
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	got := []string{first.Msg.GetRecords()[0].GetId()}
+	for _, rec := range second.Msg.GetRecords() {
+		got = append(got, rec.GetId())
+	}
+	want := []string{seeded[2].GetId(), seeded[1].GetId(), seeded[0].GetId()}
+	if strings.Join(got, ",") != strings.Join(want, ",") || second.Msg.GetNextPageToken() != "" {
+		t.Errorf("walk = %v (next %q), want %v and an exhausted window", got, second.Msg.GetNextPageToken(), want)
+	}
+	if _, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		PageToken: "v1:not-base64!",
+	})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("garbage token = %v, want InvalidArgument", err)
+	}
+}
+
+func TestListAuditRecords_NamespaceEmptyMeansEvery(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	f.seed(t, [2]string{"", "retention.update"}, [2]string{"default", "namespace.update"}, [2]string{"payments", "orkflow.promote"})
+	for _, tc := range []struct {
+		namespace string
+		want      int
+	}{{"", 3}, {"default", 1}, {"payments", 1}, {"missing", 0}} {
+		resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{Namespace: tc.namespace}))
+		if err != nil {
+			t.Fatalf("ListAuditRecords(%q): %v", tc.namespace, err)
+		}
+		if got := len(resp.Msg.GetRecords()); got != tc.want {
+			t.Errorf("namespace %q: %d records, want %d", tc.namespace, got, tc.want)
+		}
+		for _, rec := range resp.Msg.GetRecords() {
+			if tc.namespace != "" && rec.GetNamespace() != tc.namespace {
+				t.Errorf("namespace %q returned a record of %q", tc.namespace, rec.GetNamespace())
+			}
+		}
+	}
+}
+
+func TestListAuditRecords_NoStoreIsFailedPrecondition(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{none: true})
+	_, err := f.audit().ListAuditRecords(context.Background(), connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "audit store is not configured") {
+		t.Fatalf("ListAuditRecords with no store = %v, want FailedPrecondition", err)
+	}
+	// And a write with no store still succeeds, recording nothing.
+	if _, err := f.namespaces().CreateNamespace(context.Background(), connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "quiet"},
+	})); err != nil {
+		t.Fatalf("CreateNamespace with no audit store: %v", err)
+	}
+}
+
+func TestListAuditRecords_ScanBudgetIsResourceExhausted(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{store: failingAuditStore{err: fmt.Errorf("walk: %w", artifacts.ErrAuditScanBudget)}})
+	_, err := f.audit().ListAuditRecords(context.Background(), connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{}))
+	if connect.CodeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "5000") ||
+		!strings.Contains(err.Error(), "narrow --since/--until") {
+		t.Fatalf("budget refusal = %v, want ResourceExhausted naming the budget and the fix", err)
+	}
+	f2 := newAuditFixture(t, auditOptions{store: failingAuditStore{err: errors.New("connection refused")}})
+	_, err = f2.audit().ListAuditRecords(context.Background(), connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{}))
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("store outage = %v, want Unavailable", err)
+	}
+}
