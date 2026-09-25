@@ -235,7 +235,12 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	page
 }) => {
 	// 1. Orkflow list shows the applied orkflow (screenshot for proof).
-	await page.goto(`${UI_ORIGIN}/orkflows`);
+	// The list is name-ordered and paged, and the default namespace lives in
+	// the shared bucket every suite applies into: once 25 or more names sort
+	// before `hello-ork`, it is on page 2 of the default page. Ask for the
+	// largest page so the row's presence depends on this spec's apply, not
+	// on how many orkflows other suites have left behind.
+	await page.goto(`${UI_ORIGIN}/orkflows?size=100`);
 	await expect(page.getByTestId('orkflow-row-hello-ork')).toBeVisible();
 	await expect(page.getByTestId('orkflow-taskcount-hello-ork')).toHaveText('3');
 	await page.screenshot({ path: logPath('screenshot-orkflows.png'), fullPage: true });
