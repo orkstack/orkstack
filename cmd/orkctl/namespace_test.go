@@ -52,6 +52,21 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 	).requireExit(t, exitOK)
 	requireGolden(t, "namespace-update.golden", updated.stdout)
 
+	// Admission: a hold with its reason, the document read back, the release,
+	// and a cap. The since is the fixture's held clock.
+	held := f.run("namespace", "update", "payments",
+		"--hold", "partner CI loop, INC-4412",
+	).requireExit(t, exitOK)
+	requireGolden(t, "namespace-hold.golden", held.stdout)
+	gotHeld := f.run("namespace", "get", "payments").requireExit(t, exitOK)
+	requireGolden(t, "namespace-get-held.golden", gotHeld.stdout)
+	listedHeld := f.run("namespace", "list").requireExit(t, exitOK)
+	requireGolden(t, "namespace-list-held.golden", listedHeld.stdout)
+	released := f.run("namespace", "update", "payments", "--release-hold").requireExit(t, exitOK)
+	requireGolden(t, "namespace-release-hold.golden", released.stdout)
+	capped := f.run("namespace", "update", "payments", "--max-running", "20").requireExit(t, exitOK)
+	requireGolden(t, "namespace-max-running.golden", capped.stdout)
+
 	f.run("namespace", "create", "scratch").requireExit(t, exitOK)
 	deleted := f.run("namespace", "delete", "scratch").requireExit(t, exitOK)
 	requireGolden(t, "namespace-delete.golden", deleted.stdout)
@@ -77,6 +92,17 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 		"--description", "the payments tenant, renamed",
 	).requireExit(t, exitOK)
 	requireGolden(t, "namespace-update.json.golden", updatedJSON.stdout)
+
+	heldJSON := jsonFixture.run("--json", "namespace", "update", "payments",
+		"--hold", "partner CI loop, INC-4412",
+	).requireExit(t, exitOK)
+	requireGolden(t, "namespace-hold.json.golden", heldJSON.stdout)
+	releasedJSON := jsonFixture.run("--json", "namespace", "update", "payments", "--release-hold").
+		requireExit(t, exitOK)
+	requireGolden(t, "namespace-release-hold.json.golden", releasedJSON.stdout)
+	cappedJSON := jsonFixture.run("--json", "namespace", "update", "payments", "--max-running", "20").
+		requireExit(t, exitOK)
+	requireGolden(t, "namespace-max-running.json.golden", cappedJSON.stdout)
 
 	jsonFixture.run("--json", "namespace", "create", "scratch").requireExit(t, exitOK)
 	deletedJSON := jsonFixture.run("--json", "namespace", "delete", "scratch").
