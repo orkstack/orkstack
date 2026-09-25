@@ -408,6 +408,32 @@ func (a *RunArchiver) TallyRuns(ctx context.Context, q ArchiveQuery) (RunTally, 
 	return TallyRunIndex(entries), nil
 }
 
+// ListRunIndex is the failure breakdown's population: every FAILED index row
+// a query's namespace, orkflow and window match, read out of KEYS only.
+//
+// It is how the breakdown learns WHICH runs failed before it reads any of
+// them. Two of the query's fields are deliberately not honoured: Status is
+// always FAILED, whatever the caller set, and Limit — whose convention on
+// ArchiveQuery is "0 means a page" — is ignored along with Exhaustive,
+// because a population that stopped at a page size is not a population. The
+// breakdown bounds its cost by refusing an over-large population outright
+// (api.FailureBreakdownMaxScan), never by reading part of one.
+func (a *RunArchiver) ListRunIndex(ctx context.Context, q ArchiveQuery) ([]artifacts.RunIndexEntry, error) {
+	if a == nil {
+		// Not an empty population, on TallyRuns' terms: "no archive" and "no
+		// run failed" are opposite facts that would render identically.
+		return nil, ErrNoRunArchive
+	}
+	return a.archive.ListRuns(ctx, artifacts.RunQuery{
+		Namespace: q.Namespace,
+		Orkflow:   q.OrkflowName,
+		Status:    archiveStatus(orkstackv1.Status_STATUS_FAILED),
+		Since:     q.Since,
+		Until:     q.Until,
+		Limit:     0,
+	})
+}
+
 // PercentileDuration returns the p-th percentile of an ASCENDING sample by
 // nearest rank: the smallest value at or above p per cent of the samples.
 //
