@@ -29,7 +29,7 @@ The two constructs are mirror images, not variants of one another.
 | | Webhook (existing, unchanged) | Trigger (this contract) |
 | --- | --- | --- |
 | Direction | Outbound: OrkStack calls the subscriber | Inbound: the caller calls OrkStack |
-| Scope | Deployment-wide event subscription; the namespace picker does not filter it | One Orkflow in one namespace, optionally one pinned version |
+| Scope | Deployment-wide event subscription unless it names an exact-match namespace/orkflow/task scope (`docs/UI_CLI_PARITY.md`, "Scoped subscriptions"); the namespace picker does not filter the listing | One Orkflow in one namespace, optionally one pinned version |
 | Authentication | OrkStack signs each delivery with the stored secret (HMAC-SHA256) | The caller presents the trigger's bearer token; OrkStack verifies it |
 | Secret at rest | Plaintext, by necessity: delivery replays it into a signature | Salted SHA-256 digest and salt only; the plaintext is never stored |
 | What the secret proves | That a delivery came from this deployment | That the caller may start this one Orkflow |

@@ -235,13 +235,25 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	page
 }) => {
 	// 1. Orkflow list shows the applied orkflow (screenshot for proof).
-	// The list is name-ordered and paged, and the default namespace lives in
-	// the shared bucket every suite applies into: once 25 or more names sort
-	// before `hello-ork`, it is on page 2 of the default page. Ask for the
-	// largest page so the row's presence depends on this spec's apply, not
-	// on how many orkflows other suites have left behind.
-	await page.goto(`${UI_ORIGIN}/orkflows?size=100`);
-	await expect(page.getByTestId('orkflow-row-hello-ork')).toBeVisible();
+	//
+	// The list is alphabetical and paginated, and the default namespace of the
+	// shared development stack keeps every orkflow other suites applied there,
+	// so hello-ork is not necessarily on the first page: follow Next until the
+	// page that holds it (bounded, and failing if the list ends without it).
+	await page.goto(`${UI_ORIGIN}/orkflows`);
+	const helloRow = page.getByTestId('orkflow-row-hello-ork');
+	for (let pages = 1; ; pages++) {
+		await expect(page.getByTestId('orkflows-page-status')).toBeVisible();
+		if ((await helloRow.count()) > 0) break;
+		const next = page.getByTestId('orkflows-next');
+		if (pages >= 40 || (await next.getAttribute('aria-disabled')) === 'true') {
+			throw new Error(`hello-ork is on none of the ${pages} orkflow list pages`);
+		}
+		const status = await page.getByTestId('orkflows-page-status').textContent();
+		await next.click();
+		await expect(page.getByTestId('orkflows-page-status')).not.toHaveText(status ?? '');
+	}
+	await expect(helloRow).toBeVisible();
 	await expect(page.getByTestId('orkflow-taskcount-hello-ork')).toHaveText('3');
 	await page.screenshot({ path: logPath('screenshot-orkflows.png'), fullPage: true });
 

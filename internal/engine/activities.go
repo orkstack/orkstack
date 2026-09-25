@@ -9,15 +9,17 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// RunNotifier is the seam between a run's state transitions and whoever is
-// listening outside the process. The engine owns *when* a transition happened;
-// it deliberately does not know that the listener is a webhook, what a
-// delivery looks like, or how a Run is spelled on the wire.
+// RunNotifier is the seam between a run's subscribable events and whoever is
+// listening outside the process: the run's own state transitions, and its
+// task outcomes (IsSubscribableEvent). The engine owns *when* an event
+// happened; it deliberately does not know that the listener is a webhook, what
+// a delivery looks like, or how a Run is spelled on the wire.
 //
 // Implementations must not block: this is called from the projection activity,
-// which a run's progress waits on.
+// which a run's progress waits on. Task outcome events arrive too, so an
+// implementation sees up to four more calls per task than per run.
 type RunNotifier interface {
-	NotifyRunTransition(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run)
+	NotifyRunEvent(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run)
 }
 
 // EventObserver sees every lifecycle event the FIRST time this replica
@@ -66,16 +68,17 @@ func NewArchivingEventActivities(bus *EventBus, store *RunStore, archive *RunArc
 	return &EventActivities{bus: bus, store: store, archive: archive}
 }
 
-// WithRunNotifier announces run state transitions to notifier as well, and
-// returns the same activities so it can be chained onto a constructor.
+// WithRunNotifier announces subscribable events — run state transitions and
+// task outcomes — to notifier as well, and returns the same activities so it
+// can be chained onto a constructor.
 func (a *EventActivities) WithRunNotifier(notifier RunNotifier) *EventActivities {
 	a.notifier = notifier
 	return a
 }
 
 // WithEventObserver hands every published event, of any type, to o as well.
-// Unlike WithRunNotifier this is not limited to a run's own transitions: a
-// telemetry observer wants task events too, TASK_LOG included. It returns the
+// Unlike WithRunNotifier this is not limited to subscribable events: a
+// telemetry observer wants every event, TASK_LOG included. It returns the
 // same activities so it can be chained onto a constructor.
 func (a *EventActivities) WithEventObserver(o EventObserver) *EventActivities {
 	a.observer = o
@@ -110,7 +113,8 @@ func (a *EventActivities) WithSnapshotStore(store SnapshotStore) *EventActivitie
 // the terminal event itself. The write is idempotent (the archive body is
 // immutable), which is what lets this activity be retried at all.
 //
-// A run state transition is announced to the RunNotifier, and every event —
+// A subscribable event (IsSubscribableEvent: a run state transition or a task
+// outcome) is announced to the RunNotifier, and every event —
 // including task events and TASK_LOG — is announced to the EventObserver, but
 // only when the bus reports that this publication was the first for its
 // dedupe key. An activity retry or a workflow replay therefore re-runs the
@@ -146,8 +150,8 @@ func (a *EventActivities) PublishEvent(
 	// nothing for a second or third call to recompute.
 	snapshot := a.mergedSnapshot(event.GetRunId(), run)
 
-	if a.notifier != nil && firstPublication && IsRunTransitionEvent(event) && snapshot != nil {
-		a.notifier.NotifyRunTransition(ctx, event, snapshot)
+	if a.notifier != nil && firstPublication && IsSubscribableEvent(event) && snapshot != nil {
+		a.notifier.NotifyRunEvent(ctx, event, snapshot)
 	}
 
 	if a.observer != nil && firstPublication && snapshot != nil {
@@ -212,6 +216,36 @@ func (a *EventActivities) mergedSnapshot(runID string, fallback *orkstackv1.Run)
 		return snapshot
 	}
 	return fallback
+}
+
+// IsSubscribableEvent reports whether an event is one an external subscriber
+// may ask for: a run transition, or a task outcome (TASK_SCHEDULED,
+// TASK_STARTED, TASK_SUCCEEDED, and TASK_FAILED with status FAILED).
+//
+// Two things the interpreter emits are excluded on purpose. TASK_LOG is never
+// one, whatever status it carries: a skipped task and a task that never
+// started before its run ended are recorded as log lines (workflow.go
+// markSkipped, markCanceled). And a TASK_FAILED whose status is CANCELED is not
+// one either: it is how collect records a task that was RUNNING when its run
+// ended — an operator cancel, a run timeout, or a sibling canceled because
+// another task failed (recordFailure's IsCanceledError branch). That task did
+// not fail; delivering it under X-Ork-Event: TASK_FAILED would say it did. The
+// run's terminal delivery carries its CANCELED status, which is where a
+// subscriber reads it.
+//
+// The gate lives here, in the projection activity, and nowhere upstream:
+// RunWorkflow keeps writing the task's status into history exactly as it
+// always has, and only the outbound announcement filters it.
+func IsSubscribableEvent(event *orkstackv1.Event) bool {
+	switch event.GetType() {
+	case orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_STARTED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED:
+		return true
+	case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
+		return event.GetStatus() == orkstackv1.Status_STATUS_FAILED
+	}
+	return IsRunTransitionEvent(event)
 }
 
 // IsRunTransitionEvent reports whether an event moves the run itself between

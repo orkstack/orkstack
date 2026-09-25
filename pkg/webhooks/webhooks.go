@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -18,19 +19,38 @@ import (
 // in-memory implementation used by focused unit tests.
 type Store interface {
 	Register(context.Context, Registration) (Webhook, error)
+	// List returns every subscription without its secret. It is the API's
+	// read: what ListWebhooks and the JSON adapter answer with.
 	List(context.Context) ([]Webhook, error)
+	// ListForDelivery returns every subscription WITH its signing secret, in
+	// the same order List uses. It is the dispatcher's read and nobody
+	// else's: no handler, adapter, CLI or client calls it, and its result is
+	// never serialized. Registry.MatchingContext is its only caller.
+	ListForDelivery(context.Context) ([]Webhook, error)
 	Get(context.Context, string) (Webhook, bool, error)
 	Delete(context.Context, string) (bool, error)
 }
 
-// Event names a run state transition a subscriber can ask for. The values are
-// the run lifecycle event types without their proto prefix, which is how every
-// other OrkStack JSON surface spells an enum (see internal/api/json.go).
+// Event names a transition a subscriber can ask for: one of the run's own
+// transitions, or a task outcome. The values are the lifecycle event types
+// without their proto prefix, which is how every other OrkStack JSON surface
+// spells an enum (see internal/api/json.go). TASK_LOG is deliberately not one:
+// a log line is not a state transition.
 type Event string
 
 const (
 	// EventRunStarted is PENDING → RUNNING.
 	EventRunStarted Event = "RUN_STARTED"
+	// EventTaskScheduled is a task handed to the interpreter's scheduler.
+	EventTaskScheduled Event = "TASK_SCHEDULED"
+	// EventTaskStarted is a task dispatched to an Orker. It means the activity
+	// was scheduled, not that a container is running.
+	EventTaskStarted Event = "TASK_STARTED"
+	// EventTaskSucceeded is a task's committed success.
+	EventTaskSucceeded Event = "TASK_SUCCEEDED"
+	// EventTaskFailed is a task's final failure, after Temporal stopped
+	// retrying it. A task canceled because its run ended is never one.
+	EventTaskFailed Event = "TASK_FAILED"
 	// EventRunSucceeded is RUNNING → SUCCEEDED.
 	EventRunSucceeded Event = "RUN_SUCCEEDED"
 	// EventRunFailed is RUNNING → FAILED.
@@ -39,10 +59,37 @@ const (
 	EventRunCanceled Event = "RUN_CANCELED"
 )
 
-// KnownEvents lists every transition a subscription may name, in lifecycle
-// order.
+// KnownEvents lists every subscribable event, in lifecycle order. The four
+// task outcomes sit between RUN_STARTED and RUN_SUCCEEDED, which leaves the
+// relative order of the run transitions what it always was.
 func KnownEvents() []Event {
+	return []Event{
+		EventRunStarted,
+		EventTaskScheduled, EventTaskStarted, EventTaskSucceeded, EventTaskFailed,
+		EventRunSucceeded, EventRunFailed, EventRunCanceled,
+	}
+}
+
+// RunEvents lists the run's own transitions: what an empty subscription means.
+func RunEvents() []Event {
 	return []Event{EventRunStarted, EventRunSucceeded, EventRunFailed, EventRunCanceled}
+}
+
+func isRunEvent(event Event) bool {
+	for _, run := range RunEvents() {
+		if run == event {
+			return true
+		}
+	}
+	return false
+}
+
+func isTaskEvent(event Event) bool {
+	switch event {
+	case EventTaskScheduled, EventTaskStarted, EventTaskSucceeded, EventTaskFailed:
+		return true
+	}
+	return false
 }
 
 // ParseEvent reads an event name. It accepts the short form a subscriber
@@ -69,20 +116,30 @@ type Webhook struct {
 	ID string `json:"id"`
 	// URL receives the POST.
 	URL string `json:"url"`
-	// Events selects transitions. Empty means every transition.
+	// Events selects transitions. Empty means every run transition; task
+	// outcome events are delivered only to a subscription that names them.
 	Events []Event `json:"events,omitempty"`
 	// Secret signs the body. It is returned once, by Register, and never
 	// again: List and Get answer with Public copies.
 	Secret string `json:"secret,omitempty"`
 	// CreatedAt is when the subscription was registered, in UTC.
 	CreatedAt time.Time `json:"createdAt"`
+	// Namespace, OrkflowName and TaskID are the subscription's scope. Each is
+	// an exact match and empty means every; all three empty is a
+	// deployment-wide subscription. TaskID is consulted only for task
+	// outcome events.
+	Namespace   string `json:"namespace,omitempty"`
+	OrkflowName string `json:"orkflowName,omitempty"`
+	TaskID      string `json:"taskId,omitempty"`
 }
 
 // Subscribes reports whether w wants event. A subscription that named no
-// events wants all of them, which is the useful default for an audit sink.
+// events wants every run transition — the useful default for an audit sink,
+// and the meaning it had when run transitions were the only events. Task
+// outcome events are opt-in by name, always.
 func (w Webhook) Subscribes(event Event) bool {
 	if len(w.Events) == 0 {
-		return true
+		return isRunEvent(event)
 	}
 	for _, want := range w.Events {
 		if want == event {
@@ -90,6 +147,37 @@ func (w Webhook) Subscribes(event Event) bool {
 		}
 	}
 	return false
+}
+
+// Match is what one event looks like to the registry: which transition, of
+// which run, of which task. Namespace is always the resolved name ("default",
+// never ""), because the adapter resolves it before asking; TaskID is empty
+// for a run transition.
+type Match struct {
+	Event       Event
+	Namespace   string
+	OrkflowName string
+	TaskID      string
+}
+
+// Matches reports whether w wants this event. Each scope field is an equality
+// on one coordinate, and an empty field matches every value. TaskID is
+// consulted only when the event is a task outcome event, so one subscription
+// can want TASK_SUCCEEDED of one task and RUN_FAILED of the whole run.
+func (w Webhook) Matches(m Match) bool {
+	if !w.Subscribes(m.Event) {
+		return false
+	}
+	if w.Namespace != "" && w.Namespace != m.Namespace {
+		return false
+	}
+	if w.OrkflowName != "" && w.OrkflowName != m.OrkflowName {
+		return false
+	}
+	if w.TaskID != "" && isTaskEvent(m.Event) && w.TaskID != m.TaskID {
+		return false
+	}
+	return true
 }
 
 // Public returns a copy safe to hand back to a caller: everything but the
@@ -103,11 +191,55 @@ func (w Webhook) Public() Webhook {
 type Registration struct {
 	// URL must be an absolute http or https URL.
 	URL string `json:"url"`
-	// Events selects transitions. Empty means every transition.
+	// Events selects transitions. Empty means every run transition.
 	Events []Event `json:"events,omitempty"`
 	// Secret signs deliveries. Empty means "generate one for me", which is
 	// the path most callers take.
 	Secret string `json:"secret,omitempty"`
+	// Namespace, OrkflowName and TaskID are the scope, on the terms Webhook
+	// states them. ValidateScope decides whether they can be stored.
+	Namespace   string `json:"namespace,omitempty"`
+	OrkflowName string `json:"orkflowName,omitempty"`
+	TaskID      string `json:"taskId,omitempty"`
+}
+
+// maxScopeBytes and scopePattern are the slug rule AGENTS.md §7 states for a
+// namespace, an orkflow name and a task id. It is declared here rather than
+// imported because pkg/webhooks stays ignorant of proto and pkg/artifacts,
+// exactly as pkg/triggers declares its own.
+const maxScopeBytes = 200
+
+var scopePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// ValidateScope reports why a scope cannot be stored. Each non-empty field
+// must be a slug (^[a-z][a-z0-9-]*$, at most 200 bytes), validated and never
+// sanitized. A task id requires at least one task outcome event in events: an
+// empty events means run transitions only, so the task filter could never be
+// consulted.
+func ValidateScope(namespace, orkflowName, taskID string, events []Event) error {
+	for _, field := range []struct{ name, value string }{
+		{"namespace", namespace}, {"orkflow", orkflowName}, {"task", taskID},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if len(field.value) > maxScopeBytes {
+			return fmt.Errorf("webhooks: invalid %s scope %q: longer than %d bytes", field.name, field.value, maxScopeBytes)
+		}
+		if !scopePattern.MatchString(field.value) {
+			return fmt.Errorf("webhooks: invalid %s scope %q: must match %s", field.name, field.value, scopePattern)
+		}
+	}
+	if taskID == "" {
+		return nil
+	}
+	for _, raw := range events {
+		if event, err := ParseEvent(string(raw)); err == nil && isTaskEvent(event) {
+			return nil
+		}
+	}
+	return fmt.Errorf("webhooks: a task scope %q needs at least one task event (TASK_SCHEDULED, TASK_STARTED, TASK_SUCCEEDED, TASK_FAILED); "+
+		"without one the subscription receives run transitions only and the task filter is never consulted", taskID)
 }
 
 // Registry holds subscriptions in process. It is the smallest thing that
@@ -189,6 +321,9 @@ func (r *Registry) RegisterContext(ctx context.Context, reg Registration) (Webho
 	if err != nil {
 		return Webhook{}, err
 	}
+	if err := ValidateScope(reg.Namespace, reg.OrkflowName, reg.TaskID, events); err != nil {
+		return Webhook{}, err
+	}
 
 	secret := reg.Secret
 	if secret == "" {
@@ -203,11 +338,14 @@ func (r *Registry) RegisterContext(ctx context.Context, reg Registration) (Webho
 	}
 
 	hook := Webhook{
-		ID:        id,
-		URL:       target,
-		Events:    events,
-		Secret:    secret,
-		CreatedAt: r.now().UTC(),
+		ID:          id,
+		URL:         target,
+		Events:      events,
+		Secret:      secret,
+		CreatedAt:   r.now().UTC(),
+		Namespace:   reg.Namespace,
+		OrkflowName: reg.OrkflowName,
+		TaskID:      reg.TaskID,
 	}
 
 	r.mu.Lock()
@@ -282,25 +420,25 @@ func (r *Registry) DeleteContext(ctx context.Context, id string) (bool, error) {
 	return true, nil
 }
 
-// Matching returns the subscriptions that want event, secrets included: this
-// is the dispatcher's read, not an API response.
-func (r *Registry) Matching(event Event) []Webhook {
-	hooks, _ := r.MatchingContext(context.Background(), event)
+// Matching returns the subscriptions that want this event, secrets included:
+// this is the dispatcher's read, not an API response.
+func (r *Registry) Matching(m Match) []Webhook {
+	hooks, _ := r.MatchingContext(context.Background(), m)
 	return hooks
 }
 
 // MatchingContext performs the lookup against the shared registry. Callers
 // that dispatch run notifications should bound this context and treat errors
 // as best-effort delivery failures.
-func (r *Registry) MatchingContext(ctx context.Context, event Event) ([]Webhook, error) {
+func (r *Registry) MatchingContext(ctx context.Context, m Match) ([]Webhook, error) {
 	if r.store != nil {
-		hooks, err := r.store.List(ctx)
+		hooks, err := r.store.ListForDelivery(ctx)
 		if err != nil {
 			return nil, err
 		}
 		out := hooks[:0]
 		for _, hook := range hooks {
-			if hook.Subscribes(event) {
+			if hook.Matches(m) {
 				out = append(out, hook)
 			}
 		}
@@ -310,7 +448,7 @@ func (r *Registry) MatchingContext(ctx context.Context, event Event) ([]Webhook,
 	defer r.mu.RUnlock()
 	out := make([]Webhook, 0, len(r.order))
 	for _, id := range r.order {
-		if hook := r.byID[id]; hook.Subscribes(event) {
+		if hook := r.byID[id]; hook.Matches(m) {
 			out = append(out, hook)
 		}
 	}

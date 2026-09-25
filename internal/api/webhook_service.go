@@ -11,8 +11,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// RegisterWebhook creates one deployment-wide subscription. Its signing
-// secret appears only in this response; every later read maps to Webhook.
+// RegisterWebhook creates one subscription, deployment-wide unless it names a
+// scope. Its signing secret appears only in this response; every later read
+// maps to Webhook. A scope is checked for shape, never for existence: a
+// subscription may be registered before the orkflow it names is applied.
 func (s *Service) RegisterWebhook(ctx context.Context, req *connect.Request[orkstackv1.RegisterWebhookRequest]) (*connect.Response[orkstackv1.RegisterWebhookResponse], error) {
 	events, err := webhookEventsFromProto(req.Msg.GetEvents())
 	if err != nil {
@@ -21,7 +23,13 @@ func (s *Service) RegisterWebhook(ctx context.Context, req *connect.Request[orks
 	if _, err := webhooks.ValidateURL(req.Msg.GetUrl()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	hook, err := s.webhooks.RegisterContext(ctx, webhooks.Registration{URL: req.Msg.GetUrl(), Events: events, Secret: req.Msg.GetSecret()})
+	if err := webhooks.ValidateScope(req.Msg.GetNamespace(), req.Msg.GetOrkflowName(), req.Msg.GetTaskId(), events); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	hook, err := s.webhooks.RegisterContext(ctx, webhooks.Registration{
+		URL: req.Msg.GetUrl(), Events: events, Secret: req.Msg.GetSecret(),
+		Namespace: req.Msg.GetNamespace(), OrkflowName: req.Msg.GetOrkflowName(), TaskID: req.Msg.GetTaskId(),
+	})
 	if err != nil {
 		return nil, webhookConnectError(err)
 	}
@@ -70,7 +78,10 @@ func webhookProto(hook webhooks.Webhook) *orkstackv1.Webhook {
 			events = append(events, orkstackv1.EventType(value))
 		}
 	}
-	return &orkstackv1.Webhook{Id: hook.ID, Url: hook.URL, Events: events, CreatedAt: timestamppb.New(hook.CreatedAt)}
+	return &orkstackv1.Webhook{
+		Id: hook.ID, Url: hook.URL, Events: events, CreatedAt: timestamppb.New(hook.CreatedAt),
+		Namespace: hook.Namespace, OrkflowName: hook.OrkflowName, TaskId: hook.TaskID,
+	}
 }
 
 func webhookConnectError(err error) error {
