@@ -154,6 +154,75 @@ func TestTallyRuns_ReadsIndexKeysAndNeverABody(t *testing.T) {
 	_, _ = noBodies{inner: store}.GetRun(context.Background(), "ork-anything")
 }
 
+// TestListRunIndex_ReadsKeysOnlyIgnoresLimitAndNarrowsToFailed is the failure
+// breakdown's population: every FAILED index row in the window, read out of
+// keys, however many there are and whatever limit the caller set.
+func TestListRunIndex_ReadsKeysOnlyIgnoresLimitAndNarrowsToFailed(t *testing.T) {
+	store, err := artifacts.NewLocalRunArchive(t.TempDir())
+	if err != nil {
+		t.Fatalf("open local run archive: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	writer := engine.NewRunArchiver(store)
+	seed := func(namespace, orkflow string, status orkstackv1.Status, at time.Time, n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			run := &orkstackv1.Run{
+				Id:          fmt.Sprintf("ork-%s-%s-%s-%d-%d", namespace, orkflow, status, at.UnixNano(), i),
+				Namespace:   namespace,
+				OrkflowName: orkflow,
+				Status:      status,
+				CreatedAt:   timestamppb.New(at),
+			}
+			if err := writer.Archive(context.Background(), run, nil); err != nil {
+				t.Fatalf("archive: %v", err)
+			}
+		}
+	}
+	seed("alpha", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, now.Add(-time.Hour), 3)
+	seed("alpha", "deploy", orkstackv1.Status_STATUS_CANCELED, now.Add(-time.Hour), 2)
+	seed("alpha", "deploy", orkstackv1.Status_STATUS_FAILED, now.Add(-time.Hour), 4)
+	seed("alpha", "nightly", orkstackv1.Status_STATUS_FAILED, now.Add(-2*time.Hour), 3)
+	seed("alpha", "deploy", orkstackv1.Status_STATUS_FAILED, now.Add(-48*time.Hour), 5)
+	seed("beta", "deploy", orkstackv1.Status_STATUS_FAILED, now.Add(-time.Hour), 9)
+
+	sealed := engine.NewRunArchiver(noBodies{inner: store})
+	entries, err := sealed.ListRunIndex(context.Background(), engine.ArchiveQuery{
+		Namespace: "alpha",
+		Since:     now.Add(-24 * time.Hour),
+		Until:     now,
+		// Neither must narrow a population: the status is always FAILED and
+		// a limit a caller happened to set is not a census bound.
+		Status: orkstackv1.Status_STATUS_SUCCEEDED,
+		Limit:  2,
+	})
+	if err != nil {
+		t.Fatalf("ListRunIndex: %v", err)
+	}
+	if len(entries) != 7 {
+		t.Fatalf("ListRunIndex returned %d entries, want the 7 failed runs of alpha in the window", len(entries))
+	}
+	for _, entry := range entries {
+		if entry.Namespace != "alpha" || artifacts.NormalizeRunStatus(entry.Status) != engine.StatusKeyFailed {
+			t.Errorf("entry %+v is not one of alpha's failed runs", entry)
+		}
+	}
+
+	one, err := sealed.ListRunIndex(context.Background(), engine.ArchiveQuery{
+		Namespace: "alpha", OrkflowName: "nightly", Since: now.Add(-24 * time.Hour), Until: now,
+	})
+	if err != nil || len(one) != 3 {
+		t.Fatalf("ListRunIndex(nightly) = %d entries, %v; want 3", len(one), err)
+	}
+
+	var absent *engine.RunArchiver
+	if _, err := absent.ListRunIndex(context.Background(), engine.ArchiveQuery{Namespace: "alpha"}); err != engine.ErrNoRunArchive {
+		t.Fatalf("a nil archiver answered %v, want ErrNoRunArchive", err)
+	}
+}
+
 // noBodies answers listings and refuses bodies.
 type noBodies struct {
 	inner artifacts.RunArchive

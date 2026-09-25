@@ -13,10 +13,12 @@ import (
 
 	"connectrpc.com/connect"
 	enumspb "go.temporal.io/api/enums/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -478,4 +480,63 @@ func writeStatsTranscript(
 	fmt.Fprintf(&out, "alpha's numbers exclude beta's: %t\n",
 		statsDigest(alphaA) != statsDigest(betaA))
 	proof.Write(t, "orkctl", "stats-two-replicas.txt", []byte(out.String()))
+}
+
+// TestIntegration_TwoReplicasReportTheSameFailureBreakdown is AGENTS.md §7 for
+// the one stats read that opens run bodies: every run is submitted to replica
+// A, and replica B — which started nothing — must group the same failed runs
+// into the same fingerprints. The window is pinned for the reason the stats
+// test above pins it. Only computed_at, the one field that records WHEN, may
+// differ; everything else is compared with proto.Equal.
+func TestIntegration_TwoReplicasReportTheSameFailureBreakdown(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	corpus := seedFailureCorpus(ctx, t, 2)
+	statsA, statsB := statsClientFor(t, corpus.replicas[0]), statsClientFor(t, corpus.replicas[1])
+
+	var transcript strings.Builder
+	fmt.Fprintf(&transcript, "# two engine replicas, one failure breakdown (%s)\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(&transcript, "namespace  %s\nwindow     %s .. %s (pinned)\nevery run submitted to replica A (ork-A)\n\n",
+		corpus.namespace, corpus.since.Format(time.RFC3339), corpus.until.Format(time.RFC3339))
+	for _, groupBy := range [][]orkstackv1.FailureGroupBy{
+		nil,
+		{
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_CODE,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_IMAGE,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_PHASE,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_POOL,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_ORKER,
+		},
+	} {
+		req := &orkstackv1.GetFailureBreakdownRequest{
+			Namespace: corpus.namespace, GroupBy: groupBy,
+			Since: timestamppb.New(corpus.since), Until: timestamppb.New(corpus.until),
+		}
+		// B first: it started nothing, so nothing it could hold would help it.
+		fromB, err := statsB.GetFailureBreakdown(ctx, connect.NewRequest(req))
+		if err != nil {
+			t.Fatalf("GetFailureBreakdown on replica B: %v", err)
+		}
+		fromA, err := statsA.GetFailureBreakdown(ctx, connect.NewRequest(req))
+		if err != nil {
+			t.Fatalf("GetFailureBreakdown on replica A: %v", err)
+		}
+		a, b := fromA.Msg, fromB.Msg
+		if a.GetFailedRunsInWindow() != int64(corpus.failed()) {
+			t.Fatalf("replica A counts %d failed runs, want %d", a.GetFailedRunsInWindow(), corpus.failed())
+		}
+		computedA, computedB := a.GetComputedAt().AsTime(), b.GetComputedAt().AsTime()
+		a.ComputedAt, b.ComputedAt = nil, nil
+		equal := proto.Equal(a, b)
+		if !equal {
+			t.Errorf("the replicas disagree (group_by %v):\n replica A %v\n replica B %v", groupBy, a, b)
+		}
+		encodedA, _ := api.MarshalJSON(a)
+		fmt.Fprintf(&transcript, "group_by %v\n  replica A computed %s, replica B computed %s\n  answer %s\n  proto.Equal(A, B) with computed_at cleared: %t\n\n",
+			a.GetGroupBy(), computedA.Format(time.RFC3339Nano), computedB.Format(time.RFC3339Nano), encodedA, equal)
+		t.Logf("EVIDENCE failure_breakdown_two_replicas group_by=%v groups=%d failed_runs_in_window=%d proto_equal=%t",
+			a.GetGroupBy(), len(a.GetGroups()), a.GetFailedRunsInWindow(), equal)
+	}
+	proof.Write(t, "stats-failures", "two-replicas.txt", []byte(transcript.String()))
 }

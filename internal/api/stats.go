@@ -16,6 +16,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 const (
@@ -76,6 +77,18 @@ type RunIndexTallier interface {
 	TallyRuns(ctx context.Context, q engine.ArchiveQuery) (engine.RunTally, error)
 }
 
+// RunIndexLister is the archive's keys-only listing: the index rows a
+// query matches, every field read out of the KEY. It is how the failure
+// breakdown learns WHICH runs failed before it reads any of them.
+//
+// Implementations answer the FAILED rows of the query's namespace, orkflow and
+// window, and every one of them: the query's Status and Limit are not
+// honoured, because a population narrowed to another status or stopped at a
+// page is not the population (engine.RunArchiver.ListRunIndex).
+type RunIndexLister interface {
+	ListRunIndex(ctx context.Context, q engine.ArchiveQuery) ([]artifacts.RunIndexEntry, error)
+}
+
 // StatsCacheTTLFromEnv reads StatsCacheTTLVar, falling back to
 // DefaultStatsCacheTTL. An explicit zero or negative value switches the cache
 // off; an unparsable one is ignored, because a typo in an optimisation's knob
@@ -125,15 +138,25 @@ type statsKey struct {
 // statsKeyFor is the key of one request, in one place, so the lookup and the
 // store can never disagree about what was asked.
 func statsKeyFor(namespace string, req *orkstackv1.GetStatsRequest) statsKey {
+	return windowKeyFor(namespace, req.GetSince(), req.GetUntil(), req.GetLookback())
+}
+
+// windowKeyFor is the namespace-and-window half of a key, as sent. Both the
+// stats cache and the failure-breakdown cache key their window through it.
+func windowKeyFor(
+	namespace string,
+	since, until *timestamppb.Timestamp,
+	lookback *durationpb.Duration,
+) statsKey {
 	key := statsKey{namespace: namespace}
-	if ts := req.GetSince(); ts != nil {
-		key.since, key.sinceSet = ts.AsTime().UnixNano(), true
+	if since != nil {
+		key.since, key.sinceSet = since.AsTime().UnixNano(), true
 	}
-	if ts := req.GetUntil(); ts != nil {
-		key.until, key.untilSet = ts.AsTime().UnixNano(), true
+	if until != nil {
+		key.until, key.untilSet = until.AsTime().UnixNano(), true
 	}
-	if d := req.GetLookback(); d != nil {
-		key.lookback, key.lookbackSet = int64(d.AsDuration()), true
+	if lookback != nil {
+		key.lookback, key.lookbackSet = int64(lookback.AsDuration()), true
 	}
 	return key
 }
@@ -161,12 +184,20 @@ type StatsHandler struct {
 
 	mu    sync.Mutex
 	cache map[statsKey]statsEntry
+	// breakdowns is GetFailureBreakdown's cache, under the same mu, TTL and
+	// bound: one whole answer per question, never a merge.
+	breakdowns map[breakdownKey]breakdownEntry
 }
 
 // NewStatsHandler returns the stats surface over a service. ttl is used as
 // given; NewMux is where an unset one becomes the documented default.
 func NewStatsHandler(svc *Service, ttl time.Duration) *StatsHandler {
-	return &StatsHandler{svc: svc, ttl: ttl, cache: map[statsKey]statsEntry{}}
+	return &StatsHandler{
+		svc:        svc,
+		ttl:        ttl,
+		cache:      map[statsKey]statsEntry{},
+		breakdowns: map[breakdownKey]breakdownEntry{},
+	}
 }
 
 // GetStats reports one namespace's runs over one window.
@@ -190,7 +221,8 @@ func (h *StatsHandler) GetStats(
 	// refused window collect the previous caller's numbers: the two requests
 	// differ in a field the answer does not carry, and one of them is not a
 	// question.
-	window, err := h.window(ns.GetName(), req.Msg)
+	window, err := h.windowOf(ns.GetName(),
+		req.Msg.GetSince(), req.Msg.GetUntil(), req.Msg.GetLookback())
 	if err != nil {
 		return nil, err
 	}
@@ -206,32 +238,38 @@ func (h *StatsHandler) GetStats(
 	return connect.NewResponse(cloneStats(computed)), nil
 }
 
-// window resolves the request's bounds against ONE clock: this server's.
+// windowOf resolves a request's bounds against ONE clock: this server's.
 //
 // An empty `until` is now and an empty `since` is `lookback` before the window
 // ends, so the ordinary request — "how are we doing?" — needs no arguments,
 // and a relative one needs only a duration. A window that ends at or before it
 // starts is refused: answering it with zeros would hand back a set of numbers
 // that read exactly like a healthy, idle namespace.
-func (h *StatsHandler) window(
+//
+// It takes the three fields rather than a request because two RPCs carry them
+// — GetStats and GetFailureBreakdown — and they must not drift on what a
+// window means: the breakdown's population is GetStats' failed count, and the
+// two only reconcile if they are measured over the same instants.
+func (h *StatsHandler) windowOf(
 	namespace string,
-	req *orkstackv1.GetStatsRequest,
+	sinceTS, untilTS *timestamppb.Timestamp,
+	lookbackD *durationpb.Duration,
 ) (engine.StatsWindow, error) {
 	now := h.now()
 	until := now
-	if ts := req.GetUntil(); ts != nil {
-		until = ts.AsTime().UTC()
+	if untilTS != nil {
+		until = untilTS.AsTime().UTC()
 	}
 	// The relative form, resolved against the SAME clock that fixed the end of
 	// the window. A negative lookback is refused below with everything else
 	// that makes a window empty.
 	lookback := DefaultStatsWindow
-	if d := req.GetLookback(); d != nil {
-		lookback = d.AsDuration()
+	if lookbackD != nil {
+		lookback = lookbackD.AsDuration()
 	}
 	since := until.Add(-lookback)
-	if ts := req.GetSince(); ts != nil {
-		since = ts.AsTime().UTC()
+	if sinceTS != nil {
+		since = sinceTS.AsTime().UTC()
 	}
 	if !until.After(since) {
 		return engine.StatsWindow{}, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(

@@ -1,4 +1,6 @@
 import type { Duration, Timestamp } from '@bufbuild/protobuf/wkt';
+import { FailureCategory } from './gen/orkstack/v1/common_pb';
+import { FailureGroupBy, type FailureGroup, type GetFailureBreakdownResponse } from './gen/orkstack/v1/stats_pb';
 
 // UNAVAILABLE is what a number that cannot be answered renders as.
 //
@@ -107,4 +109,101 @@ export function fmtAge(ts: Timestamp | undefined, now: number): string {
 export function finishedRuns(counts: Record<string, bigint> | undefined): number {
 	const at = (key: string) => Number(counts?.[key] ?? 0n);
 	return at('succeeded') + at('failed') + at('canceled');
+}
+
+// ---- failure fingerprints --------------------------------------------------
+//
+// The dashboard's fingerprint rows and `orkctl stats failures` render the same
+// GetFailureBreakdownResponse, and these helpers are the browser's half of
+// that parity: the same spellings, the same `unavailable` versus `-` rule, the
+// same footer sentences from the same fields (cmd/orkctl/stats_failures.go).
+
+/** DASH is an empty value the snapshot genuinely does not carry. */
+export const DASH = '-';
+
+/** Every fingerprint dimension, in the enum's (and the table's) order. */
+export const FINGERPRINT_DIMENSIONS: FailureGroupBy[] = [
+	FailureGroupBy.ORKFLOW,
+	FailureGroupBy.TASK,
+	FailureGroupBy.CODE,
+	FailureGroupBy.CATEGORY,
+	FailureGroupBy.IMAGE,
+	FailureGroupBy.POOL,
+	FailureGroupBy.PHASE,
+	FailureGroupBy.ORKER
+];
+
+/** The dimensions an empty group_by resolves to, server-side and here. */
+export const DEFAULT_FINGERPRINT: FailureGroupBy[] = [
+	FailureGroupBy.ORKFLOW,
+	FailureGroupBy.TASK,
+	FailureGroupBy.CODE,
+	FailureGroupBy.CATEGORY
+];
+
+/** groupBySpelling is a dimension in `--group-by`'s lower-case vocabulary. */
+export function groupBySpelling(dim: FailureGroupBy): string {
+	return dim === FailureGroupBy.UNSPECIFIED ? '' : (FailureGroupBy[dim] ?? '').toLowerCase();
+}
+
+/**
+ * fmtCategory renders a §4 failure category in the JSON dialect's short form
+ * (`ACTIVITY_FAILED`); an unspecified one is a dash, never a guess.
+ */
+export function fmtCategory(category: FailureCategory): string {
+	return category === FailureCategory.UNSPECIFIED ? DASH : (FailureCategory[category] ?? String(category));
+}
+
+/**
+ * fingerprintCell renders one dimension of one group.
+ *
+ * An empty image or phase in a group whose attempt evidence is missing is
+ * UNAVAILABLE — the record was reclaimed or never written. Every other empty
+ * value is a dash: the snapshot genuinely carries none. The proto names these
+ * as two distinct facts (stats.proto, FailureGroup), and they must not render
+ * alike.
+ */
+export function fingerprintCell(group: FailureGroup, dim: FailureGroupBy): { text: string; unavailable: boolean } {
+	let value = '';
+	switch (dim) {
+		case FailureGroupBy.ORKFLOW: value = group.orkflowName; break;
+		case FailureGroupBy.TASK: value = group.taskId; break;
+		case FailureGroupBy.CODE: value = group.code; break;
+		case FailureGroupBy.CATEGORY: return { text: fmtCategory(group.category), unavailable: false };
+		case FailureGroupBy.IMAGE: value = group.imagePinned; break;
+		case FailureGroupBy.POOL: value = group.pool; break;
+		case FailureGroupBy.PHASE: value = group.phase; break;
+		case FailureGroupBy.ORKER: value = group.orkerId; break;
+	}
+	if (!value && group.attemptEvidenceMissing > 0n && (dim === FailureGroupBy.IMAGE || dim === FailureGroupBy.PHASE)) {
+		return { text: UNAVAILABLE, unavailable: true };
+	}
+	return { text: value || DASH, unavailable: false };
+}
+
+function plural(n: bigint, noun: string): string {
+	return `${n} ${noun}${n === 1n ? '' : 's'}`;
+}
+
+/**
+ * fingerprintFooter is the sentences under the table, in the order `orkctl
+ * stats failures` prints them. `category` is the one the request asked for,
+ * which the response does not echo.
+ */
+export function fingerprintFooter(resp: GetFailureBreakdownResponse, category: FailureCategory = FailureCategory.UNSPECIFIED): string[] {
+	const lines = [
+		`scanned ${resp.failedRunsScanned} of ${resp.failedRunsInWindow} failed runs in the window; ${resp.failedRunsGrouped} grouped into ${plural(resp.groupsTotal, 'group')}`
+	];
+	const shown = BigInt(resp.groups.length);
+	if (shown < resp.groupsTotal) lines.push(`showing ${shown} of ${resp.groupsTotal} groups (raise --limit)`);
+	if (category !== FailureCategory.UNSPECIFIED) {
+		lines.push(`category ${fmtCategory(category)}: ${resp.failedRunsGrouped} of ${resp.failedRunsScanned} failed runs`);
+	}
+	if (resp.attemptEvidenceMissing > 0n) {
+		const groups = BigInt(resp.groups.filter((group) => group.attemptEvidenceMissing > 0n).length);
+		lines.push(
+			`image and phase unavailable for ${plural(groups, 'group')}: attempt records for ${plural(resp.attemptEvidenceMissing, 'run')} were reclaimed or never written`
+		);
+	}
+	return lines;
 }

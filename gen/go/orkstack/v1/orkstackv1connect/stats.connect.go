@@ -35,12 +35,26 @@ const (
 const (
 	// StatsServiceGetStatsProcedure is the fully-qualified name of the StatsService's GetStats RPC.
 	StatsServiceGetStatsProcedure = "/orkstack.v1.StatsService/GetStats"
+	// StatsServiceGetFailureBreakdownProcedure is the fully-qualified name of the StatsService's
+	// GetFailureBreakdown RPC.
+	StatsServiceGetFailureBreakdownProcedure = "/orkstack.v1.StatsService/GetFailureBreakdown"
 )
 
 // StatsServiceClient is a client for the orkstack.v1.StatsService service.
 type StatsServiceClient interface {
 	// GetStats reports one namespace's runs over one time window.
 	GetStats(context.Context, *connect.Request[v1.GetStatsRequest]) (*connect.Response[v1.GetStatsResponse], error)
+	// GetFailureBreakdown groups one namespace's FAILED runs over one window by
+	// the dimensions the caller names. It is the read that makes the §4
+	// failure categories pay: a category nobody counts is a comment.
+	//
+	// It reads run BODIES — one per failed run in the window — which GetStats
+	// deliberately never does. The discriminating facts are not in the index
+	// key, and widening the key would be a migration and a second copy of the
+	// body. So the cost is bounded three ways instead: by the window, by the
+	// failed subset of it, and by a scan budget that FAILS the call rather
+	// than answering from a subset (see GetFailureBreakdownResponse).
+	GetFailureBreakdown(context.Context, *connect.Request[v1.GetFailureBreakdownRequest]) (*connect.Response[v1.GetFailureBreakdownResponse], error)
 }
 
 // NewStatsServiceClient constructs a client for the orkstack.v1.StatsService service. By default,
@@ -60,12 +74,19 @@ func NewStatsServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(statsServiceMethods.ByName("GetStats")),
 			connect.WithClientOptions(opts...),
 		),
+		getFailureBreakdown: connect.NewClient[v1.GetFailureBreakdownRequest, v1.GetFailureBreakdownResponse](
+			httpClient,
+			baseURL+StatsServiceGetFailureBreakdownProcedure,
+			connect.WithSchema(statsServiceMethods.ByName("GetFailureBreakdown")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // statsServiceClient implements StatsServiceClient.
 type statsServiceClient struct {
-	getStats *connect.Client[v1.GetStatsRequest, v1.GetStatsResponse]
+	getStats            *connect.Client[v1.GetStatsRequest, v1.GetStatsResponse]
+	getFailureBreakdown *connect.Client[v1.GetFailureBreakdownRequest, v1.GetFailureBreakdownResponse]
 }
 
 // GetStats calls orkstack.v1.StatsService.GetStats.
@@ -73,10 +94,26 @@ func (c *statsServiceClient) GetStats(ctx context.Context, req *connect.Request[
 	return c.getStats.CallUnary(ctx, req)
 }
 
+// GetFailureBreakdown calls orkstack.v1.StatsService.GetFailureBreakdown.
+func (c *statsServiceClient) GetFailureBreakdown(ctx context.Context, req *connect.Request[v1.GetFailureBreakdownRequest]) (*connect.Response[v1.GetFailureBreakdownResponse], error) {
+	return c.getFailureBreakdown.CallUnary(ctx, req)
+}
+
 // StatsServiceHandler is an implementation of the orkstack.v1.StatsService service.
 type StatsServiceHandler interface {
 	// GetStats reports one namespace's runs over one time window.
 	GetStats(context.Context, *connect.Request[v1.GetStatsRequest]) (*connect.Response[v1.GetStatsResponse], error)
+	// GetFailureBreakdown groups one namespace's FAILED runs over one window by
+	// the dimensions the caller names. It is the read that makes the §4
+	// failure categories pay: a category nobody counts is a comment.
+	//
+	// It reads run BODIES — one per failed run in the window — which GetStats
+	// deliberately never does. The discriminating facts are not in the index
+	// key, and widening the key would be a migration and a second copy of the
+	// body. So the cost is bounded three ways instead: by the window, by the
+	// failed subset of it, and by a scan budget that FAILS the call rather
+	// than answering from a subset (see GetFailureBreakdownResponse).
+	GetFailureBreakdown(context.Context, *connect.Request[v1.GetFailureBreakdownRequest]) (*connect.Response[v1.GetFailureBreakdownResponse], error)
 }
 
 // NewStatsServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -92,10 +129,18 @@ func NewStatsServiceHandler(svc StatsServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(statsServiceMethods.ByName("GetStats")),
 		connect.WithHandlerOptions(opts...),
 	)
+	statsServiceGetFailureBreakdownHandler := connect.NewUnaryHandler(
+		StatsServiceGetFailureBreakdownProcedure,
+		svc.GetFailureBreakdown,
+		connect.WithSchema(statsServiceMethods.ByName("GetFailureBreakdown")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.StatsService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case StatsServiceGetStatsProcedure:
 			statsServiceGetStatsHandler.ServeHTTP(w, r)
+		case StatsServiceGetFailureBreakdownProcedure:
+			statsServiceGetFailureBreakdownHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -107,4 +152,8 @@ type UnimplementedStatsServiceHandler struct{}
 
 func (UnimplementedStatsServiceHandler) GetStats(context.Context, *connect.Request[v1.GetStatsRequest]) (*connect.Response[v1.GetStatsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.StatsService.GetStats is not implemented"))
+}
+
+func (UnimplementedStatsServiceHandler) GetFailureBreakdown(context.Context, *connect.Request[v1.GetFailureBreakdownRequest]) (*connect.Response[v1.GetFailureBreakdownResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.StatsService.GetFailureBreakdown is not implemented"))
 }

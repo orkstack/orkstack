@@ -2,10 +2,12 @@
 // @generated from file orkstack/v1/stats.proto (package orkstack.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Duration, Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_duration, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { FailureCategory } from "./common_pb";
+import { file_orkstack_v1_common } from "./common_pb";
 import type { Pool } from "./namespace_pb";
 import { file_orkstack_v1_namespace } from "./namespace_pb";
 import type { Run } from "./run_pb";
@@ -16,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/stats.proto.
  */
 export const file_orkstack_v1_stats: GenFile = /*@__PURE__*/
-  fileDesc("ChdvcmtzdGFjay92MS9zdGF0cy5wcm90bxILb3Jrc3RhY2sudjEipwEKD0dldFN0YXRzUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJGCg9PcmtmbG93RmFpbHVyZXMSFAoMb3JrZmxvd19uYW1lGAEgASgJEg4KBmZhaWxlZBgCIAEoAxINCgV0b3RhbBgDIAEoAyKjBQoQR2V0U3RhdHNSZXNwb25zZRJHCg5ydW5zX2J5X3N0YXR1cxgBIAMoCzIvLm9ya3N0YWNrLnYxLkdldFN0YXRzUmVzcG9uc2UuUnVuc0J5U3RhdHVzRW50cnkSFAoMc3VjY2Vzc19yYXRlGAIgASgBEhwKFHN1Y2Nlc3NfcmF0ZV9kZWZpbmVkGAMgASgIEi8KDHA1MF9kdXJhdGlvbhgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIvCgxwOTVfZHVyYXRpb24YBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SOwoXZHVyYXRpb25fY292ZXJhZ2Vfc2luY2UYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEh0KFWR1cmF0aW9uX3NhbXBsZV9jb3VudBgHIAEoAxIyCgxtb3N0X2ZhaWxpbmcYCCADKAsyHC5vcmtzdGFjay52MS5PcmtmbG93RmFpbHVyZXMSIQoHcnVubmluZxgJIAMoCzIQLm9ya3N0YWNrLnYxLlJ1bhIgCgVwb29scxgKIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSLwoLY29tcHV0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgOIAEoCRIwCgx3aW5kb3dfc2luY2UYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAaMwoRUnVuc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ATJXCgxTdGF0c1NlcnZpY2USRwoIR2V0U3RhdHMSHC5vcmtzdGFjay52MS5HZXRTdGF0c1JlcXVlc3QaHS5vcmtzdGFjay52MS5HZXRTdGF0c1Jlc3BvbnNlQqYBCg9jb20ub3Jrc3RhY2sudjFCClN0YXRzUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_namespace, file_orkstack_v1_run]);
+  fileDesc("ChdvcmtzdGFjay92MS9zdGF0cy5wcm90bxILb3Jrc3RhY2sudjEipwEKD0dldFN0YXRzUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJGCg9PcmtmbG93RmFpbHVyZXMSFAoMb3JrZmxvd19uYW1lGAEgASgJEg4KBmZhaWxlZBgCIAEoAxINCgV0b3RhbBgDIAEoAyKjBQoQR2V0U3RhdHNSZXNwb25zZRJHCg5ydW5zX2J5X3N0YXR1cxgBIAMoCzIvLm9ya3N0YWNrLnYxLkdldFN0YXRzUmVzcG9uc2UuUnVuc0J5U3RhdHVzRW50cnkSFAoMc3VjY2Vzc19yYXRlGAIgASgBEhwKFHN1Y2Nlc3NfcmF0ZV9kZWZpbmVkGAMgASgIEi8KDHA1MF9kdXJhdGlvbhgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIvCgxwOTVfZHVyYXRpb24YBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SOwoXZHVyYXRpb25fY292ZXJhZ2Vfc2luY2UYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEh0KFWR1cmF0aW9uX3NhbXBsZV9jb3VudBgHIAEoAxIyCgxtb3N0X2ZhaWxpbmcYCCADKAsyHC5vcmtzdGFjay52MS5PcmtmbG93RmFpbHVyZXMSIQoHcnVubmluZxgJIAMoCzIQLm9ya3N0YWNrLnYxLlJ1bhIgCgVwb29scxgKIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSLwoLY29tcHV0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgOIAEoCRIwCgx3aW5kb3dfc2luY2UYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAaMwoRUnVuc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ASK2AgoaR2V0RmFpbHVyZUJyZWFrZG93blJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEikKBXNpbmNlGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKwoIbG9va2JhY2sYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SFAoMb3JrZmxvd19uYW1lGAUgASgJEi0KCGdyb3VwX2J5GAYgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkSLgoIY2F0ZWdvcnkYByABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSDQoFbGltaXQYCCABKAUi5QIKDEZhaWx1cmVHcm91cBIUCgxvcmtmbG93X25hbWUYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRjb2RlGAMgASgJEi4KCGNhdGVnb3J5GAQgASgOMhwub3Jrc3RhY2sudjEuRmFpbHVyZUNhdGVnb3J5EhQKDGltYWdlX3Bpbm5lZBgFIAEoCRIMCgRwb29sGAYgASgJEg0KBXBoYXNlGAcgASgJEhAKCG9ya2VyX2lkGAggASgJEhEKCXJ1bl9jb3VudBgJIAEoAxIuCgpmaXJzdF9zZWVuGAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBItCglsYXN0X3NlZW4YCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKD2V4YW1wbGVfcnVuX2lkcxgMIAMoCRIgChhhdHRlbXB0X2V2aWRlbmNlX21pc3NpbmcYDSABKAMizwMKG0dldEZhaWx1cmVCcmVha2Rvd25SZXNwb25zZRIpCgZncm91cHMYASADKAsyGS5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXASHQoVZmFpbGVkX3J1bnNfaW5fd2luZG93GAIgASgDEhsKE2ZhaWxlZF9ydW5zX3NjYW5uZWQYAyABKAMSGwoTZmFpbGVkX3J1bnNfZ3JvdXBlZBgEIAEoAxIUCgxncm91cHNfdG90YWwYBSABKAMSIAoYYXR0ZW1wdF9ldmlkZW5jZV9taXNzaW5nGAYgASgDEh0KFWF0dGVtcHRfZXZpZGVuY2VfcmVhZBgHIAEoCBItCghncm91cF9ieRgIIAMoDjIbLm9ya3N0YWNrLnYxLkZhaWx1cmVHcm91cEJ5EhEKCW5hbWVzcGFjZRgJIAEoCRIwCgx3aW5kb3dfc2luY2UYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLY29tcHV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKpQCCg5GYWlsdXJlR3JvdXBCeRIgChxGQUlMVVJFX0dST1VQX0JZX1VOU1BFQ0lGSUVEEAASHAoYRkFJTFVSRV9HUk9VUF9CWV9PUktGTE9XEAESGQoVRkFJTFVSRV9HUk9VUF9CWV9UQVNLEAISGQoVRkFJTFVSRV9HUk9VUF9CWV9DT0RFEAMSHQoZRkFJTFVSRV9HUk9VUF9CWV9DQVRFR09SWRAEEhoKFkZBSUxVUkVfR1JPVVBfQllfSU1BR0UQBRIZChVGQUlMVVJFX0dST1VQX0JZX1BPT0wQBhIaChZGQUlMVVJFX0dST1VQX0JZX1BIQVNFEAcSGgoWRkFJTFVSRV9HUk9VUF9CWV9PUktFUhAIMsEBCgxTdGF0c1NlcnZpY2USRwoIR2V0U3RhdHMSHC5vcmtzdGFjay52MS5HZXRTdGF0c1JlcXVlc3QaHS5vcmtzdGFjay52MS5HZXRTdGF0c1Jlc3BvbnNlEmgKE0dldEZhaWx1cmVCcmVha2Rvd24SJy5vcmtzdGFjay52MS5HZXRGYWlsdXJlQnJlYWtkb3duUmVxdWVzdBooLm9ya3N0YWNrLnYxLkdldEZhaWx1cmVCcmVha2Rvd25SZXNwb25zZUKmAQoPY29tLm9ya3N0YWNrLnYxQgpTdGF0c1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_namespace, file_orkstack_v1_run]);
 
 /**
  * @generated from message orkstack.v1.GetStatsRequest
@@ -274,6 +276,349 @@ export const GetStatsResponseSchema: GenMessage<GetStatsResponse> = /*@__PURE__*
   messageDesc(file_orkstack_v1_stats, 2);
 
 /**
+ * @generated from message orkstack.v1.GetFailureBreakdownRequest
+ */
+export type GetFailureBreakdownRequest = Message<"orkstack.v1.GetFailureBreakdownRequest"> & {
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+
+  /**
+   * since, until and lookback carry exactly GetStatsRequest's window
+   * semantics: since inclusive, until exclusive, lookback ignored when since
+   * is set, lookback defaulting to 24h, and a window with no time in it
+   * refused. One clock — the server's — resolves a relative window.
+   *
+   * @generated from field: google.protobuf.Timestamp since = 2;
+   */
+  since?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp until = 3;
+   */
+  until?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Duration lookback = 4;
+   */
+  lookback?: Duration | undefined;
+
+  /**
+   * empty = every orkflow in the namespace
+   *
+   * @generated from field: string orkflow_name = 5;
+   */
+  orkflowName: string;
+
+  /**
+   * group_by is the fingerprint's dimensions, in the caller's order. Empty
+   * means ORKFLOW, TASK, CODE, CATEGORY. A duplicate or UNSPECIFIED value is
+   * InvalidArgument. IMAGE and PHASE are the two that read attempt records.
+   *
+   * @generated from field: repeated orkstack.v1.FailureGroupBy group_by = 6;
+   */
+  groupBy: FailureGroupBy[];
+
+  /**
+   * category keeps only failures of one §4 category. UNSPECIFIED keeps all.
+   *
+   * @generated from field: orkstack.v1.FailureCategory category = 7;
+   */
+  category: FailureCategory;
+
+  /**
+   * limit caps the groups returned, worst first. 0 means 50; more than 500
+   * is InvalidArgument. It bounds the answer, never the scan: the totals
+   * below are over every group.
+   *
+   * @generated from field: int32 limit = 8;
+   */
+  limit: number;
+};
+
+/**
+ * Describes the message orkstack.v1.GetFailureBreakdownRequest.
+ * Use `create(GetFailureBreakdownRequestSchema)` to create a new message.
+ */
+export const GetFailureBreakdownRequestSchema: GenMessage<GetFailureBreakdownRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_stats, 3);
+
+/**
+ * FailureGroup is every failed run in the window that shares one fingerprint.
+ *
+ * A dimension NOT in the request's group_by is empty here and means "not
+ * grouped by". A dimension that IS in group_by and is empty means one of two
+ * things, told apart by attempt_evidence_missing: for IMAGE and PHASE with a
+ * nonzero attempt_evidence_missing it means "unavailable — the attempt record
+ * was reclaimed or never written"; otherwise it means the snapshot genuinely
+ * carries no value (a run-level failure has no task, a task that never
+ * reached an Orker has no pool or orker, a snapshot written before a field
+ * existed). Clients render the first as `unavailable` and the second as `-`.
+ *
+ * @generated from message orkstack.v1.FailureGroup
+ */
+export type FailureGroup = Message<"orkstack.v1.FailureGroup"> & {
+  /**
+   * @generated from field: string orkflow_name = 1;
+   */
+  orkflowName: string;
+
+  /**
+   * @generated from field: string task_id = 2;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: string code = 3;
+   */
+  code: string;
+
+  /**
+   * @generated from field: orkstack.v1.FailureCategory category = 4;
+   */
+  category: FailureCategory;
+
+  /**
+   * @generated from field: string image_pinned = 5;
+   */
+  imagePinned: string;
+
+  /**
+   * @generated from field: string pool = 6;
+   */
+  pool: string;
+
+  /**
+   * @generated from field: string phase = 7;
+   */
+  phase: string;
+
+  /**
+   * @generated from field: string orker_id = 8;
+   */
+  orkerId: string;
+
+  /**
+   * @generated from field: int64 run_count = 9;
+   */
+  runCount: bigint;
+
+  /**
+   * first_seen and last_seen are the creation times of the group's oldest and
+   * newest runs — the same coordinate the window is measured in.
+   *
+   * @generated from field: google.protobuf.Timestamp first_seen = 10;
+   */
+  firstSeen?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp last_seen = 11;
+   */
+  lastSeen?: Timestamp | undefined;
+
+  /**
+   * example_run_ids holds at most 3 of the group's runs, newest created
+   * first. Ids are never compared with each other (AGENTS.md §7).
+   *
+   * @generated from field: repeated string example_run_ids = 12;
+   */
+  exampleRunIds: string[];
+
+  /**
+   * attempt_evidence_missing counts this group's runs whose attempt record
+   * could not be read, so image and phase were unavailable for them. It is
+   * only ever nonzero when the response's attempt_evidence_read is true.
+   *
+   * @generated from field: int64 attempt_evidence_missing = 13;
+   */
+  attemptEvidenceMissing: bigint;
+};
+
+/**
+ * Describes the message orkstack.v1.FailureGroup.
+ * Use `create(FailureGroupSchema)` to create a new message.
+ */
+export const FailureGroupSchema: GenMessage<FailureGroup> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_stats, 4);
+
+/**
+ * @generated from message orkstack.v1.GetFailureBreakdownResponse
+ */
+export type GetFailureBreakdownResponse = Message<"orkstack.v1.GetFailureBreakdownResponse"> & {
+  /**
+   * @generated from field: repeated orkstack.v1.FailureGroup groups = 1;
+   */
+  groups: FailureGroup[];
+
+  /**
+   * failed_runs_in_window is the population: index keys under the
+   * namespace's `failed` status inside the window — the same count GetStats
+   * reports as runs_by_status["failed"] for the same window.
+   *
+   * @generated from field: int64 failed_runs_in_window = 2;
+   */
+  failedRunsInWindow: bigint;
+
+  /**
+   * failed_runs_scanned is how many of those had a body to read. It is less
+   * than failed_runs_in_window only for an index row whose body is absent —
+   * the crash window between the archive's two writes, which ListRuns
+   * already skips. Any OTHER unreadable body fails the call.
+   *
+   * @generated from field: int64 failed_runs_scanned = 3;
+   */
+  failedRunsScanned: bigint;
+
+  /**
+   * failed_runs_grouped is sum(run_count) over EVERY group, before limit. It
+   * equals failed_runs_scanned unless category narrowed the answer.
+   *
+   * @generated from field: int64 failed_runs_grouped = 4;
+   */
+  failedRunsGrouped: bigint;
+
+  /**
+   * groups_total is how many groups there were before limit, so a client can
+   * say "showing 50 of 212".
+   *
+   * @generated from field: int64 groups_total = 5;
+   */
+  groupsTotal: bigint;
+
+  /**
+   * attempt_evidence_missing is the total across groups.
+   *
+   * @generated from field: int64 attempt_evidence_missing = 6;
+   */
+  attemptEvidenceMissing: bigint;
+
+  /**
+   * attempt_evidence_read is true when group_by named IMAGE or PHASE and the
+   * attempt store was therefore consulted. When false, attempt_evidence_missing
+   * is 0 because nothing was looked for, not because everything was found.
+   *
+   * @generated from field: bool attempt_evidence_read = 7;
+   */
+  attemptEvidenceRead: boolean;
+
+  /**
+   * group_by is the dimensions actually grouped by, with an empty request
+   * resolved. A client cannot label its own columns without it.
+   *
+   * @generated from field: repeated orkstack.v1.FailureGroupBy group_by = 8;
+   */
+  groupBy: FailureGroupBy[];
+
+  /**
+   * namespace, window_since, window_until and computed_at are the question
+   * that was answered and when, exactly as GetStatsResponse carries them.
+   *
+   * @generated from field: string namespace = 9;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp window_since = 10;
+   */
+  windowSince?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp window_until = 11;
+   */
+  windowUntil?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp computed_at = 12;
+   */
+  computedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.GetFailureBreakdownResponse.
+ * Use `create(GetFailureBreakdownResponseSchema)` to create a new message.
+ */
+export const GetFailureBreakdownResponseSchema: GenMessage<GetFailureBreakdownResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_stats, 5);
+
+/**
+ * FailureGroupBy names one dimension of a fingerprint. The order of the
+ * values is the order dimensions render in, and the order ties break in.
+ *
+ * @generated from enum orkstack.v1.FailureGroupBy
+ */
+export enum FailureGroupBy {
+  /**
+   * @generated from enum value: FAILURE_GROUP_BY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Run.orkflow_name
+   *
+   * @generated from enum value: FAILURE_GROUP_BY_ORKFLOW = 1;
+   */
+  ORKFLOW = 1,
+
+  /**
+   * the primary failed task's id (see FailureGroup.task_id)
+   *
+   * @generated from enum value: FAILURE_GROUP_BY_TASK = 2;
+   */
+  TASK = 2,
+
+  /**
+   * TaskRun.error.code, or Run.error.code for a run-level failure
+   *
+   * @generated from enum value: FAILURE_GROUP_BY_CODE = 3;
+   */
+  CODE = 3,
+
+  /**
+   * TaskRun.error.category, likewise
+   *
+   * @generated from enum value: FAILURE_GROUP_BY_CATEGORY = 4;
+   */
+  CATEGORY = 4,
+
+  /**
+   * TaskAttempt.image.pinned — needs the attempt record; may be unavailable
+   *
+   * @generated from enum value: FAILURE_GROUP_BY_IMAGE = 5;
+   */
+  IMAGE = 5,
+
+  /**
+   * TaskRun.pool
+   *
+   * @generated from enum value: FAILURE_GROUP_BY_POOL = 6;
+   */
+  POOL = 6,
+
+  /**
+   * TaskAttempt.phase — needs the attempt record; may be unavailable
+   *
+   * @generated from enum value: FAILURE_GROUP_BY_PHASE = 7;
+   */
+  PHASE = 7,
+
+  /**
+   * TaskRun.orker_id
+   *
+   * @generated from enum value: FAILURE_GROUP_BY_ORKER = 8;
+   */
+  ORKER = 8,
+}
+
+/**
+ * Describes the enum orkstack.v1.FailureGroupBy.
+ */
+export const FailureGroupBySchema: GenEnum<FailureGroupBy> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_stats, 0);
+
+/**
  * StatsService answers one question — "how is this namespace doing?" — from
  * the two records that already exist. It adds no write path, keeps no counter
  * and stores nothing: a number here is derived on read, or it is not reported.
@@ -302,6 +647,25 @@ export const StatsService: GenService<{
     methodKind: "unary";
     input: typeof GetStatsRequestSchema;
     output: typeof GetStatsResponseSchema;
+  },
+  /**
+   * GetFailureBreakdown groups one namespace's FAILED runs over one window by
+   * the dimensions the caller names. It is the read that makes the §4
+   * failure categories pay: a category nobody counts is a comment.
+   *
+   * It reads run BODIES — one per failed run in the window — which GetStats
+   * deliberately never does. The discriminating facts are not in the index
+   * key, and widening the key would be a migration and a second copy of the
+   * body. So the cost is bounded three ways instead: by the window, by the
+   * failed subset of it, and by a scan budget that FAILS the call rather
+   * than answering from a subset (see GetFailureBreakdownResponse).
+   *
+   * @generated from rpc orkstack.v1.StatsService.GetFailureBreakdown
+   */
+  getFailureBreakdown: {
+    methodKind: "unary";
+    input: typeof GetFailureBreakdownRequestSchema;
+    output: typeof GetFailureBreakdownResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_orkstack_v1_stats, 0);
