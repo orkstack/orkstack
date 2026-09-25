@@ -19,6 +19,7 @@ import (
 
 	"connectrpc.com/connect"
 	"go.temporal.io/sdk/client"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
@@ -380,6 +381,33 @@ func TestIntegration_AHoldSetOnOneReplicaRefusesSubmitsOnTheOther(t *testing.T) 
 
 	// Released through B; a submit through A is admitted and finishes.
 	s.cli(t, s.b, exitOK, "namespace", "update", s.namespace, "--release-hold")
+
+	// The audit trail, read back through B, says why the door was closed and
+	// that it was reopened: the hold's namespace.update record names the
+	// reason, the release's has no hold= key, newest first.
+	listed, _ = s.cli(t, s.b, exitOK, "--json", "-n", s.namespace, "admin", "audit")
+	audit := &orkstackv1.ListAuditRecordsResponse{}
+	if err := protojson.Unmarshal([]byte(listed), audit); err != nil {
+		t.Fatalf("admin audit --json is not a ListAuditRecordsResponse: %v\n%s", err, listed)
+	}
+	var updates []*orkstackv1.AuditRecord
+	for _, rec := range audit.GetRecords() {
+		if rec.GetAction() == "namespace.update" {
+			updates = append(updates, rec)
+		}
+	}
+	if len(updates) != 2 {
+		t.Fatalf("namespace.update records = %d, want the hold and the release:\n%s", len(updates), listed)
+	}
+	release, hold := updates[0].GetDetail(), updates[1].GetDetail()
+	if strings.Contains(release, "hold=") || !strings.Contains(release, "max_running=0") {
+		t.Errorf("release record detail = %q, want no hold= key", release)
+	}
+	if !strings.Contains(hold, `hold="`+admissionHoldReason+`" max_running=0`) {
+		t.Errorf("hold record detail = %q, want hold=%q", hold, admissionHoldReason)
+	}
+	fmt.Fprintf(&s.transcript, "audit record details via %s, newest first:\n  release: %s\n  hold:    %s\n\n",
+		s.b.name, release, hold)
 	runID := s.submitID(t, s.a, s.orkflow)
 	s.awaitStatus(ctx, t, s.a, runID, orkstackv1.Status_STATUS_SUCCEEDED)
 	s.cli(t, s.b, exitOK, "run", "get", runID, "-n", s.namespace)

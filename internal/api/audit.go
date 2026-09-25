@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -368,6 +369,16 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 		"allowed_pools=[" + strings.Join(ns.GetAllowedPools(), " ") + "]",
 		"run_retention=" + retentionLabel(ns.GetRunRetention()),
 	}
+	// Admission (namespace-admission-control): hold= only when a hold is
+	// requested — released is the absence, as an accepting namespace is
+	// hold == nil — quoted so a reason can never end its own value early;
+	// since is the registry's and the record's own at says when. max_running
+	// is always rendered: max_running=0 on an update is the line that shows a
+	// cap was lifted.
+	if hold := ns.GetHold(); hold != nil {
+		parts = append(parts, "hold="+strconv.Quote(hold.GetReason()))
+	}
+	parts = append(parts, "max_running="+strconv.FormatInt(int64(ns.GetMaxRunning()), 10))
 	sink := "inherited"
 	if telemetry := ns.GetTelemetry(); telemetry != nil {
 		sink = telemetry.GetSink()

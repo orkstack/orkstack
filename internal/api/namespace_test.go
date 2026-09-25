@@ -89,6 +89,13 @@ func (r *fakeRegistry) Put(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	name := artifacts.ResolveNamespace(ns.GetName())
+	// A hold with no reason is the store's refusal (validNamespaceHold); the
+	// double mirrors only this one case, so the audit trail's record of a
+	// refused namespace write can be observed through the Connect surface.
+	// The full rule is proved against the store itself.
+	if hold := ns.GetHold(); hold != nil && strings.TrimSpace(hold.GetReason()) == "" {
+		return nil, fmt.Errorf("put %q: hold needs a reason: %w", name, artifacts.ErrInvalidNamespace)
+	}
 	existing, exists := r.docs[name]
 	if cond.IfAbsent && exists {
 		return nil, fmt.Errorf("put %q: %w", name, artifacts.ErrPreconditionFailed)
