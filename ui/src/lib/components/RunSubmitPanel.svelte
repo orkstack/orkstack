@@ -21,9 +21,12 @@
 	import CliEquivalent from './CliEquivalent.svelte';
 	import DeclaredInputs from './DeclaredInputs.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
+	import HoldBanner from './HoldBanner.svelte';
 	import Select from './Select.svelte';
 	import { PayloadSchema } from '$lib/gen/orkstack/v1/common_pb';
+	import type { NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
 	import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
+	import { namespaceLabel } from '$lib/namespace';
 	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/service_pb';
 
 	interface Props {
@@ -59,6 +62,12 @@
 	let versions = $state<OrkflowVersion[]>([]);
 	let versionsLoading = $state(false);
 	let selectionError = $state('');
+	// hold is the namespace's hold as the server holds it NOW, read fresh every
+	// time the panel opens or the version changes. While it is set the submit
+	// is disabled on the strength of the server's own state; a max_running
+	// refusal is never predicted here — the count is the server's, at the
+	// instant of the submit — and arrives verbatim in the ErrorPanel below.
+	let hold = $state<NamespaceHold | null>(null);
 	let inputsValue = $state<JsonObject>(untrack(() => initialInput ?? {}));
 	let inputsJson = $state(untrack(() => JSON.stringify(initialInput ?? {}, null, 2)));
 	let inputMode = $state<'form' | 'json'>('form');
@@ -80,13 +89,16 @@
 		selectedOrkflow = null;
 		try {
 			const client = orkstack(fetch);
-			const [catalog, detail] = await Promise.all([
+			const [catalog, detail, namespaceDoc] = await Promise.all([
 				client.orkflows.listOrkflowVersions({ name, namespace: requested }),
 				client.orkflows.getOrkflow({
 					name,
 					version: version === CURRENT ? '' : version,
 					namespace: requested
-				})
+				}),
+				// A namespace read that fails does not block the draft: the
+				// server is the gate, and it refuses a held submit either way.
+				client.namespaces.getNamespace({ name: requested }).catch(() => null)
 			]);
 			// A slower earlier request must not overwrite a newer selection —
 			// the version dropdown is the control an operator changes twice in
@@ -94,6 +106,7 @@
 			if (!stillWanted(request, requested, name, version)) return;
 			versions = catalog.versions;
 			selectedOrkflow = detail.orkflow ?? null;
+			hold = namespaceDoc?.namespace?.hold ?? null;
 			if (!preserveInput) setInputs(defaultsForInputs(detail.orkflow?.inputs));
 		} catch (err) {
 			if (stillWanted(request, requested, name, version)) {
@@ -396,11 +409,16 @@
 		<ErrorPanel testid="run-submit-error" message={formError} />
 	{/if}
 
+	{#if hold}
+		<HoldBanner namespace={namespaceLabel(namespace)} {hold} testid="submit-hold-banner" />
+	{/if}
+
 	<div class="flex items-center justify-between gap-3">
 		<button
 			type="submit"
 			data-testid="run-submit-submit"
 			disabled={submitting ||
+				!!hold ||
 				versionsLoading ||
 				!!selectionError ||
 				!!typedInputError ||

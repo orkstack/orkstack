@@ -17,6 +17,8 @@
 		error?: string;
 		/** Swaps the accept button to the destructive recipe, for delete/cancel actions. */
 		destructive?: boolean;
+		/** Holds the accept button disabled, for a dialog whose body collects a required value. */
+		acceptDisabled?: boolean;
 		body: Snippet;
 		onaccept: () => void;
 		oncancel: () => void;
@@ -31,6 +33,7 @@
 		busy = false,
 		error = '',
 		destructive = false,
+		acceptDisabled = false,
 		body,
 		onaccept,
 		oncancel
@@ -70,7 +73,7 @@
 			<button
 				type="button"
 				data-testid={acceptTestid}
-				disabled={busy}
+				disabled={busy || acceptDisabled}
 				onclick={() => onaccept()}
 				class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50 {destructive
 					? 'bg-danger-600 hover:bg-danger-700 focus-visible:ring-danger-500/40 active:bg-danger-800'
