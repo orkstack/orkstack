@@ -264,6 +264,7 @@ Every failure is the error envelope `webhookErrorEnvelope` already uses:
 | Body is not a JSON object, or exceeds the bound | 400 | `invalid_argument` |
 | Orkflow or pinned version no longer exists | 404 | `not_found` |
 | A resolved pool has no live Orker, or no run starter is configured | 412 | `failed_precondition` |
+| The namespace is on hold, or at its `max_running` (namespace admission) | 412 | `failed_precondition` |
 | Object storage or Temporal unavailable at submit | 503 | `unavailable` |
 | Anything else | 500 | `internal` |
 
@@ -369,7 +370,13 @@ merges triggers across namespaces.
   proxy or gateway, the same posture `docs/DEPLOY.md` §7 takes for
   `ORK_ADMIN_ADDR`: what to expose, to whom, and how fast is a deployment
   decision, not an OrkStack subsystem. This contract adds no rate limiter and
-  no rate-limit configuration (`AGENTS.md` §13).
+  no rate-limit configuration (`AGENTS.md` §13). What does bound a
+  legitimate, authenticated upstream that has started looping is the
+  namespace's own admission control: `orkctl namespace update NS --hold
+  REASON` refuses every new run of the namespace (a trigger invoke is `412`
+  carrying the reason), and `--max-running N` caps its runs in flight. Both
+  are the same `SubmitRun` gate every other door goes through; neither is a
+  rate limiter.
 - **No `allow_empty_pool` override.** Every trigger-started run submits with
   `allow_empty_pool = false`. A pool with no live Orker fails the invoke with
   `412` rather than starting a run that would never leave PENDING. The field

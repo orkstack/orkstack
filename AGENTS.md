@@ -354,6 +354,12 @@ The repository vocabulary is deliberate:
   telemetry sinks: which sink, whether task logs export, which attributes.
   It is a field of `orkstack.v1.Namespace` (`telemetry`), unset meaning
   inherit — the same shape `run_retention` already uses.
+- **Hold** means a namespace closed to new runs, with the operator's reason
+  and the instant the registry recorded it (`orkstack.v1.Namespace.hold`). It
+  is an admission decision, never a retroactive one: a run already accepted
+  finishes untouched, and releasing a hold starts nothing that was refused.
+  Its sibling `max_running` bounds a namespace's runs in flight, counted from
+  the cluster's execution index at submit.
 
 An Orkflow name is unique within a namespace. Names are validated, never
 sanitized, by the same rule at each boundary:

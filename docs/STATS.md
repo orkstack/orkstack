@@ -37,6 +37,10 @@ rest — comes from the telemetry pipeline instead (`docs/DEPLOY.md`,
 "Lifecycle metrics"), which is the write path this service deliberately has
 none of.
 
+A submission refused by namespace admission (a hold, or `max_running`) is in
+neither record — it never became a run — so it is reported nowhere here; it
+is counted on `ork.runs.refused` in the telemetry pipeline instead.
+
 **Nothing is read from an engine's memory.** Both sources are shared, so a
 replica that started no runs answers exactly as the one that started them all
 (AGENTS.md §7). `cmd/orkctl/stats_two_engine_integration_test.go` holds two
