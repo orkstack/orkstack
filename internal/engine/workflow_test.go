@@ -1070,15 +1070,36 @@ func TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails(t *test
 // cancelSiblingsTask is cancelSiblingsDocument's task activity: doomed fails,
 // sibling runs until it is canceled (closing siblingCanceled), and any other
 // task is an error because the run must end before it is dispatched.
+//
+// doomed fails only once sibling's function is really running. Without that
+// ordering the test raced the SDK's test environment: when the workflow's
+// cancel lands before the environment's goroutine has invoked sibling, the
+// environment answers Canceled WITHOUT calling the function at all
+// (activityExecutorWrapper.Execute: "If activity handle cannot be found, we
+// assume it was cancelled"), so siblingCanceled never closed and the test
+// failed after its 30s deadline — about one run in twenty on an idle host,
+// more under load, on this branch's base as well as on it. Waiting here makes
+// sibling genuinely running when the run fails, which is the case the test
+// exists to pin.
 func cancelSiblingsTask(
 	t *testing.T,
 	siblingCanceled chan struct{},
 ) func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	siblingRunning := make(chan struct{})
+	var markRunning sync.Once
 	return func(actCtx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		switch in.TaskId {
 		case "doomed":
+			select {
+			case <-siblingRunning:
+			case <-actCtx.Done():
+				return &orkstackv1.ExecuteTaskResult{}, actCtx.Err()
+			case <-time.After(30 * time.Second):
+				t.Error("sibling was never started while doomed ran; the fixture cannot pin cancellation")
+			}
 			return &orkstackv1.ExecuteTaskResult{}, errors.New("workload exited 1")
 		case "sibling":
+			markRunning.Do(func() { close(siblingRunning) })
 			// Temporal delivers cancellation to an activity ONLY through a
 			// heartbeat response (see workflow.go's orkerHeartbeatTimeout
 			// comment) — this must heartbeat in a loop, exactly like the
