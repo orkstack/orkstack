@@ -303,8 +303,15 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 	}
 	// It really RAN, so it carries a dispatch stamp — the fact the run page
 	// uses to tell it from a task the run ended before it ever started.
-	if sibling.GetStartedAt() == nil {
-		t.Error("sibling started_at is unset, but it was dispatched and killed")
+	// Since task-timing-breakdown that stamp is scheduled_at; started_at is
+	// the Orker's own start, which a plain context cancellation does not
+	// report, so it stays unset rather than holding the dispatch instant.
+	if sibling.GetScheduledAt() == nil {
+		t.Error("sibling scheduled_at is unset, but it was dispatched and killed")
+	}
+	if sibling.GetStartedAt() != nil {
+		t.Errorf("sibling started_at = %v, want unset: no Orker reported a start for a task "+
+			"canceled while running", sibling.GetStartedAt().AsTime())
 	}
 	if code := sibling.GetError().GetCode(); code != "" && code != "TASK_CANCELED" {
 		t.Logf("sibling error code = %q", code)
@@ -336,6 +343,7 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 		"budget":                   budget.String(),
 		"sigterm_reached_workload": caughtTerm,
 		"sibling_status":           sibling.GetStatus().String(),
+		"sibling_scheduled_at_set": sibling.GetScheduledAt() != nil,
 		"sibling_started_at_set":   sibling.GetStartedAt() != nil,
 	})
 }

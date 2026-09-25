@@ -1108,8 +1108,13 @@ func TestIntegration_ASaturatedPinPoolFailsTheTriggeringTaskWithPinUnavailable(t
 	if queued.GetError().GetRetryable() {
 		t.Error("queued's error is retryable; the engine never re-creates a session for a pin")
 	}
-	// It never reached an Orker, and started_at's absence is the only thing
-	// that says so (§6.5, pinOpened).
+	// It never reached an Orker, and the absence of a dispatch stamp is the
+	// only thing that says so (§6.5, pinOpened). The dispatch stamp is
+	// scheduled_at; started_at (the Orker's start) is unset as well.
+	if queued.GetScheduledAt() != nil {
+		t.Errorf("queued scheduled_at = %v, want unset: the pin never opened, so nothing was dispatched",
+			queued.GetScheduledAt().AsTime())
+	}
 	if queued.GetStartedAt() != nil {
 		t.Errorf("queued started_at = %v, want unset: the pin never opened, so nothing was dispatched",
 			queued.GetStartedAt().AsTime())

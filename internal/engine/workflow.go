@@ -753,9 +753,9 @@ func (s *runState) pinOpened(ctx workflow.Context, name string) error {
 	taskRun.Status = orkstackv1.Status_STATUS_FAILED
 	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
 	taskRun.Pin = name
-	// started_at stays UNSET, as it does for every task that never reached an
-	// Orker: this one was never dispatched, and that absence is the only thing
-	// telling a client so.
+	// scheduled_at and started_at both stay UNSET, as they do for every task
+	// that never reached an Orker: this one was never dispatched, and the
+	// absence of scheduled_at is the only thing telling a client so.
 	taskRun.Error = &orkstackv1.Error{
 		Code:      "PIN_UNAVAILABLE",
 		Message:   message,
