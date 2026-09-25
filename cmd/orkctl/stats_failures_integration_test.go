@@ -31,8 +31,9 @@ import (
 // engine, a real Orker running the first-party shell image (the image
 // test/fixtures/bash_activity_contract.sh holds to the ABI), real Temporal,
 // real MinIO. Each failure mode is produced the way production produces it —
-// a container that exits 1, a container that exits 0 without values.json, an
-// image the Orker cannot pull for its platform — and the breakdown is asked for
+// a container that exits 1, a container that exits 0 having left a directory
+// where an artifact must be a regular file, an image the Orker cannot pull
+// for its platform — and the breakdown is asked for
 // through the CLI an operator would use.
 
 // failureCorpus is one namespace holding three different kinds of failure.
@@ -42,7 +43,7 @@ type failureCorpus struct {
 	since       time.Time
 	until       time.Time
 	exitRuns    []string // CONTAINER_EXIT_NONZERO / ACTIVITY_FAILED
-	missingRuns []string // VALUES_MISSING / CONTRACT_VIOLATION
+	missingRuns []string // ARTIFACT_NOT_A_FILE / CONTRACT_VIOLATION
 	pullRuns    []string // IMAGE_PULL_FAILED / INFRASTRUCTURE_ERROR
 	succeeded   []string
 	artifactCfg artifacts.Config
@@ -100,9 +101,9 @@ func seedFailureCorpus(ctx context.Context, t *testing.T, replicas int) *failure
 		}
 	}
 	apply(fingerprintOrkflowYAML("fp-exit", "shell", `["sh", "-c", "exit 1"]`))
-	apply(fingerprintOrkflowYAML("fp-no-values", "shell", `["sh", "-c", "exit 0"]`))
+	apply(fingerprintOrkflowYAML("fp-dir-artifact", "shell", `["sh", "-c", "mkdir -p /orkstack/output/artifacts/workspace"]`))
 	apply(fingerprintOrkflowYAML("fp-pull", unpullable, `["sh", "-c", "exit 0"]`))
-	apply(fingerprintOrkflowYAML("fp-ok", "shell", `["sh", "-c", "printf '{}' > /orkstack/output/values.json"]`))
+	apply(fingerprintOrkflowYAML("fp-ok", "shell", `["sh", "-c", "exit 0"]`))
 
 	corpus.since = time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
 	submit := func(orkflow string) string {
@@ -116,7 +117,7 @@ func seedFailureCorpus(ctx context.Context, t *testing.T, replicas int) *failure
 		return submitted.Msg.GetRun().GetId()
 	}
 	corpus.exitRuns = []string{submit("fp-exit"), submit("fp-exit"), submit("fp-exit")}
-	corpus.missingRuns = []string{submit("fp-no-values"), submit("fp-no-values")}
+	corpus.missingRuns = []string{submit("fp-dir-artifact"), submit("fp-dir-artifact")}
 	corpus.pullRuns = []string{submit("fp-pull")}
 	corpus.succeeded = []string{submit("fp-ok")}
 
@@ -158,7 +159,8 @@ func awaitTerminalIn(ctx context.Context, t *testing.T, replica *engineReplica, 
 }
 
 // fingerprintOrkflowYAML is one task that does not retry, so each run is one
-// attempt and one failure.
+// attempt and one failure. The shell image's `exec` op runs the argv and
+// writes values.json itself, so a failure here is the one the argv causes.
 func fingerprintOrkflowYAML(name, uses, command string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
@@ -167,9 +169,11 @@ tasks:
   - id: work
     uses: %s
     timeout_seconds: 60
-    command: %s
     retry:
       maximum_attempts: 1
+    with:
+      op: exec
+      command: %s
 `, name, uses, command)
 }
 
@@ -394,7 +398,7 @@ func TestIntegration_FailureBreakdownGroupsRealFailuresAndReconcilesWithStats(t 
 		runs     []string
 	}{
 		{"CONTAINER_EXIT_NONZERO", orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED, "fp-exit", corpus.exitRuns},
-		{"VALUES_MISSING", orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, "fp-no-values", corpus.missingRuns},
+		{"ARTIFACT_NOT_A_FILE", orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, "fp-dir-artifact", corpus.missingRuns},
 		{"IMAGE_PULL_FAILED", orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR, "fp-pull", corpus.pullRuns},
 	} {
 		group := groupWithCode(t, byDefault, want.code)
