@@ -1317,11 +1317,32 @@ func (x *DeleteOrkflowResponse) GetDeletedAt() *timestamppb.Timestamp {
 }
 
 type Webhook struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Url           string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
-	Events        []EventType            `protobuf:"varint,3,rep,packed,name=events,proto3,enum=orkstack.v1.EventType" json:"events,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Url   string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	// events selects the transitions this subscription wants. Empty means
+	// every RUN transition — and only those: a task outcome event
+	// (TASK_SCHEDULED, TASK_STARTED, TASK_SUCCEEDED, TASK_FAILED) is delivered
+	// only to a subscription that names it. TASK_LOG is never accepted.
+	Events    []EventType            `protobuf:"varint,3,rep,packed,name=events,proto3,enum=orkstack.v1.EventType" json:"events,omitempty"`
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// namespace narrows this subscription to runs of one namespace. Empty
+	// means every namespace, which is what every subscription registered
+	// before this field existed is. A run that names no namespace is in
+	// "default", so a subscription written as "default" matches it.
+	Namespace string `protobuf:"bytes,5,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// orkflow_name narrows to runs of one orkflow, by the name the author
+	// wrote. Empty means every orkflow. It composes with namespace by
+	// conjunction and does not require it: a name alone matches that name in
+	// every namespace.
+	OrkflowName string `protobuf:"bytes,6,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	// task_id narrows the task outcome events to one task. Empty means every
+	// task. It is consulted only for TASK_* events: a RUN_* event has no task
+	// and passes this filter unconditionally, so one subscription can want
+	// TASK_SUCCEEDED of `extract` and RUN_FAILED of the whole run. Registration
+	// refuses a task_id when events names no TASK_* event, because the filter
+	// could then never be consulted.
+	TaskId        string `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1384,11 +1405,36 @@ func (x *Webhook) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Webhook) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *Webhook) GetOrkflowName() string {
+	if x != nil {
+		return x.OrkflowName
+	}
+	return ""
+}
+
+func (x *Webhook) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
 type RegisterWebhookRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
-	Events        []EventType            `protobuf:"varint,2,rep,packed,name=events,proto3,enum=orkstack.v1.EventType" json:"events,omitempty"`
-	Secret        string                 `protobuf:"bytes,3,opt,name=secret,proto3" json:"secret,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Url    string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	Events []EventType            `protobuf:"varint,2,rep,packed,name=events,proto3,enum=orkstack.v1.EventType" json:"events,omitempty"`
+	Secret string                 `protobuf:"bytes,3,opt,name=secret,proto3" json:"secret,omitempty"`
+	// The scope, on exactly the terms Webhook states them.
+	Namespace     string `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	OrkflowName   string `protobuf:"bytes,5,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	TaskId        string `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1440,6 +1486,27 @@ func (x *RegisterWebhookRequest) GetEvents() []EventType {
 func (x *RegisterWebhookRequest) GetSecret() string {
 	if x != nil {
 		return x.Secret
+	}
+	return ""
+}
+
+func (x *RegisterWebhookRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *RegisterWebhookRequest) GetOrkflowName() string {
+	if x != nil {
+		return x.OrkflowName
+	}
+	return ""
+}
+
+func (x *RegisterWebhookRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
 	}
 	return ""
 }
@@ -4853,17 +4920,23 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x129\n" +
 	"\n" +
-	"deleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"\x96\x01\n" +
+	"deleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"\xf0\x01\n" +
 	"\aWebhook\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12.\n" +
 	"\x06events\x18\x03 \x03(\x0e2\x16.orkstack.v1.EventTypeR\x06events\x129\n" +
 	"\n" +
-	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"r\n" +
+	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x1c\n" +
+	"\tnamespace\x18\x05 \x01(\tR\tnamespace\x12!\n" +
+	"\forkflow_name\x18\x06 \x01(\tR\vorkflowName\x12\x17\n" +
+	"\atask_id\x18\a \x01(\tR\x06taskId\"\xcc\x01\n" +
 	"\x16RegisterWebhookRequest\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12.\n" +
 	"\x06events\x18\x02 \x03(\x0e2\x16.orkstack.v1.EventTypeR\x06events\x12\x16\n" +
-	"\x06secret\x18\x03 \x01(\tR\x06secret\"a\n" +
+	"\x06secret\x18\x03 \x01(\tR\x06secret\x12\x1c\n" +
+	"\tnamespace\x18\x04 \x01(\tR\tnamespace\x12!\n" +
+	"\forkflow_name\x18\x05 \x01(\tR\vorkflowName\x12\x17\n" +
+	"\atask_id\x18\x06 \x01(\tR\x06taskId\"a\n" +
 	"\x17RegisterWebhookResponse\x12.\n" +
 	"\awebhook\x18\x01 \x01(\v2\x14.orkstack.v1.WebhookR\awebhook\x12\x16\n" +
 	"\x06secret\x18\x02 \x01(\tR\x06secret\"\x15\n" +

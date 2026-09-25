@@ -240,23 +240,38 @@ each pin's member cards with one accent colour derived from the pin name, so
 ### Webhook administration
 
 Add a proto `WebhookService` with `RegisterWebhook`, `ListWebhooks`, and
-`DeleteWebhook`. Subscriptions remain deployment-wide, matching the existing
-CLI contract; the UI labels that scope explicitly rather than implying the
-namespace picker filters them.
+`DeleteWebhook`. Subscriptions are deployment-wide unless they name a scope
+(see "Scoped subscriptions and task outcome events" below); the listing stays
+deployment-wide, each row states its scope, and the UI says so explicitly
+rather than implying the namespace picker filters it.
 
 - `Webhook`: `string id = 1`, `string url = 2`,
-  `repeated EventType events = 3`, `google.protobuf.Timestamp created_at = 4`.
+  `repeated EventType events = 3`, `google.protobuf.Timestamp created_at = 4`,
+  `string namespace = 5`, `string orkflow_name = 6`, `string task_id = 7`.
 - Register request: `string url = 1`, `repeated EventType events = 2`,
-  `string secret = 3` (optional user-supplied signing secret).
+  `string secret = 3` (optional user-supplied signing secret),
+  `string namespace = 4`, `string orkflow_name = 5`, `string task_id = 6`.
 - Register response: `Webhook webhook = 1`, `string secret = 2`.
 - List request empty; response `repeated Webhook webhooks = 1`.
 - Delete request `string id = 1`; response empty.
 
-Accept only the existing RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED, RUN_CANCELED
-events; empty selects all. Preserve HTTP/HTTPS URL validation and one-time
+Accept the four run transitions (RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
+RUN_CANCELED) and the four task outcomes (TASK_SCHEDULED, TASK_STARTED,
+TASK_SUCCEEDED, TASK_FAILED); TASK_LOG is refused. Empty selects every run
+transition and no task event: task events are opt-in by name. Preserve HTTP/HTTPS URL validation and one-time
 secret disclosure. List never contains secrets. Store subscriptions in shared
 object storage, with atomic create/delete and durable failure reporting;
 both management and delivery matching must observe another replica's changes.
+Delivery matching reads the registry through `Store.ListForDelivery`, the one
+read that carries each subscription's signing secret; `List` and `Get` — what
+`ListWebhooks`, the JSON adapter, `orkctl` and the UI answer from — never do.
+Until scoped subscriptions landed, the durable registry production wires
+matched through the public `List`, so every production delivery went out with
+no `X-Ork-Signature` header. Every delivery from the durable registry now
+carries one, over the same body bytes, with the secret its registration
+disclosed; no record is rewritten and no subscriber re-registers. A matched
+subscription with no secret is still delivered, and logged at `Warn` as
+`webhook delivery unsigned`.
 Do not use a startup-only snapshot or a process-only subscription registry in
 production. The existing JSON routes may remain compatibility adapters over
 the same service/storage; clients use generated types. Keep existing delivery
@@ -264,6 +279,40 @@ semantics and describe them accurately: durable registration does not make
 in-flight delivery durable or exactly once. This work adds no scheduler or
 delivery-state database. Storage failure must not produce successful registration
 or deletion, and notification lookup failure must not fail a run.
+
+#### Scoped subscriptions and task outcome events
+
+A subscription may name `namespace`, `orkflow_name` and `task_id`: three
+exact-match strings, each empty meaning every, each validated as a slug
+(`^[a-z][a-z0-9-]*$`, at most 200 bytes) and never sanitized. A run that names
+no namespace is in `default`, so a subscription scoped to `default` matches
+it. `task_id` is consulted only for task events — a `RUN_*` event passes it —
+and registration refuses a `task_id` when no `TASK_*` event is named. A scope
+names coordinates, not objects: nothing checks that the namespace, orkflow or
+task exists, so a subscription may precede the orkflow it names. The record
+stays flat at `metadata/webhooks/{id}.json`; a record written before scope
+existed reads as deployment-wide, and a record whose scope is invalid is
+refused on read rather than widened.
+
+A task delivery carries the flat header plus `taskId` and `attempt`, and the
+`X-Ork-Task-Id` header; `attempt` is omitted when Temporal has not numbered
+one (`TASK_SCHEDULED`, `TASK_STARTED`, a task that timed out). A run
+delivery's body and headers are byte-identical to what they were before. A
+task that was skipped, or that was running or pending when its run ended, is
+never delivered as a task outcome — the interpreter records a canceled running
+task as `TASK_FAILED` carrying `CANCELED`, and the projection refuses it by
+status — so a `TASK_FAILED` delivery always reads `"status":"FAILED"`, and the
+run's terminal delivery is where a cancellation is read. Task events are
+higher-cardinality hints on the same best-effort channel (four requests at
+most, no ordering across deliveries, possibly twice across replicas); a
+subscriber that must not miss one reconciles with `GetRun`. Every durable
+lookup lists the whole registry, as before, now up to four more times per
+task; there is no cache.
+
+| Surface | Register | Read the scope | Refusal |
+| --- | --- | --- | --- |
+| CLI | `orkctl webhook register URL -n NS --orkflow NAME --task TASK --event E`; only an explicit `-n` narrows (`ORK_NAMESPACE` and the saved default do not apply) | `SCOPE` row/column: `ns/orkflow/task`, `*` per unset component, `ALL` when unscoped; `--json` carries `namespace`/`orkflowName`/`taskId` when set | Local, before any request, with the server's `ValidateScope` message |
+| UI | Admin → Webhooks: three optional free-text inputs (a slug `pattern` catches typos), eight event checkboxes, a caveat under the task events | `Scope` column (`webhook-scope-{id}`), `Deployment-wide` when unscoped | Server `InvalidArgument` in the register `ErrorPanel` |
 
 ### Run again
 
@@ -289,7 +338,7 @@ seeded draft exists only in the page that already holds that run.
 | Run filters/history | Status, Orkflow, page size, creation interval, refresh, next/previous; URL preserves filters, cursor and page number; the path back is per-tab; distinguish empty deployment from no matches | List query/cursor above | Older page is reachable; no duplicate rows at equal timestamps; mixed live/archive results and cross-namespace rejection covered |
 | Retained logs | Full retained-log download bypasses scrollback cap; older retained chunks can be browsed; search explicitly says loaded-log scope | Existing `run logs` task/attempt/from cursor and shell redirection | Download includes beyond pane cap; truncation notices remain visible; attempt selection and namespace retained; failed download never looks complete |
 | Dashboard window | 15m, 6h, 24h and custom since; the active window, custom included, is marked in the control and shown as a formatted instant; display selected time and preserve coverage caveats | Existing `stats --since` | Request time changes and rendered counts/coverage follow response; reload preserves selection |
-| Webhooks | Deployment-wide list/register/delete, event selection, one-time secret copy | Proto-backed existing webhook commands | Second replica and restarted engine see registration/deletion; list excludes secret; storage failure errors; browser registration flow captured |
+| Webhooks | List/register/delete, run and task event selection, optional namespace/orkflow/task scope with a per-row scope cell, one-time secret copy | Proto-backed webhook commands with `-n`/`--orkflow`/`--task` and a `SCOPE` column | Second replica and restarted engine see registration/deletion and scope; list excludes secret; storage failure errors; a scoped task delivery and an invalid-scope refusal captured in the browser |
 | Validate/apply | Validate current YAML without saving; field issues and warnings; retain warnings after apply | Shared validator and CLI validate | Invalid DAG and namespace mismatch agree; valid validation writes nothing; unavailable image errors actionable |
 | Run again | Reviewed submission seeded from run, showing source and pinned version | CLI again plus dry-run | Inputs preserved, override respected, new ID, no implicit old-key reuse, unavailable version refuses |
 | Typed inputs | String/number/boolean controls, required/default hints; object/array JSON editors; JSON alternative | Same submitted JSON values as `run submit --input` | Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce |
