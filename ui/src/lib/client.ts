@@ -11,6 +11,7 @@ import {
 	SystemService
 } from './gen/orkstack/v1/service_pb';
 import { StatsService } from './gen/orkstack/v1/stats_pb';
+import { AuditService } from './gen/orkstack/v1/audit_pb';
 
 // All platform access goes through the clients generated from
 // proto/orkstack/v1 (see ui/src/lib/gen). The browser uses same-origin URLs;
@@ -34,7 +35,10 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 		// REPLICA THAT ANSWERED rather than the cluster or the store. It is its
 		// own client because it is its own service:
 		// folding it into namespaces or stats would misname what scopes it.
-		system: createClient(SystemService, transport)
+		system: createClient(SystemService, transport),
+		// audit reads the control-plane audit trail back: one immutable
+		// record per write RPC, from the shared store. It is itself a read.
+		audit: createClient(AuditService, transport)
 	};
 }
 

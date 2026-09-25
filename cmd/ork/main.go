@@ -824,6 +824,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open trigger store: %w", err)
 	}
+	// The control-plane audit trail: one immutable record per write RPC, in
+	// the same shared object store, so any replica lists a write another
+	// replica recorded. A deployment that cannot open it does not boot — the
+	// same footing as the trigger store above. A failed WRITE later is only
+	// logged and counted (internal/api/audit.go).
+	auditStore, err := artifacts.NewAuditStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open audit store: %w", err)
+	}
 	defer func() {
 		drainCtx, cancelDrain := context.WithTimeout(context.Background(), webhookDrainTimeout)
 		defer cancelDrain()
@@ -942,6 +951,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if wireEventObserver(tcfg) {
 		eventObserver = observer
 	}
+	// The audit counter: ork.audit.records on the default providers, a no-op
+	// when telemetry is off.
+	auditInstruments, err := telemetry.NewAuditInstruments(sinks.Default())
+	if err != nil {
+		return err
+	}
 
 	// Projection worker: engine-internal activities on a dedicated queue so
 	// Orkers never receive them. The archive body's event log is read back
@@ -1042,6 +1057,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Idempotency:   idempotency,
 		Webhooks:      webhookRegistry,
 		Triggers:      triggerStore,
+		AuditStore:    auditStore,
+		AuditCounter:  auditInstruments,
 		Notifier:      runNotifier,
 		Logger:        logger,
 		System:        system,
