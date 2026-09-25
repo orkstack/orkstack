@@ -120,6 +120,13 @@ func (n *Notifier) queue(ctx context.Context, delivery Delivery, hooks []Webhook
 	detached := context.WithoutCancel(ctx)
 	queued := 0
 	for _, hook := range hooks {
+		if hook.Secret == "" {
+			// A stored subscription always has a secret (registration
+			// generates one), so this can only mean the read path lost it.
+			// It is a diagnostic, not a refusal: the delivery still goes out.
+			n.logger.Warn("webhook delivery unsigned",
+				"webhook_id", hook.ID, "event", string(delivery.Event), "run_id", delivery.RunID)
+		}
 		id, err := n.newID()
 		if err != nil {
 			n.logger.Error("webhook delivery id", "webhook_id", hook.ID, "error", err)

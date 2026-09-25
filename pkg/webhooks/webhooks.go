@@ -19,11 +19,13 @@ import (
 // in-memory implementation used by focused unit tests.
 type Store interface {
 	Register(context.Context, Registration) (Webhook, error)
-	// List returns Public copies: it answers management reads.
+	// List returns every subscription without its secret. It is the API's
+	// read: what ListWebhooks and the JSON adapter answer with.
 	List(context.Context) ([]Webhook, error)
-	// ListForDelivery returns every subscription with its signing secret. It
-	// is the dispatcher's read and never an API response: a delivery built
-	// from a Public copy would go out unsigned.
+	// ListForDelivery returns every subscription WITH its signing secret, in
+	// the same order List uses. It is the dispatcher's read and nobody
+	// else's: no handler, adapter, CLI or client calls it, and its result is
+	// never serialized. Registry.MatchingContext is its only caller.
 	ListForDelivery(context.Context) ([]Webhook, error)
 	Get(context.Context, string) (Webhook, bool, error)
 	Delete(context.Context, string) (bool, error)

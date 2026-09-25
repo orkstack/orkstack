@@ -116,3 +116,98 @@ func TestIntegration_S3WebhookStoreRoundTripsScope(t *testing.T) {
 		t.Errorf("the pre-scope record %s was not listed", legacyID)
 	}
 }
+
+// TestIntegration_S3WebhookStoreListForDeliveryCarriesTheSecretAndListDoesNot
+// is the S3 twin of TestWebhookStore_DurableMatchingCarriesTheSigningSecret:
+// the management reads strip the secret, the delivery read carries the one
+// Register disclosed, in List's order, and the durable registry production
+// wires over this store hands the dispatcher that secret.
+func TestIntegration_S3WebhookStoreListForDeliveryCarriesTheSecretAndListDoesNot(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+
+	store, err := artifacts.NewS3WebhookStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3WebhookStore: %v", err)
+	}
+	raw := newRawS3Client(t, cfg)
+
+	// A path unique to this test, so the other subscriptions a shared bucket
+	// holds can be told apart from ours.
+	marker := "https://example.test/" + uniqueToken(t)
+	supplied, err := store.Register(ctx, webhooks.Registration{URL: marker + "/supplied", Secret: "s3cret"})
+	if err != nil {
+		t.Fatalf("Register (supplied secret): %v", err)
+	}
+	generated, err := store.Register(ctx, webhooks.Registration{URL: marker + "/generated"})
+	if err != nil {
+		t.Fatalf("Register (generated secret): %v", err)
+	}
+	for _, id := range []string{supplied.ID, generated.ID} {
+		key := artifacts.WebhookPrefix + "/" + id + ".json"
+		t.Cleanup(func() { deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, key) })
+	}
+	if supplied.Secret != "s3cret" || generated.Secret == "" {
+		t.Fatalf("Register disclosed %q and %q, want the supplied secret and a generated one", supplied.Secret, generated.Secret)
+	}
+	disclosed := map[string]string{supplied.ID: supplied.Secret, generated.ID: generated.Secret}
+
+	ours := func(hooks []webhooks.Webhook) []webhooks.Webhook {
+		var out []webhooks.Webhook
+		for _, hook := range hooks {
+			if _, ok := disclosed[hook.ID]; ok {
+				out = append(out, hook)
+			}
+		}
+		return out
+	}
+
+	all, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	listed := ours(all)
+	if len(listed) != 2 {
+		t.Fatalf("List returned %d of our subscriptions, want 2", len(listed))
+	}
+	for _, hook := range listed {
+		if hook.Secret != "" {
+			t.Errorf("List disclosed the secret of %s", hook.ID)
+		}
+		got, ok, err := store.Get(ctx, hook.ID)
+		if err != nil || !ok {
+			t.Fatalf("Get(%s) = %v, %v", hook.ID, ok, err)
+		}
+		if got.Secret != "" {
+			t.Errorf("Get disclosed the secret of %s", hook.ID)
+		}
+	}
+
+	all, err = store.ListForDelivery(ctx)
+	if err != nil {
+		t.Fatalf("ListForDelivery: %v", err)
+	}
+	delivery := ours(all)
+	if len(delivery) != 2 {
+		t.Fatalf("ListForDelivery returned %d of our subscriptions, want 2", len(delivery))
+	}
+	for i, hook := range delivery {
+		if hook.ID != listed[i].ID {
+			t.Errorf("ListForDelivery[%d] = %s, List[%d] = %s: the two reads disagree on order", i, hook.ID, i, listed[i].ID)
+		}
+		if hook.Secret != disclosed[hook.ID] {
+			t.Errorf("ListForDelivery returned %s with secret %q, want the disclosed %q", hook.ID, hook.Secret, disclosed[hook.ID])
+		}
+	}
+
+	matched := ours(webhooks.NewDurableRegistry(store).Matching(webhooks.Match{Event: webhooks.EventRunSucceeded}))
+	if len(matched) != 2 {
+		t.Fatalf("the durable registry matched %d of our subscriptions, want 2", len(matched))
+	}
+	for _, hook := range matched {
+		if hook.Secret != disclosed[hook.ID] {
+			t.Errorf("the durable registry would sign %s with %q, want the disclosed %q", hook.ID, hook.Secret, disclosed[hook.ID])
+		}
+	}
+}

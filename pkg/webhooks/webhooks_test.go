@@ -1,7 +1,9 @@
 package webhooks_test
 
 import (
+	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,4 +219,106 @@ func mustRegister(t *testing.T, registry *webhooks.Registry, reg webhooks.Regist
 		t.Fatalf("Register(%q): %v", reg.URL, err)
 	}
 	return hook
+}
+
+// countingStore is a durable webhooks.Store held in memory. Its List answers
+// with Public copies, exactly as both production backends do, its
+// ListForDelivery with the secrets, and it counts calls to each so a test can
+// say which read a registry used.
+type countingStore struct {
+	mu                  sync.Mutex
+	hooks               []webhooks.Webhook
+	lists, deliveryRead int
+}
+
+func (s *countingStore) Register(context.Context, webhooks.Registration) (webhooks.Webhook, error) {
+	panic("countingStore is read-only")
+}
+
+func (s *countingStore) List(context.Context) ([]webhooks.Webhook, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lists++
+	out := make([]webhooks.Webhook, 0, len(s.hooks))
+	for _, hook := range s.hooks {
+		out = append(out, hook.Public())
+	}
+	return out, nil
+}
+
+func (s *countingStore) ListForDelivery(context.Context) ([]webhooks.Webhook, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deliveryRead++
+	return append([]webhooks.Webhook(nil), s.hooks...), nil
+}
+
+func (s *countingStore) Get(_ context.Context, id string) (webhooks.Webhook, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, hook := range s.hooks {
+		if hook.ID == id {
+			return hook.Public(), true, nil
+		}
+	}
+	return webhooks.Webhook{}, false, nil
+}
+
+func (s *countingStore) Delete(context.Context, string) (bool, error) {
+	panic("countingStore is read-only")
+}
+
+func (s *countingStore) calls() (lists, deliveryReads int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lists, s.deliveryRead
+}
+
+// The production registry is the durable one, and a delivery can only be
+// signed if its lookup carries the secret. List is the API's read and strips
+// it; the dispatcher's read must be ListForDelivery, and the API's reads must
+// never reach for it.
+func TestRegistry_DurableMatchingReadsTheDeliveryListNeverThePublicOne(t *testing.T) {
+	store := &countingStore{hooks: []webhooks.Webhook{
+		{ID: "whk-a", URL: "https://a.example/hook", Secret: "secret-a"},
+		{ID: "whk-b", URL: "https://b.example/hook", Secret: "secret-b", Events: []webhooks.Event{webhooks.EventRunSucceeded}},
+	}}
+	registry := webhooks.NewDurableRegistry(store)
+	ctx := context.Background()
+
+	matched, err := registry.MatchingContext(ctx, webhooks.Match{Event: webhooks.EventRunSucceeded})
+	if err != nil {
+		t.Fatalf("MatchingContext: %v", err)
+	}
+	if len(matched) != 2 {
+		t.Fatalf("matched %d subscriptions, want 2: %+v", len(matched), matched)
+	}
+	for _, hook := range matched {
+		if hook.Secret == "" {
+			t.Errorf("delivery lookup returned %s without its secret: its delivery would go out unsigned", hook.ID)
+		}
+	}
+	if lists, deliveryReads := store.calls(); lists != 0 || deliveryReads != 1 {
+		t.Errorf("delivery lookup made %d List and %d ListForDelivery calls, want 0 and 1", lists, deliveryReads)
+	}
+
+	listed, err := registry.ListContext(ctx)
+	if err != nil {
+		t.Fatalf("ListContext: %v", err)
+	}
+	for _, hook := range listed {
+		if hook.Secret != "" {
+			t.Errorf("ListContext disclosed the secret of %s", hook.ID)
+		}
+	}
+	got, ok, err := registry.GetContext(ctx, "whk-a")
+	if err != nil || !ok {
+		t.Fatalf("GetContext(whk-a) = %v, %v", ok, err)
+	}
+	if got.Secret != "" {
+		t.Errorf("GetContext disclosed the secret of %s", got.ID)
+	}
+	if _, deliveryReads := store.calls(); deliveryReads != 1 {
+		t.Errorf("a management read reached ListForDelivery: %d delivery reads, want still 1", deliveryReads)
+	}
 }

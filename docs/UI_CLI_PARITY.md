@@ -262,6 +262,16 @@ transition and no task event: task events are opt-in by name. Preserve HTTP/HTTP
 secret disclosure. List never contains secrets. Store subscriptions in shared
 object storage, with atomic create/delete and durable failure reporting;
 both management and delivery matching must observe another replica's changes.
+Delivery matching reads the registry through `Store.ListForDelivery`, the one
+read that carries each subscription's signing secret; `List` and `Get` — what
+`ListWebhooks`, the JSON adapter, `orkctl` and the UI answer from — never do.
+Until scoped subscriptions landed, the durable registry production wires
+matched through the public `List`, so every production delivery went out with
+no `X-Ork-Signature` header. Every delivery from the durable registry now
+carries one, over the same body bytes, with the secret its registration
+disclosed; no record is rewritten and no subscriber re-registers. A matched
+subscription with no secret is still delivered, and logged at `Warn` as
+`webhook delivery unsigned`.
 Do not use a startup-only snapshot or a process-only subscription registry in
 production. The existing JSON routes may remain compatibility adapters over
 the same service/storage; clients use generated types. Keep existing delivery

@@ -233,8 +233,15 @@ func TestIntegration_TaskOutcomeWebhookFiresWhenTheTaskCommits(t *testing.T) {
 	}
 	committingTaskWorker(t, temporalClient, queue)
 	subscriber := newWebhookSubscriber(t)
+	// The registry production wires (cmd/ork): durable, over a real store, so
+	// the signature asserted below is the one a production delivery carries.
+	webhookStore, err := artifacts.NewLocalWebhookStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalWebhookStore: %v", err)
+	}
 	e := startScopedEngine(t, scopedEngineConfig{
 		temporal: temporalClient, runQueue: queue, project: true, snapshots: newTestSnapshotStore(),
+		registry: webhooks.NewDurableRegistry(webhookStore),
 		config: api.Config{
 			Orkflows: engine.NewMemoryOrkflowStore(),
 			Starter:  engine.NewTemporalStarter(temporalClient, queue),
@@ -272,9 +279,15 @@ func TestIntegration_TaskOutcomeWebhookFiresWhenTheTaskCommits(t *testing.T) {
 	if len(deliveries) != 2 {
 		t.Fatalf("received %d deliveries, want TASK_SUCCEEDED of transform then RUN_SUCCEEDED: %+v", len(deliveries), deliveries)
 	}
+	// Each delivery is its own goroutine and the durable lookup is
+	// asynchronous, so arrival order is not part of the contract: find each
+	// by its event.
 	taskDelivery, runDelivery := deliveries[0], deliveries[1]
+	if taskDelivery.event == "RUN_SUCCEEDED" {
+		taskDelivery, runDelivery = runDelivery, taskDelivery
+	}
 	if taskDelivery.event != "TASK_SUCCEEDED" || runDelivery.event != "RUN_SUCCEEDED" {
-		t.Fatalf("delivered %s then %s, want TASK_SUCCEEDED then RUN_SUCCEEDED", taskDelivery.event, runDelivery.event)
+		t.Fatalf("delivered %s and %s, want one TASK_SUCCEEDED and one RUN_SUCCEEDED", taskDelivery.event, runDelivery.event)
 	}
 	for _, got := range deliveries {
 		if !webhooks.Verify(hook.Secret, got.body, got.signature) {
