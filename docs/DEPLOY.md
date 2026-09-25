@@ -1225,10 +1225,11 @@ Runs already pinned to a version still need that version's workers.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
-Five reads answer every operational question about a deployment, and each is
+Six reads answer every operational question about a deployment, and each is
 available from the CLI and over Connect. Four of them are answered from the
 cluster or the bucket, so **any replica answers them and they all answer the
-same** (`AGENTS.md` §7). The fifth is deliberately not.
+same** (`AGENTS.md` §7). Two — system information and the activity catalog —
+are deliberately not.
 
 | read | CLI | where the answer comes from |
 |---|---|---|
@@ -1237,6 +1238,7 @@ same** (`AGENTS.md` §7). The fifth is deliberately not.
 | pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
 | namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket — each namespace's own `run_retention` lives here too |
 | activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests at apply time |
+| audit trail | `orkctl admin audit` | the audit records in the bucket (`metadata/audit/`) — **any replica answers**, for writes any replica recorded |
 
 `orkctl admin info` describes **the replica that answered**, and it says so in
 its own output. Behind a load balancer that is whichever replica took the
@@ -1338,6 +1340,59 @@ The whole surface, answered by a second replica that started nothing — no
 namespace registered, no orkflow applied, no run — is proven live in
 `TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`
 (`cmd/orkctl/admin_surface_integration_test.go`).
+
+### Attributing control-plane writes
+
+Every call of a control-plane **write** RPC — namespace create/update/delete,
+orkflow apply/promote/delete, run cancel, trigger create/delete, webhook
+register/delete (over Connect and over the legacy `/v1/webhooks` routes), and
+the retention maximum — writes one immutable record, succeeded or refused, to
+`metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` in the bucket, before the response
+leaves the engine. Reads are never recorded, and neither is `SubmitRun` nor a
+trigger invocation: a run's own record is already the durable fact.
+`orkctl admin audit` and Admin → Audit read the trail back, newest first,
+from any replica:
+
+```
+WHEN                  PRINCIPAL        ACTION            NAMESPACE      TARGET         RESULT
+2026-03-14T11:02:44Z  svc-platform-ci  retention.update  -              deployment     ok
+2026-02-28T16:44:58Z  unattributed     namespace.delete  staging        staging        refused: failed_precondition
+
+Scope: every namespace, 2026-03-07T11:02:44Z to 2026-03-14T11:02:44Z (exclusive), newest first.
+principal is the identity the deployment's gateway asserted in Ork-Principal;
+OrkStack records it and does not authenticate it.
+```
+
+- **`principal` is an assertion, not an identity.** It is the value of the
+  `Ork-Principal` request header, recorded verbatim (bounded, control
+  characters replaced). OrkStack has no authentication and does not verify
+  it. A request without the header is recorded with an empty principal,
+  which both clients render as `unattributed`.
+- **A gateway that authenticates callers must OVERWRITE `Ork-Principal`**
+  with the identity it established, never pass a client's value through —
+  otherwise any caller can claim any name. The UI's server forwards the
+  header a gateway sets on browser requests to the engine unchanged.
+- **`ORK_PRINCIPAL` makes `orkctl` assert one.** Set in `orkctl`'s
+  environment, every request it sends carries `Ork-Principal:
+  $ORK_PRINCIPAL`. It is an assertion like any other: useful on a `make up`
+  deployment with no gateway, never proof of who typed the command.
+- **`source_address` is the TCP peer the engine accepted the request from.**
+  Behind a gateway that is the gateway's address; no `X-Forwarded-For` or
+  other proxy header is consulted. The client's address is in the gateway's
+  own access log.
+- **The write is best-effort.** An audit store that refuses the write never
+  changes what the write RPC returns: the engine logs `audit record dropped`
+  at warn (action, target, principal, error) and counts
+  `ork.audit.records{outcome="dropped"}` (§7 "Metrics").
+- **Nothing reclaims the trail.** The cleanup worker never touches
+  `metadata/audit/`; a bucket lifecycle rule on that prefix is the operator's
+  retention for it. There is no setting: a deployment that upgrades gets
+  records, unattributed until something asserts a principal.
+- **A listing is bounded.** The default window is the seven days before now;
+  `--since`/`--until` choose another. A page that would examine more than
+  5000 records before filling is refused (`resource_exhausted`) rather than
+  answered from the subset it read — narrow the window, and page a long
+  compliance range month by month.
 
 ### Run retention: a deployment maximum, a value per namespace
 
@@ -1664,6 +1719,12 @@ export path below. The Temporal SDK's own `temporal_*` metrics — activity and
 workflow task latency, poll counts, failures — arrive via
 `client.Options.MetricsHandler`, and Go's runtime and process collectors ride
 along on the same `/metrics`.
+
+`ork.audit.records{action,outcome}` (engine) counts every control-plane
+audit write, once per audited write RPC: `outcome` is `written`, or `dropped`
+when the audit store refused the write (the RPC itself still answered as it
+would have — see §5 "Attributing control-plane writes"). A rising `dropped`
+rate is an unwritable `metadata/audit/` prefix.
 
 ### Lifecycle metrics
 
