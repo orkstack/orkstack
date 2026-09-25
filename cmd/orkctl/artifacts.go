@@ -32,7 +32,7 @@ func newRunArtifactsCommand(g *globalFlags) *cobra.Command {
 
 func newRunArtifactCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{Use: "artifact", Short: "Read one recorded artifact"}
-	cmd.AddCommand(newRunArtifactDownloadCommand(g))
+	cmd.AddCommand(newRunArtifactDownloadCommand(g), newRunArtifactProvenanceCommand(g))
 	return cmd
 }
 

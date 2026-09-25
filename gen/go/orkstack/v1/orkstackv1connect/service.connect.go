@@ -90,6 +90,9 @@ const (
 	// RunServiceListTaskAttemptsProcedure is the fully-qualified name of the RunService's
 	// ListTaskAttempts RPC.
 	RunServiceListTaskAttemptsProcedure = "/orkstack.v1.RunService/ListTaskAttempts"
+	// RunServiceGetArtifactProvenanceProcedure is the fully-qualified name of the RunService's
+	// GetArtifactProvenance RPC.
+	RunServiceGetArtifactProvenanceProcedure = "/orkstack.v1.RunService/GetArtifactProvenance"
 	// WebhookServiceRegisterWebhookProcedure is the fully-qualified name of the WebhookService's
 	// RegisterWebhook RPC.
 	WebhookServiceRegisterWebhookProcedure = "/orkstack.v1.WebhookService/RegisterWebhook"
@@ -513,6 +516,23 @@ type RunServiceClient interface {
 	// never has a silent hole where an Orker died. There is no stream: a client
 	// refetches on the events it already follows.
 	ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error)
+	// GetArtifactProvenance answers, for ONE recorded artifact, whether its
+	// bytes are still in the object store and which archived runs of the
+	// calling namespace recorded the same physical object.
+	//
+	// It is a READ of the reverse index the archive already maintains for
+	// cleanup refcounting (metadata/index/objects/…, docs/STORAGE.md): a
+	// keys-only prefix scan whose keys are the answer, then one body read per
+	// referencing run to check its namespace. It writes nothing and creates
+	// no key family.
+	//
+	// The artifact is addressed exactly as ReadArtifact addresses it — by the
+	// run, task, kind and recorded name — and resolved against the
+	// authoritative run. A caller never names an object key or a URI. On the
+	// S3 backend an object key embeds its run id, so `references` is the
+	// producing run alone; on the local backend identical bytes under one
+	// name are one object, so every run that produced them is listed.
+	GetArtifactProvenance(context.Context, *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -580,20 +600,27 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("ListTaskAttempts")),
 			connect.WithClientOptions(opts...),
 		),
+		getArtifactProvenance: connect.NewClient[v1.GetArtifactProvenanceRequest, v1.GetArtifactProvenanceResponse](
+			httpClient,
+			baseURL+RunServiceGetArtifactProvenanceProcedure,
+			connect.WithSchema(runServiceMethods.ByName("GetArtifactProvenance")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // runServiceClient implements RunServiceClient.
 type runServiceClient struct {
-	submitRun        *connect.Client[v1.SubmitRunRequest, v1.SubmitRunResponse]
-	getRun           *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
-	listRuns         *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
-	cancelRun        *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
-	streamEvents     *connect.Client[v1.StreamEventsRequest, v1.Event]
-	streamTaskLogs   *connect.Client[v1.StreamTaskLogsRequest, v1.TaskLogChunk]
-	listRunArtifacts *connect.Client[v1.ListRunArtifactsRequest, v1.ListRunArtifactsResponse]
-	readArtifact     *connect.Client[v1.ReadArtifactRequest, v1.ArtifactChunk]
-	listTaskAttempts *connect.Client[v1.ListTaskAttemptsRequest, v1.ListTaskAttemptsResponse]
+	submitRun             *connect.Client[v1.SubmitRunRequest, v1.SubmitRunResponse]
+	getRun                *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
+	listRuns              *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	cancelRun             *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
+	streamEvents          *connect.Client[v1.StreamEventsRequest, v1.Event]
+	streamTaskLogs        *connect.Client[v1.StreamTaskLogsRequest, v1.TaskLogChunk]
+	listRunArtifacts      *connect.Client[v1.ListRunArtifactsRequest, v1.ListRunArtifactsResponse]
+	readArtifact          *connect.Client[v1.ReadArtifactRequest, v1.ArtifactChunk]
+	listTaskAttempts      *connect.Client[v1.ListTaskAttemptsRequest, v1.ListTaskAttemptsResponse]
+	getArtifactProvenance *connect.Client[v1.GetArtifactProvenanceRequest, v1.GetArtifactProvenanceResponse]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -641,6 +668,11 @@ func (c *runServiceClient) ListTaskAttempts(ctx context.Context, req *connect.Re
 	return c.listTaskAttempts.CallUnary(ctx, req)
 }
 
+// GetArtifactProvenance calls orkstack.v1.RunService.GetArtifactProvenance.
+func (c *runServiceClient) GetArtifactProvenance(ctx context.Context, req *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error) {
+	return c.getArtifactProvenance.CallUnary(ctx, req)
+}
+
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
 type RunServiceHandler interface {
 	SubmitRun(context.Context, *connect.Request[v1.SubmitRunRequest]) (*connect.Response[v1.SubmitRunResponse], error)
@@ -682,6 +714,23 @@ type RunServiceHandler interface {
 	// never has a silent hole where an Orker died. There is no stream: a client
 	// refetches on the events it already follows.
 	ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error)
+	// GetArtifactProvenance answers, for ONE recorded artifact, whether its
+	// bytes are still in the object store and which archived runs of the
+	// calling namespace recorded the same physical object.
+	//
+	// It is a READ of the reverse index the archive already maintains for
+	// cleanup refcounting (metadata/index/objects/…, docs/STORAGE.md): a
+	// keys-only prefix scan whose keys are the answer, then one body read per
+	// referencing run to check its namespace. It writes nothing and creates
+	// no key family.
+	//
+	// The artifact is addressed exactly as ReadArtifact addresses it — by the
+	// run, task, kind and recorded name — and resolved against the
+	// authoritative run. A caller never names an object key or a URI. On the
+	// S3 backend an object key embeds its run id, so `references` is the
+	// producing run alone; on the local backend identical bytes under one
+	// name are one object, so every run that produced them is listed.
+	GetArtifactProvenance(context.Context, *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error)
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -745,6 +794,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("ListTaskAttempts")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceGetArtifactProvenanceHandler := connect.NewUnaryHandler(
+		RunServiceGetArtifactProvenanceProcedure,
+		svc.GetArtifactProvenance,
+		connect.WithSchema(runServiceMethods.ByName("GetArtifactProvenance")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -765,6 +820,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceReadArtifactHandler.ServeHTTP(w, r)
 		case RunServiceListTaskAttemptsProcedure:
 			runServiceListTaskAttemptsHandler.ServeHTTP(w, r)
+		case RunServiceGetArtifactProvenanceProcedure:
+			runServiceGetArtifactProvenanceHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -808,6 +865,10 @@ func (UnimplementedRunServiceHandler) ReadArtifact(context.Context, *connect.Req
 
 func (UnimplementedRunServiceHandler) ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ListTaskAttempts is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) GetArtifactProvenance(context.Context, *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.GetArtifactProvenance is not implemented"))
 }
 
 // WebhookServiceClient is a client for the orkstack.v1.WebhookService service.

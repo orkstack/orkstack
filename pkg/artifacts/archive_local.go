@@ -273,6 +273,38 @@ func (a *LocalRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, run
 	return result, nil
 }
 
+// ListObjectReferences walks one object's marker prefix exactly as
+// DeleteUnreferencedObjects does, collecting every marker's run id. A prefix
+// that does not exist is an object nothing references: an empty list.
+func (a *LocalRunArchive) ListObjectReferences(ctx context.Context, objectID string) ([]string, error) {
+	if _, _, ok := splitKey(objectID); !ok {
+		return nil, fmt.Errorf("%w: %q is not a canonical local object id", ErrInvalidURI, objectID)
+	}
+	collector := newObjectReferenceCollector()
+	err := fs.WalkDir(a.root.FS(), strings.TrimSuffix(runObjectRefPrefix(objectID), "/"), func(key string, d fs.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, fs.ErrNotExist) {
+			return fs.SkipAll
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		return collector.add(key)
+	})
+	if err != nil {
+		if errors.Is(err, ErrTooManyReferences) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("artifacts: local list references of %q: %w", objectID, err)
+	}
+	return collector.runIDs, nil
+}
+
 // DeleteUnreferencedObjects removes local content-addressed objects only after
 // their reference prefix is empty. Missing objects make retries a no-op.
 func (a *LocalRunArchive) DeleteUnreferencedObjects(ctx context.Context, objectIDs []string) (CleanupResult, error) {

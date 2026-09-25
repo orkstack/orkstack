@@ -27,6 +27,9 @@ const (
 	WebhookHeader = "X-Ork-Webhook-Id"
 	// RunHeader is the id of the run that transitioned.
 	RunHeader = "X-Ork-Run-Id"
+	// TaskHeader names the task of a task outcome delivery. Absent on a run
+	// transition. Not signed, like every other header.
+	TaskHeader = "X-Ork-Task-Id"
 	// TimestampHeader is when the transition happened, RFC3339 in UTC.
 	TimestampHeader = "X-Ork-Timestamp"
 	// AttemptHeader counts delivery attempts from 1. It is not signed.

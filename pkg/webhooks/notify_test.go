@@ -1,7 +1,9 @@
 package webhooks_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -194,5 +196,58 @@ func TestNotifier_StampsADeliveryThatArrivedWithoutATimestamp(t *testing.T) {
 	}
 	if stamped.IsZero() {
 		t.Error("delivery went out with a zero timestamp")
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe to write from the notifier's goroutines.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// A stored subscription always has a secret, so a matched hook without one
+// means the read path lost it — the symptom of the durable registry reading
+// the public List. The notifier says so, and still delivers: refusing would
+// turn a diagnostic into a silent drop.
+func TestNotifier_WarnsWhenAMatchedSubscriptionHasNoSecret(t *testing.T) {
+	target := newReceiver(t, http.StatusOK)
+	// The in-memory Registry always generates a secret, so the secretless
+	// hook is served by a durable store, which is also where this can happen.
+	store := &countingStore{hooks: []webhooks.Webhook{{ID: "whk-nosecret", URL: target.server.URL}}}
+	logs := &syncBuffer{}
+	notifier := webhooks.NewNotifier(webhooks.NewDurableRegistry(store), webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+		webhooks.NotifierOptions{Logger: slog.New(slog.NewTextHandler(logs, nil))})
+
+	notifier.Notify(context.Background(), webhooks.Delivery{
+		Event: webhooks.EventRunSucceeded, RunID: "ork-1-1", OrkflowName: "etl", Status: "SUCCEEDED",
+		Run: []byte(`{}`),
+	})
+	drain(t, notifier)
+
+	out := logs.String()
+	for _, want := range []string{"webhook delivery unsigned", "webhook_id=whk-nosecret", "event=RUN_SUCCEEDED", "run_id=ork-1-1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log does not contain %q:\n%s", want, out)
+		}
+	}
+	target.mu.Lock()
+	defer target.mu.Unlock()
+	if len(target.headers) != 1 {
+		t.Fatalf("receiver got %d POSTs, want 1: an unsigned hook is still delivered", len(target.headers))
+	}
+	if sig := target.headers[0].Get(webhooks.SignatureHeader); sig != "" {
+		t.Errorf("a secretless delivery carried %s: %q", webhooks.SignatureHeader, sig)
 	}
 }

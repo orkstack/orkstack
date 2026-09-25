@@ -1000,34 +1000,8 @@ func TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails(t *test
 	store := engine.NewRunStore()
 	env.RegisterActivityWithOptions(engine.NewEventActivities(bus, store).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	env.RegisterActivityWithOptions(
-		func(actCtx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-			switch in.TaskId {
-			case "doomed":
-				return &orkstackv1.ExecuteTaskResult{}, errors.New("workload exited 1")
-			case "sibling":
-				// Temporal delivers cancellation to an activity ONLY through a
-				// heartbeat response (see workflow.go's orkerHeartbeatTimeout
-				// comment) — this must heartbeat in a loop, exactly like the
-				// real Orker does, or it will never observe actCtx.Done().
-				ticker := time.NewTicker(10 * time.Millisecond)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-actCtx.Done():
-						close(siblingCanceled)
-						return &orkstackv1.ExecuteTaskResult{}, actCtx.Err()
-					case <-ticker.C:
-						activity.RecordHeartbeat(actCtx, "waiting")
-					}
-				}
-			default:
-				t.Errorf("task %q ran, want it never scheduled", in.TaskId)
-				return &orkstackv1.ExecuteTaskResult{}, nil
-			}
-		},
-		activity.RegisterOptions{Name: task.ActivityExecuteTask},
-	)
+	env.RegisterActivityWithOptions(cancelSiblingsTask(t, siblingCanceled),
+		activity.RegisterOptions{Name: task.ActivityExecuteTask})
 
 	started := time.Now()
 	env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-siblings", compile(t, cancelSiblingsDocument), payload(t, nil), defaultPlan())
@@ -1081,6 +1055,131 @@ func TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails(t *test
 	if tr := taskRunOf(t, stored, "sibling"); tr.GetStartedAt() == nil {
 		t.Error("sibling started_at is unset; it really did run before it was canceled, and a " +
 			"client cannot tell it from downstream without that stamp")
+	}
+}
+
+// cancelSiblingsTask is cancelSiblingsDocument's task activity: doomed fails,
+// sibling runs until it is canceled (closing siblingCanceled), and any other
+// task is an error because the run must end before it is dispatched.
+func cancelSiblingsTask(
+	t *testing.T,
+	siblingCanceled chan struct{},
+) func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	return func(actCtx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		switch in.TaskId {
+		case "doomed":
+			return &orkstackv1.ExecuteTaskResult{}, errors.New("workload exited 1")
+		case "sibling":
+			// Temporal delivers cancellation to an activity ONLY through a
+			// heartbeat response (see workflow.go's orkerHeartbeatTimeout
+			// comment) — this must heartbeat in a loop, exactly like the
+			// real Orker does, or it will never observe actCtx.Done().
+			ticker := time.NewTicker(10 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-actCtx.Done():
+					close(siblingCanceled)
+					return &orkstackv1.ExecuteTaskResult{}, actCtx.Err()
+				case <-ticker.C:
+					activity.RecordHeartbeat(actCtx, "waiting")
+				}
+			}
+		default:
+			t.Errorf("task %q ran, want it never scheduled", in.TaskId)
+			return &orkstackv1.ExecuteTaskResult{}, nil
+		}
+	}
+}
+
+// TestRunWorkflow_NeverAnnouncesACanceledSiblingAsATaskOutcome drives the real
+// interpreter through the case the webhook contract excludes by status: a task
+// that was RUNNING when its run ended comes back through collect as a
+// TASK_FAILED event carrying STATUS_CANCELED. The bus must still record it —
+// that is the fixture the guard exists for, and asserting it turns an
+// interpreter change that stops emitting it into a visible failure — while the
+// notifier must never be told that task failed.
+func TestRunWorkflow_NeverAnnouncesACanceledSiblingAsATaskOutcome(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	siblingCanceled := make(chan struct{})
+
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(60 * time.Second)
+	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
+	snapshots := newTestSnapshotStore()
+	env.RegisterActivityWithOptions(engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot})
+	bus := engine.NewEventBus()
+	store := engine.NewRunStore()
+	notifier := &recordingNotifier{}
+	env.RegisterActivityWithOptions(
+		engine.NewEventActivities(bus, store).WithSnapshotStore(snapshots).WithRunNotifier(notifier).PublishEvent,
+		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
+	env.RegisterActivityWithOptions(cancelSiblingsTask(t, siblingCanceled),
+		activity.RegisterOptions{Name: task.ActivityExecuteTask})
+
+	const runID = "run-cancel-siblings-announce"
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, cancelSiblingsDocument), payload(t, nil), defaultPlan())
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("workflow did not complete")
+	}
+	if err := env.GetWorkflowError(); err == nil {
+		t.Fatal("workflow error = nil, want doomed's failure to fail the run")
+	}
+	select {
+	case <-siblingCanceled:
+	case <-time.After(30 * time.Second):
+		t.Fatal("sibling never observed cancellation")
+	}
+
+	// (1) The interpreter emitted TASK_FAILED carrying CANCELED for sibling.
+	emitted := false
+	for _, event := range bus.Events(runID, 0) {
+		if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_FAILED && event.GetTaskId() == "sibling" &&
+			event.GetStatus() == orkstackv1.Status_STATUS_CANCELED {
+			emitted = true
+		}
+	}
+	if !emitted {
+		t.Fatal("the bus holds no TASK_FAILED/CANCELED event for sibling; the guard this test pins has nothing to guard")
+	}
+
+	notifier.mu.Lock()
+	events := append([]*orkstackv1.Event{}, notifier.events...)
+	runs := append([]*orkstackv1.Run{}, notifier.runs...)
+	notifier.mu.Unlock()
+
+	// (2) Exactly one TASK_FAILED is announced: doomed's, with FAILED.
+	// (3) None names sibling.
+	var failures []*orkstackv1.Event
+	for _, event := range events {
+		if event.GetType() != orkstackv1.EventType_EVENT_TYPE_TASK_FAILED {
+			continue
+		}
+		failures = append(failures, event)
+		if event.GetTaskId() == "sibling" {
+			t.Errorf("announced TASK_FAILED for sibling with status %v; a canceled task is not a failure", event.GetStatus())
+		}
+	}
+	if len(failures) != 1 || failures[0].GetTaskId() != "doomed" || failures[0].GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		t.Errorf("announced TASK_FAILED events %v, want exactly doomed's with STATUS_FAILED", failures)
+	}
+
+	// (4) The announcements end with RUN_FAILED, whose run reads sibling as
+	// CANCELED with a startedAt and downstream as CANCELED without one.
+	if len(events) == 0 {
+		t.Fatal("nothing was announced")
+	}
+	last := events[len(events)-1]
+	if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
+		t.Fatalf("last announcement = %v, want RUN_FAILED", last.GetType())
+	}
+	final := runs[len(runs)-1]
+	if tr := taskRunOf(t, final, "sibling"); tr.GetStatus() != orkstackv1.Status_STATUS_CANCELED || tr.GetStartedAt() == nil {
+		t.Errorf("RUN_FAILED run reads sibling as %v (startedAt %v), want CANCELED with a startedAt", tr.GetStatus(), tr.GetStartedAt())
+	}
+	if tr := taskRunOf(t, final, "downstream"); tr.GetStatus() != orkstackv1.Status_STATUS_CANCELED || tr.GetStartedAt() != nil {
+		t.Errorf("RUN_FAILED run reads downstream as %v (startedAt %v), want CANCELED without one", tr.GetStatus(), tr.GetStartedAt())
 	}
 }
 

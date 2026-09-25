@@ -1368,7 +1368,7 @@ func (s *Service) notifyRunFailedToStart(
 		Timestamp: failedAt,
 	}
 	if s.notifier != nil {
-		s.notifier.NotifyRunTransition(ctx, event, run)
+		s.notifier.NotifyRunEvent(ctx, event, run)
 	}
 	if s.observer != nil {
 		s.observer.ObserveEvent(ctx, event, run)
