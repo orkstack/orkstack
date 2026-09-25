@@ -485,13 +485,6 @@ func formatTimePtr(at *time.Time) string {
 	return at.UTC().Format(time.RFC3339)
 }
 
-func plural(n int, word string) string {
-	if n == 1 {
-		return fmt.Sprintf("%d %s", n, word)
-	}
-	return fmt.Sprintf("%d %ss", n, word)
-}
-
 func (timing *runTiming) summaryLine() string {
 	line := "run " + formatTimePtr(timing.RunStartedAt)
 	switch {
@@ -506,7 +499,7 @@ func (timing *runTiming) summaryLine() string {
 	switch {
 	case timing.WaitSumTasks > 0:
 		line += " · task wait, summed: " + formatDuration(timing.WaitSum.value) +
-			" over " + plural(timing.WaitSumTasks, "task")
+			" over " + plural(int64(timing.WaitSumTasks), "task")
 		if timing.WaitUnavailableTasks > 0 {
 			line += fmt.Sprintf(" (%d unavailable)", timing.WaitUnavailableTasks)
 		}
