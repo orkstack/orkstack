@@ -612,6 +612,11 @@ func openNamespaceStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3
 	return store, nil
 }
 
+// The refusal counter's seam is satisfied by shape (internal/telemetry does
+// not import internal/engine), so a signature drift must fail the build here
+// rather than a test.
+var _ engine.AdmissionObserver = (*telemetry.EngineObserver)(nil)
+
 // wireEventObserver decides whether the engine's telemetry observer is wired
 // into the projection worker and the API. It is gated on SignalsEnabled, not
 // Enabled: ORK_ADMIN_ADDR alone must not change a single thing about
@@ -939,8 +944,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	var eventObserver engine.EventObserver
+	var admissionObserver engine.AdmissionObserver
 	if wireEventObserver(tcfg) {
 		eventObserver = observer
+		admissionObserver = observer
 	}
 
 	// Projection worker: engine-internal activities on a dedicated queue so
@@ -1058,6 +1065,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		TransferBudgetSeconds:         cfg.transferBudgetSeconds,
 		FloorThroughputBytesPerSecond: cfg.floorThroughputBytesPerSecond,
 		Observer:                      eventObserver,
+		Admissions:                    admissionObserver,
 		TelemetrySinks:                tcfg.Sinks.Names(),
 	})
 	mux := api.NewMux(svc, api.MuxOptions{
