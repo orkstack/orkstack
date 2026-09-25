@@ -2,10 +2,13 @@
 	// The Admin area's own sub-navigation.
 	//
 	// Every route under here carries `?ns=` like any other page — the
-	// namespace switcher stays visible on all five — but only Pools RESPECTS
-	// it. Namespaces, Activities, Retention (the deployment MAXIMUM; a
-	// namespace's own run retention lives on the Namespaces page) and the
-	// overview are DEPLOYMENT-WIDE, and each says so in its own caption
+	// namespace switcher stays visible on all of them — but only Pools RESPECTS
+	// it. Namespaces, Activities, Webhooks, Retention (the deployment MAXIMUM;
+	// a namespace's own run retention lives on the Namespaces page) and the
+	// overview are DEPLOYMENT-WIDE, and Audit is a third behaviour: it shows
+	// every namespace by default and applies the switcher's namespace only as
+	// an explicit filter chosen on the page ("All namespaces" or "Namespace
+	// …"). Each says so in its own caption
 	// rather than hiding the switcher: hiding chrome per route is
 	// deliberately not done, because a switcher that disappears on some
 	// pages and not others is one more thing to notice, where a sentence in
@@ -38,7 +41,8 @@
 		{ id: 'pools', href: '/admin/pools', label: 'Pools' },
 		{ id: 'activities', href: '/admin/activities', label: 'Activities' },
 		{ id: 'webhooks', href: '/admin/webhooks', label: 'Webhooks' },
-		{ id: 'retention', href: '/admin/retention', label: 'Retention' }
+		{ id: 'retention', href: '/admin/retention', label: 'Retention' },
+		{ id: 'audit', href: '/admin/audit', label: 'Audit' }
 	];
 
 	// "overview" only ever matches the exact `/admin` path: every other tab's
