@@ -116,6 +116,10 @@ type runReadClient interface {
 		ctx context.Context,
 		request *workflowservice.ListWorkflowExecutionsRequest,
 	) (*workflowservice.ListWorkflowExecutionsResponse, error)
+	CountWorkflow(
+		ctx context.Context,
+		request *workflowservice.CountWorkflowExecutionsRequest,
+	) (*workflowservice.CountWorkflowExecutionsResponse, error)
 }
 
 // workflowServiceAdmin is the slice of Temporal's WorkflowService the admin

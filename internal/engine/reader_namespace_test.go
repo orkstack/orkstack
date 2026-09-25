@@ -62,6 +62,14 @@ func (v *visibilityIndex) GetWorkflowHistory(
 	return &fakeHistory{}
 }
 
+// CountWorkflow is not a question this double answers.
+func (v *visibilityIndex) CountWorkflow(
+	context.Context,
+	*workflowservice.CountWorkflowExecutionsRequest,
+) (*workflowservice.CountWorkflowExecutionsResponse, error) {
+	return nil, fmt.Errorf("visibilityIndex: CountWorkflow is not supported")
+}
+
 func (v *visibilityIndex) ListWorkflow(
 	_ context.Context,
 	request *workflowservice.ListWorkflowExecutionsRequest,

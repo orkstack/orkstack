@@ -42,6 +42,11 @@ func (s statsReader) Executions(
 	return s.executions[w.Namespace], nil
 }
 
+// RunningCount answers admission's question from the same executions map.
+func (s statsReader) RunningCount(_ context.Context, namespace string) (int64, error) {
+	return int64(len(s.executions[namespace].Running)), nil
+}
+
 // seedStats wires a fixture whose stats surface has something to report, and
 // returns it. The archive is a real one on a temp directory, so the counts
 // below come out of real index keys.

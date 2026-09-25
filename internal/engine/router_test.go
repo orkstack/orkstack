@@ -104,3 +104,5 @@ func (nopReader) StreamEvents(
 func (nopReader) Executions(context.Context, engine.StatsWindow) (engine.Executions, error) {
 	return engine.Executions{}, nil
 }
+
+func (nopReader) RunningCount(context.Context, string) (int64, error) { return 0, nil }

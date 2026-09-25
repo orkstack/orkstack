@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -277,6 +278,12 @@ func (s *S3NamespaceStore) Put(
 	if err := validNamespaceTelemetry(ns); err != nil {
 		return nil, err
 	}
+	if err := validNamespaceHold(ns); err != nil {
+		return nil, err
+	}
+	if err := validNamespaceMaxRunning(ns); err != nil {
+		return nil, err
+	}
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
 	stored.Name = name
 	stored.Etag = ""
@@ -287,8 +294,11 @@ func (s *S3NamespaceStore) Put(
 		if created := existing.GetCreatedAt(); created != nil {
 			stored.CreatedAt = created
 		}
+		StampNamespaceHold(stored, existing, stamp.AsTime())
 	case errors.Is(err, ErrNotFound):
-		// First write of this name: the stamp above is its birth.
+		// First write of this name: the stamp above is its birth, and a hold
+		// it carries is set by this write.
+		StampNamespaceHold(stored, nil, stamp.AsTime())
 	default:
 		return nil, err
 	}
@@ -450,6 +460,68 @@ func validNamespaceTelemetry(ns *orkstackv1.Namespace) error {
 		return fmt.Errorf("artifacts: namespace %q %w: %w", ns.GetName(), err, ErrInvalidNamespace)
 	}
 	return nil
+}
+
+// maxHoldReason bounds a hold's reason: a short human line, never a document.
+const maxHoldReason = 512
+
+// validNamespaceHold enforces the hold rule on the document alone: a hold
+// carries a reason the next operator can read — non-empty once trimmed, at
+// most 512 bytes, and free of control characters, which `orkctl namespace get`
+// and the UI render verbatim. Validated, never sanitized: a reason that fails
+// is refused, not rewritten.
+func validNamespaceHold(ns *orkstackv1.Namespace) error {
+	hold := ns.GetHold()
+	if hold == nil {
+		return nil
+	}
+	reason := hold.GetReason()
+	switch {
+	case strings.TrimSpace(reason) == "":
+		return fmt.Errorf("artifacts: namespace %q hold needs a reason: %w",
+			ns.GetName(), ErrInvalidNamespace)
+	case len(reason) > maxHoldReason:
+		return fmt.Errorf("artifacts: namespace %q hold reason of %d bytes exceeds the %d-byte limit: %w",
+			ns.GetName(), len(reason), maxHoldReason, ErrInvalidNamespace)
+	case !utf8.ValidString(reason):
+		return fmt.Errorf("artifacts: namespace %q hold reason is not valid UTF-8: %w",
+			ns.GetName(), ErrInvalidNamespace)
+	}
+	for i := 0; i < len(reason); i++ {
+		if b := reason[i]; b < 0x20 || b == 0x7f {
+			return fmt.Errorf("artifacts: namespace %q hold reason contains control character %#02x: %w",
+				ns.GetName(), b, ErrInvalidNamespace)
+		}
+	}
+	return nil
+}
+
+// validNamespaceMaxRunning refuses a negative cap. 0 is unlimited.
+func validNamespaceMaxRunning(ns *orkstackv1.Namespace) error {
+	if ns.GetMaxRunning() < 0 {
+		return fmt.Errorf("artifacts: namespace %q max_running %d must be 0 (unlimited) or positive: %w",
+			ns.GetName(), ns.GetMaxRunning(), ErrInvalidNamespace)
+	}
+	return nil
+}
+
+// StampNamespaceHold gives `next` the hold timestamps the registry owns:
+// a hold that `existing` already carried keeps its since, a hold that is new
+// is stamped now, and whatever since the client sent is discarded.
+//
+// It is exported so every registry double in the tree calls the same rule the
+// store does, and for no other reason. It edits next in place and never
+// touches existing.
+func StampNamespaceHold(next, existing *orkstackv1.Namespace, now time.Time) {
+	hold := next.GetHold()
+	if hold == nil {
+		return
+	}
+	if prior := existing.GetHold().GetSince(); prior != nil {
+		hold.Since = proto.Clone(prior).(*timestamppb.Timestamp)
+		return
+	}
+	hold.Since = timestamppb.New(now)
 }
 
 // Get reads one namespace. The default namespace always resolves.

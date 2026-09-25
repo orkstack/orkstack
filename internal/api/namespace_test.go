@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -98,6 +99,9 @@ func (r *fakeRegistry) Put(
 	r.seq++
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
 	stored.Name = name
+	// The hold's since is the registry's, by the one rule the durable store
+	// applies, so this double cannot drift from it.
+	artifacts.StampNamespaceHold(stored, existing, time.Now())
 	stored.Etag = fmt.Sprintf("etag-%d", r.seq)
 	r.docs[name] = stored
 	return proto.Clone(stored).(*orkstackv1.Namespace), nil

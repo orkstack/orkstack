@@ -283,6 +283,15 @@ func specDifference(stored, requested *orkstackv1.Namespace) string {
 	if got, want := retentionLabel(stored.GetRunRetention()), retentionLabel(requested.GetRunRetention()); got != want {
 		return fmt.Sprintf("run_retention is %s, not %s", got, want)
 	}
+	// A hold is compared by its reason alone: since is the registry's, so two
+	// requests that both ask for the same hold are the same spec whenever
+	// they were sent.
+	if got, want := holdLabel(stored.GetHold()), holdLabel(requested.GetHold()); got != want {
+		return fmt.Sprintf("hold is %s, not %s", got, want)
+	}
+	if got, want := stored.GetMaxRunning(), requested.GetMaxRunning(); got != want {
+		return fmt.Sprintf("max_running is %d, not %d", got, want)
+	}
 	if diff := telemetryDifference(stored.GetTelemetry(), requested.GetTelemetry()); diff != "" {
 		return diff
 	}
@@ -304,6 +313,15 @@ func telemetryDifference(stored, requested *orkstackv1.TelemetryPolicy) string {
 		return fmt.Sprintf("telemetry.attributes are %s, not %s", renderLabels(got), renderLabels(want))
 	}
 	return ""
+}
+
+// holdLabel renders a namespace's hold for a difference report: "none" for
+// an accepting namespace, the quoted reason otherwise.
+func holdLabel(hold *orkstackv1.NamespaceHold) string {
+	if hold == nil {
+		return "none"
+	}
+	return fmt.Sprintf("%q", hold.GetReason())
 }
 
 // retentionLabel renders a namespace's run_retention for a difference

@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -361,6 +362,101 @@ func TestNamespaceStore_RoundTripsATelemetryPolicyAndRefusesAReservedKey(t *test
 	}, artifacts.PutConditions{})
 	if !errors.Is(err, artifacts.ErrInvalidNamespace) {
 		t.Fatalf("Put with a reserved attribute key = %v, want ErrInvalidNamespace", err)
+	}
+}
+
+// TestNamespaceStore_RoundTripsHoldAndMaxRunningAndStampsSinceItself: the
+// hold's since is the registry's, set on the write that set the hold and kept
+// across a reason edit; releasing it is a write with no hold; an empty reason
+// is refused and leaves the stored document as it was.
+func TestNamespaceStore_RoundTripsHoldAndMaxRunningAndStampsSinceItself(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	nsName := "reg-ns-hold-" + uniqueToken(t)
+	t.Cleanup(func() { _ = store.Delete(context.Background(), nsName) })
+
+	forged := timestamppb.New(time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
+	before := time.Now().UTC().Add(-time.Minute)
+	put, err := store.Put(ctx, &orkstackv1.Namespace{
+		Name:       nsName,
+		MaxRunning: 20,
+		Hold:       &orkstackv1.NamespaceHold{Reason: "partner CI loop, INC-4412", Since: forged},
+	}, artifacts.PutConditions{IfAbsent: true})
+	if err != nil {
+		t.Fatalf("Put with a hold: %v", err)
+	}
+	first, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", nsName, err)
+	}
+	if got := first.GetHold().GetReason(); got != "partner CI loop, INC-4412" {
+		t.Fatalf("hold.reason = %q, want the one written", got)
+	}
+	if first.GetMaxRunning() != 20 {
+		t.Fatalf("max_running = %d, want 20", first.GetMaxRunning())
+	}
+	since := first.GetHold().GetSince()
+	if since == nil || !since.AsTime().After(before) {
+		t.Fatalf("hold.since = %v, want the registry's clock, not the client's %s", since, forged.AsTime())
+	}
+
+	// A reason edit under the etag keeps since and moves updated_at.
+	edited := proto.Clone(first).(*orkstackv1.Namespace)
+	edited.Hold.Reason = "partner CI loop, INC-4412 (vendor paged)"
+	edited.Hold.Since = forged
+	if _, err := store.Put(ctx, edited, artifacts.PutConditions{IfMatch: put.GetEtag()}); err != nil {
+		t.Fatalf("Put reason edit: %v", err)
+	}
+	second, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get after edit: %v", err)
+	}
+	if second.GetHold().GetReason() != edited.GetHold().GetReason() {
+		t.Fatalf("hold.reason = %q, want the edit", second.GetHold().GetReason())
+	}
+	if !second.GetHold().GetSince().AsTime().Equal(since.AsTime()) {
+		t.Fatalf("hold.since moved from %s to %s on a reason edit", since.AsTime(), second.GetHold().GetSince().AsTime())
+	}
+	if !second.GetUpdatedAt().AsTime().After(first.GetUpdatedAt().AsTime()) &&
+		!second.GetUpdatedAt().AsTime().Equal(first.GetUpdatedAt().AsTime()) {
+		t.Fatalf("updated_at went backwards: %s then %s", first.GetUpdatedAt().AsTime(), second.GetUpdatedAt().AsTime())
+	}
+	if second.GetEtag() == first.GetEtag() {
+		t.Fatalf("etag unchanged across a write: %q", second.GetEtag())
+	}
+
+	// Release: a write with no hold.
+	released := proto.Clone(second).(*orkstackv1.Namespace)
+	released.Hold = nil
+	if _, err := store.Put(ctx, released, artifacts.PutConditions{IfMatch: second.GetEtag()}); err != nil {
+		t.Fatalf("Put release: %v", err)
+	}
+	third, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get after release: %v", err)
+	}
+	if third.GetHold() != nil {
+		t.Fatalf("hold = %v after release, want none", third.GetHold())
+	}
+
+	// An empty reason is refused, and the stored document is unchanged.
+	bad := proto.Clone(third).(*orkstackv1.Namespace)
+	bad.Hold = &orkstackv1.NamespaceHold{Reason: "  "}
+	if _, err := store.Put(ctx, bad, artifacts.PutConditions{IfMatch: third.GetEtag()}); !errors.Is(err, artifacts.ErrInvalidNamespace) {
+		t.Fatalf("Put with an empty reason = %v, want ErrInvalidNamespace", err)
+	}
+	after, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get after refused write: %v", err)
+	}
+	if after.GetEtag() != third.GetEtag() || after.GetHold() != nil {
+		t.Fatalf("refused write changed the document: etag %q -> %q, hold %v",
+			third.GetEtag(), after.GetEtag(), after.GetHold())
 	}
 }
 
