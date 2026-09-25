@@ -301,6 +301,7 @@ func (panicCreateRuntime) Describe(context.Context) (RuntimeInfo, error) {
 func TestPhaseObserver_PanicStillEndsExactlyOnceAndClosesTheLogs(t *testing.T) {
 	obs := &fakePhaseObserver{}
 	exporter := &recordingTaskLogExporter{}
+	attempts := artifacts.NewMemoryAttemptStore()
 	store, err := artifacts.NewLocalStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("local artifact store: %v", err)
@@ -316,6 +317,7 @@ func TestPhaseObserver_PanicStillEndsExactlyOnceAndClosesTheLogs(t *testing.T) {
 		BuildID:  "test",
 		Phases:   obs,
 		TaskLogs: exporter,
+		Attempts: attempts,
 	}
 	in := baseExportInput("phase-panic")
 
@@ -355,6 +357,15 @@ func TestPhaseObserver_PanicStillEndsExactlyOnceAndClosesTheLogs(t *testing.T) {
 	}
 	if closeCount != 1 {
 		t.Fatalf("exporter Close called %d times, want exactly 1 — a panic must not skip STEP 1's teardown", closeCount)
+	}
+
+	// O9: the record the panic path writes still closes its phase list — the
+	// attempt died in "create", and the span it died in ends at the record's
+	// finished_at rather than being left open.
+	record := onlyAttempt(t, attempts, in)
+	assertClosedSpanList(t, record)
+	if last := record.GetPhases()[len(record.GetPhases())-1].GetPhase(); last != "create" {
+		t.Errorf("the panic path's last span = %q, want create (where the runtime panicked)", last)
 	}
 }
 

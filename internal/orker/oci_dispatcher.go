@@ -329,6 +329,10 @@ func (d *OCIDispatcher) Execute(
 		return nil, err
 	}
 	if failure != nil {
+		// Every failure carries the attempt's start, detail or not, so the
+		// engine projects TaskRun.started_at for a failed task exactly as for
+		// a succeeded one (ExecuteTaskResult.started_at).
+		failure.StampStart(startedAt)
 		outcome := AttemptOutcome{Reason: failure.Reason, Err: failure.TemporalError()}
 		if failure.Detail != nil {
 			outcome.ExitCode = failure.Detail.GetExitCode()
@@ -1684,6 +1688,9 @@ func (d *OCIDispatcher) attemptRecord(
 		// than a second copy of the sequence: "run" and "commit" are different
 		// stories about the same non-zero exit code.
 		record.Phase = beat.progress().Phase
+		// Every phase it passed through, closed at the record's own
+		// finished_at: the same sequence, so the last span's name IS Phase.
+		record.Phases = beat.PhaseSpans(record.FinishedAt.AsTime())
 	}
 
 	// The branch order is Execute's own, and it is load-bearing there for the

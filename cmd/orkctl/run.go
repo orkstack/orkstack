@@ -26,6 +26,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunArtifactsCommand(g),
 		newRunArtifactCommand(g),
 		newRunAttemptsCommand(g),
+		newRunTimingCommand(g),
 		newRunAgainCommand(g),
 		newRunCancelCommand(g),
 	)
@@ -110,7 +111,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 }
 
 func newRunGetCommand(g *globalFlags) *cobra.Command {
-	var withAttempts bool
+	var withAttempts, withTiming bool
 	cmd := &cobra.Command{
 		Use:   "get <run-id>",
 		Short: "Show one run",
@@ -120,7 +121,8 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 			"The task table shows each task's FINAL outcome, which is all Temporal\n" +
 			"keeps: a try that failed and was retried away is not in it. --attempts\n" +
 			"adds the per-attempt timeline underneath, the same table\n" +
-			"`orkctl run attempts` prints.",
+			"`orkctl run attempts` prints. --timing adds the wait/run/total table and\n" +
+			"each attempt's phases, the same output `orkctl run timing` prints.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if withAttempts && g.json {
@@ -131,6 +133,12 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 					"--attempts is a second response and cannot be added to --json output; "+
 						"read the timeline with: %s",
 					orkctlCommand(g.namespace, "run", "attempts", args[0], "--json"))
+			}
+			if withTiming && g.json {
+				return fmt.Errorf(
+					"--timing is a second response and cannot be added to --json output; "+
+						"read the timing with: %s",
+					orkctlCommand(g.namespace, "run", "timing", args[0], "--json"))
 			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
@@ -147,14 +155,21 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 			if err := renderRun(cmd.OutOrStdout(), resp.Msg.GetRun()); err != nil {
 				return err
 			}
-			if !withAttempts {
-				return nil
+			if withAttempts {
+				if err := appendRunAttempts(cmd, g, args[0]); err != nil {
+					return err
+				}
 			}
-			return appendRunAttempts(cmd, g, args[0])
+			if withTiming {
+				return appendRunTiming(cmd, g, args[0])
+			}
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&withAttempts, "attempts", false,
 		"also print every attempt of every task, including the ones that were retried away")
+	cmd.Flags().BoolVar(&withTiming, "timing", false,
+		"also print each task's wait, run and total time and every attempt's phases")
 	return cmd
 }
 
@@ -312,12 +327,17 @@ func renderRun(out io.Writer, run *orkstackv1.Run) error {
 	// ORKER together are the client-visible proof a pin held — same pin, same
 	// orker. ORKER is filled for every task that reached an Orker, pinned or
 	// not; a dash therefore means "never got there", not "not pinned".
-	fmt.Fprintln(table, "TASK\tSTATUS\tPOOL\tPIN\tORKER\tATTEMPT\tEXIT\tSTARTED\tFINISHED\tERROR")
+	//
+	// SCHEDULED is when the engine dispatched the task; STARTED is when the
+	// Orker began the attempt that decided it. The gap between them is the
+	// wait `orkctl run timing` breaks down.
+	fmt.Fprintln(table, "TASK\tSTATUS\tPOOL\tPIN\tORKER\tATTEMPT\tEXIT\tSCHEDULED\tSTARTED\tFINISHED\tERROR")
 	for _, taskRun := range run.GetTaskRuns() {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n",
 			taskRun.GetTaskId(), taskStatusLabel(taskRun),
 			orDash(taskRun.GetPool()), orDash(taskRun.GetPin()), orDash(taskRun.GetOrkerId()),
-			taskRun.GetAttempt(), taskRun.GetExitCode(), formatTime(taskRun.GetStartedAt()),
+			taskRun.GetAttempt(), taskRun.GetExitCode(), formatTime(taskRun.GetScheduledAt()),
+			formatTime(taskRun.GetStartedAt()),
 			formatTime(taskRun.GetFinishedAt()), errorLine(taskRun.GetError()))
 	}
 	if err := table.Flush(); err != nil {

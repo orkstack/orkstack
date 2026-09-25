@@ -340,3 +340,43 @@ func TestListTaskAttempts_WithoutAnAttemptStoreSaysSo(t *testing.T) {
 		t.Fatalf("err = %v (code %v), want FailedPrecondition", err, connect.CodeOf(err))
 	}
 }
+
+// TestListTaskAttempts_PassesPhasesThroughAndSynthesizedRowsHaveNone is A1:
+// a stored record's phase spans reach the client as the Orker wrote them, and
+// a synthesized UNREPORTED row carries none — nothing is invented for an
+// attempt nobody recorded.
+func TestListTaskAttempts_PassesPhasesThroughAndSynthesizedRowsHaveNone(t *testing.T) {
+	run := retriedRun("ork-attempts-phases", "flaky", 3)
+	fixture := newAttemptFixture(t, run)
+	first := attemptRecord(run.GetId(), "flaky", 1, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED)
+	start := first.GetStartedAt().AsTime()
+	first.Phase = "exit"
+	first.Phases = []*orkstackv1.PhaseSpan{
+		{Phase: "start", StartedAt: timestamppb.New(start), FinishedAt: timestamppb.New(start.Add(3 * time.Millisecond))},
+		{Phase: "run", StartedAt: timestamppb.New(start.Add(3 * time.Millisecond)), FinishedAt: timestamppb.New(start.Add(900 * time.Millisecond))},
+		{Phase: "exit", StartedAt: timestamppb.New(start.Add(900 * time.Millisecond)), FinishedAt: first.GetFinishedAt()},
+	}
+	fixture.write(t, first)
+	fixture.write(t, attemptRecord(run.GetId(), "flaky", 3, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED))
+
+	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()})
+	if err != nil {
+		t.Fatalf("ListTaskAttempts: %v", err)
+	}
+	if len(attempts) != 3 {
+		t.Fatalf("timeline = %v", outcomesOf(attempts))
+	}
+	got := attempts[0].GetPhases()
+	if len(got) != 3 || got[0].GetPhase() != "start" || got[2].GetPhase() != "exit" {
+		t.Fatalf("attempt 1 phases = %v, want the three stored spans", got)
+	}
+	if !got[2].GetFinishedAt().AsTime().Equal(first.GetFinishedAt().AsTime()) {
+		t.Errorf("the last span ends at %v, want %v", got[2].GetFinishedAt().AsTime(), first.GetFinishedAt().AsTime())
+	}
+	if attempts[1].GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED {
+		t.Fatalf("attempt 2 = %v, want UNREPORTED", attempts[1].GetOutcome())
+	}
+	if len(attempts[1].GetPhases()) != 0 {
+		t.Errorf("the synthesized UNREPORTED row carries phases: %v", attempts[1].GetPhases())
+	}
+}

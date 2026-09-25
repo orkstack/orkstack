@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/run.proto.
  */
 export const file_orkstack_v1_run: GenFile = /*@__PURE__*/
-  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIq0ECgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgtyZXRyeV9zdGF0ZRgPIAEoDjIXLm9ya3N0YWNrLnYxLlJldHJ5U3RhdGUSCwoDcGluGBAgASgJEhAKCG9ya2VyX2lkGBEgASgJSgQIAhADUgZwbHVnaW4izwMKC1Rhc2tBdHRlbXB0EhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEg4KBnJ1bl9pZBgCIAEoCRIPCgd0YXNrX2lkGAMgASgJEg8KB2F0dGVtcHQYBCABKAUSLAoHb3V0Y29tZRgFIAEoDjIbLm9ya3N0YWNrLnYxLkF0dGVtcHRPdXRjb21lEiEKBWVycm9yGAYgASgLMhIub3Jrc3RhY2sudjEuRXJyb3ISEQoJZXhpdF9jb2RlGAcgASgFEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgKIAEoCRIMCgRwb29sGAsgASgJEg0KBXBoYXNlGAwgASgJEiQKBWltYWdlGA0gASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgOIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEhYKDmNvbW1pdF9hZG9wdGVkGA8gASgIEhAKCGJ1aWxkX2lkGBAgASgJIvcDCgNSdW4SCgoCaWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIjCgZzdGF0dXMYBCABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSIwoFaW5wdXQYBSABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEiQKBm91dHB1dBgGIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchInCgl0YXNrX3J1bnMYCCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEi4KCmNyZWF0ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnN0YXJ0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYDCABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgNIAEoCRIyCgl0ZWxlbWV0cnkYDiABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24i6QEKBUV2ZW50Eg4KBnJ1bl9pZBgBIAEoCRIQCghzZXF1ZW5jZRgCIAEoAxIkCgR0eXBlGAMgASgOMhYub3Jrc3RhY2sudjEuRXZlbnRUeXBlEg8KB3Rhc2tfaWQYBCABKAkSIwoGc3RhdHVzGAUgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB21lc3NhZ2UYBiABKAkSIgoEZGF0YRgHIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSLQoJdGltZXN0YW1wGAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCqqAQoOQXR0ZW1wdE91dGNvbWUSHwobQVRURU1QVF9PVVRDT01FX1VOU1BFQ0lGSUVEEAASHQoZQVRURU1QVF9PVVRDT01FX1NVQ0NFRURFRBABEhoKFkFUVEVNUFRfT1VUQ09NRV9GQUlMRUQQAhIcChhBVFRFTVBUX09VVENPTUVfQ0FOQ0VMRUQQAxIeChpBVFRFTVBUX09VVENPTUVfVU5SRVBPUlRFRBAEKoICCgpSZXRyeVN0YXRlEhsKF1JFVFJZX1NUQVRFX1VOU1BFQ0lGSUVEEAASJQohUkVUUllfU1RBVEVfTk9OX1JFVFJZQUJMRV9GQUlMVVJFEAESFwoTUkVUUllfU1RBVEVfVElNRU9VVBACEigKJFJFVFJZX1NUQVRFX01BWElNVU1fQVRURU1QVFNfUkVBQ0hFRBADEiQKIFJFVFJZX1NUQVRFX1JFVFJZX1BPTElDWV9OT1RfU0VUEAQSIAocUkVUUllfU1RBVEVfQ0FOQ0VMX1JFUVVFU1RFRBAFEiUKIVJFVFJZX1NUQVRFX0lOVEVSTkFMX1NFUlZFUl9FUlJPUhAGKsUCCglFdmVudFR5cGUSGgoWRVZFTlRfVFlQRV9VTlNQRUNJRklFRBAAEhoKFkVWRU5UX1RZUEVfUlVOX0NSRUFURUQQARIaChZFVkVOVF9UWVBFX1JVTl9TVEFSVEVEEAISHQoZRVZFTlRfVFlQRV9UQVNLX1NDSEVEVUxFRBADEhsKF0VWRU5UX1RZUEVfVEFTS19TVEFSVEVEEAQSFwoTRVZFTlRfVFlQRV9UQVNLX0xPRxAFEh0KGUVWRU5UX1RZUEVfVEFTS19TVUNDRUVERUQQBhIaChZFVkVOVF9UWVBFX1RBU0tfRkFJTEVEEAcSHAoYRVZFTlRfVFlQRV9SVU5fU1VDQ0VFREVEEAgSGQoVRVZFTlRfVFlQRV9SVU5fRkFJTEVEEAkSGwoXRVZFTlRfVFlQRV9SVU5fQ0FOQ0VMRUQQCkKkAQoPY29tLm9ya3N0YWNrLnYxQghSdW5Qcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
+  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIt8ECgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgtyZXRyeV9zdGF0ZRgPIAEoDjIXLm9ya3N0YWNrLnYxLlJldHJ5U3RhdGUSCwoDcGluGBAgASgJEhAKCG9ya2VyX2lkGBEgASgJEjAKDHNjaGVkdWxlZF9hdBgSIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBKBAgCEANSBnBsdWdpbiJ7CglQaGFzZVNwYW4SDQoFcGhhc2UYASABKAkSLgoKc3RhcnRlZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIvcDCgtUYXNrQXR0ZW1wdBIWCg5zY2hlbWFfdmVyc2lvbhgBIAEoBRIOCgZydW5faWQYAiABKAkSDwoHdGFza19pZBgDIAEoCRIPCgdhdHRlbXB0GAQgASgFEiwKB291dGNvbWUYBSABKA4yGy5vcmtzdGFjay52MS5BdHRlbXB0T3V0Y29tZRIhCgVlcnJvchgGIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEhEKCWV4aXRfY29kZRgHIAEoBRIuCgpzdGFydGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIb3JrZXJfaWQYCiABKAkSDAoEcG9vbBgLIAEoCRINCgVwaGFzZRgMIAEoCRIkCgVpbWFnZRgNIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIWCg5jb21taXRfYWRvcHRlZBgPIAEoCBIQCghidWlsZF9pZBgQIAEoCRImCgZwaGFzZXMYESADKAsyFi5vcmtzdGFjay52MS5QaGFzZVNwYW4i9wMKA1J1bhIKCgJpZBgBIAEoCRIUCgxvcmtmbG93X25hbWUYAiABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAMgASgJEiMKBnN0YXR1cxgEIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIjCgVpbnB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSJAoGb3V0cHV0GAYgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEicKCXRhc2tfcnVucxgIIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SLgoKY3JlYXRlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgMIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GA0gASgJEjIKCXRlbGVtZXRyeRgOIAEoCzIfLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVNlbGVjdGlvbiLpAQoFRXZlbnQSDgoGcnVuX2lkGAEgASgJEhAKCHNlcXVlbmNlGAIgASgDEiQKBHR5cGUYAyABKA4yFi5vcmtzdGFjay52MS5FdmVudFR5cGUSDwoHdGFza19pZBgEIAEoCRIjCgZzdGF0dXMYBSABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSDwoHbWVzc2FnZRgGIAEoCRIiCgRkYXRhGAcgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBItCgl0aW1lc3RhbXAYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKqoBCg5BdHRlbXB0T3V0Y29tZRIfChtBVFRFTVBUX09VVENPTUVfVU5TUEVDSUZJRUQQABIdChlBVFRFTVBUX09VVENPTUVfU1VDQ0VFREVEEAESGgoWQVRURU1QVF9PVVRDT01FX0ZBSUxFRBACEhwKGEFUVEVNUFRfT1VUQ09NRV9DQU5DRUxFRBADEh4KGkFUVEVNUFRfT1VUQ09NRV9VTlJFUE9SVEVEEAQqggIKClJldHJ5U3RhdGUSGwoXUkVUUllfU1RBVEVfVU5TUEVDSUZJRUQQABIlCiFSRVRSWV9TVEFURV9OT05fUkVUUllBQkxFX0ZBSUxVUkUQARIXChNSRVRSWV9TVEFURV9USU1FT1VUEAISKAokUkVUUllfU1RBVEVfTUFYSU1VTV9BVFRFTVBUU19SRUFDSEVEEAMSJAogUkVUUllfU1RBVEVfUkVUUllfUE9MSUNZX05PVF9TRVQQBBIgChxSRVRSWV9TVEFURV9DQU5DRUxfUkVRVUVTVEVEEAUSJQohUkVUUllfU1RBVEVfSU5URVJOQUxfU0VSVkVSX0VSUk9SEAYqxQIKCUV2ZW50VHlwZRIaChZFVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRVZFTlRfVFlQRV9SVU5fQ1JFQVRFRBABEhoKFkVWRU5UX1RZUEVfUlVOX1NUQVJURUQQAhIdChlFVkVOVF9UWVBFX1RBU0tfU0NIRURVTEVEEAMSGwoXRVZFTlRfVFlQRV9UQVNLX1NUQVJURUQQBBIXChNFVkVOVF9UWVBFX1RBU0tfTE9HEAUSHQoZRVZFTlRfVFlQRV9UQVNLX1NVQ0NFRURFRBAGEhoKFkVWRU5UX1RZUEVfVEFTS19GQUlMRUQQBxIcChhFVkVOVF9UWVBFX1JVTl9TVUNDRUVERUQQCBIZChVFVkVOVF9UWVBFX1JVTl9GQUlMRUQQCRIbChdFVkVOVF9UWVBFX1JVTl9DQU5DRUxFRBAKQqQBCg9jb20ub3Jrc3RhY2sudjFCCFJ1blByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
 
 /**
  * TaskRun is the execution record of a single Task within a Run.
@@ -62,11 +62,31 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
   error?: Error | undefined;
 
   /**
+   * started_at is when the Orker began the attempt that produced this task's
+   * outcome, on the Orker's own clock: ExecuteTaskResult.started_at for a
+   * succeeded task (the committing attempt's start for an adopted commit,
+   * exactly as `attempt` is the committing attempt), and
+   * ActivityFailureDetail.started_at for a failed one. It is the start of
+   * the FINAL attempt, on the same rule attempt, error, exit_code and
+   * orker_id already follow: the snapshot describes the attempt that decided
+   * the task, and ListTaskAttempts describes the rest.
+   *
+   * Unset while the task is PENDING or RUNNING, and for a terminal task no
+   * Orker reported on — a host that died before reporting, a Temporal-side
+   * timeout, a cancellation that reached the Orker as a plain context
+   * cancellation, a lost pin. Unset is "not known", never zero.
+   *
+   * Before this field's meaning was corrected it held the dispatch instant;
+   * scheduled_at (18) holds that now.
+   *
    * @generated from field: google.protobuf.Timestamp started_at = 8;
    */
   startedAt?: Timestamp | undefined;
 
   /**
+   * finished_at is the workflow's own clock at the moment it learned this
+   * task's outcome.
+   *
    * @generated from field: google.protobuf.Timestamp finished_at = 9;
    */
   finishedAt?: Timestamp | undefined;
@@ -162,6 +182,23 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    * @generated from field: string orker_id = 17;
    */
   orkerId: string;
+
+  /**
+   * scheduled_at is the instant the engine scheduled this task's activity —
+   * workflow.Now at schedule(), which is also the timestamp on the
+   * EVENT_TYPE_TASK_SCHEDULED event. It is a PROJECTION of that event onto
+   * the snapshot, not a new measurement, and it is the workflow's own
+   * deterministic clock, never an Orker's.
+   *
+   * Unset when the task never reached scheduling (skipped, or canceled
+   * before dispatch) and on a snapshot written before this field existed.
+   * The two are told apart by started_at: a pre-contract snapshot has
+   * started_at set (it held the dispatch instant then) and scheduled_at
+   * unset; a never-scheduled task has neither.
+   *
+   * @generated from field: google.protobuf.Timestamp scheduled_at = 18;
+   */
+  scheduledAt?: Timestamp | undefined;
 };
 
 /**
@@ -170,6 +207,44 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
  */
 export const TaskRunSchema: GenMessage<TaskRun> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_run, 0);
+
+/**
+ * PhaseSpan is one §7.1 phase of one attempt, on the Orker's clock. Spans
+ * are recorded by the dispatcher's own Phase() sequence, so a list of them is
+ * contiguous: each span's finished_at is the next span's started_at, the
+ * first begins at the attempt's first Phase call, and the last ends at
+ * TaskAttempt.finished_at. The names are the dispatcher's own — "start",
+ * "commit-check", "workspace", "stage-inputs", "image", "render", "create",
+ * "run", "exit", "validate", "commit", and, entered from the wait path,
+ * "timeout" and "cancel" — and are not an enum, for the reason
+ * TaskAttempt.phase is a string: a reader of an older build must be able to
+ * read a phase it has never heard of.
+ *
+ * @generated from message orkstack.v1.PhaseSpan
+ */
+export type PhaseSpan = Message<"orkstack.v1.PhaseSpan"> & {
+  /**
+   * @generated from field: string phase = 1;
+   */
+  phase: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp started_at = 2;
+   */
+  startedAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp finished_at = 3;
+   */
+  finishedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.PhaseSpan.
+ * Use `create(PhaseSpanSchema)` to create a new message.
+ */
+export const PhaseSpanSchema: GenMessage<PhaseSpan> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 1);
 
 /**
  * TaskAttempt is the immutable record of ONE Temporal attempt of one task,
@@ -260,7 +335,8 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
   pool: string;
 
   /**
-   * phase is the §7.1 phase the attempt ended in: "pull", "run", "commit", …
+   * phase is the §7.1 phase the attempt ended in — "image", "run",
+   * "commit", … — the same name as the last element of phases below.
    *
    * @generated from field: string phase = 12;
    */
@@ -295,6 +371,21 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
    * @generated from field: string build_id = 16;
    */
   buildId: string;
+
+  /**
+   * phases lists every §7.1 phase this attempt passed through, in order,
+   * contiguous, the last ending at finished_at, and its last element's phase
+   * equal to `phase` above. Empty on a record written before this field
+   * existed and on a synthesized UNREPORTED row. A reader renders an empty
+   * list as unavailable, never as "no phases happened".
+   *
+   * schema_version stays 1: the field is additive and UnmarshalAttempt
+   * discards unknown fields, so a record with phases reads on a build without
+   * them and a record without phases reads on this one as an empty list.
+   *
+   * @generated from field: repeated orkstack.v1.PhaseSpan phases = 17;
+   */
+  phases: PhaseSpan[];
 };
 
 /**
@@ -302,7 +393,7 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
  * Use `create(TaskAttemptSchema)` to create a new message.
  */
 export const TaskAttemptSchema: GenMessage<TaskAttempt> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 1);
+  messageDesc(file_orkstack_v1_run, 2);
 
 /**
  * Run is one execution of an Orkflow.
@@ -402,7 +493,7 @@ export type Run = Message<"orkstack.v1.Run"> & {
  * Use `create(RunSchema)` to create a new message.
  */
 export const RunSchema: GenMessage<Run> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 2);
+  messageDesc(file_orkstack_v1_run, 3);
 
 /**
  * Event is a single realtime update for a run, delivered over the
@@ -465,7 +556,7 @@ export type Event = Message<"orkstack.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 3);
+  messageDesc(file_orkstack_v1_run, 4);
 
 /**
  * AttemptOutcome is how one Temporal attempt of a task ended.

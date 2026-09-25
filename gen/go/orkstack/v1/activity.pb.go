@@ -1363,10 +1363,16 @@ type ActivityFailureDetail struct {
 	SystemArtifacts []*ArtifactRef         `protobuf:"bytes,5,rep,name=system_artifacts,json=systemArtifacts,proto3" json:"system_artifacts,omitempty"`
 	// scan_notes carries §3.5 violations found on the failure path. They are
 	// notes ON the workload's error, never a replacement for it (§7.1 step 14).
-	ScanNotes     []string  `protobuf:"bytes,6,rep,name=scan_notes,json=scanNotes,proto3" json:"scan_notes,omitempty"`
-	Image         *ImageRef `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
-	Attempt       int32     `protobuf:"varint,8,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	OrkerId       string    `protobuf:"bytes,9,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	ScanNotes []string  `protobuf:"bytes,6,rep,name=scan_notes,json=scanNotes,proto3" json:"scan_notes,omitempty"`
+	Image     *ImageRef `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
+	Attempt   int32     `protobuf:"varint,8,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	OrkerId   string    `protobuf:"bytes,9,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	// started_at is when this Orker began the attempt that failed, the same
+	// instant ExecuteTaskResult.started_at carries on the success path, so the
+	// engine can project TaskRun.started_at identically for both outcomes.
+	// Stamped by the Orker on every ApplicationError it returns, whether or
+	// not a container ran.
+	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1462,6 +1468,13 @@ func (x *ActivityFailureDetail) GetOrkerId() string {
 		return x.OrkerId
 	}
 	return ""
+}
+
+func (x *ActivityFailureDetail) GetStartedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.StartedAt
+	}
+	return nil
 }
 
 // DescribeOrkerResult is the pool-liveness probe's payload: a pool proves it
@@ -1702,7 +1715,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"finishedAt\x12\x18\n" +
 	"\aattempt\x18\x10 \x01(\x05R\aattempt\x12\x19\n" +
 	"\borker_id\x18\x11 \x01(\tR\aorkerId\x12\x19\n" +
-	"\bbuild_id\x18\x12 \x01(\tR\abuildId\"\x8d\x03\n" +
+	"\bbuild_id\x18\x12 \x01(\tR\abuildId\"\xc8\x03\n" +
 	"\x15ActivityFailureDetail\x12\x1f\n" +
 	"\vreason_code\x18\x01 \x01(\tR\n" +
 	"reasonCode\x128\n" +
@@ -1714,7 +1727,10 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"scan_notes\x18\x06 \x03(\tR\tscanNotes\x12+\n" +
 	"\x05image\x18\a \x01(\v2\x15.orkstack.v1.ImageRefR\x05image\x12\x18\n" +
 	"\aattempt\x18\b \x01(\x05R\aattempt\x12\x19\n" +
-	"\borker_id\x18\t \x01(\tR\aorkerId\"\xc9\x02\n" +
+	"\borker_id\x18\t \x01(\tR\aorkerId\x129\n" +
+	"\n" +
+	"started_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\xc9\x02\n" +
 	"\x13DescribeOrkerResult\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12\x12\n" +
@@ -1801,11 +1817,12 @@ var file_orkstack_v1_activity_proto_depIdxs = []int32{
 	15, // 29: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
 	15, // 30: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
 	1,  // 31: orkstack.v1.ActivityFailureDetail.image:type_name -> orkstack.v1.ImageRef
-	32, // [32:32] is the sub-list for method output_type
-	32, // [32:32] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	19, // 32: orkstack.v1.ActivityFailureDetail.started_at:type_name -> google.protobuf.Timestamp
+	33, // [33:33] is the sub-list for method output_type
+	33, // [33:33] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_proto_init() }

@@ -65,12 +65,18 @@ func statusLabel(status orkstackv1.Status) string {
 // (never started)" instead of a bare CANCELED. STATUS_CANCELED is the
 // engine's status for both a task that was running and got killed, and one
 // that never ran because the run ended first (markCanceled never stamps
-// started_at for the latter) — a bare label can't tell them apart, which is
+// scheduled_at for the latter) — a bare label can't tell them apart, which is
 // what made a run's unstarted tasks read as if they had been running.
+//
+// It keys on scheduled_at, the dispatch instant: started_at is the Orker's
+// report and is unset for a task canceled while it ran. A snapshot written
+// before scheduled_at existed held the dispatch instant in started_at, so
+// that is still read when scheduled_at is absent.
 // Mirrors ui/src/lib/status.ts's taskDispatched.
 func taskStatusLabel(taskRun *orkstackv1.TaskRun) string {
 	label := statusLabel(taskRun.GetStatus())
-	if taskRun.GetStatus() == orkstackv1.Status_STATUS_CANCELED && formatTime(taskRun.GetStartedAt()) == dash {
+	if taskRun.GetStatus() == orkstackv1.Status_STATUS_CANCELED &&
+		formatTime(taskRun.GetScheduledAt()) == dash && formatTime(taskRun.GetStartedAt()) == dash {
 		return label + " (never started)"
 	}
 	return label

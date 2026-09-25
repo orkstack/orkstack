@@ -1,3 +1,4 @@
+import { Code, ConnectError } from '@connectrpc/connect';
 import { errorMessage, orkstack } from '$lib/client';
 import { namespaceFrom } from '$lib/namespace';
 import type { RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
@@ -17,6 +18,10 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		let artifactsError: string | null = null;
 		let attempts: TaskAttempt[] = [];
 		let attemptsError: string | null = null;
+		// The engine has no attempt store at all (FailedPrecondition): not a
+		// transient read failure, but "no record will ever exist" — the timing
+		// derivation names it as its own reason.
+		let attemptStoreAbsent = false;
 		let orkflow = null;
 		if (run) {
 			try {
@@ -41,6 +46,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 				attempts = attemptRes.attempts;
 			} catch (err) {
 				attemptsError = errorMessage(err);
+				attemptStoreAbsent = err instanceof ConnectError && err.code === Code.FailedPrecondition;
 			}
 			try {
 				const wfRes = await client.orkflows.getOrkflow({
@@ -61,6 +67,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			artifactsError,
 			attempts,
 			attemptsError,
+			attemptStoreAbsent,
 			namespace,
 			error: null as string | null
 		};
@@ -73,6 +80,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			artifactsError: null,
 			attempts: [] as TaskAttempt[],
 			attemptsError: null,
+			attemptStoreAbsent: false,
 			namespace,
 			error: errorMessage(err)
 		};

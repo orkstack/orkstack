@@ -1739,7 +1739,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.runs` | `status` | engine, once per terminal run (succeeded/failed/canceled) |
 | `ork.run.duration` | `status` | engine, same event, `finished_at - started_at` |
 | `ork.tasks` | `status`, `failure_category` | engine, once per terminal task (succeeded/failed) |
-| `ork.task.duration` | `status` | engine, same event, `finished_at - started_at` |
+| `ork.task.duration` | `status` | engine, same event, `finished_at - scheduled_at` (dispatch to finish; `started_at` on a run recorded before `scheduled_at` existed) |
 | `ork.task.attempts` | `status` | engine, same event: the attempt number the task finished on |
 | `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Orker, once per attempt (`outcome`: `succeeded`, `failed`, `canceled`, or `adopted` for a retry that found an existing durable commit and ran no container) |
 | `ork.orker.task.duration` | `outcome` | Orker, same event |

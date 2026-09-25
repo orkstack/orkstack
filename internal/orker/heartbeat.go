@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -132,6 +134,20 @@ type Heartbeater struct {
 	// It is set once, before Start, so it needs no synchronization of its
 	// own: Phase is only ever called from the dispatcher's own goroutine.
 	onPhase func(string)
+
+	// mu guards marks. Phase is called from the dispatcher's own sequence and,
+	// on the wait path, from the step that observes the timeout or the
+	// cancellation; progress() and PhaseSpans() read it from the record path.
+	// An atomic pointer was enough for one name; a list needs a lock.
+	mu    sync.Mutex
+	marks []phaseMark
+}
+
+// phaseMark is one phase transition: the phase entered and when, on this
+// Orker's clock.
+type phaseMark struct {
+	name string
+	at   time.Time
 }
 
 // NewHeartbeater builds a loop that reports into the activity context.
@@ -191,8 +207,13 @@ func (h *Heartbeater) Stop() {
 }
 
 // Phase records what the attempt is doing now. It is called from the
-// dispatcher's sequence, so a heartbeat always names the current step.
+// dispatcher's sequence, so a heartbeat always names the current step, and it
+// appends the transition to the phase log the attempt record's spans are
+// rendered from (PhaseSpans).
 func (h *Heartbeater) Phase(phase string) {
+	h.mu.Lock()
+	h.marks = append(h.marks, phaseMark{name: phase, at: time.Now().UTC()})
+	h.mu.Unlock()
 	h.phase.Store(&phase)
 	if h.onPhase != nil {
 		h.onPhase(phase)
@@ -266,4 +287,48 @@ func TerminateContainer(
 	_ = runtime.Signal(killCtx, id, SIGKILL)
 	killCancel()
 	return false
+}
+
+// PhaseSpans closes the phase log at `end` and renders it as PhaseSpan
+// records: each mark starts a span that the next mark ends, and the last
+// mark's span ends at `end`. It never returns a span with finished_at before
+// started_at: a mark recorded after `end` (a Phase call racing the record on
+// the cancel path) is dropped rather than rendered backwards, and a wall clock
+// that stepped back between two marks is held at the earlier mark. Nil when no
+// Phase was ever called.
+//
+// It is the attempt record's own copy of the §7.1 sequence — not a by-product
+// of an AttemptObserver — so a record carries its phases whether or not
+// telemetry is wired.
+func (h *Heartbeater) PhaseSpans(end time.Time) []*orkstackv1.PhaseSpan {
+	h.mu.Lock()
+	marks := append([]phaseMark(nil), h.marks...)
+	h.mu.Unlock()
+
+	kept := marks[:0]
+	for _, mark := range marks {
+		if mark.at.After(end) {
+			continue
+		}
+		if n := len(kept); n > 0 && mark.at.Before(kept[n-1].at) {
+			mark.at = kept[n-1].at
+		}
+		kept = append(kept, mark)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	spans := make([]*orkstackv1.PhaseSpan, len(kept))
+	for i, mark := range kept {
+		finished := end
+		if i+1 < len(kept) {
+			finished = kept[i+1].at
+		}
+		spans[i] = &orkstackv1.PhaseSpan{
+			Phase:      mark.name,
+			StartedAt:  timestamppb.New(mark.at),
+			FinishedAt: timestamppb.New(finished),
+		}
+	}
+	return spans
 }

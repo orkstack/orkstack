@@ -1,0 +1,19 @@
+TASK       STATUS     POOL  ATTEMPT  SCHEDULED             WAIT         RUN          TOTAL
+extract    SUCCEEDED  main  1        2026-09-22T09:14:02Z  2.1s         1m3s         1m5.1s
+transform  SUCCEEDED  gpu   3        2026-09-22T09:15:07Z  4m11s        52s          5m3s
+load       SUCCEEDED  main  1        2026-09-22T09:20:10Z  1.4s         2m30s        2m31.4s
+verify     FAILED     main  1        2026-09-22T09:22:40Z  unavailable  unavailable  2s
+report     SKIPPED    -     0        -                     -            -            -
+
+run 2026-09-22T09:14:01Z → 2026-09-22T09:22:42Z (8m41s) · task wait, summed: 4m14.5s over 3 tasks (1 unavailable)
+WAIT is scheduling to the start of the attempt that produced the outcome; for a
+retried task the earlier attempts are inside it. See the attempts below.
+
+attempts:
+  extract    attempt 1  SUCCEEDED   start 3ms  commit-check 40ms  workspace 2ms  stage-inputs 105ms  image 900ms  render 4ms  create 205ms  run 1m1.2s  exit 1ms  validate 8ms  commit 500ms
+  transform  queue wait on pool gpu: unavailable (no attempt record)
+  transform  attempt 3  SUCCEEDED   start 3ms  commit-check 41ms  workspace 2ms  stage-inputs 118ms  image 1.2s  render 4ms  create 210ms  run 50.1s  exit 1ms  validate 9ms  commit 700ms
+  transform  attempt 2  FAILED      start 2ms  commit-check 38ms  workspace 2ms  stage-inputs 97ms  image 1.1s  render 3ms  create 190ms  run 12.4s  exit 1ms
+  transform  attempt 1  unavailable (no attempt record: the orker crashed or lost its heartbeat)
+  load       attempt 1  SUCCEEDED   start 3ms  commit-check 39ms  workspace 2ms  stage-inputs 110ms  image 800ms  render 4ms  create 200ms  run 2m28.4s  exit 1ms  validate 8ms  commit 500ms
+  verify     attempt 1  unavailable (attempt records reclaimed)

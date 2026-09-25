@@ -25,7 +25,26 @@ message TaskRun {
   Payload output = 5;
   repeated ArtifactRef artifacts = 6;
   Error error = 7;                       // carries FailureCategory (§8)
+
+  // started_at is when the Orker began the attempt that produced this task's
+  // outcome, on the Orker's own clock: ExecuteTaskResult.started_at for a
+  // succeeded task (the committing attempt's start for an adopted commit,
+  // exactly as `attempt` is the committing attempt), and
+  // ActivityFailureDetail.started_at for a failed one. It is the start of
+  // the FINAL attempt, on the same rule attempt, error, exit_code and
+  // orker_id already follow: the snapshot describes the attempt that decided
+  // the task, and ListTaskAttempts describes the rest.
+  //
+  // Unset while the task is PENDING or RUNNING, and for a terminal task no
+  // Orker reported on — a host that died before reporting, a Temporal-side
+  // timeout, a cancellation that reached the Orker as a plain context
+  // cancellation, a lost pin. Unset is "not known", never zero.
+  //
+  // Before this field's meaning was corrected it held the dispatch instant;
+  // scheduled_at (18) holds that now.
   google.protobuf.Timestamp started_at = 8;
+  // finished_at is the workflow's own clock at the moment it learned this
+  // task's outcome.
   google.protobuf.Timestamp finished_at = 9;
   // pool names the set of Orkers this attempt was dispatched to, in the word
   // its author typed: the task's own `pool:`, or the pool this run's default
@@ -83,6 +102,19 @@ message TaskRun {
   // failure's error.details carries the Temporal session's raw OS host name as
   // an explicitly labelled best-effort lead, which is NOT an orker_id.
   string orker_id = 17;
+
+  // scheduled_at is the instant the engine scheduled this task's activity —
+  // workflow.Now at schedule(), which is also the timestamp on the
+  // EVENT_TYPE_TASK_SCHEDULED event. It is a PROJECTION of that event onto
+  // the snapshot, not a new measurement, and it is the workflow's own
+  // deterministic clock, never an Orker's.
+  //
+  // Unset when the task never reached scheduling (skipped, or canceled
+  // before dispatch) and on a snapshot written before this field existed.
+  // The two are told apart by started_at: a pre-contract snapshot has
+  // started_at set (it held the dispatch instant then) and scheduled_at
+  // unset; a never-scheduled task has neither.
+  google.protobuf.Timestamp scheduled_at = 18;
 }
 
 // AttemptOutcome is how one Temporal attempt of a task ended.
@@ -98,6 +130,22 @@ enum AttemptOutcome {
   // attempt number that has no record, which means the Orker running it died
   // or lost its heartbeat before it could write one.
   ATTEMPT_OUTCOME_UNREPORTED = 4;
+}
+
+// PhaseSpan is one §7.1 phase of one attempt, on the Orker's clock. Spans
+// are recorded by the dispatcher's own Phase() sequence, so a list of them is
+// contiguous: each span's finished_at is the next span's started_at, the
+// first begins at the attempt's first Phase call, and the last ends at
+// TaskAttempt.finished_at. The names are the dispatcher's own — "start",
+// "commit-check", "workspace", "stage-inputs", "image", "render", "create",
+// "run", "exit", "validate", "commit", and, entered from the wait path,
+// "timeout" and "cancel" — and are not an enum, for the reason
+// TaskAttempt.phase is a string: a reader of an older build must be able to
+// read a phase it has never heard of.
+message PhaseSpan {
+  string phase = 1;
+  google.protobuf.Timestamp started_at = 2;
+  google.protobuf.Timestamp finished_at = 3;
 }
 
 // TaskAttempt is the immutable record of ONE Temporal attempt of one task,
@@ -135,7 +183,8 @@ message TaskAttempt {
   // pool is the routing request this attempt was dispatched with, as
   // TaskRun.pool spells it.
   string pool = 11;
-  // phase is the §7.1 phase the attempt ended in: "pull", "run", "commit", …
+  // phase is the §7.1 phase the attempt ended in — "image", "run",
+  // "commit", … — the same name as the last element of phases below.
   string phase = 12;
   // image is the ImageRef as executed, with platform_digest and delivery set.
   ImageRef image = 13;
@@ -147,6 +196,17 @@ message TaskAttempt {
   bool commit_adopted = 15;
   // build_id is ORK_BUILD_ID of the Orker that ran the attempt.
   string build_id = 16;
+
+  // phases lists every §7.1 phase this attempt passed through, in order,
+  // contiguous, the last ending at finished_at, and its last element's phase
+  // equal to `phase` above. Empty on a record written before this field
+  // existed and on a synthesized UNREPORTED row. A reader renders an empty
+  // list as unavailable, never as "no phases happened".
+  //
+  // schema_version stays 1: the field is additive and UnmarshalAttempt
+  // discards unknown fields, so a record with phases reads on a build without
+  // them and a record without phases reads on this one as an empty list.
+  repeated PhaseSpan phases = 17;
 }
 
 // RetryState is why Temporal stopped retrying a task. It mirrors

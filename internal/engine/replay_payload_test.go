@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"sync"
 	"testing"
@@ -130,6 +131,118 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 			"A replica of another build reads that projection. Either restore the shape, or "+
 			"re-record the fixture and say so in the commit.", diff)
 	}
+}
+
+// TestGoldenHistory_ReplayedSnapshotProjectsSchedulingAndLeavesStartUnset is
+// E6 (task-timing-breakdown): re-executing the committed fixture's own inputs
+// and recorded results on this code publishes snapshots that carry
+// scheduled_at on every dispatched task and started_at on none.
+//
+// What it proves: scheduled_at is projected from the workflow's own clock for
+// an OLD history with no gate and no re-recording, and collect()'s start
+// projection is nil-safe — the fixture's recorded ExecuteTaskResults carry no
+// started_at (its recording harness returned only task_id, values_json and
+// artifacts), so the snapshot's unset started_at is the projection of a nil
+// input, asserted as such below. What it does NOT prove: that a real Orker's
+// start survives replay. That is E2/E5 (mocked results that carry one) and I1
+// (end to end), not this test's claim. The fixture itself is not touched.
+func TestGoldenHistory_ReplayedSnapshotProjectsSchedulingAndLeavesStartUnset(t *testing.T) {
+	recorded := loadGoldenHistory(t)
+	runID, wf, runInput, plan := goldenWorkflowArgs(t, recorded)
+	_, _, recordedResults, _ := goldenActivityPayloads(t, recorded)
+
+	// (b), first half: the inputs really are nil.
+	for _, id := range []string{"fetch", "transform", "sidecar", "publish"} {
+		result, ok := recordedResults[id]
+		if !ok {
+			t.Fatalf("the fixture has no recorded result for %q", id)
+		}
+		if result.GetStartedAt() != nil {
+			t.Fatalf("the fixture's recorded result for %q carries started_at %v; this test's premise "+
+				"(a nil input) no longer holds", id, result.GetStartedAt().AsTime())
+		}
+	}
+
+	var (
+		mu        sync.Mutex
+		snapshots []*orkstackv1.Run
+	)
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(60 * time.Second)
+	env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			result, ok := recordedResults[in.TaskId]
+			if !ok {
+				return nil, fmt.Errorf("current code ran task %q, which the recorded run never executed", in.TaskId)
+			}
+			return result, nil
+		},
+		activity.RegisterOptions{Name: task.ActivityExecuteTask},
+	)
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, run *orkstackv1.Run, sequence int64) (string, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			snapshots = append(snapshots, run)
+			return fmt.Sprintf("memory://snapshots/%s/%d.pb", run.GetId(), sequence), nil
+		},
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	env.RegisterActivityWithOptions(
+		func(context.Context, *orkstackv1.Event, string, string) error { return nil },
+		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
+	)
+	env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, runInput, plan)
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("re-executing the fixture's own input did not complete the workflow")
+	}
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("re-executing the fixture's own input failed: %v", err)
+	}
+	if len(snapshots) == 0 {
+		t.Fatal("no snapshot was written")
+	}
+	last := snapshots[len(snapshots)-1]
+
+	dispatched := map[string]bool{"fetch": true, "transform": true, "sidecar": true, "publish": true}
+	seen := 0
+	for _, tr := range last.GetTaskRuns() {
+		seen++
+		id := tr.GetTaskId()
+		// (a) scheduled_at on exactly the dispatched four.
+		if dispatched[id] != (tr.GetScheduledAt() != nil) {
+			t.Errorf("%s scheduled_at = %v, want set=%v", id, tr.GetScheduledAt(), dispatched[id])
+		}
+		// (b) started_at on none of the six.
+		if tr.GetStartedAt() != nil {
+			t.Errorf("%s started_at = %v, want unset: no recorded result carried one", id, tr.GetStartedAt().AsTime())
+		}
+		// (c) the four dispatched tasks succeeded and finished.
+		if dispatched[id] && (tr.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || tr.GetFinishedAt() == nil) {
+			t.Errorf("%s status = %v finished_at = %v, want SUCCEEDED and set", id, tr.GetStatus(), tr.GetFinishedAt())
+		}
+	}
+	if seen != 6 {
+		t.Fatalf("the last snapshot lists %d tasks, want the fixture's six", seen)
+	}
+	t.Logf("E6 golden replay: scheduled_at set on fetch, transform, sidecar, publish; unset on gated, after-gate; " +
+		"started_at unset on all six")
+
+	// (d) the fixture is untouched.
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git is required to prove the fixture is untouched: %v", err)
+	}
+	out, err := exec.Command(git, "status", "--porcelain", "testdata").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status --porcelain testdata: %v: %s", err, out)
+	}
+	if len(out) != 0 {
+		t.Fatalf("internal/engine/testdata is modified:\n%s", out)
+	}
+	t.Logf("E6 git status --porcelain internal/engine/testdata: clean (%d bytes of output)", len(out))
 }
 
 // compareTaskInputs holds the engine->Orker activity contract to the fixture,
@@ -360,7 +473,11 @@ func withoutTimestamps(value any) any {
 		out := make(map[string]any, len(typed))
 		for key, inner := range typed {
 			switch key {
-			case "timestamp", "createdAt", "startedAt", "finishedAt":
+			// scheduledAt joined this list with TaskRun.scheduled_at: it is
+			// workflow.Now at dispatch, the same wall clock startedAt held
+			// before its meaning was corrected, so a re-execution can never
+			// reproduce the recorded value either.
+			case "timestamp", "createdAt", "startedAt", "finishedAt", "scheduledAt":
 				continue
 			}
 			out[key] = withoutTimestamps(inner)

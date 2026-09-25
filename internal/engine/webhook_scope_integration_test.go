@@ -547,15 +547,19 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 			if len(results) != 2 {
 				t.Errorf("Observe seam recorded %d results for the run, want 2 (TASK_STARTED and %s)", len(results), tc.terminal)
 			}
+			// scheduledAt is the dispatch stamp (task-timing-breakdown):
+			// sibling was dispatched and then canceled, so it carries one.
+			// startedAt is the Orker's own start, which a plain context
+			// cancellation does not report, so it is not asserted here.
 			statuses := map[string]string{}
-			startedAt := map[string]string{}
+			scheduledAt := map[string]string{}
 			for _, tr := range terminal[0].payload.Run.TaskRuns {
 				statuses[tr.TaskID] = tr.Status
-				startedAt[tr.TaskID] = tr.StartedAt
+				scheduledAt[tr.TaskID] = tr.ScheduledAt
 			}
-			if statuses["sibling"] != "CANCELED" || startedAt["sibling"] == "" {
-				t.Errorf("%s run reads sibling as %q (startedAt %q), want CANCELED with a startedAt",
-					tc.terminal, statuses["sibling"], startedAt["sibling"])
+			if statuses["sibling"] != "CANCELED" || scheduledAt["sibling"] == "" {
+				t.Errorf("%s run reads sibling as %q (scheduledAt %q), want CANCELED with a scheduledAt",
+					tc.terminal, statuses["sibling"], scheduledAt["sibling"])
 			}
 			if !tc.cancel && statuses["doomed"] != "FAILED" {
 				t.Errorf("%s run reads doomed as %q, want FAILED", tc.terminal, statuses["doomed"])
