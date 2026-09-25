@@ -59,6 +59,7 @@ place each shape is spelled.
 | `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind each projected event, kept out of Temporal history (`RunSnapshotKey`, `snapshots.go`) | by the workflow's snapshot local activity | the cleanup worker |
 | `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` (and `.trunc`) | live task stdout/stderr chunks; order is the zero-padded key (`LogChunkKey`, `logs.go`) | by the Orker while the task runs | the cleanup worker, or a bucket lifecycle rule |
 | `metadata/attempts/{run-id}/{task-id}/{attempt}.json` | one `TaskAttempt`: the outcome, error, exit code and §7.1 phase of ONE attempt; order is the zero-padded key (`AttemptKey`, `attempts.go`) | by the Orker at the end of every attempt, best-effort, plain put | the cleanup worker, or a bucket lifecycle rule |
+| `metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` | one control-plane audit record: who asserted which write, on what, when, and whether it was refused (`AuditKey`, `pkg/artifacts/audit.go`); the day is the record's own `at` in UTC | create-only, by the engine after every audited write RPC | nothing; a bucket lifecycle rule is the operator's |
 | `metadata/commits/{ns}/{run-id}/{task-id}/commit.json` | the immutable activity completion record (`CommitKey`, `commit_store.go`) | conditional create-if-absent | the cleanup worker |
 | `metadata/probes/commit-store/…/commit.json` | the boot-time probe proving conditional create works on this store | at boot | nothing |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`, `s3_manifest.go`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
@@ -133,6 +134,10 @@ back to the deployment maximum) it explicitly retires the execution — never
 waiting for anything to expire passively — then deletes the run's logs,
 attempt records, snapshots, and commit record, releases its object markers, and
 writes the cleanup sidecar.
+
+The cleanup worker never touches `metadata/audit/`: the control-plane audit
+trail is kept until a bucket lifecycle rule on that prefix says otherwise, and
+no setting in OrkStack shortens it.
 
 Artifact objects themselves are not reclaimed automatically.
 `DeleteUnreferencedObjects` exists and is proven against live object storage,

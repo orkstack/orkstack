@@ -314,6 +314,41 @@ task; there is no cache.
 | CLI | `orkctl webhook register URL -n NS --orkflow NAME --task TASK --event E`; only an explicit `-n` narrows (`ORK_NAMESPACE` and the saved default do not apply) | `SCOPE` row/column: `ns/orkflow/task`, `*` per unset component, `ALL` when unscoped; `--json` carries `namespace`/`orkflowName`/`taskId` when set | Local, before any request, with the server's `ValidateScope` message |
 | UI | Admin → Webhooks: three optional free-text inputs (a slug `pattern` catches typos), eight event checkboxes, a caveat under the task events | `Scope` column (`webhook-scope-{id}`), `Deployment-wide` when unscoped | Server `InvalidArgument` in the register `ErrorPanel` |
 
+### Control-plane audit trail
+
+`AuditService.ListAuditRecords` (`proto/orkstack/v1/audit.proto`) reads back
+one immutable record per control-plane write RPC — succeeded or refused —
+from `metadata/audit/` in the shared store, so any replica answers for a write
+any replica recorded. Reads, `SubmitRun`, and trigger invocations are never
+recorded. `orkctl admin audit [--since] [--until] [--action PREFIX]
+[--principal NAME] [--limit N] [--page-token TOKEN] [-n NS] [--json]` and
+Admin → Audit render the same records in the same order for the same filters.
+
+- The request's `namespace` is a FILTER, and empty means **every** namespace —
+  the one request in the API where it does not mean `default`. The CLI sends
+  one only when `-n` is typed on that command line (never from
+  `ORK_NAMESPACE` or `namespace use`); the page shows every namespace unless
+  its scope control says otherwise. Both print the scope they used.
+- The window defaults to the seven days before the engine's `now`; the
+  response echoes the resolved `since`/`until`, which both clients print.
+- The page token is versioned and binds namespace, action prefix, principal,
+  and the window as sent; a token presented with different filters is
+  `InvalidArgument` ("filters changed; drop the page token"), as for
+  `ListRuns`. The CLI's next-page hint repeats the filters; the page keeps
+  filters, cursor and page number in its URL and the path back per tab.
+- `principal` is what a gateway asserted in `Ork-Principal`, never
+  authenticated; an empty one renders `unattributed`, and both clients print
+  the "asserted, not authenticated" caption under every rendering, empty
+  page included. `ORK_PRINCIPAL` makes `orkctl` assert one.
+- A scan past the engine's budget is `ResourceExhausted` and is shown as the
+  failure it is — beside the window inputs in the UI, a non-zero exit in the
+  CLI — never as an empty page.
+- A `webhook.register` record is deployment-wide (empty namespace) even when
+  the subscription is scoped; its detail is `url=… events=[…]`, followed by
+  `scope=ns/orkflow/task` (`*` per unset component, as the `SCOPE` column
+  renders it) when any scope component is set. The signing secret is never
+  part of it.
+
 ### Run again
 
 No new durable operation is needed. UI `Run again` loads the selected run into
@@ -346,7 +381,8 @@ seeded draft exists only in the page that already holds that run.
 | Deep links/CLI copies | Preserve namespace, task, attempt, inspector tab; copy commands beside corresponding actions | Shell-escaped actual CLI syntax | Reload restores selection; copied commands include required namespace/version; quotes in values cannot become shell syntax |
 | Task attempts | Per-task retry badge and attempt timeline; failed attempts show their own error; a row links to that attempt's logs | `run attempts RUN [--task]` and `run get --attempts`, same order and `--json` envelope | Retried fixture shows every attempt with its own outcome and error; an attempt with no record renders as UNREPORTED, not as a failure or a gap; another namespace's run is NotFound; a replica that ran nothing answers identically |
 | Artifact provenance | Per-row **Provenance** disclosure under Inspect: bytes line, reference line, referencing runs linked in the page's namespace with `this run` marked, unreadable footer, CLI equivalent; fetched on open, re-fetched on every open | `run artifact provenance RUN --task --kind --name [--expect-sha256] [--json]`, same wordings and order | Bytes present and missing both render; HELD, RELEASED and ABSENT each render their own wording; another namespace's runs are neither listed nor counted; a replica that started nothing answers identically; a second S3 run with identical bytes lists only itself |
-| Namespace admission | Admin → Namespaces Hold and Max running columns; Hold… / Release hold row actions behind `ConfirmDialog` with `CliEquivalent`; hold banner on Orkflows, dashboard and the submit dialog with submit disabled; a cap refusal shown verbatim | `namespace update --hold REASON`, `--release-hold`, `--max-running N`; `namespace get`/`list` render both; `run submit`, `run again` and a trigger invoke refused `failed_precondition` with the reason and the fix | Refusal leaves no run, no id and no claim; an accepted run finishes after a hold is set; a hold set on one replica refuses on the other; the count includes runs the other replica started; `since` survives a reason edit and is never client-supplied |
+| Namespace admission | Admin → Namespaces Hold and Max running columns; Hold… / Release hold row actions behind `ConfirmDialog` with `CliEquivalent`; hold banner on Orkflows, dashboard and the submit dialog with submit disabled; a cap refusal shown verbatim; Admin → Audit shows the `namespace.update` record's detail with the reason and cap | `namespace update --hold REASON`, `--release-hold`, `--max-running N`; `namespace get`/`list` render both; `run submit`, `run again` and a trigger invoke refused `failed_precondition` with the reason and the fix; `admin audit --json` carries `hold="…"`/`max_running=N` in the record's `detail` | Refusal leaves no run, no id and no claim; an accepted run finishes after a hold is set; a hold set on one replica refuses on the other; the count includes runs the other replica started; `since` survives a reason edit and is never client-supplied; the audit record of a hold names the reason, and of a release has no `hold=` |
+| Audit trail | Admin → Audit: scope statement (every namespace by default, one namespace on request), action/principal/window filters, table with `unattributed` for an absent principal and `refused {code}` for a refusal, pagination, caption, CLI equivalent; ErrorPanel with Retry on a failed read | `admin audit [--since] [--until] [--action] [--principal] [--limit] [--page-token] [-n]`, `--json` is the raw envelope; `ORK_PRINCIPAL` asserts a principal | A write on one replica is listed by another; a refusal is recorded with its code; reads and submits are not recorded; the header a gateway sets on browser requests is recorded verbatim; a scan past its budget refuses instead of answering empty |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new
