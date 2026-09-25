@@ -1,0 +1,54 @@
+{
+  "records": [
+    {
+      "schemaVersion": 1,
+      "id": "aud-20260102T020405.000000000Z-dddddddddddddddd",
+      "at": "2026-01-02T02:04:05Z",
+      "principal": "svc-platform-ci",
+      "sourceAddress": "10.0.0.7:51234",
+      "action": "retention.update",
+      "procedure": "/orkstack.v1.SystemService/UpdateRetentionPolicy",
+      "target": "deployment",
+      "detail": "max_run_retention=720h0m0s",
+      "succeeded": true
+    },
+    {
+      "schemaVersion": 1,
+      "id": "aud-20260102T010405.000000000Z-cccccccccccccccc",
+      "at": "2026-01-02T01:04:05Z",
+      "principal": "dsantos",
+      "sourceAddress": "10.0.0.7:51234",
+      "action": "namespace.update",
+      "procedure": "/orkstack.v1.NamespaceService/UpdateNamespace",
+      "namespace": "prod-payments",
+      "target": "prod-payments",
+      "succeeded": true
+    },
+    {
+      "schemaVersion": 1,
+      "id": "aud-20260102T000405.000000000Z-bbbbbbbbbbbbbbbb",
+      "at": "2026-01-02T00:04:05Z",
+      "principal": "dsantos",
+      "sourceAddress": "10.0.0.7:51234",
+      "action": "trigger.create",
+      "procedure": "/orkstack.v1.TriggerService/CreateTrigger",
+      "namespace": "prod-payments",
+      "target": "trg-4a91c0e2b7d3f815",
+      "detail": "settle@current",
+      "succeeded": true
+    },
+    {
+      "schemaVersion": 1,
+      "id": "aud-20260101T230405.000000000Z-aaaaaaaaaaaaaaaa",
+      "at": "2026-01-01T23:04:05Z",
+      "sourceAddress": "10.0.0.7:51234",
+      "action": "namespace.delete",
+      "procedure": "/orkstack.v1.NamespaceService/DeleteNamespace",
+      "namespace": "staging",
+      "target": "staging",
+      "errorCode": "failed_precondition"
+    }
+  ],
+  "since": "2025-12-26T03:04:05Z",
+  "until": "2026-01-02T03:04:05Z"
+}

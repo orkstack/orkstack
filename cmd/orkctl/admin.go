@@ -24,6 +24,7 @@ func newAdminCommand(g *globalFlags) *cobra.Command {
 	}
 	cmd.AddCommand(newAdminInfoCommand(g))
 	cmd.AddCommand(newAdminRetentionCommand(g))
+	cmd.AddCommand(newAdminAuditCommand(g))
 	return cmd
 }
 

@@ -213,40 +213,90 @@ func (g *globalFlags) httpClient() *http.Client {
 }
 
 func (g *globalFlags) orkflowClient() orkstackv1connect.OrkflowServiceClient {
-	return orkstackv1connect.NewOrkflowServiceClient(g.httpClient(), g.baseURL())
+	return orkstackv1connect.NewOrkflowServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
 }
 
 func (g *globalFlags) runClient() orkstackv1connect.RunServiceClient {
-	return orkstackv1connect.NewRunServiceClient(g.httpClient(), g.baseURL())
+	return orkstackv1connect.NewRunServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
 }
 
 // activityClient reaches ActivityService: an activity is an image, and which
 // images exist is engine configuration rather than something to ask an Orker
 // (§4.2, §6.5).
 func (g *globalFlags) activityClient() orkstackv1connect.ActivityServiceClient {
-	return orkstackv1connect.NewActivityServiceClient(g.httpClient(), g.baseURL())
+	return orkstackv1connect.NewActivityServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
 }
 
 func (g *globalFlags) namespaceClient() orkstackv1connect.NamespaceServiceClient {
-	return orkstackv1connect.NewNamespaceServiceClient(g.httpClient(), g.baseURL())
+	return orkstackv1connect.NewNamespaceServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
 }
 
 func (g *globalFlags) systemClient() orkstackv1connect.SystemServiceClient {
-	return orkstackv1connect.NewSystemServiceClient(g.httpClient(), g.baseURL())
+	return orkstackv1connect.NewSystemServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
 }
 
 func (g *globalFlags) statsClient() orkstackv1connect.StatsServiceClient {
-	return orkstackv1connect.NewStatsServiceClient(g.httpClient(), g.baseURL())
+	return orkstackv1connect.NewStatsServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
 }
 
 func (g *globalFlags) webhookClient() orkstackv1connect.WebhookServiceClient {
-	return orkstackv1connect.NewWebhookServiceClient(g.httpClient(), g.baseURL())
+	return orkstackv1connect.NewWebhookServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
 }
 
 // triggerClient reaches TriggerService, the inbound mirror of WebhookService:
 // a trigger is what an external caller invokes to start a run.
 func (g *globalFlags) triggerClient() orkstackv1connect.TriggerServiceClient {
-	return orkstackv1connect.NewTriggerServiceClient(g.httpClient(), g.baseURL())
+	return orkstackv1connect.NewTriggerServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
+}
+
+// auditClient reaches AuditService, the read-back of the control-plane audit
+// trail.
+func (g *globalFlags) auditClient() orkstackv1connect.AuditServiceClient {
+	return orkstackv1connect.NewAuditServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
+}
+
+// principalEnvVar names the identity this CLI asserts to the engine. It is an
+// ASSERTION, not authentication: the engine records it verbatim in the audit
+// trail and verifies nothing.
+const principalEnvVar = "ORK_PRINCIPAL"
+
+// principalHeader is the request header the assertion travels in; the engine
+// reads the same name (internal/api.AuditPrincipalHeader).
+const principalHeader = "Ork-Principal"
+
+// clientOptions is what every Connect client this CLI builds shares. With
+// ORK_PRINCIPAL set, every request — unary or streaming — carries
+// Ork-Principal: $ORK_PRINCIPAL; unset, nothing is added.
+func (g *globalFlags) clientOptions() []connect.ClientOption {
+	principal := os.Getenv(principalEnvVar)
+	if principal == "" {
+		return nil
+	}
+	return []connect.ClientOption{connect.WithInterceptors(principalInterceptor{principal: principal})}
+}
+
+// principalInterceptor sets the Ork-Principal header on every outgoing
+// request. It is a full interceptor rather than a unary one so a streaming
+// read carries the same assertion as a write.
+type principalInterceptor struct{ principal string }
+
+func (p principalInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		req.Header().Set(principalHeader, p.principal)
+		return next(ctx, req)
+	}
+}
+
+func (p principalInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, spec)
+		conn.RequestHeader().Set(principalHeader, p.principal)
+		return conn
+	}
+}
+
+func (principalInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
 }
 
 func (g *globalFlags) baseURL() string {
