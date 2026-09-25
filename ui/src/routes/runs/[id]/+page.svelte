@@ -349,6 +349,14 @@
 		}
 	}
 
+	// Whether the page holds the run's TERMINAL snapshot: true when it loaded
+	// an already-finished run, and once the terminal re-read below has been
+	// merged. Until then a task's missing startedAt means "not read yet", not
+	// "no Orker reported a start" — the Orker's start arrives only with that
+	// snapshot — so the timing bar waits for it rather than briefly naming a
+	// reason that is not true.
+	let terminalFactsRead = $state(untrack(() => isTerminal(data.run?.status ?? Status.UNSPECIFIED)));
+
 	let terminalRefresh: Promise<void> | undefined;
 	function refreshTerminalFacts() {
 		if (terminalRefresh) return;
@@ -358,6 +366,7 @@
 			// inventing a polling loop or pretending the event message is structured.
 			await invalidateAll();
 			mergeTerminalFacts();
+			terminalFactsRead = true;
 		})();
 	}
 
@@ -990,13 +999,14 @@
 								per-phase or wait/run split exists yet. Once it has, the
 								bar splits its time into the wait for an Orker and the
 								run on one. The Orker's start reaches the page with the
-								run's terminal snapshot, so until then a finished task
-								shows its scheduled-to-finished span rather than a bar
-								that would call the start unknown.
+								run's terminal snapshot, so until that snapshot has been
+								read (terminalFactsRead) a finished task shows its
+								scheduled-to-finished span rather than a bar that would
+								call the start unknown.
 							-->
 							{#if dispatched && !isTerminal(task.status)}
 								<span data-testid="task-{task.id}-elapsed">Since scheduled {formatDuration(task.scheduledAt ?? task.startedAt, currentTimestamp)}</span>
-							{:else if timing.scheduled && isTerminal(task.status) && (task.startedAt || isTerminal(runStatus))}
+							{:else if timing.scheduled && isTerminal(task.status) && (task.startedAt || terminalFactsRead)}
 								<TimingBar taskId={task.id} {timing} />
 							{:else if timing.scheduled && isTerminal(task.status)}
 								<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.scheduledAt ?? task.startedAt, task.finishedAt)}</span>

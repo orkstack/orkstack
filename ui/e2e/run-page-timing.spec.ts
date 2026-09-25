@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import {
@@ -72,6 +72,24 @@ let probeServer: Server | undefined;
 let probeRequests = 0;
 let probeUrl = '';
 let orkctl = '';
+/**
+ * Whether THIS worker has started the Orker. The first test starts it after
+ * its stimulus; the second needs one polling and starts it itself when the
+ * first did not get that far (a failed test restarts the worker, and
+ * beforeAll with it), so one failure is reported once, not twice.
+ */
+let orkerStarted = false;
+
+function startOrker() {
+	if (orkerStarted) return;
+	orkerStarted = true;
+	spawnLogged(outPath('orker.log'), './bin/orker', [], {
+		...clusterEnv(TEMPORAL_NAMESPACE),
+		...s3Env,
+		...orkerEnv('run-page-timing')
+	});
+	note('orker started');
+}
 
 function waitOrkflow(): string {
 	return `name: ${WAIT_ORKFLOW}
@@ -115,14 +133,18 @@ function runTimingCLI(runId: string, task: string): string {
 }
 
 function msOf(value: string | null): number {
-	const parsed = Number(value);
+	// Number(null) is 0: an absent data-ms (an UNAVAILABLE segment) must fail
+	// as "not measured", never read as a measured zero.
+	const parsed = value === null || value === '' ? NaN : Number(value);
 	if (!Number.isFinite(parsed)) throw new Error(`not a measured duration: ${value}`);
 	return parsed;
 }
 
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	// Appended, not overwritten: a failed test restarts the worker and this
+	// hook with it, and the transcript must keep what the failed test noted.
+	appendFileSync(
 		outPath(TRANSCRIPT),
 		[
 			'# Task timing on the run detail page: since-scheduled while running,',
@@ -221,12 +243,7 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 
 	// The stimulus, not synchronization: this wait IS what is measured.
 	await new Promise((resolve) => setTimeout(resolve, STIMULUS_MS));
-	spawnLogged(outPath('orker.log'), './bin/orker', [], {
-		...clusterEnv(TEMPORAL_NAMESPACE),
-		...s3Env,
-		...orkerEnv('run-page-timing')
-	});
-	note('orker started');
+	startOrker();
 	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
 
 	// P2 — the bar: wait at least the stimulus, run shorter, drawn wider.
@@ -268,6 +285,7 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 });
 
 test('a task that failed once shows both attempts\' phases and its queue wait', async ({ page }) => {
+	startOrker();
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
 			'NamespaceService/ListPools',
