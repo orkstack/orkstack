@@ -23,6 +23,75 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// FailureGroupBy names one dimension of a fingerprint. The order of the
+// values is the order dimensions render in, and the order ties break in.
+type FailureGroupBy int32
+
+const (
+	FailureGroupBy_FAILURE_GROUP_BY_UNSPECIFIED FailureGroupBy = 0
+	FailureGroupBy_FAILURE_GROUP_BY_ORKFLOW     FailureGroupBy = 1 // Run.orkflow_name
+	FailureGroupBy_FAILURE_GROUP_BY_TASK        FailureGroupBy = 2 // the primary failed task's id (see FailureGroup.task_id)
+	FailureGroupBy_FAILURE_GROUP_BY_CODE        FailureGroupBy = 3 // TaskRun.error.code, or Run.error.code for a run-level failure
+	FailureGroupBy_FAILURE_GROUP_BY_CATEGORY    FailureGroupBy = 4 // TaskRun.error.category, likewise
+	FailureGroupBy_FAILURE_GROUP_BY_IMAGE       FailureGroupBy = 5 // TaskAttempt.image.pinned — needs the attempt record; may be unavailable
+	FailureGroupBy_FAILURE_GROUP_BY_POOL        FailureGroupBy = 6 // TaskRun.pool
+	FailureGroupBy_FAILURE_GROUP_BY_PHASE       FailureGroupBy = 7 // TaskAttempt.phase — needs the attempt record; may be unavailable
+	FailureGroupBy_FAILURE_GROUP_BY_ORKER       FailureGroupBy = 8 // TaskRun.orker_id
+)
+
+// Enum value maps for FailureGroupBy.
+var (
+	FailureGroupBy_name = map[int32]string{
+		0: "FAILURE_GROUP_BY_UNSPECIFIED",
+		1: "FAILURE_GROUP_BY_ORKFLOW",
+		2: "FAILURE_GROUP_BY_TASK",
+		3: "FAILURE_GROUP_BY_CODE",
+		4: "FAILURE_GROUP_BY_CATEGORY",
+		5: "FAILURE_GROUP_BY_IMAGE",
+		6: "FAILURE_GROUP_BY_POOL",
+		7: "FAILURE_GROUP_BY_PHASE",
+		8: "FAILURE_GROUP_BY_ORKER",
+	}
+	FailureGroupBy_value = map[string]int32{
+		"FAILURE_GROUP_BY_UNSPECIFIED": 0,
+		"FAILURE_GROUP_BY_ORKFLOW":     1,
+		"FAILURE_GROUP_BY_TASK":        2,
+		"FAILURE_GROUP_BY_CODE":        3,
+		"FAILURE_GROUP_BY_CATEGORY":    4,
+		"FAILURE_GROUP_BY_IMAGE":       5,
+		"FAILURE_GROUP_BY_POOL":        6,
+		"FAILURE_GROUP_BY_PHASE":       7,
+		"FAILURE_GROUP_BY_ORKER":       8,
+	}
+)
+
+func (x FailureGroupBy) Enum() *FailureGroupBy {
+	p := new(FailureGroupBy)
+	*p = x
+	return p
+}
+
+func (x FailureGroupBy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FailureGroupBy) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_stats_proto_enumTypes[0].Descriptor()
+}
+
+func (FailureGroupBy) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_stats_proto_enumTypes[0]
+}
+
+func (x FailureGroupBy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FailureGroupBy.Descriptor instead.
+func (FailureGroupBy) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_stats_proto_rawDescGZIP(), []int{0}
+}
+
 type GetStatsRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
@@ -396,11 +465,430 @@ func (x *GetStatsResponse) GetWindowUntil() *timestamppb.Timestamp {
 	return nil
 }
 
+type GetFailureBreakdownRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"` // empty = the default namespace
+	// since, until and lookback carry exactly GetStatsRequest's window
+	// semantics: since inclusive, until exclusive, lookback ignored when since
+	// is set, lookback defaulting to 24h, and a window with no time in it
+	// refused. One clock — the server's — resolves a relative window.
+	Since       *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=since,proto3" json:"since,omitempty"`
+	Until       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=until,proto3" json:"until,omitempty"`
+	Lookback    *durationpb.Duration   `protobuf:"bytes,4,opt,name=lookback,proto3" json:"lookback,omitempty"`
+	OrkflowName string                 `protobuf:"bytes,5,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"` // empty = every orkflow in the namespace
+	// group_by is the fingerprint's dimensions, in the caller's order. Empty
+	// means ORKFLOW, TASK, CODE, CATEGORY. A duplicate or UNSPECIFIED value is
+	// InvalidArgument. IMAGE and PHASE are the two that read attempt records.
+	GroupBy []FailureGroupBy `protobuf:"varint,6,rep,packed,name=group_by,json=groupBy,proto3,enum=orkstack.v1.FailureGroupBy" json:"group_by,omitempty"`
+	// category keeps only failures of one §4 category. UNSPECIFIED keeps all.
+	Category FailureCategory `protobuf:"varint,7,opt,name=category,proto3,enum=orkstack.v1.FailureCategory" json:"category,omitempty"`
+	// limit caps the groups returned, worst first. 0 means 50; more than 500
+	// is InvalidArgument. It bounds the answer, never the scan: the totals
+	// below are over every group.
+	Limit         int32 `protobuf:"varint,8,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFailureBreakdownRequest) Reset() {
+	*x = GetFailureBreakdownRequest{}
+	mi := &file_orkstack_v1_stats_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFailureBreakdownRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFailureBreakdownRequest) ProtoMessage() {}
+
+func (x *GetFailureBreakdownRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_stats_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFailureBreakdownRequest.ProtoReflect.Descriptor instead.
+func (*GetFailureBreakdownRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_stats_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GetFailureBreakdownRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *GetFailureBreakdownRequest) GetSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Since
+	}
+	return nil
+}
+
+func (x *GetFailureBreakdownRequest) GetUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Until
+	}
+	return nil
+}
+
+func (x *GetFailureBreakdownRequest) GetLookback() *durationpb.Duration {
+	if x != nil {
+		return x.Lookback
+	}
+	return nil
+}
+
+func (x *GetFailureBreakdownRequest) GetOrkflowName() string {
+	if x != nil {
+		return x.OrkflowName
+	}
+	return ""
+}
+
+func (x *GetFailureBreakdownRequest) GetGroupBy() []FailureGroupBy {
+	if x != nil {
+		return x.GroupBy
+	}
+	return nil
+}
+
+func (x *GetFailureBreakdownRequest) GetCategory() FailureCategory {
+	if x != nil {
+		return x.Category
+	}
+	return FailureCategory_FAILURE_CATEGORY_UNSPECIFIED
+}
+
+func (x *GetFailureBreakdownRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+// FailureGroup is every failed run in the window that shares one fingerprint.
+//
+// A dimension NOT in the request's group_by is empty here and means "not
+// grouped by". A dimension that IS in group_by and is empty means one of two
+// things, told apart by attempt_evidence_missing: for IMAGE and PHASE with a
+// nonzero attempt_evidence_missing it means "unavailable — the attempt record
+// was reclaimed or never written"; otherwise it means the snapshot genuinely
+// carries no value (a run-level failure has no task, a task that never
+// reached an Orker has no pool or orker, a snapshot written before a field
+// existed). Clients render the first as `unavailable` and the second as `-`.
+type FailureGroup struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	OrkflowName string                 `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	TaskId      string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Code        string                 `protobuf:"bytes,3,opt,name=code,proto3" json:"code,omitempty"`
+	Category    FailureCategory        `protobuf:"varint,4,opt,name=category,proto3,enum=orkstack.v1.FailureCategory" json:"category,omitempty"`
+	ImagePinned string                 `protobuf:"bytes,5,opt,name=image_pinned,json=imagePinned,proto3" json:"image_pinned,omitempty"`
+	Pool        string                 `protobuf:"bytes,6,opt,name=pool,proto3" json:"pool,omitempty"`
+	Phase       string                 `protobuf:"bytes,7,opt,name=phase,proto3" json:"phase,omitempty"`
+	OrkerId     string                 `protobuf:"bytes,8,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	RunCount    int64                  `protobuf:"varint,9,opt,name=run_count,json=runCount,proto3" json:"run_count,omitempty"`
+	// first_seen and last_seen are the creation times of the group's oldest and
+	// newest runs — the same coordinate the window is measured in.
+	FirstSeen *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=first_seen,json=firstSeen,proto3" json:"first_seen,omitempty"`
+	LastSeen  *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	// example_run_ids holds at most 3 of the group's runs, newest created
+	// first. Ids are never compared with each other (AGENTS.md §7).
+	ExampleRunIds []string `protobuf:"bytes,12,rep,name=example_run_ids,json=exampleRunIds,proto3" json:"example_run_ids,omitempty"`
+	// attempt_evidence_missing counts this group's runs whose attempt record
+	// could not be read, so image and phase were unavailable for them. It is
+	// only ever nonzero when the response's attempt_evidence_read is true.
+	AttemptEvidenceMissing int64 `protobuf:"varint,13,opt,name=attempt_evidence_missing,json=attemptEvidenceMissing,proto3" json:"attempt_evidence_missing,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *FailureGroup) Reset() {
+	*x = FailureGroup{}
+	mi := &file_orkstack_v1_stats_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FailureGroup) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FailureGroup) ProtoMessage() {}
+
+func (x *FailureGroup) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_stats_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FailureGroup.ProtoReflect.Descriptor instead.
+func (*FailureGroup) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_stats_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *FailureGroup) GetOrkflowName() string {
+	if x != nil {
+		return x.OrkflowName
+	}
+	return ""
+}
+
+func (x *FailureGroup) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *FailureGroup) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *FailureGroup) GetCategory() FailureCategory {
+	if x != nil {
+		return x.Category
+	}
+	return FailureCategory_FAILURE_CATEGORY_UNSPECIFIED
+}
+
+func (x *FailureGroup) GetImagePinned() string {
+	if x != nil {
+		return x.ImagePinned
+	}
+	return ""
+}
+
+func (x *FailureGroup) GetPool() string {
+	if x != nil {
+		return x.Pool
+	}
+	return ""
+}
+
+func (x *FailureGroup) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *FailureGroup) GetOrkerId() string {
+	if x != nil {
+		return x.OrkerId
+	}
+	return ""
+}
+
+func (x *FailureGroup) GetRunCount() int64 {
+	if x != nil {
+		return x.RunCount
+	}
+	return 0
+}
+
+func (x *FailureGroup) GetFirstSeen() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FirstSeen
+	}
+	return nil
+}
+
+func (x *FailureGroup) GetLastSeen() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastSeen
+	}
+	return nil
+}
+
+func (x *FailureGroup) GetExampleRunIds() []string {
+	if x != nil {
+		return x.ExampleRunIds
+	}
+	return nil
+}
+
+func (x *FailureGroup) GetAttemptEvidenceMissing() int64 {
+	if x != nil {
+		return x.AttemptEvidenceMissing
+	}
+	return 0
+}
+
+type GetFailureBreakdownResponse struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Groups []*FailureGroup        `protobuf:"bytes,1,rep,name=groups,proto3" json:"groups,omitempty"`
+	// failed_runs_in_window is the population: index keys under the
+	// namespace's `failed` status inside the window — the same count GetStats
+	// reports as runs_by_status["failed"] for the same window.
+	FailedRunsInWindow int64 `protobuf:"varint,2,opt,name=failed_runs_in_window,json=failedRunsInWindow,proto3" json:"failed_runs_in_window,omitempty"`
+	// failed_runs_scanned is how many of those had a body to read. It is less
+	// than failed_runs_in_window only for an index row whose body is absent —
+	// the crash window between the archive's two writes, which ListRuns
+	// already skips. Any OTHER unreadable body fails the call.
+	FailedRunsScanned int64 `protobuf:"varint,3,opt,name=failed_runs_scanned,json=failedRunsScanned,proto3" json:"failed_runs_scanned,omitempty"`
+	// failed_runs_grouped is sum(run_count) over EVERY group, before limit. It
+	// equals failed_runs_scanned unless category narrowed the answer.
+	FailedRunsGrouped int64 `protobuf:"varint,4,opt,name=failed_runs_grouped,json=failedRunsGrouped,proto3" json:"failed_runs_grouped,omitempty"`
+	// groups_total is how many groups there were before limit, so a client can
+	// say "showing 50 of 212".
+	GroupsTotal int64 `protobuf:"varint,5,opt,name=groups_total,json=groupsTotal,proto3" json:"groups_total,omitempty"`
+	// attempt_evidence_missing is the total across groups.
+	AttemptEvidenceMissing int64 `protobuf:"varint,6,opt,name=attempt_evidence_missing,json=attemptEvidenceMissing,proto3" json:"attempt_evidence_missing,omitempty"`
+	// attempt_evidence_read is true when group_by named IMAGE or PHASE and the
+	// attempt store was therefore consulted. When false, attempt_evidence_missing
+	// is 0 because nothing was looked for, not because everything was found.
+	AttemptEvidenceRead bool `protobuf:"varint,7,opt,name=attempt_evidence_read,json=attemptEvidenceRead,proto3" json:"attempt_evidence_read,omitempty"`
+	// group_by is the dimensions actually grouped by, with an empty request
+	// resolved. A client cannot label its own columns without it.
+	GroupBy []FailureGroupBy `protobuf:"varint,8,rep,packed,name=group_by,json=groupBy,proto3,enum=orkstack.v1.FailureGroupBy" json:"group_by,omitempty"`
+	// namespace, window_since, window_until and computed_at are the question
+	// that was answered and when, exactly as GetStatsResponse carries them.
+	Namespace     string                 `protobuf:"bytes,9,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	WindowSince   *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=window_since,json=windowSince,proto3" json:"window_since,omitempty"`
+	WindowUntil   *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=window_until,json=windowUntil,proto3" json:"window_until,omitempty"`
+	ComputedAt    *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=computed_at,json=computedAt,proto3" json:"computed_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFailureBreakdownResponse) Reset() {
+	*x = GetFailureBreakdownResponse{}
+	mi := &file_orkstack_v1_stats_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFailureBreakdownResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFailureBreakdownResponse) ProtoMessage() {}
+
+func (x *GetFailureBreakdownResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_stats_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFailureBreakdownResponse.ProtoReflect.Descriptor instead.
+func (*GetFailureBreakdownResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_stats_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetFailureBreakdownResponse) GetGroups() []*FailureGroup {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
+}
+
+func (x *GetFailureBreakdownResponse) GetFailedRunsInWindow() int64 {
+	if x != nil {
+		return x.FailedRunsInWindow
+	}
+	return 0
+}
+
+func (x *GetFailureBreakdownResponse) GetFailedRunsScanned() int64 {
+	if x != nil {
+		return x.FailedRunsScanned
+	}
+	return 0
+}
+
+func (x *GetFailureBreakdownResponse) GetFailedRunsGrouped() int64 {
+	if x != nil {
+		return x.FailedRunsGrouped
+	}
+	return 0
+}
+
+func (x *GetFailureBreakdownResponse) GetGroupsTotal() int64 {
+	if x != nil {
+		return x.GroupsTotal
+	}
+	return 0
+}
+
+func (x *GetFailureBreakdownResponse) GetAttemptEvidenceMissing() int64 {
+	if x != nil {
+		return x.AttemptEvidenceMissing
+	}
+	return 0
+}
+
+func (x *GetFailureBreakdownResponse) GetAttemptEvidenceRead() bool {
+	if x != nil {
+		return x.AttemptEvidenceRead
+	}
+	return false
+}
+
+func (x *GetFailureBreakdownResponse) GetGroupBy() []FailureGroupBy {
+	if x != nil {
+		return x.GroupBy
+	}
+	return nil
+}
+
+func (x *GetFailureBreakdownResponse) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *GetFailureBreakdownResponse) GetWindowSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.WindowSince
+	}
+	return nil
+}
+
+func (x *GetFailureBreakdownResponse) GetWindowUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.WindowUntil
+	}
+	return nil
+}
+
+func (x *GetFailureBreakdownResponse) GetComputedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ComputedAt
+	}
+	return nil
+}
+
 var File_orkstack_v1_stats_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\n" +
-	"\x17orkstack/v1/stats.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/namespace.proto\x1a\x15orkstack/v1/run.proto\"\xca\x01\n" +
+	"\x17orkstack/v1/stats.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/namespace.proto\x1a\x15orkstack/v1/run.proto\"\xca\x01\n" +
 	"\x0fGetStatsRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x120\n" +
 	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x120\n" +
@@ -429,9 +917,60 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\fwindow_until\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\vwindowUntil\x1a?\n" +
 	"\x11RunsByStatusEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x012W\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\x80\x03\n" +
+	"\x1aGetFailureBreakdownRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x120\n" +
+	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x120\n" +
+	"\x05until\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\x125\n" +
+	"\blookback\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\blookback\x12!\n" +
+	"\forkflow_name\x18\x05 \x01(\tR\vorkflowName\x126\n" +
+	"\bgroup_by\x18\x06 \x03(\x0e2\x1b.orkstack.v1.FailureGroupByR\agroupBy\x128\n" +
+	"\bcategory\x18\a \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory\x12\x14\n" +
+	"\x05limit\x18\b \x01(\x05R\x05limit\"\xf3\x03\n" +
+	"\fFailureGroup\x12!\n" +
+	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x12\n" +
+	"\x04code\x18\x03 \x01(\tR\x04code\x128\n" +
+	"\bcategory\x18\x04 \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory\x12!\n" +
+	"\fimage_pinned\x18\x05 \x01(\tR\vimagePinned\x12\x12\n" +
+	"\x04pool\x18\x06 \x01(\tR\x04pool\x12\x14\n" +
+	"\x05phase\x18\a \x01(\tR\x05phase\x12\x19\n" +
+	"\borker_id\x18\b \x01(\tR\aorkerId\x12\x1b\n" +
+	"\trun_count\x18\t \x01(\x03R\brunCount\x129\n" +
+	"\n" +
+	"first_seen\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tfirstSeen\x127\n" +
+	"\tlast_seen\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12&\n" +
+	"\x0fexample_run_ids\x18\f \x03(\tR\rexampleRunIds\x128\n" +
+	"\x18attempt_evidence_missing\x18\r \x01(\x03R\x16attemptEvidenceMissing\"\x85\x05\n" +
+	"\x1bGetFailureBreakdownResponse\x121\n" +
+	"\x06groups\x18\x01 \x03(\v2\x19.orkstack.v1.FailureGroupR\x06groups\x121\n" +
+	"\x15failed_runs_in_window\x18\x02 \x01(\x03R\x12failedRunsInWindow\x12.\n" +
+	"\x13failed_runs_scanned\x18\x03 \x01(\x03R\x11failedRunsScanned\x12.\n" +
+	"\x13failed_runs_grouped\x18\x04 \x01(\x03R\x11failedRunsGrouped\x12!\n" +
+	"\fgroups_total\x18\x05 \x01(\x03R\vgroupsTotal\x128\n" +
+	"\x18attempt_evidence_missing\x18\x06 \x01(\x03R\x16attemptEvidenceMissing\x122\n" +
+	"\x15attempt_evidence_read\x18\a \x01(\bR\x13attemptEvidenceRead\x126\n" +
+	"\bgroup_by\x18\b \x03(\x0e2\x1b.orkstack.v1.FailureGroupByR\agroupBy\x12\x1c\n" +
+	"\tnamespace\x18\t \x01(\tR\tnamespace\x12=\n" +
+	"\fwindow_since\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\vwindowSince\x12=\n" +
+	"\fwindow_until\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\vwindowUntil\x12;\n" +
+	"\vcomputed_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"computedAt*\x94\x02\n" +
+	"\x0eFailureGroupBy\x12 \n" +
+	"\x1cFAILURE_GROUP_BY_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18FAILURE_GROUP_BY_ORKFLOW\x10\x01\x12\x19\n" +
+	"\x15FAILURE_GROUP_BY_TASK\x10\x02\x12\x19\n" +
+	"\x15FAILURE_GROUP_BY_CODE\x10\x03\x12\x1d\n" +
+	"\x19FAILURE_GROUP_BY_CATEGORY\x10\x04\x12\x1a\n" +
+	"\x16FAILURE_GROUP_BY_IMAGE\x10\x05\x12\x19\n" +
+	"\x15FAILURE_GROUP_BY_POOL\x10\x06\x12\x1a\n" +
+	"\x16FAILURE_GROUP_BY_PHASE\x10\a\x12\x1a\n" +
+	"\x16FAILURE_GROUP_BY_ORKER\x10\b2\xc1\x01\n" +
 	"\fStatsService\x12G\n" +
-	"\bGetStats\x12\x1c.orkstack.v1.GetStatsRequest\x1a\x1d.orkstack.v1.GetStatsResponseB\xa6\x01\n" +
+	"\bGetStats\x12\x1c.orkstack.v1.GetStatsRequest\x1a\x1d.orkstack.v1.GetStatsResponse\x12h\n" +
+	"\x13GetFailureBreakdown\x12'.orkstack.v1.GetFailureBreakdownRequest\x1a(.orkstack.v1.GetFailureBreakdownResponseB\xa6\x01\n" +
 	"\x0fcom.orkstack.v1B\n" +
 	"StatsProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
@@ -447,38 +986,59 @@ func file_orkstack_v1_stats_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_stats_proto_rawDescData
 }
 
-var file_orkstack_v1_stats_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_orkstack_v1_stats_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_orkstack_v1_stats_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_orkstack_v1_stats_proto_goTypes = []any{
-	(*GetStatsRequest)(nil),       // 0: orkstack.v1.GetStatsRequest
-	(*OrkflowFailures)(nil),       // 1: orkstack.v1.OrkflowFailures
-	(*GetStatsResponse)(nil),      // 2: orkstack.v1.GetStatsResponse
-	nil,                           // 3: orkstack.v1.GetStatsResponse.RunsByStatusEntry
-	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 5: google.protobuf.Duration
-	(*Run)(nil),                   // 6: orkstack.v1.Run
-	(*Pool)(nil),                  // 7: orkstack.v1.Pool
+	(FailureGroupBy)(0),                 // 0: orkstack.v1.FailureGroupBy
+	(*GetStatsRequest)(nil),             // 1: orkstack.v1.GetStatsRequest
+	(*OrkflowFailures)(nil),             // 2: orkstack.v1.OrkflowFailures
+	(*GetStatsResponse)(nil),            // 3: orkstack.v1.GetStatsResponse
+	(*GetFailureBreakdownRequest)(nil),  // 4: orkstack.v1.GetFailureBreakdownRequest
+	(*FailureGroup)(nil),                // 5: orkstack.v1.FailureGroup
+	(*GetFailureBreakdownResponse)(nil), // 6: orkstack.v1.GetFailureBreakdownResponse
+	nil,                                 // 7: orkstack.v1.GetStatsResponse.RunsByStatusEntry
+	(*timestamppb.Timestamp)(nil),       // 8: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 9: google.protobuf.Duration
+	(*Run)(nil),                         // 10: orkstack.v1.Run
+	(*Pool)(nil),                        // 11: orkstack.v1.Pool
+	(FailureCategory)(0),                // 12: orkstack.v1.FailureCategory
 }
 var file_orkstack_v1_stats_proto_depIdxs = []int32{
-	4,  // 0: orkstack.v1.GetStatsRequest.since:type_name -> google.protobuf.Timestamp
-	4,  // 1: orkstack.v1.GetStatsRequest.until:type_name -> google.protobuf.Timestamp
-	5,  // 2: orkstack.v1.GetStatsRequest.lookback:type_name -> google.protobuf.Duration
-	3,  // 3: orkstack.v1.GetStatsResponse.runs_by_status:type_name -> orkstack.v1.GetStatsResponse.RunsByStatusEntry
-	5,  // 4: orkstack.v1.GetStatsResponse.p50_duration:type_name -> google.protobuf.Duration
-	5,  // 5: orkstack.v1.GetStatsResponse.p95_duration:type_name -> google.protobuf.Duration
-	4,  // 6: orkstack.v1.GetStatsResponse.duration_coverage_since:type_name -> google.protobuf.Timestamp
-	1,  // 7: orkstack.v1.GetStatsResponse.most_failing:type_name -> orkstack.v1.OrkflowFailures
-	6,  // 8: orkstack.v1.GetStatsResponse.running:type_name -> orkstack.v1.Run
-	7,  // 9: orkstack.v1.GetStatsResponse.pools:type_name -> orkstack.v1.Pool
-	4,  // 10: orkstack.v1.GetStatsResponse.computed_at:type_name -> google.protobuf.Timestamp
-	4,  // 11: orkstack.v1.GetStatsResponse.window_since:type_name -> google.protobuf.Timestamp
-	4,  // 12: orkstack.v1.GetStatsResponse.window_until:type_name -> google.protobuf.Timestamp
-	0,  // 13: orkstack.v1.StatsService.GetStats:input_type -> orkstack.v1.GetStatsRequest
-	2,  // 14: orkstack.v1.StatsService.GetStats:output_type -> orkstack.v1.GetStatsResponse
-	14, // [14:15] is the sub-list for method output_type
-	13, // [13:14] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	8,  // 0: orkstack.v1.GetStatsRequest.since:type_name -> google.protobuf.Timestamp
+	8,  // 1: orkstack.v1.GetStatsRequest.until:type_name -> google.protobuf.Timestamp
+	9,  // 2: orkstack.v1.GetStatsRequest.lookback:type_name -> google.protobuf.Duration
+	7,  // 3: orkstack.v1.GetStatsResponse.runs_by_status:type_name -> orkstack.v1.GetStatsResponse.RunsByStatusEntry
+	9,  // 4: orkstack.v1.GetStatsResponse.p50_duration:type_name -> google.protobuf.Duration
+	9,  // 5: orkstack.v1.GetStatsResponse.p95_duration:type_name -> google.protobuf.Duration
+	8,  // 6: orkstack.v1.GetStatsResponse.duration_coverage_since:type_name -> google.protobuf.Timestamp
+	2,  // 7: orkstack.v1.GetStatsResponse.most_failing:type_name -> orkstack.v1.OrkflowFailures
+	10, // 8: orkstack.v1.GetStatsResponse.running:type_name -> orkstack.v1.Run
+	11, // 9: orkstack.v1.GetStatsResponse.pools:type_name -> orkstack.v1.Pool
+	8,  // 10: orkstack.v1.GetStatsResponse.computed_at:type_name -> google.protobuf.Timestamp
+	8,  // 11: orkstack.v1.GetStatsResponse.window_since:type_name -> google.protobuf.Timestamp
+	8,  // 12: orkstack.v1.GetStatsResponse.window_until:type_name -> google.protobuf.Timestamp
+	8,  // 13: orkstack.v1.GetFailureBreakdownRequest.since:type_name -> google.protobuf.Timestamp
+	8,  // 14: orkstack.v1.GetFailureBreakdownRequest.until:type_name -> google.protobuf.Timestamp
+	9,  // 15: orkstack.v1.GetFailureBreakdownRequest.lookback:type_name -> google.protobuf.Duration
+	0,  // 16: orkstack.v1.GetFailureBreakdownRequest.group_by:type_name -> orkstack.v1.FailureGroupBy
+	12, // 17: orkstack.v1.GetFailureBreakdownRequest.category:type_name -> orkstack.v1.FailureCategory
+	12, // 18: orkstack.v1.FailureGroup.category:type_name -> orkstack.v1.FailureCategory
+	8,  // 19: orkstack.v1.FailureGroup.first_seen:type_name -> google.protobuf.Timestamp
+	8,  // 20: orkstack.v1.FailureGroup.last_seen:type_name -> google.protobuf.Timestamp
+	5,  // 21: orkstack.v1.GetFailureBreakdownResponse.groups:type_name -> orkstack.v1.FailureGroup
+	0,  // 22: orkstack.v1.GetFailureBreakdownResponse.group_by:type_name -> orkstack.v1.FailureGroupBy
+	8,  // 23: orkstack.v1.GetFailureBreakdownResponse.window_since:type_name -> google.protobuf.Timestamp
+	8,  // 24: orkstack.v1.GetFailureBreakdownResponse.window_until:type_name -> google.protobuf.Timestamp
+	8,  // 25: orkstack.v1.GetFailureBreakdownResponse.computed_at:type_name -> google.protobuf.Timestamp
+	1,  // 26: orkstack.v1.StatsService.GetStats:input_type -> orkstack.v1.GetStatsRequest
+	4,  // 27: orkstack.v1.StatsService.GetFailureBreakdown:input_type -> orkstack.v1.GetFailureBreakdownRequest
+	3,  // 28: orkstack.v1.StatsService.GetStats:output_type -> orkstack.v1.GetStatsResponse
+	6,  // 29: orkstack.v1.StatsService.GetFailureBreakdown:output_type -> orkstack.v1.GetFailureBreakdownResponse
+	28, // [28:30] is the sub-list for method output_type
+	26, // [26:28] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_stats_proto_init() }
@@ -486,6 +1046,7 @@ func file_orkstack_v1_stats_proto_init() {
 	if File_orkstack_v1_stats_proto != nil {
 		return
 	}
+	file_orkstack_v1_common_proto_init()
 	file_orkstack_v1_namespace_proto_init()
 	file_orkstack_v1_run_proto_init()
 	type x struct{}
@@ -493,13 +1054,14 @@ func file_orkstack_v1_stats_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_stats_proto_rawDesc), len(file_orkstack_v1_stats_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   4,
+			NumEnums:      1,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_orkstack_v1_stats_proto_goTypes,
 		DependencyIndexes: file_orkstack_v1_stats_proto_depIdxs,
+		EnumInfos:         file_orkstack_v1_stats_proto_enumTypes,
 		MessageInfos:      file_orkstack_v1_stats_proto_msgTypes,
 	}.Build()
 	File_orkstack_v1_stats_proto = out.File

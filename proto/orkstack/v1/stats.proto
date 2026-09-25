@@ -4,6 +4,7 @@ package orkstack.v1;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/common.proto";
 import "orkstack/v1/namespace.proto";
 import "orkstack/v1/run.proto";
 
@@ -27,6 +28,17 @@ option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1"
 service StatsService {
   // GetStats reports one namespace's runs over one time window.
   rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+  // GetFailureBreakdown groups one namespace's FAILED runs over one window by
+  // the dimensions the caller names. It is the read that makes the §4
+  // failure categories pay: a category nobody counts is a comment.
+  //
+  // It reads run BODIES — one per failed run in the window — which GetStats
+  // deliberately never does. The discriminating facts are not in the index
+  // key, and widening the key would be a migration and a second copy of the
+  // body. So the cost is bounded three ways instead: by the window, by the
+  // failed subset of it, and by a scan budget that FAILS the call rather
+  // than answering from a subset (see GetFailureBreakdownResponse).
+  rpc GetFailureBreakdown(GetFailureBreakdownRequest) returns (GetFailureBreakdownResponse);
 }
 
 message GetStatsRequest {
@@ -154,4 +166,107 @@ message GetStatsResponse {
   string namespace = 14;
   google.protobuf.Timestamp window_since = 12;
   google.protobuf.Timestamp window_until = 13;
+}
+
+// FailureGroupBy names one dimension of a fingerprint. The order of the
+// values is the order dimensions render in, and the order ties break in.
+enum FailureGroupBy {
+  FAILURE_GROUP_BY_UNSPECIFIED = 0;
+  FAILURE_GROUP_BY_ORKFLOW  = 1;   // Run.orkflow_name
+  FAILURE_GROUP_BY_TASK     = 2;   // the primary failed task's id (see FailureGroup.task_id)
+  FAILURE_GROUP_BY_CODE     = 3;   // TaskRun.error.code, or Run.error.code for a run-level failure
+  FAILURE_GROUP_BY_CATEGORY = 4;   // TaskRun.error.category, likewise
+  FAILURE_GROUP_BY_IMAGE    = 5;   // TaskAttempt.image.pinned — needs the attempt record; may be unavailable
+  FAILURE_GROUP_BY_POOL     = 6;   // TaskRun.pool
+  FAILURE_GROUP_BY_PHASE    = 7;   // TaskAttempt.phase — needs the attempt record; may be unavailable
+  FAILURE_GROUP_BY_ORKER    = 8;   // TaskRun.orker_id
+}
+
+message GetFailureBreakdownRequest {
+  string namespace = 1;                       // empty = the default namespace
+  // since, until and lookback carry exactly GetStatsRequest's window
+  // semantics: since inclusive, until exclusive, lookback ignored when since
+  // is set, lookback defaulting to 24h, and a window with no time in it
+  // refused. One clock — the server's — resolves a relative window.
+  google.protobuf.Timestamp since = 2;
+  google.protobuf.Timestamp until = 3;
+  google.protobuf.Duration lookback = 4;
+  string orkflow_name = 5;                    // empty = every orkflow in the namespace
+  // group_by is the fingerprint's dimensions, in the caller's order. Empty
+  // means ORKFLOW, TASK, CODE, CATEGORY. A duplicate or UNSPECIFIED value is
+  // InvalidArgument. IMAGE and PHASE are the two that read attempt records.
+  repeated FailureGroupBy group_by = 6;
+  // category keeps only failures of one §4 category. UNSPECIFIED keeps all.
+  FailureCategory category = 7;
+  // limit caps the groups returned, worst first. 0 means 50; more than 500
+  // is InvalidArgument. It bounds the answer, never the scan: the totals
+  // below are over every group.
+  int32 limit = 8;
+}
+
+// FailureGroup is every failed run in the window that shares one fingerprint.
+//
+// A dimension NOT in the request's group_by is empty here and means "not
+// grouped by". A dimension that IS in group_by and is empty means one of two
+// things, told apart by attempt_evidence_missing: for IMAGE and PHASE with a
+// nonzero attempt_evidence_missing it means "unavailable — the attempt record
+// was reclaimed or never written"; otherwise it means the snapshot genuinely
+// carries no value (a run-level failure has no task, a task that never
+// reached an Orker has no pool or orker, a snapshot written before a field
+// existed). Clients render the first as `unavailable` and the second as `-`.
+message FailureGroup {
+  string orkflow_name = 1;
+  string task_id = 2;
+  string code = 3;
+  FailureCategory category = 4;
+  string image_pinned = 5;
+  string pool = 6;
+  string phase = 7;
+  string orker_id = 8;
+  int64 run_count = 9;
+  // first_seen and last_seen are the creation times of the group's oldest and
+  // newest runs — the same coordinate the window is measured in.
+  google.protobuf.Timestamp first_seen = 10;
+  google.protobuf.Timestamp last_seen = 11;
+  // example_run_ids holds at most 3 of the group's runs, newest created
+  // first. Ids are never compared with each other (AGENTS.md §7).
+  repeated string example_run_ids = 12;
+  // attempt_evidence_missing counts this group's runs whose attempt record
+  // could not be read, so image and phase were unavailable for them. It is
+  // only ever nonzero when the response's attempt_evidence_read is true.
+  int64 attempt_evidence_missing = 13;
+}
+
+message GetFailureBreakdownResponse {
+  repeated FailureGroup groups = 1;
+  // failed_runs_in_window is the population: index keys under the
+  // namespace's `failed` status inside the window — the same count GetStats
+  // reports as runs_by_status["failed"] for the same window.
+  int64 failed_runs_in_window = 2;
+  // failed_runs_scanned is how many of those had a body to read. It is less
+  // than failed_runs_in_window only for an index row whose body is absent —
+  // the crash window between the archive's two writes, which ListRuns
+  // already skips. Any OTHER unreadable body fails the call.
+  int64 failed_runs_scanned = 3;
+  // failed_runs_grouped is sum(run_count) over EVERY group, before limit. It
+  // equals failed_runs_scanned unless category narrowed the answer.
+  int64 failed_runs_grouped = 4;
+  // groups_total is how many groups there were before limit, so a client can
+  // say "showing 50 of 212".
+  int64 groups_total = 5;
+  // attempt_evidence_missing is the total across groups.
+  int64 attempt_evidence_missing = 6;
+  // attempt_evidence_read is true when group_by named IMAGE or PHASE and the
+  // attempt store was therefore consulted. When false, attempt_evidence_missing
+  // is 0 because nothing was looked for, not because everything was found.
+  bool attempt_evidence_read = 7;
+  // group_by is the dimensions actually grouped by, with an empty request
+  // resolved. A client cannot label its own columns without it.
+  repeated FailureGroupBy group_by = 8;
+  // namespace, window_since, window_until and computed_at are the question
+  // that was answered and when, exactly as GetStatsResponse carries them.
+  string namespace = 9;
+  google.protobuf.Timestamp window_since = 10;
+  google.protobuf.Timestamp window_until = 11;
+  google.protobuf.Timestamp computed_at = 12;
 }
