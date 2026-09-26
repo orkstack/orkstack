@@ -174,7 +174,10 @@ definition records an immutable digest. `uses:` cannot be templated.
 only variables supplied to the workload; OrkStack's required context travels
 as files. Each `secrets` item names the file exposed under
 `/orkstack/input/secrets` and the Orker-specific source used to resolve it.
-Secret values never enter this YAML or Temporal history.
+Secret values never enter this YAML or Temporal history. A namespace may bound
+which `source:` values its tasks may name (`allowed_secrets`, shown by
+`orkctl namespace get`), and a source outside that bound is refused at
+validate, apply and submit.
 
 `resources` uses `cpu` and `memory` request strings. Orker policy may refuse a
 request above its cap but never silently raises or clamps it. `network` accepts

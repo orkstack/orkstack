@@ -367,8 +367,18 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 	parts := []string{
 		"default_pool=" + engine.DefaultPoolFor(ns),
 		"allowed_pools=[" + strings.Join(ns.GetAllowedPools(), " ") + "]",
-		"run_retention=" + retentionLabel(ns.GetRunRetention()),
 	}
+	// Secret policy (tenant-scoped-secret-policy): allowed_secrets= only when
+	// the list is non-empty, so an unrestricted namespace's summary is
+	// byte-identical to what it was before the field existed; clearing the
+	// list is the record with no key. Entries are in stored order, the
+	// allowed_pools rendering, and ahead of run_retention= so a truncation
+	// cuts a long labels map, never a pattern. Names only: a pattern is a
+	// locator the operator wrote, never a value.
+	if allowed := ns.GetAllowedSecrets(); len(allowed) > 0 {
+		parts = append(parts, "allowed_secrets=["+strings.Join(allowed, " ")+"]")
+	}
+	parts = append(parts, "run_retention="+retentionLabel(ns.GetRunRetention()))
 	// Admission (namespace-admission-control): hold= only when a hold is
 	// requested — released is the absence, as an accepting namespace is
 	// hold == nil — quoted so a reason can never end its own value early;

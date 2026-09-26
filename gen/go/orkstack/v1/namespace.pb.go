@@ -127,9 +127,34 @@ type Namespace struct {
 	// AGENTS.md §2.1 forbids building one, which is the right trade — a guard
 	// that is occasionally one over is worth far more than a lock service. A
 	// namespace that sets 0 never pays the read at all.
-	MaxRunning    int32 `protobuf:"varint,12,opt,name=max_running,json=maxRunning,proto3" json:"max_running,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	MaxRunning int32 `protobuf:"varint,12,opt,name=max_running,json=maxRunning,proto3" json:"max_running,omitempty"`
+	// allowed_secrets bounds which SecretRef.source values a task of this
+	// namespace may resolve. Empty means UNRESTRICTED, which is what every
+	// namespace has today and therefore what an upgrade preserves — a
+	// deployment that sets none behaves exactly as it did before this field
+	// existed. It bounds NAMES: nothing that reads this field stores,
+	// compares or transmits a secret value.
+	//
+	// Each entry is `scheme:pattern`. The scheme is literal. The pattern is
+	// matched against the locator ONLY, never across the separator, and
+	// never as a regular expression: "*" is the one wildcard and it does not
+	// cross "/"; every other character is itself. A "file:" locator with a
+	// ".." segment is refused outright rather than normalized, so a pattern
+	// cannot be escaped by path traversal. The rule is
+	// internal/dsl.ValidSecretPattern and CheckSecretSource, the one place it
+	// is implemented; the registry refuses an entry that fails it.
+	//
+	// It is enforced at the API boundary in the two places a secret can be
+	// named, exactly as allowed_pools is: when an orkflow is applied or
+	// validated, with the file in hand (an issue anchored to
+	// tasks[i].secrets[j].source), and again when a run is submitted, which is
+	// the gate no client can bypass and which catches a definition stored
+	// while the list was wider. It composes by INTERSECTION with each Orker's
+	// own floor (ORK_ORKER_SECRET_ALLOW): a namespace can only ever narrow
+	// what its Orkers already permit.
+	AllowedSecrets []string `protobuf:"bytes,13,rep,name=allowed_secrets,json=allowedSecrets,proto3" json:"allowed_secrets,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Namespace) Reset() {
@@ -244,6 +269,13 @@ func (x *Namespace) GetMaxRunning() int32 {
 		return x.MaxRunning
 	}
 	return 0
+}
+
+func (x *Namespace) GetAllowedSecrets() []string {
+	if x != nil {
+		return x.AllowedSecrets
+	}
+	return nil
 }
 
 // NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
@@ -432,7 +464,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\xd7\x04\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\x80\x05\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -449,7 +481,8 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	" \x01(\v2\x1c.orkstack.v1.TelemetryPolicyR\ttelemetry\x12.\n" +
 	"\x04hold\x18\v \x01(\v2\x1a.orkstack.v1.NamespaceHoldR\x04hold\x12\x1f\n" +
 	"\vmax_running\x18\f \x01(\x05R\n" +
-	"maxRunning\x1a9\n" +
+	"maxRunning\x12'\n" +
+	"\x0fallowed_secrets\x18\r \x03(\tR\x0eallowedSecrets\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +

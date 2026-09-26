@@ -60,6 +60,10 @@ const (
 	ReasonWorkdirFailed        = "WORKDIR_FAILED"
 	ReasonSecretUnresolved     = "SECRET_UNRESOLVED"
 	ReasonSecretSchemeForbid   = "SECRET_SCHEME_FORBIDDEN"
+	// ReasonSecretNotPermitted is a source outside this Orker's
+	// ORK_ORKER_SECRET_ALLOW floor. A policy refusal refuses identically
+	// forever, so it is a ContractViolation and never retried.
+	ReasonSecretNotPermitted   = "SECRET_NOT_PERMITTED"
 	ReasonCommitReadFailed     = "COMMIT_READ_FAILED"
 	ReasonCommitWriteFailed    = "COMMIT_WRITE_FAILED"
 	ReasonCommitSchema         = "COMMIT_SCHEMA_UNSUPPORTED"
@@ -114,6 +118,7 @@ var reasonCategory = map[string]string{
 	ReasonWorkdirFailed:        CategoryInfrastructureError,
 	ReasonSecretUnresolved:     CategoryInfrastructureError,
 	ReasonSecretSchemeForbid:   CategoryContractViolation,
+	ReasonSecretNotPermitted:   CategoryContractViolation,
 	ReasonCommitReadFailed:     CategoryInfrastructureError,
 	ReasonCommitWriteFailed:    CategoryInfrastructureError,
 	ReasonCommitSchema:         CategoryContractViolation,

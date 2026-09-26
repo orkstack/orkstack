@@ -67,6 +67,23 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 	capped := f.run("namespace", "update", "payments", "--max-running", "20").requireExit(t, exitOK)
 	requireGolden(t, "namespace-max-running.golden", capped.stdout)
 
+	// Secret policy: set through update, read back, cleared; and set through
+	// create, the other command sharing namespaceSpecFlags.
+	allowed := f.run("namespace", "update", "payments",
+		"--allow-secret", "env:PAYMENTS_*",
+		"--allow-secret", "file:/etc/orkstack/secrets/payments/*",
+	).requireExit(t, exitOK)
+	requireGolden(t, "namespace-allow-secret.golden", allowed.stdout)
+	gotAllowed := f.run("namespace", "get", "payments").requireExit(t, exitOK)
+	requireGolden(t, "namespace-get-allowed-secrets.golden", gotAllowed.stdout)
+	cleared := f.run("namespace", "update", "payments", "--clear-allowed-secrets").requireExit(t, exitOK)
+	requireGolden(t, "namespace-clear-allowed-secrets.golden", cleared.stdout)
+	sandbox := f.run("namespace", "create", "sandbox", "--allow-secret", "env:SANDBOX_*").
+		requireExit(t, exitOK)
+	requireGolden(t, "namespace-create-allow-secret.golden", sandbox.stdout)
+	listedSecrets := f.run("namespace", "list").requireExit(t, exitOK)
+	requireGolden(t, "namespace-list-allowed-secrets.golden", listedSecrets.stdout)
+
 	f.run("namespace", "create", "scratch").requireExit(t, exitOK)
 	deleted := f.run("namespace", "delete", "scratch").requireExit(t, exitOK)
 	requireGolden(t, "namespace-delete.golden", deleted.stdout)
@@ -103,6 +120,20 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 	cappedJSON := jsonFixture.run("--json", "namespace", "update", "payments", "--max-running", "20").
 		requireExit(t, exitOK)
 	requireGolden(t, "namespace-max-running.json.golden", cappedJSON.stdout)
+
+	allowedJSON := jsonFixture.run("--json", "namespace", "update", "payments",
+		"--allow-secret", "env:PAYMENTS_*",
+		"--allow-secret", "file:/etc/orkstack/secrets/payments/*",
+	).requireExit(t, exitOK)
+	requireGolden(t, "namespace-allow-secret.json.golden", allowedJSON.stdout)
+	gotAllowedJSON := jsonFixture.run("--json", "namespace", "get", "payments").requireExit(t, exitOK)
+	requireGolden(t, "namespace-get-allowed-secrets.json.golden", gotAllowedJSON.stdout)
+	clearedJSON := jsonFixture.run("--json", "namespace", "update", "payments", "--clear-allowed-secrets").
+		requireExit(t, exitOK)
+	requireGolden(t, "namespace-clear-allowed-secrets.json.golden", clearedJSON.stdout)
+	sandboxJSON := jsonFixture.run("--json", "namespace", "create", "sandbox", "--allow-secret", "env:SANDBOX_*").
+		requireExit(t, exitOK)
+	requireGolden(t, "namespace-create-allow-secret.json.golden", sandboxJSON.stdout)
 
 	jsonFixture.run("--json", "namespace", "create", "scratch").requireExit(t, exitOK)
 	deletedJSON := jsonFixture.run("--json", "namespace", "delete", "scratch").
@@ -306,4 +337,109 @@ func writeOrkflow(t *testing.T, name, taskID string) string {
 		t.Fatalf("write orkflow %s: %v", name, err)
 	}
 	return path
+}
+
+// ---------------------------------------------------------------------------
+// namespace: secret policy
+// ---------------------------------------------------------------------------
+
+// exfilDocument names a secret source a sandbox list of env:SANDBOX_* does
+// not allow.
+func exfilDocument(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "exfil.ork.yaml")
+	document := "name: exfil\nversion: 1.0.0\ntasks:\n" +
+		"  - id: grab\n    uses: shell\n" +
+		"    secrets:\n      - name: db\n        source: env:PROD_DB_PASSWORD\n" +
+		"    with: {command: \"cat /orkstack/input/secrets/db\"}\n"
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatalf("write exfil: %v", err)
+	}
+	return path
+}
+
+const exfilSentence = `namespace "sandbox" may not resolve "env:PROD_DB_PASSWORD" (task "grab", secret "db"); allowed: env:SANDBOX_*`
+
+func TestNamespaceUpdate_RefusesAllowSecretAndClearTogether(t *testing.T) {
+	f := newFixture(t)
+	f.run("namespace", "create", "sandbox").requireExit(t, exitOK)
+	before := len(f.requests())
+	result := f.run("namespace", "update", "sandbox",
+		"--allow-secret", "env:SANDBOX_*", "--clear-allowed-secrets")
+	if result.code == exitOK {
+		t.Fatal("--allow-secret with --clear-allowed-secrets succeeded")
+	}
+	result.requireStderrContains(t, "--allow-secret", "--clear-allowed-secrets")
+	if after := f.requests(); len(after) != before {
+		t.Fatalf("a contradictory update reached the server: %v", after[before:])
+	}
+}
+
+func TestNamespaceUpdate_RefusesAMalformedPatternLocally(t *testing.T) {
+	f := newFixture(t)
+	f.run("namespace", "create", "sandbox").requireExit(t, exitOK)
+	for _, args := range [][]string{
+		{"namespace", "update", "sandbox", "--allow-secret", "file:/a/../b"},
+		{"namespace", "create", "other", "--allow-secret", "file:/a/../b"},
+	} {
+		before := len(f.requests())
+		result := f.run(args...)
+		if result.code == exitOK {
+			t.Fatalf("%v succeeded", args)
+		}
+		result.requireStderrContains(t, `invalid --allow-secret "file:/a/../b"`, `".." segment`)
+		if after := f.requests(); len(after) != before {
+			t.Fatalf("%v reached the server: %v", args, after[before:])
+		}
+	}
+}
+
+func TestOrkflowValidate_PrintsTheSecretIssueOnItsFieldPath(t *testing.T) {
+	f := newFixture(t)
+	f.run("namespace", "create", "sandbox", "--allow-secret", "env:SANDBOX_*").requireExit(t, exitOK)
+	path := exfilDocument(t)
+
+	human := f.run("orkflow", "validate", path, "-n", "sandbox")
+	if human.code == exitOK {
+		t.Fatal("validate of a forbidden secret exited 0")
+	}
+	human.requireContains(t, "tasks[0].secrets[0].source: "+exfilSentence)
+
+	machine := f.run("--json", "orkflow", "validate", path, "-n", "sandbox")
+	var decoded struct {
+		Issues []struct {
+			Field    string `json:"field"`
+			Message  string `json:"message"`
+			Severity string `json:"severity"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(machine.stdout), &decoded); err != nil {
+		t.Fatalf("decode --json: %v\n%s", err, machine.stdout)
+	}
+	if len(decoded.Issues) != 1 || decoded.Issues[0].Field != "tasks[0].secrets[0].source" ||
+		decoded.Issues[0].Severity != "ERROR" || decoded.Issues[0].Message != exfilSentence {
+		t.Fatalf("--json issues = %+v", decoded.Issues)
+	}
+
+	// apply is refused with the same sentence and stores nothing.
+	apply := f.run("apply", path, "-n", "sandbox")
+	if apply.code == exitOK {
+		t.Fatal("apply of a forbidden secret succeeded")
+	}
+	apply.requireStderrContains(t, "invalid_argument", exfilSentence)
+	f.run("orkflow", "list", "-n", "sandbox").requireExit(t, exitOK).requireContains(t, "No orkflows.")
+}
+
+func TestRunSubmit_RefusedByASecretPolicyNamesTheSourceAndTheList(t *testing.T) {
+	f := newFixture(t)
+	f.run("namespace", "create", "sandbox").requireExit(t, exitOK)
+	f.run("apply", exfilDocument(t), "-n", "sandbox").requireExit(t, exitOK)
+	f.run("namespace", "update", "sandbox", "--allow-secret", "env:SANDBOX_*").requireExit(t, exitOK)
+
+	submit := f.run("run", "submit", "exfil", "-n", "sandbox")
+	if submit.code == exitOK {
+		t.Fatal("a submit naming a forbidden secret succeeded")
+	}
+	submit.requireStderrContains(t, "invalid_argument", `"env:PROD_DB_PASSWORD"`, "env:SANDBOX_*", exfilSentence)
+	f.run("run", "list", "-n", "sandbox").requireExit(t, exitOK).requireContains(t, "No runs")
 }
