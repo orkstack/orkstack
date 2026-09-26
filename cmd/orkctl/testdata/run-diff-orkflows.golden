@@ -1,0 +1,14 @@
+Diff:        ork-etl -> ork-report
+Namespace:   default
+Orkflow:     etl -> report (DIFFERENT ORKFLOWS)
+Status:      SUCCEEDED -> SUCCEEDED
+Finished:    2026-01-02T03:12:05Z -> 2026-01-02T03:12:05Z
+Definition:  differs: etl@1.0.0 sha256:9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c -> report@1.0.0 sha256:aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10
+Input:       identical
+
+TASK  FIELD     FROM     TO
+a     presence  present  absent
+b     attempt   1        2
+d     presence  absent   present
+
+3 of 4 tasks differ; 1 identical.

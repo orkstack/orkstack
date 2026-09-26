@@ -1,0 +1,113 @@
+{
+  "from": {
+    "id": "ork-mon",
+    "orkflowName": "nightly-etl",
+    "orkflowVersion": "1.2.0",
+    "status": "SUCCEEDED",
+    "createdAt": "2026-01-02T03:04:05Z",
+    "startedAt": "2026-01-02T03:04:05Z",
+    "finishedAt": "2026-01-02T03:12:05Z",
+    "orkflowDefinitionDigest": "sha256:9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c"
+  },
+  "to": {
+    "id": "ork-tue",
+    "orkflowName": "nightly-etl",
+    "orkflowVersion": "1.2.1",
+    "status": "FAILED",
+    "createdAt": "2026-01-03T03:04:05Z",
+    "startedAt": "2026-01-03T03:04:05Z",
+    "finishedAt": "2026-01-03T03:12:05Z",
+    "orkflowDefinitionDigest": "sha256:aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10"
+  },
+  "sameOrkflow": true,
+  "inputUnifiedDiff": "--- a/ork-mon/input.json\n+++ b/ork-tue/input.json\n@@ -1,4 +1,4 @@\n {\n-  \"date\": \"2026-09-21\",\n+  \"date\": \"2026-09-22\",\n   \"limit\": 500\n }\n",
+  "differences": [
+    {
+      "field": "definition",
+      "fromValue": "nightly-etl@1.2.0 sha256:9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c",
+      "toValue": "nightly-etl@1.2.1 sha256:aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10",
+      "fromAvailable": true,
+      "toAvailable": true
+    },
+    {
+      "taskId": "extract",
+      "field": "pool",
+      "fromValue": "main",
+      "toValue": "gpu",
+      "fromAvailable": true,
+      "toAvailable": true
+    },
+    {
+      "taskId": "extract",
+      "field": "duration",
+      "fromValue": "1m3s",
+      "toValue": "4m12s",
+      "fromAvailable": true,
+      "toAvailable": true
+    },
+    {
+      "taskId": "transform",
+      "field": "status",
+      "fromValue": "SUCCEEDED",
+      "toValue": "FAILED",
+      "fromAvailable": true,
+      "toAvailable": true
+    },
+    {
+      "taskId": "transform",
+      "field": "attempt",
+      "fromValue": "1",
+      "toValue": "3",
+      "fromAvailable": true,
+      "toAvailable": true
+    },
+    {
+      "taskId": "transform",
+      "field": "exit_code",
+      "fromValue": "0",
+      "toValue": "3",
+      "fromAvailable": true,
+      "toAvailable": true
+    },
+    {
+      "taskId": "transform",
+      "field": "error",
+      "toValue": "CONTAINER_EXIT_NONZERO (ACTIVITY_FAILED)",
+      "fromAvailable": true,
+      "toAvailable": true
+    },
+    {
+      "taskId": "transform",
+      "field": "image",
+      "fromValue": "ghcr.io/acme/transform@sha256:ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12",
+      "toValue": "ghcr.io/acme/transform@sha256:ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90",
+      "fromAvailable": true,
+      "toAvailable": true
+    },
+    {
+      "taskId": "load",
+      "field": "platform_digest",
+      "toValue": "sha256:c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff",
+      "toAvailable": true,
+      "fromReason": "attempt_record_missing"
+    }
+  ],
+  "tasksCompared": 4,
+  "tasksIdentical": 1,
+  "evidenceUnavailable": 1,
+  "fieldsCompared": [
+    "definition",
+    "input",
+    "presence",
+    "status",
+    "attempt",
+    "pool",
+    "pin",
+    "orker",
+    "exit_code",
+    "error",
+    "duration",
+    "image",
+    "platform_digest"
+  ]
+}

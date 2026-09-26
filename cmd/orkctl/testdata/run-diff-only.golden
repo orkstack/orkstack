@@ -1,0 +1,14 @@
+Diff:        ork-mon -> ork-tue
+Namespace:   default
+Compared:    presence, pool, image
+Orkflow:     nightly-etl (same orkflow)
+Status:      SUCCEEDED -> FAILED
+Finished:    2026-01-02T03:12:05Z -> 2026-01-03T03:12:05Z
+Definition:  not compared
+Input:       not compared
+
+TASK       FIELD  FROM                                                                                            TO
+extract    pool   main                                                                                            gpu
+transform  image  ghcr.io/acme/transform@sha256:ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12  ghcr.io/acme/transform@sha256:ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90
+
+2 of 4 tasks differ; 2 identical.

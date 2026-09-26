@@ -1,0 +1,11 @@
+Diff:        ork-mon -> ork-tue
+Namespace:   default
+Orkflow:     nightly-etl (same orkflow)
+Status:      SUCCEEDED -> SUCCEEDED
+Finished:    2026-01-02T03:12:05Z -> 2026-01-03T03:12:05Z
+Definition:  identical (sha256:9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c)
+Input:       identical
+
+No task differences.
+
+0 of 4 tasks differ; 4 identical.
