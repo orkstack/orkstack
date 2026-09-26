@@ -69,6 +69,10 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err != nil {
 		return err
 	}
+	originKey, hasOrigin, err := RunOriginIndexKey(rec)
+	if err != nil {
+		return err
+	}
 	objectIDs := dedupeObjectIDs(rec.ObjectIDs)
 	listKey, err := RunObjectListKey(rec.RunID)
 	if err != nil {
@@ -113,6 +117,15 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	}
 	if err := a.putObjectRefs(ctx, refKeys); err != nil {
 		return fmt.Errorf("artifacts: s3 archive run %q: %w", rec.RunID, err)
+	}
+	// The origin row is one more zero-byte key, written before the run-index
+	// row so the run index stays the last thing published.
+	if hasOrigin {
+		if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(a.bucket), Key: aws.String(originKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
+		}); err != nil {
+			return fmt.Errorf("artifacts: s3 archive run %q: write origin index %q: %w", rec.RunID, originKey, err)
+		}
 	}
 	// The index carries everything in its key, so its body is empty. Publishing
 	// it last makes all prior durable records visible to cleanup first.
@@ -416,9 +429,11 @@ func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntr
 		input.StartAfter = aws.String(startAfter)
 	}
 
-	// With orkflow and status pinned, the remaining keys sort by timestamp, so
-	// an upper bound ends the scan instead of filtering the rest of the subtree.
-	stopAfterUntil := q.Namespace != "" && q.Orkflow != "" && q.Status != "" && !q.Until.IsZero()
+	// With every segment above the stamp pinned (orkflow and status, and in
+	// the origin family kind and id too), the remaining keys sort by
+	// timestamp, so an upper bound ends the scan instead of filtering the rest
+	// of the subtree.
+	stopAfterUntil := q.timeOrderedPrefix() && !q.Until.IsZero()
 	stopKey := prefix + RunStamp(q.Until)
 
 	entries := make([]RunIndexEntry, 0, q.pageCapacity())
@@ -434,7 +449,7 @@ func (a *S3RunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexEntr
 				return a.finishList(q, entries), nil
 			}
 			a.indexKeysScanned.Add(1)
-			entry, ok := ParseRunIndexKey(key)
+			entry, ok := q.parseKey(key)
 			if !ok || !q.Matches(entry) {
 				continue
 			}

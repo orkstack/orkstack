@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go/middleware"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -62,7 +63,7 @@ func cleanupArchivedRun(t *testing.T, cfg artifacts.Config, runID string) {
 			t.Fatalf("RunObjectListKey: %v", err)
 		}
 		keys := []string{body, list}
-		for _, prefix := range []string{artifacts.RunIndexNamespace + "/", artifacts.RunObjectRefNamespace + "/"} {
+		for _, prefix := range []string{artifacts.RunIndexNamespace + "/", artifacts.RunOriginIndexNamespace + "/", artifacts.RunObjectRefNamespace + "/"} {
 			for _, key := range listKeys(t, ctx, client, cfg.S3Bucket, prefix) {
 				if strings.HasSuffix(key, "/"+runID) {
 					keys = append(keys, key)
@@ -723,4 +724,88 @@ func TestS3RunArchive_ListObjectReferencesReadsMarkerKeysOnly(t *testing.T) {
 	}
 	t.Logf("EVIDENCE s3_provenance_keys_only objects=%d references_per_object=1 list_objects_v2=%d get_object=%d head_object=%d",
 		len(objectIDs), operations["ListObjectsV2"], operations["GetObject"], operations["HeadObject"])
+}
+
+// TestS3RunArchive_OriginIndexAgainstMinIO writes runs from two triggers and a
+// submit into real object storage and lists them back through the origin
+// family: kind-only, kind and id, and a query with no origin filter that
+// still sees every run through the run index.
+func TestS3RunArchive_OriginIndexAgainstMinIO(t *testing.T) {
+	archive, cfg := newS3RunArchive(t)
+	ctx := context.Background()
+	namespace := "origin-it-" + uniqueToken(t)[:8]
+	triggerA := "trg-" + uniqueToken(t)[:12]
+	triggerB := "trg-" + uniqueToken(t)[:12]
+	base := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	trigger := orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER
+	submit := orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT
+
+	ids := map[string]string{}
+	for i, seed := range []struct {
+		name string
+		kind orkstackv1.RunOriginKind
+		id   string
+	}{
+		{"a1", trigger, triggerA}, {"a2", trigger, triggerA}, {"b1", trigger, triggerB}, {"s1", submit, ""}, {"legacy", 0, ""},
+	} {
+		runID := archiveTestRun(t, "-"+seed.name)
+		cleanupArchivedRun(t, cfg, runID)
+		ids[seed.name] = runID
+		if err := archive.PutRun(ctx, artifacts.RunRecord{
+			RunID: runID, Namespace: namespace, Orkflow: "deploy-service", Status: "succeeded",
+			Time: base.Add(time.Duration(i) * time.Minute), OriginKind: seed.kind, OriginID: seed.id,
+			JSONL: []byte(`{"kind":"run","run":{"id":"` + runID + `"}}` + "\n"),
+		}); err != nil {
+			t.Fatalf("PutRun(%s): %v", runID, err)
+		}
+	}
+	list := func(q artifacts.RunQuery) []string {
+		t.Helper()
+		entries, err := archive.ListRuns(ctx, q)
+		if err != nil {
+			t.Fatalf("ListRuns(%+v): %v", q, err)
+		}
+		out := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			out = append(out, entry.RunID)
+		}
+		return out
+	}
+	want := func(names ...string) []string {
+		out := make([]string, 0, len(names))
+		for _, name := range names {
+			out = append(out, ids[name])
+		}
+		return out
+	}
+	if got := list(artifacts.RunQuery{Namespace: namespace, OriginKind: trigger}); !equalStrings(got, want("b1", "a2", "a1")) {
+		t.Fatalf("kind-only = %v, want %v", got, want("b1", "a2", "a1"))
+	}
+	if got := list(artifacts.RunQuery{Namespace: namespace, OriginKind: trigger, OriginID: triggerA}); !equalStrings(got, want("a2", "a1")) {
+		t.Fatalf("kind+id = %v, want %v", got, want("a2", "a1"))
+	}
+	if got := list(artifacts.RunQuery{Namespace: namespace, OriginKind: submit}); !equalStrings(got, want("s1")) {
+		t.Fatalf("submit = %v, want %v", got, want("s1"))
+	}
+	if got := list(artifacts.RunQuery{Namespace: namespace}); !equalStrings(got, want("legacy", "s1", "b1", "a2", "a1")) {
+		t.Fatalf("run index = %v, want every run", got)
+	}
+	key, _, err := artifacts.RunOriginIndexKey(artifacts.RunRecord{
+		RunID: ids["a1"], Namespace: namespace, Orkflow: "deploy-service", Status: "succeeded",
+		Time: base, OriginKind: trigger, OriginID: triggerA,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := listKeys(t, ctx, newRawS3Client(t, cfg), cfg.S3Bucket, artifacts.RunOriginIndexNamespace+"/"+namespace+"/")
+	found := false
+	for _, k := range keys {
+		if k == key {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("origin row %q not in MinIO; keys under the namespace: %v", key, keys)
+	}
+	t.Logf("EVIDENCE origin_row=%s", key)
 }

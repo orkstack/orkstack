@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
 // The run archive is the queryable record of a finished run. Temporal stays the
@@ -34,6 +36,15 @@ import (
 // subtree, and a time range starts the scan at its lower bound instead of at
 // the first key. Cleanup state is a separate immutable sidecar, so cleanup
 // never rewrites run history.
+//
+// A second zero-byte family indexes the same runs by what started them:
+//
+//	metadata/index/origins/{namespace}/{kind}/{origin-id}/{orkflow}/{status}/{stamp}/{run-id}
+//
+// It is written beside the run-index row, only for a run whose origin was
+// recorded, and read only by an origin-filtered list. It is a sibling family,
+// never a segment inserted into the run index, so the run index's key shape,
+// its time narrowing and the cleanup cursor over it are untouched.
 const (
 	// RunArchiveNamespace prefixes every archived run body.
 	RunArchiveNamespace = "metadata/runs"
@@ -59,6 +70,18 @@ const (
 	// runIndexSegments is the fixed segment count of an index key:
 	// metadata, index, runs, namespace, orkflow, status, stamp, run-id.
 	runIndexSegments = 8
+	// RunOriginIndexNamespace prefixes the origin index: one zero-byte key
+	// per archived run, written beside its run-index row, so "which runs did
+	// this trigger start" is a prefix scan that reads no body.
+	RunOriginIndexNamespace = "metadata/index/origins"
+	// OriginIndexNoID is the origin-id segment of a run whose origin has no
+	// id (SUBMIT). A real id that is literally "none" is stored encoded, so
+	// the two never collide.
+	OriginIndexNoID = "none"
+	// runOriginIndexSegments is the fixed segment count of an origin-index
+	// key: metadata, index, origins, namespace, kind, origin-id, orkflow,
+	// status, stamp, run-id — runIndexSegments plus kind and origin-id.
+	runOriginIndexSegments = 10
 	// archiveRefWriteConcurrency bounds the parallel reference-marker writes
 	// one PutRun issues. It matches the engine's archiveFetchConcurrency: the
 	// same shape of problem, so the same number rather than a second knob.
@@ -99,6 +122,11 @@ type RunRecord struct {
 	// digest: equal bytes stored under different logical names are distinct
 	// physical objects.
 	ObjectIDs []string
+	// OriginKind and OriginID are the run's origin, as RunOrigin carries it.
+	// OriginKind UNSPECIFIED writes no origin row: a run with no recorded
+	// origin is matched by no origin filter, and never masquerades as SUBMIT.
+	OriginKind orkstackv1.RunOriginKind
+	OriginID   string
 	// JSONL is the archive body: one JSON record per line.
 	JSONL []byte
 }
@@ -125,6 +153,10 @@ type RunIndexEntry struct {
 	Orkflow   string
 	Status    string
 	Time      time.Time
+	// OriginKind and OriginID are set by an origin-index scan and zero from a
+	// run-index scan; a reader that needs them asks with an origin filter.
+	OriginKind orkstackv1.RunOriginKind
+	OriginID   string
 }
 
 // RunQuery narrows a prefix scan. Zero values mean "no filter".
@@ -144,6 +176,11 @@ type RunQuery struct {
 	Since time.Time
 	// Until is the exclusive upper bound on RunRecord.Time.
 	Until time.Time
+	// OriginKind selects the origin index instead of the run index. With
+	// OriginID empty the scan covers every id of that kind; with OriginID set
+	// it is one prefix. An OriginID without OriginKind is ErrInvalidRunKey.
+	OriginKind orkstackv1.RunOriginKind
+	OriginID   string
 	// BeforeTime/BeforeRunID continue after a newest-first cursor. Filtering
 	// happens during the index scan, before finish applies Limit and before an
 	// engine hydrates any run bodies.
@@ -440,6 +477,127 @@ func ParseRunIndexKey(key string) (RunIndexEntry, bool) {
 	}, true
 }
 
+// RunOriginIndexKey renders the origin-index key for a record, or ("",
+// false) when the record has no origin kind. orkflow, status, stamp and run
+// id are rendered exactly as RunIndexKey renders them.
+func RunOriginIndexKey(rec RunRecord) (key string, ok bool, err error) {
+	if rec.OriginKind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+		return "", false, nil
+	}
+	kind, known := OriginKindSlug(rec.OriginKind)
+	if !known {
+		return "", false, fmt.Errorf("%w: origin kind %d is not declared", ErrInvalidRunKey, rec.OriginKind)
+	}
+	namespace, err := encodeArchiveSegment(ResolveNamespace(rec.Namespace))
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run origin index key: namespace: %w", err)
+	}
+	originID, err := encodeOriginIDSegment(rec.OriginID)
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run origin index key: origin id: %w", err)
+	}
+	orkflow, err := encodeArchiveSegment(rec.Orkflow)
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run origin index key: orkflow: %w", err)
+	}
+	status, err := encodeArchiveSegment(NormalizeRunStatus(rec.Status))
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run origin index key: status: %w", err)
+	}
+	runID, err := encodeArchiveSegment(rec.RunID)
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run origin index key: run id: %w", err)
+	}
+	return path.Join(RunOriginIndexNamespace, namespace, kind, originID, orkflow, status,
+		RunStamp(rec.Time), runID), true, nil
+}
+
+// ParseRunOriginIndexKey reverses RunOriginIndexKey; a foreign key — a
+// run-index key among them — is ok=false, so a scan can skip it.
+func ParseRunOriginIndexKey(key string) (RunIndexEntry, bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) != runOriginIndexSegments || !strings.HasPrefix(key, RunOriginIndexNamespace+"/") {
+		return RunIndexEntry{}, false
+	}
+	namespace, ok := decodeArchiveSegment(parts[3])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	kind, ok := ParseOriginKindSlug(parts[4])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	originID, ok := decodeOriginIDSegment(parts[5])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	orkflow, ok := decodeArchiveSegment(parts[6])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	status, ok := decodeArchiveSegment(parts[7])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	stamp, err := time.Parse(RunStampLayout, parts[8])
+	if err != nil {
+		return RunIndexEntry{}, false
+	}
+	runID, ok := decodeArchiveSegment(parts[9])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	return RunIndexEntry{
+		RunID:      runID,
+		Namespace:  namespace,
+		Orkflow:    orkflow,
+		Status:     status,
+		Time:       stamp,
+		OriginKind: kind,
+		OriginID:   originID,
+	}, true
+}
+
+// encodeOriginIDSegment renders an origin id as one key segment: the literal
+// OriginIndexNoID for an empty id, and otherwise the id through the ordinary
+// segment encoding — except an id that is itself spelled "none", which is
+// forced into the encoded form so it can never read back as "no id".
+func encodeOriginIDSegment(id string) (string, error) {
+	if id == "" {
+		return OriginIndexNoID, nil
+	}
+	if id == OriginIndexNoID {
+		return archiveEncodedMarker + base64.RawURLEncoding.EncodeToString([]byte(id)), nil
+	}
+	return encodeArchiveSegment(id)
+}
+
+func decodeOriginIDSegment(segment string) (string, bool) {
+	if segment == OriginIndexNoID {
+		return "", true
+	}
+	return decodeArchiveSegment(segment)
+}
+
+// parseKey parses one scanned key with the family the query selected.
+func (q RunQuery) parseKey(key string) (RunIndexEntry, bool) {
+	if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+		return ParseRunOriginIndexKey(key)
+	}
+	return ParseRunIndexKey(key)
+}
+
+// timeOrderedPrefix reports whether ScanPrefix pinned every segment above the
+// stamp, so the keys remaining under the prefix sort by time and an upper
+// bound can end a scan instead of filtering the rest of the subtree.
+func (q RunQuery) timeOrderedPrefix() bool {
+	pinned := q.Namespace != "" && q.Orkflow != "" && q.Status != ""
+	if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+		return pinned && q.OriginID != ""
+	}
+	return pinned
+}
+
 // RunStamp renders t as an index segment: UTC, fixed width, sortable.
 func RunStamp(t time.Time) string { return t.UTC().Format(RunStampLayout) }
 
@@ -459,8 +617,20 @@ func NormalizeRunStatus(raw string) string {
 // A query that names an orkflow but no namespace cannot narrow past the root:
 // an orkflow name is unique within a namespace, so the same name may exist in
 // several, and the scan must see them all and filter with Matches.
+//
+// A query with an OriginKind scans the origin family instead, narrowing in
+// that family's own order — namespace, kind, origin id, orkflow, status, then
+// the stamp once all five are pinned. An OriginID without an OriginKind is
+// ErrInvalidRunKey: an id is meaningful only within a kind.
 func (q RunQuery) ScanPrefix() (prefix, startAfter string, err error) {
-	prefix = RunIndexNamespace + "/"
+	if q.OriginKind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+		if q.OriginID != "" {
+			return "", "", fmt.Errorf("%w: an origin id needs an origin kind", ErrInvalidRunKey)
+		}
+		prefix = RunIndexNamespace + "/"
+	} else {
+		prefix = RunOriginIndexNamespace + "/"
+	}
 	if q.Namespace == "" {
 		return prefix, "", nil
 	}
@@ -469,6 +639,21 @@ func (q RunQuery) ScanPrefix() (prefix, startAfter string, err error) {
 		return "", "", fmt.Errorf("artifacts: run query: namespace: %w", err)
 	}
 	prefix += namespace + "/"
+	if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+		kind, ok := OriginKindSlug(q.OriginKind)
+		if !ok {
+			return "", "", fmt.Errorf("%w: origin kind %d is not declared", ErrInvalidRunKey, q.OriginKind)
+		}
+		prefix += kind + "/"
+		if q.OriginID == "" {
+			return prefix, "", nil
+		}
+		originID, err := encodeOriginIDSegment(q.OriginID)
+		if err != nil {
+			return "", "", fmt.Errorf("artifacts: run query: origin id: %w", err)
+		}
+		prefix += originID + "/"
+	}
 	if q.Orkflow == "" {
 		return prefix, "", nil
 	}
@@ -502,6 +687,12 @@ func (q RunQuery) Matches(entry RunIndexEntry) bool {
 		return false
 	}
 	if q.Status != "" && entry.Status != NormalizeRunStatus(q.Status) {
+		return false
+	}
+	if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && entry.OriginKind != q.OriginKind {
+		return false
+	}
+	if q.OriginID != "" && entry.OriginID != q.OriginID {
 		return false
 	}
 	if !q.Since.IsZero() && entry.Time.Before(q.Since) {
