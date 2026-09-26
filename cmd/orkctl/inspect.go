@@ -370,10 +370,16 @@ func timeoutFooter(live *orkstackv1.LiveAttempt, now time.Time) string {
 	if left < 0 {
 		left = 0
 	}
-	return fmt.Sprintf(
-		"%s: timeout %s, at least %s left (the container clock starts after setup) · cancellation grace %s · backstop %s",
-		live.GetTaskId(), timeout, left, seconds(live.GetCancellationGracePeriodSeconds()),
-		formatTime(live.GetExpiresAt()))
+	line := fmt.Sprintf(
+		"%s: timeout %s, at least %s left (the container clock starts after setup) · cancellation grace %s",
+		live.GetTaskId(), timeout, left, seconds(live.GetCancellationGracePeriodSeconds()))
+	// Temporal reports an expiration only when the activity has one to
+	// report; without it there is no backstop instant to print, and a dash
+	// would read as a missing value rather than an absent bound.
+	if backstop := formatTime(live.GetExpiresAt()); backstop != dash {
+		line += " · backstop " + backstop
+	}
+	return line
 }
 
 // unavailableReasonSentence is the fixed sentence for each reason.
