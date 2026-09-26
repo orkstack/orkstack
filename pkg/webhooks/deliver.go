@@ -3,6 +3,8 @@ package webhooks
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +36,13 @@ type Delivery struct {
 	Attempt int32
 	// Run is the full run, already encoded in OrkStack's JSON dialect.
 	Run json.RawMessage
+	// QueuedAt is when the notifier queued this delivery; it is the instant the
+	// id's stamp carries. Zero for a caller that bypasses the notifier.
+	QueuedAt time.Time
+	// RedeliveryOf names the delivery this one repeats, when an operator asked
+	// for it. It is sent as X-Ork-Redelivery-Of and is otherwise not part of
+	// the body.
+	RedeliveryOf string
 }
 
 // payload is the wire body, in the field order the contract states:
@@ -98,6 +107,9 @@ type Attempt struct {
 	Backoff time.Duration `json:"backoff,omitempty"`
 	// Duration is how long the request itself took.
 	Duration time.Duration `json:"duration"`
+	// At is when the request was started, in UTC. For an attempt the ladder
+	// abandoned while waiting out its backoff, it is when the wait ended.
+	At time.Time `json:"at"`
 }
 
 // Result is the outcome of a delivery: whether it landed, and every attempt it
@@ -112,6 +124,25 @@ type Result struct {
 	Delivered  bool      `json:"delivered"`
 	Signature  string    `json:"signature,omitempty"`
 	Attempts   []Attempt `json:"attempts"`
+	// Namespace, OrkflowName, TaskID, Attempt and Status are the delivery's
+	// coordinates as the body carried them: what a record needs to say WHICH
+	// transition of which run was sent, without keeping the body.
+	Namespace   string `json:"namespace,omitempty"`
+	OrkflowName string `json:"orkflowName"`
+	TaskID      string `json:"taskId,omitempty"`
+	Attempt     int32  `json:"attempt,omitempty"`
+	Status      string `json:"status"`
+	// EventAt is the transition's timestamp (X-Ork-Timestamp); QueuedAt the
+	// id's instant; SettledAt when Deliver returned.
+	EventAt   time.Time `json:"eventAt"`
+	QueuedAt  time.Time `json:"queuedAt"`
+	SettledAt time.Time `json:"settledAt"`
+	// BodySHA256 is the lowercase hex SHA-256 of the exact bytes POSTed, and
+	// BodyBytes their length. The bytes themselves are not kept.
+	BodySHA256 string `json:"bodySha256"`
+	BodyBytes  int    `json:"bodyBytes"`
+	// RedeliveryOf is copied from the delivery.
+	RedeliveryOf string `json:"redeliveryOf,omitempty"`
 }
 
 // LastAttempt returns the attempt that ended the delivery.
@@ -187,20 +218,36 @@ func NewDispatcher(options DispatcherOptions) *Dispatcher {
 // with exponential backoff. It returns the full attempt record; the error is
 // non-nil only when the delivery never landed, so a caller can log one and
 // keep the other.
-func (d *Dispatcher) Deliver(ctx context.Context, hook Webhook, delivery Delivery) (Result, error) {
+func (d *Dispatcher) Deliver(ctx context.Context, hook Webhook, delivery Delivery) (result Result, err error) {
+	result = Result{
+		DeliveryID:   delivery.ID,
+		WebhookID:    hook.ID,
+		Event:        delivery.Event,
+		RunID:        delivery.RunID,
+		URL:          hook.URL,
+		Namespace:    delivery.Namespace,
+		OrkflowName:  delivery.OrkflowName,
+		TaskID:       delivery.TaskID,
+		Attempt:      delivery.Attempt,
+		Status:       delivery.Status,
+		EventAt:      delivery.Timestamp.UTC(),
+		QueuedAt:     delivery.QueuedAt.UTC(),
+		RedeliveryOf: delivery.RedeliveryOf,
+	}
+	// One stamp for every return path — delivered, exhausted, refused, an
+	// interrupted wait, an unencodable body — so a record always says when
+	// the delivery settled.
+	defer func() { result.SettledAt = time.Now().UTC() }()
+
 	body, err := delivery.Body()
 	if err != nil {
-		return Result{DeliveryID: delivery.ID, WebhookID: hook.ID, URL: hook.URL}, err
+		return result, err
 	}
+	digest := sha256.Sum256(body)
+	result.BodySHA256 = hex.EncodeToString(digest[:])
+	result.BodyBytes = len(body)
 	signature := Sign(hook.Secret, body)
-	result := Result{
-		DeliveryID: delivery.ID,
-		WebhookID:  hook.ID,
-		Event:      delivery.Event,
-		RunID:      delivery.RunID,
-		URL:        hook.URL,
-		Signature:  signature,
-	}
+	result.Signature = signature
 
 	var lastErr error
 	for attempt := 1; attempt <= d.maxRetries+1; attempt++ {
@@ -209,7 +256,7 @@ func (d *Dispatcher) Deliver(ctx context.Context, hook Webhook, delivery Deliver
 			backoff = d.backoffFor(attempt)
 			if err := d.sleep(ctx, backoff); err != nil {
 				result.Attempts = append(result.Attempts, Attempt{
-					Number: attempt, Backoff: backoff, Error: err.Error(),
+					Number: attempt, Backoff: backoff, Error: err.Error(), At: time.Now().UTC(),
 				})
 				return result, fmt.Errorf("webhooks: deliver %s to %s: %w", delivery.ID, hook.URL, err)
 			}
@@ -222,6 +269,7 @@ func (d *Dispatcher) Deliver(ctx context.Context, hook Webhook, delivery Deliver
 			StatusCode: status,
 			Backoff:    backoff,
 			Duration:   time.Since(started),
+			At:         started.UTC(),
 		}
 		if sendErr != nil {
 			record.Error = sendErr.Error()
@@ -266,6 +314,9 @@ func (d *Dispatcher) send(
 	req.Header.Set(RunHeader, delivery.RunID)
 	if delivery.TaskID != "" {
 		req.Header.Set(TaskHeader, delivery.TaskID)
+	}
+	if delivery.RedeliveryOf != "" {
+		req.Header.Set(RedeliveryHeader, delivery.RedeliveryOf)
 	}
 	req.Header.Set(TimestampHeader, delivery.Timestamp.UTC().Format(time.RFC3339Nano))
 	req.Header.Set(AttemptHeader, strconv.Itoa(attempt))
