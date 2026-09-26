@@ -1530,6 +1530,46 @@ to the moment each run actually crosses its own namespace's retention —
 sooner, by up to the enforcement margin, and namespace-aware for the first
 time.
 
+### Secrets on a shared pool
+
+A task names a secret by its `source:` (`env:NAME` or `file:/path`), and the
+Orker that runs it resolves that name from its own environment or
+filesystem. On a pool several namespaces share, bound those names in two
+places; a source must pass **both**:
+
+- **The operator's floor, per Orker:** `orker.secret_allow` /
+  `ORK_ORKER_SECRET_ALLOW`, comma-separated `scheme:pattern` entries such as
+  `env:SANDBOX_*,file:/etc/orkstack/secrets/sandbox/*`. It is checked by the
+  process that reads the value, at dispatch, before the image is pulled; a
+  source outside it fails the task `SECRET_NOT_PERMITTED` (a
+  `ContractViolation`, never retried). Empty resolves every source of an
+  allowed scheme, as before this setting existed. A malformed entry, or one
+  naming a scheme outside `orker.secret_schemes`, stops the Orker at boot.
+- **The tenant's list, per namespace:** `orkctl namespace update NAME
+  --allow-secret 'env:SANDBOX_*'` (or Admin → Namespaces). It is enforced by
+  the engine at validate and apply, as an issue on
+  `tasks[i].secrets[j].source`, and again at every submit — `run submit`,
+  `run again`, the UI, a trigger invoke — so a definition applied before the
+  list existed is refused at its next submit. It is never retroactive: a run
+  already accepted finishes on the definition it pinned; stop one with
+  `orkctl run cancel`. Empty means unrestricted.
+
+A namespace can therefore only ever narrow what its Orkers permit. The grammar
+is deliberately small: a literal scheme, and `*` as the one wildcard, which
+never crosses `/`; `?`, `[…]` and `\` are ordinary characters. A `file:`
+source with a `..`, `.` or empty segment is refused outright rather than
+normalized, so `file:/etc/orkstack/secrets/sandbox/../payments/db` never sits
+inside `file:/etc/orkstack/secrets/sandbox/*`. The policy bounds the NAME a
+tenant may write, not the filesystem behind it: a symlink placed under a
+tenant's directory is a grant the operator made, and the Orker reads the path
+as it always has. Nothing here stores, logs or compares a secret value;
+refusals carry the source string only.
+
+During a rolling upgrade the namespace list is enforced only by engine
+replicas already at the release that added it; the Orker floor is unaffected
+by the rollout. An older `orkctl` round-tripping a namespace through `update`
+drops the list — run the `orkctl` of the release.
+
 ---
 
 ## 6. Replay safety across versions
