@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 func newNamespaceCommand(g *globalFlags) *cobra.Command {
@@ -38,6 +39,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		description         string
 		defaultPool         string
 		allowedPools        []string
+		allowedSecrets      []string
 		labels              []string
 		runRetention        string
 		telemetrySink       string
@@ -70,20 +72,24 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			if err := applyAdmissionFlags(cmd, admission, holdReason, maxRunning); err != nil {
 				return err
 			}
+			if err := checkAllowSecretFlags(allowedSecrets); err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.namespaceClient().CreateNamespace(ctx, connect.NewRequest(
 				&orkstackv1.CreateNamespaceRequest{Namespace: &orkstackv1.Namespace{
-					Name:         args[0],
-					Description:  description,
-					Labels:       parsed,
-					DefaultPool:  defaultPool,
-					AllowedPools: allowedPools,
-					RunRetention: retention,
-					Telemetry:    telemetry,
-					Hold:         admission.GetHold(),
-					MaxRunning:   admission.GetMaxRunning(),
+					Name:           args[0],
+					Description:    description,
+					Labels:         parsed,
+					DefaultPool:    defaultPool,
+					AllowedPools:   allowedPools,
+					RunRetention:   retention,
+					AllowedSecrets: allowedSecrets,
+					Telemetry:      telemetry,
+					Hold:           admission.GetHold(),
+					MaxRunning:     admission.GetMaxRunning(),
 				}},
 			))
 			if err != nil {
@@ -101,7 +107,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			return renderNamespace(cmd.OutOrStdout(), resp.Msg.GetNamespace())
 		},
 	}
-	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention,
+	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &allowedSecrets, &labels, &runRetention,
 		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning)
 	return cmd
 }
@@ -163,6 +169,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		description         string
 		defaultPool         string
 		allowedPools        []string
+		allowedSecrets      []string
 		labels              []string
 		runRetention        string
 		telemetrySink       string
@@ -171,6 +178,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		holdReason          string
 		maxRunning          int32
 		releaseHold         bool
+		clearSecrets        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <name>",
@@ -185,6 +193,12 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if releaseHold && cmd.Flags().Changed("hold") {
 				return fmt.Errorf("--hold and --release-hold contradict each other: give one")
+			}
+			if clearSecrets && cmd.Flags().Changed("allow-secret") {
+				return fmt.Errorf("--allow-secret and --clear-allowed-secrets contradict each other: give one")
+			}
+			if err := checkAllowSecretFlags(allowedSecrets); err != nil {
+				return err
 			}
 			// The admission flags are checked before any round trip, on a
 			// scratch document, so a blank reason or a negative cap is a local
@@ -228,6 +242,12 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			if cmd.Flags().Changed("allow-pool") {
 				edited.AllowedPools = allowedPools
 			}
+			if cmd.Flags().Changed("allow-secret") {
+				edited.AllowedSecrets = allowedSecrets
+			}
+			if clearSecrets {
+				edited.AllowedSecrets = nil
+			}
 			if cmd.Flags().Changed("label") {
 				edited.Labels = parsed
 			}
@@ -256,10 +276,13 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			return renderNamespace(cmd.OutOrStdout(), resp.Msg.GetNamespace())
 		},
 	}
-	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention,
+	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &allowedSecrets, &labels, &runRetention,
 		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning)
 	cmd.Flags().BoolVar(&releaseHold, "release-hold", false,
 		"reopen a held namespace to new runs (nothing refused while it was held is started)")
+	cmd.Flags().BoolVar(&clearSecrets, "clear-allowed-secrets", false,
+		"remove the namespace's secret-source list, leaving it unrestricted "+
+			"(each Orker's ORK_ORKER_SECRET_ALLOW still applies)")
 	return cmd
 }
 
@@ -336,7 +359,7 @@ func newNamespaceUseCommand(g *globalFlags) *cobra.Command {
 func namespaceSpecFlags(
 	cmd *cobra.Command,
 	description, defaultPool *string,
-	allowedPools, labels *[]string,
+	allowedPools, allowedSecrets, labels *[]string,
 	runRetention *string,
 	telemetrySink, taskLogs *string,
 	telemetryAttributes *[]string,
@@ -348,6 +371,9 @@ func namespaceSpecFlags(
 		"pool a task of this namespace runs on when it names none (default \"main\")")
 	cmd.Flags().StringArrayVar(allowedPools, "allow-pool", nil,
 		"pool this namespace may dispatch onto (repeatable; empty = unrestricted)")
+	cmd.Flags().StringArrayVar(allowedSecrets, "allow-secret", nil,
+		"secret source this namespace's tasks may name, as scheme:pattern, e.g. 'env:SANDBOX_*' "+
+			"(repeatable; empty = unrestricted; on update, replaces the whole set)")
 	cmd.Flags().StringArrayVar(labels, "label", nil, "label as key=value (repeatable)")
 	cmd.Flags().StringVar(runRetention, "run-retention", "",
 		"how long a finished run stays readable, e.g. \"168h\" "+
@@ -365,6 +391,22 @@ func namespaceSpecFlags(
 			"(runs already accepted finish untouched)")
 	cmd.Flags().Int32Var(maxRunning, "max-running", 0,
 		"most runs of this namespace in flight at once (0 = unlimited)")
+}
+
+// checkAllowSecretFlags holds --allow-secret entries to the registry's own
+// rule (dsl.ValidSecretPattern, the same implementation, not a restatement)
+// before any round trip, so a bad pattern is a local error. The registry
+// stays the authority and refuses the same entries for any other client.
+func checkAllowSecretFlags(entries []string) error {
+	for _, entry := range entries {
+		if err := dsl.ValidSecretPattern(entry); err != nil {
+			return fmt.Errorf("invalid --allow-secret %q: %w", entry, err)
+		}
+	}
+	if err := dsl.ValidSecretPatterns(entries); err != nil {
+		return fmt.Errorf("invalid --allow-secret: %w", err)
+	}
+	return nil
 }
 
 // applyAdmissionFlags writes --hold and --max-running onto ns, each only when
@@ -508,11 +550,11 @@ func renderNamespaceList(out io.Writer, namespaces []*orkstackv1.Namespace) erro
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tRUN RETENTION\tHOLD\tMAX RUNNING\tCREATED\tDESCRIPTION")
+	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tALLOWED SECRETS\tRUN RETENTION\tHOLD\tMAX RUNNING\tCREATED\tDESCRIPTION")
 	for _, ns := range namespaces {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			ns.GetName(), defaultPoolLabel(ns), joinOrDash(ns.GetAllowedPools()),
-			runRetentionLabel(ns), holdCellLabel(ns), maxRunningLabel(ns),
+			allowedSecretsCellLabel(ns), runRetentionLabel(ns), holdCellLabel(ns), maxRunningLabel(ns),
 			formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
 	}
 	if err := table.Flush(); err != nil {
@@ -527,6 +569,7 @@ func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	fmt.Fprintf(table, "Description:\t%s\n", orDash(ns.GetDescription()))
 	fmt.Fprintf(table, "Default pool:\t%s\n", defaultPoolLabel(ns))
 	fmt.Fprintf(table, "Allowed pools:\t%s\n", allowedPoolsLabel(ns))
+	fmt.Fprintf(table, "Allowed secrets:\t%s\n", allowedSecretsLabel(ns))
 	fmt.Fprintf(table, "Run retention:\t%s\n", runRetentionLabel(ns))
 	fmt.Fprintf(table, "Hold:\t%s\n", holdLabel(ns))
 	fmt.Fprintf(table, "Max running:\t%s\n", maxRunningLabel(ns))
@@ -558,6 +601,28 @@ func allowedPoolsLabel(ns *orkstackv1.Namespace) string {
 		return strings.Join(pools, ",")
 	}
 	return "(unrestricted)"
+}
+
+// allowedSecretsLabel spells out what an empty secret list means, on the rule
+// allowedPoolsLabel states: not "none", but "no restriction" — and says what
+// still bounds it, so the permissive default is never mistaken for a
+// configured one.
+func allowedSecretsLabel(ns *orkstackv1.Namespace) string {
+	if secrets := ns.GetAllowedSecrets(); len(secrets) > 0 {
+		return strings.Join(secrets, ",")
+	}
+	return "(unrestricted; bounded only by each Orker's ORK_ORKER_SECRET_ALLOW)"
+}
+
+// allowedSecretsCellLabel is allowedSecretsLabel for a table cell. It is the
+// word "unrestricted", not joinOrDash's "-": under a heading that names a
+// security bound, a dash invites the reading "none allowed", the opposite of
+// what an empty list means.
+func allowedSecretsCellLabel(ns *orkstackv1.Namespace) string {
+	if secrets := ns.GetAllowedSecrets(); len(secrets) > 0 {
+		return strings.Join(secrets, ",")
+	}
+	return "unrestricted"
 }
 
 // runRetentionLabel renders an unset run_retention as what it means: this

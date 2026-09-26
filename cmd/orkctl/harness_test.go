@@ -153,6 +153,11 @@ func (r *memoryRegistry) Put(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	name := artifacts.ResolveNamespace(ns.GetName())
+	// allowed_secrets is held to the store's own rule, by the store's own
+	// function, so this double refuses exactly what the store refuses.
+	if err := artifacts.ValidNamespaceSecrets(ns); err != nil {
+		return nil, err
+	}
 	existing, exists := r.docs[name]
 	if cond.IfAbsent && exists {
 		return nil, fmt.Errorf("put %q: %w", name, artifacts.ErrPreconditionFailed)
@@ -396,6 +401,17 @@ func (r result) requireContains(t *testing.T, fragments ...string) result {
 	for _, fragment := range fragments {
 		if !strings.Contains(r.stdout, fragment) {
 			t.Fatalf("stdout does not contain %q\nstdout:\n%s", fragment, r.stdout)
+		}
+	}
+	return r
+}
+
+// requireStderrContains fails the test unless stderr contains every fragment.
+func (r result) requireStderrContains(t *testing.T, fragments ...string) result {
+	t.Helper()
+	for _, fragment := range fragments {
+		if !strings.Contains(r.stderr, fragment) {
+			t.Fatalf("stderr does not contain %q\nstderr:\n%s", fragment, r.stderr)
 		}
 	}
 	return r
