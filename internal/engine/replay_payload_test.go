@@ -204,6 +204,18 @@ func TestGoldenHistory_ReplayedSnapshotProjectsSchedulingAndLeavesStartUnset(t *
 	if len(snapshots) == 0 {
 		t.Fatal("no snapshot was written")
 	}
+	// run-origin: the fixture's plan predates origins and carries none, so no
+	// replayed snapshot may grow one — "unrecorded" is the only honest reading
+	// of a run started before origins existed, and the committed fixture is
+	// not re-recorded to say otherwise.
+	if plan.Origin != nil {
+		t.Fatalf("the golden fixture's plan decoded an origin %+v; it was recorded before origins existed", plan.Origin)
+	}
+	for i, snapshot := range snapshots {
+		if snapshot.GetOrigin() != nil {
+			t.Fatalf("replayed snapshot %d carries origin %v, want none", i, snapshot.GetOrigin())
+		}
+	}
 	last := snapshots[len(snapshots)-1]
 
 	dispatched := map[string]bool{"fetch": true, "transform": true, "sidecar": true, "publish": true}

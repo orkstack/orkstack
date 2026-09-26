@@ -78,6 +78,66 @@ type RunPlan struct {
 	// omitempty, so a plan with none encodes exactly as it did before the
 	// field existed.
 	Telemetry *TelemetrySelection `json:"telemetry,omitempty"`
+
+	// Origin is what started this run, or nil for a plan built before origins
+	// existed. It is decided at SUBMIT for the reason CommitRoot and
+	// Telemetry are: the door that accepted the submission is the only thing
+	// that knows, and workflow code may read neither a request header nor a
+	// trigger record (AGENTS.md §2.1). omitempty, so a plan with none encodes
+	// exactly as it did before the field existed, and the golden history
+	// fixture keeps matching without re-recording.
+	Origin *RunOrigin `json:"origin,omitempty"`
+}
+
+// RunOrigin is the plan-side copy of orkstack.v1.RunOrigin. It is a plain Go
+// type for the reason TelemetrySelection is: the data converter encodes a
+// top-level protobuf message with protojson and everything else with
+// encoding/json, so nesting a proto message here would silently change how
+// the whole plan is encoded. Kind is the enum's proto name
+// ("RUN_ORIGIN_KIND_TRIGGER"), as TelemetrySelection.TaskLogs is.
+type RunOrigin struct {
+	Kind        string `json:"kind"`
+	ID          string `json:"id,omitempty"`
+	Reference   string `json:"reference,omitempty"`
+	Description string `json:"description,omitempty"`
+	Principal   string `json:"principal,omitempty"`
+}
+
+// Proto renders the origin as the wire message the snapshot carries.
+// Nil-safe: a nil origin produces a nil message, so Run.origin stays unset
+// exactly as it was before this field existed. An unrecognized kind name
+// falls back to UNSPECIFIED rather than panicking, as taskLogExportProto
+// does, because a plan is data a harness can hand-build.
+func (o *RunOrigin) Proto() *orkstackv1.RunOrigin {
+	if o == nil {
+		return nil
+	}
+	kind := orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED
+	if v, ok := orkstackv1.RunOriginKind_value[o.Kind]; ok {
+		kind = orkstackv1.RunOriginKind(v)
+	}
+	return &orkstackv1.RunOrigin{
+		Kind:        kind,
+		Id:          o.ID,
+		Reference:   o.Reference,
+		Description: o.Description,
+		Principal:   o.Principal,
+	}
+}
+
+// OriginFromProto is Proto's inverse, used by the API to build the plan
+// from the RunOrigin it decided. Nil in, nil out.
+func OriginFromProto(o *orkstackv1.RunOrigin) *RunOrigin {
+	if o == nil {
+		return nil
+	}
+	return &RunOrigin{
+		Kind:        o.GetKind().String(),
+		ID:          o.GetId(),
+		Reference:   o.GetReference(),
+		Description: o.GetDescription(),
+		Principal:   o.GetPrincipal(),
+	}
 }
 
 // WorkspaceLimits is the plan-side copy of orkstack.v1.WorkspaceLimits.
