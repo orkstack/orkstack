@@ -33,7 +33,21 @@ func setenvT(t *testing.T) func(string, string) error {
 	}
 }
 
+// unsetenvT removes key for the rest of the test and restores it afterwards.
+// A test that asserts the FILE supplies a value must not inherit that value
+// from the shell running it: AGENTS.md §11.1 has parallel integration runs
+// export a unique ORK_TEMPORAL_NAMESPACE, and the environment wins over the
+// file by design.
+func unsetenvT(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, "") // registers the restore of the original value
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+}
+
 func TestApplyConfigFile_FileValueReachesLoadConfig(t *testing.T) {
+	unsetenvT(t, "ORK_TEMPORAL_NAMESPACE")
 	path := writeTempConfig(t, "cfg.yaml", "temporal:\n  namespace: from-file\n")
 
 	doc, gotPath, check, set, err := applyConfigFile(
