@@ -14,7 +14,7 @@ import (
 // newRunAgainCommand reuses the source's pinned coordinates and inputs, but
 // deliberately never its idempotency key: this is a new external execution.
 func newRunAgainCommand(g *globalFlags) *cobra.Command {
-	var version, key, inputJSON string
+	var version, key, inputJSON, originRef string
 	var inputs []string
 	var dryRun, allowEmptyPool bool
 	cmd := &cobra.Command{Use: "again <run-id>", Short: "Submit a new run from a prior run's pinned definition and inputs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -35,7 +35,10 @@ func newRunAgainCommand(g *globalFlags) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		request := &orkstackv1.SubmitRunRequest{OrkflowName: source.Msg.GetRun().GetOrkflowName(), OrkflowVersion: chosen, Input: input, IdempotencyKey: key, Namespace: g.namespace, AllowEmptyPool: allowEmptyPool}
+		// SourceRunId is what makes the new run's origin run-again <source>: a
+		// claim the server checks exists in this namespace. It is set before
+		// --dry-run so the printed submission is exactly what would be sent.
+		request := &orkstackv1.SubmitRunRequest{OrkflowName: source.Msg.GetRun().GetOrkflowName(), OrkflowVersion: chosen, Input: input, IdempotencyKey: key, Namespace: g.namespace, AllowEmptyPool: allowEmptyPool, SourceRunId: args[0], OriginReference: originRef}
 		if dryRun {
 			return writeJSON(cmd.OutOrStdout(), request)
 		}
@@ -57,6 +60,7 @@ func newRunAgainCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&key, "idempotency-key", "", "fresh dedupe key for the new run")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the exact new submission without starting it")
 	cmd.Flags().BoolVar(&allowEmptyPool, "allow-empty-pool", false, "submit even when the selected pool has no live Orkers")
+	cmd.Flags().StringVar(&originRef, "origin-ref", "", originRefHelp)
 	return cmd
 }
 
