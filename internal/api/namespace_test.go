@@ -96,6 +96,11 @@ func (r *fakeRegistry) Put(
 	if hold := ns.GetHold(); hold != nil && strings.TrimSpace(hold.GetReason()) == "" {
 		return nil, fmt.Errorf("put %q: hold needs a reason: %w", name, artifacts.ErrInvalidNamespace)
 	}
+	// allowed_secrets is held to the store's own rule, by the store's own
+	// function, so this double refuses exactly what the store refuses.
+	if err := artifacts.ValidNamespaceSecrets(ns); err != nil {
+		return nil, err
+	}
 	existing, exists := r.docs[name]
 	if cond.IfAbsent && exists {
 		return nil, fmt.Errorf("put %q: %w", name, artifacts.ErrPreconditionFailed)

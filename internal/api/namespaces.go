@@ -277,6 +277,14 @@ func specDifference(stored, requested *orkstackv1.Namespace) string {
 		return fmt.Sprintf("allowed_pools are [%s], not [%s]",
 			strings.Join(got, " "), strings.Join(want, " "))
 	}
+	// allowed_secrets is a set for the same reason allowed_pools is: a
+	// provisioning script that only reordered its --allow-secret flags is
+	// re-sending the namespace it already created.
+	if got, want := sortedCopy(stored.GetAllowedSecrets()),
+		sortedCopy(requested.GetAllowedSecrets()); !equalStrings(got, want) {
+		return fmt.Sprintf("allowed_secrets are [%s], not [%s]",
+			strings.Join(got, " "), strings.Join(want, " "))
+	}
 	if got, want := stored.GetLabels(), requested.GetLabels(); !equalLabels(got, want) {
 		return fmt.Sprintf("labels are %s, not %s", renderLabels(got), renderLabels(want))
 	}

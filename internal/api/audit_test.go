@@ -774,3 +774,53 @@ func TestAudit_NamespaceUpdateRecordsHoldWhenPresent(t *testing.T) {
 		t.Errorf("refused record = %v, want succeeded=false with the requested summary", refused)
 	}
 }
+
+// TestAudit_NamespaceUpdateRecordsAllowedSecretsWhenPresent: a write that
+// sets the list is recorded with allowed_secrets= after allowed_pools=; the
+// write that clears it is recorded with no such key.
+func TestAudit_NamespaceUpdateRecordsAllowedSecretsWhenPresent(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	const listed = "allowed_secrets=[env:SANDBOX_* file:/etc/orkstack/secrets/sandbox/*]"
+
+	created, err := f.svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "sandbox"},
+	}))
+	if err != nil {
+		t.Fatalf("CreateNamespace (direct, unaudited): %v", err)
+	}
+	updated, err := f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{
+			Name:           "sandbox",
+			AllowedSecrets: []string{"env:SANDBOX_*", "file:/etc/orkstack/secrets/sandbox/*"},
+			Etag:           created.Msg.GetNamespace().GetEtag(),
+		},
+	}))
+	if err != nil {
+		t.Fatalf("UpdateNamespace (set): %v", err)
+	}
+	records := f.records(t)
+	if len(records) != 1 || records[0].GetAction() != "namespace.update" || !records[0].GetSucceeded() {
+		t.Fatalf("records after the set = %v, want one successful namespace.update", records)
+	}
+	detail := records[0].GetDetail()
+	pools, at, retention := strings.Index(detail, "allowed_pools="), strings.Index(detail, listed),
+		strings.Index(detail, "run_retention=")
+	if pools < 0 || at < 0 || retention < 0 || !(pools < at && at < retention) {
+		t.Errorf("set detail = %q, want %s after allowed_pools= and before run_retention=", detail, listed)
+	}
+
+	f.now = f.now.Add(time.Second)
+	if _, err := f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "sandbox", Etag: updated.Msg.GetNamespace().GetEtag()},
+	})); err != nil {
+		t.Fatalf("UpdateNamespace (clear): %v", err)
+	}
+	records = f.records(t)
+	if len(records) != 2 {
+		t.Fatalf("records after the clear = %d, want two", len(records))
+	}
+	if clear := records[0].GetDetail(); strings.Contains(clear, "allowed_secrets=") {
+		t.Errorf("clear detail = %q, want no allowed_secrets=", clear)
+	}
+}
