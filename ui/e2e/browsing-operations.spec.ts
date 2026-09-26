@@ -66,7 +66,9 @@ test.afterAll(async () => { await killAll(); });
 
 /** The run rows on screen, by testid, in the order they render. */
 function rowIDs(page: Page) {
-	return page.locator('[data-testid^="run-row-"]').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid')));
+	// Rows only: each row's Origin cell carries run-row-origin-{id}, which the
+	// same prefix would otherwise count as a second row.
+	return page.locator('tr[data-testid^="run-row-"]').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid')));
 }
 
 /**
