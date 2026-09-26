@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -348,6 +349,55 @@ func workerOptions(cfg config) worker.Options {
 	})
 }
 
+// taskWorkerOptions is workerOptions plus the three things only a booted
+// Orker knows (orker-cordon-drain §5.7):
+//
+//   - Identity is the orker id, so the poller identity Temporal records for
+//     every worker of this process — and therefore the presence channel's
+//     poller list — is a list of Orker ids;
+//   - Tuner is the cordon's: the SDK's default sizes, with the activity slot
+//     supplier refusing to reserve while cordoned;
+//   - Interceptors carries the cordon interceptor, which counts running tasks
+//     and open pins and refuses a new pin while cordoned.
+//
+// checkTunerCompatible runs first, so a future edit that sets a size the SDK
+// refuses beside a Tuner is a named refusal and not a panic in worker.New.
+func taskWorkerOptions(cfg config, activities *orker.Activities) (worker.Options, error) {
+	options := workerOptions(cfg)
+	if err := checkTunerCompatible(options); err != nil {
+		return worker.Options{}, err
+	}
+	tuner, err := activities.WorkerTuner()
+	if err != nil {
+		return worker.Options{}, fmt.Errorf("build the cordon's worker tuner: %w", err)
+	}
+	options.Identity = activities.Dispatcher().OrkerID
+	options.Tuner = tuner
+	options.Interceptors = []interceptor.WorkerInterceptor{activities.WorkerInterceptor()}
+	return options, nil
+}
+
+// checkTunerCompatible refuses the options worker.New would PANIC on beside a
+// Tuner (go.temporal.io/sdk internal_worker.go setWorkerOptionsDefaults,
+// v1.47.0). MaxConcurrentSessionExecutionSize is not in that set and stays.
+func checkTunerCompatible(opts worker.Options) error {
+	for _, field := range []struct {
+		name string
+		set  bool
+	}{
+		{"MaxConcurrentWorkflowTaskExecutionSize", opts.MaxConcurrentWorkflowTaskExecutionSize != 0},
+		{"MaxConcurrentActivityExecutionSize", opts.MaxConcurrentActivityExecutionSize != 0},
+		{"MaxConcurrentLocalActivityExecutionSize", opts.MaxConcurrentLocalActivityExecutionSize != 0},
+		{"MaxConcurrentNexusTaskExecutionSize", opts.MaxConcurrentNexusTaskExecutionSize != 0},
+	} {
+		if field.set {
+			return fmt.Errorf("ORKER_WORKER_OPTIONS_INVALID: workerOptions sets %s, which the SDK refuses "+
+				"beside a Tuner; the cordon's slot supplier IS the Tuner", field.name)
+		}
+	}
+	return nil
+}
+
 func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -486,7 +536,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// leave the one case nothing else collects — a pinned input that reached a
 	// non-pin-hosting Orker's ordinary queue — with no collector at all.
 	go activities.SweepPinLeases(ctx)
-	taskWorker := worker.New(temporalClient, cfg.queue, workerOptions(cfg))
+	taskOptions, err := taskWorkerOptions(cfg, activities)
+	if err != nil {
+		return err
+	}
+	taskWorker := worker.New(temporalClient, cfg.queue, taskOptions)
 	taskWorker.RegisterActivityWithOptions(
 		activities.ExecuteTask,
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
@@ -505,12 +559,40 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activity.RegisterOptions{Name: task.ActivityReleasePin},
 	)
 
+	// The control and presence workers are built before anything starts, so a
+	// refusal leaves nothing polling.
+	controlWorker, presenceWorker, err := orker.NewChannelWorkers(temporalClient, activities)
+	if err != nil {
+		return err
+	}
 	if err := taskWorker.Start(); err != nil {
 		return err
 	}
-	defer taskWorker.Stop()
-	// /readyz flips to 200 only once the task worker is actually polling —
-	// the point past which this replica should be counted on to pick up work.
+	// Started after the task worker; stopped AFTER it too, in one defer, so the
+	// control channel keeps answering DescribeOrker (and the presence channel
+	// keeps this Orker in the inventory) while the task worker stops and
+	// drains its in-flight work on SIGTERM.
+	var controlStarted, presenceStarted bool
+	defer func() {
+		taskWorker.Stop()
+		if controlStarted {
+			controlWorker.Stop()
+		}
+		if presenceStarted {
+			presenceWorker.Stop()
+		}
+	}()
+	if err := controlWorker.Start(); err != nil {
+		return err
+	}
+	controlStarted = true
+	if err := presenceWorker.Start(); err != nil {
+		return err
+	}
+	presenceStarted = true
+	// /readyz flips to 200 only once all three workers are actually polling —
+	// the point past which this replica should be counted on to pick up work
+	// and to answer on its own channel.
 	sinks.Default().Ready.Set(true)
 
 	logger.Info("orker started",
@@ -518,6 +600,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"activity", task.ActivityExecuteTask,
 		"probe", task.ActivityDescribeOrker,
 		"orker_id", activities.Dispatcher().OrkerID,
+		// Every Orker boots ready; a cordon is process-local and does not
+		// survive a restart.
+		"cordon", false,
 		"security_profile", activities.Dispatcher().Policy.ProfileID(),
 		// Whether this Orker is a pin host, and for how many pins at once. 0 is
 		// said out loud rather than omitted: it is the answer to "why was my
