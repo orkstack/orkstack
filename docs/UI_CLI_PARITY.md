@@ -176,7 +176,9 @@ filing its record. Clients must present an UNREPORTED row as missing evidence
 ("no record from the orker — it crashed or lost its heartbeat"), never as a
 failure, and must not invent timing, an error, or a retry schedule for it.
 `TaskRun.attempt` alone is not the attempt count: it is 0 for a task Temporal
-timed out and is the committing attempt for an adopted commit.
+timed out and is the committing attempt for an adopted commit. (`DiffRuns`
+relies on the same shape and reads the committing attempt's record, then the
+newest successful adopter's — see "Run diff" below.)
 
 A task that has not been attempted returns an empty list, which is not an
 error and is distinct from a task whose attempts were reclaimed. Records live
@@ -193,6 +195,106 @@ document, so `run get --attempts --json` is refused and points at
 `run attempts --json`. UI presents a per-task retry badge and an
 attempt timeline with each failed attempt's error and a link that pins the log
 pane to that attempt, retaining namespace, task and attempt.
+
+### Run diff
+
+*"This run failed and last night's succeeded — what is different?"* Add
+`RunService.DiffRuns(DiffRunsRequest)` returning `DiffRunsResponse` — one
+unary read over what `GetRun`, `GetOrkflow` and `ListTaskAttempts` already
+serve, computed on every call and stored nowhere:
+
+- Request: `string from_run_id = 1`, `string to_run_id = 2`,
+  `string namespace = 3` (empty = `default`; BOTH runs resolve in it),
+  `repeated string only = 4` (empty = every field).
+- `RunFieldDiff`: `task_id = 1` (empty for a run-level row), `field = 2`,
+  `from_value = 3`, `to_value = 4`, `from_available = 5`, `to_available = 6`,
+  `from_reason = 7`, `to_reason = 8`.
+- Response: `Run from = 1`, `Run to = 2` (shallow: `task_runs`, `input` and
+  `output` cleared), `same_orkflow = 3`, `same_definition_digest = 4`,
+  `input_unified_diff = 5`, `repeated RunFieldDiff differences = 6`,
+  `tasks_compared = 7`, `tasks_identical = 8`, `evidence_unavailable = 9`,
+  `repeated string fields_compared = 10`.
+
+Both ids resolve through the lookup every run read uses: another namespace's
+run is NotFound, never compared. Equal ids, an empty id, or an unknown field
+name are InvalidArgument (the last lists the valid fields). Two runs of
+different orkflows are compared and flagged (`same_orkflow=false`), never
+refused. A store error fails the call (Unavailable); it never degrades to
+"unavailable" evidence.
+
+**Vocabulary and order.** The field names, in canonical order, are
+`definition`, `input` (run-level) and `presence`, `status`, `attempt`,
+`pool`, `pin`, `orker`, `exit_code`, `error`, `duration`, `image`,
+`platform_digest` (task-level). `differences` is ordered: the run-level
+`definition` row, then the from-run's tasks in its `task_runs` order, then
+tasks only the to-run has in its order; within a task, fields in canonical
+order. Both clients render that order as given. There is no `input` row: the
+canonical-JSON unified diff (keys sorted, integers without fraction, labelled
+`<run id>/input.json`) is the row, printed verbatim.
+
+**`only` and `presence`.** `only` narrows the fields and the reads — naming
+neither `image` nor `platform_digest` never opens the orkflow or the attempt
+store. `presence` is compared under every `only`: a task one run lacks
+always yields exactly one `presence` row (`present`/`absent`) and no other,
+so narrowing can never make an added or removed task count identical.
+`fields_compared` is the resolved list (every field, or `only` plus
+`presence`) and every row's `field` is one of its entries.
+
+**Rendering — decided once, server-side.** Every value is a rendered string
+a client prints verbatim. An available empty value is "does not apply" and
+prints `-`; an unavailable side prints `unavailable` and its reason. The two
+never look alike.
+
+| `field` | Rendered value | `-` (available, empty) when | `unavailable` when |
+| --- | --- | --- | --- |
+| `presence` | `present` / `absent` | never | never |
+| `status` | `SUCCEEDED`, `SKIPPED`, … | never | never |
+| `attempt` | decimal, `0` included | never | never |
+| `pool` | verbatim | never reached an Orker | never |
+| `pin` | verbatim | not pinned | never |
+| `orker` | `TaskRun.orker_id` | no Orker reported | never |
+| `exit_code` | decimal | no Orker reported | never |
+| `error` | `{code} ({category})`, or `{code}`; message and details are never compared | no error | never |
+| `duration` | `finished − started` in Go's spelling (`1m3s`, `850ms`) | not terminal; SKIPPED; never reached an Orker | `timestamps_missing`, `timestamps_inverted` |
+| `image` | the pinned definition's `Task.image.pinned`, else the outcome attempt record's | never | the definition is unavailable (`definition_unavailable`, `definition_digest_mismatch`) and no record answers; `task_not_in_definition` |
+| `platform_digest` | the outcome attempt record's `image.platform_digest` | never reached an Orker; the container never ran | `no_attempt_store`, `no_outcome_attempt`, `attempt_record_missing` |
+
+**The outcome attempt record.** For `image` (fallback) and
+`platform_digest`, the record whose attempt is `TaskRun.attempt` answers —
+which for an adopted commit is the committing attempt. When that record is
+gone (a crash after `commit.json`, or cleanup), the newest record with
+`commit_adopted` and outcome SUCCEEDED answers instead: an adopting retry
+files its record under its own attempt number, carrying the committing
+attempt's executed image from `commit.json`. A failed or canceled record is
+never used. A definition whose `definition_digest` differs from the run's
+pinned digest cannot answer (`definition_digest_mismatch`).
+
+**Reason tokens.** A client renders the sentence; an unknown token (a later
+build's) renders as itself, and the row is never dropped.
+
+| token | sentence |
+| --- | --- |
+| `definition_unavailable` | the pinned definition is no longer stored |
+| `definition_digest_mismatch` | the stored definition does not hash to the digest this run pinned |
+| `task_not_in_definition` | the pinned definition has no task of this id |
+| `no_attempt_store` | this engine has no task attempt store configured |
+| `no_outcome_attempt` | the snapshot names no outcome attempt |
+| `attempt_record_missing` | no record of the outcome attempt or of a retry that adopted its commit: reclaimed, or the Orker never filed one |
+| `timestamps_missing` | the snapshot lacks a start or finish time |
+| `timestamps_inverted` | the finish time precedes the start time |
+
+CLI: `run diff FROM TO [--only FIELD,...] [--json]` prints a header (`Diff`,
+`Namespace`, `Compared` when narrowed, `Orkflow`, `Status`, `Finished`,
+`Definition`, `Input`), the input diff verbatim, a TASK/FIELD/FROM/TO table
+(or `No task differences.`), the summary sentence `{differ} of {compared}
+tasks differ; {identical} identical[; {n} field(s) unavailable].` and one
+footnote per unavailable side, `{task} {field} in {run}: {reason}
+({sentence})`. Digests are never abbreviated. `--json` is the raw
+`DiffRunsResponse`; exit status is 0 whenever the RPC succeeded. UI: a
+**Compare** action on the run page pre-selects the Orkflow's newest other
+SUCCEEDED run and opens `/runs/{from}/compare?to={to}`, a deep-linkable page
+with a swap link, the same table, summary and footnotes, and a
+`CliEquivalent` for the command above.
 
 ### Task timing
 
@@ -424,6 +526,7 @@ seeded draft exists only in the page that already holds that run.
 | Task attempts | Per-task retry badge and attempt timeline; failed attempts show their own error; a row links to that attempt's logs | `run attempts RUN [--task]` and `run get --attempts`, same order and `--json` envelope | Retried fixture shows every attempt with its own outcome and error; an attempt with no record renders as UNREPORTED, not as a failure or a gap; another namespace's run is NotFound; a replica that ran nothing answers identically |
 | Task timing | Running card reads "Since scheduled"; finished card draws a wait/run bar with unavailable segments hatched and named; attempt timeline lists each attempt's phases and a retried task's queue wait | `run timing RUN [--task] [--json]`, `run get --timing`, `SCHEDULED` column on `run get` | A task submitted with no Orker polling waits at least the stimulus and its wait segment is wider than its run; every attempt lists its phases; a retried task shows both attempts and its queue wait; a reclaimed, pre-contract, skewed or unreported value renders `unavailable` with its reason, never `0s`; a replica that ran nothing prints the identical document |
 | Failure fingerprints | Dashboard **Recent failures** → *Fingerprints* disclosure (absent when nothing failed): one chip per dimension (`orkflow`…`orker`, four defaults ticked), rows in enum column order with runs/first/last, `unavailable` (muted italic, `data-unavailable`) for reclaimed image/phase and `-` for a value the run never had, the CLI's footer sentences, each row a link to `/runs` filtered by namespace, orkflow (when grouped), `status=failed` and the answered window; fetched on open and on each dashboard refresh; ErrorPanel with Retry on a failed read; CLI equivalent | `stats failures [--since] [--until] [--orkflow] [--group-by] [--category] [--limit]`, `--json` is the raw `GetFailureBreakdownResponse` | `sum(run_count)` equals `stats`' failed count for the window; three real failure modes group apart with their codes and categories; a reclaimed attempt record renders `unavailable` and is counted, never blank; a scan past its budget is refused, never truncated; a replica that started nothing answers identically |
+| Run diff | Run page **Compare** action with the newest other SUCCEEDED run of the Orkflow pre-selected (any run id may be pasted); deep-linkable `/runs/{id}/compare?to={id}` page with swap, definition/orkflow chips, the verbatim input diff, a TASK/FIELD/FROM/TO table tinting only differing cells, the CLI's summary and footnotes, and `CliEquivalent` | `run diff FROM TO [--only FIELD,...]`, `--json` is the raw `DiffRunsResponse` envelope | Same rows, same strings, same order in both; another namespace's run is NotFound; a reclaimed attempt record renders `unavailable` with its reason and never `-`; a task only one run has keeps its `presence` row under any `--only`; a replica that started neither run answers identically |
 | Artifact provenance | Per-row **Provenance** disclosure under Inspect: bytes line, reference line, referencing runs linked in the page's namespace with `this run` marked, unreadable footer, CLI equivalent; fetched on open, re-fetched on every open | `run artifact provenance RUN --task --kind --name [--expect-sha256] [--json]`, same wordings and order | Bytes present and missing both render; HELD, RELEASED and ABSENT each render their own wording; another namespace's runs are neither listed nor counted; a replica that started nothing answers identically; a second S3 run with identical bytes lists only itself |
 | Namespace admission | Admin → Namespaces Hold and Max running columns; Hold… / Release hold row actions behind `ConfirmDialog` with `CliEquivalent`; hold banner on Orkflows, dashboard and the submit dialog with submit disabled; a cap refusal shown verbatim; Admin → Audit shows the `namespace.update` record's detail with the reason and cap | `namespace update --hold REASON`, `--release-hold`, `--max-running N`; `namespace get`/`list` render both; `run submit`, `run again` and a trigger invoke refused `failed_precondition` with the reason and the fix; `admin audit --json` carries `hold="…"`/`max_running=N` in the record's `detail` | Refusal leaves no run, no id and no claim; an accepted run finishes after a hold is set; a hold set on one replica refuses on the other; the count includes runs the other replica started; `since` survives a reason edit and is never client-supplied; the audit record of a hold names the reason, and of a release has no `hold=` |
 | Audit trail | Admin → Audit: scope statement (every namespace by default, one namespace on request), action/principal/window filters, table with `unattributed` for an absent principal and `refused {code}` for a refusal, pagination, caption, CLI equivalent; ErrorPanel with Retry on a failed read | `admin audit [--since] [--until] [--action] [--principal] [--limit] [--page-token] [-n]`, `--json` is the raw envelope; `ORK_PRINCIPAL` asserts a principal | A write on one replica is listed by another; a refusal is recorded with its code; reads and submits are not recorded; the header a gateway sets on browser requests is recorded verbatim; a scan past its budget refuses instead of answering empty |

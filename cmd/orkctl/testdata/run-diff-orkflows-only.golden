@@ -1,0 +1,14 @@
+Diff:        ork-etl -> ork-report
+Namespace:   default
+Compared:    presence, image
+Orkflow:     etl -> report (DIFFERENT ORKFLOWS)
+Status:      SUCCEEDED -> SUCCEEDED
+Finished:    2026-01-02T03:12:05Z -> 2026-01-02T03:12:05Z
+Definition:  not compared
+Input:       not compared
+
+TASK  FIELD     FROM     TO
+a     presence  present  absent
+d     presence  absent   present
+
+2 of 4 tasks differ; 2 identical.

@@ -279,6 +279,23 @@ service RunService {
   // producing run alone; on the local backend identical bytes under one
   // name are one object, so every run that produced them is listed.
   rpc GetArtifactProvenance(GetArtifactProvenanceRequest) returns (GetArtifactProvenanceResponse);
+  // DiffRuns compares two runs of ONE namespace field by field: the pinned
+  // definition, the input (as a canonical-JSON unified diff), and per task
+  // its status, attempt, pool, pin, orker, exit code, error, duration, and
+  // the image it was dispatched with and the platform manifest it ran.
+  //
+  // It is a READ over what GetRun, GetOrkflow and ListTaskAttempts already
+  // serve, computed on every call and stored nowhere, so there is no
+  // comparison record that can disagree with the runs it compares. Both ids
+  // resolve inside the request's namespace exactly as GetRun resolves one: a
+  // run of another namespace is NotFound. Two runs of different orkflows are
+  // compared and flagged (same_orkflow=false), never refused.
+  //
+  // The diff is SERVER-side for the reason DiffOrkflowVersions records: two
+  // clients render it, and the rendering of "unavailable", "does not apply"
+  // and an empty value must be decided once. Every from_value/to_value is a
+  // rendered string a client prints verbatim.
+  rpc DiffRuns(DiffRunsRequest) returns (DiffRunsResponse);
 }
 
 // WebhookService manages run-event subscriptions. A subscription is
@@ -567,6 +584,90 @@ message GetArtifactProvenanceResponse {
   // any other reason fails the call.
   int64 references_unreadable = 6;
   google.protobuf.Timestamp computed_at = 7;
+}
+
+message DiffRunsRequest {
+  string from_run_id = 1;
+  string to_run_id = 2;
+  string namespace = 3;                  // empty = the default namespace; BOTH runs resolve in it
+  // only restricts the comparison to the named fields, in the vocabulary
+  // RunFieldDiff.field uses plus the two run-level names "definition" and
+  // "input". Empty means every field. An unknown name is InvalidArgument
+  // naming the valid ones. Narrowing also narrows the READS: a request that
+  // names neither "image" nor "platform_digest" never opens the attempt
+  // store or the orkflow store.
+  //
+  // "presence" is ALWAYS compared, whatever only names: a task that exists in
+  // one run and not the other always yields its presence row, so narrowing
+  // can never make an added or removed task count as identical. Naming
+  // "presence" is accepted and redundant. It costs no read beyond the two
+  // runs themselves.
+  repeated string only = 4;
+}
+
+// RunFieldDiff is one field of one task (or of the run, when task_id is
+// empty) whose two values differ, or whose evidence is missing on at least
+// one side. A field that is equal and available on both sides has no row.
+message RunFieldDiff {
+  string task_id = 1;                    // empty for a run-level field
+  // field is one of: "definition" (run-level); "presence", "status",
+  // "attempt", "pool", "pin", "orker", "exit_code", "error", "duration",
+  // "image", "platform_digest" (task-level). It is a string, not an enum,
+  // so a later contract can add a field a client of this build has never
+  // heard of and the client still prints the row.
+  string field = 2;
+  // from_value / to_value are RENDERED strings. Empty with the side available
+  // means "does not apply" or "no value" (an unpinned task's pin, a skipped
+  // task's exit code); a client prints "-". Empty with the side unavailable
+  // means the evidence is gone; a client prints "unavailable" and the reason.
+  string from_value = 3;
+  string to_value = 4;
+  bool from_available = 5;
+  bool to_available = 6;
+  // from_reason / to_reason are set only when the side is unavailable: a
+  // stable machine token from the list in docs/UI_CLI_PARITY.md ("Run diff"),
+  // e.g. "attempt_record_missing", "definition_unavailable",
+  // "no_attempt_store". A client renders the token's documented sentence.
+  string from_reason = 7;
+  string to_reason = 8;
+}
+
+message DiffRunsResponse {
+  // from / to are the two runs, SHALLOW: task_runs, input and output are
+  // cleared, because the differences below and input_unified_diff already
+  // carry what a client needs of them, and a run's input may be large.
+  // Every other Run field (id, orkflow, version, status, error, times,
+  // namespace, definition digest, telemetry, and any field a later contract
+  // adds) is carried as GetRun would carry it.
+  Run from = 1;
+  Run to = 2;
+  bool same_orkflow = 3;                 // orkflow_name equal (namespace is equal by construction)
+  bool same_definition_digest = 4;       // orkflow_definition_digest equal
+  // input_unified_diff is dsl.Unified over the canonical, indented JSON of the
+  // two inputs (keys sorted, integers without fraction), labelled
+  // "<run id>/input.json" on each side. Empty when the inputs are identical
+  // under that canonical form, or when "input" was excluded by `only`.
+  string input_unified_diff = 5;
+  // differences is ordered: run-level rows first, then the from-run's tasks
+  // in its task_runs order, then tasks present only in the to-run in that
+  // run's order; within a task, fields in the order the field comment on
+  // RunFieldDiff lists them. The order is the contract; clients render it
+  // as given.
+  repeated RunFieldDiff differences = 6;
+  // tasks_compared is the number of distinct task ids across both runs.
+  int32 tasks_compared = 7;
+  // tasks_identical is the number of tasks with NO row: every compared field
+  // equal and available on both sides. A task whose evidence is missing on
+  // either side is not identical, whatever its other fields say; nor is a
+  // task present in only one run, which always has its presence row.
+  int32 tasks_identical = 8;
+  // evidence_unavailable counts rows with at least one unavailable side.
+  int32 evidence_unavailable = 9;
+  // fields_compared is the resolved field list — every field when `only` is
+  // empty, else `only` plus "presence" — in canonical order, so a client can
+  // say what was and was not compared. It is exhaustive: every
+  // RunFieldDiff.field in differences is one of its entries.
+  repeated string fields_compared = 10;
 }
 message CancelRunRequest {
   string run_id = 1;

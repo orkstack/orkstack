@@ -84,7 +84,13 @@ export function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 	});
 }
 
-export async function killAll(): Promise<void> {
+/**
+ * killStarted ends exactly the processes this spec started through
+ * spawnLogged — by handle, never by name — and waits for them to exit. It is
+ * killAll without the name-pattern sweep, for a spec that shares its host
+ * with other stacks and so may only ever signal its own children.
+ */
+export async function killStarted(): Promise<void> {
 	const survivors = children.splice(0);
 	for (const child of survivors) {
 		if (child.exitCode === null && !child.signalCode) child.kill('SIGTERM');
@@ -96,6 +102,10 @@ export async function killAll(): Promise<void> {
 		}
 		if (child.exitCode === null && !child.signalCode) child.kill('SIGKILL');
 	}
+}
+
+export async function killAll(): Promise<void> {
+	await killStarted();
 	// AGENTS.md §11.1: never leave a stray engine or Orker behind, and anchor both
 	// patterns — unanchored, `bin/ork` also matches `bin/orkctl`.
 	try {
