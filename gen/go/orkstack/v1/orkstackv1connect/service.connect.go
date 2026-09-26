@@ -104,6 +104,15 @@ const (
 	// WebhookServiceDeleteWebhookProcedure is the fully-qualified name of the WebhookService's
 	// DeleteWebhook RPC.
 	WebhookServiceDeleteWebhookProcedure = "/orkstack.v1.WebhookService/DeleteWebhook"
+	// WebhookServiceListDeliveriesProcedure is the fully-qualified name of the WebhookService's
+	// ListDeliveries RPC.
+	WebhookServiceListDeliveriesProcedure = "/orkstack.v1.WebhookService/ListDeliveries"
+	// WebhookServiceGetDeliveryProcedure is the fully-qualified name of the WebhookService's
+	// GetDelivery RPC.
+	WebhookServiceGetDeliveryProcedure = "/orkstack.v1.WebhookService/GetDelivery"
+	// WebhookServiceRedeliverWebhookProcedure is the fully-qualified name of the WebhookService's
+	// RedeliverWebhook RPC.
+	WebhookServiceRedeliverWebhookProcedure = "/orkstack.v1.WebhookService/RedeliverWebhook"
 	// TriggerServiceCreateTriggerProcedure is the fully-qualified name of the TriggerService's
 	// CreateTrigger RPC.
 	TriggerServiceCreateTriggerProcedure = "/orkstack.v1.TriggerService/CreateTrigger"
@@ -936,6 +945,18 @@ type WebhookServiceClient interface {
 	RegisterWebhook(context.Context, *connect.Request[v1.RegisterWebhookRequest]) (*connect.Response[v1.RegisterWebhookResponse], error)
 	ListWebhooks(context.Context, *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error)
 	DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error)
+	// ListDeliveries lists delivery records newest first, bounded and
+	// paginated. A scan that would examine more keys than the engine's budget
+	// allows before filling a page is REFUSED (RESOURCE_EXHAUSTED) naming the
+	// budget, never answered from the subset it managed to read.
+	ListDeliveries(context.Context, *connect.Request[v1.ListDeliveriesRequest]) (*connect.Response[v1.ListDeliveriesResponse], error)
+	// GetDelivery returns one record by id.
+	GetDelivery(context.Context, *connect.Request[v1.GetDeliveryRequest]) (*connect.Response[v1.GetDeliveryResponse], error)
+	// RedeliverWebhook POSTs one delivery again — once, now, synchronously,
+	// signed with the subscription's current secret, embedding the run as it
+	// reads today — and returns the NEW record. The operator is the retry
+	// policy: this RPC never queues, never retries, and never runs unattended.
+	RedeliverWebhook(context.Context, *connect.Request[v1.RedeliverWebhookRequest]) (*connect.Response[v1.RedeliverWebhookResponse], error)
 }
 
 // NewWebhookServiceClient constructs a client for the orkstack.v1.WebhookService service. By
@@ -967,14 +988,35 @@ func NewWebhookServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(webhookServiceMethods.ByName("DeleteWebhook")),
 			connect.WithClientOptions(opts...),
 		),
+		listDeliveries: connect.NewClient[v1.ListDeliveriesRequest, v1.ListDeliveriesResponse](
+			httpClient,
+			baseURL+WebhookServiceListDeliveriesProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("ListDeliveries")),
+			connect.WithClientOptions(opts...),
+		),
+		getDelivery: connect.NewClient[v1.GetDeliveryRequest, v1.GetDeliveryResponse](
+			httpClient,
+			baseURL+WebhookServiceGetDeliveryProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("GetDelivery")),
+			connect.WithClientOptions(opts...),
+		),
+		redeliverWebhook: connect.NewClient[v1.RedeliverWebhookRequest, v1.RedeliverWebhookResponse](
+			httpClient,
+			baseURL+WebhookServiceRedeliverWebhookProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("RedeliverWebhook")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // webhookServiceClient implements WebhookServiceClient.
 type webhookServiceClient struct {
-	registerWebhook *connect.Client[v1.RegisterWebhookRequest, v1.RegisterWebhookResponse]
-	listWebhooks    *connect.Client[v1.ListWebhooksRequest, v1.ListWebhooksResponse]
-	deleteWebhook   *connect.Client[v1.DeleteWebhookRequest, v1.DeleteWebhookResponse]
+	registerWebhook  *connect.Client[v1.RegisterWebhookRequest, v1.RegisterWebhookResponse]
+	listWebhooks     *connect.Client[v1.ListWebhooksRequest, v1.ListWebhooksResponse]
+	deleteWebhook    *connect.Client[v1.DeleteWebhookRequest, v1.DeleteWebhookResponse]
+	listDeliveries   *connect.Client[v1.ListDeliveriesRequest, v1.ListDeliveriesResponse]
+	getDelivery      *connect.Client[v1.GetDeliveryRequest, v1.GetDeliveryResponse]
+	redeliverWebhook *connect.Client[v1.RedeliverWebhookRequest, v1.RedeliverWebhookResponse]
 }
 
 // RegisterWebhook calls orkstack.v1.WebhookService.RegisterWebhook.
@@ -992,11 +1034,38 @@ func (c *webhookServiceClient) DeleteWebhook(ctx context.Context, req *connect.R
 	return c.deleteWebhook.CallUnary(ctx, req)
 }
 
+// ListDeliveries calls orkstack.v1.WebhookService.ListDeliveries.
+func (c *webhookServiceClient) ListDeliveries(ctx context.Context, req *connect.Request[v1.ListDeliveriesRequest]) (*connect.Response[v1.ListDeliveriesResponse], error) {
+	return c.listDeliveries.CallUnary(ctx, req)
+}
+
+// GetDelivery calls orkstack.v1.WebhookService.GetDelivery.
+func (c *webhookServiceClient) GetDelivery(ctx context.Context, req *connect.Request[v1.GetDeliveryRequest]) (*connect.Response[v1.GetDeliveryResponse], error) {
+	return c.getDelivery.CallUnary(ctx, req)
+}
+
+// RedeliverWebhook calls orkstack.v1.WebhookService.RedeliverWebhook.
+func (c *webhookServiceClient) RedeliverWebhook(ctx context.Context, req *connect.Request[v1.RedeliverWebhookRequest]) (*connect.Response[v1.RedeliverWebhookResponse], error) {
+	return c.redeliverWebhook.CallUnary(ctx, req)
+}
+
 // WebhookServiceHandler is an implementation of the orkstack.v1.WebhookService service.
 type WebhookServiceHandler interface {
 	RegisterWebhook(context.Context, *connect.Request[v1.RegisterWebhookRequest]) (*connect.Response[v1.RegisterWebhookResponse], error)
 	ListWebhooks(context.Context, *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error)
 	DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error)
+	// ListDeliveries lists delivery records newest first, bounded and
+	// paginated. A scan that would examine more keys than the engine's budget
+	// allows before filling a page is REFUSED (RESOURCE_EXHAUSTED) naming the
+	// budget, never answered from the subset it managed to read.
+	ListDeliveries(context.Context, *connect.Request[v1.ListDeliveriesRequest]) (*connect.Response[v1.ListDeliveriesResponse], error)
+	// GetDelivery returns one record by id.
+	GetDelivery(context.Context, *connect.Request[v1.GetDeliveryRequest]) (*connect.Response[v1.GetDeliveryResponse], error)
+	// RedeliverWebhook POSTs one delivery again — once, now, synchronously,
+	// signed with the subscription's current secret, embedding the run as it
+	// reads today — and returns the NEW record. The operator is the retry
+	// policy: this RPC never queues, never retries, and never runs unattended.
+	RedeliverWebhook(context.Context, *connect.Request[v1.RedeliverWebhookRequest]) (*connect.Response[v1.RedeliverWebhookResponse], error)
 }
 
 // NewWebhookServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1024,6 +1093,24 @@ func NewWebhookServiceHandler(svc WebhookServiceHandler, opts ...connect.Handler
 		connect.WithSchema(webhookServiceMethods.ByName("DeleteWebhook")),
 		connect.WithHandlerOptions(opts...),
 	)
+	webhookServiceListDeliveriesHandler := connect.NewUnaryHandler(
+		WebhookServiceListDeliveriesProcedure,
+		svc.ListDeliveries,
+		connect.WithSchema(webhookServiceMethods.ByName("ListDeliveries")),
+		connect.WithHandlerOptions(opts...),
+	)
+	webhookServiceGetDeliveryHandler := connect.NewUnaryHandler(
+		WebhookServiceGetDeliveryProcedure,
+		svc.GetDelivery,
+		connect.WithSchema(webhookServiceMethods.ByName("GetDelivery")),
+		connect.WithHandlerOptions(opts...),
+	)
+	webhookServiceRedeliverWebhookHandler := connect.NewUnaryHandler(
+		WebhookServiceRedeliverWebhookProcedure,
+		svc.RedeliverWebhook,
+		connect.WithSchema(webhookServiceMethods.ByName("RedeliverWebhook")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.WebhookService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case WebhookServiceRegisterWebhookProcedure:
@@ -1032,6 +1119,12 @@ func NewWebhookServiceHandler(svc WebhookServiceHandler, opts ...connect.Handler
 			webhookServiceListWebhooksHandler.ServeHTTP(w, r)
 		case WebhookServiceDeleteWebhookProcedure:
 			webhookServiceDeleteWebhookHandler.ServeHTTP(w, r)
+		case WebhookServiceListDeliveriesProcedure:
+			webhookServiceListDeliveriesHandler.ServeHTTP(w, r)
+		case WebhookServiceGetDeliveryProcedure:
+			webhookServiceGetDeliveryHandler.ServeHTTP(w, r)
+		case WebhookServiceRedeliverWebhookProcedure:
+			webhookServiceRedeliverWebhookHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1051,6 +1144,18 @@ func (UnimplementedWebhookServiceHandler) ListWebhooks(context.Context, *connect
 
 func (UnimplementedWebhookServiceHandler) DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.DeleteWebhook is not implemented"))
+}
+
+func (UnimplementedWebhookServiceHandler) ListDeliveries(context.Context, *connect.Request[v1.ListDeliveriesRequest]) (*connect.Response[v1.ListDeliveriesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.ListDeliveries is not implemented"))
+}
+
+func (UnimplementedWebhookServiceHandler) GetDelivery(context.Context, *connect.Request[v1.GetDeliveryRequest]) (*connect.Response[v1.GetDeliveryResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.GetDelivery is not implemented"))
+}
+
+func (UnimplementedWebhookServiceHandler) RedeliverWebhook(context.Context, *connect.Request[v1.RedeliverWebhookRequest]) (*connect.Response[v1.RedeliverWebhookResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.RedeliverWebhook is not implemented"))
 }
 
 // TriggerServiceClient is a client for the orkstack.v1.TriggerService service.

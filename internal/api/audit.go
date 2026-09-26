@@ -245,6 +245,23 @@ var auditedProcedures = map[string]auditExtractor{
 		in, _ := req.(*orkstackv1.DeleteWebhookRequest)
 		return auditEntry{Action: "webhook.delete", Target: in.GetId()}
 	},
+	orkstackv1connect.WebhookServiceRedeliverWebhookProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.RedeliverWebhookRequest)
+		entry := auditEntry{Action: "webhook.redeliver", Target: in.GetId()}
+		if out, ok := resp.(*orkstackv1.RedeliverWebhookResponse); ok && out != nil && out.GetDelivery() != nil {
+			d := out.GetDelivery()
+			status := int32(0)
+			if attempts := d.GetAttempts(); len(attempts) > 0 {
+				status = attempts[len(attempts)-1].GetStatusCode()
+			}
+			// Coordinates and outcome only: never the signature, never a
+			// secret, never the body.
+			entry.Detail = fmt.Sprintf("webhook=%s run=%s event=%s -> %s delivered=%t status=%d",
+				d.GetWebhookId(), d.GetRunId(), strings.TrimPrefix(d.GetEvent().String(), "EVENT_TYPE_"),
+				d.GetId(), d.GetDelivered(), status)
+		}
+		return entry
+	},
 	orkstackv1connect.TriggerServiceCreateTriggerProcedure: func(req, resp proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.CreateTriggerRequest)
 		version := in.GetOrkflowVersion()
