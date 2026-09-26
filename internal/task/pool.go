@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // A pool is the user-facing word for where a task runs: a set of Orkers. A
@@ -240,4 +242,29 @@ func PoolForQueue(queue string) (string, bool) {
 		return "", false
 	}
 	return pool, true
+}
+
+// MaxCordonReason bounds a cordon's reason, in bytes.
+const MaxCordonReason = 256
+
+// ValidCordonReason is the rule a cordon's reason meets, at the API boundary
+// and again on the Orker: present (not blank), at most 256 bytes, valid UTF-8,
+// no control character. It is what ListOrkers shows beside the state, so it
+// must be one printable line.
+func ValidCordonReason(reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("a cordon needs a reason: it is what every reader of the fleet sees beside the state")
+	}
+	if len(reason) > MaxCordonReason {
+		return fmt.Errorf("a cordon reason is at most %d bytes; this one is %d", MaxCordonReason, len(reason))
+	}
+	if !utf8.ValidString(reason) {
+		return fmt.Errorf("a cordon reason must be valid UTF-8")
+	}
+	for _, r := range reason {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("a cordon reason may not contain a control character (%U)", r)
+		}
+	}
+	return nil
 }

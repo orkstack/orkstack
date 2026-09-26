@@ -6,8 +6,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/interceptor"
@@ -201,9 +199,6 @@ const ReasonOrkerCordoned = "ORKER_CORDONED"
 // long or carries a control character. ContractViolation: never retried.
 const ReasonOrkerCordonInvalid = "ORKER_CORDON_INVALID"
 
-// maxCordonReason bounds a cordon's reason, in bytes.
-const maxCordonReason = 256
-
 // cordonPinRefusalAttempts bounds the ping-pong when EVERY host that polls the
 // creation channel refuses: past this many attempts the refusal is
 // non-retryable and the pin fails PIN_UNAVAILABLE. 45 attempts at the SDK's
@@ -384,38 +379,7 @@ func validateCordonInput(in *orkstackv1.CordonOrkerInput) error {
 	if !in.GetCordoned() {
 		return nil
 	}
-	return ValidCordonReason(in.GetReason())
-}
-
-// ValidCordonReason is the rule a cordon's reason meets: present, at most 256
-// bytes, valid UTF-8, no control character.
-func ValidCordonReason(reason string) error {
-	if len(reason) > maxCordonReason {
-		return fmt.Errorf("a cordon reason is at most %d bytes; this one is %d", maxCordonReason, len(reason))
-	}
-	if !utf8.ValidString(reason) {
-		return fmt.Errorf("a cordon reason must be valid UTF-8")
-	}
-	for _, r := range reason {
-		if unicode.IsControl(r) {
-			return fmt.Errorf("a cordon reason may not contain a control character (%U)", r)
-		}
-	}
-	if len(trimSpace(reason)) == 0 {
-		return fmt.Errorf("a cordon needs a reason: it is what every reader of the fleet sees beside the state")
-	}
-	return nil
-}
-
-func trimSpace(s string) string {
-	start, end := 0, len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
+	return task.ValidCordonReason(in.GetReason())
 }
 
 // CordonOrker sets or clears this Orker's cordon and answers with its state
