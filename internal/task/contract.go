@@ -176,6 +176,40 @@ const HeartbeatTimeout = 30 * time.Second
 // 24 s wait before a running container learns it was cancelled.
 const MaxHeartbeatInterval = HeartbeatTimeout / 3
 
+// HeartbeatStaleAfter is how old a live attempt's last heartbeat may be
+// before the engine's InspectRun reports it stale. It is two ceiling ticks:
+// a healthy Orker beats at least every MaxHeartbeatInterval (the worker's
+// throttle is capped to its tick, OCI contract §6.3 item 3), so one missed
+// tick is a frontend blip and two are a missing Orker. It is deliberately
+// inside HeartbeatTimeout, so an operator sees the gap open BEFORE Temporal
+// acts on it; TestHeartbeatStaleAfter_LeavesRoomBeforeTheDeadWorkerWindow
+// holds the ordering. It is a code constant, not an operator setting: the
+// tick ceiling it is derived from is not one either.
+const HeartbeatStaleAfter = 2 * MaxHeartbeatInterval
+
+// HeartbeatProgress is the detail the Orker's heartbeat loop carries and the
+// engine's InspectRun reads back from the cluster. It is deliberately small:
+// heartbeat details travel through Temporal's data converter into history,
+// and bytes never travel through Temporal payloads (AGENTS.md §2.2). Phase,
+// a container id and a byte count are diagnosis; the logs are where the
+// content lives.
+//
+// The JSON names are the wire contract between an Orker and an engine of
+// possibly different builds: a field is only ever ADDED, with omitempty, so
+// an older Orker's beat decodes on a newer engine with the new field empty.
+type HeartbeatProgress struct {
+	Phase       string `json:"phase"`
+	ContainerID string `json:"container_id,omitempty"`
+	BytesLogged int64  `json:"bytes_logged,omitempty"`
+	// OrkerID is the sender, as ORK_ORKER_ID names it. It is here rather than
+	// read from the SDK's worker identity because that identity is
+	// "pid@hostname" by default, and a host name may not reach a user-facing
+	// surface (AGENTS.md §7.1). ORK_ORKER_ID's own default is
+	// "hostname-<hash of the work dir>" (docs/DEPLOY.md §1), which every
+	// TaskRun.orker_id already shows; nothing new is disclosed.
+	OrkerID string `json:"orker_id,omitempty"`
+}
+
 // CheckInputSize enforces the deployment's replay-pinned input bound without
 // ever exceeding Temporal's hard 256 KiB ceiling. A zero or omitted plan limit
 // uses the ceiling, preserving old histories and small test harness plans.
