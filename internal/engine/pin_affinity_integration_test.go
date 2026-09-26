@@ -5,6 +5,7 @@ package engine_test
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"connectrpc.com/connect"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -106,6 +108,11 @@ type pinOrker struct {
 	workRoot   string
 	activities *orker.Activities
 	worker     worker.Worker
+	// control and presence are the Orker's own two channels (orker-cordon-
+	// drain §5.7): built by orker.NewChannelWorkers exactly as cmd/orker
+	// builds them, so this test Orker and the shipped one are one shape.
+	control  worker.Worker
+	presence worker.Worker
 
 	// temporal is THIS Orker's own Temporal client. One client per Orker,
 	// because three Orkers are three processes with three connections — and
@@ -260,7 +267,11 @@ func (o *pinOrker) kill() {
 // stop stops this Orker's Temporal worker. It is the ordinary, graceful
 // shutdown, used by cleanup; Proof 2 uses kill().
 func (o *pinOrker) stop() {
-	o.stopOnce.Do(o.worker.Stop)
+	o.stopOnce.Do(func() {
+		o.worker.Stop()
+		o.control.Stop()
+		o.presence.Stop()
+	})
 }
 
 // close releases this Orker's client at the end of the test.
@@ -1110,6 +1121,18 @@ type pinOrkerConfig struct {
 	logs              artifacts.LogStore
 	refs              artifacts.RefPredictor
 	temporalNamespace string
+
+	// The cordon suite's knobs; the zero value is what the pin suites use.
+	//
+	// maxPins overrides the pin cap (0 means 2). workRoot reuses a work root,
+	// which is what a restart of the same Orker does. logger receives the
+	// Orker's lifecycle lines (nil: slog.Default). buildID and deployment make
+	// the task worker versioned, as ORK_BUILD_ID does for cmd/orker.
+	maxPins    int32
+	workRoot   string
+	logger     *slog.Logger
+	buildID    string
+	deployment task.Deployment
 }
 
 // newPinOrker builds and starts one real pin host, the way cmd/orker builds
@@ -1131,12 +1154,16 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 	// daemon does not share /var/folders, which is what t.TempDir() would give
 	// — the caveat orker.WorkRootVar's doc comment describes, and the reason
 	// orphan_reap_integration_test.go does the same thing.
-	root := pinAffinityWorkRootParent(t)
-	workRoot, err := os.MkdirTemp(root, "pin-affinity-")
-	if err != nil {
-		t.Fatalf("create a work root under %s: %v", root, err)
+	workRoot := cfg.workRoot
+	if workRoot == "" {
+		root := pinAffinityWorkRootParent(t)
+		var err error
+		workRoot, err = os.MkdirTemp(root, "pin-affinity-")
+		if err != nil {
+			t.Fatalf("create a work root under %s: %v", root, err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(workRoot) })
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(workRoot) })
 
 	o := &pinOrker{
 		id:       cfg.id,
@@ -1161,7 +1188,10 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 	o.temporal = orkerClient
 	t.Cleanup(o.close)
 
-	const maxPins = 2
+	maxPins := cfg.maxPins
+	if maxPins == 0 {
+		maxPins = 2
+	}
 	// The Orker's heartbeat tick, deliberately FASTER than the SDK's session
 	// heartbeat, and that ordering is load-bearing for Proof 2.
 	//
@@ -1191,7 +1221,9 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		HeartbeatInterval: tick,
 		// The real Options.Phases seam, so Proof 2 can wait for the container
 		// to actually be running before it kills the host.
-		Phases: pinPhaseObserver{o: o},
+		Phases:  pinPhaseObserver{o: o},
+		Logger:  cfg.logger,
+		BuildID: cfg.buildID,
 	})
 	if err := activities.Boot(ctx); err != nil {
 		infraAbsent(t, "orker %s boot checks failed: %v", cfg.id, err)
@@ -1199,7 +1231,11 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 	t.Cleanup(activities.Close)
 	o.activities = activities
 
-	o.worker = worker.New(orkerClient, cfg.queue, worker.Options{
+	tuner, err := activities.WorkerTuner()
+	if err != nil {
+		t.Fatalf("orker %s tuner: %v", cfg.id, err)
+	}
+	o.worker = worker.New(orkerClient, cfg.queue, cfg.deployment.Apply(worker.Options{
 		DisableRegistrationAliasing: true,
 		DisableWorkflowWorker:       true,
 		// The heartbeat pairing cmd/orker's workerOptions describes: the SDK's
@@ -1211,7 +1247,7 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		// <uuid>@<hostname>. Without this the process is not a pin host and no
 		// session could ever be created on it.
 		EnableSessionWorker:               true,
-		MaxConcurrentSessionExecutionSize: maxPins,
+		MaxConcurrentSessionExecutionSize: int(maxPins),
 		// MANDATORY here, and not a detail: engine.livePollers counts one
 		// poller per Temporal worker identity, and the SDK's default identity
 		// is <pid>@<hostname>. Three workers in ONE test process would share
@@ -1220,7 +1256,13 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		// Three real Orkers are three processes with three identities; these
 		// are theirs.
 		Identity: cfg.id,
-	})
+		// The cordon's two seams, exactly as cmd/orker's taskWorkerOptions
+		// sets them: the Tuner whose activity slot supplier refuses to
+		// reserve while cordoned, and the interceptor that counts and refuses
+		// new pins (orker-cordon-drain §5.3-§5.6).
+		Tuner:        tuner,
+		Interceptors: []interceptor.WorkerInterceptor{activities.WorkerInterceptor()},
+	}))
 	o.worker.RegisterActivityWithOptions(o.execute,
 		activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	o.worker.RegisterActivityWithOptions(activities.DescribeOrker,
@@ -1228,8 +1270,19 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 	o.worker.RegisterActivityWithOptions(activities.ReleasePin,
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
 
+	o.control, o.presence, err = orker.NewChannelWorkers(orkerClient, activities)
+	if err != nil {
+		t.Fatalf("orker %s channel workers: %v", cfg.id, err)
+	}
+
 	if err := o.worker.Start(); err != nil {
 		t.Fatalf("start orker %s: %v", cfg.id, err)
+	}
+	if err := o.control.Start(); err != nil {
+		t.Fatalf("start orker %s control worker: %v", cfg.id, err)
+	}
+	if err := o.presence.Start(); err != nil {
+		t.Fatalf("start orker %s presence worker: %v", cfg.id, err)
 	}
 	t.Cleanup(o.stop)
 	// Whatever happens, this Orker's containers do not outlive the test.
