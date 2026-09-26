@@ -1896,7 +1896,14 @@ Required, all four together (`internal/orker/heartbeat.go`):
 2. **Orker** runs a heartbeat goroutine for the **entire** container lifetime,
    ticking every `ORK_ORKER_HEARTBEAT_INTERVAL` (default 5 s, bounded to
    `1s`–`10s`; docs/DEPLOY.md §1), carrying a small progress detail
-   (`phase`, `container id`, `bytes logged`).
+   (`phase`, `container id`, `bytes logged`, and the Orker's own id —
+   `ORK_ORKER_ID`, never the SDK's `pid@hostname` worker identity). The
+   detail's shape is `task.HeartbeatProgress` (`internal/task/contract.go`),
+   because the engine reads it back: `RunService.InspectRun` reports, for
+   every pending attempt, the detail Temporal holds for it, refusing a
+   previous attempt's carried-over detail and flagging a beat older than
+   `task.HeartbeatStaleAfter` (two ceiling ticks) stale. The container sees
+   none of this.
 3. **Orker** caps its task worker's `worker.Options.MaxHeartbeatThrottleInterval`
    to that same interval (`cmd/orker/main.go`, `workerOptions`). This is the
    half that is invisible until somebody cancels. The Go SDK does not send
