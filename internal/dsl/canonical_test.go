@@ -472,3 +472,77 @@ func TestDerivedVersion_CoversBothSourceAndResolution(t *testing.T) {
 		}
 	})
 }
+
+// K1 — the text DiffRuns hands dsl.Unified spells every value one way: keys in
+// byte order at every depth, an integral number without a fraction, a
+// fractional one unchanged, and a `<` left as itself rather than escaped.
+func TestCanonicalInputJSON_SortsKeysAndRendersIntegersWithoutFraction(t *testing.T) {
+	input, err := structpb.NewStruct(map[string]any{
+		"b": 1,
+		"a": 5.0,
+		"c": map[string]any{"z": true, "y": []any{1, 2.5}},
+		"d": "a<b",
+	})
+	if err != nil {
+		t.Fatalf("NewStruct: %v", err)
+	}
+	got, err := CanonicalInputJSON(input)
+	if err != nil {
+		t.Fatalf("CanonicalInputJSON: %v", err)
+	}
+	want := `{
+  "a": 5,
+  "b": 1,
+  "c": {
+    "y": [
+      1,
+      2.5
+    ],
+    "z": true
+  },
+  "d": "a<b"
+}`
+	if got != want {
+		t.Fatalf("CanonicalInputJSON =\n%s\nwant\n%s", got, want)
+	}
+	t.Logf("K1 rendered text:\n%s", got)
+}
+
+// K2 — an absent input and an empty one are the same object, and two inputs
+// that differ only in key order render identically, so their diff is empty.
+func TestCanonicalInputJSON_NilAndEmptyAreTheSameObject(t *testing.T) {
+	fromNil, err := CanonicalInputJSON(nil)
+	if err != nil {
+		t.Fatalf("CanonicalInputJSON(nil): %v", err)
+	}
+	fromEmpty, err := CanonicalInputJSON(&structpb.Struct{})
+	if err != nil {
+		t.Fatalf("CanonicalInputJSON(empty): %v", err)
+	}
+	if fromNil != "{}" || fromEmpty != "{}" {
+		t.Fatalf("nil renders %q and empty renders %q; both must be {}", fromNil, fromEmpty)
+	}
+
+	one, err := structpb.NewStruct(map[string]any{"x": 1, "y": "two", "z": []any{3}})
+	if err != nil {
+		t.Fatalf("NewStruct: %v", err)
+	}
+	two, err := structpb.NewStruct(map[string]any{"z": []any{3.0}, "y": "two", "x": 1.0})
+	if err != nil {
+		t.Fatalf("NewStruct: %v", err)
+	}
+	a, err := CanonicalInputJSON(one)
+	if err != nil {
+		t.Fatalf("CanonicalInputJSON: %v", err)
+	}
+	b, err := CanonicalInputJSON(two)
+	if err != nil {
+		t.Fatalf("CanonicalInputJSON: %v", err)
+	}
+	if a != b {
+		t.Fatalf("reordered inputs render differently:\n%s\n---\n%s", a, b)
+	}
+	if diff := Unified("from/input.json", "to/input.json", a, b); diff != "" {
+		t.Fatalf("Unified over identical canonical inputs = %q, want empty", diff)
+	}
+}
