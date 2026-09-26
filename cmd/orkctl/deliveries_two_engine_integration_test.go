@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -130,13 +130,15 @@ func TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother(t *testing.T) {
 
 	var listed *orkstackv1.ListDeliveriesResponse
 	for deadline := time.Now().Add(30 * time.Second); ; {
-		out := deliveriesCLI(t, replicaB, exitOK, "--json", "webhook", "deliveries", "--run", runID)
+		out := deliveriesCLI(t, replicaB, exitOK, "--json", "webhook", "deliveries", "--run", runID, "--webhook", hook.ID)
 		listed = &orkstackv1.ListDeliveriesResponse{}
-		if err := protojson.Unmarshal([]byte(out), listed); err != nil {
+		// --json is OrkStack's JSON dialect (short enum names), which the
+		// API's own decoder reads.
+		if err := api.UnmarshalJSON([]byte(out), listed); err != nil {
 			t.Fatalf("webhook deliveries --json is not a ListDeliveriesResponse: %v\n%s", err, out)
 		}
 		if len(listed.GetDeliveries()) > 0 || time.Now().After(deadline) {
-			fmt.Fprintf(&transcript, "$ orkctl --server <replica B> webhook deliveries --run %s --json\n%s\n\n", runID, out)
+			fmt.Fprintf(&transcript, "$ orkctl --server <replica B> webhook deliveries --run %s --webhook %s --json\n%s\n\n", runID, hook.ID, out)
 			break
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -150,7 +152,7 @@ func TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother(t *testing.T) {
 		t.Fatalf("replica B's record = %v, want %s delivered with the signature the subscriber saw (%s)",
 			rec, originalID, original.Get(webhooks.SignatureHeader))
 	}
-	human := deliveriesCLI(t, replicaB, exitOK, "webhook", "deliveries", "--run", runID)
+	human := deliveriesCLI(t, replicaB, exitOK, "webhook", "deliveries", "--run", runID, "--webhook", hook.ID)
 	shown := deliveriesCLI(t, replicaB, exitOK, "webhook", "delivery", originalID)
 	if !strings.Contains(human, originalID) || !strings.Contains(human, "(the run's start)") ||
 		!strings.Contains(shown, "SIGNATURE  "+rec.GetSignature()) || !strings.Contains(shown, "1  ") {
@@ -172,7 +174,7 @@ func TestIntegration_DeliveryRecordedOnOneReplicaListedOnAnother(t *testing.T) {
 		t.Fatalf("redelivery headers %v, output:\n%s", again, redelivered)
 	}
 	fmt.Fprintf(&transcript, "$ orkctl --server <replica B> webhook redeliver %s\n%s\n", originalID, redelivered)
-	fromA := deliveriesCLI(t, replicaA, exitOK, "webhook", "deliveries", "--run", runID)
+	fromA := deliveriesCLI(t, replicaA, exitOK, "webhook", "deliveries", "--run", runID, "--webhook", hook.ID)
 	if !strings.Contains(fromA, again.Get(webhooks.DeliveryHeader)) {
 		t.Fatalf("replica A does not list the redelivery replica B recorded:\n%s", fromA)
 	}

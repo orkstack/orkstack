@@ -142,8 +142,15 @@ async function submitAndSettle(expectedPerEvent: number): Promise<string> {
 }
 
 async function expand(page: Page, id: string) {
-	await page.getByTestId(`delivery-${id}`).click();
-	await expect(page.getByTestId(`delivery-detail-${id}`)).toBeVisible();
+	// Click a plain cell of the row: its centre can be the run link, which
+	// navigates to the run instead of expanding the record.
+	// A click that lands before hydration does nothing, so it is retried
+	// until the detail row is there — never once it is, which would fold it.
+	const detail = page.getByTestId(`delivery-detail-${id}`);
+	await expect(async () => {
+		if (!(await detail.isVisible())) await page.getByTestId(`delivery-event-${id}`).click();
+		await expect(detail).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 20_000 });
 }
 
 test.describe.configure({ mode: 'serial' });
@@ -202,6 +209,7 @@ test.afterAll(async () => {
 
 test('a settled delivery appears in the Deliveries panel with its attempts and digest', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/webhooks`);
+	await page.waitForLoadState('networkidle');
 	await expect(page.getByTestId('deliveries-scope')).toContainText('the body itself is not stored');
 	await expect(page.getByTestId('deliveries-scope')).toContainText('Showing every namespace');
 
@@ -227,6 +235,7 @@ test('a settled delivery appears in the Deliveries panel with its attempts and d
 	failedId = failed!.id;
 
 	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}`);
+	await page.waitForLoadState('networkidle');
 	await expect(page.getByTestId(`delivery-${failedId}`)).toBeVisible();
 	await expect(page.getByTestId(`delivery-outcome-${failedId}`)).toHaveText('failed');
 	await expect(page.getByTestId(`delivery-attempt-count-${failedId}`)).toHaveText('4');
@@ -250,6 +259,7 @@ test('redelivering sends exactly one signed POST and lists the new record first'
 	answer = 200;
 	const before = received.length;
 	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}`);
+	await page.waitForLoadState('networkidle');
 	await expand(page, failedId);
 	await page.getByTestId(`redeliver-${failedId}`).click();
 	const dialog = page.getByTestId('redeliver-confirm');
@@ -303,6 +313,7 @@ test('redelivering sends exactly one signed POST and lists the new record first'
 
 test('filters narrow by outcome and run and the URL restores them', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}`);
+	await page.waitForLoadState('networkidle');
 	await page.getByTestId('deliveries-outcome').click();
 	await page.getByRole('option', { name: 'Failed', exact: true }).click();
 	await expect(page).toHaveURL(/delivered=false/);
@@ -315,6 +326,7 @@ test('filters narrow by outcome and run and the URL restores them', async ({ pag
 		await expect(page.getByTestId(`delivery-outcome-${id}`)).toHaveText('failed');
 	const window = await page.getByTestId('deliveries-window').innerText();
 	await page.reload();
+	await page.waitForLoadState('networkidle');
 	await expect(page.getByTestId('deliveries-run')).toHaveValue(firstRun);
 	await expect(page.getByTestId('deliveries-outcome')).toContainText('Failed');
 	await expect(rows).toHaveCount(2);
@@ -329,6 +341,7 @@ test('pagination walks newest first without repeats', async ({ page }) => {
 	expect((await listFor(webhookId)).length).toBeGreaterThanOrEqual(5);
 
 	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}&limit=2`);
+	await page.waitForLoadState('networkidle');
 	const ids = async () =>
 		page
 			.getByTestId('deliveries-table')
@@ -344,7 +357,8 @@ test('pagination walks newest first without repeats', async ({ page }) => {
 	const third = await ids();
 	seen.push(...third);
 	await page.reload();
-	await expect(page.getByTestId('deliveries-page-status')).toContainText('3');
+	await page.waitForLoadState('networkidle');
+	await expect(page.getByTestId('deliveries-page-status')).toContainText('Page 3');
 	expect(await ids()).toEqual(third);
 	await page.getByTestId('deliveries-previous').click();
 	await expect(page).toHaveURL(/page=2/);
@@ -357,6 +371,7 @@ test('pagination walks newest first without repeats', async ({ page }) => {
 
 test('a failed deliveries read shows an error beside an intact webhook table', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/webhooks?webhook=${webhookId}`);
+	await page.waitForLoadState('networkidle');
 	await expect(page.getByTestId('deliveries-table')).toBeVisible();
 
 	// Only the deliveries read fails: the webhook table must still render.
@@ -371,6 +386,7 @@ test('a failed deliveries read shows an error beside an intact webhook table', a
 	// The engine itself down: the read fails with Retry; back up, Retry renders.
 	await stop(engine);
 	await page.reload();
+	await page.waitForLoadState('networkidle');
 	await expect(page.getByTestId('deliveries-error')).toBeVisible();
 	await expect(page.getByTestId('deliveries-error-retry')).toBeVisible();
 	await page.screenshot({ path: out('deliveries-read-failed.png'), fullPage: true });
@@ -383,6 +399,7 @@ test('a failed deliveries read shows an error beside an intact webhook table', a
 
 test('the per-webhook link filters the panel', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/webhooks`);
+	await page.waitForLoadState('networkidle');
 	await page.getByTestId(`webhook-deliveries-${webhookId}`).click();
 	await expect(page).toHaveURL(new RegExp(`webhook=${webhookId}`));
 	await expect(page.getByTestId('deliveries-scope-webhook')).toHaveText(webhookId);

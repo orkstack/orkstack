@@ -162,8 +162,7 @@
 	</div>
 	<p class="mb-4 text-sm text-fg-muted" data-testid="deliveries-scope">
 		{DELIVERIES_CAPTION}
-		{#if c.namespace}Showing namespace <span class="font-medium text-fg">{c.namespace}</span>{:else}Showing every namespace{/if}{#if c.webhook}
-			for webhook <span class="font-mono text-xs text-fg" data-testid="deliveries-scope-webhook">{c.webhook}</span>{/if}{#if response},
+		{#if c.namespace}Showing namespace <span class="font-medium text-fg">{c.namespace}</span>{:else}Showing every namespace{/if}{#if c.webhook}{' '}for webhook <span class="font-mono text-xs text-fg" data-testid="deliveries-scope-webhook">{c.webhook}</span>{/if}{#if response},
 			<span class="font-mono text-xs" data-testid="deliveries-window">{resolvedSince} to {resolvedUntil}</span>{/if}.
 		The page's namespace selector does not filter this panel.
 	</p>
@@ -230,7 +229,7 @@
 			No deliveries in this window{c.page > 1 ? ' past the previous page' : ''}.
 		</p>
 		{#if c.page > 1}
-			<Pagination testid="deliveries" noun="delivery" page={c.page} count={0} {previousHref} {firstHref} />
+			<Pagination testid="deliveries" noun="delivery record" page={c.page} count={0} {previousHref} {firstHref} />
 		{/if}
 	{:else}
 		<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
@@ -355,7 +354,7 @@
 		</div>
 		<Pagination
 			testid="deliveries"
-			noun="delivery"
+			noun="delivery record"
 			page={c.page}
 			count={deliveries.length}
 			{previousHref}

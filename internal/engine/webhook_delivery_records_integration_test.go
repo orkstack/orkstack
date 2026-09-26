@@ -230,7 +230,11 @@ func (h *recordsHarness) run(t *testing.T, ctx context.Context, marker string) *
 
 func (h *recordsHarness) list(t *testing.T, ctx context.Context, runID string) []*orkstackv1.Delivery {
 	t.Helper()
-	resp, err := h.engine.webhookClient().ListDeliveries(ctx, connect.NewRequest(&orkstackv1.ListDeliveriesRequest{RunId: runID}))
+	resp, err := h.engine.webhookClient().ListDeliveries(ctx, connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
+		// This test's subscription only: the registry is the bucket's, and a
+		// subscription another suite left behind may also match the run.
+		RunId: runID, WebhookId: h.hook.ID,
+	}))
 	if err != nil {
 		t.Fatalf("ListDeliveries: %v", err)
 	}
