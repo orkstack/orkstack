@@ -191,6 +191,136 @@ func (ReferenceState) EnumDescriptor() ([]byte, []int) {
 	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{2}
 }
 
+// LiveAttemptState is where the pending attempt is in Temporal's view. It
+// mirrors temporal.api.enums.v1.PendingActivityState with its own numbering,
+// on the rule RetryState (run.proto) follows: a value of another package's
+// enum is never carried by number, and the mapping is an explicit switch in
+// internal/engine/live.go. PAUSED and PAUSE_REQUESTED have no member: nothing
+// in OrkStack pauses an activity, and a reader of an older build must not be
+// handed a state it cannot name — they map to UNSPECIFIED.
+type LiveAttemptState int32
+
+const (
+	LiveAttemptState_LIVE_ATTEMPT_STATE_UNSPECIFIED LiveAttemptState = 0
+	// SCHEDULED: Temporal holds the activity and no Orker has it — the pool
+	// has no free Orker, or a retry is waiting out its backoff (next_attempt_at
+	// is then set).
+	LiveAttemptState_LIVE_ATTEMPT_STATE_SCHEDULED LiveAttemptState = 1
+	// STARTED: an Orker picked the attempt up. Only STARTED and
+	// CANCEL_REQUESTED can carry a heartbeat.
+	LiveAttemptState_LIVE_ATTEMPT_STATE_STARTED LiveAttemptState = 2
+	// CANCEL_REQUESTED: the run was cancelled and the Orker has been (or is
+	// about to be) told through a heartbeat response; the §3.3 SIGTERM → grace
+	// → SIGKILL sequence runs on the Orker while this state holds.
+	LiveAttemptState_LIVE_ATTEMPT_STATE_CANCEL_REQUESTED LiveAttemptState = 3
+)
+
+// Enum value maps for LiveAttemptState.
+var (
+	LiveAttemptState_name = map[int32]string{
+		0: "LIVE_ATTEMPT_STATE_UNSPECIFIED",
+		1: "LIVE_ATTEMPT_STATE_SCHEDULED",
+		2: "LIVE_ATTEMPT_STATE_STARTED",
+		3: "LIVE_ATTEMPT_STATE_CANCEL_REQUESTED",
+	}
+	LiveAttemptState_value = map[string]int32{
+		"LIVE_ATTEMPT_STATE_UNSPECIFIED":      0,
+		"LIVE_ATTEMPT_STATE_SCHEDULED":        1,
+		"LIVE_ATTEMPT_STATE_STARTED":          2,
+		"LIVE_ATTEMPT_STATE_CANCEL_REQUESTED": 3,
+	}
+)
+
+func (x LiveAttemptState) Enum() *LiveAttemptState {
+	p := new(LiveAttemptState)
+	*p = x
+	return p
+}
+
+func (x LiveAttemptState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (LiveAttemptState) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_service_proto_enumTypes[3].Descriptor()
+}
+
+func (LiveAttemptState) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_service_proto_enumTypes[3]
+}
+
+func (x LiveAttemptState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use LiveAttemptState.Descriptor instead.
+func (LiveAttemptState) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{3}
+}
+
+// HeartbeatUnavailableReason says why LiveAttempt.heartbeat_available is
+// false. It is an enum rather than free text so a client renders a fixed
+// sentence per value and a new value is a proto change, not a string drift.
+type HeartbeatUnavailableReason int32
+
+const (
+	HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_UNSPECIFIED HeartbeatUnavailableReason = 0 // heartbeat_available is true
+	// NOT_STARTED: state is SCHEDULED (or UNSPECIFIED); no Orker has the
+	// attempt, so there is nothing to beat.
+	HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED HeartbeatUnavailableReason = 1
+	// NO_HEARTBEAT_YET: an Orker has the attempt and no beat from THIS attempt
+	// has arrived — including the case where the cluster still holds a
+	// previous attempt's detail. On a healthy Orker this lasts one tick at
+	// most, because the loop beats immediately on start.
+	HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_NO_HEARTBEAT_YET HeartbeatUnavailableReason = 2
+	// UNDECODABLE: a beat from this attempt arrived whose detail is not the
+	// Orker's shape (no "phase"). Reported, never guessed at.
+	HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE HeartbeatUnavailableReason = 3
+)
+
+// Enum value maps for HeartbeatUnavailableReason.
+var (
+	HeartbeatUnavailableReason_name = map[int32]string{
+		0: "HEARTBEAT_UNAVAILABLE_REASON_UNSPECIFIED",
+		1: "HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED",
+		2: "HEARTBEAT_UNAVAILABLE_REASON_NO_HEARTBEAT_YET",
+		3: "HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE",
+	}
+	HeartbeatUnavailableReason_value = map[string]int32{
+		"HEARTBEAT_UNAVAILABLE_REASON_UNSPECIFIED":      0,
+		"HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED":      1,
+		"HEARTBEAT_UNAVAILABLE_REASON_NO_HEARTBEAT_YET": 2,
+		"HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE":      3,
+	}
+)
+
+func (x HeartbeatUnavailableReason) Enum() *HeartbeatUnavailableReason {
+	p := new(HeartbeatUnavailableReason)
+	*p = x
+	return p
+}
+
+func (x HeartbeatUnavailableReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (HeartbeatUnavailableReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_service_proto_enumTypes[4].Descriptor()
+}
+
+func (HeartbeatUnavailableReason) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_service_proto_enumTypes[4]
+}
+
+func (x HeartbeatUnavailableReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use HeartbeatUnavailableReason.Descriptor instead.
+func (HeartbeatUnavailableReason) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{4}
+}
+
 type ApplyOrkflowRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Yaml  string                 `protobuf:"bytes,1,opt,name=yaml,proto3" json:"yaml,omitempty"` // raw DSL document
@@ -3205,6 +3335,371 @@ func (x *GetArtifactProvenanceResponse) GetComputedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type InspectRunRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Namespace     string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`         // empty = the default namespace
+	TaskId        string                 `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"` // empty = every in-flight task of the run
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InspectRunRequest) Reset() {
+	*x = InspectRunRequest{}
+	mi := &file_orkstack_v1_service_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InspectRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InspectRunRequest) ProtoMessage() {}
+
+func (x *InspectRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_service_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InspectRunRequest.ProtoReflect.Descriptor instead.
+func (*InspectRunRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *InspectRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *InspectRunRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *InspectRunRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+// LiveAttempt is ONE pending ExecuteTask attempt as the cluster sees it now.
+// It is not durable and is not a record: when the attempt ends the durable
+// answer is the TaskAttempt record the Orker writes.
+type LiveAttempt struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// attempt is Temporal's attempt number for the pending activity
+	// (PendingActivityInfo.attempt). While STARTED it is the number the
+	// Orker's own record will carry; while SCHEDULED between retries it is the
+	// number of the attempt that is ABOUT to run.
+	Attempt int32            `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	State   LiveAttemptState `protobuf:"varint,3,opt,name=state,proto3,enum=orkstack.v1.LiveAttemptState" json:"state,omitempty"`
+	// attempt_scheduled_at is Temporal's scheduled_time for the pending
+	// attempt: for a retry, the instant the backoff ends. attempt_started_at
+	// is Temporal's last_started_time and is set only while STARTED or
+	// CANCEL_REQUESTED. Neither is an Orker clock.
+	AttemptScheduledAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=attempt_scheduled_at,json=attemptScheduledAt,proto3" json:"attempt_scheduled_at,omitempty"`
+	AttemptStartedAt   *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=attempt_started_at,json=attemptStartedAt,proto3" json:"attempt_started_at,omitempty"`
+	// next_attempt_at is set only while SCHEDULED between attempts: the
+	// previous attempt failed and Temporal will start the next one at this
+	// time (next_attempt_schedule_time). The previous attempt's error is in
+	// ListTaskAttempts, not here.
+	NextAttemptAt *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=next_attempt_at,json=nextAttemptAt,proto3" json:"next_attempt_at,omitempty"`
+	// timeout_seconds and cancellation_grace_period_seconds are the task's own
+	// bounds as dispatched (ExecuteTaskInput 15 and 16, read from the
+	// scheduling event). The Orker arms timeout_seconds when the container is
+	// started, AFTER staging and the image pull, so attempt_started_at +
+	// timeout_seconds is the EARLIEST the container can be killed, not the
+	// moment it will be. A client that prints a remaining time prints a lower
+	// bound and says so.
+	TimeoutSeconds                 int32 `protobuf:"varint,7,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	CancellationGracePeriodSeconds int32 `protobuf:"varint,8,opt,name=cancellation_grace_period_seconds,json=cancellationGracePeriodSeconds,proto3" json:"cancellation_grace_period_seconds,omitempty"`
+	// expires_at is Temporal's backstop for this attempt (expiration_time: the
+	// StartToClose deadline the engine computed at schedule, OCI contract
+	// §6.3). It is deliberately generous and is not the task's timeout.
+	ExpiresAt *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	// heartbeat_available is true ONLY when state is STARTED or
+	// CANCEL_REQUESTED, a heartbeat has arrived since attempt_started_at, and
+	// its detail decodes as the Orker's shape. Every field from
+	// last_heartbeat_at down is meaningless when it is false and MUST render
+	// as unavailable, never as zero or empty.
+	HeartbeatAvailable bool `protobuf:"varint,10,opt,name=heartbeat_available,json=heartbeatAvailable,proto3" json:"heartbeat_available,omitempty"`
+	// heartbeat_unavailable_reason is set exactly when heartbeat_available is
+	// false, and UNSPECIFIED when it is true.
+	HeartbeatUnavailableReason HeartbeatUnavailableReason `protobuf:"varint,11,opt,name=heartbeat_unavailable_reason,json=heartbeatUnavailableReason,proto3,enum=orkstack.v1.HeartbeatUnavailableReason" json:"heartbeat_unavailable_reason,omitempty"`
+	// last_heartbeat_at is the cluster's time of the last beat from this
+	// attempt (last_heartbeat_time).
+	LastHeartbeatAt *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=last_heartbeat_at,json=lastHeartbeatAt,proto3" json:"last_heartbeat_at,omitempty"`
+	// heartbeat_stale is computed_at - last_heartbeat_at > task.HeartbeatStaleAfter
+	// (two ceiling ticks, 20 s): a healthy Orker beats at least every
+	// task.MaxHeartbeatInterval, so an older beat means the Orker is gone,
+	// partitioned, or cannot reach the frontend. Temporal has not yet acted:
+	// it times the attempt out at heartbeat_deadline_at, after which the
+	// attempt is retried or the task fails, and this attempt becomes an
+	// UNREPORTED row in ListTaskAttempts if the Orker never files a record.
+	HeartbeatStale bool `protobuf:"varint,13,opt,name=heartbeat_stale,json=heartbeatStale,proto3" json:"heartbeat_stale,omitempty"`
+	// heartbeat_deadline_at is last_heartbeat_at + the heartbeat timeout
+	// (task.HeartbeatTimeout, 30 s): the instant Temporal times this attempt
+	// out unless another beat arrives first. Computed here so no client needs
+	// to know the constant.
+	HeartbeatDeadlineAt *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=heartbeat_deadline_at,json=heartbeatDeadlineAt,proto3" json:"heartbeat_deadline_at,omitempty"`
+	// phase is the phase the attempt is in, in the Orker's own vocabulary:
+	// "start", "commit-check", "workspace", "stage-inputs", "image", "render",
+	// "create", "run", "exit", "validate", "commit", "timeout", "cancel". Not
+	// an enum, for the reason TaskAttempt.phase is a string.
+	Phase string `protobuf:"bytes,15,opt,name=phase,proto3" json:"phase,omitempty"`
+	// container_id is the runtime's id for the container, once one exists.
+	ContainerId string `protobuf:"bytes,16,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	// bytes_logged is every byte the workload has written to stdout AND
+	// stderr, counted before the per-stream retention cap drops any — so it
+	// keeps growing after retention stops. Zero with heartbeat_available true
+	// means the workload has written nothing.
+	BytesLogged int64 `protobuf:"varint,17,opt,name=bytes_logged,json=bytesLogged,proto3" json:"bytes_logged,omitempty"`
+	// orker_id is the Orker that sent the heartbeat, as it names itself
+	// (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id
+	// carry. Empty when the beat came from an Orker built before the detail
+	// carried it.
+	OrkerId       string `protobuf:"bytes,18,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LiveAttempt) Reset() {
+	*x = LiveAttempt{}
+	mi := &file_orkstack_v1_service_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LiveAttempt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LiveAttempt) ProtoMessage() {}
+
+func (x *LiveAttempt) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_service_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LiveAttempt.ProtoReflect.Descriptor instead.
+func (*LiveAttempt) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *LiveAttempt) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *LiveAttempt) GetAttempt() int32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *LiveAttempt) GetState() LiveAttemptState {
+	if x != nil {
+		return x.State
+	}
+	return LiveAttemptState_LIVE_ATTEMPT_STATE_UNSPECIFIED
+}
+
+func (x *LiveAttempt) GetAttemptScheduledAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AttemptScheduledAt
+	}
+	return nil
+}
+
+func (x *LiveAttempt) GetAttemptStartedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AttemptStartedAt
+	}
+	return nil
+}
+
+func (x *LiveAttempt) GetNextAttemptAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.NextAttemptAt
+	}
+	return nil
+}
+
+func (x *LiveAttempt) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+func (x *LiveAttempt) GetCancellationGracePeriodSeconds() int32 {
+	if x != nil {
+		return x.CancellationGracePeriodSeconds
+	}
+	return 0
+}
+
+func (x *LiveAttempt) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+func (x *LiveAttempt) GetHeartbeatAvailable() bool {
+	if x != nil {
+		return x.HeartbeatAvailable
+	}
+	return false
+}
+
+func (x *LiveAttempt) GetHeartbeatUnavailableReason() HeartbeatUnavailableReason {
+	if x != nil {
+		return x.HeartbeatUnavailableReason
+	}
+	return HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_UNSPECIFIED
+}
+
+func (x *LiveAttempt) GetLastHeartbeatAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastHeartbeatAt
+	}
+	return nil
+}
+
+func (x *LiveAttempt) GetHeartbeatStale() bool {
+	if x != nil {
+		return x.HeartbeatStale
+	}
+	return false
+}
+
+func (x *LiveAttempt) GetHeartbeatDeadlineAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.HeartbeatDeadlineAt
+	}
+	return nil
+}
+
+func (x *LiveAttempt) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *LiveAttempt) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *LiveAttempt) GetBytesLogged() int64 {
+	if x != nil {
+		return x.BytesLogged
+	}
+	return 0
+}
+
+func (x *LiveAttempt) GetOrkerId() string {
+	if x != nil {
+		return x.OrkerId
+	}
+	return ""
+}
+
+type InspectRunResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// run_status is the run's status as the read model reports it. A terminal
+	// status comes with no attempts.
+	RunStatus Status `protobuf:"varint,1,opt,name=run_status,json=runStatus,proto3,enum=orkstack.v1.Status" json:"run_status,omitempty"`
+	// attempts lists every pending ExecuteTask attempt of the run, in
+	// Run.task_runs order, one per task. Empty for a run with nothing pending:
+	// between two tasks, waiting on nothing, or finished.
+	Attempts []*LiveAttempt `protobuf:"bytes,2,rep,name=attempts,proto3" json:"attempts,omitempty"`
+	// computed_at is the engine's clock at the time of the answer; every age a
+	// client prints is measured against it, never against the browser's clock.
+	ComputedAt    *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=computed_at,json=computedAt,proto3" json:"computed_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InspectRunResponse) Reset() {
+	*x = InspectRunResponse{}
+	mi := &file_orkstack_v1_service_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InspectRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InspectRunResponse) ProtoMessage() {}
+
+func (x *InspectRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_service_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InspectRunResponse.ProtoReflect.Descriptor instead.
+func (*InspectRunResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *InspectRunResponse) GetRunStatus() Status {
+	if x != nil {
+		return x.RunStatus
+	}
+	return Status_STATUS_UNSPECIFIED
+}
+
+func (x *InspectRunResponse) GetAttempts() []*LiveAttempt {
+	if x != nil {
+		return x.Attempts
+	}
+	return nil
+}
+
+func (x *InspectRunResponse) GetComputedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ComputedAt
+	}
+	return nil
+}
+
 type CancelRunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
@@ -3216,7 +3711,7 @@ type CancelRunRequest struct {
 
 func (x *CancelRunRequest) Reset() {
 	*x = CancelRunRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[48]
+	mi := &file_orkstack_v1_service_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3228,7 +3723,7 @@ func (x *CancelRunRequest) String() string {
 func (*CancelRunRequest) ProtoMessage() {}
 
 func (x *CancelRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[48]
+	mi := &file_orkstack_v1_service_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3241,7 +3736,7 @@ func (x *CancelRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRunRequest.ProtoReflect.Descriptor instead.
 func (*CancelRunRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{48}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *CancelRunRequest) GetRunId() string {
@@ -3274,7 +3769,7 @@ type CancelRunResponse struct {
 
 func (x *CancelRunResponse) Reset() {
 	*x = CancelRunResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[49]
+	mi := &file_orkstack_v1_service_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3286,7 +3781,7 @@ func (x *CancelRunResponse) String() string {
 func (*CancelRunResponse) ProtoMessage() {}
 
 func (x *CancelRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[49]
+	mi := &file_orkstack_v1_service_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3299,7 +3794,7 @@ func (x *CancelRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRunResponse.ProtoReflect.Descriptor instead.
 func (*CancelRunResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{49}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *CancelRunResponse) GetRun() *Run {
@@ -3320,7 +3815,7 @@ type StreamEventsRequest struct {
 
 func (x *StreamEventsRequest) Reset() {
 	*x = StreamEventsRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[50]
+	mi := &file_orkstack_v1_service_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3332,7 +3827,7 @@ func (x *StreamEventsRequest) String() string {
 func (*StreamEventsRequest) ProtoMessage() {}
 
 func (x *StreamEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[50]
+	mi := &file_orkstack_v1_service_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3345,7 +3840,7 @@ func (x *StreamEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamEventsRequest.ProtoReflect.Descriptor instead.
 func (*StreamEventsRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{50}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *StreamEventsRequest) GetRunId() string {
@@ -3420,7 +3915,7 @@ type StreamTaskLogsRequest struct {
 
 func (x *StreamTaskLogsRequest) Reset() {
 	*x = StreamTaskLogsRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[51]
+	mi := &file_orkstack_v1_service_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3432,7 +3927,7 @@ func (x *StreamTaskLogsRequest) String() string {
 func (*StreamTaskLogsRequest) ProtoMessage() {}
 
 func (x *StreamTaskLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[51]
+	mi := &file_orkstack_v1_service_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3445,7 +3940,7 @@ func (x *StreamTaskLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamTaskLogsRequest.ProtoReflect.Descriptor instead.
 func (*StreamTaskLogsRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{51}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *StreamTaskLogsRequest) GetRunId() string {
@@ -3527,7 +4022,7 @@ type TaskLogChunk struct {
 
 func (x *TaskLogChunk) Reset() {
 	*x = TaskLogChunk{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[52]
+	mi := &file_orkstack_v1_service_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3539,7 +4034,7 @@ func (x *TaskLogChunk) String() string {
 func (*TaskLogChunk) ProtoMessage() {}
 
 func (x *TaskLogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[52]
+	mi := &file_orkstack_v1_service_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3552,7 +4047,7 @@ func (x *TaskLogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskLogChunk.ProtoReflect.Descriptor instead.
 func (*TaskLogChunk) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{52}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *TaskLogChunk) GetRunId() string {
@@ -3613,7 +4108,7 @@ type CreateNamespaceRequest struct {
 
 func (x *CreateNamespaceRequest) Reset() {
 	*x = CreateNamespaceRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[53]
+	mi := &file_orkstack_v1_service_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3625,7 +4120,7 @@ func (x *CreateNamespaceRequest) String() string {
 func (*CreateNamespaceRequest) ProtoMessage() {}
 
 func (x *CreateNamespaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[53]
+	mi := &file_orkstack_v1_service_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3638,7 +4133,7 @@ func (x *CreateNamespaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateNamespaceRequest.ProtoReflect.Descriptor instead.
 func (*CreateNamespaceRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{53}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *CreateNamespaceRequest) GetNamespace() *Namespace {
@@ -3660,7 +4155,7 @@ type CreateNamespaceResponse struct {
 
 func (x *CreateNamespaceResponse) Reset() {
 	*x = CreateNamespaceResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[54]
+	mi := &file_orkstack_v1_service_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3672,7 +4167,7 @@ func (x *CreateNamespaceResponse) String() string {
 func (*CreateNamespaceResponse) ProtoMessage() {}
 
 func (x *CreateNamespaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[54]
+	mi := &file_orkstack_v1_service_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3685,7 +4180,7 @@ func (x *CreateNamespaceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateNamespaceResponse.ProtoReflect.Descriptor instead.
 func (*CreateNamespaceResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{54}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *CreateNamespaceResponse) GetNamespace() *Namespace {
@@ -3711,7 +4206,7 @@ type GetNamespaceRequest struct {
 
 func (x *GetNamespaceRequest) Reset() {
 	*x = GetNamespaceRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[55]
+	mi := &file_orkstack_v1_service_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3723,7 +4218,7 @@ func (x *GetNamespaceRequest) String() string {
 func (*GetNamespaceRequest) ProtoMessage() {}
 
 func (x *GetNamespaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[55]
+	mi := &file_orkstack_v1_service_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3736,7 +4231,7 @@ func (x *GetNamespaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNamespaceRequest.ProtoReflect.Descriptor instead.
 func (*GetNamespaceRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{55}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *GetNamespaceRequest) GetName() string {
@@ -3755,7 +4250,7 @@ type GetNamespaceResponse struct {
 
 func (x *GetNamespaceResponse) Reset() {
 	*x = GetNamespaceResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[56]
+	mi := &file_orkstack_v1_service_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3767,7 +4262,7 @@ func (x *GetNamespaceResponse) String() string {
 func (*GetNamespaceResponse) ProtoMessage() {}
 
 func (x *GetNamespaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[56]
+	mi := &file_orkstack_v1_service_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3780,7 +4275,7 @@ func (x *GetNamespaceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNamespaceResponse.ProtoReflect.Descriptor instead.
 func (*GetNamespaceResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{56}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *GetNamespaceResponse) GetNamespace() *Namespace {
@@ -3798,7 +4293,7 @@ type ListNamespacesRequest struct {
 
 func (x *ListNamespacesRequest) Reset() {
 	*x = ListNamespacesRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[57]
+	mi := &file_orkstack_v1_service_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3810,7 +4305,7 @@ func (x *ListNamespacesRequest) String() string {
 func (*ListNamespacesRequest) ProtoMessage() {}
 
 func (x *ListNamespacesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[57]
+	mi := &file_orkstack_v1_service_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3823,7 +4318,7 @@ func (x *ListNamespacesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNamespacesRequest.ProtoReflect.Descriptor instead.
 func (*ListNamespacesRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{57}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{60}
 }
 
 type ListNamespacesResponse struct {
@@ -3835,7 +4330,7 @@ type ListNamespacesResponse struct {
 
 func (x *ListNamespacesResponse) Reset() {
 	*x = ListNamespacesResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[58]
+	mi := &file_orkstack_v1_service_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3847,7 +4342,7 @@ func (x *ListNamespacesResponse) String() string {
 func (*ListNamespacesResponse) ProtoMessage() {}
 
 func (x *ListNamespacesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[58]
+	mi := &file_orkstack_v1_service_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3860,7 +4355,7 @@ func (x *ListNamespacesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNamespacesResponse.ProtoReflect.Descriptor instead.
 func (*ListNamespacesResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{58}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *ListNamespacesResponse) GetNamespaces() []*Namespace {
@@ -3886,7 +4381,7 @@ type UpdateNamespaceRequest struct {
 
 func (x *UpdateNamespaceRequest) Reset() {
 	*x = UpdateNamespaceRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[59]
+	mi := &file_orkstack_v1_service_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3898,7 +4393,7 @@ func (x *UpdateNamespaceRequest) String() string {
 func (*UpdateNamespaceRequest) ProtoMessage() {}
 
 func (x *UpdateNamespaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[59]
+	mi := &file_orkstack_v1_service_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3911,7 +4406,7 @@ func (x *UpdateNamespaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNamespaceRequest.ProtoReflect.Descriptor instead.
 func (*UpdateNamespaceRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{59}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *UpdateNamespaceRequest) GetNamespace() *Namespace {
@@ -3930,7 +4425,7 @@ type UpdateNamespaceResponse struct {
 
 func (x *UpdateNamespaceResponse) Reset() {
 	*x = UpdateNamespaceResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[60]
+	mi := &file_orkstack_v1_service_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3942,7 +4437,7 @@ func (x *UpdateNamespaceResponse) String() string {
 func (*UpdateNamespaceResponse) ProtoMessage() {}
 
 func (x *UpdateNamespaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[60]
+	mi := &file_orkstack_v1_service_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3955,7 +4450,7 @@ func (x *UpdateNamespaceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNamespaceResponse.ProtoReflect.Descriptor instead.
 func (*UpdateNamespaceResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{60}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *UpdateNamespaceResponse) GetNamespace() *Namespace {
@@ -3974,7 +4469,7 @@ type DeleteNamespaceRequest struct {
 
 func (x *DeleteNamespaceRequest) Reset() {
 	*x = DeleteNamespaceRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[61]
+	mi := &file_orkstack_v1_service_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3986,7 +4481,7 @@ func (x *DeleteNamespaceRequest) String() string {
 func (*DeleteNamespaceRequest) ProtoMessage() {}
 
 func (x *DeleteNamespaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[61]
+	mi := &file_orkstack_v1_service_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3999,7 +4494,7 @@ func (x *DeleteNamespaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteNamespaceRequest.ProtoReflect.Descriptor instead.
 func (*DeleteNamespaceRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{61}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *DeleteNamespaceRequest) GetName() string {
@@ -4017,7 +4512,7 @@ type DeleteNamespaceResponse struct {
 
 func (x *DeleteNamespaceResponse) Reset() {
 	*x = DeleteNamespaceResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[62]
+	mi := &file_orkstack_v1_service_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4029,7 +4524,7 @@ func (x *DeleteNamespaceResponse) String() string {
 func (*DeleteNamespaceResponse) ProtoMessage() {}
 
 func (x *DeleteNamespaceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[62]
+	mi := &file_orkstack_v1_service_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4042,7 +4537,7 @@ func (x *DeleteNamespaceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteNamespaceResponse.ProtoReflect.Descriptor instead.
 func (*DeleteNamespaceResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{62}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{65}
 }
 
 type ListPoolsRequest struct {
@@ -4054,7 +4549,7 @@ type ListPoolsRequest struct {
 
 func (x *ListPoolsRequest) Reset() {
 	*x = ListPoolsRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[63]
+	mi := &file_orkstack_v1_service_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4066,7 +4561,7 @@ func (x *ListPoolsRequest) String() string {
 func (*ListPoolsRequest) ProtoMessage() {}
 
 func (x *ListPoolsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[63]
+	mi := &file_orkstack_v1_service_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4079,7 +4574,7 @@ func (x *ListPoolsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPoolsRequest.ProtoReflect.Descriptor instead.
 func (*ListPoolsRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{63}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *ListPoolsRequest) GetNamespace() string {
@@ -4099,7 +4594,7 @@ type ListPoolsResponse struct {
 
 func (x *ListPoolsResponse) Reset() {
 	*x = ListPoolsResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[64]
+	mi := &file_orkstack_v1_service_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4111,7 +4606,7 @@ func (x *ListPoolsResponse) String() string {
 func (*ListPoolsResponse) ProtoMessage() {}
 
 func (x *ListPoolsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[64]
+	mi := &file_orkstack_v1_service_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4124,7 +4619,7 @@ func (x *ListPoolsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPoolsResponse.ProtoReflect.Descriptor instead.
 func (*ListPoolsResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{64}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *ListPoolsResponse) GetPools() []*Pool {
@@ -4149,7 +4644,7 @@ type ListActivitiesRequest struct {
 
 func (x *ListActivitiesRequest) Reset() {
 	*x = ListActivitiesRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[65]
+	mi := &file_orkstack_v1_service_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4161,7 +4656,7 @@ func (x *ListActivitiesRequest) String() string {
 func (*ListActivitiesRequest) ProtoMessage() {}
 
 func (x *ListActivitiesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[65]
+	mi := &file_orkstack_v1_service_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4174,7 +4669,7 @@ func (x *ListActivitiesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListActivitiesRequest.ProtoReflect.Descriptor instead.
 func (*ListActivitiesRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{65}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{68}
 }
 
 // ActivityInfo is one catalog entry, resolved.
@@ -4196,7 +4691,7 @@ type ActivityInfo struct {
 
 func (x *ActivityInfo) Reset() {
 	*x = ActivityInfo{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[66]
+	mi := &file_orkstack_v1_service_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4208,7 +4703,7 @@ func (x *ActivityInfo) String() string {
 func (*ActivityInfo) ProtoMessage() {}
 
 func (x *ActivityInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[66]
+	mi := &file_orkstack_v1_service_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4221,7 +4716,7 @@ func (x *ActivityInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivityInfo.ProtoReflect.Descriptor instead.
 func (*ActivityInfo) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{66}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *ActivityInfo) GetName() string {
@@ -4278,7 +4773,7 @@ type ListActivitiesResponse struct {
 
 func (x *ListActivitiesResponse) Reset() {
 	*x = ListActivitiesResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[67]
+	mi := &file_orkstack_v1_service_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4290,7 +4785,7 @@ func (x *ListActivitiesResponse) String() string {
 func (*ListActivitiesResponse) ProtoMessage() {}
 
 func (x *ListActivitiesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[67]
+	mi := &file_orkstack_v1_service_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4303,7 +4798,7 @@ func (x *ListActivitiesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListActivitiesResponse.ProtoReflect.Descriptor instead.
 func (*ListActivitiesResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{67}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *ListActivitiesResponse) GetActivities() []*ActivityInfo {
@@ -4321,7 +4816,7 @@ type DescribeOrkerRequest struct {
 
 func (x *DescribeOrkerRequest) Reset() {
 	*x = DescribeOrkerRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[68]
+	mi := &file_orkstack_v1_service_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4333,7 +4828,7 @@ func (x *DescribeOrkerRequest) String() string {
 func (*DescribeOrkerRequest) ProtoMessage() {}
 
 func (x *DescribeOrkerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[68]
+	mi := &file_orkstack_v1_service_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4346,7 +4841,7 @@ func (x *DescribeOrkerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DescribeOrkerRequest.ProtoReflect.Descriptor instead.
 func (*DescribeOrkerRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{68}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{71}
 }
 
 type DescribeOrkerResponse struct {
@@ -4358,7 +4853,7 @@ type DescribeOrkerResponse struct {
 
 func (x *DescribeOrkerResponse) Reset() {
 	*x = DescribeOrkerResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[69]
+	mi := &file_orkstack_v1_service_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4370,7 +4865,7 @@ func (x *DescribeOrkerResponse) String() string {
 func (*DescribeOrkerResponse) ProtoMessage() {}
 
 func (x *DescribeOrkerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[69]
+	mi := &file_orkstack_v1_service_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4383,7 +4878,7 @@ func (x *DescribeOrkerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DescribeOrkerResponse.ProtoReflect.Descriptor instead.
 func (*DescribeOrkerResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{69}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *DescribeOrkerResponse) GetOrker() *DescribeOrkerResult {
@@ -4401,7 +4896,7 @@ type GetSystemInfoRequest struct {
 
 func (x *GetSystemInfoRequest) Reset() {
 	*x = GetSystemInfoRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[70]
+	mi := &file_orkstack_v1_service_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4413,7 +4908,7 @@ func (x *GetSystemInfoRequest) String() string {
 func (*GetSystemInfoRequest) ProtoMessage() {}
 
 func (x *GetSystemInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[70]
+	mi := &file_orkstack_v1_service_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4426,7 +4921,7 @@ func (x *GetSystemInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSystemInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetSystemInfoRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{70}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{73}
 }
 
 type GetSystemInfoResponse struct {
@@ -4472,7 +4967,7 @@ type GetSystemInfoResponse struct {
 
 func (x *GetSystemInfoResponse) Reset() {
 	*x = GetSystemInfoResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[71]
+	mi := &file_orkstack_v1_service_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4484,7 +4979,7 @@ func (x *GetSystemInfoResponse) String() string {
 func (*GetSystemInfoResponse) ProtoMessage() {}
 
 func (x *GetSystemInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[71]
+	mi := &file_orkstack_v1_service_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4497,7 +4992,7 @@ func (x *GetSystemInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSystemInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetSystemInfoResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{71}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *GetSystemInfoResponse) GetEngineVersion() string {
@@ -4571,7 +5066,7 @@ type GetRetentionPolicyRequest struct {
 
 func (x *GetRetentionPolicyRequest) Reset() {
 	*x = GetRetentionPolicyRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[72]
+	mi := &file_orkstack_v1_service_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4583,7 +5078,7 @@ func (x *GetRetentionPolicyRequest) String() string {
 func (*GetRetentionPolicyRequest) ProtoMessage() {}
 
 func (x *GetRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[72]
+	mi := &file_orkstack_v1_service_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4596,7 +5091,7 @@ func (x *GetRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRetentionPolicyRequest.ProtoReflect.Descriptor instead.
 func (*GetRetentionPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{72}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{75}
 }
 
 type GetRetentionPolicyResponse struct {
@@ -4614,7 +5109,7 @@ type GetRetentionPolicyResponse struct {
 
 func (x *GetRetentionPolicyResponse) Reset() {
 	*x = GetRetentionPolicyResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[73]
+	mi := &file_orkstack_v1_service_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4626,7 +5121,7 @@ func (x *GetRetentionPolicyResponse) String() string {
 func (*GetRetentionPolicyResponse) ProtoMessage() {}
 
 func (x *GetRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[73]
+	mi := &file_orkstack_v1_service_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4639,7 +5134,7 @@ func (x *GetRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRetentionPolicyResponse.ProtoReflect.Descriptor instead.
 func (*GetRetentionPolicyResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{73}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *GetRetentionPolicyResponse) GetPolicy() *RetentionPolicy {
@@ -4668,7 +5163,7 @@ type UpdateRetentionPolicyRequest struct {
 
 func (x *UpdateRetentionPolicyRequest) Reset() {
 	*x = UpdateRetentionPolicyRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[74]
+	mi := &file_orkstack_v1_service_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4680,7 +5175,7 @@ func (x *UpdateRetentionPolicyRequest) String() string {
 func (*UpdateRetentionPolicyRequest) ProtoMessage() {}
 
 func (x *UpdateRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[74]
+	mi := &file_orkstack_v1_service_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4693,7 +5188,7 @@ func (x *UpdateRetentionPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRetentionPolicyRequest.ProtoReflect.Descriptor instead.
 func (*UpdateRetentionPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{74}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *UpdateRetentionPolicyRequest) GetMaxRunRetention() *durationpb.Duration {
@@ -4713,7 +5208,7 @@ type UpdateRetentionPolicyResponse struct {
 
 func (x *UpdateRetentionPolicyResponse) Reset() {
 	*x = UpdateRetentionPolicyResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[75]
+	mi := &file_orkstack_v1_service_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4725,7 +5220,7 @@ func (x *UpdateRetentionPolicyResponse) String() string {
 func (*UpdateRetentionPolicyResponse) ProtoMessage() {}
 
 func (x *UpdateRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[75]
+	mi := &file_orkstack_v1_service_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4738,7 +5233,7 @@ func (x *UpdateRetentionPolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRetentionPolicyResponse.ProtoReflect.Descriptor instead.
 func (*UpdateRetentionPolicyResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{75}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *UpdateRetentionPolicyResponse) GetPolicy() *RetentionPolicy {
@@ -4763,7 +5258,7 @@ type ListTelemetrySinksRequest struct {
 
 func (x *ListTelemetrySinksRequest) Reset() {
 	*x = ListTelemetrySinksRequest{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[76]
+	mi := &file_orkstack_v1_service_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4775,7 +5270,7 @@ func (x *ListTelemetrySinksRequest) String() string {
 func (*ListTelemetrySinksRequest) ProtoMessage() {}
 
 func (x *ListTelemetrySinksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[76]
+	mi := &file_orkstack_v1_service_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4788,7 +5283,7 @@ func (x *ListTelemetrySinksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTelemetrySinksRequest.ProtoReflect.Descriptor instead.
 func (*ListTelemetrySinksRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{76}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{79}
 }
 
 type ListTelemetrySinksResponse struct {
@@ -4804,7 +5299,7 @@ type ListTelemetrySinksResponse struct {
 
 func (x *ListTelemetrySinksResponse) Reset() {
 	*x = ListTelemetrySinksResponse{}
-	mi := &file_orkstack_v1_service_proto_msgTypes[77]
+	mi := &file_orkstack_v1_service_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4816,7 +5311,7 @@ func (x *ListTelemetrySinksResponse) String() string {
 func (*ListTelemetrySinksResponse) ProtoMessage() {}
 
 func (x *ListTelemetrySinksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_service_proto_msgTypes[77]
+	mi := &file_orkstack_v1_service_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4829,7 +5324,7 @@ func (x *ListTelemetrySinksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTelemetrySinksResponse.ProtoReflect.Descriptor instead.
 func (*ListTelemetrySinksResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{77}
+	return file_orkstack_v1_service_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *ListTelemetrySinksResponse) GetNames() []string {
@@ -5051,6 +5546,37 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"references\x123\n" +
 	"\x15references_unreadable\x18\x06 \x01(\x03R\x14referencesUnreadable\x12;\n" +
 	"\vcomputed_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"computedAt\"a\n" +
+	"\x11InspectRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1c\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x17\n" +
+	"\atask_id\x18\x03 \x01(\tR\x06taskId\"\xd4\a\n" +
+	"\vLiveAttempt\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
+	"\aattempt\x18\x02 \x01(\x05R\aattempt\x123\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x1d.orkstack.v1.LiveAttemptStateR\x05state\x12L\n" +
+	"\x14attempt_scheduled_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x12attemptScheduledAt\x12H\n" +
+	"\x12attempt_started_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x10attemptStartedAt\x12B\n" +
+	"\x0fnext_attempt_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\rnextAttemptAt\x12'\n" +
+	"\x0ftimeout_seconds\x18\a \x01(\x05R\x0etimeoutSeconds\x12I\n" +
+	"!cancellation_grace_period_seconds\x18\b \x01(\x05R\x1ecancellationGracePeriodSeconds\x129\n" +
+	"\n" +
+	"expires_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12/\n" +
+	"\x13heartbeat_available\x18\n" +
+	" \x01(\bR\x12heartbeatAvailable\x12i\n" +
+	"\x1cheartbeat_unavailable_reason\x18\v \x01(\x0e2'.orkstack.v1.HeartbeatUnavailableReasonR\x1aheartbeatUnavailableReason\x12F\n" +
+	"\x11last_heartbeat_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\x0flastHeartbeatAt\x12'\n" +
+	"\x0fheartbeat_stale\x18\r \x01(\bR\x0eheartbeatStale\x12N\n" +
+	"\x15heartbeat_deadline_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\x13heartbeatDeadlineAt\x12\x14\n" +
+	"\x05phase\x18\x0f \x01(\tR\x05phase\x12!\n" +
+	"\fcontainer_id\x18\x10 \x01(\tR\vcontainerId\x12!\n" +
+	"\fbytes_logged\x18\x11 \x01(\x03R\vbytesLogged\x12\x19\n" +
+	"\borker_id\x18\x12 \x01(\tR\aorkerId\"\xbb\x01\n" +
+	"\x12InspectRunResponse\x122\n" +
+	"\n" +
+	"run_status\x18\x01 \x01(\x0e2\x13.orkstack.v1.StatusR\trunStatus\x124\n" +
+	"\battempts\x18\x02 \x03(\v2\x18.orkstack.v1.LiveAttemptR\battempts\x12;\n" +
+	"\vcomputed_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"computedAt\"_\n" +
 	"\x10CancelRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
@@ -5160,7 +5686,17 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x1bREFERENCE_STATE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14REFERENCE_STATE_HELD\x10\x01\x12\x1c\n" +
 	"\x18REFERENCE_STATE_RELEASED\x10\x02\x12\x1a\n" +
-	"\x16REFERENCE_STATE_ABSENT\x10\x032\x8c\x06\n" +
+	"\x16REFERENCE_STATE_ABSENT\x10\x03*\xa1\x01\n" +
+	"\x10LiveAttemptState\x12\"\n" +
+	"\x1eLIVE_ATTEMPT_STATE_UNSPECIFIED\x10\x00\x12 \n" +
+	"\x1cLIVE_ATTEMPT_STATE_SCHEDULED\x10\x01\x12\x1e\n" +
+	"\x1aLIVE_ATTEMPT_STATE_STARTED\x10\x02\x12'\n" +
+	"#LIVE_ATTEMPT_STATE_CANCEL_REQUESTED\x10\x03*\xd9\x01\n" +
+	"\x1aHeartbeatUnavailableReason\x12,\n" +
+	"(HEARTBEAT_UNAVAILABLE_REASON_UNSPECIFIED\x10\x00\x12,\n" +
+	"(HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED\x10\x01\x121\n" +
+	"-HEARTBEAT_UNAVAILABLE_REASON_NO_HEARTBEAT_YET\x10\x02\x12,\n" +
+	"(HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE\x10\x032\x8c\x06\n" +
 	"\x0eOrkflowService\x12\\\n" +
 	"\x0fValidateOrkflow\x12#.orkstack.v1.ValidateOrkflowRequest\x1a$.orkstack.v1.ValidateOrkflowResponse\x12S\n" +
 	"\fApplyOrkflow\x12 .orkstack.v1.ApplyOrkflowRequest\x1a!.orkstack.v1.ApplyOrkflowResponse\x12M\n" +
@@ -5170,7 +5706,7 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x13ListOrkflowVersions\x12'.orkstack.v1.ListOrkflowVersionsRequest\x1a(.orkstack.v1.ListOrkflowVersionsResponse\x12w\n" +
 	"\x18SetCurrentOrkflowVersion\x12,.orkstack.v1.SetCurrentOrkflowVersionRequest\x1a-.orkstack.v1.SetCurrentOrkflowVersionResponse\x12h\n" +
 	"\x13DiffOrkflowVersions\x12'.orkstack.v1.DiffOrkflowVersionsRequest\x1a(.orkstack.v1.DiffOrkflowVersionsResponse\x12V\n" +
-	"\rDeleteOrkflow\x12!.orkstack.v1.DeleteOrkflowRequest\x1a\".orkstack.v1.DeleteOrkflowResponse2\xcd\x06\n" +
+	"\rDeleteOrkflow\x12!.orkstack.v1.DeleteOrkflowRequest\x1a\".orkstack.v1.DeleteOrkflowResponse2\x9c\a\n" +
 	"\n" +
 	"RunService\x12J\n" +
 	"\tSubmitRun\x12\x1d.orkstack.v1.SubmitRunRequest\x1a\x1e.orkstack.v1.SubmitRunResponse\x12A\n" +
@@ -5182,7 +5718,9 @@ const file_orkstack_v1_service_proto_rawDesc = "" +
 	"\x10ListRunArtifacts\x12$.orkstack.v1.ListRunArtifactsRequest\x1a%.orkstack.v1.ListRunArtifactsResponse\x12N\n" +
 	"\fReadArtifact\x12 .orkstack.v1.ReadArtifactRequest\x1a\x1a.orkstack.v1.ArtifactChunk0\x01\x12_\n" +
 	"\x10ListTaskAttempts\x12$.orkstack.v1.ListTaskAttemptsRequest\x1a%.orkstack.v1.ListTaskAttemptsResponse\x12n\n" +
-	"\x15GetArtifactProvenance\x12).orkstack.v1.GetArtifactProvenanceRequest\x1a*.orkstack.v1.GetArtifactProvenanceResponse2\x9b\x02\n" +
+	"\x15GetArtifactProvenance\x12).orkstack.v1.GetArtifactProvenanceRequest\x1a*.orkstack.v1.GetArtifactProvenanceResponse\x12M\n" +
+	"\n" +
+	"InspectRun\x12\x1e.orkstack.v1.InspectRunRequest\x1a\x1f.orkstack.v1.InspectRunResponse2\x9b\x02\n" +
 	"\x0eWebhookService\x12\\\n" +
 	"\x0fRegisterWebhook\x12#.orkstack.v1.RegisterWebhookRequest\x1a$.orkstack.v1.RegisterWebhookResponse\x12S\n" +
 	"\fListWebhooks\x12 .orkstack.v1.ListWebhooksRequest\x1a!.orkstack.v1.ListWebhooksResponse\x12V\n" +
@@ -5220,238 +5758,256 @@ func file_orkstack_v1_service_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_service_proto_rawDescData
 }
 
-var file_orkstack_v1_service_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_orkstack_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 78)
+var file_orkstack_v1_service_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_orkstack_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 81)
 var file_orkstack_v1_service_proto_goTypes = []any{
 	(ValidationSeverity)(0),                  // 0: orkstack.v1.ValidationSeverity
 	(ArtifactKind)(0),                        // 1: orkstack.v1.ArtifactKind
 	(ReferenceState)(0),                      // 2: orkstack.v1.ReferenceState
-	(*ApplyOrkflowRequest)(nil),              // 3: orkstack.v1.ApplyOrkflowRequest
-	(*ValidationIssue)(nil),                  // 4: orkstack.v1.ValidationIssue
-	(*ValidateOrkflowRequest)(nil),           // 5: orkstack.v1.ValidateOrkflowRequest
-	(*ValidateOrkflowResponse)(nil),          // 6: orkstack.v1.ValidateOrkflowResponse
-	(*ApplyOrkflowResponse)(nil),             // 7: orkstack.v1.ApplyOrkflowResponse
-	(*GetOrkflowRequest)(nil),                // 8: orkstack.v1.GetOrkflowRequest
-	(*GetOrkflowResponse)(nil),               // 9: orkstack.v1.GetOrkflowResponse
-	(*ListOrkflowsRequest)(nil),              // 10: orkstack.v1.ListOrkflowsRequest
-	(*ListOrkflowsResponse)(nil),             // 11: orkstack.v1.ListOrkflowsResponse
-	(*OrkflowVersion)(nil),                   // 12: orkstack.v1.OrkflowVersion
-	(*ListOrkflowVersionsRequest)(nil),       // 13: orkstack.v1.ListOrkflowVersionsRequest
-	(*ListOrkflowVersionsResponse)(nil),      // 14: orkstack.v1.ListOrkflowVersionsResponse
-	(*SetCurrentOrkflowVersionRequest)(nil),  // 15: orkstack.v1.SetCurrentOrkflowVersionRequest
-	(*SetCurrentOrkflowVersionResponse)(nil), // 16: orkstack.v1.SetCurrentOrkflowVersionResponse
-	(*DiffOrkflowVersionsRequest)(nil),       // 17: orkstack.v1.DiffOrkflowVersionsRequest
-	(*DiffOrkflowVersionsResponse)(nil),      // 18: orkstack.v1.DiffOrkflowVersionsResponse
-	(*DeleteOrkflowRequest)(nil),             // 19: orkstack.v1.DeleteOrkflowRequest
-	(*DeleteOrkflowResponse)(nil),            // 20: orkstack.v1.DeleteOrkflowResponse
-	(*Webhook)(nil),                          // 21: orkstack.v1.Webhook
-	(*RegisterWebhookRequest)(nil),           // 22: orkstack.v1.RegisterWebhookRequest
-	(*RegisterWebhookResponse)(nil),          // 23: orkstack.v1.RegisterWebhookResponse
-	(*ListWebhooksRequest)(nil),              // 24: orkstack.v1.ListWebhooksRequest
-	(*ListWebhooksResponse)(nil),             // 25: orkstack.v1.ListWebhooksResponse
-	(*DeleteWebhookRequest)(nil),             // 26: orkstack.v1.DeleteWebhookRequest
-	(*DeleteWebhookResponse)(nil),            // 27: orkstack.v1.DeleteWebhookResponse
-	(*Trigger)(nil),                          // 28: orkstack.v1.Trigger
-	(*CreateTriggerRequest)(nil),             // 29: orkstack.v1.CreateTriggerRequest
-	(*CreateTriggerResponse)(nil),            // 30: orkstack.v1.CreateTriggerResponse
-	(*ListTriggersRequest)(nil),              // 31: orkstack.v1.ListTriggersRequest
-	(*ListTriggersResponse)(nil),             // 32: orkstack.v1.ListTriggersResponse
-	(*DeleteTriggerRequest)(nil),             // 33: orkstack.v1.DeleteTriggerRequest
-	(*DeleteTriggerResponse)(nil),            // 34: orkstack.v1.DeleteTriggerResponse
-	(*SubmitRunRequest)(nil),                 // 35: orkstack.v1.SubmitRunRequest
-	(*SubmitRunResponse)(nil),                // 36: orkstack.v1.SubmitRunResponse
-	(*GetRunRequest)(nil),                    // 37: orkstack.v1.GetRunRequest
-	(*GetRunResponse)(nil),                   // 38: orkstack.v1.GetRunResponse
-	(*ListRunsRequest)(nil),                  // 39: orkstack.v1.ListRunsRequest
-	(*ListRunsResponse)(nil),                 // 40: orkstack.v1.ListRunsResponse
-	(*RunArtifact)(nil),                      // 41: orkstack.v1.RunArtifact
-	(*ListRunArtifactsRequest)(nil),          // 42: orkstack.v1.ListRunArtifactsRequest
-	(*ListRunArtifactsResponse)(nil),         // 43: orkstack.v1.ListRunArtifactsResponse
-	(*ReadArtifactRequest)(nil),              // 44: orkstack.v1.ReadArtifactRequest
-	(*ArtifactChunk)(nil),                    // 45: orkstack.v1.ArtifactChunk
-	(*ListTaskAttemptsRequest)(nil),          // 46: orkstack.v1.ListTaskAttemptsRequest
-	(*ListTaskAttemptsResponse)(nil),         // 47: orkstack.v1.ListTaskAttemptsResponse
-	(*GetArtifactProvenanceRequest)(nil),     // 48: orkstack.v1.GetArtifactProvenanceRequest
-	(*ArtifactReference)(nil),                // 49: orkstack.v1.ArtifactReference
-	(*GetArtifactProvenanceResponse)(nil),    // 50: orkstack.v1.GetArtifactProvenanceResponse
-	(*CancelRunRequest)(nil),                 // 51: orkstack.v1.CancelRunRequest
-	(*CancelRunResponse)(nil),                // 52: orkstack.v1.CancelRunResponse
-	(*StreamEventsRequest)(nil),              // 53: orkstack.v1.StreamEventsRequest
-	(*StreamTaskLogsRequest)(nil),            // 54: orkstack.v1.StreamTaskLogsRequest
-	(*TaskLogChunk)(nil),                     // 55: orkstack.v1.TaskLogChunk
-	(*CreateNamespaceRequest)(nil),           // 56: orkstack.v1.CreateNamespaceRequest
-	(*CreateNamespaceResponse)(nil),          // 57: orkstack.v1.CreateNamespaceResponse
-	(*GetNamespaceRequest)(nil),              // 58: orkstack.v1.GetNamespaceRequest
-	(*GetNamespaceResponse)(nil),             // 59: orkstack.v1.GetNamespaceResponse
-	(*ListNamespacesRequest)(nil),            // 60: orkstack.v1.ListNamespacesRequest
-	(*ListNamespacesResponse)(nil),           // 61: orkstack.v1.ListNamespacesResponse
-	(*UpdateNamespaceRequest)(nil),           // 62: orkstack.v1.UpdateNamespaceRequest
-	(*UpdateNamespaceResponse)(nil),          // 63: orkstack.v1.UpdateNamespaceResponse
-	(*DeleteNamespaceRequest)(nil),           // 64: orkstack.v1.DeleteNamespaceRequest
-	(*DeleteNamespaceResponse)(nil),          // 65: orkstack.v1.DeleteNamespaceResponse
-	(*ListPoolsRequest)(nil),                 // 66: orkstack.v1.ListPoolsRequest
-	(*ListPoolsResponse)(nil),                // 67: orkstack.v1.ListPoolsResponse
-	(*ListActivitiesRequest)(nil),            // 68: orkstack.v1.ListActivitiesRequest
-	(*ActivityInfo)(nil),                     // 69: orkstack.v1.ActivityInfo
-	(*ListActivitiesResponse)(nil),           // 70: orkstack.v1.ListActivitiesResponse
-	(*DescribeOrkerRequest)(nil),             // 71: orkstack.v1.DescribeOrkerRequest
-	(*DescribeOrkerResponse)(nil),            // 72: orkstack.v1.DescribeOrkerResponse
-	(*GetSystemInfoRequest)(nil),             // 73: orkstack.v1.GetSystemInfoRequest
-	(*GetSystemInfoResponse)(nil),            // 74: orkstack.v1.GetSystemInfoResponse
-	(*GetRetentionPolicyRequest)(nil),        // 75: orkstack.v1.GetRetentionPolicyRequest
-	(*GetRetentionPolicyResponse)(nil),       // 76: orkstack.v1.GetRetentionPolicyResponse
-	(*UpdateRetentionPolicyRequest)(nil),     // 77: orkstack.v1.UpdateRetentionPolicyRequest
-	(*UpdateRetentionPolicyResponse)(nil),    // 78: orkstack.v1.UpdateRetentionPolicyResponse
-	(*ListTelemetrySinksRequest)(nil),        // 79: orkstack.v1.ListTelemetrySinksRequest
-	(*ListTelemetrySinksResponse)(nil),       // 80: orkstack.v1.ListTelemetrySinksResponse
-	(*Orkflow)(nil),                          // 81: orkstack.v1.Orkflow
-	(*timestamppb.Timestamp)(nil),            // 82: google.protobuf.Timestamp
-	(EventType)(0),                           // 83: orkstack.v1.EventType
-	(*Payload)(nil),                          // 84: orkstack.v1.Payload
-	(*Run)(nil),                              // 85: orkstack.v1.Run
-	(Status)(0),                              // 86: orkstack.v1.Status
-	(*ArtifactRef)(nil),                      // 87: orkstack.v1.ArtifactRef
-	(*TaskAttempt)(nil),                      // 88: orkstack.v1.TaskAttempt
-	(*Namespace)(nil),                        // 89: orkstack.v1.Namespace
-	(*Pool)(nil),                             // 90: orkstack.v1.Pool
-	(*DescribeOrkerResult)(nil),              // 91: orkstack.v1.DescribeOrkerResult
-	(*RetentionPolicy)(nil),                  // 92: orkstack.v1.RetentionPolicy
-	(*durationpb.Duration)(nil),              // 93: google.protobuf.Duration
-	(*Event)(nil),                            // 94: orkstack.v1.Event
+	(LiveAttemptState)(0),                    // 3: orkstack.v1.LiveAttemptState
+	(HeartbeatUnavailableReason)(0),          // 4: orkstack.v1.HeartbeatUnavailableReason
+	(*ApplyOrkflowRequest)(nil),              // 5: orkstack.v1.ApplyOrkflowRequest
+	(*ValidationIssue)(nil),                  // 6: orkstack.v1.ValidationIssue
+	(*ValidateOrkflowRequest)(nil),           // 7: orkstack.v1.ValidateOrkflowRequest
+	(*ValidateOrkflowResponse)(nil),          // 8: orkstack.v1.ValidateOrkflowResponse
+	(*ApplyOrkflowResponse)(nil),             // 9: orkstack.v1.ApplyOrkflowResponse
+	(*GetOrkflowRequest)(nil),                // 10: orkstack.v1.GetOrkflowRequest
+	(*GetOrkflowResponse)(nil),               // 11: orkstack.v1.GetOrkflowResponse
+	(*ListOrkflowsRequest)(nil),              // 12: orkstack.v1.ListOrkflowsRequest
+	(*ListOrkflowsResponse)(nil),             // 13: orkstack.v1.ListOrkflowsResponse
+	(*OrkflowVersion)(nil),                   // 14: orkstack.v1.OrkflowVersion
+	(*ListOrkflowVersionsRequest)(nil),       // 15: orkstack.v1.ListOrkflowVersionsRequest
+	(*ListOrkflowVersionsResponse)(nil),      // 16: orkstack.v1.ListOrkflowVersionsResponse
+	(*SetCurrentOrkflowVersionRequest)(nil),  // 17: orkstack.v1.SetCurrentOrkflowVersionRequest
+	(*SetCurrentOrkflowVersionResponse)(nil), // 18: orkstack.v1.SetCurrentOrkflowVersionResponse
+	(*DiffOrkflowVersionsRequest)(nil),       // 19: orkstack.v1.DiffOrkflowVersionsRequest
+	(*DiffOrkflowVersionsResponse)(nil),      // 20: orkstack.v1.DiffOrkflowVersionsResponse
+	(*DeleteOrkflowRequest)(nil),             // 21: orkstack.v1.DeleteOrkflowRequest
+	(*DeleteOrkflowResponse)(nil),            // 22: orkstack.v1.DeleteOrkflowResponse
+	(*Webhook)(nil),                          // 23: orkstack.v1.Webhook
+	(*RegisterWebhookRequest)(nil),           // 24: orkstack.v1.RegisterWebhookRequest
+	(*RegisterWebhookResponse)(nil),          // 25: orkstack.v1.RegisterWebhookResponse
+	(*ListWebhooksRequest)(nil),              // 26: orkstack.v1.ListWebhooksRequest
+	(*ListWebhooksResponse)(nil),             // 27: orkstack.v1.ListWebhooksResponse
+	(*DeleteWebhookRequest)(nil),             // 28: orkstack.v1.DeleteWebhookRequest
+	(*DeleteWebhookResponse)(nil),            // 29: orkstack.v1.DeleteWebhookResponse
+	(*Trigger)(nil),                          // 30: orkstack.v1.Trigger
+	(*CreateTriggerRequest)(nil),             // 31: orkstack.v1.CreateTriggerRequest
+	(*CreateTriggerResponse)(nil),            // 32: orkstack.v1.CreateTriggerResponse
+	(*ListTriggersRequest)(nil),              // 33: orkstack.v1.ListTriggersRequest
+	(*ListTriggersResponse)(nil),             // 34: orkstack.v1.ListTriggersResponse
+	(*DeleteTriggerRequest)(nil),             // 35: orkstack.v1.DeleteTriggerRequest
+	(*DeleteTriggerResponse)(nil),            // 36: orkstack.v1.DeleteTriggerResponse
+	(*SubmitRunRequest)(nil),                 // 37: orkstack.v1.SubmitRunRequest
+	(*SubmitRunResponse)(nil),                // 38: orkstack.v1.SubmitRunResponse
+	(*GetRunRequest)(nil),                    // 39: orkstack.v1.GetRunRequest
+	(*GetRunResponse)(nil),                   // 40: orkstack.v1.GetRunResponse
+	(*ListRunsRequest)(nil),                  // 41: orkstack.v1.ListRunsRequest
+	(*ListRunsResponse)(nil),                 // 42: orkstack.v1.ListRunsResponse
+	(*RunArtifact)(nil),                      // 43: orkstack.v1.RunArtifact
+	(*ListRunArtifactsRequest)(nil),          // 44: orkstack.v1.ListRunArtifactsRequest
+	(*ListRunArtifactsResponse)(nil),         // 45: orkstack.v1.ListRunArtifactsResponse
+	(*ReadArtifactRequest)(nil),              // 46: orkstack.v1.ReadArtifactRequest
+	(*ArtifactChunk)(nil),                    // 47: orkstack.v1.ArtifactChunk
+	(*ListTaskAttemptsRequest)(nil),          // 48: orkstack.v1.ListTaskAttemptsRequest
+	(*ListTaskAttemptsResponse)(nil),         // 49: orkstack.v1.ListTaskAttemptsResponse
+	(*GetArtifactProvenanceRequest)(nil),     // 50: orkstack.v1.GetArtifactProvenanceRequest
+	(*ArtifactReference)(nil),                // 51: orkstack.v1.ArtifactReference
+	(*GetArtifactProvenanceResponse)(nil),    // 52: orkstack.v1.GetArtifactProvenanceResponse
+	(*InspectRunRequest)(nil),                // 53: orkstack.v1.InspectRunRequest
+	(*LiveAttempt)(nil),                      // 54: orkstack.v1.LiveAttempt
+	(*InspectRunResponse)(nil),               // 55: orkstack.v1.InspectRunResponse
+	(*CancelRunRequest)(nil),                 // 56: orkstack.v1.CancelRunRequest
+	(*CancelRunResponse)(nil),                // 57: orkstack.v1.CancelRunResponse
+	(*StreamEventsRequest)(nil),              // 58: orkstack.v1.StreamEventsRequest
+	(*StreamTaskLogsRequest)(nil),            // 59: orkstack.v1.StreamTaskLogsRequest
+	(*TaskLogChunk)(nil),                     // 60: orkstack.v1.TaskLogChunk
+	(*CreateNamespaceRequest)(nil),           // 61: orkstack.v1.CreateNamespaceRequest
+	(*CreateNamespaceResponse)(nil),          // 62: orkstack.v1.CreateNamespaceResponse
+	(*GetNamespaceRequest)(nil),              // 63: orkstack.v1.GetNamespaceRequest
+	(*GetNamespaceResponse)(nil),             // 64: orkstack.v1.GetNamespaceResponse
+	(*ListNamespacesRequest)(nil),            // 65: orkstack.v1.ListNamespacesRequest
+	(*ListNamespacesResponse)(nil),           // 66: orkstack.v1.ListNamespacesResponse
+	(*UpdateNamespaceRequest)(nil),           // 67: orkstack.v1.UpdateNamespaceRequest
+	(*UpdateNamespaceResponse)(nil),          // 68: orkstack.v1.UpdateNamespaceResponse
+	(*DeleteNamespaceRequest)(nil),           // 69: orkstack.v1.DeleteNamespaceRequest
+	(*DeleteNamespaceResponse)(nil),          // 70: orkstack.v1.DeleteNamespaceResponse
+	(*ListPoolsRequest)(nil),                 // 71: orkstack.v1.ListPoolsRequest
+	(*ListPoolsResponse)(nil),                // 72: orkstack.v1.ListPoolsResponse
+	(*ListActivitiesRequest)(nil),            // 73: orkstack.v1.ListActivitiesRequest
+	(*ActivityInfo)(nil),                     // 74: orkstack.v1.ActivityInfo
+	(*ListActivitiesResponse)(nil),           // 75: orkstack.v1.ListActivitiesResponse
+	(*DescribeOrkerRequest)(nil),             // 76: orkstack.v1.DescribeOrkerRequest
+	(*DescribeOrkerResponse)(nil),            // 77: orkstack.v1.DescribeOrkerResponse
+	(*GetSystemInfoRequest)(nil),             // 78: orkstack.v1.GetSystemInfoRequest
+	(*GetSystemInfoResponse)(nil),            // 79: orkstack.v1.GetSystemInfoResponse
+	(*GetRetentionPolicyRequest)(nil),        // 80: orkstack.v1.GetRetentionPolicyRequest
+	(*GetRetentionPolicyResponse)(nil),       // 81: orkstack.v1.GetRetentionPolicyResponse
+	(*UpdateRetentionPolicyRequest)(nil),     // 82: orkstack.v1.UpdateRetentionPolicyRequest
+	(*UpdateRetentionPolicyResponse)(nil),    // 83: orkstack.v1.UpdateRetentionPolicyResponse
+	(*ListTelemetrySinksRequest)(nil),        // 84: orkstack.v1.ListTelemetrySinksRequest
+	(*ListTelemetrySinksResponse)(nil),       // 85: orkstack.v1.ListTelemetrySinksResponse
+	(*Orkflow)(nil),                          // 86: orkstack.v1.Orkflow
+	(*timestamppb.Timestamp)(nil),            // 87: google.protobuf.Timestamp
+	(EventType)(0),                           // 88: orkstack.v1.EventType
+	(*Payload)(nil),                          // 89: orkstack.v1.Payload
+	(*Run)(nil),                              // 90: orkstack.v1.Run
+	(Status)(0),                              // 91: orkstack.v1.Status
+	(*ArtifactRef)(nil),                      // 92: orkstack.v1.ArtifactRef
+	(*TaskAttempt)(nil),                      // 93: orkstack.v1.TaskAttempt
+	(*Namespace)(nil),                        // 94: orkstack.v1.Namespace
+	(*Pool)(nil),                             // 95: orkstack.v1.Pool
+	(*DescribeOrkerResult)(nil),              // 96: orkstack.v1.DescribeOrkerResult
+	(*RetentionPolicy)(nil),                  // 97: orkstack.v1.RetentionPolicy
+	(*durationpb.Duration)(nil),              // 98: google.protobuf.Duration
+	(*Event)(nil),                            // 99: orkstack.v1.Event
 }
 var file_orkstack_v1_service_proto_depIdxs = []int32{
-	0,  // 0: orkstack.v1.ValidationIssue.severity:type_name -> orkstack.v1.ValidationSeverity
-	81, // 1: orkstack.v1.ValidateOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
-	4,  // 2: orkstack.v1.ValidateOrkflowResponse.issues:type_name -> orkstack.v1.ValidationIssue
-	81, // 3: orkstack.v1.ApplyOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
-	81, // 4: orkstack.v1.GetOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
-	81, // 5: orkstack.v1.ListOrkflowsResponse.orkflows:type_name -> orkstack.v1.Orkflow
-	82, // 6: orkstack.v1.OrkflowVersion.applied_at:type_name -> google.protobuf.Timestamp
-	12, // 7: orkstack.v1.ListOrkflowVersionsResponse.versions:type_name -> orkstack.v1.OrkflowVersion
-	82, // 8: orkstack.v1.SetCurrentOrkflowVersionResponse.updated_at:type_name -> google.protobuf.Timestamp
-	82, // 9: orkstack.v1.DeleteOrkflowResponse.deleted_at:type_name -> google.protobuf.Timestamp
-	83, // 10: orkstack.v1.Webhook.events:type_name -> orkstack.v1.EventType
-	82, // 11: orkstack.v1.Webhook.created_at:type_name -> google.protobuf.Timestamp
-	83, // 12: orkstack.v1.RegisterWebhookRequest.events:type_name -> orkstack.v1.EventType
-	21, // 13: orkstack.v1.RegisterWebhookResponse.webhook:type_name -> orkstack.v1.Webhook
-	21, // 14: orkstack.v1.ListWebhooksResponse.webhooks:type_name -> orkstack.v1.Webhook
-	82, // 15: orkstack.v1.Trigger.created_at:type_name -> google.protobuf.Timestamp
-	28, // 16: orkstack.v1.CreateTriggerResponse.trigger:type_name -> orkstack.v1.Trigger
-	28, // 17: orkstack.v1.ListTriggersResponse.triggers:type_name -> orkstack.v1.Trigger
-	84, // 18: orkstack.v1.SubmitRunRequest.input:type_name -> orkstack.v1.Payload
-	85, // 19: orkstack.v1.SubmitRunResponse.run:type_name -> orkstack.v1.Run
-	85, // 20: orkstack.v1.GetRunResponse.run:type_name -> orkstack.v1.Run
-	86, // 21: orkstack.v1.ListRunsRequest.status:type_name -> orkstack.v1.Status
-	82, // 22: orkstack.v1.ListRunsRequest.created_after:type_name -> google.protobuf.Timestamp
-	82, // 23: orkstack.v1.ListRunsRequest.created_before:type_name -> google.protobuf.Timestamp
-	85, // 24: orkstack.v1.ListRunsResponse.runs:type_name -> orkstack.v1.Run
-	1,  // 25: orkstack.v1.RunArtifact.kind:type_name -> orkstack.v1.ArtifactKind
-	87, // 26: orkstack.v1.RunArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
-	41, // 27: orkstack.v1.ListRunArtifactsResponse.artifacts:type_name -> orkstack.v1.RunArtifact
-	1,  // 28: orkstack.v1.ReadArtifactRequest.kind:type_name -> orkstack.v1.ArtifactKind
-	87, // 29: orkstack.v1.ArtifactChunk.artifact:type_name -> orkstack.v1.ArtifactRef
-	88, // 30: orkstack.v1.ListTaskAttemptsResponse.attempts:type_name -> orkstack.v1.TaskAttempt
-	1,  // 31: orkstack.v1.GetArtifactProvenanceRequest.kind:type_name -> orkstack.v1.ArtifactKind
-	1,  // 32: orkstack.v1.ArtifactReference.kind:type_name -> orkstack.v1.ArtifactKind
-	86, // 33: orkstack.v1.ArtifactReference.run_status:type_name -> orkstack.v1.Status
-	82, // 34: orkstack.v1.ArtifactReference.run_created_at:type_name -> google.protobuf.Timestamp
-	87, // 35: orkstack.v1.GetArtifactProvenanceResponse.artifact:type_name -> orkstack.v1.ArtifactRef
-	2,  // 36: orkstack.v1.GetArtifactProvenanceResponse.own_reference:type_name -> orkstack.v1.ReferenceState
-	82, // 37: orkstack.v1.GetArtifactProvenanceResponse.released_at:type_name -> google.protobuf.Timestamp
-	49, // 38: orkstack.v1.GetArtifactProvenanceResponse.references:type_name -> orkstack.v1.ArtifactReference
-	82, // 39: orkstack.v1.GetArtifactProvenanceResponse.computed_at:type_name -> google.protobuf.Timestamp
-	85, // 40: orkstack.v1.CancelRunResponse.run:type_name -> orkstack.v1.Run
-	89, // 41: orkstack.v1.CreateNamespaceRequest.namespace:type_name -> orkstack.v1.Namespace
-	89, // 42: orkstack.v1.CreateNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
-	89, // 43: orkstack.v1.GetNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
-	89, // 44: orkstack.v1.ListNamespacesResponse.namespaces:type_name -> orkstack.v1.Namespace
-	89, // 45: orkstack.v1.UpdateNamespaceRequest.namespace:type_name -> orkstack.v1.Namespace
-	89, // 46: orkstack.v1.UpdateNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
-	90, // 47: orkstack.v1.ListPoolsResponse.pools:type_name -> orkstack.v1.Pool
-	82, // 48: orkstack.v1.ActivityInfo.resolved_at:type_name -> google.protobuf.Timestamp
-	69, // 49: orkstack.v1.ListActivitiesResponse.activities:type_name -> orkstack.v1.ActivityInfo
-	91, // 50: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
-	82, // 51: orkstack.v1.GetSystemInfoResponse.server_time:type_name -> google.protobuf.Timestamp
-	92, // 52: orkstack.v1.GetRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
-	93, // 53: orkstack.v1.UpdateRetentionPolicyRequest.max_run_retention:type_name -> google.protobuf.Duration
-	92, // 54: orkstack.v1.UpdateRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
-	5,  // 55: orkstack.v1.OrkflowService.ValidateOrkflow:input_type -> orkstack.v1.ValidateOrkflowRequest
-	3,  // 56: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
-	8,  // 57: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
-	10, // 58: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
-	13, // 59: orkstack.v1.OrkflowService.ListOrkflowVersions:input_type -> orkstack.v1.ListOrkflowVersionsRequest
-	15, // 60: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:input_type -> orkstack.v1.SetCurrentOrkflowVersionRequest
-	17, // 61: orkstack.v1.OrkflowService.DiffOrkflowVersions:input_type -> orkstack.v1.DiffOrkflowVersionsRequest
-	19, // 62: orkstack.v1.OrkflowService.DeleteOrkflow:input_type -> orkstack.v1.DeleteOrkflowRequest
-	35, // 63: orkstack.v1.RunService.SubmitRun:input_type -> orkstack.v1.SubmitRunRequest
-	37, // 64: orkstack.v1.RunService.GetRun:input_type -> orkstack.v1.GetRunRequest
-	39, // 65: orkstack.v1.RunService.ListRuns:input_type -> orkstack.v1.ListRunsRequest
-	51, // 66: orkstack.v1.RunService.CancelRun:input_type -> orkstack.v1.CancelRunRequest
-	53, // 67: orkstack.v1.RunService.StreamEvents:input_type -> orkstack.v1.StreamEventsRequest
-	54, // 68: orkstack.v1.RunService.StreamTaskLogs:input_type -> orkstack.v1.StreamTaskLogsRequest
-	42, // 69: orkstack.v1.RunService.ListRunArtifacts:input_type -> orkstack.v1.ListRunArtifactsRequest
-	44, // 70: orkstack.v1.RunService.ReadArtifact:input_type -> orkstack.v1.ReadArtifactRequest
-	46, // 71: orkstack.v1.RunService.ListTaskAttempts:input_type -> orkstack.v1.ListTaskAttemptsRequest
-	48, // 72: orkstack.v1.RunService.GetArtifactProvenance:input_type -> orkstack.v1.GetArtifactProvenanceRequest
-	22, // 73: orkstack.v1.WebhookService.RegisterWebhook:input_type -> orkstack.v1.RegisterWebhookRequest
-	24, // 74: orkstack.v1.WebhookService.ListWebhooks:input_type -> orkstack.v1.ListWebhooksRequest
-	26, // 75: orkstack.v1.WebhookService.DeleteWebhook:input_type -> orkstack.v1.DeleteWebhookRequest
-	29, // 76: orkstack.v1.TriggerService.CreateTrigger:input_type -> orkstack.v1.CreateTriggerRequest
-	31, // 77: orkstack.v1.TriggerService.ListTriggers:input_type -> orkstack.v1.ListTriggersRequest
-	33, // 78: orkstack.v1.TriggerService.DeleteTrigger:input_type -> orkstack.v1.DeleteTriggerRequest
-	56, // 79: orkstack.v1.NamespaceService.CreateNamespace:input_type -> orkstack.v1.CreateNamespaceRequest
-	58, // 80: orkstack.v1.NamespaceService.GetNamespace:input_type -> orkstack.v1.GetNamespaceRequest
-	60, // 81: orkstack.v1.NamespaceService.ListNamespaces:input_type -> orkstack.v1.ListNamespacesRequest
-	62, // 82: orkstack.v1.NamespaceService.UpdateNamespace:input_type -> orkstack.v1.UpdateNamespaceRequest
-	64, // 83: orkstack.v1.NamespaceService.DeleteNamespace:input_type -> orkstack.v1.DeleteNamespaceRequest
-	66, // 84: orkstack.v1.NamespaceService.ListPools:input_type -> orkstack.v1.ListPoolsRequest
-	68, // 85: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
-	71, // 86: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
-	73, // 87: orkstack.v1.SystemService.GetSystemInfo:input_type -> orkstack.v1.GetSystemInfoRequest
-	75, // 88: orkstack.v1.SystemService.GetRetentionPolicy:input_type -> orkstack.v1.GetRetentionPolicyRequest
-	77, // 89: orkstack.v1.SystemService.UpdateRetentionPolicy:input_type -> orkstack.v1.UpdateRetentionPolicyRequest
-	79, // 90: orkstack.v1.SystemService.ListTelemetrySinks:input_type -> orkstack.v1.ListTelemetrySinksRequest
-	6,  // 91: orkstack.v1.OrkflowService.ValidateOrkflow:output_type -> orkstack.v1.ValidateOrkflowResponse
-	7,  // 92: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
-	9,  // 93: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
-	11, // 94: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
-	14, // 95: orkstack.v1.OrkflowService.ListOrkflowVersions:output_type -> orkstack.v1.ListOrkflowVersionsResponse
-	16, // 96: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:output_type -> orkstack.v1.SetCurrentOrkflowVersionResponse
-	18, // 97: orkstack.v1.OrkflowService.DiffOrkflowVersions:output_type -> orkstack.v1.DiffOrkflowVersionsResponse
-	20, // 98: orkstack.v1.OrkflowService.DeleteOrkflow:output_type -> orkstack.v1.DeleteOrkflowResponse
-	36, // 99: orkstack.v1.RunService.SubmitRun:output_type -> orkstack.v1.SubmitRunResponse
-	38, // 100: orkstack.v1.RunService.GetRun:output_type -> orkstack.v1.GetRunResponse
-	40, // 101: orkstack.v1.RunService.ListRuns:output_type -> orkstack.v1.ListRunsResponse
-	52, // 102: orkstack.v1.RunService.CancelRun:output_type -> orkstack.v1.CancelRunResponse
-	94, // 103: orkstack.v1.RunService.StreamEvents:output_type -> orkstack.v1.Event
-	55, // 104: orkstack.v1.RunService.StreamTaskLogs:output_type -> orkstack.v1.TaskLogChunk
-	43, // 105: orkstack.v1.RunService.ListRunArtifacts:output_type -> orkstack.v1.ListRunArtifactsResponse
-	45, // 106: orkstack.v1.RunService.ReadArtifact:output_type -> orkstack.v1.ArtifactChunk
-	47, // 107: orkstack.v1.RunService.ListTaskAttempts:output_type -> orkstack.v1.ListTaskAttemptsResponse
-	50, // 108: orkstack.v1.RunService.GetArtifactProvenance:output_type -> orkstack.v1.GetArtifactProvenanceResponse
-	23, // 109: orkstack.v1.WebhookService.RegisterWebhook:output_type -> orkstack.v1.RegisterWebhookResponse
-	25, // 110: orkstack.v1.WebhookService.ListWebhooks:output_type -> orkstack.v1.ListWebhooksResponse
-	27, // 111: orkstack.v1.WebhookService.DeleteWebhook:output_type -> orkstack.v1.DeleteWebhookResponse
-	30, // 112: orkstack.v1.TriggerService.CreateTrigger:output_type -> orkstack.v1.CreateTriggerResponse
-	32, // 113: orkstack.v1.TriggerService.ListTriggers:output_type -> orkstack.v1.ListTriggersResponse
-	34, // 114: orkstack.v1.TriggerService.DeleteTrigger:output_type -> orkstack.v1.DeleteTriggerResponse
-	57, // 115: orkstack.v1.NamespaceService.CreateNamespace:output_type -> orkstack.v1.CreateNamespaceResponse
-	59, // 116: orkstack.v1.NamespaceService.GetNamespace:output_type -> orkstack.v1.GetNamespaceResponse
-	61, // 117: orkstack.v1.NamespaceService.ListNamespaces:output_type -> orkstack.v1.ListNamespacesResponse
-	63, // 118: orkstack.v1.NamespaceService.UpdateNamespace:output_type -> orkstack.v1.UpdateNamespaceResponse
-	65, // 119: orkstack.v1.NamespaceService.DeleteNamespace:output_type -> orkstack.v1.DeleteNamespaceResponse
-	67, // 120: orkstack.v1.NamespaceService.ListPools:output_type -> orkstack.v1.ListPoolsResponse
-	70, // 121: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
-	72, // 122: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
-	74, // 123: orkstack.v1.SystemService.GetSystemInfo:output_type -> orkstack.v1.GetSystemInfoResponse
-	76, // 124: orkstack.v1.SystemService.GetRetentionPolicy:output_type -> orkstack.v1.GetRetentionPolicyResponse
-	78, // 125: orkstack.v1.SystemService.UpdateRetentionPolicy:output_type -> orkstack.v1.UpdateRetentionPolicyResponse
-	80, // 126: orkstack.v1.SystemService.ListTelemetrySinks:output_type -> orkstack.v1.ListTelemetrySinksResponse
-	91, // [91:127] is the sub-list for method output_type
-	55, // [55:91] is the sub-list for method input_type
-	55, // [55:55] is the sub-list for extension type_name
-	55, // [55:55] is the sub-list for extension extendee
-	0,  // [0:55] is the sub-list for field type_name
+	0,   // 0: orkstack.v1.ValidationIssue.severity:type_name -> orkstack.v1.ValidationSeverity
+	86,  // 1: orkstack.v1.ValidateOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	6,   // 2: orkstack.v1.ValidateOrkflowResponse.issues:type_name -> orkstack.v1.ValidationIssue
+	86,  // 3: orkstack.v1.ApplyOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	86,  // 4: orkstack.v1.GetOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	86,  // 5: orkstack.v1.ListOrkflowsResponse.orkflows:type_name -> orkstack.v1.Orkflow
+	87,  // 6: orkstack.v1.OrkflowVersion.applied_at:type_name -> google.protobuf.Timestamp
+	14,  // 7: orkstack.v1.ListOrkflowVersionsResponse.versions:type_name -> orkstack.v1.OrkflowVersion
+	87,  // 8: orkstack.v1.SetCurrentOrkflowVersionResponse.updated_at:type_name -> google.protobuf.Timestamp
+	87,  // 9: orkstack.v1.DeleteOrkflowResponse.deleted_at:type_name -> google.protobuf.Timestamp
+	88,  // 10: orkstack.v1.Webhook.events:type_name -> orkstack.v1.EventType
+	87,  // 11: orkstack.v1.Webhook.created_at:type_name -> google.protobuf.Timestamp
+	88,  // 12: orkstack.v1.RegisterWebhookRequest.events:type_name -> orkstack.v1.EventType
+	23,  // 13: orkstack.v1.RegisterWebhookResponse.webhook:type_name -> orkstack.v1.Webhook
+	23,  // 14: orkstack.v1.ListWebhooksResponse.webhooks:type_name -> orkstack.v1.Webhook
+	87,  // 15: orkstack.v1.Trigger.created_at:type_name -> google.protobuf.Timestamp
+	30,  // 16: orkstack.v1.CreateTriggerResponse.trigger:type_name -> orkstack.v1.Trigger
+	30,  // 17: orkstack.v1.ListTriggersResponse.triggers:type_name -> orkstack.v1.Trigger
+	89,  // 18: orkstack.v1.SubmitRunRequest.input:type_name -> orkstack.v1.Payload
+	90,  // 19: orkstack.v1.SubmitRunResponse.run:type_name -> orkstack.v1.Run
+	90,  // 20: orkstack.v1.GetRunResponse.run:type_name -> orkstack.v1.Run
+	91,  // 21: orkstack.v1.ListRunsRequest.status:type_name -> orkstack.v1.Status
+	87,  // 22: orkstack.v1.ListRunsRequest.created_after:type_name -> google.protobuf.Timestamp
+	87,  // 23: orkstack.v1.ListRunsRequest.created_before:type_name -> google.protobuf.Timestamp
+	90,  // 24: orkstack.v1.ListRunsResponse.runs:type_name -> orkstack.v1.Run
+	1,   // 25: orkstack.v1.RunArtifact.kind:type_name -> orkstack.v1.ArtifactKind
+	92,  // 26: orkstack.v1.RunArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
+	43,  // 27: orkstack.v1.ListRunArtifactsResponse.artifacts:type_name -> orkstack.v1.RunArtifact
+	1,   // 28: orkstack.v1.ReadArtifactRequest.kind:type_name -> orkstack.v1.ArtifactKind
+	92,  // 29: orkstack.v1.ArtifactChunk.artifact:type_name -> orkstack.v1.ArtifactRef
+	93,  // 30: orkstack.v1.ListTaskAttemptsResponse.attempts:type_name -> orkstack.v1.TaskAttempt
+	1,   // 31: orkstack.v1.GetArtifactProvenanceRequest.kind:type_name -> orkstack.v1.ArtifactKind
+	1,   // 32: orkstack.v1.ArtifactReference.kind:type_name -> orkstack.v1.ArtifactKind
+	91,  // 33: orkstack.v1.ArtifactReference.run_status:type_name -> orkstack.v1.Status
+	87,  // 34: orkstack.v1.ArtifactReference.run_created_at:type_name -> google.protobuf.Timestamp
+	92,  // 35: orkstack.v1.GetArtifactProvenanceResponse.artifact:type_name -> orkstack.v1.ArtifactRef
+	2,   // 36: orkstack.v1.GetArtifactProvenanceResponse.own_reference:type_name -> orkstack.v1.ReferenceState
+	87,  // 37: orkstack.v1.GetArtifactProvenanceResponse.released_at:type_name -> google.protobuf.Timestamp
+	51,  // 38: orkstack.v1.GetArtifactProvenanceResponse.references:type_name -> orkstack.v1.ArtifactReference
+	87,  // 39: orkstack.v1.GetArtifactProvenanceResponse.computed_at:type_name -> google.protobuf.Timestamp
+	3,   // 40: orkstack.v1.LiveAttempt.state:type_name -> orkstack.v1.LiveAttemptState
+	87,  // 41: orkstack.v1.LiveAttempt.attempt_scheduled_at:type_name -> google.protobuf.Timestamp
+	87,  // 42: orkstack.v1.LiveAttempt.attempt_started_at:type_name -> google.protobuf.Timestamp
+	87,  // 43: orkstack.v1.LiveAttempt.next_attempt_at:type_name -> google.protobuf.Timestamp
+	87,  // 44: orkstack.v1.LiveAttempt.expires_at:type_name -> google.protobuf.Timestamp
+	4,   // 45: orkstack.v1.LiveAttempt.heartbeat_unavailable_reason:type_name -> orkstack.v1.HeartbeatUnavailableReason
+	87,  // 46: orkstack.v1.LiveAttempt.last_heartbeat_at:type_name -> google.protobuf.Timestamp
+	87,  // 47: orkstack.v1.LiveAttempt.heartbeat_deadline_at:type_name -> google.protobuf.Timestamp
+	91,  // 48: orkstack.v1.InspectRunResponse.run_status:type_name -> orkstack.v1.Status
+	54,  // 49: orkstack.v1.InspectRunResponse.attempts:type_name -> orkstack.v1.LiveAttempt
+	87,  // 50: orkstack.v1.InspectRunResponse.computed_at:type_name -> google.protobuf.Timestamp
+	90,  // 51: orkstack.v1.CancelRunResponse.run:type_name -> orkstack.v1.Run
+	94,  // 52: orkstack.v1.CreateNamespaceRequest.namespace:type_name -> orkstack.v1.Namespace
+	94,  // 53: orkstack.v1.CreateNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
+	94,  // 54: orkstack.v1.GetNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
+	94,  // 55: orkstack.v1.ListNamespacesResponse.namespaces:type_name -> orkstack.v1.Namespace
+	94,  // 56: orkstack.v1.UpdateNamespaceRequest.namespace:type_name -> orkstack.v1.Namespace
+	94,  // 57: orkstack.v1.UpdateNamespaceResponse.namespace:type_name -> orkstack.v1.Namespace
+	95,  // 58: orkstack.v1.ListPoolsResponse.pools:type_name -> orkstack.v1.Pool
+	87,  // 59: orkstack.v1.ActivityInfo.resolved_at:type_name -> google.protobuf.Timestamp
+	74,  // 60: orkstack.v1.ListActivitiesResponse.activities:type_name -> orkstack.v1.ActivityInfo
+	96,  // 61: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
+	87,  // 62: orkstack.v1.GetSystemInfoResponse.server_time:type_name -> google.protobuf.Timestamp
+	97,  // 63: orkstack.v1.GetRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
+	98,  // 64: orkstack.v1.UpdateRetentionPolicyRequest.max_run_retention:type_name -> google.protobuf.Duration
+	97,  // 65: orkstack.v1.UpdateRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
+	7,   // 66: orkstack.v1.OrkflowService.ValidateOrkflow:input_type -> orkstack.v1.ValidateOrkflowRequest
+	5,   // 67: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
+	10,  // 68: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
+	12,  // 69: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
+	15,  // 70: orkstack.v1.OrkflowService.ListOrkflowVersions:input_type -> orkstack.v1.ListOrkflowVersionsRequest
+	17,  // 71: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:input_type -> orkstack.v1.SetCurrentOrkflowVersionRequest
+	19,  // 72: orkstack.v1.OrkflowService.DiffOrkflowVersions:input_type -> orkstack.v1.DiffOrkflowVersionsRequest
+	21,  // 73: orkstack.v1.OrkflowService.DeleteOrkflow:input_type -> orkstack.v1.DeleteOrkflowRequest
+	37,  // 74: orkstack.v1.RunService.SubmitRun:input_type -> orkstack.v1.SubmitRunRequest
+	39,  // 75: orkstack.v1.RunService.GetRun:input_type -> orkstack.v1.GetRunRequest
+	41,  // 76: orkstack.v1.RunService.ListRuns:input_type -> orkstack.v1.ListRunsRequest
+	56,  // 77: orkstack.v1.RunService.CancelRun:input_type -> orkstack.v1.CancelRunRequest
+	58,  // 78: orkstack.v1.RunService.StreamEvents:input_type -> orkstack.v1.StreamEventsRequest
+	59,  // 79: orkstack.v1.RunService.StreamTaskLogs:input_type -> orkstack.v1.StreamTaskLogsRequest
+	44,  // 80: orkstack.v1.RunService.ListRunArtifacts:input_type -> orkstack.v1.ListRunArtifactsRequest
+	46,  // 81: orkstack.v1.RunService.ReadArtifact:input_type -> orkstack.v1.ReadArtifactRequest
+	48,  // 82: orkstack.v1.RunService.ListTaskAttempts:input_type -> orkstack.v1.ListTaskAttemptsRequest
+	50,  // 83: orkstack.v1.RunService.GetArtifactProvenance:input_type -> orkstack.v1.GetArtifactProvenanceRequest
+	53,  // 84: orkstack.v1.RunService.InspectRun:input_type -> orkstack.v1.InspectRunRequest
+	24,  // 85: orkstack.v1.WebhookService.RegisterWebhook:input_type -> orkstack.v1.RegisterWebhookRequest
+	26,  // 86: orkstack.v1.WebhookService.ListWebhooks:input_type -> orkstack.v1.ListWebhooksRequest
+	28,  // 87: orkstack.v1.WebhookService.DeleteWebhook:input_type -> orkstack.v1.DeleteWebhookRequest
+	31,  // 88: orkstack.v1.TriggerService.CreateTrigger:input_type -> orkstack.v1.CreateTriggerRequest
+	33,  // 89: orkstack.v1.TriggerService.ListTriggers:input_type -> orkstack.v1.ListTriggersRequest
+	35,  // 90: orkstack.v1.TriggerService.DeleteTrigger:input_type -> orkstack.v1.DeleteTriggerRequest
+	61,  // 91: orkstack.v1.NamespaceService.CreateNamespace:input_type -> orkstack.v1.CreateNamespaceRequest
+	63,  // 92: orkstack.v1.NamespaceService.GetNamespace:input_type -> orkstack.v1.GetNamespaceRequest
+	65,  // 93: orkstack.v1.NamespaceService.ListNamespaces:input_type -> orkstack.v1.ListNamespacesRequest
+	67,  // 94: orkstack.v1.NamespaceService.UpdateNamespace:input_type -> orkstack.v1.UpdateNamespaceRequest
+	69,  // 95: orkstack.v1.NamespaceService.DeleteNamespace:input_type -> orkstack.v1.DeleteNamespaceRequest
+	71,  // 96: orkstack.v1.NamespaceService.ListPools:input_type -> orkstack.v1.ListPoolsRequest
+	73,  // 97: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
+	76,  // 98: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
+	78,  // 99: orkstack.v1.SystemService.GetSystemInfo:input_type -> orkstack.v1.GetSystemInfoRequest
+	80,  // 100: orkstack.v1.SystemService.GetRetentionPolicy:input_type -> orkstack.v1.GetRetentionPolicyRequest
+	82,  // 101: orkstack.v1.SystemService.UpdateRetentionPolicy:input_type -> orkstack.v1.UpdateRetentionPolicyRequest
+	84,  // 102: orkstack.v1.SystemService.ListTelemetrySinks:input_type -> orkstack.v1.ListTelemetrySinksRequest
+	8,   // 103: orkstack.v1.OrkflowService.ValidateOrkflow:output_type -> orkstack.v1.ValidateOrkflowResponse
+	9,   // 104: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
+	11,  // 105: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
+	13,  // 106: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
+	16,  // 107: orkstack.v1.OrkflowService.ListOrkflowVersions:output_type -> orkstack.v1.ListOrkflowVersionsResponse
+	18,  // 108: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:output_type -> orkstack.v1.SetCurrentOrkflowVersionResponse
+	20,  // 109: orkstack.v1.OrkflowService.DiffOrkflowVersions:output_type -> orkstack.v1.DiffOrkflowVersionsResponse
+	22,  // 110: orkstack.v1.OrkflowService.DeleteOrkflow:output_type -> orkstack.v1.DeleteOrkflowResponse
+	38,  // 111: orkstack.v1.RunService.SubmitRun:output_type -> orkstack.v1.SubmitRunResponse
+	40,  // 112: orkstack.v1.RunService.GetRun:output_type -> orkstack.v1.GetRunResponse
+	42,  // 113: orkstack.v1.RunService.ListRuns:output_type -> orkstack.v1.ListRunsResponse
+	57,  // 114: orkstack.v1.RunService.CancelRun:output_type -> orkstack.v1.CancelRunResponse
+	99,  // 115: orkstack.v1.RunService.StreamEvents:output_type -> orkstack.v1.Event
+	60,  // 116: orkstack.v1.RunService.StreamTaskLogs:output_type -> orkstack.v1.TaskLogChunk
+	45,  // 117: orkstack.v1.RunService.ListRunArtifacts:output_type -> orkstack.v1.ListRunArtifactsResponse
+	47,  // 118: orkstack.v1.RunService.ReadArtifact:output_type -> orkstack.v1.ArtifactChunk
+	49,  // 119: orkstack.v1.RunService.ListTaskAttempts:output_type -> orkstack.v1.ListTaskAttemptsResponse
+	52,  // 120: orkstack.v1.RunService.GetArtifactProvenance:output_type -> orkstack.v1.GetArtifactProvenanceResponse
+	55,  // 121: orkstack.v1.RunService.InspectRun:output_type -> orkstack.v1.InspectRunResponse
+	25,  // 122: orkstack.v1.WebhookService.RegisterWebhook:output_type -> orkstack.v1.RegisterWebhookResponse
+	27,  // 123: orkstack.v1.WebhookService.ListWebhooks:output_type -> orkstack.v1.ListWebhooksResponse
+	29,  // 124: orkstack.v1.WebhookService.DeleteWebhook:output_type -> orkstack.v1.DeleteWebhookResponse
+	32,  // 125: orkstack.v1.TriggerService.CreateTrigger:output_type -> orkstack.v1.CreateTriggerResponse
+	34,  // 126: orkstack.v1.TriggerService.ListTriggers:output_type -> orkstack.v1.ListTriggersResponse
+	36,  // 127: orkstack.v1.TriggerService.DeleteTrigger:output_type -> orkstack.v1.DeleteTriggerResponse
+	62,  // 128: orkstack.v1.NamespaceService.CreateNamespace:output_type -> orkstack.v1.CreateNamespaceResponse
+	64,  // 129: orkstack.v1.NamespaceService.GetNamespace:output_type -> orkstack.v1.GetNamespaceResponse
+	66,  // 130: orkstack.v1.NamespaceService.ListNamespaces:output_type -> orkstack.v1.ListNamespacesResponse
+	68,  // 131: orkstack.v1.NamespaceService.UpdateNamespace:output_type -> orkstack.v1.UpdateNamespaceResponse
+	70,  // 132: orkstack.v1.NamespaceService.DeleteNamespace:output_type -> orkstack.v1.DeleteNamespaceResponse
+	72,  // 133: orkstack.v1.NamespaceService.ListPools:output_type -> orkstack.v1.ListPoolsResponse
+	75,  // 134: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
+	77,  // 135: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
+	79,  // 136: orkstack.v1.SystemService.GetSystemInfo:output_type -> orkstack.v1.GetSystemInfoResponse
+	81,  // 137: orkstack.v1.SystemService.GetRetentionPolicy:output_type -> orkstack.v1.GetRetentionPolicyResponse
+	83,  // 138: orkstack.v1.SystemService.UpdateRetentionPolicy:output_type -> orkstack.v1.UpdateRetentionPolicyResponse
+	85,  // 139: orkstack.v1.SystemService.ListTelemetrySinks:output_type -> orkstack.v1.ListTelemetrySinksResponse
+	103, // [103:140] is the sub-list for method output_type
+	66,  // [66:103] is the sub-list for method input_type
+	66,  // [66:66] is the sub-list for extension type_name
+	66,  // [66:66] is the sub-list for extension extendee
+	0,   // [0:66] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_service_proto_init() }
@@ -5470,8 +6026,8 @@ func file_orkstack_v1_service_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_service_proto_rawDesc), len(file_orkstack_v1_service_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   78,
+			NumEnums:      5,
+			NumMessages:   81,
 			NumExtensions: 0,
 			NumServices:   7,
 		},

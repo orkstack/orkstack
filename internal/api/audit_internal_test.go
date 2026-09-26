@@ -29,6 +29,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.RunServiceListRunArtifactsProcedure:        true,
 	orkstackv1connect.RunServiceListTaskAttemptsProcedure:        true,
 	orkstackv1connect.RunServiceGetArtifactProvenanceProcedure:   true,
+	orkstackv1connect.RunServiceInspectRunProcedure:              true,
 	orkstackv1connect.WebhookServiceListWebhooksProcedure:        true,
 	orkstackv1connect.TriggerServiceListTriggersProcedure:        true,
 	orkstackv1connect.NamespaceServiceGetNamespaceProcedure:      true,
@@ -53,7 +54,7 @@ var auditStreamingReads = map[string]bool{
 	orkstackv1connect.RunServiceReadArtifactProcedure:   true,
 }
 
-var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream"}
+var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Inspect"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file
 // registry and returns each method's procedure and whether it streams.
