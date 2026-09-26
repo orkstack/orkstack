@@ -91,6 +91,9 @@ const SCROLLBACK = 2000;
 test.describe.configure({ mode: 'serial' });
 
 const children: ChildProcess[] = [];
+// The run the dashboard test fails on purpose, which the fingerprint test
+// after it groups, deep-links to and then reclaims.
+let failedRun = '';
 let run1 = '';
 let run2 = '';
 
@@ -773,6 +776,7 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 		orkflowName: FAILING,
 		namespace: ALPHA
 	});
+	failedRun = failed.run.id;
 	note(`engine A started run ${failed.run.id} (${FAILING}), which is meant to fail`);
 	await waitFor(
 		'the failing run reaches a terminal state',
@@ -857,6 +861,9 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 	// Nothing of alpha's leaks in.
 	await expect(page.getByTestId(`failure-${FAILING}`)).toHaveCount(0);
 	await expect(page.getByTestId('failures-empty')).toBeVisible();
+	// Nothing failed, so there is nothing to fingerprint: the disclosure is
+	// not offered at all rather than opening onto an empty table.
+	await expect(page.getByTestId('failure-fingerprints')).toHaveCount(0);
 
 	// THE HONESTY CLAUSE. A success rate over no finished runs is unanswerable,
 	// and 0% is the most alarming number a dashboard can show. Percentiles over
@@ -878,4 +885,94 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 			'while the run counts render a real 0'
 	);
 	await shot(page, 'screenshot-dashboard-unavailable.png');
+});
+
+// The fingerprints: the failed run grouped by what failed and why, linked to
+// the runs list it came from, and honest about evidence that is gone. Read, as
+// everything here is, through the replica that started nothing.
+test('the recent-failures section expands into fingerprints that name the task and code, deep-link to the filtered runs list, and say unavailable for reclaimed evidence', async ({
+	page
+}) => {
+	expect(failedRun, 'the dashboard test left a failed run behind').not.toBe('');
+	await page.goto(`${UI_ORIGIN}/?ns=${ALPHA}`);
+	await expect
+		.poll(async () => page.getByTestId(`failure-${FAILING}`).count(), { timeout: 60_000 })
+		.toBe(1);
+
+	await page.getByTestId('failure-fingerprints-toggle').click();
+	// ALPHA holds only this run's orkflows, so the failing one is the row; it
+	// is located by its name rather than assumed to sort first.
+	const row = page.locator('[data-testid^="fingerprint-row-"]').filter({ hasText: FAILING });
+	await expect(row).toHaveCount(1, { timeout: 60_000 });
+	for (const text of [FAILING, 'boom', 'CONTAINER_EXIT_NONZERO', 'ACTIVITY_FAILED']) {
+		await expect(row).toContainText(text);
+	}
+	const rowId = (await row.getAttribute('data-testid')) ?? '';
+	const index = rowId.replace('fingerprint-row-', '');
+	note(`fingerprint row ${rowId}: ${(await row.innerText()).replace(/\s+/g, ' ')}`);
+
+	// The image the final attempt ran, as a pinned digest.
+	await page.getByTestId('fingerprint-dim-image').check();
+	const image = page.getByTestId(`fingerprint-cell-${index}-image`);
+	await expect(image).toContainText('@sha256:', { timeout: 30_000 });
+	await expect(image).toHaveAttribute('data-unavailable', 'false');
+	note(`fingerprint image for ${FAILING}: ${await image.innerText()}`);
+
+	// The CLI that reproduces these rows.
+	await page.getByTestId('fingerprint-cli-trigger').click();
+	const command = (await page.getByTestId('fingerprint-cli-command').innerText()).trim();
+	expect(command).toContain('stats failures');
+	expect(command).toContain('--group-by orkflow,task,code,category,image');
+	note(`fingerprint CLI equivalent: ${command}`);
+	await page.keyboard.press('Escape');
+	await shot(page, 'screenshot-dashboard-fingerprints.png');
+
+	// The row is a link to the runs it counts: the namespace, the orkflow,
+	// status failed, and the exact window the breakdown answered.
+	await row.click();
+	await page.waitForURL(/\/runs\?/);
+	const target = new URL(page.url());
+	expect(target.searchParams.get('status')).toBe('failed');
+	expect(target.searchParams.get('orkflow')).toBe(FAILING);
+	expect(target.searchParams.get('ns')).toBe(ALPHA);
+	expect(target.searchParams.get('since')).toBeTruthy();
+	expect(target.searchParams.get('until')).toBeTruthy();
+	await expect(page.getByTestId(`run-row-${failedRun}`)).toBeVisible({ timeout: 30_000 });
+	note(`fingerprint row navigated to ${target.pathname}${target.search}`);
+
+	// Reclaim the run's attempt records the way the cleanup worker does when
+	// retention ends. The archived run stays; the evidence of which image it
+	// ran does not.
+	const reclaimed = execFileSync('go', ['run', './test/tools/reclaim-run', ALPHA, failedRun], {
+		cwd: repoRoot,
+		env: {
+			...process.env,
+			ORK_ARTIFACT_BACKEND: 's3',
+			ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
+			ORK_S3_REGION: 'us-east-1',
+			ORK_S3_BUCKET: 'orkstack-artifacts',
+			ORK_S3_ACCESS_KEY: 'orkstack',
+			ORK_S3_SECRET_KEY: 'orkstack-secret',
+			ORK_S3_PATH_STYLE: 'true'
+		}
+	}).toString().trim();
+	note(reclaimed);
+
+	await page.goto(`${UI_ORIGIN}/?ns=${ALPHA}`);
+	// The disclosure remembers it was open; the dimension chips do not.
+	await expect(page.getByTestId('fingerprint-dim-image')).toBeVisible({ timeout: 60_000 });
+	await page.getByTestId('fingerprint-dim-image').check();
+	const after = page.locator('[data-testid^="fingerprint-row-"]').filter({ hasText: FAILING });
+	// The engine caches an answer for its stats TTL, and the dashboard refetches
+	// on every new measurement, so the reclaim shows within a few refreshes.
+	await expect
+		.poll(async () => (await after.locator('[data-unavailable="true"]').count()), { timeout: 60_000 })
+		.toBe(1);
+	const unavailableCell = after.locator('[data-unavailable="true"]');
+	await expect(unavailableCell).toHaveText('unavailable');
+	await expect(unavailableCell).toHaveAttribute('data-testid', /-image$/);
+	const footer = page.getByTestId('failure-fingerprints-footer');
+	await expect(footer).toContainText('attempt records for 1 run were reclaimed or never written');
+	note(`after the reclaim: ${(await after.innerText()).replace(/\s+/g, ' ')} / ${(await footer.innerText()).replace(/\s+/g, ' ')}`);
+	await shot(page, 'screenshot-dashboard-fingerprints-unavailable.png');
 });

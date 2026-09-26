@@ -1,0 +1,374 @@
+{
+  "runId": "ork-20260922091401-1",
+  "namespace": "data",
+  "orkflowName": "nightly-etl",
+  "orkflowVersion": "1.2.0",
+  "status": "FAILED",
+  "runStartedAt": "2026-09-22T09:14:01.000000000Z",
+  "runFinishedAt": "2026-09-22T09:22:42.000000000Z",
+  "runElapsedSeconds": 521,
+  "waitSumSeconds": 254.5,
+  "waitSumTasks": 3,
+  "waitUnavailableTasks": 1,
+  "attemptRecordsAvailable": true,
+  "tasks": [
+    {
+      "taskId": "extract",
+      "status": "SUCCEEDED",
+      "attempt": 1,
+      "pool": "main",
+      "scheduledAt": "2026-09-22T09:14:02.000000000Z",
+      "startedAt": "2026-09-22T09:14:04.100000000Z",
+      "finishedAt": "2026-09-22T09:15:07.100000000Z",
+      "waitSeconds": 2.1,
+      "runSeconds": 63,
+      "totalSeconds": 65.1,
+      "queueWaitSeconds": 2.1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "outcome": "SUCCEEDED",
+          "startedAt": "2026-09-22T09:14:04.100000000Z",
+          "finishedAt": "2026-09-22T09:15:07.068000000Z",
+          "phases": [
+            {
+              "phase": "start",
+              "startedAt": "2026-09-22T09:14:04.100000000Z",
+              "finishedAt": "2026-09-22T09:14:04.103000000Z",
+              "seconds": 0.003
+            },
+            {
+              "phase": "commit-check",
+              "startedAt": "2026-09-22T09:14:04.103000000Z",
+              "finishedAt": "2026-09-22T09:14:04.143000000Z",
+              "seconds": 0.04
+            },
+            {
+              "phase": "workspace",
+              "startedAt": "2026-09-22T09:14:04.143000000Z",
+              "finishedAt": "2026-09-22T09:14:04.145000000Z",
+              "seconds": 0.002
+            },
+            {
+              "phase": "stage-inputs",
+              "startedAt": "2026-09-22T09:14:04.145000000Z",
+              "finishedAt": "2026-09-22T09:14:04.250000000Z",
+              "seconds": 0.105
+            },
+            {
+              "phase": "image",
+              "startedAt": "2026-09-22T09:14:04.250000000Z",
+              "finishedAt": "2026-09-22T09:14:05.150000000Z",
+              "seconds": 0.9
+            },
+            {
+              "phase": "render",
+              "startedAt": "2026-09-22T09:14:05.150000000Z",
+              "finishedAt": "2026-09-22T09:14:05.154000000Z",
+              "seconds": 0.004
+            },
+            {
+              "phase": "create",
+              "startedAt": "2026-09-22T09:14:05.154000000Z",
+              "finishedAt": "2026-09-22T09:14:05.359000000Z",
+              "seconds": 0.205
+            },
+            {
+              "phase": "run",
+              "startedAt": "2026-09-22T09:14:05.359000000Z",
+              "finishedAt": "2026-09-22T09:15:06.559000000Z",
+              "seconds": 61.2
+            },
+            {
+              "phase": "exit",
+              "startedAt": "2026-09-22T09:15:06.559000000Z",
+              "finishedAt": "2026-09-22T09:15:06.560000000Z",
+              "seconds": 0.001
+            },
+            {
+              "phase": "validate",
+              "startedAt": "2026-09-22T09:15:06.560000000Z",
+              "finishedAt": "2026-09-22T09:15:06.568000000Z",
+              "seconds": 0.008
+            },
+            {
+              "phase": "commit",
+              "startedAt": "2026-09-22T09:15:06.568000000Z",
+              "finishedAt": "2026-09-22T09:15:07.068000000Z",
+              "seconds": 0.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "taskId": "transform",
+      "status": "SUCCEEDED",
+      "attempt": 3,
+      "pool": "gpu",
+      "scheduledAt": "2026-09-22T09:15:07.000000000Z",
+      "startedAt": "2026-09-22T09:19:18.000000000Z",
+      "finishedAt": "2026-09-22T09:20:10.000000000Z",
+      "waitSeconds": 251,
+      "runSeconds": 52,
+      "totalSeconds": 303,
+      "queueWaitSeconds": null,
+      "queueWaitReason": "no attempt record",
+      "attempts": [
+        {
+          "attempt": 3,
+          "outcome": "SUCCEEDED",
+          "startedAt": "2026-09-22T09:19:18.000000000Z",
+          "finishedAt": "2026-09-22T09:20:10.388000000Z",
+          "phases": [
+            {
+              "phase": "start",
+              "startedAt": "2026-09-22T09:19:18.000000000Z",
+              "finishedAt": "2026-09-22T09:19:18.003000000Z",
+              "seconds": 0.003
+            },
+            {
+              "phase": "commit-check",
+              "startedAt": "2026-09-22T09:19:18.003000000Z",
+              "finishedAt": "2026-09-22T09:19:18.044000000Z",
+              "seconds": 0.041
+            },
+            {
+              "phase": "workspace",
+              "startedAt": "2026-09-22T09:19:18.044000000Z",
+              "finishedAt": "2026-09-22T09:19:18.046000000Z",
+              "seconds": 0.002
+            },
+            {
+              "phase": "stage-inputs",
+              "startedAt": "2026-09-22T09:19:18.046000000Z",
+              "finishedAt": "2026-09-22T09:19:18.164000000Z",
+              "seconds": 0.118
+            },
+            {
+              "phase": "image",
+              "startedAt": "2026-09-22T09:19:18.164000000Z",
+              "finishedAt": "2026-09-22T09:19:19.364000000Z",
+              "seconds": 1.2
+            },
+            {
+              "phase": "render",
+              "startedAt": "2026-09-22T09:19:19.364000000Z",
+              "finishedAt": "2026-09-22T09:19:19.368000000Z",
+              "seconds": 0.004
+            },
+            {
+              "phase": "create",
+              "startedAt": "2026-09-22T09:19:19.368000000Z",
+              "finishedAt": "2026-09-22T09:19:19.578000000Z",
+              "seconds": 0.21
+            },
+            {
+              "phase": "run",
+              "startedAt": "2026-09-22T09:19:19.578000000Z",
+              "finishedAt": "2026-09-22T09:20:09.678000000Z",
+              "seconds": 50.1
+            },
+            {
+              "phase": "exit",
+              "startedAt": "2026-09-22T09:20:09.678000000Z",
+              "finishedAt": "2026-09-22T09:20:09.679000000Z",
+              "seconds": 0.001
+            },
+            {
+              "phase": "validate",
+              "startedAt": "2026-09-22T09:20:09.679000000Z",
+              "finishedAt": "2026-09-22T09:20:09.688000000Z",
+              "seconds": 0.009
+            },
+            {
+              "phase": "commit",
+              "startedAt": "2026-09-22T09:20:09.688000000Z",
+              "finishedAt": "2026-09-22T09:20:10.388000000Z",
+              "seconds": 0.7
+            }
+          ]
+        },
+        {
+          "attempt": 2,
+          "outcome": "FAILED",
+          "startedAt": "2026-09-22T09:17:30.000000000Z",
+          "finishedAt": "2026-09-22T09:17:43.833000000Z",
+          "phases": [
+            {
+              "phase": "start",
+              "startedAt": "2026-09-22T09:17:30.000000000Z",
+              "finishedAt": "2026-09-22T09:17:30.002000000Z",
+              "seconds": 0.002
+            },
+            {
+              "phase": "commit-check",
+              "startedAt": "2026-09-22T09:17:30.002000000Z",
+              "finishedAt": "2026-09-22T09:17:30.040000000Z",
+              "seconds": 0.038
+            },
+            {
+              "phase": "workspace",
+              "startedAt": "2026-09-22T09:17:30.040000000Z",
+              "finishedAt": "2026-09-22T09:17:30.042000000Z",
+              "seconds": 0.002
+            },
+            {
+              "phase": "stage-inputs",
+              "startedAt": "2026-09-22T09:17:30.042000000Z",
+              "finishedAt": "2026-09-22T09:17:30.139000000Z",
+              "seconds": 0.097
+            },
+            {
+              "phase": "image",
+              "startedAt": "2026-09-22T09:17:30.139000000Z",
+              "finishedAt": "2026-09-22T09:17:31.239000000Z",
+              "seconds": 1.1
+            },
+            {
+              "phase": "render",
+              "startedAt": "2026-09-22T09:17:31.239000000Z",
+              "finishedAt": "2026-09-22T09:17:31.242000000Z",
+              "seconds": 0.003
+            },
+            {
+              "phase": "create",
+              "startedAt": "2026-09-22T09:17:31.242000000Z",
+              "finishedAt": "2026-09-22T09:17:31.432000000Z",
+              "seconds": 0.19
+            },
+            {
+              "phase": "run",
+              "startedAt": "2026-09-22T09:17:31.432000000Z",
+              "finishedAt": "2026-09-22T09:17:43.832000000Z",
+              "seconds": 12.4
+            },
+            {
+              "phase": "exit",
+              "startedAt": "2026-09-22T09:17:43.832000000Z",
+              "finishedAt": "2026-09-22T09:17:43.833000000Z",
+              "seconds": 0.001
+            }
+          ]
+        },
+        {
+          "attempt": 1,
+          "outcome": "UNREPORTED",
+          "phases": null,
+          "phasesReason": "no attempt record"
+        }
+      ]
+    },
+    {
+      "taskId": "load",
+      "status": "SUCCEEDED",
+      "attempt": 1,
+      "pool": "main",
+      "scheduledAt": "2026-09-22T09:20:10.000000000Z",
+      "startedAt": "2026-09-22T09:20:11.400000000Z",
+      "finishedAt": "2026-09-22T09:22:41.400000000Z",
+      "waitSeconds": 1.4,
+      "runSeconds": 150,
+      "totalSeconds": 151.4,
+      "queueWaitSeconds": 1.4,
+      "attempts": [
+        {
+          "attempt": 1,
+          "outcome": "SUCCEEDED",
+          "startedAt": "2026-09-22T09:20:11.400000000Z",
+          "finishedAt": "2026-09-22T09:22:41.467000000Z",
+          "phases": [
+            {
+              "phase": "start",
+              "startedAt": "2026-09-22T09:20:11.400000000Z",
+              "finishedAt": "2026-09-22T09:20:11.403000000Z",
+              "seconds": 0.003
+            },
+            {
+              "phase": "commit-check",
+              "startedAt": "2026-09-22T09:20:11.403000000Z",
+              "finishedAt": "2026-09-22T09:20:11.442000000Z",
+              "seconds": 0.039
+            },
+            {
+              "phase": "workspace",
+              "startedAt": "2026-09-22T09:20:11.442000000Z",
+              "finishedAt": "2026-09-22T09:20:11.444000000Z",
+              "seconds": 0.002
+            },
+            {
+              "phase": "stage-inputs",
+              "startedAt": "2026-09-22T09:20:11.444000000Z",
+              "finishedAt": "2026-09-22T09:20:11.554000000Z",
+              "seconds": 0.11
+            },
+            {
+              "phase": "image",
+              "startedAt": "2026-09-22T09:20:11.554000000Z",
+              "finishedAt": "2026-09-22T09:20:12.354000000Z",
+              "seconds": 0.8
+            },
+            {
+              "phase": "render",
+              "startedAt": "2026-09-22T09:20:12.354000000Z",
+              "finishedAt": "2026-09-22T09:20:12.358000000Z",
+              "seconds": 0.004
+            },
+            {
+              "phase": "create",
+              "startedAt": "2026-09-22T09:20:12.358000000Z",
+              "finishedAt": "2026-09-22T09:20:12.558000000Z",
+              "seconds": 0.2
+            },
+            {
+              "phase": "run",
+              "startedAt": "2026-09-22T09:20:12.558000000Z",
+              "finishedAt": "2026-09-22T09:22:40.958000000Z",
+              "seconds": 148.4
+            },
+            {
+              "phase": "exit",
+              "startedAt": "2026-09-22T09:22:40.958000000Z",
+              "finishedAt": "2026-09-22T09:22:40.959000000Z",
+              "seconds": 0.001
+            },
+            {
+              "phase": "validate",
+              "startedAt": "2026-09-22T09:22:40.959000000Z",
+              "finishedAt": "2026-09-22T09:22:40.967000000Z",
+              "seconds": 0.008
+            },
+            {
+              "phase": "commit",
+              "startedAt": "2026-09-22T09:22:40.967000000Z",
+              "finishedAt": "2026-09-22T09:22:41.467000000Z",
+              "seconds": 0.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "taskId": "verify",
+      "status": "FAILED",
+      "attempt": 1,
+      "pool": "main",
+      "scheduledAt": "2026-09-22T09:22:40.000000000Z",
+      "finishedAt": "2026-09-22T09:22:42.000000000Z",
+      "waitSeconds": null,
+      "waitReason": "no orker reported a start",
+      "runSeconds": null,
+      "runReason": "no orker reported a start",
+      "totalSeconds": 2,
+      "queueWaitSeconds": null,
+      "queueWaitReason": "attempt records reclaimed",
+      "attempts": []
+    },
+    {
+      "taskId": "report",
+      "status": "SKIPPED",
+      "attempt": 0,
+      "attempts": []
+    }
+  ]
+}

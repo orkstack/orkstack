@@ -10,6 +10,7 @@ orkctl -n payments stats           # one namespace
 orkctl -n payments stats --since 6h
 orkctl -n payments stats --since 2026-05-01T09:00:00Z
 orkctl -n payments stats --json    # the same answer, for a machine
+orkctl -n payments stats failures  # the window's failed runs, grouped (§6)
 ```
 
 ## 1. Two sources, and no third
@@ -180,3 +181,106 @@ Registering the namespace search attribute (the engine provisions it at boot)
 turns the namespace into a predicate the cluster applies, instead of a filter
 applied after reading every namespace's records. The boot log says which
 happened: `run_namespace_index=true`.
+
+## 6. Failure fingerprints
+
+`StatsService.GetFailureBreakdown` answers the question `most_failing` stops
+short of: *is this the same failure as the last eighteen, and is it mine or the
+platform's?* It groups one namespace's failed runs over one window by the
+dimensions a caller names, worst first.
+
+```bash
+orkctl -n payments stats failures                       # orkflow, task, code, category
+orkctl -n payments stats failures --since 6h --group-by task,code,image,phase
+orkctl -n payments stats failures --category infrastructure_error --json
+orkctl -n payments stats failures --since 2026-09-22T04:00:00Z --until 2026-09-22T11:00:00Z --orkflow reconcile
+```
+
+The dashboard offers the same answer as a disclosure under **Recent failures**
+(`ui/src/lib/components/FailureFingerprints.svelte`), fetched only when it is
+opened, with one chip per dimension and a CLI equivalent that reproduces its
+rows.
+
+**The one read that opens run bodies.** §1's rule — no aggregate reads a run
+body — holds for `GetStats` unchanged, with its keys-only type and its
+panicking test. The facts that tell one failure from another are not in the
+index key: the task that failed, its code and category, its pool and Orker are
+in the archived snapshot, and the image the final attempt ran and the phase it
+ended in are in the per-attempt record. Widening the key would be a migration
+and an index that can disagree with the body it indexes. So this read crosses
+the line, deliberately and in one place, and bounds the crossing three ways:
+by the window, by the failed subset of it, and by a scan budget. What §1
+protects is preserved — the bodies read are proportional to FAILED runs in the
+window, never to how much output they wrote, because a run body holds
+references and not bytes.
+
+**One window, one population, again.** The window is exactly `GetStats`'
+(§2), resolved by the same function (`windowOf`). The population is the index
+keys under the namespace's `failed` status inside it, so
+`failed_runs_in_window` is the number `GetStats` reports as
+`runs_by_status["failed"]` for the same window, and `sum(run_count)` over
+every group is `failed_runs_grouped`. The two answers about one namespace
+cannot disagree about how many runs failed
+(`TestGetFailureBreakdown_ReconcilesWithGetStatsFailedCount`).
+
+**Dimensions** are exact equality on recorded fields; nothing is inferred,
+clustered or read out of a message:
+
+| Dimension | Read from |
+|---|---|
+| `orkflow` | `Run.orkflow_name` |
+| `task` | the primary failed task's id (below) |
+| `code`, `category` | that task's `error`, or the run's own `error` for a run-level failure |
+| `pool`, `orker` | that task's `pool` and `orker_id` |
+| `image`, `phase` | the task's final attempt record: `image.pinned`, `phase` |
+
+The **primary failed task** is, among the run's `FAILED` tasks, the one that
+finished first; a task with no `finished_at` sorts after every one that has
+one, and ties go to declaration order. The tasks a failing run cancels around
+its failure are consequences, never the cause. A lost pin member is `FAILED`
+with `PIN_HOST_LOST`, so a lost pin fingerprints as exactly that. A failed run
+with no `FAILED` task — a start that failed after its id was minted
+(`RUN_START_FAILED`) — is a run-level failure with no task, pool, Orker, image
+or phase. The **final attempt record** is the one whose number is the task
+run's `attempt`, else the highest-numbered one (`attempt` is 0 for a task
+Temporal timed out). A record is used whatever its outcome.
+
+**`unavailable` is not `-`.** Attempt records are reclaimed on the run's
+retention schedule (`docs/STORAGE.md`, "Reclaiming space"); the archive body
+and its index key never are. A group whose image or phase could not be read
+because the record is gone counts those runs in `attempt_evidence_missing`,
+and both clients render the empty cell `unavailable`. Any other empty value —
+a run-level failure's task, a task that never reached an Orker, a snapshot
+written before a field existed — renders `-`. `attempt_evidence_read` says
+whether the attempt store was consulted at all: it is only when `image` or
+`phase` is asked for, so a zero beside `false` means nothing was looked for.
+An engine with no attempt store refuses `image` and `phase` with
+`FailedPrecondition` rather than answering them as "all unavailable".
+
+**Fail rather than answer from a subset.** More than 5000 failed runs in the
+window (`FailureBreakdownMaxScan`) is `ResourceExhausted` before a single body
+is read, and the message names the population, the bound, and what to narrow.
+An index row whose body is absent — the crash window between the archive's two
+writes — is skipped exactly as `ListRuns` skips it, and shows as
+`failed_runs_scanned < failed_runs_in_window`. Any other unreadable body, or an
+attempt store that cannot be reached, fails the call with `Unavailable` naming
+the run: a census with a hole in it is not a census, and "could not read" is
+not "reclaimed". `limit` (default 50, at most 500) bounds the groups returned,
+never the scan; `groups_total`, `failed_runs_grouped` and
+`attempt_evidence_missing` are always over every group.
+
+**Order** is total and clock-free: run count descending, then newest
+`last_seen`, then each grouped dimension ascending in the enum's order. Each
+group carries its `first_seen`/`last_seen` (creation times) and up to three
+example runs, newest created first; ids are carried, never compared.
+
+**The cache** is §4's, with a second key shape: the namespace and window as
+sent, plus the orkflow, the resolved dimensions in request order, the
+category and the limit as sent. Same TTL (`ORK_STATS_CACHE_TTL`), same bound,
+same whole-answer rule, and the same order — namespace and window resolved,
+every field validated, and only then the lookup.
+
+**Cost**: one keys-only prefix scan of
+`metadata/index/runs/{namespace}/{orkflow?}/failed/`, one body read per failed
+run in the window (eight at a time), and — only for `image` or `phase` — one
+attempt-record prefix listing per failed task-level run. Nothing is written.

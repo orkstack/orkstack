@@ -458,10 +458,11 @@ type webhookPayload struct {
 		Namespace string `json:"namespace"`
 		Status    string `json:"status"`
 		TaskRuns  []struct {
-			TaskID    string          `json:"taskId"`
-			Status    string          `json:"status"`
-			StartedAt string          `json:"startedAt"`
-			ValuesRef json.RawMessage `json:"valuesRef"`
+			TaskID      string          `json:"taskId"`
+			Status      string          `json:"status"`
+			ScheduledAt string          `json:"scheduledAt"`
+			StartedAt   string          `json:"startedAt"`
+			ValuesRef   json.RawMessage `json:"valuesRef"`
 		} `json:"taskRuns"`
 	} `json:"run"`
 }

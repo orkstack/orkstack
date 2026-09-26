@@ -2,6 +2,7 @@
 	import { goto, invalidate } from '$app/navigation';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import FailureFingerprints from '$lib/components/FailureFingerprints.svelte';
 	import HoldBanner from '$lib/components/HoldBanner.svelte';
 	import Popover from '$lib/components/Popover.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
@@ -354,6 +355,15 @@
 						</tbody>
 					</table>
 				</div>
+				<!-- The same failed runs, grouped by what failed and why. Fetched
+					only when opened; absent when nothing failed, because there is
+					nothing to fingerprint. -->
+				<FailureFingerprints
+					namespace={data.namespace}
+					window={data.window}
+					sinceParam={data.sinceParam}
+					computedAt={stats.computedAt}
+				/>
 			{/if}
 		</section>
 	</div>

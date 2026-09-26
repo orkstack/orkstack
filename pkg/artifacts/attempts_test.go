@@ -5,8 +5,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -294,5 +296,107 @@ func TestAttemptStoreBackends_MatchTheLogStoreBackends(t *testing.T) {
 	logs := strings.Join(LogStoreBackends(), ",")
 	if attempts != logs {
 		t.Fatalf("attempt store backends = %q, log store backends = %q", attempts, logs)
+	}
+}
+
+// sampleSpans is a closed §7.1 span list, the shape the Orker writes.
+func sampleSpans() []*orkstackv1.PhaseSpan {
+	base := time.Date(2026, 9, 22, 9, 14, 4, 0, time.UTC)
+	names := []string{"start", "commit-check", "workspace", "stage-inputs", "image", "render", "create", "run", "exit"}
+	spans := make([]*orkstackv1.PhaseSpan, len(names))
+	at := base
+	for i, name := range names {
+		next := at.Add(time.Duration(i+1) * 17 * time.Millisecond)
+		spans[i] = &orkstackv1.PhaseSpan{
+			Phase:      name,
+			StartedAt:  timestamppb.New(at),
+			FinishedAt: timestamppb.New(next),
+		}
+		at = next
+	}
+	return spans
+}
+
+// TestAttemptRecord_PhasesRoundTripThroughLocalAndS3Stores is S1's unit half:
+// a record's phase spans survive the encoder and every in-tree store without
+// a code change in this package — the field is additive. The S3 half is
+// TestIntegration_S3AttemptStore_PhasesRoundTrip, against real MinIO.
+func TestAttemptRecord_PhasesRoundTripThroughLocalAndS3Stores(t *testing.T) {
+	local, err := NewLocalAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalAttemptStore: %v", err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	for name, store := range map[string]AttemptStore{"local": local, "memory": NewMemoryAttemptStore()} {
+		t.Run(name, func(t *testing.T) {
+			record := sampleAttempt("ork-spans", "flaky", 1)
+			record.Phase = "exit"
+			record.Phases = sampleSpans()
+			if err := store.PutAttempt(context.Background(), record); err != nil {
+				t.Fatalf("PutAttempt: %v", err)
+			}
+			got, err := store.ListAttempts(context.Background(), "ork-spans", "flaky")
+			if err != nil || len(got) != 1 {
+				t.Fatalf("ListAttempts = %d records, %v", len(got), err)
+			}
+			if !proto.Equal(got[0], record) {
+				t.Fatalf("round trip changed the record:\n got %v\nwant %v", got[0], record)
+			}
+		})
+	}
+}
+
+// TestBoundAttempt_PhasesSurviveMessageTruncation is S2: a record over the cap
+// because of its error strings is truncated in those strings only; every span
+// survives.
+func TestBoundAttempt_PhasesSurviveMessageTruncation(t *testing.T) {
+	record := sampleAttempt("ork-1", "flaky", 1)
+	record.Phases = sampleSpans()
+	record.Error.Message = strings.Repeat("m", AttemptMaxBytes)
+	record.Error.Details = strings.Repeat("d", AttemptMaxBytes)
+
+	document, err := MarshalAttempt(record)
+	if err != nil {
+		t.Fatalf("MarshalAttempt: %v", err)
+	}
+	if len(document) > AttemptMaxBytes {
+		t.Fatalf("serialized record = %d bytes, cap is %d", len(document), AttemptMaxBytes)
+	}
+	decoded, err := UnmarshalAttempt(document)
+	if err != nil {
+		t.Fatalf("UnmarshalAttempt: %v", err)
+	}
+	if len(decoded.GetPhases()) != len(record.GetPhases()) {
+		t.Fatalf("bounding kept %d spans, want all %d", len(decoded.GetPhases()), len(record.GetPhases()))
+	}
+	for i := range record.GetPhases() {
+		if !proto.Equal(decoded.GetPhases()[i], record.GetPhases()[i]) {
+			t.Errorf("span %d changed: %v, want %v", i, decoded.GetPhases()[i], record.GetPhases()[i])
+		}
+	}
+}
+
+// TestUnmarshalAttempt_ARecordWithoutPhasesReadsAnEmptyList is S3: a record
+// written before phases existed decodes on this build as an empty list — the
+// reader's "record predates phase spans" — and a record WITH phases decodes on
+// a reader that does not know the field (simulated by an unknown field) rather
+// than failing.
+func TestUnmarshalAttempt_ARecordWithoutPhasesReadsAnEmptyList(t *testing.T) {
+	old := `{"schemaVersion":1,"runId":"ork-1","taskId":"flaky","attempt":1,` +
+		`"outcome":"ATTEMPT_OUTCOME_SUCCEEDED","phase":"commit"}`
+	decoded, err := UnmarshalAttempt([]byte(old))
+	if err != nil {
+		t.Fatalf("UnmarshalAttempt of a pre-phases record: %v", err)
+	}
+	if len(decoded.GetPhases()) != 0 {
+		t.Fatalf("a pre-phases record decoded %d spans, want none", len(decoded.GetPhases()))
+	}
+	if decoded.GetPhase() != "commit" {
+		t.Errorf("phase = %q, want commit", decoded.GetPhase())
+	}
+	future := `{"schemaVersion":1,"runId":"ork-1","taskId":"flaky","attempt":1,"phase":"run",` +
+		`"phasesFromTheFuture":[{"phase":"run"}]}`
+	if _, err := UnmarshalAttempt([]byte(future)); err != nil {
+		t.Fatalf("an unknown field broke the reader: %v", err)
 	}
 }

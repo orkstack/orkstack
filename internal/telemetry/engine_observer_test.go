@@ -458,3 +458,78 @@ func containsAll(s string, substrings ...string) bool {
 	}
 	return true
 }
+
+// taskDurationSum is the ork.task.duration histogram's sum for one status.
+func taskDurationSum(t *testing.T, reader sdkmetric.Reader, status string) (float64, bool) {
+	t.Helper()
+	for _, sm := range collect(t, reader).ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "ork.task.duration" {
+				continue
+			}
+			if hist, ok := m.Data.(metricdata.Histogram[float64]); ok {
+				for _, dp := range hist.DataPoints {
+					if v, ok := dp.Attributes.Value(AttrStatus); ok && v.AsString() == status {
+						return dp.Sum, true
+					}
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+// TestEngineObserver_TaskDurationMeasuresDispatchToFinish is E8: correcting
+// TaskRun.started_at to the Orker's start must not silently change what
+// ork.task.duration measures. It stays dispatch to finish — finished_at −
+// scheduled_at — and falls back to started_at on a snapshot that has no
+// scheduled_at (a pre-contract run, where started_at held the dispatch
+// instant).
+func TestEngineObserver_TaskDurationMeasuresDispatchToFinish(t *testing.T) {
+	scheduled := time.Unix(1755302400, 0).UTC()
+	cases := []struct {
+		name string
+		task *orkstackv1.TaskRun
+		want float64
+	}{
+		{
+			name: "scheduled_at set: dispatch to finish, not the Orker's run time",
+			task: &orkstackv1.TaskRun{
+				TaskId:      "build",
+				Status:      orkstackv1.Status_STATUS_SUCCEEDED,
+				ScheduledAt: timestamppb.New(scheduled),
+				StartedAt:   timestamppb.New(scheduled.Add(30 * time.Second)),
+				FinishedAt:  timestamppb.New(scheduled.Add(50 * time.Second)),
+			},
+			want: 50,
+		},
+		{
+			name: "pre-contract snapshot: started_at is the dispatch instant",
+			task: &orkstackv1.TaskRun{
+				TaskId:     "build",
+				Status:     orkstackv1.Status_STATUS_SUCCEEDED,
+				StartedAt:  timestamppb.New(scheduled),
+				FinishedAt: timestamppb.New(scheduled.Add(12 * time.Second)),
+			},
+			want: 12,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := sdkmetric.NewManualReader()
+			var buf bytes.Buffer
+			observer := newTestEngineObserver(t, reader, &buf, false)
+			run := &orkstackv1.Run{Id: "run-e8", Namespace: "default", TaskRuns: []*orkstackv1.TaskRun{tc.task}}
+			observer.ObserveEvent(context.Background(),
+				runEvent("run-e8", orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED, "build"),
+				run)
+			got, ok := taskDurationSum(t, reader, "succeeded")
+			if !ok {
+				t.Fatal("ork.task.duration{status=succeeded} was not recorded")
+			}
+			if got != tc.want {
+				t.Fatalf("ork.task.duration = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

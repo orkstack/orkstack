@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"go.temporal.io/sdk/temporal"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
@@ -325,4 +326,23 @@ func (f *Failure) TemporalError() error {
 	// run to read. Found by
 	// TestIntegration_AFailedTaskStillPublishesWhatItProduced.
 	return temporal.NewApplicationErrorWithCause(message, category, f.Cause, detail)
+}
+
+// StampStart records when the attempt began on the failure's transport, so
+// TaskRun.started_at is filled for a failed task exactly as for a succeeded
+// one. A failure that reached here without a detail — a Validate refusal, a
+// workdir error — gets the same minimal detail TemporalError would have
+// built for it, with the start added.
+func (f *Failure) StampStart(startedAt *timestamppb.Timestamp) *Failure {
+	if f == nil {
+		return nil
+	}
+	if f.Detail == nil {
+		f.Detail = &orkstackv1.ActivityFailureDetail{
+			ReasonCode: f.Reason,
+			Category:   CategoryEnum(f.Category()),
+		}
+	}
+	f.Detail.StartedAt = startedAt
+	return f
 }

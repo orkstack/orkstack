@@ -589,6 +589,10 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 	// resolve these tasks, at that moment.
 	for _, id := range []string{"maybe", "after"} {
 		tr := taskRunOf(t, &run, id)
+		if tr.GetScheduledAt() != nil {
+			t.Errorf("%s scheduled_at = %v, want unset: a skipped task was never scheduled",
+				id, tr.GetScheduledAt().AsTime())
+		}
 		if tr.GetStartedAt() != nil {
 			t.Errorf("%s started_at = %v, want unset: a skipped task never reached an Orker",
 				id, tr.GetStartedAt().AsTime())
@@ -1041,35 +1045,61 @@ func TestRunWorkflow_CancelsSiblingsAndSkipsUnstartedTasksWhenATaskFails(t *test
 	}
 
 	// BOTH tasks read CANCELED, and that is correct — it is the lifecycle
-	// truth for each. started_at is the ONLY thing on the snapshot that tells
-	// them apart, so it has to be honest: `sibling` was dispatched and killed,
-	// `downstream` never reached an Orker at all. Stamping both made a task
-	// that never ran render with the same CANCELED badge as one that did, on
-	// the run page and everywhere else that reads the snapshot.
-	if tr := taskRunOf(t, stored, "downstream"); tr.GetStartedAt() != nil {
-		t.Errorf("downstream started_at = %v, want unset: the run ended before it was dispatched",
-			tr.GetStartedAt().AsTime())
+	// truth for each. scheduled_at is the ONLY thing on the snapshot that
+	// tells them apart, so it has to be honest: `sibling` was dispatched and
+	// killed, `downstream` never reached an Orker at all. Stamping both made a
+	// task that never ran render with the same CANCELED badge as one that
+	// did, on the run page and everywhere else that reads the snapshot.
+	if tr := taskRunOf(t, stored, "downstream"); tr.GetScheduledAt() != nil || tr.GetStartedAt() != nil {
+		t.Errorf("downstream scheduled_at = %v, started_at = %v, want both unset: the run ended "+
+			"before it was dispatched", tr.GetScheduledAt(), tr.GetStartedAt())
 	} else if tr.GetFinishedAt() == nil {
 		t.Error("downstream finished_at is unset; the run did resolve this task")
 	}
-	if tr := taskRunOf(t, stored, "sibling"); tr.GetStartedAt() == nil {
-		t.Error("sibling started_at is unset; it really did run before it was canceled, and a " +
+	if tr := taskRunOf(t, stored, "sibling"); tr.GetScheduledAt() == nil {
+		t.Error("sibling scheduled_at is unset; it really was dispatched before it was canceled, and a " +
 			"client cannot tell it from downstream without that stamp")
+	} else if tr.GetStartedAt() != nil {
+		// Its cancellation reached the Orker as a plain context cancellation:
+		// no Orker reported a start, and none is invented.
+		t.Errorf("sibling started_at = %v, want unset: no Orker reported a start for it",
+			tr.GetStartedAt().AsTime())
 	}
 }
 
 // cancelSiblingsTask is cancelSiblingsDocument's task activity: doomed fails,
 // sibling runs until it is canceled (closing siblingCanceled), and any other
 // task is an error because the run must end before it is dispatched.
+//
+// doomed fails only once sibling's function is really running. Without that
+// ordering the test raced the SDK's test environment: when the workflow's
+// cancel lands before the environment's goroutine has invoked sibling, the
+// environment answers Canceled WITHOUT calling the function at all
+// (activityExecutorWrapper.Execute: "If activity handle cannot be found, we
+// assume it was cancelled"), so siblingCanceled never closed and the test
+// failed after its 30s deadline — about one run in twenty on an idle host,
+// more under load, on this branch's base as well as on it. Waiting here makes
+// sibling genuinely running when the run fails, which is the case the test
+// exists to pin.
 func cancelSiblingsTask(
 	t *testing.T,
 	siblingCanceled chan struct{},
 ) func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	siblingRunning := make(chan struct{})
+	var markRunning sync.Once
 	return func(actCtx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		switch in.TaskId {
 		case "doomed":
+			select {
+			case <-siblingRunning:
+			case <-actCtx.Done():
+				return &orkstackv1.ExecuteTaskResult{}, actCtx.Err()
+			case <-time.After(30 * time.Second):
+				t.Error("sibling was never started while doomed ran; the fixture cannot pin cancellation")
+			}
 			return &orkstackv1.ExecuteTaskResult{}, errors.New("workload exited 1")
 		case "sibling":
+			markRunning.Do(func() { close(siblingRunning) })
 			// Temporal delivers cancellation to an activity ONLY through a
 			// heartbeat response (see workflow.go's orkerHeartbeatTimeout
 			// comment) — this must heartbeat in a loop, exactly like the
@@ -1166,7 +1196,8 @@ func TestRunWorkflow_NeverAnnouncesACanceledSiblingAsATaskOutcome(t *testing.T) 
 	}
 
 	// (4) The announcements end with RUN_FAILED, whose run reads sibling as
-	// CANCELED with a startedAt and downstream as CANCELED without one.
+	// CANCELED with a scheduledAt (it was dispatched) and downstream as
+	// CANCELED with neither scheduledAt nor startedAt (it never was).
 	if len(events) == 0 {
 		t.Fatal("nothing was announced")
 	}
@@ -1175,11 +1206,13 @@ func TestRunWorkflow_NeverAnnouncesACanceledSiblingAsATaskOutcome(t *testing.T) 
 		t.Fatalf("last announcement = %v, want RUN_FAILED", last.GetType())
 	}
 	final := runs[len(runs)-1]
-	if tr := taskRunOf(t, final, "sibling"); tr.GetStatus() != orkstackv1.Status_STATUS_CANCELED || tr.GetStartedAt() == nil {
-		t.Errorf("RUN_FAILED run reads sibling as %v (startedAt %v), want CANCELED with a startedAt", tr.GetStatus(), tr.GetStartedAt())
+	if tr := taskRunOf(t, final, "sibling"); tr.GetStatus() != orkstackv1.Status_STATUS_CANCELED || tr.GetScheduledAt() == nil {
+		t.Errorf("RUN_FAILED run reads sibling as %v (scheduledAt %v), want CANCELED with a scheduledAt", tr.GetStatus(), tr.GetScheduledAt())
 	}
-	if tr := taskRunOf(t, final, "downstream"); tr.GetStatus() != orkstackv1.Status_STATUS_CANCELED || tr.GetStartedAt() != nil {
-		t.Errorf("RUN_FAILED run reads downstream as %v (startedAt %v), want CANCELED without one", tr.GetStatus(), tr.GetStartedAt())
+	if tr := taskRunOf(t, final, "downstream"); tr.GetStatus() != orkstackv1.Status_STATUS_CANCELED ||
+		tr.GetScheduledAt() != nil || tr.GetStartedAt() != nil {
+		t.Errorf("RUN_FAILED run reads downstream as %v (scheduledAt %v, startedAt %v), want CANCELED with neither",
+			tr.GetStatus(), tr.GetScheduledAt(), tr.GetStartedAt())
 	}
 }
 
@@ -1592,8 +1625,18 @@ func TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost(t *testing.T) {
 	if got := statusOf(stored, "compile"); got != orkstackv1.Status_STATUS_CANCELED {
 		t.Errorf("compile status = %v, want CANCELED", got)
 	}
-	if tr := taskRunOf(t, stored, "compile"); tr.GetStartedAt() != nil {
-		t.Errorf("compile started_at = %v, want unset", tr.GetStartedAt().AsTime())
+	if tr := taskRunOf(t, stored, "compile"); tr.GetScheduledAt() != nil || tr.GetStartedAt() != nil {
+		t.Errorf("compile scheduled_at = %v, started_at = %v, want both unset",
+			tr.GetScheduledAt(), tr.GetStartedAt())
+	}
+	// E4's pin-loss half: prep WAS dispatched, but its host died without
+	// reporting, so it has a scheduled_at and no started_at.
+	if prep.GetScheduledAt() == nil {
+		t.Error("prep scheduled_at is unset; it was dispatched before the host was lost")
+	}
+	if prep.GetStartedAt() != nil {
+		t.Errorf("prep started_at = %v, want unset: the lost host never reported a start",
+			prep.GetStartedAt().AsTime())
 	}
 
 	// ── the no-sibling half of "which Orker died?" ────────────────────────
@@ -1862,10 +1905,11 @@ func TestRunWorkflow_FailsTheTriggeringTaskWhenNoPinHostHasAFreeSlot(t *testing.
 	if got := prep.GetError().GetCategory(); got != orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR {
 		t.Errorf("prep error category = %v, want INFRASTRUCTURE_ERROR", got)
 	}
-	// It never reached an Orker, and started_at is the only thing that says so.
-	if prep.GetStartedAt() != nil {
-		t.Errorf("prep started_at = %v, want unset: the pin never opened, so it was never dispatched",
-			prep.GetStartedAt().AsTime())
+	// It never reached an Orker, and scheduled_at is the only thing that says
+	// so.
+	if prep.GetScheduledAt() != nil || prep.GetStartedAt() != nil {
+		t.Errorf("prep scheduled_at = %v, started_at = %v, want both unset: the pin never opened, "+
+			"so it was never dispatched", prep.GetScheduledAt(), prep.GetStartedAt())
 	}
 	if stored.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 		t.Errorf("run status = %v, want FAILED", stored.GetStatus())

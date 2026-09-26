@@ -1,0 +1,13 @@
+Namespace:   default
+Window:      2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:    2026-01-02T03:04:05Z
+Grouped by:  orkflow, task, code, category, image, pool, phase
+
+ORKFLOW    TASK       CODE                    CATEGORY              IMAGE                                 POOL  PHASE        RUNS  FIRST                 LAST                  EXAMPLE
+payments   ingest     IMAGE_PULL_FAILED       INFRASTRUCTURE_ERROR  ghcr.io/acme/ingest@sha256:4f0c11     gpu   image        2     2026-01-02T02:24:05Z  2026-01-02T02:34:05Z  ork-ingest-1
+reconcile  reconcile  CONTAINER_EXIT_NONZERO  ACTIVITY_FAILED       ghcr.io/acme/reconcile@sha256:ab12ff  main  exit         2     2026-01-02T00:04:05Z  2026-01-02T01:04:05Z  ork-reconcile-1
+payments   ingest     IMAGE_PULL_FAILED       INFRASTRUCTURE_ERROR  unavailable                           gpu   unavailable  1     2026-01-02T02:14:05Z  2026-01-02T02:14:05Z  ork-ingest-3
+nightly    -          RUN_START_FAILED        -                     -                                     -     -            1     2026-01-01T22:04:05Z  2026-01-01T22:04:05Z  ork-nightly-1
+
+scanned 6 of 6 failed runs in the window; 6 grouped into 4 groups
+image and phase unavailable for 1 group: attempt records for 1 run were reclaimed or never written

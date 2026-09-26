@@ -357,6 +357,13 @@ message ActivityFailureDetail {
   ImageRef image = 7;
   int32 attempt = 8;
   string orker_id = 9;
+
+  // started_at is when this Orker began the attempt that failed, the same
+  // instant ExecuteTaskResult.started_at carries on the success path, so the
+  // engine can project TaskRun.started_at identically for both outcomes.
+  // Stamped by the Orker on every ApplicationError it returns, whether or
+  // not a container ran.
+  google.protobuf.Timestamp started_at = 10;
 }
 
 // ---------------------------------------------------------------- orker identity

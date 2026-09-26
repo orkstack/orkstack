@@ -176,7 +176,16 @@ func (o *EngineObserver) recordTask(ctx context.Context, event *orkstackv1.Event
 	durationAttrs := inst.Cardinality.TaskRunAttrs(run, task,
 		attribute.String(AttrStatus, status))
 	durationAttrs = append(durationAttrs, selAttrs...)
-	if started, finished := task.GetStartedAt(), task.GetFinishedAt(); started != nil && finished != nil {
+	// Dispatch to finish: finished_at − scheduled_at. started_at is the
+	// Orker's start of the deciding attempt, and measuring from it would
+	// change this instrument's meaning under an unchanged name; it is the
+	// fallback only for a snapshot with no scheduled_at (recorded before that
+	// field existed), where it still held the dispatch instant.
+	started := task.GetScheduledAt()
+	if started == nil {
+		started = task.GetStartedAt()
+	}
+	if finished := task.GetFinishedAt(); started != nil && finished != nil {
 		seconds := finished.AsTime().Sub(started.AsTime()).Seconds()
 		if seconds >= 0 {
 			inst.TaskDuration.Record(ctx, seconds, metric.WithAttributes(durationAttrs...))

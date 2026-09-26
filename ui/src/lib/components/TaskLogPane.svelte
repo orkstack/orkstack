@@ -20,12 +20,12 @@
 		namespace: string;
 		status: Status;
 		/**
-		 * startedAt is the engine's dispatch stamp, and the only thing that
+		 * scheduledAt is the engine's dispatch stamp, and the only thing that
 		 * tells a CANCELED task that RAN from one the run ended before it ever
 		 * reached an Orker. Without it this pane opened a socket for an
 		 * attempt that does not exist and the engine answered NotFound.
 		 */
-		startedAt?: Timestamp;
+		scheduledAt?: Timestamp;
 		/**
 		 * attempt is the try to SHOW, and 0 means "the latest that wrote
 		 * anything" — which follows the task onto its retries. It is the
@@ -75,7 +75,7 @@
 		taskId,
 		namespace,
 		status,
-		startedAt,
+		scheduledAt,
 		attempt = 0,
 		deepLinked = false,
 		pinRequest,
@@ -190,7 +190,7 @@
 	// taskDispatched reads the dispatch stamp too: a task killed mid-run has
 	// output worth reading, and one the run canceled before it started has no
 	// attempt at all.
-	const started = $derived(taskDispatched(status, startedAt));
+	const started = $derived(taskDispatched(status, scheduledAt));
 
 	// dispatched latches `started`: a task that has been dispatched once has
 	// output to read for ever, so a later status reading as not-started must
