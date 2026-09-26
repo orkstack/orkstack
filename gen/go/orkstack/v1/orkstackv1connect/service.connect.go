@@ -95,6 +95,8 @@ const (
 	RunServiceGetArtifactProvenanceProcedure = "/orkstack.v1.RunService/GetArtifactProvenance"
 	// RunServiceInspectRunProcedure is the fully-qualified name of the RunService's InspectRun RPC.
 	RunServiceInspectRunProcedure = "/orkstack.v1.RunService/InspectRun"
+	// RunServiceDiffRunsProcedure is the fully-qualified name of the RunService's DiffRuns RPC.
+	RunServiceDiffRunsProcedure = "/orkstack.v1.RunService/DiffRuns"
 	// WebhookServiceRegisterWebhookProcedure is the fully-qualified name of the WebhookService's
 	// RegisterWebhook RPC.
 	WebhookServiceRegisterWebhookProcedure = "/orkstack.v1.WebhookService/RegisterWebhook"
@@ -549,6 +551,23 @@ type RunServiceClient interface {
 	// retry backoff and until the next attempt's first beat; that detail is
 	// never rendered as the new attempt's progress.
 	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
+	// DiffRuns compares two runs of ONE namespace field by field: the pinned
+	// definition, the input (as a canonical-JSON unified diff), and per task
+	// its status, attempt, pool, pin, orker, exit code, error, duration, and
+	// the image it was dispatched with and the platform manifest it ran.
+	//
+	// It is a READ over what GetRun, GetOrkflow and ListTaskAttempts already
+	// serve, computed on every call and stored nowhere, so there is no
+	// comparison record that can disagree with the runs it compares. Both ids
+	// resolve inside the request's namespace exactly as GetRun resolves one: a
+	// run of another namespace is NotFound. Two runs of different orkflows are
+	// compared and flagged (same_orkflow=false), never refused.
+	//
+	// The diff is SERVER-side for the reason DiffOrkflowVersions records: two
+	// clients render it, and the rendering of "unavailable", "does not apply"
+	// and an empty value must be decided once. Every from_value/to_value is a
+	// rendered string a client prints verbatim.
+	DiffRuns(context.Context, *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -628,6 +647,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("InspectRun")),
 			connect.WithClientOptions(opts...),
 		),
+		diffRuns: connect.NewClient[v1.DiffRunsRequest, v1.DiffRunsResponse](
+			httpClient,
+			baseURL+RunServiceDiffRunsProcedure,
+			connect.WithSchema(runServiceMethods.ByName("DiffRuns")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -644,6 +669,7 @@ type runServiceClient struct {
 	listTaskAttempts      *connect.Client[v1.ListTaskAttemptsRequest, v1.ListTaskAttemptsResponse]
 	getArtifactProvenance *connect.Client[v1.GetArtifactProvenanceRequest, v1.GetArtifactProvenanceResponse]
 	inspectRun            *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
+	diffRuns              *connect.Client[v1.DiffRunsRequest, v1.DiffRunsResponse]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -699,6 +725,11 @@ func (c *runServiceClient) GetArtifactProvenance(ctx context.Context, req *conne
 // InspectRun calls orkstack.v1.RunService.InspectRun.
 func (c *runServiceClient) InspectRun(ctx context.Context, req *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
 	return c.inspectRun.CallUnary(ctx, req)
+}
+
+// DiffRuns calls orkstack.v1.RunService.DiffRuns.
+func (c *runServiceClient) DiffRuns(ctx context.Context, req *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error) {
+	return c.diffRuns.CallUnary(ctx, req)
 }
 
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
@@ -773,6 +804,23 @@ type RunServiceHandler interface {
 	// retry backoff and until the next attempt's first beat; that detail is
 	// never rendered as the new attempt's progress.
 	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
+	// DiffRuns compares two runs of ONE namespace field by field: the pinned
+	// definition, the input (as a canonical-JSON unified diff), and per task
+	// its status, attempt, pool, pin, orker, exit code, error, duration, and
+	// the image it was dispatched with and the platform manifest it ran.
+	//
+	// It is a READ over what GetRun, GetOrkflow and ListTaskAttempts already
+	// serve, computed on every call and stored nowhere, so there is no
+	// comparison record that can disagree with the runs it compares. Both ids
+	// resolve inside the request's namespace exactly as GetRun resolves one: a
+	// run of another namespace is NotFound. Two runs of different orkflows are
+	// compared and flagged (same_orkflow=false), never refused.
+	//
+	// The diff is SERVER-side for the reason DiffOrkflowVersions records: two
+	// clients render it, and the rendering of "unavailable", "does not apply"
+	// and an empty value must be decided once. Every from_value/to_value is a
+	// rendered string a client prints verbatim.
+	DiffRuns(context.Context, *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error)
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -848,6 +896,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("InspectRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceDiffRunsHandler := connect.NewUnaryHandler(
+		RunServiceDiffRunsProcedure,
+		svc.DiffRuns,
+		connect.WithSchema(runServiceMethods.ByName("DiffRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -872,6 +926,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceGetArtifactProvenanceHandler.ServeHTTP(w, r)
 		case RunServiceInspectRunProcedure:
 			runServiceInspectRunHandler.ServeHTTP(w, r)
+		case RunServiceDiffRunsProcedure:
+			runServiceDiffRunsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -923,6 +979,10 @@ func (UnimplementedRunServiceHandler) GetArtifactProvenance(context.Context, *co
 
 func (UnimplementedRunServiceHandler) InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.InspectRun is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) DiffRuns(context.Context, *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.DiffRuns is not implemented"))
 }
 
 // WebhookServiceClient is a client for the orkstack.v1.WebhookService service.

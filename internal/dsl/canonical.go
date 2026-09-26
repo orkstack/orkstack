@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -42,6 +43,33 @@ import (
 // by byte sequence at emit time, so the order the code writes them in cannot
 // affect the output — which removes a whole class of "I reordered the struct
 // and the digest moved" bug.
+
+// CanonicalInputJSON renders a run input (or any Struct payload) for a
+// human-readable, deterministic line diff: the §4.4 canonical value tree —
+// keys sorted by byte sequence, integers without fraction or exponent, no
+// HTML escaping — indented two spaces, one key per line, no trailing newline.
+// A nil struct renders as "{}". It exists so DiffRuns can hand dsl.Unified
+// two texts in which the same value always spells the same way, and a
+// reordered or 5.0-vs-5 input never shows as a change.
+func CanonicalInputJSON(s *structpb.Struct) (string, error) {
+	// canonicalStruct returns (nil, nil) for a nil *Struct, which json would
+	// render as `null`; an absent input is the empty object.
+	if s == nil {
+		return "{}", nil
+	}
+	tree, err := canonicalStruct(s)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(tree); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(buf.String(), "\n"), nil
+}
 
 // CanonicalOrkflow renders wf in the canonical form of §4.4.
 func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {

@@ -1519,13 +1519,20 @@ func (s *Service) LookupRunIn(ctx context.Context, runID, namespace string) (*or
 	if err != nil {
 		return nil, err
 	}
+	return s.lookupRunInResolved(ctx, runID, ns.GetName())
+}
+
+// lookupRunInResolved is LookupRunIn for a namespace already resolved through
+// s.namespace, so a request that addresses two runs resolves its one
+// namespace once and reports a namespace error once, unattributed to a side.
+func (s *Service) lookupRunInResolved(ctx context.Context, runID, namespace string) (*orkstackv1.Run, error) {
 	run, err := s.LookupRun(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	if artifacts.ResolveNamespace(run.GetNamespace()) != ns.GetName() {
+	if artifacts.ResolveNamespace(run.GetNamespace()) != namespace {
 		return nil, connect.NewError(connect.CodeNotFound,
-			fmt.Errorf("run %q not found in namespace %q", runID, ns.GetName()))
+			fmt.Errorf("run %q not found in namespace %q", runID, namespace))
 	}
 	return run, nil
 }

@@ -16,6 +16,8 @@
 	import TimingBar from '$lib/components/TimingBar.svelte';
 	import { taskTiming } from '$lib/timing';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import Select from '$lib/components/Select.svelte';
+	import { defaultCompareTarget } from '$lib/runDiff';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
@@ -24,6 +26,7 @@
 		EventType,
 		type Event,
 		type RetryState,
+		type Run,
 		type TaskAttempt,
 		type TaskRun
 	} from '$lib/gen/orkstack/v1/run_pb';
@@ -237,6 +240,19 @@
 	// input — so there is no second GetRun and, deliberately, no URL that
 	// carries an input payload for someone to paste into a chat window.
 	let runAgainDialogOpen = $state(false);
+	// "Compare" is a dialog too, and it reads nothing but ids and statuses: the
+	// comparison page it opens carries two run ids in its URL and nothing else.
+	// Candidates are fetched when the dialog OPENS, not with the page — most
+	// visits never compare, and ListRuns is not free.
+	let compareDialogOpen = $state(false);
+	let compareCandidates = $state<Run[]>([]);
+	let compareSelected = $state('');
+	let comparePasted = $state('');
+	let compareLoading = $state(false);
+	let compareError = $state('');
+	// A pasted id — any run of this namespace, of any orkflow — wins over the
+	// list, so the dialog never stands between an operator and a run it lacks.
+	const compareTarget = $derived(comparePasted.trim() || compareSelected);
 	let cancelReason = $state('');
 	let cancelBusy = $state(false);
 	let cancelError = $state('');
@@ -764,6 +780,40 @@
 		}
 	}
 
+
+	async function openCompare(): Promise<void> {
+		if (!run) return;
+		compareDialogOpen = true;
+		compareError = '';
+		comparePasted = '';
+		compareLoading = true;
+		const current = run;
+		try {
+			const res = await orkstack(fetch).runs.listRuns({
+				namespace: data.namespace,
+				orkflowName: current.orkflowName,
+				pageSize: 20
+			});
+			compareCandidates = res.runs.filter((candidate) => candidate.id !== current.id);
+			compareSelected = defaultCompareTarget(res.runs, current.id);
+		} catch (err) {
+			compareCandidates = [];
+			compareSelected = '';
+			compareError = errorMessage(err);
+		} finally {
+			compareLoading = false;
+		}
+	}
+
+	function openComparison(): void {
+		if (!run || compareTarget === '') return;
+		void goto(
+			withNamespace(
+				`/runs/${encodeURIComponent(run.id)}/compare?to=${encodeURIComponent(compareTarget)}`,
+				data.namespace
+			)
+		);
+	}
 </script>
 
 <svelte:head><title>Run {run?.id ?? ''} — OrkStack</title></svelte:head>
@@ -835,6 +885,12 @@
 			</span>
 		</div>
 		<div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+			<button
+				type="button"
+				data-testid="compare-run"
+				onclick={() => void openCompare()}
+				class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+			>Compare</button>
 			<button
 				type="button"
 				data-testid="run-again"
@@ -1413,6 +1469,75 @@
 					replayFromRunId={run.id}
 					onsubmitted={(newRunId) => goto(withNamespace(`/runs/${newRunId}`, data.namespace))}
 				/>
+			{/snippet}
+		</Dialog>
+	{/if}
+
+	{#if compareDialogOpen}
+		<Dialog
+			testid="compare-dialog"
+			title="Compare this run with another"
+			widthClass="max-w-xl"
+			onclose={() => (compareDialogOpen = false)}
+		>
+			{#snippet body()}
+				<div class="grid grid-cols-1 gap-4">
+					<div class="grid grid-cols-1 gap-1.5">
+						<label for="compare-target" class="text-xs font-medium text-fg-muted"
+							>A recent run of {run.orkflowName}</label
+						>
+						{#if compareLoading}
+							<p class="text-sm text-fg-muted" data-testid="compare-loading">Loading recent runs…</p>
+						{:else if compareError}
+							<ErrorPanel
+								testid="compare-error"
+								retryTestid="compare-retry"
+								subject="recent runs of {run.orkflowName}"
+								message={compareError}
+								onretry={() => void openCompare()}
+							/>
+						{:else if compareCandidates.length === 0}
+							<p class="text-sm text-fg-muted" data-testid="compare-no-candidates">
+								No other run of {run.orkflowName} in this namespace. Paste a run id below.
+							</p>
+						{:else}
+							<Select
+								id="compare-target"
+								testid="compare-target"
+								value={compareSelected}
+								options={compareCandidates.map((candidate) => ({
+									value: candidate.id,
+									label: `${candidate.id} · ${statusLabel(candidate.status)} · ${fmtTimestamp(candidate.createdAt)}`
+								}))}
+								onchange={(value) => (compareSelected = value)}
+							/>
+						{/if}
+					</div>
+					<div class="grid grid-cols-1 gap-1.5">
+						<label for="compare-target-id" class="text-xs font-medium text-fg-muted"
+							>Or any run id (of any orkflow)</label
+						>
+						<input
+							id="compare-target-id"
+							data-testid="compare-target-id"
+							type="text"
+							bind:value={comparePasted}
+							placeholder="ork-…"
+							autocomplete="off"
+							spellcheck="false"
+							class="h-9 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg shadow-xs focus-visible:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500/25 focus-visible:outline-none"
+						/>
+					</div>
+					<div class="flex justify-end">
+						<button
+							type="button"
+							data-testid="compare-open"
+							disabled={compareTarget === ''}
+							onclick={openComparison}
+							class="inline-flex h-9 items-center rounded-md bg-brand-600 px-3 text-sm font-medium text-white shadow-xs hover:bg-brand-700 disabled:opacity-50"
+						>Open comparison</button>
+					</div>
+				</div>
 			{/snippet}
 		</Dialog>
 	{/if}
