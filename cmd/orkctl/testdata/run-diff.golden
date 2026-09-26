@@ -1,0 +1,29 @@
+Diff:        ork-mon -> ork-tue
+Namespace:   default
+Orkflow:     nightly-etl (same orkflow)
+Status:      SUCCEEDED -> FAILED
+Finished:    2026-01-02T03:12:05Z -> 2026-01-03T03:12:05Z
+Definition:  differs: nightly-etl@1.2.0 sha256:9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c9f2c -> nightly-etl@1.2.1 sha256:aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10aa10
+Input:       differs (2 lines)
+
+--- a/ork-mon/input.json
++++ b/ork-tue/input.json
+@@ -1,4 +1,4 @@
+ {
+-  "date": "2026-09-21",
++  "date": "2026-09-22",
+   "limit": 500
+ }
+
+TASK       FIELD            FROM                                                                                            TO
+extract    pool             main                                                                                            gpu
+extract    duration         1m3s                                                                                            4m12s
+transform  status           SUCCEEDED                                                                                       FAILED
+transform  attempt          1                                                                                               3
+transform  exit_code        0                                                                                               3
+transform  error            -                                                                                               CONTAINER_EXIT_NONZERO (ACTIVITY_FAILED)
+transform  image            ghcr.io/acme/transform@sha256:ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12  ghcr.io/acme/transform@sha256:ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90ff90
+load       platform_digest  unavailable                                                                                     sha256:c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff
+
+3 of 4 tasks differ; 1 identical; 1 field unavailable.
+load platform_digest in ork-mon: attempt_record_missing (no record of the outcome attempt or of a retry that adopted its commit: reclaimed, or the Orker never filed one)
