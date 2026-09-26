@@ -101,7 +101,33 @@ type Namespace struct {
 	// can never name an endpoint or a credential (AGENTS.md §6): a namespace
 	// admin chooses WHERE among the operator's destinations, not the
 	// destination itself. Unset means "the default sink, deployment defaults".
-	Telemetry     *TelemetryPolicy `protobuf:"bytes,10,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
+	Telemetry *TelemetryPolicy `protobuf:"bytes,10,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
+	// hold, when set, refuses every new run of this namespace at submit with
+	// FAILED_PRECONDITION, naming the reason and since. Unset means accepting,
+	// which is what every namespace has today and what an upgrade preserves.
+	//
+	// It is enforced in exactly one place — SubmitRun's preparation, the gate
+	// every door into a namespace already goes through (orkctl, the UI, `run
+	// again`, a trigger invoke) — and read from the registry on every submit,
+	// so a hold set through one replica is honoured by every other on its
+	// next request.
+	Hold *NamespaceHold `protobuf:"bytes,11,opt,name=hold,proto3" json:"hold,omitempty"`
+	// max_running bounds how many runs of this namespace may be in flight at
+	// once — accepted and not finished, which is exactly the population
+	// GetStatsResponse.running reports. 0 means unlimited, which is the
+	// inherited default and what every namespace has today.
+	//
+	// It is evaluated by reading the cluster's execution index at submit — the
+	// same read GetStats.running performs (docs/STATS.md §1) — so no OrkStack
+	// counter exists to disagree with it tomorrow. That makes it best-effort
+	// under simultaneous submits against several replicas: each reads, then
+	// acts, with no lock between, and the overshoot is bounded by the number
+	// of submits racing through the window between one replica's read and the
+	// cluster indexing its start. A lock would remove the overshoot and
+	// AGENTS.md §2.1 forbids building one, which is the right trade — a guard
+	// that is occasionally one over is worth far more than a lock service. A
+	// namespace that sets 0 never pays the read at all.
+	MaxRunning    int32 `protobuf:"varint,12,opt,name=max_running,json=maxRunning,proto3" json:"max_running,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -206,6 +232,90 @@ func (x *Namespace) GetTelemetry() *TelemetryPolicy {
 	return nil
 }
 
+func (x *Namespace) GetHold() *NamespaceHold {
+	if x != nil {
+		return x.Hold
+	}
+	return nil
+}
+
+func (x *Namespace) GetMaxRunning() int32 {
+	if x != nil {
+		return x.MaxRunning
+	}
+	return 0
+}
+
+// NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
+// decision and never a retroactive one: a run already accepted continues, is
+// readable, and finishes normally (AGENTS.md §15). Releasing a hold starts
+// nothing that was refused while it was set — a refused submit was refused,
+// not queued.
+//
+// It is a message rather than two scalars on Namespace so that "held" is one
+// presence check (hold != nil) and a hold can never be half-set.
+type NamespaceHold struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// reason is required. A hold with no reason is refused by the registry:
+	// the next operator to read this document is the one who has to decide
+	// whether to release it, and "on hold" with no why is not a decision they
+	// can make. It is a short human line, bounded at 512 bytes with no control
+	// characters, never a secret and never machine-parsed.
+	Reason string `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	// since is written by the registry on the write that SET the hold and
+	// preserved on every later write while it stays set, never supplied by a
+	// client — the same rule created_at/updated_at follow. Editing the reason
+	// of a hold does not move it: the door has been closed since the first
+	// write, whatever the sign on it now says.
+	Since         *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=since,proto3" json:"since,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NamespaceHold) Reset() {
+	*x = NamespaceHold{}
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NamespaceHold) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NamespaceHold) ProtoMessage() {}
+
+func (x *NamespaceHold) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NamespaceHold.ProtoReflect.Descriptor instead.
+func (*NamespaceHold) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *NamespaceHold) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *NamespaceHold) GetSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Since
+	}
+	return nil
+}
+
 // Pool is a set of Orkers, observed live.
 //
 // Nothing writes a Pool: it is derived on read from what the cluster reports
@@ -255,7 +365,7 @@ type Pool struct {
 
 func (x *Pool) Reset() {
 	*x = Pool{}
-	mi := &file_orkstack_v1_namespace_proto_msgTypes[1]
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -267,7 +377,7 @@ func (x *Pool) String() string {
 func (*Pool) ProtoMessage() {}
 
 func (x *Pool) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_namespace_proto_msgTypes[1]
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -280,7 +390,7 @@ func (x *Pool) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Pool.ProtoReflect.Descriptor instead.
 func (*Pool) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{1}
+	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Pool) GetName() string {
@@ -322,7 +432,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\x86\x04\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\xd7\x04\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -336,10 +446,16 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\x04etag\x18\b \x01(\tR\x04etag\x12>\n" +
 	"\rrun_retention\x18\t \x01(\v2\x19.google.protobuf.DurationR\frunRetention\x12:\n" +
 	"\ttelemetry\x18\n" +
-	" \x01(\v2\x1c.orkstack.v1.TelemetryPolicyR\ttelemetry\x1a9\n" +
+	" \x01(\v2\x1c.orkstack.v1.TelemetryPolicyR\ttelemetry\x12.\n" +
+	"\x04hold\x18\v \x01(\v2\x1a.orkstack.v1.NamespaceHoldR\x04hold\x12\x1f\n" +
+	"\vmax_running\x18\f \x01(\x05R\n" +
+	"maxRunning\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xda\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +
+	"\rNamespaceHold\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x120\n" +
+	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\"\xda\x01\n" +
 	"\x04Pool\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12(\n" +
 	"\x10live_orker_count\x18\x02 \x01(\x05R\x0eliveOrkerCount\x12\x1d\n" +
@@ -361,27 +477,30 @@ func file_orkstack_v1_namespace_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_namespace_proto_rawDescData
 }
 
-var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_orkstack_v1_namespace_proto_goTypes = []any{
 	(*Namespace)(nil),             // 0: orkstack.v1.Namespace
-	(*Pool)(nil),                  // 1: orkstack.v1.Pool
-	nil,                           // 2: orkstack.v1.Namespace.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 4: google.protobuf.Duration
-	(*TelemetryPolicy)(nil),       // 5: orkstack.v1.TelemetryPolicy
+	(*NamespaceHold)(nil),         // 1: orkstack.v1.NamespaceHold
+	(*Pool)(nil),                  // 2: orkstack.v1.Pool
+	nil,                           // 3: orkstack.v1.Namespace.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 5: google.protobuf.Duration
+	(*TelemetryPolicy)(nil),       // 6: orkstack.v1.TelemetryPolicy
 }
 var file_orkstack_v1_namespace_proto_depIdxs = []int32{
-	2, // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
-	3, // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
-	3, // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
-	4, // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
-	5, // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
-	3, // 5: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	3, // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
+	4, // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
+	4, // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
+	5, // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
+	6, // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
+	1, // 5: orkstack.v1.Namespace.hold:type_name -> orkstack.v1.NamespaceHold
+	4, // 6: orkstack.v1.NamespaceHold.since:type_name -> google.protobuf.Timestamp
+	4, // 7: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
+	8, // [8:8] is the sub-list for method output_type
+	8, // [8:8] is the sub-list for method input_type
+	8, // [8:8] is the sub-list for extension type_name
+	8, // [8:8] is the sub-list for extension extendee
+	0, // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_namespace_proto_init() }
@@ -396,7 +515,7 @@ func file_orkstack_v1_namespace_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_namespace_proto_rawDesc), len(file_orkstack_v1_namespace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

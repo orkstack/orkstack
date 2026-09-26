@@ -3,6 +3,7 @@
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import FailureFingerprints from '$lib/components/FailureFingerprints.svelte';
+	import HoldBanner from '$lib/components/HoldBanner.svelte';
 	import Popover from '$lib/components/Popover.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
@@ -125,6 +126,10 @@
 </script>
 
 <svelte:head><title>Dashboard — OrkStack</title></svelte:head>
+
+{#if data.namespaceHold}
+	<HoldBanner namespace={shown} hold={data.namespaceHold} testid="dashboard-hold-banner" />
+{/if}
 
 <div class="mb-6 flex flex-wrap items-baseline gap-3">
 	<h1 class="text-xl font-semibold tracking-tight text-fg" data-testid="dashboard-heading">

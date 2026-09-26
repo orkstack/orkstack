@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import HoldBanner from '$lib/components/HoldBanner.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
@@ -66,6 +67,14 @@
 </script>
 
 <svelte:head><title>Orkflows — OrkStack</title></svelte:head>
+
+{#if data.namespaceHold}
+	<HoldBanner
+		namespace={namespaceLabel(data.namespace)}
+		hold={data.namespaceHold}
+		testid="orkflows-hold-banner"
+	/>
+{/if}
 
 <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 	<h1 class="text-xl font-semibold tracking-tight text-fg">Orkflows</h1>

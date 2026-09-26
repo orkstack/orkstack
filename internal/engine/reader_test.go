@@ -79,6 +79,14 @@ func (f *fakeReadClient) GetWorkflowHistory(
 	return &fakeHistory{events: history.events, err: history.err}
 }
 
+// CountWorkflow is not a question this double answers.
+func (f *fakeReadClient) CountWorkflow(
+	context.Context,
+	*workflowservice.CountWorkflowExecutionsRequest,
+) (*workflowservice.CountWorkflowExecutionsResponse, error) {
+	return nil, fmt.Errorf("fakeReadClient: CountWorkflow is not supported")
+}
+
 func (f *fakeReadClient) ListWorkflow(
 	_ context.Context,
 	request *workflowservice.ListWorkflowExecutionsRequest,
@@ -760,6 +768,14 @@ func (p *pagedReadClient) GetWorkflowHistory(
 	return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}
 }
 
+// CountWorkflow is not a question this double answers.
+func (p *pagedReadClient) CountWorkflow(
+	context.Context,
+	*workflowservice.CountWorkflowExecutionsRequest,
+) (*workflowservice.CountWorkflowExecutionsResponse, error) {
+	return nil, fmt.Errorf("pagedReadClient: CountWorkflow is not supported")
+}
+
 func (p *pagedReadClient) ListWorkflow(
 	_ context.Context,
 	_ *workflowservice.ListWorkflowExecutionsRequest,
@@ -821,6 +837,14 @@ func (e *endlessReadClient) GetWorkflowHistory(
 	context.Context, string, string, bool, enumspb.HistoryEventFilterType,
 ) client.HistoryEventIterator {
 	return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}
+}
+
+// CountWorkflow is not a question this double answers.
+func (e *endlessReadClient) CountWorkflow(
+	context.Context,
+	*workflowservice.CountWorkflowExecutionsRequest,
+) (*workflowservice.CountWorkflowExecutionsResponse, error) {
+	return nil, fmt.Errorf("endlessReadClient: CountWorkflow is not supported")
 }
 
 func (e *endlessReadClient) ListWorkflow(

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -88,6 +89,13 @@ func (r *fakeRegistry) Put(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	name := artifacts.ResolveNamespace(ns.GetName())
+	// A hold with no reason is the store's refusal (validNamespaceHold); the
+	// double mirrors only this one case, so the audit trail's record of a
+	// refused namespace write can be observed through the Connect surface.
+	// The full rule is proved against the store itself.
+	if hold := ns.GetHold(); hold != nil && strings.TrimSpace(hold.GetReason()) == "" {
+		return nil, fmt.Errorf("put %q: hold needs a reason: %w", name, artifacts.ErrInvalidNamespace)
+	}
 	existing, exists := r.docs[name]
 	if cond.IfAbsent && exists {
 		return nil, fmt.Errorf("put %q: %w", name, artifacts.ErrPreconditionFailed)
@@ -98,6 +106,9 @@ func (r *fakeRegistry) Put(
 	r.seq++
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
 	stored.Name = name
+	// The hold's since is the registry's, by the one rule the durable store
+	// applies, so this double cannot drift from it.
+	artifacts.StampNamespaceHold(stored, existing, time.Now())
 	stored.Etag = fmt.Sprintf("etag-%d", r.seq)
 	r.docs[name] = stored
 	return proto.Clone(stored).(*orkstackv1.Namespace), nil

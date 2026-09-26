@@ -25,6 +25,7 @@ import (
 // deployment nobody is running.
 type RunReader interface {
 	ExecutionReader
+	AdmissionReader
 
 	GetRun(ctx context.Context, runID string) (*orkstackv1.Run, error)
 	ListRuns(ctx context.Context, q RunQuery) ([]*orkstackv1.Run, error)

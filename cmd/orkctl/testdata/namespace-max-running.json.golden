@@ -1,0 +1,18 @@
+{
+  "namespace": {
+    "name": "payments",
+    "description": "the payments tenant, renamed",
+    "labels": {
+      "team": "money"
+    },
+    "defaultPool": "batch",
+    "allowedPools": [
+      "batch",
+      "main"
+    ],
+    "createdAt": "2026-01-02T03:04:05Z",
+    "updatedAt": "2026-01-02T03:04:05Z",
+    "etag": "etag-5",
+    "maxRunning": 20
+  }
+}

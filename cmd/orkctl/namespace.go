@@ -43,6 +43,8 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		telemetrySink       string
 		taskLogs            string
 		telemetryAttributes []string
+		holdReason          string
+		maxRunning          int32
 	)
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -64,6 +66,10 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			admission := &orkstackv1.Namespace{}
+			if err := applyAdmissionFlags(cmd, admission, holdReason, maxRunning); err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -76,6 +82,8 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 					AllowedPools: allowedPools,
 					RunRetention: retention,
 					Telemetry:    telemetry,
+					Hold:         admission.GetHold(),
+					MaxRunning:   admission.GetMaxRunning(),
 				}},
 			))
 			if err != nil {
@@ -94,7 +102,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention,
-		&telemetrySink, &taskLogs, &telemetryAttributes)
+		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning)
 	return cmd
 }
 
@@ -160,6 +168,9 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		telemetrySink       string
 		taskLogs            string
 		telemetryAttributes []string
+		holdReason          string
+		maxRunning          int32
+		releaseHold         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <name>",
@@ -167,9 +178,20 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		Long: "update reads the namespace, applies the flags given, and writes it back\n" +
 			"compare-and-swapping on the version it read. A flag left out keeps its\n" +
 			"current value; if somebody else changed the namespace in between, the\n" +
-			"write is refused rather than silently overwriting theirs.",
+			"write is refused rather than silently overwriting theirs.\n\n" +
+			"--hold REASON closes the namespace to new runs (runs already accepted\n" +
+			"finish untouched); --release-hold reopens it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if releaseHold && cmd.Flags().Changed("hold") {
+				return fmt.Errorf("--hold and --release-hold contradict each other: give one")
+			}
+			// The admission flags are checked before any round trip, on a
+			// scratch document, so a blank reason or a negative cap is a local
+			// error; they are applied to the real one after it is read.
+			if err := applyAdmissionFlags(cmd, &orkstackv1.Namespace{}, holdReason, maxRunning); err != nil {
+				return err
+			}
 			parsed, err := parseLabels(labels)
 			if err != nil {
 				return err
@@ -213,6 +235,12 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 				edited.RunRetention = retention
 			}
 			edited.Telemetry = telemetry
+			if err := applyAdmissionFlags(cmd, edited, holdReason, maxRunning); err != nil {
+				return err
+			}
+			if releaseHold {
+				edited.Hold = nil
+			}
 
 			resp, err := client.UpdateNamespace(ctx, connect.NewRequest(
 				&orkstackv1.UpdateNamespaceRequest{Namespace: edited},
@@ -229,7 +257,9 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &labels, &runRetention,
-		&telemetrySink, &taskLogs, &telemetryAttributes)
+		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning)
+	cmd.Flags().BoolVar(&releaseHold, "release-hold", false,
+		"reopen a held namespace to new runs (nothing refused while it was held is started)")
 	return cmd
 }
 
@@ -310,6 +340,8 @@ func namespaceSpecFlags(
 	runRetention *string,
 	telemetrySink, taskLogs *string,
 	telemetryAttributes *[]string,
+	holdReason *string,
+	maxRunning *int32,
 ) {
 	cmd.Flags().StringVar(description, "description", "", "human description")
 	cmd.Flags().StringVar(defaultPool, "default-pool", "",
@@ -328,6 +360,34 @@ func namespaceSpecFlags(
 	cmd.Flags().StringArrayVar(telemetryAttributes, "telemetry-attribute", nil,
 		"attribute stamped on every signal of this namespace's runs, as key=value (repeatable; "+
 			"on update, replaces the whole set)")
+	cmd.Flags().StringVar(holdReason, "hold", "",
+		"close this namespace to new runs, with the reason the next operator reads "+
+			"(runs already accepted finish untouched)")
+	cmd.Flags().Int32Var(maxRunning, "max-running", 0,
+		"most runs of this namespace in flight at once (0 = unlimited)")
+}
+
+// applyAdmissionFlags writes --hold and --max-running onto ns, each only when
+// its flag was given — the "a flag left out keeps its current value" rule
+// every other update flag follows. A blank reason and a negative cap are
+// refused here, before any round trip; the registry refuses both again.
+// The hold's since is never sent: the registry stamps it.
+func applyAdmissionFlags(cmd *cobra.Command, ns *orkstackv1.Namespace, holdReason string, maxRunning int32) error {
+	if cmd.Flags().Changed("hold") {
+		if strings.TrimSpace(holdReason) == "" {
+			return fmt.Errorf("--hold needs a reason: the next operator has to decide whether to release it")
+		}
+		if ns.GetHold().GetReason() != holdReason {
+			ns.Hold = &orkstackv1.NamespaceHold{Reason: holdReason}
+		}
+	}
+	if cmd.Flags().Changed("max-running") {
+		if maxRunning < 0 {
+			return fmt.Errorf("--max-running must be 0 (unlimited) or positive, got %d", maxRunning)
+		}
+		ns.MaxRunning = maxRunning
+	}
+	return nil
 }
 
 // parseTaskLogsFlag turns --task-logs's raw value into the TaskLogExport it
@@ -448,11 +508,12 @@ func renderNamespaceList(out io.Writer, namespaces []*orkstackv1.Namespace) erro
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tRUN RETENTION\tCREATED\tDESCRIPTION")
+	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tRUN RETENTION\tHOLD\tMAX RUNNING\tCREATED\tDESCRIPTION")
 	for _, ns := range namespaces {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			ns.GetName(), defaultPoolLabel(ns), joinOrDash(ns.GetAllowedPools()),
-			runRetentionLabel(ns), formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
+			runRetentionLabel(ns), holdCellLabel(ns), maxRunningLabel(ns),
+			formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -467,6 +528,8 @@ func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	fmt.Fprintf(table, "Default pool:\t%s\n", defaultPoolLabel(ns))
 	fmt.Fprintf(table, "Allowed pools:\t%s\n", allowedPoolsLabel(ns))
 	fmt.Fprintf(table, "Run retention:\t%s\n", runRetentionLabel(ns))
+	fmt.Fprintf(table, "Hold:\t%s\n", holdLabel(ns))
+	fmt.Fprintf(table, "Max running:\t%s\n", maxRunningLabel(ns))
 	fmt.Fprintf(table, "Telemetry sink:\t%s\n", telemetrySinkLabel(ns))
 	fmt.Fprintf(table, "Task logs:\t%s\n", taskLogsLabel(ns))
 	fmt.Fprintf(table, "Telemetry attributes:\t%s\n", telemetryAttributesLabel(ns))
@@ -505,6 +568,35 @@ func runRetentionLabel(ns *orkstackv1.Namespace) string {
 		return d.AsDuration().String()
 	}
 	return "inherited (deployment maximum)"
+}
+
+// holdLabel renders a namespace's hold for `namespace get`: "accepting" when
+// it has none — spelled out, never a dash, which would read as the opposite
+// of the truth — and otherwise since when, and why.
+func holdLabel(ns *orkstackv1.Namespace) string {
+	hold := ns.GetHold()
+	if hold == nil {
+		return "accepting"
+	}
+	return fmt.Sprintf("since %s — %q", formatTime(hold.GetSince()), hold.GetReason())
+}
+
+// holdCellLabel is holdLabel for a table cell: the reason is a sentence and
+// belongs to `namespace get`, so the list says only whether and since when.
+func holdCellLabel(ns *orkstackv1.Namespace) string {
+	hold := ns.GetHold()
+	if hold == nil {
+		return "accepting"
+	}
+	return "since " + formatTime(hold.GetSince())
+}
+
+// maxRunningLabel renders a namespace's cap, with 0 spelled as what it means.
+func maxRunningLabel(ns *orkstackv1.Namespace) string {
+	if limit := ns.GetMaxRunning(); limit > 0 {
+		return fmt.Sprintf("%d", limit)
+	}
+	return "unlimited"
 }
 
 // telemetrySinkLabel renders the sink a namespace's telemetry policy names:

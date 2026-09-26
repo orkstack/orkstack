@@ -50,6 +50,14 @@ var (
 type statsIndex struct {
 	records []indexedExecution
 	queries []string
+	// counts records every CountWorkflow query, apart from the list queries
+	// above, so a test can say which of the two questions was asked.
+	counts []string
+	// countErr is returned by CountWorkflow when set.
+	countErr error
+	// endless always offers another page, so a walk that does not stop on its
+	// own budget never stops at all.
+	endless bool
 }
 
 // indexedExecution is one visibility record and the namespace memo the cluster
@@ -79,8 +87,42 @@ func (s *statsIndex) ListWorkflow(
 ) (*workflowservice.ListWorkflowExecutionsResponse, error) {
 	query := request.GetQuery()
 	s.queries = append(s.queries, query)
+	matching, err := s.match(query)
+	if err != nil {
+		return nil, err
+	}
+	response := &workflowservice.ListWorkflowExecutionsResponse{Executions: matching}
+	if s.endless {
+		response.NextPageToken = []byte("next")
+	}
+	return response, nil
+}
+
+// CountWorkflow answers how many records the query selects, applying the
+// same predicates ListWorkflow does.
+func (s *statsIndex) CountWorkflow(
+	_ context.Context,
+	request *workflowservice.CountWorkflowExecutionsRequest,
+) (*workflowservice.CountWorkflowExecutionsResponse, error) {
+	s.counts = append(s.counts, request.GetQuery())
+	if s.countErr != nil {
+		return nil, s.countErr
+	}
+	matching, err := s.match(request.GetQuery())
+	if err != nil {
+		return nil, err
+	}
+	return &workflowservice.CountWorkflowExecutionsResponse{Count: int64(len(matching))}, nil
+}
+
+// match applies the query language the stats questions use.
+func (s *statsIndex) match(query string) ([]*workflowpb.WorkflowExecutionInfo, error) {
 	if !strings.Contains(query, fmt.Sprintf("WorkflowType = %q", RunWorkflowType)) {
 		return nil, fmt.Errorf("visibility: unsupported query %q", query)
+	}
+	var wantNamespace string
+	if match := namespacePredicate.FindStringSubmatch(query); match != nil {
+		wantNamespace = match[1]
 	}
 	bound := func(pattern *regexp.Regexp) (time.Time, bool) {
 		match := pattern.FindStringSubmatch(query)
@@ -96,6 +138,9 @@ func (s *statsIndex) ListWorkflow(
 	matching := make([]*workflowpb.WorkflowExecutionInfo, 0, len(s.records))
 	for _, record := range s.records {
 		info := record.info
+		if wantNamespace != "" && record.namespace != wantNamespace {
+			continue
+		}
 		if want := statusEqualTo.FindStringSubmatch(query); want != nil {
 			running := info.GetStatus() == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING
 			if (want[1] == executionStatusRunning) != running {
@@ -120,7 +165,7 @@ func (s *statsIndex) ListWorkflow(
 		}
 		matching = append(matching, info)
 	}
-	return &workflowservice.ListWorkflowExecutionsResponse{Executions: matching}, nil
+	return matching, nil
 }
 
 // statsCorpusRun is one run of the corpus, described the way both records see

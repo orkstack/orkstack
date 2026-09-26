@@ -1341,6 +1341,52 @@ namespace registered, no orkflow applied, no run — is proven live in
 `TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`
 (`cmd/orkctl/admin_surface_integration_test.go`).
 
+### Namespace admission: `hold` and `max_running`
+
+Two fields of a namespace's own document decide whether it admits a new run.
+Both are checked at one place — `SubmitRun`'s preparation, the gate every door
+goes through (`orkctl run submit`, `run again`, the UI's submit dialog, a
+trigger invoke) — after the namespace and orkflow resolve and before any pool
+is looked at, so `--allow-empty-pool` does not bypass them. A refusal is
+`failed_precondition`, synchronous, and leaves nothing behind: no run id, no
+idempotency claim, no recorded run. Nothing is queued; releasing a hold starts
+nothing that was refused while it was set.
+
+- **`orkctl namespace update NS --hold "REASON"`** closes the namespace to new
+  runs; `--release-hold` reopens it. The reason is required (at most 512
+  bytes, one printable line); the registry stamps `since` on the write that set
+  the hold and keeps it across a reason edit. Runs already accepted are never
+  touched — a hold is an admission decision, never a cancellation. The hold is
+  read from the registry on every submit, so a hold written through one
+  replica is enforced by every other on its next request.
+- **`--max-running N`** caps how many runs of the namespace may be in flight
+  (accepted and not finished — the population `GetStats.running` reports); `0`
+  is unlimited and costs nothing. The count is read from the cluster's
+  execution index at each submit, never from a counter OrkStack keeps, so any
+  replica counts runs the others started. An index that cannot be read refuses
+  the submit `unavailable` rather than admitting it.
+- **The cap can overshoot, by design.** Each submit reads the count and then
+  starts, with no lock between replicas (a lock is exactly what `AGENTS.md`
+  §2.1 forbids building). Submits racing through the window between one
+  replica's read and the cluster indexing another's start can each be
+  admitted, so a burst against several replicas can land a few runs over the
+  cap. It is a guard, not a semaphore; a guard that is occasionally one over
+  is worth far more than a lock service.
+- **A keyed repeat is refused while held or at the cap.** Admission runs
+  before an `idempotency_key` is looked at, so repeating a key whose first
+  submission was accepted returns the refusal instead of that run while the
+  namespace is held or full. The run the key names is unaffected and readable
+  by id and in `run list`.
+- **Rolling upgrade.** A release older than this one discards both fields and
+  admits, so during a rollout a hold is enforced only by replicas already on
+  this release; an older `orkctl` writing a held namespace back through
+  `namespace update` drops the hold — run the `orkctl` of the release.
+- **Refusals are counted** on `ork.runs.refused` (§7, "Lifecycle metrics") and
+  logged once per refusal at Info as `run refused`, with `namespace`,
+  `orkflow`, `reason` (`NAMESPACE_HELD` or `MAX_RUNNING_REACHED`) and
+  `hold_since` or `running`/`max_running`. `GetStats` does not report them:
+  a refused submission is in neither record it derives from.
+
 ### Attributing control-plane writes
 
 Every call of a control-plane **write** RPC — namespace create/update/delete,
@@ -1745,6 +1791,16 @@ policy names one — they can land on a different sink than the process default
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
+| `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold or `max_running` refused (`namespace_held`, `max_running_reached`); not a run, not counted on `ork.runs` |
+
+(The rows above omit `ork.namespace` even though every run and task metric
+carries it; `ork.runs.refused` names it explicitly.) Under `prometheus` the
+refusal counter renders as
+`ork_runs_refused_total{ork_namespace="payments",ork_refusal_reason="namespace_held"}`,
+by the same name derivation as every other counter here. Under high
+cardinality it also carries `ork.orkflow.name` and the namespace's
+`ork.ns.*` / orkflow's `ork.label.*` selection attributes — never
+`ork.run_id`, because a refused submission has none.
 
 `ORK_TELEMETRY_HIGH_CARDINALITY=true` additionally puts `ork.run_id` and
 `ork.task_id` (and, on the engine's, `ork.orkflow.name`/`.version`) on the ones

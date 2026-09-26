@@ -169,6 +169,9 @@ func (r *memoryRegistry) Put(
 	if exists && existing.GetCreatedAt() != nil {
 		stored.CreatedAt = existing.GetCreatedAt()
 	}
+	// The hold's since is the registry's, by the rule the durable store
+	// applies, on the fixture's held clock.
+	artifacts.StampNamespaceHold(stored, existing, fixedNow)
 	r.docs[name] = stored
 	return proto.Clone(stored).(*orkstackv1.Namespace), nil
 }

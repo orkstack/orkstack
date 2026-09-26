@@ -150,6 +150,13 @@ type Config struct {
 	// engine's own projection activity covers every run that did reach it.
 	Observer engine.EventObserver
 
+	// Admissions is announced every submission the admission gate refuses
+	// (admission.go). It is Observer's counterpart for a submission that never
+	// became a run: Observer is handed an Event and a Run, and a refusal has
+	// neither, so it is its own seam rather than a synthesized RUN_FAILED.
+	// Nil counts nothing; the refusal is returned to the caller either way.
+	Admissions engine.AdmissionObserver
+
 	// Activities is the deployment's activity catalog, served by
 	// ActivityService.ListActivities. Nil answers with an empty catalog:
 	// which images exist is engine configuration (§4.2), and an
@@ -302,6 +309,7 @@ type Service struct {
 	auditStore artifacts.AuditStore
 	notifier   engine.RunNotifier
 	observer   engine.EventObserver
+	admissions engine.AdmissionObserver
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system SystemInfo
@@ -350,6 +358,7 @@ func NewService(cfg Config) *Service {
 		triggers:          cfg.Triggers,
 		notifier:          cfg.Notifier,
 		observer:          cfg.Observer,
+		admissions:        cfg.Admissions,
 		artifacts:         cfg.Artifacts,
 		limits:            cfg.Limits,
 		retention:         cfg.Retention,
@@ -1033,6 +1042,13 @@ func (s *Service) prepare(
 	if binding.Starter == nil {
 		return submission{}, connect.NewError(connect.CodeFailedPrecondition,
 			fmt.Errorf("no run starter configured"))
+	}
+	// Admission is decided here, after everything the request itself could
+	// have got wrong and before routing: a hold or a full namespace refuses
+	// before any pool is looked at, so allow_empty_pool cannot bypass it, and
+	// before a key is claimed or an id minted, so a refusal leaves nothing.
+	if err := s.admit(ctx, ns, stored, binding); err != nil {
+		return submission{}, err
 	}
 
 	planned, plan, err := s.resolverFor(binding).Plan(ctx, ns, stored, msg.GetAllowEmptyPool())

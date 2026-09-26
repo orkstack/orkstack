@@ -194,6 +194,55 @@ func (o *EngineObserver) recordTask(ctx context.Context, event *orkstackv1.Event
 	inst.TaskAttempts.Record(ctx, int64(task.GetAttempt()), metric.WithAttributes(durationAttrs...))
 }
 
+// ObserveRefusal records one admission refusal on the sink telemetry names
+// — o.sinks.For(telemetry.GetSink()), the lookup sinkFor performs on
+// run.GetTelemetry() for a run, applied to the selection the refused run
+// would have carried (engine.RefusalTelemetry). It moves RunsRefused and
+// nothing else: no Runs increment, no duration, no log line (the API logs
+// the refusal itself, once, at Info). Nil-safe on o and telemetry (a nil
+// selection is the default sink with no selection attributes, exactly as a
+// nil run is to sinkFor), and never blocks. It satisfies
+// engine.AdmissionObserver by shape.
+//
+// telemetry's attributes are already stamped ork.ns.<key> / ork.label.<key>
+// by the engine, so they are added verbatim through selectionAttrs — under
+// the same Cardinality.High gate they ride Runs under — and this method
+// spells no prefix of its own.
+func (o *EngineObserver) ObserveRefusal(
+	ctx context.Context,
+	namespace string,
+	telemetry *orkstackv1.TelemetrySelection,
+	orkflow string,
+	reason string,
+) {
+	if o == nil {
+		return
+	}
+	inst, err := o.instFor(o.sinks.For(telemetry.GetSink()))
+	if err != nil || inst == nil {
+		// Same reasoning as recordMetric: a sink whose instruments failed to
+		// build once keeps failing, so there is nothing to retry.
+		return
+	}
+	attrs := []attribute.KeyValue{
+		attribute.String(AttrNamespace, namespace),
+		attribute.String(AttrRefusalReason, refusalReasonLabel(reason)),
+	}
+	if inst.Cardinality.High {
+		attrs = append(attrs, attribute.String(AttrOrkflowName, orkflow))
+		attrs = append(attrs, selectionAttrs(telemetry.GetAttributes())...)
+	}
+	inst.RunsRefused.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
+// refusalReasonLabel turns NAMESPACE_HELD into "namespace_held": the one-rule
+// lowercasing statusLabel and failureCategoryLabel apply to their enums, so
+// the code an operator reads in the log line and the value they filter on
+// differ by case alone.
+func refusalReasonLabel(reason string) string {
+	return strings.ToLower(reason)
+}
+
 // log emits one structured line per event, at Debug for TASK_LOG (a run can
 // carry thousands of these; they belong in the log body, not shouted at Info)
 // and, for everything else, at Info only when the run's resolved sink has

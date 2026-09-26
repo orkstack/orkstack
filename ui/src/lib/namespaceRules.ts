@@ -66,6 +66,11 @@ export interface NamespaceFormValues {
 	// per line — blank means the namespace sets none of its own, same as
 	// runRetentionHours's blank-means-inherit above.
 	telemetryAttributesText?: string;
+	// holdReason is the raw text of the hold field: blank means accepting
+	// (send no hold), anything else is the reason the next operator reads.
+	holdReason?: string;
+	// maxRunning is the raw text of the cap field: blank or 0 is unlimited.
+	maxRunning?: string;
 }
 
 export interface NamespaceFormErrors {
@@ -74,6 +79,44 @@ export interface NamespaceFormErrors {
 	allowedPools?: string;
 	runRetention?: string;
 	telemetryAttributes?: string;
+	holdReason?: string;
+	maxRunning?: string;
+}
+
+// MAX_HOLD_REASON_BYTES mirrors pkg/artifacts/namespace_store.go's
+// maxHoldReason: a hold's reason is a short human line, never a document.
+export const MAX_HOLD_REASON_BYTES = 512;
+
+// holdReasonError holds a hold reason to the registry's rule
+// (validNamespaceHold): at most 512 bytes and no control character. Blank is
+// fine here — in a form it means "accepting", which sends no hold at all;
+// the registry's own "a hold needs a reason" refusal is for a hold that is
+// SENT without one, which this form never does.
+export function holdReasonError(value: string): string | null {
+	if (value.trim() === '') return null;
+	const bytes = new TextEncoder().encode(value).length;
+	if (bytes > MAX_HOLD_REASON_BYTES) {
+		return `hold reason of ${bytes} bytes exceeds the ${MAX_HOLD_REASON_BYTES}-byte limit`;
+	}
+	for (let i = 0; i < value.length; i++) {
+		const code = value.charCodeAt(i);
+		if (code < 0x20 || code === 0x7f) {
+			return 'hold reason contains a control character; keep it to one printable line';
+		}
+	}
+	return null;
+}
+
+// maxRunningError holds max_running's text to what the registry accepts
+// (validNamespaceMaxRunning): blank, or a non-negative whole number. 0 is
+// unlimited.
+export function maxRunningError(value: string): string | null {
+	const trimmed = value.trim();
+	if (trimmed === '') return null;
+	if (!/^\d+$/.test(trimmed) || Number(trimmed) > 2147483647) {
+		return `max running ${JSON.stringify(value)} must be a non-negative whole number (0 = unlimited)`;
+	}
+	return null;
 }
 
 // ATTRIBUTE_KEY_PATTERN mirrors internal/dsl.attributeKeyPattern — the one
@@ -208,6 +251,15 @@ export function validateNamespaceForm(
 			const err = telemetryAttributesError(parsed.attributes);
 			if (err) errors.telemetryAttributes = err;
 		}
+	}
+
+	if (values.holdReason !== undefined) {
+		const err = holdReasonError(values.holdReason);
+		if (err) errors.holdReason = err;
+	}
+	if (values.maxRunning !== undefined) {
+		const err = maxRunningError(values.maxRunning);
+		if (err) errors.maxRunning = err;
 	}
 
 	return errors;

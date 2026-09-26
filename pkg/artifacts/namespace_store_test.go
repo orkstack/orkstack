@@ -2,7 +2,12 @@ package artifacts
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -143,5 +148,97 @@ func TestValidNamespaceTelemetry_RefusesAControlCharacterInAValue(t *testing.T) 
 	}
 	if err := validNamespaceTelemetry(ns); !errors.Is(err, ErrInvalidNamespace) {
 		t.Errorf("validNamespaceTelemetry(control char value) = %v, want ErrInvalidNamespace", err)
+	}
+}
+
+func TestValidNamespaceHold_RequiresAReasonAndBoundsIt(t *testing.T) {
+	cases := []struct {
+		name string
+		hold *orkstackv1.NamespaceHold
+		ok   bool
+	}{
+		{"nil hold is accepting", nil, true},
+		{"a short reason", &orkstackv1.NamespaceHold{Reason: "partner CI loop, INC-4412"}, true},
+		{"exactly 512 bytes", &orkstackv1.NamespaceHold{Reason: strings.Repeat("x", 512)}, true},
+		{"empty", &orkstackv1.NamespaceHold{}, false},
+		{"whitespace only", &orkstackv1.NamespaceHold{Reason: "   "}, false},
+		{"513 bytes", &orkstackv1.NamespaceHold{Reason: strings.Repeat("x", 513)}, false},
+		{"newline", &orkstackv1.NamespaceHold{Reason: "loop\nINC-4412"}, false},
+		{"escape", &orkstackv1.NamespaceHold{Reason: "loop \x1b[31m"}, false},
+		{"NUL", &orkstackv1.NamespaceHold{Reason: "loop\x00"}, false},
+		{"DEL", &orkstackv1.NamespaceHold{Reason: "loop\x7f"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validNamespaceHold(&orkstackv1.Namespace{Name: "payments", Hold: tc.hold})
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("validNamespaceHold = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidNamespace) {
+				t.Fatalf("validNamespaceHold = %v, want ErrInvalidNamespace", err)
+			}
+			if !strings.Contains(err.Error(), `"payments"`) {
+				t.Errorf("validNamespaceHold = %q, want it to name the namespace", err)
+			}
+		})
+	}
+}
+
+func TestValidNamespaceMaxRunning_RefusesANegativeValue(t *testing.T) {
+	for _, tc := range []struct {
+		max int32
+		ok  bool
+	}{{-1, false}, {0, true}, {20, true}} {
+		err := validNamespaceMaxRunning(&orkstackv1.Namespace{Name: "payments", MaxRunning: tc.max})
+		if tc.ok && err != nil {
+			t.Errorf("validNamespaceMaxRunning(%d) = %v, want nil", tc.max, err)
+		}
+		if !tc.ok && !errors.Is(err, ErrInvalidNamespace) {
+			t.Errorf("validNamespaceMaxRunning(%d) = %v, want ErrInvalidNamespace", tc.max, err)
+		}
+	}
+}
+
+func TestStampNamespaceHold_KeepsSinceAcrossAReasonEditAndClearsOnRelease(t *testing.T) {
+	now := time.Date(2026, 9, 22, 2, 14, 7, 0, time.UTC)
+	earlier := timestamppb.New(now.Add(-3 * time.Hour))
+	forged := timestamppb.New(time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC))
+	cases := []struct {
+		name      string
+		next      *orkstackv1.NamespaceHold
+		existing  *orkstackv1.Namespace
+		wantSince *timestamppb.Timestamp
+	}{
+		{"new hold is stamped now", &orkstackv1.NamespaceHold{Reason: "r"}, nil, timestamppb.New(now)},
+		{"new hold over an accepting document is stamped now",
+			&orkstackv1.NamespaceHold{Reason: "r"}, &orkstackv1.Namespace{}, timestamppb.New(now)},
+		{"a reason edit keeps since",
+			&orkstackv1.NamespaceHold{Reason: "new reason"},
+			&orkstackv1.Namespace{Hold: &orkstackv1.NamespaceHold{Reason: "old", Since: earlier}}, earlier},
+		{"a client since on a new hold is discarded",
+			&orkstackv1.NamespaceHold{Reason: "r", Since: forged}, nil, timestamppb.New(now)},
+		{"a client since on a kept hold is discarded",
+			&orkstackv1.NamespaceHold{Reason: "r", Since: forged},
+			&orkstackv1.Namespace{Hold: &orkstackv1.NamespaceHold{Reason: "r", Since: earlier}}, earlier},
+		{"release carries nothing forward", nil,
+			&orkstackv1.Namespace{Hold: &orkstackv1.NamespaceHold{Reason: "old", Since: earlier}}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			next := &orkstackv1.Namespace{Name: "payments", Hold: tc.next}
+			StampNamespaceHold(next, tc.existing, now)
+			if tc.wantSince == nil {
+				if next.GetHold() != nil {
+					t.Fatalf("hold = %v, want none", next.GetHold())
+				}
+				return
+			}
+			if !proto.Equal(next.GetHold().GetSince(), tc.wantSince) {
+				t.Fatalf("since = %v, want %v", next.GetHold().GetSince().AsTime(), tc.wantSince.AsTime())
+			}
+		})
 	}
 }

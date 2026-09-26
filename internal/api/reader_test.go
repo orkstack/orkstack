@@ -62,6 +62,30 @@ type fakeReader struct {
 	// path setting Exhaustive is invisible in the response — it costs pages,
 	// not rows — so it has to be observed here.
 	listQueries []engine.RunQuery
+	// runningCounts records every namespace RunningCount was asked about, and
+	// runningCountErr makes that count unreadable.
+	runningCounts   []string
+	runningCountErr error
+}
+
+// RunningCount answers the admission question from the same executions map
+// the aggregate half reads, so a test seeds one map for both.
+func (f *fakeReader) RunningCount(_ context.Context, namespace string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	namespace = artifacts.ResolveNamespace(namespace)
+	f.runningCounts = append(f.runningCounts, namespace)
+	if f.runningCountErr != nil {
+		return 0, f.runningCountErr
+	}
+	return int64(len(f.executions[namespace].Running)), nil
+}
+
+// runningCountNamespaces is every namespace RunningCount was asked about.
+func (f *fakeReader) runningCountNamespaces() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.runningCounts...)
 }
 
 // runQueries is every RunQuery this reader has served, in order.

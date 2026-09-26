@@ -1,7 +1,10 @@
 import { expect, test } from 'bun:test';
 import {
 	DEFAULT_POOL_NAME,
+	holdReasonError,
+	MAX_HOLD_REASON_BYTES,
 	MAX_TELEMETRY_ATTRIBUTES,
+	maxRunningError,
 	parseAttributeLines,
 	parsePoolList,
 	slugError,
@@ -231,4 +234,52 @@ test('a well-formed telemetry-attributes field is accepted', () => {
 		telemetryAttributesText: 'team=payments\napp.tier=checkout'
 	});
 	expect(errors.telemetryAttributes).toBe(undefined);
+});
+
+// Namespace admission control: a hold's reason and max_running, prefiltered
+// to the registry's own rule (pkg/artifacts/namespace_store.go
+// validNamespaceHold / validNamespaceMaxRunning).
+test('holdReasonError accepts blank (accepting) and a short reason', () => {
+	expect(holdReasonError('')).toBe(null);
+	expect(holdReasonError('   ')).toBe(null);
+	expect(holdReasonError('partner CI loop, INC-4412')).toBe(null);
+	expect(holdReasonError('x'.repeat(MAX_HOLD_REASON_BYTES))).toBe(null);
+});
+
+test('holdReasonError refuses 513 bytes and a control character', () => {
+	expect(holdReasonError('x'.repeat(513))).toContain('512-byte limit');
+	expect(holdReasonError('loop\nINC-4412')).toContain('control character');
+	expect(holdReasonError('loop\u007f')).toContain('control character');
+	// Bytes, not characters: 171 three-byte characters are 513 bytes.
+	expect(holdReasonError('€'.repeat(171))).toContain('512-byte limit');
+});
+
+test('maxRunningError accepts blank, 0 and 20, refuses -1, 1.5 and abc', () => {
+	expect(maxRunningError('')).toBe(null);
+	expect(maxRunningError('0')).toBe(null);
+	expect(maxRunningError('20')).toBe(null);
+	expect(maxRunningError('-1')).toContain('non-negative whole number');
+	expect(maxRunningError('1.5')).toContain('non-negative whole number');
+	expect(maxRunningError('abc')).toContain('non-negative whole number');
+});
+
+test('validateNamespaceForm reports holdReason and maxRunning', () => {
+	const errors = validateNamespaceForm({
+		name: 'payments',
+		defaultPool: '',
+		allowedPools: [],
+		holdReason: 'x'.repeat(513),
+		maxRunning: '-1'
+	});
+	expect(errors.holdReason).toContain('512-byte limit');
+	expect(errors.maxRunning).toContain('non-negative whole number');
+	const clean = validateNamespaceForm({
+		name: 'payments',
+		defaultPool: '',
+		allowedPools: [],
+		holdReason: '',
+		maxRunning: '0'
+	});
+	expect(clean.holdReason).toBe(undefined);
+	expect(clean.maxRunning).toBe(undefined);
 });

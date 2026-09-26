@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIo8DCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIpwBCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRISCgppc19kZWZhdWx0GAQgASgIEi0KCWxhc3Rfc2VlbhgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGgoSdW5hdmFpbGFibGVfcmVhc29uGAYgASgJSgQIAxAEUgdwbHVnaW5zQqoBCg9jb20ub3Jrc3RhY2sudjFCDk5hbWVzcGFjZVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIs4DCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIkoKDU5hbWVzcGFjZUhvbGQSDgoGcmVhc29uGAEgASgJEikKBXNpbmNlGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCKcAQoEUG9vbBIMCgRuYW1lGAEgASgJEhgKEGxpdmVfb3JrZXJfY291bnQYAiABKAUSEgoKaXNfZGVmYXVsdBgEIAEoCBItCglsYXN0X3NlZW4YBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhoKEnVuYXZhaWxhYmxlX3JlYXNvbhgGIAEoCUoECAMQBFIHcGx1Z2luc0KqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -144,6 +144,42 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * @generated from field: orkstack.v1.TelemetryPolicy telemetry = 10;
    */
   telemetry?: TelemetryPolicy | undefined;
+
+  /**
+   * hold, when set, refuses every new run of this namespace at submit with
+   * FAILED_PRECONDITION, naming the reason and since. Unset means accepting,
+   * which is what every namespace has today and what an upgrade preserves.
+   *
+   * It is enforced in exactly one place — SubmitRun's preparation, the gate
+   * every door into a namespace already goes through (orkctl, the UI, `run
+   * again`, a trigger invoke) — and read from the registry on every submit,
+   * so a hold set through one replica is honoured by every other on its
+   * next request.
+   *
+   * @generated from field: orkstack.v1.NamespaceHold hold = 11;
+   */
+  hold?: NamespaceHold | undefined;
+
+  /**
+   * max_running bounds how many runs of this namespace may be in flight at
+   * once — accepted and not finished, which is exactly the population
+   * GetStatsResponse.running reports. 0 means unlimited, which is the
+   * inherited default and what every namespace has today.
+   *
+   * It is evaluated by reading the cluster's execution index at submit — the
+   * same read GetStats.running performs (docs/STATS.md §1) — so no OrkStack
+   * counter exists to disagree with it tomorrow. That makes it best-effort
+   * under simultaneous submits against several replicas: each reads, then
+   * acts, with no lock between, and the overshoot is bounded by the number
+   * of submits racing through the window between one replica's read and the
+   * cluster indexing its start. A lock would remove the overshoot and
+   * AGENTS.md §2.1 forbids building one, which is the right trade — a guard
+   * that is occasionally one over is worth far more than a lock service. A
+   * namespace that sets 0 never pays the read at all.
+   *
+   * @generated from field: int32 max_running = 12;
+   */
+  maxRunning: number;
 };
 
 /**
@@ -152,6 +188,49 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
  */
 export const NamespaceSchema: GenMessage<Namespace> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_namespace, 0);
+
+/**
+ * NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
+ * decision and never a retroactive one: a run already accepted continues, is
+ * readable, and finishes normally (AGENTS.md §15). Releasing a hold starts
+ * nothing that was refused while it was set — a refused submit was refused,
+ * not queued.
+ *
+ * It is a message rather than two scalars on Namespace so that "held" is one
+ * presence check (hold != nil) and a hold can never be half-set.
+ *
+ * @generated from message orkstack.v1.NamespaceHold
+ */
+export type NamespaceHold = Message<"orkstack.v1.NamespaceHold"> & {
+  /**
+   * reason is required. A hold with no reason is refused by the registry:
+   * the next operator to read this document is the one who has to decide
+   * whether to release it, and "on hold" with no why is not a decision they
+   * can make. It is a short human line, bounded at 512 bytes with no control
+   * characters, never a secret and never machine-parsed.
+   *
+   * @generated from field: string reason = 1;
+   */
+  reason: string;
+
+  /**
+   * since is written by the registry on the write that SET the hold and
+   * preserved on every later write while it stays set, never supplied by a
+   * client — the same rule created_at/updated_at follow. Editing the reason
+   * of a hold does not move it: the door has been closed since the first
+   * write, whatever the sign on it now says.
+   *
+   * @generated from field: google.protobuf.Timestamp since = 2;
+   */
+  since?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.NamespaceHold.
+ * Use `create(NamespaceHoldSchema)` to create a new message.
+ */
+export const NamespaceHoldSchema: GenMessage<NamespaceHold> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_namespace, 1);
 
 /**
  * Pool is a set of Orkers, observed live.
@@ -230,5 +309,5 @@ export type Pool = Message<"orkstack.v1.Pool"> & {
  * Use `create(PoolSchema)` to create a new message.
  */
 export const PoolSchema: GenMessage<Pool> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_namespace, 1);
+  messageDesc(file_orkstack_v1_namespace, 2);
 

@@ -4,6 +4,8 @@ Description:           the payments tenant, renamed
 Default pool:          batch
 Allowed pools:         batch,main
 Run retention:         inherited (deployment maximum)
+Hold:                  accepting
+Max running:           unlimited
 Telemetry sink:        default (inherited)
 Task logs:             inherited (Orker default)
 Telemetry attributes:  -

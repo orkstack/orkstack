@@ -158,6 +158,59 @@ func (r *TemporalRunReader) runningExecutions(
 	return out, nil
 }
 
+// RunningCount is how many runs of namespace are in flight now, from the
+// cluster's execution index — the same population runningExecutions lists
+// for GetStats.running, asked as a count.
+//
+// When the cluster indexes a run's namespace it is one CountWorkflow call
+// with the namespace as a predicate. Otherwise the cluster cannot count a
+// namespace it does not index, and countRunning walks the index filtering on
+// the memo instead.
+//
+// A count that cannot be read is an error, never zero: reporting zero runs in
+// flight is exactly the number a cap is built to distrust. It is never cached.
+func (r *TemporalRunReader) RunningCount(ctx context.Context, namespace string) (int64, error) {
+	if !r.namespaceIndexed {
+		return r.countRunning(ctx, namespace)
+	}
+	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q AND %s = %q",
+		RunWorkflowType, executionStatusRunning, task.SearchAttrOrkflowNamespace,
+		artifacts.ResolveNamespace(namespace))
+	response, err := r.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{
+		Query: query,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("engine: count the execution index (%s): %w", query, err)
+	}
+	return response.GetCount(), nil
+}
+
+// countRunning is the unindexed half of RunningCount: the same query
+// runningExecutions issues, walked with a visitor that only counts the
+// records whose memo namespace matches. No window, no sort, no
+// projection — the cluster is asked how many, not which.
+//
+// A window with only Namespace set is a valid argument to walkExecutions,
+// which reads w.Namespace and nothing else of it; because this path is taken
+// only when the namespace is not indexed, the walk takes its scan bound, and
+// running out of it is a failure rather than a short count.
+func (r *TemporalRunReader) countRunning(ctx context.Context, namespace string) (int64, error) {
+	namespace = artifacts.ResolveNamespace(namespace)
+	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q",
+		RunWorkflowType, executionStatusRunning)
+	var count int64
+	err := r.walkExecutions(ctx, StatsWindow{Namespace: namespace}, query,
+		func(info *workflowpb.WorkflowExecutionInfo) {
+			if inNamespace(r.listedRun(info).GetNamespace(), namespace) {
+				count++
+			}
+		})
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // windowRunDurations samples how long each run the window CREATED took, for
 // the ones that have finished, ascending.
 //

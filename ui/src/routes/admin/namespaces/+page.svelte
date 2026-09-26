@@ -10,12 +10,14 @@
 	// reason inline.
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
+	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import TelemetryFields from '$lib/components/TelemetryFields.svelte';
 	import { isStaleEtagConflict } from '$lib/adminErrors';
 	import { errorMessage, orkstack } from '$lib/client';
-	import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
+	import { create } from '@bufbuild/protobuf';
+	import { NamespaceHoldSchema, type Namespace, type NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { TaskLogExport } from '$lib/gen/orkstack/v1/telemetry_pb';
 	import { DEFAULT_NAMESPACE, namespaceLabel, rememberNamespace, withNamespace } from '$lib/namespace';
 	import {
@@ -26,6 +28,7 @@
 		type NamespaceFormErrors
 	} from '$lib/namespaceRules';
 	import { hoursToMs, parseRetentionHours } from '$lib/retentionForm';
+	import { shellQuote } from '$lib/runDetail';
 	import { fmtDuration } from '$lib/stats';
 	import { fmtTimestamp } from '$lib/status';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
@@ -59,6 +62,32 @@
 	// a reader could mistake for "no telemetry at all" — the CLI's
 	// telemetrySinkLabel/taskLogsLabel (cmd/orkctl/namespace.go) render the
 	// same three fields the same way.
+	// holdLabel and maxRunningLabel render namespace admission the way the
+	// CLI's `namespace get` does (cmd/orkctl/namespace.go): "accepting" and
+	// "unlimited" spelled out, never a dash that would read as the opposite
+	// of the truth.
+	function holdLabel(hold: NamespaceHold | undefined): string {
+		return hold ? `since ${fmtTimestamp(hold.since)} — "${hold.reason}"` : 'accepting';
+	}
+
+	function maxRunningLabel(maxRunning: number): string {
+		return maxRunning > 0 ? String(maxRunning) : 'unlimited';
+	}
+
+	// holdRequest is what a form's hold field sends: blank is a deliberate
+	// "accepting" (no hold), anything else is a hold with that reason. The
+	// registry stamps since; a client never sends one.
+	function holdRequest(reason: string): { reason: string } | undefined {
+		return reason.trim() === '' ? undefined : { reason };
+	}
+
+	// maxRunningRequest turns the cap field's text into the number sent; blank
+	// is 0, which is unlimited. validateNamespaceForm has already refused
+	// anything that is not a non-negative whole number.
+	function maxRunningRequest(text: string): number {
+		return text.trim() === '' ? 0 : Number(text.trim());
+	}
+
 	function telemetrySinkLabel(policy: NamespaceTelemetryPolicy | undefined): string {
 		return policy?.sink ? policy.sink : 'inherited (default sink)';
 	}
@@ -161,6 +190,8 @@
 	let createTelemetrySink = $state('');
 	let createTaskLogs = $state<TaskLogsChoice>('inherit');
 	let createTelemetryAttributesText = $state('');
+	let createHoldReason = $state('');
+	let createMaxRunning = $state('');
 	let createErrors = $state<NamespaceFormErrors>({});
 	let createBusy = $state(false);
 	let createServerError = $state('');
@@ -175,6 +206,8 @@
 		createTelemetrySink = '';
 		createTaskLogs = 'inherit';
 		createTelemetryAttributesText = '';
+		createHoldReason = '';
+		createMaxRunning = '';
 	}
 
 	async function submitCreate() {
@@ -187,7 +220,9 @@
 				defaultPool: createDefaultPool.trim(),
 				allowedPools: allowed,
 				runRetentionHours: createRunRetentionHours,
-				telemetryAttributesText: createTelemetryAttributesText
+				telemetryAttributesText: createTelemetryAttributesText,
+				holdReason: createHoldReason,
+				maxRunning: createMaxRunning
 			},
 			{ requireName: true }
 		);
@@ -217,7 +252,9 @@
 						createTelemetrySink,
 						createTaskLogs,
 						createTelemetryAttributesText
-					)
+					),
+					hold: holdRequest(createHoldReason),
+					maxRunning: maxRunningRequest(createMaxRunning)
 				}
 			});
 			createSuccess = res.created
@@ -241,6 +278,8 @@
 	let editTelemetrySink = $state('');
 	let editTaskLogs = $state<TaskLogsChoice>('inherit');
 	let editTelemetryAttributesText = $state('');
+	let editHoldReason = $state('');
+	let editMaxRunning = $state('');
 	let editEtag = $state('');
 	let editErrors = $state<NamespaceFormErrors>({});
 	let editBusy = $state(false);
@@ -263,6 +302,8 @@
 					.map(([key, value]) => `${key}=${value}`)
 					.join('\n')
 			: '';
+		editHoldReason = ns.hold?.reason ?? '';
+		editMaxRunning = ns.maxRunning > 0 ? String(ns.maxRunning) : '';
 		editEtag = ns.etag;
 		editLabels = { ...ns.labels };
 		editErrors = {};
@@ -294,7 +335,9 @@
 				defaultPool: editDefaultPool.trim(),
 				allowedPools: allowed,
 				runRetentionHours: editRunRetentionHours,
-				telemetryAttributesText: editTelemetryAttributesText
+				telemetryAttributesText: editTelemetryAttributesText,
+				holdReason: editHoldReason,
+				maxRunning: editMaxRunning
 			},
 			{ requireName: false }
 		);
@@ -323,7 +366,11 @@
 					// every telemetry field back at "no override" sends no
 					// policy at all, same as buildTelemetryPolicy documents for
 					// create.
-					telemetry: buildTelemetryPolicy(editTelemetrySink, editTaskLogs, editTelemetryAttributesText)
+					telemetry: buildTelemetryPolicy(editTelemetrySink, editTaskLogs, editTelemetryAttributesText),
+					// Prefilled from the row like run retention: a blank hold
+					// reason on save is a deliberate release, not an omission.
+					hold: holdRequest(editHoldReason),
+					maxRunning: maxRunningRequest(editMaxRunning)
 				}
 			});
 			closeEdit();
@@ -382,6 +429,66 @@
 			editBusy = false;
 		}
 	}
+
+	// ── hold / release (the one-click incident flow) ───────────────────────
+	// Both are the same read-etag-then-update round trip submitEdit makes,
+	// changing the hold and nothing else: the document is read fresh, so the
+	// write carries whatever else is stored now, and a write that lands in
+	// between is the stale-etag conflict, told apart by isStaleEtagConflict.
+	let pendingHold = $state('');
+	let holdReasonInput = $state('');
+	let pendingRelease = $state<Namespace | null>(null);
+	let admissionBusy = $state(false);
+	let admissionError = $state('');
+
+	function askToHold(name: string) {
+		pendingHold = name;
+		holdReasonInput = '';
+		admissionError = '';
+	}
+
+	function askToRelease(ns: Namespace) {
+		pendingRelease = ns;
+		admissionError = '';
+	}
+
+	function closeAdmission() {
+		pendingHold = '';
+		pendingRelease = null;
+		holdReasonInput = '';
+		admissionError = '';
+	}
+
+	async function writeHold(name: string, hold: { reason: string } | undefined) {
+		admissionBusy = true;
+		admissionError = '';
+		try {
+			const client = orkstack(fetch);
+			const res = await client.namespaces.getNamespace({ name });
+			const current = res.namespace;
+			if (!current) throw new Error(`namespace ${name} came back empty`);
+			await client.namespaces.updateNamespace({
+				namespace: { ...current, hold: hold ? create(NamespaceHoldSchema, hold) : undefined }
+			});
+			closeAdmission();
+			await invalidateAll();
+		} catch (err) {
+			admissionError = isStaleEtagConflict(err)
+				? `${errorMessage(err)} — namespace ${name} changed while this was being written; try again.`
+				: errorMessage(err);
+		} finally {
+			admissionBusy = false;
+		}
+	}
+
+	const holdReasonError = $derived(
+		holdReasonInput.trim() === ''
+			? ''
+			: (validateNamespaceForm(
+					{ name: pendingHold, defaultPool: '', allowedPools: [], holdReason: holdReasonInput },
+					{ requireName: false }
+				).holdReason ?? '')
+	);
 
 	// ── delete ─────────────────────────────────────────────────────────────
 	let pendingDelete = $state('');
@@ -519,6 +626,35 @@
 					>
 				{/if}
 			</label>
+			<label class="flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Hold reason (blank = accepting)</span>
+				<input
+					data-testid="ns-create-hold-reason"
+					bind:value={createHoldReason}
+					placeholder="accepting"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				/>
+				{#if createErrors.holdReason}
+					<span class="text-xs text-danger-700" data-testid="ns-create-error-hold-reason"
+						>{createErrors.holdReason}</span
+					>
+				{/if}
+			</label>
+			<label class="flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Max running (0 = unlimited)</span>
+				<input
+					data-testid="ns-create-max-running"
+					bind:value={createMaxRunning}
+					inputmode="numeric"
+					placeholder="0"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				/>
+				{#if createErrors.maxRunning}
+					<span class="text-xs text-danger-700" data-testid="ns-create-error-max-running"
+						>{createErrors.maxRunning}</span
+					>
+				{/if}
+			</label>
 			<TelemetryFields
 				bind:sink={createTelemetrySink}
 				bind:taskLogs={createTaskLogs}
@@ -572,7 +708,9 @@
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Default pool</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed pools</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Run retention</th>
-						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Telemetry sink</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Hold</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Max running</th>
+<th class="h-10 px-4 text-xs font-medium text-fg-muted">Telemetry sink</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Task logs</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Attrs</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Updated</th>
@@ -582,8 +720,11 @@
 				<tbody>
 					{#each data.namespacesList as ns (ns.name)}
 						<tr
-							class="border-t border-border-subtle transition-colors duration-150 hover:bg-surface-hover"
+							class="border-t border-border-subtle transition-colors duration-150 {ns.hold
+								? 'bg-warning-50 hover:bg-warning-100'
+								: 'hover:bg-surface-hover'}"
 							data-testid="namespace-row-{ns.name}"
+							data-held={ns.hold ? 'true' : 'false'}
 						>
 							<td class="h-11 px-4 pl-5 align-middle font-medium text-fg">{ns.name}</td>
 							<td class="h-11 max-w-xs truncate px-4 align-middle text-fg-secondary"
@@ -597,6 +738,16 @@
 							</td>
 							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-run-retention-{ns.name}"
 								>{runRetentionLabel(ns.runRetention)}</td
+							>
+							<td
+								class="h-11 max-w-xs truncate px-4 align-middle {ns.hold
+									? 'font-medium text-warning-800'
+									: 'text-fg-secondary'}"
+								title={holdLabel(ns.hold)}
+								data-testid="namespace-hold-{ns.name}">{holdLabel(ns.hold)}</td
+							>
+							<td class="h-11 px-4 align-middle text-fg-secondary tabular-nums" data-testid="namespace-max-running-{ns.name}"
+								>{maxRunningLabel(ns.maxRunning)}</td
 							>
 							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
 								>{telemetrySinkLabel(ns.telemetry)}</td
@@ -620,7 +771,26 @@
 									>
 										Edit
 									</button>
-									{#if ns.name === 'default'}
+									{#if ns.hold}
+										<button
+											type="button"
+											data-testid="namespace-release-hold-{ns.name}"
+											onclick={() => askToRelease(ns)}
+											class="inline-flex h-8 items-center rounded-md border border-warning-300 bg-surface px-3 text-xs font-medium text-warning-800 shadow-xs transition-colors duration-150 hover:bg-warning-50"
+										>
+											Release hold
+										</button>
+									{:else}
+										<button
+											type="button"
+											data-testid="namespace-hold-action-{ns.name}"
+											onclick={() => askToHold(ns.name)}
+											class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover"
+										>
+											Hold…
+										</button>
+									{/if}
+{#if ns.name === 'default'}
 										<span
 											class="text-xs text-fg-muted"
 											data-testid="namespace-delete-default-reason"
@@ -652,7 +822,7 @@
 						</tr>
 						{#if editingName === ns.name}
 							<tr>
-								<td colspan="10" class="bg-surface-sunken px-4 py-4">
+								<td colspan="12" class="bg-surface-sunken px-4 py-4">
 									<form
 										data-testid="namespace-edit-form-{ns.name}"
 										class="grid gap-3 sm:grid-cols-2"
@@ -702,6 +872,32 @@
 											/>
 											{#if editErrors.runRetention}
 												<span class="text-xs text-danger-700">{editErrors.runRetention}</span>
+											{/if}
+										</label>
+										<label class="flex flex-col gap-1.5 text-sm">
+											<span class="font-medium text-fg">Hold reason (blank = accepting)</span>
+											<input
+												data-testid="ns-edit-hold-reason-{ns.name}"
+												bind:value={editHoldReason}
+												placeholder="accepting"
+												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+											/>
+											<span class="text-xs text-fg-muted">A reason closes the namespace to new runs; blank releases it.</span>
+											{#if editErrors.holdReason}
+												<span class="text-xs text-danger-700">{editErrors.holdReason}</span>
+											{/if}
+										</label>
+										<label class="flex flex-col gap-1.5 text-sm">
+											<span class="font-medium text-fg">Max running (0 = unlimited)</span>
+											<input
+												data-testid="ns-edit-max-running-{ns.name}"
+												bind:value={editMaxRunning}
+												inputmode="numeric"
+												placeholder="0"
+												class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+											/>
+											{#if editErrors.maxRunning}
+												<span class="text-xs text-danger-700">{editErrors.maxRunning}</span>
 											{/if}
 										</label>
 										<TelemetryFields
@@ -769,6 +965,81 @@
 			</table>
 		</div>
 	{/if}
+{/if}
+
+{#if pendingHold}
+	<ConfirmDialog
+		testid="namespace-hold-confirm"
+		title="Hold namespace {pendingHold}?"
+		acceptLabel="Hold"
+		acceptTestid="namespace-hold-confirm-accept"
+		cancelTestid="namespace-hold-confirm-cancel"
+		busy={admissionBusy}
+		acceptDisabled={holdReasonInput.trim() === '' || holdReasonError !== ''}
+		error={admissionError}
+		destructive
+		onaccept={() => writeHold(pendingHold, { reason: holdReasonInput })}
+		oncancel={closeAdmission}
+	>
+		{#snippet body()}
+			<p>
+				Every new run of <span class="font-medium text-fg">{pendingHold}</span> — CLI, UI, run
+				again, trigger — is refused until the hold is released. Runs already accepted finish
+				untouched.
+			</p>
+			<label class="mt-3 flex flex-col gap-1.5 text-sm">
+				<span class="font-medium text-fg">Reason (the next operator reads this)</span>
+				<input
+					data-testid="namespace-hold-reason-input"
+					bind:value={holdReasonInput}
+					placeholder="partner CI loop, INC-4412"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				/>
+				{#if holdReasonError}
+					<span class="text-xs text-danger-700" data-testid="namespace-hold-reason-error"
+						>{holdReasonError}</span
+					>
+				{/if}
+			</label>
+			<div class="mt-3 flex items-center justify-end">
+				<CliEquivalent
+					testid="namespace-hold-cli"
+					label="CLI equivalent of this hold"
+					command={`orkctl namespace update ${pendingHold} --hold ${shellQuote(holdReasonInput.trim() === '' ? 'REASON' : holdReasonInput)}`}
+				/>
+			</div>
+		{/snippet}
+	</ConfirmDialog>
+{/if}
+
+{#if pendingRelease}
+	<ConfirmDialog
+		testid="namespace-release-hold-confirm"
+		title="Release the hold on {pendingRelease.name}?"
+		acceptLabel="Release hold"
+		acceptTestid="namespace-release-hold-confirm-accept"
+		cancelTestid="namespace-release-hold-confirm-cancel"
+		busy={admissionBusy}
+		error={admissionError}
+		onaccept={() => writeHold(pendingRelease?.name ?? '', undefined)}
+		oncancel={closeAdmission}
+	>
+		{#snippet body()}
+			<p>
+				This clears the hold set {fmtTimestamp(pendingRelease?.hold?.since)} for
+				<span class="font-medium text-fg" data-testid="namespace-release-hold-reason"
+					>"{pendingRelease?.hold?.reason}"</span
+				>. New runs are accepted again; nothing refused while it was held is started.
+			</p>
+			<div class="mt-3 flex items-center justify-end">
+				<CliEquivalent
+					testid="namespace-release-hold-cli"
+					label="CLI equivalent of this release"
+					command={`orkctl namespace update ${pendingRelease?.name ?? ''} --release-hold`}
+				/>
+			</div>
+		{/snippet}
+	</ConfirmDialog>
 {/if}
 
 {#if pendingDelete}

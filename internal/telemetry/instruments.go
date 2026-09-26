@@ -23,6 +23,15 @@ const (
 	AttrFailureCategory = "failure_category"
 )
 
+// AttrRefusalReason labels ork.runs.refused with why the gate said no. It
+// takes the ork. prefix, unlike status and failure_category above, on the
+// rule those two state for themselves: they are the vocabulary a dashboard
+// author already reaches for, while a refusal reason is an OrkStack code
+// (NAMESPACE_HELD, MAX_RUNNING_REACHED) — the same kind of value the Orker
+// labels ork.failure.reason with (orker_spans.go), and it follows that
+// precedent, not the bare one.
+const AttrRefusalReason = "ork.refusal.reason"
+
 // Outcomes recorded on TaskLogExporter's counters.
 const (
 	OutcomeEmitted   = "emitted"
@@ -247,6 +256,10 @@ type EngineInstruments struct {
 	// labelled ork.namespace and ork.pool — the width of the retry tail a
 	// namespace or pool is paying for.
 	TaskAttempts metric.Int64Histogram
+	// RunsRefused counts submissions the admission gate refused, labelled
+	// ork.namespace and ork.refusal.reason. A refused submission is not a
+	// run and is never also counted on Runs.
+	RunsRefused metric.Int64Counter
 	// Cardinality is the label policy EngineObserver applies through
 	// RunAttrs above.
 	Cardinality Cardinality
@@ -296,12 +309,19 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	runsRefused, err := meter.Int64Counter("ork.runs.refused",
+		metric.WithDescription("Submissions the admission gate refused, by namespace and reason."),
+		metric.WithUnit("{submission}"))
+	if err != nil {
+		return nil, err
+	}
 	return &EngineInstruments{
 		Runs:         runs,
 		RunDuration:  runDuration,
 		Tasks:        tasks,
 		TaskDuration: taskDuration,
 		TaskAttempts: taskAttempts,
+		RunsRefused:  runsRefused,
 		Cardinality:  highCard,
 	}, nil
 }

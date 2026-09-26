@@ -675,3 +675,102 @@ func TestAuditWebhookRegister_DetailNamesScope(t *testing.T) {
 		}
 	}
 }
+
+// TestAudit_NamespaceUpdateRecordsHoldWhenPresent is the audit half of
+// namespace admission control: the record of a write that sets a hold names
+// its reason and cap, the record of the release has no hold= key, a create
+// carries both after its outcome, and a refused write still records the
+// summary it was asked for.
+func TestAudit_NamespaceUpdateRecordsHoldWhenPresent(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	const reason = "partner CI loop, INC-4412"
+	const held = `hold="partner CI loop, INC-4412" max_running=20`
+
+	created, err := f.svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "payments"},
+	}))
+	if err != nil {
+		t.Fatalf("CreateNamespace (direct, unaudited): %v", err)
+	}
+	updated, err := f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{
+			Name: "payments", Hold: &orkstackv1.NamespaceHold{Reason: reason}, MaxRunning: 20,
+			Etag: created.Msg.GetNamespace().GetEtag(),
+		},
+	}))
+	if err != nil {
+		t.Fatalf("UpdateNamespace (hold): %v", err)
+	}
+	records := f.records(t)
+	if len(records) != 1 {
+		t.Fatalf("records after the hold = %d, want exactly one", len(records))
+	}
+	hold := records[0]
+	if hold.GetAction() != "namespace.update" || !hold.GetSucceeded() {
+		t.Fatalf("record = %v, want a successful namespace.update", hold)
+	}
+	detail := hold.GetDetail()
+	at, retention, sink := strings.Index(detail, held), strings.Index(detail, "run_retention="),
+		strings.Index(detail, "telemetry.sink=")
+	if at < 0 || retention < 0 || sink < 0 || !(retention < at && at < sink) {
+		t.Errorf("hold detail = %q, want %s after run_retention= and before telemetry.sink=", detail, held)
+	}
+
+	f.now = f.now.Add(time.Second) // newest first is by at; give each write its own
+	_, err = f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{
+			Name: "payments", MaxRunning: 20, Etag: updated.Msg.GetNamespace().GetEtag(),
+		},
+	}))
+	if err != nil {
+		t.Fatalf("UpdateNamespace (release): %v", err)
+	}
+	records = f.records(t)
+	if len(records) != 2 {
+		t.Fatalf("records after the release = %d, want two", len(records))
+	}
+	release := records[0].GetDetail()
+	if strings.Contains(release, "hold=") || !strings.Contains(release, "max_running=20") {
+		t.Errorf("release detail = %q, want no hold= and still max_running=20", release)
+	}
+
+	f.now = f.now.Add(time.Second)
+	billing, err := f.namespaces().CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{
+			Name: "billing", Hold: &orkstackv1.NamespaceHold{Reason: reason}, MaxRunning: 20,
+		},
+	}))
+	if err != nil {
+		t.Fatalf("CreateNamespace (held): %v", err)
+	}
+	records = f.records(t)
+	if len(records) != 3 {
+		t.Fatalf("records after the create = %d, want three", len(records))
+	}
+	create := records[0].GetDetail()
+	if records[0].GetAction() != "namespace.create" || !strings.HasPrefix(create, "created ") ||
+		!strings.Contains(create, held) {
+		t.Errorf("create detail = %q, want created followed by %s", create, held)
+	}
+
+	f.now = f.now.Add(time.Second)
+	_, err = f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{
+			Name: "billing", Hold: &orkstackv1.NamespaceHold{Reason: "  "}, MaxRunning: 20,
+			Etag: billing.Msg.GetNamespace().GetEtag(),
+		},
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("UpdateNamespace (blank reason) = %v, want InvalidArgument", err)
+	}
+	records = f.records(t)
+	if len(records) != 4 {
+		t.Fatalf("records after the refusal = %d, want four", len(records))
+	}
+	refused := records[0]
+	if refused.GetSucceeded() || refused.GetErrorCode() != "invalid_argument" ||
+		!strings.Contains(refused.GetDetail(), `hold="  " max_running=20`) {
+		t.Errorf("refused record = %v, want succeeded=false with the requested summary", refused)
+	}
+}
