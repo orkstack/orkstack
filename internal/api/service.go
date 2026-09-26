@@ -127,6 +127,19 @@ type Config struct {
 	// unit tests only — exactly the terms Webhooks above is on.
 	Triggers triggers.Store
 
+	// Deliveries is where settled webhook deliveries are recorded. `ork` wires
+	// the durable store on the same shared backend the webhook registry uses,
+	// so a delivery made through one replica is readable on every other one.
+	// Nil answers ListDeliveries, GetDelivery and RedeliverWebhook with
+	// FailedPrecondition rather than an empty listing — an operator who
+	// configured no store must be told, not shown a subscriber that looks like
+	// it was never called (unit-test convenience, never a production fallback).
+	Deliveries artifacts.DeliveryStore
+	// Redelivery sends RedeliverWebhook's one POST. Nil builds
+	// webhooks.NewDispatcher(webhooks.DispatcherOptions{MaxRetries: -1}): one
+	// request, the default 10 s timeout, no ladder. Tests inject a client.
+	Redelivery *webhooks.Dispatcher
+
 	// AuditStore is where the control-plane audit trail lives: one immutable
 	// record per call of a write RPC (audit.go), in the same bucket, through
 	// the same ORK_ARTIFACT_BACKEND, as attempts and triggers — so any replica
@@ -302,6 +315,12 @@ type Service struct {
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
 	triggers    triggers.Store
+	// deliveries is the webhook delivery record store, read by ListDeliveries
+	// and GetDelivery; deliveryRecorder writes RedeliverWebhook's record into
+	// it and redelivery sends that one POST. Nil deliveries refuses all three.
+	deliveries       artifacts.DeliveryStore
+	deliveryRecorder *DeliveryRecorder
+	redelivery       *webhooks.Dispatcher
 	// audit writes the control-plane audit trail and auditStore reads it
 	// back. Both are nil when no store is wired: nothing is recorded and
 	// ListAuditRecords is refused.
@@ -356,6 +375,8 @@ func NewService(cfg Config) *Service {
 		idempotency:       cfg.Idempotency,
 		webhooks:          cfg.Webhooks,
 		triggers:          cfg.Triggers,
+		deliveries:        cfg.Deliveries,
+		redelivery:        cfg.Redelivery,
 		notifier:          cfg.Notifier,
 		observer:          cfg.Observer,
 		admissions:        cfg.Admissions,
@@ -420,6 +441,13 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.now == nil {
 		svc.now = time.Now
+	}
+	if svc.deliveries != nil {
+		svc.deliveryRecorder = NewDeliveryRecorder(svc.deliveries, svc.logger)
+	}
+	if svc.redelivery == nil {
+		// One request, no ladder: the operator is the retry policy.
+		svc.redelivery = webhooks.NewDispatcher(webhooks.DispatcherOptions{MaxRetries: -1})
 	}
 	if cfg.AuditStore != nil {
 		svc.auditStore = cfg.AuditStore
