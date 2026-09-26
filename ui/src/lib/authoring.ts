@@ -70,6 +70,14 @@ export function submitCli(args: {
 	input: JsonObject;
 	idempotencyKey?: string;
 	allowEmptyPool?: boolean;
+	/** Recorded on the run as its origin reference (--origin-ref). */
+	originReference?: string;
+	/**
+	 * Set when the draft re-runs an existing run: the command is then
+	 * `orkctl run again <id>`, which records the same run-again origin the
+	 * dialog does, instead of `orkctl run submit <name>`.
+	 */
+	sourceRunId?: string;
 }): string {
 	const namespace = args.namespace || 'default';
 	const flags = [
@@ -79,5 +87,9 @@ export function submitCli(args: {
 	];
 	if (args.idempotencyKey) flags.push(`--idempotency-key ${shellQuote(args.idempotencyKey)}`);
 	if (args.allowEmptyPool) flags.push('--allow-empty-pool');
-	return `printf '%s\\n' ${shellQuote(JSON.stringify(args.input))} > input.json\norkctl run submit ${shellQuote(args.name)} ${flags.join(' ')}`;
+	if (args.originReference) flags.push(`--origin-ref ${shellQuote(args.originReference)}`);
+	const command = args.sourceRunId
+		? `orkctl run again ${shellQuote(args.sourceRunId)}`
+		: `orkctl run submit ${shellQuote(args.name)}`;
+	return `printf '%s\\n' ${shellQuote(JSON.stringify(args.input))} > input.json\n${command} ${flags.join(' ')}`;
 }

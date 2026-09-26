@@ -30,6 +30,14 @@
 	import { attemptsSeen, groupAttemptsByTask, runRetryCount } from '$lib/attempts';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
+	import {
+		PRINCIPAL_CAPTION,
+		UNRECORDED,
+		UNRECORDED_CAPTION,
+		originKindSlug,
+		originLinkPath,
+		originReferenceURL
+	} from '$lib/origin';
 	import { fmtTimestamp, isTerminal, statusLabel, taskDispatched } from '$lib/status';
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
@@ -99,6 +107,14 @@
 	}
 
 	const run = $derived(data.run);
+	// What started this run, read off the run it is: nothing here infers it.
+	const origin = $derived(run?.origin);
+	const originSlug = $derived(origin ? originKindSlug(origin.kind) : '');
+	const originHref = $derived.by(() => {
+		const path = originLinkPath(origin, run?.orkflowName ?? '');
+		return path ? withNamespace(path, data.namespace) : null;
+	});
+	const originReference = $derived(origin?.reference ? originReferenceURL(origin.reference) : null);
 
 	// runError is the STRUCTURED terminal error from the GetRun snapshot — the
 	// only source that carries a §8.1 category. It is $derived rather than
@@ -724,6 +740,58 @@
 					class="font-medium text-brand-700 hover:underline">{run.orkflowName}</a
 				>@{run.orkflowVersion}
 			</p>
+			<!--
+				WHAT STARTED IT. The kind is a recorded fact, never an inference:
+				a run recorded before origins existed says "unrecorded", not
+				"submit". The reference is caller-supplied text and is a link only
+				when it provably is an http(s) URL; the principal is the gateway's
+				assertion and says so.
+			-->
+			<p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-fg-muted" data-testid="run-origin">
+				{#if originSlug}
+					<span
+						data-testid="run-origin-kind"
+						class="inline-flex items-center rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-xs font-medium text-fg-secondary"
+						>{originSlug}</span
+					>
+					{#if origin?.id}
+						{#if originHref}
+							<a
+								href={originHref}
+								data-testid="run-origin-link"
+								class="font-mono text-xs text-brand-700 hover:underline">{origin.id}</a
+							>
+						{:else}
+							<span data-testid="run-origin-id" class="font-mono text-xs text-fg-secondary">{origin.id}</span>
+						{/if}
+					{/if}
+					{#if origin?.description}
+						<span data-testid="run-origin-description">({origin.description})</span>
+					{/if}
+					{#if origin?.reference}
+						{#if originReference}
+							<a
+								href={originReference}
+								target="_blank"
+								rel="noopener noreferrer"
+								data-testid="run-origin-reference"
+								class="break-all text-brand-700 hover:underline">{origin.reference}</a
+							>
+						{:else}
+							<span data-testid="run-origin-reference" class="font-mono text-xs break-all text-fg-secondary"
+								>{origin.reference}</span
+							>
+						{/if}
+					{/if}
+					{#if origin?.principal}
+						<span data-testid="run-origin-principal" title={PRINCIPAL_CAPTION}
+							>asserted by {origin.principal}</span
+						>
+					{/if}
+				{:else}
+					<span data-testid="run-origin-kind" class="italic" title={UNRECORDED_CAPTION}>{UNRECORDED}</span>
+				{/if}
+			</p>
 		</div>
 		<div class="flex items-center gap-3">
 			<StatusPill status={runStatus} testid="run-status" />
@@ -1308,7 +1376,13 @@
 					initialVersion={run.orkflowVersion}
 					initialInput={run.input?.data ?? {}}
 					replayFromRunId={run.id}
-					onsubmitted={(newRunId) => goto(withNamespace(`/runs/${newRunId}`, data.namespace))}
+					onsubmitted={(newRunId) => {
+						// The new run opens on this same route, so this component
+						// survives the navigation: close the dialog first, or the
+						// new run's page opens under a stale "Submitting…" dialog.
+						runAgainDialogOpen = false;
+						void goto(withNamespace(`/runs/${newRunId}`, data.namespace));
+					}}
 				/>
 			{/snippet}
 		</Dialog>
