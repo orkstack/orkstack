@@ -10,6 +10,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import PoolOrkers from '$lib/components/PoolOrkers.svelte';
 	import type { Pool } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { namespaceLabel } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
@@ -39,6 +40,11 @@
 		navigating.to !== null && navigating.to.url.pathname === page.url.pathname
 	);
 	const busy = $derived(retrying || navigatingHere);
+
+	// Which pool cards have their Orker list open. Orkers are deployment
+	// infrastructure, so the list is a disclosure on the (namespace-scoped)
+	// pool card rather than a namespace-scoped list of its own.
+	let expanded = $state<Record<string, boolean>>({});
 
 	// Nothing unavailable is ever drawn as zero: a pool the
 	// cluster could not answer for has NO number at all, only the reason.
@@ -126,6 +132,21 @@
 						>{pool.lastSeen ? fmtTimestamp(pool.lastSeen) : 'never (or gone quiet)'}</span
 					>
 				</p>
+
+				{#if !pool.unavailableReason}
+					<button
+						type="button"
+						class="mt-2 text-xs font-medium text-brand-700 hover:underline"
+						aria-expanded={expanded[pool.name] ?? false}
+						data-testid="pool-orkers-toggle-{pool.name}"
+						onclick={() => (expanded[pool.name] = !expanded[pool.name])}
+					>
+						{expanded[pool.name] ? 'Hide Orkers' : 'Show Orkers'}
+					</button>
+					{#if expanded[pool.name]}
+						<PoolOrkers pool={pool.name} namespace={data.namespace} />
+					{/if}
+				{/if}
 			</div>
 		{/each}
 	</div>
