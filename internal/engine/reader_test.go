@@ -63,6 +63,40 @@ type fakeReadClient struct {
 	executions []*workflowpb.WorkflowExecutionInfo
 	listQuery  string
 	longPolled bool
+
+	// describes is the per-workflow DescribeWorkflowExecution answer; a
+	// workflow with none is NotFound. describeErr, when set, is returned for
+	// every describe instead. calls records "describe" and "history" in the
+	// order the reader made them.
+	describes   map[string]*workflowservice.DescribeWorkflowExecutionResponse
+	describeErr error
+	calls       []string
+}
+
+func (f *fakeReadClient) DescribeWorkflowExecution(
+	_ context.Context,
+	workflowID, _ string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	f.calls = append(f.calls, "describe")
+	if f.describeErr != nil {
+		return nil, f.describeErr
+	}
+	resp, ok := f.describes[workflowID]
+	if !ok {
+		return nil, serviceerror.NewNotFound("workflow execution not found")
+	}
+	return resp, nil
+}
+
+// count reports how many calls of one kind the reader made.
+func (f *fakeReadClient) count(kind string) int {
+	n := 0
+	for _, call := range f.calls {
+		if call == kind {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeReadClient) GetWorkflowHistory(
@@ -72,6 +106,7 @@ func (f *fakeReadClient) GetWorkflowHistory(
 	_ enumspb.HistoryEventFilterType,
 ) client.HistoryEventIterator {
 	f.longPolled = isLongPoll
+	f.calls = append(f.calls, "history")
 	history, ok := f.history[workflowID]
 	if !ok {
 		return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}
@@ -768,6 +803,14 @@ func (p *pagedReadClient) GetWorkflowHistory(
 	return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}
 }
 
+// DescribeWorkflowExecution is not a question this double answers: none of
+// its tests inspects a live run.
+func (p *pagedReadClient) DescribeWorkflowExecution(
+	context.Context, string, string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	return nil, serviceerror.NewNotFound("pagedReadClient: no execution to describe")
+}
+
 // CountWorkflow is not a question this double answers.
 func (p *pagedReadClient) CountWorkflow(
 	context.Context,
@@ -837,6 +880,14 @@ func (e *endlessReadClient) GetWorkflowHistory(
 	context.Context, string, string, bool, enumspb.HistoryEventFilterType,
 ) client.HistoryEventIterator {
 	return &fakeHistory{err: serviceerror.NewNotFound("workflow execution not found")}
+}
+
+// DescribeWorkflowExecution is not a question this double answers: none of
+// its tests inspects a live run.
+func (e *endlessReadClient) DescribeWorkflowExecution(
+	context.Context, string, string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	return nil, serviceerror.NewNotFound("endlessReadClient: no execution to describe")
 }
 
 // CountWorkflow is not a question this double answers.
