@@ -1,0 +1,6 @@
+TASK   STATUS     ATTEMPT  STATE  PHASE  ORKER  CONTAINER  LOGGED  RUNNING  HEARTBEAT
+fit    SUCCEEDED  -        -      -      -      -          -       -        -
+eval   SUCCEEDED  -        -      -      -      -          -       -        -
+clean  SUCCEEDED  -        -      -      -      -          -       -        -
+
+run SUCCEEDED; nothing is live

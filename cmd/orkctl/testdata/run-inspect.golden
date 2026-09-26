@@ -1,0 +1,6 @@
+TASK   STATUS   ATTEMPT  STATE    PHASE  ORKER    CONTAINER     LOGGED     RUNNING  HEARTBEAT
+fit    RUNNING  2        STARTED  run    orker-7  3f2a9c1d0b4e  412.0 MiB  40m2s    3s ago
+eval   PENDING  -        -        -      -        -             -          -        -
+clean  SKIPPED  -        -        -      -        -             -          -        -
+
+fit: timeout 45m0s, at least 4m58s left (the container clock starts after setup) · cancellation grace 30s · backstop 2026-09-23T10:31:07Z
