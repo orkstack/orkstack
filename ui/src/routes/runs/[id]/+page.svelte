@@ -34,7 +34,8 @@
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
 	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
 	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
-	import { ArtifactKind, type RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
+	import { ArtifactKind, type LiveAttempt, type RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
+	import { liveLine } from '$lib/live';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -260,6 +261,71 @@
 	const currentTimestamp = $derived({
 		seconds: BigInt(Math.floor(wallNow / 1000)),
 		nanos: (wallNow % 1000) * 1_000_000
+	});
+
+	// WHAT EACH RUNNING TASK IS DOING RIGHT NOW. InspectRun reads the
+	// heartbeat detail the cluster already holds for every pending attempt;
+	// nothing is stored and there is no stream, so the page polls the unary
+	// read while something runs and stops the moment nothing does, when the
+	// run is terminal, and while the tab is hidden. Each answer replaces the
+	// map whole. A failed poll keeps the last answer and is never fatal (the
+	// refreshAttempts posture). Ages are measured against the engine's
+	// computed_at plus the wall time since the answer arrived — never the
+	// browser's clock alone.
+	const LIVE_POLL_MS = 5000;
+	let liveByTask = $state.raw(new Map<string, LiveAttempt>());
+	let liveError = $state<string | null>(null);
+	let liveComputedAtMs = $state(0);
+	let liveReceivedAtMs = $state(0);
+	let liveInFlight = false;
+	const liveNowMs = $derived(liveComputedAtMs + (wallNow - liveReceivedAtMs));
+	const liveNowTimestamp = $derived({
+		seconds: BigInt(Math.floor(liveNowMs / 1000)),
+		nanos: (liveNowMs % 1000) * 1_000_000
+	});
+	const anyTaskRunning = $derived(tasks.some((task) => task.status === Status.RUNNING));
+
+	async function pollLive(): Promise<void> {
+		if (!run || liveInFlight) return;
+		liveInFlight = true;
+		try {
+			const res = await orkstack(fetch).runs.inspectRun({ runId: run.id, namespace: data.namespace });
+			const next = new Map<string, LiveAttempt>();
+			for (const attempt of res.attempts) next.set(attempt.taskId, attempt);
+			liveByTask = next;
+			const computed = res.computedAt;
+			liveReceivedAtMs = Date.now();
+			liveComputedAtMs = computed
+				? Number(computed.seconds) * 1000 + Math.floor(computed.nanos / 1e6)
+				: liveReceivedAtMs;
+			liveError = null;
+		} catch (err) {
+			liveError = errorMessage(err);
+		} finally {
+			liveInFlight = false;
+		}
+	}
+
+	$effect(() => {
+		if (!run || isTerminal(runStatus) || !anyTaskRunning) return;
+		let timer: ReturnType<typeof setInterval> | undefined;
+		const start = () => {
+			if (timer !== undefined) return;
+			void pollLive();
+			timer = setInterval(() => void pollLive(), LIVE_POLL_MS);
+		};
+		const stop = () => {
+			if (timer === undefined) return;
+			clearInterval(timer);
+			timer = undefined;
+		};
+		const onVisibility = () => (document.visibilityState === 'hidden' ? stop() : start());
+		document.addEventListener('visibilitychange', onVisibility);
+		if (document.visibilityState !== 'hidden') start();
+		return () => {
+			stop();
+			document.removeEventListener('visibilitychange', onVisibility);
+		};
 	});
 
 	function seedTasks(): TaskView[] {
@@ -1011,6 +1077,36 @@
 							{:else if timing.scheduled && isTerminal(task.status)}
 								<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.scheduledAt ?? task.startedAt, task.finishedAt)}</span>
 							{/if}
+							<!--
+								LIVE. While the task runs, what its pending attempt is doing
+								now, from the heartbeat the cluster holds: its own running
+								time, its phase, bytes and heartbeat age — or why that is
+								unavailable. Nothing about the attempt's PAST is drawn from
+								here; that is AttemptTimeline's. The Orker the heartbeat
+								names is a live claim, so it has its own testid beside the
+								snapshot's proof a pin held.
+							-->
+							{#if task.status === Status.RUNNING}
+								{@const live = liveByTask.get(task.id)}
+								{#if live?.attemptStartedAt}
+									<span data-testid="task-{task.id}-running-for">Running for {formatDuration(live.attemptStartedAt, liveNowTimestamp)}</span>
+								{/if}
+								{#if live}
+									{@const line = liveLine(live, liveNowMs)}
+									<span
+										data-testid="task-{task.id}-live"
+										data-live={line.kind}
+										data-stale={line.stale}
+										title={line.title}
+										class={line.stale ? 'font-medium text-warning-700' : ''}>{line.text}</span
+									>
+									{#if live.heartbeatAvailable && live.orkerId && !task.orkerId}
+										<span data-testid="task-{task.id}-live-orker">Orker {live.orkerId}</span>
+									{/if}
+								{:else if liveError}
+									<span data-testid="task-{task.id}-live" data-live="unavailable" data-stale="false" title={liveError}>Live detail unavailable</span>
+								{/if}
+							{/if}
 							{#if task.pool}<span>Pool {task.pool}</span>{/if}
 							<!--
 								Pin and Orker are stated the same way Pool is: when the
@@ -1037,6 +1133,13 @@
 								testid="run-task-{task.id}-logs-cli"
 								label="Copy logs CLI"
 							/>
+							{#if task.status === Status.RUNNING}
+								<CliEquivalent
+									command={runCommand(data.namespace, ['run', 'inspect', run.id, '--task', task.id])}
+									testid="run-task-{task.id}-inspect-cli"
+									label="Copy inspect CLI"
+								/>
+							{/if}
 							{#if timing.scheduled}
 								<CliEquivalent
 									command={runCommand(data.namespace, ['run', 'timing', run.id, '--task', task.id])}
