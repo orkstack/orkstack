@@ -697,6 +697,17 @@ aws s3api put-bucket-lifecycle-configuration --bucket orkstack-artifacts \
     "Filter":{"Prefix":"metadata/logs/"},"Expiration":{"Days":30}}]}'
 ```
 
+Webhook delivery records (`metadata/deliveries/`, one small object per settled
+delivery) are a second prefix an operator may expire the same way. Nothing
+reads them to decide anything, so a rule only bounds how far back
+`orkctl webhook deliveries` and Admin → Webhooks → Deliveries can look:
+
+```bash
+# MinIO: expire webhook delivery records after 90 days.
+mc ilm rule add local/orkstack-artifacts \
+  --prefix "metadata/deliveries/" --expire-days 90
+```
+
 This is separate from `DeleteOrkflow`. Orkflow deletion removes the stored
 versions of an Orkflow only after its run-safety gate proves no affected run
 is live. Retention cleanup removes one finished run's logs and commits only
@@ -1225,8 +1236,8 @@ Runs already pinned to a version still need that version's workers.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
-Six reads answer every operational question about a deployment, and each is
-available from the CLI and over Connect. Four of them are answered from the
+Seven reads answer every operational question about a deployment, and each is
+available from the CLI and over Connect. Five of them are answered from the
 cluster or the bucket, so **any replica answers them and they all answer the
 same** (`AGENTS.md` §7). Two — system information and the activity catalog —
 are deliberately not.
@@ -1239,6 +1250,7 @@ are deliberately not.
 | namespaces | `orkctl namespace list \| get \| create \| update \| delete` | the registry in the bucket — each namespace's own `run_retention` lives here too |
 | activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests at apply time |
 | audit trail | `orkctl admin audit` | the audit records in the bucket (`metadata/audit/`) — **any replica answers**, for writes any replica recorded |
+| webhook deliveries | `orkctl webhook deliveries \| delivery \| redeliver` | the delivery records in the bucket (`metadata/deliveries/`) — **any replica answers**, for deliveries any replica made |
 
 `orkctl admin info` describes **the replica that answered**, and it says so in
 its own output. Behind a load balancer that is whichever replica took the
