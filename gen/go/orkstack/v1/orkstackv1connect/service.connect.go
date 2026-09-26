@@ -137,6 +137,12 @@ const (
 	// ActivityServiceDescribeOrkerProcedure is the fully-qualified name of the ActivityService's
 	// DescribeOrker RPC.
 	ActivityServiceDescribeOrkerProcedure = "/orkstack.v1.ActivityService/DescribeOrker"
+	// ActivityServiceListOrkersProcedure is the fully-qualified name of the ActivityService's
+	// ListOrkers RPC.
+	ActivityServiceListOrkersProcedure = "/orkstack.v1.ActivityService/ListOrkers"
+	// ActivityServiceCordonOrkerProcedure is the fully-qualified name of the ActivityService's
+	// CordonOrker RPC.
+	ActivityServiceCordonOrkerProcedure = "/orkstack.v1.ActivityService/CordonOrker"
 	// SystemServiceGetSystemInfoProcedure is the fully-qualified name of the SystemService's
 	// GetSystemInfo RPC.
 	SystemServiceGetSystemInfoProcedure = "/orkstack.v1.SystemService/GetSystemInfo"
@@ -1450,6 +1456,24 @@ type ActivityServiceClient interface {
 	// Temporal activity on a pool's own channel, so it answers only when an
 	// Orker is actually polling that pool.
 	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
+	// ListOrkers is the fleet: one row per live Orker of the deployment,
+	// derived on read. Like Pool, nothing WRITES an Orker — the list comes
+	// from the cluster's own poller records and each Orker's own answer, so
+	// any replica answers and none holds state of its own (AGENTS.md §7). It
+	// NARROWS rather than refusing: an Orker that did not answer keeps its
+	// row and carries unavailable_reason. Two conditions are distinct: a
+	// known poller whose describe failed is a row with unavailable_reason;
+	// an orker_id that NO live poller answers to is an EMPTY list, never
+	// NOT_FOUND — a read for an id nothing polls is an empty answer, and the
+	// drain loop relies on it (CordonOrker, a write, is the one that answers
+	// NOT_FOUND for that id).
+	ListOrkers(context.Context, *connect.Request[v1.ListOrkersRequest]) (*connect.Response[v1.ListOrkersResponse], error)
+	// CordonOrker sets or clears ONE Orker's cordon: a process-local flag
+	// delivered over that Orker's own channel, lost when the process exits.
+	// A cordoned Orker takes no new task and opens no new pin; everything
+	// already in flight on it is untouched. The response is the Orker's
+	// state AFTER the change, as the Orker itself reported it.
+	CordonOrker(context.Context, *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error)
 }
 
 // NewActivityServiceClient constructs a client for the orkstack.v1.ActivityService service. By
@@ -1475,6 +1499,18 @@ func NewActivityServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(activityServiceMethods.ByName("DescribeOrker")),
 			connect.WithClientOptions(opts...),
 		),
+		listOrkers: connect.NewClient[v1.ListOrkersRequest, v1.ListOrkersResponse](
+			httpClient,
+			baseURL+ActivityServiceListOrkersProcedure,
+			connect.WithSchema(activityServiceMethods.ByName("ListOrkers")),
+			connect.WithClientOptions(opts...),
+		),
+		cordonOrker: connect.NewClient[v1.CordonOrkerRequest, v1.CordonOrkerResponse](
+			httpClient,
+			baseURL+ActivityServiceCordonOrkerProcedure,
+			connect.WithSchema(activityServiceMethods.ByName("CordonOrker")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -1482,6 +1518,8 @@ func NewActivityServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 type activityServiceClient struct {
 	listActivities *connect.Client[v1.ListActivitiesRequest, v1.ListActivitiesResponse]
 	describeOrker  *connect.Client[v1.DescribeOrkerRequest, v1.DescribeOrkerResponse]
+	listOrkers     *connect.Client[v1.ListOrkersRequest, v1.ListOrkersResponse]
+	cordonOrker    *connect.Client[v1.CordonOrkerRequest, v1.CordonOrkerResponse]
 }
 
 // ListActivities calls orkstack.v1.ActivityService.ListActivities.
@@ -1494,6 +1532,16 @@ func (c *activityServiceClient) DescribeOrker(ctx context.Context, req *connect.
 	return c.describeOrker.CallUnary(ctx, req)
 }
 
+// ListOrkers calls orkstack.v1.ActivityService.ListOrkers.
+func (c *activityServiceClient) ListOrkers(ctx context.Context, req *connect.Request[v1.ListOrkersRequest]) (*connect.Response[v1.ListOrkersResponse], error) {
+	return c.listOrkers.CallUnary(ctx, req)
+}
+
+// CordonOrker calls orkstack.v1.ActivityService.CordonOrker.
+func (c *activityServiceClient) CordonOrker(ctx context.Context, req *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error) {
+	return c.cordonOrker.CallUnary(ctx, req)
+}
+
 // ActivityServiceHandler is an implementation of the orkstack.v1.ActivityService service.
 type ActivityServiceHandler interface {
 	ListActivities(context.Context, *connect.Request[v1.ListActivitiesRequest]) (*connect.Response[v1.ListActivitiesResponse], error)
@@ -1501,6 +1549,24 @@ type ActivityServiceHandler interface {
 	// Temporal activity on a pool's own channel, so it answers only when an
 	// Orker is actually polling that pool.
 	DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error)
+	// ListOrkers is the fleet: one row per live Orker of the deployment,
+	// derived on read. Like Pool, nothing WRITES an Orker — the list comes
+	// from the cluster's own poller records and each Orker's own answer, so
+	// any replica answers and none holds state of its own (AGENTS.md §7). It
+	// NARROWS rather than refusing: an Orker that did not answer keeps its
+	// row and carries unavailable_reason. Two conditions are distinct: a
+	// known poller whose describe failed is a row with unavailable_reason;
+	// an orker_id that NO live poller answers to is an EMPTY list, never
+	// NOT_FOUND — a read for an id nothing polls is an empty answer, and the
+	// drain loop relies on it (CordonOrker, a write, is the one that answers
+	// NOT_FOUND for that id).
+	ListOrkers(context.Context, *connect.Request[v1.ListOrkersRequest]) (*connect.Response[v1.ListOrkersResponse], error)
+	// CordonOrker sets or clears ONE Orker's cordon: a process-local flag
+	// delivered over that Orker's own channel, lost when the process exits.
+	// A cordoned Orker takes no new task and opens no new pin; everything
+	// already in flight on it is untouched. The response is the Orker's
+	// state AFTER the change, as the Orker itself reported it.
+	CordonOrker(context.Context, *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error)
 }
 
 // NewActivityServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1522,12 +1588,28 @@ func NewActivityServiceHandler(svc ActivityServiceHandler, opts ...connect.Handl
 		connect.WithSchema(activityServiceMethods.ByName("DescribeOrker")),
 		connect.WithHandlerOptions(opts...),
 	)
+	activityServiceListOrkersHandler := connect.NewUnaryHandler(
+		ActivityServiceListOrkersProcedure,
+		svc.ListOrkers,
+		connect.WithSchema(activityServiceMethods.ByName("ListOrkers")),
+		connect.WithHandlerOptions(opts...),
+	)
+	activityServiceCordonOrkerHandler := connect.NewUnaryHandler(
+		ActivityServiceCordonOrkerProcedure,
+		svc.CordonOrker,
+		connect.WithSchema(activityServiceMethods.ByName("CordonOrker")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.ActivityService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ActivityServiceListActivitiesProcedure:
 			activityServiceListActivitiesHandler.ServeHTTP(w, r)
 		case ActivityServiceDescribeOrkerProcedure:
 			activityServiceDescribeOrkerHandler.ServeHTTP(w, r)
+		case ActivityServiceListOrkersProcedure:
+			activityServiceListOrkersHandler.ServeHTTP(w, r)
+		case ActivityServiceCordonOrkerProcedure:
+			activityServiceCordonOrkerHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1543,6 +1625,14 @@ func (UnimplementedActivityServiceHandler) ListActivities(context.Context, *conn
 
 func (UnimplementedActivityServiceHandler) DescribeOrker(context.Context, *connect.Request[v1.DescribeOrkerRequest]) (*connect.Response[v1.DescribeOrkerResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.ActivityService.DescribeOrker is not implemented"))
+}
+
+func (UnimplementedActivityServiceHandler) ListOrkers(context.Context, *connect.Request[v1.ListOrkersRequest]) (*connect.Response[v1.ListOrkersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.ActivityService.ListOrkers is not implemented"))
+}
+
+func (UnimplementedActivityServiceHandler) CordonOrker(context.Context, *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.ActivityService.CordonOrker is not implemented"))
 }
 
 // SystemServiceClient is a client for the orkstack.v1.SystemService service.
