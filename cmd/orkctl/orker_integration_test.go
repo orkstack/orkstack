@@ -51,7 +51,7 @@ func newOrkerStack(t *testing.T, replicas int) *orkerStack {
 	s := &orkerStack{t: t, ctx: ctx, root: repoRoot(t)}
 	s.namespace = isolatedNamespace()
 	s.temporal = dialIsolatedNamespace(ctx, t, address, s.namespace)
-	s.queue = fmt.Sprintf("ork-orker-cli-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
+	s.queue = fmt.Sprintf("ork-drain-cli-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 	s.orkerID = fmt.Sprintf("orker-cli-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 
 	binDir := t.TempDir()
