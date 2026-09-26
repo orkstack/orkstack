@@ -390,7 +390,11 @@ Admin → Audit render the same records in the same order for the same filters.
 
 No new durable operation is needed. UI `Run again` loads the selected run into
 a submission draft. CLI `run again RUN` reads that run and submits through
-`SubmitRun`; support reviewed overrides for inputs and version plus a
+`SubmitRun` with `source_run_id` set to it, so the new run's origin is
+`run-again <source>` — a claim the server checks (the source must exist in the
+namespace, NotFound otherwise); `--origin-ref` and the dialog's **Origin
+reference** attach a correlation reference, and the dialog's copied command is
+`orkctl run again <source>` with the same flags; support reviewed overrides for inputs and version plus a
 `--dry-run` that prints the exact new submission. Default to the source's
 pinned version and inputs. Never reuse its original idempotency key; allow a
 fresh explicitly supplied key. A new run gets a new ID. Explain before submit
@@ -413,6 +417,7 @@ seeded draft exists only in the page that already holds that run.
 | Webhooks | List/register/delete, run and task event selection, optional namespace/orkflow/task scope with a per-row scope cell, one-time secret copy | Proto-backed webhook commands with `-n`/`--orkflow`/`--task` and a `SCOPE` column | Second replica and restarted engine see registration/deletion and scope; list excludes secret; storage failure errors; a scoped task delivery and an invalid-scope refusal captured in the browser |
 | Validate/apply | Validate current YAML without saving; field issues and warnings; retain warnings after apply | Shared validator and CLI validate | Invalid DAG and namespace mismatch agree; valid validation writes nothing; unavailable image errors actionable |
 | Run again | Reviewed submission seeded from run, showing source and pinned version | CLI again plus dry-run | Inputs preserved, override respected, new ID, no implicit old-key reuse, unavailable version refuses |
+| Run origin | Run header line `run-origin`: kind chip, id linked to the source run or the Triggers tab, description, reference linked only when it is an http(s) URL, `asserted by …` principal with its not-authenticated title, `unrecorded` for a run recorded before origins existed; submit dialog **Origin reference** (`--origin-ref` in its copied command, `orkctl run again <source>` when opened from Run again); runs list **Started by** + **Origin id** filters and an **Origin** column, both in the URL (`origin`, `originId`) | `run submit --origin-ref`, `run again --origin-ref` (sends `source_run_id`), `run list --origin KIND[:ID]`, `ORIGIN` column (`-` when unrecorded), `run get` `Origin:`/`Reference:`/`Principal:` lines; trigger invoke `Ork-Origin-Reference` header | The kind is never taken from a client: `SUBMIT`/`RUN_AGAIN` from `SubmitRun`, `TRIGGER` from the trigger door; an over-long or control-character reference is `InvalidArgument` and mints nothing; a run-again of an unknown or other-namespace run is `NotFound`; live and archived runs of one origin listed together; a pre-origin run is `unrecorded` and matched by no origin filter |
 | Typed inputs | String/number/boolean controls, required/default hints; object/array JSON editors; JSON alternative | Same submitted JSON values as `run submit --input` | Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce |
 | Editor protection | Warn on navigation with unsaved YAML; import local YAML; export current draft/source; conflict handling preserved | Existing file-based apply/edit/get | Import and export round-trip; dirty navigation guarded; successful save clears dirty state; validation alone does not clear it |
 | Deep links/CLI copies | Preserve namespace, task, attempt, inspector tab; copy commands beside corresponding actions | Shell-escaped actual CLI syntax | Reload restores selection; copied commands include required namespace/version; quotes in values cannot become shell syntax |

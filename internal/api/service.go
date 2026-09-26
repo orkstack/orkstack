@@ -951,6 +951,11 @@ type submission struct {
 	// the claim authority is asked about is claimKey(), which is a different
 	// string.
 	key string
+	// origin is what started this run, decided and validated by the door
+	// that accepted it before prepare ran. It rides the plan into history and
+	// the pending run into the response, the claim and a failed start's
+	// archive record.
+	origin *orkstackv1.RunOrigin
 }
 
 // claimKey is the coordinate one idempotency key occupies: the caller's key,
@@ -979,7 +984,30 @@ func (s *Service) SubmitRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.SubmitRunRequest],
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	sub, err := s.prepare(ctx, req.Msg)
+	// originForRequest validates origin_reference, then checks source_run_id,
+	// then builds the origin. It is the Connect door's half of "every door
+	// validates its own reference before submitFrom"; the trigger door
+	// (triggers.go) is the other half.
+	origin, err := s.originForRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.submitFrom(ctx, req.Msg, origin)
+}
+
+// submitFrom is SubmitRun with the origin already decided AND already
+// validated by the door that decided it. It is the seam the trigger door
+// (TRIGGER) and, later, schedules (SCHEDULE) start runs through: an origin's
+// kind is a fact about the door, so the door supplies it and the request
+// cannot. submitFrom validates nothing about the origin itself; every check
+// prepare makes — namespace, orkflow, version, admission, pool plan — runs
+// here unchanged.
+func (s *Service) submitFrom(
+	ctx context.Context,
+	msg *orkstackv1.SubmitRunRequest,
+	origin *orkstackv1.RunOrigin,
+) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	sub, err := s.prepare(ctx, msg, origin)
 	if err != nil {
 		return nil, err
 	}
@@ -993,7 +1021,7 @@ func (s *Service) SubmitRun(
 		return s.submitClaimedRun(ctx, sub)
 	}
 
-	run := s.newPendingRun(s.newRunID(), sub.wf, sub.input)
+	run := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 	s.runs.Save(run)
 	return s.startPreparedRun(ctx, run, sub)
 }
@@ -1010,9 +1038,13 @@ func (s *Service) SubmitRun(
 //
 // It refuses before minting a run id, so a refused submission leaves nothing
 // behind: no id burnt, no claim taken, no run recorded as failed.
+//
+// The origin it is handed was decided and validated by the door; prepare
+// only carries it onto the plan, and never checks it a second time.
 func (s *Service) prepare(
 	ctx context.Context,
 	msg *orkstackv1.SubmitRunRequest,
+	origin *orkstackv1.RunOrigin,
 ) (submission, error) {
 	name := msg.GetOrkflowName()
 	if name == "" {
@@ -1059,6 +1091,10 @@ func (s *Service) prepare(
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("resolve durable activity configuration: %w", err))
 	}
+	// The origin travels on the replay-pinned plan, as CommitRoot does: the
+	// door that accepted the submission is the only thing that knows it, and
+	// workflow code may not ask.
+	plan.Origin = engine.OriginFromProto(origin)
 	return submission{
 		binding:   binding,
 		wf:        planned,
@@ -1066,6 +1102,7 @@ func (s *Service) prepare(
 		plan:      plan,
 		namespace: ns.GetName(),
 		key:       msg.GetIdempotencyKey(),
+		origin:    origin,
 	}, nil
 }
 
@@ -1172,7 +1209,7 @@ func (s *Service) submitClaimedRun(
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	var candidate *orkstackv1.Run
 	winner, err := s.idempotency.Claim(ctx, sub.claimKey(), func() (engine.Claim, error) {
-		candidate = s.newPendingRun(s.newRunID(), sub.wf, sub.input)
+		candidate = s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 		return newClaim(candidate)
 	})
 	if err != nil {
@@ -1243,10 +1280,15 @@ func claimedSnapshot(claim engine.Claim) (*orkstackv1.Run, error) {
 	return run, nil
 }
 
+// newPendingRun is the run a submission reports before its workflow has
+// published anything. It carries the origin, so SubmitRunResponse.run, the
+// idempotency claim's snapshot and a failed start's archive record all say
+// what started it.
 func (s *Service) newPendingRun(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	origin *orkstackv1.RunOrigin,
 ) *orkstackv1.Run {
 	return &orkstackv1.Run{
 		Id:             runID,
@@ -1256,6 +1298,7 @@ func (s *Service) newPendingRun(
 		Status:         orkstackv1.Status_STATUS_PENDING,
 		Input:          input,
 		CreatedAt:      timestamppb.New(s.now().UTC()),
+		Origin:         origin,
 	}
 }
 
@@ -1319,7 +1362,7 @@ func (s *Service) reissueRunID(
 	s.runs.Delete(discarded.GetId())
 	s.bus.Discard(discarded.GetId())
 
-	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input)
+	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 	s.runs.Save(next)
 	if sub.key == "" {
 		return next, nil
@@ -1584,6 +1627,10 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
+	originKind, originID := req.Msg.GetOriginKind(), req.Msg.GetOriginId()
+	if err := validateOriginFilter(originKind, originID); err != nil {
+		return nil, err
+	}
 	var (
 		runs       []*orkstackv1.Run
 		fromMemory bool
@@ -1594,7 +1641,7 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
-	cursor, err := decodeRunCursor(req.Msg.GetPageToken(), ns.GetName(), req.Msg.GetOrkflowName(), req.Msg.GetStatus(), since, until)
+	cursor, err := decodeRunCursor(req.Msg.GetPageToken(), ns.GetName(), req.Msg.GetOrkflowName(), req.Msg.GetStatus(), since, until, originKind, originID)
 	if err != nil {
 		return nil, err
 	}
@@ -1611,6 +1658,8 @@ func (s *Service) ListRuns(
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
+			OriginKind:  originKind,
+			OriginID:    originID,
 			// Visibility does not promise ID ordering inside equal timestamps.
 			// Complete collects its bounded metadata scan before applying Limit,
 			// so a later higher-ID tie cannot disappear behind this cursor.
@@ -1626,6 +1675,8 @@ func (s *Service) ListRuns(
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
+			OriginKind:  originKind,
+			OriginID:    originID,
 		})
 		runs = filterRunTimes(runs, since, until)
 		if cursor != nil {
@@ -1642,6 +1693,8 @@ func (s *Service) ListRuns(
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
+			OriginKind:  originKind,
+			OriginID:    originID,
 			Since:       since, Until: until, BeforeCreated: beforeCreated, BeforeID: beforeID, Limit: size + 1,
 		})
 		if err != nil {
@@ -1660,7 +1713,7 @@ func (s *Service) ListRuns(
 	if len(runs) > size {
 		page := runs[:size]
 		last := page[len(page)-1]
-		token, err := encodeRunCursor(runCursor{Version: 1, Namespace: ns.GetName(), Orkflow: req.Msg.GetOrkflowName(), Status: int32(req.Msg.GetStatus()), Since: timeString(since), Until: timeString(until), LastCreated: engine.RunIndexTime(last).UTC().Format(time.RFC3339Nano), LastID: last.GetId()})
+		token, err := encodeRunCursor(runCursor{Version: 1, Namespace: ns.GetName(), Orkflow: req.Msg.GetOrkflowName(), Status: int32(req.Msg.GetStatus()), Since: timeString(since), Until: timeString(until), OriginKind: int32(originKind), OriginID: originID, LastCreated: engine.RunIndexTime(last).UTC().Format(time.RFC3339Nano), LastID: last.GetId()})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode run page token: %w", err))
 		}
@@ -1672,14 +1725,37 @@ func (s *Service) ListRuns(
 }
 
 type runCursor struct {
-	Version     int    `json:"v"`
-	Namespace   string `json:"n"`
-	Orkflow     string `json:"o"`
-	Status      int32  `json:"s"`
-	Since       string `json:"a,omitempty"`
-	Until       string `json:"b,omitempty"`
+	Version   int    `json:"v"`
+	Namespace string `json:"n"`
+	Orkflow   string `json:"o"`
+	Status    int32  `json:"s"`
+	Since     string `json:"a,omitempty"`
+	Until     string `json:"b,omitempty"`
+	// OriginKind and OriginID bind the origin filter a token was minted
+	// under. Both omitempty, so a token minted before origins existed decodes
+	// with both zero and matches a request that sets neither; Version stays 1.
+	OriginKind  int32  `json:"k,omitempty"`
+	OriginID    string `json:"d,omitempty"`
 	LastCreated string `json:"c"`
 	LastID      string `json:"i"`
+}
+
+// validateOriginFilter refuses an origin filter that cannot mean anything: an
+// id without a kind (an id is meaningful only within a kind) and a kind the
+// enum does not declare.
+func validateOriginFilter(kind orkstackv1.RunOriginKind, id string) error {
+	if kind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+		if id != "" {
+			return connect.NewError(connect.CodeInvalidArgument,
+				fmt.Errorf("origin_id needs origin_kind: an origin id is meaningful only within a kind"))
+		}
+		return nil
+	}
+	if _, ok := artifacts.OriginKindSlug(kind); !ok {
+		return connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("origin_kind %d is not a declared origin kind", kind))
+	}
+	return nil
 }
 
 func timeString(t time.Time) string {
@@ -1714,7 +1790,7 @@ func encodeRunCursor(c runCursor) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
-func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status, since, until time.Time) (*runCursor, error) {
+func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status, since, until time.Time, originKind orkstackv1.RunOriginKind, originID string) (*runCursor, error) {
 	if token == "" {
 		return nil, nil
 	}
@@ -1723,7 +1799,7 @@ func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status,
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
 	}
 	var c runCursor
-	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Namespace != namespace || c.Orkflow != orkflow || c.Status != int32(status) || c.Since != timeString(since) || c.Until != timeString(until) || c.LastCreated == "" || c.LastID == "" {
+	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Namespace != namespace || c.Orkflow != orkflow || c.Status != int32(status) || c.Since != timeString(since) || c.Until != timeString(until) || c.OriginKind != int32(originKind) || c.OriginID != originID || c.LastCreated == "" || c.LastID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_token does not match these run filters"))
 	}
 	if _, err := time.Parse(time.RFC3339Nano, c.LastCreated); err != nil {

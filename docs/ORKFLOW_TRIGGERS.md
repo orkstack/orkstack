@@ -199,6 +199,7 @@ POST /v1/triggers/{id}
 Authorization: Bearer <token>
 Content-Type: application/json
 Idempotency-Key: <key>          (optional)
+Ork-Origin-Reference: <text>    (optional; e.g. the CI job URL, recorded on the run)
 
 <the run's input JSON object>
 ```
@@ -222,16 +223,25 @@ The steps are, in order:
    its own; a body that is not a JSON object is `400`. An empty body means no
    input, and the Orkflow's declared defaults apply as they do for any other
    submission.
-5. Read `Idempotency-Key`, if present, into `SubmitRunRequest.idempotency_key`.
-6. Call `(*api.Service).SubmitRun` with `namespace`, `orkflow_name`, and
-   `orkflow_version` copied from the stored record and `allow_empty_pool`
-   set to `false`.
+5. Read `Idempotency-Key`, if present, into `SubmitRunRequest.idempotency_key`,
+   and `Ork-Origin-Reference`, if present, as the run's origin reference. A
+   reference longer than 256 bytes, or holding a control character, is `400
+   invalid_argument` here, before anything is minted.
+6. Start the run through the submit seam every door with a kind of its own
+   uses (`submitFrom`), with `namespace`, `orkflow_name`, and
+   `orkflow_version` copied from the stored record, `allow_empty_pool` set to
+   `false`, and the run's origin stamped from the record: kind `TRIGGER`, id
+   the trigger's id, description the trigger's description, the reference
+   from the header, and the `Ork-Principal` header recorded (never
+   authenticated) as the principal (`docs/design/proposals/phase-2/run-origin`).
 7. Answer with the result.
 
 **The load-bearing invariant:** the namespace, Orkflow name, and version a
 trigger invokes come only from the stored Trigger record, never from the
 request. There is no path, query, header, or body field that selects them.
-A body key named `orkflow_name` is input data like any other key. A caller
+A body key named `orkflow_name` is input data like any other key.
+`Ork-Origin-Reference` names the caller's own correlation and selects
+nothing; it is never read from the body, the path or the query. A caller
 who holds a token can start exactly the Orkflow the trigger was created for
 and nothing else; a trigger cannot be redirected.
 
@@ -244,7 +254,8 @@ exactly as `orkctl run submit --json` does:
 ```
 
 `id`, `status`, `namespace`, `orkflowName`, and `orkflowVersion` are always
-present, with whatever else the pending `Run` carries. `orkflowVersion` is
+present, with whatever else the pending `Run` carries — including
+`"origin":{"kind":"TRIGGER","id":"trg-…",…}`. `orkflowVersion` is
 the version that was resolved, never empty, so a caller of an unpinned
 trigger learns which version actually started. `status` is `PENDING`, not
 `STATUS_PENDING`.
@@ -262,6 +273,7 @@ Every failure is the error envelope `webhookErrorEnvelope` already uses:
 | Unknown or deleted id | 404 | `not_found` |
 | Trigger store unreadable | 500 | `storage_error` |
 | Body is not a JSON object, or exceeds the bound | 400 | `invalid_argument` |
+| Malformed or over-long `Ork-Origin-Reference` | 400 | `invalid_argument` |
 | Orkflow or pinned version no longer exists | 404 | `not_found` |
 | A resolved pool has no live Orker, or no run starter is configured | 412 | `failed_precondition` |
 | The namespace is on hold, or at its `max_running` (namespace admission) | 412 | `failed_precondition` |
@@ -318,6 +330,7 @@ curl -X POST http://localhost:8080/v1/triggers/trg-… \
   -H 'Authorization: Bearer <secret>' \
   -H 'Content-Type: application/json' \
   -d '{}'
+# optional: -H 'Ork-Origin-Reference: <your CI job URL>'
 ```
 
 `--json` output is the proto response encoded by the shared encoder
@@ -389,8 +402,10 @@ merges triggers across namespaces.
   toggle. A deployment that never creates a trigger runs exactly as before.
 - **No secret rotation or re-disclosure.** The plaintext exists only in the
   create response. Rotating a token is delete then create, yielding a new id.
-- **No provenance on the run.** `Run` gains no field naming the trigger that
-  started it; a trigger-started run is indistinguishable from `run submit`.
+- **Provenance is the run's origin, not a trigger field.** A trigger-started
+  run records `origin {kind: TRIGGER, id: trg-…}` with the header's reference
+  (run-origin, `docs/design/proposals/phase-2/run-origin`); the trigger
+  record itself stores nothing about any one invocation.
 - **No change to webhooks.** `WebhookService`, its storage, its delivery, and
   its UI are untouched; a trigger-started run notifies webhook subscribers
   exactly as any other run does.
