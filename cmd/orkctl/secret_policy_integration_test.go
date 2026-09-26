@@ -407,7 +407,7 @@ func TestIntegration_TheOrkerFloorRefusesWhatTheNamespaceAllows(t *testing.T) {
 	stdout, _ := s.cli(t, s.b, exitOK, "--json", "run", "get", runID, "-n", s.namespace)
 	var run struct {
 		Run struct {
-			Tasks []struct {
+			TaskRuns []struct {
 				TaskID string `json:"taskId"`
 				Status string `json:"status"`
 				Error  struct {
@@ -415,13 +415,13 @@ func TestIntegration_TheOrkerFloorRefusesWhatTheNamespaceAllows(t *testing.T) {
 					Message  string `json:"message"`
 					Category string `json:"category"`
 				} `json:"error"`
-			} `json:"tasks"`
+			} `json:"taskRuns"`
 		} `json:"run"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &run); err != nil || len(run.Run.Tasks) != 1 {
+	if err := json.Unmarshal([]byte(stdout), &run); err != nil || len(run.Run.TaskRuns) != 1 {
 		t.Fatalf("decode run get --json: %v\n%s", err, stdout)
 	}
-	task := run.Run.Tasks[0]
+	task := run.Run.TaskRuns[0]
 	if !strings.HasSuffix(task.Status, "FAILED") || task.Error.Code != "SECRET_NOT_PERMITTED" ||
 		!strings.HasSuffix(task.Error.Category, "CONTRACT_VIOLATION") {
 		t.Fatalf("task = %+v, want FAILED / SECRET_NOT_PERMITTED / CONTRACT_VIOLATION", task)
@@ -560,7 +560,7 @@ func TestIntegration_AMalformedFloorStopsTheOrkerAtBoot(t *testing.T) {
 		want  []string
 	}{
 		{"file:relative", []string{"ORK_ORKER_SECRET_ALLOW", "file:relative"}},
-		{"env:SANDBOX_*,vault:*", []string{"ORK_ORKER_SECRET_ALLOW", `"vault:*"`, "ORK_ORKER_SECRET_SCHEMES"}},
+		{"env:SANDBOX_*,vault:*", []string{"ORK_ORKER_SECRET_ALLOW", "vault:*", "ORK_ORKER_SECRET_SCHEMES"}},
 	} {
 		bootCtx, bootCancel := context.WithTimeout(ctx, 90*time.Second)
 		cmd := exec.CommandContext(bootCtx, orkerPath)
