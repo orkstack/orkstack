@@ -81,3 +81,26 @@ export function submitCli(args: {
 	if (args.allowEmptyPool) flags.push('--allow-empty-pool');
 	return `printf '%s\\n' ${shellQuote(JSON.stringify(args.input))} > input.json\norkctl run submit ${shellQuote(args.name)} ${flags.join(' ')}`;
 }
+
+// planCli is submitCli's sibling for the Plan action: the same input.json
+// idiom, plus outputs.json when assumed outputs are set. An empty version is
+// omitted, so the copied command plans `current` exactly as the dialog did.
+export function planCli(args: {
+	name: string;
+	namespace: string;
+	version: string;
+	input: JsonObject;
+	assumedOutputs?: JsonObject;
+}): string {
+	const namespace = args.namespace || 'default';
+	const flags = [`--namespace ${shellQuote(namespace)}`];
+	if (args.version) flags.push(`--version ${shellQuote(args.version)}`);
+	flags.push('--input-json "$(cat input.json)"');
+	const lines = [`printf '%s\\n' ${shellQuote(JSON.stringify(args.input))} > input.json`];
+	if (args.assumedOutputs && Object.keys(args.assumedOutputs).length > 0) {
+		lines.push(`printf '%s\\n' ${shellQuote(JSON.stringify(args.assumedOutputs))} > outputs.json`);
+		flags.push('--outputs-file outputs.json');
+	}
+	lines.push(`orkctl run plan ${shellQuote(args.name)} ${flags.join(' ')}`);
+	return lines.join('\n');
+}

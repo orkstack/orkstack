@@ -17,17 +17,20 @@
 	import { create } from '@bufbuild/protobuf';
 	import type { JsonObject } from '@bufbuild/protobuf';
 	import { errorMessage, orkstack } from '$lib/client';
-	import { defaultsForInputs, inputSpecs, parseInputObject, submitCli } from '$lib/authoring';
+	import { defaultsForInputs, inputSpecs, parseInputObject, planCli, submitCli } from '$lib/authoring';
+	import { parseAssumedOutputs } from '$lib/plan';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import DeclaredInputs from './DeclaredInputs.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 	import HoldBanner from './HoldBanner.svelte';
+	import PlanTable from './PlanTable.svelte';
 	import Select from './Select.svelte';
 	import { PayloadSchema } from '$lib/gen/orkstack/v1/common_pb';
 	import type { NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
 	import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import { namespaceLabel } from '$lib/namespace';
-	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/service_pb';
+	import type { OrkflowVersion, PlanRunResponse } from '$lib/gen/orkstack/v1/service_pb';
+	import type { Payload } from '$lib/gen/orkstack/v1/common_pb';
 
 	interface Props {
 		namespace: string;
@@ -78,6 +81,16 @@
 	let typedInputError = $state('');
 	let loadedCoordinate = $state('');
 	let selectionRequest = $state(0);
+	// A plan describes ONE draft. It is cleared whenever the version, the input
+	// or the assumed outputs change, so a table can never be read as the answer
+	// to a draft it was not computed for — the silent disagreement the Plan
+	// action exists to remove. A plan is a read: it sends no idempotency key,
+	// no empty-pool override and no origin, and it never disables Submit.
+	let plan = $state<PlanRunResponse | null>(null);
+	let planning = $state(false);
+	let planError = $state('');
+	let assumedOutputsJson = $state('{}');
+	let planRequest = 0;
 
 	async function loadSelection(version: string, preserveInput = false) {
 		const name = orkflowName;
@@ -147,6 +160,9 @@
 			typedInputError = '';
 			idempotencyKey = '';
 			allowEmptyPool = false;
+			assumedOutputsJson = '{}';
+			plan = null;
+			planError = '';
 			setInputs(initialInput ?? {});
 		}
 		const version = selectedVersion;
@@ -161,6 +177,21 @@
 		// on its own call's side effects and retrigger itself without end.
 		untrack(() => {
 			void loadSelection(version, preserveInput);
+		});
+	});
+
+	$effect(() => {
+		// Keyed on the three things a plan answers for. Reading them is the
+		// subscription; the clear is untracked so it does not subscribe to plan.
+		void selectedVersion;
+		void inputsJson;
+		void inputsValue;
+		void assumedOutputsJson;
+		untrack(() => {
+			planRequest++;
+			plan = null;
+			planError = '';
+			planning = false;
 		});
 	});
 
@@ -222,6 +253,54 @@
 				})
 			: ''
 	);
+
+	const assumedParsed = $derived(parseAssumedOutputs(assumedOutputsJson));
+	const assumedError = $derived('error' in assumedParsed ? assumedParsed.error : '');
+	const planCommand = $derived(
+		'value' in cliParsedInput && 'value' in assumedParsed
+			? planCli({
+					name: orkflowName,
+					namespace,
+					version: chosenVersion,
+					input: cliParsedInput.value,
+					assumedOutputs: assumedParsed.value
+				})
+			: ''
+	);
+
+	async function runPlan() {
+		planError = '';
+		const parsed = parseInputObject(inputsJson);
+		if ('error' in parsed) {
+			planError = parsed.error;
+			return;
+		}
+		if (typedInputError) {
+			planError = typedInputError;
+			return;
+		}
+		if (!('value' in assumedParsed) || !selectedOrkflow) return;
+		const assumedOutputs: Record<string, Payload> = {};
+		for (const [taskId, data] of Object.entries(assumedParsed.value)) {
+			assumedOutputs[taskId] = create(PayloadSchema, { data });
+		}
+		const request = ++planRequest;
+		planning = true;
+		try {
+			const res = await orkstack(fetch).orkflows.planRun({
+				orkflowName: selectedOrkflow.name,
+				orkflowVersion: chosenVersion,
+				namespace,
+				input: create(PayloadSchema, { data: parsed.value }),
+				assumedOutputs
+			});
+			if (request === planRequest) plan = res;
+		} catch (err) {
+			if (request === planRequest) planError = errorMessage(err);
+		} finally {
+			if (request === planRequest) planning = false;
+		}
+	}
 
 	async function submit() {
 		formError = '';
@@ -402,8 +481,38 @@
 				/>
 				Submit even if a resolved pool currently has no live Orker.
 			</label>
+			<div class="flex flex-col gap-1.5">
+				<label for="run-submit-assumed-outputs" class="text-sm text-fg">
+					Assumed task outputs <span class="text-fg-muted">(JSON object keyed by task id, optional)</span>
+				</label>
+				<textarea
+					id="run-submit-assumed-outputs"
+					data-testid="run-submit-assumed-outputs"
+					bind:value={assumedOutputsJson}
+					rows="3"
+					spellcheck="false"
+					class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-5 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				></textarea>
+				{#if assumedError}
+					<p data-testid="run-submit-assumed-outputs-error" class="text-sm text-danger-700">
+						{assumedError}
+					</p>
+				{/if}
+				<p class="text-xs text-fg-muted">
+					Stubs a task's values.json so a condition that reads an upstream output can be planned.
+					Tasks not listed are planned with an empty output.
+				</p>
+			</div>
 		</div>
 	</details>
+
+	{#if planError}
+		<ErrorPanel testid="run-plan-error" subject="a plan of {orkflowName}" message={planError} />
+	{/if}
+
+	{#if plan}
+		<PlanTable {plan} />
+	{/if}
 
 	{#if formError}
 		<ErrorPanel testid="run-submit-error" message={formError} />
@@ -413,22 +522,43 @@
 		<HoldBanner namespace={namespaceLabel(namespace)} {hold} testid="submit-hold-banner" />
 	{/if}
 
-	<div class="flex items-center justify-between gap-3">
-		<button
-			type="submit"
-			data-testid="run-submit-submit"
-			disabled={submitting ||
-				!!hold ||
-				versionsLoading ||
-				!!selectionError ||
-				!!typedInputError ||
-				!selectedOrkflow}
-			class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
-		>
-			{submitting ? 'Submitting…' : 'Submit run'}
-		</button>
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<div class="flex items-center gap-2">
+			<button
+				type="button"
+				data-testid="run-submit-plan"
+				onclick={() => void runPlan()}
+				disabled={planning ||
+					versionsLoading ||
+					!!selectionError ||
+					!!typedInputError ||
+					!!assumedError ||
+					!selectedOrkflow}
+				class="inline-flex h-9 items-center justify-center rounded-md border border-border bg-surface px-3.5 text-sm font-medium text-fg shadow-xs transition-colors duration-150 hover:bg-surface-sunken focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+			>
+				{planning ? 'Planning…' : 'Plan'}
+			</button>
+			<button
+				type="submit"
+				data-testid="run-submit-submit"
+				disabled={submitting ||
+					!!hold ||
+					versionsLoading ||
+					!!selectionError ||
+					!!typedInputError ||
+					!selectedOrkflow}
+				class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 active:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+			>
+				{submitting ? 'Submitting…' : 'Submit run'}
+			</button>
+		</div>
 		{#if cli}
-			<CliEquivalent command={cli} testid="run-submit-cli" label="CLI equivalent of this submission" />
+			<div class="flex items-center gap-2">
+				<CliEquivalent command={cli} testid="run-submit-cli" label="CLI equivalent of this submission" />
+				{#if planCommand}
+					<CliEquivalent command={planCommand} testid="run-submit-plan-cli" label="CLI equivalent of this plan" />
+				{/if}
+			</div>
 		{:else}
 			<span data-testid="run-submit-cli-unavailable" class="text-xs text-warning-700">
 				Fix the input JSON to export a CLI command.
