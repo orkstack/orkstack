@@ -34,6 +34,10 @@ func setenvT(t *testing.T) func(string, string) error {
 }
 
 func TestApplyConfigFile_FileValueReachesLoadConfig(t *testing.T) {
+	// The file's value only lands when the variable is unset, so a caller's
+	// own ORK_TEMPORAL_NAMESPACE (a proof run's private namespace, AGENTS.md
+	// §11.1) is hidden for this test rather than silently winning.
+	unsetenvT(t, "ORK_TEMPORAL_NAMESPACE")
 	path := writeTempConfig(t, "cfg.yaml", "temporal:\n  namespace: from-file\n")
 
 	doc, gotPath, check, set, err := applyConfigFile(
@@ -146,5 +150,15 @@ func TestApplyConfigFile_NoConfigIsTheZeroConfigPath(t *testing.T) {
 		nil, cfgfile.BinaryOrker, func(string) (string, bool) { return "", false }, setenvT(t))
 	if err != nil || doc != nil || path != "" || check || set != nil {
 		t.Errorf("applyConfigFile(nil args) = (doc=%v, path=%q, check=%v, set=%v, err=%v), want the zero-config path", doc, path, check, set, err)
+	}
+}
+
+// unsetenvT removes key from the environment for the rest of the test and
+// restores its previous value afterwards (t.Setenv records the restore).
+func unsetenvT(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, os.Getenv(key))
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
 	}
 }
