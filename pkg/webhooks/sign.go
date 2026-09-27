@@ -34,6 +34,9 @@ const (
 	TimestampHeader = "X-Ork-Timestamp"
 	// AttemptHeader counts delivery attempts from 1. It is not signed.
 	AttemptHeader = "X-Ork-Attempt"
+	// RedeliveryHeader names the delivery an operator asked to repeat. Absent on
+	// a delivery the engine made on its own. Not signed, like every header.
+	RedeliveryHeader = "X-Ork-Redelivery-Of"
 
 	// UserAgent identifies the sender to receivers and proxies.
 	UserAgent = "orkstack-webhooks/1"

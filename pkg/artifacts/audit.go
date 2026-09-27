@@ -373,16 +373,12 @@ func walkAudit(ctx context.Context, src auditSource, q AuditQuery) (AuditPage, e
 			last = endOfCursorDay
 		}
 	}
-	firstDay := truncateToDay(since)
 	examined := 0
 	var page AuditPage
-	for day := truncateToDay(last); !day.Before(firstDay); day = day.AddDate(0, 0, -1) {
-		if err := ctx.Err(); err != nil {
-			return AuditPage{}, err
-		}
+	err := walkDaysNewestFirst(ctx, last, since, func(day time.Time) (bool, error) {
 		keys, err := src.listAuditDay(ctx, auditDayPrefix(day))
 		if err != nil {
-			return AuditPage{}, err
+			return false, err
 		}
 		sort.Strings(keys)
 		for i := len(keys) - 1; i >= 0; i-- {
@@ -404,12 +400,12 @@ func walkAudit(ctx context.Context, src auditSource, q AuditQuery) (AuditPage, e
 				continue
 			}
 			if examined >= AuditScanMaxObjects {
-				return AuditPage{}, ErrAuditScanBudget
+				return false, ErrAuditScanBudget
 			}
 			examined++
 			rec, ok, err := readAuditCandidate(ctx, src, key, day)
 			if err != nil {
-				return AuditPage{}, err
+				return false, err
 			}
 			if !ok {
 				continue
@@ -421,9 +417,13 @@ func walkAudit(ctx context.Context, src auditSource, q AuditQuery) (AuditPage, e
 			page.Records = append(page.Records, rec)
 			if len(page.Records) == q.Limit {
 				page.NextKey = key
-				return page, nil
+				return true, nil
 			}
 		}
+		return false, nil
+	})
+	if err != nil {
+		return AuditPage{}, err
 	}
 	return page, nil
 }

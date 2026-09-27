@@ -1,0 +1,16 @@
+Delivery dlv-20260102T021705.891204113Z-9c22a1f04e7b3d58
+WEBHOOK    wh-4a1c0e2b7d3f8159  https://payments.example/hooks/orkstack
+EVENT      RUN_FAILED
+RUN        ork-2026-01-01-8f31  (namespace payments, orkflow reconcile)
+DELIVERED  no
+SIGNATURE  sha256=3f9a000000000000000000000000000000000000000000000000000000000000
+BODY       sha256 7c1e000000000000000000000000000000000000000000000000000000000000, 1284 bytes (not stored; the run is readable with: orkctl -n payments run get ork-2026-01-01-8f31)
+EVENT AT   2026-01-02T02:17:05.884Z
+QUEUED     2026-01-02T02:17:05.891Z
+SETTLED    2026-01-02T02:17:06.878Z
+
+#  AT                        STATUS  DURATION  BACKOFF  ERROR
+1  2026-01-02T02:17:05.902Z  502     84ms      -        receiver answered 502
+2  2026-01-02T02:17:06.086Z  502     74ms      100ms    receiver answered 502
+3  2026-01-02T02:17:06.360Z  502     64ms      200ms    receiver answered 502
+4  2026-01-02T02:17:06.824Z  502     54ms      400ms    receiver answered 502

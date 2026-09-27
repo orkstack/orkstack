@@ -36,12 +36,17 @@ func newWebhookCommand(g *globalFlags) *cobra.Command {
 			"name. Task events are best-effort hints with a short retry budget: a\n" +
 			"subscriber that must not miss one reconciles with GetRun.\n\n" +
 			"A subscription is deployment-wide unless it names a scope: a namespace\n" +
-			"(-n), an orkflow (--orkflow) and a task (--task), each an exact match.",
+			"(-n), an orkflow (--orkflow) and a task (--task), each an exact match.\n\n" +
+			"What each delivery did is recorded; `deliveries` lists the records, `delivery`\n" +
+			"shows one, `redeliver` sends one again by hand.",
 	}
 	cmd.AddCommand(
 		newWebhookRegisterCommand(g),
 		newWebhookListCommand(g),
 		newWebhookDeleteCommand(g),
+		newWebhookDeliveriesCommand(g),
+		newWebhookDeliveryCommand(g),
+		newWebhookRedeliverCommand(g),
 	)
 	return cmd
 }

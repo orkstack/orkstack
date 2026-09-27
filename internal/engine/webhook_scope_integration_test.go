@@ -80,6 +80,10 @@ type scopedEngineConfig struct {
 	project bool
 	// snapshots is shared with the run worker.
 	snapshots *testSnapshotStore
+	// deliveries, when set, is where this replica records every settled
+	// delivery (the Observe callback `ork` wires) and what its API reads
+	// delivery records from.
+	deliveries artifacts.DeliveryStore
 }
 
 func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
@@ -92,6 +96,9 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 	if cfg.project {
 		e.notifier = webhooks.NewNotifier(e.registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
 			webhooks.NotifierOptions{})
+		if cfg.deliveries != nil {
+			e.notifier.Observe(api.NewDeliveryRecorder(cfg.deliveries, nil).Record)
+		}
 		runNotifier = api.NewWebhookNotifier(e.notifier, nil)
 
 		runWorker := worker.New(cfg.temporal, cfg.runQueue, worker.Options{
@@ -120,6 +127,9 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 	config.Runs = e.runs
 	config.Bus = e.bus
 	config.Webhooks = e.registry
+	if cfg.deliveries != nil {
+		config.Deliveries = cfg.deliveries
+	}
 	if runNotifier != nil {
 		config.Notifier = runNotifier
 	}
@@ -146,6 +156,10 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 
 func (e *scopedEngine) orkflowClient() orkstackv1connect.OrkflowServiceClient {
 	return orkstackv1connect.NewOrkflowServiceClient(e.httpClient, e.origin)
+}
+
+func (e *scopedEngine) webhookClient() orkstackv1connect.WebhookServiceClient {
+	return orkstackv1connect.NewWebhookServiceClient(e.httpClient, e.origin)
 }
 
 func (e *scopedEngine) runClient() orkstackv1connect.RunServiceClient {

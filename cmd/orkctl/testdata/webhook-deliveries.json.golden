@@ -1,0 +1,113 @@
+{
+  "deliveries": [
+    {
+      "schemaVersion": 1,
+      "id": "dlv-20260102T021705.891204113Z-9c22a1f04e7b3d58",
+      "webhookId": "wh-4a1c0e2b7d3f8159",
+      "event": "RUN_FAILED",
+      "runId": "ork-2026-01-01-8f31",
+      "namespace": "payments",
+      "orkflowName": "reconcile",
+      "status": "FAILED",
+      "url": "https://payments.example/hooks/orkstack",
+      "signature": "sha256=3f9a000000000000000000000000000000000000000000000000000000000000",
+      "bodySha256": "7c1e000000000000000000000000000000000000000000000000000000000000",
+      "bodyBytes": "1284",
+      "attempts": [
+        {
+          "number": 1,
+          "statusCode": 502,
+          "error": "receiver answered 502",
+          "backoff": "0s",
+          "duration": "0.084s",
+          "at": "2026-01-02T02:17:05.902204113Z"
+        },
+        {
+          "number": 2,
+          "statusCode": 502,
+          "error": "receiver answered 502",
+          "backoff": "0.100s",
+          "duration": "0.074s",
+          "at": "2026-01-02T02:17:06.086204113Z"
+        },
+        {
+          "number": 3,
+          "statusCode": 502,
+          "error": "receiver answered 502",
+          "backoff": "0.200s",
+          "duration": "0.064s",
+          "at": "2026-01-02T02:17:06.360204113Z"
+        },
+        {
+          "number": 4,
+          "statusCode": 502,
+          "error": "receiver answered 502",
+          "backoff": "0.400s",
+          "duration": "0.054s",
+          "at": "2026-01-02T02:17:06.824204113Z"
+        }
+      ],
+      "eventAt": "2026-01-02T02:17:05.884204113Z",
+      "createdAt": "2026-01-02T02:17:05.891204113Z",
+      "settledAt": "2026-01-02T02:17:06.878204113Z"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "dlv-20260102T021505.891204113Z-0d9e5b3a7c61f284",
+      "webhookId": "wh-4a1c0e2b7d3f8159",
+      "event": "TASK_FAILED",
+      "runId": "ork-2026-01-01-8f31",
+      "namespace": "payments",
+      "orkflowName": "reconcile",
+      "taskId": "settle",
+      "attempt": 2,
+      "status": "FAILED",
+      "url": "https://payments.example/hooks/orkstack",
+      "signature": "sha256=3f9a000000000000000000000000000000000000000000000000000000000000",
+      "bodySha256": "7c1e000000000000000000000000000000000000000000000000000000000000",
+      "bodyBytes": "1284",
+      "attempts": [
+        {
+          "number": 1,
+          "statusCode": 400,
+          "error": "receiver answered 400",
+          "backoff": "0s",
+          "duration": "0.084s",
+          "at": "2026-01-02T02:15:05.902204113Z"
+        }
+      ],
+      "eventAt": "2026-01-02T02:15:05.884204113Z",
+      "createdAt": "2026-01-02T02:15:05.891204113Z",
+      "settledAt": "2026-01-02T02:15:05.986204113Z"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "dlv-20260102T021405.891204113Z-71b0cc19e2d4a6f3",
+      "webhookId": "wh-4a1c0e2b7d3f8159",
+      "event": "RUN_STARTED",
+      "runId": "ork-2026-01-01-8f31",
+      "namespace": "payments",
+      "orkflowName": "reconcile",
+      "status": "RUNNING",
+      "url": "https://payments.example/hooks/orkstack",
+      "delivered": true,
+      "signature": "sha256=3f9a000000000000000000000000000000000000000000000000000000000000",
+      "bodySha256": "7c1e000000000000000000000000000000000000000000000000000000000000",
+      "bodyBytes": "1284",
+      "attempts": [
+        {
+          "number": 1,
+          "statusCode": 200,
+          "backoff": "0s",
+          "duration": "0.084s",
+          "at": "2026-01-02T02:14:05.902204113Z"
+        }
+      ],
+      "eventAt": "2026-01-02T02:14:05.884204113Z",
+      "createdAt": "2026-01-02T02:14:05.891204113Z",
+      "settledAt": "2026-01-02T02:14:05.986204113Z"
+    }
+  ],
+  "since": "2025-12-26T03:04:05Z",
+  "until": "2026-01-02T03:04:05Z"
+}
