@@ -49,16 +49,32 @@ func newOrkflowValidateCommand(g *globalFlags) *cobra.Command {
 		if g.json {
 			return writeJSON(cmd.OutOrStdout(), response.Msg)
 		}
-		if len(response.Msg.GetIssues()) == 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "Valid orkflow %s (version %s)\n", response.Msg.GetOrkflow().GetName(), response.Msg.GetOrkflow().GetVersion())
-			return nil
-		}
+		out := cmd.OutOrStdout()
+		failed, warnings := false, 0
 		for _, issue := range response.Msg.GetIssues() {
-			if issue.GetField() != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", issue.GetField(), issue.GetMessage())
+			severity := "warning"
+			if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
+				severity, failed = "error", true
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), issue.GetMessage())
+				warnings++
 			}
+			if issue.GetField() != "" {
+				fmt.Fprintf(out, "%-8s %s: %s\n", severity, issue.GetField(), issue.GetMessage())
+			} else {
+				fmt.Fprintf(out, "%-8s %s\n", severity, issue.GetMessage())
+			}
+		}
+		// Only an ERROR fails validation: a warned document is one apply
+		// accepts, and docs/UI_CLI_PARITY.md says "invalid documents exit
+		// nonzero" — not warned ones.
+		if !failed {
+			wf := response.Msg.GetOrkflow()
+			if warnings == 0 {
+				fmt.Fprintf(out, "Valid orkflow %s (version %s)\n", wf.GetName(), wf.GetVersion())
+			} else {
+				fmt.Fprintf(out, "Valid orkflow %s (version %s), %s\n", wf.GetName(), wf.GetVersion(), countNoun(warnings, "warning"))
+			}
+			return nil
 		}
 		return fmt.Errorf("orkflow validation failed")
 	}}
