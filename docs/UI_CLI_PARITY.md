@@ -504,6 +504,36 @@ switch to current. Original inputs may contain secrets and never belong in a
 shareable or bookmarkable URL; a run is shared by its ID alone, and the
 seeded draft exists only in the page that already holds that run.
 
+### Run plan
+
+`OrkflowService.PlanRun` answers, for one definition and one input, which
+tasks would run, which would be skipped and exactly why, and in which dispatch
+wave each would start — without starting anything. It resolves a stored
+version exactly as `GetOrkflow` does (empty version = current), or prepares
+an unapplied document exactly as `ValidateOrkflow` does, applies the declared
+input defaults, and walks the DAG with the interpreter's own condition
+evaluator and skip-reason sentences. Optional `assumed_outputs` stub a task's
+`values.json` so a condition on an upstream output can be planned both ways;
+a running task without a stub is planned with `{}`, and every condition that
+read such an output is named. A condition that errors is `FAILS` with the
+exact `RUN_FAILED` message a run would record, and every task decided after
+it is `UNREACHED`.
+
+CLI: `orkctl run plan <orkflow> [--version V]` or `orkctl run plan --file
+FILE.ork.yaml`, with `--input`/`--input-json`, `--output TASK=JSON`,
+`--outputs-file PATH`, and `--assert-runs`/`--assert-skipped` for CI (exit 4
+when the plan contradicts them, 1 when no plan could be computed); `--json`
+is the raw `PlanRunResponse`. UI: a **Plan** action beside **Submit run** in
+the submit dialog (also behind **Run again**), with an optional assumed-outputs
+field in its advanced section, a wave/task/outcome/detail table, and a CLI
+equivalent of the plan.
+
+A plan never submits. There is no flag, button, or field that turns a plan
+into a run: `PlanRun` has no starter, mints no run id, takes no idempotency
+claim, writes no definition or event, and is not an admission check — pools,
+holds, and limits remain `SubmitRun`'s questions, so Plan stays available
+while a namespace is held. A plan proves wiring, never behaviour.
+
 ## Capability and acceptance matrix
 
 | Capability | UI behavior | CLI/shared behavior | Required observable acceptance |
@@ -518,6 +548,7 @@ seeded draft exists only in the page that already holds that run.
 | Webhook deliveries | Admin → Webhooks **Deliveries** panel: caption with the resolved window and "every namespace" or the namespace, webhook/run/event/outcome/since/until/namespace filters, table with a delivered/failed pill, attempts and last status, an expanded row with the signature, the body's `sha256` and byte count ("body not stored") and the attempt timeline, pagination, `CliEquivalent`, a per-webhook `Deliveries` link, ErrorPanel with Retry; Redeliver behind `ConfirmDialog` stating one POST, now, signed, today's run, with the result inline | `webhook deliveries [--webhook] [--run] [--event] [--delivered] [--since] [--until] [--limit] [--page-token] [-n]`, `webhook delivery ID`, `webhook redeliver ID` (exit 1 when not delivered); `--json` is the raw response | Every settled delivery is one create-only record whose `body_sha256` and `signature` equal what the receiver read; a refused delivery lists four attempts that agree with the receiver's log; a record written on one replica is listed and redelivered by another; a redelivery is exactly one signed POST carrying `X-Ork-Redelivery-Of` and is recorded as a new delivery; a scan past its budget refuses; nothing reads a record to decide what to send |
 | Validate/apply | Validate current YAML without saving; field issues and warnings; retain warnings after apply | Shared validator and CLI validate | Invalid DAG and namespace mismatch agree; valid validation writes nothing; unavailable image errors actionable |
 | Run again | Reviewed submission seeded from run, showing source and pinned version | CLI again plus dry-run | Inputs preserved, override respected, new ID, no implicit old-key reuse, unavailable version refuses |
+| Run plan | Plan action in the submit dialog beside Submit run, with an assumed-outputs field, a wave/task/outcome/detail table, the summary sentence and caveats, and a CLI equivalent of the plan; stale plans clear when the draft changes | `run plan <orkflow> [--version]` / `run plan --file FILE`, `--input`, `--output`, `--outputs-file`, `--assert-runs`/`--assert-skipped` (exit 4), `--json` is the raw `PlanRunResponse` | Plan and a real run of the same input agree on every task; ListRuns shows no new run after a plan; a second replica plans an Orkflow it never applied identically |
 | Typed inputs | String/number/boolean controls, required/default hints; object/array JSON editors; JSON alternative | Same submitted JSON values as `run submit --input` | Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce |
 | Editor protection | Warn on navigation with unsaved YAML; import local YAML; export current draft/source; conflict handling preserved | Existing file-based apply/edit/get | Import and export round-trip; dirty navigation guarded; successful save clears dirty state; validation alone does not clear it |
 | Deep links/CLI copies | Preserve namespace, task, attempt, inspector tab; copy commands beside corresponding actions | Shell-escaped actual CLI syntax | Reload restores selection; copied commands include required namespace/version; quotes in values cannot become shell syntax |

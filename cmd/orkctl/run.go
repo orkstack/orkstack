@@ -19,6 +19,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newRunSubmitCommand(g),
+		newRunPlanCommand(g),
 		newRunGetCommand(g),
 		newRunListCommand(g),
 		newRunWatchCommand(g),
