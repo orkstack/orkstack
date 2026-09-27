@@ -368,13 +368,13 @@ type Service struct {
 	retentionEnforced bool
 	// imagePolicies is the deployment's image supply-chain floor (see
 	// Config.ImagePolicies); signatures verifies a namespace's signer.
-	imagePolicies     artifacts.ImagePolicyStore
-	signatures        *dsl.SignatureVerifier
-	transferBudget    int32
-	floorThroughput   int64
-	logger            *slog.Logger
-	now               func() time.Time
-	newRunID          func() string
+	imagePolicies   artifacts.ImagePolicyStore
+	signatures      *dsl.SignatureVerifier
+	transferBudget  int32
+	floorThroughput int64
+	logger          *slog.Logger
+	now             func() time.Time
+	newRunID        func() string
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
