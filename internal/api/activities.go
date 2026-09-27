@@ -89,11 +89,40 @@ func (errNoOrker) Error() string {
 		task.DefaultQueue + " which orker is serving it"
 }
 
-// InspectActivity resolves one reference on demand. Implemented in a later
-// commit of this change; the proto declares it first (AGENTS.md §11.1).
+// InspectActivity resolves ONE reference on demand — a catalog name or any
+// registry reference `uses:` would accept — and answers it as ListActivities
+// would, interface included.
+//
+// It is uncached on purpose: an operator asks it once, about one reference.
+// It performs the same GETs an apply of that reference performs, to the same
+// hosts with the same credential, so it widens no network surface. It is a
+// read: nothing is written and nothing is audited.
 func (s *Service) InspectActivity(
-	_ context.Context,
-	_ *connect.Request[orkstackv1.InspectActivityRequest],
+	ctx context.Context,
+	req *connect.Request[orkstackv1.InspectActivityRequest],
 ) (*connect.Response[orkstackv1.InspectActivityResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("InspectActivity is not implemented yet"))
+	requested := req.Msg.GetReference()
+	if requested == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(
+			`reference is required: a catalog name ("shell") or a registry reference ("ghcr.io/acme/migrate:v3")`))
+	}
+	if s.resolver == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New(
+			"this engine has no image resolver configured, so it cannot inspect a reference"))
+	}
+	catalog := s.activityCatalog()
+	reference, err := catalog.ResolveUses("", requested)
+	if err != nil {
+		return nil, applyResolveError(err)
+	}
+	res, err := s.resolver.Inspect(ctx, requested, reference)
+	if err != nil {
+		return nil, applyResolveError(err)
+	}
+	info := &orkstackv1.ActivityInfo{Reference: reference}
+	if _, isCatalogName := catalog[requested]; isCatalogName {
+		info.Name = requested
+	}
+	fillActivityInfo(info, res, s.now())
+	return connect.NewResponse(&orkstackv1.InspectActivityResponse{Activity: info}), nil
 }

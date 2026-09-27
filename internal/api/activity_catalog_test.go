@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -19,14 +20,65 @@ import (
 )
 
 // movableRegistry serves a manifest whose bytes the test can change, which is
-// how "the tag moved" is expressed without a second registry.
+// how "the tag moved" is expressed without a second registry. It is a real
+// registry in miniature: the tag serves an index, and every platform manifest
+// and config blob an index names is served by its digest, because resolution
+// reads the image config for its interface label (§4.3 step 7).
 type movableRegistry struct {
-	body atomic.Value // []byte
+	body       atomic.Value // []byte, the index served at every tag
+	mu         sync.Mutex
+	objects    map[string][]byte // "manifests/<digest>" or "blobs/<digest>"
+	blobStatus atomic.Int32      // when non-zero, every blob GET answers it
 }
 
 func (m *movableRegistry) set(body []byte) { m.body.Store(body) }
 
-func (m *movableRegistry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+// addImage makes the registry serve img's platform manifest and config.
+func (m *movableRegistry) addImage(img testImage) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.objects == nil {
+		m.objects = map[string][]byte{}
+	}
+	m.objects["manifests/"+digestOf(img.manifest)] = img.manifest
+	m.objects["blobs/"+digestOf(img.config)] = img.config
+}
+
+// setImage points every tag at an index over an image whose config carries
+// labels (nil: an unlabelled image).
+func (m *movableRegistry) setImage(t *testing.T, labels map[string]string, platforms ...string) testImage {
+	t.Helper()
+	img := newTestImage(t, labels)
+	m.addImage(img)
+	m.set(img.index(t, platforms...))
+	return img
+}
+
+func (m *movableRegistry) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if _, digest, isBlob := strings.Cut(r.URL.Path, "/blobs/"); isBlob {
+		if status := m.blobStatus.Load(); status != 0 {
+			w.WriteHeader(int(status))
+			return
+		}
+		m.mu.Lock()
+		body, ok := m.objects["blobs/"+digest]
+		m.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Write(body)
+		return
+	}
+	_, target, _ := strings.Cut(r.URL.Path, "/manifests/")
+	m.mu.Lock()
+	manifest, ok := m.objects["manifests/"+target]
+	m.mu.Unlock()
+	if ok {
+		w.Header().Set("Content-Type", dsl.MediaTypeOCIManifest)
+		w.Write(manifest)
+		return
+	}
 	body := m.body.Load().([]byte)
 	sum := sha256.Sum256(body)
 	w.Header().Set("Docker-Content-Digest", "sha256:"+hex.EncodeToString(sum[:]))
@@ -34,13 +86,37 @@ func (m *movableRegistry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.Write(body)
 }
 
-func indexWithPlatforms(t *testing.T, platforms ...string) []byte {
+// testImage is one image as a registry holds it.
+type testImage struct{ config, manifest []byte }
+
+// newTestImage builds an image whose config carries labels (nil: none).
+func newTestImage(t *testing.T, labels map[string]string) testImage {
+	t.Helper()
+	config, err := json.Marshal(map[string]any{"architecture": "amd64", "os": "linux",
+		"config": map[string]any{"Labels": labels}})
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	manifest, err := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": dsl.MediaTypeOCIManifest,
+		"config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json",
+			"digest": digestOf(config), "size": len(config)},
+		"layers": []any{}})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	return testImage{config: config, manifest: manifest}
+}
+
+// index is an OCI index whose every platform entry names img's manifest.
+func (img testImage) index(t *testing.T, platforms ...string) []byte {
 	t.Helper()
 	manifests := make([]any, 0, len(platforms))
 	for _, p := range platforms {
 		parts := strings.SplitN(p, "/", 2)
 		manifests = append(manifests, map[string]any{
-			"platform": map[string]any{"os": parts[0], "architecture": parts[1]},
+			"mediaType": dsl.MediaTypeOCIManifest,
+			"digest":    digestOf(img.manifest),
+			"platform":  map[string]any{"os": parts[0], "architecture": parts[1]},
 		})
 	}
 	body, err := json.Marshal(map[string]any{
@@ -54,6 +130,23 @@ func indexWithPlatforms(t *testing.T, platforms ...string) []byte {
 	return body
 }
 
+// indexWithPlatforms is an index over the unlabelled image every
+// movableRegistry serves (newMovableRegistry).
+func indexWithPlatforms(t *testing.T, platforms ...string) []byte {
+	t.Helper()
+	return newTestImage(t, nil).index(t, platforms...)
+}
+
+// newMovableRegistry serves indexWithPlatforms(linux/amd64) and the
+// unlabelled image behind every indexWithPlatforms body.
+func newMovableRegistry(t *testing.T) *movableRegistry {
+	t.Helper()
+	registry := &movableRegistry{}
+	registry.addImage(newTestImage(t, nil))
+	registry.set(indexWithPlatforms(t, "linux/amd64"))
+	return registry
+}
+
 func digestOf(body []byte) string {
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -62,8 +155,7 @@ func digestOf(body []byte) string {
 // applyServiceWithRegistry wires a Service against a live local registry stub.
 func applyServiceWithRegistry(t *testing.T) (*api.Service, *movableRegistry, string) {
 	t.Helper()
-	registry := &movableRegistry{}
-	registry.set(indexWithPlatforms(t, "linux/amd64"))
+	registry := newMovableRegistry(t)
 	server := httptest.NewServer(registry)
 	t.Cleanup(server.Close)
 	host := strings.TrimPrefix(server.URL, "http://")
@@ -223,8 +315,7 @@ func TestApplyOrkflow_AnUnresolvableReferenceFailsAtApply(t *testing.T) {
 }
 
 func TestListActivities_ReportsTheCatalogOrderedByName(t *testing.T) {
-	registry := &movableRegistry{}
-	registry.set(indexWithPlatforms(t, "linux/amd64"))
+	registry := newMovableRegistry(t)
 	server := httptest.NewServer(registry)
 	defer server.Close()
 	host := strings.TrimPrefix(server.URL, "http://")

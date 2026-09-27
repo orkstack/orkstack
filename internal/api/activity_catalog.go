@@ -24,8 +24,9 @@ type ImageResolver interface {
 	// ResolveOrkflow resolves every distinct `uses:`, stamps Task.image,
 	// and returns what each image declares (§4.3 step 7).
 	ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, wf *orkstackv1.Orkflow) (dsl.Resolutions, error)
-	// Resolve resolves a single reference, for the catalog read path.
-	Resolve(ctx context.Context, uses, reference string) (*orkstackv1.ImageRef, error)
+	// Inspect resolves a single reference, for the catalog and inspect
+	// read paths.
+	Inspect(ctx context.Context, uses, reference string) (*dsl.Resolution, error)
 }
 
 // CatalogLister answers ActivityService.ListActivities from the configured
@@ -104,11 +105,8 @@ func (l *CatalogLister) ListActivities(ctx context.Context) ([]*orkstackv1.Activ
 		reference := catalog[name]
 		info := &orkstackv1.ActivityInfo{Name: name, Reference: reference}
 		if l.Resolver != nil {
-			if image, err := l.Resolver.Resolve(ctx, name, reference); err == nil {
-				info.IndexDigest = image.GetIndexDigest()
-				info.MediaType = image.GetMediaType()
-				info.Platforms = image.GetPlatforms()
-				info.ResolvedAt = timestamppb.New(l.now())
+			if res, err := l.Resolver.Inspect(ctx, name, reference); err == nil {
+				fillActivityInfo(info, res, l.now())
 			}
 			// A failed resolution leaves the digest empty, on purpose: see
 			// the type comment. The entry is configuration and still exists.
@@ -128,14 +126,28 @@ func (l *CatalogLister) ListActivities(ctx context.Context) ([]*orkstackv1.Activ
 // and apply anyway. That is what a unit test and an air-gapped `make up`
 // both need, and it is honest — an engine that cannot reach a registry cannot
 // pin a digest, and pretending otherwise would be worse than not pinning.
-func (s *Service) resolveImages(ctx context.Context, wf *orkstackv1.Orkflow) error {
+//
+// It also returns what each resolved image declares about its with: block,
+// which prepareOrkflow checks the document against. No resolver returns no
+// resolutions: an engine that pins nothing checks nothing.
+func (s *Service) resolveImages(ctx context.Context, wf *orkstackv1.Orkflow) (dsl.Resolutions, error) {
 	if s.resolver == nil {
-		return nil
+		return nil, nil
 	}
-	if _, err := s.resolver.ResolveOrkflow(ctx, s.activityCatalog(), wf); err != nil {
-		return err
-	}
-	return nil
+	return s.resolver.ResolveOrkflow(ctx, s.activityCatalog(), wf)
+}
+
+// fillActivityInfo copies one resolution into a catalog or inspect answer.
+// The interface is a READ-MODEL field, like resolved_at: derived from the
+// digest-addressed image on every read and stored nowhere.
+func fillActivityInfo(info *orkstackv1.ActivityInfo, res *dsl.Resolution, now time.Time) {
+	image := res.Image
+	info.IndexDigest = image.GetIndexDigest()
+	info.MediaType = image.GetMediaType()
+	info.Platforms = image.GetPlatforms()
+	info.ResolvedAt = timestamppb.New(now)
+	info.Interface = res.Interface
+	info.InterfaceError = res.InterfaceError
 }
 
 func (s *Service) activityCatalog() dsl.Catalog {
