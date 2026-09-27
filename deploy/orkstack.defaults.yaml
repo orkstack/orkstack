@@ -71,6 +71,7 @@ orker:
   image_layout: /var/lib/orkstack/images  # orker
   env_allowlist: []  # orker
   secret_schemes: [env, file]  # orker
+  secret_allow: []  # orker
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
   pins:

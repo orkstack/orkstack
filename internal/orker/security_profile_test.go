@@ -1,10 +1,12 @@
 package orker
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 func TestSecurityPolicyFromEnvRefusesInvalidProcessLimits(t *testing.T) {
@@ -348,5 +350,74 @@ func TestSecurityPolicy_ValidateRefusesAnUnreadableCapAtBoot(t *testing.T) {
 	}
 	if err := DefaultSecurityPolicy().Validate(); err != nil {
 		t.Fatalf("the default policy must validate: %v", err)
+	}
+}
+
+func TestSecurityPolicyFromEnv_ReadsTheSecretFloor(t *testing.T) {
+	t.Setenv(SecretAllowVar, "env:SANDBOX_*, file:/etc/orkstack/secrets/*,")
+	policy := SecurityPolicyFromEnv()
+	if got := strings.Join(policy.SecretAllow, "|"); got != "env:SANDBOX_*|file:/etc/orkstack/secrets/*" {
+		t.Fatalf("SecretAllow = %q, want the two trimmed entries", policy.SecretAllow)
+	}
+	if err := policy.Validate(); err != nil {
+		t.Fatalf("Validate() = %v", err)
+	}
+	t.Setenv(SecretAllowVar, "")
+	if policy := SecurityPolicyFromEnv(); policy.SecretAllow != nil {
+		t.Fatalf("unset floor = %q, want nil", policy.SecretAllow)
+	}
+	if DefaultSecurityPolicy().SecretAllow != nil {
+		t.Fatal("DefaultSecurityPolicy carries a floor")
+	}
+}
+
+func TestSecurityPolicy_ValidateRefusesAMalformedFloorAtBoot(t *testing.T) {
+	for _, entry := range []string{"file:relative", "env:A B"} {
+		policy := DefaultSecurityPolicy()
+		policy.SecretAllow = []string{entry}
+		err := policy.Validate()
+		if err == nil || !strings.Contains(err.Error(), SecretAllowVar) || !strings.Contains(err.Error(), entry) {
+			t.Errorf("Validate(%q) = %v, want a refusal naming %s and the entry", entry, err, SecretAllowVar)
+		}
+	}
+	// Through the environment, as boot reads it: "A B" survives the comma
+	// split and trim, so it reaches the rule.
+	t.Setenv(SecretAllowVar, "env:A B")
+	if err := SecurityPolicyFromEnv().Validate(); err == nil || !strings.Contains(err.Error(), SecretAllowVar) {
+		t.Fatalf("Validate() from env = %v, want a refusal naming %s", err, SecretAllowVar)
+	}
+}
+
+func TestSecurityPolicy_ValidateRefusesAFloorNamingAnUnresolvedScheme(t *testing.T) {
+	policy := DefaultSecurityPolicy()
+	policy.SecretAllow = []string{"env:SANDBOX_*", "vault:*"}
+	err := policy.Validate()
+	if err == nil {
+		t.Fatal("Validate() accepted a floor naming a scheme this Orker never resolves")
+	}
+	for _, want := range []string{SecretAllowVar, SecretSchemesVar, `"vault:*"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate() = %q, want it to name %s", err, want)
+		}
+	}
+}
+
+func TestSecurityPolicy_AllowsSecretSourceIsTheSharedRule(t *testing.T) {
+	for _, v := range dsl.SecretPolicyVectors() {
+		policy := DefaultSecurityPolicy()
+		if v.Pattern != "" {
+			policy.SecretAllow = []string{v.Pattern}
+		}
+		err := policy.AllowsSecretSource(v.Source)
+		if v.Permitted != (err == nil) {
+			t.Errorf("floor %q, source %q: err = %v, want permitted=%v", v.Pattern, v.Source, err, v.Permitted)
+		}
+		var refusal *dsl.SecretSourceRefusal
+		if err != nil && (!errors.As(err, &refusal) || refusal.Why != v.Why) {
+			t.Errorf("floor %q, source %q: err = %#v, want Why %q", v.Pattern, v.Source, err, v.Why)
+		}
+	}
+	if err := DefaultSecurityPolicy().AllowsSecretSource("env:ANYTHING"); err != nil {
+		t.Fatalf("an empty floor refused: %v", err)
 	}
 }

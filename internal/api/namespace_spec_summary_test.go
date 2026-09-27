@@ -82,3 +82,30 @@ func TestNamespaceSpecSummary_RendersHoldAndMaxRunning(t *testing.T) {
 		})
 	}
 }
+
+// TestNamespaceSpecSummary_RendersAllowedSecretsOnlyWhenSet: allowed_secrets=
+// is rendered only for a non-empty list, in stored order, immediately after
+// allowed_pools= and before run_retention=; an unrestricted namespace's
+// summary is byte-identical to what it rendered before the field existed.
+func TestNamespaceSpecSummary_RendersAllowedSecretsOnlyWhenSet(t *testing.T) {
+	ns := &orkstackv1.Namespace{
+		Name:         "sandbox",
+		DefaultPool:  "main",
+		AllowedPools: []string{"main"},
+		RunRetention: durationpb.New(168 * time.Hour),
+		Labels:       map[string]string{"team": "contractors"},
+	}
+	const before = "default_pool=main allowed_pools=[main] run_retention=168h0m0s max_running=0 telemetry.sink=inherited labels={team=contractors}"
+	if got := namespaceSpecSummary(ns); got != before {
+		t.Fatalf("unrestricted summary =\n  %s\nwant\n  %s", got, before)
+	}
+	ns.AllowedSecrets = []string{}
+	if got := namespaceSpecSummary(ns); got != before {
+		t.Fatalf("empty-list summary =\n  %s\nwant\n  %s", got, before)
+	}
+	ns.AllowedSecrets = []string{"env:SANDBOX_*", "file:/etc/orkstack/secrets/sandbox/*"}
+	want := "default_pool=main allowed_pools=[main] allowed_secrets=[env:SANDBOX_* file:/etc/orkstack/secrets/sandbox/*] run_retention=168h0m0s max_running=0 telemetry.sink=inherited labels={team=contractors}"
+	if got := namespaceSpecSummary(ns); got != want {
+		t.Fatalf("summary =\n  %s\nwant\n  %s", got, want)
+	}
+}

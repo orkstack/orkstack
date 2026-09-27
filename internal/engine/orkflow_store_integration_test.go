@@ -158,19 +158,41 @@ func TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt(t *testing.T) 
 		t.Error("reloaded orkflow lost its source document")
 	}
 
-	listed, err := listEveryOrkflow(ctx, after)
+	listed, err := listOrkflowNames(ctx, after)
 	if err != nil {
 		t.Fatalf("ListOrkflows after restart: %v", err)
 	}
 	found := false
-	for _, wf := range listed {
-		if wf.GetName() == name {
+	for _, listedName := range listed {
+		if listedName == name {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("ListOrkflows after restart does not report %q (%d orkflows)",
 			name, len(listed))
+	}
+}
+
+// listOrkflowNames follows ListOrkflows' pages to the end. The default
+// namespace of a shared development bucket holds every orkflow any run left
+// there, so a probe's name need not sort onto the first page, and "the list
+// reports it" has to mean every page of the list.
+func listOrkflowNames(ctx context.Context, c orkstackv1connect.OrkflowServiceClient) ([]string, error) {
+	var names []string
+	token := ""
+	for {
+		page, err := c.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{PageToken: token}))
+		if err != nil {
+			return nil, err
+		}
+		for _, wf := range page.Msg.GetOrkflows() {
+			names = append(names, wf.GetName())
+		}
+		token = page.Msg.GetNextPageToken()
+		if token == "" {
+			return names, nil
+		}
 	}
 }
 
@@ -195,36 +217,15 @@ func TestIntegration_ListOrkflowsReadsTheBucketNotTheProcess(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	listed, err := listEveryOrkflow(ctx, client)
+	listed, err := listOrkflowNames(ctx, client)
 	if err != nil {
 		t.Fatalf("ListOrkflows: %v", err)
 	}
-	for _, wf := range listed {
-		if wf.GetName() == name {
+	for _, listedName := range listed {
+		if listedName == name {
 			return
 		}
 	}
 	t.Fatalf("ListOrkflows does not report %q written by another store (%d orkflows)",
 		name, len(listed))
-}
-
-// listEveryOrkflow walks every page of the default namespace's listing. The
-// bucket these suites share accumulates orkflows from every run on the host,
-// so the probe written above is not guaranteed to be on the first page; the
-// claim under test is that the listing reads the bucket, not that it fits in
-// one page.
-func listEveryOrkflow(ctx context.Context, client orkstackv1connect.OrkflowServiceClient) ([]*orkstackv1.Orkflow, error) {
-	var all []*orkstackv1.Orkflow
-	token := ""
-	for {
-		resp, err := client.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{PageToken: token}))
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, resp.Msg.GetOrkflows()...)
-		token = resp.Msg.GetNextPageToken()
-		if token == "" {
-			return all, nil
-		}
-	}
 }

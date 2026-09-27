@@ -3,6 +3,7 @@ Name:                  payments
 Description:           the payments tenant
 Default pool:          batch
 Allowed pools:         batch,main
+Allowed secrets:       (unrestricted; bounded only by each Orker's ORK_ORKER_SECRET_ALLOW)
 Run retention:         inherited (deployment maximum)
 Hold:                  accepting
 Max running:           unlimited

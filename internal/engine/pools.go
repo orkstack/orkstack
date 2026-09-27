@@ -467,6 +467,12 @@ func (r *PoolResolver) Plan(
 	if wf == nil || len(wf.GetTasks()) == 0 {
 		return nil, RunPlan{}, fmt.Errorf("orkflow has no tasks")
 	}
+	// The namespace's secret policy, first: it needs no pool resolved and no
+	// question asked of the cluster, and this is the gate a definition stored
+	// while the list was wider cannot get past (Namespace.allowed_secrets).
+	if err := CheckAllowedSecrets(ns, wf); err != nil {
+		return nil, RunPlan{}, err
+	}
 	permitted := permittedPools(ns)
 
 	planned := proto.Clone(wf).(*orkstackv1.Orkflow)

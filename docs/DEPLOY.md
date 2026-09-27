@@ -319,6 +319,7 @@ then the variable it becomes.
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
+| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme, as today. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
 | `orker.log.flush_bytes` | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
@@ -1603,6 +1604,46 @@ moves retirement from whenever the (now-hidden) backstop TTL would have fired
 to the moment each run actually crosses its own namespace's retention —
 sooner, by up to the enforcement margin, and namespace-aware for the first
 time.
+
+### Secrets on a shared pool
+
+A task names a secret by its `source:` (`env:NAME` or `file:/path`), and the
+Orker that runs it resolves that name from its own environment or
+filesystem. On a pool several namespaces share, bound those names in two
+places; a source must pass **both**:
+
+- **The operator's floor, per Orker:** `orker.secret_allow` /
+  `ORK_ORKER_SECRET_ALLOW`, comma-separated `scheme:pattern` entries such as
+  `env:SANDBOX_*,file:/etc/orkstack/secrets/sandbox/*`. It is checked by the
+  process that reads the value, at dispatch, before the image is pulled; a
+  source outside it fails the task `SECRET_NOT_PERMITTED` (a
+  `ContractViolation`, never retried). Empty resolves every source of an
+  allowed scheme, as before this setting existed. A malformed entry, or one
+  naming a scheme outside `orker.secret_schemes`, stops the Orker at boot.
+- **The tenant's list, per namespace:** `orkctl namespace update NAME
+  --allow-secret 'env:SANDBOX_*'` (or Admin → Namespaces). It is enforced by
+  the engine at validate and apply, as an issue on
+  `tasks[i].secrets[j].source`, and again at every submit — `run submit`,
+  `run again`, the UI, a trigger invoke — so a definition applied before the
+  list existed is refused at its next submit. It is never retroactive: a run
+  already accepted finishes on the definition it pinned; stop one with
+  `orkctl run cancel`. Empty means unrestricted.
+
+A namespace can therefore only ever narrow what its Orkers permit. The grammar
+is deliberately small: a literal scheme, and `*` as the one wildcard, which
+never crosses `/`; `?`, `[…]` and `\` are ordinary characters. A `file:`
+source with a `..`, `.` or empty segment is refused outright rather than
+normalized, so `file:/etc/orkstack/secrets/sandbox/../payments/db` never sits
+inside `file:/etc/orkstack/secrets/sandbox/*`. The policy bounds the NAME a
+tenant may write, not the filesystem behind it: a symlink placed under a
+tenant's directory is a grant the operator made, and the Orker reads the path
+as it always has. Nothing here stores, logs or compares a secret value;
+refusals carry the source string only.
+
+During a rolling upgrade the namespace list is enforced only by engine
+replicas already at the release that added it; the Orker floor is unaffected
+by the rollout. An older `orkctl` round-tripping a namespace through `update`
+drops the list — run the `orkctl` of the release.
 
 ---
 

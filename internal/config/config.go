@@ -161,6 +161,7 @@ var Schema = []Var{
 	{Path: "orker.image_layout", Env: "ORK_ORKER_IMAGE_LAYOUT", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultImageLayoutRoot},
 	{Path: "orker.env_allowlist", Env: "ORK_ORKER_ENV_ALLOWLIST", Binaries: usesOrker, Kind: KindList, Default: EmptyDefault},
 	{Path: "orker.secret_schemes", Env: "ORK_ORKER_SECRET_SCHEMES", Binaries: usesOrker, Kind: KindList, Default: formatList(orker.DefaultSecretSchemes)},
+	{Path: "orker.secret_allow", Env: "ORK_ORKER_SECRET_ALLOW", Binaries: usesOrker, Kind: KindList, Default: EmptyDefault},
 	{Path: "orker.task_log_export", Env: "ORK_ORKER_TASK_LOG_EXPORT", Binaries: usesOrker, Kind: KindBool, Default: "false"},
 	{Path: "orker.heartbeat_interval", Env: "ORK_ORKER_HEARTBEAT_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultHeartbeatInterval)},
 

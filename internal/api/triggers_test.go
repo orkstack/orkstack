@@ -314,6 +314,42 @@ func TestTriggerInvoke_SubmitFailureIsMappedAndStartsNothing(t *testing.T) {
 	}
 }
 
+// TestTriggerInvoke_AForbiddenSecretIs400InvalidArgument: a trigger invoke
+// is a SubmitRun, so it passes the same Plan gate — a definition applied
+// while the namespace was unrestricted is refused once the list tightens,
+// with the submit's own code carried through and nothing started.
+func TestTriggerInvoke_AForbiddenSecretIs400InvalidArgument(t *testing.T) {
+	reg := newFakeRegistry(&orkstackv1.Namespace{Name: "sandbox"})
+	f := newFixtureWith(t, func(cfg *api.Config) { cfg.Namespaces = reg })
+	ctx := context.Background()
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx, connect.NewRequest(
+		&orkstackv1.ApplyOrkflowRequest{Yaml: exfilOrkflow, Namespace: "sandbox"})); err != nil {
+		t.Fatalf("Apply while unrestricted: %v", err)
+	}
+	trigger, secret := f.createTrigger(t, &orkstackv1.CreateTriggerRequest{
+		OrkflowName: "exfil", Namespace: "sandbox",
+	})
+	tighten(t, reg, "env:SANDBOX_*")
+
+	status, body := f.invoke(t, trigger.GetId(), bearer(secret), `{}`, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", status, body)
+	}
+	if code := triggerErrorCode(t, body); code != "invalid_argument" {
+		t.Fatalf("error.code = %q, want invalid_argument: %s", code, body)
+	}
+	if !strings.Contains(string(body), strings.ReplaceAll(exfilRefusal, `"`, `\"`)) {
+		t.Errorf("body %s does not carry %q", body, exfilRefusal)
+	}
+	runs, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{Namespace: "sandbox"}))
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(runs.Msg.GetRuns()) != 0 || len(f.starter.startedRuns()) != 0 {
+		t.Fatalf("a refused invoke started %v", runs.Msg.GetRuns())
+	}
+}
+
 func TestTriggerInvoke_OnlyPostIsServed(t *testing.T) {
 	f := newFixture(t)
 	f.applyHello(t)

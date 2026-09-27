@@ -99,22 +99,33 @@ func newFixture(t *testing.T) *fixture {
 // notifier, which is how the service is wired in production.
 func newFixtureWithNotifier(t *testing.T, notifier engine.RunNotifier) *fixture {
 	t.Helper()
+	return newFixtureWith(t, func(cfg *api.Config) { cfg.Notifier = notifier })
+}
+
+// newFixtureWith is newFixture with the Service's configuration adjusted by
+// configure before it is built — a namespace registry, say — so a test can
+// drive a real server over a deployment shaped the way it needs.
+func newFixtureWith(t *testing.T, configure func(*api.Config)) *fixture {
+	t.Helper()
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
 	starter := &fakeStarter{}
 	var counter int
-	svc := api.NewService(api.Config{
+	cfg := api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(),
 		Runs:     runs,
 		Bus:      bus,
 		Starter:  starter,
-		Notifier: notifier,
 		NewRunID: func() string {
 			counter++
 			return fmt.Sprintf("run-%03d", counter)
 		},
-	})
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	svc := api.NewService(cfg)
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

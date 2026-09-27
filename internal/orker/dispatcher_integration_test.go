@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -644,6 +645,60 @@ func TestIntegration_ContractViolationsAreRefusedWithTheirReasonCode(t *testing.
 			}
 		})
 	}
+
+	// A source outside this Orker's ORK_ORKER_SECRET_ALLOW floor is refused
+	// before the real runtime is asked anything: no pull, no container.
+	t.Run("a secret source outside the orker's floor", func(t *testing.T) {
+		t.Setenv("PROD_DB_PASSWORD", "never-staged")
+		dispatcher, _ := newDispatcher(t)
+		counting := &countingRuntime{ContainerRuntime: dispatcher.Runtime}
+		dispatcher.Runtime = counting
+		dispatcher.Policy.SecretAllow = []string{"env:SANDBOX_*"}
+		in := baseInput(t, "violate-secret", "/bin/sh", "-c", `cat /orkstack/input/secrets/db`)
+		in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:PROD_DB_PASSWORD"}}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		_, err := dispatcher.Execute(ctx, in)
+		if err == nil || !strings.Contains(err.Error(), orker.ReasonSecretNotPermitted) {
+			t.Fatalf("error = %v, want %s", err, orker.ReasonSecretNotPermitted)
+		}
+		if strings.Contains(err.Error(), "never-staged") {
+			t.Fatalf("the refusal carries the value: %v", err)
+		}
+		if pulls, creates := counting.counts(); pulls != 0 || creates != 0 {
+			t.Fatalf("runtime asked %d pulls and %d creates; want none", pulls, creates)
+		}
+	})
+}
+
+// countingRuntime passes every call to the real runtime and counts the two
+// that mean work began: a pull and a container creation.
+type countingRuntime struct {
+	orker.ContainerRuntime
+	mu      sync.Mutex
+	pulls   int
+	creates int
+}
+
+func (c *countingRuntime) Pull(ctx context.Context, ref string) (orker.PullInfo, error) {
+	c.mu.Lock()
+	c.pulls++
+	c.mu.Unlock()
+	return c.ContainerRuntime.Pull(ctx, ref)
+}
+
+func (c *countingRuntime) Create(ctx context.Context, spec orker.ContainerSpec) (orker.ContainerID, error) {
+	c.mu.Lock()
+	c.creates++
+	c.mu.Unlock()
+	return c.ContainerRuntime.Create(ctx, spec)
+}
+
+func (c *countingRuntime) counts() (pulls, creates int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.pulls, c.creates
 }
 
 // TestIntegration_AFailedTaskStillPublishesWhatItProduced is §7.1 step 14: the
