@@ -191,7 +191,7 @@ tasks:
 		<div data-testid="apply-validation-issues" class="space-y-2 rounded-md border border-border bg-surface-sunken p-3 text-sm">
 			<p class="font-medium text-fg">Validation results</p>
 			{#each issues as issue, i (`${issue.field}-${i}`)}
-				<p class={issue.severity === ValidationSeverity.ERROR ? 'text-danger-700' : 'text-warning-700'}><span class="font-medium">{issue.field || 'document'}</span>: {issue.message}</p>
+				<p data-testid="apply-validation-issue" data-severity={issue.severity === ValidationSeverity.ERROR ? 'error' : 'warning'} data-field={issue.field} class={issue.severity === ValidationSeverity.ERROR ? 'text-danger-700' : 'text-warning-700'}><span class="font-medium">{issue.field || 'document'}</span>: {issue.message}</p>
 			{/each}
 		</div>
 	{/if}
