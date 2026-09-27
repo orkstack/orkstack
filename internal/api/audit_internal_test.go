@@ -40,12 +40,15 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.ActivityServiceListActivitiesProcedure:     true,
 	orkstackv1connect.ActivityServiceDescribeOrkerProcedure:      true,
 	orkstackv1connect.ActivityServiceListOrkersProcedure:         true,
-	orkstackv1connect.SystemServiceGetSystemInfoProcedure:        true,
-	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure:   true,
-	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:   true,
-	orkstackv1connect.StatsServiceGetStatsProcedure:              true,
-	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure:   true,
-	orkstackv1connect.AuditServiceListAuditRecordsProcedure:      true,
+	// InspectActivity resolves one reference against the registry and writes
+	// nothing (activity-interface-manifests §5.4).
+	orkstackv1connect.ActivityServiceInspectActivityProcedure:  true,
+	orkstackv1connect.SystemServiceGetSystemInfoProcedure:      true,
+	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure: true,
+	orkstackv1connect.SystemServiceListTelemetrySinksProcedure: true,
+	orkstackv1connect.StatsServiceGetStatsProcedure:            true,
+	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure: true,
+	orkstackv1connect.AuditServiceListAuditRecordsProcedure:    true,
 }
 
 // auditStreamingReads is every streaming RPC. The audit interceptor is unary
@@ -57,7 +60,9 @@ var auditStreamingReads = map[string]bool{
 	orkstackv1connect.RunServiceReadArtifactProcedure:   true,
 }
 
-var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream"}
+// Inspect is InspectActivity's verb: an on-demand registry read (activity-interface-
+// manifests §5.4) that writes nothing.
+var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Inspect"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file
 // registry and returns each method's procedure and whether it streams.

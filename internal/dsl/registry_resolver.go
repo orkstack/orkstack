@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -91,7 +92,8 @@ type Resolver struct {
 	// Client is the HTTP client. Nil uses a client with a bounded timeout.
 	Client *http.Client
 	// AuthFile is ORK_REGISTRY_AUTH_FILE: a Docker config.json, used ONLY
-	// for manifest GETs (§4.5). It grants no push and no execution.
+	// for manifest and config-blob GETs (§4.5). It grants no push and no
+	// execution.
 	AuthFile string
 
 	auth     map[string]dockerAuth
@@ -113,47 +115,76 @@ func (r *Resolver) client() *http.Client {
 	return &http.Client{Timeout: defaultResolveTimeout}
 }
 
-// ResolveOrkflow resolves every distinct `uses:` in wf and stamps Task.image.
+// Resolution is one reference, resolved: the pinned ImageRef and what the
+// image declares about its with: block.
+type Resolution struct {
+	Image *orkstackv1.ImageRef
+	// Interface is the parsed label, or nil when the image carries none or
+	// InterfaceError says why it could not be read.
+	Interface *orkstackv1.ActivityInterface
+	// InterfaceError is ActivityInfo.interface_error, verbatim.
+	InterfaceError string
+}
+
+// Resolutions is ResolveOrkflow's answer, keyed by the task's `uses:` —
+// the same key ResolveOrkflow already de-duplicates the manifest GET on.
+type Resolutions map[string]*Resolution
+
+// ResolveOrkflow resolves every distinct `uses:` in wf, stamps Task.image,
+// and returns what each image declares about its with: block (§4.3 step 7).
 //
 // Distinct, because a document with twelve `uses: shell` tasks is one image
 // and should be one GET. Sharing the resolved message across tasks is safe:
 // the ImageRef is written once and never mutated, and proto.Clone would only
 // add allocations and a way for two tasks to drift.
-func (r *Resolver) ResolveOrkflow(ctx context.Context, catalog Catalog, wf *orkstackv1.Orkflow) error {
-	resolved := make(map[string]*orkstackv1.ImageRef)
+func (r *Resolver) ResolveOrkflow(ctx context.Context, catalog Catalog, wf *orkstackv1.Orkflow) (Resolutions, error) {
+	resolved := make(Resolutions)
 	for _, t := range wf.GetTasks() {
 		uses := t.GetUses()
-		if image, ok := resolved[uses]; ok {
-			t.Image = image
+		if res, ok := resolved[uses]; ok {
+			t.Image = res.Image
 			continue
 		}
 		reference, err := catalog.ResolveUses(t.GetId(), uses)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		image, err := r.Resolve(ctx, uses, reference)
+		res, err := r.Inspect(ctx, uses, reference)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		resolved[uses] = image
-		t.Image = image
+		resolved[uses] = res
+		t.Image = res.Image
 	}
-	return nil
+	return resolved, nil
 }
 
-// Resolve issues the manifest GET and returns the pinned ImageRef.
+// Resolve is Inspect's ImageRef. Kept for the callers that want only the pin.
+func (r *Resolver) Resolve(ctx context.Context, uses, reference string) (*orkstackv1.ImageRef, error) {
+	res, err := r.Inspect(ctx, uses, reference)
+	if err != nil {
+		return nil, err
+	}
+	return res.Image, nil
+}
+
+// Inspect issues the manifest GET (§4.3 steps 2–6) and then reads the
+// image's interface label from its config blob (step 7).
 //
 // `uses` is what the author wrote and becomes ImageRef.reference verbatim;
 // `reference` is what the catalog turned it into and is what gets fetched.
 // Keeping both is what makes `uses: shell` explainable after the fact.
-func (r *Resolver) Resolve(ctx context.Context, uses, reference string) (*orkstackv1.ImageRef, error) {
+func (r *Resolver) Inspect(ctx context.Context, uses, reference string) (*Resolution, error) {
 	parsed, err := ParseReference(reference)
 	if err != nil {
 		return nil, &ResolveError{Reference: reference, Code: ReasonImageResolveUnsupported,
 			Detail: "cannot be parsed as an OCI reference", Err: err}
 	}
 
-	body, contentType, headerDigest, err := r.getManifest(ctx, parsed)
+	// One credential per Inspect: the token the manifest GET earns is reused
+	// for the platform-manifest and config-blob GETs of step 7.
+	var authorization string
+	body, contentType, headerDigest, err := r.getManifest(ctx, parsed, parsed.Target(), &authorization)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +216,7 @@ func (r *Resolver) Resolve(ctx context.Context, uses, reference string) (*orksta
 			Detail: "manifest body is not valid JSON for its content type", Err: err}
 	}
 
-	return &orkstackv1.ImageRef{
+	res := &Resolution{Image: &orkstackv1.ImageRef{
 		Reference:   uses,
 		Registry:    parsed.Registry,
 		Repository:  parsed.Repository,
@@ -193,7 +224,158 @@ func (r *Resolver) Resolve(ctx context.Context, uses, reference string) (*orksta
 		Pinned:      parsed.Pinned(computed),
 		MediaType:   contentType,
 		Platforms:   platforms,
-	}, nil
+	}}
+	if err := r.readInterface(ctx, parsed, body, contentType, &authorization, res); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// errNoPlatformManifest is InterfaceError for an index step 7a cannot read a
+// config through.
+const errNoPlatformManifest = "index advertises no platform manifest to read a config from"
+
+// readInterface is §4.3 step 7: locate the image manifest, read its config
+// blob, and parse the interface label from config.Labels.
+//
+// A failure to FETCH (7a–7d) fails resolution: a registry that serves a
+// manifest but not its config cannot serve a pull, and apply must not pin a
+// digest nobody can pull (step 5). A label that cannot be PARSED never fails
+// resolution (7e) — the image is still pinned and runnable, and only the
+// apply-time check is lost, which InterfaceError reports.
+func (r *Resolver) readInterface(ctx context.Context, ref Reference, body []byte, contentType string,
+	authorization *string, res *Resolution,
+) error {
+	manifest := body
+	switch mediaTypeOf(contentType) {
+	case MediaTypeOCIIndex, MediaTypeDockerManifestList:
+		digest, ok := selectPlatformManifest(body)
+		if !ok {
+			res.InterfaceError = errNoPlatformManifest
+			return nil
+		}
+		platform, platformType, _, err := r.getManifest(ctx, ref, digest, authorization)
+		if err != nil {
+			return err
+		}
+		if got := digestOf(platform); !strings.EqualFold(got, digest) {
+			return &ResolveError{Reference: ref.Original, Code: ReasonImageDigestMismatch,
+				Detail: fmt.Sprintf("index names platform manifest %s but the registry served a body hashing to %s",
+					digest, got)}
+		}
+		switch mediaTypeOf(platformType) {
+		case MediaTypeOCIIndex, MediaTypeDockerManifestList:
+			res.InterfaceError = errNoPlatformManifest
+			return nil
+		}
+		manifest = platform
+	}
+
+	configDigest, err := configDescriptor(manifest)
+	if err != nil {
+		return &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
+			Detail: "manifest has no readable config descriptor", Err: err}
+	}
+	config, err := r.getBlob(ctx, ref, configDigest, authorization)
+	if err != nil {
+		return err
+	}
+	if got := digestOf(config); !strings.EqualFold(got, configDigest) {
+		return &ResolveError{Reference: ref.Original, Code: ReasonImageDigestMismatch,
+			Detail: fmt.Sprintf("manifest names config %s but the registry served a blob hashing to %s",
+				configDigest, got)}
+	}
+	value, present, err := labelOf(config, InterfaceLabel)
+	if err != nil {
+		return &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
+			Detail: "config blob is not valid JSON", Err: err}
+	}
+	if !present {
+		return nil
+	}
+	iface, err := ParseInterfaceLabel(value)
+	if err != nil {
+		res.InterfaceError = err.Error()
+		return nil
+	}
+	res.Interface = iface
+	return nil
+}
+
+func digestOf(body []byte) string {
+	sum := sha256.Sum256(body)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// sha256DigestPattern is a content digest this resolver can verify.
+var sha256DigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+
+// selectPlatformManifest picks the FIRST entry, in index order, whose
+// platform.os is present and is not "unknown" — buildx attestation manifests
+// carry os: unknown and are skipped. It reports false when no entry
+// qualifies, when the selected entry is itself an index, or when it names no
+// sha256 digest this resolver could verify.
+func selectPlatformManifest(index []byte) (string, bool) {
+	var parsed struct {
+		Manifests []struct {
+			MediaType string `json:"mediaType"`
+			Digest    string `json:"digest"`
+			Platform  *struct {
+				OS string `json:"os"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(index, &parsed); err != nil {
+		return "", false
+	}
+	for _, m := range parsed.Manifests {
+		if m.Platform == nil || m.Platform.OS == "" || m.Platform.OS == "unknown" {
+			continue
+		}
+		switch mediaTypeOf(m.MediaType) {
+		case MediaTypeOCIIndex, MediaTypeDockerManifestList:
+			return "", false
+		}
+		if !sha256DigestPattern.MatchString(m.Digest) {
+			return "", false
+		}
+		return m.Digest, true
+	}
+	return "", false
+}
+
+// configDescriptor reads config.digest from an image manifest.
+func configDescriptor(manifest []byte) (string, error) {
+	var parsed struct {
+		Config *struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(manifest, &parsed); err != nil {
+		return "", err
+	}
+	if parsed.Config == nil {
+		return "", errors.New("the manifest has no config")
+	}
+	if !sha256DigestPattern.MatchString(parsed.Config.Digest) {
+		return "", fmt.Errorf("config.digest %q is not sha256:<64 hex>", parsed.Config.Digest)
+	}
+	return parsed.Config.Digest, nil
+}
+
+// labelOf reads config.Labels[name] from an OCI image config (Docker's
+// config uses the same path).
+func labelOf(config []byte, name string) (string, bool, error) {
+	var parsed struct {
+		Config struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(config, &parsed); err != nil {
+		return "", false, err
+	}
+	value, present := parsed.Config.Labels[name]
+	return value, present, nil
 }
 
 // indexPlatforms reads manifests[].platform for an index, and returns nothing
@@ -255,39 +437,28 @@ func mediaTypeOf(contentType string) string {
 // Docker-Content-Digest and Content-Length. A HEAD-only resolver would leave
 // platforms empty where a GET-based one fills it, and the two would mint
 // DIFFERENT definition digests for the same index.
-func (r *Resolver) getManifest(ctx context.Context, ref Reference) ([]byte, string, string, error) {
+func (r *Resolver) getManifest(ctx context.Context, ref Reference, target string, authorization *string) ([]byte, string, string, error) {
 	endpoint := fmt.Sprintf("%s://%s/v2/%s/manifests/%s",
-		ref.Scheme(), ref.APIHost(), ref.Repository, ref.Target())
+		ref.Scheme(), ref.APIHost(), ref.Repository, target)
 
-	resp, body, err := r.do(ctx, endpoint, "")
+	resp, body, err := r.authorizedGet(ctx, ref, endpoint, authorization)
 	if err != nil {
 		return nil, "", "", err
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		// The registry told us how to authenticate. Anonymous pulls from
-		// Docker Hub and ghcr.io both arrive here on the first request, so
-		// this path is the common case rather than an error path.
-		if challenge := parseBearerChallenge(resp.Header.Get("WWW-Authenticate")); challenge != nil {
-			token, tokenErr := r.fetchToken(ctx, ref, challenge)
-			if tokenErr != nil {
-				return nil, "", "", tokenErr
-			}
-			if token != "" {
-				resp, body, err = r.do(ctx, endpoint, "Bearer "+token)
-				if err != nil {
-					return nil, "", "", err
-				}
-			}
-		}
 	}
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
+		if int64(len(body)) > maxManifestBytes {
+			// Kept at the bound as before: a manifest past it hashes to
+			// something the registry did not serve and is refused as a
+			// mismatch or as unparseable, exactly as it always was.
+			body = body[:maxManifestBytes]
+		}
 		return body, resp.Header.Get("Content-Type"), resp.Header.Get("Docker-Content-Digest"), nil
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageNotFound,
 			Detail: fmt.Sprintf("registry %s has no manifest %s for %s",
-				ref.APIHost(), ref.Target(), ref.Repository)}
+				ref.APIHost(), target, ref.Repository)}
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
 		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnauthorized,
 			Detail: fmt.Sprintf("registry %s refused the manifest read with %d; "+
@@ -301,6 +472,72 @@ func (r *Resolver) getManifest(ctx context.Context, ref Reference) ([]byte, stri
 			Detail: fmt.Sprintf("registry %s answered %d: %s",
 				ref.APIHost(), resp.StatusCode, strings.TrimSpace(string(body)))}
 	}
+}
+
+// getBlob reads one blob — the image config of §4.3 step 7c — with the
+// credential the manifest GET earned. Registries commonly redirect a blob to
+// a CDN; the client follows, and drops Authorization on a cross-host hop.
+func (r *Resolver) getBlob(ctx context.Context, ref Reference, digest string, authorization *string) ([]byte, error) {
+	endpoint := fmt.Sprintf("%s://%s/v2/%s/blobs/%s",
+		ref.Scheme(), ref.APIHost(), ref.Repository, digest)
+
+	resp, body, err := r.authorizedGet(ctx, ref, endpoint, authorization)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		if int64(len(body)) > maxManifestBytes {
+			return nil, &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
+				Detail: fmt.Sprintf("config blob %s is larger than %d bytes", digest, maxManifestBytes)}
+		}
+		return body, nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil, &ResolveError{Reference: ref.Original, Code: ReasonImageNotFound,
+			Detail: fmt.Sprintf("registry %s has no blob %s for %s", ref.APIHost(), digest, ref.Repository)}
+	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
+		return nil, &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnauthorized,
+			Detail: fmt.Sprintf("registry %s refused the config blob read with %d; "+
+				"set ORK_REGISTRY_AUTH_FILE to a docker config.json with credentials for %s",
+				ref.APIHost(), resp.StatusCode, ref.Registry)}
+	case resp.StatusCode >= 500:
+		return nil, &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnavailable,
+			Detail: fmt.Sprintf("registry %s answered %d for blob %s", ref.APIHost(), resp.StatusCode, digest)}
+	default:
+		return nil, &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
+			Detail: fmt.Sprintf("registry %s answered %d for blob %s: %s",
+				ref.APIHost(), resp.StatusCode, digest, strings.TrimSpace(string(body)))}
+	}
+}
+
+// authorizedGet performs one GET with *authorization and, on a 401 carrying
+// a Bearer challenge, exactly one token handshake and retry. The token it
+// earns is written back through authorization, so one Inspect performs the
+// handshake once and every later GET reuses it.
+func (r *Resolver) authorizedGet(ctx context.Context, ref Reference, endpoint string, authorization *string) (*http.Response, []byte, error) {
+	resp, body, err := r.do(ctx, endpoint, *authorization)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		// The registry told us how to authenticate. Anonymous pulls from
+		// Docker Hub and ghcr.io both arrive here on the first request, so
+		// this path is the common case rather than an error path.
+		if challenge := parseBearerChallenge(resp.Header.Get("WWW-Authenticate")); challenge != nil {
+			token, tokenErr := r.fetchToken(ctx, ref, challenge)
+			if tokenErr != nil {
+				return nil, nil, tokenErr
+			}
+			if token != "" {
+				*authorization = "Bearer " + token
+				resp, body, err = r.do(ctx, endpoint, *authorization)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+	}
+	return resp, body, nil
 }
 
 // do issues one GET and reads a bounded body.
@@ -326,7 +563,9 @@ func (r *Resolver) do(ctx context.Context, endpoint, authorization string) (*htt
 			Detail: "the registry could not be reached", Err: err}
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestBytes))
+	// One byte past the bound, so a caller can tell "at the bound" from
+	// "over it" (a config blob over it is refused, not truncated).
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestBytes+1))
 	if err != nil {
 		return nil, nil, &ResolveError{Reference: endpoint, Code: ReasonImageResolveUnavailable,
 			Detail: "the manifest response could not be read", Err: err}

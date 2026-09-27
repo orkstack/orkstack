@@ -21,8 +21,9 @@ import (
 // `platforms` and therefore about the definition digest, and §4.4's whole
 // argument is that one definition has one digest.
 type ImageResolver interface {
-	// ResolveOrkflow resolves every distinct `uses:` and stamps Task.image.
-	ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, wf *orkstackv1.Orkflow) error
+	// ResolveOrkflow resolves every distinct `uses:`, stamps Task.image,
+	// and returns what each image declares (§4.3 step 7).
+	ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, wf *orkstackv1.Orkflow) (dsl.Resolutions, error)
 	// Resolve resolves a single reference, for the catalog read path.
 	Resolve(ctx context.Context, uses, reference string) (*orkstackv1.ImageRef, error)
 }
@@ -131,7 +132,7 @@ func (s *Service) resolveImages(ctx context.Context, wf *orkstackv1.Orkflow) err
 	if s.resolver == nil {
 		return nil
 	}
-	if err := s.resolver.ResolveOrkflow(ctx, s.activityCatalog(), wf); err != nil {
+	if _, err := s.resolver.ResolveOrkflow(ctx, s.activityCatalog(), wf); err != nil {
 		return err
 	}
 	return nil
