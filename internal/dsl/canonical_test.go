@@ -546,3 +546,55 @@ func TestCanonicalInputJSON_NilAndEmptyAreTheSameObject(t *testing.T) {
 		t.Fatalf("Unified over identical canonical inputs = %q, want empty", diff)
 	}
 }
+
+// CanonicalInputLine is the one-line header renderer: canonical values, keys
+// sorted, no whitespace, no HTML escaping, never a newline.
+func TestCanonicalInputLine_IsOneSortedCompactLine(t *testing.T) {
+	mustStruct := func(m map[string]any) *structpb.Struct {
+		t.Helper()
+		s, err := structpb.NewStruct(m)
+		if err != nil {
+			t.Fatalf("NewStruct: %v", err)
+		}
+		return s
+	}
+	cases := []struct {
+		name string
+		in   *structpb.Struct
+		want string
+	}{
+		{"nil", nil, `{}`},
+		{"empty", &structpb.Struct{}, `{}`},
+		{"sorted keys", mustStruct(map[string]any{"region": "eu", "canary": false}), `{"canary":false,"region":"eu"}`},
+		{"integer float", mustStruct(map[string]any{"port": float64(8080)}), `{"port":8080}`},
+		{"no exponent", mustStruct(map[string]any{"n": 1e21}), `{"n":1000000000000000000000}`},
+		{"nested", mustStruct(map[string]any{"b": map[string]any{"z": 1, "a": []any{2, "x"}}}), `{"b":{"a":[2,"x"],"z":1}}`},
+		{"no html escaping", mustStruct(map[string]any{"s": "<a&b>"}), `{"s":"<a&b>"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := CanonicalInputLine(tc.in)
+			if err != nil {
+				t.Fatalf("CanonicalInputLine: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("CanonicalInputLine = %s, want %s", got, tc.want)
+			}
+			if strings.Contains(got, "\n") {
+				t.Fatalf("CanonicalInputLine contains a newline: %q", got)
+			}
+			var back, wantBack any
+			if err := json.Unmarshal([]byte(got), &back); err != nil {
+				t.Fatalf("result does not round-trip: %v", err)
+			}
+			if err := json.Unmarshal([]byte(tc.want), &wantBack); err != nil {
+				t.Fatalf("want does not parse: %v", err)
+			}
+			gotJSON, _ := json.Marshal(back)
+			wantJSON, _ := json.Marshal(wantBack)
+			if string(gotJSON) != string(wantJSON) {
+				t.Fatalf("round-trip %s != %s", gotJSON, wantJSON)
+			}
+		})
+	}
+}
