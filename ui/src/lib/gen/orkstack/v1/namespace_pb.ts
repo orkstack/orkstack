@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIucDCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRIXCg9hbGxvd2VkX3NlY3JldHMYDSADKAkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJKCg1OYW1lc3BhY2VIb2xkEg4KBnJlYXNvbhgBIAEoCRIpCgVzaW5jZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAinAEKBFBvb2wSDAoEbmFtZRgBIAEoCRIYChBsaXZlX29ya2VyX2NvdW50GAIgASgFEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YBiABKAlKBAgDEARSB3BsdWdpbnNCqgEKD2NvbS5vcmtzdGFjay52MUIOTmFtZXNwYWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIoIECglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRIXCg9hbGxvd2VkX3NlY3JldHMYDSADKAkSGQoRcmVxdWlyZV9zaWduZWRfYnkYDiABKAkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJKCg1OYW1lc3BhY2VIb2xkEg4KBnJlYXNvbhgBIAEoCRIpCgVzaW5jZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAinAEKBFBvb2wSDAoEbmFtZRgBIAEoCRIYChBsaXZlX29ya2VyX2NvdW50GAIgASgFEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YBiABKAlKBAgDEARSB3BsdWdpbnNCqgEKD2NvbS5vcmtzdGFjay52MUIOTmFtZXNwYWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -210,6 +210,26 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * @generated from field: repeated string allowed_secrets = 13;
    */
   allowedSecrets: string[];
+
+  /**
+   * require_signed_by names a signer every image executed in this namespace
+   * must satisfy: "cosign:<key-name>", where <key-name> is one of the
+   * deployment's ImagePolicy.signing_keys. Unset means no signature is
+   * required, which is what every namespace has today and what an upgrade
+   * preserves. A namespace may only TIGHTEN the deployment policy: this is
+   * its one field for doing so, and there is none for loosening.
+   *
+   * It is enforced in the three places an image passes: at apply and
+   * validate, with the file in hand (a field-anchored issue on
+   * tasks[i].uses); at submit, before a run id is minted, which catches a
+   * definition stored before the requirement existed; and by the Orker at
+   * dispatch, which verifies the signature itself against the key the run
+   * pinned at submit. Only "cosign:" exists; it is a closed set, not an
+   * extension point (AGENTS.md §13).
+   *
+   * @generated from field: string require_signed_by = 14;
+   */
+  requireSignedBy: string;
 };
 
 /**
