@@ -69,6 +69,8 @@ const (
 	// OrkflowServiceDeleteOrkflowProcedure is the fully-qualified name of the OrkflowService's
 	// DeleteOrkflow RPC.
 	OrkflowServiceDeleteOrkflowProcedure = "/orkstack.v1.OrkflowService/DeleteOrkflow"
+	// OrkflowServicePlanRunProcedure is the fully-qualified name of the OrkflowService's PlanRun RPC.
+	OrkflowServicePlanRunProcedure = "/orkstack.v1.OrkflowService/PlanRun"
 	// RunServiceSubmitRunProcedure is the fully-qualified name of the RunService's SubmitRun RPC.
 	RunServiceSubmitRunProcedure = "/orkstack.v1.RunService/SubmitRun"
 	// RunServiceGetRunProcedure is the fully-qualified name of the RunService's GetRun RPC.
@@ -213,6 +215,23 @@ type OrkflowServiceClient interface {
 	// have the version they started with — but any new run will fail with
 	// NotFound.
 	DeleteOrkflow(context.Context, *connect.Request[v1.DeleteOrkflowRequest]) (*connect.Response[v1.DeleteOrkflowResponse], error)
+	// PlanRun answers "for this input, which tasks of this definition would
+	// run, which would be skipped and why, and in what order" WITHOUT
+	// starting anything.
+	//
+	// It is a read in the shape of ValidateOrkflow: it resolves the same
+	// definition SubmitRun would (or prepares an unapplied document exactly
+	// as ValidateOrkflow does), applies the same declared input defaults, and
+	// walks the DAG with the interpreter's own condition evaluator — the
+	// same function RunWorkflow calls, not a copy of it. It writes no
+	// definition, no pointer, no execution, no idempotency claim, and no
+	// event; no run id is minted. There is no flag that makes it submit.
+	//
+	// A plan proves WIRING, never behaviour: a task reported RUNS is a task
+	// the interpreter would dispatch, not a task that would succeed. It is
+	// also not an admission check — pools, holds, and limits are SubmitRun's
+	// questions and are not asked here.
+	PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error)
 }
 
 // NewOrkflowServiceClient constructs a client for the orkstack.v1.OrkflowService service. By
@@ -274,6 +293,12 @@ func NewOrkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(orkflowServiceMethods.ByName("DeleteOrkflow")),
 			connect.WithClientOptions(opts...),
 		),
+		planRun: connect.NewClient[v1.PlanRunRequest, v1.PlanRunResponse](
+			httpClient,
+			baseURL+OrkflowServicePlanRunProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("PlanRun")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -287,6 +312,7 @@ type orkflowServiceClient struct {
 	setCurrentOrkflowVersion *connect.Client[v1.SetCurrentOrkflowVersionRequest, v1.SetCurrentOrkflowVersionResponse]
 	diffOrkflowVersions      *connect.Client[v1.DiffOrkflowVersionsRequest, v1.DiffOrkflowVersionsResponse]
 	deleteOrkflow            *connect.Client[v1.DeleteOrkflowRequest, v1.DeleteOrkflowResponse]
+	planRun                  *connect.Client[v1.PlanRunRequest, v1.PlanRunResponse]
 }
 
 // ValidateOrkflow calls orkstack.v1.OrkflowService.ValidateOrkflow.
@@ -327,6 +353,11 @@ func (c *orkflowServiceClient) DiffOrkflowVersions(ctx context.Context, req *con
 // DeleteOrkflow calls orkstack.v1.OrkflowService.DeleteOrkflow.
 func (c *orkflowServiceClient) DeleteOrkflow(ctx context.Context, req *connect.Request[v1.DeleteOrkflowRequest]) (*connect.Response[v1.DeleteOrkflowResponse], error) {
 	return c.deleteOrkflow.CallUnary(ctx, req)
+}
+
+// PlanRun calls orkstack.v1.OrkflowService.PlanRun.
+func (c *orkflowServiceClient) PlanRun(ctx context.Context, req *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error) {
+	return c.planRun.CallUnary(ctx, req)
 }
 
 // OrkflowServiceHandler is an implementation of the orkstack.v1.OrkflowService service.
@@ -376,6 +407,23 @@ type OrkflowServiceHandler interface {
 	// have the version they started with — but any new run will fail with
 	// NotFound.
 	DeleteOrkflow(context.Context, *connect.Request[v1.DeleteOrkflowRequest]) (*connect.Response[v1.DeleteOrkflowResponse], error)
+	// PlanRun answers "for this input, which tasks of this definition would
+	// run, which would be skipped and why, and in what order" WITHOUT
+	// starting anything.
+	//
+	// It is a read in the shape of ValidateOrkflow: it resolves the same
+	// definition SubmitRun would (or prepares an unapplied document exactly
+	// as ValidateOrkflow does), applies the same declared input defaults, and
+	// walks the DAG with the interpreter's own condition evaluator — the
+	// same function RunWorkflow calls, not a copy of it. It writes no
+	// definition, no pointer, no execution, no idempotency claim, and no
+	// event; no run id is minted. There is no flag that makes it submit.
+	//
+	// A plan proves WIRING, never behaviour: a task reported RUNS is a task
+	// the interpreter would dispatch, not a task that would succeed. It is
+	// also not an admission check — pools, holds, and limits are SubmitRun's
+	// questions and are not asked here.
+	PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error)
 }
 
 // NewOrkflowServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -433,6 +481,12 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 		connect.WithSchema(orkflowServiceMethods.ByName("DeleteOrkflow")),
 		connect.WithHandlerOptions(opts...),
 	)
+	orkflowServicePlanRunHandler := connect.NewUnaryHandler(
+		OrkflowServicePlanRunProcedure,
+		svc.PlanRun,
+		connect.WithSchema(orkflowServiceMethods.ByName("PlanRun")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.OrkflowService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case OrkflowServiceValidateOrkflowProcedure:
@@ -451,6 +505,8 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 			orkflowServiceDiffOrkflowVersionsHandler.ServeHTTP(w, r)
 		case OrkflowServiceDeleteOrkflowProcedure:
 			orkflowServiceDeleteOrkflowHandler.ServeHTTP(w, r)
+		case OrkflowServicePlanRunProcedure:
+			orkflowServicePlanRunHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -490,6 +546,10 @@ func (UnimplementedOrkflowServiceHandler) DiffOrkflowVersions(context.Context, *
 
 func (UnimplementedOrkflowServiceHandler) DeleteOrkflow(context.Context, *connect.Request[v1.DeleteOrkflowRequest]) (*connect.Response[v1.DeleteOrkflowResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.DeleteOrkflow is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.PlanRun is not implemented"))
 }
 
 // RunServiceClient is a client for the orkstack.v1.RunService service.
