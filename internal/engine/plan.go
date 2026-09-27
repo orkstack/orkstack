@@ -78,6 +78,55 @@ type RunPlan struct {
 	// omitempty, so a plan with none encodes exactly as it did before the
 	// field existed.
 	Telemetry *TelemetrySelection `json:"telemetry,omitempty"`
+
+	// ImagePolicy is the image policy in force for this run, or nil when the
+	// deployment configured none and the namespace names no signer. Decided
+	// at submit (internal/api.prepare) from the ImagePolicy document and the
+	// namespace, for the reason Limits and Telemetry are: both are state a
+	// deterministic workflow may not read (AGENTS.md §2.1), and every
+	// attempt of one task must be judged by one rule. It is copied onto
+	// every ExecuteTaskInput and is otherwise not read by workflow code.
+	// omitempty, so a plan with none encodes exactly as it did before the
+	// field existed.
+	ImagePolicy *ImagePolicySelection `json:"image_policy,omitempty"`
+}
+
+// ImagePolicySelection is the plan-side copy of
+// orkstack.v1.ImagePolicySelection, a plain Go type for the reason
+// TelemetrySelection is one: nesting a proto message inside RunPlan would
+// change how the whole plan is encoded.
+type ImagePolicySelection struct {
+	RequireDigest     bool     `json:"require_digest,omitempty"`
+	AllowedRegistries []string `json:"allowed_registries,omitempty"`
+	RequireSignedBy   string   `json:"require_signed_by,omitempty"`
+	SigningKeyPEM     string   `json:"signing_key_pem,omitempty"`
+}
+
+// Proto is nil-safe: a nil selection yields a nil message, so
+// ExecuteTaskInput.ImagePolicy stays unset for a run with no policy.
+func (s *ImagePolicySelection) Proto() *orkstackv1.ImagePolicySelection {
+	if s == nil {
+		return nil
+	}
+	return &orkstackv1.ImagePolicySelection{
+		RequireDigest:     s.RequireDigest,
+		AllowedRegistries: append([]string(nil), s.AllowedRegistries...),
+		RequireSignedBy:   s.RequireSignedBy,
+		SigningKeyPem:     s.SigningKeyPEM,
+	}
+}
+
+// ImagePolicySelectionFromProto is Proto's inverse, nil for nil.
+func ImagePolicySelectionFromProto(p *orkstackv1.ImagePolicySelection) *ImagePolicySelection {
+	if p == nil {
+		return nil
+	}
+	return &ImagePolicySelection{
+		RequireDigest:     p.GetRequireDigest(),
+		AllowedRegistries: append([]string(nil), p.GetAllowedRegistries()...),
+		RequireSignedBy:   p.GetRequireSignedBy(),
+		SigningKeyPEM:     p.GetSigningKeyPem(),
+	}
 }
 
 // WorkspaceLimits is the plan-side copy of orkstack.v1.WorkspaceLimits.

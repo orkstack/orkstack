@@ -109,3 +109,26 @@ func TestNamespaceSpecSummary_RendersAllowedSecretsOnlyWhenSet(t *testing.T) {
 		t.Fatalf("summary =\n  %s\nwant\n  %s", got, want)
 	}
 }
+
+// TestNamespaceSpecSummary_RendersRequireSignedByOnlyWhenSet:
+// require_signed_by= is rendered only when set, immediately after
+// run_retention=; an unrestricted namespace's summary is byte-identical to
+// what it rendered before the field existed.
+func TestNamespaceSpecSummary_RendersRequireSignedByOnlyWhenSet(t *testing.T) {
+	ns := &orkstackv1.Namespace{
+		Name:         "prod-payments",
+		DefaultPool:  "main",
+		AllowedPools: []string{"main"},
+		RunRetention: durationpb.New(168 * time.Hour),
+		Labels:       map[string]string{"team": "payments"},
+	}
+	const before = "default_pool=main allowed_pools=[main] run_retention=168h0m0s max_running=0 telemetry.sink=inherited labels={team=payments}"
+	if got := namespaceSpecSummary(ns); got != before {
+		t.Fatalf("unrestricted summary =\n  %s\nwant\n  %s", got, before)
+	}
+	ns.RequireSignedBy = "cosign:acme-release"
+	want := "default_pool=main allowed_pools=[main] run_retention=168h0m0s require_signed_by=cosign:acme-release max_running=0 telemetry.sink=inherited labels={team=payments}"
+	if got := namespaceSpecSummary(ns); got != want {
+		t.Fatalf("summary =\n  %s\nwant\n  %s", got, want)
+	}
+}

@@ -351,6 +351,16 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail: "max_run_retention=" + requested,
 		}
 	},
+	orkstackv1connect.SystemServiceUpdateImagePolicyProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UpdateImagePolicyRequest)
+		// Deployment-wide, as retention.update is. Keys are rendered by
+		// fingerprint, never as PEM (imagePolicySummary).
+		return auditEntry{
+			Action: "image_policy.update",
+			Target: "deployment",
+			Detail: imagePolicySummary(in.GetPolicy()),
+		}
+	},
 }
 
 // unauditedWrites are write RPCs deliberately NOT recorded, each with the
@@ -412,6 +422,12 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 		parts = append(parts, "allowed_secrets=["+strings.Join(allowed, " ")+"]")
 	}
 	parts = append(parts, "run_retention="+retentionLabel(ns.GetRunRetention()))
+	// Image policy (image-supply-chain-policy): require_signed_by= only when
+	// set, on the rule allowed_secrets= and hold= follow, so an unrestricted
+	// namespace's summary is byte-identical to before the field existed.
+	if signer := ns.GetRequireSignedBy(); signer != "" {
+		parts = append(parts, "require_signed_by="+signer)
+	}
 	// Admission (namespace-admission-control): hold= only when a hold is
 	// requested — released is the absence, as an accepting namespace is
 	// hold == nil — quoted so a reason can never end its own value early;

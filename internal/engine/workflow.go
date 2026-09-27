@@ -1313,6 +1313,11 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		// no selection produces a nil field here, unchanged from before this
 		// field existed.
 		Telemetry: s.plan.Telemetry.Proto(),
+		// Decided at SUBMIT from the ImagePolicy document and the namespace,
+		// carried on the plan like Limits and Telemetry. Nil-safe: a plan
+		// with no policy produces a nil field here, unchanged from before
+		// this field existed.
+		ImagePolicy: s.plan.ImagePolicy.Proto(),
 
 		// Set ONLY for a pinned task. An unpinned task's payload is therefore
 		// byte-identical to what it was before this field existed — protojson
