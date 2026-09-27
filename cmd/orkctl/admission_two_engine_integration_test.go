@@ -309,6 +309,9 @@ func (s *admissionStack) metricLines(ctx context.Context, t *testing.T, families
 func TestIntegration_AHoldSetOnOneReplicaRefusesSubmitsOnTheOther(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	// The audit read below is bounded to this test's own records: the shared
+	// bucket's default window can hold more than the scan budget.
+	since := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
 	s := newAdmissionStack(ctx, t, "hold")
 	defer s.writeTranscript(t, "admission-hold-two-replicas.txt")
 
@@ -385,7 +388,7 @@ func TestIntegration_AHoldSetOnOneReplicaRefusesSubmitsOnTheOther(t *testing.T) 
 	// The audit trail, read back through B, says why the door was closed and
 	// that it was reopened: the hold's namespace.update record names the
 	// reason, the release's has no hold= key, newest first.
-	listed, _ = s.cli(t, s.b, exitOK, "--json", "-n", s.namespace, "admin", "audit")
+	listed, _ = s.cli(t, s.b, exitOK, "--json", "-n", s.namespace, "admin", "audit", "--since", since)
 	audit := &orkstackv1.ListAuditRecordsResponse{}
 	if err := protojson.Unmarshal([]byte(listed), audit); err != nil {
 		t.Fatalf("admin audit --json is not a ListAuditRecordsResponse: %v\n%s", err, listed)

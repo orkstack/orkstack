@@ -342,6 +342,9 @@ func TestIntegration_ASecretPolicyRefusesValidateAndApplyWithTheFieldPath(t *tes
 func TestIntegration_AListTightenedOnOneReplicaRefusesASubmitOnTheOther(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	// The audit read below is bounded to this test's own records: the shared
+	// bucket's default window can hold more than the scan budget.
+	since := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
 	s := newSecretStack(ctx, t, "tighten")
 	defer s.writeTranscript(t, "secret-policy-two-replicas.txt")
 
@@ -369,7 +372,7 @@ func TestIntegration_AListTightenedOnOneReplicaRefusesASubmitOnTheOther(t *testi
 		t.Fatalf("run get via B does not show the Orker's refusal:\n%s", got)
 	}
 
-	listed, _ := s.cli(t, s.b, exitOK, "--json", "-n", s.namespace, "admin", "audit")
+	listed, _ := s.cli(t, s.b, exitOK, "--json", "-n", s.namespace, "admin", "audit", "--since", since)
 	audit := &orkstackv1.ListAuditRecordsResponse{}
 	if err := protojson.Unmarshal([]byte(listed), audit); err != nil {
 		t.Fatalf("admin audit --json is not a ListAuditRecordsResponse: %v\n%s", err, listed)
