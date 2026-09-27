@@ -71,6 +71,10 @@ export interface NamespaceFormValues {
 	holdReason?: string;
 	// maxRunning is the raw text of the cap field: blank or 0 is unlimited.
 	maxRunning?: string;
+	// allowedSecretsText is the raw textarea contents, one scheme:pattern per
+	// line: blank means unrestricted (send an empty list), a deliberate
+	// choice rather than an omission.
+	allowedSecretsText?: string;
 }
 
 export interface NamespaceFormErrors {
@@ -81,6 +85,7 @@ export interface NamespaceFormErrors {
 	telemetryAttributes?: string;
 	holdReason?: string;
 	maxRunning?: string;
+	allowedSecrets?: string;
 }
 
 // MAX_HOLD_REASON_BYTES mirrors pkg/artifacts/namespace_store.go's
@@ -261,8 +266,108 @@ export function validateNamespaceForm(
 		const err = maxRunningError(values.maxRunning);
 		if (err) errors.maxRunning = err;
 	}
+	if (values.allowedSecretsText !== undefined) {
+		const err = secretPatternsError(parseSecretPatternLines(values.allowedSecretsText));
+		if (err) errors.allowedSecrets = err;
+	}
 
 	return errors;
+}
+
+// MAX_SECRET_PATTERNS, MAX_SECRET_PATTERN_BYTES and MAX_SECRET_SCHEME_BYTES
+// mirror internal/dsl's MaxSecretPatterns, MaxSecretPatternBytes and
+// MaxSecretSchemeBytes: the bounds on Namespace.allowed_secrets that
+// ORK_ORKER_SECRET_ALLOW shares.
+export const MAX_SECRET_PATTERNS = 32;
+export const MAX_SECRET_PATTERN_BYTES = 256;
+export const MAX_SECRET_SCHEME_BYTES = 16;
+
+// SECRET_SCHEME_PATTERN mirrors the scheme rule of internal/dsl.ValidSecretPattern.
+export const SECRET_SCHEME_PATTERN = /^[a-z][a-z0-9]*$/;
+
+// parseSecretPatternLines turns the allowed-secrets textarea into the list a
+// request carries: one entry per line, trimmed, blank lines dropped. It is
+// parseAttributeLines' shape rather than parsePoolList's, because a pattern
+// may not contain whitespace but the separator is the line.
+export function parseSecretPatternLines(text: string): string[] {
+	return text
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+}
+
+function fileSegmentRule(path: string): string | null {
+	for (const segment of path.slice(1).split('/')) {
+		if (segment === '') return 'an empty segment';
+		if (segment === '.') return 'a "." segment';
+		if (segment === '..') return 'a ".." segment';
+	}
+	return null;
+}
+
+// secretPatternError restates internal/dsl.ValidSecretPattern, in its order:
+// the whole entry's bound first, then "scheme:pattern" split at the first
+// ":", a literal lowercase scheme, a pattern with no control character,
+// whitespace or ",", and for "file:" an absolute path with no empty, "." or
+// ".." segment and no trailing "/". "*" is the only wildcard; every other
+// character is literal, so nothing else is checked. A prefilter, never a
+// gate: the registry refuses the same entries and its sentence is shown
+// verbatim.
+export function secretPatternError(entry: string): string | null {
+	const quoted = JSON.stringify(entry);
+	const bytes = new TextEncoder().encode(entry).length;
+	if (bytes > MAX_SECRET_PATTERN_BYTES) {
+		return `secret pattern ${quoted} is ${bytes} bytes, over the ${MAX_SECRET_PATTERN_BYTES}-byte limit`;
+	}
+	const colon = entry.indexOf(':');
+	if (colon < 0) {
+		return `secret pattern ${quoted} must be scheme:pattern, with a ":" after the scheme (e.g. "env:SANDBOX_*")`;
+	}
+	const scheme = entry.slice(0, colon);
+	const pattern = entry.slice(colon + 1);
+	if (scheme === '') return `secret pattern ${quoted} has an empty scheme before the ":"`;
+	if (pattern === '') return `secret pattern ${quoted} has an empty pattern after the ":"`;
+	if (new TextEncoder().encode(scheme).length > MAX_SECRET_SCHEME_BYTES) {
+		return `secret pattern ${quoted}: scheme ${JSON.stringify(scheme)} is over the ${MAX_SECRET_SCHEME_BYTES}-byte limit`;
+	}
+	if (!SECRET_SCHEME_PATTERN.test(scheme)) {
+		return `secret pattern ${quoted}: scheme ${JSON.stringify(scheme)} must match ^[a-z][a-z0-9]*$ (a scheme is literal)`;
+	}
+	for (const ch of pattern) {
+		const code = ch.codePointAt(0) ?? 0;
+		if (code < 0x20 || code === 0x7f) return `secret pattern ${quoted} contains a control character`;
+		if (/\s/u.test(ch)) return `secret pattern ${quoted} contains whitespace`;
+		if (ch === ',') return `secret pattern ${quoted} contains ",", the list separator`;
+	}
+	if (scheme === 'file') {
+		if (!pattern.startsWith('/')) return `secret pattern ${quoted}: a "file:" pattern must begin with "/"`;
+		if (pattern.endsWith('/')) return `secret pattern ${quoted}: a "file:" pattern must not end in "/"`;
+		const rule = fileSegmentRule(pattern);
+		if (rule) {
+			return `secret pattern ${quoted}: a "file:" pattern has ${rule}, which is refused rather than normalized`;
+		}
+	}
+	return null;
+}
+
+// secretPatternsError is internal/dsl.ValidSecretPatterns: the count bound,
+// then the first malformed entry, then the first byte-equal duplicate — one
+// message, the shape every other field's check here follows.
+export function secretPatternsError(entries: string[]): string | null {
+	if (entries.length > MAX_SECRET_PATTERNS) {
+		return `${entries.length} secret patterns exceed the ${MAX_SECRET_PATTERNS}-entry limit`;
+	}
+	const seen = new Map<string, number>();
+	for (const [i, entry] of entries.entries()) {
+		const err = secretPatternError(entry);
+		if (err) return `line ${i + 1}: ${err}`;
+		const first = seen.get(entry);
+		if (first !== undefined) {
+			return `line ${i + 1}: secret pattern ${JSON.stringify(entry)} is a duplicate of line ${first + 1}`;
+		}
+		seen.set(entry, i);
+	}
+	return null;
 }
 
 // parsePoolList turns the comma/whitespace-separated text a form field holds

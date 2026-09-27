@@ -1,0 +1,10 @@
+orker      orker-7f3a
+pool       build
+build      2026.08.16-a1b2
+state      cordoned
+reason     "CVE-2026-1234 runtime patch"
+since      2026-09-22T08:52:10Z
+tasks      2
+pins       1/2
+last seen  2026-09-22T09:14:02Z
+pin "build" of run ork-20260922-1 since 2026-09-22T07:52:10Z expires 2026-09-22T11:26:40Z

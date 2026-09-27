@@ -261,7 +261,7 @@ Every failure is the error envelope `webhookErrorEnvelope` already uses:
 | Token does not match the record | 401 | `unauthenticated` |
 | Unknown or deleted id | 404 | `not_found` |
 | Trigger store unreadable | 500 | `storage_error` |
-| Body is not a JSON object, or exceeds the bound | 400 | `invalid_argument` |
+| Body is not a JSON object, or exceeds the bound, or the stored definition names a secret source its namespace does not allow | 400 | `invalid_argument` |
 | Orkflow or pinned version no longer exists | 404 | `not_found` |
 | A resolved pool has no live Orker, or no run starter is configured | 412 | `failed_precondition` |
 | The namespace is on hold, or at its `max_running` (namespace admission) | 412 | `failed_precondition` |

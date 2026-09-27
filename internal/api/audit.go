@@ -323,6 +323,22 @@ var auditedProcedures = map[string]auditExtractor{
 		name := artifacts.ResolveNamespace(in.GetName())
 		return auditEntry{Action: "namespace.delete", Namespace: name, Target: name}
 	},
+	orkstackv1connect.ActivityServiceCordonOrkerProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.CordonOrkerRequest)
+		// Deployment-wide, as webhook.register and retention.update are: an
+		// Orker belongs to no namespace.
+		entry := auditEntry{Action: "orker.uncordon", Target: in.GetOrkerId()}
+		var parts []string
+		if in.GetCordoned() {
+			entry.Action = "orker.cordon"
+			parts = append(parts, "reason="+strconv.Quote(in.GetReason()))
+		}
+		if out, ok := resp.(*orkstackv1.CordonOrkerResponse); ok && out != nil && out.GetOrker().GetPool() != "" {
+			parts = append(parts, "pool="+out.GetOrker().GetPool())
+		}
+		entry.Detail = strings.Join(parts, " ")
+		return entry
+	},
 	orkstackv1connect.SystemServiceUpdateRetentionPolicyProcedure: func(req, _ proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.UpdateRetentionPolicyRequest)
 		requested := "-"
@@ -384,8 +400,18 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 	parts := []string{
 		"default_pool=" + engine.DefaultPoolFor(ns),
 		"allowed_pools=[" + strings.Join(ns.GetAllowedPools(), " ") + "]",
-		"run_retention=" + retentionLabel(ns.GetRunRetention()),
 	}
+	// Secret policy (tenant-scoped-secret-policy): allowed_secrets= only when
+	// the list is non-empty, so an unrestricted namespace's summary is
+	// byte-identical to what it was before the field existed; clearing the
+	// list is the record with no key. Entries are in stored order, the
+	// allowed_pools rendering, and ahead of run_retention= so a truncation
+	// cuts a long labels map, never a pattern. Names only: a pattern is a
+	// locator the operator wrote, never a value.
+	if allowed := ns.GetAllowedSecrets(); len(allowed) > 0 {
+		parts = append(parts, "allowed_secrets=["+strings.Join(allowed, " ")+"]")
+	}
+	parts = append(parts, "run_retention="+retentionLabel(ns.GetRunRetention()))
 	// Admission (namespace-admission-control): hold= only when a hold is
 	// requested — released is the absence, as an accepting namespace is
 	// hold == nil — quoted so a reason can never end its own value early;

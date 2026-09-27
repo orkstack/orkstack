@@ -309,7 +309,7 @@ then the variable it becomes.
 | `pool.queue` | `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
 | `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file` → `ghcr.io/orkstack/activity-*:0.1` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
 | `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
-| `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one |
+| `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one — across the whole deployment, not only on one host: it is also the Orker's address for `orkctl orker` (1–200 bytes, no whitespace or control characters; refused at boot otherwise) |
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
 | `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI |
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
@@ -319,6 +319,7 @@ then the variable it becomes.
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
+| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme, as today. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it. The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable |
 | `orker.log.flush_bytes` | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
@@ -423,6 +424,11 @@ covers the deprecated `UseBuildIDForVersioning` flag. The combination OrkStack
 produces is therefore accepted and behaves as above, but it is not a supported
 upstream configuration — which is why that integration test, not the doc
 comment, is the contract, and why it runs on every proof.
+
+§3 step 5's `Drained` is the **version**-scoped wait. Its **host**-scoped
+complement is `orkctl orker drain` (see "Removing an Orker safely" in §5):
+cordon one Orker so it opens no new pin, and wait until its open pins have
+finished before the process is stopped.
 
 ### The bucket stops being optional at the second replica
 
@@ -1236,8 +1242,8 @@ Runs already pinned to a version still need that version's workers.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
-Seven reads answer every operational question about a deployment, and each is
-available from the CLI and over Connect. Five of them are answered from the
+Eight reads answer every operational question about a deployment, and each is
+available from the CLI and over Connect. Six of them are answered from the
 cluster or the bucket, so **any replica answers them and they all answer the
 same** (`AGENTS.md` §7). Two — system information and the activity catalog —
 are deliberately not.
@@ -1251,6 +1257,7 @@ are deliberately not.
 | activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests at apply time |
 | audit trail | `orkctl admin audit` | the audit records in the bucket (`metadata/audit/`) — **any replica answers**, for writes any replica recorded |
 | webhook deliveries | `orkctl webhook deliveries \| delivery \| redeliver` | the delivery records in the bucket (`metadata/deliveries/`) — **any replica answers**, for deliveries any replica made |
+| Orker inventory | `orkctl orker list \| get \| cordon \| uncordon \| drain` | the cluster's poller information, plus each Orker itself — **any replica answers**; nothing stores an Orker |
 
 `orkctl admin info` describes **the replica that answered**, and it says so in
 its own output. Behind a load balancer that is whichever replica took the
@@ -1352,6 +1359,75 @@ The whole surface, answered by a second replica that started nothing — no
 namespace registered, no orkflow applied, no run — is proven live in
 `TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface`
 (`cmd/orkctl/admin_surface_integration_test.go`).
+
+### Removing an Orker safely: cordon and drain
+
+A pin never moves (`AGENTS.md` §5): stopping a pin host fails every run whose
+pin it holds with `PIN_HOST_LOST`, and restarting it loses the pin just the
+same. `orkctl orker` is the supported way to take one host out of service
+without inflicting that:
+
+```bash
+orkctl orker list --pool build
+orkctl orker cordon orker-7f3a --reason "CVE-2026-1234 runtime patch"
+orkctl orker drain  orker-7f3a --timeout 4h --watch
+```
+
+```text
+$ orkctl orker drain orker-7f3a --timeout 4h --watch
+cordoned orker-7f3a: "orkctl orker drain"
+waiting for 2 tasks and 1 pin to finish…
+  09:15:40  2 tasks, 1 pin     pin "build" of run ork-20260922-…  expires in 2h11m
+  10:02:18  0 tasks, 1 pin     pin "build" of run ork-20260922-…  expires in 1h24m
+  11:26:51  0 tasks, 0 pins
+orker-7f3a is drained; it is safe to stop this process.
+```
+
+Stop the process when `drain` exits `0`. Exit `4` means `--timeout` passed
+with work still on the host, printed; stopping the process then fails the open
+pins' runs with `PIN_HOST_LOST`, as the output says. Exit `1` means the Orker
+stopped answering, or was uncordoned or restarted — a cordon is a flag in the
+Orker **process** and nowhere else, so a restarted Orker comes back ready.
+
+What a cordon does, precisely:
+
+- **New tasks.** The Orker's activity slot supplier stops reserving slots, so
+  its pool pollers stop polling. A poller already inside a long poll when the
+  cordon lands may still be handed one task; with the SDK's two activity
+  pollers, at most two tasks can land on an Orker after `CordonOrker`
+  returned, each within about a minute. They are ordinary in-flight tasks:
+  `running_tasks` counts them and drain waits for them.
+- **New pins.** The SDK's session creation activity is refused with a
+  retryable `ORKER_CORDONED`, and the SDK retries the creation on another
+  host. When **every** pin host of the pool is cordoned, the refusal turns
+  non-retryable after 45 attempts — about five minutes, the time a saturated
+  pool takes — and the triggering task fails `PIN_UNAVAILABLE`, its message
+  naming the cordon and its reason.
+- **Everything in flight** is untouched: running containers finish, and open
+  pins keep executing their remaining members, their release, and their
+  completion on this host.
+- **The pool probe.** A cordoned Orker stops answering `DescribeOrker` on its
+  pool channel (only its own control channel still answers), so a pool whose
+  every Orker is cordoned reports its poller-derived count for the freshness
+  window and zero after it.
+
+`SIGTERM` is unchanged: it stops polling and cancels in-flight work as before.
+An operator who wants in-flight work to finish first cordons and drains; the
+Orker does not cordon itself on `SIGTERM`.
+
+`ORK_ORKER_ID` must be unique across the **whole deployment**: it is the
+Orker's Temporal worker identity and names its control channel. Two Orkers
+sharing one show as a single row whose `unavailable_reason` names the
+collision, and a cordon could land on either. The derived default
+(`<host>-<hash of the work root>`) is unique by construction. Each Orker holds
+two more idle long polls against the cluster (its control and presence
+channels) than before this capability existed. An Orker of an older release
+polls neither: `orkctl pool list` still counts it, `orkctl orker list` does
+not list it, and `orkctl orker cordon` answers `NotFound` for it.
+
+Every cordon and uncordon is an audit record (`orker.cordon`,
+`orker.uncordon`, target the Orker id, the reason in its detail, no
+namespace).
 
 ### Namespace admission: `hold` and `max_running`
 
@@ -1540,6 +1616,46 @@ moves retirement from whenever the (now-hidden) backstop TTL would have fired
 to the moment each run actually crosses its own namespace's retention —
 sooner, by up to the enforcement margin, and namespace-aware for the first
 time.
+
+### Secrets on a shared pool
+
+A task names a secret by its `source:` (`env:NAME` or `file:/path`), and the
+Orker that runs it resolves that name from its own environment or
+filesystem. On a pool several namespaces share, bound those names in two
+places; a source must pass **both**:
+
+- **The operator's floor, per Orker:** `orker.secret_allow` /
+  `ORK_ORKER_SECRET_ALLOW`, comma-separated `scheme:pattern` entries such as
+  `env:SANDBOX_*,file:/etc/orkstack/secrets/sandbox/*`. It is checked by the
+  process that reads the value, at dispatch, before the image is pulled; a
+  source outside it fails the task `SECRET_NOT_PERMITTED` (a
+  `ContractViolation`, never retried). Empty resolves every source of an
+  allowed scheme, as before this setting existed. A malformed entry, or one
+  naming a scheme outside `orker.secret_schemes`, stops the Orker at boot.
+- **The tenant's list, per namespace:** `orkctl namespace update NAME
+  --allow-secret 'env:SANDBOX_*'` (or Admin → Namespaces). It is enforced by
+  the engine at validate and apply, as an issue on
+  `tasks[i].secrets[j].source`, and again at every submit — `run submit`,
+  `run again`, the UI, a trigger invoke — so a definition applied before the
+  list existed is refused at its next submit. It is never retroactive: a run
+  already accepted finishes on the definition it pinned; stop one with
+  `orkctl run cancel`. Empty means unrestricted.
+
+A namespace can therefore only ever narrow what its Orkers permit. The grammar
+is deliberately small: a literal scheme, and `*` as the one wildcard, which
+never crosses `/`; `?`, `[…]` and `\` are ordinary characters. A `file:`
+source with a `..`, `.` or empty segment is refused outright rather than
+normalized, so `file:/etc/orkstack/secrets/sandbox/../payments/db` never sits
+inside `file:/etc/orkstack/secrets/sandbox/*`. The policy bounds the NAME a
+tenant may write, not the filesystem behind it: a symlink placed under a
+tenant's directory is a grant the operator made, and the Orker reads the path
+as it always has. Nothing here stores, logs or compares a secret value;
+refusals carry the source string only.
+
+During a rolling upgrade the namespace list is enforced only by engine
+replicas already at the release that added it; the Orker floor is unaffected
+by the rollout. An older `orkctl` round-tripping a namespace through `update`
+drops the list — run the `orkctl` of the release.
 
 ---
 

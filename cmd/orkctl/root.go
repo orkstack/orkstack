@@ -24,6 +24,8 @@ const (
 	exitError       = 1
 	exitRunFailed   = 2
 	exitRunCanceled = 3
+	// exitDrainTimedOut (4, orker.go) is `orkctl orker drain` timing out
+	// with work still on the Orker.
 )
 
 // defaultServer is used when neither --server nor ORK_SERVER is set.
@@ -126,6 +128,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newApplyCommand(g),
 		newNamespaceCommand(g),
 		newOrkflowCommand(g),
+		newOrkerCommand(g),
 		newPoolCommand(g),
 		newRunCommand(g),
 		newActivityCommand(g),

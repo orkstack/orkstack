@@ -180,6 +180,11 @@ type Config struct {
 	// (§6.5).
 	Orkers OrkerDescriber
 
+	// Fleet answers ActivityService.ListOrkers and CordonOrker: the presence
+	// channel's poller records and one Orker's own control channel
+	// (orker-cordon-drain §6). Nil answers both Unavailable.
+	Fleet engine.OrkerFleet
+
 	// Catalog is the deployment's activity table (§4.2): the short names
 	// `uses:` may spell. Nil selects dsl.BuiltinActivityCatalog.
 	Catalog dsl.Catalog
@@ -289,6 +294,9 @@ type Service struct {
 	bus        *engine.EventBus
 	activities ActivityLister
 	orkers     OrkerDescriber
+	// fleet is the Orker inventory and cordon seam. It holds no Orker list:
+	// every answer is read from the cluster and from the Orker itself.
+	fleet engine.OrkerFleet
 	// catalog and resolver are the two halves of §4.1: the catalog turns a
 	// short name into a reference, and the resolver turns a reference into a
 	// digest. Both live here because ApplyOrkflow is where §4.3 puts them.
@@ -362,6 +370,7 @@ func NewService(cfg Config) *Service {
 		bus:               cfg.Bus,
 		activities:        cfg.Activities,
 		orkers:            cfg.Orkers,
+		fleet:             cfg.Fleet,
 		catalog:           cfg.Catalog,
 		resolver:          cfg.Resolver,
 		system:            cfg.System,
@@ -589,7 +598,15 @@ func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orks
 		if errors.As(err, &requestField) {
 			field = requestField.Field
 		}
-		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{Issues: []*orkstackv1.ValidationIssue{{Field: field, Message: err.Error(), Severity: orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR}}}), nil
+		// The issue's message is the refusal's own sentence. The Connect code
+		// is already said by the severity, and a "invalid_argument: " prefix
+		// in front of a field-anchored issue only pushes the sentence right.
+		message := err.Error()
+		var connectErr *connect.Error
+		if errors.As(err, &connectErr) {
+			message = connectErr.Message()
+		}
+		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{Issues: []*orkstackv1.ValidationIssue{{Field: field, Message: message, Severity: orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR}}}), nil
 	}
 	return nil, err
 }
@@ -684,6 +701,17 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 		return nil, nil, err
 	}
 	if err := s.pools.CheckAllowedPools(ns, wf); err != nil {
+		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// The namespace's secret policy, with the file in hand: anchored to the
+	// exact tasks[i].secrets[j].source so validate reports it as a field
+	// issue. Plan repeats it at submit, the gate no client can bypass.
+	if err := engine.CheckAllowedSecrets(ns, wf); err != nil {
+		var refused *engine.SecretNotAllowedError
+		if errors.As(err, &refused) {
+			return nil, nil, connect.NewError(connect.CodeInvalidArgument,
+				&validationFieldError{Field: refused.Field(), Err: err})
+		}
 		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	wf.Namespace = ns.GetName()
@@ -1158,6 +1186,12 @@ func (s *Service) pinDurabilityPlan(plan *engine.RunPlan) error {
 func poolPlanError(err error) error {
 	var notAllowed *engine.PoolNotAllowedError
 	if errors.As(err, &notAllowed) {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// A secret source the namespace does not allow is the caller's document
+	// to fix, exactly as a forbidden pool is.
+	var secretRefused *engine.SecretNotAllowedError
+	if errors.As(err, &secretRefused) {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	// A pin whose tasks resolved onto two pools is the caller's own document

@@ -11,8 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // WorkRootVar overrides the parent directory for per-attempt workspaces.
@@ -110,6 +115,15 @@ type Activities struct {
 	// identityLock is held for the process's lifetime once Boot claims this
 	// Orker's identity, so no second live Orker can reap by the same label.
 	identityLock *os.File
+	// cordon is this process's cordon flag (cordon.go): the only place it
+	// exists.
+	cordon *Cordon
+	// running counts the ExecuteTask activities in flight, measured by the
+	// cordon interceptor at the SDK seam (running_tasks).
+	running atomic.Int32
+	// pins is the set of sessions this Orker accepted and has not completed
+	// (open_pins), maintained by the same interceptor.
+	pins *openPins
 }
 
 // NewActivities builds the activity set with environment-derived defaults.
@@ -172,6 +186,8 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		pool:    opts.Pool,
 		maxConc: opts.MaxConcurrent,
 		maxPins: opts.MaxPins,
+		cordon:  NewCordon(),
+		pins:    newOpenPins(),
 	}
 }
 
@@ -208,7 +224,17 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		SecurityProfile:   a.dispatcher.Policy.ProfileID(),
 		MaxConcurrent:     a.maxConc,
 		MaxConcurrentPins: a.maxPins,
+		RunningTasks:      a.running.Load(),
 	}
+	// The cordon and the load: one lock read, one atomic load and — only when
+	// a pin is open — one ReadDir of the work root.
+	if cordoned, reason, since := a.cordon.State(); cordoned {
+		result.Cordoned = true
+		result.CordonReason = reason
+		result.CordonedAt = timestamppb.New(since)
+	}
+	result.Pins = a.describePins()
+	result.OpenPins = int32(len(result.Pins))
 	if a.dispatcher.Runtime != nil {
 		info, err := a.dispatcher.Runtime.Describe(ctx)
 		if err != nil {
@@ -350,6 +376,13 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// (§9.3, AGENTS.md §6).
 	if err := a.dispatcher.Policy.Validate(); err != nil {
 		return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
+	}
+	// An id is what names this Orker's control channel (task.QueueForOrker),
+	// so an id that cannot name one refuses boot here, naming the variable,
+	// rather than leaving an Orker nobody can cordon.
+	if err := task.ValidOrkerID(a.dispatcher.OrkerID); err != nil {
+		return fmt.Errorf("ORKER_ID_INVALID: %s=%q must be 1–200 bytes with no whitespace "+
+			"or control characters: %w", OrkerIDVar, a.dispatcher.OrkerID, err)
 	}
 	root := a.dispatcher.WorkRoot
 	if root == "" {

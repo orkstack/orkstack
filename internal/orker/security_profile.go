@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // Network modes. Exactly two exist, and named Orker-defined profiles are
@@ -37,6 +38,7 @@ const (
 	TmpfsBytesVar    = "ORK_ORKER_TMPFS_BYTES"
 	ForceUserVar     = "ORK_ORKER_FORCE_USER"
 	SecretSchemesVar = "ORK_ORKER_SECRET_SCHEMES"
+	SecretAllowVar   = "ORK_ORKER_SECRET_ALLOW"
 )
 
 // Policy defaults. None of them is unlimited: a workload that requested
@@ -95,6 +97,17 @@ type SecurityPolicy struct {
 	// SecretSchemes are the SecretRef.source schemes this Orker resolves. An
 	// unknown scheme is refused rather than ignored (§9.4).
 	SecretSchemes []string
+	// SecretAllow is the floor of SecretRef.source values this Orker
+	// resolves, as scheme:pattern entries in the grammar
+	// internal/dsl.ValidSecretPattern states. Empty means every source of an
+	// allowed scheme, which is what every Orker resolves today. It is the
+	// operator's half of the policy Namespace.allowed_secrets is the tenant's
+	// half of, and it composes with that list by intersection: a source must
+	// pass both, so a namespace can only narrow what its Orkers permit. It is
+	// checked here, by the process that reads the value, because the Orker
+	// is the security boundary (AGENTS.md §2.3) and trusts no caller to have
+	// checked first.
+	SecretAllow []string
 }
 
 // DefaultSecurityPolicy returns the policy an Orker enforces with no operator
@@ -153,6 +166,15 @@ func SecurityPolicyFromEnv() SecurityPolicy {
 		}
 		policy.SecretSchemes = schemes
 	}
+	if v := strings.TrimSpace(os.Getenv(SecretAllowVar)); v != "" {
+		var allow []string
+		for _, entry := range strings.Split(v, ",") {
+			if entry = strings.TrimSpace(entry); entry != "" {
+				allow = append(allow, entry)
+			}
+		}
+		policy.SecretAllow = allow
+	}
 	return policy
 }
 
@@ -184,6 +206,36 @@ func (p SecurityPolicy) AllowsSecretScheme(scheme string) bool {
 	return false
 }
 
+// AllowsSecretSource reports whether this Orker's floor permits a source:
+// nil when SecretAllow is empty or the source matches, otherwise the
+// *dsl.SecretSourceRefusal for the caller to wrap with its coordinates.
+func (p SecurityPolicy) AllowsSecretSource(source string) error {
+	if len(p.SecretAllow) == 0 {
+		return nil
+	}
+	return dsl.CheckSecretSource(p.SecretAllow, source)
+}
+
+// validateSecretAllow holds the floor to the shared grammar and to this
+// Orker's own schemes. A floor naming a scheme this process never resolves
+// is an operator typo that would otherwise silently permit nothing of that
+// scheme, and "permits nothing" and "was never applied" must not be the same
+// boot log.
+func (p SecurityPolicy) validateSecretAllow() error {
+	if err := dsl.ValidSecretPatterns(p.SecretAllow); err != nil {
+		return fmt.Errorf("%s: %w", SecretAllowVar, err)
+	}
+	for _, entry := range p.SecretAllow {
+		scheme, _, _ := strings.Cut(entry, ":")
+		if !p.AllowsSecretScheme(scheme) {
+			return fmt.Errorf("%s entry %q names scheme %q, which %s (%s) does not resolve; "+
+				"add the scheme there or drop the entry", SecretAllowVar, entry, scheme,
+				SecretSchemesVar, strings.Join(p.SecretSchemes, ", "))
+		}
+	}
+	return nil
+}
+
 // Validate refuses a policy an operator cannot have meant.
 //
 // It exists because an unreadable cap must never pass for an absent one: were
@@ -199,6 +251,9 @@ func (p SecurityPolicy) AllowsSecretScheme(scheme string) bool {
 func (p SecurityPolicy) Validate() error {
 	if p.configErr != nil {
 		return p.configErr
+	}
+	if err := p.validateSecretAllow(); err != nil {
+		return err
 	}
 	capCPU, err := parseCPU(p.MaxCPU)
 	if err != nil {

@@ -3,10 +3,13 @@ import {
 	DEFAULT_POOL_NAME,
 	holdReasonError,
 	MAX_HOLD_REASON_BYTES,
+	MAX_SECRET_PATTERNS,
 	MAX_TELEMETRY_ATTRIBUTES,
 	maxRunningError,
 	parseAttributeLines,
 	parsePoolList,
+	parseSecretPatternLines,
+	secretPatternError,
 	slugError,
 	telemetryAttributesError,
 	validateNamespaceForm
@@ -282,4 +285,83 @@ test('validateNamespaceForm reports holdReason and maxRunning', () => {
 	});
 	expect(clean.holdReason).toBe(undefined);
 	expect(clean.maxRunning).toBe(undefined);
+});
+
+// The secret-pattern rule restates internal/dsl.ValidSecretPattern. The
+// refusal rows below are the Go test's own (internal/dsl/secret_policy_test.go,
+// TestValidSecretPattern_RefusesEveryMalformedShape), copied as literals the way
+// SLUG_PATTERN is restated, and the accepted rows are every pattern of the
+// shared vector table.
+test('parseSecretPatternLines trims each line and drops blank ones', () => {
+	expect(parseSecretPatternLines('')).toEqual([]);
+	expect(parseSecretPatternLines('  env:SANDBOX_*  \n\n\tfile:/etc/orkstack/secrets/sandbox/*\n  \n')).toEqual([
+		'env:SANDBOX_*',
+		'file:/etc/orkstack/secrets/sandbox/*'
+	]);
+});
+
+test('secretPatternError refuses every shape the Go rule refuses', () => {
+	const long = 'abcdefghijklmnop:' + 'A'.repeat(240); // 257 bytes, 16-byte scheme
+	const refusals: [string, string][] = [
+		[long, '256-byte'],
+		['envX', '":"'],
+		[':X', 'empty scheme'],
+		['env:', 'empty pattern'],
+		['abcdefghijklmnopq:X', '16-byte'],
+		['en*v:X', '^[a-z][a-z0-9]*$'],
+		['Env:X', '^[a-z][a-z0-9]*$'],
+		['env:A,B', '","'],
+		['env:A B', 'whitespace'],
+		['env:A\tB', 'control'],
+		['env:A\u007fB', 'control'],
+		['file:relative', 'begin with "/"'],
+		['file:/a/../b', '".."'],
+		['file:/a/./b', '"."'],
+		['file:/a//b', 'empty segment'],
+		['file:/a/', 'end in "/"']
+	];
+	for (const [entry, fragment] of refusals) {
+		const err = secretPatternError(entry);
+		expect(err).not.toBe(null);
+		expect(err).toContain(fragment);
+		expect(err).toContain(JSON.stringify(entry));
+	}
+	// The total bound is checked first, before either half.
+	expect(secretPatternError(long)).not.toContain('scheme');
+});
+
+test('secretPatternError accepts every permitted pattern of the shared vectors', () => {
+	for (const entry of [
+		'env:SANDBOX_*',
+		'env:*',
+		'file:/etc/orkstack/secrets/sandbox/*',
+		'file:/etc/*/secrets/sandbox/*',
+		'env:DB?',
+		'env:A..B',
+		'env:DB[a-z]',
+		'env:DB\\*',
+		'vault:x',
+		'file:/etc/*/*',
+		'abcdefghijklmnop:' + 'A'.repeat(239)
+	]) {
+		expect(secretPatternError(entry)).toBe(null);
+	}
+});
+
+test('validateNamespaceForm reports the first bad secret, a duplicate and the 33-entry case', () => {
+	const base = { name: 'sandbox', defaultPool: '', allowedPools: [] as string[] };
+	expect(validateNamespaceForm({ ...base, allowedSecretsText: '' }).allowedSecrets).toBe(undefined);
+	expect(validateNamespaceForm({ ...base, allowedSecretsText: 'env:SANDBOX_*\nfile:/etc/x/*' }).allowedSecrets).toBe(
+		undefined
+	);
+	expect(
+		validateNamespaceForm({ ...base, allowedSecretsText: 'env:SANDBOX_*\nfile:/a/../b\nEnv:X' }).allowedSecrets
+	).toContain('"file:/a/../b"');
+	expect(
+		validateNamespaceForm({ ...base, allowedSecretsText: 'env:SANDBOX_*\nenv:SANDBOX_*' }).allowedSecrets
+	).toContain('duplicate');
+	const many = Array.from({ length: MAX_SECRET_PATTERNS + 1 }, (_, i) => `env:P${i}_*`).join('\n');
+	expect(validateNamespaceForm({ ...base, allowedSecretsText: many }).allowedSecrets).toContain('33');
+	const exactly = Array.from({ length: MAX_SECRET_PATTERNS }, (_, i) => `env:P${i}_*`).join('\n');
+	expect(validateNamespaceForm({ ...base, allowedSecretsText: exactly }).allowedSecrets).toBe(undefined);
 });

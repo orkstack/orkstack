@@ -115,6 +115,32 @@ message Namespace {
   // that is occasionally one over is worth far more than a lock service. A
   // namespace that sets 0 never pays the read at all.
   int32 max_running = 12;
+
+  // allowed_secrets bounds which SecretRef.source values a task of this
+  // namespace may resolve. Empty means UNRESTRICTED, which is what every
+  // namespace has today and therefore what an upgrade preserves — a
+  // deployment that sets none behaves exactly as it did before this field
+  // existed. It bounds NAMES: nothing that reads this field stores,
+  // compares or transmits a secret value.
+  //
+  // Each entry is `scheme:pattern`. The scheme is literal. The pattern is
+  // matched against the locator ONLY, never across the separator, and
+  // never as a regular expression: "*" is the one wildcard and it does not
+  // cross "/"; every other character is itself. A "file:" locator with a
+  // ".." segment is refused outright rather than normalized, so a pattern
+  // cannot be escaped by path traversal. The rule is
+  // internal/dsl.ValidSecretPattern and CheckSecretSource, the one place it
+  // is implemented; the registry refuses an entry that fails it.
+  //
+  // It is enforced at the API boundary in the two places a secret can be
+  // named, exactly as allowed_pools is: when an orkflow is applied or
+  // validated, with the file in hand (an issue anchored to
+  // tasks[i].secrets[j].source), and again when a run is submitted, which is
+  // the gate no client can bypass and which catches a definition stored
+  // while the list was wider. It composes by INTERSECTION with each Orker's
+  // own floor (ORK_ORKER_SECRET_ALLOW): a namespace can only ever narrow
+  // what its Orkers already permit.
+  repeated string allowed_secrets = 13;
 }
 
 // NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
