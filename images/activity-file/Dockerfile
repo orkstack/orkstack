@@ -19,5 +19,11 @@ RUN chmod 0555 /usr/local/bin/entry.sh
 # Never root.
 USER 65532:65532
 
+# The with: contract, declared (docs/ACTIVITY_IMAGES.md, "Declaring the
+# interface"). Optional: the engine checks a document's with: against it at
+# validate and apply; the container never reads it. One line, because the
+# value is JSON; README.md's Interface section reproduces it verbatim.
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"checksum":{"fields":{"src":{"type":"string","required":true}}},"gzip":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"gunzip":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}},"tar":{"fields":{"srcs":{"type":"array","required":true},"as":{"type":"string"}}},"untar":{"fields":{"src":{"type":"string","required":true},"member":{"type":"string","required":true},"as":{"type":"string"}}},"concat":{"fields":{"srcs":{"type":"array","required":true},"as":{"type":"string","required":true}}}},"values":{"path":{"type":"string"},"sizeBytes":{"type":"number"},"sha256":{"type":"string"}}}'
+
 # Exec form, mandatory.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]
