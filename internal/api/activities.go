@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"connectrpc.com/connect"
@@ -86,4 +87,13 @@ type errNoOrker struct{}
 func (errNoOrker) Error() string {
 	return "this engine is not wired to a temporal client, so it cannot ask pool " +
 		task.DefaultQueue + " which orker is serving it"
+}
+
+// InspectActivity resolves one reference on demand. Implemented in a later
+// commit of this change; the proto declares it first (AGENTS.md §11.1).
+func (s *Service) InspectActivity(
+	_ context.Context,
+	_ *connect.Request[orkstackv1.InspectActivityRequest],
+) (*connect.Response[orkstackv1.InspectActivityResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("InspectActivity is not implemented yet"))
 }
