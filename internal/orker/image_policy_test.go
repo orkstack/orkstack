@@ -424,4 +424,3 @@ func TestDispatcher_AnAdoptedCommitIsNeverReJudged(t *testing.T) {
 		})
 	}
 }
-
