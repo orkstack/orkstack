@@ -82,6 +82,7 @@ type auditFixture struct {
 type auditOptions struct {
 	store artifacts.AuditStore // nil = a fresh memory store
 	none  bool                 // wire no audit store at all
+	fleet engine.OrkerFleet    // the Orker inventory seam; nil wires none
 }
 
 func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
@@ -109,6 +110,7 @@ func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
 		Starter:      &fakeStarter{},
 		AuditStore:   store,
 		AuditCounter: f.counter,
+		Fleet:        opts.fleet,
 		Logger:       slog.New(slog.NewTextHandler(f.logs, nil)),
 		Now:          func() time.Time { return f.now },
 		NewRunID: func() string {
@@ -772,6 +774,55 @@ func TestAudit_NamespaceUpdateRecordsHoldWhenPresent(t *testing.T) {
 	if refused.GetSucceeded() || refused.GetErrorCode() != "invalid_argument" ||
 		!strings.Contains(refused.GetDetail(), `hold="  " max_running=20`) {
 		t.Errorf("refused record = %v, want succeeded=false with the requested summary", refused)
+	}
+}
+
+// TestAudit_CordonOrkerIsClassified: every cordon write is an audit record —
+// orker.cordon or orker.uncordon, the id as target, namespace empty (the
+// Orker is deployment infrastructure), the reason in a bounded detail — and
+// ListOrkers, a read, records nothing.
+func TestAudit_CordonOrkerIsClassified(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{fleet: threeOrkerFleet()})
+	ctx := context.Background()
+	activities := orkstackv1connect.NewActivityServiceClient(f.server.Client(), f.server.URL)
+
+	if _, err := activities.ListOrkers(ctx, connect.NewRequest(&orkstackv1.ListOrkersRequest{})); err != nil {
+		t.Fatalf("ListOrkers: %v", err)
+	}
+	if records := f.records(t); len(records) != 0 {
+		t.Fatalf("a read was recorded: %v", records)
+	}
+	if _, err := activities.CordonOrker(ctx, connect.NewRequest(&orkstackv1.CordonOrkerRequest{
+		OrkerId: "orker-7f3a", Cordoned: true, Reason: "CVE-2026-1234 runtime patch"})); err != nil {
+		t.Fatalf("CordonOrker: %v", err)
+	}
+	f.now = f.now.Add(time.Second)
+	if _, err := activities.CordonOrker(ctx, connect.NewRequest(&orkstackv1.CordonOrkerRequest{OrkerId: "orker-7f3a"})); err != nil {
+		t.Fatalf("uncordon: %v", err)
+	}
+	f.now = f.now.Add(time.Second)
+	long := strings.Repeat("x", 256)
+	if _, err := activities.CordonOrker(ctx, connect.NewRequest(&orkstackv1.CordonOrkerRequest{
+		OrkerId: "orker-typo", Cordoned: true, Reason: long})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("cordon of an unknown id = %v; want NotFound", err)
+	}
+
+	records := f.records(t)
+	if len(records) != 3 {
+		t.Fatalf("records = %d; want three", len(records))
+	}
+	refused, uncordon, cordon := records[0], records[1], records[2]
+	if cordon.GetAction() != "orker.cordon" || cordon.GetTarget() != "orker-7f3a" || cordon.GetNamespace() != "" ||
+		!cordon.GetSucceeded() || cordon.GetDetail() != `reason="CVE-2026-1234 runtime patch" pool=build` {
+		t.Fatalf("cordon record = %v", cordon)
+	}
+	if uncordon.GetAction() != "orker.uncordon" || uncordon.GetTarget() != "orker-7f3a" || uncordon.GetNamespace() != "" ||
+		!uncordon.GetSucceeded() {
+		t.Fatalf("uncordon record = %v", uncordon)
+	}
+	if refused.GetAction() != "orker.cordon" || refused.GetSucceeded() || refused.GetErrorCode() != "not_found" ||
+		len(refused.GetDetail()) > artifacts.AuditDetailMaxBytes || !strings.HasPrefix(refused.GetDetail(), `reason="xxx`) {
+		t.Fatalf("refused record = %v", refused)
 	}
 }
 

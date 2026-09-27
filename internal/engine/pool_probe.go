@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -96,11 +97,44 @@ func (p *TemporalPoolProbe) ObservePool(ctx context.Context, queue string) (Pool
 // the old behaviour, while under-reporting invents a refusal of a healthy
 // submit.
 func livePollers(description client.TaskQueueDescription, now time.Time, within time.Duration) PoolLiveness {
-	live := PoolLiveness{}
-	orkers := make(map[string]struct{})
+	records, anonymous := pollerRecords(description, now, within)
+	live := PoolLiveness{Orkers: len(records) + anonymous.count}
+	live.LastSeen = anonymous.lastSeen
+	for _, record := range records {
+		if record.LastSeen.After(live.LastSeen) {
+			live.LastSeen = record.LastSeen
+		}
+	}
+	return live
+}
+
+// OrkerPresence is one live poller of a channel, by Temporal worker identity.
+type OrkerPresence struct {
+	Identity string
+	LastSeen time.Time // zero when the cluster reported none
+}
+
+// livePollerRecords is livePollers without the reduction: one record per
+// identity inside the freshness window, newest LastSeen per identity,
+// anonymous records dropped (an identity-less poller cannot be addressed).
+// Ordered by identity.
+func livePollerRecords(description client.TaskQueueDescription, now time.Time, within time.Duration) []OrkerPresence {
+	records, _ := pollerRecords(description, now, within)
+	return records
+}
+
+type anonymousPollers struct {
+	count    int
+	lastSeen time.Time
+}
+
+// pollerRecords is the one walk over a description both readers share.
+func pollerRecords(description client.TaskQueueDescription, now time.Time, within time.Duration) ([]OrkerPresence, anonymousPollers) {
+	byIdentity := make(map[string]time.Time)
+	seen := make(map[string]bool)
 	// A record with no identity cannot be matched against any other, so it
 	// counts on its own rather than collapsing every anonymous record into one.
-	anonymous := 0
+	var anonymous anonymousPollers
 	for _, version := range description.VersionsInfo {
 		info, ok := version.TypesInfo[client.TaskQueueTypeActivity]
 		if !ok {
@@ -111,17 +145,24 @@ func livePollers(description client.TaskQueueDescription, now time.Time, within 
 				continue
 			}
 			if poller.Identity == "" {
-				anonymous++
-			} else {
-				orkers[poller.Identity] = struct{}{}
+				anonymous.count++
+				if poller.LastAccessTime.After(anonymous.lastSeen) {
+					anonymous.lastSeen = poller.LastAccessTime
+				}
+				continue
 			}
-			if poller.LastAccessTime.After(live.LastSeen) {
-				live.LastSeen = poller.LastAccessTime
+			seen[poller.Identity] = true
+			if poller.LastAccessTime.After(byIdentity[poller.Identity]) {
+				byIdentity[poller.Identity] = poller.LastAccessTime
 			}
 		}
 	}
-	live.Orkers = len(orkers) + anonymous
-	return live
+	records := make([]OrkerPresence, 0, len(seen))
+	for identity := range seen {
+		records = append(records, OrkerPresence{Identity: identity, LastSeen: byIdentity[identity]})
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Identity < records[j].Identity })
+	return records, anonymous
 }
 
 func (p *TemporalPoolProbe) freshness() time.Duration {

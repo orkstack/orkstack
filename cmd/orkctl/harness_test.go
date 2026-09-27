@@ -216,6 +216,17 @@ type fixture struct {
 	// crossed the wire at all.
 	requestsMu sync.Mutex
 	requestLog []string
+	// timeoutLog is the Connect-Timeout-Ms header each request carried, in
+	// the same order: the deadline the CLI gave that one request.
+	timeoutLog []string
+}
+
+// timeoutHeaders returns the Connect-Timeout-Ms header of every request
+// received so far, in arrival order ("" when a request carried none).
+func (f *fixture) timeoutHeaders() []string {
+	f.requestsMu.Lock()
+	defer f.requestsMu.Unlock()
+	return append([]string(nil), f.timeoutLog...)
 }
 
 // requests returns every HTTP request path this fixture's server has
@@ -288,6 +299,7 @@ func newFixtureWith(
 	recording := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.requestsMu.Lock()
 		f.requestLog = append(f.requestLog, r.URL.Path)
+		f.timeoutLog = append(f.timeoutLog, r.Header.Get("Connect-Timeout-Ms"))
 		f.requestsMu.Unlock()
 		mux.ServeHTTP(w, r)
 	})

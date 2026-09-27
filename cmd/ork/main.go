@@ -1053,6 +1053,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Pools:         pools,
 		PoolOrkers:    starter,
 		Orkers:        starter,
+		Fleet:         starter,
 		Catalog:       cfg.activityCatalog,
 		Resolver:      resolver,
 		Activities:    activities,

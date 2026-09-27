@@ -1,0 +1,5 @@
+cordoned orker-7f3a: "orkctl orker drain"
+waiting for 2 tasks and 1 pin to finish…
+orker-7f3a is NOT drained after 12s: 0 tasks, 1 pin still running
+  pin "build" of run ork-20260922-1  expires in 2h10m
+stopping the process now fails that run with PIN_HOST_LOST.

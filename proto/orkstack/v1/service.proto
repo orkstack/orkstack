@@ -815,6 +815,24 @@ service ActivityService {
   // Temporal activity on a pool's own channel, so it answers only when an
   // Orker is actually polling that pool.
   rpc DescribeOrker(DescribeOrkerRequest) returns (DescribeOrkerResponse);
+  // ListOrkers is the fleet: one row per live Orker of the deployment,
+  // derived on read. Like Pool, nothing WRITES an Orker — the list comes
+  // from the cluster's own poller records and each Orker's own answer, so
+  // any replica answers and none holds state of its own (AGENTS.md §7). It
+  // NARROWS rather than refusing: an Orker that did not answer keeps its
+  // row and carries unavailable_reason. Two conditions are distinct: a
+  // known poller whose describe failed is a row with unavailable_reason;
+  // an orker_id that NO live poller answers to is an EMPTY list, never
+  // NOT_FOUND — a read for an id nothing polls is an empty answer, and the
+  // drain loop relies on it (CordonOrker, a write, is the one that answers
+  // NOT_FOUND for that id).
+  rpc ListOrkers(ListOrkersRequest) returns (ListOrkersResponse);
+  // CordonOrker sets or clears ONE Orker's cordon: a process-local flag
+  // delivered over that Orker's own channel, lost when the process exits.
+  // A cordoned Orker takes no new task and opens no new pin; everything
+  // already in flight on it is untouched. The response is the Orker's
+  // state AFTER the change, as the Orker itself reported it.
+  rpc CordonOrker(CordonOrkerRequest) returns (CordonOrkerResponse);
 }
 
 message ListActivitiesRequest {}
@@ -842,6 +860,58 @@ message ListActivitiesResponse {
 
 message DescribeOrkerRequest {}
 message DescribeOrkerResponse { DescribeOrkerResult orker = 1; }
+
+// Orker is one execution process, observed live.
+message Orker {
+  string orker_id = 1;
+  // pool is the pool the Orker reports serving (DescribeOrkerResult.pool).
+  string pool = 2;
+  string build_id = 3;               // empty when versioning is off
+  int32 running_tasks = 4;
+  int32 open_pins = 5;
+  int32 max_concurrent_pins = 6;     // ORK_ORKER_MAX_PINS; 0 means not a pin host
+  bool cordoned = 7;
+  string cordon_reason = 8;          // empty when not cordoned
+  google.protobuf.Timestamp cordoned_at = 9;
+  // last_seen is the most recent moment this Orker was observed polling.
+  // It answers "how fresh is this row", never "when did this Orker die".
+  google.protobuf.Timestamp last_seen = 10;
+  // unavailable_reason says this Orker COULD NOT BE ASKED, and why — the
+  // same three-state distinction Pool.unavailable_reason makes, for the same
+  // reason: "not measured" rendered as "measured zero" sends an operator to
+  // stop a host that may be mid-task. When set, fields 2–9 and 12 are
+  // unset: nothing was measured, so there is no number to report.
+  string unavailable_reason = 11;
+  repeated OpenPin pins = 12;
+}
+
+message ListOrkersRequest {
+  // pool keeps only Orkers that report serving this pool. Empty keeps every
+  // Orker. It is matched against what each Orker answers, not against a
+  // channel name.
+  string pool = 1;
+  // orker_id asks exactly one Orker, on its own channel, and returns at
+  // most one row; pool is then ignored. It is what `orkctl orker get` and
+  // the drain loop use, so a drain costs one activity per poll and not one
+  // per Orker of the fleet.
+  string orker_id = 2;
+}
+
+message ListOrkersResponse {
+  // orkers is ordered by pool, then orker_id. A stable order is part of the
+  // contract: the Admin page renders it.
+  repeated Orker orkers = 1;
+}
+
+message CordonOrkerRequest {
+  string orker_id = 1;
+  bool cordoned = 2;
+  // reason is required when cordoned is true (INVALID_ARGUMENT otherwise);
+  // ignored when false.
+  string reason = 3;
+}
+
+message CordonOrkerResponse { Orker orker = 1; }
 
 // SystemService reports what this deployment is made of.
 service SystemService {

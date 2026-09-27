@@ -483,3 +483,93 @@ func TestOrkerOptions_AdvertiseThePinCapTheWorkerPollsFor(t *testing.T) {
 			opts.MaxPins, options.MaxConcurrentSessionExecutionSize)
 	}
 }
+
+// TestWorkerOptions_ZeroCordon_IsTheSameWorker: the cordon's Tuner runs the
+// task worker at exactly the SDK defaults it ran at before a Tuner was set, a
+// clear cordon reserves immediately, and a future edit that sets one of the
+// four MaxConcurrent*ExecutionSize fields beside it is a named refusal rather
+// than a bare SDK panic at boot.
+func TestWorkerOptions_ZeroCordon_IsTheSameWorker(t *testing.T) {
+	activities := orker.NewActivitiesWithOptions(nil, orker.Options{OrkerID: "orker-test", WorkRoot: t.TempDir()})
+	cfg := loadConfig()
+	options, err := taskWorkerOptions(cfg, activities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Identity != "orker-test" {
+		t.Fatalf("Identity = %q; want the orker id, which is what the presence channel lists", options.Identity)
+	}
+	if len(options.Interceptors) != 1 {
+		t.Fatalf("Interceptors = %v; want the cordon interceptor", options.Interceptors)
+	}
+	tuner := options.Tuner
+	if tuner == nil {
+		t.Fatal("no Tuner: the cordon's slot supplier IS the Tuner")
+	}
+	for name, supplier := range map[string]worker.SlotSupplier{
+		"workflow":         tuner.GetWorkflowTaskSlotSupplier(),
+		"activity":         tuner.GetActivityTaskSlotSupplier(),
+		"local activity":   tuner.GetLocalActivitySlotSupplier(),
+		"nexus":            tuner.GetNexusSlotSupplier(),
+		"session activity": tuner.GetSessionActivitySlotSupplier(),
+	} {
+		if supplier.MaxSlots() != 1000 {
+			t.Errorf("%s supplier MaxSlots() = %d; want the SDK default 1000", name, supplier.MaxSlots())
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	permit, err := tuner.GetActivityTaskSlotSupplier().ReserveSlot(ctx, nil)
+	if err != nil || permit == nil {
+		t.Fatalf("a clear cordon did not reserve at once: %v", err)
+	}
+
+	if err := checkTunerCompatible(workerOptions(cfg)); err != nil {
+		t.Fatalf("today's workerOptions refused: %v", err)
+	}
+	for field, set := range map[string]func(*worker.Options){
+		"MaxConcurrentWorkflowTaskExecutionSize":  func(o *worker.Options) { o.MaxConcurrentWorkflowTaskExecutionSize = 1 },
+		"MaxConcurrentActivityExecutionSize":      func(o *worker.Options) { o.MaxConcurrentActivityExecutionSize = 1 },
+		"MaxConcurrentLocalActivityExecutionSize": func(o *worker.Options) { o.MaxConcurrentLocalActivityExecutionSize = 1 },
+		"MaxConcurrentNexusTaskExecutionSize":     func(o *worker.Options) { o.MaxConcurrentNexusTaskExecutionSize = 1 },
+	} {
+		o := workerOptions(cfg)
+		set(&o)
+		err := checkTunerCompatible(o)
+		if err == nil || !strings.Contains(err.Error(), field) || !strings.Contains(err.Error(), "ORKER_WORKER_OPTIONS_INVALID") {
+			t.Errorf("checkTunerCompatible with %s set = %v; want ORKER_WORKER_OPTIONS_INVALID naming it", field, err)
+		}
+	}
+
+	// The whole of worker.New for the three workers, on a lazy client: the
+	// SDK validates its options (and panics on a Tuner beside a size) here.
+	c, err := client.NewLazyClient(client.Options{HostPort: "127.0.0.1:1", Namespace: task.DefaultNamespace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = worker.New(c, task.DefaultQueue, options)
+	control, presence, err := orker.NewChannelWorkers(c, activities)
+	if err != nil || control == nil || presence == nil {
+		t.Fatalf("NewChannelWorkers = %v, %v, %v", control, presence, err)
+	}
+}
+
+// TestControlChannelOptions_AreUnversionedAndOneProcess: the control and
+// presence workers carry the orker id as identity, one poller, and no
+// deployment options even when the task worker is versioned.
+func TestControlChannelOptions_AreUnversionedAndOneProcess(t *testing.T) {
+	t.Setenv(task.EnvDeploymentName, "orkstack-prod")
+	t.Setenv(task.EnvBuildID, "v2")
+	if !workerOptions(loadConfig()).DeploymentOptions.UseVersioning {
+		t.Fatal("this test asserts nothing: the task worker is not versioned")
+	}
+	options := orker.ChannelWorkerOptions("orker-test")
+	if options.Identity != "orker-test" || options.MaxConcurrentActivityTaskPollers != 1 ||
+		!options.DisableWorkflowWorker || !options.DisableRegistrationAliasing {
+		t.Fatalf("control options = %+v", options)
+	}
+	if options.DeploymentOptions.UseVersioning || options.DeploymentOptions.Version.BuildID != "" {
+		t.Fatalf("the control channel is versioned: %+v", options.DeploymentOptions)
+	}
+}

@@ -306,6 +306,22 @@ var auditedProcedures = map[string]auditExtractor{
 		name := artifacts.ResolveNamespace(in.GetName())
 		return auditEntry{Action: "namespace.delete", Namespace: name, Target: name}
 	},
+	orkstackv1connect.ActivityServiceCordonOrkerProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.CordonOrkerRequest)
+		// Deployment-wide, as webhook.register and retention.update are: an
+		// Orker belongs to no namespace.
+		entry := auditEntry{Action: "orker.uncordon", Target: in.GetOrkerId()}
+		var parts []string
+		if in.GetCordoned() {
+			entry.Action = "orker.cordon"
+			parts = append(parts, "reason="+strconv.Quote(in.GetReason()))
+		}
+		if out, ok := resp.(*orkstackv1.CordonOrkerResponse); ok && out != nil && out.GetOrker().GetPool() != "" {
+			parts = append(parts, "pool="+out.GetOrker().GetPool())
+		}
+		entry.Detail = strings.Join(parts, " ")
+		return entry
+	},
 	orkstackv1connect.SystemServiceUpdateRetentionPolicyProcedure: func(req, _ proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.UpdateRetentionPolicyRequest)
 		requested := "-"

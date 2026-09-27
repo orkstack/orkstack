@@ -167,6 +167,11 @@ type Config struct {
 	// (§6.5).
 	Orkers OrkerDescriber
 
+	// Fleet answers ActivityService.ListOrkers and CordonOrker: the presence
+	// channel's poller records and one Orker's own control channel
+	// (orker-cordon-drain §6). Nil answers both Unavailable.
+	Fleet engine.OrkerFleet
+
 	// Catalog is the deployment's activity table (§4.2): the short names
 	// `uses:` may spell. Nil selects dsl.BuiltinActivityCatalog.
 	Catalog dsl.Catalog
@@ -276,6 +281,9 @@ type Service struct {
 	bus        *engine.EventBus
 	activities ActivityLister
 	orkers     OrkerDescriber
+	// fleet is the Orker inventory and cordon seam. It holds no Orker list:
+	// every answer is read from the cluster and from the Orker itself.
+	fleet engine.OrkerFleet
 	// catalog and resolver are the two halves of §4.1: the catalog turns a
 	// short name into a reference, and the resolver turns a reference into a
 	// digest. Both live here because ApplyOrkflow is where §4.3 puts them.
@@ -343,6 +351,7 @@ func NewService(cfg Config) *Service {
 		bus:               cfg.Bus,
 		activities:        cfg.Activities,
 		orkers:            cfg.Orkers,
+		fleet:             cfg.Fleet,
 		catalog:           cfg.Catalog,
 		resolver:          cfg.Resolver,
 		system:            cfg.System,
