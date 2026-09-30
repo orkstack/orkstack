@@ -48,13 +48,15 @@ test('a reference is a link only when it provably is an http(s) URL', () => {
 	expect(originReferenceURL('')).toBeNull();
 });
 
-test('an origin links to the Triggers tab or to the source run', () => {
+test('an origin links to the Triggers or Schedules tab or to the source run', () => {
 	expect(originLinkPath(create(RunOriginSchema, { kind: RunOriginKind.TRIGGER, id: 'trg-1' }), 'deploy')).toBe(
 		'/orkflows/deploy?tab=triggers'
 	);
 	expect(originLinkPath(create(RunOriginSchema, { kind: RunOriginKind.RUN_AGAIN, id: 'ork-1' }), 'deploy')).toBe('/runs/ork-1');
 	expect(originLinkPath(create(RunOriginSchema, { kind: RunOriginKind.PARENT_RUN, id: 'ork-p' }), 'deploy')).toBe('/runs/ork-p');
-	expect(originLinkPath(create(RunOriginSchema, { kind: RunOriginKind.SCHEDULE, id: 'sch-1' }), 'deploy')).toBeNull();
+	expect(originLinkPath(create(RunOriginSchema, { kind: RunOriginKind.SCHEDULE, id: 'sch-1' }), 'deploy')).toBe(
+		'/orkflows/deploy?tab=schedules'
+	);
 	expect(originLinkPath(create(RunOriginSchema, { kind: RunOriginKind.SUBMIT }), 'deploy')).toBeNull();
 });
 
