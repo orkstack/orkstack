@@ -96,8 +96,11 @@ func ScheduleFireWorkflow(ctx workflow.Context, rec *orkstackv1.ScheduleRecord) 
 		return refuseFire(ctx, msg, err)
 	}
 	options := workflow.ChildWorkflowOptions{
-		WorkflowID:            runID,
-		TaskQueue:             task.DefaultQueue,
+		WorkflowID: runID,
+		// The fire's own channel, which is the engine's run channel the
+		// schedule's action names (task.DefaultQueue in `ork`): read from
+		// history, so the choice replays.
+		TaskQueue:             workflow.GetInfo(ctx).TaskQueueName,
 		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 		// ABANDON: a fire terminated by hand, or cancelled by cancel-other,
 		// must not take its run with it by the default parent-close policy.

@@ -332,13 +332,13 @@ func (s *TemporalScheduler) view(ctx context.Context, namespace, name string, de
 		view.Paused = state.Paused
 		view.Note = state.Note
 	}
-	if !view.Paused {
-		for _, t := range desc.Info.NextActionTimes {
-			if len(view.NextFireTimes) == maxScheduleFireTimes {
-				break
-			}
-			view.NextFireTimes = append(view.NextFireTimes, t.UTC())
+	// The cluster's own answer, paused or not: a schedule created paused
+	// shows the times it would fire at, which is why it was created paused.
+	for _, t := range desc.Info.NextActionTimes {
+		if len(view.NextFireTimes) == maxScheduleFireTimes {
+			break
 		}
+		view.NextFireTimes = append(view.NextFireTimes, t.UTC())
 	}
 	view.RecentFires = s.recentFires(ctx, desc.Info.RecentActions)
 	return view, nil

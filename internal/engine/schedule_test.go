@@ -511,8 +511,8 @@ func TestTemporalScheduler_DescribeDecodesRecordAndState(t *testing.T) {
 	if !view.Paused || view.Note != "Q3 close" {
 		t.Errorf("state paused=%v note=%q", view.Paused, view.Note)
 	}
-	if len(view.NextFireTimes) != 0 {
-		t.Errorf("a paused schedule reports next fires %v", view.NextFireTimes)
+	if len(view.NextFireTimes) != 2 || !view.NextFireTimes[0].Equal(next[0]) {
+		t.Errorf("a paused schedule reports next fires %v, want the cluster's %v", view.NextFireTimes, next)
 	}
 	if view.FiresTaken != 142 || view.FiresSkippedOverlap != 3 || view.FiresMissedCatchup != 1 ||
 		!view.CreatedAt.Equal(created) || !view.UpdatedAt.Equal(created.Add(time.Hour)) {

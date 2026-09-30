@@ -213,7 +213,8 @@ export type Schedule = Message<"orkstack.v1.Schedule"> & {
 
   /**
    * next_fire_times is up to the next 10 nominal fire times, read from the
-   * cluster for this call, empty while paused. Never stored by OrkStack.
+   * cluster for this call; a paused schedule lists the times it would fire
+   * at, which is what creating one paused is for. Never stored by OrkStack.
    *
    * @generated from field: repeated google.protobuf.Timestamp next_fire_times = 11;
    */

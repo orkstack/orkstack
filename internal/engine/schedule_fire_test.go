@@ -13,6 +13,7 @@ import (
 
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -129,6 +130,9 @@ func newFireHarness(t *testing.T) *fireHarness {
 	capture := &fireCapture{memo: map[string]any{}}
 	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&fireWorkerInterceptor{capture: capture}}})
 	env.RegisterWorkflowWithOptions(engine.ScheduleFireWorkflow, workflow.RegisterOptions{Name: engine.ScheduleFireWorkflowType})
+	// The schedule's action starts the fire on the engine's run channel; the
+	// child run is started on the fire's own channel.
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{TaskQueue: task.DefaultQueue})
 	return &fireHarness{env: env, capture: capture}
 }
 

@@ -292,7 +292,8 @@ type Schedule struct {
 	Paused bool   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
 	Note   string `protobuf:"bytes,10,opt,name=note,proto3" json:"note,omitempty"`
 	// next_fire_times is up to the next 10 nominal fire times, read from the
-	// cluster for this call, empty while paused. Never stored by OrkStack.
+	// cluster for this call; a paused schedule lists the times it would fire
+	// at, which is what creating one paused is for. Never stored by OrkStack.
 	NextFireTimes []*timestamppb.Timestamp `protobuf:"bytes,11,rep,name=next_fire_times,json=nextFireTimes,proto3" json:"next_fire_times,omitempty"`
 	// recent_fires is up to the last 10 fires, oldest first, read from the
 	// cluster for this call. Never stored by OrkStack.
