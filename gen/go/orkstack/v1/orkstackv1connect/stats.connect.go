@@ -38,6 +38,9 @@ const (
 	// StatsServiceGetFailureBreakdownProcedure is the fully-qualified name of the StatsService's
 	// GetFailureBreakdown RPC.
 	StatsServiceGetFailureBreakdownProcedure = "/orkstack.v1.StatsService/GetFailureBreakdown"
+	// StatsServiceGetFlakeIndexProcedure is the fully-qualified name of the StatsService's
+	// GetFlakeIndex RPC.
+	StatsServiceGetFlakeIndexProcedure = "/orkstack.v1.StatsService/GetFlakeIndex"
 )
 
 // StatsServiceClient is a client for the orkstack.v1.StatsService service.
@@ -55,6 +58,19 @@ type StatsServiceClient interface {
 	// failed subset of it, and by a scan budget that FAILS the call rather
 	// than answering from a subset (see GetFailureBreakdownResponse).
 	GetFailureBreakdown(context.Context, *connect.Request[v1.GetFailureBreakdownRequest]) (*connect.Response[v1.GetFailureBreakdownResponse], error)
+	// GetFlakeIndex groups one namespace's dispatched tasks over one window by
+	// the dimensions the caller names and reports, per group, how often a
+	// task needed more than one attempt. It is the one cross-run read of the
+	// per-attempt records the Orker writes: a SUCCEEDED run that retried is
+	// invisible to every other number this service reports, by construction.
+	//
+	// It reads run BODIES — one per finished run in the window, not only the
+	// failed ones — and one attempt listing per dispatched task. That is more
+	// than GetFailureBreakdown reads and far more than GetStats, which reads
+	// none, so the cost is bounded the same three ways: by the window, by an
+	// optional orkflow, and by a scan budget that FAILS the call rather than
+	// answering from a subset (see GetFlakeIndexResponse).
+	GetFlakeIndex(context.Context, *connect.Request[v1.GetFlakeIndexRequest]) (*connect.Response[v1.GetFlakeIndexResponse], error)
 }
 
 // NewStatsServiceClient constructs a client for the orkstack.v1.StatsService service. By default,
@@ -80,6 +96,12 @@ func NewStatsServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(statsServiceMethods.ByName("GetFailureBreakdown")),
 			connect.WithClientOptions(opts...),
 		),
+		getFlakeIndex: connect.NewClient[v1.GetFlakeIndexRequest, v1.GetFlakeIndexResponse](
+			httpClient,
+			baseURL+StatsServiceGetFlakeIndexProcedure,
+			connect.WithSchema(statsServiceMethods.ByName("GetFlakeIndex")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -87,6 +109,7 @@ func NewStatsServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 type statsServiceClient struct {
 	getStats            *connect.Client[v1.GetStatsRequest, v1.GetStatsResponse]
 	getFailureBreakdown *connect.Client[v1.GetFailureBreakdownRequest, v1.GetFailureBreakdownResponse]
+	getFlakeIndex       *connect.Client[v1.GetFlakeIndexRequest, v1.GetFlakeIndexResponse]
 }
 
 // GetStats calls orkstack.v1.StatsService.GetStats.
@@ -97,6 +120,11 @@ func (c *statsServiceClient) GetStats(ctx context.Context, req *connect.Request[
 // GetFailureBreakdown calls orkstack.v1.StatsService.GetFailureBreakdown.
 func (c *statsServiceClient) GetFailureBreakdown(ctx context.Context, req *connect.Request[v1.GetFailureBreakdownRequest]) (*connect.Response[v1.GetFailureBreakdownResponse], error) {
 	return c.getFailureBreakdown.CallUnary(ctx, req)
+}
+
+// GetFlakeIndex calls orkstack.v1.StatsService.GetFlakeIndex.
+func (c *statsServiceClient) GetFlakeIndex(ctx context.Context, req *connect.Request[v1.GetFlakeIndexRequest]) (*connect.Response[v1.GetFlakeIndexResponse], error) {
+	return c.getFlakeIndex.CallUnary(ctx, req)
 }
 
 // StatsServiceHandler is an implementation of the orkstack.v1.StatsService service.
@@ -114,6 +142,19 @@ type StatsServiceHandler interface {
 	// failed subset of it, and by a scan budget that FAILS the call rather
 	// than answering from a subset (see GetFailureBreakdownResponse).
 	GetFailureBreakdown(context.Context, *connect.Request[v1.GetFailureBreakdownRequest]) (*connect.Response[v1.GetFailureBreakdownResponse], error)
+	// GetFlakeIndex groups one namespace's dispatched tasks over one window by
+	// the dimensions the caller names and reports, per group, how often a
+	// task needed more than one attempt. It is the one cross-run read of the
+	// per-attempt records the Orker writes: a SUCCEEDED run that retried is
+	// invisible to every other number this service reports, by construction.
+	//
+	// It reads run BODIES — one per finished run in the window, not only the
+	// failed ones — and one attempt listing per dispatched task. That is more
+	// than GetFailureBreakdown reads and far more than GetStats, which reads
+	// none, so the cost is bounded the same three ways: by the window, by an
+	// optional orkflow, and by a scan budget that FAILS the call rather than
+	// answering from a subset (see GetFlakeIndexResponse).
+	GetFlakeIndex(context.Context, *connect.Request[v1.GetFlakeIndexRequest]) (*connect.Response[v1.GetFlakeIndexResponse], error)
 }
 
 // NewStatsServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -135,12 +176,20 @@ func NewStatsServiceHandler(svc StatsServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(statsServiceMethods.ByName("GetFailureBreakdown")),
 		connect.WithHandlerOptions(opts...),
 	)
+	statsServiceGetFlakeIndexHandler := connect.NewUnaryHandler(
+		StatsServiceGetFlakeIndexProcedure,
+		svc.GetFlakeIndex,
+		connect.WithSchema(statsServiceMethods.ByName("GetFlakeIndex")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.StatsService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case StatsServiceGetStatsProcedure:
 			statsServiceGetStatsHandler.ServeHTTP(w, r)
 		case StatsServiceGetFailureBreakdownProcedure:
 			statsServiceGetFailureBreakdownHandler.ServeHTTP(w, r)
+		case StatsServiceGetFlakeIndexProcedure:
+			statsServiceGetFlakeIndexHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -156,4 +205,8 @@ func (UnimplementedStatsServiceHandler) GetStats(context.Context, *connect.Reque
 
 func (UnimplementedStatsServiceHandler) GetFailureBreakdown(context.Context, *connect.Request[v1.GetFailureBreakdownRequest]) (*connect.Response[v1.GetFailureBreakdownResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.StatsService.GetFailureBreakdown is not implemented"))
+}
+
+func (UnimplementedStatsServiceHandler) GetFlakeIndex(context.Context, *connect.Request[v1.GetFlakeIndexRequest]) (*connect.Response[v1.GetFlakeIndexResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.StatsService.GetFlakeIndex is not implemented"))
 }
