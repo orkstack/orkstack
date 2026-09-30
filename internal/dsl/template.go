@@ -28,11 +28,52 @@ func Parse(name, text string) (*template.Template, error) {
 }
 
 // templateChecker validates rule 8 for one task.
+//
+// A checker built by ReferencedUpstream has refs set: it then COLLECTS the
+// task ids read through .tasks instead of refusing anything, walking the same
+// tree with the same spellings, so the checker and the collector cannot
+// disagree about what counts as a reference.
 type templateChecker struct {
 	taskID   string
 	inputs   map[string]struct{}
 	tasks    map[string]*orkstackv1.Task
 	upstream map[string]struct{}
+	refs     map[string]struct{}
+}
+
+// ReferencedUpstream lists the task ids a template reads through .tasks —
+// the field spelling checkField accepts (.tasks.<id>…) and the index
+// spelling checkIndex accepts (index .tasks "<id>" …) — sorted and deduped.
+// A parse error is returned as is; a dynamic index argument is not a
+// reference and is ignored. It is advisory: callers use it to SAY which
+// upstream outputs a condition read, never to decide anything.
+func ReferencedUpstream(text string) ([]string, error) {
+	if !strings.Contains(text, "{{") {
+		return nil, nil
+	}
+	tmpl, err := Parse("reference", text)
+	if err != nil {
+		return nil, err
+	}
+	c := &templateChecker{refs: map[string]struct{}{}}
+	if err := c.walkTemplate("", tmpl); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(c.refs))
+	for id := range c.refs {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// refuse returns err while checking and nil while collecting: a collector
+// reports what a template reads and never judges it.
+func (c *templateChecker) refuse(err error) error {
+	if c.refs != nil {
+		return nil
+	}
+	return err
 }
 
 // checkValue walks every string inside a decoded `with` value.
@@ -69,6 +110,11 @@ func (c *templateChecker) checkString(path, text string) error {
 	if err != nil {
 		return fmt.Errorf("task %q: %s: template parse error: %w", c.taskID, path, err)
 	}
+	return c.walkTemplate(path, tmpl)
+}
+
+// walkTemplate walks the main template and every template it defines.
+func (c *templateChecker) walkTemplate(path string, tmpl *template.Template) error {
 	associated := tmpl.Templates()
 	sort.Slice(associated, func(i, j int) bool {
 		return associated[i].Name() < associated[j].Name()
@@ -197,28 +243,35 @@ func (c *templateChecker) checkField(path string, ident []string) error {
 	switch ident[0] {
 	case "inputs":
 		if len(ident) < 2 {
-			return fmt.Errorf("task %q: %s: .inputs must name a declared input", c.taskID, path)
+			return c.refuse(fmt.Errorf("task %q: %s: .inputs must name a declared input", c.taskID, path))
 		}
 		return c.checkInput(path, ident[1])
 	case "tasks":
 		if len(ident) < 2 {
-			return fmt.Errorf("task %q: %s: .tasks must name an upstream task", c.taskID, path)
+			return c.refuse(fmt.Errorf("task %q: %s: .tasks must name an upstream task", c.taskID, path))
+		}
+		if c.refs != nil {
+			c.refs[ident[1]] = struct{}{}
+			return nil
 		}
 		return c.checkUpstream(path, ident[1])
 	default:
-		return fmt.Errorf("task %q: %s: unknown template root %q", c.taskID, path, ident[0])
+		return c.refuse(fmt.Errorf("task %q: %s: unknown template root %q", c.taskID, path, ident[0]))
 	}
 }
 
 func (c *templateChecker) checkInput(path, name string) error {
 	if _, ok := c.inputs[name]; !ok {
-		return fmt.Errorf("task %q: %s: template references undeclared input %q",
-			c.taskID, path, name)
+		return c.refuse(fmt.Errorf("task %q: %s: template references undeclared input %q",
+			c.taskID, path, name))
 	}
 	return nil
 }
 
 func (c *templateChecker) checkUpstream(path, taskID string) error {
+	if c.refs != nil {
+		return nil
+	}
 	if _, exists := c.tasks[taskID]; !exists {
 		return fmt.Errorf("task %q: %s: template references unknown task %q", c.taskID, path, taskID)
 	}
@@ -246,7 +299,7 @@ func (c *templateChecker) checkCommand(path string, cmd *parse.CommandNode, rebo
 		return true, c.checkIndex(path, cmd, rebound)
 	case "artifact":
 		if len(cmd.Args) < 2 {
-			return false, fmt.Errorf("task %q: %s: artifact helper requires a \"<task>/<name>\" argument", c.taskID, path)
+			return false, c.refuse(fmt.Errorf("task %q: %s: artifact helper requires a \"<task>/<name>\" argument", c.taskID, path))
 		}
 		str, ok := cmd.Args[1].(*parse.StringNode)
 		if !ok {
@@ -254,13 +307,13 @@ func (c *templateChecker) checkCommand(path string, cmd *parse.CommandNode, rebo
 		}
 		producer, name, found := strings.Cut(str.Text, "/")
 		if !found || producer == "" || name == "" {
-			return false, fmt.Errorf("task %q: %s: artifact reference %q must be \"<task>/<name>\"",
-				c.taskID, path, str.Text)
+			return false, c.refuse(fmt.Errorf("task %q: %s: artifact reference %q must be \"<task>/<name>\"",
+				c.taskID, path, str.Text))
 		}
 		return false, c.checkUpstream(path, producer)
 	case "env":
 		if len(cmd.Args) < 2 {
-			return false, fmt.Errorf("task %q: %s: env helper requires a variable name", c.taskID, path)
+			return false, c.refuse(fmt.Errorf("task %q: %s: env helper requires a variable name", c.taskID, path))
 		}
 	}
 	return false, nil
@@ -301,7 +354,7 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 		root = rootKey.Text
 		keyArg = 3
 		if root != "inputs" && root != "tasks" {
-			return fmt.Errorf("task %q: %s: unknown template root %q", c.taskID, path, root)
+			return c.refuse(fmt.Errorf("task %q: %s: unknown template root %q", c.taskID, path, root))
 		}
 	}
 
@@ -310,15 +363,17 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 	}
 	if len(cmd.Args) <= keyArg {
 		if root == "inputs" {
-			return fmt.Errorf("task %q: %s: index inputs must name a declared input", c.taskID, path)
+			return c.refuse(fmt.Errorf("task %q: %s: index inputs must name a declared input", c.taskID, path))
 		}
-		return fmt.Errorf("task %q: %s: index tasks must name an upstream task", c.taskID, path)
+		return c.refuse(fmt.Errorf("task %q: %s: index tasks must name an upstream task", c.taskID, path))
 	}
 	if key, literal := cmd.Args[keyArg].(*parse.StringNode); literal {
 		if root == "inputs" {
 			if err := c.checkInput(path, key.Text); err != nil {
 				return err
 			}
+		} else if c.refs != nil {
+			c.refs[key.Text] = struct{}{}
 		} else if err := c.checkUpstream(path, key.Text); err != nil {
 			return err
 		}

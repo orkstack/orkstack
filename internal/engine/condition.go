@@ -71,3 +71,15 @@ func evaluateCondition(expression string, inputs map[string]any, upstream map[st
 	_, falsy := falsyValues[value]
 	return !falsy, nil
 }
+
+// skipReasonUpstream is the reason recorded when a direct need was skipped.
+// classify and Simulate both spell it through this function, so a plan's
+// skip_reason and the interpreter's "task skipped: " event cannot drift.
+func skipReasonUpstream(need string) string {
+	return fmt.Sprintf("upstream task %q was skipped", need)
+}
+
+// skipReasonCondition is the reason recorded when a condition rendered falsy.
+func skipReasonCondition(expression string) string {
+	return fmt.Sprintf("condition %q evaluated false", expression)
+}

@@ -26,6 +26,13 @@ const (
 	exitRunCanceled = 3
 	// exitDrainTimedOut (4, orker.go) is `orkctl orker drain` timing out
 	// with work still on the Orker.
+	//
+	// exitPlanAssertionFailed is `orkctl run plan` whose plan contradicts an
+	// --assert-runs/--assert-skipped: distinct from exitError so a CI step
+	// can tell "the plan contradicts the policy" from "the engine was
+	// unreachable". It shares the number with drain's timeout because the
+	// two belong to different commands and neither can return the other.
+	exitPlanAssertionFailed = 4
 )
 
 // defaultServer is used when neither --server nor ORK_SERVER is set.

@@ -35,6 +35,7 @@ DSL YAML → ork engine (Temporal) → Orker → OCI image
 ```bash
 make up             # Temporal + MinIO + engine + orker + UI, health-checked
 ./bin/orkctl apply examples/hello.ork.yaml
+./bin/orkctl run plan hello-ork     # which tasks would run; starts nothing
 ./bin/orkctl run submit hello-ork --watch
 make down           # stop everything (data is kept)
 ```
