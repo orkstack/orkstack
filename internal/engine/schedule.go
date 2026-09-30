@@ -474,6 +474,11 @@ func (s *TemporalScheduler) List(ctx context.Context, namespace string) ([]Sched
 		name, _ := s.memoString(fields, MemoScheduleName)
 		orkflow, _ := s.memoString(fields, MemoOrkflowName)
 		view, err := s.Describe(ctx, namespace, name)
+		if errors.Is(err, ErrScheduleNotFound) {
+			// Listed by visibility, which lags, but already deleted: the
+			// cluster's own answer for the schedule itself is that it is gone.
+			continue
+		}
 		if err != nil {
 			view = ScheduleView{ID: id, Name: name, Namespace: namespace, OrkflowName: orkflow, Unavailable: err.Error()}
 		}

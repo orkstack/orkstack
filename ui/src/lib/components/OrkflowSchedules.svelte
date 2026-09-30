@@ -96,6 +96,18 @@
 	]);
 	const overlapOptions = OVERLAP_POLICY_SLUGS.map((slug) => ({ value: slug, label: slug }));
 
+	// The list is the cluster's visibility index, which lags a create or a
+	// delete by a moment. After either, the loader is asked again until the
+	// row the write made or removed is (or is no longer) listed — a bounded
+	// wait for the cluster's own answer, never a row this component invented.
+	async function refreshUntil(done: () => boolean) {
+		for (let attempt = 0; attempt < 20; attempt++) {
+			await invalidateAll();
+			if (done()) return;
+			await new Promise((resolve) => setTimeout(resolve, 500));
+		}
+	}
+
 	function parseTime(field: string, text: string): { value: Date | undefined } | { error: string } {
 		const trimmed = text.trim();
 		if (!trimmed) return { value: undefined };
@@ -130,11 +142,12 @@
 			.split('\n')
 			.map((line) => line.trim())
 			.filter((line) => line !== '');
+		const created = scheduleName.trim();
 		creating = true;
 		try {
 			await orkstack(fetch).schedules.createSchedule({
 				namespace,
-				name: scheduleName.trim(),
+				name: created,
 				orkflowName: name,
 				orkflowVersion: selectedVersion === CURRENT ? '' : selectedVersion,
 				input,
@@ -157,7 +170,7 @@
 			intervalText = '';
 			description = '';
 			inputText = '';
-			await invalidateAll();
+			await refreshUntil(() => schedules.some((row) => row.name === created));
 		} catch (err) {
 			// The draft stays in the form, and the server's refusal — the
 			// cluster's own cron-syntax message included — is shown verbatim.
@@ -167,13 +180,13 @@
 		}
 	}
 
-	async function act(run: () => Promise<unknown>, done: () => void) {
+	async function act(run: () => Promise<unknown>, done: () => void, settled: () => boolean = () => true) {
 		actionBusy = true;
 		actionError = '';
 		try {
 			await run();
 			done();
-			await invalidateAll();
+			await refreshUntil(settled);
 		} catch (err) {
 			actionError = errorMessage(err);
 		} finally {
@@ -197,11 +210,14 @@
 			() => orkstack(fetch).schedules.fireSchedule({ namespace, name: firing }),
 			() => (firing = '')
 		);
-	const remove = () =>
-		act(
-			() => orkstack(fetch).schedules.deleteSchedule({ namespace, name: deleting }),
-			() => (deleting = '')
+	function remove() {
+		const removed = deleting;
+		return act(
+			() => orkstack(fetch).schedules.deleteSchedule({ namespace, name: removed }),
+			() => (deleting = ''),
+			() => !schedules.some((row) => row.name === removed)
 		);
+	}
 
 	async function reload() {
 		reloading = true;

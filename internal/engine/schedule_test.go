@@ -591,6 +591,11 @@ func TestTemporalScheduler_ListFiltersByMemoNamespaceAndDescribesEach(t *testing
 	cluster.sc.entries = append(cluster.sc.entries, &client.ScheduleListEntry{ID: "someone-else",
 		Memo: memoOf(t, map[string]string{engine.MemoNamespace: "payments"})})
 
+	// Visibility lags a delete: an entry whose schedule is already gone is
+	// not listed.
+	cluster.sc.entries = append(cluster.sc.entries, &client.ScheduleListEntry{ID: "ork-schedule/payments/deleted",
+		Memo: memoOf(t, map[string]string{engine.MemoScheduleID: "sch-dead", engine.MemoScheduleName: "deleted",
+			engine.MemoNamespace: "payments", engine.MemoOrkflowName: "reconcile"})})
 	views, err := s.List(ctx, "payments")
 	if err != nil {
 		t.Fatalf("List: %v", err)

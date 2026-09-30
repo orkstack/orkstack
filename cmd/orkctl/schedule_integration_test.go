@@ -258,6 +258,26 @@ func (s *scheduleStack) create(t *testing.T, name string, args ...string) string
 	if !strings.HasPrefix(created.Schedule.ID, "sch-") {
 		t.Fatalf("created schedule id = %q", created.Schedule.ID)
 	}
+	// Listing reads the cluster's visibility index, which lags a create; a
+	// scenario that lists (or deletes the orkflow) starts once it caught up.
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		var listed struct {
+			Schedules []struct {
+				Name string `json:"name"`
+			} `json:"schedules"`
+		}
+		out, _, code := s.cliRaw(t, s.a, "--json", "schedule", "list")
+		if code == exitOK && json.Unmarshal([]byte(out), &listed) == nil {
+			for _, row := range listed.Schedules {
+				if row.Name == name {
+					return created.Schedule.ID
+				}
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("schedule %s was never listed", name)
 	return created.Schedule.ID
 }
 

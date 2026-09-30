@@ -95,6 +95,14 @@ async function createSchedule(name: string, paused = true): Promise<string> {
 		spec: { cron: ['0 2 * * *'], timezone: 'Europe/Lisbon' },
 		paused
 	});
+	// Listing reads the cluster's visibility index, which lags a create.
+	await waitFor(`schedule ${name} to be listed`, async () => {
+		const listed = await rpc<{ schedules?: { name: string }[] }>('ScheduleService/ListSchedules', {
+			namespace: NS,
+			orkflowName: NAME
+		});
+		return (listed.schedules ?? []).some((row) => row.name === name);
+	});
 	note(`created schedule ${name} (${created.schedule.id}) over the API`);
 	return created.schedule.id;
 }
