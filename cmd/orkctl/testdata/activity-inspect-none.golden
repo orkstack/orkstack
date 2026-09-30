@@ -1,0 +1,8 @@
+Activity    ghcr.io/acme/plain:1 (reference)
+Reference   ghcr.io/acme/plain:1
+Pinned      ghcr.io/acme/plain@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+Media type  application/vnd.oci.image.manifest.v1+json
+Platforms   -
+Resolved    2026-01-02T03:04:05Z
+
+Interface   none — the image declares no org.orkstack.activity.interface label; with: is checked by the image at run time

@@ -34,3 +34,15 @@ declare module 'bun:test' {
 		};
 	};
 }
+
+// The one filesystem read a unit test makes: activityInterface.test.ts reads
+// the first-party images' Dockerfiles, so the UI is tested against the label a
+// real image ships rather than a copy that can drift from it.
+declare module 'node:fs' {
+	export function readFileSync(path: string, encoding: 'utf8'): string;
+}
+
+interface ImportMeta {
+	/** Bun: the directory of the current module. */
+	readonly dir: string;
+}

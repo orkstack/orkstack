@@ -17,5 +17,11 @@ RUN chmod 0555 /usr/local/bin/entry.sh
 # Never root.
 USER 65532:65532
 
+# The with: contract, declared (docs/ACTIVITY_IMAGES.md, "Declaring the
+# interface"). Optional: the engine checks a document's with: against it at
+# validate and apply; the container never reads it. One line, because the
+# value is JSON; README.md's Interface section reproduces it verbatim.
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"headers":{"type":"object"},"body":{"type":"string"},"timeoutSeconds":{"type":"number"},"captureBodyAs":{"type":"string"}},"ops":{"get":{},"post":{},"put":{},"patch":{},"delete":{},"head":{}},"defaultOp":"get","values":{"status":{"type":"number"},"headers":{"type":"object"},"durationMs":{"type":"number"},"sizeBytes":{"type":"number"},"json":{"type":"object"}}}'
+
 # Exec form, mandatory.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]

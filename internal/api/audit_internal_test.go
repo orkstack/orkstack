@@ -30,6 +30,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.RunServiceListRunArtifactsProcedure:        true,
 	orkstackv1connect.RunServiceListTaskAttemptsProcedure:        true,
 	orkstackv1connect.RunServiceGetArtifactProvenanceProcedure:   true,
+	orkstackv1connect.RunServiceInspectRunProcedure:              true,
 	orkstackv1connect.RunServiceDiffRunsProcedure:                true,
 	orkstackv1connect.WebhookServiceListWebhooksProcedure:        true,
 	orkstackv1connect.WebhookServiceListDeliveriesProcedure:      true,
@@ -41,12 +42,15 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.ActivityServiceListActivitiesProcedure:     true,
 	orkstackv1connect.ActivityServiceDescribeOrkerProcedure:      true,
 	orkstackv1connect.ActivityServiceListOrkersProcedure:         true,
-	orkstackv1connect.SystemServiceGetSystemInfoProcedure:        true,
-	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure:   true,
-	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:   true,
-	orkstackv1connect.StatsServiceGetStatsProcedure:              true,
-	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure:   true,
-	orkstackv1connect.AuditServiceListAuditRecordsProcedure:      true,
+	// InspectActivity resolves one reference against the registry and writes
+	// nothing (activity-interface-manifests §5.4).
+	orkstackv1connect.ActivityServiceInspectActivityProcedure:  true,
+	orkstackv1connect.SystemServiceGetSystemInfoProcedure:      true,
+	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure: true,
+	orkstackv1connect.SystemServiceListTelemetrySinksProcedure: true,
+	orkstackv1connect.StatsServiceGetStatsProcedure:            true,
+	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure: true,
+	orkstackv1connect.AuditServiceListAuditRecordsProcedure:    true,
 }
 
 // auditStreamingReads is every streaming RPC. The audit interceptor is unary
@@ -59,8 +63,10 @@ var auditStreamingReads = map[string]bool{
 }
 
 // Plan is a read verb: PlanRun simulates a definition and writes nothing
-// (docs/design/proposals/phase-3/run-plan, "Reads only").
-var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan"}
+// (docs/design/proposals/phase-3/run-plan, "Reads only"). Inspect is the verb
+// of InspectRun (a live describe) and InspectActivity (an on-demand registry
+// read, activity-interface-manifests §5.4); both write nothing.
+var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file
 // registry and returns each method's procedure and whether it streams.

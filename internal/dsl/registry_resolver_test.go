@@ -2,31 +2,88 @@ package dsl
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// indexBody is a two-platform OCI index, as a registry would serve one.
-func indexBody(t *testing.T) []byte {
+// stubObject is one content-addressed object a registryStub serves.
+type stubObject struct {
+	body      []byte
+	mediaType string
+}
+
+// testImage is one image as a registry holds it: a config blob, the
+// platform manifest naming it, and the attestation manifest buildx emits
+// beside it.
+type testImage struct {
+	config      []byte
+	manifest    []byte
+	attestation []byte
+}
+
+// newTestImage builds an image whose config carries labels (nil: none).
+func newTestImage(t *testing.T, labels map[string]string) testImage {
 	t.Helper()
+	config, err := json.Marshal(map[string]any{
+		"architecture": "amd64", "os": "linux",
+		"config": map[string]any{"Labels": labels},
+	})
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	return newTestImageWithConfig(t, config)
+}
+
+func newTestImageWithConfig(t *testing.T, config []byte) testImage {
+	t.Helper()
+	manifest, err := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     MediaTypeOCIManifest,
+		"config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json",
+			"digest": digestOf(config), "size": len(config)},
+		"layers": []any{},
+	})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	attestation := []byte(`{"schemaVersion":2,"mediaType":"` + MediaTypeOCIManifest + `","config":{"digest":"sha256:` +
+		strings.Repeat("0", 64) + `"},"layers":[]}`)
+	return testImage{config: config, manifest: manifest, attestation: attestation}
+}
+
+// index is a multi-platform OCI index over the image. entries are rendered in
+// order; "attestation" is buildx's os: unknown entry.
+func (img testImage) index(t *testing.T, entries ...string) []byte {
+	t.Helper()
+	manifests := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		if entry == "attestation" {
+			manifests = append(manifests, map[string]any{"mediaType": MediaTypeOCIManifest,
+				"digest":   digestOf(img.attestation),
+				"platform": map[string]any{"os": "unknown", "architecture": "unknown"}})
+			continue
+		}
+		parts := strings.Split(entry, "/")
+		platform := map[string]any{"os": parts[0], "architecture": parts[1]}
+		if len(parts) > 2 {
+			platform["variant"] = parts[2]
+		}
+		manifests = append(manifests, map[string]any{"mediaType": MediaTypeOCIManifest,
+			"digest": digestOf(img.manifest), "platform": platform})
+	}
 	body, err := json.Marshal(map[string]any{
 		"schemaVersion": 2,
 		"mediaType":     MediaTypeOCIIndex,
-		"manifests": []any{
-			map[string]any{"platform": map[string]any{"os": "linux", "architecture": "amd64"}},
-			map[string]any{"platform": map[string]any{"os": "linux", "architecture": "arm64", "variant": "v8"}},
-			// An attestation manifest, as buildx emits. It has no os/arch
-			// worth naming and must not become a bogus "/" platform.
-			map[string]any{"platform": map[string]any{"os": "unknown", "architecture": "unknown"}},
-		},
+		"manifests":     manifests,
 	})
 	if err != nil {
 		t.Fatalf("index: %v", err)
@@ -34,38 +91,98 @@ func indexBody(t *testing.T) []byte {
 	return body
 }
 
-func digestOf(body []byte) string {
-	sum := sha256.Sum256(body)
-	return "sha256:" + hex.EncodeToString(sum[:])
+// objects are the content-addressed paths a registry serves for the image.
+func (img testImage) objects() map[string]stubObject {
+	return map[string]stubObject{
+		"manifests/" + digestOf(img.manifest):    {img.manifest, MediaTypeOCIManifest},
+		"manifests/" + digestOf(img.attestation): {img.attestation, MediaTypeOCIManifest},
+		"blobs/" + digestOf(img.config):          {img.config, "application/octet-stream"},
+	}
 }
 
-// registryStub serves /v2/<repo>/manifests/<ref> the way a registry does.
+// indexBody is a two-platform OCI index, as a registry would serve one, over
+// an unlabelled image. Every stub that serves it also serves the image's
+// content-addressed objects (see indexStub).
+func indexBody(t *testing.T) []byte {
+	t.Helper()
+	return newTestImage(t, nil).index(t, "linux/amd64", "linux/arm64/v8", "attestation")
+}
+
+// indexStub serves indexBody at the tag and the image behind it by digest.
+func indexStub(t *testing.T) *registryStub {
+	t.Helper()
+	body := indexBody(t)
+	return &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex, sendDigest: digestOf(body),
+		objects: newTestImage(t, nil).objects()}
+}
+
+// registryStub serves /v2/<repo>/manifests/<ref> the way a registry does:
+// body at the tag (or any reference objects does not name), and every
+// content-addressed object by its digest.
 type registryStub struct {
 	t          *testing.T
 	body       []byte
 	mediaType  string
 	sendDigest string // Docker-Content-Digest to send; "" sends none
 	status     int
+	objects    map[string]stubObject // "manifests/<digest>" or "blobs/<digest>"
+	blobStatus int                   // when set, every blob GET answers it
 	gotAccept  string
 	gotMethod  string
 	requests   int
+	paths      []string
 }
 
 func (s *registryStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.requests++
-	s.gotAccept = r.Header.Get("Accept")
+	s.paths = append(s.paths, r.URL.Path)
 	s.gotMethod = r.Method
 	if s.status != 0 && s.status != http.StatusOK {
 		w.WriteHeader(s.status)
 		fmt.Fprintln(w, "refused")
 		return
 	}
+	_, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/"), "/manifests/")
+	isBlob := strings.Contains(r.URL.Path, "/blobs/")
+	if isBlob {
+		_, digest, _ := strings.Cut(r.URL.Path, "/blobs/")
+		if s.blobStatus != 0 {
+			w.WriteHeader(s.blobStatus)
+			fmt.Fprintln(w, "refused")
+			return
+		}
+		obj, ok := s.objects["blobs/"+digest]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", obj.mediaType)
+		w.Write(obj.body)
+		return
+	}
+	if obj, ok := s.objects["manifests/"+rest]; ok {
+		w.Header().Set("Content-Type", obj.mediaType)
+		w.Write(obj.body)
+		return
+	}
+	s.gotAccept = r.Header.Get("Accept")
 	if s.sendDigest != "" {
 		w.Header().Set("Docker-Content-Digest", s.sendDigest)
 	}
 	w.Header().Set("Content-Type", s.mediaType)
 	w.WriteHeader(http.StatusOK)
 	w.Write(s.body)
+}
+
+// tagRequests counts GETs of the tag (not of content-addressed objects).
+func (s *registryStub) tagRequests() int {
+	n := 0
+	for _, p := range s.paths {
+		if strings.HasSuffix(p, "/manifests/v3") || strings.HasSuffix(p, ":dev") || strings.HasSuffix(p, "/manifests/dev") {
+			n++
+		}
+	}
+	return n
 }
 
 // newStubResolver returns a resolver and the reference naming the stub. The
@@ -79,8 +196,8 @@ func newStubResolver(t *testing.T, stub *registryStub) (*Resolver, string) {
 }
 
 func TestResolve_PinsTheIndexDigestAndPlatforms(t *testing.T) {
-	body := indexBody(t)
-	stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex, sendDigest: digestOf(body)}
+	stub := indexStub(t)
+	body := stub.body
 	resolver, reference := newStubResolver(t, stub)
 
 	image, err := resolver.Resolve(context.Background(), "migrate", reference)
@@ -123,8 +240,10 @@ func TestResolve_PinsTheIndexDigestAndPlatforms(t *testing.T) {
 }
 
 func TestResolve_SingleManifestLeavesPlatformsEmpty(t *testing.T) {
-	body := []byte(`{"schemaVersion":2,"config":{},"layers":[]}`)
-	stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIManifest, sendDigest: digestOf(body)}
+	img := newTestImage(t, nil)
+	body := img.manifest
+	stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIManifest, sendDigest: digestOf(body),
+		objects: img.objects()}
 	resolver, reference := newStubResolver(t, stub)
 
 	image, err := resolver.Resolve(context.Background(), "migrate", reference)
@@ -160,7 +279,7 @@ func TestResolve_PinnedReferenceMustMatchWhatTheRegistryServes(t *testing.T) {
 	body := indexBody(t)
 
 	t.Run("a pin the registry honours resolves", func(t *testing.T) {
-		stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex, sendDigest: digestOf(body)}
+		stub := indexStub(t)
 		server := httptest.NewServer(stub)
 		defer server.Close()
 		host := strings.TrimPrefix(server.URL, "http://")
@@ -227,14 +346,39 @@ func TestResolve_ErrorTaxonomy(t *testing.T) {
 // A 401 carrying a Bearer challenge is the normal first response from Docker
 // Hub and ghcr.io, not an error. The resolver must complete the handshake.
 func TestResolve_CompletesTheBearerTokenHandshake(t *testing.T) {
-	body := indexBody(t)
-	var tokenScope string
+	server, stub, tokens := bearerRegistry(t, indexStub(t))
+	body := stub.body
+
+	host := strings.TrimPrefix(server.URL, "http://")
+	image, err := NewResolver("").Resolve(context.Background(), "migrate", host+"/acme/migrate:v3")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if image.GetIndexDigest() != digestOf(body) {
+		t.Fatalf("digest = %q", image.GetIndexDigest())
+	}
+	if tokens.scope != "repository:acme/migrate:pull" {
+		t.Fatalf("token scope = %q", tokens.scope)
+	}
+}
+
+type tokenLog struct {
+	scope string
+	hits  int
+}
+
+// bearerRegistry fronts stub with a token-auth registry: every /v2/ request
+// without the issued token answers 401 with a Bearer challenge.
+func bearerRegistry(t *testing.T, stub *registryStub) (*httptest.Server, *registryStub, *tokenLog) {
+	t.Helper()
+	tokens := &tokenLog{}
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
-		tokenScope = r.URL.Query().Get("scope")
+		tokens.hits++
+		tokens.scope = r.URL.Query().Get("scope")
 		json.NewEncoder(w).Encode(map[string]string{"token": "issued-token"})
 	})
 	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
@@ -245,21 +389,32 @@ func TestResolve_CompletesTheBearerTokenHandshake(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		w.Header().Set("Docker-Content-Digest", digestOf(body))
-		w.Header().Set("Content-Type", MediaTypeOCIIndex)
-		w.Write(body)
+		stub.ServeHTTP(w, r)
 	})
+	return server, stub, tokens
+}
+
+// §4.3 step 7c: the token the manifest GET earned is the credential of the
+// platform-manifest and config-blob GETs. One Inspect, one handshake.
+func TestInspect_ReusesTheBearerTokenForTheBlobGet(t *testing.T) {
+	img := newTestImage(t, map[string]string{InterfaceLabel: `{"schemaVersion":1}`})
+	body := img.index(t, "linux/amd64")
+	server, stub, tokens := bearerRegistry(t, &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex,
+		sendDigest: digestOf(body), objects: img.objects()})
 
 	host := strings.TrimPrefix(server.URL, "http://")
-	image, err := NewResolver("").Resolve(context.Background(), "migrate", host+"/acme/migrate:v3")
+	res, err := NewResolver("").Inspect(context.Background(), "migrate", host+"/acme/migrate:v3")
 	if err != nil {
-		t.Fatalf("resolve: %v", err)
+		t.Fatalf("inspect: %v", err)
 	}
-	if image.GetIndexDigest() != digestOf(body) {
-		t.Fatalf("digest = %q", image.GetIndexDigest())
+	if res.Interface == nil {
+		t.Fatalf("interface not read: %+v", res)
 	}
-	if tokenScope != "repository:acme/migrate:pull" {
-		t.Fatalf("token scope = %q", tokenScope)
+	if tokens.hits != 1 {
+		t.Fatalf("token endpoint hit %d times for manifest and blob together, want 1", tokens.hits)
+	}
+	if stub.requests != 3 {
+		t.Fatalf("authorized GETs = %d, want 3 (index, manifest, blob): %v", stub.requests, stub.paths)
 	}
 }
 
@@ -280,8 +435,8 @@ func TestParseBearerChallenge_KeepsCommasInsideQuotedValues(t *testing.T) {
 }
 
 func TestResolveOrkflow_ResolvesEachDistinctUsesOnce(t *testing.T) {
-	body := indexBody(t)
-	stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex, sendDigest: digestOf(body)}
+	stub := indexStub(t)
+	body := stub.body
 	server := httptest.NewServer(stub)
 	defer server.Close()
 	host := strings.TrimPrefix(server.URL, "http://")
@@ -291,11 +446,20 @@ func TestResolveOrkflow_ResolvesEachDistinctUsesOnce(t *testing.T) {
 	}}
 	catalog := Catalog{"shell": host + "/orkstack/activity-shell:dev"}
 
-	if err := NewResolver("").ResolveOrkflow(context.Background(), catalog, wf); err != nil {
+	resolutions, err := NewResolver("").ResolveOrkflow(context.Background(), catalog, wf)
+	if err != nil {
 		t.Fatalf("resolve orkflow: %v", err)
 	}
-	if stub.requests != 1 {
-		t.Fatalf("issued %d manifest GETs for one distinct image, want 1", stub.requests)
+	// One distinct image is one tag GET, one platform-manifest GET and one
+	// config-blob GET — not three of each.
+	if got := stub.tagRequests(); got != 1 {
+		t.Fatalf("issued %d tag manifest GETs for one distinct image, want 1", got)
+	}
+	if stub.requests != 3 {
+		t.Fatalf("issued %d GETs for one distinct image, want 3 (index, manifest, blob): %v", stub.requests, stub.paths)
+	}
+	if len(resolutions) != 1 || resolutions["shell"] == nil {
+		t.Fatalf("resolutions = %v, want one keyed by uses", resolutions)
 	}
 	for _, task := range wf.GetTasks() {
 		if task.GetImage().GetIndexDigest() != digestOf(body) {
@@ -369,4 +533,188 @@ func TestParseReference(t *testing.T) {
 			t.Fatalf("api host = %q, want %q", hub.APIHost(), DefaultRegistryAPIHost)
 		}
 	})
+}
+
+const testLabel = `{"schemaVersion":1,"ops":{"copy":{"fields":{"src":{"type":"string","required":true}}}}}`
+
+func singleManifestStub(t *testing.T, img testImage) *registryStub {
+	t.Helper()
+	return &registryStub{t: t, body: img.manifest, mediaType: MediaTypeOCIManifest,
+		sendDigest: digestOf(img.manifest), objects: img.objects()}
+}
+
+func TestInspect_ReadsTheLabelFromASingleManifestConfig(t *testing.T) {
+	img := newTestImage(t, map[string]string{InterfaceLabel: testLabel, "other": "x"})
+	resolver, reference := newStubResolver(t, singleManifestStub(t, img))
+
+	res, err := resolver.Inspect(context.Background(), "migrate", reference)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if res.InterfaceError != "" {
+		t.Fatalf("interface error = %q", res.InterfaceError)
+	}
+	if got := res.Interface.GetOps()["copy"].GetFields()["src"]; !got.GetRequired() || got.GetType() != "string" {
+		t.Fatalf("interface = %v, want the label's copy.src", res.Interface)
+	}
+	image, err := resolver.Resolve(context.Background(), "migrate", reference)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !proto.Equal(image, res.Image) {
+		t.Fatalf("Inspect's image %v differs from Resolve's %v", res.Image, image)
+	}
+}
+
+func TestInspect_SelectsTheFirstRunnablePlatformOfAnIndex(t *testing.T) {
+	img := newTestImage(t, map[string]string{InterfaceLabel: testLabel})
+	body := img.index(t, "attestation", "linux/amd64")
+	stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex, sendDigest: digestOf(body),
+		objects: img.objects()}
+	resolver, reference := newStubResolver(t, stub)
+
+	res, err := resolver.Inspect(context.Background(), "migrate", reference)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if res.Interface == nil {
+		t.Fatalf("interface not read (error %q)", res.InterfaceError)
+	}
+	want := []string{
+		"/v2/acme/migrate/manifests/v3",
+		"/v2/acme/migrate/manifests/" + digestOf(img.manifest),
+		"/v2/acme/migrate/blobs/" + digestOf(img.config),
+	}
+	if !reflect.DeepEqual(stub.paths, want) {
+		t.Fatalf("GETs = %v, want exactly %v — the attestation entry is skipped", stub.paths, want)
+	}
+}
+
+func TestInspect_AnIndexWithNoRunnablePlatformReportsItAsUnreadable(t *testing.T) {
+	img := newTestImage(t, map[string]string{InterfaceLabel: testLabel})
+	body := img.index(t, "attestation")
+	stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex, sendDigest: digestOf(body),
+		objects: img.objects()}
+	resolver, reference := newStubResolver(t, stub)
+
+	res, err := resolver.Inspect(context.Background(), "migrate", reference)
+	if err != nil {
+		t.Fatalf("inspect: %v — an unreadable interface must never fail resolution", err)
+	}
+	if res.InterfaceError != "index advertises no platform manifest to read a config from" {
+		t.Fatalf("interface error = %q", res.InterfaceError)
+	}
+	if res.Interface != nil || res.Image.GetIndexDigest() != digestOf(body) {
+		t.Fatalf("resolution = %+v, want a pinned image and no interface", res)
+	}
+}
+
+func TestInspect_NoLabelMeansNoInterface(t *testing.T) {
+	resolver, reference := newStubResolver(t, indexStub(t))
+	res, err := resolver.Inspect(context.Background(), "migrate", reference)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if res.Interface != nil || res.InterfaceError != "" {
+		t.Fatalf("an unlabelled image declared %v / %q, want nothing", res.Interface, res.InterfaceError)
+	}
+}
+
+func TestInspect_AMalformedLabelNeverFailsResolution(t *testing.T) {
+	img := newTestImage(t, map[string]string{InterfaceLabel: `{"schemaVersion":2}`})
+	resolver, reference := newStubResolver(t, singleManifestStub(t, img))
+
+	res, err := resolver.Inspect(context.Background(), "migrate", reference)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if res.Interface != nil {
+		t.Fatalf("interface = %v, want nil", res.Interface)
+	}
+	if res.InterfaceError != "schemaVersion 2 is not supported (this engine reads 1)" {
+		t.Fatalf("interface error = %q, want ParseInterfaceLabel's message", res.InterfaceError)
+	}
+	if res.Image.GetPinned() == "" {
+		t.Fatal("the image was not pinned")
+	}
+}
+
+func TestInspect_ConfigBlobFailureTaxonomy(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stub  func(*testing.T) *registryStub
+		want  string
+		match string
+	}{
+		{"blob 404 is not found", func(t *testing.T) *registryStub {
+			s := singleManifestStub(t, newTestImage(t, nil))
+			s.blobStatus = http.StatusNotFound
+			return s
+		}, ReasonImageNotFound, "has no blob sha256:"},
+		{"blob 403 is unauthorized", func(t *testing.T) *registryStub {
+			s := singleManifestStub(t, newTestImage(t, nil))
+			s.blobStatus = http.StatusForbidden
+			return s
+		}, ReasonImageResolveUnauthorized, ""},
+		{"blob 503 is unavailable", func(t *testing.T) *registryStub {
+			s := singleManifestStub(t, newTestImage(t, nil))
+			s.blobStatus = http.StatusServiceUnavailable
+			return s
+		}, ReasonImageResolveUnavailable, ""},
+		{"a blob that does not hash to config.digest is a mismatch", func(t *testing.T) *registryStub {
+			img := newTestImage(t, nil)
+			s := singleManifestStub(t, img)
+			s.objects["blobs/"+digestOf(img.config)] = stubObject{[]byte(`{"config":{}}`), "application/octet-stream"}
+			return s
+		}, ReasonImageDigestMismatch, ""},
+		{"a manifest without config is unsupported", func(t *testing.T) *registryStub {
+			body := []byte(`{"schemaVersion":2,"layers":[]}`)
+			return &registryStub{t: t, body: body, mediaType: MediaTypeOCIManifest, sendDigest: digestOf(body)}
+		}, ReasonImageResolveUnsupported, "manifest has no readable config descriptor"},
+		{"a blob over 4 MiB is unsupported", func(t *testing.T) *registryStub {
+			big := make([]byte, maxManifestBytes+1)
+			for i := range big {
+				big[i] = ' '
+			}
+			return singleManifestStub(t, newTestImageWithConfig(t, big))
+		}, ReasonImageResolveUnsupported, "larger than"},
+		{"a config that is not JSON is unsupported", func(t *testing.T) *registryStub {
+			return singleManifestStub(t, newTestImageWithConfig(t, []byte("not json")))
+		}, ReasonImageResolveUnsupported, "config blob is not valid JSON"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver, reference := newStubResolver(t, tc.stub(t))
+			_, err := resolver.Inspect(context.Background(), "migrate", reference)
+			if got := ResolveCode(err); got != tc.want {
+				t.Fatalf("code = %q, want %s (err=%v)", got, tc.want, err)
+			}
+			if tc.match != "" && !strings.Contains(err.Error(), tc.match) {
+				t.Fatalf("error %q does not say %q", err, tc.match)
+			}
+		})
+	}
+}
+
+func TestResolve_IsUnchangedByTheLabel(t *testing.T) {
+	plain := newTestImage(t, nil)
+	labelled := newTestImage(t, map[string]string{InterfaceLabel: testLabel})
+	var images []*orkstackv1.ImageRef
+	for _, img := range []testImage{plain, labelled} {
+		body := img.index(t, "linux/amd64", "attestation")
+		resolver, reference := newStubResolver(t, &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex,
+			sendDigest: digestOf(body), objects: img.objects()})
+		image, err := resolver.Resolve(context.Background(), "migrate", reference)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		images = append(images, image)
+	}
+	// The two indexes differ (they name different manifests), so the digest
+	// does; everything the label could have touched does not.
+	for _, image := range images {
+		image.IndexDigest, image.Pinned, image.Registry = "", "", ""
+	}
+	if !proto.Equal(images[0], images[1]) {
+		t.Fatalf("the label changed the ImageRef:\n%v\n%v", images[0], images[1])
+	}
 }

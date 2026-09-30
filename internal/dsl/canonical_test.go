@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -596,5 +597,70 @@ func TestCanonicalInputLine_IsOneSortedCompactLine(t *testing.T) {
 				t.Fatalf("round-trip %s != %s", gotJSON, wantJSON)
 			}
 		})
+	}
+}
+
+// The interface an image declares is a READ-MODEL fact about immutable,
+// digest-addressed content: it is not an ImageRef field, so the canonical
+// form cannot hash it. Two resolutions of one document — through Inspect
+// against a labelled image, and by stamping the very same ImageRef with no
+// resolver at all — therefore produce one DefinitionDigest and one
+// DerivedVersion, and the canonical bytes carry nothing of the label.
+//
+// (A labelled and an unlabelled image cannot share an index digest — the
+// label lives in the config the index addresses — so "the same resolution
+// with and without a label" is exactly this: the same ImageRef, once with an
+// interface beside it and once without.)
+func TestDefinitionDigest_IgnoresTheInterface(t *testing.T) {
+	source := []byte("name: golden\ntasks:\n  - id: one\n    uses: file\n    with:\n      op: copy\n      src: a\n")
+	img := newTestImage(t, map[string]string{InterfaceLabel: testLabel})
+	body := img.index(t, "linux/amd64", "attestation")
+	stub := &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex, sendDigest: digestOf(body),
+		objects: img.objects()}
+	resolver, reference := newStubResolver(t, stub)
+
+	labelled, err := Compile(source)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	resolutions, err := resolver.ResolveOrkflow(t.Context(), Catalog{"file": reference}, labelled)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolutions["file"].Interface == nil {
+		t.Fatalf("the labelled image declared nothing (%q)", resolutions["file"].InterfaceError)
+	}
+
+	plain, err := Compile(source)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	plain.Tasks[0].Image = proto.Clone(resolutions["file"].Image).(*orkstackv1.ImageRef)
+
+	for _, pair := range []struct {
+		name string
+		fn   func(*orkstackv1.Orkflow) (string, error)
+	}{
+		{"DefinitionDigest", DefinitionDigest},
+		{"DerivedVersion", func(wf *orkstackv1.Orkflow) (string, error) { return DerivedVersion(source, wf) }},
+	} {
+		a, err := pair.fn(labelled)
+		if err != nil {
+			t.Fatalf("%s: %v", pair.name, err)
+		}
+		b, err := pair.fn(plain)
+		if err != nil {
+			t.Fatalf("%s: %v", pair.name, err)
+		}
+		if a != b {
+			t.Fatalf("%s differs with the interface beside the ImageRef: %s vs %s", pair.name, a, b)
+		}
+	}
+	canonical, err := CanonicalOrkflow(labelled)
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	if strings.Contains(string(canonical), "schemaVersion") || strings.Contains(string(canonical), InterfaceLabel) {
+		t.Fatalf("the canonical form carries the label: %s", canonical)
 	}
 }

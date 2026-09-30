@@ -1,0 +1,108 @@
+{
+  "activity": {
+    "name": "file",
+    "reference": "localhost:5001/orkstack/activity-file:dev",
+    "indexDigest": "sha256:2b1e0a7c9d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e",
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "resolvedAt": "2026-01-02T03:04:05Z",
+    "interface": {
+      "schemaVersion": 1,
+      "ops": {
+        "checksum": {
+          "fields": {
+            "src": {
+              "type": "string",
+              "required": true
+            }
+          }
+        },
+        "concat": {
+          "fields": {
+            "as": {
+              "type": "string",
+              "required": true
+            },
+            "srcs": {
+              "type": "array",
+              "required": true
+            }
+          }
+        },
+        "copy": {
+          "fields": {
+            "as": {
+              "type": "string"
+            },
+            "src": {
+              "type": "string",
+              "required": true
+            }
+          }
+        },
+        "gunzip": {
+          "fields": {
+            "as": {
+              "type": "string"
+            },
+            "src": {
+              "type": "string",
+              "required": true
+            }
+          }
+        },
+        "gzip": {
+          "fields": {
+            "as": {
+              "type": "string"
+            },
+            "src": {
+              "type": "string",
+              "required": true
+            }
+          }
+        },
+        "tar": {
+          "fields": {
+            "as": {
+              "type": "string"
+            },
+            "srcs": {
+              "type": "array",
+              "required": true
+            }
+          }
+        },
+        "untar": {
+          "fields": {
+            "as": {
+              "type": "string"
+            },
+            "member": {
+              "type": "string",
+              "required": true
+            },
+            "src": {
+              "type": "string",
+              "required": true
+            }
+          }
+        }
+      },
+      "values": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

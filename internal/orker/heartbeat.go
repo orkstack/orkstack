@@ -95,17 +95,10 @@ func ValidateHeartbeatInterval(d time.Duration) error {
 // set its own (AGENTS.md §3.3).
 const DefaultCancellationGrace = 30 * time.Second
 
-// HeartbeatProgress is the small detail the loop carries.
-//
-// It is deliberately small: heartbeat details travel through Temporal's data
-// converter into history, and bytes never travel through Temporal payloads
-// (AGENTS.md §2.2). Phase and a container id are diagnosis; the logs are where
-// the content lives.
-type HeartbeatProgress struct {
-	Phase       string `json:"phase"`
-	ContainerID string `json:"container_id,omitempty"`
-	BytesLogged int64  `json:"bytes_logged,omitempty"`
-}
+// HeartbeatProgress is the small detail the loop carries. Its shape is owned
+// by internal/task, because the engine's InspectRun reads it back from the
+// cluster: two processes, one declaration (task.HeartbeatProgress).
+type HeartbeatProgress = task.HeartbeatProgress
 
 // Heartbeater runs the heartbeat loop for the entire lifetime of one activity
 // attempt, so cancellation can reach a running container at any moment rather
@@ -134,6 +127,10 @@ type Heartbeater struct {
 	// It is set once, before Start, so it needs no synchronization of its
 	// own: Phase is only ever called from the dispatcher's own goroutine.
 	onPhase func(string)
+	// orkerID is stamped on every beat so an engine reading the pending
+	// detail can name the sender without a host name. Set from
+	// OCIDispatcher.OrkerID before Start; never changes for the attempt.
+	orkerID string
 
 	// mu guards marks. Phase is called from the dispatcher's own sequence and,
 	// on the wait path, from the step that observes the timeout or the
@@ -230,7 +227,7 @@ func (h *Heartbeater) Container(id ContainerID) {
 func (h *Heartbeater) Logged(n int64) { h.bytesLogged.Add(n) }
 
 func (h *Heartbeater) progress() HeartbeatProgress {
-	progress := HeartbeatProgress{BytesLogged: h.bytesLogged.Load()}
+	progress := HeartbeatProgress{BytesLogged: h.bytesLogged.Load(), OrkerID: h.orkerID}
 	if phase := h.phase.Load(); phase != nil {
 		progress.Phase = *phase
 	}

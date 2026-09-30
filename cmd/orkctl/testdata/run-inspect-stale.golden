@@ -1,0 +1,7 @@
+TASK   STATUS   ATTEMPT  STATE    PHASE  ORKER    CONTAINER     LOGGED     RUNNING  HEARTBEAT
+fit    RUNNING  2        STARTED  run    orker-7  3f2a9c1d0b4e  412.0 MiB  40m2s    24s ago STALE
+eval   PENDING  -        -        -      -        -             -          -        -
+clean  SKIPPED  -        -        -      -        -             -          -        -
+
+fit: no heartbeat for 24s (a live orker beats at least every 10s) — the orker is gone or partitioned; Temporal times this attempt out at 2026-09-23T09:51:13Z unless a beat arrives, and it will show as UNREPORTED in run attempts
+fit: timeout 45m0s, at least 4m58s left (the container clock starts after setup) · cancellation grace 30s · backstop 2026-09-23T10:31:07Z

@@ -66,7 +66,9 @@ func (s *Service) PlanRun(
 		// ValidateOrkflow's preparation, with its errors returned as the
 		// refusal they are: `orkctl orkflow validate` itemizes issues, a plan
 		// of an invalid document is a refused request.
-		wf, ns, err = s.prepareOrkflow(ctx, []byte(yaml), msg.GetNamespace())
+		// Interface WARNINGs (rule 14) do not refuse a plan; an ERROR already
+		// came back as err.
+		wf, ns, _, err = s.prepareOrkflow(ctx, []byte(yaml), msg.GetNamespace())
 		if err != nil {
 			return nil, withFieldPath(err)
 		}

@@ -76,6 +76,10 @@
 	let inputMode = $state<'form' | 'json'>('form');
 	let idempotencyKey = $state('');
 	let allowEmptyPool = $state(false);
+	// originReference is recorded on the run as its origin's reference — a CI
+	// job URL, a ticket. The server validates it; a refusal lands verbatim in
+	// the ErrorPanel like every other.
+	let originReference = $state('');
 	let submitting = $state(false);
 	let formError = $state('');
 	let typedInputError = $state('');
@@ -163,6 +167,7 @@
 			assumedOutputsJson = '{}';
 			plan = null;
 			planError = '';
+			originReference = '';
 			setInputs(initialInput ?? {});
 		}
 		const version = selectedVersion;
@@ -249,7 +254,9 @@
 					version: chosenVersion,
 					input: cliParsedInput.value,
 					idempotencyKey,
-					allowEmptyPool
+					allowEmptyPool,
+					originReference,
+					sourceRunId: replayFromRunId
 				})
 			: ''
 	);
@@ -327,6 +334,10 @@
 				namespace,
 				idempotencyKey,
 				allowEmptyPool,
+				originReference,
+				// A draft opened from Run again records run-again <source>: a
+				// claim the server checks exists in this namespace.
+				sourceRunId: replayFromRunId,
 				input: create(PayloadSchema, { data: parsed.value })
 			});
 			if (!res.run) throw new Error('engine returned no run');
@@ -481,6 +492,21 @@
 				/>
 				Submit even if a resolved pool currently has no live Orker.
 			</label>
+			<div class="flex flex-col gap-1.5">
+				<label for="run-submit-origin-ref" class="text-sm text-fg">
+					Origin reference <span class="text-fg-muted">(optional)</span>
+				</label>
+				<input
+					id="run-submit-origin-ref"
+					data-testid="submit-origin-ref"
+					bind:value={originReference}
+					placeholder="https://ci.example/jobs/123"
+					class="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				/>
+				<p class="text-xs text-fg-muted">
+					A CI job URL, a ticket, or an event id recorded on the run; up to 256 bytes.
+				</p>
+			</div>
 			<div class="flex flex-col gap-1.5">
 				<label for="run-submit-assumed-outputs" class="text-sm text-fg">
 					Assumed task outputs <span class="text-fg-muted">(JSON object keyed by task id, optional)</span>

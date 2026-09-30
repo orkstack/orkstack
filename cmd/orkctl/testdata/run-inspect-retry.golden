@@ -1,0 +1,7 @@
+TASK   STATUS   ATTEMPT  STATE      PHASE        ORKER  CONTAINER  LOGGED  RUNNING  HEARTBEAT
+fit    RUNNING  3        SCHEDULED  unavailable  -      -          -       -        -
+eval   PENDING  -        -          -            -      -          -       -        -
+clean  SKIPPED  -        -          -            -      -          -       -        -
+
+fit: not started
+fit: attempt 2 ended; attempt 3 is scheduled for 2026-09-23T09:51:49Z (in 42s) · the earlier attempt's error: orkctl run attempts ork-train-1 --task fit

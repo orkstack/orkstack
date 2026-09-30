@@ -16,11 +16,44 @@
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { shortDigest } from '$lib/activity';
+	import ActivityInterface from '$lib/components/ActivityInterface.svelte';
+	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
+	import { inspectCommand, interfaceSummary, pinnedReference, shortDigest } from '$lib/activity';
+	import { errorMessage, orkstack } from '$lib/client';
+	import type { ActivityInfo } from '$lib/gen/orkstack/v1/service_pb';
 	import { fmtTimestamp } from '$lib/status';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	// Which catalog rows have their interface disclosed. Keyed by name, which
+	// the catalog guarantees unique.
+	let disclosed = $state<Record<string, boolean>>({});
+
+	// Inspect a reference: InspectActivity resolves one reference on demand,
+	// exactly as `orkctl activity inspect` does. An error is the server's own
+	// message, never a silently empty result.
+	let inspectReference = $state('');
+	let inspecting = $state(false);
+	let inspected = $state<ActivityInfo | null>(null);
+	let inspectError = $state('');
+	const inspectCli = $derived(inspectCommand(inspectReference.trim() || '<name-or-reference>'));
+	async function inspect(event: SubmitEvent) {
+		event.preventDefault();
+		const reference = inspectReference.trim();
+		inspecting = true;
+		inspectError = '';
+		inspected = null;
+		try {
+			const res = await orkstack(fetch).activities.inspectActivity({ reference });
+			inspected = res.activity ?? null;
+			if (!inspected) inspectError = 'the engine answered with no activity';
+		} catch (err) {
+			inspectError = errorMessage(err);
+		} finally {
+			inspecting = false;
+		}
+	}
 
 	let retrying = $state(false);
 	let copiedLocalTool = $state('');
@@ -159,7 +192,7 @@
 	</p>
 {:else}
 	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs" data-testid="activity-list">
-		<table class="w-full min-w-[860px] border-collapse text-left text-sm">
+		<table class="w-full min-w-[960px] border-collapse text-left text-sm">
 			<thead class="bg-surface-sunken">
 				<tr>
 					<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Name</th>
@@ -167,6 +200,7 @@
 					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Index digest</th>
 					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Media type</th>
 					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Platforms</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Interface</th>
 					<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Resolved</th>
 				</tr>
 			</thead>
@@ -223,12 +257,103 @@
 								>
 							{/if}
 						</td>
+						<!--
+							What the image declares about its with: block. The cell
+							is a disclosure: the full table opens in a row beneath,
+							so the catalog stays one line per activity.
+						-->
+						<td class="h-11 px-4 align-middle text-xs">
+							{#if activity.indexDigest}
+								<button
+									type="button"
+									class="inline-flex items-center gap-1 rounded text-brand-700 hover:underline focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none"
+									aria-expanded={!!disclosed[activity.name]}
+									aria-controls="activity-interface-panel-{activity.name}"
+									data-testid="activity-interface-{activity.name}"
+									onclick={() => (disclosed[activity.name] = !disclosed[activity.name])}
+								>
+									<span aria-hidden="true">{disclosed[activity.name] ? '▾' : '▸'}</span>{interfaceSummary(activity)}
+								</button>
+							{:else}
+								<span class="text-fg-muted" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
+							{/if}
+						</td>
 						<td class="h-11 px-4 pr-5 align-middle text-xs text-fg-muted" data-testid="activity-resolved-at-{activity.name}">
 							{fmtTimestamp(activity.resolvedAt)}
 						</td>
 					</tr>
+					{#if disclosed[activity.name]}
+						<tr class="border-t border-border-subtle bg-surface-sunken/40">
+							<td
+								colspan="7"
+								class="px-5 py-3"
+								id="activity-interface-panel-{activity.name}"
+								data-testid="activity-interface-panel-{activity.name}"
+							>
+								<ActivityInterface info={activity} />
+							</td>
+						</tr>
+					{/if}
 				{/each}
 			</tbody>
 		</table>
 	</div>
 {/if}
+
+<!--
+	INSPECT A REFERENCE. Any reference `uses:` would accept — a catalog name or
+	a registry reference — resolved on demand by the engine against the
+	registry, uncached, writing nothing. Namespace-agnostic like the rest of
+	this page.
+-->
+<section class="mt-6" data-testid="activity-inspect">
+	<h2 class="mb-2 text-[11px] font-medium tracking-wider text-fg-muted uppercase">Inspect a reference</h2>
+	<form class="flex flex-wrap items-center gap-2" data-testid="activity-inspect-form" onsubmit={inspect}>
+		<label class="sr-only" for="activity-inspect-reference">Catalog name or registry reference</label>
+		<input
+			id="activity-inspect-reference"
+			type="text"
+			bind:value={inspectReference}
+			placeholder="file, or ghcr.io/acme/migrate:v3"
+			autocomplete="off"
+			spellcheck="false"
+			class="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg shadow-xs focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:outline-none sm:max-w-md"
+			data-testid="activity-inspect-reference"
+		/>
+		<button
+			type="submit"
+			disabled={inspecting || inspectReference.trim() === ''}
+			class="h-9 rounded-md bg-brand-600 px-3 text-sm font-medium text-white shadow-xs hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+			data-testid="activity-inspect-submit">{inspecting ? 'Inspecting…' : 'Inspect'}</button
+		>
+		<CliEquivalent testid="activity-inspect-cli" command={inspectCli} label="orkctl activity inspect for this reference" />
+	</form>
+	{#if inspectError}
+		<div class="mt-3">
+			<ErrorPanel testid="activity-inspect-error" subject="that reference" message={inspectError} />
+		</div>
+	{:else if inspected}
+		<div
+			class="mt-3 space-y-3 rounded-lg border border-border bg-surface p-4 text-sm shadow-xs"
+			data-testid="activity-inspect-result"
+		>
+			<dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
+				<dt class="text-fg-muted">Activity</dt>
+				<dd class="text-fg" data-testid="activity-inspect-activity">
+					{inspected.name ? `${inspected.name} (catalog)` : `${inspected.reference} (reference)`}
+				</dd>
+				<dt class="text-fg-muted">Reference</dt>
+				<dd class="font-mono break-all text-fg-secondary">{inspected.reference}</dd>
+				<dt class="text-fg-muted">Pinned</dt>
+				<dd class="font-mono break-all text-brand-700" data-testid="activity-inspect-pinned">{pinnedReference(inspected)}</dd>
+				<dt class="text-fg-muted">Media type</dt>
+				<dd class="font-mono text-fg-secondary">{inspected.mediaType || '-'}</dd>
+				<dt class="text-fg-muted">Platforms</dt>
+				<dd class="text-fg-secondary">{inspected.platforms.length > 0 ? inspected.platforms.join(', ') : '-'}</dd>
+				<dt class="text-fg-muted">Resolved</dt>
+				<dd class="text-fg-secondary">{fmtTimestamp(inspected.resolvedAt)}</dd>
+			</dl>
+			<ActivityInterface info={inspected} />
+		</div>
+	{/if}
+</section>

@@ -172,6 +172,12 @@ func (f *fakeReader) ListRuns(_ context.Context, q engine.RunQuery) ([]*orkstack
 		if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != q.Status {
 			continue
 		}
+		if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && run.GetOrigin().GetKind() != q.OriginKind {
+			continue
+		}
+		if q.OriginID != "" && run.GetOrigin().GetId() != q.OriginID {
+			continue
+		}
 		out = append(out, run)
 	}
 	sort.SliceStable(out, func(i, j int) bool {

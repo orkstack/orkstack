@@ -336,6 +336,12 @@ referencing an unrelated task's output is a compile-time error.
     and means the same thing as omitting the key; the compiled field is a plain
     integer in which the two cannot be told apart, and every rule the compiler
     applies must also hold for a request that never met this YAML.
+14. When a task's resolved image declares an interface, `with:` supplies
+    every key the image requires and names an op it declares; an undeclared
+    key or a type that disagrees is reported as a warning, never refused.
+    Enforced by `internal/api` at validate and apply, after resolution — the
+    compiler has no registry to ask (`docs/ACTIVITY_IMAGES.md`, "Declaring the
+    interface"). An image without the label is not checked.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

@@ -536,7 +536,9 @@ func (s *Service) ApplyOrkflow(
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
 ) (*connect.Response[orkstackv1.ApplyOrkflowResponse], error) {
 	source := []byte(req.Msg.GetYaml())
-	wf, ns, err := s.prepareOrkflow(ctx, source, req.Msg.GetNamespace())
+	// issues is WARNING only here: an interface ERROR is already the
+	// InvalidArgument returned above, before any token read or write.
+	wf, ns, issues, err := s.prepareOrkflow(ctx, source, req.Msg.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
@@ -571,22 +573,33 @@ func (s *Service) ApplyOrkflow(
 		return nil, orkflowStoreError(err, "store orkflow %s@%s in namespace %q",
 			wf.GetName(), wf.GetVersion(), ns.GetName())
 	}
-	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{
+	resp := &orkstackv1.ApplyOrkflowResponse{
 		Orkflow: stored,
 		Created: created,
-	}), nil
+	}
+	for _, issue := range issues { // WARNING only: an ERROR already returned
+		resp.Warnings = append(resp.Warnings, issue.GetField()+": "+issue.GetMessage())
+	}
+	return connect.NewResponse(resp), nil
 }
 
 // ValidateOrkflow performs exactly ApplyOrkflow's preparation without reading
 // edit tokens or writing a definition. A document error is a returned issue;
 // unavailable registries and namespace stores remain RPC failures.
 func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orkstackv1.ValidateOrkflowRequest]) (*connect.Response[orkstackv1.ValidateOrkflowResponse], error) {
-	wf, _, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
+	wf, _, issues, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
 	if err == nil {
+		// Interface warnings first, then the pin advice, as one list.
 		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{
 			Orkflow: wf,
-			Issues:  pinUserParityWarnings(wf),
+			Issues:  append(issues, pinUserParityWarnings(wf)...),
 		}), nil
+	}
+	// A with: block that fails an image's declared interface is reported
+	// whole — every ERROR and WARNING at once — not as its first line.
+	var refusal *interfaceRefusal
+	if errors.As(err, &refusal) {
+		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{Issues: refusal.Issues}), nil
 	}
 	if connect.CodeOf(err) == connect.CodeInvalidArgument {
 		field := ""
@@ -681,27 +694,58 @@ type validationFieldError struct {
 func (e *validationFieldError) Error() string { return e.Err.Error() }
 func (e *validationFieldError) Unwrap() error { return e.Err }
 
+// interfaceRefusal is a document whose with: blocks fail the interface an
+// image declares. It carries EVERY issue, errors and warnings, so
+// ValidateOrkflow can return all of them at once instead of the first,
+// and ApplyOrkflow's message names the first error and the count.
+type interfaceRefusal struct{ Issues []*orkstackv1.ValidationIssue }
+
+func (e *interfaceRefusal) Error() string {
+	first := e.Issues[0]
+	for _, issue := range e.Issues {
+		if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
+			first = issue
+			break
+		}
+	}
+	message := first.GetField() + ": " + first.GetMessage()
+	if len(e.Issues) > 1 {
+		message += fmt.Sprintf(" (and %d more issues; run orkctl orkflow validate to see them all)", len(e.Issues)-1)
+	}
+	return message
+}
+
+// hasError reports whether any issue is an ERROR.
+func hasError(issues []*orkstackv1.ValidationIssue) bool {
+	for _, issue := range issues {
+		if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
+			return true
+		}
+	}
+	return false
+}
+
 // prepareOrkflow is the common apply/validate pipeline. Keep all mutation
 // after this function so validation cannot create a pointer or a definition.
-func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNamespace string) (*orkstackv1.Orkflow, *orkstackv1.Namespace, error) {
+func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNamespace string) (*orkstackv1.Orkflow, *orkstackv1.Namespace, []*orkstackv1.ValidationIssue, error) {
 	wf, err := dsl.CompileWithOptions(source, dsl.Options{Catalog: s.activityCatalog()})
 	if err != nil {
-		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	pinsVersion, err := dsl.DocumentPinsVersion(source)
 	if err != nil {
-		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	selected, err := applyNamespace(requestedNamespace, wf.GetNamespace())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	ns, err := s.namespace(ctx, selected)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := s.pools.CheckAllowedPools(ns, wf); err != nil {
-		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	// The namespace's secret policy, with the file in hand: anchored to the
 	// exact tasks[i].secrets[j].source so validate reports it as a field
@@ -709,28 +753,37 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	if err := engine.CheckAllowedSecrets(ns, wf); err != nil {
 		var refused *engine.SecretNotAllowedError
 		if errors.As(err, &refused) {
-			return nil, nil, connect.NewError(connect.CodeInvalidArgument,
+			return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument,
 				&validationFieldError{Field: refused.Field(), Err: err})
 		}
-		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	wf.Namespace = ns.GetName()
-	if err := s.resolveImages(ctx, wf); err != nil {
-		return nil, nil, applyResolveError(err)
+	resolutions, err := s.resolveImages(ctx, wf)
+	if err != nil {
+		return nil, nil, nil, applyResolveError(err)
+	}
+	// Rule 14: every task's with: against the interface its resolved image
+	// declares. After resolution, because the interface arrives from the
+	// registry and Compile stays pure. An ERROR refuses before anything is
+	// written; WARNINGs travel with the prepared document.
+	issues := dsl.CheckOrkflowInterfaces(wf, resolutions)
+	if hasError(issues) {
+		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
 	if !pinsVersion {
 		derived, err := dsl.DerivedVersion(source, wf)
 		if err != nil {
-			return nil, nil, connect.NewError(connect.CodeInternal, err)
+			return nil, nil, nil, connect.NewError(connect.CodeInternal, err)
 		}
 		wf.Version = derived
 	}
 	digest, err := dsl.DefinitionDigest(wf)
 	if err != nil {
-		return nil, nil, connect.NewError(connect.CodeInternal, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInternal, err)
 	}
 	wf.DefinitionDigest = digest
-	return wf, ns, nil
+	return wf, ns, issues, nil
 }
 
 // checkEditTokens reads the two things an edit says about itself — which
@@ -1007,6 +1060,11 @@ type submission struct {
 	// the claim authority is asked about is claimKey(), which is a different
 	// string.
 	key string
+	// origin is what started this run, decided and validated by the door
+	// that accepted it before prepare ran. It rides the plan into history and
+	// the pending run into the response, the claim and a failed start's
+	// archive record.
+	origin *orkstackv1.RunOrigin
 }
 
 // claimKey is the coordinate one idempotency key occupies: the caller's key,
@@ -1035,7 +1093,30 @@ func (s *Service) SubmitRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.SubmitRunRequest],
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	sub, err := s.prepare(ctx, req.Msg)
+	// originForRequest validates origin_reference, then checks source_run_id,
+	// then builds the origin. It is the Connect door's half of "every door
+	// validates its own reference before submitFrom"; the trigger door
+	// (triggers.go) is the other half.
+	origin, err := s.originForRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.submitFrom(ctx, req.Msg, origin)
+}
+
+// submitFrom is SubmitRun with the origin already decided AND already
+// validated by the door that decided it. It is the seam the trigger door
+// (TRIGGER) and, later, schedules (SCHEDULE) start runs through: an origin's
+// kind is a fact about the door, so the door supplies it and the request
+// cannot. submitFrom validates nothing about the origin itself; every check
+// prepare makes — namespace, orkflow, version, admission, pool plan — runs
+// here unchanged.
+func (s *Service) submitFrom(
+	ctx context.Context,
+	msg *orkstackv1.SubmitRunRequest,
+	origin *orkstackv1.RunOrigin,
+) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	sub, err := s.prepare(ctx, msg, origin)
 	if err != nil {
 		return nil, err
 	}
@@ -1049,7 +1130,7 @@ func (s *Service) SubmitRun(
 		return s.submitClaimedRun(ctx, sub)
 	}
 
-	run := s.newPendingRun(s.newRunID(), sub.wf, sub.input)
+	run := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 	s.runs.Save(run)
 	return s.startPreparedRun(ctx, run, sub)
 }
@@ -1066,9 +1147,13 @@ func (s *Service) SubmitRun(
 //
 // It refuses before minting a run id, so a refused submission leaves nothing
 // behind: no id burnt, no claim taken, no run recorded as failed.
+//
+// The origin it is handed was decided and validated by the door; prepare
+// only carries it onto the plan, and never checks it a second time.
 func (s *Service) prepare(
 	ctx context.Context,
 	msg *orkstackv1.SubmitRunRequest,
+	origin *orkstackv1.RunOrigin,
 ) (submission, error) {
 	name := msg.GetOrkflowName()
 	if name == "" {
@@ -1115,6 +1200,10 @@ func (s *Service) prepare(
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("resolve durable activity configuration: %w", err))
 	}
+	// The origin travels on the replay-pinned plan, as CommitRoot does: the
+	// door that accepted the submission is the only thing that knows it, and
+	// workflow code may not ask.
+	plan.Origin = engine.OriginFromProto(origin)
 	return submission{
 		binding:   binding,
 		wf:        planned,
@@ -1122,6 +1211,7 @@ func (s *Service) prepare(
 		plan:      plan,
 		namespace: ns.GetName(),
 		key:       msg.GetIdempotencyKey(),
+		origin:    origin,
 	}, nil
 }
 
@@ -1234,7 +1324,7 @@ func (s *Service) submitClaimedRun(
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	var candidate *orkstackv1.Run
 	winner, err := s.idempotency.Claim(ctx, sub.claimKey(), func() (engine.Claim, error) {
-		candidate = s.newPendingRun(s.newRunID(), sub.wf, sub.input)
+		candidate = s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 		return newClaim(candidate)
 	})
 	if err != nil {
@@ -1305,10 +1395,15 @@ func claimedSnapshot(claim engine.Claim) (*orkstackv1.Run, error) {
 	return run, nil
 }
 
+// newPendingRun is the run a submission reports before its workflow has
+// published anything. It carries the origin, so SubmitRunResponse.run, the
+// idempotency claim's snapshot and a failed start's archive record all say
+// what started it.
 func (s *Service) newPendingRun(
 	runID string,
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
+	origin *orkstackv1.RunOrigin,
 ) *orkstackv1.Run {
 	return &orkstackv1.Run{
 		Id:             runID,
@@ -1318,6 +1413,7 @@ func (s *Service) newPendingRun(
 		Status:         orkstackv1.Status_STATUS_PENDING,
 		Input:          input,
 		CreatedAt:      timestamppb.New(s.now().UTC()),
+		Origin:         origin,
 	}
 }
 
@@ -1381,7 +1477,7 @@ func (s *Service) reissueRunID(
 	s.runs.Delete(discarded.GetId())
 	s.bus.Discard(discarded.GetId())
 
-	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input)
+	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 	s.runs.Save(next)
 	if sub.key == "" {
 		return next, nil
@@ -1653,6 +1749,10 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
+	originKind, originID := req.Msg.GetOriginKind(), req.Msg.GetOriginId()
+	if err := validateOriginFilter(originKind, originID); err != nil {
+		return nil, err
+	}
 	var (
 		runs       []*orkstackv1.Run
 		fromMemory bool
@@ -1663,7 +1763,7 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
-	cursor, err := decodeRunCursor(req.Msg.GetPageToken(), ns.GetName(), req.Msg.GetOrkflowName(), req.Msg.GetStatus(), since, until)
+	cursor, err := decodeRunCursor(req.Msg.GetPageToken(), ns.GetName(), req.Msg.GetOrkflowName(), req.Msg.GetStatus(), since, until, originKind, originID)
 	if err != nil {
 		return nil, err
 	}
@@ -1680,6 +1780,8 @@ func (s *Service) ListRuns(
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
+			OriginKind:  originKind,
+			OriginID:    originID,
 			// Visibility does not promise ID ordering inside equal timestamps.
 			// Complete collects its bounded metadata scan before applying Limit,
 			// so a later higher-ID tie cannot disappear behind this cursor.
@@ -1695,6 +1797,8 @@ func (s *Service) ListRuns(
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
+			OriginKind:  originKind,
+			OriginID:    originID,
 		})
 		runs = filterRunTimes(runs, since, until)
 		if cursor != nil {
@@ -1711,6 +1815,8 @@ func (s *Service) ListRuns(
 			Namespace:   ns.GetName(),
 			OrkflowName: req.Msg.GetOrkflowName(),
 			Status:      req.Msg.GetStatus(),
+			OriginKind:  originKind,
+			OriginID:    originID,
 			Since:       since, Until: until, BeforeCreated: beforeCreated, BeforeID: beforeID, Limit: size + 1,
 		})
 		if err != nil {
@@ -1729,7 +1835,7 @@ func (s *Service) ListRuns(
 	if len(runs) > size {
 		page := runs[:size]
 		last := page[len(page)-1]
-		token, err := encodeRunCursor(runCursor{Version: 1, Namespace: ns.GetName(), Orkflow: req.Msg.GetOrkflowName(), Status: int32(req.Msg.GetStatus()), Since: timeString(since), Until: timeString(until), LastCreated: engine.RunIndexTime(last).UTC().Format(time.RFC3339Nano), LastID: last.GetId()})
+		token, err := encodeRunCursor(runCursor{Version: 1, Namespace: ns.GetName(), Orkflow: req.Msg.GetOrkflowName(), Status: int32(req.Msg.GetStatus()), Since: timeString(since), Until: timeString(until), OriginKind: int32(originKind), OriginID: originID, LastCreated: engine.RunIndexTime(last).UTC().Format(time.RFC3339Nano), LastID: last.GetId()})
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode run page token: %w", err))
 		}
@@ -1741,14 +1847,37 @@ func (s *Service) ListRuns(
 }
 
 type runCursor struct {
-	Version     int    `json:"v"`
-	Namespace   string `json:"n"`
-	Orkflow     string `json:"o"`
-	Status      int32  `json:"s"`
-	Since       string `json:"a,omitempty"`
-	Until       string `json:"b,omitempty"`
+	Version   int    `json:"v"`
+	Namespace string `json:"n"`
+	Orkflow   string `json:"o"`
+	Status    int32  `json:"s"`
+	Since     string `json:"a,omitempty"`
+	Until     string `json:"b,omitempty"`
+	// OriginKind and OriginID bind the origin filter a token was minted
+	// under. Both omitempty, so a token minted before origins existed decodes
+	// with both zero and matches a request that sets neither; Version stays 1.
+	OriginKind  int32  `json:"k,omitempty"`
+	OriginID    string `json:"d,omitempty"`
 	LastCreated string `json:"c"`
 	LastID      string `json:"i"`
+}
+
+// validateOriginFilter refuses an origin filter that cannot mean anything: an
+// id without a kind (an id is meaningful only within a kind) and a kind the
+// enum does not declare.
+func validateOriginFilter(kind orkstackv1.RunOriginKind, id string) error {
+	if kind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+		if id != "" {
+			return connect.NewError(connect.CodeInvalidArgument,
+				fmt.Errorf("origin_id needs origin_kind: an origin id is meaningful only within a kind"))
+		}
+		return nil
+	}
+	if _, ok := artifacts.OriginKindSlug(kind); !ok {
+		return connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("origin_kind %d is not a declared origin kind", kind))
+	}
+	return nil
 }
 
 func timeString(t time.Time) string {
@@ -1783,7 +1912,7 @@ func encodeRunCursor(c runCursor) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
-func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status, since, until time.Time) (*runCursor, error) {
+func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status, since, until time.Time, originKind orkstackv1.RunOriginKind, originID string) (*runCursor, error) {
 	if token == "" {
 		return nil, nil
 	}
@@ -1792,7 +1921,7 @@ func decodeRunCursor(token, namespace, orkflow string, status orkstackv1.Status,
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token"))
 	}
 	var c runCursor
-	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Namespace != namespace || c.Orkflow != orkflow || c.Status != int32(status) || c.Since != timeString(since) || c.Until != timeString(until) || c.LastCreated == "" || c.LastID == "" {
+	if json.Unmarshal(raw, &c) != nil || c.Version != 1 || c.Namespace != namespace || c.Orkflow != orkflow || c.Status != int32(status) || c.Since != timeString(since) || c.Until != timeString(until) || c.OriginKind != int32(originKind) || c.OriginID != originID || c.LastCreated == "" || c.LastID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_token does not match these run filters"))
 	}
 	if _, err := time.Parse(time.RFC3339Nano, c.LastCreated); err != nil {
