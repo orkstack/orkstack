@@ -1,0 +1,25 @@
+Schedule:     nightly-reconcile (sch-4a1c0e2b7d3f8156)
+Namespace:    payments
+Runs:         reconcile@current
+Description:  Nightly reconcile
+When:         0 2 * * *  (Europe/Lisbon)
+Overlap:      skip
+Catch-up:     1h
+On failure:   pause
+Jitter:       30s
+Window:       2026-10-01T00:00:00Z – 2026-12-31T23:59:59Z
+State:        active
+Fires:        142 taken, 3 skipped (overlap), 0 missed (catch-up window)
+Created:      2026-09-01T10:00:00Z    Updated: 2026-09-20T09:12:00Z
+Input:        {"mode":"full"}
+
+Next fires:
+  2026-09-25T01:00:00Z  (2026-09-25 02:00 Europe/Lisbon)
+  2026-09-26T01:00:00Z  (2026-09-26 02:00 Europe/Lisbon)
+
+Recent fires:
+  SCHEDULED             STARTED               RUN             REFUSAL
+  2026-08-01T01:00:00Z  2026-08-01T01:00:01Z  unavailable     -
+  2026-09-23T01:00:00Z  2026-09-23T01:00:01Z  -               namespace "payments" is held: Q3 close
+  2026-09-24T01:00:00Z  2026-09-24T01:00:02Z  ork-20260924-7  -
+  2026-09-24T09:15:00Z  2026-09-24T09:15:00Z  preparing       -
