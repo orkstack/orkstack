@@ -1,0 +1,6 @@
+TASK   STATUS   ATTEMPT  STATE             PHASE   ORKER    CONTAINER     LOGGED     RUNNING  HEARTBEAT
+fit    RUNNING  2        CANCEL_REQUESTED  cancel  orker-7  3f2a9c1d0b4e  412.0 MiB  40m2s    3s ago
+eval   PENDING  -        -                 -       -        -             -          -        -
+clean  SKIPPED  -        -                 -       -        -             -          -        -
+
+fit: cancellation requested · phase cancel · grace 30s

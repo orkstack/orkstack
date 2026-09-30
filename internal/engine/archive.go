@@ -155,6 +155,11 @@ type ArchiveQuery struct {
 	Until         time.Time
 	BeforeCreated time.Time
 	BeforeID      string
+	// OriginKind selects the origin index instead of the run index; OriginID
+	// narrows it to one originating object (ListRunsRequest.origin_kind and
+	// origin_id). A run archived with no origin is matched by neither.
+	OriginKind orkstackv1.RunOriginKind
+	OriginID   string
 	// Limit caps the runs returned, newest first. 0 means DefaultArchivePageSize
 	// unless Exhaustive is set, in which case zero means every matching entry.
 	Limit      int
@@ -201,6 +206,10 @@ func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events [
 		Time:      RunIndexTime(run),
 		JSONL:     body,
 		ObjectIDs: runObjectIDs(run),
+		// The origin row is written from the snapshot's own origin, so the
+		// index carries exactly what the archived body says.
+		OriginKind: run.GetOrigin().GetKind(),
+		OriginID:   run.GetOrigin().GetId(),
 	}
 	if record.Status == "" {
 		return fmt.Errorf("engine: archive run %q: status is unspecified", run.GetId())
@@ -307,6 +316,8 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		Until:       q.Until,
 		BeforeTime:  q.BeforeCreated,
 		BeforeRunID: q.BeforeID,
+		OriginKind:  q.OriginKind,
+		OriginID:    q.OriginID,
 		Limit:       limit,
 	})
 	if err != nil {

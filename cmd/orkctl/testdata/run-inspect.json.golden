@@ -1,0 +1,23 @@
+{
+  "runStatus": "RUNNING",
+  "attempts": [
+    {
+      "taskId": "fit",
+      "attempt": 2,
+      "state": "STARTED",
+      "attemptScheduledAt": "2026-09-23T09:11:02Z",
+      "attemptStartedAt": "2026-09-23T09:11:05Z",
+      "timeoutSeconds": 2700,
+      "cancellationGracePeriodSeconds": 30,
+      "expiresAt": "2026-09-23T10:31:07Z",
+      "heartbeatAvailable": true,
+      "lastHeartbeatAt": "2026-09-23T09:51:04Z",
+      "heartbeatDeadlineAt": "2026-09-23T09:51:34Z",
+      "phase": "run",
+      "containerId": "3f2a9c1d0b4e7f00",
+      "bytesLogged": "432013312",
+      "orkerId": "orker-7"
+    }
+  ],
+  "computedAt": "2026-09-23T09:51:07Z"
+}

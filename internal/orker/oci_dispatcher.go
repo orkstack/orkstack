@@ -306,6 +306,7 @@ func (d *OCIDispatcher) Execute(
 	// somebody presses cancel.
 	beat = NewHeartbeater(ctx)
 	beat.interval = d.HeartbeatInterval
+	beat.orkerID = d.OrkerID
 	if attemptObs != nil {
 		beat.onPhase = attemptObs.Phase
 	}

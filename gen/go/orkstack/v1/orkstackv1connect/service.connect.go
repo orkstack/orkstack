@@ -93,6 +93,8 @@ const (
 	// RunServiceGetArtifactProvenanceProcedure is the fully-qualified name of the RunService's
 	// GetArtifactProvenance RPC.
 	RunServiceGetArtifactProvenanceProcedure = "/orkstack.v1.RunService/GetArtifactProvenance"
+	// RunServiceInspectRunProcedure is the fully-qualified name of the RunService's InspectRun RPC.
+	RunServiceInspectRunProcedure = "/orkstack.v1.RunService/InspectRun"
 	// RunServiceDiffRunsProcedure is the fully-qualified name of the RunService's DiffRuns RPC.
 	RunServiceDiffRunsProcedure = "/orkstack.v1.RunService/DiffRuns"
 	// WebhookServiceRegisterWebhookProcedure is the fully-qualified name of the WebhookService's
@@ -556,6 +558,20 @@ type RunServiceClient interface {
 	// producing run alone; on the local backend identical bytes under one
 	// name are one object, so every run that produced them is listed.
 	GetArtifactProvenance(context.Context, *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error)
+	// InspectRun answers "what is this task doing right now" for every
+	// in-flight task of ONE live run, from the heartbeat detail the Orker
+	// already sends and the cluster already holds for the pending activity.
+	//
+	// It is a READ of Temporal's own describe of the execution — nothing is
+	// stored, nothing is projected onto the snapshot, and no event is added.
+	// A run that is terminal, or whose execution has left the cluster, answers
+	// with run_status and no attempts. There is no stream: a client polls.
+	//
+	// A heartbeat is reported ONLY when it belongs to the attempt that is
+	// pending now. Temporal keeps a failed attempt's last detail through the
+	// retry backoff and until the next attempt's first beat; that detail is
+	// never rendered as the new attempt's progress.
+	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
 	// DiffRuns compares two runs of ONE namespace field by field: the pinned
 	// definition, the input (as a canonical-JSON unified diff), and per task
 	// its status, attempt, pool, pin, orker, exit code, error, duration, and
@@ -646,6 +662,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("GetArtifactProvenance")),
 			connect.WithClientOptions(opts...),
 		),
+		inspectRun: connect.NewClient[v1.InspectRunRequest, v1.InspectRunResponse](
+			httpClient,
+			baseURL+RunServiceInspectRunProcedure,
+			connect.WithSchema(runServiceMethods.ByName("InspectRun")),
+			connect.WithClientOptions(opts...),
+		),
 		diffRuns: connect.NewClient[v1.DiffRunsRequest, v1.DiffRunsResponse](
 			httpClient,
 			baseURL+RunServiceDiffRunsProcedure,
@@ -667,6 +689,7 @@ type runServiceClient struct {
 	readArtifact          *connect.Client[v1.ReadArtifactRequest, v1.ArtifactChunk]
 	listTaskAttempts      *connect.Client[v1.ListTaskAttemptsRequest, v1.ListTaskAttemptsResponse]
 	getArtifactProvenance *connect.Client[v1.GetArtifactProvenanceRequest, v1.GetArtifactProvenanceResponse]
+	inspectRun            *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
 	diffRuns              *connect.Client[v1.DiffRunsRequest, v1.DiffRunsResponse]
 }
 
@@ -718,6 +741,11 @@ func (c *runServiceClient) ListTaskAttempts(ctx context.Context, req *connect.Re
 // GetArtifactProvenance calls orkstack.v1.RunService.GetArtifactProvenance.
 func (c *runServiceClient) GetArtifactProvenance(ctx context.Context, req *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error) {
 	return c.getArtifactProvenance.CallUnary(ctx, req)
+}
+
+// InspectRun calls orkstack.v1.RunService.InspectRun.
+func (c *runServiceClient) InspectRun(ctx context.Context, req *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
+	return c.inspectRun.CallUnary(ctx, req)
 }
 
 // DiffRuns calls orkstack.v1.RunService.DiffRuns.
@@ -783,6 +811,20 @@ type RunServiceHandler interface {
 	// producing run alone; on the local backend identical bytes under one
 	// name are one object, so every run that produced them is listed.
 	GetArtifactProvenance(context.Context, *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error)
+	// InspectRun answers "what is this task doing right now" for every
+	// in-flight task of ONE live run, from the heartbeat detail the Orker
+	// already sends and the cluster already holds for the pending activity.
+	//
+	// It is a READ of Temporal's own describe of the execution — nothing is
+	// stored, nothing is projected onto the snapshot, and no event is added.
+	// A run that is terminal, or whose execution has left the cluster, answers
+	// with run_status and no attempts. There is no stream: a client polls.
+	//
+	// A heartbeat is reported ONLY when it belongs to the attempt that is
+	// pending now. Temporal keeps a failed attempt's last detail through the
+	// retry backoff and until the next attempt's first beat; that detail is
+	// never rendered as the new attempt's progress.
+	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
 	// DiffRuns compares two runs of ONE namespace field by field: the pinned
 	// definition, the input (as a canonical-JSON unified diff), and per task
 	// its status, attempt, pool, pin, orker, exit code, error, duration, and
@@ -869,6 +911,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("GetArtifactProvenance")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceInspectRunHandler := connect.NewUnaryHandler(
+		RunServiceInspectRunProcedure,
+		svc.InspectRun,
+		connect.WithSchema(runServiceMethods.ByName("InspectRun")),
+		connect.WithHandlerOptions(opts...),
+	)
 	runServiceDiffRunsHandler := connect.NewUnaryHandler(
 		RunServiceDiffRunsProcedure,
 		svc.DiffRuns,
@@ -897,6 +945,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceListTaskAttemptsHandler.ServeHTTP(w, r)
 		case RunServiceGetArtifactProvenanceProcedure:
 			runServiceGetArtifactProvenanceHandler.ServeHTTP(w, r)
+		case RunServiceInspectRunProcedure:
+			runServiceInspectRunHandler.ServeHTTP(w, r)
 		case RunServiceDiffRunsProcedure:
 			runServiceDiffRunsHandler.ServeHTTP(w, r)
 		default:
@@ -946,6 +996,10 @@ func (UnimplementedRunServiceHandler) ListTaskAttempts(context.Context, *connect
 
 func (UnimplementedRunServiceHandler) GetArtifactProvenance(context.Context, *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.GetArtifactProvenance is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.InspectRun is not implemented"))
 }
 
 func (UnimplementedRunServiceHandler) DiffRuns(context.Context, *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error) {

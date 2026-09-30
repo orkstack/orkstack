@@ -103,6 +103,10 @@ type ListFilter struct {
 	Namespace   string
 	OrkflowName string
 	Status      orkstackv1.Status
+	// OriginKind and OriginID keep runs whose origin matches, on the terms
+	// RunQuery states; a run with no origin matches no origin filter.
+	OriginKind orkstackv1.RunOriginKind
+	OriginID   string
 }
 
 // List returns clones of the stored runs, newest first.
@@ -122,6 +126,12 @@ func (s *RunStore) List(filter ListFilter) []*orkstackv1.Run {
 			continue
 		}
 		if filter.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != filter.Status {
+			continue
+		}
+		if filter.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && run.GetOrigin().GetKind() != filter.OriginKind {
+			continue
+		}
+		if filter.OriginID != "" && run.GetOrigin().GetId() != filter.OriginID {
 			continue
 		}
 		out = append(out, proto.Clone(run).(*orkstackv1.Run))

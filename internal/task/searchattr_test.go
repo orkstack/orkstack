@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -125,4 +126,73 @@ func TestEnsureRunSearchAttributes_ReportsAClusterThatRefuses(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap %v", err, boom)
 	}
+}
+
+// The origin attributes carry their own answer. A cluster that already has
+// OrkflowNamespace and now refuses the operator API keeps its namespace
+// predicate while the origin index reports unusable; one that has all three
+// reports both usable without registering anything; a fresh one registers
+// both origin attributes and polls until both are present.
+func TestEnsureRunOriginSearchAttributes_IsIndependentOfNamespace(t *testing.T) {
+	t.Run("namespace present, registration refused", func(t *testing.T) {
+		svc := &fakeOperator{
+			custom: map[string]enumspb.IndexedValueType{SearchAttrOrkflowNamespace: enumspb.INDEXED_VALUE_TYPE_KEYWORD},
+			addErr: errors.New("operator api is disabled"),
+		}
+		namespaceIndexed, err := ensureRunSearchAttributes(context.Background(), svc, DefaultNamespace)
+		if err != nil || !namespaceIndexed {
+			t.Fatalf("namespace index = %v, %v; want usable", namespaceIndexed, err)
+		}
+		originIndexed, err := ensureRunOriginSearchAttributes(context.Background(), svc, DefaultNamespace)
+		if originIndexed || err == nil {
+			t.Fatalf("origin index = %v, %v; want unusable with an error", originIndexed, err)
+		}
+		for _, name := range []string{SearchAttrOrkflowOriginKind, SearchAttrOrkflowOriginId} {
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("error %q does not name %s", err, name)
+			}
+		}
+	})
+	t.Run("all three present", func(t *testing.T) {
+		svc := &fakeOperator{custom: map[string]enumspb.IndexedValueType{
+			SearchAttrOrkflowNamespace:  enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+			SearchAttrOrkflowOriginKind: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+			SearchAttrOrkflowOriginId:   enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		}}
+		namespaceIndexed, _ := ensureRunSearchAttributes(context.Background(), svc, DefaultNamespace)
+		originIndexed, err := ensureRunOriginSearchAttributes(context.Background(), svc, DefaultNamespace)
+		if !namespaceIndexed || !originIndexed || err != nil {
+			t.Fatalf("namespace=%v origin=%v err=%v; want both usable", namespaceIndexed, originIndexed, err)
+		}
+		if len(svc.added) != 0 {
+			t.Fatalf("registered %v on a namespace that has all three", svc.added)
+		}
+	})
+	t.Run("one of the pair present registers only the other", func(t *testing.T) {
+		svc := &fakeOperator{custom: map[string]enumspb.IndexedValueType{
+			SearchAttrOrkflowOriginKind: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		}}
+		originIndexed, err := ensureRunOriginSearchAttributes(context.Background(), svc, DefaultNamespace)
+		if !originIndexed || err != nil {
+			t.Fatalf("origin = %v, %v; want usable", originIndexed, err)
+		}
+		if len(svc.added) != 1 || svc.added[0] != SearchAttrOrkflowOriginId {
+			t.Fatalf("registered %v, want only [%s]", svc.added, SearchAttrOrkflowOriginId)
+		}
+	})
+	t.Run("fresh namespace registers both as Keyword", func(t *testing.T) {
+		svc := &fakeOperator{}
+		originIndexed, err := ensureRunOriginSearchAttributes(context.Background(), svc, DefaultNamespace)
+		if !originIndexed || err != nil {
+			t.Fatalf("origin = %v, %v; want usable", originIndexed, err)
+		}
+		for _, name := range []string{SearchAttrOrkflowOriginKind, SearchAttrOrkflowOriginId} {
+			if svc.custom[name] != enumspb.INDEXED_VALUE_TYPE_KEYWORD {
+				t.Errorf("%s registered as %v, want Keyword", name, svc.custom[name])
+			}
+		}
+		if _, ok := svc.custom[SearchAttrOrkflowNamespace]; ok {
+			t.Error("the origin registration must not register the namespace attribute")
+		}
+	})
 }

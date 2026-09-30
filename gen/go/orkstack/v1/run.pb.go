@@ -153,6 +153,85 @@ func (RetryState) EnumDescriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{1}
 }
 
+// RunOriginKind is WHAT started a run. It is decided by the process that
+// accepted the submission and is never accepted from a client: the public
+// SubmitRun RPC produces SUBMIT, or RUN_AGAIN when the request names a
+// source run the server confirms exists; the trigger door produces TRIGGER
+// from its stored record; schedule and composition code produce SCHEDULE
+// and PARENT_RUN. A caller who could claim "trigger" would be claiming an
+// audit fact, so no request field carries a kind.
+type RunOriginKind int32
+
+const (
+	// UNSPECIFIED is what a run recorded before origins existed carries.
+	// Every client renders it as "unrecorded" — never as SUBMIT, because
+	// "a person submitted this" is a claim, and no evidence supports it.
+	RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED RunOriginKind = 0
+	// SUBMIT: SubmitRun over Connect — orkctl run submit, the UI's submit
+	// dialog, or a direct API call. id is empty.
+	RunOriginKind_RUN_ORIGIN_KIND_SUBMIT RunOriginKind = 1
+	// TRIGGER: POST /v1/triggers/{id}. id is the trigger id (trg-…).
+	RunOriginKind_RUN_ORIGIN_KIND_TRIGGER RunOriginKind = 2
+	// SCHEDULE: a schedule fired. id is the schedule id (sch-…). Defined
+	// here so orkflow-schedules stamps it without touching Run; nothing
+	// produces it until that proposal lands.
+	RunOriginKind_RUN_ORIGIN_KIND_SCHEDULE RunOriginKind = 3
+	// PARENT_RUN: a child run started by a composing parent. id is the
+	// PARENT run's id. Defined here so composed-orkflows adds no Run field
+	// of its own; nothing produces it until that proposal lands.
+	RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN RunOriginKind = 4
+	// RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the
+	// SOURCE run's id, which the server confirmed exists in this namespace.
+	RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN RunOriginKind = 5
+)
+
+// Enum value maps for RunOriginKind.
+var (
+	RunOriginKind_name = map[int32]string{
+		0: "RUN_ORIGIN_KIND_UNSPECIFIED",
+		1: "RUN_ORIGIN_KIND_SUBMIT",
+		2: "RUN_ORIGIN_KIND_TRIGGER",
+		3: "RUN_ORIGIN_KIND_SCHEDULE",
+		4: "RUN_ORIGIN_KIND_PARENT_RUN",
+		5: "RUN_ORIGIN_KIND_RUN_AGAIN",
+	}
+	RunOriginKind_value = map[string]int32{
+		"RUN_ORIGIN_KIND_UNSPECIFIED": 0,
+		"RUN_ORIGIN_KIND_SUBMIT":      1,
+		"RUN_ORIGIN_KIND_TRIGGER":     2,
+		"RUN_ORIGIN_KIND_SCHEDULE":    3,
+		"RUN_ORIGIN_KIND_PARENT_RUN":  4,
+		"RUN_ORIGIN_KIND_RUN_AGAIN":   5,
+	}
+)
+
+func (x RunOriginKind) Enum() *RunOriginKind {
+	p := new(RunOriginKind)
+	*p = x
+	return p
+}
+
+func (x RunOriginKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RunOriginKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_run_proto_enumTypes[2].Descriptor()
+}
+
+func (RunOriginKind) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_run_proto_enumTypes[2]
+}
+
+func (x RunOriginKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RunOriginKind.Descriptor instead.
+func (RunOriginKind) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
+}
+
 // EventType classifies a run event on the realtime stream.
 type EventType int32
 
@@ -211,11 +290,11 @@ func (x EventType) String() string {
 }
 
 func (EventType) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[2].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[3].Descriptor()
 }
 
 func (EventType) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[2]
+	return &file_orkstack_v1_run_proto_enumTypes[3]
 }
 
 func (x EventType) Number() protoreflect.EnumNumber {
@@ -224,7 +303,7 @@ func (x EventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EventType.Descriptor instead.
 func (EventType) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{3}
 }
 
 // TaskRun is the execution record of a single Task within a Run.
@@ -783,7 +862,12 @@ type Run struct {
 	OrkflowDefinitionDigest string `protobuf:"bytes,13,opt,name=orkflow_definition_digest,json=orkflowDefinitionDigest,proto3" json:"orkflow_definition_digest,omitempty"`
 	// telemetry is the selection this run was pinned with (see
 	// ExecuteTaskInput.telemetry). Unset when none was configured.
-	Telemetry     *TelemetrySelection `protobuf:"bytes,14,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
+	Telemetry *TelemetrySelection `protobuf:"bytes,14,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
+	// origin is what started this run (RunOrigin). Unset only on a run
+	// recorded before origins existed; every run started since carries at
+	// least a kind. It is present on every snapshot the run writes, on the
+	// archived run, and therefore in every webhook payload's embedded run.
+	Origin        *RunOrigin `protobuf:"bytes,15,opt,name=origin,proto3" json:"origin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -916,6 +1000,120 @@ func (x *Run) GetTelemetry() *TelemetrySelection {
 	return nil
 }
 
+func (x *Run) GetOrigin() *RunOrigin {
+	if x != nil {
+		return x.Origin
+	}
+	return nil
+}
+
+// RunOrigin is the immutable record of what started a run. It is decided
+// once, at submit, by the process that accepted the submission, and travels
+// on the replay-pinned plan exactly as the definition digest and the
+// telemetry selection do (internal/engine/plan.go): recorded in history,
+// identical on every replay, readable by any replica. It records; nothing
+// in OrkStack reads it to decide anything.
+type RunOrigin struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Kind  RunOriginKind          `protobuf:"varint,1,opt,name=kind,proto3,enum=orkstack.v1.RunOriginKind" json:"kind,omitempty"`
+	// id names the originating object for the kinds that have one — a
+	// trigger id, a schedule id, a parent run id, a source run id — and is
+	// empty for SUBMIT. Opaque: nothing parses it or derives anything from
+	// its shape (AGENTS.md §7).
+	Id string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	// reference is caller-supplied correlation text — a CI job URL, a ticket
+	// key, a partner event id — carried through from
+	// SubmitRunRequest.origin_reference or the Ork-Origin-Reference header on
+	// the trigger door. At most 256 bytes and no control characters, VALIDATED
+	// at the request boundary and never sanitized (AGENTS.md §7): an
+	// over-long or malformed reference is INVALID_ARGUMENT and starts no run.
+	// Opaque to OrkStack: it is never an expression, a selector or a routing
+	// key. A client renders it as a link only when it parses as an http(s)
+	// URL, and as text otherwise.
+	Reference string `protobuf:"bytes,3,opt,name=reference,proto3" json:"reference,omitempty"`
+	// description is the originating object's own human label at the moment
+	// of submit — Trigger.description for TRIGGER, the schedule's name for
+	// SCHEDULE — copied so a run stays explainable after the trigger is
+	// deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256
+	// bytes by truncation.
+	Description string `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	// principal is what the deployment's gateway asserted in the
+	// Ork-Principal request header on the submitting request — the trigger
+	// invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes
+	// by truncation, and NEVER authenticated: it is the same assertion, on the
+	// same terms, as AuditRecord.principal. Empty when no header was present;
+	// a client then omits the line entirely rather than showing a blank that
+	// could be mistaken for a name.
+	Principal     string `protobuf:"bytes,5,opt,name=principal,proto3" json:"principal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunOrigin) Reset() {
+	*x = RunOrigin{}
+	mi := &file_orkstack_v1_run_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunOrigin) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunOrigin) ProtoMessage() {}
+
+func (x *RunOrigin) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunOrigin.ProtoReflect.Descriptor instead.
+func (*RunOrigin) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *RunOrigin) GetKind() RunOriginKind {
+	if x != nil {
+		return x.Kind
+	}
+	return RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED
+}
+
+func (x *RunOrigin) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *RunOrigin) GetReference() string {
+	if x != nil {
+		return x.Reference
+	}
+	return ""
+}
+
+func (x *RunOrigin) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *RunOrigin) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
 // Event is a single realtime update for a run, delivered over the
 // server-streaming RPC and the WebSocket bridge.
 type Event struct {
@@ -934,7 +1132,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[4]
+	mi := &file_orkstack_v1_run_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -946,7 +1144,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[4]
+	mi := &file_orkstack_v1_run_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -959,7 +1157,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{4}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Event) GetRunId() string {
@@ -1072,7 +1270,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x10system_artifacts\x18\x0e \x03(\v2\x18.orkstack.v1.ArtifactRefR\x0fsystemArtifacts\x12%\n" +
 	"\x0ecommit_adopted\x18\x0f \x01(\bR\rcommitAdopted\x12\x19\n" +
 	"\bbuild_id\x18\x10 \x01(\tR\abuildId\x12.\n" +
-	"\x06phases\x18\x11 \x03(\v2\x16.orkstack.v1.PhaseSpanR\x06phases\"\x91\x05\n" +
+	"\x06phases\x18\x11 \x03(\v2\x16.orkstack.v1.PhaseSpanR\x06phases\"\xc1\x05\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
@@ -1091,7 +1289,14 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"finishedAt\x12\x1c\n" +
 	"\tnamespace\x18\f \x01(\tR\tnamespace\x12:\n" +
 	"\x19orkflow_definition_digest\x18\r \x01(\tR\x17orkflowDefinitionDigest\x12=\n" +
-	"\ttelemetry\x18\x0e \x01(\v2\x1f.orkstack.v1.TelemetrySelectionR\ttelemetry\"\xaa\x02\n" +
+	"\ttelemetry\x18\x0e \x01(\v2\x1f.orkstack.v1.TelemetrySelectionR\ttelemetry\x12.\n" +
+	"\x06origin\x18\x0f \x01(\v2\x16.orkstack.v1.RunOriginR\x06origin\"\xa9\x01\n" +
+	"\tRunOrigin\x12.\n" +
+	"\x04kind\x18\x01 \x01(\x0e2\x1a.orkstack.v1.RunOriginKindR\x04kind\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1c\n" +
+	"\treference\x18\x03 \x01(\tR\treference\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1c\n" +
+	"\tprincipal\x18\x05 \x01(\tR\tprincipal\"\xaa\x02\n" +
 	"\x05Event\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12*\n" +
@@ -1115,7 +1320,14 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"$RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED\x10\x03\x12$\n" +
 	" RETRY_STATE_RETRY_POLICY_NOT_SET\x10\x04\x12 \n" +
 	"\x1cRETRY_STATE_CANCEL_REQUESTED\x10\x05\x12%\n" +
-	"!RETRY_STATE_INTERNAL_SERVER_ERROR\x10\x06*\xc5\x02\n" +
+	"!RETRY_STATE_INTERNAL_SERVER_ERROR\x10\x06*\xc6\x01\n" +
+	"\rRunOriginKind\x12\x1f\n" +
+	"\x1bRUN_ORIGIN_KIND_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16RUN_ORIGIN_KIND_SUBMIT\x10\x01\x12\x1b\n" +
+	"\x17RUN_ORIGIN_KIND_TRIGGER\x10\x02\x12\x1c\n" +
+	"\x18RUN_ORIGIN_KIND_SCHEDULE\x10\x03\x12\x1e\n" +
+	"\x1aRUN_ORIGIN_KIND_PARENT_RUN\x10\x04\x12\x1d\n" +
+	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05*\xc5\x02\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16EVENT_TYPE_RUN_CREATED\x10\x01\x12\x1a\n" +
@@ -1143,65 +1355,69 @@ func file_orkstack_v1_run_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_run_proto_rawDescData
 }
 
-var file_orkstack_v1_run_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_orkstack_v1_run_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_orkstack_v1_run_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_orkstack_v1_run_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_orkstack_v1_run_proto_goTypes = []any{
 	(AttemptOutcome)(0),           // 0: orkstack.v1.AttemptOutcome
 	(RetryState)(0),               // 1: orkstack.v1.RetryState
-	(EventType)(0),                // 2: orkstack.v1.EventType
-	(*TaskRun)(nil),               // 3: orkstack.v1.TaskRun
-	(*PhaseSpan)(nil),             // 4: orkstack.v1.PhaseSpan
-	(*TaskAttempt)(nil),           // 5: orkstack.v1.TaskAttempt
-	(*Run)(nil),                   // 6: orkstack.v1.Run
-	(*Event)(nil),                 // 7: orkstack.v1.Event
-	(Status)(0),                   // 8: orkstack.v1.Status
-	(*Payload)(nil),               // 9: orkstack.v1.Payload
-	(*ArtifactRef)(nil),           // 10: orkstack.v1.ArtifactRef
-	(*Error)(nil),                 // 11: orkstack.v1.Error
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
-	(*CommitRef)(nil),             // 13: orkstack.v1.CommitRef
-	(*ImageRef)(nil),              // 14: orkstack.v1.ImageRef
-	(*TelemetrySelection)(nil),    // 15: orkstack.v1.TelemetrySelection
+	(RunOriginKind)(0),            // 2: orkstack.v1.RunOriginKind
+	(EventType)(0),                // 3: orkstack.v1.EventType
+	(*TaskRun)(nil),               // 4: orkstack.v1.TaskRun
+	(*PhaseSpan)(nil),             // 5: orkstack.v1.PhaseSpan
+	(*TaskAttempt)(nil),           // 6: orkstack.v1.TaskAttempt
+	(*Run)(nil),                   // 7: orkstack.v1.Run
+	(*RunOrigin)(nil),             // 8: orkstack.v1.RunOrigin
+	(*Event)(nil),                 // 9: orkstack.v1.Event
+	(Status)(0),                   // 10: orkstack.v1.Status
+	(*Payload)(nil),               // 11: orkstack.v1.Payload
+	(*ArtifactRef)(nil),           // 12: orkstack.v1.ArtifactRef
+	(*Error)(nil),                 // 13: orkstack.v1.Error
+	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(*CommitRef)(nil),             // 15: orkstack.v1.CommitRef
+	(*ImageRef)(nil),              // 16: orkstack.v1.ImageRef
+	(*TelemetrySelection)(nil),    // 17: orkstack.v1.TelemetrySelection
 }
 var file_orkstack_v1_run_proto_depIdxs = []int32{
-	8,  // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
-	9,  // 1: orkstack.v1.TaskRun.output:type_name -> orkstack.v1.Payload
-	10, // 2: orkstack.v1.TaskRun.artifacts:type_name -> orkstack.v1.ArtifactRef
-	11, // 3: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
-	12, // 4: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
-	12, // 5: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	10, // 6: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
-	13, // 7: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
-	10, // 8: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	10, // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
+	11, // 1: orkstack.v1.TaskRun.output:type_name -> orkstack.v1.Payload
+	12, // 2: orkstack.v1.TaskRun.artifacts:type_name -> orkstack.v1.ArtifactRef
+	13, // 3: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
+	14, // 4: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
+	14, // 5: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
+	12, // 6: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
+	15, // 7: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
+	12, // 8: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
 	1,  // 9: orkstack.v1.TaskRun.retry_state:type_name -> orkstack.v1.RetryState
-	12, // 10: orkstack.v1.TaskRun.scheduled_at:type_name -> google.protobuf.Timestamp
-	12, // 11: orkstack.v1.PhaseSpan.started_at:type_name -> google.protobuf.Timestamp
-	12, // 12: orkstack.v1.PhaseSpan.finished_at:type_name -> google.protobuf.Timestamp
+	14, // 10: orkstack.v1.TaskRun.scheduled_at:type_name -> google.protobuf.Timestamp
+	14, // 11: orkstack.v1.PhaseSpan.started_at:type_name -> google.protobuf.Timestamp
+	14, // 12: orkstack.v1.PhaseSpan.finished_at:type_name -> google.protobuf.Timestamp
 	0,  // 13: orkstack.v1.TaskAttempt.outcome:type_name -> orkstack.v1.AttemptOutcome
-	11, // 14: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
-	12, // 15: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
-	12, // 16: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
-	14, // 17: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
-	10, // 18: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	4,  // 19: orkstack.v1.TaskAttempt.phases:type_name -> orkstack.v1.PhaseSpan
-	8,  // 20: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
-	9,  // 21: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
-	9,  // 22: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
-	11, // 23: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
-	3,  // 24: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
-	12, // 25: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	12, // 26: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	12, // 27: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	15, // 28: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
-	2,  // 29: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
-	8,  // 30: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
-	9,  // 31: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
-	12, // 32: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
-	33, // [33:33] is the sub-list for method output_type
-	33, // [33:33] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	13, // 14: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
+	14, // 15: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
+	14, // 16: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
+	16, // 17: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
+	12, // 18: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	5,  // 19: orkstack.v1.TaskAttempt.phases:type_name -> orkstack.v1.PhaseSpan
+	10, // 20: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
+	11, // 21: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
+	11, // 22: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
+	13, // 23: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
+	4,  // 24: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
+	14, // 25: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	14, // 26: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	14, // 27: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	17, // 28: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
+	8,  // 29: orkstack.v1.Run.origin:type_name -> orkstack.v1.RunOrigin
+	2,  // 30: orkstack.v1.RunOrigin.kind:type_name -> orkstack.v1.RunOriginKind
+	3,  // 31: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
+	10, // 32: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
+	11, // 33: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
+	14, // 34: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
+	35, // [35:35] is the sub-list for method output_type
+	35, // [35:35] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }
@@ -1217,8 +1433,8 @@ func file_orkstack_v1_run_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_run_proto_rawDesc), len(file_orkstack_v1_run_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   5,
+			NumEnums:      4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

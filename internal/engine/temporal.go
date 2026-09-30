@@ -38,6 +38,14 @@ type TemporalStarter struct {
 	// to and listed by it. Stamping an attribute a cluster does not have fails
 	// the start, so it is off until a boot says otherwise.
 	namespaceIndexed bool
+
+	// originIndexed reports that this cluster has the OrkflowOriginKind and
+	// OrkflowOriginId search attributes (task.EnsureRunOriginSearchAttributes).
+	// It is a separate answer from namespaceIndexed: a cluster may have
+	// accepted the namespace attribute in an earlier release and refuse the
+	// two origin attributes now, and stamping one it does not have fails
+	// every submit.
+	originIndexed bool
 }
 
 // NewTemporalStarter returns a starter that dispatches RunWorkflow onto queue.
@@ -64,6 +72,14 @@ func NewTemporalStarterWithOrkerQueue(c client.Client, runQueue, orkerQueue stri
 // because it is what registered it.
 func (s *TemporalStarter) WithNamespaceIndex(indexed bool) *TemporalStarter {
 	s.namespaceIndexed = indexed
+	return s
+}
+
+// WithOriginIndex records whether the cluster indexes a run's origin
+// (task.EnsureRunOriginSearchAttributes), on the terms WithNamespaceIndex
+// records the namespace answer.
+func (s *TemporalStarter) WithOriginIndex(indexed bool) *TemporalStarter {
+	s.originIndexed = indexed
 	return s
 }
 
@@ -107,26 +123,44 @@ func (s *TemporalStarter) StartRun(
 		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
-		// The memo is how `run list` names an orkflow without reading a
-		// history per run: visibility returns it with the execution, on every
-		// replica. It is a copy of the definition's identity, never a second
-		// source of truth for it.
-		Memo: map[string]any{
-			MemoOrkflowName:    wf.GetName(),
-			MemoOrkflowVersion: wf.GetVersion(),
-			MemoNamespace:      wf.GetNamespace(),
-		},
 	}
-	// The namespace is stamped a second time, as a search attribute, because a
-	// memo is returned with a record and cannot select one. A tenant listing
-	// its runs needs the cluster to do the selecting — see ListRuns — and this
-	// is the value it selects on. It is resolved, so the built-in default is
-	// spelled one way whether the document named it or left it empty.
+	// The memo is how `run list` names an orkflow without reading a history
+	// per run: visibility returns it with the execution, on every replica. It
+	// is a copy of the definition's identity, never a second source of truth
+	// for it. The origin's kind and id ride it for the same reason: a listing
+	// row can say "trigger trg-…" without a history read per run.
+	memo := map[string]any{
+		MemoOrkflowName:    wf.GetName(),
+		MemoOrkflowVersion: wf.GetVersion(),
+		MemoNamespace:      wf.GetNamespace(),
+	}
+	originSlug, hasOrigin := artifacts.OriginKindSlug(plan.Origin.Proto().GetKind())
+	if hasOrigin {
+		memo[MemoOriginKind] = originSlug
+		memo[MemoOriginID] = plan.Origin.ID
+	}
+	options.Memo = memo
+	// Search attributes are collected and set ONCE: NewSearchAttributes takes
+	// every update in one call. The namespace is stamped a second time, as a
+	// search attribute, because a memo is returned with a record and cannot
+	// select one. A tenant listing its runs needs the cluster to do the
+	// selecting — see ListRuns — and this is the value it selects on. It is
+	// resolved, so the built-in default is spelled one way whether the
+	// document named it or left it empty. The origin goes in under its own
+	// boot-time answer, because a cluster may have accepted OrkflowNamespace
+	// last release and refuse the two new attributes now.
+	var attrs []temporal.SearchAttributeUpdate
 	if s.namespaceIndexed {
-		options.TypedSearchAttributes = temporal.NewSearchAttributes(
-			task.SearchKeyOrkflowNamespace.ValueSet(
-				artifacts.ResolveNamespace(wf.GetNamespace())),
-		)
+		attrs = append(attrs, task.SearchKeyOrkflowNamespace.ValueSet(
+			artifacts.ResolveNamespace(wf.GetNamespace())))
+	}
+	if s.originIndexed && hasOrigin {
+		attrs = append(attrs,
+			task.SearchKeyOrkflowOriginKind.ValueSet(originSlug),
+			task.SearchKeyOrkflowOriginID.ValueSet(plan.Origin.ID))
+	}
+	if len(attrs) > 0 {
+		options.TypedSearchAttributes = temporal.NewSearchAttributes(attrs...)
 	}
 	_, err := s.client.ExecuteWorkflow(ctx, options,
 		RunWorkflowType, runID, wf, input, plan)

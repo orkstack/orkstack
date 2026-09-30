@@ -1836,6 +1836,10 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		// plan is replay-pinned), so the run record shows what actually routed
 		// each task's signals. Nil-safe, same as above.
 		Telemetry: s.plan.Telemetry.Proto(),
+		// Same origin every snapshot of this run carries (the plan is
+		// replay-pinned), so the run record — and every webhook payload built
+		// from it — says what started it. Nil-safe, same as Telemetry above.
+		Origin: s.plan.Origin.Proto(),
 	}
 	for _, id := range s.order {
 		run.TaskRuns = append(run.TaskRuns, s.taskRuns[id])

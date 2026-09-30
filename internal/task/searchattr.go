@@ -3,6 +3,8 @@ package task
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -86,35 +88,102 @@ func ensureRunSearchAttributes(
 	svc searchAttributeRegistrar,
 	namespace string,
 ) (bool, error) {
-	if present, err := hasRunSearchAttributes(ctx, svc, namespace); err == nil && present {
+	return ensureSearchAttributes(ctx, svc, namespace, map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowNamespace: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	})
+}
+
+// SearchAttrOrkflowOriginKind and SearchAttrOrkflowOriginId index a run's
+// origin so "which runs did this trigger start" is a predicate the cluster
+// applies, on the terms SearchAttrOrkflowNamespace states. The orkflow_
+// prefix is the same rule: an unqualified name beside a Temporal client
+// would read as something Temporal owns.
+const (
+	SearchAttrOrkflowOriginKind = "OrkflowOriginKind"
+	SearchAttrOrkflowOriginId   = "OrkflowOriginId"
+)
+
+// SearchKeyOrkflowOriginKind and SearchKeyOrkflowOriginID are the typed keys
+// StartRun stamps a run's origin under.
+var (
+	SearchKeyOrkflowOriginKind = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowOriginKind)
+	SearchKeyOrkflowOriginID   = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowOriginId)
+)
+
+// EnsureRunOriginSearchAttributes registers the two origin attributes and
+// reports whether BOTH are usable, with the same idempotency, readiness poll
+// and "refused is not fatal" contract EnsureRunSearchAttributes has. It is
+// a separate call with a separate answer on purpose: a cluster that
+// accepted OrkflowNamespace in an earlier release and now refuses the
+// operator API must keep its namespace predicate; folding the three into
+// one answer would silently downgrade a working tenant listing to the slow
+// walk on the day of an upgrade.
+func EnsureRunOriginSearchAttributes(
+	ctx context.Context,
+	temporalClient client.Client,
+	namespace string,
+) (bool, error) {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
+	return ensureRunOriginSearchAttributes(ctx, temporalClient.OperatorService(), namespace)
+}
+
+func ensureRunOriginSearchAttributes(
+	ctx context.Context,
+	svc searchAttributeRegistrar,
+	namespace string,
+) (bool, error) {
+	return ensureSearchAttributes(ctx, svc, namespace, map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowOriginKind: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		SearchAttrOrkflowOriginId:   enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	})
+}
+
+// ensureSearchAttributes registers every attribute in want the namespace does
+// not already index, then polls until all of them are queryable. Only the
+// missing ones are sent: a registration that names an attribute the cluster
+// already has is refused whole, which would leave its sibling unregistered.
+func ensureSearchAttributes(
+	ctx context.Context,
+	svc searchAttributeRegistrar,
+	namespace string,
+	want map[string]enumspb.IndexedValueType,
+) (bool, error) {
+	names := sortedAttributeNames(want)
+	missing, err := missingSearchAttributes(ctx, svc, namespace, want)
+	if err == nil && len(missing) == 0 {
 		return true, nil
 	}
+	if err != nil {
+		// The read failed; ask for all of them and let the registration and the
+		// poll below decide.
+		missing = want
+	}
 	if _, err := svc.AddSearchAttributes(ctx, &operatorservice.AddSearchAttributesRequest{
-		Namespace: namespace,
-		SearchAttributes: map[string]enumspb.IndexedValueType{
-			SearchAttrOrkflowNamespace: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
-		},
+		Namespace:        namespace,
+		SearchAttributes: missing,
 	}); err != nil && grpcCode(err) != codes.AlreadyExists {
 		return false, fmt.Errorf("register search attribute %s in temporal namespace %q: %w",
-			SearchAttrOrkflowNamespace, namespace, err)
+			strings.Join(sortedAttributeNames(missing), ","), namespace, err)
 	}
 	// Registered is not the same as queryable. Poll rather than assume: the
 	// first ListRuns after boot would otherwise fail on an attribute the
 	// cluster has accepted and not yet indexed.
 	deadline := time.Now().Add(searchAttributeReadyTimeout)
 	for {
-		present, err := hasRunSearchAttributes(ctx, svc, namespace)
+		stillMissing, err := missingSearchAttributes(ctx, svc, namespace, want)
 		if err != nil {
 			return false, fmt.Errorf("read search attributes of temporal namespace %q: %w",
 				namespace, err)
 		}
-		if present {
+		if len(stillMissing) == 0 {
 			return true, nil
 		}
 		if time.Now().After(deadline) {
 			return false, fmt.Errorf(
 				"search attribute %s was registered in temporal namespace %q but is not "+
-					"queryable after %s", SearchAttrOrkflowNamespace, namespace,
+					"queryable after %s", strings.Join(names, ","), namespace,
 				searchAttributeReadyTimeout)
 		}
 		select {
@@ -125,17 +194,34 @@ func ensureRunSearchAttributes(
 	}
 }
 
-func hasRunSearchAttributes(
+// missingSearchAttributes reports which of want the namespace does not index
+// yet; empty means every one is present.
+func missingSearchAttributes(
 	ctx context.Context,
 	svc searchAttributeRegistrar,
 	namespace string,
-) (bool, error) {
+	want map[string]enumspb.IndexedValueType,
+) (map[string]enumspb.IndexedValueType, error) {
 	response, err := svc.ListSearchAttributes(ctx, &operatorservice.ListSearchAttributesRequest{
 		Namespace: namespace,
 	})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	_, ok := response.GetCustomAttributes()[SearchAttrOrkflowNamespace]
-	return ok, nil
+	missing := map[string]enumspb.IndexedValueType{}
+	for name, kind := range want {
+		if _, ok := response.GetCustomAttributes()[name]; !ok {
+			missing[name] = kind
+		}
+	}
+	return missing, nil
+}
+
+func sortedAttributeNames(attrs map[string]enumspb.IndexedValueType) []string {
+	names := make([]string, 0, len(attrs))
+	for name := range attrs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

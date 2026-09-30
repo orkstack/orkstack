@@ -1201,6 +1201,28 @@ Runs already pinned to a version still need that version's workers.
   one. Runs started *before* the attribute existed carry the namespace in
   their memo but not in the index, so they are listed by id and, once
   finished, from the archive — whose key already begins with the namespace.
+- **Listing runs by what started them is the same kind of question.** The
+  engine also registers `OrkflowOriginKind` and `OrkflowOriginId`
+  (`task.EnsureRunOriginSearchAttributes`) and stamps each run with its
+  origin's kind and id, so `run list --origin trigger:trg-…` and the runs
+  page's **Started by** filter are a visibility predicate for live runs; for
+  finished runs the archive keeps a zero-byte origin index beside its run
+  index (`docs/STORAGE.md`). The two origin attributes carry their OWN answer
+  on the boot line, separate from the namespace one, so a cluster that
+  accepted `OrkflowNamespace` in an earlier release and refuses the new pair
+  keeps its namespace predicate:
+
+  ```
+  INFO connected to temporal address=… namespace=… run_namespace_index=true run_origin_index=true
+  ```
+
+  On refusal the engine still boots and warns once
+  (`search_attribute=OrkflowOriginKind,OrkflowOriginId`,
+  `consequence="filtering runs by origin walks the whole index"`); an
+  origin-filtered list then reads the index to the end and fails, naming both
+  attributes, rather than return a short list. A run started before origins
+  existed has no origin, renders `unrecorded`, and is matched by no origin
+  filter. No setting controls any of this.
 - **A double submit is settled by the cluster, not by a replica.** One
   `--idempotency-key` sent to two replicas at once returns one run id, because
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not

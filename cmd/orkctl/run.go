@@ -26,6 +26,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunArtifactsCommand(g),
 		newRunArtifactCommand(g),
 		newRunAttemptsCommand(g),
+		newRunInspectCommand(g),
 		newRunDiffCommand(g),
 		newRunTimingCommand(g),
 		newRunAgainCommand(g),
@@ -53,6 +54,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 		idempotencyKey string
 		watch          bool
 		allowEmptyPool bool
+		originRef      string
 	)
 	cmd := &cobra.Command{
 		Use:   "submit <orkflow>",
@@ -77,6 +79,8 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 				IdempotencyKey: idempotencyKey,
 				Namespace:      g.namespace,
 				AllowEmptyPool: allowEmptyPool,
+				// Validation is the server's: the CLI sends what it was given.
+				OriginReference: originRef,
 			}))
 			if err != nil {
 				return rpcError("submit run", err)
@@ -108,8 +112,12 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 		"dedupe key for repeated submissions, scoped to this namespace")
 	cmd.Flags().BoolVar(&watch, "watch", false, "stream events until the run reaches a terminal state")
 	cmd.Flags().BoolVar(&allowEmptyPool, "allow-empty-pool", false, "submit even when the selected pool has no live Orkers")
+	cmd.Flags().StringVar(&originRef, "origin-ref", "", originRefHelp)
 	return cmd
 }
+
+// originRefHelp is the --origin-ref help, shared by `run submit` and `run again`.
+const originRefHelp = "correlation reference recorded on the run, e.g. a CI job URL or a ticket; at most 256 bytes"
 
 func newRunGetCommand(g *globalFlags) *cobra.Command {
 	var withAttempts, withTiming bool
@@ -201,13 +209,23 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 		pageToken    string
 		sinceText    string
 		untilText    string
+		originText   string
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List runs, newest first",
-		Args:  cobra.NoArgs,
+		Long: "list shows runs of the namespace this command acts in, newest first.\n\n" +
+			"--origin KIND[:ID] keeps runs by what started them: submit, trigger,\n" +
+			"schedule, parent-run or run-again, optionally narrowed to one originating\n" +
+			"object (a trigger id, a source or parent run id). A run started before\n" +
+			"origins were recorded matches no --origin filter.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			status, err := parseStatus(statusFilter)
+			if err != nil {
+				return err
+			}
+			originKind, originID, err := parseOriginFilter(originText)
 			if err != nil {
 				return err
 			}
@@ -228,6 +246,7 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 				PageSize:    limit,
 				Namespace:   g.namespace,
 				PageToken:   pageToken, CreatedAfter: since, CreatedBefore: until,
+				OriginKind: originKind, OriginId: originID,
 			}))
 			if err != nil {
 				return rpcError("list runs", err)
@@ -239,7 +258,22 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 				return err
 			}
 			if next := resp.Msg.GetNextPageToken(); next != "" {
-				_, err := fmt.Fprintf(cmd.OutOrStdout(), "\nNext page: orkctl -n %s run list --page-token %s\n", g.namespace, next)
+				// The token is bound to the filters it was minted under, so
+				// the next-page command repeats every one of them.
+				args := []string{"run", "list"}
+				for _, flag := range [][2]string{
+					{"--orkflow", orkflowName}, {"--status", statusFilter},
+					{"--since", sinceText}, {"--until", untilText}, {"--origin", originText},
+				} {
+					if flag[1] != "" {
+						args = append(args, flag[0], shellQuote(flag[1]))
+					}
+				}
+				if limit != 0 {
+					args = append(args, "--limit", fmt.Sprint(limit))
+				}
+				args = append(args, "--page-token", next)
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "\nNext page: %s\n", orkctlCommand(g.namespace, args...))
 				return err
 			}
 			return nil
@@ -252,6 +286,8 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous list")
 	cmd.Flags().StringVar(&sinceText, "since", "", "created at or after RFC3339 timestamp")
 	cmd.Flags().StringVar(&untilText, "until", "", "created before RFC3339 timestamp")
+	cmd.Flags().StringVar(&originText, "origin", "",
+		"only runs started this way: KIND or KIND:ID (submit, trigger, schedule, parent-run, run-again)")
 	return cmd
 }
 
@@ -308,6 +344,7 @@ func renderRun(out io.Writer, run *orkstackv1.Run) error {
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(run.GetCreatedAt()))
 	fmt.Fprintf(header, "Started:\t%s\n", formatTime(run.GetStartedAt()))
 	fmt.Fprintf(header, "Finished:\t%s\n", formatTime(run.GetFinishedAt()))
+	writeOriginLines(header, run.GetOrigin())
 	fmt.Fprintf(header, "Input:\t%s\n", payloadSummary(run.GetInput()))
 	fmt.Fprintf(header, "Output:\t%s\n", payloadSummary(run.GetOutput()))
 	if run.GetError() != nil {
@@ -353,10 +390,10 @@ func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "ID\tORKFLOW\tVERSION\tSTATUS\tCREATED\tFINISHED")
+	fmt.Fprintln(table, "ID\tORKFLOW\tVERSION\tORIGIN\tSTATUS\tCREATED\tFINISHED")
 	for _, run := range runs {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion(),
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion(), originColumn(run.GetOrigin()),
 			statusLabel(run.GetStatus()), formatTime(run.GetCreatedAt()), formatTime(run.GetFinishedAt()))
 	}
 	if err := table.Flush(); err != nil {

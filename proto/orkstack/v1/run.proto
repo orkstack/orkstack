@@ -256,6 +256,81 @@ message Run {
   // telemetry is the selection this run was pinned with (see
   // ExecuteTaskInput.telemetry). Unset when none was configured.
   TelemetrySelection telemetry = 14;
+
+  // origin is what started this run (RunOrigin). Unset only on a run
+  // recorded before origins existed; every run started since carries at
+  // least a kind. It is present on every snapshot the run writes, on the
+  // archived run, and therefore in every webhook payload's embedded run.
+  RunOrigin origin = 15;
+}
+
+// RunOriginKind is WHAT started a run. It is decided by the process that
+// accepted the submission and is never accepted from a client: the public
+// SubmitRun RPC produces SUBMIT, or RUN_AGAIN when the request names a
+// source run the server confirms exists; the trigger door produces TRIGGER
+// from its stored record; schedule and composition code produce SCHEDULE
+// and PARENT_RUN. A caller who could claim "trigger" would be claiming an
+// audit fact, so no request field carries a kind.
+enum RunOriginKind {
+  // UNSPECIFIED is what a run recorded before origins existed carries.
+  // Every client renders it as "unrecorded" — never as SUBMIT, because
+  // "a person submitted this" is a claim, and no evidence supports it.
+  RUN_ORIGIN_KIND_UNSPECIFIED = 0;
+  // SUBMIT: SubmitRun over Connect — orkctl run submit, the UI's submit
+  // dialog, or a direct API call. id is empty.
+  RUN_ORIGIN_KIND_SUBMIT = 1;
+  // TRIGGER: POST /v1/triggers/{id}. id is the trigger id (trg-…).
+  RUN_ORIGIN_KIND_TRIGGER = 2;
+  // SCHEDULE: a schedule fired. id is the schedule id (sch-…). Defined
+  // here so orkflow-schedules stamps it without touching Run; nothing
+  // produces it until that proposal lands.
+  RUN_ORIGIN_KIND_SCHEDULE = 3;
+  // PARENT_RUN: a child run started by a composing parent. id is the
+  // PARENT run's id. Defined here so composed-orkflows adds no Run field
+  // of its own; nothing produces it until that proposal lands.
+  RUN_ORIGIN_KIND_PARENT_RUN = 4;
+  // RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the
+  // SOURCE run's id, which the server confirmed exists in this namespace.
+  RUN_ORIGIN_KIND_RUN_AGAIN = 5;
+}
+
+// RunOrigin is the immutable record of what started a run. It is decided
+// once, at submit, by the process that accepted the submission, and travels
+// on the replay-pinned plan exactly as the definition digest and the
+// telemetry selection do (internal/engine/plan.go): recorded in history,
+// identical on every replay, readable by any replica. It records; nothing
+// in OrkStack reads it to decide anything.
+message RunOrigin {
+  RunOriginKind kind = 1;
+  // id names the originating object for the kinds that have one — a
+  // trigger id, a schedule id, a parent run id, a source run id — and is
+  // empty for SUBMIT. Opaque: nothing parses it or derives anything from
+  // its shape (AGENTS.md §7).
+  string id = 2;
+  // reference is caller-supplied correlation text — a CI job URL, a ticket
+  // key, a partner event id — carried through from
+  // SubmitRunRequest.origin_reference or the Ork-Origin-Reference header on
+  // the trigger door. At most 256 bytes and no control characters, VALIDATED
+  // at the request boundary and never sanitized (AGENTS.md §7): an
+  // over-long or malformed reference is INVALID_ARGUMENT and starts no run.
+  // Opaque to OrkStack: it is never an expression, a selector or a routing
+  // key. A client renders it as a link only when it parses as an http(s)
+  // URL, and as text otherwise.
+  string reference = 3;
+  // description is the originating object's own human label at the moment
+  // of submit — Trigger.description for TRIGGER, the schedule's name for
+  // SCHEDULE — copied so a run stays explainable after the trigger is
+  // deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256
+  // bytes by truncation.
+  string description = 4;
+  // principal is what the deployment's gateway asserted in the
+  // Ork-Principal request header on the submitting request — the trigger
+  // invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes
+  // by truncation, and NEVER authenticated: it is the same assertion, on the
+  // same terms, as AuditRecord.principal. Empty when no header was present;
+  // a client then omits the line entirely rather than showing a blank that
+  // could be mistaken for a name.
+  string principal = 5;
 }
 
 // EventType classifies a run event on the realtime stream.
