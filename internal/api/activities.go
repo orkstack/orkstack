@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"connectrpc.com/connect"
@@ -86,4 +87,42 @@ type errNoOrker struct{}
 func (errNoOrker) Error() string {
 	return "this engine is not wired to a temporal client, so it cannot ask pool " +
 		task.DefaultQueue + " which orker is serving it"
+}
+
+// InspectActivity resolves ONE reference on demand — a catalog name or any
+// registry reference `uses:` would accept — and answers it as ListActivities
+// would, interface included.
+//
+// It is uncached on purpose: an operator asks it once, about one reference.
+// It performs the same GETs an apply of that reference performs, to the same
+// hosts with the same credential, so it widens no network surface. It is a
+// read: nothing is written and nothing is audited.
+func (s *Service) InspectActivity(
+	ctx context.Context,
+	req *connect.Request[orkstackv1.InspectActivityRequest],
+) (*connect.Response[orkstackv1.InspectActivityResponse], error) {
+	requested := req.Msg.GetReference()
+	if requested == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(
+			`reference is required: a catalog name ("shell") or a registry reference ("ghcr.io/acme/migrate:v3")`))
+	}
+	if s.resolver == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New(
+			"this engine has no image resolver configured, so it cannot inspect a reference"))
+	}
+	catalog := s.activityCatalog()
+	reference, err := catalog.ResolveUses("", requested)
+	if err != nil {
+		return nil, applyResolveError(err)
+	}
+	res, err := s.resolver.Inspect(ctx, requested, reference)
+	if err != nil {
+		return nil, applyResolveError(err)
+	}
+	info := &orkstackv1.ActivityInfo{Reference: reference}
+	if _, isCatalogName := catalog[requested]; isCatalogName {
+		info.Name = requested
+	}
+	fillActivityInfo(info, res, s.now())
+	return connect.NewResponse(&orkstackv1.InspectActivityResponse{Activity: info}), nil
 }

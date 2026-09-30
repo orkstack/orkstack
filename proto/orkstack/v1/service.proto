@@ -3,6 +3,7 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
@@ -1143,7 +1144,21 @@ service ActivityService {
   // already in flight on it is untouched. The response is the Orker's
   // state AFTER the change, as the Orker itself reported it.
   rpc CordonOrker(CordonOrkerRequest) returns (CordonOrkerResponse);
+  // InspectActivity resolves ONE reference on demand — a catalog name or
+  // any registry reference `uses:` would accept — and reports it as
+  // ListActivities would: the pinned digest, platforms, and the interface
+  // the image declares. It is uncached, reads engine configuration and the
+  // registry only, never asks an Orker, and writes nothing.
+  rpc InspectActivity(InspectActivityRequest) returns (InspectActivityResponse);
 }
+
+message InspectActivityRequest {
+  // reference is what a task would write in `uses:`, resolved by the same
+  // four rules (§4.2, Catalog.ResolveUses): a catalog name, or a registry
+  // reference carrying `/`, `:` or `@`. A template is refused.
+  string reference = 1;
+}
+message InspectActivityResponse { ActivityInfo activity = 1; }
 
 message ListActivitiesRequest {}
 
@@ -1153,12 +1168,79 @@ message ListActivitiesRequest {}
 // to the ImageRef.resolved_at that activity.proto reserves: nothing hashes it,
 // and it is never stored in a version document.
 message ActivityInfo {
-  string name = 1;          // catalog key, e.g. "shell"
+  string name = 1;          // catalog key, e.g. "shell"; empty for InspectActivity of a raw reference
   string reference = 2;     // as configured, e.g. ghcr.io/orkstack/activity-shell:0.1
   string index_digest = 3;  // resolved, "sha256:<64 hex>"
   string media_type = 4;
   repeated string platforms = 5;
   google.protobuf.Timestamp resolved_at = 6;
+
+  // interface is what the image declares about its `with:` block, read from
+  // the org.orkstack.activity.interface label of the resolved image's config
+  // (§4.3 step 7). Unset when the image carries no label, when the label
+  // could not be read (interface_error says why), or when the reference did
+  // not resolve (index_digest is then empty too).
+  //
+  // It is a READ-MODEL field exactly as resolved_at is: derived from
+  // immutable, digest-addressed content on every read, hashed by nothing,
+  // stored nowhere.
+  ActivityInterface interface = 7;
+  // interface_error is non-empty when the image carries the label but it
+  // could not be turned into an ActivityInterface — malformed JSON, a
+  // schema_version this engine does not read, a vocabulary word outside
+  // the contract — or when the index advertised no platform manifest to
+  // read a config from. It distinguishes "declares nothing" from "declares
+  // something this engine cannot read". Empty whenever interface is set.
+  string interface_error = 8;
+}
+
+// FieldSchema is one `with:` key's declaration. It is EXACTLY the
+// vocabulary an Orkflow's `inputs:` already has (docs/DSL.md, "Inputs")
+// and not one word more: no pattern, no range, no enum, no nesting.
+message FieldSchema {
+  // type is one of "string", "number", "boolean", "object", "array".
+  string type = 1;
+  // required means the image refuses to run without this key. A field
+  // with a default is never required (the two contradict; the manifest
+  // is rejected).
+  bool required = 2;
+  // default is documentary: what the image assumes when the key is
+  // absent. The engine never writes it into `with:`. When set, its JSON
+  // type must match `type`; null is not a default (omit the field).
+  google.protobuf.Value default = 3;
+}
+
+// OpSchema is the key set one `op` reads, beside the shared `fields`.
+message OpSchema {
+  map<string, FieldSchema> fields = 1;
+}
+
+// ActivityInterface is what an image declares about its `with:` block. The
+// label org.orkstack.activity.interface holds this message's protojson
+// encoding (lowerCamel names), verbatim.
+message ActivityInterface {
+  // schema_version is 1. Any other value is a manifest this engine does
+  // not read and is reported through ActivityInfo.interface_error.
+  int32 schema_version = 1;
+  // fields are the top-level `with:` keys every op reads (or, for an
+  // image with no op selector, the whole `with:` block). The key is the
+  // `with:` key, byte for byte.
+  map<string, FieldSchema> fields = 2;
+  // ops, when non-empty, says the image selects its operation with the
+  // `op` key of docs/ACTIVITY_IMAGES.md: the map key is the op's name and
+  // the value is the keys that op reads in addition to `fields`. `op`
+  // itself is then implicitly declared {type: "string"} and must not
+  // appear in `fields`. A key may not be declared both in `fields` and
+  // under an op.
+  map<string, OpSchema> ops = 3;
+  // default_op is the op the image runs when `op` is absent, and must be
+  // a key of ops. Empty with non-empty ops means `op` is required.
+  string default_op = 4;
+  // values is documentary: the keys the image writes to values.json.
+  // Nothing checks it; `orkctl activity inspect` and the Activities page
+  // render it so an author knows what `.tasks.<id>.output.<key>` may
+  // reference.
+  map<string, FieldSchema> values = 5;
 }
 
 message ListActivitiesResponse {

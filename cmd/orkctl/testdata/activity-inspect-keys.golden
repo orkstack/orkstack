@@ -1,0 +1,17 @@
+Activity    ghcr.io/acme/deploy:4.0 (reference)
+Reference   ghcr.io/acme/deploy:4.0
+Pinned      ghcr.io/acme/deploy@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+Media type  application/vnd.oci.image.manifest.v1+json
+Platforms   -
+Resolved    2026-01-02T03:04:05Z
+
+Interface   schema 1 · 3 keys
+
+KEY     TYPE     REQUIRED  DEFAULT
+dryRun  boolean  no        false
+region  string   no        "eu-west-1"
+target  string   yes       -
+
+VALUES
+KEY       TYPE
+deployed  boolean

@@ -2,6 +2,14 @@ import { FailureCategory } from './gen/orkstack/v1/common_pb';
 import type { Error as OrkError } from './gen/orkstack/v1/common_pb';
 import type { ImageRef } from './gen/orkstack/v1/activity_pb';
 import type { Task } from './gen/orkstack/v1/orkflow_pb';
+import type {
+	ActivityInfo,
+	ActivityInterface,
+	FieldSchema
+} from './gen/orkstack/v1/service_pb';
+import { toJson } from '@bufbuild/protobuf';
+import { ValueSchema } from '@bufbuild/protobuf/wkt';
+import { shellQuote } from './runDetail';
 
 // An activity is an image. This module holds the two things the
 // UI needs to say about that, in one place because both are answered from a
@@ -115,4 +123,140 @@ export function categoryTestid(category: FailureCategory | undefined): string {
 export function hasError(err: OrkError | undefined): boolean {
 	if (!err) return false;
 	return Boolean(err.code || err.message || err.category);
+}
+
+// ---------------------------------------------------------------------------
+// Activity interface manifests: what an image declares about its `with:`
+// block, read by the engine from the org.orkstack.activity.interface label.
+// Every string below is the CLI's own (cmd/orkctl/activity.go), so both
+// clients say the same words for the same entry (docs/UI_CLI_PARITY.md).
+// ---------------------------------------------------------------------------
+
+export const INTERFACE_LABEL = 'org.orkstack.activity.interface';
+
+function countNoun(n: number, noun: string): string {
+	return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * interfaceSummary is the catalog's Interface column: "-" for an entry that
+ * did not resolve, "none" for an image that declares nothing, "malformed" for
+ * a label the engine could not read, otherwise "N keys" / "N ops".
+ */
+export function interfaceSummary(info: ActivityInfo): string {
+	if (!info.indexDigest) return '-';
+	if (info.interfaceError) return 'malformed';
+	const iface = info.interface;
+	if (!iface) return 'none';
+	const parts: string[] = [];
+	const keys = Object.keys(iface.fields).length;
+	const ops = Object.keys(iface.ops).length;
+	if (keys > 0) parts.push(countNoun(keys, 'key'));
+	if (ops > 0) parts.push(countNoun(ops, 'op'));
+	return parts.length > 0 ? parts.join(', ') : '0 keys';
+}
+
+/** interfaceHeadline is `orkctl activity inspect`'s Interface line. */
+export function interfaceHeadline(info: ActivityInfo): string {
+	if (!info.indexDigest) return '-';
+	if (info.interfaceError) return `malformed — ${info.interfaceError}`;
+	const iface = info.interface;
+	if (!iface) {
+		return `none — the image declares no ${INTERFACE_LABEL} label; with: is checked by the image at run time`;
+	}
+	const schema = `schema ${iface.schemaVersion}`;
+	const ops = Object.keys(iface.ops).length;
+	const keys = Object.keys(iface.fields).length;
+	if (ops === 0) return `${schema} · ${countNoun(keys, 'key')}`;
+	const selection = iface.defaultOp ? `default ${iface.defaultOp}` : 'op required';
+	let headline = `${schema} · selected by op: (${countNoun(ops, 'op')}, ${selection})`;
+	if (keys > 0) headline += ` · ${countNoun(keys, 'key')} shared by every op`;
+	return headline;
+}
+
+export interface InterfaceRow {
+	/** The op, or "*" for a key every op reads. */
+	op: string;
+	/** The with: key, or "-" for an op that reads nothing beyond the shared keys. */
+	key: string;
+	type: string;
+	required: string;
+	default: string;
+}
+
+const sorted = (o: object) => Object.keys(o).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+/** defaultText renders a declared default as compact JSON, or "-". */
+export function defaultText(field: FieldSchema): string {
+	if (!field.default) return '-';
+	return JSON.stringify(toJson(ValueSchema, field.default));
+}
+
+/**
+ * interfaceRows is the interface table, in the CLI's order: shared keys
+ * first (op "*"), then each op by name and each op's keys by name.
+ */
+export function interfaceRows(iface: ActivityInterface): InterfaceRow[] {
+	const rows: InterfaceRow[] = [];
+	const row = (op: string, key: string, field: FieldSchema): InterfaceRow => ({
+		op,
+		key,
+		type: field.type,
+		required: field.required ? 'yes' : 'no',
+		default: defaultText(field)
+	});
+	for (const key of sorted(iface.fields)) rows.push(row('*', key, iface.fields[key]));
+	for (const op of sorted(iface.ops)) {
+		const fields = iface.ops[op].fields;
+		const keys = sorted(fields);
+		if (keys.length === 0) {
+			rows.push({ op, key: '-', type: '-', required: '-', default: '-' });
+			continue;
+		}
+		for (const key of keys) rows.push(row(op, key, fields[key]));
+	}
+	return rows;
+}
+
+/** valueRows is the VALUES table: the keys an image writes to values.json. */
+export function valueRows(iface: ActivityInterface): { key: string; type: string }[] {
+	return sorted(iface.values).map((key) => ({ key, type: iface.values[key].type }));
+}
+
+/**
+ * pinnedReference is registry/repository@digest — the string a task's
+ * ImageRef.pinned carries — for a resolved entry. It normalises the reference
+ * the way internal/dsl.ParseReference does (Docker Hub's docker.io and
+ * library/), so the UI prints the pin `orkctl activity inspect` prints.
+ */
+export function pinnedReference(info: ActivityInfo): string {
+	if (!info.indexDigest) return '-';
+	let remainder = info.reference.trim();
+	const at = remainder.lastIndexOf('@');
+	if (at >= 0) remainder = remainder.slice(0, at);
+	let registry = '';
+	let name = remainder;
+	const slash = remainder.indexOf('/');
+	if (slash >= 0) {
+		const first = remainder.slice(0, slash);
+		if (first === 'localhost' || /[.:]/.test(first)) {
+			registry = first;
+			name = remainder.slice(slash + 1);
+		}
+	}
+	if (!registry) registry = 'docker.io';
+	const colon = name.lastIndexOf(':');
+	if (colon >= 0) name = name.slice(0, colon);
+	if (registry === 'docker.io' && !name.includes('/')) name = `library/${name}`;
+	return `${registry}/${name}@${info.indexDigest}`;
+}
+
+/**
+ * inspectCommand is the CLI equivalent of the Inspect form. A reference made
+ * only of characters a shell leaves alone is written bare (`orkctl activity
+ * inspect file`); anything else is single-quoted.
+ */
+export function inspectCommand(reference: string): string {
+	const word = /^[A-Za-z0-9_./:@-]+$/.test(reference) ? reference : shellQuote(reference);
+	return `orkctl activity inspect ${word}`;
 }

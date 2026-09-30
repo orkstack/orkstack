@@ -536,7 +536,9 @@ func (s *Service) ApplyOrkflow(
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
 ) (*connect.Response[orkstackv1.ApplyOrkflowResponse], error) {
 	source := []byte(req.Msg.GetYaml())
-	wf, ns, err := s.prepareOrkflow(ctx, source, req.Msg.GetNamespace())
+	// issues is WARNING only here: an interface ERROR is already the
+	// InvalidArgument returned above, before any token read or write.
+	wf, ns, issues, err := s.prepareOrkflow(ctx, source, req.Msg.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
@@ -571,22 +573,33 @@ func (s *Service) ApplyOrkflow(
 		return nil, orkflowStoreError(err, "store orkflow %s@%s in namespace %q",
 			wf.GetName(), wf.GetVersion(), ns.GetName())
 	}
-	return connect.NewResponse(&orkstackv1.ApplyOrkflowResponse{
+	resp := &orkstackv1.ApplyOrkflowResponse{
 		Orkflow: stored,
 		Created: created,
-	}), nil
+	}
+	for _, issue := range issues { // WARNING only: an ERROR already returned
+		resp.Warnings = append(resp.Warnings, issue.GetField()+": "+issue.GetMessage())
+	}
+	return connect.NewResponse(resp), nil
 }
 
 // ValidateOrkflow performs exactly ApplyOrkflow's preparation without reading
 // edit tokens or writing a definition. A document error is a returned issue;
 // unavailable registries and namespace stores remain RPC failures.
 func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orkstackv1.ValidateOrkflowRequest]) (*connect.Response[orkstackv1.ValidateOrkflowResponse], error) {
-	wf, _, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
+	wf, _, issues, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
 	if err == nil {
+		// Interface warnings first, then the pin advice, as one list.
 		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{
 			Orkflow: wf,
-			Issues:  pinUserParityWarnings(wf),
+			Issues:  append(issues, pinUserParityWarnings(wf)...),
 		}), nil
+	}
+	// A with: block that fails an image's declared interface is reported
+	// whole — every ERROR and WARNING at once — not as its first line.
+	var refusal *interfaceRefusal
+	if errors.As(err, &refusal) {
+		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{Issues: refusal.Issues}), nil
 	}
 	if connect.CodeOf(err) == connect.CodeInvalidArgument {
 		field := ""
@@ -681,27 +694,58 @@ type validationFieldError struct {
 func (e *validationFieldError) Error() string { return e.Err.Error() }
 func (e *validationFieldError) Unwrap() error { return e.Err }
 
+// interfaceRefusal is a document whose with: blocks fail the interface an
+// image declares. It carries EVERY issue, errors and warnings, so
+// ValidateOrkflow can return all of them at once instead of the first,
+// and ApplyOrkflow's message names the first error and the count.
+type interfaceRefusal struct{ Issues []*orkstackv1.ValidationIssue }
+
+func (e *interfaceRefusal) Error() string {
+	first := e.Issues[0]
+	for _, issue := range e.Issues {
+		if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
+			first = issue
+			break
+		}
+	}
+	message := first.GetField() + ": " + first.GetMessage()
+	if len(e.Issues) > 1 {
+		message += fmt.Sprintf(" (and %d more issues; run orkctl orkflow validate to see them all)", len(e.Issues)-1)
+	}
+	return message
+}
+
+// hasError reports whether any issue is an ERROR.
+func hasError(issues []*orkstackv1.ValidationIssue) bool {
+	for _, issue := range issues {
+		if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
+			return true
+		}
+	}
+	return false
+}
+
 // prepareOrkflow is the common apply/validate pipeline. Keep all mutation
 // after this function so validation cannot create a pointer or a definition.
-func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNamespace string) (*orkstackv1.Orkflow, *orkstackv1.Namespace, error) {
+func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNamespace string) (*orkstackv1.Orkflow, *orkstackv1.Namespace, []*orkstackv1.ValidationIssue, error) {
 	wf, err := dsl.CompileWithOptions(source, dsl.Options{Catalog: s.activityCatalog()})
 	if err != nil {
-		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	pinsVersion, err := dsl.DocumentPinsVersion(source)
 	if err != nil {
-		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	selected, err := applyNamespace(requestedNamespace, wf.GetNamespace())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	ns, err := s.namespace(ctx, selected)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := s.pools.CheckAllowedPools(ns, wf); err != nil {
-		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	// The namespace's secret policy, with the file in hand: anchored to the
 	// exact tasks[i].secrets[j].source so validate reports it as a field
@@ -709,28 +753,37 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	if err := engine.CheckAllowedSecrets(ns, wf); err != nil {
 		var refused *engine.SecretNotAllowedError
 		if errors.As(err, &refused) {
-			return nil, nil, connect.NewError(connect.CodeInvalidArgument,
+			return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument,
 				&validationFieldError{Field: refused.Field(), Err: err})
 		}
-		return nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	wf.Namespace = ns.GetName()
-	if err := s.resolveImages(ctx, wf); err != nil {
-		return nil, nil, applyResolveError(err)
+	resolutions, err := s.resolveImages(ctx, wf)
+	if err != nil {
+		return nil, nil, nil, applyResolveError(err)
+	}
+	// Rule 14: every task's with: against the interface its resolved image
+	// declares. After resolution, because the interface arrives from the
+	// registry and Compile stays pure. An ERROR refuses before anything is
+	// written; WARNINGs travel with the prepared document.
+	issues := dsl.CheckOrkflowInterfaces(wf, resolutions)
+	if hasError(issues) {
+		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
 	if !pinsVersion {
 		derived, err := dsl.DerivedVersion(source, wf)
 		if err != nil {
-			return nil, nil, connect.NewError(connect.CodeInternal, err)
+			return nil, nil, nil, connect.NewError(connect.CodeInternal, err)
 		}
 		wf.Version = derived
 	}
 	digest, err := dsl.DefinitionDigest(wf)
 	if err != nil {
-		return nil, nil, connect.NewError(connect.CodeInternal, err)
+		return nil, nil, nil, connect.NewError(connect.CodeInternal, err)
 	}
 	wf.DefinitionDigest = digest
-	return wf, ns, nil
+	return wf, ns, issues, nil
 }
 
 // checkEditTokens reads the two things an edit says about itself — which
