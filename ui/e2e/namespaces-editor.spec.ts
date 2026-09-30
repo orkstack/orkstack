@@ -153,6 +153,29 @@ async function rpc<T>(method: string, body: unknown): Promise<T> {
 	return JSON.parse(text) as T;
 }
 
+// purgeOwnOrkflows deletes, from this spec's two fixed namespaces, every
+// orkflow a run of this spec creates (`editable-*`, `beta-only-*`). None of
+// them is ever submitted, so DeleteOrkflow's recent-run guard never refuses.
+async function purgeOwnOrkflows(): Promise<void> {
+	for (const namespace of [ALPHA, BETA]) {
+		const names: string[] = [];
+		let pageToken = '';
+		do {
+			const page = await rpc<{ orkflows?: { name: string }[]; nextPageToken?: string }>(
+				'OrkflowService/ListOrkflows',
+				{ namespace, pageSize: 100, pageToken }
+			);
+			for (const o of page.orkflows ?? []) {
+				if (/^(editable|beta-only)-/.test(o.name)) names.push(o.name);
+			}
+			pageToken = page.nextPageToken ?? '';
+		} while (pageToken);
+		for (const name of names) {
+			await rpc('OrkflowService/DeleteOrkflow', { name, namespace });
+		}
+	}
+}
+
 function orkflowYaml(name: string, version: string, description: string): string {
 	return `name: ${name}
 version: "${version}"
@@ -262,6 +285,11 @@ test.beforeAll(async () => {
 			namespace: { name, description: 'namespaces-editor spec' }
 		});
 	}
+	// The namespaces are fixed but the stack is shared across runs, so the
+	// orkflows earlier runs of this spec left in them would otherwise pile up
+	// until this run's orkflow no longer sorts onto the Orkflows page's first
+	// page and the scoping assertions below look at the wrong page.
+	await purgeOwnOrkflows();
 	await rpc('OrkflowService/ApplyOrkflow', {
 		yaml: orkflowYaml(ORKFLOW, '0.1.0', 'first revision'),
 		namespace: ALPHA
@@ -273,6 +301,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+	await purgeOwnOrkflows().catch((err) => console.warn(`namespaces-editor cleanup: ${err}`));
 	await killAll();
 });
 

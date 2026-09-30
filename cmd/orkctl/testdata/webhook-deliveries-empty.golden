@@ -1,0 +1,4 @@
+No deliveries.
+
+Scope: every namespace, 2025-12-26T03:04:05Z to 2026-01-02T03:04:05Z, newest first.
+The body is not stored; each record carries its SHA-256 and the signature that was sent.

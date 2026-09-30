@@ -60,6 +60,7 @@ place each shape is spelled.
 | `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` (and `.trunc`) | live task stdout/stderr chunks; order is the zero-padded key (`LogChunkKey`, `logs.go`) | by the Orker while the task runs | the cleanup worker, or a bucket lifecycle rule |
 | `metadata/attempts/{run-id}/{task-id}/{attempt}.json` | one `TaskAttempt`: the outcome, error, exit code and §7.1 phase of ONE attempt, and the phases it passed through; order is the zero-padded key (`AttemptKey`, `attempts.go`) | by the Orker at the end of every attempt, best-effort, plain put | the cleanup worker, or a bucket lifecycle rule |
 | `metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` | one control-plane audit record: who asserted which write, on what, when, and whether it was refused (`AuditKey`, `pkg/artifacts/audit.go`); the day is the record's own `at` in UTC | create-only, by the engine after every audited write RPC | nothing; a bucket lifecycle rule is the operator's |
+| `metadata/deliveries/{yyyy}/{mm}/{dd}/{id}/{ns}/{run-id}/{webhook-id}/{event}/{outcome}.json` | one settled webhook delivery: every attempt, the signature sent, the body's SHA-256 — never the body (`DeliveryKey`, `pkg/artifacts/deliveries.go`); the day is the one the delivery id's stamp carries (`created_at`), and the segments after the id are the record's own coordinates so every listing filter is decided from the key | create-only, by the engine after the dispatcher returns | nothing; a bucket lifecycle rule is the operator's |
 | `metadata/commits/{ns}/{run-id}/{task-id}/commit.json` | the immutable activity completion record (`CommitKey`, `commit_store.go`) | conditional create-if-absent | the cleanup worker |
 | `metadata/probes/commit-store/…/commit.json` | the boot-time probe proving conditional create works on this store | at boot | nothing |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`, `s3_manifest.go`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
@@ -138,6 +139,12 @@ writes the cleanup sidecar.
 The cleanup worker never touches `metadata/audit/`: the control-plane audit
 trail is kept until a bucket lifecycle rule on that prefix says otherwise, and
 no setting in OrkStack shortens it.
+
+Nor does it touch `metadata/deliveries/`: a webhook delivery record is kept
+until a bucket lifecycle rule on that prefix expires it. It is a log, never a
+queue — nothing in OrkStack reads a record to decide what to send — so
+expiring one changes no behaviour; it only shortens how far back
+`orkctl webhook deliveries` can look.
 
 Artifact objects themselves are not reclaimed automatically.
 `DeleteUnreferencedObjects` exists and is proven against live object storage,

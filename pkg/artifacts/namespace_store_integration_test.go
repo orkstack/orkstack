@@ -460,6 +460,64 @@ func TestNamespaceStore_RoundTripsHoldAndMaxRunningAndStampsSinceItself(t *testi
 	}
 }
 
+// TestNamespaceStore_RoundTripsAllowedSecretsInOrderAndRefusesABadOne: the
+// list is stored and returned in the order given, an empty list under the
+// etag clears it, and a traversal entry is refused by the store itself with
+// the stored document left as it was.
+func TestNamespaceStore_RoundTripsAllowedSecretsInOrderAndRefusesABadOne(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	nsName := "reg-ns-secrets-" + uniqueToken(t)
+	t.Cleanup(func() { _ = store.Delete(context.Background(), nsName) })
+
+	want := []string{"file:/etc/orkstack/secrets/sandbox/*", "env:SANDBOX_*"}
+	put, err := store.Put(ctx, &orkstackv1.Namespace{Name: nsName, AllowedSecrets: want},
+		artifacts.PutConditions{IfAbsent: true})
+	if err != nil {
+		t.Fatalf("Put with two allowed_secrets: %v", err)
+	}
+	first, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", nsName, err)
+	}
+	if got := first.GetAllowedSecrets(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("allowed_secrets = %q, want %q in that order", got, want)
+	}
+
+	cleared := proto.Clone(first).(*orkstackv1.Namespace)
+	cleared.AllowedSecrets = nil
+	if _, err := store.Put(ctx, cleared, artifacts.PutConditions{IfMatch: put.GetEtag()}); err != nil {
+		t.Fatalf("Put clearing allowed_secrets: %v", err)
+	}
+	second, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get after clear: %v", err)
+	}
+	if len(second.GetAllowedSecrets()) != 0 {
+		t.Fatalf("allowed_secrets = %q after clear, want none", second.GetAllowedSecrets())
+	}
+
+	bad := proto.Clone(second).(*orkstackv1.Namespace)
+	bad.AllowedSecrets = []string{"file:/a/../b"}
+	_, err = store.Put(ctx, bad, artifacts.PutConditions{IfMatch: second.GetEtag()})
+	if !errors.Is(err, artifacts.ErrInvalidNamespace) || !strings.Contains(err.Error(), `"file:/a/../b"`) {
+		t.Fatalf("Put with file:/a/../b = %v, want ErrInvalidNamespace naming the entry", err)
+	}
+	after, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get after refused write: %v", err)
+	}
+	if after.GetEtag() != second.GetEtag() || len(after.GetAllowedSecrets()) != 0 {
+		t.Fatalf("refused write changed the document: etag %q -> %q, allowed_secrets %q",
+			second.GetEtag(), after.GetEtag(), after.GetAllowedSecrets())
+	}
+}
+
 // getObject reads one object's bytes through the raw client, so an assertion
 // about what was STORED is made against the bucket rather than against what
 // the store hands back.

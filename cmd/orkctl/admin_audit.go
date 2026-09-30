@@ -42,13 +42,14 @@ func newAdminAuditCommand(g *globalFlags) *cobra.Command {
 		Use:   "audit",
 		Short: "List control-plane writes: who changed what, when, newest first",
 		Long: "List the control-plane audit trail: one immutable record per write RPC\n" +
-			"(namespace, orkflow, trigger, webhook, retention and run-cancel changes),\n" +
-			"succeeded or refused, read from the shared store so any replica answers.\n" +
+			"(namespace, orkflow, trigger, webhook, retention, run-cancel and Orker\n" +
+			"cordon changes), succeeded or refused, read from the shared store so any\n" +
+			"replica answers.\n" +
 			"Reads and run submissions are never recorded.\n\n" +
 			"The scope is every namespace unless -n is given on this command line;\n" +
 			"ORK_NAMESPACE and the namespace saved by 'orkctl namespace use' are ignored.\n" +
-			"Deployment-wide writes (retention, webhooks) carry no namespace and appear\n" +
-			"only in the every-namespace scope.\n\n" +
+			"Deployment-wide writes (retention, webhooks, Orker cordons) carry no\n" +
+			"namespace and appear only in the every-namespace scope.\n\n" +
 			"--since and --until are RFC 3339 instants (a bare YYYY-MM-DD means midnight\n" +
 			"UTC); the default window is the seven days before now. A window with more\n" +
 			"records than the engine will scan for one page is refused — narrow it.\n\n" +

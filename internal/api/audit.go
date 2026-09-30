@@ -245,6 +245,23 @@ var auditedProcedures = map[string]auditExtractor{
 		in, _ := req.(*orkstackv1.DeleteWebhookRequest)
 		return auditEntry{Action: "webhook.delete", Target: in.GetId()}
 	},
+	orkstackv1connect.WebhookServiceRedeliverWebhookProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.RedeliverWebhookRequest)
+		entry := auditEntry{Action: "webhook.redeliver", Target: in.GetId()}
+		if out, ok := resp.(*orkstackv1.RedeliverWebhookResponse); ok && out != nil && out.GetDelivery() != nil {
+			d := out.GetDelivery()
+			status := int32(0)
+			if attempts := d.GetAttempts(); len(attempts) > 0 {
+				status = attempts[len(attempts)-1].GetStatusCode()
+			}
+			// Coordinates and outcome only: never the signature, never a
+			// secret, never the body.
+			entry.Detail = fmt.Sprintf("webhook=%s run=%s event=%s -> %s delivered=%t status=%d",
+				d.GetWebhookId(), d.GetRunId(), strings.TrimPrefix(d.GetEvent().String(), "EVENT_TYPE_"),
+				d.GetId(), d.GetDelivered(), status)
+		}
+		return entry
+	},
 	orkstackv1connect.TriggerServiceCreateTriggerProcedure: func(req, resp proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.CreateTriggerRequest)
 		version := in.GetOrkflowVersion()
@@ -305,6 +322,22 @@ var auditedProcedures = map[string]auditExtractor{
 		in, _ := req.(*orkstackv1.DeleteNamespaceRequest)
 		name := artifacts.ResolveNamespace(in.GetName())
 		return auditEntry{Action: "namespace.delete", Namespace: name, Target: name}
+	},
+	orkstackv1connect.ActivityServiceCordonOrkerProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.CordonOrkerRequest)
+		// Deployment-wide, as webhook.register and retention.update are: an
+		// Orker belongs to no namespace.
+		entry := auditEntry{Action: "orker.uncordon", Target: in.GetOrkerId()}
+		var parts []string
+		if in.GetCordoned() {
+			entry.Action = "orker.cordon"
+			parts = append(parts, "reason="+strconv.Quote(in.GetReason()))
+		}
+		if out, ok := resp.(*orkstackv1.CordonOrkerResponse); ok && out != nil && out.GetOrker().GetPool() != "" {
+			parts = append(parts, "pool="+out.GetOrker().GetPool())
+		}
+		entry.Detail = strings.Join(parts, " ")
+		return entry
 	},
 	orkstackv1connect.SystemServiceUpdateRetentionPolicyProcedure: func(req, _ proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.UpdateRetentionPolicyRequest)
@@ -367,8 +400,18 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 	parts := []string{
 		"default_pool=" + engine.DefaultPoolFor(ns),
 		"allowed_pools=[" + strings.Join(ns.GetAllowedPools(), " ") + "]",
-		"run_retention=" + retentionLabel(ns.GetRunRetention()),
 	}
+	// Secret policy (tenant-scoped-secret-policy): allowed_secrets= only when
+	// the list is non-empty, so an unrestricted namespace's summary is
+	// byte-identical to what it was before the field existed; clearing the
+	// list is the record with no key. Entries are in stored order, the
+	// allowed_pools rendering, and ahead of run_retention= so a truncation
+	// cuts a long labels map, never a pattern. Names only: a pattern is a
+	// locator the operator wrote, never a value.
+	if allowed := ns.GetAllowedSecrets(); len(allowed) > 0 {
+		parts = append(parts, "allowed_secrets=["+strings.Join(allowed, " ")+"]")
+	}
+	parts = append(parts, "run_retention="+retentionLabel(ns.GetRunRetention()))
 	// Admission (namespace-admission-control): hold= only when a hold is
 	// requested — released is the absence, as an accepting namespace is
 	// hold == nil — quoted so a reason can never end its own value early;

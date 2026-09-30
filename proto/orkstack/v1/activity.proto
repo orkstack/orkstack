@@ -383,4 +383,54 @@ message DescribeOrkerResult {
   // at once. 0 means it hosts none, and a submit that pins a task to this
   // Orker's pool is refused at submit rather than left waiting.
   int32 max_concurrent_pins = 9;
+
+  // cordoned is this Orker's process-local cordon flag. It is NEVER stored
+  // anywhere but the process: a restarted Orker answers false.
+  bool cordoned = 10;
+  // cordon_reason is the reason given to CordonOrker; empty when not
+  // cordoned.
+  string cordon_reason = 11;
+  // cordoned_at is when the flag was last set; unset when not cordoned.
+  google.protobuf.Timestamp cordoned_at = 12;
+  // running_tasks is how many ExecuteTask activities this Orker has in
+  // flight right now, pinned members included. Counted in the process; it
+  // is a measurement, not a projection.
+  int32 running_tasks = 13;
+  // open_pins is how many pins this Orker currently hosts: sessions it
+  // accepted and has not completed. Counted from the session creation
+  // activities in flight, so it is exact from the instant a pin is accepted,
+  // before its first member arrives. It never exceeds max_concurrent_pins.
+  int32 open_pins = 14;
+  // pins details each open pin, ordered by run_id. len(pins) == open_pins.
+  repeated OpenPin pins = 15;
+}
+
+// OpenPin is one pin this Orker currently hosts: a session it has accepted
+// and not yet completed. It names the run and the pin — never the session,
+// which is internal (AGENTS.md §7) — and says when the shared directory's
+// lease ends, which is the longest the pin can live even if nothing else
+// closes it (docs/design/task-pinning-worker-session.md §8.4).
+message OpenPin {
+  string run_id = 1;
+  // pin is the name the author wrote in `pin:`. EMPTY until the pin's first
+  // member attempt arrives: the Orker learns the name from
+  // ExecuteTaskInput.pin, and a session exists from the moment its creation
+  // is accepted, before any member has been dispatched to it.
+  string pin = 2;
+  // since is when this Orker accepted the pin.
+  google.protobuf.Timestamp since = 3;
+  // expires_at is the shared directory's lease (lease.json). UNSET until the
+  // first member arrives and writes it; a client renders "-", never a time.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// CordonOrkerInput is the argument of the CordonOrker activity, dispatched
+// on ONE Orker's control channel. `cordoned = false` clears the flag; then
+// reason is ignored.
+message CordonOrkerInput {
+  bool cordoned = 1;
+  // reason is required when cordoned is true; at most 256 bytes, no control
+  // characters. It is what ListOrkers shows beside the state and what the
+  // drain loop prints, so an operator reading the fleet knows why.
+  string reason = 2;
 }

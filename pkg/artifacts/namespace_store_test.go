@@ -242,3 +242,51 @@ func TestStampNamespaceHold_KeepsSinceAcrossAReasonEditAndClearsOnRelease(t *tes
 		})
 	}
 }
+
+// TestValidNamespaceSecrets_RefusesAMalformedEntryAndNamesIt: the registry
+// holds allowed_secrets to dsl.ValidSecretPatterns and nothing more — a
+// scheme no Orker resolves is each Orker's business, not the document's.
+func TestValidNamespaceSecrets_RefusesAMalformedEntryAndNamesIt(t *testing.T) {
+	many := make([]string, 0, 33)
+	for i := 0; i < 33; i++ {
+		many = append(many, "env:P"+strings.Repeat("X", i)+"_*")
+	}
+	for _, tc := range []struct {
+		name    string
+		entries []string
+		names   string
+	}{
+		{"257 bytes", []string{"abcdefghijklmnop:" + strings.Repeat("A", 240)}, "abcdefghijklmnop:"},
+		{"no colon", []string{"envX"}, `"envX"`},
+		{"empty scheme", []string{":X"}, `":X"`},
+		{"empty pattern", []string{"env:"}, `"env:"`},
+		{"long scheme", []string{"abcdefghijklmnopq:X"}, `"abcdefghijklmnopq:X"`},
+		{"star in scheme", []string{"en*v:X"}, `"en*v:X"`},
+		{"upper scheme", []string{"Env:X"}, `"Env:X"`},
+		{"comma", []string{"env:A,B"}, `"env:A,B"`},
+		{"space", []string{"env:A B"}, `"env:A B"`},
+		{"tab", []string{"env:A\tB"}, `"env:A\tB"`},
+		{"relative file", []string{"file:relative"}, `"file:relative"`},
+		{"dotdot", []string{"file:/a/../b"}, `"file:/a/../b"`},
+		{"dot", []string{"file:/a/./b"}, `"file:/a/./b"`},
+		{"empty segment", []string{"file:/a//b"}, `"file:/a//b"`},
+		{"trailing slash", []string{"file:/a/"}, `"file:/a/"`},
+		{"33 entries", many, "33"},
+		{"duplicate", []string{"env:A_*", "env:A_*"}, `"env:A_*"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidNamespaceSecrets(&orkstackv1.Namespace{Name: "sandbox", AllowedSecrets: tc.entries})
+			if !errors.Is(err, ErrInvalidNamespace) {
+				t.Fatalf("ValidNamespaceSecrets = %v, want ErrInvalidNamespace", err)
+			}
+			if !strings.Contains(err.Error(), `"sandbox"`) || !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("ValidNamespaceSecrets = %q, want it to name the namespace and %s", err, tc.names)
+			}
+		})
+	}
+	for _, ok := range [][]string{nil, {}, {"vault:x"}, {"env:SANDBOX_*", "file:/etc/orkstack/secrets/sandbox/*"}} {
+		if err := ValidNamespaceSecrets(&orkstackv1.Namespace{Name: "sandbox", AllowedSecrets: ok}); err != nil {
+			t.Errorf("ValidNamespaceSecrets(%q) = %v, want nil", ok, err)
+		}
+	}
+}

@@ -2235,6 +2235,7 @@ moves the task to a live Orker.
 | `WORKDIR_FAILED` | InfrastructureError | yes | per-attempt directory could not be created |
 | `SECRET_UNRESOLVED` | InfrastructureError | yes | a `SecretRef.source` could not be resolved |
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | Orker policy does not allow that source scheme |
+| `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor |
 | `COMMIT_READ_FAILED` | InfrastructureError | yes | commit store unreadable at step 0 |
 | `COMMIT_WRITE_FAILED` | InfrastructureError | yes | conditional PUT failed for a non-precondition reason |
 | `COMMIT_SCHEMA_UNSUPPORTED` | ContractViolation | no | existing commit has an unknown `schema_version` |

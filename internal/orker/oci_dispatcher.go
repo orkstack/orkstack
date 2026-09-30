@@ -384,6 +384,21 @@ func (d *OCIDispatcher) Validate(in *orkstackv1.ExecuteTaskInput) *Failure {
 					"an unknown scheme is refused rather than ignored",
 				secret.GetName(), scheme, strings.Join(d.Policy.SecretSchemes, ", "))
 		}
+		if failure := d.secretFloorFailure(secret); failure != nil {
+			return failure
+		}
+	}
+	return nil
+}
+
+// secretFloorFailure holds one secret's source against this Orker's
+// ORK_ORKER_SECRET_ALLOW floor. It names the source and the floor — never
+// what the source resolves to, which nothing on this path has read.
+func (d *OCIDispatcher) secretFloorFailure(secret *orkstackv1.SecretRef) *Failure {
+	if err := d.Policy.AllowsSecretSource(secret.GetSource()); err != nil {
+		return FailCause(ReasonSecretNotPermitted, err,
+			"secret %q: %v (this orker's %s); a source outside that floor is refused before anything runs",
+			secret.GetName(), err, SecretAllowVar)
 	}
 	return nil
 }
@@ -935,6 +950,12 @@ func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failu
 		return nil, Fail(ReasonSecretSchemeForbid,
 			"secret %q uses source scheme %q, which this orker does not resolve (allowed: %s)",
 			ref.GetName(), scheme, strings.Join(d.Policy.SecretSchemes, ", "))
+	}
+	// The floor again, beside the read: this is the function that reads the
+	// value, and the check that protects the value lives here whatever a
+	// caller checked first.
+	if failure := d.secretFloorFailure(ref); failure != nil {
+		return nil, failure
 	}
 	switch scheme {
 	case "env":

@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIs4DCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIkoKDU5hbWVzcGFjZUhvbGQSDgoGcmVhc29uGAEgASgJEikKBXNpbmNlGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCKcAQoEUG9vbBIMCgRuYW1lGAEgASgJEhgKEGxpdmVfb3JrZXJfY291bnQYAiABKAUSEgoKaXNfZGVmYXVsdBgEIAEoCBItCglsYXN0X3NlZW4YBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhoKEnVuYXZhaWxhYmxlX3JlYXNvbhgGIAEoCUoECAMQBFIHcGx1Z2luc0KqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIucDCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRIXCg9hbGxvd2VkX3NlY3JldHMYDSADKAkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJKCg1OYW1lc3BhY2VIb2xkEg4KBnJlYXNvbhgBIAEoCRIpCgVzaW5jZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAinAEKBFBvb2wSDAoEbmFtZRgBIAEoCRIYChBsaXZlX29ya2VyX2NvdW50GAIgASgFEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YBiABKAlKBAgDEARSB3BsdWdpbnNCqgEKD2NvbS5vcmtzdGFjay52MUIOTmFtZXNwYWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -180,6 +180,36 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * @generated from field: int32 max_running = 12;
    */
   maxRunning: number;
+
+  /**
+   * allowed_secrets bounds which SecretRef.source values a task of this
+   * namespace may resolve. Empty means UNRESTRICTED, which is what every
+   * namespace has today and therefore what an upgrade preserves — a
+   * deployment that sets none behaves exactly as it did before this field
+   * existed. It bounds NAMES: nothing that reads this field stores,
+   * compares or transmits a secret value.
+   *
+   * Each entry is `scheme:pattern`. The scheme is literal. The pattern is
+   * matched against the locator ONLY, never across the separator, and
+   * never as a regular expression: "*" is the one wildcard and it does not
+   * cross "/"; every other character is itself. A "file:" locator with a
+   * ".." segment is refused outright rather than normalized, so a pattern
+   * cannot be escaped by path traversal. The rule is
+   * internal/dsl.ValidSecretPattern and CheckSecretSource, the one place it
+   * is implemented; the registry refuses an entry that fails it.
+   *
+   * It is enforced at the API boundary in the two places a secret can be
+   * named, exactly as allowed_pools is: when an orkflow is applied or
+   * validated, with the file in hand (an issue anchored to
+   * tasks[i].secrets[j].source), and again when a run is submitted, which is
+   * the gate no client can bypass and which catches a definition stored
+   * while the list was wider. It composes by INTERSECTION with each Orker's
+   * own floor (ORK_ORKER_SECRET_ALLOW): a namespace can only ever narrow
+   * what its Orkers already permit.
+   *
+   * @generated from field: repeated string allowed_secrets = 13;
+   */
+  allowedSecrets: string[];
 };
 
 /**

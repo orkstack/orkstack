@@ -278,6 +278,9 @@ func (s *S3NamespaceStore) Put(
 	if err := validNamespaceTelemetry(ns); err != nil {
 		return nil, err
 	}
+	if err := ValidNamespaceSecrets(ns); err != nil {
+		return nil, err
+	}
 	if err := validNamespaceHold(ns); err != nil {
 		return nil, err
 	}
@@ -464,6 +467,20 @@ func validNamespaceTelemetry(ns *orkstackv1.Namespace) error {
 
 // maxHoldReason bounds a hold's reason: a short human line, never a document.
 const maxHoldReason = 512
+
+// ValidNamespaceSecrets enforces what the document can be held to on its
+// own: every allowed_secrets entry is a well-formed scheme:pattern the
+// engine and every Orker read the same way (dsl.ValidSecretPatterns).
+// Whether a scheme is one any Orker resolves is not the document's business.
+// Exported so the registry doubles in internal/api and cmd/orkctl tests
+// refuse exactly what the store refuses.
+func ValidNamespaceSecrets(ns *orkstackv1.Namespace) error {
+	if err := dsl.ValidSecretPatterns(ns.GetAllowedSecrets()); err != nil {
+		return fmt.Errorf("artifacts: namespace %q allowed_secrets: %w: %w",
+			ns.GetName(), err, ErrInvalidNamespace)
+	}
+	return nil
+}
 
 // validNamespaceHold enforces the hold rule on the document alone: a hold
 // carries a reason the next operator can read — non-empty once trimmed, at

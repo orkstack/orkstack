@@ -226,9 +226,11 @@ func mustRegister(t *testing.T, registry *webhooks.Registry, reg webhooks.Regist
 // ListForDelivery with the secrets, and it counts calls to each so a test can
 // say which read a registry used.
 type countingStore struct {
-	mu                  sync.Mutex
-	hooks               []webhooks.Webhook
-	lists, deliveryRead int
+	mu                        sync.Mutex
+	hooks                     []webhooks.Webhook
+	lists, deliveryRead, gets int
+	// deliveryErr, when set, is what ListForDelivery answers with.
+	deliveryErr error
 }
 
 func (s *countingStore) Register(context.Context, webhooks.Registration) (webhooks.Webhook, error) {
@@ -250,12 +252,16 @@ func (s *countingStore) ListForDelivery(context.Context) ([]webhooks.Webhook, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deliveryRead++
+	if s.deliveryErr != nil {
+		return nil, s.deliveryErr
+	}
 	return append([]webhooks.Webhook(nil), s.hooks...), nil
 }
 
 func (s *countingStore) Get(_ context.Context, id string) (webhooks.Webhook, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.gets++
 	for _, hook := range s.hooks {
 		if hook.ID == id {
 			return hook.Public(), true, nil
@@ -266,6 +272,12 @@ func (s *countingStore) Get(_ context.Context, id string) (webhooks.Webhook, boo
 
 func (s *countingStore) Delete(context.Context, string) (bool, error) {
 	panic("countingStore is read-only")
+}
+
+func (s *countingStore) getCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gets
 }
 
 func (s *countingStore) calls() (lists, deliveryReads int) {

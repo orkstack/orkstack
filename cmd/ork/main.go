@@ -820,6 +820,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
 		webhooks.NotifierOptions{Logger: logger},
 	)
+	// Delivery records: one immutable object per SETTLED delivery, written by
+	// the Observe callback after the dispatcher returned, in the same shared
+	// object store, so any replica lists a delivery another replica made. It
+	// is a log, never a queue: nothing reads a record to decide what to send.
+	// A store that cannot be opened stops the boot; a failed WRITE later is
+	// only logged, and never changes a delivery's outcome.
+	deliveryStore, err := artifacts.NewDeliveryStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open delivery record store: %w", err)
+	}
+	deliveryRecorder := api.NewDeliveryRecorder(deliveryStore, logger)
+	webhookNotifier.Observe(deliveryRecorder.Record)
 	runNotifier := api.NewWebhookNotifier(webhookNotifier, logger)
 
 	// Triggers: the inbound mirror of the webhooks above, in the same shared
@@ -1053,6 +1065,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Pools:         pools,
 		PoolOrkers:    starter,
 		Orkers:        starter,
+		Fleet:         starter,
 		Catalog:       cfg.activityCatalog,
 		Resolver:      resolver,
 		Activities:    activities,
@@ -1063,6 +1076,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Attempts:      attemptStore,
 		Idempotency:   idempotency,
 		Webhooks:      webhookRegistry,
+		Deliveries:    deliveryStore,
 		Triggers:      triggerStore,
 		AuditStore:    auditStore,
 		AuditCounter:  auditInstruments,

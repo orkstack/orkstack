@@ -2,10 +2,45 @@ package webhooks
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
+	"regexp"
 	"sync"
 	"time"
 )
+
+// DeliveryIDLayout renders the instant a delivery was queued inside its id:
+// UTC, fixed width, ordered the same lexicographically as chronologically.
+// It is the layout pkg/artifacts uses for the run index (RunStampLayout),
+// spelled here so this package stays free of that import.
+const DeliveryIDLayout = "20060102T150405.000000000Z"
+
+// deliveryIDPrefix and deliveryIDRandomBytes shape NewDeliveryID's output.
+const (
+	deliveryIDPrefix      = "dlv-"
+	deliveryIDRandomBytes = 8
+)
+
+// deliveryIDPattern is the shape NewDeliveryID produces.
+var deliveryIDPattern = regexp.MustCompile(`^dlv-\d{8}T\d{6}\.\d{9}Z-[0-9a-f]{16}$`)
+
+// NewDeliveryID returns "dlv-" + queuedAt in DeliveryIDLayout + "-" + 16 hex
+// characters from crypto/rand. The stamp makes a day's records list in the
+// order they were queued; the random half keeps two replicas from minting
+// one id. The receiver's X-Ork-Delivery is this value, and it is opaque to
+// the receiver as it always was.
+func NewDeliveryID(queuedAt time.Time) (string, error) {
+	var raw [deliveryIDRandomBytes]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("webhooks: delivery id: %w", err)
+	}
+	return deliveryIDPrefix + queuedAt.UTC().Format(DeliveryIDLayout) + "-" + hex.EncodeToString(raw[:]), nil
+}
+
+// ValidDeliveryID reports whether id has the shape NewDeliveryID produces.
+func ValidDeliveryID(id string) bool { return deliveryIDPattern.MatchString(id) }
 
 // Notifier fans one run transition out to every subscription that wants it.
 //
@@ -18,7 +53,7 @@ type Notifier struct {
 	registry   *Registry
 	dispatcher *Dispatcher
 	logger     *slog.Logger
-	newID      func() (string, error)
+	newID      func(queuedAt time.Time) (string, error)
 
 	wg sync.WaitGroup
 
@@ -30,8 +65,9 @@ type Notifier struct {
 type NotifierOptions struct {
 	// Logger records delivery outcomes. Nil discards them.
 	Logger *slog.Logger
-	// NewDeliveryID generates delivery ids. Nil uses crypto/rand.
-	NewDeliveryID func() (string, error)
+	// NewDeliveryID generates delivery ids from the instant the delivery was
+	// queued. Nil uses NewDeliveryID.
+	NewDeliveryID func(queuedAt time.Time) (string, error)
 }
 
 // NewNotifier wires a registry to a dispatcher.
@@ -46,7 +82,7 @@ func NewNotifier(registry *Registry, dispatcher *Dispatcher, options NotifierOpt
 		n.dispatcher = NewDispatcher(DispatcherOptions{})
 	}
 	if n.newID == nil {
-		n.newID = func() (string, error) { return randomToken("dlv-", 12) }
+		n.newID = NewDeliveryID
 	}
 	if n.logger == nil {
 		n.logger = slog.New(slog.DiscardHandler)
@@ -56,7 +92,8 @@ func NewNotifier(registry *Registry, dispatcher *Dispatcher, options NotifierOpt
 
 // Observe registers a callback invoked with every delivery result, after the
 // delivery settles. It is the seam tests and proof runs use to watch the wire
-// without a real subscriber.
+// without a real subscriber, and the one the engine records each settled
+// delivery through.
 func (n *Notifier) Observe(observer func(Result)) {
 	if observer == nil {
 		return
@@ -118,6 +155,10 @@ func (n *Notifier) queue(ctx context.Context, delivery Delivery, hooks []Webhook
 		delivery.Timestamp = time.Now().UTC()
 	}
 	detached := context.WithoutCancel(ctx)
+	// One instant per event: every delivery of this transition carries it as
+	// QueuedAt and inside its id, so an id's stamp and its record's
+	// created_at are the same instant by construction.
+	now := time.Now().UTC()
 	queued := 0
 	for _, hook := range hooks {
 		if hook.Secret == "" {
@@ -127,13 +168,14 @@ func (n *Notifier) queue(ctx context.Context, delivery Delivery, hooks []Webhook
 			n.logger.Warn("webhook delivery unsigned",
 				"webhook_id", hook.ID, "event", string(delivery.Event), "run_id", delivery.RunID)
 		}
-		id, err := n.newID()
+		id, err := n.newID(now)
 		if err != nil {
 			n.logger.Error("webhook delivery id", "webhook_id", hook.ID, "error", err)
 			continue
 		}
 		one := delivery
 		one.ID = id
+		one.QueuedAt = now
 		queued++
 
 		n.wg.Add(1)

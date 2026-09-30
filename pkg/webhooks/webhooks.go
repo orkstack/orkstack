@@ -455,6 +455,35 @@ func (r *Registry) MatchingContext(ctx context.Context, m Match) ([]Webhook, err
 	return out, nil
 }
 
+// LookupForDelivery returns the subscription with the given id WITH its
+// signing secret, or ok=false when no such subscription is registered. It is
+// the redelivery read and nobody else's: RedeliverWebhook is its only
+// caller, and its result is never serialized. The durable branch reads
+// through Store.ListForDelivery and filters in front of the caller — the
+// same "list everything, filter here" shape ListTriggers uses — so a Store
+// needs no new method; the in-memory branch reads byID under the lock.
+func (r *Registry) LookupForDelivery(ctx context.Context, id string) (Webhook, bool, error) {
+	if r.store != nil {
+		hooks, err := r.store.ListForDelivery(ctx)
+		if err != nil {
+			return Webhook{}, false, fmt.Errorf("lookup webhook %s for delivery: %w", id, err)
+		}
+		for _, hook := range hooks {
+			if hook.ID == id {
+				return hook, true, nil
+			}
+		}
+		return Webhook{}, false, nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	hook, ok := r.byID[id]
+	if !ok {
+		return Webhook{}, false, nil
+	}
+	return hook, true, nil
+}
+
 // ValidateURL accepts the absolute http(s) URLs a delivery can actually reach
 // and returns the URL as stored.
 func ValidateURL(raw string) (string, error) {

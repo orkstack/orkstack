@@ -317,10 +317,28 @@ service RunService {
 // each an exact match and each empty meaning "every". Delivery is
 // deliberately outside this management contract; callers never receive the
 // stored signing secret after registration.
+//
+// What a delivery DID is a record, not a queue: one immutable object per
+// settled delivery (metadata/deliveries/…), written after the dispatcher
+// returned and read by nothing that decides what to send. ListDeliveries and
+// GetDelivery read it; RedeliverWebhook is one operator-initiated synchronous
+// POST, recorded as a new delivery. Nothing here retries on its own.
 service WebhookService {
   rpc RegisterWebhook(RegisterWebhookRequest) returns (RegisterWebhookResponse);
   rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse);
   rpc DeleteWebhook(DeleteWebhookRequest) returns (DeleteWebhookResponse);
+  // ListDeliveries lists delivery records newest first, bounded and
+  // paginated. A scan that would examine more keys than the engine's budget
+  // allows before filling a page is REFUSED (RESOURCE_EXHAUSTED) naming the
+  // budget, never answered from the subset it managed to read.
+  rpc ListDeliveries(ListDeliveriesRequest) returns (ListDeliveriesResponse);
+  // GetDelivery returns one record by id.
+  rpc GetDelivery(GetDeliveryRequest) returns (GetDeliveryResponse);
+  // RedeliverWebhook POSTs one delivery again — once, now, synchronously,
+  // signed with the subscription's current secret, embedding the run as it
+  // reads today — and returns the NEW record. The operator is the retry
+  // policy: this RPC never queues, never retries, and never runs unattended.
+  rpc RedeliverWebhook(RedeliverWebhookRequest) returns (RedeliverWebhookResponse);
 }
 
 message Webhook {
@@ -367,6 +385,120 @@ message ListWebhooksRequest {}
 message ListWebhooksResponse { repeated Webhook webhooks = 1; }
 message DeleteWebhookRequest { string id = 1; }
 message DeleteWebhookResponse {}
+
+// DeliveryOutcome selects delivery records by whether they landed.
+enum DeliveryOutcome {
+  DELIVERY_OUTCOME_UNSPECIFIED = 0;   // every record
+  DELIVERY_OUTCOME_DELIVERED = 1;     // the receiver answered 2xx
+  DELIVERY_OUTCOME_FAILED = 2;        // the ladder ended without a 2xx
+}
+
+// DeliveryAttempt is one POST of one delivery, as pkg/webhooks.Attempt
+// recorded it.
+message DeliveryAttempt {
+  int32 number = 1;                        // counts from 1
+  int32 status_code = 2;                   // 0 when the request never completed
+  string error = 3;                        // transport failure or "receiver answered N"; bounded
+  google.protobuf.Duration backoff = 4;    // pause taken before this attempt
+  google.protobuf.Duration duration = 5;   // how long the request itself took
+  google.protobuf.Timestamp at = 6;        // when the request was started
+}
+
+// Delivery is one settled webhook delivery: what OrkStack sent, what the
+// receiver answered, and nothing about what the receiver did with it.
+message Delivery {
+  // schema_version is 1. A reader skips a record whose version it does not
+  // know rather than guessing at its fields.
+  int32 schema_version = 1;
+  // id is the value the receiver saw in X-Ork-Delivery, shaped
+  // "dlv-{stamp}-{16 hex}" where stamp is the store's sortable UTC layout at
+  // the instant the delivery was queued (created_at) and the hex is 8 bytes
+  // from crypto/rand. The stamp is the store's coordinate for the record's
+  // key; no client parses it — created_at is the time.
+  string id = 2;
+  string webhook_id = 3;
+  EventType event = 4;
+  string run_id = 5;
+  // namespace is the run's resolved namespace ("default" spelled out).
+  string namespace = 6;
+  string orkflow_name = 7;
+  // task_id and attempt are set for a task outcome delivery
+  // (scoped-subscriptions) and empty/zero for a run transition.
+  string task_id = 8;
+  int32 attempt = 9;
+  // status is the transition's status as the body's "status" carried it.
+  Status status = 10;
+  // url is the subscription's URL as it was POSTed to.
+  string url = 11;
+  bool delivered = 12;
+  // signature is the X-Ork-Signature value sent ("sha256=…"), or empty when
+  // the delivery was unsigned. It is what the record proves was sent; the
+  // secret itself is never here.
+  string signature = 13;
+  // body_sha256 is the lowercase hex SHA-256 of the exact bytes POSTed, and
+  // body_bytes their length. The body is not stored: the run is readable at
+  // GetRun, and a second copy would be a second version of the truth.
+  string body_sha256 = 14;
+  int64 body_bytes = 15;
+  repeated DeliveryAttempt attempts = 16;
+  // event_at is the transition's own timestamp (X-Ork-Timestamp, the body's
+  // "timestamp"); created_at is when the notifier queued the delivery;
+  // settled_at is when the dispatcher returned.
+  google.protobuf.Timestamp event_at = 17;
+  google.protobuf.Timestamp created_at = 18;
+  google.protobuf.Timestamp settled_at = 19;
+  // redelivery_of names the delivery this one repeats, when an operator
+  // asked for it through RedeliverWebhook. Empty for a delivery the engine
+  // made on its own.
+  string redelivery_of = 20;
+}
+
+message ListDeliveriesRequest {
+  // Each filter is an exact match; empty (or UNSPECIFIED) means every.
+  string webhook_id = 1;
+  string run_id = 2;
+  // event is only a subscribable event (webhooks.KnownEvents); TASK_LOG and
+  // RUN_CREATED are INVALID_ARGUMENT, never delivered.
+  EventType event = 3;
+  DeliveryOutcome outcome = 4;
+  // namespace filters by the run's namespace. As on ListAuditRecordsRequest,
+  // empty here means EVERY namespace, not the default one: the natural scope
+  // of the webhook surface is the deployment. "default" selects the default
+  // namespace's runs.
+  string namespace = 5;
+  // since is the inclusive start of the window and until the exclusive end,
+  // both against created_at. until empty means the moment the answer is
+  // computed. since empty means: the run's created_at when run_id names a
+  // run the engine can read, otherwise seven days before until. A window
+  // whose end is not after its start is INVALID_ARGUMENT.
+  google.protobuf.Timestamp since = 6;
+  google.protobuf.Timestamp until = 7;
+  // page_size caps the records returned; 0 means the default (50); above
+  // the maximum (200) is INVALID_ARGUMENT, not clamped.
+  int32 page_size = 8;
+  // page_token continues a listing. It is opaque and versioned and binds
+  // every filter above; a token presented with different filters is
+  // INVALID_ARGUMENT, exactly as ListRunsRequest.page_token behaves.
+  string page_token = 9;
+}
+message ListDeliveriesResponse {
+  repeated Delivery deliveries = 1;        // newest first
+  string next_page_token = 2;              // empty when the window is exhausted
+  // since and until are the window the answer covers, resolved, so a client
+  // prints what "the last week" or "since the run started" meant.
+  google.protobuf.Timestamp since = 3;
+  google.protobuf.Timestamp until = 4;
+}
+
+message GetDeliveryRequest { string id = 1; }
+message GetDeliveryResponse { Delivery delivery = 1; }
+
+message RedeliverWebhookRequest { string id = 1; }   // the delivery to repeat
+message RedeliverWebhookResponse {
+  // delivery is the NEW record: its own id, its one attempt, its own
+  // signature and body digest, and redelivery_of naming the request's id.
+  Delivery delivery = 1;
+}
 
 // TriggerService manages inbound run starters. A trigger is bound to ONE
 // orkflow in one namespace, and an external caller presents that trigger's
@@ -967,6 +1099,24 @@ service ActivityService {
   // Temporal activity on a pool's own channel, so it answers only when an
   // Orker is actually polling that pool.
   rpc DescribeOrker(DescribeOrkerRequest) returns (DescribeOrkerResponse);
+  // ListOrkers is the fleet: one row per live Orker of the deployment,
+  // derived on read. Like Pool, nothing WRITES an Orker — the list comes
+  // from the cluster's own poller records and each Orker's own answer, so
+  // any replica answers and none holds state of its own (AGENTS.md §7). It
+  // NARROWS rather than refusing: an Orker that did not answer keeps its
+  // row and carries unavailable_reason. Two conditions are distinct: a
+  // known poller whose describe failed is a row with unavailable_reason;
+  // an orker_id that NO live poller answers to is an EMPTY list, never
+  // NOT_FOUND — a read for an id nothing polls is an empty answer, and the
+  // drain loop relies on it (CordonOrker, a write, is the one that answers
+  // NOT_FOUND for that id).
+  rpc ListOrkers(ListOrkersRequest) returns (ListOrkersResponse);
+  // CordonOrker sets or clears ONE Orker's cordon: a process-local flag
+  // delivered over that Orker's own channel, lost when the process exits.
+  // A cordoned Orker takes no new task and opens no new pin; everything
+  // already in flight on it is untouched. The response is the Orker's
+  // state AFTER the change, as the Orker itself reported it.
+  rpc CordonOrker(CordonOrkerRequest) returns (CordonOrkerResponse);
 }
 
 message ListActivitiesRequest {}
@@ -994,6 +1144,58 @@ message ListActivitiesResponse {
 
 message DescribeOrkerRequest {}
 message DescribeOrkerResponse { DescribeOrkerResult orker = 1; }
+
+// Orker is one execution process, observed live.
+message Orker {
+  string orker_id = 1;
+  // pool is the pool the Orker reports serving (DescribeOrkerResult.pool).
+  string pool = 2;
+  string build_id = 3;               // empty when versioning is off
+  int32 running_tasks = 4;
+  int32 open_pins = 5;
+  int32 max_concurrent_pins = 6;     // ORK_ORKER_MAX_PINS; 0 means not a pin host
+  bool cordoned = 7;
+  string cordon_reason = 8;          // empty when not cordoned
+  google.protobuf.Timestamp cordoned_at = 9;
+  // last_seen is the most recent moment this Orker was observed polling.
+  // It answers "how fresh is this row", never "when did this Orker die".
+  google.protobuf.Timestamp last_seen = 10;
+  // unavailable_reason says this Orker COULD NOT BE ASKED, and why — the
+  // same three-state distinction Pool.unavailable_reason makes, for the same
+  // reason: "not measured" rendered as "measured zero" sends an operator to
+  // stop a host that may be mid-task. When set, fields 2–9 and 12 are
+  // unset: nothing was measured, so there is no number to report.
+  string unavailable_reason = 11;
+  repeated OpenPin pins = 12;
+}
+
+message ListOrkersRequest {
+  // pool keeps only Orkers that report serving this pool. Empty keeps every
+  // Orker. It is matched against what each Orker answers, not against a
+  // channel name.
+  string pool = 1;
+  // orker_id asks exactly one Orker, on its own channel, and returns at
+  // most one row; pool is then ignored. It is what `orkctl orker get` and
+  // the drain loop use, so a drain costs one activity per poll and not one
+  // per Orker of the fleet.
+  string orker_id = 2;
+}
+
+message ListOrkersResponse {
+  // orkers is ordered by pool, then orker_id. A stable order is part of the
+  // contract: the Admin page renders it.
+  repeated Orker orkers = 1;
+}
+
+message CordonOrkerRequest {
+  string orker_id = 1;
+  bool cordoned = 2;
+  // reason is required when cordoned is true (INVALID_ARGUMENT otherwise);
+  // ignored when false.
+  string reason = 3;
+}
+
+message CordonOrkerResponse { Orker orker = 1; }
 
 // SystemService reports what this deployment is made of.
 service SystemService {

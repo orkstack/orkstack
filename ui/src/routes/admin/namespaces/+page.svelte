@@ -24,6 +24,7 @@
 		DEFAULT_POOL_NAME,
 		parseAttributeLines,
 		parsePoolList,
+		parseSecretPatternLines,
 		validateNamespaceForm,
 		type NamespaceFormErrors
 	} from '$lib/namespaceRules';
@@ -72,6 +73,15 @@
 
 	function maxRunningLabel(maxRunning: number): string {
 		return maxRunning > 0 ? String(maxRunning) : 'unlimited';
+	}
+
+	// allowedSecretsLabel renders a namespace's secret-source list the way
+	// the CLI's `namespace list` column does (cmd/orkctl/namespace.go):
+	// "unrestricted" spelled out, never a dash, which under a heading naming
+	// a security bound would read as "none allowed" — the opposite of what an
+	// empty list means.
+	function allowedSecretsLabel(allowedSecrets: string[]): string {
+		return allowedSecrets.length > 0 ? allowedSecrets.join(', ') : 'unrestricted';
 	}
 
 	// holdRequest is what a form's hold field sends: blank is a deliberate
@@ -192,6 +202,7 @@
 	let createTelemetryAttributesText = $state('');
 	let createHoldReason = $state('');
 	let createMaxRunning = $state('');
+	let createAllowedSecrets = $state('');
 	let createErrors = $state<NamespaceFormErrors>({});
 	let createBusy = $state(false);
 	let createServerError = $state('');
@@ -208,6 +219,7 @@
 		createTelemetryAttributesText = '';
 		createHoldReason = '';
 		createMaxRunning = '';
+		createAllowedSecrets = '';
 	}
 
 	async function submitCreate() {
@@ -222,7 +234,8 @@
 				runRetentionHours: createRunRetentionHours,
 				telemetryAttributesText: createTelemetryAttributesText,
 				holdReason: createHoldReason,
-				maxRunning: createMaxRunning
+				maxRunning: createMaxRunning,
+				allowedSecretsText: createAllowedSecrets
 			},
 			{ requireName: true }
 		);
@@ -254,7 +267,9 @@
 						createTelemetryAttributesText
 					),
 					hold: holdRequest(createHoldReason),
-					maxRunning: maxRunningRequest(createMaxRunning)
+					maxRunning: maxRunningRequest(createMaxRunning),
+					// Blank is an empty list: unrestricted.
+					allowedSecrets: parseSecretPatternLines(createAllowedSecrets)
 				}
 			});
 			createSuccess = res.created
@@ -280,6 +295,7 @@
 	let editTelemetryAttributesText = $state('');
 	let editHoldReason = $state('');
 	let editMaxRunning = $state('');
+	let editAllowedSecrets = $state('');
 	let editEtag = $state('');
 	let editErrors = $state<NamespaceFormErrors>({});
 	let editBusy = $state(false);
@@ -304,6 +320,7 @@
 			: '';
 		editHoldReason = ns.hold?.reason ?? '';
 		editMaxRunning = ns.maxRunning > 0 ? String(ns.maxRunning) : '';
+		editAllowedSecrets = ns.allowedSecrets.join('\n');
 		editEtag = ns.etag;
 		editLabels = { ...ns.labels };
 		editErrors = {};
@@ -337,7 +354,8 @@
 				runRetentionHours: editRunRetentionHours,
 				telemetryAttributesText: editTelemetryAttributesText,
 				holdReason: editHoldReason,
-				maxRunning: editMaxRunning
+				maxRunning: editMaxRunning,
+				allowedSecretsText: editAllowedSecrets
 			},
 			{ requireName: false }
 		);
@@ -370,7 +388,11 @@
 					// Prefilled from the row like run retention: a blank hold
 					// reason on save is a deliberate release, not an omission.
 					hold: holdRequest(editHoldReason),
-					maxRunning: maxRunningRequest(editMaxRunning)
+					maxRunning: maxRunningRequest(editMaxRunning),
+					// Prefilled one entry per line from the row: blank on save
+					// sends an empty list, a deliberate choice of unrestricted,
+					// not an omission — the rule run retention follows above.
+					allowedSecrets: parseSecretPatternLines(editAllowedSecrets)
 				}
 			});
 			closeEdit();
@@ -655,6 +677,28 @@
 					>
 				{/if}
 			</label>
+			<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
+				<span class="font-medium text-fg"
+					>Allowed secrets (one scheme:pattern per line; blank = unrestricted)</span
+				>
+				<textarea
+					data-testid="ns-create-allowed-secrets"
+					bind:value={createAllowedSecrets}
+					rows="2"
+					placeholder="env:SANDBOX_*"
+					spellcheck="false"
+					class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+				></textarea>
+				<span class="text-xs text-fg-muted"
+					>Bounds which <code>source:</code> values this namespace's tasks may name. Each Orker's own
+					<code>ORK_ORKER_SECRET_ALLOW</code> still applies.</span
+				>
+				{#if createErrors.allowedSecrets}
+					<span class="text-xs text-danger-700" data-testid="ns-create-error-allowed-secrets"
+						>{createErrors.allowedSecrets}</span
+					>
+				{/if}
+			</label>
 			<TelemetryFields
 				bind:sink={createTelemetrySink}
 				bind:taskLogs={createTaskLogs}
@@ -707,6 +751,7 @@
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Description</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Default pool</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed pools</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Allowed secrets</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Run retention</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Hold</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Max running</th>
@@ -736,6 +781,11 @@
 							<td class="h-11 px-4 align-middle text-fg-secondary">
 								{ns.allowedPools.length > 0 ? ns.allowedPools.join(', ') : 'unrestricted'}
 							</td>
+							<td
+								class="h-11 max-w-xs truncate px-4 align-middle font-mono text-xs text-fg-secondary"
+								title={allowedSecretsLabel(ns.allowedSecrets)}
+								data-testid="namespace-allowed-secrets-{ns.name}">{allowedSecretsLabel(ns.allowedSecrets)}</td
+							>
 							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-run-retention-{ns.name}"
 								>{runRetentionLabel(ns.runRetention)}</td
 							>
@@ -822,7 +872,7 @@
 						</tr>
 						{#if editingName === ns.name}
 							<tr>
-								<td colspan="12" class="bg-surface-sunken px-4 py-4">
+								<td colspan="13" class="bg-surface-sunken px-4 py-4">
 									<form
 										data-testid="namespace-edit-form-{ns.name}"
 										class="grid gap-3 sm:grid-cols-2"
@@ -898,6 +948,28 @@
 											/>
 											{#if editErrors.maxRunning}
 												<span class="text-xs text-danger-700">{editErrors.maxRunning}</span>
+											{/if}
+										</label>
+										<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
+											<span class="font-medium text-fg"
+												>Allowed secrets (one scheme:pattern per line; blank = unrestricted)</span
+											>
+											<textarea
+												data-testid="ns-edit-allowed-secrets-{ns.name}"
+												bind:value={editAllowedSecrets}
+												rows="2"
+												placeholder="unrestricted"
+												spellcheck="false"
+												class="rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+											></textarea>
+											<span class="text-xs text-fg-muted"
+												>Bounds which <code>source:</code> values this namespace's tasks may name. Each
+												Orker's own <code>ORK_ORKER_SECRET_ALLOW</code> still applies.</span
+											>
+											{#if editErrors.allowedSecrets}
+												<span class="text-xs text-danger-700" data-testid="ns-edit-error-allowed-secrets-{ns.name}"
+													>{editErrors.allowedSecrets}</span
+												>
 											{/if}
 										</label>
 										<TelemetryFields

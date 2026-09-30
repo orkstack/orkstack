@@ -78,6 +78,12 @@ const (
 	// to the host that owns the directory; a host with no such directory
 	// returns success (docs/design/task-pinning-worker-session.md §8.5).
 	ActivityReleasePin = "ReleasePin"
+
+	// ActivityCordonOrker is the registered activity name for setting or
+	// clearing one Orker's cordon. The engine executes it on that Orker's own
+	// control channel (QueueForOrker); the Orker registers it there and on no
+	// other channel, so it can never land on a different process.
+	ActivityCordonOrker = "CordonOrker"
 )
 
 // The five failure categories of the OCI Activity Contract (design §8.1).
