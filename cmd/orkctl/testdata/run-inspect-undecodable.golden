@@ -1,0 +1,6 @@
+TASK   STATUS   ATTEMPT  STATE    PHASE        ORKER  CONTAINER  LOGGED  RUNNING  HEARTBEAT
+fit    RUNNING  1        STARTED  unavailable  -      -          -       6s       -
+eval   PENDING  -        -        -            -      -          -       -        -
+clean  SKIPPED  -        -        -            -      -          -       -        -
+
+fit: heartbeat detail undecodable

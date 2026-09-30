@@ -279,6 +279,20 @@ service RunService {
   // producing run alone; on the local backend identical bytes under one
   // name are one object, so every run that produced them is listed.
   rpc GetArtifactProvenance(GetArtifactProvenanceRequest) returns (GetArtifactProvenanceResponse);
+  // InspectRun answers "what is this task doing right now" for every
+  // in-flight task of ONE live run, from the heartbeat detail the Orker
+  // already sends and the cluster already holds for the pending activity.
+  //
+  // It is a READ of Temporal's own describe of the execution — nothing is
+  // stored, nothing is projected onto the snapshot, and no event is added.
+  // A run that is terminal, or whose execution has left the cluster, answers
+  // with run_status and no attempts. There is no stream: a client polls.
+  //
+  // A heartbeat is reported ONLY when it belongs to the attempt that is
+  // pending now. Temporal keeps a failed attempt's last detail through the
+  // retry backoff and until the next attempt's first beat; that detail is
+  // never rendered as the new attempt's progress.
+  rpc InspectRun(InspectRunRequest) returns (InspectRunResponse);
   // DiffRuns compares two runs of ONE namespace field by field: the pinned
   // definition, the input (as a canonical-JSON unified diff), and per task
   // its status, attempt, pool, pin, orker, exit code, error, duration, and
@@ -690,6 +704,144 @@ message GetArtifactProvenanceResponse {
   // any other reason fails the call.
   int64 references_unreadable = 6;
   google.protobuf.Timestamp computed_at = 7;
+}
+message InspectRunRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+  string task_id = 3;                    // empty = every in-flight task of the run
+}
+
+// LiveAttemptState is where the pending attempt is in Temporal's view. It
+// mirrors temporal.api.enums.v1.PendingActivityState with its own numbering,
+// on the rule RetryState (run.proto) follows: a value of another package's
+// enum is never carried by number, and the mapping is an explicit switch in
+// internal/engine/live.go. PAUSED and PAUSE_REQUESTED have no member: nothing
+// in OrkStack pauses an activity, and a reader of an older build must not be
+// handed a state it cannot name — they map to UNSPECIFIED.
+enum LiveAttemptState {
+  LIVE_ATTEMPT_STATE_UNSPECIFIED = 0;
+  // SCHEDULED: Temporal holds the activity and no Orker has it — the pool
+  // has no free Orker, or a retry is waiting out its backoff (next_attempt_at
+  // is then set).
+  LIVE_ATTEMPT_STATE_SCHEDULED = 1;
+  // STARTED: an Orker picked the attempt up. Only STARTED and
+  // CANCEL_REQUESTED can carry a heartbeat.
+  LIVE_ATTEMPT_STATE_STARTED = 2;
+  // CANCEL_REQUESTED: the run was cancelled and the Orker has been (or is
+  // about to be) told through a heartbeat response; the §3.3 SIGTERM → grace
+  // → SIGKILL sequence runs on the Orker while this state holds.
+  LIVE_ATTEMPT_STATE_CANCEL_REQUESTED = 3;
+}
+
+// HeartbeatUnavailableReason says why LiveAttempt.heartbeat_available is
+// false. It is an enum rather than free text so a client renders a fixed
+// sentence per value and a new value is a proto change, not a string drift.
+enum HeartbeatUnavailableReason {
+  HEARTBEAT_UNAVAILABLE_REASON_UNSPECIFIED = 0;    // heartbeat_available is true
+  // NOT_STARTED: state is SCHEDULED (or UNSPECIFIED); no Orker has the
+  // attempt, so there is nothing to beat.
+  HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED = 1;
+  // NO_HEARTBEAT_YET: an Orker has the attempt and no beat from THIS attempt
+  // has arrived — including the case where the cluster still holds a
+  // previous attempt's detail. On a healthy Orker this lasts one tick at
+  // most, because the loop beats immediately on start.
+  HEARTBEAT_UNAVAILABLE_REASON_NO_HEARTBEAT_YET = 2;
+  // UNDECODABLE: a beat from this attempt arrived whose detail is not the
+  // Orker's shape (no "phase"). Reported, never guessed at.
+  HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE = 3;
+}
+
+// LiveAttempt is ONE pending ExecuteTask attempt as the cluster sees it now.
+// It is not durable and is not a record: when the attempt ends the durable
+// answer is the TaskAttempt record the Orker writes.
+message LiveAttempt {
+  string task_id = 1;
+  // attempt is Temporal's attempt number for the pending activity
+  // (PendingActivityInfo.attempt). While STARTED it is the number the
+  // Orker's own record will carry; while SCHEDULED between retries it is the
+  // number of the attempt that is ABOUT to run.
+  int32 attempt = 2;
+  LiveAttemptState state = 3;
+  // attempt_scheduled_at is Temporal's scheduled_time for the pending
+  // attempt: for a retry, the instant the backoff ends. attempt_started_at
+  // is Temporal's last_started_time and is set only while STARTED or
+  // CANCEL_REQUESTED. Neither is an Orker clock.
+  google.protobuf.Timestamp attempt_scheduled_at = 4;
+  google.protobuf.Timestamp attempt_started_at = 5;
+  // next_attempt_at is set only while SCHEDULED between attempts: the
+  // previous attempt failed and Temporal will start the next one at this
+  // time (next_attempt_schedule_time). The previous attempt's error is in
+  // ListTaskAttempts, not here.
+  google.protobuf.Timestamp next_attempt_at = 6;
+  // timeout_seconds and cancellation_grace_period_seconds are the task's own
+  // bounds as dispatched (ExecuteTaskInput 15 and 16, read from the
+  // scheduling event). The Orker arms timeout_seconds when the container is
+  // started, AFTER staging and the image pull, so attempt_started_at +
+  // timeout_seconds is the EARLIEST the container can be killed, not the
+  // moment it will be. A client that prints a remaining time prints a lower
+  // bound and says so.
+  int32 timeout_seconds = 7;
+  int32 cancellation_grace_period_seconds = 8;
+  // expires_at is Temporal's backstop for this attempt (expiration_time: the
+  // StartToClose deadline the engine computed at schedule, OCI contract
+  // §6.3). It is deliberately generous and is not the task's timeout.
+  google.protobuf.Timestamp expires_at = 9;
+
+  // heartbeat_available is true ONLY when state is STARTED or
+  // CANCEL_REQUESTED, a heartbeat has arrived since attempt_started_at, and
+  // its detail decodes as the Orker's shape. Every field from
+  // last_heartbeat_at down is meaningless when it is false and MUST render
+  // as unavailable, never as zero or empty.
+  bool heartbeat_available = 10;
+  // heartbeat_unavailable_reason is set exactly when heartbeat_available is
+  // false, and UNSPECIFIED when it is true.
+  HeartbeatUnavailableReason heartbeat_unavailable_reason = 11;
+  // last_heartbeat_at is the cluster's time of the last beat from this
+  // attempt (last_heartbeat_time).
+  google.protobuf.Timestamp last_heartbeat_at = 12;
+  // heartbeat_stale is computed_at - last_heartbeat_at > task.HeartbeatStaleAfter
+  // (two ceiling ticks, 20 s): a healthy Orker beats at least every
+  // task.MaxHeartbeatInterval, so an older beat means the Orker is gone,
+  // partitioned, or cannot reach the frontend. Temporal has not yet acted:
+  // it times the attempt out at heartbeat_deadline_at, after which the
+  // attempt is retried or the task fails, and this attempt becomes an
+  // UNREPORTED row in ListTaskAttempts if the Orker never files a record.
+  bool heartbeat_stale = 13;
+  // heartbeat_deadline_at is last_heartbeat_at + the heartbeat timeout
+  // (task.HeartbeatTimeout, 30 s): the instant Temporal times this attempt
+  // out unless another beat arrives first. Computed here so no client needs
+  // to know the constant.
+  google.protobuf.Timestamp heartbeat_deadline_at = 14;
+  // phase is the phase the attempt is in, in the Orker's own vocabulary:
+  // "start", "commit-check", "workspace", "stage-inputs", "image", "render",
+  // "create", "run", "exit", "validate", "commit", "timeout", "cancel". Not
+  // an enum, for the reason TaskAttempt.phase is a string.
+  string phase = 15;
+  // container_id is the runtime's id for the container, once one exists.
+  string container_id = 16;
+  // bytes_logged is every byte the workload has written to stdout AND
+  // stderr, counted before the per-stream retention cap drops any — so it
+  // keeps growing after retention stops. Zero with heartbeat_available true
+  // means the workload has written nothing.
+  int64 bytes_logged = 17;
+  // orker_id is the Orker that sent the heartbeat, as it names itself
+  // (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id
+  // carry. Empty when the beat came from an Orker built before the detail
+  // carried it.
+  string orker_id = 18;
+}
+
+message InspectRunResponse {
+  // run_status is the run's status as the read model reports it. A terminal
+  // status comes with no attempts.
+  Status run_status = 1;
+  // attempts lists every pending ExecuteTask attempt of the run, in
+  // Run.task_runs order, one per task. Empty for a run with nothing pending:
+  // between two tasks, waiting on nothing, or finished.
+  repeated LiveAttempt attempts = 2;
+  // computed_at is the engine's clock at the time of the answer; every age a
+  // client prints is measured against it, never against the browser's clock.
+  google.protobuf.Timestamp computed_at = 3;
 }
 
 message DiffRunsRequest {

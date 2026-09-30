@@ -120,6 +120,13 @@ type runReadClient interface {
 		ctx context.Context,
 		request *workflowservice.CountWorkflowExecutionsRequest,
 	) (*workflowservice.CountWorkflowExecutionsResponse, error)
+	// DescribeWorkflowExecution is the SDK client's describe, bound to the
+	// deployment's partition already; LiveAttempts reads the pending
+	// activities and their heartbeat detail from it.
+	DescribeWorkflowExecution(
+		ctx context.Context,
+		workflowID, runID string,
+	) (*workflowservice.DescribeWorkflowExecutionResponse, error)
 }
 
 // workflowServiceAdmin is the slice of Temporal's WorkflowService the admin
