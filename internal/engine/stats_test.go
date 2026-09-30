@@ -13,6 +13,42 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
+// TestNearestRank_IsSharedByDurationsAndAttemptCounts: one rank formula
+// serves run durations and the flake index's attempt counts, so a p95 means
+// the same thing on both.
+func TestNearestRank_IsSharedByDurationsAndAttemptCounts(t *testing.T) {
+	for _, testCase := range []struct {
+		n, p, want int
+	}{
+		{0, 50, 0},
+		{1, 50, 1},
+		{1, 95, 1},
+		{10, 50, 5},
+		{10, 95, 10},
+		{4, 50, 2},
+		{4, 95, 4},
+		{10, 0, 1},
+		{10, 100, 10},
+		{10, 150, 10},
+		{5, 50, 3},
+	} {
+		if got := engine.NearestRank(testCase.n, testCase.p); got != testCase.want {
+			t.Errorf("NearestRank(%d, %d) = %d, want %d", testCase.n, testCase.p, got, testCase.want)
+		}
+		if testCase.n == 0 {
+			continue
+		}
+		durations := make([]time.Duration, testCase.n)
+		for i := range durations {
+			durations[i] = time.Duration(i+1) * time.Second
+		}
+		if got := engine.PercentileDuration(durations, testCase.p); got != durations[testCase.want-1] {
+			t.Errorf("PercentileDuration over %d samples at p%d = %v, want rank %d",
+				testCase.n, testCase.p, got, testCase.want)
+		}
+	}
+}
+
 // TestPercentileDuration_IsTheNearestRankSample. Every value a percentile
 // returns here is a duration some run actually took, which is what makes it
 // worth paging someone about.
@@ -219,6 +255,71 @@ func TestListRunIndex_ReadsKeysOnlyIgnoresLimitAndNarrowsToFailed(t *testing.T) 
 
 	var absent *engine.RunArchiver
 	if _, err := absent.ListRunIndex(context.Background(), engine.ArchiveQuery{Namespace: "alpha"}); err != engine.ErrNoRunArchive {
+		t.Fatalf("a nil archiver answered %v, want ErrNoRunArchive", err)
+	}
+}
+
+// TestListFinishedRunIndex_ReadsKeysOnlyEveryFinishedStatusAndIgnoresLimit is
+// the flake index's population: every finished index row in the window,
+// whatever its status, read out of keys, however many there are.
+func TestListFinishedRunIndex_ReadsKeysOnlyEveryFinishedStatusAndIgnoresLimit(t *testing.T) {
+	store, err := artifacts.NewLocalRunArchive(t.TempDir())
+	if err != nil {
+		t.Fatalf("open local run archive: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	writer := engine.NewRunArchiver(store)
+	seed := func(namespace, orkflow string, status orkstackv1.Status, at time.Time, n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			run := &orkstackv1.Run{
+				Id:          fmt.Sprintf("ork-%s-%s-%s-%d-%d", namespace, orkflow, status, at.UnixNano(), i),
+				Namespace:   namespace,
+				OrkflowName: orkflow,
+				Status:      status,
+				CreatedAt:   timestamppb.New(at),
+			}
+			if err := writer.Archive(context.Background(), run, nil); err != nil {
+				t.Fatalf("archive: %v", err)
+			}
+		}
+	}
+	seed("alpha", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, now.Add(-time.Hour), 3)
+	seed("alpha", "deploy", orkstackv1.Status_STATUS_CANCELED, now.Add(-time.Hour), 2)
+	seed("alpha", "nightly", orkstackv1.Status_STATUS_FAILED, now.Add(-2*time.Hour), 4)
+	seed("alpha", "deploy", orkstackv1.Status_STATUS_FAILED, now.Add(-48*time.Hour), 5)
+	seed("beta", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, now.Add(-time.Hour), 9)
+
+	sealed := engine.NewRunArchiver(noBodies{inner: store})
+	entries, err := sealed.ListFinishedRunIndex(context.Background(), engine.ArchiveQuery{
+		Namespace: "alpha",
+		Since:     now.Add(-24 * time.Hour),
+		Until:     now,
+		Status:    orkstackv1.Status_STATUS_FAILED,
+		Limit:     2,
+	})
+	if err != nil {
+		t.Fatalf("ListFinishedRunIndex: %v", err)
+	}
+	if len(entries) != 9 {
+		t.Fatalf("ListFinishedRunIndex returned %d entries, want alpha's 9 finished runs in the window", len(entries))
+	}
+	tally, err := sealed.TallyRuns(context.Background(), engine.ArchiveQuery{
+		Namespace: "alpha", Since: now.Add(-24 * time.Hour), Until: now,
+	})
+	if err != nil || tally.Finished() != int64(len(entries)) {
+		t.Fatalf("TallyRuns counts %d finished (%v), the population is %d", tally.Finished(), err, len(entries))
+	}
+	one, err := sealed.ListFinishedRunIndex(context.Background(), engine.ArchiveQuery{
+		Namespace: "alpha", OrkflowName: "deploy", Since: now.Add(-24 * time.Hour), Until: now,
+	})
+	if err != nil || len(one) != 5 {
+		t.Fatalf("ListFinishedRunIndex(deploy) = %d entries, %v; want 5", len(one), err)
+	}
+	var absent *engine.RunArchiver
+	if _, err := absent.ListFinishedRunIndex(context.Background(), engine.ArchiveQuery{Namespace: "alpha"}); err != engine.ErrNoRunArchive {
 		t.Fatalf("a nil archiver answered %v, want ErrNoRunArchive", err)
 	}
 }
