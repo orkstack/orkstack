@@ -974,6 +974,61 @@ test('switching namespace while on Pools shows this page\'s own loading state, n
 	await page.unroute('**/orkstack.v1.NamespaceService/ListPools');
 });
 
+// Activity interface manifests (activity-interface-manifests §8.5): each
+// first-party image carries the org.orkstack.activity.interface label, the
+// engine reads it from the image's config during the same resolution that pins
+// the digest, and the page shows it — per catalog row, and for any reference
+// the Inspect form resolves on demand. Placed BEFORE the catalog test below,
+// which kills this spec's `main` Orker; nothing here asks an Orker anything.
+test("the Activities page shows each first-party image's declared interface, and Inspect resolves a reference", async ({
+	page
+}) => {
+	await page.goto(`${UI_ORIGIN}/admin/activities?ns=${OPS_NS}`);
+
+	// The catalog's Interface column, in `orkctl activity list`'s words.
+	await expect(page.getByTestId('activity-interface-file')).toContainText('7 ops');
+	await expect(page.getByTestId('activity-interface-http')).toContainText('5 keys, 6 ops');
+	await expect(page.getByTestId('activity-interface-shell')).toContainText('3 ops');
+
+	// The disclosure opens the full table beneath the row.
+	await page.getByTestId('activity-interface-file').click();
+	const filePanel = page.getByTestId('activity-interface-panel-file');
+	await expect(filePanel.getByTestId('activity-interface-summary')).toContainText(
+		'schema 1 · selected by op: (7 ops, op required)'
+	);
+	await expect(filePanel.getByTestId('activity-interface-row-copy-src')).toContainText('required');
+	await expect(filePanel.getByTestId('activity-interface-row-concat-srcs')).toContainText('array');
+	await expect(filePanel.getByTestId('activity-interface-value-sha256')).toBeVisible();
+
+	// Inspect a reference: the catalog name resolves to the same pin the row
+	// shows, with the same interface.
+	const catalogDigest = await page.getByTestId('activity-digest-file').getAttribute('data-digest');
+	expect(catalogDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+	await page.getByTestId('activity-inspect-reference').fill('file');
+	await page.getByTestId('activity-inspect-submit').click();
+	const result = page.getByTestId('activity-inspect-result');
+	await expect(result.getByTestId('activity-inspect-activity')).toHaveText('file (catalog)');
+	await expect(result.getByTestId('activity-inspect-pinned')).toContainText('sha256:');
+	await expect(result.getByTestId('activity-inspect-pinned')).toContainText(`/orkstack/activity-file@${catalogDigest}`);
+	await expect(result.getByTestId('activity-interface-row-copy-src')).toContainText('required');
+	await expect(result.getByTestId('activity-interface-row-untar-member')).toContainText('required');
+
+	// The CLI equivalent is the same question, asked of `orkctl`.
+	await page.getByTestId('activity-inspect-cli-trigger').click();
+	await expect(page.getByTestId('activity-inspect-cli-command')).toHaveText('orkctl activity inspect file');
+	await shot(page, 'screenshot-admin-activities-interface.png');
+	await page.getByTestId('activity-inspect-cli-trigger').click();
+
+	// A reference `uses:` would refuse is refused here too, in the server's
+	// own words — never a silently empty result.
+	await page.getByTestId('activity-inspect-reference').fill('{{ .x }}');
+	await page.getByTestId('activity-inspect-submit').click();
+	await expect(page.getByTestId('activity-inspect-error')).toContainText('IMAGE_NOT_PINNED');
+	await expect(page.getByTestId('activity-inspect-result')).toHaveCount(0);
+	await shot(page, 'screenshot-admin-activities-inspect-refused.png');
+	note('activities page: file 7 ops, http 5 keys, 6 ops; inspect file pinned ' + catalogDigest + '; {{ .x }} refused IMAGE_NOT_PINNED');
+});
+
 // The activity catalog, and the Orker probe beside it.
 //
 // The ACTIVITY CATALOG is global (no namespace scoping in the caption) and

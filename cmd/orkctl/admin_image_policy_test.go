@@ -64,19 +64,30 @@ func (s *imagePolicyStore) lastWrite(t *testing.T) *orkstackv1.ImagePolicy {
 // submit refusals are observed on real ImageRef values.
 type stampResolver struct{}
 
-func (stampResolver) ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, wf *orkstackv1.Orkflow) error {
+func (stampResolver) ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, wf *orkstackv1.Orkflow) (dsl.Resolutions, error) {
+	out := dsl.Resolutions{}
 	for _, t := range wf.GetTasks() {
 		reference, err := catalog.ResolveUses(t.GetId(), t.GetUses())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		image, err := stampResolver{}.Resolve(ctx, t.GetUses(), reference)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		t.Image = image
+		out[t.GetUses()] = &dsl.Resolution{Image: image}
 	}
-	return nil
+	return out, nil
+}
+
+// Inspect is Resolve with no declared interface.
+func (stampResolver) Inspect(ctx context.Context, uses, reference string) (*dsl.Resolution, error) {
+	image, err := stampResolver{}.Resolve(ctx, uses, reference)
+	if err != nil {
+		return nil, err
+	}
+	return &dsl.Resolution{Image: image}, nil
 }
 
 func (stampResolver) Resolve(_ context.Context, uses, reference string) (*orkstackv1.ImageRef, error) {

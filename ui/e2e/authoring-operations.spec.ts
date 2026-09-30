@@ -180,3 +180,69 @@ test('apply validates without writing, imports and exports exact YAML, and guard
 	await expect(page).toHaveURL(/\/orkflows/);
 	await shot(page, 'screenshot-dirty-draft-guard.png');
 });
+
+// Activity interface manifests (activity-interface-manifests §8.5): the
+// first-party `file` image declares its with: contract in the
+// org.orkstack.activity.interface label, and validate/apply check a document
+// against it after resolution. A missing required key is an ERROR the engine
+// refuses before storing anything; an undeclared key is a WARNING that
+// changes nothing — the document applies, and the warning stays visible.
+//
+// Deviation from the spec's wording, recorded in implementation-notes.md:
+// this page has never disabled Apply on a validation ERROR (secret-policy's
+// e2e clicks Apply after one to see the server refuse it), so the ERROR half
+// is proven the same way — Apply is refused in the engine's words and
+// nothing is stored — rather than by a disabled button.
+test('apply reports a missing required with key as an error and an undeclared key as a warning that survives apply', async ({ page }) => {
+	const name = `${FLOW}-iface`;
+	const missing = `name: ${name}
+version: "1.0.0"
+tasks:
+  - id: copy
+    uses: file
+    with:
+      op: copy
+`;
+	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.getByTestId('apply-yaml').fill(missing);
+	await page.getByTestId('apply-validate').click();
+	const error = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].with.src"]');
+	await expect(error).toHaveAttribute('data-severity', 'error');
+	await expect(error).toHaveClass(/text-danger-700/);
+	await expect(error).toContainText('with.src is required by the interface of');
+	await expect(error).toContainText('/orkstack/activity-file@sha256:');
+	await expect(error).toContainText('for op "copy" and is not supplied');
+	await shot(page, 'screenshot-apply-interface-error.png');
+
+	await page.getByTestId('apply-submit').click();
+	await expect(page.getByTestId('apply-error')).toContainText('tasks[0].with.src: with.src is required by the interface of');
+	const refused = await rpc<{ orkflows?: { name: string }[] }>('OrkflowService/ListOrkflows', { namespace: NS });
+	expect((refused.orkflows ?? []).filter((workflow) => workflow.name === name)).toHaveLength(0);
+
+	const warned = `name: ${name}
+version: "1.0.0"
+tasks:
+  - id: copy
+    uses: file
+    with:
+      op: copy
+      src: in/x
+      srcs: [y]
+`;
+	await page.getByTestId('apply-yaml').fill(warned);
+	await page.getByTestId('apply-validate').click();
+	const warning = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].with.srcs"]');
+	await expect(warning).toHaveAttribute('data-severity', 'warning');
+	await expect(warning).toHaveClass(/text-warning-700/);
+	await expect(warning).toContainText('(declared: as, op, src); the image may still accept it');
+	await expect(page.locator('[data-testid="apply-validation-issue"][data-severity="error"]')).toHaveCount(0);
+	await expect(page.getByTestId('apply-submit')).toBeEnabled();
+
+	await page.getByTestId('apply-submit').click();
+	await expect(page.getByTestId('apply-success')).toContainText(`Applied ${name}@1.0.0`);
+	// The warning is still on the page after a successful apply.
+	await expect(page.getByTestId('apply-validation-issues')).toContainText('tasks[0].with.srcs');
+	const stored = await rpc<{ orkflows?: { name: string }[] }>('OrkflowService/ListOrkflows', { namespace: NS });
+	expect((stored.orkflows ?? []).filter((workflow) => workflow.name === name)).toHaveLength(1);
+	await shot(page, 'screenshot-apply-interface-issues.png');
+});

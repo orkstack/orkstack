@@ -232,7 +232,7 @@ func TestSignatureVerifier_MalformedKeyIsNotPermitted(t *testing.T) {
 	}
 }
 
-func TestGetBlob_FollowsOneRedirectAndBoundsTheBody(t *testing.T) {
+func TestGetSignatureBlob_FollowsOneRedirectAndBoundsTheBody(t *testing.T) {
 	payload := []byte("the payload")
 	var cdnAuth []string
 	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +255,7 @@ func TestGetBlob_FollowsOneRedirectAndBoundsTheBody(t *testing.T) {
 	ref := Reference{Registry: strings.TrimPrefix(registry.URL, "http://"), Repository: sigRepo}
 	r := NewResolver("")
 
-	body, err := r.getBlob(context.Background(), ref, cosigntest.Digest(payload))
+	body, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload))
 	if err != nil || string(body) != string(payload) {
 		t.Fatalf("one redirect: %q, %v", body, err)
 	}
@@ -265,11 +265,11 @@ func TestGetBlob_FollowsOneRedirectAndBoundsTheBody(t *testing.T) {
 		}
 	}
 	target = "/big"
-	if _, err := r.getBlob(context.Background(), ref, cosigntest.Digest(payload)); !errors.Is(err, errBlobTooLarge) {
+	if _, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload)); !errors.Is(err, errBlobTooLarge) {
 		t.Fatalf("oversized body: %v, want errBlobTooLarge", err)
 	}
 	target = "/again"
-	if _, err := r.getBlob(context.Background(), ref, cosigntest.Digest(payload)); err == nil ||
+	if _, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload)); err == nil ||
 		!strings.Contains(err.Error(), "more than once") {
 		t.Fatalf("two redirects: %v, want a refusal", err)
 	}

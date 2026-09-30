@@ -1,0 +1,2 @@
+warning  tasks[0].with.srcs: with.srcs is not declared by the interface of localhost:5001/orkstack/activity-file@sha256:2b1e0a7c9d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e for op "copy" (declared: as, op, src); the image may still accept it — check for a typo or a key renamed in a newer image
+Valid orkflow deploy (version 3), 1 warning

@@ -154,6 +154,9 @@ const (
 	// ActivityServiceCordonOrkerProcedure is the fully-qualified name of the ActivityService's
 	// CordonOrker RPC.
 	ActivityServiceCordonOrkerProcedure = "/orkstack.v1.ActivityService/CordonOrker"
+	// ActivityServiceInspectActivityProcedure is the fully-qualified name of the ActivityService's
+	// InspectActivity RPC.
+	ActivityServiceInspectActivityProcedure = "/orkstack.v1.ActivityService/InspectActivity"
 	// SystemServiceGetSystemInfoProcedure is the fully-qualified name of the SystemService's
 	// GetSystemInfo RPC.
 	SystemServiceGetSystemInfoProcedure = "/orkstack.v1.SystemService/GetSystemInfo"
@@ -1639,6 +1642,12 @@ type ActivityServiceClient interface {
 	// already in flight on it is untouched. The response is the Orker's
 	// state AFTER the change, as the Orker itself reported it.
 	CordonOrker(context.Context, *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error)
+	// InspectActivity resolves ONE reference on demand — a catalog name or
+	// any registry reference `uses:` would accept — and reports it as
+	// ListActivities would: the pinned digest, platforms, and the interface
+	// the image declares. It is uncached, reads engine configuration and the
+	// registry only, never asks an Orker, and writes nothing.
+	InspectActivity(context.Context, *connect.Request[v1.InspectActivityRequest]) (*connect.Response[v1.InspectActivityResponse], error)
 }
 
 // NewActivityServiceClient constructs a client for the orkstack.v1.ActivityService service. By
@@ -1676,15 +1685,22 @@ func NewActivityServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(activityServiceMethods.ByName("CordonOrker")),
 			connect.WithClientOptions(opts...),
 		),
+		inspectActivity: connect.NewClient[v1.InspectActivityRequest, v1.InspectActivityResponse](
+			httpClient,
+			baseURL+ActivityServiceInspectActivityProcedure,
+			connect.WithSchema(activityServiceMethods.ByName("InspectActivity")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // activityServiceClient implements ActivityServiceClient.
 type activityServiceClient struct {
-	listActivities *connect.Client[v1.ListActivitiesRequest, v1.ListActivitiesResponse]
-	describeOrker  *connect.Client[v1.DescribeOrkerRequest, v1.DescribeOrkerResponse]
-	listOrkers     *connect.Client[v1.ListOrkersRequest, v1.ListOrkersResponse]
-	cordonOrker    *connect.Client[v1.CordonOrkerRequest, v1.CordonOrkerResponse]
+	listActivities  *connect.Client[v1.ListActivitiesRequest, v1.ListActivitiesResponse]
+	describeOrker   *connect.Client[v1.DescribeOrkerRequest, v1.DescribeOrkerResponse]
+	listOrkers      *connect.Client[v1.ListOrkersRequest, v1.ListOrkersResponse]
+	cordonOrker     *connect.Client[v1.CordonOrkerRequest, v1.CordonOrkerResponse]
+	inspectActivity *connect.Client[v1.InspectActivityRequest, v1.InspectActivityResponse]
 }
 
 // ListActivities calls orkstack.v1.ActivityService.ListActivities.
@@ -1705,6 +1721,11 @@ func (c *activityServiceClient) ListOrkers(ctx context.Context, req *connect.Req
 // CordonOrker calls orkstack.v1.ActivityService.CordonOrker.
 func (c *activityServiceClient) CordonOrker(ctx context.Context, req *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error) {
 	return c.cordonOrker.CallUnary(ctx, req)
+}
+
+// InspectActivity calls orkstack.v1.ActivityService.InspectActivity.
+func (c *activityServiceClient) InspectActivity(ctx context.Context, req *connect.Request[v1.InspectActivityRequest]) (*connect.Response[v1.InspectActivityResponse], error) {
+	return c.inspectActivity.CallUnary(ctx, req)
 }
 
 // ActivityServiceHandler is an implementation of the orkstack.v1.ActivityService service.
@@ -1732,6 +1753,12 @@ type ActivityServiceHandler interface {
 	// already in flight on it is untouched. The response is the Orker's
 	// state AFTER the change, as the Orker itself reported it.
 	CordonOrker(context.Context, *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error)
+	// InspectActivity resolves ONE reference on demand — a catalog name or
+	// any registry reference `uses:` would accept — and reports it as
+	// ListActivities would: the pinned digest, platforms, and the interface
+	// the image declares. It is uncached, reads engine configuration and the
+	// registry only, never asks an Orker, and writes nothing.
+	InspectActivity(context.Context, *connect.Request[v1.InspectActivityRequest]) (*connect.Response[v1.InspectActivityResponse], error)
 }
 
 // NewActivityServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1765,6 +1792,12 @@ func NewActivityServiceHandler(svc ActivityServiceHandler, opts ...connect.Handl
 		connect.WithSchema(activityServiceMethods.ByName("CordonOrker")),
 		connect.WithHandlerOptions(opts...),
 	)
+	activityServiceInspectActivityHandler := connect.NewUnaryHandler(
+		ActivityServiceInspectActivityProcedure,
+		svc.InspectActivity,
+		connect.WithSchema(activityServiceMethods.ByName("InspectActivity")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.ActivityService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ActivityServiceListActivitiesProcedure:
@@ -1775,6 +1808,8 @@ func NewActivityServiceHandler(svc ActivityServiceHandler, opts ...connect.Handl
 			activityServiceListOrkersHandler.ServeHTTP(w, r)
 		case ActivityServiceCordonOrkerProcedure:
 			activityServiceCordonOrkerHandler.ServeHTTP(w, r)
+		case ActivityServiceInspectActivityProcedure:
+			activityServiceInspectActivityHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1798,6 +1833,10 @@ func (UnimplementedActivityServiceHandler) ListOrkers(context.Context, *connect.
 
 func (UnimplementedActivityServiceHandler) CordonOrker(context.Context, *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.ActivityService.CordonOrker is not implemented"))
+}
+
+func (UnimplementedActivityServiceHandler) InspectActivity(context.Context, *connect.Request[v1.InspectActivityRequest]) (*connect.Response[v1.InspectActivityResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.ActivityService.InspectActivity is not implemented"))
 }
 
 // SystemServiceClient is a client for the orkstack.v1.SystemService service.

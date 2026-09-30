@@ -114,7 +114,7 @@ type simpleSigning struct {
 //     body must be an OCI image manifest (or Docker v2 manifest); anything
 //     else → IMAGE_SIGNATURE_INVALID.
 //  2. For each of at most maxSignatureLayers layers, in manifest order:
-//     GET /v2/<repository>/blobs/<layer.digest> (Resolver.getBlob, the same
+//     GET /v2/<repository>/blobs/<layer.digest> (Resolver.getSignatureBlob, the same
 //     auth flow, bounded at maxSignaturePayloadBytes); sha256(body) must
 //     equal layer.digest; the annotation dev.cosignproject.cosign/signature
 //     is base64 of a DER ECDSA signature; ecdsa.VerifyASN1(key,
@@ -180,7 +180,8 @@ func (v *SignatureVerifier) Verify(ctx context.Context, image *orkstackv1.ImageR
 				"this is a registry problem, not a verdict", what), Err: err}
 	}
 
-	body, contentType, _, err := v.Resolver.getManifest(ctx, ref)
+	var authorization string
+	body, contentType, _, err := v.Resolver.getManifest(ctx, ref, ref.Target(), &authorization)
 	if err != nil {
 		var resolve *ResolveError
 		if errors.As(err, &resolve) && resolve.Code == ReasonImageNotFound {
@@ -208,7 +209,7 @@ func (v *SignatureVerifier) Verify(ctx context.Context, image *orkstackv1.ImageR
 		if !ValidDigest(layer.Digest) || layer.Size > maxSignaturePayloadBytes {
 			continue
 		}
-		payload, err := v.Resolver.getBlob(ctx, ref, layer.Digest)
+		payload, err := v.Resolver.getSignatureBlob(ctx, ref, layer.Digest)
 		if err != nil {
 			var resolve *ResolveError
 			switch {
@@ -275,13 +276,13 @@ func (v *SignatureVerifier) transportSentence(ref Reference, err error) string {
 // layer is refused (skipped), never read whole.
 var errBlobTooLarge = errors.New("signature payload exceeds the size bound")
 
-// getBlob fetches one blob of ref's repository: GET
+// getSignatureBlob fetches one signature blob of ref's repository: GET
 // {scheme}://{apiHost}/v2/{repository}/blobs/{digest}, with the status
 // handling getManifest has and one bearer-token round trip, following ONE
 // redirect (registries serve blobs from a CDN with a 307) without forwarding
 // credentials to the redirect's host, with the body bounded at
 // maxSignaturePayloadBytes.
-func (r *Resolver) getBlob(ctx context.Context, ref Reference, digest string) ([]byte, error) {
+func (r *Resolver) getSignatureBlob(ctx context.Context, ref Reference, digest string) ([]byte, error) {
 	endpoint := fmt.Sprintf("%s://%s/v2/%s/blobs/%s", ref.Scheme(), ref.APIHost(), ref.Repository, digest)
 	noFollow := *r.client()
 	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

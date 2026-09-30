@@ -1,0 +1,8 @@
+Activity    ghcr.io/acme/broken:1 (reference)
+Reference   ghcr.io/acme/broken:1
+Pinned      ghcr.io/acme/broken@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+Media type  application/vnd.oci.image.manifest.v1+json
+Platforms   -
+Resolved    2026-01-02T03:04:05Z
+
+Interface   malformed — label is not the JSON encoding of an ActivityInterface: proto: (line 1:27): unknown field "pattern"
