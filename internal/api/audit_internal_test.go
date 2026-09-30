@@ -60,6 +60,9 @@ var auditStreamingReads = map[string]bool{
 	orkstackv1connect.RunServiceStreamEventsProcedure:   true,
 	orkstackv1connect.RunServiceStreamTaskLogsProcedure: true,
 	orkstackv1connect.RunServiceReadArtifactProcedure:   true,
+	// ExportRunEvidence assembles a bundle from objects that already exist
+	// and writes nothing (run-evidence-bundle §8).
+	orkstackv1connect.RunServiceExportRunEvidenceProcedure: true,
 }
 
 // Plan is a read verb: PlanRun simulates a definition and writes nothing
