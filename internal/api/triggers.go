@@ -92,24 +92,43 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 		return
 	}
 
-	// 5-6. One invoke is one SubmitRun. allow_empty_pool is always false: a
-	//      pool with no live Orker fails the invoke loudly rather than
-	//      starting a run that would never leave PENDING.
-	response, err := svc.SubmitRun(r.Context(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
+	// 5. The caller's correlation reference rides one optional header, read
+	//    only after the token was verified, so an unauthenticated caller
+	//    learns nothing from it. It is validated on the same terms as a
+	//    malformed body: refused here, before anything is minted. It names
+	//    the caller's own correlation and selects nothing.
+	reference := r.Header.Get(OriginReferenceHeader)
+	if err := ValidateOriginReference(reference); err != nil {
+		writeTriggerError(w, http.StatusBadRequest, "invalid_argument", err.Error())
+		return
+	}
+
+	// 6-7. One invoke is one submission, started through the seam every
+	//      door with a kind of its own uses: the origin is TRIGGER, stamped
+	//      from the stored record, never from the request. allow_empty_pool
+	//      is always false: a pool with no live Orker fails the invoke loudly
+	//      rather than starting a run that would never leave PENDING.
+	response, err := svc.submitFrom(r.Context(), &orkstackv1.SubmitRunRequest{
 		OrkflowName:    record.OrkflowName,
 		OrkflowVersion: record.OrkflowVersion,
 		Namespace:      record.Namespace,
 		Input:          input,
 		IdempotencyKey: r.Header.Get(IdempotencyKeyHeader),
 		AllowEmptyPool: false,
-	}))
+	}, &orkstackv1.RunOrigin{
+		Kind:        orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER,
+		Id:          record.ID,
+		Reference:   reference,
+		Description: boundOriginAssertion(record.Description),
+		Principal:   boundOriginAssertion(r.Header.Get(AuditPrincipalHeader)),
+	})
 	if err != nil {
 		status, code := triggerSubmitStatus(err)
 		writeTriggerError(w, status, code, err.Error())
 		return
 	}
 
-	// 7. The same envelope `orkctl run submit --json` and the UI already read,
+	// 8. The same envelope `orkctl run submit --json` and the UI already read,
 	//    in the short-enum dialect every other JSON surface uses (json.go).
 	encoded, err := MarshalJSON(response.Msg)
 	if err != nil {

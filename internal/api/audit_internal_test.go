@@ -29,6 +29,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.RunServiceListRunArtifactsProcedure:        true,
 	orkstackv1connect.RunServiceListTaskAttemptsProcedure:        true,
 	orkstackv1connect.RunServiceGetArtifactProvenanceProcedure:   true,
+	orkstackv1connect.RunServiceInspectRunProcedure:              true,
 	orkstackv1connect.RunServiceDiffRunsProcedure:                true,
 	orkstackv1connect.WebhookServiceListWebhooksProcedure:        true,
 	orkstackv1connect.WebhookServiceListDeliveriesProcedure:      true,
@@ -60,8 +61,8 @@ var auditStreamingReads = map[string]bool{
 	orkstackv1connect.RunServiceReadArtifactProcedure:   true,
 }
 
-// Inspect is InspectActivity's verb: an on-demand registry read (activity-interface-
-// manifests §5.4) that writes nothing.
+// Inspect is the verb of InspectRun (a live describe) and InspectActivity (an
+// on-demand registry read, activity-interface-manifests §5.4); both write nothing.
 var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Inspect"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file

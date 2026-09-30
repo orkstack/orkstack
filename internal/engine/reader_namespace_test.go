@@ -12,6 +12,7 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
+	"go.temporal.io/api/serviceerror"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -60,6 +61,14 @@ func (v *visibilityIndex) GetWorkflowHistory(
 	context.Context, string, string, bool, enumspb.HistoryEventFilterType,
 ) client.HistoryEventIterator {
 	return &fakeHistory{}
+}
+
+// DescribeWorkflowExecution is not a question this double answers: none of
+// its tests inspects a live run.
+func (v *visibilityIndex) DescribeWorkflowExecution(
+	context.Context, string, string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	return nil, serviceerror.NewNotFound("visibilityIndex: no execution to describe")
 }
 
 // CountWorkflow is not a question this double answers.

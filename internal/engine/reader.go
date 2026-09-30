@@ -47,6 +47,12 @@ const (
 	MemoOrkflowName    = "orkflow_name"
 	MemoOrkflowVersion = "orkflow_version"
 	MemoNamespace      = "orkflow_namespace"
+	// MemoOriginKind and MemoOriginID carry a run's origin back with each
+	// visibility record, as MemoNamespace carries its namespace: a listing
+	// row can say "trigger trg-…" without a history read per run. Values are
+	// the user-facing slug and the id; absent when the plan carries no origin.
+	MemoOriginKind = "orkflow_origin_kind"
+	MemoOriginID   = "orkflow_origin_id"
 	// DefaultRunPageSize bounds an unlimited ListRuns.
 	DefaultRunPageSize = 200
 
@@ -78,6 +84,12 @@ type RunQuery struct {
 	// Since is inclusive and Until exclusive on RunIndexTime.
 	Since time.Time
 	Until time.Time
+	// OriginKind keeps runs whose origin.kind equals it; UNSPECIFIED means no
+	// origin filter, and a run recorded before origins existed is matched by
+	// no value. OriginID keeps runs whose origin.id equals it, within
+	// OriginKind — exact match, never a prefix (ListRunsRequest).
+	OriginKind orkstackv1.RunOriginKind
+	OriginID   string
 	// BeforeCreated/BeforeID continue after a descending cursor. They are
 	// selected before Limit so a paged caller does not receive a short page
 	// merely because the source's first rows preceded its cursor.
@@ -120,6 +132,13 @@ type runReadClient interface {
 		ctx context.Context,
 		request *workflowservice.CountWorkflowExecutionsRequest,
 	) (*workflowservice.CountWorkflowExecutionsResponse, error)
+	// DescribeWorkflowExecution is the SDK client's describe, bound to the
+	// deployment's partition already; LiveAttempts reads the pending
+	// activities and their heartbeat detail from it.
+	DescribeWorkflowExecution(
+		ctx context.Context,
+		workflowID, runID string,
+	) (*workflowservice.DescribeWorkflowExecutionResponse, error)
 }
 
 // workflowServiceAdmin is the slice of Temporal's WorkflowService the admin
@@ -185,6 +204,12 @@ type TemporalRunReader struct {
 	// predicate the cluster applies rather than a filter this reader applies
 	// afterwards. It is told, at boot, by the process that registered it.
 	namespaceIndexed bool
+
+	// originIndexed reports that this cluster has the OrkflowOriginKind and
+	// OrkflowOriginId search attributes (task.EnsureRunOriginSearchAttributes),
+	// so an origin filter is a predicate the cluster applies. It is a separate
+	// answer from namespaceIndexed, told at boot the same way.
+	originIndexed bool
 }
 
 // The reader is the archive writer's event source too: PublishEvent assembles
@@ -325,6 +350,14 @@ func (r *TemporalRunReader) WithNamespaceIndex(indexed bool) *TemporalRunReader 
 	return r
 }
 
+// WithOriginIndex records whether the cluster indexes a run's origin. Off,
+// the reader answers an origin filter by the fail-closed walk the namespace
+// filter takes without its index.
+func (r *TemporalRunReader) WithOriginIndex(indexed bool) *TemporalRunReader {
+	r.originIndexed = indexed
+	return r
+}
+
 func newRunReader(c runReadClient, dc converter.DataConverter) *TemporalRunReader {
 	if dc == nil {
 		dc = converter.GetDefaultDataConverter()
@@ -461,12 +494,15 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 		return nil, nil
 	}
 
-	query, scoped := r.listQuery(q)
+	query, scoped, originScoped := r.listQuery(q)
 	// A safety-sensitive exhaustive walk must either reach the end or fail.
 	// The same fail-closed walk is required when the namespace could not be
 	// pushed into visibility: another tenant's traffic must not create a short
-	// answer for this one.
-	exhaustive := q.Exhaustive || q.Complete || (q.Namespace != "" && !scoped)
+	// answer for this one. An origin filter that could not be pushed down is
+	// held to the same rule: "which runs did this trigger start" answered from
+	// as far as the budget got is a short list nobody can tell from a whole one.
+	originUnscoped := q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && !originScoped
+	exhaustive := q.Exhaustive || q.Complete || (q.Namespace != "" && !scoped) || originUnscoped
 
 	limit, batch, pages := runListBudget(q, exhaustive)
 	out := make([]*orkstackv1.Run, 0, batch)
@@ -509,6 +545,14 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 				"not enough. Register the search attribute (it is provisioned at engine "+
 				"boot) and the namespace becomes a query predicate",
 			q.Namespace, task.SearchAttrOrkflowNamespace, pages)
+	}
+	if originUnscoped {
+		return nil, fmt.Errorf(
+			"engine: list runs by origin: visibility does not index %s or %s, so every "+
+				"other origin's runs had to be read and discarded, and %d pages were not "+
+				"enough. Register the search attributes (they are provisioned at engine "+
+				"boot) and the origin becomes a query predicate",
+			task.SearchAttrOrkflowOriginKind, task.SearchAttrOrkflowOriginId, pages)
 	}
 	if q.Complete {
 		return nil, fmt.Errorf("engine: complete run page for orkflow %q in namespace %q could not determine whether history continues after %d visibility pages", q.OrkflowName, q.Namespace, pages)
@@ -554,9 +598,13 @@ func completeRunPage(runs []*orkstackv1.Run, q RunQuery) []*orkstackv1.Run {
 // finishes the archive — whose key begins with the namespace — holds it.
 //
 // The orkflow NAME stays a client-side filter: its memo is unindexed.
-func (r *TemporalRunReader) listQuery(q RunQuery) (string, bool) {
-	query := fmt.Sprintf("WorkflowType = %q", RunWorkflowType)
-	scoped := q.Namespace != "" && r.namespaceIndexed
+//
+// The ORIGIN goes in when the cluster has the two origin attributes: the kind
+// always, the id only when one was asked for. originScoped reports it went
+// in; matchesRunQuery still applies it over the page either way.
+func (r *TemporalRunReader) listQuery(q RunQuery) (query string, scoped, originScoped bool) {
+	query = fmt.Sprintf("WorkflowType = %q", RunWorkflowType)
+	scoped = q.Namespace != "" && r.namespaceIndexed
 	if scoped {
 		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowNamespace,
 			artifacts.ResolveNamespace(q.Namespace))
@@ -564,7 +612,14 @@ func (r *TemporalRunReader) listQuery(q RunQuery) (string, bool) {
 	if predicate, ok := executionStatusPredicate(q.Status); ok {
 		query += " AND " + predicate
 	}
-	return query, scoped
+	if slug, ok := artifacts.OriginKindSlug(q.OriginKind); ok && r.originIndexed {
+		originScoped = true
+		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowOriginKind, slug)
+		if q.OriginID != "" {
+			query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowOriginId, q.OriginID)
+		}
+	}
+	return query, scoped, originScoped
 }
 
 // terminalExecutionStatuses is every Temporal execution status that
@@ -983,6 +1038,16 @@ func (r *TemporalRunReader) startedRun(
 			run.Input = input
 		}
 	}
+	// The plan is the fourth argument and carries the origin decided at
+	// submit, so a replica that never saw the submission can say what started
+	// the run before its first snapshot exists. A plan that does not decode
+	// leaves the origin unset, as an undecodable orkflow leaves the name empty.
+	if len(payloads) > 3 {
+		var plan RunPlan
+		if err := r.converter.FromPayload(payloads[3], &plan); err == nil {
+			run.Origin = plan.Origin.Proto()
+		}
+	}
 	return run
 }
 
@@ -999,6 +1064,12 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
 	run.OrkflowVersion = r.memoString(info.GetMemo(), MemoOrkflowVersion)
 	run.Namespace = r.memoString(info.GetMemo(), MemoNamespace)
+	// A listing row carries the origin's kind and id from the memo; the whole
+	// origin comes from GetRun, which reads the snapshot. A memo with no kind
+	// (a run started before origins existed) leaves Origin unset.
+	if kind, ok := artifacts.ParseOriginKindSlug(r.memoString(info.GetMemo(), MemoOriginKind)); ok {
+		run.Origin = &orkstackv1.RunOrigin{Kind: kind, Id: r.memoString(info.GetMemo(), MemoOriginID)}
+	}
 	return run
 }
 
@@ -1025,6 +1096,14 @@ func matchesRunQuery(run *orkstackv1.Run, q RunQuery) bool {
 		return false
 	}
 	if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != q.Status {
+		return false
+	}
+	// A run with no origin has kind UNSPECIFIED, which equals no filter value,
+	// so it matches no origin filter by construction.
+	if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && run.GetOrigin().GetKind() != q.OriginKind {
+		return false
+	}
+	if q.OriginID != "" && run.GetOrigin().GetId() != q.OriginID {
 		return false
 	}
 	created := RunIndexTime(run)
@@ -1137,6 +1216,9 @@ func mergeRunSnapshot(base, next *orkstackv1.Run) *orkstackv1.Run {
 	}
 	if next.GetOrkflowVersion() == "" {
 		next.OrkflowVersion = base.GetOrkflowVersion()
+	}
+	if next.GetOrigin() == nil {
+		next.Origin = base.GetOrigin()
 	}
 	return next
 }

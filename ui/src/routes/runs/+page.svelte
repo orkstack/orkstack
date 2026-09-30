@@ -6,6 +6,7 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
 	import { fmtTimestamp } from '$lib/status';
+	import { ORIGIN_KIND_SLUGS, UNRECORDED, UNRECORDED_CAPTION, originKindLabel, originKindSlug } from '$lib/origin';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import type { PageProps } from './$types';
 
@@ -21,6 +22,8 @@
 		{ value: 'skipped', label: 'Skipped' }
 	];
 	const sizeOptions = [10, 25, 50, 100].map((size) => ({ value: String(size), label: String(size) }));
+	// "Started by" is the origin kind; its slugs are the URL's spelling.
+	const originOptions = [{ value: '', label: 'Any' }, ...ORIGIN_KIND_SLUGS.map((slug) => ({ value: slug, label: originKindLabel(slug) }))];
 
 	// The filter form is a DRAFT of the URL, not a second source of truth: the
 	// URL still carries the filter (href/filter/nextHref below are unchanged),
@@ -37,7 +40,9 @@
 			status: data.status,
 			size: String(data.size),
 			since: data.createdAfter,
-			until: data.createdBefore
+			until: data.createdBefore,
+			origin: data.origin,
+			originId: data.originId
 		};
 	}
 	let draft = $state(draftFromUrl());
@@ -71,12 +76,19 @@
 	// The coordinates of what this list is showing, exactly as the address bar
 	// spells them, and one builder over them. listHref only ever `set`s, so no
 	// gesture here can leave two of the same key in the URL.
-	const coordinates = $derived({ ns: namespaceLabel(data.namespace), orkflow: data.orkflowName, status: data.status, size: String(data.size), since: data.createdAfter, until: data.createdBefore, cursor: data.cursor, page: String(data.page) });
+	const coordinates = $derived({ ns: namespaceLabel(data.namespace), orkflow: data.orkflowName, status: data.status, size: String(data.size), since: data.createdAfter, until: data.createdBefore, origin: data.origin, originId: data.originId, cursor: data.cursor, page: String(data.page) });
 	function href(changes: Record<string, string>) { return listHref('/runs', { ...coordinates, ...changes }); }
 	function filter(event: SubmitEvent) {
 		event.preventDefault();
-		void goto(href({ orkflow: draft.orkflow, status: draft.status, size: draft.size || '25', since: draft.since, until: draft.until, cursor: '', page: '' }));
+		// An id means nothing without a kind, so choosing "Any" drops it.
+		const originId = draft.origin ? draft.originId.trim() : '';
+		void goto(href({ orkflow: draft.orkflow, status: draft.status, size: draft.size || '25', since: draft.since, until: draft.until, origin: draft.origin, originId, cursor: '', page: '' }));
 	}
+
+	// The active origin filter in words, for the empty-state sentence.
+	const originPhrase = $derived(
+		data.origin ? `started by ${data.origin}${data.originId ? ` ${data.originId}` : ''} ` : ''
+	);
 
 	// The cursors BEHIND this page: per filter set, per tab, in sessionStorage
 	// rather than in the URL, which used to grow by one escaped engine cursor
@@ -187,6 +199,27 @@
 				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
 			/>
 		</label>
+		<div class="flex flex-col gap-1.5 text-sm">
+			<label class="font-medium text-fg" for="run-filter-origin">Started by</label>
+			<Select
+				id="run-filter-origin"
+				testid="run-filter-origin"
+				value={draft.origin}
+				options={originOptions}
+				onchange={(next) => (draft.origin = next)}
+			/>
+		</div>
+		<label class="flex flex-col gap-1.5 text-sm">
+			<span class="font-medium text-fg">Origin id</span>
+			<input
+				name="originId"
+				data-testid="run-filter-origin-id"
+				bind:value={draft.originId}
+				disabled={!draft.origin}
+				placeholder="trg-…, sch-…, ork-…"
+				class="h-9 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm text-fg shadow-xs placeholder:font-sans placeholder:text-fg-placeholder focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none disabled:opacity-50"
+			/>
+		</label>
 	</div>
 	<div class="mt-4 flex items-center gap-4 border-t border-border-subtle pt-4">
 		<button
@@ -196,7 +229,8 @@
 			>Apply filters</button
 		>
 		<a
-			href={href({ orkflow: '', status: '', size: '25', since: '', until: '', cursor: '', page: '' })}
+			href={href({ orkflow: '', status: '', size: '25', since: '', until: '', origin: '', originId: '', cursor: '', page: '' })}
+			data-testid="run-filters-clear"
 			class="text-sm font-medium text-brand-700 hover:underline">Clear</a
 		>
 	</div>
@@ -218,15 +252,16 @@
 		class="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-fg-muted"
 		data-testid="runs-empty"
 	>
-		No runs match these filters in namespace {namespaceLabel(data.namespace)}.
+		No runs {originPhrase}match these filters in namespace {namespaceLabel(data.namespace)}.
 	</p>
 {:else}
 	<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
-		<table class="w-full min-w-[640px] border-collapse text-left text-sm" data-testid="run-list">
+		<table class="w-full min-w-[760px] border-collapse text-left text-sm" data-testid="run-list">
 			<thead class="bg-surface-sunken">
 				<tr>
 					<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Run ID</th>
 					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Orkflow</th>
+					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Origin</th>
 					<th class="h-10 px-4 text-xs font-medium text-fg-muted">Status</th>
 					<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Created</th>
 				</tr>
@@ -246,6 +281,19 @@
 						<td class="h-11 px-4 align-middle text-fg-secondary"
 							>{run.orkflowName}@{run.orkflowVersion}</td
 						>
+						<td class="h-11 px-4 align-middle text-fg-secondary">
+							{#if run.origin && originKindSlug(run.origin.kind)}
+								<span data-testid="run-row-origin-{run.id}"
+									>{originKindSlug(run.origin.kind)}{#if run.origin.id}{' '}<span class="font-mono text-xs"
+											>{run.origin.id}</span
+										>{/if}</span
+								>
+							{:else}
+								<span data-testid="run-row-origin-{run.id}" class="text-fg-muted" title={UNRECORDED_CAPTION}
+									>{UNRECORDED}</span
+								>
+							{/if}
+						</td>
 						<td class="h-11 px-4 align-middle"><StatusPill status={run.status} /></td>
 						<td class="h-11 px-4 pr-5 align-middle text-fg-muted tabular-nums"
 							>{fmtTimestamp(run.createdAt)}</td

@@ -1,0 +1,7 @@
+TASK   STATUS     ATTEMPT  STATE      PHASE        ORKER  CONTAINER  LOGGED  RUNNING  HEARTBEAT
+fit    SUCCEEDED  -        -          -            -      -          -       -        -
+eval   RUNNING    1        SCHEDULED  unavailable  -      -          -       -        -
+clean  SKIPPED    -        -          -            -      -          -       -        -
+
+eval: not started
+eval: waiting for an orker on pool gpu for 2m10s (scheduled 2026-09-23T09:48:57Z)

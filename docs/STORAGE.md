@@ -53,6 +53,7 @@ place each shape is spelled.
 | `metadata/namespaces/{name}.json` | the namespace registry entry (`NamespaceKey`, `namespace_store.go`) | conditional PUT with an etag | `orkctl namespace delete`, refused while the namespace holds anything |
 | `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`, `archive.go`) | once, at the run's terminal event | nothing; archive bodies are never deleted |
 | `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row (`RunIndexKey`) | with the archive body | nothing |
+| `metadata/index/origins/{ns}/{kind}/{origin-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the origin index row (`RunOriginIndexKey`): `kind` is the origin kind's slug (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), `origin-id` the originating object's id or `none`; read keys-only by an origin-filtered `ListRuns` | with the archive body, only for a run with a recorded origin, before its run-index row | nothing |
 | `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`); read keys-only by `RunService.GetArtifactProvenance` (`ListObjectReferences`) as well as by cleanup | with the archive body | the cleanup worker, when it releases the run's claims |
 | `metadata/index/run-objects/{run-id}.json` | the list of object ids the run references (`RunObjectListKey`) | with the archive body | the cleanup worker |
 | `metadata/cleanup/runs/{run-id}.json` | a sidecar recording that the run's artifacts were cleaned (`RunCleanupKey`) | once, by the cleanup worker | nothing |
@@ -89,7 +90,8 @@ run id is encoded, never parsed (AGENTS.md §7).
   one `TaskAttempt` per attempt beside the logs that attempt produced. The
   write is best-effort: a record that cannot be stored is logged and never
   changes what the attempt reported.
-- **The archive is append-only.** Bodies and index rows are never deleted;
+- **The archive is append-only.** Bodies and index rows — the run index and
+  the origin index alike — are never deleted;
   what the cleanup worker reclaims is the run's logs, attempt records,
   snapshots, commit record, and object markers, and it records that in the
   cleanup sidecar.

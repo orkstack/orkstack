@@ -1,0 +1,14 @@
+Run:        run-trigger
+Orkflow:    hello-ork
+Version:    0.2.0
+Status:     SUCCEEDED
+Created:    2026-01-02T03:06:05Z
+Started:    2026-01-02T03:06:05Z
+Finished:   2026-01-02T03:06:05Z
+Origin:     trigger trg-4a1c0e2b7d3f8156 (GitHub deploy hook)
+Reference:  https://github.com/acme/svc/actions/runs/123
+Principal:  ci-github  (asserted by the gateway; not authenticated)
+Input:      -
+Output:     -
+
+No task runs yet.

@@ -10,6 +10,7 @@ import (
 
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -96,6 +97,14 @@ func (s *statsIndex) ListWorkflow(
 		response.NextPageToken = []byte("next")
 	}
 	return response, nil
+}
+
+// DescribeWorkflowExecution is not a question this double answers: none of
+// its tests inspects a live run.
+func (s *statsIndex) DescribeWorkflowExecution(
+	context.Context, string, string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	return nil, serviceerror.NewNotFound("statsIndex: no execution to describe")
 }
 
 // CountWorkflow answers how many records the query selects, applying the

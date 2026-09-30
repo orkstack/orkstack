@@ -95,7 +95,10 @@
 			`curl -X POST ${shellQuote(invokeUrl(id))} \\`,
 			`  -H ${authorization} \\`,
 			`  -H 'Content-Type: application/json' \\`,
-			`  -d '{}'`
+			`  -d '{}'`,
+			// Optional, and a comment so the command stays runnable as copied:
+			// the header records a correlation reference on the started run.
+			`# optional: -H 'Ork-Origin-Reference: <your CI job URL>'`
 		].join('\n');
 	}
 
