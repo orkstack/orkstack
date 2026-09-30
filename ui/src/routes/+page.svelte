@@ -3,6 +3,7 @@
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import FailureFingerprints from '$lib/components/FailureFingerprints.svelte';
+	import FlakeIndex from '$lib/components/FlakeIndex.svelte';
 	import HoldBanner from '$lib/components/HoldBanner.svelte';
 	import Popover from '$lib/components/Popover.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
@@ -367,6 +368,19 @@
 			{/if}
 		</section>
 	</div>
+
+	<!-- The retries the success rate hides: a SUCCEEDED run that needed a
+		second attempt counts as a success in every card above. Fetched only
+		when opened, and rendered whenever the page has numbers — a namespace
+		that dispatched nothing says so inside it. -->
+	<section class="mt-8">
+		<FlakeIndex
+			namespace={data.namespace}
+			window={data.window}
+			sinceParam={data.sinceParam}
+			computedAt={stats.computedAt}
+		/>
+	</section>
 
 	<section class="mt-8">
 		<h2 class="mb-3 text-sm font-semibold text-fg">Running now</h2>
