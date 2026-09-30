@@ -51,6 +51,7 @@ place each shape is spelled.
 | `metadata/orkflows/{ns}/{name}/@current.json` | the version new runs execute (`OrkflowCurrentKey`, `orkflow_current.go`) | compare-and-swap | the same delete |
 | `metadata/orkflows/{ns}/{name}/@head.json` | the newest applied version; moving it is the apply commit point (`OrkflowHeadKey`, `orkflow_head.go`) | compare-and-swap | the same delete |
 | `metadata/namespaces/{name}.json` | the namespace registry entry (`NamespaceKey`, `namespace_store.go`) | conditional PUT with an etag | `orkctl namespace delete`, refused while the namespace holds anything |
+| `metadata/settings/image-policy.json` | the deployment image supply-chain floor (`ImagePolicyKey`, `image_policy_store.go`) | plain put by `UpdateImagePolicy`; absent until an operator writes one | nothing |
 | `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`, `archive.go`) | once, at the run's terminal event | nothing; archive bodies are never deleted |
 | `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row (`RunIndexKey`) | with the archive body | nothing |
 | `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`); read keys-only by `RunService.GetArtifactProvenance` (`ListObjectReferences`) as well as by cleanup | with the archive body | the cleanup worker, when it releases the run's claims |

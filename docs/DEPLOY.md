@@ -1480,8 +1480,9 @@ nothing that was refused while it was set.
 
 Every call of a control-plane **write** RPC — namespace create/update/delete,
 orkflow apply/promote/delete, run cancel, trigger create/delete, webhook
-register/delete (over Connect and over the legacy `/v1/webhooks` routes), and
-the retention maximum — writes one immutable record, succeeded or refused, to
+register/delete (over Connect and over the legacy `/v1/webhooks` routes), the
+retention maximum, and the image policy (`image_policy.update`, its keys
+recorded by fingerprint, never as PEM) — writes one immutable record, succeeded or refused, to
 `metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` in the bucket, before the response
 leaves the engine. Reads are never recorded, and neither is `SubmitRun` nor a
 trigger invocation: a run's own record is already the durable fact.
@@ -1740,6 +1741,72 @@ something to expose publicly, and `ORK_PPROF_ENABLED`'s own default reflects
 that an Orker's heap holds resolved secret bytes. Suggested addresses for a
 single-host deployment: `:9464` for `ork`, `:9465` for `orker`, so one host can
 run both without a collision.
+
+### Image supply-chain policy
+
+By default any `uses:` a document names is pulled and run: the engine pins it
+to a digest at apply, which answers "did the image change under us?" and
+never "should this image run here at all?". Two halves bound that, and an
+image must pass both:
+
+- **The deployment floor:** `orkctl admin image-policy set` (or Admin →
+  Image policy), one document at `metadata/settings/image-policy.json`.
+  `--require-digest` refuses a `uses:` written as a mutable tag — a catalog
+  name (`uses: shell`) is exempt, because the catalog is the operator's own
+  configuration; write the catalog's references with digests if that matters.
+  `--allowed-registry PREFIX` (repeatable) bounds the resolved
+  `{registry}/{repository}` to literal prefixes matched on `/` boundaries
+  (`ghcr.io/acme/` matches `ghcr.io/acme/migrate`, never
+  `ghcr.io/acmeevil/…`); a list that would exclude a catalog activity is
+  refused. `--signing-key NAME=cosign.pub` registers a cosign PUBLIC key by
+  name (ECDSA P-256; OrkStack never holds a private key). Empty — the state of
+  every deployment until an operator writes one — permits everything, as
+  before.
+- **The tenant's tightening, per namespace:** `orkctl namespace update NAME
+  --require-signed-by cosign:KEY` requires every image executed in the
+  namespace to carry a valid cosign signature by that key. A namespace can
+  tighten the floor and has no field with which to loosen it. A key a
+  namespace names cannot be removed from the floor until the namespace is
+  cleared (`--clear-require-signed-by`).
+
+The policy is checked at three doors: at validate and apply (an issue on
+`tasks[i].uses`), at every submit — `run submit`, `run again`, the UI, a
+trigger invoke — before a run id is minted (`failed_precondition`, so a
+definition stored before the policy tightened is refused at its next
+submit), and by the Orker before it builds a workspace or pulls, against the
+policy the run pinned at submit. A run keeps the policy **and the key** it
+was submitted under: tightening the floor, moving a namespace's signer or
+rotating a key never reaches a run already accepted; stop one with `orkctl
+run cancel`. A committed attempt is adopted without being judged again.
+
+The Orker verifies the signature itself with its own registry client:
+`orker.registry_auth_file` / `ORK_ORKER_REGISTRY_AUTH_FILE` is a docker
+`config.json` used only for the signature manifest and blob GETs (empty is
+anonymous, which public registries allow); the engine uses
+`ORK_REGISTRY_AUTH_FILE` for the same GETs at apply. A registry that cannot
+be asked is never a pass: `unavailable` at apply and submit, and a retried
+`IMAGE_SIGNATURE_UNAVAILABLE` at the Orker. A missing signature is
+`IMAGE_NOT_SIGNED`, a signature by another key or over another digest
+`IMAGE_SIGNATURE_INVALID`, an image outside the floor `IMAGE_NOT_PERMITTED`
+— all three `ContractViolation`, never retried.
+
+Signing an image, with the `cosign` CLI and default settings:
+
+```bash
+cosign generate-key-pair                                  # cosign.key, cosign.pub
+cosign sign --key cosign.key ghcr.io/acme/migrate@sha256:<digest>
+orkctl admin image-policy set --signing-key release=cosign.pub
+orkctl namespace update prod-payments --require-signed-by cosign:release
+```
+
+To rotate a key without a gap, add the new key under a new name, re-sign,
+move each namespace's `--require-signed-by`, then `--remove-signing-key` the
+old name. During a rolling upgrade the policy is enforced only by engine
+replicas at the release that added it, and a run submitted through an older
+replica carries no policy for the Orker to check; the window is the rollout.
+Every image digest that ever ran is already recorded per attempt
+(`orkctl run attempts`, the `TaskAttempt.image` of each attempt record) —
+that is the audit read, and nothing new is written for it.
 
 ### Recipes
 

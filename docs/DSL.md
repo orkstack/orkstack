@@ -168,7 +168,12 @@ tasks:
 
 `uses:` is the only image selector. A catalog name is resolved at apply time;
 a registry tag or digest may be written directly. In every case the applied
-definition records an immutable digest. `uses:` cannot be templated.
+definition records an immutable digest. `uses:` cannot be templated. A
+deployment may require every registry reference to be written with a digest
+and bound the registries images may come from (`orkctl admin image-policy
+get`), and a namespace may require a cosign signature (`orkctl namespace
+get`); an image outside either is refused at validate and apply with the
+field path `tasks[i].uses`, and again at submit.
 
 `command` is a top-level argv override and never a shell string. `env` contains
 only variables supplied to the workload; OrkStack's required context travels
