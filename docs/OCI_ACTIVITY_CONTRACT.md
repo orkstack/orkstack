@@ -47,7 +47,7 @@ This table is the contract's spine. Every later section is consistent with it.
 | Which version a run uses | **owns** — `@current.json` at submit; the run pins it | receives the pin as a coordinate | never | holds the pointers |
 | Pool → Temporal task queue | **owns** (`internal/task/pool.go`) | binds exactly one queue at boot | never | — |
 | Template rendering | **never** — determinism (`internal/task/contract.go:7-13`) | **owns** — renders `with:` after staging artifacts | sees only the rendered result | — |
-| Registry credentials | resolve-only (manifest GET), read-only, no push, no execution | pull credentials | **never** | — |
+| Registry credentials | resolve-only (manifest and config-blob GETs), read-only, no push, no execution | pull credentials | **never** | — |
 | Temporal credentials | yes | yes | **never** | — |
 | Object-store credentials | yes | yes | **never** | — |
 | Upstream artifact bytes | **never** — references only | materializes them into the workspace | reads the files it was given | holds them |
@@ -1148,6 +1148,37 @@ The resolver:
    a `200` whose computed body digest equals the pin. Apply MUST NOT succeed
    with an unpullable pin.
 6. Stamps `Task.image`.
+7. Reads the interface label (`docs/ACTIVITY_IMAGES.md`, "Declaring the
+   interface"):
+   a. Locates the image manifest. For a single manifest it is the body of
+      step 2. For an index it selects the **first entry in index order whose
+      `platform.os` is present and is not `unknown`** (buildx attestation
+      manifests are skipped) and GETs `/v2/<repository>/manifests/<digest>`
+      with the same `Accept` set, requiring `sha256(body)` to equal the
+      entry's digest (`IMAGE_DIGEST_MISMATCH` otherwise). An index with no
+      such entry — or whose selected entry is itself an index, or names no
+      sha256 digest — reports "index advertises no platform manifest to read
+      a config from" as the interface error; resolution still succeeds. One
+      interface is read per image.
+   b. Reads `config.digest`; a manifest without a readable config descriptor
+      is `IMAGE_RESOLVE_UNSUPPORTED`.
+   c. GETs `/v2/<repository>/blobs/<config.digest>` with the credential of
+      step 2 (one token handshake per image, repeated once on a `401`),
+      following redirects, bounded at 4 MiB (`IMAGE_RESOLVE_UNSUPPORTED`
+      past it), and requires `sha256(body)` to equal `config.digest`.
+      `404` is `IMAGE_NOT_FOUND`, `401`/`403` `IMAGE_RESOLVE_UNAUTHORIZED`,
+      `5xx`/timeout/DNS `IMAGE_RESOLVE_UNAVAILABLE`.
+   d. Decodes `config.Labels`; a blob that is not JSON is
+      `IMAGE_RESOLVE_UNSUPPORTED`. No `org.orkstack.activity.interface`
+      label means the image declares nothing.
+   e. Parses the label. A malformed label **never** fails resolution: the
+      image is still pinned and runnable, and the reason is reported as the
+      interface error.
+
+   A failure in 7a–7d fails the apply with the reason codes above: a registry
+   that serves a manifest but not its config cannot serve a pull either, and
+   step 5 already refuses an unpullable pin. The interface is not an
+   `ImageRef` field, so it never reaches the definition digest (§4.4).
 
 Failures are apply-time Connect errors, never silent: `IMAGE_NOT_FOUND` (404),
 `IMAGE_RESOLVE_UNAUTHORIZED` (401/403), `IMAGE_RESOLVE_UNAVAILABLE` (5xx,
@@ -1266,8 +1297,8 @@ Consequences, all correct and all intended:
 ### 4.5 Registry credentials at the engine
 
 `ork` gains one narrowly scoped credential surface: `ORK_REGISTRY_AUTH_FILE`, a
-Docker `config.json`, used **only** for manifest **GET**s during apply-time
-resolution (§4.3). It grants no push and no
+Docker `config.json`, used **only** for manifest and config-blob **GET**s
+during apply-time resolution (§4.3), always with a pull scope. It grants no push and no
 execution. It does not weaken AGENTS.md §2.3, which makes the Orker the boundary
 for *execution* credentials; those stay on the Orker and are never sent to a
 container.

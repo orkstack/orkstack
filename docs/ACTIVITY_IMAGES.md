@@ -51,6 +51,61 @@ workload names its own image directly.
    is returned as data, but that is the image's contract, not a platform magic
    exit code.
 
+## Declaring the interface
+
+An image MAY write down its `with:` contract in one OCI image label,
+`org.orkstack.activity.interface`. The engine reads it from the image's config
+during the apply-time resolution that already pins the digest
+([OCI Activity Contract](OCI_ACTIVITY_CONTRACT.md) §4.3 step 7) and checks every
+task's `with:` against it at `orkctl orkflow validate` and at apply (DSL
+validation rule 14). The container never reads the label, and nothing about it
+is stored: it is recomputed from the digest-addressed image on every read.
+
+The label is **optional**. An image without it — every image built before it
+existed — is an ordinary activity, resolved, applied and run exactly as
+before; its `with:` is checked by the image itself at run time (rule 2 above).
+
+Its value is the protojson encoding (lowerCamel names) of the
+`orkstack.v1.ActivityInterface` message, verbatim, on one line:
+
+```dockerfile
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields":{"src":{"type":"string","required":true},"as":{"type":"string"}}}},"defaultOp":"copy","values":{"path":{"type":"string"}}}'
+```
+
+- `schemaVersion` is `1`.
+- `fields` are the top-level `with:` keys every op reads (for an image with no
+  `op`, the whole `with:` block).
+- `ops`, when present, says the image follows the `op` convention: each op's
+  `fields` are the keys it reads in addition to `fields`. `op` is then
+  implied and must not appear in `fields`; a key is declared once, shared or
+  under an op, never both.
+- `defaultOp` is the op the image runs when `op` is absent; with `ops` and no
+  `defaultOp`, `op` is required.
+- `values` is documentary: the keys the image writes to `values.json`.
+
+Each key is declared with exactly the vocabulary an Orkflow's `inputs:` has —
+`type` (`string`, `number`, `boolean`, `object`, `array`), `required`, and a
+documentary `default` the engine never writes into `with:` — and not one word
+more: no pattern, range, enum or nesting, and a word outside the vocabulary
+makes the label unreadable rather than being ignored.
+
+What a document is told:
+
+- a required key that is not supplied, an `op` the image does not declare, or
+  a missing `op` with no default is an **error** — the image would refuse it
+  at run time, so apply refuses it first and nothing is stored;
+- a key the interface does not declare is a **warning**, never an error — the
+  image may accept more than it declares;
+- a literal whose JSON type disagrees with the declared type is a
+  **warning**; a templated value (`{{ … }}`) is never typed, because the
+  Orker renders every template to a string;
+- a label the engine cannot read is one warning on the task's `uses:`, and the
+  image is still pinned and runnable.
+
+`orkctl activity inspect <name-or-reference>` and Admin → Activities show what
+an image declares. The three first-party images carry the label; each README's
+"Interface" section reproduces it.
+
 ## First-party reference images
 
 The current configuration and output contract for each image lives beside its

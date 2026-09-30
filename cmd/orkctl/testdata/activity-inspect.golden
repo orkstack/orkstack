@@ -1,0 +1,30 @@
+Activity    file (catalog)
+Reference   localhost:5001/orkstack/activity-file:dev
+Pinned      localhost:5001/orkstack/activity-file@sha256:2b1e0a7c9d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e
+Media type  application/vnd.oci.image.index.v1+json
+Platforms   linux/amd64, linux/arm64
+Resolved    2026-01-02T03:04:05Z
+
+Interface   schema 1 · selected by op: (7 ops, op required)
+
+OP        KEY     TYPE    REQUIRED  DEFAULT
+checksum  src     string  yes       -
+concat    as      string  yes       -
+concat    srcs    array   yes       -
+copy      as      string  no        -
+copy      src     string  yes       -
+gunzip    as      string  no        -
+gunzip    src     string  yes       -
+gzip      as      string  no        -
+gzip      src     string  yes       -
+tar       as      string  no        -
+tar       srcs    array   yes       -
+untar     as      string  no        -
+untar     member  string  yes       -
+untar     src     string  yes       -
+
+VALUES
+KEY        TYPE
+path       string
+sha256     string
+sizeBytes  number

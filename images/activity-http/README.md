@@ -91,6 +91,21 @@ When `captureBodyAs` is set, the raw response body is written to
 `/orkstack/output/artifacts/<name>` and becomes an output artifact. It must be
 a plain file name: no `/`, and not `.` or `..`.
 
+## Interface
+
+The image declares its `with:` contract in the
+`org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
+"Declaring the interface"), so `orkctl orkflow validate` and apply check a
+task's `with:` before anything runs: a missing required key or an unknown
+`op` is an error, an undeclared key a warning. Five shared keys, six ops that read nothing beyond them, `get` when `op` is absent, and every `values.json` key of Output — `json` included, although it is present only for a JSON body of at most 1 MiB. The label, as the
+Dockerfile carries it:
+
+```dockerfile
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"headers":{"type":"object"},"body":{"type":"string"},"timeoutSeconds":{"type":"number"},"captureBodyAs":{"type":"string"}},"ops":{"get":{},"post":{},"put":{},"patch":{},"delete":{},"head":{}},"defaultOp":"get","values":{"status":{"type":"number"},"headers":{"type":"object"},"durationMs":{"type":"number"},"sizeBytes":{"type":"number"},"json":{"type":"object"}}}'
+```
+
+`orkctl activity inspect http` renders it as a table.
+
 ## Cancellation
 
 curl runs in the background under a TERM trap (§10.2 rule 2a), so cancellation
