@@ -33,7 +33,8 @@ import {
 //      without a request;
 //   3. Admin → Namespaces: `prod` created requiring cosign:e2e from the
 //      select shows it in the Signed by column; `sandbox` with None reads —;
-//   4. the Apply page's Validate anchors the registry refusal and the tag
+//   4. the Apply page's Validate anchors the registry refusal (an image
+//      outside the floor, pinned by digest) and the tag
 //      refusal to tasks[0].uses; `uses: shell` validates clean, applies in
 //      prod, and its run SUCCEEDS (the Orker verified the signature);
 //   5. prod moved to cosign:e2e-other: Submit a run shows the server's
@@ -253,15 +254,50 @@ test('3: Admin → Namespaces offers the signer select and shows the Signed by c
 	note(`${SANDBOX} Signed by: ${await page.getByTestId(`namespace-require-signed-by-${SANDBOX}`).innerText()}`);
 });
 
+/**
+ * outsideImage is activity-shell:dev in the shared registry, addressed as
+ * 127.0.0.1:<port> (a different registry string from the floor's
+ * `localhost:<port>/orkstack/`) and pinned by the digest the registry serves
+ * for the same Accept list the engine's resolver sends.
+ */
+async function outsideImage(): Promise<{ outside: string; outsideRepo: string }> {
+	const tagged = activityRef('shell');
+	const match = /^localhost:(\d+)\/(.+):([^:/]+)$/.exec(tagged);
+	if (!match) throw new Error(`activityRef('shell') = ${tagged}: not a localhost:<port>/<repo>:<tag> reference`);
+	const [, port, repo, tag] = match;
+	const response = await fetch(`http://127.0.0.1:${port}/v2/${repo}/manifests/${tag}`, {
+		method: 'HEAD',
+		headers: {
+			Accept: [
+				'application/vnd.oci.image.index.v1+json',
+				'application/vnd.oci.image.manifest.v1+json',
+				'application/vnd.docker.distribution.manifest.list.v2+json',
+				'application/vnd.docker.distribution.manifest.v2+json'
+			].join(', ')
+		}
+	});
+	const digest = response.headers.get('docker-content-digest');
+	if (!response.ok || !digest) throw new Error(`HEAD ${tagged} via 127.0.0.1: ${response.status}, digest ${digest}`);
+	const outsideRepo = `127.0.0.1:${port}/${repo}`;
+	return { outside: `${outsideRepo}@${digest}`, outsideRepo };
+}
+
 test('4: Validate anchors both refusals to tasks[0].uses; a signed catalog image applies and runs', async ({
 	page
 }) => {
+	// The image outside the floor is the shared registry's own shell image
+	// spelled through 127.0.0.1 rather than localhost, and pinned by digest:
+	// the rule checks require_digest BEFORE allowed_registries
+	// (image-supply-chain-policy §1), so a tag-spelled outside image would
+	// meet the tag sentence first, and a real, resolvable reference outside
+	// `localhost:5001/orkstack/` needs no public-registry round trip.
+	const { outside, outsideRepo } = await outsideImage();
 	await page.goto(`${UI_ORIGIN}/apply?ns=${PROD}`);
-	await page.getByTestId('apply-yaml').fill(document('deploy', 'docker.io/library/alpine:3.20'));
+	await page.getByTestId('apply-yaml').fill(document('deploy', outside));
 	await page.getByTestId('apply-validate').click();
 	const issues = page.getByTestId('apply-validation-issues');
 	await expect(issues).toContainText(
-		'tasks[0].uses: task "build": image "docker.io/library/alpine:3.20" resolves to docker.io/library/alpine, which is outside the registries this deployment allows: localhost:5001/orkstack/, ghcr.io/acme/ (orkctl admin image-policy get)'
+		`tasks[0].uses: task "build": image "${outside}" resolves to ${outsideRepo}, which is outside the registries this deployment allows: localhost:5001/orkstack/, ghcr.io/acme/ (orkctl admin image-policy get)`
 	);
 	note(`validate issue: ${await issues.innerText()}`);
 	await page.screenshot({ path: out('screenshot-validate-registry-issue.png'), fullPage: true });

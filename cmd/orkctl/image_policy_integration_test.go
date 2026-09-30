@@ -44,10 +44,14 @@ import (
 // test/tools/cosign-sign; key "other" signs nothing. The Orker runs with
 // ORK_ORKER_REGISTRY_AUTH_FILE unset: the private registry is anonymous.
 type policyStack struct {
-	cfg        artifacts.Config
-	temporal   client.Client
-	partition  string
-	registry   *cosigntest.PrivateRegistry
+	cfg       artifacts.Config
+	temporal  client.Client
+	partition string
+	registry  *cosigntest.PrivateRegistry
+	// shared is the host's shared registry (captured before this test points
+	// ORK_TEST_REGISTRY at its private one): an image there is real and
+	// resolvable but outside a floor naming only the private registry.
+	shared     string
 	a, b       *engineReplica
 	signTool   string
 	keys       string // dir holding release/ and other/ cosign.key + cosign.pub
@@ -65,6 +69,7 @@ func newPolicyStack(ctx context.Context, t *testing.T, label string) *policyStac
 
 	s := &policyStack{
 		partition: fmt.Sprintf("ork-imgpol-%s-%d-%d", label, os.Getpid(), time.Now().UnixNano()%1_000_000_000),
+		shared:    shared,
 	}
 	s.registry = cosigntest.StartRegistry(t, func(format string, args ...any) { infraAbsent(t, format, args...) })
 	copier := &cosigntest.Client{}
@@ -307,7 +312,8 @@ tasks:
 `, name, uses, command)
 }
 
-// twoStepYAML is two sequential tasks on `uses`: the first sleeps long enough
+// twoStepYAML is two sequential tasks on `uses` (second needs first: two
+// tasks with no needs are independent and start together): the first sleeps long enough
 // for the test to act while it runs; the second allows three attempts, so
 // "exactly one attempt" is a statement about retryability.
 func twoStepYAML(name, uses string, sleep int) string {
@@ -325,10 +331,11 @@ tasks:
       command: ["sh", "-c", "sleep %d"]
   - id: second
     uses: %s
+    needs: [first]
     timeout_seconds: 120
     retry:
       maximum_attempts: 3
-      initial_interval: 1s
+      initial_interval_seconds: 1
     with:
       op: exec
       command: ["sh", "-c", "echo second"]
@@ -408,13 +415,13 @@ func TestIntegration_ThePolicyRefusesValidateAndApplyWithTheFieldPath(t *testing
 	// The image outside the floor is the SHARED registry's copy of the same
 	// shell image: a real, resolvable reference that is simply not under the
 	// allowed prefix (no public-registry round trip in the proof).
-	outside := localcatalog.Registry() + "/orkstack/activity-shell:dev"
+	outside := s.shared + "/orkstack/activity-shell:dev"
 
 	s.cli(t, s.a, exitOK, "admin", "image-policy", "set", "--allowed-registry", private)
 	path := s.document(t, policyOrkflowYAML("deploy", outside, "echo outside"))
 	stdout, _ := s.cli(t, s.b, -1, "orkflow", "validate", path)
 	want := fmt.Sprintf(`tasks[0].uses: task "work": image %q resolves to %s/orkstack/activity-shell, which is outside the registries this deployment allows: %s (orkctl admin image-policy get)`,
-		outside, localcatalog.Registry(), private)
+		outside, s.shared, private)
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("validate did not print the field-anchored issue\nwant: %s\ngot:\n%s", want, stdout)
 	}
@@ -444,7 +451,7 @@ func TestIntegration_AFloorTightenedOnOneReplicaRefusesASubmitOnTheOther(t *test
 	defer cancel()
 	s := newPolicyStack(ctx, t, "floor")
 	defer s.writeTranscript(t, "image-policy-floor-two-replicas.txt")
-	outside := localcatalog.Registry() + "/orkstack/activity-shell:dev"
+	outside := s.shared + "/orkstack/activity-shell:dev"
 	since := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 
 	s.cli(t, s.a, exitOK, "apply", s.document(t, policyOrkflowYAML("deploy", outside, "echo deployed")))
