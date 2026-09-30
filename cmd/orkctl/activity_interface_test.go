@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -20,8 +21,8 @@ import (
 )
 
 const (
-	testRegistry  = "localhost:5001"
-	fileReference = testRegistry + "/orkstack/activity-file:dev"
+	fakeRegistry  = "localhost:5001"
+	fileReference = fakeRegistry + "/orkstack/activity-file:dev"
 	fileDigest    = "sha256:2b1e0a7c9d3f" + "4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e"
 )
 
@@ -52,11 +53,9 @@ func (s stubResolver) Inspect(_ context.Context, uses, reference string) (*dsl.R
 	if !ok {
 		return nil, &dsl.ResolveError{Reference: reference, Code: dsl.ReasonImageNotFound, Detail: "the stub registry has no such image"}
 	}
-	copied := *res
-	image := *res.Image
+	image := proto.Clone(res.Image).(*orkstackv1.ImageRef)
 	image.Reference = uses
-	copied.Image = &image
-	return &copied, nil
+	return &dsl.Resolution{Image: image, Interface: res.Interface, InterfaceError: res.InterfaceError}, nil
 }
 
 func (s stubResolver) ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, wf *orkstackv1.Orkflow) (dsl.Resolutions, error) {
@@ -79,8 +78,8 @@ func (s stubResolver) ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, w
 func fileResolution(t *testing.T) *dsl.Resolution {
 	return &dsl.Resolution{
 		Image: &orkstackv1.ImageRef{
-			Registry: testRegistry, Repository: "orkstack/activity-file",
-			IndexDigest: fileDigest, Pinned: testRegistry + "/orkstack/activity-file@" + fileDigest,
+			Registry: fakeRegistry, Repository: "orkstack/activity-file",
+			IndexDigest: fileDigest, Pinned: fakeRegistry + "/orkstack/activity-file@" + fileDigest,
 			MediaType: dsl.MediaTypeOCIIndex, Platforms: []string{"linux/amd64", "linux/arm64"},
 		},
 		Interface: firstPartyInterface(t, "activity-file"),
@@ -103,11 +102,11 @@ func TestActivityList_RendersTheInterfaceColumn(t *testing.T) {
 		&orkstackv1.ActivityInfo{Name: "file", Reference: fileReference, IndexDigest: fileDigest,
 			MediaType: dsl.MediaTypeOCIIndex, Platforms: []string{"linux/amd64", "linux/arm64"}, ResolvedAt: resolved,
 			Interface: firstPartyInterface(t, "activity-file")},
-		&orkstackv1.ActivityInfo{Name: "http", Reference: testRegistry + "/orkstack/activity-http:dev", IndexDigest: "sha256:" + strings.Repeat("c", 64),
+		&orkstackv1.ActivityInfo{Name: "http", Reference: fakeRegistry + "/orkstack/activity-http:dev", IndexDigest: "sha256:" + strings.Repeat("c", 64),
 			MediaType: dsl.MediaTypeOCIIndex, Platforms: []string{"linux/amd64"}, ResolvedAt: resolved,
 			InterfaceError: "schemaVersion 2 is not supported (this engine reads 1)"},
 		&orkstackv1.ActivityInfo{Name: "migrate", Reference: "ghcr.io/acme/migrate:v3"},
-		&orkstackv1.ActivityInfo{Name: "shell", Reference: testRegistry + "/orkstack/activity-shell:dev", IndexDigest: "sha256:" + strings.Repeat("d", 64),
+		&orkstackv1.ActivityInfo{Name: "shell", Reference: fakeRegistry + "/orkstack/activity-shell:dev", IndexDigest: "sha256:" + strings.Repeat("d", 64),
 			MediaType: dsl.MediaTypeOCIIndex, Platforms: []string{"linux/amd64"}, ResolvedAt: resolved},
 	)
 	human := f.run("activity", "list").requireExit(t, exitOK).stdout
