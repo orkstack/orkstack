@@ -1102,6 +1102,9 @@ test('a task watched live acquires its real exit code and Error.category without
 test("a retried task's badge carries its retry history once asked, and a run that did not retry still says the task is flaky", async ({
 	page
 }) => {
+	// Runs to wait for, archive writes and a cache TTL: more than the
+	// default budget, never a sleep.
+	test.setTimeout(420_000);
 	const HISTORY_KEY = 'orkstack.run.stability';
 	// The same question the page asks, so waiting on it also leaves the
 	// engine's short-lived cache holding the fresh answer.

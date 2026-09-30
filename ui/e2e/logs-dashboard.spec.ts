@@ -1037,6 +1037,9 @@ test('the recent-failures section expands into fingerprints that name the task a
 test("the dashboard's stability section names the task that retried, its rate and cause, links to the filtered runs list, and says unavailable rather than zero", async ({
 	page
 }) => {
+	// Runs to wait for, archive writes and a cache TTL: more than the
+	// default budget, never a sleep.
+	test.setTimeout(420_000);
 	const submitted = await rpc<{ run: { id: string } }>(ENGINE_A, 'RunService/SubmitRun', {
 		orkflowName: RETRYING,
 		namespace: ALPHA
