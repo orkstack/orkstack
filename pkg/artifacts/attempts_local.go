@@ -26,8 +26,11 @@ type LocalAttemptStore struct {
 	root *os.Root
 }
 
-// compile-time contract check.
-var _ AttemptStore = (*LocalAttemptStore)(nil)
+// compile-time contract checks.
+var (
+	_ AttemptStore          = (*LocalAttemptStore)(nil)
+	_ AttemptDocumentReader = (*LocalAttemptStore)(nil)
+)
 
 // NewLocalAttemptStore opens (creating if needed) the attempt tree under dir.
 func NewLocalAttemptStore(dir string) (*LocalAttemptStore, error) {
@@ -100,6 +103,18 @@ func (s *LocalAttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1.
 func (s *LocalAttemptStore) ListAttempts(
 	ctx context.Context, runID, taskID string,
 ) ([]*orkstackv1.TaskAttempt, error) {
+	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return attemptRecords(documents), nil
+}
+
+// ReadAttemptDocuments returns one task's stored records with their bytes,
+// ascending by attempt.
+func (s *LocalAttemptStore) ReadAttemptDocuments(
+	ctx context.Context, runID, taskID string,
+) ([]AttemptDocument, error) {
 	prefix, err := AttemptTaskPrefix(runID, taskID)
 	if err != nil {
 		return nil, err
@@ -114,11 +129,11 @@ func (s *LocalAttemptStore) ListAttempts(
 			// A task with no records reads empty. That is the ordinary state of
 			// a task that has not run yet, and of every run finished before
 			// this key family existed.
-			return []*orkstackv1.TaskAttempt{}, nil
+			return []AttemptDocument{}, nil
 		}
 		return nil, fmt.Errorf("artifacts: local task attempts %q: %w", dir, err)
 	}
-	found := make([]*orkstackv1.TaskAttempt, 0, len(entries))
+	found := make([]AttemptDocument, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -144,8 +159,8 @@ func (s *LocalAttemptStore) ListAttempts(
 		if err != nil {
 			return nil, fmt.Errorf("artifacts: local task attempt %q: %w", key, err)
 		}
-		found = append(found, record)
+		found = append(found, AttemptDocument{Ref: ref, Key: key, Raw: document, Record: record})
 	}
-	sortAttempts(found)
+	sortAttemptDocuments(found)
 	return found, nil
 }
