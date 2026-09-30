@@ -16,7 +16,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/activity.proto.
  */
 export const file_orkstack_v1_activity: GenFile = /*@__PURE__*/
-  fileDesc("ChpvcmtzdGFjay92MS9hY3Rpdml0eS5wcm90bxILb3Jrc3RhY2sudjEi4AEKCEltYWdlUmVmEhEKCXJlZmVyZW5jZRgBIAEoCRIQCghyZWdpc3RyeRgCIAEoCRISCgpyZXBvc2l0b3J5GAMgASgJEhQKDGluZGV4X2RpZ2VzdBgEIAEoCRIOCgZwaW5uZWQYBSABKAkSEgoKbWVkaWFfdHlwZRgGIAEoCRIRCglwbGF0Zm9ybXMYByADKAkSFwoPcGxhdGZvcm1fZGlnZXN0GAkgASgJEhAKCHBsYXRmb3JtGAogASgJEhAKCGRlbGl2ZXJ5GAsgASgJSgQICBAJUgtyZXNvbHZlZF9hdCIuCg9SZXNvdXJjZVJlcXVlc3QSCwoDY3B1GAEgASgJEg4KBm1lbW9yeRgCIAEoCSIpCglTZWNyZXRSZWYSDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkilAEKD1dvcmtzcGFjZUxpbWl0cxIYChB2YWx1ZXNfbWF4X2J5dGVzGAEgASgDEhoKEmFydGlmYWN0X21heF9jb3VudBgCIAEoBRIaChJhcnRpZmFjdF9tYXhfYnl0ZXMYAyABKAMSFQoNbG9nX21heF9ieXRlcxgEIAEoAxIYChBjb21taXRfbWF4X2J5dGVzGAUgASgDIokBCgtVcHN0cmVhbVJlZhIPCgd0YXNrX2lkGAEgASgJEhIKCmNvbW1pdF91cmkYAiABKAkSKAoGdmFsdWVzGAMgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYiSAoKUGluQ29udGV4dBIMCgRuYW1lGAEgASgJEhMKC2luc3RhbmNlX2lkGAIgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgDIAEoBSLTBgoQRXhlY3V0ZVRhc2tJbnB1dBIOCgZydW5faWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIMCgRwb29sGAYgASgJEg8KB3Rhc2tfaWQYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEhIKCmNvbW1pdF91cmkYCSABKAkSJAoFaW1hZ2UYCiABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAsgAygJEiUKBHdpdGgYDCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjMKA2VudhgNIAMoCzImLm9ya3N0YWNrLnYxLkV4ZWN1dGVUYXNrSW5wdXQuRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIXCg90aW1lb3V0X3NlY29uZHMYDyABKAUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBAgASgFEi8KCXJlc291cmNlcxgRIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBIgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSLAoGbGltaXRzGBMgASgLMhwub3Jrc3RhY2sudjEuV29ya3NwYWNlTGltaXRzEicKCXJ1bl9pbnB1dBgUIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKgoIdXBzdHJlYW0YFSADKAsyGC5vcmtzdGFjay52MS5VcHN0cmVhbVJlZhIZChFydW5fYXNfb3JrZXJfdXNlchgWIAEoCBIyCgl0ZWxlbWV0cnkYFyABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJAoDcGluGBggASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dBoqCghFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIloKD1JlbGVhc2VQaW5JbnB1dBIOCgZydW5faWQYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEiQKA3BpbhgDIAEoCzIXLm9ya3N0YWNrLnYxLlBpbkNvbnRleHQiZgoJQ29tbWl0UmVmEgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSDAoEZXRhZxgDIAEoCRIuCgpjcmVhdGVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLdAwoRRXhlY3V0ZVRhc2tSZXN1bHQSDwoHdGFza19pZBgBIAEoCRIRCglleGl0X2NvZGUYAiABKAUSJgoGY29tbWl0GAMgASgLMhYub3Jrc3RhY2sudjEuQ29tbWl0UmVmEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgp2YWx1ZXNfcmVmGAYgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSEwoLdmFsdWVzX2pzb24YByABKAwSFgoOdmFsdWVzX2lubGluZWQYCCABKAgSJAoFaW1hZ2UYCSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIWCg5jb21taXRfYWRvcHRlZBgKIAEoCBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIb3JrZXJfaWQYDSABKAkSDwoHYXR0ZW1wdBgOIAEoBSKhBAoOQWN0aXZpdHlDb21taXQSFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSEQoJbmFtZXNwYWNlGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRIPCgd0YXNrX2lkGAQgASgJEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YBiABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgHIAEoCRIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkSJAoFaW1hZ2UYCSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIRCglleGl0X2NvZGUYCiABKAUSKAoGdmFsdWVzGAsgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAwgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgNIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEi4KCnN0YXJ0ZWRfYXQYDiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GA8gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdhdHRlbXB0GBAgASgFEhAKCG9ya2VyX2lkGBEgASgJEhAKCGJ1aWxkX2lkGBIgASgJIt0CChVBY3Rpdml0eUZhaWx1cmVEZXRhaWwSEwoLcmVhc29uX2NvZGUYASABKAkSLgoIY2F0ZWdvcnkYAiABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJZXhpdF9jb2RlGAMgASgFEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhISCgpzY2FuX25vdGVzGAYgAygJEiQKBWltYWdlGAcgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSDwoHYXR0ZW1wdBgIIAEoBRIQCghvcmtlcl9pZBgJIAEoCRIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLXAQoTRGVzY3JpYmVPcmtlclJlc3VsdBIQCghvcmtlcl9pZBgBIAEoCRIQCghidWlsZF9pZBgCIAEoCRIMCgRwb29sGAMgASgJEhQKDHJ1bnRpbWVfbmFtZRgEIAEoCRIXCg9ydW50aW1lX3ZlcnNpb24YBSABKAkSGAoQc2VjdXJpdHlfcHJvZmlsZRgGIAEoCRIWCg5tYXhfY29uY3VycmVudBgHIAEoBRIQCghyb290bGVzcxgIIAEoCBIbChNtYXhfY29uY3VycmVudF9waW5zGAkgASgFKlwKC05ldHdvcmtNb2RlEhwKGE5FVFdPUktfTU9ERV9VTlNQRUNJRklFRBAAEhgKFE5FVFdPUktfTU9ERV9ERUZBVUxUEAESFQoRTkVUV09SS19NT0RFX05PTkUQAkKpAQoPY29tLm9ya3N0YWNrLnYxQg1BY3Rpdml0eVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
+  fileDesc("ChpvcmtzdGFjay92MS9hY3Rpdml0eS5wcm90bxILb3Jrc3RhY2sudjEi4AEKCEltYWdlUmVmEhEKCXJlZmVyZW5jZRgBIAEoCRIQCghyZWdpc3RyeRgCIAEoCRISCgpyZXBvc2l0b3J5GAMgASgJEhQKDGluZGV4X2RpZ2VzdBgEIAEoCRIOCgZwaW5uZWQYBSABKAkSEgoKbWVkaWFfdHlwZRgGIAEoCRIRCglwbGF0Zm9ybXMYByADKAkSFwoPcGxhdGZvcm1fZGlnZXN0GAkgASgJEhAKCHBsYXRmb3JtGAogASgJEhAKCGRlbGl2ZXJ5GAsgASgJSgQICBAJUgtyZXNvbHZlZF9hdCIuCg9SZXNvdXJjZVJlcXVlc3QSCwoDY3B1GAEgASgJEg4KBm1lbW9yeRgCIAEoCSIpCglTZWNyZXRSZWYSDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkilAEKD1dvcmtzcGFjZUxpbWl0cxIYChB2YWx1ZXNfbWF4X2J5dGVzGAEgASgDEhoKEmFydGlmYWN0X21heF9jb3VudBgCIAEoBRIaChJhcnRpZmFjdF9tYXhfYnl0ZXMYAyABKAMSFQoNbG9nX21heF9ieXRlcxgEIAEoAxIYChBjb21taXRfbWF4X2J5dGVzGAUgASgDIokBCgtVcHN0cmVhbVJlZhIPCgd0YXNrX2lkGAEgASgJEhIKCmNvbW1pdF91cmkYAiABKAkSKAoGdmFsdWVzGAMgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYiSAoKUGluQ29udGV4dBIMCgRuYW1lGAEgASgJEhMKC2luc3RhbmNlX2lkGAIgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgDIAEoBSLTBgoQRXhlY3V0ZVRhc2tJbnB1dBIOCgZydW5faWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIMCgRwb29sGAYgASgJEg8KB3Rhc2tfaWQYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEhIKCmNvbW1pdF91cmkYCSABKAkSJAoFaW1hZ2UYCiABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAsgAygJEiUKBHdpdGgYDCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjMKA2VudhgNIAMoCzImLm9ya3N0YWNrLnYxLkV4ZWN1dGVUYXNrSW5wdXQuRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIXCg90aW1lb3V0X3NlY29uZHMYDyABKAUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBAgASgFEi8KCXJlc291cmNlcxgRIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBIgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSLAoGbGltaXRzGBMgASgLMhwub3Jrc3RhY2sudjEuV29ya3NwYWNlTGltaXRzEicKCXJ1bl9pbnB1dBgUIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKgoIdXBzdHJlYW0YFSADKAsyGC5vcmtzdGFjay52MS5VcHN0cmVhbVJlZhIZChFydW5fYXNfb3JrZXJfdXNlchgWIAEoCBIyCgl0ZWxlbWV0cnkYFyABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJAoDcGluGBggASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dBoqCghFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIloKD1JlbGVhc2VQaW5JbnB1dBIOCgZydW5faWQYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEiQKA3BpbhgDIAEoCzIXLm9ya3N0YWNrLnYxLlBpbkNvbnRleHQiZgoJQ29tbWl0UmVmEgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSDAoEZXRhZxgDIAEoCRIuCgpjcmVhdGVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLdAwoRRXhlY3V0ZVRhc2tSZXN1bHQSDwoHdGFza19pZBgBIAEoCRIRCglleGl0X2NvZGUYAiABKAUSJgoGY29tbWl0GAMgASgLMhYub3Jrc3RhY2sudjEuQ29tbWl0UmVmEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgp2YWx1ZXNfcmVmGAYgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSEwoLdmFsdWVzX2pzb24YByABKAwSFgoOdmFsdWVzX2lubGluZWQYCCABKAgSJAoFaW1hZ2UYCSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIWCg5jb21taXRfYWRvcHRlZBgKIAEoCBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIb3JrZXJfaWQYDSABKAkSDwoHYXR0ZW1wdBgOIAEoBSKhBAoOQWN0aXZpdHlDb21taXQSFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSEQoJbmFtZXNwYWNlGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRIPCgd0YXNrX2lkGAQgASgJEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YBiABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgHIAEoCRIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkSJAoFaW1hZ2UYCSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIRCglleGl0X2NvZGUYCiABKAUSKAoGdmFsdWVzGAsgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAwgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgNIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEi4KCnN0YXJ0ZWRfYXQYDiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GA8gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdhdHRlbXB0GBAgASgFEhAKCG9ya2VyX2lkGBEgASgJEhAKCGJ1aWxkX2lkGBIgASgJIt0CChVBY3Rpdml0eUZhaWx1cmVEZXRhaWwSEwoLcmVhc29uX2NvZGUYASABKAkSLgoIY2F0ZWdvcnkYAiABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJZXhpdF9jb2RlGAMgASgFEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhISCgpzY2FuX25vdGVzGAYgAygJEiQKBWltYWdlGAcgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSDwoHYXR0ZW1wdBgIIAEoBRIQCghvcmtlcl9pZBgJIAEoCRIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCL/AgoTRGVzY3JpYmVPcmtlclJlc3VsdBIQCghvcmtlcl9pZBgBIAEoCRIQCghidWlsZF9pZBgCIAEoCRIMCgRwb29sGAMgASgJEhQKDHJ1bnRpbWVfbmFtZRgEIAEoCRIXCg9ydW50aW1lX3ZlcnNpb24YBSABKAkSGAoQc2VjdXJpdHlfcHJvZmlsZRgGIAEoCRIWCg5tYXhfY29uY3VycmVudBgHIAEoBRIQCghyb290bGVzcxgIIAEoCBIbChNtYXhfY29uY3VycmVudF9waW5zGAkgASgFEhAKCGNvcmRvbmVkGAogASgIEhUKDWNvcmRvbl9yZWFzb24YCyABKAkSLwoLY29yZG9uZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhUKDXJ1bm5pbmdfdGFza3MYDSABKAUSEQoJb3Blbl9waW5zGA4gASgFEiIKBHBpbnMYDyADKAsyFC5vcmtzdGFjay52MS5PcGVuUGluIoEBCgdPcGVuUGluEg4KBnJ1bl9pZBgBIAEoCRILCgNwaW4YAiABKAkSKQoFc2luY2UYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIjQKEENvcmRvbk9ya2VySW5wdXQSEAoIY29yZG9uZWQYASABKAgSDgoGcmVhc29uGAIgASgJKlwKC05ldHdvcmtNb2RlEhwKGE5FVFdPUktfTU9ERV9VTlNQRUNJRklFRBAAEhgKFE5FVFdPUktfTU9ERV9ERUZBVUxUEAESFQoRTkVUV09SS19NT0RFX05PTkUQAkKpAQoPY29tLm9ya3N0YWNrLnYxQg1BY3Rpdml0eVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
 
 /**
  * ImageRef is an OCI image resolved to an immutable reference. The engine
@@ -990,6 +990,55 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
    * @generated from field: int32 max_concurrent_pins = 9;
    */
   maxConcurrentPins: number;
+
+  /**
+   * cordoned is this Orker's process-local cordon flag. It is NEVER stored
+   * anywhere but the process: a restarted Orker answers false.
+   *
+   * @generated from field: bool cordoned = 10;
+   */
+  cordoned: boolean;
+
+  /**
+   * cordon_reason is the reason given to CordonOrker; empty when not
+   * cordoned.
+   *
+   * @generated from field: string cordon_reason = 11;
+   */
+  cordonReason: string;
+
+  /**
+   * cordoned_at is when the flag was last set; unset when not cordoned.
+   *
+   * @generated from field: google.protobuf.Timestamp cordoned_at = 12;
+   */
+  cordonedAt?: Timestamp | undefined;
+
+  /**
+   * running_tasks is how many ExecuteTask activities this Orker has in
+   * flight right now, pinned members included. Counted in the process; it
+   * is a measurement, not a projection.
+   *
+   * @generated from field: int32 running_tasks = 13;
+   */
+  runningTasks: number;
+
+  /**
+   * open_pins is how many pins this Orker currently hosts: sessions it
+   * accepted and has not completed. Counted from the session creation
+   * activities in flight, so it is exact from the instant a pin is accepted,
+   * before its first member arrives. It never exceeds max_concurrent_pins.
+   *
+   * @generated from field: int32 open_pins = 14;
+   */
+  openPins: number;
+
+  /**
+   * pins details each open pin, ordered by run_id. len(pins) == open_pins.
+   *
+   * @generated from field: repeated orkstack.v1.OpenPin pins = 15;
+   */
+  pins: OpenPin[];
 };
 
 /**
@@ -998,6 +1047,84 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
  */
 export const DescribeOrkerResultSchema: GenMessage<DescribeOrkerResult> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_activity, 12);
+
+/**
+ * OpenPin is one pin this Orker currently hosts: a session it has accepted
+ * and not yet completed. It names the run and the pin — never the session,
+ * which is internal (AGENTS.md §7) — and says when the shared directory's
+ * lease ends, which is the longest the pin can live even if nothing else
+ * closes it (docs/design/task-pinning-worker-session.md §8.4).
+ *
+ * @generated from message orkstack.v1.OpenPin
+ */
+export type OpenPin = Message<"orkstack.v1.OpenPin"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * pin is the name the author wrote in `pin:`. EMPTY until the pin's first
+   * member attempt arrives: the Orker learns the name from
+   * ExecuteTaskInput.pin, and a session exists from the moment its creation
+   * is accepted, before any member has been dispatched to it.
+   *
+   * @generated from field: string pin = 2;
+   */
+  pin: string;
+
+  /**
+   * since is when this Orker accepted the pin.
+   *
+   * @generated from field: google.protobuf.Timestamp since = 3;
+   */
+  since?: Timestamp | undefined;
+
+  /**
+   * expires_at is the shared directory's lease (lease.json). UNSET until the
+   * first member arrives and writes it; a client renders "-", never a time.
+   *
+   * @generated from field: google.protobuf.Timestamp expires_at = 4;
+   */
+  expiresAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.OpenPin.
+ * Use `create(OpenPinSchema)` to create a new message.
+ */
+export const OpenPinSchema: GenMessage<OpenPin> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 13);
+
+/**
+ * CordonOrkerInput is the argument of the CordonOrker activity, dispatched
+ * on ONE Orker's control channel. `cordoned = false` clears the flag; then
+ * reason is ignored.
+ *
+ * @generated from message orkstack.v1.CordonOrkerInput
+ */
+export type CordonOrkerInput = Message<"orkstack.v1.CordonOrkerInput"> & {
+  /**
+   * @generated from field: bool cordoned = 1;
+   */
+  cordoned: boolean;
+
+  /**
+   * reason is required when cordoned is true; at most 256 bytes, no control
+   * characters. It is what ListOrkers shows beside the state and what the
+   * drain loop prints, so an operator reading the fleet knows why.
+   *
+   * @generated from field: string reason = 2;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message orkstack.v1.CordonOrkerInput.
+ * Use `create(CordonOrkerInputSchema)` to create a new message.
+ */
+export const CordonOrkerInputSchema: GenMessage<CordonOrkerInput> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 14);
 
 /**
  * NetworkMode is the complete set of network configurations an Orkflow may

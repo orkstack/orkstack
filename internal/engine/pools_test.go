@@ -887,3 +887,62 @@ func TestPoolResolver_RefusesAPinSpanningTwoPoolsOnAHandBuiltRequest(t *testing.
 		t.Errorf("refusal names pools %q and %q, want gpu and cpu", mismatch.Pool, mismatch.OtherPool)
 	}
 }
+
+// countingProbe records every question Plan asks the cluster.
+type countingProbe struct{ calls int }
+
+func (p *countingProbe) ObservePool(context.Context, string) (engine.PoolLiveness, error) {
+	p.calls++
+	return engine.PoolLiveness{Orkers: 1}, nil
+}
+
+// TestPoolResolver_PlanRefusesASecretTheNamespaceDoesNotAllow: the submit
+// gate refuses the secret before asking the cluster anything and before any
+// pool is resolved — a document that would ALSO be refused for its pool is
+// refused for its secret, the first refusal in Plan's order.
+func TestPoolResolver_PlanRefusesASecretTheNamespaceDoesNotAllow(t *testing.T) {
+	ns := &orkstackv1.Namespace{
+		Name:           "sandbox",
+		AllowedPools:   []string{"main"},
+		AllowedSecrets: []string{"env:SANDBOX_*"},
+	}
+	wf := compile(t, `
+name: exfil
+version: "1"
+tasks:
+  - id: grab
+    uses: shell
+    pool: gpu
+    secrets:
+      - name: db
+        source: env:PROD_DB_PASSWORD
+    with:
+      op: exec
+      command: ["true"]
+`)
+	probe := &countingProbe{}
+	resolver := &engine.PoolResolver{Probe: probe}
+	_, _, err := resolver.Plan(context.Background(), ns, wf, false)
+	var refused *engine.SecretNotAllowedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("Plan = %v, want a *SecretNotAllowedError", err)
+	}
+	var pool *engine.PoolNotAllowedError
+	if errors.As(err, &pool) {
+		t.Fatalf("Plan refused the pool first: %v", err)
+	}
+	if probe.calls != 0 {
+		t.Fatalf("Plan asked the probe %d times before refusing, want 0", probe.calls)
+	}
+
+	// allow_empty_pool is consulted later and never bypasses the check.
+	if _, _, err := resolver.Plan(context.Background(), ns, wf, true); !errors.As(err, &refused) {
+		t.Fatalf("Plan(allowEmpty) = %v, want a *SecretNotAllowedError", err)
+	}
+
+	// A permitted source passes on to the pool rules.
+	wf.Tasks[0].Secrets[0].Source = "env:SANDBOX_DB"
+	if _, _, err := resolver.Plan(context.Background(), ns, wf, false); !errors.As(err, &pool) {
+		t.Fatalf("Plan with a permitted secret = %v, want the pool refusal next", err)
+	}
+}

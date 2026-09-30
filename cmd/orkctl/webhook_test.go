@@ -145,7 +145,12 @@ func TestWebhookCommand_IsDiscoverableFromHelp(t *testing.T) {
 		fragment []string
 	}{
 		{[]string{"--help"}, []string{"webhook", "Register and inspect run-event callbacks"}},
-		{[]string{"webhook", "--help"}, []string{"register", "list", "delete"}},
+		{[]string{"webhook", "--help"}, []string{"register", "list", "delete", "deliveries", "delivery", "redeliver",
+			"What each delivery did is recorded"}},
+		{[]string{"webhook", "deliveries", "--help"}, []string{"--webhook", "--run", "--event", "--delivered",
+			"--since", "--until", "--limit", "--page-token", "every namespace unless -n"}},
+		{[]string{"webhook", "delivery", "--help"}, []string{"delivery <id>"}},
+		{[]string{"webhook", "redeliver", "--help"}, []string{"once, now", "you are the retry policy", "exits 1"}},
 		{[]string{"webhook", "register", "--help"}, []string{"--event", "--secret", "RUN_SUCCEEDED"}},
 	} {
 		var stdout, stderr bytes.Buffer

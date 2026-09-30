@@ -153,6 +153,11 @@ func (r *memoryRegistry) Put(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	name := artifacts.ResolveNamespace(ns.GetName())
+	// allowed_secrets is held to the store's own rule, by the store's own
+	// function, so this double refuses exactly what the store refuses.
+	if err := artifacts.ValidNamespaceSecrets(ns); err != nil {
+		return nil, err
+	}
 	existing, exists := r.docs[name]
 	if cond.IfAbsent && exists {
 		return nil, fmt.Errorf("put %q: %w", name, artifacts.ErrPreconditionFailed)
@@ -211,6 +216,17 @@ type fixture struct {
 	// crossed the wire at all.
 	requestsMu sync.Mutex
 	requestLog []string
+	// timeoutLog is the Connect-Timeout-Ms header each request carried, in
+	// the same order: the deadline the CLI gave that one request.
+	timeoutLog []string
+}
+
+// timeoutHeaders returns the Connect-Timeout-Ms header of every request
+// received so far, in arrival order ("" when a request carried none).
+func (f *fixture) timeoutHeaders() []string {
+	f.requestsMu.Lock()
+	defer f.requestsMu.Unlock()
+	return append([]string(nil), f.timeoutLog...)
 }
 
 // requests returns every HTTP request path this fixture's server has
@@ -283,6 +299,7 @@ func newFixtureWith(
 	recording := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.requestsMu.Lock()
 		f.requestLog = append(f.requestLog, r.URL.Path)
+		f.timeoutLog = append(f.timeoutLog, r.Header.Get("Connect-Timeout-Ms"))
 		f.requestsMu.Unlock()
 		mux.ServeHTTP(w, r)
 	})
@@ -396,6 +413,17 @@ func (r result) requireContains(t *testing.T, fragments ...string) result {
 	for _, fragment := range fragments {
 		if !strings.Contains(r.stdout, fragment) {
 			t.Fatalf("stdout does not contain %q\nstdout:\n%s", fragment, r.stdout)
+		}
+	}
+	return r
+}
+
+// requireStderrContains fails the test unless stderr contains every fragment.
+func (r result) requireStderrContains(t *testing.T, fragments ...string) result {
+	t.Helper()
+	for _, fragment := range fragments {
+		if !strings.Contains(r.stderr, fragment) {
+			t.Fatalf("stderr does not contain %q\nstderr:\n%s", fragment, r.stderr)
 		}
 	}
 	return r

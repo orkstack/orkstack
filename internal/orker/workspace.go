@@ -561,6 +561,45 @@ func SweepExpiredPinLeases(workRoot string, now time.Time) ([]string, error) {
 	return removed, errors.Join(failures...)
 }
 
+// PinLeaseInfo is what one pin directory's lease says: whose pin it is and
+// when its backstop fires.
+type PinLeaseInfo struct {
+	RunID     string
+	Pin       string
+	ExpiresAt time.Time
+}
+
+// ListOpenPinLeases reads every pin directory's lease under the work root, for
+// DescribeOrker to decorate the open pins it counts with a name and an expiry.
+//
+// A directory whose lease is missing or undecodable is SKIPPED: this is a
+// reader, and the sweep's own grace rule (pinLeaseExpired) decides that
+// directory's fate. The count of open pins never comes from here — a session no
+// member has reached yet has no directory and is still open.
+func ListOpenPinLeases(workRoot string) ([]PinLeaseInfo, error) {
+	dirs, err := pinDirectories(workRoot)
+	if err != nil {
+		return nil, err
+	}
+	var leases []PinLeaseInfo
+	for _, dir := range dirs {
+		raw, err := os.ReadFile(filepath.Join(dir, pinLeaseFileName))
+		if err != nil {
+			continue
+		}
+		var lease pinLease
+		if json.Unmarshal(raw, &lease) != nil || lease.ExpiresAt == "" {
+			continue
+		}
+		expires, err := time.Parse(time.RFC3339Nano, lease.ExpiresAt)
+		if err != nil {
+			continue
+		}
+		leases = append(leases, PinLeaseInfo{RunID: lease.RunID, Pin: lease.Pin, ExpiresAt: expires})
+	}
+	return leases, nil
+}
+
 // pinLeaseExpired decides whether one pin directory is dead.
 //
 // A lease that decodes answers directly. A MISSING or UNDECODABLE one is the

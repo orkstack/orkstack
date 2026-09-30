@@ -158,19 +158,41 @@ func TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt(t *testing.T) 
 		t.Error("reloaded orkflow lost its source document")
 	}
 
-	listed, err := after.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
+	listed, err := listOrkflowNames(ctx, after)
 	if err != nil {
 		t.Fatalf("ListOrkflows after restart: %v", err)
 	}
 	found := false
-	for _, wf := range listed.Msg.GetOrkflows() {
-		if wf.GetName() == name {
+	for _, listedName := range listed {
+		if listedName == name {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("ListOrkflows after restart does not report %q (%d orkflows)",
-			name, len(listed.Msg.GetOrkflows()))
+			name, len(listed))
+	}
+}
+
+// listOrkflowNames follows ListOrkflows' pages to the end. The default
+// namespace of a shared development bucket holds every orkflow any run left
+// there, so a probe's name need not sort onto the first page, and "the list
+// reports it" has to mean every page of the list.
+func listOrkflowNames(ctx context.Context, c orkstackv1connect.OrkflowServiceClient) ([]string, error) {
+	var names []string
+	token := ""
+	for {
+		page, err := c.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{PageToken: token}))
+		if err != nil {
+			return nil, err
+		}
+		for _, wf := range page.Msg.GetOrkflows() {
+			names = append(names, wf.GetName())
+		}
+		token = page.Msg.GetNextPageToken()
+		if token == "" {
+			return names, nil
+		}
 	}
 }
 
@@ -195,15 +217,15 @@ func TestIntegration_ListOrkflowsReadsTheBucketNotTheProcess(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	listed, err := client.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
+	listed, err := listOrkflowNames(ctx, client)
 	if err != nil {
 		t.Fatalf("ListOrkflows: %v", err)
 	}
-	for _, wf := range listed.Msg.GetOrkflows() {
-		if wf.GetName() == name {
+	for _, listedName := range listed {
+		if listedName == name {
 			return
 		}
 	}
 	t.Fatalf("ListOrkflows does not report %q written by another store (%d orkflows)",
-		name, len(listed.Msg.GetOrkflows()))
+		name, len(listed))
 }

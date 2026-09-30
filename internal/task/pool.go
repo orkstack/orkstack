@@ -3,6 +3,9 @@ package task
 import (
 	"fmt"
 	"regexp"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // A pool is the user-facing word for where a task runs: a set of Orkers. A
@@ -17,7 +20,74 @@ const (
 	// poolQueuePrefix namespaces every pool's queue, so no pool can name a
 	// queue the engine reserves for itself.
 	poolQueuePrefix = "ork-pool-"
+
+	// orkerQueuePrefix names every Orker's control channel:
+	// orkerQueuePrefix + orker_id. Exactly one process polls each, and it
+	// carries DescribeOrker and CordonOrker to that process and no other
+	// (orker-cordon-drain §4). It is internal: no user-facing surface names it.
+	orkerQueuePrefix = "ork-orker-"
+
+	// OrkersQueue is the presence channel every Orker polls and nothing
+	// dispatches to. Its poller list is the deployment's Orker inventory; it
+	// holds no work (TestOrkersQueue_CarriesNoDispatch keeps it so).
+	OrkersQueue = "ork-orkers"
+
+	// MaxOrkerID bounds an Orker id, the same bound a pool name has.
+	MaxOrkerID = 200
 )
+
+// ErrInvalidOrkerID reports an Orker id that cannot name a control channel.
+var ErrInvalidOrkerID = fmt.Errorf("invalid orker id")
+
+// ValidOrkerID is the rule an Orker id must meet to be addressable: 1 to 200
+// bytes, no byte at or below 0x20 and no 0x7F. It is the rule cmd/orker's boot
+// and the API boundary both apply; the derived default (`<host>-<8 hex>`,
+// internal/orker.defaultOrkerID) always passes. The id is validated, never
+// sanitized.
+func ValidOrkerID(orkerID string) error {
+	if orkerID == "" {
+		return fmt.Errorf("%w: empty", ErrInvalidOrkerID)
+	}
+	if len(orkerID) > MaxOrkerID {
+		return fmt.Errorf("%w: %d bytes exceeds the %d-byte limit (%.32q…)",
+			ErrInvalidOrkerID, len(orkerID), MaxOrkerID, orkerID)
+	}
+	for i := 0; i < len(orkerID); i++ {
+		if b := orkerID[i]; b <= 0x20 || b == 0x7f {
+			return fmt.Errorf("%w: %q contains whitespace or a control character at byte %d",
+				ErrInvalidOrkerID, orkerID, i)
+		}
+	}
+	return nil
+}
+
+// QueueForOrker is the ONLY translation from an Orker id to its control
+// channel. The id is validated, never sanitized (ValidOrkerID).
+func QueueForOrker(orkerID string) (string, error) {
+	if err := ValidOrkerID(orkerID); err != nil {
+		return "", err
+	}
+	return orkerQueuePrefix + orkerID, nil
+}
+
+// reservedQueue refuses the channels no pool may be routed to: the engine's
+// own projection channel, the Orker presence channel, and every Orker's
+// control channel. It is the one place those shapes are listed, so QueueForPool
+// and ResolvePoolBinding (through DefaultRoute) refuse the same set.
+func reservedQueue(queue string) error {
+	switch {
+	case queue == EngineEventQueue:
+		return fmt.Errorf("%w: %q carries the engine's own projection activities, "+
+			"so no pool may be routed to it", ErrReservedQueue, queue)
+	case queue == OrkersQueue:
+		return fmt.Errorf("%w: %q is the Orker presence channel, which nothing may be "+
+			"dispatched to, so no pool may be routed to it", ErrReservedQueue, queue)
+	case strings.HasPrefix(queue, orkerQueuePrefix):
+		return fmt.Errorf("%w: %q is shaped like one Orker's own control channel, "+
+			"so no pool may be routed to it", ErrReservedQueue, queue)
+	}
+	return nil
+}
 
 // poolPattern is the pool name rule. It is the DSL's slug rule, repeated here
 // because this function is also reachable from a hand-built message that never
@@ -60,9 +130,10 @@ var ErrReservedQueue = fmt.Errorf("reserved task queue")
 // cannot forge the prefix — no NAMED pool reaches DefaultQueue, the engine's
 // event queue, another pool's queue, or an operator's raw isolation channel.
 // The DEFAULT pool reaches the bound channel and nothing else, because that
-// channel is what the word means; the one channel that is refused rather than
-// routed is EngineEventQueue, which carries the engine's own projection work
-// (ErrReservedQueue, and `ork` refuses to boot on it).
+// channel is what the word means; the channels that are refused rather than
+// routed are EngineEventQueue, which carries the engine's own projection work,
+// and the Orker presence and control channels (reservedQueue; ErrReservedQueue,
+// and both binaries refuse to boot on any of them).
 //
 // What it is NOT is one-to-one from pool names onto queues, and one shape
 // shows why: bind ork-pool-gpu as the default channel and `main` and `gpu`
@@ -75,9 +146,8 @@ func QueueForPool(pool, defaultQueue string) (string, error) {
 	if defaultQueue == "" {
 		defaultQueue = DefaultQueue
 	}
-	if defaultQueue == EngineEventQueue {
-		return "", fmt.Errorf("%w: %q carries the engine's own projection activities, "+
-			"so no pool may be routed to it", ErrReservedQueue, defaultQueue)
+	if err := reservedQueue(defaultQueue); err != nil {
+		return "", err
 	}
 	if pool == "" || pool == DefaultPool {
 		return defaultQueue, nil
@@ -172,4 +242,29 @@ func PoolForQueue(queue string) (string, bool) {
 		return "", false
 	}
 	return pool, true
+}
+
+// MaxCordonReason bounds a cordon's reason, in bytes.
+const MaxCordonReason = 256
+
+// ValidCordonReason is the rule a cordon's reason meets, at the API boundary
+// and again on the Orker: present (not blank), at most 256 bytes, valid UTF-8,
+// no control character. It is what ListOrkers shows beside the state, so it
+// must be one printable line.
+func ValidCordonReason(reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("a cordon needs a reason: it is what every reader of the fleet sees beside the state")
+	}
+	if len(reason) > MaxCordonReason {
+		return fmt.Errorf("a cordon reason is at most %d bytes; this one is %d", MaxCordonReason, len(reason))
+	}
+	if !utf8.ValidString(reason) {
+		return fmt.Errorf("a cordon reason must be valid UTF-8")
+	}
+	for _, r := range reason {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("a cordon reason may not contain a control character (%U)", r)
+		}
+	}
+	return nil
 }

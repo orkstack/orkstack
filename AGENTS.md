@@ -360,6 +360,20 @@ The repository vocabulary is deliberate:
   finishes untouched, and releasing a hold starts nothing that was refused.
   Its sibling `max_running` bounds a namespace's runs in flight, counted from
   the cluster's execution index at submit.
+- **Cordon** means a process-local flag on one Orker that stops it accepting
+  new tasks and opening new pins while leaving everything in flight alone. It
+  is delivered over the Orker's own control channel, is lost when the process
+  exits, and is the user-facing word: it appears in the proto, `orkctl`, the
+  UI, and every message.
+- **Drain** means cordoning an Orker and waiting until it reports no running
+  task and no open pin. It is a client-side wait over the inventory read
+  (`orkctl orker drain`); nothing server-side holds drain state.
+- **Control channel** and **presence channel** are internal, exactly as
+  **queue** is: the Temporal task queue `ork-orker-<orker_id>` that one Orker
+  polls for `DescribeOrker` and `CordonOrker`, and `ork-orkers`, which every
+  Orker polls and nothing dispatches to, whose poller list is the fleet. Both
+  are built in `internal/task/pool.go` and never appear on a user-facing
+  surface.
 
 An Orkflow name is unique within a namespace. Names are validated, never
 sanitized, by the same rule at each boundary:

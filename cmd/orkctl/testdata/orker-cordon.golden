@@ -1,0 +1,2 @@
+cordoned orker-91c0: "CVE-2026-1234 runtime patch"
+it is accepting no new tasks and will open no new pins; 2 tasks and 1 pin are still running on it.

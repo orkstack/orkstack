@@ -758,7 +758,9 @@ for the pin's lifetime — the same warning that applies to `output/`).
 - **Created** by the first member attempt that arrives with the pin's
   `instance_id` (`Acquire`, idempotent `MkdirAll`). The Orker has no hook at
   session creation — the creation activity is SDK-internal — and does not
-  need one.
+  need one — except the cordon interceptor, which refuses or counts the
+  creation and touches no directory
+  (`docs/design/proposals/phase-2/orker-cordon-drain/spec.md` §5.4).
 - **Leased**: `lease.json` records `expiresAt = firstArrival + pin.timeout_seconds + pinLeaseSlack` (slack = the release budget plus 5 min). The
   session's `ExecutionTimeout` is measured from *creation*, which strictly
   precedes first arrival, so the session is dead before the lease expires —
