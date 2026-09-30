@@ -485,12 +485,15 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 
 	runJSON := s.cli(t, s.a, exitOK, "--json", "run", "get", runID)
 	origin := originOf(t, runJSON)
-	if origin["kind"] != "SCHEDULE" || origin["id"] != id || origin["description"] != "nightly" ||
-		origin["reference"] != fire.ScheduledAt || origin["principal"] != "" {
-		t.Fatalf("run %s origin = %v, want SCHEDULE %s nightly at %s", runID, origin, id, fire.ScheduledAt)
+	nominal, err := time.Parse(time.RFC3339Nano, fire.ScheduledAt)
+	if err != nil {
+		t.Fatalf("scheduledAt %q: %v", fire.ScheduledAt, err)
 	}
-	if _, err := time.Parse(time.RFC3339, origin["reference"]); err != nil {
-		t.Fatalf("reference %q is not RFC 3339: %v", origin["reference"], err)
+	// The reference is the nominal time in RFC 3339 UTC, whole seconds; a
+	// manual fire's nominal time is the instant it was requested.
+	if origin["kind"] != "SCHEDULE" || origin["id"] != id || origin["description"] != "nightly" ||
+		origin["reference"] != nominal.UTC().Truncate(time.Second).Format(time.RFC3339) || origin["principal"] != "" {
+		t.Fatalf("run %s origin = %v, want SCHEDULE %s nightly at %s", runID, origin, id, fire.ScheduledAt)
 	}
 	t.Logf("EVIDENCE run_get_json=%s", compactJSON(t, runJSON))
 
@@ -602,7 +605,10 @@ func TestIntegration_ScheduleIntervalFiresOnItsOwn(t *testing.T) {
 	runs := s.awaitRuns(t, id, 60*time.Second, func(r []runRow) bool { return len(r) >= 2 })
 	s.cli(t, s.a, exitOK, "schedule", "delete", "every5")
 	var refs []time.Time
-	for _, run := range runs {
+	for _, listed := range runs {
+		// A list row carries the origin's kind and id; the reference is on
+		// the run itself.
+		run := s.run(t, s.a, listed.ID)
 		ref, err := time.Parse(time.RFC3339, run.Origin.Reference)
 		if err != nil {
 			t.Fatalf("run %s reference %q: %v", run.ID, run.Origin.Reference, err)
@@ -809,7 +815,8 @@ func TestIntegration_ScheduleBackfillCarriesNominalTimes(t *testing.T) {
 		want[start.Add(time.Duration(i)*time.Minute).Format(time.RFC3339)] = true
 	}
 	var refs []string
-	for _, run := range runs {
+	for _, listed := range runs {
+		run := s.run(t, s.a, listed.ID)
 		refs = append(refs, run.Origin.Reference)
 		if !want[run.Origin.Reference] {
 			t.Fatalf("run %s reference %s is not one of the nominal minutes %v", run.ID, run.Origin.Reference, want)
@@ -859,6 +866,9 @@ func TestIntegration_ScheduleFireRefusedWithoutLiveOrkerAndRecorded(t *testing.T
 		"ORK_TEMPORAL_ADDRESS="+s.address,
 		"ORK_TEMPORAL_NAMESPACE="+s.partition,
 		"ORK_ORKER_POOL=gpu",
+		// Its own identity: it shares the work root, and so the derived
+		// identity, of the stack's main Orker.
+		fmt.Sprintf("ORK_ORKER_ID=orker-gpu-%d", os.Getpid()),
 		"ORK_ORKER_WORKDIR="+bindableOrkerWorkRoot(t),
 		"ORK_ARTIFACT_BACKEND=s3",
 	)

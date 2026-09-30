@@ -325,8 +325,8 @@ func (s *TemporalScheduler) view(ctx context.Context, namespace, name string, de
 		FiresTaken:          int64(desc.Info.NumActions),
 		FiresSkippedOverlap: int64(desc.Info.NumActionsSkippedOverlap),
 		FiresMissedCatchup:  int64(desc.Info.NumActionsMissedCatchupWindow),
-		CreatedAt:           desc.Info.CreatedAt,
-		UpdatedAt:           desc.Info.LastUpdateAt,
+		CreatedAt:           clusterTime(desc.Info.CreatedAt),
+		UpdatedAt:           clusterTime(desc.Info.LastUpdateAt),
 	}
 	if state := desc.Schedule.State; state != nil {
 		view.Paused = state.Paused
@@ -342,6 +342,15 @@ func (s *TemporalScheduler) view(ctx context.Context, namespace, name string, de
 	}
 	view.RecentFires = s.recentFires(ctx, desc.Info.RecentActions)
 	return view, nil
+}
+
+// clusterTime is a time the cluster may have left unset: the SDK converts an
+// absent timestamp to the Unix epoch, which is "never", not 1970.
+func clusterTime(t time.Time) time.Time {
+	if t.IsZero() || t.Unix() == 0 {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 // decodeRecord reads the ScheduleRecord out of the action's first argument,

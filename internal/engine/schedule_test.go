@@ -523,7 +523,11 @@ func TestTemporalScheduler_DescribeDecodesRecordAndState(t *testing.T) {
 	}
 
 	h.desc.Schedule.State = &client.ScheduleState{}
+	h.desc.Info.LastUpdateAt = time.Unix(0, 0) // never updated, as the SDK reports it
 	view, _ = s.Describe(ctx, "payments", "nightly")
+	if !view.UpdatedAt.IsZero() {
+		t.Errorf("a schedule never updated reports updated_at %v, want unset", view.UpdatedAt)
+	}
 	if len(view.NextFireTimes) != 2 || !view.NextFireTimes[0].Equal(next[0]) {
 		t.Errorf("active next fires = %v", view.NextFireTimes)
 	}
