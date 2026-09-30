@@ -841,8 +841,10 @@ message LiveAttempt {
   google.protobuf.Timestamp heartbeat_deadline_at = 14;
   // phase is the phase the attempt is in, in the Orker's own vocabulary:
   // "start", "commit-check", "workspace", "stage-inputs", "image", "render",
-  // "create", "run", "exit", "validate", "commit", "timeout", "cancel". Not
-  // an enum, for the reason TaskAttempt.phase is a string.
+  // "create", "run", "exit", "validate", "commit", "timeout", "cancel";
+  // "image-policy" is entered only when the task carries an image policy
+  // (ExecuteTaskInput.image_policy), between "commit-check" and "workspace".
+  // Not an enum, for the reason TaskAttempt.phase is a string.
   string phase = 15;
   // container_id is the runtime's id for the container, once one exists.
   string container_id = 16;

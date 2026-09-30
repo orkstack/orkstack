@@ -2147,8 +2147,10 @@ export type LiveAttempt = Message<"orkstack.v1.LiveAttempt"> & {
   /**
    * phase is the phase the attempt is in, in the Orker's own vocabulary:
    * "start", "commit-check", "workspace", "stage-inputs", "image", "render",
-   * "create", "run", "exit", "validate", "commit", "timeout", "cancel". Not
-   * an enum, for the reason TaskAttempt.phase is a string.
+   * "create", "run", "exit", "validate", "commit", "timeout", "cancel";
+   * "image-policy" is entered only when the task carries an image policy
+   * (ExecuteTaskInput.image_policy), between "commit-check" and "workspace".
+   * Not an enum, for the reason TaskAttempt.phase is a string.
    *
    * @generated from field: string phase = 15;
    */

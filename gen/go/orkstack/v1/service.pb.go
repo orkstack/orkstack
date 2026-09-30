@@ -4240,8 +4240,10 @@ type LiveAttempt struct {
 	HeartbeatDeadlineAt *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=heartbeat_deadline_at,json=heartbeatDeadlineAt,proto3" json:"heartbeat_deadline_at,omitempty"`
 	// phase is the phase the attempt is in, in the Orker's own vocabulary:
 	// "start", "commit-check", "workspace", "stage-inputs", "image", "render",
-	// "create", "run", "exit", "validate", "commit", "timeout", "cancel". Not
-	// an enum, for the reason TaskAttempt.phase is a string.
+	// "create", "run", "exit", "validate", "commit", "timeout", "cancel";
+	// "image-policy" is entered only when the task carries an image policy
+	// (ExecuteTaskInput.image_policy), between "commit-check" and "workspace".
+	// Not an enum, for the reason TaskAttempt.phase is a string.
 	Phase string `protobuf:"bytes,15,opt,name=phase,proto3" json:"phase,omitempty"`
 	// container_id is the runtime's id for the container, once one exists.
 	ContainerId string `protobuf:"bytes,16,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
