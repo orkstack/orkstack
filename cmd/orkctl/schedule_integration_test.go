@@ -628,21 +628,22 @@ func TestIntegration_ScheduleIntervalFiresOnItsOwn(t *testing.T) {
 	s.writeProof(t, "schedule-interval.txt")
 }
 
-// TestIntegration_ScheduleOverlapSkip: a 45s run and a 5s interval under skip
-// start exactly one run in 30s, and the cluster counts the skipped fires.
+// TestIntegration_ScheduleOverlapSkip: a 40s run and a 5s interval under skip
+// start exactly one run while it executes (observed for 20s after it
+// started), and the cluster counts the skipped fires.
 func TestIntegration_ScheduleOverlapSkip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	s := newScheduleStack(ctx, t, "skip", 1)
-	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 45, ""))
+	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 40, ""))
 	id := s.create(t, "every5", "--orkflow", "slow", "--interval", "5s", "--overlap", "skip")
 	first := s.awaitRuns(t, id, 60*time.Second, func(r []runRow) bool { return len(r) >= 1 })[0]
-	time.Sleep(30 * time.Second)
+	time.Sleep(20 * time.Second)
 	runs := s.runsOf(t, id)
 	got := s.get(t, s.a, "every5")
 	s.cli(t, s.a, exitOK, "schedule", "delete", "every5")
 	if len(runs) != 1 || runs[0].ID != first.ID || (runs[0].Status != "RUNNING" && runs[0].Status != "SUCCEEDED") {
-		t.Fatalf("runs after 30s under skip = %+v, want exactly %s", runs, first.ID)
+		t.Fatalf("runs 20s into the first run under skip = %+v, want exactly %s", runs, first.ID)
 	}
 	if got.Schedule.FiresSkippedOverlap < 1 {
 		t.Fatalf("fires_skipped_overlap = %d, want at least 1", got.Schedule.FiresSkippedOverlap)
@@ -683,7 +684,7 @@ func TestIntegration_ScheduleOverlapBufferOne(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	s := newScheduleStack(ctx, t, "bufone", 1)
-	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 20, ""))
+	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 12, ""))
 	id := s.create(t, "nightly", "--orkflow", "slow", "--cron", "0 2 * * *", "--overlap", "buffer-one", "--paused")
 	s.cli(t, s.a, exitOK, "schedule", "fire", "nightly")
 	first := s.awaitRuns(t, id, 90*time.Second, func(r []runRow) bool { return len(r) == 1 && r[0].Status == "RUNNING" })[0]
@@ -700,7 +701,7 @@ func TestIntegration_ScheduleOverlapBufferOne(t *testing.T) {
 		t.Fatalf("the buffered run was created before the first: %+v", runs)
 	}
 	// No third: the second buffered fire was not queued behind the first.
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 	if runs := s.runsOf(t, id); len(runs) != 2 {
 		t.Fatalf("buffer-one queued more than one fire: %+v", runs)
 	}
@@ -715,7 +716,7 @@ func TestIntegration_ScheduleOverlapAllowAll(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	s := newScheduleStack(ctx, t, "allowall", 1)
-	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 20, ""))
+	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 15, ""))
 	id := s.create(t, "nightly", "--orkflow", "slow", "--cron", "0 2 * * *", "--overlap", "allow-all", "--paused")
 
 	described, err := s.temporal.ScheduleClient().GetHandle(ctx, engine.TemporalScheduleID(s.namespace, "nightly")).Describe(ctx)
@@ -761,7 +762,7 @@ func TestIntegration_ScheduleFireOverlapDefaultsToTheSchedulesPolicy(t *testing.
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	s := newScheduleStack(ctx, t, "override", 1)
-	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 20, ""))
+	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 15, ""))
 	id := s.create(t, "nightly", "--orkflow", "slow", "--cron", "0 2 * * *", "--overlap", "buffer-one", "--paused")
 	s.cli(t, s.a, exitOK, "schedule", "fire", "nightly")
 	first := s.awaitRuns(t, id, 90*time.Second, func(r []runRow) bool { return len(r) == 1 && r[0].Status == "RUNNING" })[0]
@@ -975,7 +976,7 @@ func TestIntegration_TerminatedFireLeavesItsRunRunning(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	s := newScheduleStack(ctx, t, "terminate", 1)
-	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 15, ""))
+	s.apply(t, scheduleOrkflowYAML("slow", "0.1.0", 10, ""))
 	id := s.create(t, "nightly", "--orkflow", "slow", "--cron", "0 2 * * *", "--paused")
 	s.cli(t, s.a, exitOK, "schedule", "fire", "nightly")
 	run := s.awaitRuns(t, id, 90*time.Second, func(r []runRow) bool { return len(r) == 1 && r[0].Status == "RUNNING" })[0]

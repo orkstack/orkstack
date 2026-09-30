@@ -65,8 +65,11 @@ async function stopOrker(): Promise<void> {
 	orker = undefined;
 }
 
+// Liveness is asked of this spec's own namespace: its pools are exactly the
+// ones its orkflow names (main), whereas the shared `default` namespace's
+// listing probes every pool every other suite's orkflows ever named.
 async function liveOrkers(): Promise<number> {
-	const answer = await rpc<{ pools?: { liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
+	const answer = await rpc<{ pools?: { liveOrkerCount?: number }[] }>('NamespaceService/ListPools', { namespace: NS });
 	return (answer.pools ?? []).reduce((sum, pool) => sum + (pool.liveOrkerCount ?? 0), 0);
 }
 
@@ -138,9 +141,9 @@ test.beforeAll(async () => {
 	}, uiDir);
 	await waitForEngine(ENGINE);
 	await waitFor('UI', async () => (await fetch(`${UI}/orkflows`)).ok);
-	await waitFor('the default pool reports a live Orker', async () => (await liveOrkers()) > 0);
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'orkflow schedules' } });
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: workflow(), namespace: NS });
+	await waitFor('the default pool reports a live Orker', async () => (await liveOrkers()) > 0);
 	note(`temporal namespace ${TEMPORAL_NAMESPACE}, namespace ${NS}, orkflow ${NAME}@0.1.0, engine ${ENGINE}, ui ${UI}`);
 });
 
