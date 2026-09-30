@@ -47,7 +47,7 @@ func NewLocalRunArchive(dir string) (*LocalRunArchive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: local run archive: open %q: %w", abs, err)
 	}
-	for _, subdir := range []string{localTempDir, RunArchiveNamespace, RunIndexNamespace, RunObjectRefNamespace, RunObjectListNamespace, RunCleanupNamespace} {
+	for _, subdir := range []string{localTempDir, RunArchiveNamespace, RunIndexNamespace, RunOriginIndexNamespace, RunObjectRefNamespace, RunObjectListNamespace, RunCleanupNamespace} {
 		if err := root.MkdirAll(subdir, localDirPerm); err != nil {
 			_ = root.Close()
 			return nil, fmt.Errorf("artifacts: local run archive: create %q: %w", subdir, err)
@@ -71,6 +71,10 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return err
 	}
 	indexKey, err := RunIndexKey(rec)
+	if err != nil {
+		return err
+	}
+	originKey, hasOrigin, err := RunOriginIndexKey(rec)
 	if err != nil {
 		return err
 	}
@@ -113,6 +117,14 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	for _, refKey := range refKeys {
 		if err := a.writeAtomic(refKey, nil); err != nil {
 			return fmt.Errorf("artifacts: local archive run %q: write object reference: %w", rec.RunID, err)
+		}
+	}
+	// The origin row goes before the run-index row so the run index stays the
+	// last key published, which is what lets cleanup see every other record
+	// of a run before it sees the run.
+	if hasOrigin {
+		if err := a.writeAtomic(originKey, nil); err != nil {
+			return fmt.Errorf("artifacts: local archive run %q: write origin index: %w", rec.RunID, err)
 		}
 	}
 	if err := a.writeAtomic(indexKey, nil); err != nil {
@@ -397,7 +409,7 @@ func (a *LocalRunArchive) ListRuns(ctx context.Context, q RunQuery) ([]RunIndexE
 			return nil
 		}
 		a.indexKeysScanned.Add(1)
-		entry, ok := ParseRunIndexKey(p)
+		entry, ok := q.parseKey(p)
 		if !ok || !q.Matches(entry) {
 			return nil
 		}
@@ -459,7 +471,7 @@ func (a *LocalRunArchive) listRunsInKeyOrder(ctx context.Context, q RunQuery, wa
 				continue
 			}
 			a.indexKeysScanned.Add(1)
-			entry, ok := ParseRunIndexKey(p)
+			entry, ok := q.parseKey(p)
 			if !ok || !q.Matches(entry) {
 				continue
 			}

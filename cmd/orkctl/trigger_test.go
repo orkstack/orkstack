@@ -77,6 +77,7 @@ func TestRenderTriggerCreated_ShowsTheSecretOnceWithARunnableCurl(t *testing.T) 
 		"-H 'Authorization: Bearer s3cr3t'",
 		"-H 'Content-Type: application/json'",
 		"-d '{}'",
+		"# optional: -H 'Ork-Origin-Reference: <your CI job URL>'",
 	} {
 		if !strings.Contains(out.String(), fragment) {
 			t.Errorf("created output does not contain %q:\n%s", fragment, out.String())

@@ -799,9 +799,21 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			"consequence", "listing a namespace's live runs scans the whole index",
 			"error", err)
 	}
+	// The origin index is a separate answer on purpose: a cluster that
+	// accepted OrkflowNamespace in an earlier release and refuses the two
+	// origin attributes now keeps its namespace predicate, and only an
+	// origin-filtered list falls back to the bounded walk.
+	originIndexed, err := task.EnsureRunOriginSearchAttributes(ctx, temporalClient, cfg.temporalNamespace)
+	if err != nil {
+		logger.Warn("visibility does not index a run's origin",
+			"search_attribute", task.SearchAttrOrkflowOriginKind+","+task.SearchAttrOrkflowOriginId,
+			"consequence", "filtering runs by origin walks the whole index",
+			"error", err)
+	}
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace,
-		"run_namespace_index", namespaceIndexed)
+		"run_namespace_index", namespaceIndexed,
+		"run_origin_index", originIndexed)
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
@@ -907,7 +919,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// runs this one neither started nor projected.
 	reader := engine.NewTemporalRunReader(temporalClient).
 		WithSnapshotStore(snapshots).
-		WithNamespaceIndex(namespaceIndexed)
+		WithNamespaceIndex(namespaceIndexed).
+		WithOriginIndex(originIndexed)
 
 	// The retention policy store and controller: the deployment's maximum run
 	// retention (never a user-facing Temporal setting, AGENTS.md §7) and the
@@ -1018,7 +1031,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"claim_workflow_behavior", "AutoUpgrade",
 		"event_worker", "unversioned")
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker).
-		WithNamespaceIndex(namespaceIndexed)
+		WithNamespaceIndex(namespaceIndexed).
+		WithOriginIndex(originIndexed)
 
 	// Pool routing: the cluster answers whether a pool has Orkers, so a submit
 	// onto a pool nothing serves fails at submit rather than leaving a run in

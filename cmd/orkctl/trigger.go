@@ -198,11 +198,14 @@ func renderTriggerList(out io.Writer, triggers []*orkstackv1.Trigger) error {
 
 // triggerCurlExample renders a runnable invocation against the same engine
 // address this command used, so the example works where the command worked.
+// The optional origin-reference header follows as a comment line, so the
+// command stays runnable as printed.
 func triggerCurlExample(baseURL, id, secret string) string {
 	return fmt.Sprintf("  curl -X POST %s \\\n"+
 		"    -H %s \\\n"+
 		"    -H 'Content-Type: application/json' \\\n"+
-		"    -d '{}'",
+		"    -d '{}'\n"+
+		"  # optional: -H 'Ork-Origin-Reference: <your CI job URL>' records a correlation reference on the run",
 		shellQuote(strings.TrimRight(baseURL, "/")+triggerInvokePath+id),
 		shellQuote("Authorization: Bearer "+secret))
 }

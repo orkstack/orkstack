@@ -24,6 +24,17 @@ test('CLI preview writes exact JSON and quotes every user supplied coordinate', 
 	expect(shellQuote("a'b")).toBe("'a'\"'\"'b'");
 });
 
+test('the CLI preview carries the origin reference, and a re-run is `run again` of its source', () => {
+	const submit = submitCli({ name: 'deploy', namespace: '', version: '', input: {}, originReference: 'https://ci.example/1' });
+	expect(submit).toContain("orkctl run submit 'deploy'");
+	expect(submit).toContain("--origin-ref 'https://ci.example/1'");
+	const again = submitCli({ name: 'deploy', namespace: 'payments', version: '1.2.3', input: {}, sourceRunId: 'ork-9', originReference: 'INC-1' });
+	expect(again).toContain("orkctl run again 'ork-9' --namespace 'payments' --version '1.2.3'");
+	expect(again).toContain("--origin-ref 'INC-1'");
+	expect(again).not.toContain('run submit');
+	expect(submitCli({ name: 'deploy', namespace: '', version: '', input: {} })).not.toContain('--origin-ref');
+});
+
 test('POSIX shell quoting round-trips apostrophes, substitutions, whitespace, and newlines', () => {
 	for (const original of ["a'b", '`not executed` $(also-not)', 'two words', 'first\nsecond']) {
 		const result = Bun.spawnSync({ cmd: ['/bin/sh', '-c', `set -- ${shellQuote(original)}; printf '%s' "$1"`] });

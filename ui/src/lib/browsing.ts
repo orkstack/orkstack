@@ -1,5 +1,6 @@
 import { timestampFromDate } from '@bufbuild/protobuf/wkt';
 import { Status } from './gen/orkstack/v1/common_pb';
+import { originFilterError } from './origin';
 
 const statuses: Record<string, Status> = {
 	pending: Status.PENDING,
@@ -18,8 +19,10 @@ export function instant(value: string) {
 	const date = new Date(value);
 	return Number.isNaN(date.getTime()) ? undefined : timestampFromDate(date);
 }
-export function runFilterError(status: string, after: string, before: string): string | null {
+export function runFilterError(status: string, after: string, before: string, origin = '', originId = ''): string | null {
 	if (status && statusFromParam(status) === Status.UNSPECIFIED) return `Unknown run status ${status}.`;
+	const originError = originFilterError(origin, originId);
+	if (originError) return originError;
 	if (after && !instant(after)) return 'Created-since must be a valid timestamp.';
 	if (before && !instant(before)) return 'Created-until must be a valid timestamp.';
 	if (after && before && new Date(before).getTime() <= new Date(after).getTime()) return 'Created-until must be after created-since.';

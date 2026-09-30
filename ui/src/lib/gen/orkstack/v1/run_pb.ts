@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/run.proto.
  */
 export const file_orkstack_v1_run: GenFile = /*@__PURE__*/
-  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIt8ECgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgtyZXRyeV9zdGF0ZRgPIAEoDjIXLm9ya3N0YWNrLnYxLlJldHJ5U3RhdGUSCwoDcGluGBAgASgJEhAKCG9ya2VyX2lkGBEgASgJEjAKDHNjaGVkdWxlZF9hdBgSIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBKBAgCEANSBnBsdWdpbiJ7CglQaGFzZVNwYW4SDQoFcGhhc2UYASABKAkSLgoKc3RhcnRlZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIvcDCgtUYXNrQXR0ZW1wdBIWCg5zY2hlbWFfdmVyc2lvbhgBIAEoBRIOCgZydW5faWQYAiABKAkSDwoHdGFza19pZBgDIAEoCRIPCgdhdHRlbXB0GAQgASgFEiwKB291dGNvbWUYBSABKA4yGy5vcmtzdGFjay52MS5BdHRlbXB0T3V0Y29tZRIhCgVlcnJvchgGIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEhEKCWV4aXRfY29kZRgHIAEoBRIuCgpzdGFydGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIb3JrZXJfaWQYCiABKAkSDAoEcG9vbBgLIAEoCRINCgVwaGFzZRgMIAEoCRIkCgVpbWFnZRgNIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIWCg5jb21taXRfYWRvcHRlZBgPIAEoCBIQCghidWlsZF9pZBgQIAEoCRImCgZwaGFzZXMYESADKAsyFi5vcmtzdGFjay52MS5QaGFzZVNwYW4i9wMKA1J1bhIKCgJpZBgBIAEoCRIUCgxvcmtmbG93X25hbWUYAiABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAMgASgJEiMKBnN0YXR1cxgEIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIjCgVpbnB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSJAoGb3V0cHV0GAYgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEicKCXRhc2tfcnVucxgIIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SLgoKY3JlYXRlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgMIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GA0gASgJEjIKCXRlbGVtZXRyeRgOIAEoCzIfLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVNlbGVjdGlvbiLpAQoFRXZlbnQSDgoGcnVuX2lkGAEgASgJEhAKCHNlcXVlbmNlGAIgASgDEiQKBHR5cGUYAyABKA4yFi5vcmtzdGFjay52MS5FdmVudFR5cGUSDwoHdGFza19pZBgEIAEoCRIjCgZzdGF0dXMYBSABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSDwoHbWVzc2FnZRgGIAEoCRIiCgRkYXRhGAcgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBItCgl0aW1lc3RhbXAYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKqoBCg5BdHRlbXB0T3V0Y29tZRIfChtBVFRFTVBUX09VVENPTUVfVU5TUEVDSUZJRUQQABIdChlBVFRFTVBUX09VVENPTUVfU1VDQ0VFREVEEAESGgoWQVRURU1QVF9PVVRDT01FX0ZBSUxFRBACEhwKGEFUVEVNUFRfT1VUQ09NRV9DQU5DRUxFRBADEh4KGkFUVEVNUFRfT1VUQ09NRV9VTlJFUE9SVEVEEAQqggIKClJldHJ5U3RhdGUSGwoXUkVUUllfU1RBVEVfVU5TUEVDSUZJRUQQABIlCiFSRVRSWV9TVEFURV9OT05fUkVUUllBQkxFX0ZBSUxVUkUQARIXChNSRVRSWV9TVEFURV9USU1FT1VUEAISKAokUkVUUllfU1RBVEVfTUFYSU1VTV9BVFRFTVBUU19SRUFDSEVEEAMSJAogUkVUUllfU1RBVEVfUkVUUllfUE9MSUNZX05PVF9TRVQQBBIgChxSRVRSWV9TVEFURV9DQU5DRUxfUkVRVUVTVEVEEAUSJQohUkVUUllfU1RBVEVfSU5URVJOQUxfU0VSVkVSX0VSUk9SEAYqxQIKCUV2ZW50VHlwZRIaChZFVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRVZFTlRfVFlQRV9SVU5fQ1JFQVRFRBABEhoKFkVWRU5UX1RZUEVfUlVOX1NUQVJURUQQAhIdChlFVkVOVF9UWVBFX1RBU0tfU0NIRURVTEVEEAMSGwoXRVZFTlRfVFlQRV9UQVNLX1NUQVJURUQQBBIXChNFVkVOVF9UWVBFX1RBU0tfTE9HEAUSHQoZRVZFTlRfVFlQRV9UQVNLX1NVQ0NFRURFRBAGEhoKFkVWRU5UX1RZUEVfVEFTS19GQUlMRUQQBxIcChhFVkVOVF9UWVBFX1JVTl9TVUNDRUVERUQQCBIZChVFVkVOVF9UWVBFX1JVTl9GQUlMRUQQCRIbChdFVkVOVF9UWVBFX1JVTl9DQU5DRUxFRBAKQqQBCg9jb20ub3Jrc3RhY2sudjFCCFJ1blByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
+  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIt8ECgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgtyZXRyeV9zdGF0ZRgPIAEoDjIXLm9ya3N0YWNrLnYxLlJldHJ5U3RhdGUSCwoDcGluGBAgASgJEhAKCG9ya2VyX2lkGBEgASgJEjAKDHNjaGVkdWxlZF9hdBgSIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBKBAgCEANSBnBsdWdpbiJ7CglQaGFzZVNwYW4SDQoFcGhhc2UYASABKAkSLgoKc3RhcnRlZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIvcDCgtUYXNrQXR0ZW1wdBIWCg5zY2hlbWFfdmVyc2lvbhgBIAEoBRIOCgZydW5faWQYAiABKAkSDwoHdGFza19pZBgDIAEoCRIPCgdhdHRlbXB0GAQgASgFEiwKB291dGNvbWUYBSABKA4yGy5vcmtzdGFjay52MS5BdHRlbXB0T3V0Y29tZRIhCgVlcnJvchgGIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEhEKCWV4aXRfY29kZRgHIAEoBRIuCgpzdGFydGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIb3JrZXJfaWQYCiABKAkSDAoEcG9vbBgLIAEoCRINCgVwaGFzZRgMIAEoCRIkCgVpbWFnZRgNIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIWCg5jb21taXRfYWRvcHRlZBgPIAEoCBIQCghidWlsZF9pZBgQIAEoCRImCgZwaGFzZXMYESADKAsyFi5vcmtzdGFjay52MS5QaGFzZVNwYW4inwQKA1J1bhIKCgJpZBgBIAEoCRIUCgxvcmtmbG93X25hbWUYAiABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAMgASgJEiMKBnN0YXR1cxgEIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIjCgVpbnB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSJAoGb3V0cHV0GAYgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEicKCXRhc2tfcnVucxgIIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SLgoKY3JlYXRlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgMIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GA0gASgJEjIKCXRlbGVtZXRyeRgOIAEoCzIfLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVNlbGVjdGlvbhImCgZvcmlnaW4YDyABKAsyFi5vcmtzdGFjay52MS5SdW5PcmlnaW4ifAoJUnVuT3JpZ2luEigKBGtpbmQYASABKA4yGi5vcmtzdGFjay52MS5SdW5PcmlnaW5LaW5kEgoKAmlkGAIgASgJEhEKCXJlZmVyZW5jZRgDIAEoCRITCgtkZXNjcmlwdGlvbhgEIAEoCRIRCglwcmluY2lwYWwYBSABKAki6QEKBUV2ZW50Eg4KBnJ1bl9pZBgBIAEoCRIQCghzZXF1ZW5jZRgCIAEoAxIkCgR0eXBlGAMgASgOMhYub3Jrc3RhY2sudjEuRXZlbnRUeXBlEg8KB3Rhc2tfaWQYBCABKAkSIwoGc3RhdHVzGAUgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB21lc3NhZ2UYBiABKAkSIgoEZGF0YRgHIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSLQoJdGltZXN0YW1wGAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCqqAQoOQXR0ZW1wdE91dGNvbWUSHwobQVRURU1QVF9PVVRDT01FX1VOU1BFQ0lGSUVEEAASHQoZQVRURU1QVF9PVVRDT01FX1NVQ0NFRURFRBABEhoKFkFUVEVNUFRfT1VUQ09NRV9GQUlMRUQQAhIcChhBVFRFTVBUX09VVENPTUVfQ0FOQ0VMRUQQAxIeChpBVFRFTVBUX09VVENPTUVfVU5SRVBPUlRFRBAEKoICCgpSZXRyeVN0YXRlEhsKF1JFVFJZX1NUQVRFX1VOU1BFQ0lGSUVEEAASJQohUkVUUllfU1RBVEVfTk9OX1JFVFJZQUJMRV9GQUlMVVJFEAESFwoTUkVUUllfU1RBVEVfVElNRU9VVBACEigKJFJFVFJZX1NUQVRFX01BWElNVU1fQVRURU1QVFNfUkVBQ0hFRBADEiQKIFJFVFJZX1NUQVRFX1JFVFJZX1BPTElDWV9OT1RfU0VUEAQSIAocUkVUUllfU1RBVEVfQ0FOQ0VMX1JFUVVFU1RFRBAFEiUKIVJFVFJZX1NUQVRFX0lOVEVSTkFMX1NFUlZFUl9FUlJPUhAGKsYBCg1SdW5PcmlnaW5LaW5kEh8KG1JVTl9PUklHSU5fS0lORF9VTlNQRUNJRklFRBAAEhoKFlJVTl9PUklHSU5fS0lORF9TVUJNSVQQARIbChdSVU5fT1JJR0lOX0tJTkRfVFJJR0dFUhACEhwKGFJVTl9PUklHSU5fS0lORF9TQ0hFRFVMRRADEh4KGlJVTl9PUklHSU5fS0lORF9QQVJFTlRfUlVOEAQSHQoZUlVOX09SSUdJTl9LSU5EX1JVTl9BR0FJThAFKsUCCglFdmVudFR5cGUSGgoWRVZFTlRfVFlQRV9VTlNQRUNJRklFRBAAEhoKFkVWRU5UX1RZUEVfUlVOX0NSRUFURUQQARIaChZFVkVOVF9UWVBFX1JVTl9TVEFSVEVEEAISHQoZRVZFTlRfVFlQRV9UQVNLX1NDSEVEVUxFRBADEhsKF0VWRU5UX1RZUEVfVEFTS19TVEFSVEVEEAQSFwoTRVZFTlRfVFlQRV9UQVNLX0xPRxAFEh0KGUVWRU5UX1RZUEVfVEFTS19TVUNDRUVERUQQBhIaChZFVkVOVF9UWVBFX1RBU0tfRkFJTEVEEAcSHAoYRVZFTlRfVFlQRV9SVU5fU1VDQ0VFREVEEAgSGQoVRVZFTlRfVFlQRV9SVU5fRkFJTEVEEAkSGwoXRVZFTlRfVFlQRV9SVU5fQ0FOQ0VMRUQQCkKkAQoPY29tLm9ya3N0YWNrLnYxQghSdW5Qcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
 
 /**
  * TaskRun is the execution record of a single Task within a Run.
@@ -486,6 +486,16 @@ export type Run = Message<"orkstack.v1.Run"> & {
    * @generated from field: orkstack.v1.TelemetrySelection telemetry = 14;
    */
   telemetry?: TelemetrySelection | undefined;
+
+  /**
+   * origin is what started this run (RunOrigin). Unset only on a run
+   * recorded before origins existed; every run started since carries at
+   * least a kind. It is present on every snapshot the run writes, on the
+   * archived run, and therefore in every webhook payload's embedded run.
+   *
+   * @generated from field: orkstack.v1.RunOrigin origin = 15;
+   */
+  origin?: RunOrigin | undefined;
 };
 
 /**
@@ -494,6 +504,79 @@ export type Run = Message<"orkstack.v1.Run"> & {
  */
 export const RunSchema: GenMessage<Run> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_run, 3);
+
+/**
+ * RunOrigin is the immutable record of what started a run. It is decided
+ * once, at submit, by the process that accepted the submission, and travels
+ * on the replay-pinned plan exactly as the definition digest and the
+ * telemetry selection do (internal/engine/plan.go): recorded in history,
+ * identical on every replay, readable by any replica. It records; nothing
+ * in OrkStack reads it to decide anything.
+ *
+ * @generated from message orkstack.v1.RunOrigin
+ */
+export type RunOrigin = Message<"orkstack.v1.RunOrigin"> & {
+  /**
+   * @generated from field: orkstack.v1.RunOriginKind kind = 1;
+   */
+  kind: RunOriginKind;
+
+  /**
+   * id names the originating object for the kinds that have one — a
+   * trigger id, a schedule id, a parent run id, a source run id — and is
+   * empty for SUBMIT. Opaque: nothing parses it or derives anything from
+   * its shape (AGENTS.md §7).
+   *
+   * @generated from field: string id = 2;
+   */
+  id: string;
+
+  /**
+   * reference is caller-supplied correlation text — a CI job URL, a ticket
+   * key, a partner event id — carried through from
+   * SubmitRunRequest.origin_reference or the Ork-Origin-Reference header on
+   * the trigger door. At most 256 bytes and no control characters, VALIDATED
+   * at the request boundary and never sanitized (AGENTS.md §7): an
+   * over-long or malformed reference is INVALID_ARGUMENT and starts no run.
+   * Opaque to OrkStack: it is never an expression, a selector or a routing
+   * key. A client renders it as a link only when it parses as an http(s)
+   * URL, and as text otherwise.
+   *
+   * @generated from field: string reference = 3;
+   */
+  reference: string;
+
+  /**
+   * description is the originating object's own human label at the moment
+   * of submit — Trigger.description for TRIGGER, the schedule's name for
+   * SCHEDULE — copied so a run stays explainable after the trigger is
+   * deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256
+   * bytes by truncation.
+   *
+   * @generated from field: string description = 4;
+   */
+  description: string;
+
+  /**
+   * principal is what the deployment's gateway asserted in the
+   * Ork-Principal request header on the submitting request — the trigger
+   * invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes
+   * by truncation, and NEVER authenticated: it is the same assertion, on the
+   * same terms, as AuditRecord.principal. Empty when no header was present;
+   * a client then omits the line entirely rather than showing a blank that
+   * could be mistaken for a name.
+   *
+   * @generated from field: string principal = 5;
+   */
+  principal: string;
+};
+
+/**
+ * Describes the message orkstack.v1.RunOrigin.
+ * Use `create(RunOriginSchema)` to create a new message.
+ */
+export const RunOriginSchema: GenMessage<RunOrigin> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 4);
 
 /**
  * Event is a single realtime update for a run, delivered over the
@@ -556,7 +639,7 @@ export type Event = Message<"orkstack.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 4);
+  messageDesc(file_orkstack_v1_run, 5);
 
 /**
  * AttemptOutcome is how one Temporal attempt of a task ended.
@@ -662,6 +745,75 @@ export const RetryStateSchema: GenEnum<RetryState> = /*@__PURE__*/
   enumDesc(file_orkstack_v1_run, 1);
 
 /**
+ * RunOriginKind is WHAT started a run. It is decided by the process that
+ * accepted the submission and is never accepted from a client: the public
+ * SubmitRun RPC produces SUBMIT, or RUN_AGAIN when the request names a
+ * source run the server confirms exists; the trigger door produces TRIGGER
+ * from its stored record; schedule and composition code produce SCHEDULE
+ * and PARENT_RUN. A caller who could claim "trigger" would be claiming an
+ * audit fact, so no request field carries a kind.
+ *
+ * @generated from enum orkstack.v1.RunOriginKind
+ */
+export enum RunOriginKind {
+  /**
+   * UNSPECIFIED is what a run recorded before origins existed carries.
+   * Every client renders it as "unrecorded" — never as SUBMIT, because
+   * "a person submitted this" is a claim, and no evidence supports it.
+   *
+   * @generated from enum value: RUN_ORIGIN_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * SUBMIT: SubmitRun over Connect — orkctl run submit, the UI's submit
+   * dialog, or a direct API call. id is empty.
+   *
+   * @generated from enum value: RUN_ORIGIN_KIND_SUBMIT = 1;
+   */
+  SUBMIT = 1,
+
+  /**
+   * TRIGGER: POST /v1/triggers/{id}. id is the trigger id (trg-…).
+   *
+   * @generated from enum value: RUN_ORIGIN_KIND_TRIGGER = 2;
+   */
+  TRIGGER = 2,
+
+  /**
+   * SCHEDULE: a schedule fired. id is the schedule id (sch-…). Defined
+   * here so orkflow-schedules stamps it without touching Run; nothing
+   * produces it until that proposal lands.
+   *
+   * @generated from enum value: RUN_ORIGIN_KIND_SCHEDULE = 3;
+   */
+  SCHEDULE = 3,
+
+  /**
+   * PARENT_RUN: a child run started by a composing parent. id is the
+   * PARENT run's id. Defined here so composed-orkflows adds no Run field
+   * of its own; nothing produces it until that proposal lands.
+   *
+   * @generated from enum value: RUN_ORIGIN_KIND_PARENT_RUN = 4;
+   */
+  PARENT_RUN = 4,
+
+  /**
+   * RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the
+   * SOURCE run's id, which the server confirmed exists in this namespace.
+   *
+   * @generated from enum value: RUN_ORIGIN_KIND_RUN_AGAIN = 5;
+   */
+  RUN_AGAIN = 5,
+}
+
+/**
+ * Describes the enum orkstack.v1.RunOriginKind.
+ */
+export const RunOriginKindSchema: GenEnum<RunOriginKind> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_run, 2);
+
+/**
  * EventType classifies a run event on the realtime stream.
  *
  * @generated from enum orkstack.v1.EventType
@@ -727,5 +879,5 @@ export enum EventType {
  * Describes the enum orkstack.v1.EventType.
  */
 export const EventTypeSchema: GenEnum<EventType> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 2);
+  enumDesc(file_orkstack_v1_run, 3);
 

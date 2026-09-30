@@ -1,6 +1,7 @@
 import { errorMessage, orkstack } from '$lib/client';
 import { namespaceFrom } from '$lib/namespace';
 import { instant, pageNumber, pageSize, runFilterError, statusFromParam } from '$lib/browsing';
+import { originKindFromSlug } from '$lib/origin';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, url }) => {
@@ -15,12 +16,17 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const page = cursor ? pageNumber(url.searchParams.get('page') ?? '') : 1;
 	const createdAfter = url.searchParams.get('since') ?? '';
 	const createdBefore = url.searchParams.get('until') ?? '';
-	const filterError = runFilterError(status, createdAfter, createdBefore);
-	if (filterError) return { runs: [], nextPageToken: '', orkflowName, namespace, status, size, cursor, page, createdAfter, createdBefore, error: filterError };
+	// What started the run: a kind slug and, within it, one originating
+	// object's id. Both ride the URL like every other filter.
+	const origin = url.searchParams.get('origin') ?? '';
+	const originId = url.searchParams.get('originId') ?? '';
+	const coordinates = { orkflowName, namespace, status, size, cursor, page, createdAfter, createdBefore, origin, originId };
+	const filterError = runFilterError(status, createdAfter, createdBefore, origin, originId);
+	if (filterError) return { runs: [], nextPageToken: '', ...coordinates, error: filterError };
 	try {
-		const res = await orkstack(fetch).runs.listRuns({ orkflowName, namespace, status: statusFromParam(status), pageSize: size, pageToken: cursor, createdAfter: instant(createdAfter), createdBefore: instant(createdBefore) });
-		return { runs: res.runs, nextPageToken: res.nextPageToken, orkflowName, namespace, status, size, cursor, page, createdAfter, createdBefore, error: null as string | null };
+		const res = await orkstack(fetch).runs.listRuns({ orkflowName, namespace, status: statusFromParam(status), pageSize: size, pageToken: cursor, createdAfter: instant(createdAfter), createdBefore: instant(createdBefore), originKind: originKindFromSlug(origin), originId });
+		return { runs: res.runs, nextPageToken: res.nextPageToken, ...coordinates, error: null as string | null };
 	} catch (err) {
-		return { runs: [], nextPageToken: '', orkflowName, namespace, status, size, cursor, page, createdAfter, createdBefore, error: errorMessage(err) };
+		return { runs: [], nextPageToken: '', ...coordinates, error: errorMessage(err) };
 	}
 };

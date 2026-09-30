@@ -560,6 +560,23 @@ message SubmitRunRequest {
   // that reaches RUNNING and stays there because nothing will ever pick its
   // tasks up. Setting it is logged with the pool it overrode.
   bool allow_empty_pool = 6;
+
+  // origin_reference is caller-supplied correlation text recorded as
+  // RunOrigin.reference: a CI job URL, a ticket key, an event id. Optional.
+  // At most 256 bytes and no control characters (INVALID_ARGUMENT
+  // otherwise, before a run id is minted). Opaque to OrkStack. On the
+  // trigger door the same value arrives as the Ork-Origin-Reference header,
+  // so a CI job sets one header and the body stays exactly the run's input.
+  string origin_reference = 7;
+
+  // source_run_id marks this submission as a re-run of an existing run:
+  // origin.kind becomes RUN_AGAIN and origin.id this value. Set by `orkctl
+  // run again` and the run page's Run again. The server confirms the run
+  // exists IN THIS NAMESPACE before minting anything; an unknown id, or a
+  // run of another namespace, is NOT_FOUND naming it, on the rule every run
+  // read follows. It is never an idempotency key and never reuses one: a
+  // re-run is a new execution with a new id (docs/UI_CLI_PARITY.md).
+  string source_run_id = 8;
 }
 message SubmitRunResponse { Run run = 1; }
 // A run id addresses a run INSIDE a namespace, exactly as an orkflow name
@@ -583,6 +600,15 @@ message ListRunsRequest {
   string namespace = 5;                  // empty = the default namespace
   google.protobuf.Timestamp created_after = 6;  // inclusive
   google.protobuf.Timestamp created_before = 7; // exclusive
+
+  // origin_kind keeps runs whose origin.kind equals it. UNSPECIFIED means no
+  // origin filter. A run recorded before origins existed has no kind and is
+  // matched by no value of this field.
+  RunOriginKind origin_kind = 8;
+  // origin_id keeps runs whose origin.id equals it, within origin_kind. It
+  // is INVALID_ARGUMENT without origin_kind: an id is meaningful only
+  // within a kind. Exact match; never a prefix.
+  string origin_id = 9;
 }
 message ListRunsResponse {
   repeated Run runs = 1;
