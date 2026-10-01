@@ -654,7 +654,7 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 		return runBinary(ctx, t, orkctlPath, root, append(args, "--server", server)...)
 	}
 	waitForEngine(t, cli)
-	waitForPoolLive(t, cli, "default", task.DefaultPool)
+	waitForPoolLive(t, cli, "default", pool)
 	sessions := filepath.Join(bindableOrkerWorkRoot(t), "task-run-sessions")
 	if err := os.MkdirAll(sessions, 0o755); err != nil {
 		t.Fatal(err)
@@ -683,6 +683,21 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 		t.Fatalf("the local backend recorded %s, want a file:// URI", produce.GetValuesRef().GetUri())
 	}
 	shared := sharedLocalArtifactDir(t)
+	// "Before" is taken once the source run's archive record is readable, so
+	// the engine's own terminal writes into the shared directory are done.
+	archive, err := artifacts.NewRunArchive(artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: shared})
+	if err != nil {
+		t.Fatalf("open the local run archive: %v", err)
+	}
+	archived := time.Now().Add(2 * time.Minute)
+	for {
+		if _, err := archive.GetRun(ctx, runID); err == nil {
+			break
+		} else if time.Now().After(archived) {
+			t.Fatalf("the source run's archive record never became readable: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	before := treeListing(t, shared)
 
 	stdout, stderr, code = runTaskRunBinary(ctx, t, orkctlPath, root, sessions, server, &transcript,
@@ -700,7 +715,8 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 		t.Fatalf("config.json differs from the production attempt's\nlocal:\n%s\nproduction:\n%s", keptConfig, between(t, production, "CONFIG"))
 	}
 	if after := treeListing(t, shared); strings.Join(after, "\n") != strings.Join(before, "\n") {
-		t.Fatalf("the shared artifact directory changed: %d files before, %d after", len(before), len(after))
+		t.Fatalf("the shared artifact directory changed: %d files before, %d after\nbefore:\n%s\nafter:\n%s",
+			len(before), len(after), strings.Join(before, "\n"), strings.Join(after, "\n"))
 	}
 	report := fmt.Sprintf("local backend run %s: values %s\nconfig.json byte-identical: true (%d bytes)\nshared artifact directory: %d files before, identical after\n",
 		runID, produce.GetValuesRef().GetUri(), len(keptConfig), len(before))
