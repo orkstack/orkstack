@@ -422,6 +422,38 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail: "max_run_retention=" + requested,
 		}
 	},
+	// The release writes (orkctl-release §6.8). Deployment-wide, as
+	// retention.update is: a release belongs to no namespace.
+	orkstackv1connect.SystemServicePromoteReleaseProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.PromoteReleaseRequest)
+		entry := auditEntry{Action: "release.promote", Target: in.GetBuildId(), Detail: "refused"}
+		if out, ok := resp.(*orkstackv1.PromoteReleaseResponse); ok && out != nil {
+			if out.GetChanged() {
+				entry.Detail = fmt.Sprintf("current %s -> %s", orDashAudit(out.GetPreviousBuildId()), in.GetBuildId())
+			} else {
+				entry.Detail = "unchanged: already current"
+			}
+		}
+		return entry
+	},
+	orkstackv1connect.SystemServiceRampReleaseProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.RampReleaseRequest)
+		entry := auditEntry{Action: "release.ramp", Target: in.GetBuildId(),
+			Detail: fmt.Sprintf("percent=%d", in.GetPercent())}
+		if out, ok := resp.(*orkstackv1.RampReleaseResponse); ok && out != nil {
+			entry.Detail += fmt.Sprintf(" was %s@%s", orDashAudit(out.GetPreviousBuildId()),
+				strconv.FormatFloat(float64(out.GetPreviousPercent()), 'g', -1, 32))
+		}
+		return entry
+	},
+}
+
+// orDashAudit renders an empty release as "-" in an audit detail.
+func orDashAudit(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // unauditedWrites are write RPCs deliberately NOT recorded, each with the
