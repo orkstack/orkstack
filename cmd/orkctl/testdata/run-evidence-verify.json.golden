@@ -1,0 +1,370 @@
+{
+  "manifest": {
+    "schema_version": 1,
+    "run_id": "ork-evidence-1",
+    "namespace": "default",
+    "orkflow_name": "payments-reconcile",
+    "orkflow_version": "1.4.0",
+    "definition_digest": "sha256:48451849604042acf0c2c0f72bc469c559353bcccad02e20c0e591a3333e574b",
+    "run_status": "SUCCEEDED",
+    "run_created_at": "2026-01-02T03:04:05Z",
+    "run_finished_at": "2026-01-02T03:12:05Z",
+    "exported_at": "2026-01-02T03:04:05Z",
+    "engine_version": "v0.9.3",
+    "build_id": "2026.09.22-1",
+    "scope": {
+      "task_id": "",
+      "logs": true,
+      "artifacts": true
+    },
+    "definition": {
+      "state": "present",
+      "reason": "",
+      "stored_definition_digest": ""
+    },
+    "tasks": [
+      {
+        "task_id": "extract",
+        "status": "SUCCEEDED",
+        "outcome_attempt": 1,
+        "exit_code": 0,
+        "attempts": [
+          {
+            "attempt": 1,
+            "state": "present",
+            "outcome": "SUCCEEDED"
+          }
+        ]
+      },
+      {
+        "task_id": "reconcile",
+        "status": "SUCCEEDED",
+        "outcome_attempt": 3,
+        "exit_code": 0,
+        "attempts": [
+          {
+            "attempt": 1,
+            "state": "present",
+            "outcome": "FAILED"
+          },
+          {
+            "attempt": 2,
+            "state": "unrecorded"
+          },
+          {
+            "attempt": 3,
+            "state": "present",
+            "outcome": "SUCCEEDED"
+          }
+        ]
+      }
+    ],
+    "members": [
+      {
+        "path": "run.jsonl",
+        "kind": "run",
+        "origin": "metadata/runs/ork-evidence-1.jsonl",
+        "size_bytes": 1904,
+        "sha256": "a046033e92880c2fc85bf78730f1199f84dd06db10deb2958deacc57cb36dfe6",
+        "state": "present"
+      },
+      {
+        "path": "orkflow/source.yaml",
+        "kind": "source",
+        "origin": "metadata/orkflows/default/payments-reconcile/1.4.0.json#source_yaml",
+        "size_bytes": 113,
+        "sha256": "1a88182618fbfbe69bfc49445a1c86b3db0f4480a619e594f1cea5a5299b795b",
+        "state": "present"
+      },
+      {
+        "path": "tasks/extract/commit.json",
+        "kind": "commit",
+        "task_id": "extract",
+        "origin": "mem://bucket/metadata/commits/default/ork-evidence-1/extract/commit.json",
+        "size_bytes": 485,
+        "sha256": "88841ed622eff4cb403f5158aca7f25a59056389fd74d0b25c3497ebb64dcdc3",
+        "state": "present"
+      },
+      {
+        "path": "tasks/extract/values.json",
+        "kind": "values",
+        "task_id": "extract",
+        "origin": "mem://bucket/objects/7beb01a8d02d/values.json",
+        "size_bytes": 11,
+        "sha256": "7beb01a8d02d8e7e7bec05bb5929478655b1133278aef1f748110fc20b4d5eeb",
+        "state": "present"
+      },
+      {
+        "path": "tasks/extract/attempts/1.json",
+        "kind": "attempt",
+        "task_id": "extract",
+        "attempt": 1,
+        "origin": "metadata/attempts/ork-evidence-1/extract/0000000001.json",
+        "size_bytes": 372,
+        "sha256": "bbf2cb24e3c22ff5f6f3aa792950687835fd3d9a9a13fbd4533b4a821a8e1a85",
+        "state": "present"
+      },
+      {
+        "path": "tasks/extract/attempts/1/stdout.log",
+        "kind": "stdout",
+        "task_id": "extract",
+        "attempt": 1,
+        "origin": "mem://bucket/objects/accacc1a0ab6/stdout.log",
+        "size_bytes": 18,
+        "sha256": "accacc1a0ab698f50768a52348a9e63261555f5e8fb19ebe63c2aaac2d91f106",
+        "state": "present"
+      },
+      {
+        "path": "tasks/reconcile/commit.json",
+        "kind": "commit",
+        "task_id": "reconcile",
+        "origin": "mem://bucket/metadata/commits/default/ork-evidence-1/reconcile/commit.json",
+        "size_bytes": 726,
+        "sha256": "529384473593e7f9152f69b45e7ee91720ac19f2f523c700dcbd3b0d232bf9e5",
+        "state": "present"
+      },
+      {
+        "path": "tasks/reconcile/values.json",
+        "kind": "values",
+        "task_id": "reconcile",
+        "origin": "mem://bucket/objects/f99e516a6319/values.json",
+        "size_bytes": 17,
+        "sha256": "f99e516a631967df665f6935f781cae95c953dd1087e2b6f76d85547a3269183",
+        "state": "present"
+      },
+      {
+        "path": "tasks/reconcile/artifacts/rates.parquet",
+        "kind": "artifact",
+        "task_id": "reconcile",
+        "name": "rates.parquet",
+        "origin": "mem://bucket/objects/b2359555b9d3/rates.parquet",
+        "size_bytes": 2000,
+        "sha256": "b2359555b9d34131e27109860b1c2d14207fe5746b7da1af791cdb79201d63ff",
+        "state": "present"
+      },
+      {
+        "path": "tasks/reconcile/attempts/1.json",
+        "kind": "attempt",
+        "task_id": "reconcile",
+        "attempt": 1,
+        "origin": "metadata/attempts/ork-evidence-1/reconcile/0000000001.json",
+        "size_bytes": 581,
+        "sha256": "561f9ef963c8383e4dcb81d97cae22504f2e277993110dc12e0149bd3166a29a",
+        "state": "present"
+      },
+      {
+        "path": "tasks/reconcile/attempts/1/stdout.log",
+        "kind": "stdout",
+        "task_id": "reconcile",
+        "attempt": 1,
+        "origin": "mem://bucket/objects/354f3d1781cb/stdout.log",
+        "size_bytes": 20,
+        "sha256": "354f3d1781cbac403bd4d09f8dd4f229bcd9a5f767fdaf20fe74ca5811bcfca9",
+        "state": "reclaimed",
+        "reason": "object_missing"
+      },
+      {
+        "path": "tasks/reconcile/attempts/1/stderr.log",
+        "kind": "stderr",
+        "task_id": "reconcile",
+        "attempt": 1,
+        "origin": "mem://bucket/objects/461e1a182217/stderr.log",
+        "size_bytes": 22,
+        "sha256": "461e1a182217b245fd42484e16ec85ea9e631cd648dfa227db851795f9d72417",
+        "state": "reclaimed",
+        "reason": "object_missing"
+      },
+      {
+        "path": "tasks/reconcile/attempts/2.json",
+        "kind": "attempt",
+        "task_id": "reconcile",
+        "attempt": 2,
+        "origin": "metadata/attempts/ork-evidence-1/reconcile/0000000002.json",
+        "size_bytes": 0,
+        "sha256": "",
+        "state": "unrecorded",
+        "reason": "attempt_record_missing"
+      },
+      {
+        "path": "tasks/reconcile/attempts/3.json",
+        "kind": "attempt",
+        "task_id": "reconcile",
+        "attempt": 3,
+        "origin": "metadata/attempts/ork-evidence-1/reconcile/0000000003.json",
+        "size_bytes": 374,
+        "sha256": "c40c740cfdd3675021facfe551a84cfaa25816f77e773dbf048eb8f29a33c092",
+        "state": "present"
+      },
+      {
+        "path": "tasks/reconcile/attempts/3/stdout.log",
+        "kind": "stdout",
+        "task_id": "reconcile",
+        "attempt": 3,
+        "origin": "mem://bucket/objects/560a7f0fecd2/stdout.log",
+        "size_bytes": 20,
+        "sha256": "560a7f0fecd289c1d2bc7bb61b83da166fa984cfb7583a661aee9359ab75ab76",
+        "state": "present"
+      }
+    ],
+    "counts": {
+      "present": 12,
+      "reclaimed": 2,
+      "unrecorded": 1,
+      "rejected": 0,
+      "bytes_present": 6621
+    }
+  },
+  "verified": [
+    {
+      "path": "run.jsonl",
+      "kind": "run",
+      "origin": "metadata/runs/ork-evidence-1.jsonl",
+      "size_bytes": 1904,
+      "sha256": "a046033e92880c2fc85bf78730f1199f84dd06db10deb2958deacc57cb36dfe6",
+      "state": "present"
+    },
+    {
+      "path": "orkflow/source.yaml",
+      "kind": "source",
+      "origin": "metadata/orkflows/default/payments-reconcile/1.4.0.json#source_yaml",
+      "size_bytes": 113,
+      "sha256": "1a88182618fbfbe69bfc49445a1c86b3db0f4480a619e594f1cea5a5299b795b",
+      "state": "present"
+    },
+    {
+      "path": "tasks/extract/commit.json",
+      "kind": "commit",
+      "task_id": "extract",
+      "origin": "mem://bucket/metadata/commits/default/ork-evidence-1/extract/commit.json",
+      "size_bytes": 485,
+      "sha256": "88841ed622eff4cb403f5158aca7f25a59056389fd74d0b25c3497ebb64dcdc3",
+      "state": "present"
+    },
+    {
+      "path": "tasks/extract/values.json",
+      "kind": "values",
+      "task_id": "extract",
+      "origin": "mem://bucket/objects/7beb01a8d02d/values.json",
+      "size_bytes": 11,
+      "sha256": "7beb01a8d02d8e7e7bec05bb5929478655b1133278aef1f748110fc20b4d5eeb",
+      "state": "present"
+    },
+    {
+      "path": "tasks/extract/attempts/1.json",
+      "kind": "attempt",
+      "task_id": "extract",
+      "attempt": 1,
+      "origin": "metadata/attempts/ork-evidence-1/extract/0000000001.json",
+      "size_bytes": 372,
+      "sha256": "bbf2cb24e3c22ff5f6f3aa792950687835fd3d9a9a13fbd4533b4a821a8e1a85",
+      "state": "present"
+    },
+    {
+      "path": "tasks/extract/attempts/1/stdout.log",
+      "kind": "stdout",
+      "task_id": "extract",
+      "attempt": 1,
+      "origin": "mem://bucket/objects/accacc1a0ab6/stdout.log",
+      "size_bytes": 18,
+      "sha256": "accacc1a0ab698f50768a52348a9e63261555f5e8fb19ebe63c2aaac2d91f106",
+      "state": "present"
+    },
+    {
+      "path": "tasks/reconcile/commit.json",
+      "kind": "commit",
+      "task_id": "reconcile",
+      "origin": "mem://bucket/metadata/commits/default/ork-evidence-1/reconcile/commit.json",
+      "size_bytes": 726,
+      "sha256": "529384473593e7f9152f69b45e7ee91720ac19f2f523c700dcbd3b0d232bf9e5",
+      "state": "present"
+    },
+    {
+      "path": "tasks/reconcile/values.json",
+      "kind": "values",
+      "task_id": "reconcile",
+      "origin": "mem://bucket/objects/f99e516a6319/values.json",
+      "size_bytes": 17,
+      "sha256": "f99e516a631967df665f6935f781cae95c953dd1087e2b6f76d85547a3269183",
+      "state": "present"
+    },
+    {
+      "path": "tasks/reconcile/artifacts/rates.parquet",
+      "kind": "artifact",
+      "task_id": "reconcile",
+      "name": "rates.parquet",
+      "origin": "mem://bucket/objects/b2359555b9d3/rates.parquet",
+      "size_bytes": 2000,
+      "sha256": "b2359555b9d34131e27109860b1c2d14207fe5746b7da1af791cdb79201d63ff",
+      "state": "present"
+    },
+    {
+      "path": "tasks/reconcile/attempts/1.json",
+      "kind": "attempt",
+      "task_id": "reconcile",
+      "attempt": 1,
+      "origin": "metadata/attempts/ork-evidence-1/reconcile/0000000001.json",
+      "size_bytes": 581,
+      "sha256": "561f9ef963c8383e4dcb81d97cae22504f2e277993110dc12e0149bd3166a29a",
+      "state": "present"
+    },
+    {
+      "path": "tasks/reconcile/attempts/3.json",
+      "kind": "attempt",
+      "task_id": "reconcile",
+      "attempt": 3,
+      "origin": "metadata/attempts/ork-evidence-1/reconcile/0000000003.json",
+      "size_bytes": 374,
+      "sha256": "c40c740cfdd3675021facfe551a84cfaa25816f77e773dbf048eb8f29a33c092",
+      "state": "present"
+    },
+    {
+      "path": "tasks/reconcile/attempts/3/stdout.log",
+      "kind": "stdout",
+      "task_id": "reconcile",
+      "attempt": 3,
+      "origin": "mem://bucket/objects/560a7f0fecd2/stdout.log",
+      "size_bytes": 20,
+      "sha256": "560a7f0fecd289c1d2bc7bb61b83da166fa984cfb7583a661aee9359ab75ab76",
+      "state": "present"
+    }
+  ],
+  "reclaimed": [
+    {
+      "path": "tasks/reconcile/attempts/1/stdout.log",
+      "kind": "stdout",
+      "task_id": "reconcile",
+      "attempt": 1,
+      "origin": "mem://bucket/objects/354f3d1781cb/stdout.log",
+      "size_bytes": 20,
+      "sha256": "354f3d1781cbac403bd4d09f8dd4f229bcd9a5f767fdaf20fe74ca5811bcfca9",
+      "state": "reclaimed",
+      "reason": "object_missing"
+    },
+    {
+      "path": "tasks/reconcile/attempts/1/stderr.log",
+      "kind": "stderr",
+      "task_id": "reconcile",
+      "attempt": 1,
+      "origin": "mem://bucket/objects/461e1a182217/stderr.log",
+      "size_bytes": 22,
+      "sha256": "461e1a182217b245fd42484e16ec85ea9e631cd648dfa227db851795f9d72417",
+      "state": "reclaimed",
+      "reason": "object_missing"
+    }
+  ],
+  "unrecorded": [
+    {
+      "path": "tasks/reconcile/attempts/2.json",
+      "kind": "attempt",
+      "task_id": "reconcile",
+      "attempt": 2,
+      "origin": "metadata/attempts/ork-evidence-1/reconcile/0000000002.json",
+      "size_bytes": 0,
+      "sha256": "",
+      "state": "unrecorded",
+      "reason": "attempt_record_missing"
+    }
+  ],
+  "rejected": null,
+  "failures": null
+}
