@@ -7,6 +7,7 @@ Allowed secrets:       (unrestricted; bounded only by each Orker's ORK_ORKER_SEC
 Run retention:         inherited (deployment maximum)
 Hold:                  since 2026-01-02T03:04:05Z — "partner CI loop, INC-4412"
 Max running:           unlimited
+Budget:                unbounded
 Telemetry sink:        default (inherited)
 Task logs:             inherited (Orker default)
 Telemetry attributes:  -

@@ -1,0 +1,10 @@
+Window:   the last 720h0m0s, each namespace measured on its own (see COMPUTED)
+
+NAMESPACE  RUNS  TASKS  ATTEMPTS  TASK-SECONDS  CPU-SECONDS  GiB-SECONDS  COMPUTED              BUDGET
+analytics  2     3      4         220           755          1475         2026-01-02T03:04:05Z  151% of 500 cpu-s per 720h0m0s, enforced, reached
+broken     -     -      -         -             -            -            -                     error: unavailable: read the archived body of run "ork-broken-1": bucket unreachable
+default    2     2      2         60            40           40           2026-01-02T03:04:05Z  unbounded
+sandbox    0     0      0         0             0            0            2026-01-02T03:04:05Z  unbounded
+
+cpu-seconds and GiB-seconds are RESERVED cpu and memory × attempt time, not measured utilization.
+1 runs across 1 namespace have missing attempt evidence; ask one namespace with -n NS for detail
