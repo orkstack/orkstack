@@ -349,6 +349,25 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 	return cpu, memory, nil
 }
 
+// ReservedResources is what an attempt of req is granted on this Orker, as
+// numbers: the effective values ResolveResources returns as the strings
+// task.json carries, parsed by the same parseCPU and parseMemory the caps
+// were checked with. Nil when the policy refuses the request — an attempt
+// refused RESOURCE_REFUSED reserved nothing. Pure: it reads the policy and
+// the request and nothing else, so it agrees with the value execute()
+// resolved for the same attempt by construction.
+func (p SecurityPolicy) ReservedResources(req *orkstackv1.ResourceRequest) *orkstackv1.ReservedResources {
+	cpu, memory, failure := p.ResolveResources(req)
+	if failure != nil {
+		return nil
+	}
+	// Both parses already succeeded inside ResolveResources, so the discarded
+	// errors are unreachable.
+	cores, _ := parseCPU(cpu)
+	bytes, _ := parseMemory(memory)
+	return &orkstackv1.ReservedResources{Cpu: cores, MemoryBytes: int64(bytes)}
+}
+
 // ResolveNetwork maps the proto enum to the runtime's word, refusing anything
 // that is not one of the two modes that exist.
 func (p SecurityPolicy) ResolveNetwork(mode orkstackv1.NetworkMode) (string, *Failure) {
