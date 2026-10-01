@@ -7,6 +7,7 @@ import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
+import "orkstack/v1/image_policy.proto";
 import "orkstack/v1/run.proto";
 import "orkstack/v1/orkflow.proto";
 import "orkstack/v1/namespace.proto";
@@ -1011,8 +1012,10 @@ message LiveAttempt {
   google.protobuf.Timestamp heartbeat_deadline_at = 14;
   // phase is the phase the attempt is in, in the Orker's own vocabulary:
   // "start", "commit-check", "workspace", "stage-inputs", "image", "render",
-  // "create", "run", "exit", "validate", "commit", "timeout", "cancel". Not
-  // an enum, for the reason TaskAttempt.phase is a string.
+  // "create", "run", "exit", "validate", "commit", "timeout", "cancel";
+  // "image-policy" is entered only when the task carries an image policy
+  // (ExecuteTaskInput.image_policy), between "commit-check" and "workspace".
+  // Not an enum, for the reason TaskAttempt.phase is a string.
   string phase = 15;
   // container_id is the runtime's id for the container, once one exists.
   string container_id = 16;
@@ -1547,6 +1550,29 @@ service SystemService {
   // only: endpoints and headers are the operator's and never leave the
   // process. CONFIGURATION-DERIVED; "default" is always present.
   rpc ListTelemetrySinks(ListTelemetrySinksRequest) returns (ListTelemetrySinksResponse);
+
+  // GetImagePolicy reads the deployment's image supply-chain floor: whether
+  // a `uses:` may be a mutable tag, which registries images may come from,
+  // and which signing keys a namespace may require by name. Read from the
+  // store, so any replica answers it. A deployment that never wrote one
+  // answers the EMPTY policy with updated_at unset — that is a real answer
+  // (everything is permitted), not a missing document.
+  //
+  // Deployment-wide on purpose. The per-namespace tightening is a field of
+  // orkstack.v1.Namespace (require_signed_by); this is the floor under all
+  // of them.
+  rpc GetImagePolicy(GetImagePolicyRequest) returns (GetImagePolicyResponse);
+
+  // UpdateImagePolicy replaces the floor. Every entry and key is validated
+  // before anything is written (INVALID_ARGUMENT naming the entry). An
+  // allowed_registries list that excludes an activity of this engine's
+  // catalog is FAILED_PRECONDITION naming the activities — widen the list
+  // or change ORK_ACTIVITY_CATALOG first, because a floor that silently
+  // refuses every `uses: shell` is not a floor an operator meant. Removing
+  // a signing key a namespace still names is FAILED_PRECONDITION naming the
+  // namespace — clear the namespace first. Definitions already stored are
+  // untouched; they are re-checked at their next submit.
+  rpc UpdateImagePolicy(UpdateImagePolicyRequest) returns (UpdateImagePolicyResponse);
 }
 message GetSystemInfoRequest {}
 message GetSystemInfoResponse {
@@ -1616,3 +1642,20 @@ message ListTelemetrySinksResponse {
   // TelemetryPolicy.sink resolves to.
   repeated string names = 1;
 }
+
+message GetImagePolicyRequest {}
+message GetImagePolicyResponse {
+  // policy is the stored document, or the empty policy with updated_at
+  // unset when none was ever written. signing_keys carries PEM; clients
+  // render the fingerprint (task.SigningKeyFingerprint) and never the block.
+  ImagePolicy policy = 1;
+}
+message UpdateImagePolicyRequest {
+  // policy is the new floor, whole: require_digest, allowed_registries and
+  // signing_keys. updated_at is ignored; the store stamps it. There is no
+  // etag, on the same terms as UpdateRetentionPolicy: the audit trail
+  // records every write, and an operator who read a stale policy sees their
+  // own write in `admin image-policy get`.
+  ImagePolicy policy = 1;
+}
+message UpdateImagePolicyResponse { ImagePolicy policy = 1; }

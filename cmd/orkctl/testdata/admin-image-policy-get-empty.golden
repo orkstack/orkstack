@@ -1,0 +1,7 @@
+require digest:      no
+allowed registries:  (unrestricted)
+signing keys:        (none)
+updated:             never (no policy stored; every image is permitted)
+
+A namespace may tighten this policy (`orkctl namespace update --require-signed-by
+cosign:<key>`) and may never loosen it.

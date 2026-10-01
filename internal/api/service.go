@@ -285,6 +285,19 @@ type Config struct {
 	// enforcement margin regardless of a tighter namespace value.
 	RetentionEnforced bool
 
+	// ImagePolicies is the deployment's image supply-chain floor store,
+	// backing SystemService.GetImagePolicy/UpdateImagePolicy and read at
+	// apply, validate and submit. Nil answers both RPCs with Unimplemented
+	// and treats the floor as empty — the unit-test configuration, never a
+	// fallback for a configured one.
+	ImagePolicies artifacts.ImagePolicyStore
+
+	// Signatures verifies cosign signatures for namespaces that require one.
+	// `ork` builds it over the same Resolver wired above — one registry
+	// client, one credential file. Nil refuses any selection that names a
+	// signer with FailedPrecondition.
+	Signatures *dsl.SignatureVerifier
+
 	// Logger records the decisions a submission makes that an operator would
 	// otherwise have to infer, such as an empty-pool override. Nil uses the
 	// process default.
@@ -372,11 +385,15 @@ type Service struct {
 	// Unimplemented.
 	retention         *archive.RetentionController
 	retentionEnforced bool
-	transferBudget    int32
-	floorThroughput   int64
-	logger            *slog.Logger
-	now               func() time.Time
-	newRunID          func() string
+	// imagePolicies is the deployment's image supply-chain floor (see
+	// Config.ImagePolicies); signatures verifies a namespace's signer.
+	imagePolicies   artifacts.ImagePolicyStore
+	signatures      *dsl.SignatureVerifier
+	transferBudget  int32
+	floorThroughput int64
+	logger          *slog.Logger
+	now             func() time.Time
+	newRunID        func() string
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
@@ -414,6 +431,8 @@ func NewService(cfg Config) *Service {
 		limits:            cfg.Limits,
 		retention:         cfg.Retention,
 		retentionEnforced: cfg.RetentionEnforced,
+		imagePolicies:     cfg.ImagePolicies,
+		signatures:        cfg.Signatures,
 		transferBudget:    cfg.TransferBudgetSeconds,
 		floorThroughput:   cfg.FloorThroughputBytesPerSecond,
 		logger:            cfg.Logger,
@@ -783,6 +802,18 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	resolutions, err := s.resolveImages(ctx, wf)
 	if err != nil {
 		return nil, nil, nil, applyResolveError(err)
+	}
+	// The image policy, with the file in hand and every image resolved:
+	// anchored to the exact tasks[i].uses so validate reports it as a field
+	// issue. It runs before the interface check: a forbidden image's
+	// interface is never consulted. prepare repeats it at submit, which
+	// catches a definition stored before the policy tightened.
+	sel, err := s.imagePolicySelection(ctx, ns)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := s.checkImagePolicy(ctx, ns, sel, wf); err != nil {
+		return nil, nil, nil, err
 	}
 	// Rule 14: every task's with: against the interface its resolved image
 	// declares. After resolution, because the interface arrives from the
@@ -1217,6 +1248,20 @@ func (s *Service) prepare(
 	if err != nil {
 		return submission{}, poolPlanError(err)
 	}
+	// The image policy in force NOW, over the stored definition's resolved
+	// images, before anything is minted or claimed: a definition applied
+	// before the policy tightened is refused here, and allow_empty_pool does
+	// not bypass it. The selection is then pinned on the plan, so every
+	// attempt of every task is judged by this rule and this key, whatever the
+	// policy says later.
+	sel, err := s.imagePolicySelection(ctx, ns)
+	if err != nil {
+		return submission{}, err
+	}
+	if err := s.checkImagePolicy(ctx, ns, sel, planned); err != nil {
+		return submission{}, submitPolicyError(err)
+	}
+	plan.ImagePolicy = engine.ImagePolicySelectionFromProto(sel)
 	if err := s.pinDurabilityPlan(&plan); err != nil {
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("resolve durable activity configuration: %w", err))

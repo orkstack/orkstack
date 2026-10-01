@@ -1,4 +1,4 @@
-import { execSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, createWriteStream, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -248,3 +248,19 @@ export function ensureActivityImages(): void {
  * connection.
  */
 export const containerHost = process.env.ORK_TEST_CONTAINER_HOST ?? 'host.docker.internal';
+
+/**
+ * cosignSign runs test/tools/cosign-sign (built into bin/ on each call) — the test
+ * tool that writes cosign key-based signatures in exactly the layout `cosign
+ * sign --key` writes and the engine and Orker verify. `keygen DIR` writes
+ * DIR/cosign.key and DIR/cosign.pub; `sign --key KEY REF` signs REF's digest
+ * in its (plain-HTTP, loopback) registry. Test tooling only: it holds a
+ * private key, which nothing OrkStack ships ever does.
+ */
+export function cosignSign(args: string[]): string {
+	// Rebuilt every call: a binary left by another branch's tree must never
+	// be the one that writes this run's signatures.
+	const bin = path.join(repoRoot, 'bin', 'cosign-sign');
+	execFileSync('go', ['build', '-o', 'bin/cosign-sign', './test/tools/cosign-sign'], { cwd: repoRoot });
+	return execFileSync(bin, args, { cwd: repoRoot, encoding: 'utf8' });
+}
