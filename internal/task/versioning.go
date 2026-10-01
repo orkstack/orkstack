@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode"
 
 	"go.temporal.io/sdk/worker"
 )
@@ -127,4 +128,25 @@ func (d Deployment) Apply(opts worker.Options) worker.Options {
 		},
 	}
 	return opts
+}
+
+// IndexedVersion is the value SearchAttrDeploymentVersion holds for build
+// buildID of deployment name: "<name>:<buildID>" — the spelling the cluster's
+// run index uses (orkctl-release §4, pinned by
+// TestIntegration_ReleaseRunsCountsARunExecutingOnIt). A name or build id
+// holding a double quote, a backslash, or a control character cannot be
+// written into a query without escaping the cluster's grammar does not
+// promise, so it is refused rather than escaped.
+func IndexedVersion(name, buildID string) (string, error) {
+	for _, part := range []struct{ label, value string }{{"deployment name", name}, {"build id", buildID}} {
+		if part.value == "" {
+			return "", fmt.Errorf("a release's %s cannot be empty", part.label)
+		}
+		for _, r := range part.value {
+			if r == '"' || r == '\\' || unicode.IsControl(r) {
+				return "", fmt.Errorf("the %s %q holds %q, which the run index cannot be asked about", part.label, part.value, r)
+			}
+		}
+	}
+	return name + ":" + buildID, nil
 }
