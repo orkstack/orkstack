@@ -109,3 +109,29 @@ func TestNamespaceSpecSummary_RendersAllowedSecretsOnlyWhenSet(t *testing.T) {
 		t.Fatalf("summary =\n  %s\nwant\n  %s", got, want)
 	}
 }
+
+// TestNamespaceSpecSummary_RendersBudgetOnlyWhenSet: budget={…} appears after
+// max_running= and before telemetry.sink= only when a budget is set, so a
+// namespace with none summarizes byte-identically to before the field.
+func TestNamespaceSpecSummary_RendersBudgetOnlyWhenSet(t *testing.T) {
+	ns := &orkstackv1.Namespace{
+		Name:         "analytics",
+		DefaultPool:  "main",
+		AllowedPools: []string{"main", "gpu"},
+		RunRetention: durationpb.New(168 * time.Hour),
+		MaxRunning:   20,
+		Telemetry:    &orkstackv1.TelemetryPolicy{Sink: "default"},
+		Labels:       map[string]string{"team": "analytics"},
+	}
+	const before = "default_pool=main allowed_pools=[main gpu] run_retention=168h0m0s max_running=20 telemetry.sink=default labels={team=analytics}"
+	if got := namespaceSpecSummary(ns); got != before {
+		t.Fatalf("no budget: summary =\n  %s\nwant\n  %s", got, before)
+	}
+	with := proto.Clone(ns).(*orkstackv1.Namespace)
+	with.Budget = &orkstackv1.Budget{CpuSeconds: 5000000, Period: durationpb.New(720 * time.Hour), Enforce: true}
+	const want = "default_pool=main allowed_pools=[main gpu] run_retention=168h0m0s max_running=20 " +
+		"budget={cpu_seconds=5000000 gib_seconds=0 period=720h0m0s enforce=true} telemetry.sink=default labels={team=analytics}"
+	if got := namespaceSpecSummary(with); got != want {
+		t.Fatalf("budget: summary =\n  %s\nwant\n  %s", got, want)
+	}
+}

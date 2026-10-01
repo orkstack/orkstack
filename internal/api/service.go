@@ -177,6 +177,13 @@ type Config struct {
 	// Nil counts nothing; the refusal is returned to the caller either way.
 	Admissions engine.AdmissionObserver
 
+	// UsageCacheTTL is how long one whole usage measurement is reused, by
+	// GetUsage and by the admission gate alike. Used verbatim: zero or
+	// negative switches the answer cache off. `ork` fills it from
+	// UsageCacheTTLFromEnv (ORK_USAGE_CACHE_TTL, default 5m); a unit test
+	// that leaves it zero measures on every call.
+	UsageCacheTTL time.Duration
+
 	// Activities is the deployment's activity catalog, served by
 	// ActivityService.ListActivities. Nil answers with an empty catalog:
 	// which images exist is engine configuration (§4.2), and an
@@ -346,6 +353,11 @@ type Service struct {
 	notifier   engine.RunNotifier
 	observer   engine.EventObserver
 	admissions engine.AdmissionObserver
+	// usage measures a namespace's reserved consumption for GetUsage and for
+	// an enforced budget's admission check — one measurement both share
+	// (usage.go). It is a measuring component, not a map of answers: its
+	// cache is unexported inside it and reachable only through Measure.
+	usage *UsageMeter
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system SystemInfo
@@ -461,6 +473,7 @@ func NewService(cfg Config) *Service {
 	if svc.now == nil {
 		svc.now = time.Now
 	}
+	svc.usage = newUsageMeter(cfg.Archive, cfg.Attempts, cfg.UsageCacheTTL, svc.now)
 	if svc.deliveries != nil {
 		svc.deliveryRecorder = NewDeliveryRecorder(svc.deliveries, svc.logger)
 	}

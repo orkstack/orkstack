@@ -300,6 +300,9 @@ func specDifference(stored, requested *orkstackv1.Namespace) string {
 	if got, want := stored.GetMaxRunning(), requested.GetMaxRunning(); got != want {
 		return fmt.Sprintf("max_running is %d, not %d", got, want)
 	}
+	if got, want := budgetLabel(stored.GetBudget()), budgetLabel(requested.GetBudget()); got != want {
+		return fmt.Sprintf("budget is %s, not %s", got, want)
+	}
 	if diff := telemetryDifference(stored.GetTelemetry(), requested.GetTelemetry()); diff != "" {
 		return diff
 	}
@@ -335,6 +338,17 @@ func holdLabel(hold *orkstackv1.NamespaceHold) string {
 // retentionLabel renders a namespace's run_retention for a difference
 // report: nil reads as "inherited (deployment maximum)", never as an empty
 // string that could be mistaken for a stored zero.
+// budgetLabel renders a namespace's budget for a difference report and the
+// audit summary: "none" when unbounded, every field otherwise, so two
+// budgets that differ in any field render differently.
+func budgetLabel(b *orkstackv1.Budget) string {
+	if b == nil {
+		return "none"
+	}
+	return fmt.Sprintf("{cpu_seconds=%d gib_seconds=%d period=%s enforce=%t}",
+		b.GetCpuSeconds(), b.GetGibSeconds(), b.GetPeriod().AsDuration(), b.GetEnforce())
+}
+
 func retentionLabel(d *durationpb.Duration) string {
 	if d == nil {
 		return "inherited (deployment maximum)"
