@@ -81,40 +81,34 @@ func (c *fakeDeploymentClient) GetHandle(name string) client.WorkerDeploymentHan
 type fakeReleaseClient struct {
 	deployments *fakeDeploymentClient
 
-	mu           sync.Mutex
-	enhanced     map[string]client.TaskQueueDescription
-	enhancedErr  map[string]error
-	enhancedReqs []client.DescribeTaskQueueEnhancedOptions
-	routing      []*workflowservice.DescribeTaskQueueResponse // consumed one per call; the last repeats
-	routingReqs  []*workflowservice.DescribeTaskQueueRequest
+	mu          sync.Mutex
+	channels    map[string]*workflowservice.DescribeTaskQueueResponse // by queue name
+	channelErr  map[string]error
+	routing     []*workflowservice.DescribeTaskQueueResponse // when set: consumed one per call; the last repeats
+	channelReqs []*workflowservice.DescribeTaskQueueRequest
 }
 
-func (c *fakeReleaseClient) WorkerDeploymentClient() client.WorkerDeploymentClient {
-	return c.deployments
-}
-
-func (c *fakeReleaseClient) DescribeTaskQueueEnhanced(_ context.Context, o client.DescribeTaskQueueEnhancedOptions) (client.TaskQueueDescription, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.enhancedReqs = append(c.enhancedReqs, o)
-	if err := c.enhancedErr[o.TaskQueue]; err != nil {
-		return client.TaskQueueDescription{}, err
-	}
-	return c.enhanced[o.TaskQueue], nil
-}
+func (c *fakeReleaseClient) WorkerDeploymentClient() client.WorkerDeploymentClient { return c.deployments }
 
 func (c *fakeReleaseClient) DescribeTaskQueue(_ context.Context, in *workflowservice.DescribeTaskQueueRequest) (*workflowservice.DescribeTaskQueueResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.routingReqs = append(c.routingReqs, in)
-	if len(c.routing) == 0 {
-		return &workflowservice.DescribeTaskQueueResponse{}, nil
+	c.channelReqs = append(c.channelReqs, in)
+	if len(c.routing) > 0 {
+		answer := c.routing[0]
+		if len(c.routing) > 1 {
+			c.routing = c.routing[1:]
+		}
+		return answer, nil
 	}
-	answer := c.routing[0]
-	if len(c.routing) > 1 {
-		c.routing = c.routing[1:]
+	name := in.GetTaskQueue().GetName()
+	if err := c.channelErr[name]; err != nil {
+		return nil, err
 	}
-	return answer, nil
+	if answer, ok := c.channels[name]; ok {
+		return answer, nil
+	}
+	return &workflowservice.DescribeTaskQueueResponse{}, nil
 }
 
 var releaseNow = time.Date(2026, 9, 24, 9, 15, 0, 0, time.UTC)
@@ -127,8 +121,8 @@ func newFakeReleaseCluster(t *testing.T, orkerQueue string) (*TemporalReleaseClu
 	}
 	fake := &fakeReleaseClient{
 		deployments: &fakeDeploymentClient{handle: handle},
-		enhanced:    map[string]client.TaskQueueDescription{},
-		enhancedErr: map[string]error{},
+		channels:    map[string]*workflowservice.DescribeTaskQueueResponse{},
+		channelErr:  map[string]error{},
 	}
 	cluster, err := newReleaseCluster(fake, nil, "orkstack", task.DefaultQueue, orkerQueue)
 	if err != nil {
@@ -276,42 +270,24 @@ func TestObserveReleases_ADescribeVersionFailureKeepsTheRelease(t *testing.T) {
 
 func TestEngineReplicas_CountFreshWorkflowPollersByRelease(t *testing.T) {
 	cluster, fake, _ := newFakeReleaseCluster(t, "")
-	fresh := releaseNow.Add(-5 * time.Second)
-	stale := releaseNow.Add(-5 * time.Minute)
-	// The SDK does not export the poller-options type, so the field's own
-	// type is instantiated by reflection.
-	poller := func(identity string, at time.Time, deployment, build string) client.TaskQueuePollerInfo {
-		info := client.TaskQueuePollerInfo{Identity: identity, LastAccessTime: at}
-		field := reflect.ValueOf(&info).Elem().FieldByName("WorkerDeploymentPollerOptions")
-		opts := reflect.New(field.Type().Elem())
-		opts.Elem().FieldByName("DeploymentName").SetString(deployment)
-		opts.Elem().FieldByName("BuildID").SetString(build)
-		field.Set(opts)
+	fresh := timestamppb.New(releaseNow.Add(-5 * time.Second))
+	stale := timestamppb.New(releaseNow.Add(-5 * time.Minute))
+	poller := func(identity string, at *timestamppb.Timestamp, deployment, build string) *taskqueuepb.PollerInfo {
+		info := &taskqueuepb.PollerInfo{Identity: identity, LastAccessTime: at}
+		if build != "" {
+			info.DeploymentOptions = &deploymentpb.WorkerDeploymentOptions{DeploymentName: deployment, BuildId: build,
+				WorkerVersioningMode: enumspb.WORKER_VERSIONING_MODE_VERSIONED}
+		}
 		return info
 	}
-	fake.enhanced[task.DefaultQueue] = client.TaskQueueDescription{VersionsInfo: map[string]client.TaskQueueVersionInfo{
-		"orkstack.v1": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-			client.TaskQueueTypeWorkflow: {Pollers: []client.TaskQueuePollerInfo{
-				poller("1@a", fresh, "orkstack", "v1"),
-				poller("2@b", fresh, "orkstack", "v1"),
-				poller("9@x", fresh, "other", "v1"),
-			}},
-		}},
-		"orkstack.v2": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-			client.TaskQueueTypeWorkflow: {Pollers: []client.TaskQueuePollerInfo{
-				poller("1@a", fresh, "orkstack", "v1"),
-				poller("3@c", fresh, "orkstack", "v2"),
-				poller("4@d", stale, "orkstack", "v2"),
-			}},
-		}},
-		"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-			client.TaskQueueTypeWorkflow: {Pollers: []client.TaskQueuePollerInfo{
-				{Identity: "5@e", LastAccessTime: fresh},
-			}},
-			client.TaskQueueTypeActivity: {Pollers: []client.TaskQueuePollerInfo{
-				{Identity: "orker@f", LastAccessTime: fresh},
-			}},
-		}},
+	fake.channels[task.DefaultQueue] = &workflowservice.DescribeTaskQueueResponse{Pollers: []*taskqueuepb.PollerInfo{
+		poller("1@a", fresh, "orkstack", "v1"),
+		poller("2@b", fresh, "orkstack", "v1"),
+		poller("9@x", fresh, "other", "v1"),
+		poller("1@a", fresh, "orkstack", "v1"), // one process, two records
+		poller("3@c", fresh, "orkstack", "v2"),
+		poller("4@d", stale, "orkstack", "v2"),
+		poller("5@e", fresh, "", ""),
 	}}
 	got, err := cluster.engineReplicas(context.Background())
 	if err != nil {
@@ -320,10 +296,16 @@ func TestEngineReplicas_CountFreshWorkflowPollersByRelease(t *testing.T) {
 	if want := map[string]int{"v1": 2, "v2": 1, "": 1}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("replicas = %v, want %v", got, want)
 	}
-	req := fake.enhancedReqs[0]
-	if req.TaskQueue != task.DefaultQueue || !reflect.DeepEqual(req.TaskQueueTypes, []client.TaskQueueType{client.TaskQueueTypeWorkflow}) ||
-		!req.ReportPollers || req.Versions == nil || !req.Versions.AllActive || !req.Versions.Unversioned {
-		t.Fatalf("request = %+v", req)
+	req := fake.channelReqs[0]
+	if req.GetTaskQueue().GetName() != task.DefaultQueue || req.GetTaskQueueType() != enumspb.TASK_QUEUE_TYPE_WORKFLOW ||
+		req.GetApiMode() != enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED {
+		t.Fatalf("request = %v", req)
+	}
+
+	failing, fake2, _ := newFakeReleaseCluster(t, "")
+	fake2.channelErr[task.DefaultQueue] = serviceerror.NewUnavailable("down")
+	if _, err := failing.engineReplicas(context.Background()); err == nil {
+		t.Fatal("a failed read was reported as a count")
 	}
 }
 
@@ -355,49 +337,45 @@ func TestRegisteredPools_TranslateThroughTheOnlyMapping(t *testing.T) {
 // --- pool use ---------------------------------------------------------------
 
 func TestPoolUse_InUseByPollerBacklogOrRate(t *testing.T) {
-	fresh := releaseNow.Add(-5 * time.Second)
-	stale := releaseNow.Add(-5 * time.Minute)
-	describe := func(poller time.Time, stats *client.TaskQueueStats) client.TaskQueueDescription {
-		return client.TaskQueueDescription{VersionsInfo: map[string]client.TaskQueueVersionInfo{
-			"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
-				client.TaskQueueTypeActivity: {
-					Pollers: []client.TaskQueuePollerInfo{{Identity: "orker@a", LastAccessTime: poller}},
-					Stats:   stats,
-				},
-			}},
-		}}
+	fresh := timestamppb.New(releaseNow.Add(-5 * time.Second))
+	stale := timestamppb.New(releaseNow.Add(-5 * time.Minute))
+	describe := func(at *timestamppb.Timestamp, stats *taskqueuepb.TaskQueueStats) *workflowservice.DescribeTaskQueueResponse {
+		return &workflowservice.DescribeTaskQueueResponse{
+			Pollers: []*taskqueuepb.PollerInfo{{Identity: "orker@a", LastAccessTime: at}},
+			Stats:   stats,
+		}
 	}
 	cases := []struct {
 		name    string
-		desc    client.TaskQueueDescription
+		desc    *workflowservice.DescribeTaskQueueResponse
 		err     error
 		inUse   bool
 		wantErr bool
 	}{
-		{"fresh poller", describe(fresh, &client.TaskQueueStats{}), nil, true, false},
-		{"stale poller, backlog 3", describe(stale, &client.TaskQueueStats{ApproximateBacklogCount: 3}), nil, true, false},
-		{"add rate 0.2", describe(stale, &client.TaskQueueStats{TasksAddRate: 0.2}), nil, true, false},
-		{"stale and zero", describe(stale, &client.TaskQueueStats{}), nil, false, false},
+		{"fresh poller", describe(fresh, &taskqueuepb.TaskQueueStats{}), nil, true, false},
+		{"stale poller, backlog 3", describe(stale, &taskqueuepb.TaskQueueStats{ApproximateBacklogCount: 3}), nil, true, false},
+		{"add rate 0.2", describe(stale, &taskqueuepb.TaskQueueStats{TasksAddRate: 0.2}), nil, true, false},
+		{"stale and zero", describe(stale, &taskqueuepb.TaskQueueStats{}), nil, false, false},
 		{"every stats nil", describe(stale, nil), nil, false, true},
-		{"describe error", client.TaskQueueDescription{}, serviceerror.NewUnavailable("down"), false, true},
+		{"describe error", nil, serviceerror.NewUnavailable("down"), false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cluster, fake, _ := newFakeReleaseCluster(t, "")
-			fake.enhanced["ork-pool-build"] = tc.desc
+			if tc.desc != nil {
+				fake.channels["ork-pool-build"] = tc.desc
+			}
 			if tc.err != nil {
-				fake.enhancedErr["ork-pool-build"] = tc.err
+				fake.channelErr["ork-pool-build"] = tc.err
 			}
 			use := cluster.describePoolUse(context.Background(), "build")
 			if use.InUse() != tc.inUse || (use.Err != nil) != tc.wantErr {
 				t.Fatalf("use = %+v, in use %v; want in use %v, err %v", use, use.InUse(), tc.inUse, tc.wantErr)
 			}
-			if tc.err == nil {
-				req := fake.enhancedReqs[0]
-				if req.TaskQueue != "ork-pool-build" || !req.ReportStats || !req.ReportPollers ||
-					!req.Versions.AllActive || !req.Versions.Unversioned {
-					t.Fatalf("request = %+v", req)
-				}
+			req := fake.channelReqs[0]
+			if req.GetTaskQueue().GetName() != "ork-pool-build" || !req.GetReportStats() ||
+				req.GetTaskQueueType() != enumspb.TASK_QUEUE_TYPE_ACTIVITY {
+				t.Fatalf("request = %v", req)
 			}
 		})
 	}
@@ -556,10 +534,10 @@ func TestAwaitRouting_ReadsTheEngineChannelInDefaultMode(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("AwaitRouting = %v, %v", ok, err)
 	}
-	if len(fake.routingReqs) != 3 {
-		t.Fatalf("polls = %d, want 3", len(fake.routingReqs))
+	if len(fake.channelReqs) != 3 {
+		t.Fatalf("polls = %d, want 3", len(fake.channelReqs))
 	}
-	req := fake.routingReqs[0]
+	req := fake.channelReqs[0]
 	if req.GetTaskQueue().GetName() != task.DefaultQueue || req.GetTaskQueueType() != enumspb.TASK_QUEUE_TYPE_WORKFLOW ||
 		req.GetApiMode() != enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED {
 		t.Fatalf("request = %v", req)

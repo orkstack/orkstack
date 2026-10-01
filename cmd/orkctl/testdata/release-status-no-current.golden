@@ -1,0 +1,9 @@
+deployment:  orkstack
+current:     none — new runs go to the 2 engines started without ORK_BUILD_ID; a release takes nothing until it is promoted (docs/DEPLOY.md §3 step 0)
+ramping:     -
+
+RELEASE  ROLE       ENGINE  ORKERS  POOLS SERVED  RUNS  STATE
+v1       candidate  1       1       main          0     not ready (1 blocker)
+
+v1 cannot take new runs yet:
+  - 1 run(s) started before any release was current are still executing; making release v1 take new runs moves them onto it at their next step, which fails them if its code differs from the build that started them. Let them finish first — "orkctl namespace update NS --hold REASON" stops new ones meanwhile (docs/DEPLOY.md §3.5).

@@ -1,0 +1,2 @@
+Error: release promote: failed_precondition: release 2026.08.23-c4d5e6f cannot take new runs yet:
+  - pool "build" is in use (orker-7f3a of release 2026.08.09-9f8e7d6 serves it) and no Orker of release 2026.08.23-c4d5e6f serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.23-c4d5e6f ORK_ORKER_POOL=build.

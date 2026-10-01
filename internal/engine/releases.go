@@ -164,7 +164,6 @@ const releaseFanout = 16
 // and workflowServiceAdmin use.
 type releaseClient interface {
 	WorkerDeploymentClient() client.WorkerDeploymentClient
-	DescribeTaskQueueEnhanced(ctx context.Context, o client.DescribeTaskQueueEnhancedOptions) (client.TaskQueueDescription, error)
 	DescribeTaskQueue(ctx context.Context, in *workflowservice.DescribeTaskQueueRequest) (*workflowservice.DescribeTaskQueueResponse, error)
 }
 
@@ -381,46 +380,40 @@ func (c *TemporalReleaseCluster) registeredPools(infos []client.WorkerDeployment
 // the engine's run worker polls workflow tasks only, so this channel's
 // workflow pollers are exactly the engine's processes. A failure fails the
 // whole read: engine liveness is never reported as zero.
+//
+// It is the default-mode read, which lists every poller of the channel with
+// the release it registered with. The enhanced read §5.3 named
+// (AllActive + Unversioned) was measured against the pinned cluster to omit
+// pollers that registered with a release (TestIntegration_ObserveReleases…),
+// so it would have reported a running engine as none.
 func (c *TemporalReleaseCluster) engineReplicas(ctx context.Context) (map[string]int, error) {
-	describeCtx, cancel := context.WithTimeout(ctx, releaseReadTimeout)
-	defer cancel()
-	description, err := c.client.DescribeTaskQueueEnhanced(describeCtx, client.DescribeTaskQueueEnhancedOptions{
-		TaskQueue:      c.engineQueue,
-		TaskQueueTypes: []client.TaskQueueType{client.TaskQueueTypeWorkflow},
-		ReportPollers:  true,
-		Versions:       &client.TaskQueueVersionSelection{AllActive: true, Unversioned: true},
-	})
+	described, err := c.describeChannel(ctx, c.engineQueue, enumspb.TASK_QUEUE_TYPE_WORKFLOW, false)
 	if err != nil {
 		return nil, c.fail(ReleaseOpRead, "describe the engine's channel", "", err)
 	}
 	now, within := c.now(), c.freshness()
 	identities := map[string]map[string]bool{}
 	anonymous := map[string]int{}
-	for _, version := range description.VersionsInfo {
-		info, ok := version.TypesInfo[client.TaskQueueTypeWorkflow]
-		if !ok {
+	for _, poller := range described.GetPollers() {
+		if !freshPoller(poller, now, within) {
 			continue
 		}
-		for _, poller := range info.Pollers {
-			if !poller.LastAccessTime.IsZero() && now.Sub(poller.LastAccessTime) > within {
-				continue
+		key := ""
+		if opts := poller.GetDeploymentOptions(); opts != nil && opts.GetBuildId() != "" &&
+			opts.GetWorkerVersioningMode() != enumspb.WORKER_VERSIONING_MODE_UNVERSIONED {
+			if opts.GetDeploymentName() != c.deployment {
+				continue // another deployment's engine shares this namespace
 			}
-			key := ""
-			if opts := poller.WorkerDeploymentPollerOptions; opts != nil && opts.BuildID != "" {
-				if opts.DeploymentName != c.deployment {
-					continue // another deployment's engine shares this namespace
-				}
-				key = opts.BuildID
-			}
-			if poller.Identity == "" {
-				anonymous[key]++
-				continue
-			}
-			if identities[key] == nil {
-				identities[key] = map[string]bool{}
-			}
-			identities[key][poller.Identity] = true
+			key = opts.GetBuildId()
 		}
+		if poller.GetIdentity() == "" {
+			anonymous[key]++
+			continue
+		}
+		if identities[key] == nil {
+			identities[key] = map[string]bool{}
+		}
+		identities[key][poller.GetIdentity()] = true
 	}
 	replicas := map[string]int{}
 	for key, set := range identities {
@@ -430,6 +423,29 @@ func (c *TemporalReleaseCluster) engineReplicas(ctx context.Context) (map[string
 		replicas[key] += n
 	}
 	return replicas, nil
+}
+
+// freshPoller applies livePollers' per-record rule: a record with no access
+// time is trusted, a stale one is dropped individually.
+func freshPoller(poller *taskqueuepb.PollerInfo, now time.Time, within time.Duration) bool {
+	at := poller.GetLastAccessTime()
+	if at == nil || at.AsTime().IsZero() {
+		return true
+	}
+	return now.Sub(at.AsTime()) <= within
+}
+
+// describeChannel is the default-mode channel read every release question
+// uses: the engine's channel for replicas and routing, a pool's for its use.
+func (c *TemporalReleaseCluster) describeChannel(ctx context.Context, queue string, kind enumspb.TaskQueueType, stats bool) (*workflowservice.DescribeTaskQueueResponse, error) {
+	readCtx, cancel := context.WithTimeout(ctx, releaseReadTimeout)
+	defer cancel()
+	return c.client.DescribeTaskQueue(readCtx, &workflowservice.DescribeTaskQueueRequest{
+		TaskQueue:     &taskqueuepb.TaskQueue{Name: queue, Kind: enumspb.TASK_QUEUE_KIND_NORMAL},
+		TaskQueueType: kind,
+		ReportStats:   stats,
+		ApiMode:       enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED,
+	})
 }
 
 // poolUse describes every pool the current and ramping releases registered
@@ -464,39 +480,40 @@ func (c *TemporalReleaseCluster) poolUse(ctx context.Context, obs ReleaseObserva
 }
 
 // describePoolUse is one pool's channel description: live pollers, backlog
-// and add rate. No stats at all is an error — whether work is waiting was not
-// measured — never "not in use".
+// and add rate, from the default-mode read with stats (see engineReplicas for
+// why not the enhanced one). No stats at all is an error — whether work is
+// waiting was not measured — never "not in use".
 func (c *TemporalReleaseCluster) describePoolUse(ctx context.Context, pool string) PoolUse {
 	route, err := task.RouteForPool(pool, c.defaultRoute.Queue)
 	if err != nil {
 		return PoolUse{Err: err}
 	}
-	describeCtx, cancel := context.WithTimeout(ctx, releaseReadTimeout)
-	defer cancel()
-	description, err := c.client.DescribeTaskQueueEnhanced(describeCtx, client.DescribeTaskQueueEnhancedOptions{
-		TaskQueue:      route.Queue,
-		TaskQueueTypes: []client.TaskQueueType{client.TaskQueueTypeActivity},
-		ReportPollers:  true,
-		ReportStats:    true,
-		Versions:       &client.TaskQueueVersionSelection{AllActive: true, Unversioned: true},
-	})
+	described, err := c.describeChannel(ctx, route.Queue, enumspb.TASK_QUEUE_TYPE_ACTIVITY, true)
 	if err != nil {
 		return PoolUse{Err: c.fail(ReleaseOpRead, "describe pool "+pool, "", err)}
 	}
-	use := PoolUse{LivePollers: livePollers(description, c.now(), c.freshness()).Orkers}
-	measured := false
-	for _, version := range description.VersionsInfo {
-		info, ok := version.TypesInfo[client.TaskQueueTypeActivity]
-		if !ok || info.Stats == nil {
+	now, within := c.now(), c.freshness()
+	seen := map[string]bool{}
+	var use PoolUse
+	for _, poller := range described.GetPollers() {
+		if !freshPoller(poller, now, within) {
 			continue
 		}
-		measured = true
-		use.Backlog += info.Stats.ApproximateBacklogCount
-		use.AddRate += info.Stats.TasksAddRate
+		if id := poller.GetIdentity(); id != "" {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+		}
+		use.LivePollers++
 	}
-	if !measured {
+	stats := described.GetStats()
+	if stats == nil {
 		use.Err = fmt.Errorf("pool %q: the cluster returned no statistics", pool)
+		return use
 	}
+	use.Backlog = stats.GetApproximateBacklogCount()
+	use.AddRate = stats.GetTasksAddRate()
 	return use
 }
 
@@ -569,13 +586,7 @@ func (c *TemporalReleaseCluster) AwaitRouting(ctx context.Context, want Routing,
 	defer deadline.Stop()
 	var lastErr error
 	for {
-		readCtx, cancel := context.WithTimeout(ctx, releaseReadTimeout)
-		described, err := c.client.DescribeTaskQueue(readCtx, &workflowservice.DescribeTaskQueueRequest{
-			TaskQueue:     &taskqueuepb.TaskQueue{Name: c.engineQueue, Kind: enumspb.TASK_QUEUE_KIND_NORMAL},
-			TaskQueueType: enumspb.TASK_QUEUE_TYPE_WORKFLOW,
-			ApiMode:       enumspb.DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED,
-		})
-		cancel()
+		described, err := c.describeChannel(ctx, c.engineQueue, enumspb.TASK_QUEUE_TYPE_WORKFLOW, false)
 		lastErr = err
 		if err == nil && c.routesAs(described.GetVersioningInfo(), want) {
 			return true, nil

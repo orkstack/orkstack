@@ -137,6 +137,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newOrkflowCommand(g),
 		newOrkerCommand(g),
 		newPoolCommand(g),
+		newReleaseCommand(g),
 		newRunCommand(g),
 		newActivityCommand(g),
 		newScheduleCommand(g),

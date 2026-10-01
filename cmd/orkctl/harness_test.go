@@ -324,7 +324,7 @@ func newFixtureWith(
 		// Only unary schedule requests are buffered: a streaming body must
 		// reach the handler as it arrives.
 		var body []byte
-		if strings.Contains(r.URL.Path, "ScheduleService") {
+		if strings.Contains(r.URL.Path, "ScheduleService") || strings.Contains(r.URL.Path, "SystemService") {
 			body, _ = io.ReadAll(r.Body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
