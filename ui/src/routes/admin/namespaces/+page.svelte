@@ -17,7 +17,7 @@
 	import { isStaleEtagConflict } from '$lib/adminErrors';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { create } from '@bufbuild/protobuf';
-	import { NamespaceHoldSchema, type Namespace, type NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
+	import { NamespaceHoldSchema, type Budget, type Namespace, type NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
 	import { TaskLogExport } from '$lib/gen/orkstack/v1/telemetry_pb';
 	import { DEFAULT_NAMESPACE, namespaceLabel, rememberNamespace, withNamespace } from '$lib/namespace';
 	import {
@@ -31,6 +31,8 @@
 	import { hoursToMs, parseRetentionHours } from '$lib/retentionForm';
 	import { shellQuote } from '$lib/runDetail';
 	import { fmtDuration } from '$lib/stats';
+	import { budgetConfigLabel } from '$lib/usage';
+	import { shellWord } from '$lib/flakes';
 	import { fmtTimestamp } from '$lib/status';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import type { Duration } from '@bufbuild/protobuf/wkt';
@@ -96,6 +98,37 @@
 	// anything that is not a non-negative whole number.
 	function maxRunningRequest(text: string): number {
 		return text.trim() === '' ? 0 : Number(text.trim());
+	}
+
+	// budgetRequest turns the four budget fields into the budget sent: both
+	// amounts blank is no budget at all — on an edit, a deliberate clear.
+	// validateNamespaceForm has already refused everything else the registry
+	// would (budgetError).
+	function budgetRequest(cpu: string, gib: string, periodHours: string, enforce: boolean) {
+		if (cpu.trim() === '' && gib.trim() === '') return undefined;
+		return {
+			cpuSeconds: BigInt(cpu.trim() === '' ? '0' : cpu.trim()),
+			gibSeconds: BigInt(gib.trim() === '' ? '0' : gib.trim()),
+			period: durationFromMs(hoursToMs(Number(periodHours.trim()))),
+			enforce
+		};
+	}
+
+	// budgetCommand is the `orkctl namespace update` an edit's save performs
+	// for the budget: the four flags, or --clear-budget when both amounts are
+	// blank.
+	function budgetCommand(name: string, cpu: string, gib: string, periodHours: string, enforce: boolean): string {
+		if (cpu.trim() === '' && gib.trim() === '') return `orkctl namespace update ${shellWord(name)} --clear-budget`;
+		const parts = ['orkctl', 'namespace', 'update', shellWord(name)];
+		parts.push('--budget-cpu-seconds', cpu.trim() === '' ? '0' : cpu.trim());
+		parts.push('--budget-gib-seconds', gib.trim() === '' ? '0' : gib.trim());
+		parts.push('--budget-period', `${periodHours.trim() || 'H'}h`);
+		parts.push(`--budget-enforce=${enforce}`);
+		return parts.join(' ');
+	}
+
+	function budgetPeriodHours(b: Budget | undefined): string {
+		return b?.period ? String(Number(b.period.seconds) / 3600) : '';
 	}
 
 	function telemetrySinkLabel(policy: NamespaceTelemetryPolicy | undefined): string {
@@ -203,6 +236,10 @@
 	let createHoldReason = $state('');
 	let createMaxRunning = $state('');
 	let createAllowedSecrets = $state('');
+	let createBudgetCpuSeconds = $state('');
+	let createBudgetGibSeconds = $state('');
+	let createBudgetPeriodHours = $state('');
+	let createBudgetEnforce = $state(false);
 	let createErrors = $state<NamespaceFormErrors>({});
 	let createBusy = $state(false);
 	let createServerError = $state('');
@@ -220,6 +257,10 @@
 		createHoldReason = '';
 		createMaxRunning = '';
 		createAllowedSecrets = '';
+		createBudgetCpuSeconds = '';
+		createBudgetGibSeconds = '';
+		createBudgetPeriodHours = '';
+		createBudgetEnforce = false;
 	}
 
 	async function submitCreate() {
@@ -235,7 +276,11 @@
 				telemetryAttributesText: createTelemetryAttributesText,
 				holdReason: createHoldReason,
 				maxRunning: createMaxRunning,
-				allowedSecretsText: createAllowedSecrets
+				allowedSecretsText: createAllowedSecrets,
+				budgetCpuSeconds: createBudgetCpuSeconds,
+				budgetGibSeconds: createBudgetGibSeconds,
+				budgetPeriodHours: createBudgetPeriodHours,
+				budgetEnforce: createBudgetEnforce
 			},
 			{ requireName: true }
 		);
@@ -269,7 +314,9 @@
 					hold: holdRequest(createHoldReason),
 					maxRunning: maxRunningRequest(createMaxRunning),
 					// Blank is an empty list: unrestricted.
-					allowedSecrets: parseSecretPatternLines(createAllowedSecrets)
+					allowedSecrets: parseSecretPatternLines(createAllowedSecrets),
+					// Both amounts blank: no budget, unbounded.
+					budget: budgetRequest(createBudgetCpuSeconds, createBudgetGibSeconds, createBudgetPeriodHours, createBudgetEnforce)
 				}
 			});
 			createSuccess = res.created
@@ -296,6 +343,10 @@
 	let editHoldReason = $state('');
 	let editMaxRunning = $state('');
 	let editAllowedSecrets = $state('');
+	let editBudgetCpuSeconds = $state('');
+	let editBudgetGibSeconds = $state('');
+	let editBudgetPeriodHours = $state('');
+	let editBudgetEnforce = $state(false);
 	let editEtag = $state('');
 	let editErrors = $state<NamespaceFormErrors>({});
 	let editBusy = $state(false);
@@ -321,6 +372,10 @@
 		editHoldReason = ns.hold?.reason ?? '';
 		editMaxRunning = ns.maxRunning > 0 ? String(ns.maxRunning) : '';
 		editAllowedSecrets = ns.allowedSecrets.join('\n');
+		editBudgetCpuSeconds = ns.budget && ns.budget.cpuSeconds > 0n ? String(ns.budget.cpuSeconds) : '';
+		editBudgetGibSeconds = ns.budget && ns.budget.gibSeconds > 0n ? String(ns.budget.gibSeconds) : '';
+		editBudgetPeriodHours = budgetPeriodHours(ns.budget);
+		editBudgetEnforce = ns.budget?.enforce ?? false;
 		editEtag = ns.etag;
 		editLabels = { ...ns.labels };
 		editErrors = {};
@@ -355,7 +410,11 @@
 				telemetryAttributesText: editTelemetryAttributesText,
 				holdReason: editHoldReason,
 				maxRunning: editMaxRunning,
-				allowedSecretsText: editAllowedSecrets
+				allowedSecretsText: editAllowedSecrets,
+				budgetCpuSeconds: editBudgetCpuSeconds,
+				budgetGibSeconds: editBudgetGibSeconds,
+				budgetPeriodHours: editBudgetPeriodHours,
+				budgetEnforce: editBudgetEnforce
 			},
 			{ requireName: false }
 		);
@@ -392,7 +451,11 @@
 					// Prefilled one entry per line from the row: blank on save
 					// sends an empty list, a deliberate choice of unrestricted,
 					// not an omission — the rule run retention follows above.
-					allowedSecrets: parseSecretPatternLines(editAllowedSecrets)
+					allowedSecrets: parseSecretPatternLines(editAllowedSecrets),
+					// Prefilled from the row: both amounts blank on save sends no
+					// budget, which clears it — a deliberate choice, not an
+					// omission, the rule every prefilled field here follows.
+					budget: budgetRequest(editBudgetCpuSeconds, editBudgetGibSeconds, editBudgetPeriodHours, editBudgetEnforce)
 				}
 			});
 			closeEdit();
@@ -677,6 +740,31 @@
 					>
 				{/if}
 			</label>
+			<fieldset class="flex flex-col gap-2 rounded-md border border-border px-3 py-2 text-sm sm:col-span-2" data-testid="ns-create-budget">
+				<legend class="px-1 font-medium text-fg">Budget (reserved cpu and memory over a rolling period; both amounts blank = unbounded)</legend>
+				<div class="grid gap-3 sm:grid-cols-4">
+					<label class="flex flex-col gap-1.5">
+						<span class="text-xs font-medium text-fg">Budget cpu-seconds</span>
+						<input data-testid="ns-create-budget-cpu-seconds" bind:value={createBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+					</label>
+					<label class="flex flex-col gap-1.5">
+						<span class="text-xs font-medium text-fg">Budget GiB-seconds</span>
+						<input data-testid="ns-create-budget-gib-seconds" bind:value={createBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+					</label>
+					<label class="flex flex-col gap-1.5">
+						<span class="text-xs font-medium text-fg">Budget period (hours)</span>
+						<input data-testid="ns-create-budget-period-hours" bind:value={createBudgetPeriodHours} inputmode="numeric" placeholder="720" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+					</label>
+					<label class="flex items-center gap-2 self-end pb-2">
+						<input type="checkbox" class="size-4 accent-brand-600" data-testid="ns-create-budget-enforce" bind:checked={createBudgetEnforce} />
+						<span class="text-xs font-medium text-fg">Enforce</span>
+					</label>
+				</div>
+				<span class="text-xs text-fg-muted">Units are RESERVED cpu and memory × attempt time, not measured utilization. Unchecked, the budget is reported and never refuses; checked, new runs are refused once it is reached — check the Usage card answers first, because an enforced budget that cannot be measured refuses every submit.</span>
+				{#if createErrors.budget}
+					<span class="text-xs text-danger-700" data-testid="ns-create-error-budget">{createErrors.budget}</span>
+				{/if}
+			</fieldset>
 			<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
 				<span class="font-medium text-fg"
 					>Allowed secrets (one scheme:pattern per line; blank = unrestricted)</span
@@ -755,6 +843,7 @@
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Run retention</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Hold</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Max running</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Budget</th>
 <th class="h-10 px-4 text-xs font-medium text-fg-muted">Telemetry sink</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Task logs</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Attrs</th>
@@ -798,6 +887,9 @@
 							>
 							<td class="h-11 px-4 align-middle text-fg-secondary tabular-nums" data-testid="namespace-max-running-{ns.name}"
 								>{maxRunningLabel(ns.maxRunning)}</td
+							>
+							<td class="h-11 px-4 align-middle whitespace-nowrap text-fg-secondary" data-testid="namespace-budget-{ns.name}"
+								>{budgetConfigLabel(ns.budget)}</td
 							>
 							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
 								>{telemetrySinkLabel(ns.telemetry)}</td
@@ -872,7 +964,7 @@
 						</tr>
 						{#if editingName === ns.name}
 							<tr>
-								<td colspan="13" class="bg-surface-sunken px-4 py-4">
+								<td colspan="14" class="bg-surface-sunken px-4 py-4">
 									<form
 										data-testid="namespace-edit-form-{ns.name}"
 										class="grid gap-3 sm:grid-cols-2"
@@ -950,6 +1042,31 @@
 												<span class="text-xs text-danger-700">{editErrors.maxRunning}</span>
 											{/if}
 										</label>
+										<fieldset class="flex flex-col gap-2 rounded-md border border-border px-3 py-2 text-sm sm:col-span-2" data-testid="ns-edit-budget-{ns.name}">
+											<legend class="px-1 font-medium text-fg">Budget (reserved cpu and memory over a rolling period; both amounts blank = unbounded)</legend>
+											<div class="grid gap-3 sm:grid-cols-4">
+												<label class="flex flex-col gap-1.5">
+													<span class="text-xs font-medium text-fg">Budget cpu-seconds</span>
+													<input data-testid="ns-edit-budget-cpu-seconds-{ns.name}" bind:value={editBudgetCpuSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+												</label>
+												<label class="flex flex-col gap-1.5">
+													<span class="text-xs font-medium text-fg">Budget GiB-seconds</span>
+													<input data-testid="ns-edit-budget-gib-seconds-{ns.name}" bind:value={editBudgetGibSeconds} inputmode="numeric" placeholder="unbounded" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+												</label>
+												<label class="flex flex-col gap-1.5">
+													<span class="text-xs font-medium text-fg">Budget period (hours)</span>
+													<input data-testid="ns-edit-budget-period-hours-{ns.name}" bind:value={editBudgetPeriodHours} inputmode="numeric" placeholder="720" class="h-9 rounded-md border border-border bg-surface px-3 text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none" />
+												</label>
+												<label class="flex items-center gap-2 self-end pb-2">
+													<input type="checkbox" class="size-4 accent-brand-600" data-testid="ns-edit-budget-enforce-{ns.name}" bind:checked={editBudgetEnforce} />
+													<span class="text-xs font-medium text-fg">Enforce</span>
+												</label>
+											</div>
+											<span class="text-xs text-fg-muted">Units are RESERVED cpu and memory × attempt time, not measured utilization. Unchecked, the budget is reported and never refuses; checked, new runs are refused once it is reached — check the Usage card answers first, because an enforced budget that cannot be measured refuses every submit.</span>
+											{#if editErrors.budget}
+												<span class="text-xs text-danger-700" data-testid="ns-edit-error-budget-{ns.name}">{editErrors.budget}</span>
+											{/if}
+										</fieldset>
 										<label class="flex flex-col gap-1.5 text-sm sm:col-span-2">
 											<span class="font-medium text-fg"
 												>Allowed secrets (one scheme:pattern per line; blank = unrestricted)</span
@@ -991,6 +1108,10 @@
 											>
 												{editBusy ? 'Saving…' : 'Save'}
 											</button>
+											<CliEquivalent
+												command={budgetCommand(ns.name, editBudgetCpuSeconds, editBudgetGibSeconds, editBudgetPeriodHours, editBudgetEnforce)}
+												testid="ns-edit-cli-{ns.name}"
+											/>
 											<button
 												type="button"
 												data-testid="ns-edit-cancel-{ns.name}"

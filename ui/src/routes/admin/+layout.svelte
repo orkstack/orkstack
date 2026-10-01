@@ -42,6 +42,7 @@
 		{ id: 'activities', href: '/admin/activities', label: 'Activities' },
 		{ id: 'webhooks', href: '/admin/webhooks', label: 'Webhooks' },
 		{ id: 'retention', href: '/admin/retention', label: 'Retention' },
+		{ id: 'usage', href: '/admin/usage', label: 'Usage' },
 		{ id: 'audit', href: '/admin/audit', label: 'Audit' }
 	];
 
