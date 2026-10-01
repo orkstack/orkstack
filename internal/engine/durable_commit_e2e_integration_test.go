@@ -3,10 +3,12 @@
 package engine_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +31,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -352,6 +355,80 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	t.Logf("EVIDENCE I3 adopted_phases=%v snapshot_started_at=%s commit_started_at=%s",
 		phaseNames, taskRun.GetStartedAt().AsTime().Format(time.RFC3339Nano),
 		commitStart.AsTime().Format(time.RFC3339Nano))
+
+	// (e) run-evidence-bundle I4: the evidence bundle carries the adoption
+	//     honestly. The run is archived the way the projection archives it,
+	//     and the bundle is read through the production handler over the real
+	//     stores: the adopting attempt is marked commit_adopted, the outcome
+	//     attempt is the committing one, and commit.json's digest is the
+	//     snapshot's CommitRef.sha256, carried through, never recomputed.
+	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3RunArchive: %v", err)
+	}
+	archiver := engine.NewRunArchiver(runArchive)
+	if err := archiver.Archive(ctx, run, nil); err != nil {
+		t.Fatalf("archive run: %v", err)
+	}
+	evidenceSvc := api.NewService(api.Config{
+		Orkflows:      orkflows,
+		Runs:          runs,
+		Bus:           bus,
+		Archive:       archiver,
+		ArtifactStore: store,
+		Attempts:      attemptStore,
+		Commits:       commitStore,
+	})
+	evidenceServer := httptest.NewServer(api.NewMux(evidenceSvc, api.MuxOptions{}))
+	defer evidenceServer.Close()
+	exported, err := orkstackv1connect.NewRunServiceClient(evidenceServer.Client(), evidenceServer.URL).ExportRunEvidence(ctx,
+		connect.NewRequest(&orkstackv1.ExportRunEvidenceRequest{RunId: runID}))
+	if err != nil {
+		t.Fatalf("ExportRunEvidence: %v", err)
+	}
+	var bundle bytes.Buffer
+	last := false
+	for exported.Receive() {
+		bundle.Write(exported.Msg().GetData())
+		last = last || exported.Msg().GetLast()
+	}
+	if err := exported.Err(); err != nil || !last {
+		t.Fatalf("ExportRunEvidence stream: %v (last %v)", err, last)
+	}
+	_ = exported.Close()
+	report, err := evidence.Verify(bytes.NewReader(bundle.Bytes()))
+	if err != nil || len(report.Failures) != 0 {
+		t.Fatalf("verify the adoption bundle: %v %+v", err, report)
+	}
+	manifest := report.Manifest
+	if len(manifest.Tasks) != 1 {
+		t.Fatalf("manifest tasks = %+v", manifest.Tasks)
+	}
+	entry := manifest.Tasks[0]
+	if entry.OutcomeAttempt != adopted.GetAttempt() || entry.OutcomeAttempt != taskRun.GetAttempt() {
+		t.Fatalf("outcome_attempt = %d, want the committing attempt %d (snapshot %d)",
+			entry.OutcomeAttempt, adopted.GetAttempt(), taskRun.GetAttempt())
+	}
+	adoptedEntry := false
+	for _, a := range entry.Attempts {
+		if a.Attempt == adoptedRecord.GetAttempt() && a.CommitAdopted && a.State == evidence.StatePresent {
+			adoptedEntry = true
+		}
+	}
+	if !adoptedEntry {
+		t.Fatalf("manifest attempts %+v do not mark attempt %d commit_adopted", entry.Attempts, adoptedRecord.GetAttempt())
+	}
+	var commitMember evidence.Member
+	for _, m := range manifest.Members {
+		if m.Path == "tasks/build/commit.json" {
+			commitMember = m
+		}
+	}
+	if commitMember.State != evidence.StatePresent || commitMember.SHA256 != taskRun.GetCommit().GetSha256() {
+		t.Fatalf("commit.json member = %+v, want present with the snapshot's sha256 %s", commitMember, taskRun.GetCommit().GetSha256())
+	}
+	t.Logf("EVIDENCE I4 run_evidence_adoption outcome_attempt=%d attempts=%+v commit.json sha256=%s snapshot CommitRef.sha256=%s",
+		entry.OutcomeAttempt, entry.Attempts, commitMember.SHA256, taskRun.GetCommit().GetSha256())
 }
 
 // tappedAttemptStore delegates to a real AttemptStore and remembers the last
