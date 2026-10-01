@@ -153,8 +153,21 @@ type Namespace struct {
 	// own floor (ORK_ORKER_SECRET_ALLOW): a namespace can only ever narrow
 	// what its Orkers already permit.
 	AllowedSecrets []string `protobuf:"bytes,13,rep,name=allowed_secrets,json=allowedSecrets,proto3" json:"allowed_secrets,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// budget bounds this namespace's reserved consumption over a rolling
+	// period. Unset means unbounded, which is what every namespace has today
+	// and what an upgrade preserves.
+	//
+	// An enforced budget is checked in exactly one place — the admission gate
+	// in SubmitRun's preparation, after the hold and max_running — by reading
+	// the namespace's usage over the trailing period. That read is a
+	// read-then-act with no lock, cached for at most ORK_USAGE_CACHE_TTL, and
+	// counts a run only once it has finished, so enforcement is best-effort by
+	// a bounded margin: the runs that finished inside one cache lifetime, every
+	// run still in flight, and submits racing the check. A lock would remove
+	// the margin and AGENTS.md §2.1 forbids building one.
+	Budget        *Budget `protobuf:"bytes,15,opt,name=budget,proto3" json:"budget,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Namespace) Reset() {
@@ -278,6 +291,13 @@ func (x *Namespace) GetAllowedSecrets() []string {
 	return nil
 }
 
+func (x *Namespace) GetBudget() *Budget {
+	if x != nil {
+		return x.Budget
+	}
+	return nil
+}
+
 // NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
 // decision and never a retroactive one: a run already accepted continues, is
 // readable, and finishes normally (AGENTS.md §15). Releasing a hold starts
@@ -348,6 +368,101 @@ func (x *NamespaceHold) GetSince() *timestamppb.Timestamp {
 	return nil
 }
 
+// Budget bounds how much of the fleet one namespace may RESERVE over a
+// rolling period. Its units are reservation × held time: the cpu and memory
+// an Orker granted each attempt (TaskAttempt.resources), multiplied by how
+// long that Orker held the attempt. They are not utilization, and every
+// surface that renders them says so: OrkStack reserves, the kernel measures,
+// and presenting the first as the second would be a number no measurement
+// produced.
+//
+// Usage is derived on read (StatsService.GetUsage) from the runs this
+// namespace created inside the period that have FINISHED; a run still in
+// flight is counted when it finishes. Nothing counts usage as it happens, so
+// nothing can disagree with the records tomorrow.
+type Budget struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// cpu_seconds bounds reserved cpu × held time, in cpu-seconds. 0 means this
+	// dimension is not bounded. At least one of cpu_seconds and gib_seconds is
+	// above 0; a budget that bounds nothing is refused — clear it instead.
+	CpuSeconds int64 `protobuf:"varint,1,opt,name=cpu_seconds,json=cpuSeconds,proto3" json:"cpu_seconds,omitempty"`
+	// gib_seconds bounds reserved memory × held time, in GiB-seconds (memory
+	// bytes ÷ 2^30 × seconds). 0 means this dimension is not bounded.
+	GibSeconds int64 `protobuf:"varint,2,opt,name=gib_seconds,json=gibSeconds,proto3" json:"gib_seconds,omitempty"`
+	// period is the rolling window a budget is held against, ending at the
+	// moment of the question. Required; at least 1h and at most 744h (31 days).
+	// A longer question is a report — `orkctl stats usage --since` — not a
+	// budget evaluated at every submit.
+	Period *durationpb.Duration `protobuf:"bytes,3,opt,name=period,proto3" json:"period,omitempty"`
+	// enforce turns the budget from an observation into an admission rule.
+	// False — the default — reports usage against the budget on every read and
+	// never refuses anything, and costs nothing at submit. True refuses every
+	// new run of the namespace with FAILED_PRECONDITION while measured usage
+	// over the trailing period is at or above any bounded dimension. Either
+	// way an accepted run is never touched (AGENTS.md §15).
+	Enforce       bool `protobuf:"varint,4,opt,name=enforce,proto3" json:"enforce,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Budget) Reset() {
+	*x = Budget{}
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Budget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Budget) ProtoMessage() {}
+
+func (x *Budget) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Budget.ProtoReflect.Descriptor instead.
+func (*Budget) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Budget) GetCpuSeconds() int64 {
+	if x != nil {
+		return x.CpuSeconds
+	}
+	return 0
+}
+
+func (x *Budget) GetGibSeconds() int64 {
+	if x != nil {
+		return x.GibSeconds
+	}
+	return 0
+}
+
+func (x *Budget) GetPeriod() *durationpb.Duration {
+	if x != nil {
+		return x.Period
+	}
+	return nil
+}
+
+func (x *Budget) GetEnforce() bool {
+	if x != nil {
+		return x.Enforce
+	}
+	return false
+}
+
 // Pool is a set of Orkers, observed live.
 //
 // Nothing writes a Pool: it is derived on read from what the cluster reports
@@ -397,7 +512,7 @@ type Pool struct {
 
 func (x *Pool) Reset() {
 	*x = Pool{}
-	mi := &file_orkstack_v1_namespace_proto_msgTypes[2]
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -409,7 +524,7 @@ func (x *Pool) String() string {
 func (*Pool) ProtoMessage() {}
 
 func (x *Pool) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_namespace_proto_msgTypes[2]
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -422,7 +537,7 @@ func (x *Pool) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Pool.ProtoReflect.Descriptor instead.
 func (*Pool) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{2}
+	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Pool) GetName() string {
@@ -464,7 +579,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\x80\x05\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\xad\x05\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -482,13 +597,21 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\x04hold\x18\v \x01(\v2\x1a.orkstack.v1.NamespaceHoldR\x04hold\x12\x1f\n" +
 	"\vmax_running\x18\f \x01(\x05R\n" +
 	"maxRunning\x12'\n" +
-	"\x0fallowed_secrets\x18\r \x03(\tR\x0eallowedSecrets\x1a9\n" +
+	"\x0fallowed_secrets\x18\r \x03(\tR\x0eallowedSecrets\x12+\n" +
+	"\x06budget\x18\x0f \x01(\v2\x13.orkstack.v1.BudgetR\x06budget\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +
 	"\rNamespaceHold\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x120\n" +
-	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\"\xda\x01\n" +
+	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\"\x97\x01\n" +
+	"\x06Budget\x12\x1f\n" +
+	"\vcpu_seconds\x18\x01 \x01(\x03R\n" +
+	"cpuSeconds\x12\x1f\n" +
+	"\vgib_seconds\x18\x02 \x01(\x03R\n" +
+	"gibSeconds\x121\n" +
+	"\x06period\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x06period\x12\x18\n" +
+	"\aenforce\x18\x04 \x01(\bR\aenforce\"\xda\x01\n" +
 	"\x04Pool\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12(\n" +
 	"\x10live_orker_count\x18\x02 \x01(\x05R\x0eliveOrkerCount\x12\x1d\n" +
@@ -510,30 +633,33 @@ func file_orkstack_v1_namespace_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_namespace_proto_rawDescData
 }
 
-var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_orkstack_v1_namespace_proto_goTypes = []any{
 	(*Namespace)(nil),             // 0: orkstack.v1.Namespace
 	(*NamespaceHold)(nil),         // 1: orkstack.v1.NamespaceHold
-	(*Pool)(nil),                  // 2: orkstack.v1.Pool
-	nil,                           // 3: orkstack.v1.Namespace.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 5: google.protobuf.Duration
-	(*TelemetryPolicy)(nil),       // 6: orkstack.v1.TelemetryPolicy
+	(*Budget)(nil),                // 2: orkstack.v1.Budget
+	(*Pool)(nil),                  // 3: orkstack.v1.Pool
+	nil,                           // 4: orkstack.v1.Namespace.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 5: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 6: google.protobuf.Duration
+	(*TelemetryPolicy)(nil),       // 7: orkstack.v1.TelemetryPolicy
 }
 var file_orkstack_v1_namespace_proto_depIdxs = []int32{
-	3, // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
-	4, // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
-	4, // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
-	5, // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
-	6, // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
-	1, // 5: orkstack.v1.Namespace.hold:type_name -> orkstack.v1.NamespaceHold
-	4, // 6: orkstack.v1.NamespaceHold.since:type_name -> google.protobuf.Timestamp
-	4, // 7: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
-	8, // [8:8] is the sub-list for method output_type
-	8, // [8:8] is the sub-list for method input_type
-	8, // [8:8] is the sub-list for extension type_name
-	8, // [8:8] is the sub-list for extension extendee
-	0, // [0:8] is the sub-list for field type_name
+	4,  // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
+	5,  // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
+	5,  // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
+	6,  // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
+	7,  // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
+	1,  // 5: orkstack.v1.Namespace.hold:type_name -> orkstack.v1.NamespaceHold
+	2,  // 6: orkstack.v1.Namespace.budget:type_name -> orkstack.v1.Budget
+	5,  // 7: orkstack.v1.NamespaceHold.since:type_name -> google.protobuf.Timestamp
+	6,  // 8: orkstack.v1.Budget.period:type_name -> google.protobuf.Duration
+	5,  // 9: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_namespace_proto_init() }
@@ -548,7 +674,7 @@ func file_orkstack_v1_namespace_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_namespace_proto_rawDesc), len(file_orkstack_v1_namespace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

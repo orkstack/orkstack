@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIucDCglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRIXCg9hbGxvd2VkX3NlY3JldHMYDSADKAkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJKCg1OYW1lc3BhY2VIb2xkEg4KBnJlYXNvbhgBIAEoCRIpCgVzaW5jZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAinAEKBFBvb2wSDAoEbmFtZRgBIAEoCRIYChBsaXZlX29ya2VyX2NvdW50GAIgASgFEhIKCmlzX2RlZmF1bHQYBCABKAgSLQoJbGFzdF9zZWVuGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YBiABKAlKBAgDEARSB3BsdWdpbnNCqgEKD2NvbS5vcmtzdGFjay52MUIOTmFtZXNwYWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIowECglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRIXCg9hbGxvd2VkX3NlY3JldHMYDSADKAkSIwoGYnVkZ2V0GA8gASgLMhMub3Jrc3RhY2sudjEuQnVkZ2V0Gi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiSgoNTmFtZXNwYWNlSG9sZBIOCgZyZWFzb24YASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIm4KBkJ1ZGdldBITCgtjcHVfc2Vjb25kcxgBIAEoAxITCgtnaWJfc2Vjb25kcxgCIAEoAxIpCgZwZXJpb2QYAyABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SDwoHZW5mb3JjZRgEIAEoCCKcAQoEUG9vbBIMCgRuYW1lGAEgASgJEhgKEGxpdmVfb3JrZXJfY291bnQYAiABKAUSEgoKaXNfZGVmYXVsdBgEIAEoCBItCglsYXN0X3NlZW4YBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhoKEnVuYXZhaWxhYmxlX3JlYXNvbhgGIAEoCUoECAMQBFIHcGx1Z2luc0KqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -210,6 +210,24 @@ export type Namespace = Message<"orkstack.v1.Namespace"> & {
    * @generated from field: repeated string allowed_secrets = 13;
    */
   allowedSecrets: string[];
+
+  /**
+   * budget bounds this namespace's reserved consumption over a rolling
+   * period. Unset means unbounded, which is what every namespace has today
+   * and what an upgrade preserves.
+   *
+   * An enforced budget is checked in exactly one place — the admission gate
+   * in SubmitRun's preparation, after the hold and max_running — by reading
+   * the namespace's usage over the trailing period. That read is a
+   * read-then-act with no lock, cached for at most ORK_USAGE_CACHE_TTL, and
+   * counts a run only once it has finished, so enforcement is best-effort by
+   * a bounded margin: the runs that finished inside one cache lifetime, every
+   * run still in flight, and submits racing the check. A lock would remove
+   * the margin and AGENTS.md §2.1 forbids building one.
+   *
+   * @generated from field: orkstack.v1.Budget budget = 15;
+   */
+  budget?: Budget | undefined;
 };
 
 /**
@@ -261,6 +279,70 @@ export type NamespaceHold = Message<"orkstack.v1.NamespaceHold"> & {
  */
 export const NamespaceHoldSchema: GenMessage<NamespaceHold> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_namespace, 1);
+
+/**
+ * Budget bounds how much of the fleet one namespace may RESERVE over a
+ * rolling period. Its units are reservation × held time: the cpu and memory
+ * an Orker granted each attempt (TaskAttempt.resources), multiplied by how
+ * long that Orker held the attempt. They are not utilization, and every
+ * surface that renders them says so: OrkStack reserves, the kernel measures,
+ * and presenting the first as the second would be a number no measurement
+ * produced.
+ *
+ * Usage is derived on read (StatsService.GetUsage) from the runs this
+ * namespace created inside the period that have FINISHED; a run still in
+ * flight is counted when it finishes. Nothing counts usage as it happens, so
+ * nothing can disagree with the records tomorrow.
+ *
+ * @generated from message orkstack.v1.Budget
+ */
+export type Budget = Message<"orkstack.v1.Budget"> & {
+  /**
+   * cpu_seconds bounds reserved cpu × held time, in cpu-seconds. 0 means this
+   * dimension is not bounded. At least one of cpu_seconds and gib_seconds is
+   * above 0; a budget that bounds nothing is refused — clear it instead.
+   *
+   * @generated from field: int64 cpu_seconds = 1;
+   */
+  cpuSeconds: bigint;
+
+  /**
+   * gib_seconds bounds reserved memory × held time, in GiB-seconds (memory
+   * bytes ÷ 2^30 × seconds). 0 means this dimension is not bounded.
+   *
+   * @generated from field: int64 gib_seconds = 2;
+   */
+  gibSeconds: bigint;
+
+  /**
+   * period is the rolling window a budget is held against, ending at the
+   * moment of the question. Required; at least 1h and at most 744h (31 days).
+   * A longer question is a report — `orkctl stats usage --since` — not a
+   * budget evaluated at every submit.
+   *
+   * @generated from field: google.protobuf.Duration period = 3;
+   */
+  period?: Duration | undefined;
+
+  /**
+   * enforce turns the budget from an observation into an admission rule.
+   * False — the default — reports usage against the budget on every read and
+   * never refuses anything, and costs nothing at submit. True refuses every
+   * new run of the namespace with FAILED_PRECONDITION while measured usage
+   * over the trailing period is at or above any bounded dimension. Either
+   * way an accepted run is never touched (AGENTS.md §15).
+   *
+   * @generated from field: bool enforce = 4;
+   */
+  enforce: boolean;
+};
+
+/**
+ * Describes the message orkstack.v1.Budget.
+ * Use `create(BudgetSchema)` to create a new message.
+ */
+export const BudgetSchema: GenMessage<Budget> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_namespace, 2);
 
 /**
  * Pool is a set of Orkers, observed live.
@@ -339,5 +421,5 @@ export type Pool = Message<"orkstack.v1.Pool"> & {
  * Use `create(PoolSchema)` to create a new message.
  */
 export const PoolSchema: GenMessage<Pool> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_namespace, 2);
+  messageDesc(file_orkstack_v1_namespace, 3);
 

@@ -141,6 +141,20 @@ message Namespace {
   // own floor (ORK_ORKER_SECRET_ALLOW): a namespace can only ever narrow
   // what its Orkers already permit.
   repeated string allowed_secrets = 13;
+
+  // budget bounds this namespace's reserved consumption over a rolling
+  // period. Unset means unbounded, which is what every namespace has today
+  // and what an upgrade preserves.
+  //
+  // An enforced budget is checked in exactly one place — the admission gate
+  // in SubmitRun's preparation, after the hold and max_running — by reading
+  // the namespace's usage over the trailing period. That read is a
+  // read-then-act with no lock, cached for at most ORK_USAGE_CACHE_TTL, and
+  // counts a run only once it has finished, so enforcement is best-effort by
+  // a bounded margin: the runs that finished inside one cache lifetime, every
+  // run still in flight, and submits racing the check. A lock would remove
+  // the margin and AGENTS.md §2.1 forbids building one.
+  Budget budget = 15;
 }
 
 // NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
@@ -164,6 +178,40 @@ message NamespaceHold {
   // of a hold does not move it: the door has been closed since the first
   // write, whatever the sign on it now says.
   google.protobuf.Timestamp since = 2;
+}
+
+// Budget bounds how much of the fleet one namespace may RESERVE over a
+// rolling period. Its units are reservation × held time: the cpu and memory
+// an Orker granted each attempt (TaskAttempt.resources), multiplied by how
+// long that Orker held the attempt. They are not utilization, and every
+// surface that renders them says so: OrkStack reserves, the kernel measures,
+// and presenting the first as the second would be a number no measurement
+// produced.
+//
+// Usage is derived on read (StatsService.GetUsage) from the runs this
+// namespace created inside the period that have FINISHED; a run still in
+// flight is counted when it finishes. Nothing counts usage as it happens, so
+// nothing can disagree with the records tomorrow.
+message Budget {
+  // cpu_seconds bounds reserved cpu × held time, in cpu-seconds. 0 means this
+  // dimension is not bounded. At least one of cpu_seconds and gib_seconds is
+  // above 0; a budget that bounds nothing is refused — clear it instead.
+  int64 cpu_seconds = 1;
+  // gib_seconds bounds reserved memory × held time, in GiB-seconds (memory
+  // bytes ÷ 2^30 × seconds). 0 means this dimension is not bounded.
+  int64 gib_seconds = 2;
+  // period is the rolling window a budget is held against, ending at the
+  // moment of the question. Required; at least 1h and at most 744h (31 days).
+  // A longer question is a report — `orkctl stats usage --since` — not a
+  // budget evaluated at every submit.
+  google.protobuf.Duration period = 3;
+  // enforce turns the budget from an observation into an admission rule.
+  // False — the default — reports usage against the budget on every read and
+  // never refuses anything, and costs nothing at submit. True refuses every
+  // new run of the namespace with FAILED_PRECONDITION while measured usage
+  // over the trailing period is at or above any bounded dimension. Either
+  // way an accepted run is never touched (AGENTS.md §15).
+  bool enforce = 4;
 }
 
 // Pool is a set of Orkers, observed live.
