@@ -314,6 +314,16 @@ async function openStability(page: Page): Promise<void> {
 	if (!isOpen) await page.getByTestId('stability-toggle').click();
 }
 
+/** stabilityRow is the Stability table's row for one orkflow's task, matched
+ * on its orkflow and task CELLS: a row's cells run together in its text, so a
+ * whole-row text filter can match across cell boundaries. */
+function stabilityRow(page: Page, orkflow: string, task: string) {
+	return page
+		.locator('tr[data-testid^="stability-row-"]')
+		.filter({ has: page.locator('[data-testid$="-orkflow"]', { hasText: new RegExp(`^\\s*${orkflow}\\s*$`) }) })
+		.filter({ has: page.locator('[data-testid$="-task"]', { hasText: new RegExp(`^\\s*${task}\\s*$`) }) });
+}
+
 /** lineNumbers reads the numbers off a pane's rendered lines, in DOM order. */
 async function lineNumbers(page: Page, taskId: string, prefix: string): Promise<number[]> {
 	const texts = await page.getByTestId(`task-log-${taskId}`).getByTestId('task-log-line').allInnerTexts();
@@ -1078,7 +1088,11 @@ test("the dashboard's stability section names the task that retried, its rate an
 
 	// Grouped by Orker too: the row names the Orker whose attempt FAILED.
 	await page.getByTestId('stability-dim-orker').check();
-	const orkerRow = page.locator('[data-testid^="stability-row-"]').filter({ hasText: RETRYING }).filter({ hasText: '100.0%' });
+	// Match on the CELLS, never the row's whole text: a row's cells run
+	// together in its text, so runs 1, retried 0 and rate 0.0% read "100.0%".
+	const orkerRow = stabilityRow(page, RETRYING, 'flaky').filter({
+		has: page.locator('[data-testid$="-rate"]', { hasText: /^\s*100\.0%\s*$/ })
+	});
 	await expect(orkerRow).toContainText(orkerId, { timeout: 30_000 });
 	note(`stability grouped by task,orker: ${(await orkerRow.first().innerText()).replace(/\s+/g, ' ')}`);
 
@@ -1127,7 +1141,7 @@ test("the dashboard's stability section names the task that retried, its rate an
 	await page.goto(`${UI_ORIGIN}/?ns=${ALPHA}`);
 	// The disclosure remembers it was open.
 	await openStability(page);
-	const after = page.locator('[data-testid^="stability-row-"]').filter({ hasText: RETRYING }).filter({ hasText: 'flaky' });
+	const after = stabilityRow(page, RETRYING, 'flaky');
 	await expect
 		.poll(async () => (await after.locator('[data-unavailable="true"]').count()), { timeout: 90_000 })
 		.toBe(1);
