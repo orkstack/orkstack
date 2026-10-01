@@ -913,6 +913,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open artifact store: %w", err)
 	}
+	// The completion records, READ by ExportRunEvidence only, and only at the
+	// uri a run snapshot recorded. Same bucket and backend the Orker writes
+	// them through; the conditional-create boot probe is the Orker's concern
+	// and is not run here, because the engine never writes a commit.
+	commitStore, err := artifacts.NewCommitStore(ctx, archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open commit store: %w", err)
+	}
 
 	// The read model. Every run read leaves this process: a run's history is
 	// its event log, and Temporal hands the same answer to every replica, for
@@ -1088,6 +1096,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Logs:          logStore,
 		ArtifactStore: artifactStore,
 		Attempts:      attemptStore,
+		Commits:       commitStore,
 		Idempotency:   idempotency,
 		Webhooks:      webhookRegistry,
 		Deliveries:    deliveryStore,
