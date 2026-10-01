@@ -119,6 +119,65 @@ func TestVerify_FailsByName(t *testing.T) {
 		})
 	}
 
+	// The manifest itself disagreeing with the four states, or listing one
+	// path twice: the member must still be accounted for, as a Failure.
+	manifestCases := []struct {
+		name   string
+		mutate func(*Manifest) string
+		reason string
+	}{
+		{"unknown state", func(m *Manifest) string {
+			for i := range m.Members {
+				if m.Members[i].State == StateReclaimed {
+					m.Members[i].State = "vanished"
+					return m.Members[i].Path
+				}
+			}
+			t.Fatal("fixture has no reclaimed member")
+			return ""
+		}, FailureUnknownState},
+		{"listed twice", func(m *Manifest) string {
+			for _, member := range m.Members {
+				if member.Path == artifact {
+					m.Members = append(m.Members, member)
+					return artifact
+				}
+			}
+			t.Fatal("fixture has no artifact member")
+			return ""
+		}, FailureDuplicateMember},
+	}
+	for _, tc := range manifestCases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture()
+			f.manifest.Members = append([]Member(nil), f.manifest.Members...)
+			path := tc.mutate(f.manifest)
+			// The file carries each member's bytes once, as the engine
+			// would write them; only the manifest is at fault.
+			var entries []tarEntry
+			written := map[string]bool{}
+			for _, e := range fixtureEntries(t, f) {
+				if !written[e.name] {
+					written[e.name] = true
+					entries = append(entries, e)
+				}
+			}
+			report, err := Verify(bytes.NewReader(buildTar(t, entries)))
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if len(report.Failures) != 1 || report.Failures[0].Path != path || report.Failures[0].Reason != tc.reason {
+				t.Fatalf("failures = %+v, want one %s %q", report.Failures, path, tc.reason)
+			}
+			t.Logf("%s: %+v", tc.name, report.Failures)
+			accounted := len(report.Verified) + len(report.Reclaimed) + len(report.Unrecorded) +
+				len(report.Rejected) + len(report.Failures)
+			if accounted != len(f.manifest.Members) {
+				t.Errorf("%d of %d manifest members accounted for", accounted, len(f.manifest.Members))
+			}
+		})
+	}
+
 	t.Run("schema version 2", func(t *testing.T) {
 		entries := fixtureEntries(t, f)
 		entries[0].body = bytes.Replace(entries[0].body, []byte(`"schema_version": 1`), []byte(`"schema_version": 2`), 1)

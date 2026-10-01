@@ -22,10 +22,17 @@ const (
 	FailureUnsafePath       = "unsafe path"
 	FailureNotRegular       = "not a regular file"
 	FailureManifestNotFirst = "manifest not first"
+	// The two below are disagreements inside the manifest itself, which the
+	// engine never writes but a hand-edited or foreign file can carry: a
+	// member whose state is none of the four, and a path listed twice.
+	// Without them such a member would land in no list of the Report.
+	FailureUnknownState    = "unknown state"
+	FailureDuplicateMember = "listed twice in manifest"
 )
 
 // Report is what Verify found. Every member of the manifest is accounted
-// for in exactly one of its lists.
+// for in exactly one of its lists: a member whose state is unknown, or the
+// second listing of a path, is a Failure.
 type Report struct {
 	Manifest   *Manifest `json:"manifest"`
 	Verified   []Member  `json:"verified"`   // present in manifest, present in file, digest and size equal
@@ -87,6 +94,10 @@ func Verify(r io.Reader) (*Report, error) {
 	present := map[string]slot{}
 	listed := map[string]bool{}
 	for i, member := range manifest.Members {
+		if listed[member.Path] {
+			report.Failures = append(report.Failures, Failure{Path: member.Path, Reason: FailureDuplicateMember})
+			continue
+		}
 		listed[member.Path] = true
 		switch member.State {
 		case StatePresent:
@@ -97,6 +108,9 @@ func Verify(r io.Reader) (*Report, error) {
 			report.Unrecorded = append(report.Unrecorded, member)
 		case StateRejected:
 			report.Rejected = append(report.Rejected, member)
+		default:
+			report.Failures = append(report.Failures, Failure{Path: member.Path, Reason: FailureUnknownState,
+				Got: string(member.State)})
 		}
 	}
 	seen := map[string]bool{}
@@ -150,8 +164,8 @@ func Verify(r io.Reader) (*Report, error) {
 		}
 		report.Verified = append(report.Verified, entry.member)
 	}
-	for _, member := range manifest.Members {
-		if member.State == StatePresent && !seen[member.Path] {
+	for i, member := range manifest.Members {
+		if entry, ok := present[member.Path]; ok && entry.index == i && !seen[member.Path] {
 			report.Failures = append(report.Failures, Failure{Path: member.Path, Reason: FailureMissing})
 		}
 	}

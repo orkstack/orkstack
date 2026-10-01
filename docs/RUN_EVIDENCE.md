@@ -215,6 +215,11 @@ string. Its rules:
 6. An absolute name, a `..` segment or a NUL is `unsafe path`; a non-regular
    entry is `not a regular file`.
 7. A `schema_version` other than 1 is refused.
+8. The manifest must agree with itself: a member whose `state` is not one of
+   `present`, `reclaimed`, `unrecorded` or `rejected` is `unknown state`, and
+   a `path` listed a second time is `listed twice in manifest`. The engine
+   never writes either; the rule exists so that every listed member is
+   accounted for exactly once, as verified, a finding, or a failure.
 
 Reclaimed, unrecorded and rejected members are findings, not failures: the
 command exits 0 and lists them with their reasons. Any failure exits 1 and is
