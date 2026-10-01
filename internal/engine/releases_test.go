@@ -88,7 +88,9 @@ type fakeReleaseClient struct {
 	channelReqs []*workflowservice.DescribeTaskQueueRequest
 }
 
-func (c *fakeReleaseClient) WorkerDeploymentClient() client.WorkerDeploymentClient { return c.deployments }
+func (c *fakeReleaseClient) WorkerDeploymentClient() client.WorkerDeploymentClient {
+	return c.deployments
+}
 
 func (c *fakeReleaseClient) DescribeTaskQueue(_ context.Context, in *workflowservice.DescribeTaskQueueRequest) (*workflowservice.DescribeTaskQueueResponse, error) {
 	c.mu.Lock()

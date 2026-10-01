@@ -8,6 +8,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 )
 
@@ -61,17 +63,36 @@ var _ PoolProbe = (*TemporalPoolProbe)(nil)
 func (p *TemporalPoolProbe) ObservePool(ctx context.Context, queue string) (PoolLiveness, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, poolProbeTimeout)
 	defer cancel()
-	description, err := p.client.DescribeTaskQueueEnhanced(probeCtx, client.DescribeTaskQueueEnhancedOptions{
-		TaskQueue:      queue,
-		TaskQueueTypes: []client.TaskQueueType{client.TaskQueueTypeActivity},
-		ReportPollers:  true,
-		Versions:       &client.TaskQueueVersionSelection{AllActive: true, Unversioned: true},
-	})
+	// The default-mode read, which lists every poller of the channel whatever
+	// release it registered with. The enhanced read (AllActive + Unversioned)
+	// was measured against the pinned cluster to omit pollers that registered
+	// with a release — a pool served only by versioned Orkers read as empty
+	// and every submit to it was refused (orkctl-release implementation
+	// notes; TestIntegration_ObservePoolCountsAReleasesOrkers).
+	described, err := p.client.DescribeTaskQueue(probeCtx, queue, enumspb.TASK_QUEUE_TYPE_ACTIVITY)
 	if err != nil {
 		return PoolLiveness{}, fmt.Errorf("describe pool channel %q: %w", queue, err)
 	}
 
-	return livePollers(description, p.now(), p.freshness()), nil
+	return livePollers(activityDescription(described), p.now(), p.freshness()), nil
+}
+
+// activityDescription reshapes a default-mode answer into the description
+// livePollers reduces: one entry holding the channel's activity pollers.
+func activityDescription(described *workflowservice.DescribeTaskQueueResponse) client.TaskQueueDescription {
+	pollers := make([]client.TaskQueuePollerInfo, 0, len(described.GetPollers()))
+	for _, poller := range described.GetPollers() {
+		info := client.TaskQueuePollerInfo{Identity: poller.GetIdentity(), RatePerSecond: poller.GetRatePerSecond()}
+		if at := poller.GetLastAccessTime(); at != nil {
+			info.LastAccessTime = at.AsTime()
+		}
+		pollers = append(pollers, info)
+	}
+	return client.TaskQueueDescription{VersionsInfo: map[string]client.TaskQueueVersionInfo{
+		"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
+			client.TaskQueueTypeActivity: {Pollers: pollers},
+		}},
+	}}
 }
 
 // livePollers reduces one channel's poller records to a count of the Orkers

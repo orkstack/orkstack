@@ -119,7 +119,7 @@ func rolloutStep() releaseStep {
 			CurrentSince:   time.Date(2026, 9, 24, 9, 2, 11, 0, time.UTC),
 			Releases: []engine.ObservedRelease{
 				{BuildID: relQ, FirstSeenAt: time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC), HasServed: true,
-					DrainState: orkstackv1.ReleaseDrainState_RELEASE_DRAIN_STATE_DRAINED,
+					DrainState:     orkstackv1.ReleaseDrainState_RELEASE_DRAIN_STATE_DRAINED,
 					DrainCheckedAt: time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)},
 				{BuildID: relP, FirstSeenAt: time.Date(2026, 8, 9, 10, 0, 0, 0, time.UTC), HasServed: true,
 					DrainState:     orkstackv1.ReleaseDrainState_RELEASE_DRAIN_STATE_DRAINING,

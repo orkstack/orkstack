@@ -106,6 +106,10 @@ func (w *releaseWorld) startPoolOrker(build, pool string, holdTask string) *rele
 	o := &releaseOrker{w: w, build: build, ran: map[string]string{}, holdTask: holdTask,
 		hold: make(chan struct{}), held: make(chan struct{})}
 	o.worker = worker.New(w.c, route.Queue, w.version(build).Apply(worker.Options{
+		// Every stub Orker lives in this one test process, so each is given
+		// an identity of its own: the cluster counts processes by identity,
+		// and two workers sharing the SDK's pid@host default are one poller.
+		Identity:                    fmt.Sprintf("orker-%s-%s@%s", build, pool, w.deployment),
 		DisableRegistrationAliasing: true,
 		DisableWorkflowWorker:       true,
 	}))
@@ -509,4 +513,37 @@ func assertRunVersionPlain(t *testing.T, ctx context.Context, c client.Client, r
 	if version.GetBuildId() != want.BuildID || version.GetDeploymentName() != want.Name {
 		t.Fatalf("run %s is on %s:%s, want %s", runID, version.GetDeploymentName(), version.GetBuildId(), want)
 	}
+}
+
+// TestIntegration_ObservePoolCountsAReleasesOrkers holds the pool liveness
+// probe — what a submit asks before it accepts a run — to the Orkers of a
+// release. With every Orker of a pool started with ORK_BUILD_ID, the enhanced
+// channel read this probe used before reported the pool empty, and every
+// submit onto it was refused.
+func TestIntegration_ObservePoolCountsAReleasesOrkers(t *testing.T) {
+	w := newReleaseWorld(t, 3*time.Minute)
+	w.startProjection()
+	w.startEngine("v1")
+	w.startPoolOrker("v1", "main", "")
+	w.awaitRegistered("v1", w.runQueue, w.orkerQueue)
+	w.setCurrent("v1")
+	w.startPoolOrker("v2", "main", "")
+	w.awaitRegistered("v2", w.orkerQueue)
+
+	probe := engine.NewTemporalPoolProbe(w.c)
+	deadline := time.Now().Add(60 * time.Second)
+	var live engine.PoolLiveness
+	var err error
+	for {
+		live, err = probe.ObservePool(w.ctx, w.orkerQueue)
+		if err == nil && live.Orkers == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ObservePool = %+v, %v; want the two release Orkers (v1 current, v2 a candidate)", live, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	w.step(fmt.Sprintf("ObservePool counts %d Orkers on a pool served only by Orkers of releases v1 and v2", live.Orkers))
+	w.write("releases-pool-probe.txt")
 }
