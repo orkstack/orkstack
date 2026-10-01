@@ -277,7 +277,7 @@ Every failure is the error envelope `webhookErrorEnvelope` already uses:
 | Malformed or over-long `Ork-Origin-Reference` | 400 | `invalid_argument` |
 | Orkflow or pinned version no longer exists | 404 | `not_found` |
 | A resolved pool has no live Orker, or no run starter is configured | 412 | `failed_precondition` |
-| The namespace is on hold, or at its `max_running` (namespace admission) | 412 | `failed_precondition` |
+| The namespace is on hold, at its `max_running`, or its enforced budget is reached or cannot be measured (namespace admission) | 412 | `failed_precondition` |
 | Object storage or Temporal unavailable at submit | 503 | `unavailable` |
 | Anything else | 500 | `internal` |
 

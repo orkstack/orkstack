@@ -202,7 +202,7 @@ The dashboard offers the same answer as a disclosure under **Recent failures**
 opened, with one chip per dimension and a CLI equivalent that reproduces its
 rows.
 
-**The one read that opens run bodies.** §1's rule — no aggregate reads a run
+**The one read that opens run bodies.** §1's rule — no `GetStats` aggregate reads a run
 body — holds for `GetStats` unchanged, with its keys-only type and its
 panicking test. The facts that tell one failure from another are not in the
 index key: the task that failed, its code and category, its pool and Orker are
@@ -401,3 +401,96 @@ finished run in the window and one prefix listing of
 `metadata/attempts/{run-id}/{task-id}/` per dispatched task, eight at a time.
 Nothing is written; no counter, rollup or trend store exists. A flake rate
 graphed over weeks belongs to the telemetry pipeline (`ork.task.attempts`).
+
+## 8. Usage
+
+`StatsService.GetUsage` answers *how much of the fleet did this namespace
+RESERVE over a window?* — the read a namespace budget is held against, and the
+one the admission gate itself makes for an enforced budget
+(`docs/DEPLOY.md`, "Namespace budgets").
+
+```bash
+orkctl -n analytics stats usage                               # the namespace total, last 24h
+orkctl -n analytics stats usage --since 720h --group-by pool  # the budget's own window, per pool
+orkctl stats usage --since 720h --group-by namespace          # every namespace, one call each
+```
+
+The dashboard's **Usage** card and **Admin → Usage** render the same answers
+(`ui/src/lib/usage.ts`).
+
+**Three units, all reserved, none measured.**
+
+| Unit | Definition |
+|---|---|
+| task-seconds | Σ held time — `finished_at − started_at` of every recorded attempt: from the Orker picking the activity up to it writing the record, image pull, staging and upload included, because the Orker's slot was held for all of it |
+| cpu-seconds | Σ `TaskAttempt.resources.cpu × held time` over recorded attempts carrying a reservation |
+| GiB-seconds | Σ `TaskAttempt.resources.memory_bytes ÷ 2³⁰ × held time` over the same attempts |
+
+The **reservation** is what the Orker granted the container after its
+defaults filled a missing request and its caps admitted it
+(`ORK_ORKER_DEFAULT_*`, `ORK_ORKER_MAX_*`), recorded on every attempt record
+(`TaskAttempt.resources`). It is a limit, not a measurement: every surface
+prints "cpu-seconds and GiB-seconds are RESERVED cpu and memory × attempt
+time, not measured utilization." OrkStack knows what it reserved, never what
+it cost or what the kernel measured.
+
+**The population** is the flake index's (§7): every finished run of the
+namespace the window created, read from the archive index keys, so
+`runs_in_window` equals `GetStats`' succeeded + failed + canceled for the same
+window. A run still in flight is not in it; it is counted once it finishes.
+Every recorded attempt counts whatever its outcome — succeeded, failed,
+canceled, or an adopted commit (whose held time is the commit check).
+
+**Honest gaps.** Each is counted and printed, never folded into a smaller
+number that looks real:
+
+- `runs_evidence_missing` — dispatched runs holding no record for at least one
+  task (reclaimed with the run's logs, removed by a lifecycle rule, or a
+  best-effort write that never landed). Their consumption is NOT in any sum.
+- `coverage_since` — the creation time of the oldest run in the window that
+  still has a record: where reclamation has reached.
+- `attempts_without_resources` — recorded attempts with no reservation (written
+  before this release, or refused before one was resolved): their time is in
+  task-seconds, not in cpu- or GiB-seconds, which are then lower bounds.
+- `unreported_attempts` — attempts below a task's highest that left no record.
+- `attempts_unmeasured` — records with no usable interval; counted in nothing.
+
+**Fail rather than answer from a subset.** More than 10000 finished runs in the
+window (`UsageMaxScan`) is `ResourceExhausted` before a body is read. An index
+row with no body is skipped (`runs_scanned < runs_in_window`); any other
+unreadable body, attempt listing or record fails the call `Unavailable`,
+naming the run. An engine with no archive, or no attempt store that can list a
+run's records, is `FailedPrecondition`.
+
+**The memo cannot change an answer.** A usage window is long and its runs are
+finished, so each replica remembers, per run, its archived body's facts
+(immutable: archive bodies are never deleted) and the sums its attempt records
+fold to — valid ONLY for the exact set of record keys they were read from.
+Every measurement re-lists each run's records; a listing that names other keys
+(a record reclaimed since, or a late best-effort write) misses the memo and the
+run is re-read, so a warm replica and a cold one answer identically for the
+same bytes (`TestUsageMeter_WarmAnswerEqualsColdAnswer`,
+`TestUsageMeter_AReclaimedRunIsMissingOnAWarmReplicaToo`). It is bounded at
+20000 runs, least recently used first.
+
+**The answer cache** holds whole measurements for `ORK_USAGE_CACHE_TTL`
+(default 5m; `0` switches it off), keyed by the namespace and window as sent
+and the grouping, and every answer carries `computed_at`. One measurement per
+question runs at a time; a caller that gives up does not abort it, and the
+next caller gets it. The budget is policy and is never cached: every answer
+reads it fresh from the namespace document, and `budget_window` /
+`budget_reached` are set only when the window asked is exactly the budget's
+trailing period (`--since <period>`).
+
+**Cost**, divided by `ORK_USAGE_CACHE_TTL` per (namespace, window as sent,
+grouping):
+
+| Read | When |
+|---|---|
+| index listing, 1 page per 1000 archived runs of the namespace | every measurement (GetStats pays the same) |
+| 1 attempt-prefix listing per finished run in the window | every measurement |
+| 1 body GET + 1 GET per attempt record, per run | the first measurement of that run on this replica, and again only when its record set changed |
+
+Nothing is written; no counter, rollup or ledger exists. A consumption curve
+over months belongs to the telemetry pipeline (`ork.orker.task.duration`
+carries per-attempt durations labelled by namespace and pool).
