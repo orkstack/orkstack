@@ -130,6 +130,7 @@ func startObservedReplica(
 	ctx context.Context,
 	t *testing.T,
 	name, enginePath, temporalAddr, namespace, queue, adminAddr string,
+	extraEnv ...string,
 ) (*engineReplica, *lockedBuffer) {
 	t.Helper()
 	addr := freeAddress(t)
@@ -144,6 +145,7 @@ func startObservedReplica(
 		"OTEL_METRICS_EXPORTER=prometheus",
 		localActivityCatalogEnv(t),
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	log := &lockedBuffer{}
 	cmd.Stdout = log
 	cmd.Stderr = log
