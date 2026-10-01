@@ -561,7 +561,9 @@ func (x *TaskRun) GetScheduledAt() *timestamppb.Timestamp {
 // TaskAttempt.finished_at. The names are the dispatcher's own — "start",
 // "commit-check", "workspace", "stage-inputs", "image", "render", "create",
 // "run", "exit", "validate", "commit", and, entered from the wait path,
-// "timeout" and "cancel" — and are not an enum, for the reason
+// "timeout" and "cancel"; "image-policy" is entered only when the task
+// carries an image policy (ExecuteTaskInput.image_policy), between
+// "commit-check" and "workspace" — and are not an enum, for the reason
 // TaskAttempt.phase is a string: a reader of an older build must be able to
 // read a phase it has never heard of.
 type PhaseSpan struct {

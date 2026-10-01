@@ -23,6 +23,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	cfgfile "github.com/orkstack/orkstack/internal/config"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -62,6 +63,11 @@ type config struct {
 	// served from it if its digest was already resolved from a registry at
 	// apply time.
 	imageLayoutRoot string
+	// registryAuthFile is ORK_ORKER_REGISTRY_AUTH_FILE: a docker config.json
+	// used only for the manifest and blob GETs that verify a cosign signature
+	// when a run's image policy names a signer. Empty verifies anonymously,
+	// which public registries allow. Never mounted into a container.
+	registryAuthFile string
 	// taskLogExport is TaskLogExportVar: whether a task's stdout/stderr lines
 	// are additionally exported as OTel log records, beside the durable chunk
 	// store every attempt already writes to.
@@ -113,6 +119,7 @@ func loadConfig() config {
 	maxPins, maxPinsErr := envMaxPins()
 	return config{
 		imageLayoutRoot:   env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
+		registryAuthFile:  env(orker.RegistryAuthFileVar, ""),
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
 		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
 		pool:              binding.Pool,
@@ -670,6 +677,14 @@ func orkerOptions(
 		// (§14.15), so a filename is a claim rather than a digest. An absent
 		// directory simply disables the fallback.
 		LayoutRoot: cfg.imageLayoutRoot,
+		// The image policy's signature check (image-supply-chain-policy
+		// §6.2): always built — an empty auth file is anonymous access,
+		// which is what a public registry needs — over the engine's one
+		// resolver, so the Orker reads a signature exactly as apply did.
+		Signatures: &dsl.SignatureVerifier{
+			Resolver:    dsl.NewResolver(cfg.registryAuthFile),
+			AuthFileVar: orker.RegistryAuthFileVar,
+		},
 		// The dispatcher's half of the pairing workerOptions describes. Both
 		// read cfg.tick(), so there is one number and no way for the loop and
 		// the SDK's batch window to drift apart.

@@ -26,6 +26,8 @@ var allReasonCodes = []string{
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused,
 	ReasonNetworkModeRefused,
+	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
+	ReasonImageSignatureUnavailable,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake
@@ -80,6 +82,14 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"storage failures are usually transient"},
 		{ReasonArtifactNameNotUTF8, CategoryContractViolation, false,
 			"no protobuf encoding can carry the name (§14.16)"},
+		{ReasonImageNotPermitted, CategoryContractViolation, false,
+			"an image outside the pinned policy refuses identically on every attempt"},
+		{ReasonImageNotSigned, CategoryContractViolation, false,
+			"a digest with no signature object is the same digest next attempt"},
+		{ReasonImageSignatureInvalid, CategoryContractViolation, false,
+			"no signature verifies with the pinned key, and none will"},
+		{ReasonImageSignatureUnavailable, CategoryInfrastructureError, true,
+			"the registry could not be asked; that is IMAGE_PULL_FAILED's situation, never a verdict"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.reason, func(t *testing.T) {

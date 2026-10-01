@@ -48,6 +48,9 @@ if has_gate integration || has_gate ui; then
 			"http://$REGISTRY/v2/orkstack/activity-$activity/manifests/dev"
 	done
 fi
+if has_gate integration; then
+	need "the cosign CLI on PATH (image-policy interop test)" command -v cosign
+fi
 if has_gate ui; then
 	need "bun on PATH" command -v bun
 	need "ui/node_modules (cd ui && bun install)" test -d "$REPO/ui/node_modules"

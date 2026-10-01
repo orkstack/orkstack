@@ -11,8 +11,9 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const namespace = namespaceFrom(url);
 	const namespaces = loadNamespaces(fetch);
 	const sinks = loadTelemetrySinks(fetch);
-	const [namespacesResult, sinksResult] = await Promise.all([namespaces, sinks]);
-	return { namespace, ...namespacesResult, ...sinksResult };
+	const keys = loadImagePolicy(fetch);
+	const [namespacesResult, sinksResult, keysResult] = await Promise.all([namespaces, sinks, keys]);
+	return { namespace, ...namespacesResult, ...sinksResult, ...keysResult };
 };
 
 async function loadNamespaces(fetchFn: typeof fetch) {
@@ -48,6 +49,26 @@ async function loadTelemetrySinks(fetchFn: typeof fetch) {
 		return {
 			telemetrySinks: [] as string[],
 			telemetrySinksError: errorMessage(err)
+		};
+	}
+}
+
+// loadImagePolicy reads the deployment's image policy (SystemService.
+// GetImagePolicy) for its signing key NAMES only, so the create/edit forms can
+// offer a select of `cosign:<name>` signers the engine will accept. A failure
+// here does not fail the page — the forms fall back to a plain text input for
+// the signer, on the same terms as the telemetry sink select.
+async function loadImagePolicy(fetchFn: typeof fetch) {
+	try {
+		const res = await orkstack(fetchFn).system.getImagePolicy({});
+		return {
+			signingKeys: Object.keys(res.policy?.signingKeys ?? {}).sort(),
+			signingKeysError: null as string | null
+		};
+	} catch (err) {
+		return {
+			signingKeys: [] as string[],
+			signingKeysError: errorMessage(err)
 		};
 	}
 }
