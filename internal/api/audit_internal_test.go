@@ -36,6 +36,8 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.WebhookServiceListDeliveriesProcedure:      true,
 	orkstackv1connect.WebhookServiceGetDeliveryProcedure:         true,
 	orkstackv1connect.TriggerServiceListTriggersProcedure:        true,
+	orkstackv1connect.ScheduleServiceListSchedulesProcedure:      true,
+	orkstackv1connect.ScheduleServiceGetScheduleProcedure:        true,
 	orkstackv1connect.NamespaceServiceGetNamespaceProcedure:      true,
 	orkstackv1connect.NamespaceServiceListNamespacesProcedure:    true,
 	orkstackv1connect.NamespaceServiceListPoolsProcedure:         true,
@@ -50,6 +52,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.SystemServiceListTelemetrySinksProcedure: true,
 	orkstackv1connect.StatsServiceGetStatsProcedure:            true,
 	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure: true,
+	orkstackv1connect.StatsServiceGetFlakeIndexProcedure:       true,
 	orkstackv1connect.AuditServiceListAuditRecordsProcedure:    true,
 }
 

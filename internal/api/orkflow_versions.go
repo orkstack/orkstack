@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -189,6 +190,30 @@ func (s *Service) DeleteOrkflow(
 	// even when the run record is temporarily unavailable.
 	if _, err := s.orkflows.Get(ctx, ns.GetName(), name, ""); err != nil {
 		return nil, orkflowStoreError(err, "orkflow %q in namespace %q", name, ns.GetName())
+	}
+
+	// A schedule names the orkflow it starts; deleting the orkflow under it
+	// would turn every later fire into a refusal. The check is the cluster's
+	// answer, and an unanswerable one refuses the delete on the terms the run
+	// query below does.
+	if s.schedules != nil {
+		views, err := s.schedules.List(ctx, ns.GetName())
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+				"cannot verify whether orkflow %q in namespace %q has schedules: %w",
+				name, ns.GetName(), err))
+		}
+		var naming []string
+		for _, view := range views {
+			if view.OrkflowName == name {
+				naming = append(naming, view.Name)
+			}
+		}
+		if len(naming) > 0 {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"cannot delete orkflow %q in namespace %q: %d schedule(s) name it (%s); delete them first",
+				name, ns.GetName(), len(naming), strings.Join(naming, ", ")))
+		}
 	}
 
 	listed, err := s.completeOrkflowRuns(ctx, ns.GetName(), name)

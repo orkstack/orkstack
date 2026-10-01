@@ -81,6 +81,12 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	triggerPath, triggerHandler := orkstackv1connect.NewTriggerServiceHandler(svc, handlerOptions...)
 	mux.Handle(triggerPath, triggerHandler)
 
+	// ScheduleService manages schedules: the third run starter, bound to one
+	// orkflow in one namespace, whose every field lives in a Temporal
+	// Schedule (orkflow-schedules).
+	schedulePath, scheduleHandler := orkstackv1connect.NewScheduleServiceHandler(svc, handlerOptions...)
+	mux.Handle(schedulePath, scheduleHandler)
+
 	// AuditService reads the control-plane audit trail back from the shared
 	// store. It is itself a read and is never recorded.
 	auditPath, auditHandler := orkstackv1connect.NewAuditServiceHandler(svc, handlerOptions...)

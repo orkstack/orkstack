@@ -32,6 +32,9 @@
 		type TaskRun
 	} from '$lib/gen/orkstack/v1/run_pb';
 	import { attemptsSeen, groupAttemptsByTask, runRetryCount } from '$lib/attempts';
+	import { durationFromMs } from '@bufbuild/protobuf/wkt';
+	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
+	import { flakesCli } from '$lib/flakes';
 	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import {
@@ -249,6 +252,86 @@
 	// tried again. Zero draws nothing — a run that never retried should not
 	// have to say so.
 	const runRetries = $derived(runRetryCount([...attemptsByTask.values()].flat()));
+
+	// RETRY HISTORY, on request. Whether THIS run retried a task is on its
+	// badge already; whether the task retries in this orkflow's other runs is
+	// a question about the archive (GetFlakeIndex), and it is asked only when
+	// a reader asks it — the page's own loads stay what they were. The open
+	// state is remembered per viewer, so a reader who wants history on every
+	// run page gets it without clicking, and one who never asks never costs
+	// the scan.
+	const HISTORY_KEY = 'orkstack.run.stability';
+	const HISTORY_WINDOW = '7 days';
+	const HISTORY_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
+	let historyOpen = $state(false);
+	let history = $state<GetFlakeIndexResponse | null>(null);
+	let historyError = $state<string | null>(null);
+	let historyLoading = $state(false);
+	// Which run the answer in hand was asked for; a new run page asks again.
+	let historyFor = '';
+	let historyGeneration = 0;
+	$effect(() => {
+		try {
+			historyOpen = globalThis.localStorage?.getItem(HISTORY_KEY) === 'open';
+		} catch {
+			// Storage is blocked; the default (closed) stands.
+		}
+	});
+	const flakesByTask = $derived(
+		new Map<string, FlakeGroup>((historyOpen && history ? history.groups : []).map((group) => [group.taskId, group]))
+	);
+	async function loadHistory(namespace: string, orkflowName: string) {
+		const mine = ++historyGeneration;
+		historyLoading = true;
+		try {
+			const resp = await orkstack(fetch).stats.getFlakeIndex({
+				namespace,
+				orkflowName,
+				lookback: durationFromMs(HISTORY_LOOKBACK_MS),
+				groupBy: [FailureGroupBy.TASK]
+			});
+			if (mine !== historyGeneration) return;
+			history = resp;
+			historyError = null;
+		} catch (err) {
+			if (mine !== historyGeneration) return;
+			// Tolerant: the badges stay exactly as they were, and the reason is
+			// said beside the button rather than swallowed.
+			history = null;
+			historyError = errorMessage(err);
+		} finally {
+			if (mine === historyGeneration) historyLoading = false;
+		}
+	}
+	$effect(() => {
+		const key = `${data.namespace}/${run?.id ?? ''}`;
+		if (!historyOpen || !run?.orkflowName) return;
+		if (historyFor === key) return;
+		historyFor = key;
+		history = null;
+		historyError = null;
+		void loadHistory(data.namespace, run.orkflowName);
+	});
+	function toggleHistory() {
+		historyOpen = !historyOpen;
+		if (!historyOpen) {
+			historyFor = '';
+			history = null;
+			historyError = null;
+		}
+		try {
+			globalThis.localStorage?.setItem(HISTORY_KEY, historyOpen ? 'open' : 'closed');
+		} catch {
+			// Storage is blocked; the state lives for this page only.
+		}
+	}
+	const historyNote = $derived.by(() => {
+		if (!history) return '';
+		const runs = history.runsScanned;
+		let note = `${runs} finished ${runs === 1n ? 'run' : 'runs'} of this orkflow in the last ${HISTORY_WINDOW}; attempt records complete for ${history.runsEvidenceComplete}, missing for ${history.runsEvidenceMissing}`;
+		if (history.runsEvidenceMissing > 0n) note += ' (excluded from every rate, never counted as clean)';
+		return note;
+	});
 	let finishedAt = $state(untrack(() => data.run?.finishedAt));
 	let startedAt = $state(untrack(() => data.run?.startedAt));
 	let cancelDialog = $state(false);
@@ -930,6 +1013,30 @@
 					Retries: {runRetries}
 				</span>
 			{/if}
+			<button
+				type="button"
+				data-testid="run-stability-toggle"
+				aria-pressed={historyOpen}
+				onclick={toggleHistory}
+				class="inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium whitespace-nowrap transition-colors duration-150 {historyOpen
+					? 'border-brand-200 bg-brand-50 text-brand-700'
+					: 'border-border bg-surface text-fg-muted hover:bg-surface-hover'}"
+			>Retry history ({HISTORY_WINDOW})</button>
+			{#if historyOpen}
+				<CliEquivalent
+					command={flakesCli(data.namespace, '168h', [], run.orkflowName)}
+					testid="run-stability-cli"
+				/>
+				{#if historyLoading}
+					<span class="text-xs text-fg-muted" data-testid="run-stability-loading">loading…</span>
+				{:else if historyError}
+					<span class="text-xs text-failed-fg" data-testid="run-stability-error"
+						>retry history unavailable: {historyError}</span
+					>
+				{:else if history}
+					<span class="text-xs text-fg-muted" data-testid="run-stability-note">{historyNote}</span>
+				{/if}
+			{/if}
 			<span
 				data-testid="live-badge"
 				class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium {isTerminal(
@@ -1193,6 +1300,8 @@
 									attempts={taskAttempts}
 									terminal={isTerminal(task.status)}
 									testid="task-{task.id}-retries"
+									history={flakesByTask.get(task.id)}
+									historyWindow={HISTORY_WINDOW}
 								/>
 							</div>
 						</div>

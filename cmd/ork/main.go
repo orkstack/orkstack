@@ -426,8 +426,8 @@ func main() {
 // the run worker polls task.DefaultQueue, ALWAYS, and ORK_ORKER_QUEUE moves
 // task EXECUTION only. Naming the split lets a test hold the runbook to it.
 type queues struct {
-	// run carries RunWorkflow and the idempotency claims: the engine's own
-	// workflows, hosted by every replica of a release. Fixed, because a run
+	// run carries RunWorkflow, the idempotency claims and schedule fires: the
+	// engine's own workflows, hosted by every replica of a release. Fixed, because a run
 	// belongs to the engine, not to whichever Orker pool executes its tasks.
 	run string
 	// events carries PublishEvent, engine-internal so no Orker receives it.
@@ -1015,29 +1015,6 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
-	if err := runWorker.Start(); err != nil {
-		return err
-	}
-	defer runWorker.Stop()
-	if err := eventWorker.Start(); err != nil {
-		return err
-	}
-	defer eventWorker.Stop()
-	logger.Info("temporal workers started",
-		"task_queue", q.run, "event_queue", q.events,
-		"orker_queue", q.orker, "pool", cfg.pool)
-	// The versioning line is separate and always printed, because "which
-	// version am I" is the first question of any rollout. The Orker must
-	// report the same pair, or a pinned run's tasks fall through to the task
-	// queue's current version and land on a different build's activity code.
-	logger.Info("worker deployment versioning",
-		"enabled", cfg.deployment.Versioned(),
-		"deployment", cfg.deployment.Name,
-		"build_id", cfg.deployment.BuildID,
-		"version", cfg.deployment.String(),
-		"run_workflow_behavior", "Pinned",
-		"claim_workflow_behavior", "AutoUpgrade",
-		"event_worker", "unversioned")
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker).
 		WithNamespaceIndex(namespaceIndexed).
 		WithOriginIndex(originIndexed)
@@ -1077,6 +1054,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	resolver := dsl.NewResolver(cfg.registryAuthFile)
 	activities := &api.CatalogLister{Catalog: cfg.activityCatalog, Resolver: resolver}
 
+	// Schedules: every field lives in a Temporal Schedule on this cluster,
+	// and each fire starts on the engine's own run channel.
+	scheduler := engine.NewTemporalScheduler(temporalClient, q.run).WithLogger(logger)
+
 	svc := api.NewService(api.Config{
 		Orkflows:      orkflows,
 		Namespaces:    namespaces,
@@ -1101,6 +1082,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Webhooks:      webhookRegistry,
 		Deliveries:    deliveryStore,
 		Triggers:      triggerStore,
+		Schedules:     scheduler,
 		AuditStore:    auditStore,
 		AuditCounter:  auditInstruments,
 		Notifier:      runNotifier,
@@ -1122,6 +1104,40 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Admissions:                    admissionObserver,
 		TelemetrySinks:                tcfg.Sinks.Names(),
 	})
+	// The schedule fire's one activity IS the submit preparation, so it needs
+	// the service; it is registered before the run worker starts, which is
+	// why both workers start here rather than where they were built. Nothing
+	// between their construction and this point needs a started worker: each
+	// is a client-side object over temporalClient.
+	runWorker.RegisterActivityWithOptions(
+		api.NewScheduleActivities(svc, starter).PrepareScheduledRun,
+		activity.RegisterOptions{Name: engine.ActivityPrepareScheduledRun},
+	)
+	if err := runWorker.Start(); err != nil {
+		return err
+	}
+	defer runWorker.Stop()
+	if err := eventWorker.Start(); err != nil {
+		return err
+	}
+	defer eventWorker.Stop()
+	logger.Info("temporal workers started",
+		"task_queue", q.run, "event_queue", q.events,
+		"orker_queue", q.orker, "pool", cfg.pool)
+	// The versioning line is separate and always printed, because "which
+	// version am I" is the first question of any rollout. The Orker must
+	// report the same pair, or a pinned run's tasks fall through to the task
+	// queue's current version and land on a different build's activity code.
+	logger.Info("worker deployment versioning",
+		"enabled", cfg.deployment.Versioned(),
+		"deployment", cfg.deployment.Name,
+		"build_id", cfg.deployment.BuildID,
+		"version", cfg.deployment.String(),
+		"run_workflow_behavior", "Pinned",
+		"claim_workflow_behavior", "AutoUpgrade",
+		"schedule_fire_workflow_behavior", "Pinned",
+		"event_worker", "unversioned")
+
 	mux := api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,
 	})

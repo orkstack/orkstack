@@ -12,6 +12,7 @@ import {
 } from './gen/orkstack/v1/service_pb';
 import { StatsService } from './gen/orkstack/v1/stats_pb';
 import { AuditService } from './gen/orkstack/v1/audit_pb';
+import { ScheduleService } from './gen/orkstack/v1/schedule_pb';
 
 // All platform access goes through the clients generated from
 // proto/orkstack/v1 (see ui/src/lib/gen). The browser uses same-origin URLs;
@@ -29,6 +30,10 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 		// triggers is the inbound counterpart to webhooks: one bound to a
 		// specific orkflow+namespace rather than a deployment-wide subscription.
 		triggers: createClient(TriggerService, transport),
+		// schedules is the third run starter: a schedule starts runs of one
+		// orkflow at the times its spec names, and every field of it is read
+		// from the cluster on each call.
+		schedules: createClient(ScheduleService, transport),
 		namespaces: createClient(NamespaceService, transport),
 		stats: createClient(StatsService, transport),
 		// system answers GetSystemInfo — the one admin read that describes the
