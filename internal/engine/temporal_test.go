@@ -9,6 +9,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 
 	"google.golang.org/protobuf/proto"
 
@@ -293,5 +294,56 @@ func TestStartRun_DoesNotMistakeAnUnrelatedFailureForATakenID(t *testing.T) {
 	}
 	if errors.Is(err, engine.ErrRunIDTaken) {
 		t.Errorf("StartRun reported %v as a taken run id", err)
+	}
+}
+
+// TestRunStartMemoAndAttributes_MatchStartRun: the two helpers a scheduled
+// run's child start uses produce exactly what StartRun sends for the same
+// definition, plan and boot answers — so a run started by a schedule is
+// stamped as a submitted one is (orkflow-schedules §4.4).
+func TestRunStartMemoAndAttributes_MatchStartRun(t *testing.T) {
+	origins := []*engine.RunOrigin{
+		nil,
+		{Kind: "RUN_ORIGIN_KIND_SCHEDULE", ID: "sch-4a1c0e2b7d3f8156", Reference: "2026-09-24T01:00:00Z", Description: "nightly"},
+	}
+	for _, origin := range origins {
+		for _, answers := range [][2]bool{{false, false}, {true, false}, {false, true}, {true, true}} {
+			c := &recordingClient{}
+			starter := engine.NewTemporalStarter(c, task.DefaultQueue).
+				WithNamespaceIndex(answers[0]).WithOriginIndex(answers[1])
+			nsIdx, orIdx := starter.IndexAnswers()
+			if nsIdx != answers[0] || orIdx != answers[1] {
+				t.Fatalf("IndexAnswers = %v, %v; want %v", nsIdx, orIdx, answers)
+			}
+			plan := defaultPlan()
+			plan.Origin = origin
+			wf := twoTaskOrkflow()
+			wf.Namespace = "payments"
+			if err := starter.StartRun(context.Background(), "ork-1-1", wf, nil, plan); err != nil {
+				t.Fatalf("StartRun: %v", err)
+			}
+			memo := engine.RunStartMemo(wf, plan)
+			if len(memo) != len(c.options.Memo) {
+				t.Fatalf("memo %v, StartRun sent %v", memo, c.options.Memo)
+			}
+			for k, v := range memo {
+				if c.options.Memo[k] != v {
+					t.Fatalf("memo[%s] = %v, StartRun sent %v", k, v, c.options.Memo[k])
+				}
+			}
+			attrs := engine.RunStartSearchAttributes(wf, plan, answers[0], answers[1])
+			want := c.options.TypedSearchAttributes
+			if len(attrs) != want.Size() {
+				t.Fatalf("helpers give %d attributes, StartRun sent %d (answers %v, origin %v)", len(attrs), want.Size(), answers, origin)
+			}
+			got := temporal.NewSearchAttributes(attrs...)
+			for _, key := range []temporal.SearchAttributeKeyKeyword{task.SearchKeyOrkflowNamespace, task.SearchKeyOrkflowOriginKind, task.SearchKeyOrkflowOriginID} {
+				a, aok := got.GetKeyword(key)
+				b, bok := want.GetKeyword(key)
+				if a != b || aok != bok {
+					t.Fatalf("%s: helpers %q/%v, StartRun %q/%v", key.GetName(), a, aok, b, bok)
+				}
+			}
+		}
 	}
 }

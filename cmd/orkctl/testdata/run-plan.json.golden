@@ -1,0 +1,72 @@
+{
+  "orkflowName": "advanced-demo",
+  "orkflowVersion": "1.0.1",
+  "namespace": "default",
+  "definitionDigest": "sha256:f0066bf169a7ffa3f6a3c20e703d78a30d519fbdd5460a927c403b1ba02d1865",
+  "input": {
+    "data": {
+      "enable_secret_check": false,
+      "greeting": "hello from advanced-demo",
+      "log_lines": 120
+    }
+  },
+  "tasks": [
+    {
+      "taskId": "warmup",
+      "outcome": "RUNS",
+      "wave": 1
+    },
+    {
+      "taskId": "flaky",
+      "outcome": "RUNS",
+      "wave": 2
+    },
+    {
+      "taskId": "logstream",
+      "outcome": "RUNS",
+      "wave": 2
+    },
+    {
+      "taskId": "guarded",
+      "outcome": "SKIPPED",
+      "wave": 2,
+      "skipReason": "condition \"{{ .inputs.enable_secret_check }}\" evaluated false",
+      "condition": "{{ .inputs.enable_secret_check }}"
+    },
+    {
+      "taskId": "summarize",
+      "outcome": "SKIPPED",
+      "wave": 3,
+      "skipReason": "condition \"{{ eq .tasks.flaky.output.exitCode 0.0 }}\" evaluated false",
+      "condition": "{{ eq .tasks.flaky.output.exitCode 0.0 }}",
+      "assumedAbsent": [
+        "flaky"
+      ]
+    },
+    {
+      "taskId": "archive",
+      "outcome": "SKIPPED",
+      "wave": 4,
+      "skipReason": "upstream task \"summarize\" was skipped",
+      "skippedBy": "summarize"
+    }
+  ],
+  "waves": [
+    {
+      "wave": 1,
+      "taskIds": [
+        "warmup"
+      ]
+    },
+    {
+      "wave": 2,
+      "taskIds": [
+        "flaky",
+        "logstream"
+      ]
+    }
+  ],
+  "runs": 3,
+  "skipped": 3,
+  "waveCount": 2
+}

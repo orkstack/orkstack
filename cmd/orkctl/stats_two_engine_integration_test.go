@@ -540,3 +540,58 @@ func TestIntegration_TwoReplicasReportTheSameFailureBreakdown(t *testing.T) {
 	}
 	proof.Write(t, "stats-failures", "two-replicas.txt", []byte(transcript.String()))
 }
+
+// TestIntegration_TwoReplicasReportTheSameFlakeIndex holds the flake index to
+// AGENTS.md §7: every run submitted to replica A, the pinned window asked of
+// both, and the two answers equal once computed_at is cleared — both derive
+// them from the shared archive and attempt records, never from memory.
+func TestIntegration_TwoReplicasReportTheSameFlakeIndex(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	corpus := seedFlakeCorpus(ctx, t, 2)
+	statsA, statsB := statsClientFor(t, corpus.replicas[0]), statsClientFor(t, corpus.replicas[1])
+
+	var transcript strings.Builder
+	fmt.Fprintf(&transcript, "# two engine replicas, one flake index (%s)\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(&transcript, "namespace  %s\nwindow     %s .. %s (pinned)\nevery run submitted to replica A (ork-A)\n\n",
+		corpus.namespace, corpus.since.Format(time.RFC3339), corpus.until.Format(time.RFC3339))
+	for _, groupBy := range [][]orkstackv1.FailureGroupBy{
+		nil,
+		{
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_POOL,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_ORKER,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_PHASE,
+			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_IMAGE,
+		},
+	} {
+		req := &orkstackv1.GetFlakeIndexRequest{
+			Namespace: corpus.namespace, GroupBy: groupBy,
+			Since: timestamppb.New(corpus.since), Until: timestamppb.New(corpus.until),
+		}
+		// B first: it started nothing, so nothing it could hold would help it.
+		fromB, err := statsB.GetFlakeIndex(ctx, connect.NewRequest(req))
+		if err != nil {
+			t.Fatalf("GetFlakeIndex on replica B: %v", err)
+		}
+		fromA, err := statsA.GetFlakeIndex(ctx, connect.NewRequest(req))
+		if err != nil {
+			t.Fatalf("GetFlakeIndex on replica A: %v", err)
+		}
+		if fromA.Msg.GetRunsInWindow() != int64(len(corpus.runs)) {
+			t.Fatalf("replica A counts %d runs, want %d", fromA.Msg.GetRunsInWindow(), len(corpus.runs))
+		}
+		computedA, computedB := fromA.Msg.GetComputedAt().AsTime(), fromB.Msg.GetComputedAt().AsTime()
+		a, b := clearComputed(fromA.Msg), clearComputed(fromB.Msg)
+		equal := proto.Equal(a, b)
+		if !equal {
+			t.Errorf("the replicas disagree (group_by %v):\n replica A %v\n replica B %v", groupBy, a, b)
+		}
+		encodedA, _ := api.MarshalJSON(a)
+		fmt.Fprintf(&transcript, "group_by %v\n  replica A computed %s, replica B computed %s\n  answer %s\n  proto.Equal(A, B) with computed_at cleared: %t\n\n",
+			a.GetGroupBy(), computedA.Format(time.RFC3339Nano), computedB.Format(time.RFC3339Nano), encodedA, equal)
+		t.Logf("EVIDENCE flake_index_two_replicas group_by=%v groups=%d runs_in_window=%d proto_equal=%t",
+			a.GetGroupBy(), len(a.GetGroups()), a.GetRunsInWindow(), equal)
+	}
+	proof.Write(t, "stats-flakes", "two-replicas.txt", []byte(transcript.String()))
+}

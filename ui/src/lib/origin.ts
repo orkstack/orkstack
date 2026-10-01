@@ -65,15 +65,17 @@ export function originReferenceURL(reference: string): string | null {
 
 /**
  * originLink is where the origin's id leads on this UI, or null when it leads
- * nowhere yet: a trigger opens the pinned orkflow's Triggers tab, a source or
- * parent run opens that run, and a schedule stays text until schedules exist.
- * The namespace is applied by the caller.
+ * nowhere: a trigger opens the orkflow's Triggers tab and a schedule its
+ * Schedules tab — where the row the description names lives — and a source or
+ * parent run opens that run. The namespace is applied by the caller.
  */
 export function originLinkPath(origin: RunOrigin | undefined, orkflowName: string): string | null {
 	if (!origin || !origin.id) return null;
 	switch (origin.kind) {
 		case RunOriginKind.TRIGGER:
 			return orkflowName ? `/orkflows/${encodeURIComponent(orkflowName)}?tab=triggers` : null;
+		case RunOriginKind.SCHEDULE:
+			return orkflowName ? `/orkflows/${encodeURIComponent(orkflowName)}?tab=schedules` : null;
 		case RunOriginKind.RUN_AGAIN:
 		case RunOriginKind.PARENT_RUN:
 			return `/runs/${encodeURIComponent(origin.id)}`;

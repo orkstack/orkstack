@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/stats.proto.
  */
 export const file_orkstack_v1_stats: GenFile = /*@__PURE__*/
-  fileDesc("ChdvcmtzdGFjay92MS9zdGF0cy5wcm90bxILb3Jrc3RhY2sudjEipwEKD0dldFN0YXRzUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJGCg9PcmtmbG93RmFpbHVyZXMSFAoMb3JrZmxvd19uYW1lGAEgASgJEg4KBmZhaWxlZBgCIAEoAxINCgV0b3RhbBgDIAEoAyKjBQoQR2V0U3RhdHNSZXNwb25zZRJHCg5ydW5zX2J5X3N0YXR1cxgBIAMoCzIvLm9ya3N0YWNrLnYxLkdldFN0YXRzUmVzcG9uc2UuUnVuc0J5U3RhdHVzRW50cnkSFAoMc3VjY2Vzc19yYXRlGAIgASgBEhwKFHN1Y2Nlc3NfcmF0ZV9kZWZpbmVkGAMgASgIEi8KDHA1MF9kdXJhdGlvbhgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIvCgxwOTVfZHVyYXRpb24YBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SOwoXZHVyYXRpb25fY292ZXJhZ2Vfc2luY2UYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEh0KFWR1cmF0aW9uX3NhbXBsZV9jb3VudBgHIAEoAxIyCgxtb3N0X2ZhaWxpbmcYCCADKAsyHC5vcmtzdGFjay52MS5PcmtmbG93RmFpbHVyZXMSIQoHcnVubmluZxgJIAMoCzIQLm9ya3N0YWNrLnYxLlJ1bhIgCgVwb29scxgKIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSLwoLY29tcHV0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgOIAEoCRIwCgx3aW5kb3dfc2luY2UYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAaMwoRUnVuc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ASK2AgoaR2V0RmFpbHVyZUJyZWFrZG93blJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEikKBXNpbmNlGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKwoIbG9va2JhY2sYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SFAoMb3JrZmxvd19uYW1lGAUgASgJEi0KCGdyb3VwX2J5GAYgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkSLgoIY2F0ZWdvcnkYByABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSDQoFbGltaXQYCCABKAUi5QIKDEZhaWx1cmVHcm91cBIUCgxvcmtmbG93X25hbWUYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRjb2RlGAMgASgJEi4KCGNhdGVnb3J5GAQgASgOMhwub3Jrc3RhY2sudjEuRmFpbHVyZUNhdGVnb3J5EhQKDGltYWdlX3Bpbm5lZBgFIAEoCRIMCgRwb29sGAYgASgJEg0KBXBoYXNlGAcgASgJEhAKCG9ya2VyX2lkGAggASgJEhEKCXJ1bl9jb3VudBgJIAEoAxIuCgpmaXJzdF9zZWVuGAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBItCglsYXN0X3NlZW4YCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKD2V4YW1wbGVfcnVuX2lkcxgMIAMoCRIgChhhdHRlbXB0X2V2aWRlbmNlX21pc3NpbmcYDSABKAMizwMKG0dldEZhaWx1cmVCcmVha2Rvd25SZXNwb25zZRIpCgZncm91cHMYASADKAsyGS5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXASHQoVZmFpbGVkX3J1bnNfaW5fd2luZG93GAIgASgDEhsKE2ZhaWxlZF9ydW5zX3NjYW5uZWQYAyABKAMSGwoTZmFpbGVkX3J1bnNfZ3JvdXBlZBgEIAEoAxIUCgxncm91cHNfdG90YWwYBSABKAMSIAoYYXR0ZW1wdF9ldmlkZW5jZV9taXNzaW5nGAYgASgDEh0KFWF0dGVtcHRfZXZpZGVuY2VfcmVhZBgHIAEoCBItCghncm91cF9ieRgIIAMoDjIbLm9ya3N0YWNrLnYxLkZhaWx1cmVHcm91cEJ5EhEKCW5hbWVzcGFjZRgJIAEoCRIwCgx3aW5kb3dfc2luY2UYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLY29tcHV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKpQCCg5GYWlsdXJlR3JvdXBCeRIgChxGQUlMVVJFX0dST1VQX0JZX1VOU1BFQ0lGSUVEEAASHAoYRkFJTFVSRV9HUk9VUF9CWV9PUktGTE9XEAESGQoVRkFJTFVSRV9HUk9VUF9CWV9UQVNLEAISGQoVRkFJTFVSRV9HUk9VUF9CWV9DT0RFEAMSHQoZRkFJTFVSRV9HUk9VUF9CWV9DQVRFR09SWRAEEhoKFkZBSUxVUkVfR1JPVVBfQllfSU1BR0UQBRIZChVGQUlMVVJFX0dST1VQX0JZX1BPT0wQBhIaChZGQUlMVVJFX0dST1VQX0JZX1BIQVNFEAcSGgoWRkFJTFVSRV9HUk9VUF9CWV9PUktFUhAIMsEBCgxTdGF0c1NlcnZpY2USRwoIR2V0U3RhdHMSHC5vcmtzdGFjay52MS5HZXRTdGF0c1JlcXVlc3QaHS5vcmtzdGFjay52MS5HZXRTdGF0c1Jlc3BvbnNlEmgKE0dldEZhaWx1cmVCcmVha2Rvd24SJy5vcmtzdGFjay52MS5HZXRGYWlsdXJlQnJlYWtkb3duUmVxdWVzdBooLm9ya3N0YWNrLnYxLkdldEZhaWx1cmVCcmVha2Rvd25SZXNwb25zZUKmAQoPY29tLm9ya3N0YWNrLnYxQgpTdGF0c1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_namespace, file_orkstack_v1_run]);
+  fileDesc("ChdvcmtzdGFjay92MS9zdGF0cy5wcm90bxILb3Jrc3RhY2sudjEipwEKD0dldFN0YXRzUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJGCg9PcmtmbG93RmFpbHVyZXMSFAoMb3JrZmxvd19uYW1lGAEgASgJEg4KBmZhaWxlZBgCIAEoAxINCgV0b3RhbBgDIAEoAyKjBQoQR2V0U3RhdHNSZXNwb25zZRJHCg5ydW5zX2J5X3N0YXR1cxgBIAMoCzIvLm9ya3N0YWNrLnYxLkdldFN0YXRzUmVzcG9uc2UuUnVuc0J5U3RhdHVzRW50cnkSFAoMc3VjY2Vzc19yYXRlGAIgASgBEhwKFHN1Y2Nlc3NfcmF0ZV9kZWZpbmVkGAMgASgIEi8KDHA1MF9kdXJhdGlvbhgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIvCgxwOTVfZHVyYXRpb24YBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SOwoXZHVyYXRpb25fY292ZXJhZ2Vfc2luY2UYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEh0KFWR1cmF0aW9uX3NhbXBsZV9jb3VudBgHIAEoAxIyCgxtb3N0X2ZhaWxpbmcYCCADKAsyHC5vcmtzdGFjay52MS5PcmtmbG93RmFpbHVyZXMSIQoHcnVubmluZxgJIAMoCzIQLm9ya3N0YWNrLnYxLlJ1bhIgCgVwb29scxgKIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSLwoLY29tcHV0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgOIAEoCRIwCgx3aW5kb3dfc2luY2UYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAaMwoRUnVuc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ASK2AgoaR2V0RmFpbHVyZUJyZWFrZG93blJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEikKBXNpbmNlGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKwoIbG9va2JhY2sYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SFAoMb3JrZmxvd19uYW1lGAUgASgJEi0KCGdyb3VwX2J5GAYgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkSLgoIY2F0ZWdvcnkYByABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSDQoFbGltaXQYCCABKAUi5QIKDEZhaWx1cmVHcm91cBIUCgxvcmtmbG93X25hbWUYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRjb2RlGAMgASgJEi4KCGNhdGVnb3J5GAQgASgOMhwub3Jrc3RhY2sudjEuRmFpbHVyZUNhdGVnb3J5EhQKDGltYWdlX3Bpbm5lZBgFIAEoCRIMCgRwb29sGAYgASgJEg0KBXBoYXNlGAcgASgJEhAKCG9ya2VyX2lkGAggASgJEhEKCXJ1bl9jb3VudBgJIAEoAxIuCgpmaXJzdF9zZWVuGAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBItCglsYXN0X3NlZW4YCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKD2V4YW1wbGVfcnVuX2lkcxgMIAMoCRIgChhhdHRlbXB0X2V2aWRlbmNlX21pc3NpbmcYDSABKAMizwMKG0dldEZhaWx1cmVCcmVha2Rvd25SZXNwb25zZRIpCgZncm91cHMYASADKAsyGS5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXASHQoVZmFpbGVkX3J1bnNfaW5fd2luZG93GAIgASgDEhsKE2ZhaWxlZF9ydW5zX3NjYW5uZWQYAyABKAMSGwoTZmFpbGVkX3J1bnNfZ3JvdXBlZBgEIAEoAxIUCgxncm91cHNfdG90YWwYBSABKAMSIAoYYXR0ZW1wdF9ldmlkZW5jZV9taXNzaW5nGAYgASgDEh0KFWF0dGVtcHRfZXZpZGVuY2VfcmVhZBgHIAEoCBItCghncm91cF9ieRgIIAMoDjIbLm9ya3N0YWNrLnYxLkZhaWx1cmVHcm91cEJ5EhEKCW5hbWVzcGFjZRgJIAEoCRIwCgx3aW5kb3dfc2luY2UYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLY29tcHV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIoACChRHZXRGbGFrZUluZGV4UmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIUCgxvcmtmbG93X25hbWUYBSABKAkSLQoIZ3JvdXBfYnkYBiADKA4yGy5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXBCeRINCgVsaW1pdBgHIAEoBSKjBAoKRmxha2VHcm91cBIUCgxvcmtmbG93X25hbWUYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRwb29sGAMgASgJEhAKCG9ya2VyX2lkGAQgASgJEg0KBXBoYXNlGAUgASgJEhQKDGltYWdlX3Bpbm5lZBgGIAEoCRIVCg1ydW5zX29ic2VydmVkGAcgASgDEhQKDHJ1bnNfcmV0cmllZBgIIAEoAxISCgpyZXRyeV9yYXRlGAkgASgBEhoKEnJldHJ5X3JhdGVfZGVmaW5lZBgKIAEoCBIdChVydW5zX2V2aWRlbmNlX21pc3NpbmcYCyABKAMSFAoMcDUwX2F0dGVtcHRzGAwgASgFEhQKDHA5NV9hdHRlbXB0cxgNIAEoBRIWCg5yZXRyeV9hdHRlbXB0cxgOIAEoAxIbChN1bnJlcG9ydGVkX2F0dGVtcHRzGA8gASgDEhUKDWRvbWluYW50X2NvZGUYECABKAkSNwoRZG9taW5hbnRfY2F0ZWdvcnkYESABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSFgoOZG9taW5hbnRfcGhhc2UYEiABKAkSFgoOZG9taW5hbnRfY291bnQYEyABKAMSMwoPbGFzdF9yZXRyaWVkX2F0GBQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIXCg9leGFtcGxlX3J1bl9pZHMYFSADKAkixwMKFUdldEZsYWtlSW5kZXhSZXNwb25zZRInCgZncm91cHMYASADKAsyFy5vcmtzdGFjay52MS5GbGFrZUdyb3VwEhYKDnJ1bnNfaW5fd2luZG93GAIgASgDEhQKDHJ1bnNfc2Nhbm5lZBgDIAEoAxIXCg9ydW5zX2Rpc3BhdGNoZWQYBCABKAMSHgoWcnVuc19ldmlkZW5jZV9jb21wbGV0ZRgFIAEoAxIdChVydW5zX2V2aWRlbmNlX21pc3NpbmcYBiABKAMSFAoMZ3JvdXBzX3RvdGFsGAcgASgDEhIKCmJvZHlfa2V5ZWQYCCABKAgSLQoIZ3JvdXBfYnkYCSADKA4yGy5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXBCeRIRCgluYW1lc3BhY2UYCiABKAkSMAoMd2luZG93X3NpbmNlGAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgx3aW5kb3dfdW50aWwYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2NvbXB1dGVkX2F0GA0gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCqUAgoORmFpbHVyZUdyb3VwQnkSIAocRkFJTFVSRV9HUk9VUF9CWV9VTlNQRUNJRklFRBAAEhwKGEZBSUxVUkVfR1JPVVBfQllfT1JLRkxPVxABEhkKFUZBSUxVUkVfR1JPVVBfQllfVEFTSxACEhkKFUZBSUxVUkVfR1JPVVBfQllfQ09ERRADEh0KGUZBSUxVUkVfR1JPVVBfQllfQ0FURUdPUlkQBBIaChZGQUlMVVJFX0dST1VQX0JZX0lNQUdFEAUSGQoVRkFJTFVSRV9HUk9VUF9CWV9QT09MEAYSGgoWRkFJTFVSRV9HUk9VUF9CWV9QSEFTRRAHEhoKFkZBSUxVUkVfR1JPVVBfQllfT1JLRVIQCDKZAgoMU3RhdHNTZXJ2aWNlEkcKCEdldFN0YXRzEhwub3Jrc3RhY2sudjEuR2V0U3RhdHNSZXF1ZXN0Gh0ub3Jrc3RhY2sudjEuR2V0U3RhdHNSZXNwb25zZRJoChNHZXRGYWlsdXJlQnJlYWtkb3duEicub3Jrc3RhY2sudjEuR2V0RmFpbHVyZUJyZWFrZG93blJlcXVlc3QaKC5vcmtzdGFjay52MS5HZXRGYWlsdXJlQnJlYWtkb3duUmVzcG9uc2USVgoNR2V0Rmxha2VJbmRleBIhLm9ya3N0YWNrLnYxLkdldEZsYWtlSW5kZXhSZXF1ZXN0GiIub3Jrc3RhY2sudjEuR2V0Rmxha2VJbmRleFJlc3BvbnNlQqYBCg9jb20ub3Jrc3RhY2sudjFCClN0YXRzUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_namespace, file_orkstack_v1_run]);
 
 /**
  * @generated from message orkstack.v1.GetStatsRequest
@@ -544,6 +544,371 @@ export const GetFailureBreakdownResponseSchema: GenMessage<GetFailureBreakdownRe
   messageDesc(file_orkstack_v1_stats, 5);
 
 /**
+ * @generated from message orkstack.v1.GetFlakeIndexRequest
+ */
+export type GetFlakeIndexRequest = Message<"orkstack.v1.GetFlakeIndexRequest"> & {
+  /**
+   * empty = the default namespace
+   *
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+
+  /**
+   * since, until and lookback carry exactly GetStatsRequest's window
+   * semantics: since inclusive, until exclusive, lookback ignored when since
+   * is set, lookback defaulting to 24h, and a window with no time in it
+   * refused. One clock — the server's — resolves a relative window.
+   *
+   * @generated from field: google.protobuf.Timestamp since = 2;
+   */
+  since?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp until = 3;
+   */
+  until?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Duration lookback = 4;
+   */
+  lookback?: Duration | undefined;
+
+  /**
+   * empty = every orkflow in the namespace
+   *
+   * @generated from field: string orkflow_name = 5;
+   */
+  orkflowName: string;
+
+  /**
+   * group_by is the group key's dimensions, in the caller's order. Empty
+   * means TASK. ORKFLOW is always part of the key — a task id names a task
+   * only within its orkflow — and may be named explicitly; naming it alone
+   * asks "which orkflow retries most". CODE and CATEGORY are refused
+   * (InvalidArgument): they are what a group REPORTS as its dominant cause,
+   * not what it is keyed by. A duplicate or UNSPECIFIED value is
+   * InvalidArgument.
+   *
+   * ORKFLOW, TASK and POOL are read from the archived run body. ORKER, PHASE
+   * and IMAGE are read from each attempt record — one task's attempts can run
+   * on different Orkers — so a group keyed by any of those three exists only
+   * where a record exists (see FlakeGroup, body_keyed).
+   *
+   * @generated from field: repeated orkstack.v1.FailureGroupBy group_by = 6;
+   */
+  groupBy: FailureGroupBy[];
+
+  /**
+   * limit caps the groups returned, flakiest first. 0 means 50; more than
+   * 500 is InvalidArgument. It bounds the answer, never the scan: the totals
+   * below are over every group.
+   *
+   * @generated from field: int32 limit = 7;
+   */
+  limit: number;
+};
+
+/**
+ * Describes the message orkstack.v1.GetFlakeIndexRequest.
+ * Use `create(GetFlakeIndexRequestSchema)` to create a new message.
+ */
+export const GetFlakeIndexRequestSchema: GenMessage<GetFlakeIndexRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_stats, 6);
+
+/**
+ * FlakeGroup is every (run, task) pair in the window whose attempts share
+ * one group key, counted by run.
+ *
+ * A dimension NOT in the request's group_by is empty here and means "not
+ * grouped by". A dimension that IS in group_by and is empty means the record
+ * genuinely carries no value (a record written before the field existed);
+ * there is no "unavailable" case for a keyed dimension, because a task whose
+ * records are gone is not in any record-keyed group at all — it is counted
+ * in runs_evidence_missing instead.
+ *
+ * @generated from message orkstack.v1.FlakeGroup
+ */
+export type FlakeGroup = Message<"orkstack.v1.FlakeGroup"> & {
+  /**
+   * @generated from field: string orkflow_name = 1;
+   */
+  orkflowName: string;
+
+  /**
+   * @generated from field: string task_id = 2;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: string pool = 3;
+   */
+  pool: string;
+
+  /**
+   * @generated from field: string orker_id = 4;
+   */
+  orkerId: string;
+
+  /**
+   * @generated from field: string phase = 5;
+   */
+  phase: string;
+
+  /**
+   * @generated from field: string image_pinned = 6;
+   */
+  imagePinned: string;
+
+  /**
+   * runs_observed is how many distinct runs contributed a task with at least
+   * one attempt carrying this group's key. It is the denominator.
+   *
+   * @generated from field: int64 runs_observed = 7;
+   */
+  runsObserved: bigint;
+
+  /**
+   * runs_retried is how many of those runs had a NON-FINAL attempt carrying
+   * this key — an attempt below the task's highest, which by construction
+   * did not complete the task and caused the next one to be scheduled. It
+   * is the numerator. Keyed by ORKER, this attributes a retry to the Orker
+   * whose attempt failed, never to the one that then succeeded.
+   *
+   * @generated from field: int64 runs_retried = 8;
+   */
+  runsRetried: bigint;
+
+  /**
+   * retry_rate is runs_retried / runs_observed, between 0 and 1.
+   *
+   * @generated from field: double retry_rate = 9;
+   */
+  retryRate: number;
+
+  /**
+   * retry_rate_defined is false when runs_observed is 0. That happens only
+   * for a body-keyed group: a task the window dispatched in some run but for
+   * which no run in the window has a record. Render "unavailable", never 0%.
+   *
+   * @generated from field: bool retry_rate_defined = 10;
+   */
+  retryRateDefined: boolean;
+
+  /**
+   * runs_evidence_missing is how many distinct runs dispatched a task with
+   * this group's body key and hold NO attempt record for it: the records were
+   * reclaimed on the run's retention schedule, or the Orker's best-effort
+   * write never landed. Those runs are in neither runs_observed nor
+   * runs_retried. Exact when the response's body_keyed is true; 0 otherwise,
+   * because a task with no record has no orker, phase or image to be keyed
+   * by, and only the response total is then meaningful.
+   *
+   * @generated from field: int64 runs_evidence_missing = 11;
+   */
+  runsEvidenceMissing: bigint;
+
+  /**
+   * p50_attempts and p95_attempts are the median and 95th percentile, by
+   * nearest rank over runs_observed samples, of how many attempts carrying
+   * this key one run took (the maximum over that run's member tasks). For a
+   * body-keyed group that is simply the task's attempt count; for an
+   * ORKER-keyed group it is how many attempts ran on that Orker in that run.
+   * Nearest rank: every value here is a count some run actually reached.
+   *
+   * @generated from field: int32 p50_attempts = 12;
+   */
+  p50Attempts: number;
+
+  /**
+   * @generated from field: int32 p95_attempts = 13;
+   */
+  p95Attempts: number;
+
+  /**
+   * retry_attempts is the number of non-final RECORDED attempts carrying
+   * this key, summed over the group's runs — the attempts the retries are
+   * attributed to, and the population dominant_* is the mode of.
+   *
+   * @generated from field: int64 retry_attempts = 14;
+   */
+  retryAttempts: bigint;
+
+  /**
+   * unreported_attempts counts attempts numbered below a task's highest that
+   * have no record of their own: the Orker running them died or lost its
+   * heartbeat before it could file one. They are retries with no recorded
+   * cause. Exact when body_keyed; 0 otherwise, for the reason given on
+   * runs_evidence_missing.
+   *
+   * @generated from field: int64 unreported_attempts = 15;
+   */
+  unreportedAttempts: bigint;
+
+  /**
+   * dominant_code, dominant_category and dominant_phase are ONE triple — the
+   * (error.code, error.category, phase) that the most of retry_attempts
+   * share — never three independent modes, which could name a combination
+   * no attempt had. dominant_count is how many of retry_attempts share it.
+   * All four are unset when retry_attempts is 0.
+   *
+   * @generated from field: string dominant_code = 16;
+   */
+  dominantCode: string;
+
+  /**
+   * @generated from field: orkstack.v1.FailureCategory dominant_category = 17;
+   */
+  dominantCategory: FailureCategory;
+
+  /**
+   * @generated from field: string dominant_phase = 18;
+   */
+  dominantPhase: string;
+
+  /**
+   * @generated from field: int64 dominant_count = 19;
+   */
+  dominantCount: bigint;
+
+  /**
+   * last_retried_at is the creation time of the newest run in runs_retried —
+   * the coordinate the window is measured in. Unset when runs_retried is 0.
+   *
+   * @generated from field: google.protobuf.Timestamp last_retried_at = 20;
+   */
+  lastRetriedAt?: Timestamp | undefined;
+
+  /**
+   * example_run_ids holds at most 3 of the group's retried runs, newest
+   * created first, so a row leads to a run page whose attempt timeline
+   * shows the retries. Ids are never compared with each other (AGENTS.md §7).
+   *
+   * @generated from field: repeated string example_run_ids = 21;
+   */
+  exampleRunIds: string[];
+};
+
+/**
+ * Describes the message orkstack.v1.FlakeGroup.
+ * Use `create(FlakeGroupSchema)` to create a new message.
+ */
+export const FlakeGroupSchema: GenMessage<FlakeGroup> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_stats, 7);
+
+/**
+ * @generated from message orkstack.v1.GetFlakeIndexResponse
+ */
+export type GetFlakeIndexResponse = Message<"orkstack.v1.GetFlakeIndexResponse"> & {
+  /**
+   * @generated from field: repeated orkstack.v1.FlakeGroup groups = 1;
+   */
+  groups: FlakeGroup[];
+
+  /**
+   * runs_in_window is the population: index keys under the namespace (and
+   * orkflow, if named) inside the window, every finished status — the same
+   * count GetStats reports as runs_by_status succeeded + failed + canceled
+   * for the same window.
+   *
+   * @generated from field: int64 runs_in_window = 2;
+   */
+  runsInWindow: bigint;
+
+  /**
+   * runs_scanned is how many of those had a body to read. It is less than
+   * runs_in_window only for an index row whose body is absent — the crash
+   * window between the archive's two writes, which ListRuns already skips.
+   * Any OTHER unreadable body fails the call.
+   *
+   * @generated from field: int64 runs_scanned = 3;
+   */
+  runsScanned: bigint;
+
+  /**
+   * runs_dispatched is how many scanned runs dispatched at least one task
+   * (TaskRun.pool set). A run that dispatched nothing — a start that failed,
+   * every task skipped — has no attempts to index and is in no count below.
+   *
+   * @generated from field: int64 runs_dispatched = 4;
+   */
+  runsDispatched: bigint;
+
+  /**
+   * runs_evidence_complete is how many dispatched runs hold at least one
+   * record for EVERY task they dispatched. runs_evidence_missing is how many
+   * hold none for at least one. The two sum to runs_dispatched. A run in the
+   * second set is excluded from every group's runs_observed for the tasks it
+   * has no record of, and is NEVER counted as "did not retry".
+   *
+   * @generated from field: int64 runs_evidence_complete = 5;
+   */
+  runsEvidenceComplete: bigint;
+
+  /**
+   * @generated from field: int64 runs_evidence_missing = 6;
+   */
+  runsEvidenceMissing: bigint;
+
+  /**
+   * groups_total is how many groups there were before limit, so a client can
+   * say "showing 50 of 212".
+   *
+   * @generated from field: int64 groups_total = 7;
+   */
+  groupsTotal: bigint;
+
+  /**
+   * body_keyed is true when the resolved group_by names no record-level
+   * dimension (ORKER, PHASE, IMAGE). Then every group's runs_evidence_missing
+   * and unreported_attempts are exact; when false, both are 0 on every group
+   * and only the response's runs_evidence_missing is meaningful.
+   *
+   * @generated from field: bool body_keyed = 8;
+   */
+  bodyKeyed: boolean;
+
+  /**
+   * group_by is the dimensions actually grouped by, with an empty request
+   * resolved to TASK and ORKFLOW made explicit at the front. A client cannot
+   * label its own columns without it.
+   *
+   * @generated from field: repeated orkstack.v1.FailureGroupBy group_by = 9;
+   */
+  groupBy: FailureGroupBy[];
+
+  /**
+   * namespace, window_since, window_until and computed_at are the question
+   * that was answered and when, exactly as GetStatsResponse carries them.
+   *
+   * @generated from field: string namespace = 10;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp window_since = 11;
+   */
+  windowSince?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp window_until = 12;
+   */
+  windowUntil?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp computed_at = 13;
+   */
+  computedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.GetFlakeIndexResponse.
+ * Use `create(GetFlakeIndexResponseSchema)` to create a new message.
+ */
+export const GetFlakeIndexResponseSchema: GenMessage<GetFlakeIndexResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_stats, 8);
+
+/**
  * FailureGroupBy names one dimension of a fingerprint. The order of the
  * values is the order dimensions render in, and the order ties break in.
  *
@@ -666,6 +1031,27 @@ export const StatsService: GenService<{
     methodKind: "unary";
     input: typeof GetFailureBreakdownRequestSchema;
     output: typeof GetFailureBreakdownResponseSchema;
+  },
+  /**
+   * GetFlakeIndex groups one namespace's dispatched tasks over one window by
+   * the dimensions the caller names and reports, per group, how often a
+   * task needed more than one attempt. It is the one cross-run read of the
+   * per-attempt records the Orker writes: a SUCCEEDED run that retried is
+   * invisible to every other number this service reports, by construction.
+   *
+   * It reads run BODIES — one per finished run in the window, not only the
+   * failed ones — and one attempt listing per dispatched task. That is more
+   * than GetFailureBreakdown reads and far more than GetStats, which reads
+   * none, so the cost is bounded the same three ways: by the window, by an
+   * optional orkflow, and by a scan budget that FAILS the call rather than
+   * answering from a subset (see GetFlakeIndexResponse).
+   *
+   * @generated from rpc orkstack.v1.StatsService.GetFlakeIndex
+   */
+  getFlakeIndex: {
+    methodKind: "unary";
+    input: typeof GetFlakeIndexRequestSchema;
+    output: typeof GetFlakeIndexResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_orkstack_v1_stats, 0);

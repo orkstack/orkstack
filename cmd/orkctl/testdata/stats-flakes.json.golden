@@ -1,0 +1,73 @@
+{
+  "groups": [
+    {
+      "orkflowName": "ingest",
+      "taskId": "normalize",
+      "runsObserved": "2",
+      "runsRetried": "2",
+      "retryRate": 1,
+      "retryRateDefined": true,
+      "p50Attempts": 2,
+      "p95Attempts": 2,
+      "retryAttempts": "1",
+      "unreportedAttempts": "1",
+      "dominantCode": "CONTAINER_EXIT_NONZERO",
+      "dominantCategory": "ACTIVITY_FAILED",
+      "dominantPhase": "exit",
+      "dominantCount": "1",
+      "lastRetriedAt": "2026-01-02T02:04:05Z",
+      "exampleRunIds": [
+        "ork-ingest-1",
+        "ork-ingest-2"
+      ]
+    },
+    {
+      "orkflowName": "reconcile",
+      "taskId": "fetch-rates",
+      "runsObserved": "3",
+      "runsRetried": "2",
+      "retryRate": 0.6666666666666666,
+      "retryRateDefined": true,
+      "p50Attempts": 2,
+      "p95Attempts": 3,
+      "retryAttempts": "3",
+      "dominantCode": "IMAGE_PULL_FAILED",
+      "dominantCategory": "INFRASTRUCTURE_ERROR",
+      "dominantPhase": "image",
+      "dominantCount": "3",
+      "lastRetriedAt": "2026-01-02T02:34:05Z",
+      "exampleRunIds": [
+        "ork-reconcile-1",
+        "ork-reconcile-2"
+      ]
+    },
+    {
+      "orkflowName": "settle",
+      "taskId": "post",
+      "runsObserved": "1",
+      "retryRateDefined": true,
+      "p50Attempts": 1,
+      "p95Attempts": 1
+    },
+    {
+      "orkflowName": "nightly",
+      "taskId": "warm-cache",
+      "runsEvidenceMissing": "1"
+    }
+  ],
+  "runsInWindow": "7",
+  "runsScanned": "7",
+  "runsDispatched": "7",
+  "runsEvidenceComplete": "6",
+  "runsEvidenceMissing": "1",
+  "groupsTotal": "4",
+  "bodyKeyed": true,
+  "groupBy": [
+    "ORKFLOW",
+    "TASK"
+  ],
+  "namespace": "default",
+  "windowSince": "2026-01-01T03:04:05Z",
+  "windowUntil": "2026-01-02T03:04:05Z",
+  "computedAt": "2026-01-02T03:04:05Z"
+}

@@ -70,6 +70,7 @@ func newStatsCommand(g *globalFlags) *cobra.Command {
 		"how far back to look: a duration such as 6h, or an RFC3339 instant "+
 			"(default: the last 24 hours)")
 	cmd.AddCommand(newStatsFailuresCommand(g))
+	cmd.AddCommand(newStatsFlakesCommand(g))
 	return cmd
 }
 

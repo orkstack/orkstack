@@ -16,7 +16,7 @@ type WorkflowRegistrar interface {
 // RegisterWorkflows registers the engine's workflow types, each with the
 // versioning behaviour it needs. Under Worker Deployment Versioning a workflow
 // type with no declared behaviour panics at registration, so this list is also
-// the statement that both types have been considered.
+// the statement that every type has been considered.
 //
 // It lives in the engine package, not in cmd/ork, so that the integration
 // tests which stand up engine workers (the versioning rollout, drain and
@@ -51,5 +51,15 @@ func RegisterWorkflows(w WorkflowRegistrar) {
 	w.RegisterWorkflowWithOptions(IdempotencyClaimWorkflow, workflow.RegisterOptions{
 		Name:               ClaimWorkflowType,
 		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
+	})
+
+	// Pinned, for the reason RunWorkflow is and with none of the cost the
+	// claim workflow avoids: a fire lives exactly as long as the run it
+	// started, which is pinned to the same version, so it holds no version
+	// open that the run does not, and its history never replays on a newer
+	// build.
+	w.RegisterWorkflowWithOptions(ScheduleFireWorkflow, workflow.RegisterOptions{
+		Name:               ScheduleFireWorkflowType,
+		VersioningBehavior: workflow.VersioningBehaviorPinned,
 	})
 }

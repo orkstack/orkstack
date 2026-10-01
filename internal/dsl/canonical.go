@@ -71,6 +71,30 @@ func CanonicalInputJSON(s *structpb.Struct) (string, error) {
 	return strings.TrimSuffix(buf.String(), "\n"), nil
 }
 
+// CanonicalInputLine renders a run input (or any Struct payload) as ONE line
+// of compact canonical JSON for a human-readable header: the §4.4 canonical
+// value tree — keys sorted by byte sequence, integers without fraction or
+// exponent, no HTML escaping — with no whitespace and no trailing newline.
+// A nil struct renders as "{}". It is the single-line sibling of
+// CanonicalInputJSON, which indents one key per line for a line diff; the
+// two are not interchangeable.
+func CanonicalInputLine(s *structpb.Struct) (string, error) {
+	// canonicalStruct returns (nil, nil) for a nil *Struct, which canonicalJSON
+	// would render as `null`; an absent input is the empty object.
+	if s == nil {
+		return "{}", nil
+	}
+	tree, err := canonicalStruct(s)
+	if err != nil {
+		return "", err
+	}
+	out, err := canonicalJSON(tree)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // CanonicalOrkflow renders wf in the canonical form of §4.4.
 func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	tasks := make([]any, 0, len(wf.GetTasks()))

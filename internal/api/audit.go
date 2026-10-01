@@ -290,6 +290,77 @@ var auditedProcedures = map[string]auditExtractor{
 			Target:    in.GetId(),
 		}
 	},
+	orkstackv1connect.ScheduleServiceCreateScheduleProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.CreateScheduleRequest)
+		entry := auditEntry{
+			Action:    "schedule.create",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    auditNoTarget,
+			// Coordinates and the spec summary only: never the input.
+			Detail: fmt.Sprintf("name=%s %s@%s %s paused=%t", in.GetName(), in.GetOrkflowName(),
+				scheduleVersionLabel(in.GetOrkflowVersion()), scheduleSpecSummary(in.GetSpec()), in.GetPaused()),
+		}
+		if out, ok := resp.(*orkstackv1.CreateScheduleResponse); ok && out != nil && out.GetSchedule().GetId() != "" {
+			entry.Target = out.GetSchedule().GetId()
+			if ns := out.GetSchedule().GetNamespace(); ns != "" {
+				entry.Namespace = ns
+			}
+		}
+		return entry
+	},
+	orkstackv1connect.ScheduleServiceUpdateScheduleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UpdateScheduleRequest)
+		return auditEntry{
+			Action:    "schedule.update",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetName(),
+			Detail:    scheduleVersionLabel(in.GetOrkflowVersion()) + " " + scheduleSpecSummary(in.GetSpec()),
+		}
+	},
+	orkstackv1connect.ScheduleServicePauseScheduleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.PauseScheduleRequest)
+		return auditEntry{
+			Action:    "schedule.pause",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetName(),
+			Detail:    "reason=" + in.GetReason(),
+		}
+	},
+	orkstackv1connect.ScheduleServiceResumeScheduleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.ResumeScheduleRequest)
+		return auditEntry{
+			Action:    "schedule.resume",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetName(),
+		}
+	},
+	orkstackv1connect.ScheduleServiceFireScheduleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.FireScheduleRequest)
+		return auditEntry{
+			Action:    "schedule.fire",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetName(),
+			Detail:    "overlap=" + scheduleOverrideLabel(in.GetOverlap()),
+		}
+	},
+	orkstackv1connect.ScheduleServiceBackfillScheduleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.BackfillScheduleRequest)
+		return auditEntry{
+			Action:    "schedule.backfill",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetName(),
+			Detail: fmt.Sprintf("start=%s end=%s overlap=%s", auditTimestamp(in.GetStart()),
+				auditTimestamp(in.GetEnd()), scheduleOverrideLabel(in.GetOverlap())),
+		}
+	},
+	orkstackv1connect.ScheduleServiceDeleteScheduleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.DeleteScheduleRequest)
+		return auditEntry{
+			Action:    "schedule.delete",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetName(),
+		}
+	},
 	orkstackv1connect.NamespaceServiceCreateNamespaceProcedure: func(req, resp proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.CreateNamespaceRequest)
 		name := artifacts.ResolveNamespace(in.GetNamespace().GetName())
@@ -398,6 +469,64 @@ func webhookAuditDetail(rawURL string, events []string, namespace, orkflowName, 
 		return value
 	}
 	return detail + " scope=" + part(namespace) + "/" + part(orkflowName) + "/" + part(taskID)
+}
+
+// OverlapPolicySlug is the user-facing spelling of an overlap policy: the
+// value's name after OVERLAP_POLICY_, lowercased, "_" as "-". UNSPECIFIED and
+// any undeclared number have none.
+func OverlapPolicySlug(p orkstackv1.OverlapPolicy) (string, bool) {
+	name, ok := orkstackv1.OverlapPolicy_name[int32(p)]
+	if !ok || p == orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED {
+		return "", false
+	}
+	return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(name, "OVERLAP_POLICY_")), "_", "-"), true
+}
+
+// scheduleVersionLabel spells an unpinned schedule's version as "current".
+func scheduleVersionLabel(version string) string {
+	if version == "" {
+		return "current"
+	}
+	return version
+}
+
+// scheduleOverrideLabel spells a per-call overlap override: "schedule" when
+// there is none, so the schedule's own policy applied.
+func scheduleOverrideLabel(p orkstackv1.OverlapPolicy) string {
+	if slug, ok := OverlapPolicySlug(p); ok {
+		return slug
+	}
+	if p == orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED {
+		return "schedule"
+	}
+	return fmt.Sprintf("%d", int32(p))
+}
+
+// scheduleSpecSummary is an audit detail's summary of an authored spec. An
+// UNSPECIFIED overlap is spelled as what it is recorded as: skip.
+func scheduleSpecSummary(spec *orkstackv1.ScheduleSpec) string {
+	interval := "-"
+	if iv := spec.GetInterval(); iv != nil {
+		interval = iv.AsDuration().String()
+	}
+	timezone := spec.GetTimezone()
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	overlap := spec.GetOverlap()
+	if overlap == orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED {
+		overlap = orkstackv1.OverlapPolicy_OVERLAP_POLICY_SKIP
+	}
+	return fmt.Sprintf("cron=[%s] interval=%s timezone=%s overlap=%s",
+		strings.Join(spec.GetCron(), " | "), interval, timezone, scheduleOverrideLabel(overlap))
+}
+
+// auditTimestamp spells a timestamp in an audit detail, "-" when unset.
+func auditTimestamp(ts *timestamppb.Timestamp) string {
+	if ts == nil {
+		return "-"
+	}
+	return ts.AsTime().UTC().Format(time.RFC3339)
 }
 
 // namespaceSpecSummary renders the requested spec's mutable fields as

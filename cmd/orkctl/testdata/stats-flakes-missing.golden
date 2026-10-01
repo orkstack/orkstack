@@ -1,0 +1,11 @@
+Namespace:   default
+Window:      2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:    2026-01-02T03:04:05Z
+Grouped by:  task
+
+ORKFLOW  TASK        RUNS  RETRIED  RATE         ATTEMPTS/RUN  RETRIES  UNREPORTED  DOMINANT CAUSE  LAST RETRIED  EXAMPLE
+nightly  warm-cache  0     0        unavailable  -             0        0           -               -             -
+
+scanned 1 of 1 finished runs in the window; 1 dispatched a task; attempt records complete for 0, missing for 1
+1 runs' attempt records were reclaimed or never written: they are EXCLUDED from every rate above, not counted as clean
+retry rates are unavailable: no run in this window has an attempt record

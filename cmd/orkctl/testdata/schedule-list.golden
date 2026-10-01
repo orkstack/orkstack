@@ -1,0 +1,5 @@
+NAME               ORKFLOW    VERSION  WHEN                       STATE             NEXT                  LAST RUN  ID
+nightly-reconcile  reconcile  current  0 2 * * * (Europe/Lisbon)  active            2026-09-25T01:00:00Z  -         sch-4a1c0e2b7d3f8156
+hourly-sync        sync       3        every 1h                   paused: Q3 close  -                     -         sch-00000000000000a1
+refusing           etl        current  */15 * * * *               active            -                     refused   sch-00000000000000a2
+broken             etl        -        -                          unavailable       -                     -         sch-00000000000000a3

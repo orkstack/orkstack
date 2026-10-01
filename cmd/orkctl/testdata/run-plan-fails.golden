@@ -1,0 +1,11 @@
+PLAN  plan-fails@1.0.0  namespace default
+definition  sha256:6df9c27060208e95ea3560d8a4175ca290da6839a5316da36d483dee3627baa6
+input       {"a":"x","b":1}
+
+WAVE  TASK    OUTCOME    DETAIL
+1     first   runs
+-     broken  fails      evaluate condition "{{ eq .inputs.a .inputs.b }}": template: condition:1:3: executing "condition" at <eq .inputs.a .inputs.b>: error calling eq: incompatible types for comparison: string and float64
+-     after   unreached  after broken fails
+
+1 run, 0 skipped, 1 wave. Nothing was started.
+The run would FAIL deciding broken: evaluate condition "{{ eq .inputs.a .inputs.b }}": template: condition:1:3: executing "condition" at <eq .inputs.a .inputs.b>: error calling eq: incompatible types for comparison: string and float64. 1 task unreached; tasks planned to run in the same or a later wave may be cancelled in flight.

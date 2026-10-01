@@ -11,6 +11,7 @@ orkctl -n payments stats --since 6h
 orkctl -n payments stats --since 2026-05-01T09:00:00Z
 orkctl -n payments stats --json    # the same answer, for a machine
 orkctl -n payments stats failures  # the window's failed runs, grouped (§6)
+orkctl -n payments stats flakes    # the window's tasks that needed a retry (§7)
 ```
 
 ## 1. Two sources, and no third
@@ -284,3 +285,119 @@ every field validated, and only then the lookup.
 `metadata/index/runs/{namespace}/{orkflow?}/failed/`, one body read per failed
 run in the window (eight at a time), and — only for `image` or `phase` — one
 attempt-record prefix listing per failed task-level run. Nothing is written.
+
+## 7. Flake index
+
+`StatsService.GetFlakeIndex` answers the question a success rate cannot: *which
+tasks only succeed because they are tried again?* A task that failed twice and
+passed on its third attempt makes a `SUCCEEDED` run, invisible by construction
+to `runs_by_status`, `success_rate`, `most_failing` and the fingerprints. A
+**flake** is a task that needed more than one Temporal attempt in one run,
+whatever the run's final status; the index groups the window's dispatched tasks
+by the dimensions a caller names and reports, per group, how often that
+happened, flakiest first.
+
+```bash
+orkctl -n payments stats flakes                              # orkflow, task
+orkctl -n payments stats flakes --since 168h --group-by task,orker
+orkctl -n payments stats flakes --orkflow reconcile --group-by phase --json
+```
+
+The dashboard offers the same answer as a **Stability** disclosure
+(`ui/src/lib/components/FlakeIndex.svelte`), fetched only when opened; the run
+page's **Retry history (7 days)** button asks it for one orkflow and decorates
+each task's retry badge with the task's historical rate (`flaky 50%` on a run
+that did not retry a task that retries elsewhere).
+
+**The second read that opens bodies, and the widest.** Like §6 it crosses §1's
+line, and it crosses it further: it reads the body of **every** finished run
+in the window — succeeded, failed and canceled — because the instability it
+exposes is exactly the kind a `SUCCEEDED` status hides, and the body is the
+only record of which tasks were dispatched. It then lists one task's attempt
+records per dispatched task: the one aggregation that reads attempt records
+across runs. The cost stays proportional to runs × dispatched tasks in the
+window, never to output size — bodies hold references, attempt records are
+bounded at 64 KiB — and it is bounded by the window, an optional orkflow, and
+a scan budget.
+
+**One window, one population.** The window is `GetStats`' (§2), resolved by
+`windowOf`. The population is every index key under the namespace (and
+orkflow, if named) inside it, whatever its finished status, so
+`runs_in_window` equals `runs_by_status["succeeded"] + ["failed"] +
+["canceled"]` for the same window
+(`TestGetFlakeIndex_PopulationIsEveryFinishedRunTheWindowCreated`).
+
+**Dispatched.** A task is in the index iff its snapshot's `pool` is set — it
+reached an Orker. A skipped task, a task canceled before dispatch and a task of
+a run whose start failed produce nothing. A run with no dispatched task is
+counted in `runs_scanned` and nowhere else.
+
+**Attempts** for one task of one run are the highest stored record's number or
+the snapshot's `attempt`, whichever is higher; the snapshot alone is not
+trusted (it is 0 for a task Temporal timed out and the committing attempt for
+an adopted commit). A record is used whatever its outcome — a `CANCELED`
+non-final record and an adopted commit on attempt 2 are both retries. The log
+store is **not** consulted, so a task whose final attempts left neither a
+record nor a snapshot attempt number is undercounted: the error is always
+toward fewer retries, never more, and `orkctl run attempts` remains the
+per-run truth. An attempt numbered below the highest with no record of its own
+is `unreported_attempts` — a retry whose Orker died before filing its cause.
+
+**The honest denominator.** Attempt records are reclaimed on the run's
+retention schedule (`docs/STORAGE.md`, "Reclaiming space"), or a best-effort
+write never landed. A dispatched task with **no** record is *evidence
+missing*: it is **excluded** from every rate and counted
+(`runs_evidence_missing` on the group and the response), never treated as a
+task that ran once cleanly. Counting it as clean would make every rate fall
+smoothly as the window ages — a graph that trends toward health for purely
+mechanical reasons. A task no run in the window has a record of appears with
+`retry_rate_defined = false` and renders `unavailable`, never `0%`; a window
+older than retention answers with every task `unavailable` and says so with a
+count. `runs_evidence_complete + runs_evidence_missing = runs_dispatched`; a
+partially observed run is missing for the response, and its observed tasks
+still count.
+
+**Attribution.** `orkflow`, `task` and `pool` are read from the body;
+`orker`, `phase` and `image` from each attempt record, because one task's
+attempts can run on different Orkers. Keyed by a record-level dimension, a
+retry is attributed to the key of the **non-final** attempt — the one that
+failed and caused the next — so keyed by `orker` the index blames the host
+whose attempt failed, never the one that then succeeded
+(`TestGroupFlakes_ARecordKeyedGroupCountsARunRetriedOnlyWhereANonFinalAttemptCarriesItsKey`).
+A record-keyed answer has `body_keyed = false`, and its per-group
+evidence-missing and unreported counts are 0: a task with no record has no
+Orker to be keyed by, so only the response totals are meaningful. `code` and
+`category` are refused as dimensions — a group REPORTS them as its dominant
+cause: the most common `(code, category, phase)` triple among its non-final
+records, one triple, never three independent modes.
+
+**Percentiles** of attempts per run are nearest rank over the group's observed
+runs — the same `NearestRank` the duration percentiles use, so every value is
+an attempt count some run actually reached.
+
+**Fail rather than answer from a subset.** More than 5000 finished runs in the
+window (`FlakeIndexMaxScan`) is `ResourceExhausted` before a single body or
+listing is read; the message names the population, the bound, and what to
+narrow. An index row with no body is skipped (`runs_scanned <
+runs_in_window`); any other unreadable body, or an attempt listing that
+errors, fails the call with `Unavailable` naming the run. An engine with no
+attempt store refuses with `FailedPrecondition` rather than answer "everything
+unavailable". `limit` (default 50, at most 500) bounds the groups returned,
+never the scan.
+
+**Order** is total and clock-free: defined rates first, then retry rate,
+retried runs and observed runs, each descending, then each keyed dimension
+ascending in enum order. Up to three example runs per group are its newest
+retried runs.
+
+**The cache** is §4's, with a third key shape: the namespace and window as
+sent, plus the orkflow, the resolved dimensions in request order and the limit
+as sent. Same TTL (`ORK_STATS_CACHE_TTL`), same whole-answer rule, and the
+namespace, window and every field are validated before the lookup.
+
+**Cost**: one keys-only prefix scan of
+`metadata/index/runs/{namespace}/{orkflow?}/` (every status), one body read per
+finished run in the window and one prefix listing of
+`metadata/attempts/{run-id}/{task-id}/` per dispatched task, eight at a time.
+Nothing is written; no counter, rollup or trend store exists. A flake rate
+graphed over weeks belongs to the telemetry pipeline (`ork.task.attempts`).

@@ -462,15 +462,22 @@ func (s *runState) start(ctx workflow.Context) {
 // permits referencing any transitively upstream task, so the whole closure is
 // threaded into the downstream activity input.
 func (s *runState) transitiveNeeds(id string) []string {
+	return transitiveNeedsOf(s.tasks, id)
+}
+
+// transitiveNeedsOf is transitiveNeeds over a plain task map, shared with
+// Simulate so a plan hands a condition exactly the closure classify does. It
+// is pure: it reads only its arguments.
+func transitiveNeedsOf(tasks map[string]*orkstackv1.Task, id string) []string {
 	collected := map[string]struct{}{}
 	var walk func(string)
 	walk = func(current string) {
-		for _, need := range s.tasks[current].GetNeeds() {
+		for _, need := range tasks[current].GetNeeds() {
 			if _, done := collected[need]; done {
 				continue
 			}
 			collected[need] = struct{}{}
-			if _, ok := s.tasks[need]; ok {
+			if _, ok := tasks[need]; ok {
 				walk(need)
 			}
 		}
@@ -1061,7 +1068,7 @@ func hintPinSessionHost(p *pinState, failure *orkstackv1.Error) {
 func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
 	for _, need := range s.tasks[id].GetNeeds() {
 		if s.taskRuns[need].GetStatus() == orkstackv1.Status_STATUS_SKIPPED {
-			return false, s.markSkipped(ctx, id, fmt.Sprintf("upstream task %q was skipped", need))
+			return false, s.markSkipped(ctx, id, skipReasonUpstream(need))
 		}
 	}
 
@@ -1070,8 +1077,7 @@ func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
 		return false, err
 	}
 	if !shouldRun {
-		return false, s.markSkipped(ctx, id,
-			fmt.Sprintf("condition %q evaluated false", s.tasks[id].GetCondition()))
+		return false, s.markSkipped(ctx, id, skipReasonCondition(s.tasks[id].GetCondition()))
 	}
 	return true, nil
 }

@@ -12,7 +12,8 @@ Orkflow name, and an optional version pin — that an external caller invokes
 over plain HTTP with a bearer token to start one run of that Orkflow. An empty
 version pin means the Orkflow's current pointer, resolved at invoke time,
 exactly as `SubmitRunRequest.orkflow_version` already defaults. A Trigger is
-not a webhook, a schedule, a subscription, or a new execution authority: an
+not a webhook, a schedule ([`ORKFLOW_SCHEDULES.md`](ORKFLOW_SCHEDULES.md)),
+a subscription, or a new execution authority: an
 invocation is one `SubmitRun` call, and Temporal remains the sole owner of
 what happens next.
 

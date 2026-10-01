@@ -1,0 +1,347 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/common.proto";
+import "orkstack/v1/orkflow.proto";
+import "orkstack/v1/run.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// ScheduleService manages schedules: objects bound to ONE orkflow in one
+// namespace that start a run of it whenever a Temporal Schedule fires.
+//
+// It is the third starter beside SubmitRun and TriggerService, and it starts
+// runs the way both of them do — through the ordinary submit preparation,
+// with the version pointer resolved at fire time when none is pinned — so
+// a scheduled run is an ordinary run with origin.kind = SCHEDULE.
+//
+// Temporal owns every piece of schedule state (AGENTS.md §2.1). OrkStack
+// stores NOTHING for a schedule: the coordinates below live inside the
+// Temporal Schedule itself, and paused, note, next_fire_times and
+// recent_fires are read from the cluster on every call. There is no
+// OrkStack column that could disagree with Temporal's.
+service ScheduleService {
+  // CreateSchedule creates one schedule. The namespace is resolved and the
+  // orkflow (and pinned version, when one is given) confirmed to exist
+  // before the cluster is asked, on the checks CreateTrigger makes; a
+  // refused create creates nothing. A name already in use in the namespace
+  // is AlreadyExists. The cluster's own refusal of the spec (a cron
+  // expression it cannot parse) is InvalidArgument quoting its message.
+  rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse);
+  // ListSchedules returns one namespace's schedules, ordered by name,
+  // narrowed to one orkflow when orkflow_name is set. Every row is
+  // described on the cluster for this call; a row the cluster could not
+  // describe is still listed, carrying unavailable_reason, on the terms
+  // ListPools narrows rather than refuses.
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+  // GetSchedule reads one schedule by name, with its next fire times and
+  // recent fires. A schedule of another namespace is NotFound.
+  rpc GetSchedule(GetScheduleRequest) returns (GetScheduleResponse);
+  // UpdateSchedule REPLACES a schedule's mutable fields: version pin, input,
+  // description and spec. The orkflow a schedule is bound to is immutable,
+  // as a trigger's is: rebinding is delete then create. Last writer wins;
+  // see the request for why there is no etag.
+  rpc UpdateSchedule(UpdateScheduleRequest) returns (UpdateScheduleResponse);
+  // PauseSchedule stops fires without deleting anything. The reason is kept
+  // by the cluster as the schedule's note and rendered on every read.
+  rpc PauseSchedule(PauseScheduleRequest) returns (PauseScheduleResponse);
+  // ResumeSchedule lets a paused schedule fire again.
+  rpc ResumeSchedule(ResumeScheduleRequest) returns (ResumeScheduleResponse);
+  // FireSchedule fires once, now, as Temporal's TriggerImmediately does. It
+  // works on a paused schedule. The fire's run id is not known when this
+  // returns: it appears in recent_fires once the fire has prepared, and
+  // `run list --origin schedule:<id>` lists it.
+  rpc FireSchedule(FireScheduleRequest) returns (FireScheduleResponse);
+  // BackfillSchedule fires once for every nominal time the spec names in
+  // [start, end], as if that time passed now, under the overlap policy.
+  // Each backfilled run's origin.reference is its nominal time.
+  rpc BackfillSchedule(BackfillScheduleRequest) returns (BackfillScheduleResponse);
+  // DeleteSchedule removes the schedule. Runs it already started continue;
+  // a fire in progress finishes what it was doing. A repeat is NotFound.
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
+}
+
+// OverlapPolicy is what happens when a fire is due while the run of an
+// earlier fire is still executing. Each value is the Temporal
+// ScheduleOverlapPolicy of the same name, applied to the RUN: the fire
+// workflow lives exactly as long as the run it started, so "still running"
+// means the run is still running. TERMINATE_OTHER is deliberately absent:
+// termination bypasses workflow code, and a terminated fire would leave its
+// run executing while claiming otherwise.
+//
+// Every declared number equals the number of the same-named Temporal value
+// (go.temporal.io/api/enums/v1 ScheduleOverlapPolicy, v1.63.4), and 5 —
+// Temporal's TERMINATE_OTHER — is RESERVED, so ALLOW_ALL is 6 here as it is
+// there. The alignment is for readability only. The engine converts through
+// an explicit switch that never casts (specOverlapToTemporal /
+// overrideOverlapToTemporal, spec §3.1), and an undeclared value such as 5
+// arriving on the wire (proto3 enums are open) is refused by the API and by
+// that switch; it never reaches the cluster.
+enum OverlapPolicy {
+  reserved 5;
+  reserved "OVERLAP_POLICY_TERMINATE_OTHER";
+  // UNSPECIFIED has TWO meanings, fixed by the field that carries it:
+  // on ScheduleSpec.overlap (create, update) it is recorded as SKIP, the
+  // cluster's own default, so no read ever returns UNSPECIFIED; on
+  // FireScheduleRequest.overlap and BackfillScheduleRequest.overlap it is
+  // "no override" and the schedule's own policy applies.
+  OVERLAP_POLICY_UNSPECIFIED = 0;
+  // SKIP: the due fire is dropped. Counted in fires_skipped_overlap.
+  OVERLAP_POLICY_SKIP = 1;
+  // BUFFER_ONE: at most one due fire waits and starts when the run ends.
+  OVERLAP_POLICY_BUFFER_ONE = 2;
+  // BUFFER_ALL: every due fire waits and they start one after another.
+  OVERLAP_POLICY_BUFFER_ALL = 3;
+  // CANCEL_OTHER: the earlier run is cancelled — SIGTERM, grace, SIGKILL,
+  // exactly as `run cancel` — and the due fire starts without waiting for
+  // it to finish; the two overlap for the cancelled run's grace period.
+  OVERLAP_POLICY_CANCEL_OTHER = 4;
+  // ALLOW_ALL: fires never wait for one another. 6, not 5: see above.
+  OVERLAP_POLICY_ALLOW_ALL = 6;
+}
+
+// ScheduleSpec is WHEN a schedule fires, as the operator authored it. It is
+// stored verbatim inside the Temporal Schedule (ScheduleRecord.spec) and is
+// what every read returns; the cluster compiles cron expressions into its
+// own calendar form and does not hand the text back, which is why the
+// authored text travels with the record.
+message ScheduleSpec {
+  // cron is zero or more cron expressions; the schedule fires at the union
+  // of their times and of interval's. 5, 6 or 7 fields, or @hourly, @daily,
+  // @weekly, @monthly, @yearly, or "@every 15m", as Temporal accepts them.
+  // A CRON_TZ= or TZ= prefix is refused: set timezone instead, so one field
+  // says which zone the schedule keeps.
+  repeated string cron = 1;
+  // interval fires every interval, aligned to the Unix epoch (Temporal's
+  // ScheduleIntervalSpec with no offset): every 1h fires on the hour, every
+  // 15m at :00, :15, :30, :45 — not "15m after creation".
+  google.protobuf.Duration interval = 2;
+  // timezone is the IANA zone cron is evaluated in. Empty is UTC. Calendar
+  // matching is literal clock time with no DST special-casing, as Temporal
+  // documents: a 02:30 fire does not happen on the day that has no 02:30
+  // and happens twice on the day that has two 01:30s.
+  string timezone = 3;
+  // jitter delays each fire by a uniform random amount in [0, jitter], never
+  // past the next fire. Zero is none.
+  google.protobuf.Duration jitter = 4;
+  // start_at and end_at bound the fires, inclusive. Unset is unbounded. A
+  // spec with no fire left after now is refused, because the cluster
+  // retires a schedule with nothing left to do after a few days and the
+  // operator would find it gone.
+  google.protobuf.Timestamp start_at = 5;
+  google.protobuf.Timestamp end_at = 6;
+  // overlap is the policy for a fire that is due while an earlier run of
+  // this schedule is still executing. UNSPECIFIED on a create or update is
+  // RECORDED as SKIP by the API before anything is written, so every read
+  // returns SKIP and never UNSPECIFIED.
+  OverlapPolicy overlap = 7;
+  // catchup_window is how late a fire missed while the cluster was down may
+  // still be taken once it is back. Unset leaves Temporal's default (one
+  // year at the SDK version pinned in go.mod); set, it must be at least 10s,
+  // the cluster's minimum. A short window is how a nightly job says "if I
+  // could not run last night, do not run at 09:00 when Temporal comes back".
+  google.protobuf.Duration catchup_window = 8;
+  // pause_on_failure pauses the schedule when a fire ends in failure — a
+  // run that failed, or a fire that was refused — so a broken nightly does
+  // not fail five nights in a row unobserved. The cluster writes why into
+  // the note. Default false.
+  bool pause_on_failure = 9;
+}
+
+// Schedule is one schedule as a client sees it: the authored coordinates and
+// the cluster's live state, merged for this one read and never stored.
+message Schedule {
+  // id is opaque, shaped sch-{16 hex}, generated as trg-{16 hex} is (8 bytes
+  // from crypto/rand). It is what RunOrigin.id carries for a scheduled run.
+  // Nothing parses it or derives anything from its shape. It survives an
+  // update and changes on delete-then-create, so `run list --origin
+  // schedule:<id>` names one schedule's lifetime.
+  string id = 1;
+  // name is the operator's handle: a slug (^[a-z][a-z0-9-]*$, at most 200
+  // bytes), unique within the namespace, immutable. Every request addresses
+  // a schedule by (namespace, name).
+  string name = 2;
+  string namespace = 3;
+  // orkflow_name is the orkflow every fire starts. Immutable.
+  string orkflow_name = 4;
+  // orkflow_version pins a version; empty means the current pointer,
+  // resolved at EACH fire, exactly as SubmitRunRequest.orkflow_version and
+  // Trigger.orkflow_version default. A pinned version that no longer
+  // exists refuses the fire naming it; it never falls through to current.
+  string orkflow_version = 5;
+  // input is the JSON object every fire submits, verbatim; the orkflow's
+  // declared defaults apply as they do for any submission. Unset is none.
+  Payload input = 6;
+  // description is an optional operator label, at most 256 bytes, no
+  // control characters. It is NOT what a run's origin shows — that is
+  // name — so a label can change without rewriting history's meaning.
+  string description = 7;
+  // spec is the authored schedule spec, exactly as the last create or
+  // update sent it, except that an UNSPECIFIED overlap was recorded as SKIP.
+  ScheduleSpec spec = 8;
+  // paused and note are the cluster's state. note is the pause reason an
+  // operator gave, or the text the cluster wrote when pause_on_failure
+  // paused it; it is empty when the schedule is not paused and nothing
+  // wrote one.
+  bool paused = 9;
+  string note = 10;
+  // next_fire_times is up to the next 10 nominal fire times, read from the
+  // cluster for this call; a paused schedule lists the times it would fire
+  // at, which is what creating one paused is for. Never stored by OrkStack.
+  repeated google.protobuf.Timestamp next_fire_times = 11;
+  // recent_fires is up to the last 10 fires, oldest first, read from the
+  // cluster for this call. Never stored by OrkStack.
+  repeated ScheduleFire recent_fires = 12;
+  // Counters the cluster keeps: fires taken, fires skipped by an overlap
+  // policy of SKIP, and fires missed because they fell outside the catch-up
+  // window. Read for this call.
+  int64 fires_taken = 13;
+  int64 fires_skipped_overlap = 14;
+  int64 fires_missed_catchup = 15;
+  google.protobuf.Timestamp created_at = 16;
+  google.protobuf.Timestamp updated_at = 17;
+  // unavailable_reason is set on a LIST row whose live state the cluster
+  // did not answer for. The identity fields (1–4) are then from the list
+  // entry and fields 5–17 are unset — never zero, never a guess. A GetSchedule
+  // that cannot describe is an error instead, because it would have nothing
+  // to return.
+  string unavailable_reason = 18;
+}
+
+// ScheduleFire is one fire of a schedule as the cluster and the fire's own
+// record describe it. Exactly one of run_id and refusal is set once the fire
+// has prepared; neither is set while it is still preparing; details_available
+// is false when the fire could not be described at all (retired past the
+// cluster's execution retention, or the cluster did not answer), in which
+// case a client renders "unavailable", never a blank that reads as success.
+message ScheduleFire {
+  // scheduled_at is the nominal fire time, jitter included. It is also the
+  // started run's origin.reference, in RFC 3339 UTC.
+  google.protobuf.Timestamp scheduled_at = 1;
+  // actual_at is when the cluster took the action.
+  google.protobuf.Timestamp actual_at = 2;
+  // run_id is the run this fire started, once known. The run's own status is
+  // a run read (GetRun); this record does not repeat it.
+  string run_id = 3;
+  // refusal is why this fire started no run: the ordinary submit refusal,
+  // e.g. `orkflow "reconcile" version "3" in namespace "payments" not found`
+  // or `pool "gpu" has no live Orker`.
+  string refusal = 4;
+  bool details_available = 5;
+}
+
+message CreateScheduleRequest {
+  string namespace = 1;                   // empty = the default namespace
+  string name = 2;
+  string orkflow_name = 3;
+  string orkflow_version = 4;
+  Payload input = 5;
+  string description = 6;
+  ScheduleSpec spec = 7;
+  // paused creates the schedule paused, so a spec can be reviewed with
+  // `schedule get` — next fire times and all — before it ever fires.
+  bool paused = 8;
+}
+message CreateScheduleResponse { Schedule schedule = 1; }
+message ListSchedulesRequest {
+  string namespace = 1;                   // empty = the default namespace
+  string orkflow_name = 2;                // empty = every schedule in the namespace
+}
+message ListSchedulesResponse { repeated Schedule schedules = 1; }
+message GetScheduleRequest {
+  string name = 1;
+  string namespace = 2;                   // empty = the default namespace
+}
+message GetScheduleResponse { Schedule schedule = 1; }
+// UpdateScheduleRequest replaces every mutable field with the value here: an
+// unset input clears the input, an unset description clears it. A client
+// that wants to change one thing reads the schedule and sends the rest back,
+// which is what `orkctl schedule update` does.
+//
+// There is deliberately no etag. The Go SDK issues a schedule update without
+// a conflict token (v1.47.0, internal/internal_schedule_client.go:303), so a
+// compare-and-swap here would be a promise the mechanism underneath cannot
+// keep. Last writer wins, and this comment says so rather than a field
+// implying otherwise.
+message UpdateScheduleRequest {
+  string name = 1;
+  string namespace = 2;
+  string orkflow_version = 3;
+  Payload input = 4;
+  string description = 5;
+  ScheduleSpec spec = 6;
+}
+message UpdateScheduleResponse { Schedule schedule = 1; }
+message PauseScheduleRequest {
+  string name = 1;
+  string namespace = 2;
+  // reason is kept by the cluster as the note and shown on every read. At
+  // most 256 bytes, no control characters; validated, never sanitized.
+  string reason = 3;
+}
+message PauseScheduleResponse { Schedule schedule = 1; }
+message ResumeScheduleRequest {
+  string name = 1;
+  string namespace = 2;
+}
+message ResumeScheduleResponse { Schedule schedule = 1; }
+message FireScheduleRequest {
+  string name = 1;
+  string namespace = 2;
+  // overlap overrides the schedule's policy for this one fire. UNSPECIFIED
+  // is NO override — the cluster applies the schedule's own policy — and
+  // never means SKIP here.
+  OverlapPolicy overlap = 3;
+}
+message FireScheduleResponse { Schedule schedule = 1; }
+message BackfillScheduleRequest {
+  string name = 1;
+  string namespace = 2;
+  google.protobuf.Timestamp start = 3;    // inclusive
+  google.protobuf.Timestamp end = 4;      // inclusive; must not precede start
+  // overlap overrides the schedule's policy for these fires. UNSPECIFIED is
+  // NO override, exactly as on FireScheduleRequest.
+  OverlapPolicy overlap = 5;
+}
+message BackfillScheduleResponse { Schedule schedule = 1; }
+message DeleteScheduleRequest {
+  string name = 1;
+  string namespace = 2;
+}
+message DeleteScheduleResponse {}
+
+// ScheduleRecord is the ENGINE-INTERNAL argument of the schedule's action:
+// the coordinates OrkStack authored, stored inside the Temporal Schedule and
+// handed to every fire. It is a proto message because a workflow argument is
+// encoded by the data converter one payload at a time, and a plain struct
+// nesting Payload would be encoded by encoding/json instead of protojson
+// (see engine.RunOrigin's comment). Nothing outside internal/engine and
+// internal/api reads it, and no client surface renders it.
+message ScheduleRecord {
+  string schedule_id = 1;
+  string name = 2;
+  string namespace = 3;
+  string orkflow_name = 4;
+  string orkflow_version = 5;
+  Payload input = 6;
+  string description = 7;
+  ScheduleSpec spec = 8;
+}
+
+// ScheduledRunPreparation is the ENGINE-INTERNAL result of the
+// PrepareScheduledRun local activity: everything the fire workflow needs to
+// start the run as a child of itself, computed by the ordinary submit
+// preparation. The plan is carried as the encoding/json bytes the data
+// converter produces for RunWorkflow's plan argument, so the child receives
+// exactly what StartRun would have sent.
+message ScheduledRunPreparation {
+  Run run = 1;                  // the pending run: id, coordinates, origin, created_at
+  Orkflow orkflow = 2;          // the planned definition, every task's pool filled in
+  Payload input = 3;            // the input with declared defaults applied
+  bytes plan = 4;               // engine.RunPlan, encoding/json
+  bool namespace_indexed = 5;   // the engine's boot answers, so the child is stamped
+  bool origin_indexed = 6;      //   exactly as StartRun stamps a top-level run
+}

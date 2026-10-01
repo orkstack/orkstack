@@ -306,6 +306,8 @@ this context:
 
 - `.inputs.<name>` — submitted inputs.
 - `.tasks.<id>.output.<field>` — a completed upstream task's output payload.
+  `orkctl run plan` evaluates a `condition` for a given input without running
+  anything.
 - Helper `artifact "<taskId>/<artifactName>"` — resolves to a **local path** the
   Orker has materialized before the task runs.
 - Helper `env "<NAME>"` — reads an allowlisted environment variable on the Orker.

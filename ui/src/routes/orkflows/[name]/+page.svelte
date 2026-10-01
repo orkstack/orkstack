@@ -5,6 +5,7 @@
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import OrkflowEditor from '$lib/components/OrkflowEditor.svelte';
+	import OrkflowSchedules from '$lib/components/OrkflowSchedules.svelte';
 	import OrkflowTriggers from '$lib/components/OrkflowTriggers.svelte';
 	import OrkflowVersions from '$lib/components/OrkflowVersions.svelte';
 	import RunSubmitPanel from '$lib/components/RunSubmitPanel.svelte';
@@ -29,10 +30,11 @@
 	// rather than the head it just created. The Triggers tab is the same kind of
 	// listing: each trigger pins its own version, so the page's `?version=`
 	// names none of them and would only leak back into the tabs that obey it.
+	// The Schedules tab is the same kind of listing, for the same reason.
 	function tabHref(tab: string): string {
 		const params = new URLSearchParams();
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
-		if (data.version && tab !== 'versions' && tab !== 'triggers')
+		if (data.version && tab !== 'versions' && tab !== 'triggers' && tab !== 'schedules')
 			params.set('version', data.version);
 		if (tab !== 'overview') params.set('tab', tab);
 		return `/orkflows/${data.name}?${params.toString()}`;
@@ -42,6 +44,7 @@
 		{ id: 'overview', label: 'Overview' },
 		{ id: 'versions', label: 'Versions' },
 		{ id: 'triggers', label: 'Triggers' },
+		{ id: 'schedules', label: 'Schedules' },
 		{ id: 'edit', label: 'Edit' }
 	];
 
@@ -226,6 +229,15 @@
 		triggers={data.triggers}
 		error={data.triggersError}
 		{invokeOrigin}
+	/>
+{:else if data.tab === 'schedules'}
+	<OrkflowSchedules
+		name={data.name}
+		namespace={data.namespace}
+		versions={data.versions}
+		currentVersion={data.currentVersion}
+		schedules={data.schedules}
+		error={data.schedulesError}
 	/>
 {:else}
 	<OrkflowEditor

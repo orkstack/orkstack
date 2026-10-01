@@ -1,0 +1,15 @@
+PLAN  advanced-demo@1.0.1  namespace default
+definition  sha256:f0066bf169a7ffa3f6a3c20e703d78a30d519fbdd5460a927c403b1ba02d1865
+input       {"enable_secret_check":false,"greeting":"hello from advanced-demo","log_lines":120}
+
+WAVE  TASK       OUTCOME  DETAIL
+1     warmup     runs
+2     flaky      runs
+2     logstream  runs
+2     guarded    skipped  condition "{{ .inputs.enable_secret_check }}" evaluated false
+3     summarize  skipped  condition "{{ eq .tasks.flaky.output.exitCode 0.0 }}" evaluated false
+4     archive    skipped  upstream task "summarize" was skipped
+
+3 run, 3 skipped, 2 waves. Nothing was started.
+1 condition reads upstream outputs that were not supplied (planned as {}): summarize.
+  Supply them with --output TASK='{"…"}' or --outputs-file PATH.

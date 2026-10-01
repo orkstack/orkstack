@@ -67,6 +67,23 @@ service OrkflowService {
   // have the version they started with — but any new run will fail with
   // NotFound.
   rpc DeleteOrkflow(DeleteOrkflowRequest) returns (DeleteOrkflowResponse);
+  // PlanRun answers "for this input, which tasks of this definition would
+  // run, which would be skipped and why, and in what order" WITHOUT
+  // starting anything.
+  //
+  // It is a read in the shape of ValidateOrkflow: it resolves the same
+  // definition SubmitRun would (or prepares an unapplied document exactly
+  // as ValidateOrkflow does), applies the same declared input defaults, and
+  // walks the DAG with the interpreter's own condition evaluator — the
+  // same function RunWorkflow calls, not a copy of it. It writes no
+  // definition, no pointer, no execution, no idempotency claim, and no
+  // event; no run id is minted. There is no flag that makes it submit.
+  //
+  // A plan proves WIRING, never behaviour: a task reported RUNS is a task
+  // the interpreter would dispatch, not a task that would succeed. It is
+  // also not an admission check — pools, holds, and limits are SubmitRun's
+  // questions and are not asked here.
+  rpc PlanRun(PlanRunRequest) returns (PlanRunResponse);
 }
 
 message ApplyOrkflowRequest {
@@ -212,6 +229,137 @@ message DiffOrkflowVersionsResponse {
   string unified_diff = 1;
   string from_version = 2;               // resolved
   string to_version = 3;                 // resolved
+}
+// PlanRunRequest names ONE definition, one input, and optional stub outputs.
+//
+// Exactly one of orkflow_name and yaml is set. With orkflow_name, the
+// definition is the stored version the three coordinates address, resolved
+// exactly as GetOrkflow and SubmitRun resolve it (empty version = the
+// current pointer). With yaml, the definition is prepared from the document
+// exactly as ValidateOrkflow prepares it — compiled against the deployment's
+// activity catalog, namespace-checked, images resolved, digest computed —
+// and stored nowhere.
+message PlanRunRequest {
+  string orkflow_name = 1;
+  string orkflow_version = 2;            // empty = the current pointer
+  string namespace = 3;                  // empty = the default namespace
+  // input is the run input exactly as SubmitRunRequest.input would carry
+  // it; the definition's declared defaults fill omitted keys, caller keys
+  // always win. The effective, defaulted input is echoed on the response.
+  Payload input = 4;
+  // assumed_outputs stubs the values.json of a task that would run, keyed
+  // by task id, so a downstream condition that reads
+  // .tasks.<id>.output.<field> can be planned both ways. A key that is not
+  // a task id of the definition is InvalidArgument naming it. A task that
+  // runs with no entry here is planned with an EMPTY output map — which is
+  // exactly what the interpreter gives a condition when the upstream wrote
+  // no such field — and every task whose condition read such an output is
+  // listed in PlanTask.assumed_absent. An entry for a task that does not
+  // run is reported in unused_assumed_outputs, never silently dropped.
+  map<string, Payload> assumed_outputs = 5;
+  // yaml is an unapplied document to plan instead of a stored version. It
+  // is prepared, not stored: the same function ValidateOrkflow uses, with
+  // the same errors. namespace, when set, must agree with the document's
+  // own `namespace:` on the same rule ApplyOrkflow applies.
+  string yaml = 6;
+}
+
+// PlanOutcome is what the interpreter would do with one task, given the
+// planned input. It is deliberately not orkstack.v1.Status: a plan never
+// SUCCEEDS or FAILS a task — it dispatches or does not — and the enum must
+// not be mistaken for an execution record.
+enum PlanOutcome {
+  PLAN_OUTCOME_UNSPECIFIED = 0;
+  // RUNS: the interpreter would schedule this task's activity.
+  PLAN_OUTCOME_RUNS = 1;
+  // SKIPPED: the interpreter would mark it STATUS_SKIPPED, for the reason
+  // in PlanTask.skip_reason, without reaching an Orker.
+  PLAN_OUTCOME_SKIPPED = 2;
+  // FAILS: evaluating this task's condition returns an error, and the
+  // interpreter fails the RUN at that point (RUN_FAILED with the error's
+  // text). PlanTask.error carries it. At most one task of a plan is FAILS.
+  PLAN_OUTCOME_FAILS = 3;
+  // UNREACHED: the run fails at another task before this one is decided;
+  // the interpreter would mark it CANCELED ("run ended before this task
+  // started"). Only present when a task is FAILS.
+  PLAN_OUTCOME_UNREACHED = 4;
+}
+
+// PlanTask is one task's planned outcome. Tasks are listed in declaration
+// order, the order readyTasks scans them in.
+message PlanTask {
+  string task_id = 1;
+  PlanOutcome outcome = 2;
+  // wave is the dispatch depth: 1 for a task with no needs, otherwise one
+  // more than the highest wave among its needs. A SKIPPED task carries the
+  // wave it WOULD have been dispatched in, so a reader sees where in the
+  // graph the branch closed; it is not counted in PlanRunResponse.wave_count
+  // because a skip costs the interpreter no activity and no wait. 0 for
+  // FAILS and UNREACHED.
+  //
+  // A wave is a depth, not a clock: the interpreter re-scans after EVERY
+  // completion, so with real durations a wave-3 task may start before a
+  // slower wave-2 task on another branch finishes. wave_count is the
+  // minimum number of sequential dispatch rounds, which is what an author
+  // asking "how parallel is this" wants to know.
+  int32 wave = 3;
+  // skip_reason is, for SKIPPED, the exact sentence the interpreter logs
+  // after "task skipped: " — `upstream task "<id>" was skipped` or
+  // `condition "<expression>" evaluated false`. Empty otherwise.
+  string skip_reason = 4;
+  // skipped_by is, for an upstream skip, the id of the need that caused it
+  // (the first skipped entry of `needs:`, as classify finds it). Empty for
+  // a condition skip and for every other outcome.
+  string skipped_by = 5;
+  // condition is the task's `condition:` as written, empty when it has none.
+  string condition = 6;
+  // pin is the task's `pin:` as written, empty when unpinned. Rendered so a
+  // reader sees which RUNS tasks would open and share a pin; a pin whose
+  // every member is SKIPPED is never opened by the interpreter and is
+  // rendered as such.
+  string pin = 7;
+  // assumed_absent lists the upstream task ids this task's condition reads
+  // through .tasks.<id> for which the request supplied no assumed output,
+  // in sorted order. Those outputs were planned as {}. Set only when the
+  // condition was actually evaluated (RUNS, or SKIPPED by its condition);
+  // empty for an upstream skip, FAILS, and UNREACHED.
+  repeated string assumed_absent = 8;
+  // error is set for FAILS only: code RUN_FAILED and the exact message the
+  // interpreter would record on the run.
+  Error error = 9;
+}
+
+// PlanWave lists the RUNS tasks of one wave, in declaration order. There is
+// one entry per wave from 1 to wave_count; SKIPPED tasks are not members.
+message PlanWave {
+  int32 wave = 1;
+  repeated string task_ids = 2;
+}
+
+message PlanRunResponse {
+  // The definition that was planned: the coordinates and the digest of the
+  // exact document, so a plan of a pinned version and a plan of `current`
+  // can be told apart after the pointer moves.
+  string orkflow_name = 1;
+  string orkflow_version = 2;
+  string namespace = 3;
+  string definition_digest = 4;
+  // from_yaml is true when the request planned an unapplied document; the
+  // version is then whatever the document pins or the derived source hash,
+  // and nothing under these coordinates is stored.
+  bool from_yaml = 5;
+  // input is the EFFECTIVE input: the request's, with declared defaults
+  // applied, exactly what RunWorkflow would see as .inputs.
+  Payload input = 6;
+  repeated PlanTask tasks = 7;           // declaration order
+  repeated PlanWave waves = 8;           // 1..wave_count, RUNS tasks only
+  int32 runs = 9;                        // count of RUNS
+  int32 skipped = 10;                    // count of SKIPPED
+  // wave_count is the highest wave of any RUNS task; 0 when nothing runs.
+  int32 wave_count = 11;
+  // unused_assumed_outputs lists request keys whose task did not RUN, in
+  // sorted order: the stub was accepted and had no effect.
+  repeated string unused_assumed_outputs = 12;
 }
 message DeleteOrkflowRequest {
   string name = 1;

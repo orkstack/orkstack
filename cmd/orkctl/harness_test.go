@@ -222,6 +222,27 @@ type fixture struct {
 	// timeoutLog is the Connect-Timeout-Ms header each request carried, in
 	// the same order: the deadline the CLI gave that one request.
 	timeoutLog []string
+	// bodyLog is each ScheduleService request's raw body (nil for every
+	// other request), in the same order, so a test can decode exactly what
+	// the CLI put on the wire.
+	bodyLog [][]byte
+}
+
+// lastRequest decodes the body of the newest request sent to path into msg,
+// and reports whether one was sent. The CLI's Connect clients send unary
+// requests as uncompressed binary protobuf.
+func (f *fixture) lastRequest(path string, msg proto.Message) bool {
+	f.requestsMu.Lock()
+	defer f.requestsMu.Unlock()
+	for i := len(f.requestLog) - 1; i >= 0; i-- {
+		if f.requestLog[i] == path {
+			if err := proto.Unmarshal(f.bodyLog[i], msg); err != nil {
+				f.t.Fatalf("decode request to %s: %v", path, err)
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // timeoutHeaders returns the Connect-Timeout-Ms header of every request
@@ -303,6 +324,14 @@ func newFixtureWith(
 		f.requestsMu.Lock()
 		f.requestLog = append(f.requestLog, r.URL.Path)
 		f.timeoutLog = append(f.timeoutLog, r.Header.Get("Connect-Timeout-Ms"))
+		// Only unary schedule requests are buffered: a streaming body must
+		// reach the handler as it arrives.
+		var body []byte
+		if strings.Contains(r.URL.Path, "ScheduleService") {
+			body, _ = io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		f.bodyLog = append(f.bodyLog, body)
 		f.requestsMu.Unlock()
 		mux.ServeHTTP(w, r)
 	})
