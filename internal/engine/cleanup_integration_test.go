@@ -984,7 +984,11 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 			return nil, err
 		}
 		return &orkstackv1.ExecuteTaskResult{
-			TaskId: in.GetTaskId(), ValuesJson: []byte(`{}`),
+			// Attempt is what the real Orker reports (activity.proto
+			// ExecuteTaskResult.attempt): it becomes the archived
+			// TaskRun.attempt, the only record of the outcome attempt once
+			// cleanup has deleted the attempt record.
+			TaskId: in.GetTaskId(), ValuesJson: []byte(`{}`), Attempt: attempt,
 			Commit:          &orkstackv1.CommitRef{Uri: uri, Sha256: rec.SHA256, Etag: rec.ETag},
 			Artifacts:       []*orkstackv1.ArtifactRef{reportRef},
 			SystemArtifacts: []*orkstackv1.ArtifactRef{stdoutRef},
