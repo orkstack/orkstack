@@ -282,3 +282,21 @@ func TestGetUsage_MapsEveryMeasureErrorToItsCode(t *testing.T) {
 		}
 	})
 }
+
+// TestUsageCacheTTLFromEnv: the knob an operator turns, including off.
+func TestUsageCacheTTLFromEnv(t *testing.T) {
+	for _, testCase := range []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"", api.DefaultUsageCacheTTL},
+		{"30s", 30 * time.Second},
+		{"0", 0},
+		{"nonsense", api.DefaultUsageCacheTTL},
+	} {
+		t.Setenv(api.UsageCacheTTLVar, testCase.raw)
+		if got := api.UsageCacheTTLFromEnv(); got != testCase.want {
+			t.Errorf("UsageCacheTTLFromEnv(%q) = %v, want %v", testCase.raw, got, testCase.want)
+		}
+	}
+}
