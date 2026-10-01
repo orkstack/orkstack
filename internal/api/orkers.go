@@ -52,11 +52,38 @@ func (s *Service) ListOrkers(
 		return connect.NewResponse(&orkstackv1.ListOrkersResponse{Orkers: []*orkstackv1.Orker{row}}), nil
 	}
 
-	presence, err := s.fleet.ObserveOrkers(ctx)
+	rows, err := s.orkerInventory(ctx)
 	if err != nil {
 		// Nothing at all was measured: the same verdict ListPools gives when
 		// the namespace itself cannot be resolved.
 		return nil, connect.NewError(connect.CodeUnavailable, err)
+	}
+	pool := req.Msg.GetPool()
+	kept := rows[:0]
+	for _, row := range rows {
+		// An unavailable row has no pool and is KEPT under a pool filter: it
+		// may be that pool's, and dropping it would hide exactly the host an
+		// operator is looking for.
+		if pool != "" && row.GetUnavailableReason() == "" && row.GetPool() != pool {
+			continue
+		}
+		kept = append(kept, row)
+	}
+	return connect.NewResponse(&orkstackv1.ListOrkersResponse{Orkers: kept}), nil
+}
+
+// orkerInventory is ListOrkers' body for the whole fleet: the presence list,
+// one describe per Orker, rows sorted by pool then orker_id. ListOrkers keeps
+// its own orker_id branch and its pool filter on top of it; ListReleases
+// attributes the same rows to releases, so the release view and the Orker list
+// are one inventory, not two (orkctl-release §6.1).
+func (s *Service) orkerInventory(ctx context.Context) ([]*orkstackv1.Orker, error) {
+	if s.fleet == nil {
+		return nil, errNoFleet
+	}
+	presence, err := s.fleet.ObserveOrkers(ctx)
+	if err != nil {
+		return nil, err
 	}
 	rows := make([]*orkstackv1.Orker, len(presence))
 	errs := make([]error, len(presence))
@@ -69,25 +96,16 @@ func (s *Service) ListOrkers(
 		rows[i] = orkerRow(presence[i], described, err)
 		errs[i] = err
 	})
-	pool := req.Msg.GetPool()
-	kept := rows[:0]
 	for i, row := range rows {
 		s.logUnavailableOrker(row, errs[i])
-		// An unavailable row has no pool and is KEPT under a pool filter: it
-		// may be that pool's, and dropping it would hide exactly the host an
-		// operator is looking for.
-		if pool != "" && row.GetUnavailableReason() == "" && row.GetPool() != pool {
-			continue
-		}
-		kept = append(kept, row)
 	}
-	sort.SliceStable(kept, func(i, j int) bool {
-		if kept[i].GetPool() != kept[j].GetPool() {
-			return kept[i].GetPool() < kept[j].GetPool()
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].GetPool() != rows[j].GetPool() {
+			return rows[i].GetPool() < rows[j].GetPool()
 		}
-		return kept[i].GetOrkerId() < kept[j].GetOrkerId()
+		return rows[i].GetOrkerId() < rows[j].GetOrkerId()
 	})
-	return connect.NewResponse(&orkstackv1.ListOrkersResponse{Orkers: kept}), nil
+	return rows, nil
 }
 
 func (s *Service) logUnavailableOrker(row *orkstackv1.Orker, err error) {
