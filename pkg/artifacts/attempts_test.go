@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -398,5 +399,88 @@ func TestUnmarshalAttempt_ARecordWithoutPhasesReadsAnEmptyList(t *testing.T) {
 		`"phasesFromTheFuture":[{"phase":"run"}]}`
 	if _, err := UnmarshalAttempt([]byte(future)); err != nil {
 		t.Fatalf("an unknown field broke the reader: %v", err)
+	}
+}
+
+// runWideStores is every backend in this package that implements
+// RunAttemptReader without a network.
+func runWideStores(t *testing.T) map[string]interface {
+	AttemptStore
+	RunAttemptReader
+} {
+	t.Helper()
+	local, err := NewLocalAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("local attempt store: %v", err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	return map[string]interface {
+		AttemptStore
+		RunAttemptReader
+	}{
+		"memory": NewMemoryAttemptStore(),
+		"local":  local,
+	}
+}
+
+func TestRunAttemptReader_ListsEveryTaskOfOneRunInKeyOrder(t *testing.T) {
+	const run, sibling, extended = "ork-1-1", "ork-1-2", "ork-1-10"
+	for name, store := range runWideStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			for _, record := range []*orkstackv1.TaskAttempt{
+				sampleAttempt(run, "b", 2), sampleAttempt(run, "a", 1), sampleAttempt(run, "b", 1),
+				sampleAttempt(sibling, "a", 1), sampleAttempt(extended, "a", 1),
+			} {
+				if err := store.PutAttempt(ctx, record); err != nil {
+					t.Fatalf("PutAttempt: %v", err)
+				}
+			}
+			refs, err := store.ListRunAttemptRefs(ctx, run)
+			if err != nil {
+				t.Fatalf("ListRunAttemptRefs: %v", err)
+			}
+			want := []AttemptRef{{run, "a", 1}, {run, "b", 1}, {run, "b", 2}}
+			if len(refs) != len(want) {
+				t.Fatalf("ListRunAttemptRefs = %v, want %v", refs, want)
+			}
+			for i := range want {
+				if refs[i] != want[i] {
+					t.Fatalf("ListRunAttemptRefs = %v, want %v", refs, want)
+				}
+			}
+			empty, err := store.ListRunAttemptRefs(ctx, "ork-9-9")
+			if err != nil || len(empty) != 0 {
+				t.Fatalf("a run with no records = %v, %v; want empty and no error", empty, err)
+			}
+		})
+	}
+}
+
+func TestRunAttemptReader_GetAttemptReadsBackWhatWasPutAndMissingIsNotFound(t *testing.T) {
+	for name, store := range runWideStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			record := sampleAttempt("ork-2-1", "build", 3)
+			record.Resources = &orkstackv1.ReservedResources{Cpu: 0.5, MemoryBytes: 512 << 20}
+			if err := store.PutAttempt(ctx, record); err != nil {
+				t.Fatalf("PutAttempt: %v", err)
+			}
+			got, err := store.GetAttempt(ctx, AttemptRef{RunID: "ork-2-1", TaskID: "build", Attempt: 3})
+			if err != nil {
+				t.Fatalf("GetAttempt: %v", err)
+			}
+			want, err := BoundAttempt(record)
+			if err != nil {
+				t.Fatalf("BoundAttempt: %v", err)
+			}
+			if !proto.Equal(got, want) {
+				t.Fatalf("GetAttempt = %v, want %v", got, want)
+			}
+			_, err = store.GetAttempt(ctx, AttemptRef{RunID: "ork-2-1", TaskID: "build", Attempt: 4})
+			if !errors.Is(err, ErrNotFound) {
+				t.Fatalf("GetAttempt of a missing record = %v, want ErrNotFound", err)
+			}
+		})
 	}
 }
