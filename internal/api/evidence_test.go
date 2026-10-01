@@ -98,13 +98,6 @@ func (failingAttempts) ReadAttemptDocuments(context.Context, string, string) ([]
 // listOnlyAttempts implements AttemptStore and nothing else.
 type listOnlyAttempts struct{ artifacts.AttemptStore }
 
-// failingOrkflows is an orkflow store whose reads fail.
-type failingOrkflows struct{ engine.OrkflowStore }
-
-func (failingOrkflows) Get(context.Context, string, string, string) (*orkstackv1.Orkflow, error) {
-	return nil, errors.New("bucket unreachable")
-}
-
 // swappedBody serves another run's archive body under every id.
 type swappedBody struct {
 	*engine.RunArchiver
@@ -726,7 +719,9 @@ func TestExportRunEvidence_StoreErrorsAreUnavailableNeverReclaimed(t *testing.T)
 		{name: "attempts", opt: withConfig(func(cfg *api.Config) {
 			cfg.Attempts = failingAttempts{cfg.Attempts.(*artifacts.MemoryAttemptStore)}
 		})},
-		{name: "orkflows", opt: withConfig(func(cfg *api.Config) { cfg.Orkflows = failingOrkflows{cfg.Orkflows} })},
+		{name: "orkflows", opt: withConfig(func(cfg *api.Config) {
+			cfg.Orkflows = failingOrkflows{OrkflowStore: cfg.Orkflows, err: errors.New("bucket unreachable")}
+		})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
