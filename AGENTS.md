@@ -347,6 +347,21 @@ The repository vocabulary is deliberate:
 - **Maximum run retention** means the deployment-wide ceiling every
   namespace's run retention is bound by, and what a namespace that sets none
   inherits (`orkstack.v1.RetentionPolicy.max_run_retention`).
+- **Release** means one build of OrkStack — `ork` and `orker` built and
+  deployed together — identified by `ORK_BUILD_ID` within the deployment named
+  by `ORK_DEPLOYMENT_NAME` (§7.2). It is the user-facing word: it appears in
+  the proto, `orkctl release`, the UI, and every message. The Temporal Worker
+  Deployment Version it is implemented with is internal, exactly as a session
+  is internal to a pin. (Unrelated to `orkctl namespace update --release-hold`,
+  where "release" is a verb on a hold.) A release is **current** when it takes
+  every new run not sent to a ramping release, **ramping** when it takes a
+  stated percentage of new runs, **previous** when it took new runs once and
+  takes none now, and a **candidate** when its processes have registered and it
+  has never taken new runs.
+- A release is **drained** when the cluster reports that no run executing on
+  it remains and no Orker of it hosts an open pin — the release-scoped
+  counterpart of an Orker's drain. A drained release's processes may be
+  stopped.
 - **Telemetry sink** means an operator-declared OTLP destination, named, in
   `ORK_TELEMETRY_SINKS`. `default` is reserved: it means the standard `OTEL_*`
   environment, not an entry in that YAML.
@@ -446,7 +461,9 @@ One Worker Deployment spans `ork` and `orker` for a release. They share
 versioning enabled, `RunWorkflow` is Pinned, `IdempotencyClaimWorkflow` is
 AutoUpgrade, and the projection worker on `ork-engine-events` is unversioned.
 Versioning is off unless `ORK_BUILD_ID` is set; leave
-`DefaultVersioningBehavior` unset when it is off. A version must drain before
+`DefaultVersioningBehavior` unset when it is off. `orkctl release` (status, ramp, promote,
+rollback, wait) is the supported rollout path, and it refuses a ramp or
+promotion the target release's engines and Orkers could not carry. A version must drain before
 its workers are decommissioned. A pinned workflow uses its own activity-worker
 version only while that version has workers polling its activity channel;
 otherwise Temporal falls through to that channel's current version. A task pin
