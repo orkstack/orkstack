@@ -187,6 +187,8 @@ type StatsHandler struct {
 	// breakdowns is GetFailureBreakdown's cache, under the same mu, TTL and
 	// bound: one whole answer per question, never a merge.
 	breakdowns map[breakdownKey]breakdownEntry
+	// flakes is GetFlakeIndex's cache, on the same terms.
+	flakes map[flakeKey]flakeEntry
 }
 
 // NewStatsHandler returns the stats surface over a service. ttl is used as
@@ -197,6 +199,7 @@ func NewStatsHandler(svc *Service, ttl time.Duration) *StatsHandler {
 		ttl:        ttl,
 		cache:      map[statsKey]statsEntry{},
 		breakdowns: map[breakdownKey]breakdownEntry{},
+		flakes:     map[flakeKey]flakeEntry{},
 	}
 }
 

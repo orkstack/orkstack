@@ -1094,3 +1094,80 @@ test('a task watched live acquires its real exit code and Error.category without
 	await expect(page.getByTestId('task-never-status')).toHaveText(/Never started/);
 	await expect(page.getByTestId('task-never')).not.toContainText('CANCELED');
 });
+
+// The retry HISTORY on the task card: whether this orkflow's `flaky` task
+// retries in its other runs, asked of the archive only when a reader asks.
+// The first run retried it; a second run that did not still says the task is
+// flaky, with the share of runs that retried.
+test("a retried task's badge carries its retry history once asked, and a run that did not retry still says the task is flaky", async ({
+	page
+}) => {
+	// Runs to wait for, archive writes and a cache TTL: more than the
+	// default budget, never a sleep.
+	test.setTimeout(420_000);
+	const HISTORY_KEY = 'orkstack.run.stability';
+	// The same question the page asks, so waiting on it also leaves the
+	// engine's short-lived cache holding the fresh answer.
+	const historyRequest = {
+		namespace: 'default',
+		orkflowName: LIVE_ORKFLOW,
+		lookback: '604800s',
+		groupBy: ['FAILURE_GROUP_BY_TASK']
+	};
+	const scanned = async () =>
+		Number(
+			(await rpc<{ runsScanned?: string }>('StatsService/GetFlakeIndex', historyRequest)).runsScanned ?? '0'
+		);
+	const succeeded = async (runId: string) =>
+		(await rpc<{ run?: { status?: string } }>('RunService/GetRun', { runId })).run?.status === 'STATUS_SUCCEEDED';
+
+	await waitFor('the retried run has succeeded', () => succeeded(liveRun), 180_000);
+	await waitFor('the retried run is in the flake index', async () => (await scanned()) === 1, 120_000);
+
+	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
+	await page.evaluate((key) => localStorage.removeItem(key), HISTORY_KEY);
+	await page.reload();
+	const badge = page.getByTestId('task-flaky-retries');
+	await expect(badge).toHaveText('retried ×1', { timeout: 60_000 });
+	await expect(page.getByTestId('run-stability-note')).toHaveCount(0);
+
+	await page.getByTestId('run-stability-toggle').click();
+	await expect(page.getByTestId('run-stability-note')).toContainText('1 finished run ', { timeout: 60_000 });
+	// The in-run label is unchanged; the title gains the history.
+	await expect(badge).toHaveText('retried ×1');
+	await expect(badge).toHaveAttribute('title', /retried in 1 of 1 runs/);
+	note(`retry history on ${liveRun}: badge "${await badge.innerText()}", title "${await badge.getAttribute('title')}"`);
+	note(`run-stability-note: ${(await page.getByTestId('run-stability-note').innerText()).trim()}`);
+	await page.getByTestId('run-stability-cli-trigger').click();
+	const command = (await page.getByTestId('run-stability-cli-command').innerText()).trim();
+	expect(command).toContain(`stats flakes --orkflow ${LIVE_ORKFLOW} --since 168h`);
+	note(`run-stability CLI equivalent: ${command}`);
+	await page.keyboard.press('Escape');
+
+	// A second run of the same orkflow: the stub now answers first time, so
+	// `flaky` does not retry in it.
+	const second = (await submit(LIVE_ORKFLOW)).run.id;
+	note(`started run ${second} (${LIVE_ORKFLOW}), whose flaky task does not retry`);
+	await waitFor('the second run has succeeded', () => succeeded(second), 240_000);
+	await waitFor('both runs are in the flake index', async () => (await scanned()) === 2, 120_000);
+
+	// Asked for nothing, the page shows nothing: this run did not retry.
+	await page.evaluate((key) => localStorage.setItem(key, 'closed'), HISTORY_KEY);
+	await page.goto(`${UI_ORIGIN}/runs/${second}?ns=default`);
+	await expect(page.getByTestId('task-flaky-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-flaky-retries')).toHaveCount(0);
+
+	await page.getByTestId('run-stability-toggle').click();
+	const flaky = page.getByTestId('task-flaky-retries');
+	await expect(flaky).toHaveText('flaky 50%', { timeout: 60_000 });
+	await expect(flaky).toHaveAttribute('data-flaky', 'true');
+	await expect(flaky).toHaveAttribute('title', /retried in 1 of 2 runs/);
+	await expect(page.getByTestId('task-talk-retries')).toHaveCount(0);
+	note(`run ${second}: task-flaky-retries reads "${await flaky.innerText()}" (data-flaky=true), task-talk-retries absent`);
+	await shot(page, 'screenshot-run-page-flake-history.png');
+
+	// The open state is remembered: the next navigation applies it unasked.
+	await page.reload();
+	await expect(page.getByTestId('task-flaky-retries')).toHaveText('flaky 50%', { timeout: 60_000 });
+	note('after a reload the remembered open state shows "flaky 50%" without a click');
+});

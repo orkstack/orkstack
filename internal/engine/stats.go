@@ -487,6 +487,32 @@ func (a *RunArchiver) ListRunIndex(ctx context.Context, q ArchiveQuery) ([]artif
 	})
 }
 
+// ListFinishedRunIndex is the flake index's population: every index row a
+// query's namespace, orkflow and window match, WHATEVER its finished status —
+// succeeded, failed and canceled — read out of KEYS only. It is the same set
+// TallyRuns counts, so the flake index's runs_in_window equals GetStats'
+// succeeded + failed + canceled for the same window.
+//
+// It is ListRunIndex's sibling rather than a change to it: ListRunIndex's
+// contract is "always FAILED, whatever the caller set", and the failure
+// breakdown relies on it. Here Status, Limit and Exhaustive are all ignored,
+// for the same reason — a population narrowed or stopped at a page is not a
+// population. The flake index bounds its cost by refusing an over-large
+// population outright (api.FlakeIndexMaxScan), never by reading part of one.
+func (a *RunArchiver) ListFinishedRunIndex(ctx context.Context, q ArchiveQuery) ([]artifacts.RunIndexEntry, error) {
+	if a == nil {
+		return nil, ErrNoRunArchive
+	}
+	return a.archive.ListRuns(ctx, artifacts.RunQuery{
+		Namespace: q.Namespace,
+		Orkflow:   q.OrkflowName,
+		Status:    archiveStatus(orkstackv1.Status_STATUS_UNSPECIFIED),
+		Since:     q.Since,
+		Until:     q.Until,
+		Limit:     0,
+	})
+}
+
 // PercentileDuration returns the p-th percentile of an ASCENDING sample by
 // nearest rank: the smallest value at or above p per cent of the samples.
 //
@@ -496,22 +522,9 @@ func (a *RunArchiver) ListRunIndex(ctx context.Context, q ArchiveQuery) ([]artif
 // about. An empty sample has no percentile and reports zero; callers gate on
 // the sample count rather than reading that zero as "instant".
 func PercentileDuration(ascending []time.Duration, p int) time.Duration {
-	n := len(ascending)
-	if n == 0 {
+	rank := NearestRank(len(ascending), p)
+	if rank == 0 {
 		return 0
-	}
-	if p <= 0 {
-		return ascending[0]
-	}
-	if p >= 100 {
-		return ascending[n-1]
-	}
-	rank := (p*n + 99) / 100 // ceil(p*n/100)
-	if rank < 1 {
-		rank = 1
-	}
-	if rank > n {
-		rank = n
 	}
 	return ascending[rank-1]
 }

@@ -67,6 +67,10 @@ const ALPHA = `alpha-${STAMP}`;
 const BETA = `beta-${STAMP}`;
 const ORKFLOW = `chatty-${STAMP}`;
 const FAILING = `flaky-${STAMP}`;
+// The orkflow whose `flaky` task fails its first attempt and passes its
+// second: a SUCCEEDED run that retried. Named to sort first among ALPHA's
+// orkflows, so a tie on rate is broken in its favour and it is row 0.
+const RETRYING = `a-retrying-${STAMP}`;
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'logs-dashboard')
@@ -272,6 +276,54 @@ tasks:
       command: ["sh", "-c", "echo \\"about to fail\\"; exit 3"]
 `;
 
+/**
+ * retryingOrkflow: `flaky` reads its own attempt number from task.json — the
+ * OCI contract's §3.2 field, read with the jq the shell image ships — and
+ * fails attempt 1, so it retries once and succeeds, deterministically, with no
+ * stub and no clock. `steady` never retries.
+ */
+const retryingOrkflow = () => `name: ${RETRYING}
+version: "0.1.0"
+description: a task that needs a second attempt, so the dashboard has a retry to report
+namespace: ${ALPHA}
+
+tasks:
+  - id: flaky
+    uses: shell
+    timeout_seconds: 30
+    retry:
+      maximum_attempts: 3
+      initial_interval_seconds: 1
+    with:
+      op: exec
+      command: ["sh", "-c", "[ \\"$(jq -r .task.attempt /orkstack/input/task.json)\\" -ge 2 ]"]
+  - id: steady
+    uses: shell
+    timeout_seconds: 30
+    with:
+      op: exec
+      command: ["sh", "-c", "true"]
+`;
+
+/** openStability opens the dashboard's Stability disclosure unless the
+ * remembered state already has. */
+async function openStability(page: Page): Promise<void> {
+	const details = page.getByTestId('stability');
+	await expect(details).toBeVisible({ timeout: 60_000 });
+	const isOpen = await details.evaluate((el) => (el as HTMLDetailsElement).open);
+	if (!isOpen) await page.getByTestId('stability-toggle').click();
+}
+
+/** stabilityRow is the Stability table's row for one orkflow's task, matched
+ * on its orkflow and task CELLS: a row's cells run together in its text, so a
+ * whole-row text filter can match across cell boundaries. */
+function stabilityRow(page: Page, orkflow: string, task: string) {
+	return page
+		.locator('tr[data-testid^="stability-row-"]')
+		.filter({ has: page.locator('[data-testid$="-orkflow"]', { hasText: new RegExp(`^\\s*${orkflow}\\s*$`) }) })
+		.filter({ has: page.locator('[data-testid$="-task"]', { hasText: new RegExp(`^\\s*${task}\\s*$`) }) });
+}
+
 /** lineNumbers reads the numbers off a pane's rendered lines, in DOM order. */
 async function lineNumbers(page: Page, taskId: string, prefix: string): Promise<number[]> {
 	const texts = await page.getByTestId(`task-log-${taskId}`).getByTestId('task-log-line').allInnerTexts();
@@ -435,7 +487,11 @@ test.beforeAll(async () => {
 		yaml: failingOrkflow(),
 		namespace: ALPHA
 	});
-	note(`engine A applied ${ORKFLOW}@0.1.0 and ${FAILING}@0.1.0 in ${ALPHA}`);
+	await rpc(ENGINE_A, 'OrkflowService/ApplyOrkflow', {
+		yaml: retryingOrkflow(),
+		namespace: ALPHA
+	});
+	note(`engine A applied ${ORKFLOW}@0.1.0, ${FAILING}@0.1.0 and ${RETRYING}@0.1.0 in ${ALPHA}`);
 });
 
 test.afterAll(async () => {
@@ -880,6 +936,12 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 	// different answers and the dashboard tells them apart.
 	await expect(page.getByTestId('stat-succeeded')).toHaveText('0');
 	await expect(page.getByTestId('stat-succeeded')).toHaveAttribute('data-unavailable', 'false');
+	// Stability is offered even here — the absence of stability data is itself
+	// shown — and nothing of alpha's retries leaks into it.
+	await openStability(page);
+	await expect(page.getByTestId('stability-empty')).toBeVisible({ timeout: 60_000 });
+	await expect(page.locator('[data-testid^="stability-row-"]').filter({ hasText: 'flaky' })).toHaveCount(0);
+	note(`stability for ${BETA}: ${(await page.getByTestId('stability-empty').innerText()).trim()}`);
 	note(
 		`dashboard for ${BETA} (empty): success rate and percentiles render "unavailable", ` +
 			'while the run counts render a real 0'
@@ -975,4 +1037,121 @@ test('the recent-failures section expands into fingerprints that name the task a
 	await expect(footer).toContainText('attempt records for 1 run were reclaimed or never written');
 	note(`after the reclaim: ${(await after.innerText()).replace(/\s+/g, ' ')} / ${(await footer.innerText()).replace(/\s+/g, ' ')}`);
 	await shot(page, 'screenshot-dashboard-fingerprints-unavailable.png');
+});
+
+// The retries the success rate hides: a run that SUCCEEDED on its second
+// attempt, named on the dashboard with its rate and cause, linked to the runs
+// list it came from, and — once its attempt records are reclaimed — said to be
+// unavailable, never 0%. Read, as everything here is, through the replica that
+// started nothing.
+test("the dashboard's stability section names the task that retried, its rate and cause, links to the filtered runs list, and says unavailable rather than zero", async ({
+	page
+}) => {
+	// Runs to wait for, archive writes and a cache TTL: more than the
+	// default budget, never a sleep.
+	test.setTimeout(420_000);
+	const submitted = await rpc<{ run: { id: string } }>(ENGINE_A, 'RunService/SubmitRun', {
+		orkflowName: RETRYING,
+		namespace: ALPHA
+	});
+	const retriedRun = submitted.run.id;
+	note(`engine A started run ${retriedRun} (${RETRYING}), whose flaky task fails attempt 1`);
+	await waitFor(
+		'the retrying run succeeds',
+		async () => (await getRunFrom(ENGINE_B, retriedRun)).run?.status === 'STATUS_SUCCEEDED',
+		180_000
+	);
+	const attempts = await rpc<{ attempts?: { taskId: string; attempt: number; orkerId?: string }[] }>(
+		ENGINE_B,
+		'RunService/ListTaskAttempts',
+		{ runId: retriedRun, namespace: ALPHA }
+	);
+	const firstAttempt = (attempts.attempts ?? []).find((a) => a.taskId === 'flaky' && a.attempt === 1);
+	const orkerId = firstAttempt?.orkerId ?? '';
+	expect(orkerId, 'attempt 1 of flaky names the Orker that ran it').not.toBe('');
+	note(`attempt 1 of flaky in ${retriedRun} ran on ${orkerId}`);
+
+	await page.goto(`${UI_ORIGIN}/?ns=${ALPHA}`);
+	await openStability(page);
+	const row = page.getByTestId('stability-row-0');
+	// The archive is written when the run ends and the engine caches an answer
+	// for its stats TTL; the dashboard refetches on every new measurement.
+	await expect(row).toContainText(RETRYING, { timeout: 90_000 });
+	for (const text of ['flaky', '100.0%', 'ACTIVITY_FAILED', 'CONTAINER_EXIT_NONZERO']) {
+		await expect(row).toContainText(text);
+	}
+	await expect(page.getByTestId('stability-row-0-rate')).toHaveAttribute('data-unavailable', 'false');
+	note(`stability row 0: ${(await row.innerText()).replace(/\s+/g, ' ')}`);
+	const footerBefore = (await page.getByTestId('stability-footer').innerText()).replace(/\s+/g, ' ');
+	note(`stability footer before the reclaim: ${footerBefore}`);
+	const missingBefore = Number(footerBefore.match(/missing for (\d+)/)?.[1] ?? 'NaN');
+
+	// Grouped by Orker too: the row names the Orker whose attempt FAILED.
+	await page.getByTestId('stability-dim-orker').check();
+	// Match on the CELLS, never the row's whole text: a row's cells run
+	// together in its text, so runs 1, retried 0 and rate 0.0% read "100.0%".
+	const orkerRow = stabilityRow(page, RETRYING, 'flaky').filter({
+		has: page.locator('[data-testid$="-rate"]', { hasText: /^\s*100\.0%\s*$/ })
+	});
+	await expect(orkerRow).toContainText(orkerId, { timeout: 30_000 });
+	note(`stability grouped by task,orker: ${(await orkerRow.first().innerText()).replace(/\s+/g, ' ')}`);
+
+	await page.getByTestId('stability-cli-trigger').click();
+	const command = (await page.getByTestId('stability-cli-command').innerText()).trim();
+	expect(command).toContain('stats flakes');
+	expect(command).toContain('--group-by task,orker');
+	note(`stability CLI equivalent: ${command}`);
+	await page.keyboard.press('Escape');
+	await shot(page, 'screenshot-dashboard-stability.png');
+
+	// The row is a link to the runs it counts: namespace, orkflow and the
+	// answered window — and NO status, because a flaky task's runs mostly
+	// succeeded.
+	await page.getByTestId('stability-dim-orker').uncheck();
+	await expect(page.getByTestId('stability-row-0')).toContainText(RETRYING, { timeout: 30_000 });
+	await page.getByTestId('stability-row-0-task').click();
+	await page.waitForURL(/\/runs\?/);
+	const target = new URL(page.url());
+	expect(target.searchParams.get('orkflow')).toBe(RETRYING);
+	expect(target.searchParams.get('ns')).toBe(ALPHA);
+	expect(target.searchParams.get('since')).toBeTruthy();
+	expect(target.searchParams.get('until')).toBeTruthy();
+	expect(target.searchParams.get('status')).toBeNull();
+	await expect(page.getByTestId(`run-row-${retriedRun}`)).toBeVisible({ timeout: 30_000 });
+	note(`stability row navigated to ${target.pathname}${target.search}`);
+
+	// Reclaim the run's attempt records as the cleanup worker does when
+	// retention ends. The archived run stays; the evidence that it retried
+	// does not — and the dashboard must say so rather than call it clean.
+	const reclaimed = execFileSync('go', ['run', './test/tools/reclaim-run', ALPHA, retriedRun], {
+		cwd: repoRoot,
+		env: {
+			...process.env,
+			ORK_ARTIFACT_BACKEND: 's3',
+			ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
+			ORK_S3_REGION: 'us-east-1',
+			ORK_S3_BUCKET: 'orkstack-artifacts',
+			ORK_S3_ACCESS_KEY: 'orkstack',
+			ORK_S3_SECRET_KEY: 'orkstack-secret',
+			ORK_S3_PATH_STYLE: 'true'
+		}
+	}).toString().trim();
+	note(reclaimed);
+
+	await page.goto(`${UI_ORIGIN}/?ns=${ALPHA}`);
+	// The disclosure remembers it was open.
+	await openStability(page);
+	const after = stabilityRow(page, RETRYING, 'flaky');
+	await expect
+		.poll(async () => (await after.locator('[data-unavailable="true"]').count()), { timeout: 90_000 })
+		.toBe(1);
+	const rate = after.locator('[data-unavailable="true"]');
+	await expect(rate).toHaveText('unavailable');
+	await expect(rate).toHaveAttribute('data-testid', /-rate$/);
+	const footer = page.getByTestId('stability-footer');
+	await expect(footer).toContainText(
+		`${missingBefore + 1} runs' attempt records were reclaimed or never written: they are EXCLUDED from every rate above, not counted as clean`
+	);
+	note(`after the reclaim: ${(await after.innerText()).replace(/\s+/g, ' ')} / ${(await footer.innerText()).replace(/\s+/g, ' ')}`);
+	await shot(page, 'screenshot-dashboard-stability-unavailable.png');
 });

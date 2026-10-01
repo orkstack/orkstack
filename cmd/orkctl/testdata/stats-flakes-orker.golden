@@ -1,0 +1,14 @@
+Namespace:   default
+Window:      2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:    2026-01-02T03:04:05Z
+Grouped by:  task, orker
+
+ORKFLOW    TASK         ORKER     RUNS  RETRIED  RATE    ATTEMPTS/RUN   RETRIES  UNREPORTED  DOMINANT CAUSE                                      LAST RETRIED          EXAMPLE
+reconcile  fetch-rates  orker-g1  2     2        100.0%  p50 1 · p95 2  3        0           INFRASTRUCTURE_ERROR IMAGE_PULL_FAILED image (3/3)  2026-01-02T02:34:05Z  ork-reconcile-1
+ingest     normalize    orker-m1  2     1        50.0%   p50 1 · p95 2  1        0           ACTIVITY_FAILED CONTAINER_EXIT_NONZERO exit (1/1)   2026-01-02T01:04:05Z  ork-ingest-2
+reconcile  fetch-rates  orker-g2  3     0        0.0%    p50 1 · p95 1  0        0           -                                                   -                     -
+settle     post         orker-m1  1     0        0.0%    p50 1 · p95 1  0        0           -                                                   -                     -
+
+scanned 7 of 7 finished runs in the window; 7 dispatched a task; attempt records complete for 6, missing for 1
+1 runs' attempt records were reclaimed or never written: they are EXCLUDED from every rate above, not counted as clean
+unreported and evidence-missing counts are totals only: a group keyed by orker, phase or image cannot attribute them
