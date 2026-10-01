@@ -124,42 +124,8 @@ func (s *TemporalStarter) StartRun(
 		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
 	}
-	// The memo is how `run list` names an orkflow without reading a history
-	// per run: visibility returns it with the execution, on every replica. It
-	// is a copy of the definition's identity, never a second source of truth
-	// for it. The origin's kind and id ride it for the same reason: a listing
-	// row can say "trigger trg-…" without a history read per run.
-	memo := map[string]any{
-		MemoOrkflowName:    wf.GetName(),
-		MemoOrkflowVersion: wf.GetVersion(),
-		MemoNamespace:      wf.GetNamespace(),
-	}
-	originSlug, hasOrigin := artifacts.OriginKindSlug(plan.Origin.Proto().GetKind())
-	if hasOrigin {
-		memo[MemoOriginKind] = originSlug
-		memo[MemoOriginID] = plan.Origin.ID
-	}
-	options.Memo = memo
-	// Search attributes are collected and set ONCE: NewSearchAttributes takes
-	// every update in one call. The namespace is stamped a second time, as a
-	// search attribute, because a memo is returned with a record and cannot
-	// select one. A tenant listing its runs needs the cluster to do the
-	// selecting — see ListRuns — and this is the value it selects on. It is
-	// resolved, so the built-in default is spelled one way whether the
-	// document named it or left it empty. The origin goes in under its own
-	// boot-time answer, because a cluster may have accepted OrkflowNamespace
-	// last release and refuse the two new attributes now.
-	var attrs []temporal.SearchAttributeUpdate
-	if s.namespaceIndexed {
-		attrs = append(attrs, task.SearchKeyOrkflowNamespace.ValueSet(
-			artifacts.ResolveNamespace(wf.GetNamespace())))
-	}
-	if s.originIndexed && hasOrigin {
-		attrs = append(attrs,
-			task.SearchKeyOrkflowOriginKind.ValueSet(originSlug),
-			task.SearchKeyOrkflowOriginID.ValueSet(plan.Origin.ID))
-	}
-	if len(attrs) > 0 {
+	options.Memo = RunStartMemo(wf, plan)
+	if attrs := RunStartSearchAttributes(wf, plan, s.namespaceIndexed, s.originIndexed); len(attrs) > 0 {
 		options.TypedSearchAttributes = temporal.NewSearchAttributes(attrs...)
 	}
 	_, err := s.client.ExecuteWorkflow(ctx, options,
@@ -175,6 +141,65 @@ func (s *TemporalStarter) StartRun(
 		return fmt.Errorf("start run %s: %w", runID, err)
 	}
 	return nil
+}
+
+// RunStartMemo is the memo every run is started with — top-level by StartRun,
+// or as a child by ScheduleFireWorkflow — so a listing names a run the same
+// way whatever started it. Pure: it reads only its arguments.
+//
+// The memo is how `run list` names an orkflow without reading a history per
+// run: visibility returns it with the execution, on every replica. It is a
+// copy of the definition's identity, never a second source of truth for it.
+// The origin's kind and id ride it for the same reason: a listing row can say
+// "trigger trg-…" without a history read per run.
+func RunStartMemo(wf *orkstackv1.Orkflow, plan RunPlan) map[string]any {
+	memo := map[string]any{
+		MemoOrkflowName:    wf.GetName(),
+		MemoOrkflowVersion: wf.GetVersion(),
+		MemoNamespace:      wf.GetNamespace(),
+	}
+	if originSlug, ok := artifacts.OriginKindSlug(plan.Origin.Proto().GetKind()); ok {
+		memo[MemoOriginKind] = originSlug
+		memo[MemoOriginID] = plan.Origin.ID
+	}
+	return memo
+}
+
+// RunStartSearchAttributes is the search-attribute set for the same two
+// callers, gated by the engine's boot answers exactly as StartRun gates them.
+// Pure.
+//
+// Search attributes are collected and set ONCE: NewSearchAttributes takes
+// every update in one call. The namespace is stamped a second time, as a
+// search attribute, because a memo is returned with a record and cannot
+// select one. A tenant listing its runs needs the cluster to do the selecting
+// — see ListRuns — and this is the value it selects on. It is resolved, so
+// the built-in default is spelled one way whether the document named it or
+// left it empty. The origin goes in under its own boot-time answer, because a
+// cluster may have accepted OrkflowNamespace last release and refuse the two
+// new attributes now.
+func RunStartSearchAttributes(
+	wf *orkstackv1.Orkflow,
+	plan RunPlan,
+	namespaceIndexed, originIndexed bool,
+) []temporal.SearchAttributeUpdate {
+	var attrs []temporal.SearchAttributeUpdate
+	if namespaceIndexed {
+		attrs = append(attrs, task.SearchKeyOrkflowNamespace.ValueSet(
+			artifacts.ResolveNamespace(wf.GetNamespace())))
+	}
+	if originSlug, ok := artifacts.OriginKindSlug(plan.Origin.Proto().GetKind()); ok && originIndexed {
+		attrs = append(attrs,
+			task.SearchKeyOrkflowOriginKind.ValueSet(originSlug),
+			task.SearchKeyOrkflowOriginID.ValueSet(plan.Origin.ID))
+	}
+	return attrs
+}
+
+// IndexAnswers reports the boot answers this starter stamps with, for the
+// activity that prepares a scheduled run to carry onto the fire.
+func (s *TemporalStarter) IndexAnswers() (namespaceIndexed, originIndexed bool) {
+	return s.namespaceIndexed, s.originIndexed
 }
 
 // CancelRun requests cancellation of a running workflow.

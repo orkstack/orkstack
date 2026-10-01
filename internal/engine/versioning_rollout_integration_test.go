@@ -185,6 +185,22 @@ func newReplica(
 	snapshots engine.SnapshotStore,
 ) *replica {
 	t.Helper()
+	return newReplicaWith(t, c, deployment, runQueue, orkerQueue, release, snapshots, nil)
+}
+
+// newReplicaWith is newReplica with one more registration on the run worker
+// before it starts — the schedule suite's PrepareScheduledRun, which `ork`
+// registers there too.
+func newReplicaWith(
+	t *testing.T,
+	c client.Client,
+	deployment task.Deployment,
+	runQueue, orkerQueue string,
+	release <-chan struct{},
+	snapshots engine.SnapshotStore,
+	register func(worker.Worker),
+) *replica {
+	t.Helper()
 	r := &replica{
 		deployment: deployment,
 		client:     c,
@@ -209,6 +225,9 @@ func newReplica(
 		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
+	if register != nil {
+		register(r.run)
+	}
 
 	// Unversioned on purpose: PublishEvent must stay executable by any live
 	// replica of any version. See eventWorkerOptions in cmd/ork.

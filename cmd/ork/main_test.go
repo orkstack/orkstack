@@ -334,8 +334,9 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 	engine.RegisterWorkflows(&registered)
 
 	want := map[string]workflow.VersioningBehavior{
-		engine.RunWorkflowType:   workflow.VersioningBehaviorPinned,
-		engine.ClaimWorkflowType: workflow.VersioningBehaviorAutoUpgrade,
+		engine.RunWorkflowType:          workflow.VersioningBehaviorPinned,
+		engine.ClaimWorkflowType:        workflow.VersioningBehaviorAutoUpgrade,
+		engine.ScheduleFireWorkflowType: workflow.VersioningBehaviorPinned,
 	}
 	if len(registered) != len(want) {
 		t.Fatalf("registered %d workflow types (%+v), want %d", len(registered), registered, len(want))
@@ -353,6 +354,24 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 			t.Errorf("workflow %q declares no versioning behaviour; a versioned worker panics on it", got.name)
 		}
 	}
+}
+
+// TestRegisterWorkflows_ScheduleFireIsPinned: a schedule's fire lives exactly
+// as long as the run it starts, so it is Pinned with that run
+// (orkflow-schedules §4.3).
+func TestRegisterWorkflows_ScheduleFireIsPinned(t *testing.T) {
+	var registered recordingRegistrar
+	engine.RegisterWorkflows(&registered)
+	for _, got := range registered {
+		if got.name != engine.ScheduleFireWorkflowType {
+			continue
+		}
+		if got.behavior != workflow.VersioningBehaviorPinned {
+			t.Fatalf("%s registers behaviour %v, want Pinned", got.name, got.behavior)
+		}
+		return
+	}
+	t.Fatalf("%s is not registered: %+v", engine.ScheduleFireWorkflowType, registered)
 }
 
 // TestRegisterEngineWorkflows_SurvivesAVersionedWorker is the same acceptance

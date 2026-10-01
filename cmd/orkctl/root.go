@@ -139,6 +139,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newPoolCommand(g),
 		newRunCommand(g),
 		newActivityCommand(g),
+		newScheduleCommand(g),
 		newStatsCommand(g),
 		newTriggerCommand(g),
 		newWebhookCommand(g),

@@ -744,7 +744,8 @@ Both binaries print what they resolved, on every boot:
 ```
 level=INFO msg="worker deployment versioning" enabled=true deployment=orkstack \
   build_id=2026.08.16-a1b2c3d version=orkstack.2026.08.16-a1b2c3d \
-  run_workflow_behavior=Pinned claim_workflow_behavior=AutoUpgrade event_worker=unversioned
+  run_workflow_behavior=Pinned claim_workflow_behavior=AutoUpgrade \
+  schedule_fire_workflow_behavior=Pinned event_worker=unversioned
 ```
 
 A deployment name may not contain `.` — the cluster reserves it. Both binaries
@@ -816,7 +817,7 @@ one misconfiguration to watch for. Check both boot lines print the same
 
 | worker | queue | versioned | behaviour |
 |---|---|---|---|
-| run worker (`ork`) | `ork-tasks` — **fixed** | yes | `RunWorkflow` = **Pinned**, `IdempotencyClaimWorkflow` = **AutoUpgrade** |
+| run worker (`ork`) | `ork-tasks` — **fixed** | yes | `RunWorkflow` = **Pinned**, `ScheduleFireWorkflow` = **Pinned**, `IdempotencyClaimWorkflow` = **AutoUpgrade** |
 | Orker (`orker`) | `ORK_ORKER_QUEUE` (default `ork-tasks`) | yes | task activities only; must match the engine |
 | projection worker (`ork`) | `ork-engine-events` | **no** | `PublishEvent` |
 
@@ -855,6 +856,16 @@ operator did nothing to. AutoUpgrade would hand exactly that history to the new
 build on its next workflow task. Pinned lets the run finish on the code that
 started it.
 
+**Why a schedule's fire is Pinned.** `ScheduleFireWorkflow` is the action
+every Orkflow schedule takes: it prepares one run (a local activity on the run
+worker) and starts it as its child, then lives exactly as long as that run so
+the schedule's overlap policy applies to the run. It is pinned for the reason
+`RunWorkflow` is, and it costs nothing more: it holds open no version its run
+does not already hold open, and its child run is pinned to the same version. A
+fire opened before a rollout finishes, with its run, on the version that
+opened it; a fire started after the switch runs on the new version
+(`internal/engine/schedule_integration_test.go`).
+
 **Why the claim workflow is AutoUpgrade.** Its history is one update and one
 timer, its command stream is independent of run semantics, and it lives for
 `ORK_IDEMPOTENCY_TTL` (default 24h). Pinning it would strand a long-lived key
@@ -870,6 +881,28 @@ those activities to the queue's own current version, i.e. to the unversioned
 pollers. `internal/engine/versioning_rollout_integration_test.go` asserts this
 directly: in a rollout, a v1-pinned run's remaining events are published by a
 replica the v1 release does not contain.
+
+### Schedules: what the cluster shows
+
+An Orkflow schedule (`docs/ORKFLOW_SCHEDULES.md`) is a Temporal Schedule and
+nothing else. Operators who look at the cluster directly will see:
+
+- `temporal schedule list` shows each one as `ork-schedule/{namespace}/{name}`,
+  with the OrkStack identity in its memo and the authored record as its
+  action's argument;
+- each fire is a `ScheduleFireWorkflow` execution with id
+  `ork-schedule-fire/{schedule id}-{nominal time}` on `ork-tasks`, and the run
+  it starts is an ordinary `RunWorkflow` child with an `ork-…` id;
+- a schedule's fire workflows retire with the cluster's execution retention
+  (derived from the maximum run retention), so a recent fire older than that
+  reads `unavailable` in `orkctl schedule get` — never blank, never
+  successful. The schedule itself is not subject to that TTL.
+
+Editing a schedule with the `temporal` CLI edits the record itself and is not
+supported, on the same terms as editing the bucket by hand: the authored spec
+travels inside the schedule's action, and `ork` logs a warning when the
+cluster's policy no longer matches it. Change a schedule with
+`orkctl schedule update`.
 
 ---
 
@@ -1135,6 +1168,11 @@ That moves one run onto a version that did not start it, so the determinism
 argument in §2 applies in full: if the two builds disagree about the command
 stream, the run fails its next workflow task. Use it to rescue a run you would
 otherwise abandon, not as a routine tool.
+
+**Rolling back past schedules.** A release without schedules has no
+`ScheduleFireWorkflow` registered, so a schedule that fires on it fails to
+start a workflow task. Pause or delete every schedule (`orkctl schedule pause`
+/ `delete`) before rolling back to a release without them.
 
 ### Back to unversioned workers
 

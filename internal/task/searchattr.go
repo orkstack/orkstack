@@ -110,6 +110,16 @@ var (
 	SearchKeyOrkflowOriginID   = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowOriginId)
 )
 
+// SearchAttrTemporalScheduledStartTime is the Temporal-owned, server-
+// provided datetime attribute a Temporal Schedule stamps on each workflow
+// it starts: that fire's nominal time, jitter included. OrkStack reads it
+// inside ScheduleFireWorkflow and never registers, writes or queries it;
+// EnsureRunSearchAttributes is unchanged.
+const SearchAttrTemporalScheduledStartTime = "TemporalScheduledStartTime"
+
+// SearchKeyTemporalScheduledStartTime is its typed, read-only key.
+var SearchKeyTemporalScheduledStartTime = temporal.NewSearchAttributeKeyTime(SearchAttrTemporalScheduledStartTime)
+
 // EnsureRunOriginSearchAttributes registers the two origin attributes and
 // reports whether BOTH are usable, with the same idempotency, readiness poll
 // and "refused is not fatal" contract EnsureRunSearchAttributes has. It is

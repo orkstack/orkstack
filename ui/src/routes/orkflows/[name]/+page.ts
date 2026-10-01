@@ -1,15 +1,17 @@
 import { errorMessage, orkstack } from '$lib/client';
 import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
 import type { OrkflowVersion, Trigger } from '$lib/gen/orkstack/v1/service_pb';
+import type { Schedule } from '$lib/gen/orkstack/v1/schedule_pb';
 import { namespaceFrom } from '$lib/namespace';
 import type { PageLoad } from './$types';
 
-// The four views of one orkflow live under one route and one loader: what it
+// The five views of one orkflow live under one route and one loader: what it
 // does (Overview), what versions of it exist and which one runs (Versions), who
-// outside this deployment may start it (Triggers), and its source (Edit). The
+// outside this deployment may start it (Triggers), when it starts on its own
+// (Schedules), and its source (Edit). The
 // tab is in the URL so a reload, a back button and a pasted link all land where
 // the sender was.
-const TABS = ['overview', 'versions', 'triggers', 'edit'] as const;
+const TABS = ['overview', 'versions', 'triggers', 'schedules', 'edit'] as const;
 export type OrkflowTab = (typeof TABS)[number];
 
 function tabFrom(value: string | null): OrkflowTab {
@@ -37,7 +39,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 	// delete refreshes it through invalidateAll() instead of a second copy of
 	// the same fact living in the component. It is fetched only for the tab that
 	// shows it — the other three would pay a request for a list nobody renders.
-	const [detail, catalog, triggerList] = await Promise.all([
+	const [detail, catalog, triggerList, scheduleList] = await Promise.all([
 		client.orkflows
 			.getOrkflow({ name, version, namespace })
 			.then((res) => ({ orkflow: res.orkflow ?? null, error: null as string | null }))
@@ -61,7 +63,14 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 					.listTriggers({ namespace, orkflowName: name })
 					.then((res) => ({ triggers: res.triggers, error: null as string | null }))
 					.catch((err) => ({ triggers: [] as Trigger[], error: errorMessage(err) }))
-			: Promise.resolve({ triggers: [] as Trigger[], error: null as string | null })
+			: Promise.resolve({ triggers: [] as Trigger[], error: null as string | null }),
+		// Schedules are read the way triggers are, for the tab that shows them.
+		tab === 'schedules'
+			? client.schedules
+					.listSchedules({ namespace, orkflowName: name })
+					.then((res) => ({ schedules: res.schedules, error: null as string | null }))
+					.catch((err) => ({ schedules: [] as Schedule[], error: errorMessage(err) }))
+			: Promise.resolve({ schedules: [] as Schedule[], error: null as string | null })
 	]);
 
 	// The editor is seeded from the SELECTED version — `?version=` when the URL
@@ -117,6 +126,8 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		versionsError: catalog.error,
 		triggers: triggerList.triggers,
 		triggersError: triggerList.error,
+		schedules: scheduleList.schedules,
+		schedulesError: scheduleList.error,
 		editVersion,
 		editYaml,
 		editError

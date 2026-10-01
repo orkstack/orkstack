@@ -7,7 +7,9 @@ OrkStack has two durable stores and no third:
   model for a run until its run retention expires (72 h by default, set at
   boot by `internal/task.EnsureNamespace`, and read or changed as the
   deployment maximum with `orkctl admin retention`; a namespace may keep runs
-  for less with `orkctl namespace update --run-retention`).
+  for less with `orkctl namespace update --run-retention`), and every Orkflow
+  schedule — its coordinates, its spec and its fire history
+  (`docs/ORKFLOW_SCHEDULES.md`).
 - **Object storage** holds everything that must outlive a process or a
   retention window: Orkflow definitions, the namespace registry, artifacts,
   task logs, run snapshots, activity completion records, and the archive of
@@ -90,6 +92,11 @@ run id is encoded, never parsed (AGENTS.md §7).
   one `TaskAttempt` per attempt beside the logs that attempt produced. The
   write is best-effort: a record that cannot be stored is logged and never
   changes what the attempt reported.
+- **A schedule is the Temporal Schedule.** Nothing about one is written to
+  this layout, so nothing here can disagree with the cluster about when it
+  fires. The one trace a schedule leaves here is its runs' own origin-index
+  rows (`metadata/index/origins/{ns}/schedule/{sch-…}/…`), which every run
+  has whatever started it.
 - **The archive is append-only.** Bodies and index rows — the run index and
   the origin index alike — are never deleted;
   what the cleanup worker reclaims is the run's logs, attempt records,

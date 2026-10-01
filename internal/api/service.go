@@ -127,6 +127,13 @@ type Config struct {
 	// unit tests only — exactly the terms Webhooks above is on.
 	Triggers triggers.Store
 
+	// Schedules is the schedule seam (schedule.go): engine.TemporalScheduler
+	// in `ork`, so every schedule field is read from and written to the
+	// cluster and nothing is stored here. Nil answers every ScheduleService
+	// RPC with Unimplemented and skips DeleteOrkflow's schedule check — a
+	// unit-test posture, never `ork`'s.
+	Schedules ScheduleController
+
 	// Deliveries is where settled webhook deliveries are recorded. `ork` wires
 	// the durable store on the same shared backend the webhook registry uses,
 	// so a delivery made through one replica is readable on every other one.
@@ -323,6 +330,8 @@ type Service struct {
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
 	triggers    triggers.Store
+	// schedules is the cluster's schedule seam; nil answers Unimplemented.
+	schedules ScheduleController
 	// deliveries is the webhook delivery record store, read by ListDeliveries
 	// and GetDelivery; deliveryRecorder writes RedeliverWebhook's record into
 	// it and redelivery sends that one POST. Nil deliveries refuses all three.
@@ -384,6 +393,7 @@ func NewService(cfg Config) *Service {
 		idempotency:       cfg.Idempotency,
 		webhooks:          cfg.Webhooks,
 		triggers:          cfg.Triggers,
+		schedules:         cfg.Schedules,
 		deliveries:        cfg.Deliveries,
 		redelivery:        cfg.Redelivery,
 		notifier:          cfg.Notifier,
