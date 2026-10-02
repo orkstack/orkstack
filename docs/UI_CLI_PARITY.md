@@ -435,8 +435,8 @@ rather than implying the namespace picker filters it.
 - Delete request `string id = 1`; response empty.
 
 Accept the four run transitions (RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
-RUN_CANCELED) and the four task outcomes (TASK_SCHEDULED, TASK_STARTED,
-TASK_SUCCEEDED, TASK_FAILED); TASK_LOG is refused. Empty selects every run
+RUN_CANCELED) and the six task events (TASK_SCHEDULED, TASK_STARTED,
+TASK_AWAITING, TASK_RESOLVED, TASK_SUCCEEDED, TASK_FAILED); TASK_LOG is refused. Empty selects every run
 transition and no task event: task events are opt-in by name. Preserve HTTP/HTTPS URL validation and one-time
 secret disclosure. List never contains secrets. Store subscriptions in shared
 object storage, with atomic create/delete and durable failure reporting;
