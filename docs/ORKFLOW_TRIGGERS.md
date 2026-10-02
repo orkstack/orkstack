@@ -60,9 +60,16 @@ request signing as the boring API (`AGENTS.md` §14).
 //
 // The secret is handed back exactly once, at creation, on the same terms as
 // RegisterWebhookResponse.secret: a listing never carries it again.
+//
+// A trigger may carry a name, which is how an automation document addresses
+// it (docs/AUTOMATION.md); UpdateTrigger renames and re-pins in place.
 service TriggerService {
   rpc CreateTrigger(CreateTriggerRequest) returns (CreateTriggerResponse);
   rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
+  // UpdateTrigger REPLACES a trigger's mutable fields — name, pinned version,
+  // description — in place. Its id, namespace, orkflow and bearer token never
+  // change. Last writer wins; an update never brings back a deleted trigger.
+  rpc UpdateTrigger(UpdateTriggerRequest) returns (UpdateTriggerResponse);
   rpc DeleteTrigger(DeleteTriggerRequest) returns (DeleteTriggerResponse);
 }
 
@@ -73,12 +80,14 @@ message Trigger {
   string orkflow_version = 4;              // empty = current pointer, resolved at invoke time
   string description = 5;                  // optional operator label
   google.protobuf.Timestamp created_at = 6;
+  string name = 7;                         // optional slug, unique among the namespace's named triggers
 }
 message CreateTriggerRequest {
   string namespace = 1;
   string orkflow_name = 2;
   string orkflow_version = 3;
   string description = 4;
+  string name = 5;                         // optional; see Trigger.name
 }
 message CreateTriggerResponse {
   Trigger trigger = 1;
@@ -91,6 +100,14 @@ message ListTriggersRequest {
 message ListTriggersResponse { repeated Trigger triggers = 1; }
 message DeleteTriggerRequest { string id = 1; string namespace = 2; }
 message DeleteTriggerResponse {}
+message UpdateTriggerRequest {
+  string id = 1;
+  string namespace = 2;                    // another namespace's trigger is NotFound
+  string name = 3;                         // empty makes the trigger unnamed
+  string orkflow_version = 4;              // empty follows the current pointer
+  string description = 5;                  // empty clears it
+}
+message UpdateTriggerResponse { Trigger trigger = 1; }
 ```
 
 Field semantics beyond the comments above:
@@ -105,6 +122,19 @@ Field semantics beyond the comments above:
   contains it.
 - `DeleteTriggerRequest.namespace` addresses the trigger inside its namespace.
   A trigger of another namespace is NotFound, not forbidden and not deleted.
+- `Trigger.name` is the operator's handle: a slug (`^[a-z][a-z0-9-]*$`, at most
+  200 bytes), unique among the named triggers of its namespace, or empty for
+  an unnamed trigger — which every trigger created before names existed is.
+  It is how an automation document addresses the trigger
+  (`docs/AUTOMATION.md`); it is not part of the invoke URL and never selects
+  what a run starts. Uniqueness is checked by the store immediately before
+  the write; it is best-effort across replicas, and the state a race can leave
+  (two triggers sharing a name) is refused, loudly and with the fix, by every
+  automation plan and export.
+- `UpdateTriggerRequest` replaces every mutable field with the value given: a
+  client that changes one reads the trigger and sends the rest back, which is
+  what `orkctl trigger update` does. `orkflow_name` is deliberately absent: a
+  trigger's orkflow cannot change.
 
 ### Management RPC behavior
 
@@ -123,6 +153,16 @@ is an optional operator label, returned as given.
 the result to one Orkflow and empty means every trigger in the namespace.
 The list is read from the shared store on every call and never from a
 startup snapshot, so a replica answers for a trigger another replica created.
+
+`UpdateTrigger` runs `CreateTrigger`'s checks in `CreateTrigger`'s order — the
+namespace, then the trigger (absent, or of another namespace, is NotFound),
+then the pinned version, which must exist at update as at create — and then
+rewrites the record in place: on S3 a conditional put on the ETag it read,
+which can never recreate a record deleted meanwhile; on the local backend a
+rename under the mutex `Delete` holds. The id, the URL, the orkflow and the
+salted digest of the token are carried over untouched, so **an update never
+re-issues a token**: the caller holding it keeps working. A name another
+trigger of the namespace holds is AlreadyExists.
 
 `DeleteTrigger` removes exactly one record, addressed by id and namespace.
 Success means the object is gone from the shared store; a later invoke of
@@ -314,10 +354,18 @@ Nothing is left to deliver later.
 `newWebhookCommand(g)`.
 
 ```text
-orkctl trigger create --orkflow NAME [--version V] [--namespace NS] [--description TEXT]
+orkctl trigger create --orkflow NAME [--version V] [--namespace NS] [--description TEXT] [--name NAME]
 orkctl trigger list   [--orkflow NAME] [--namespace NS]
+orkctl trigger update ID [--name NAME] [--version V | --follow-current] [--description TEXT] [--namespace NS]
 orkctl trigger delete ID [--namespace NS]
 ```
+
+`update` is read-modify-write: it lists the namespace's triggers, finds the
+id, replaces only the fields whose flag was given (`--name ""` unnames,
+`--follow-current` clears the pin), and sends the full `UpdateTriggerRequest`.
+It prints the trigger without a `SECRET` row and says the token is unchanged.
+`list` has a `NAME` column (`-` for an unnamed trigger), and `--json` carries
+`name` only when one is set.
 
 `--namespace` is `orkctl`'s existing global selector (`-n`); empty is
 `default` on the wire. `--version` omitted means the current pointer at
@@ -374,6 +422,12 @@ tab shows, in this order:
   webhook's — and a Delete action behind `ConfirmDialog`. The empty state
   says no triggers exist for this Orkflow, distinct from a load error.
 
+The create form also takes an optional name (`trigger-create-name`), each
+row shows its name (`trigger-name-{id}`, *unnamed* when empty), and an Edit
+action (`edit-trigger-{id}`) opens a dialog that renames, re-pins and relabels
+the trigger through `UpdateTrigger`, stating *"Editing keeps this trigger's
+URL and token. Its orkflow cannot change."*
+
 The tab is namespace-scoped by construction: it lives on the Orkflow page,
 which is already addressed by the namespace the picker selects. It never
 merges triggers across namespaces.
@@ -403,7 +457,9 @@ merges triggers across namespaces.
 - **No new `internal/config` setting.** No TTL, no expiry, no rate limit, no
   toggle. A deployment that never creates a trigger runs exactly as before.
 - **No secret rotation or re-disclosure.** The plaintext exists only in the
-  create response. Rotating a token is delete then create, yielding a new id.
+  create response. Rotating a token is delete then create, yielding a new id;
+  an update never re-issues a token — renaming or re-pinning a trigger keeps
+  the one its caller holds.
 - **Provenance is the run's origin, not a trigger field.** A trigger-started
   run records `origin {kind: TRIGGER, id: trg-…}` with the header's reference
   (run-origin, `docs/design/proposals/phase-2/run-origin`); the trigger

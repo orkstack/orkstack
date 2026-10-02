@@ -426,13 +426,28 @@ rather than implying the namespace picker filters it.
 
 - `Webhook`: `string id = 1`, `string url = 2`,
   `repeated EventType events = 3`, `google.protobuf.Timestamp created_at = 4`,
-  `string namespace = 5`, `string orkflow_name = 6`, `string task_id = 7`.
+  `string namespace = 5`, `string orkflow_name = 6`, `string task_id = 7`,
+  `string name = 8`.
 - Register request: `string url = 1`, `repeated EventType events = 2`,
   `string secret = 3` (optional user-supplied signing secret),
-  `string namespace = 4`, `string orkflow_name = 5`, `string task_id = 6`.
+  `string namespace = 4`, `string orkflow_name = 5`, `string task_id = 6`,
+  `string name = 7`.
 - Register response: `Webhook webhook = 1`, `string secret = 2`.
 - List request empty; response `repeated Webhook webhooks = 1`.
+- Update request (`UpdateWebhook`): `string id = 1`, `string name = 2`,
+  `string url = 3`, `repeated EventType events = 4`, `string namespace = 5`,
+  `string orkflow_name = 6`, `string task_id = 7`; response `Webhook webhook = 1`.
+  It replaces every mutable field in place on the register path's checks; the
+  id and the signing secret never change, so a receiver keeps verifying and
+  the subscription's delivery history stays continuous. It carries no secret.
 - Delete request `string id = 1`; response empty.
+
+`name` is a subscription's optional handle — how an automation document
+addresses it (`docs/AUTOMATION.md`): a slug, unique among the named
+subscriptions of its namespace scope, and it REQUIRES a namespace scope,
+because a deployment-wide subscription belongs to no namespace. It plays no
+part in delivery. An unnamed subscription — every one registered before names
+existed — is outside every automation document.
 
 Accept the four run transitions (RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
 RUN_CANCELED) and the four task outcomes (TASK_SCHEDULED, TASK_STARTED,
@@ -494,6 +509,18 @@ task; there is no cache.
 | --- | --- | --- | --- |
 | CLI | `orkctl webhook register URL -n NS --orkflow NAME --task TASK --event E`; only an explicit `-n` narrows (`ORK_NAMESPACE` and the saved default do not apply) | `SCOPE` row/column: `ns/orkflow/task`, `*` per unset component, `ALL` when unscoped; `--json` carries `namespace`/`orkflowName`/`taskId` when set | Local, before any request, with the server's `ValidateScope` message |
 | UI | Admin → Webhooks: three optional free-text inputs (a slug `pattern` catches typos), eight event checkboxes, a caveat under the task events | `Scope` column (`webhook-scope-{id}`), `Deployment-wide` when unscoped | Server `InvalidArgument` in the register `ErrorPanel` |
+
+### Automation documents
+
+`AutomationService` (`proto/orkstack/v1/automation.proto`) plans and exports
+one namespace's automation document — its settings, schedules, triggers and
+webhooks, declared by name — and writes nothing (`docs/AUTOMATION.md`). An
+apply is the CLIENT sending each actionable step's carried request to the
+existing write RPC it names, so CLI and UI apply through exactly the calls a
+person makes by hand, each audited under its own action. Applying a
+directory, `--check` and `--secrets-out` are CLI affordances over operations
+both clients have: the Apply page applies orkflows, and Admin → Automation
+plans and applies one document.
 
 ### Control-plane audit trail
 
@@ -590,6 +617,9 @@ while a namespace is held. A plan proves wiring, never behaviour.
 | Dashboard window | 15m, 6h, 24h and custom since; the active window, custom included, is marked in the control and shown as a formatted instant; display selected time and preserve coverage caveats | Existing `stats --since` | Request time changes and rendered counts/coverage follow response; reload preserves selection |
 | Webhooks | List/register/delete, run and task event selection, optional namespace/orkflow/task scope with a per-row scope cell, one-time secret copy | Proto-backed webhook commands with `-n`/`--orkflow`/`--task` and a `SCOPE` column | Second replica and restarted engine see registration/deletion and scope; list excludes secret; storage failure errors; a scoped task delivery and an invalid-scope refusal captured in the browser |
 | Webhook deliveries | Admin → Webhooks **Deliveries** panel: caption with the resolved window and "every namespace" or the namespace, webhook/run/event/outcome/since/until/namespace filters, table with a delivered/failed pill, attempts and last status, an expanded row with the signature, the body's `sha256` and byte count ("body not stored") and the attempt timeline, pagination, `CliEquivalent`, a per-webhook `Deliveries` link, ErrorPanel with Retry; Redeliver behind `ConfirmDialog` stating one POST, now, signed, today's run, with the result inline | `webhook deliveries [--webhook] [--run] [--event] [--delivered] [--since] [--until] [--limit] [--page-token] [-n]`, `webhook delivery ID`, `webhook redeliver ID` (exit 1 when not delivered); `--json` is the raw response | Every settled delivery is one create-only record whose `body_sha256` and `signature` equal what the receiver read; a refused delivery lists four attempts that agree with the receiver's log; a record written on one replica is listed and redelivered by another; a redelivery is exactly one signed POST carrying `X-Ork-Redelivery-Of` and is recorded as a new delivery; a scan past its budget refuses; nothing reads a record to decide what to send |
+| Automation plan/apply/export | Admin → Automation (respects the namespace switcher): Export with Download, "Edit as a plan" and an unmanaged-objects callout naming each `orkctl … update … --name NAME`; a document textarea or imported file, a Prune checkbox, Plan showing issues, rows with symbol/action, changes and notes, a line per unmanaged section, the counts and the digest, "No changes."; a password input per `secret_env` entry; Apply behind a `ConfirmDialog` naming every deletion, re-planning first and refusing a moved plan (`automation-stale`), per-step outcomes, one-time secrets once; `CliEquivalent` for export, plan and apply | `apply FILE\|DIR... [--dry-run\|--check] [--prune] [--expect-plan sha256:…] [--secrets-out PATH]`; `export [-n]`; `--json` prints an `ApplyReport` (`ExportAutomationResponse`); one orkflow file with no new flag prints exactly as before | Same plan, same strings, same digest in both clients; a dry run leaves `metadata/` and the cluster's schedules byte-identical; a re-apply writes nothing; only `--prune` deletes, and never an unnamed, deployment-wide or omitted-section object; a trigger token and a webhook secret survive every in-place update; a plan that moved between review and apply writes nothing |
+| Trigger edit | Triggers tab: optional name on create, a name per row (`unnamed`), Edit dialog (name, version `Select`, description) stating the URL and token are kept, `CliEquivalent` | `trigger create --name`, `trigger update ID [--name] [--version\|--follow-current] [--description]` (read-modify-write), `NAME` column | Names unique per namespace; the original token invokes after a rename or re-pin; another namespace's trigger is NotFound |
+| Webhook edit | Admin → Webhooks: optional name (disabled until a namespace scope is given), `Name` column, Edit dialog (name, URL, events, scope) stating the id and secret are kept, `CliEquivalent` | `webhook register --name` (needs `-n`), `webhook update ID [--name] [--url] [--event…\|--clear-events] [-n\|--deployment-wide] [--orkflow] [--task]` (read-modify-write), `NAME` column | A name requires a namespace scope; a delivery after an edit verifies with the originally disclosed secret; an update across a concurrent delete never brings the subscription back |
 | Validate/apply | Validate current YAML without saving; field issues and warnings; retain warnings after apply | Shared validator and CLI validate | Invalid DAG and namespace mismatch agree; valid validation writes nothing; unavailable image errors actionable |
 | Run again | Reviewed submission seeded from run, showing source and pinned version | CLI again plus dry-run | Inputs preserved, override respected, new ID, no implicit old-key reuse, unavailable version refuses |
 | Run plan | Plan action in the submit dialog beside Submit run, with an assumed-outputs field, a wave/task/outcome/detail table, the summary sentence and caveats, and a CLI equivalent of the plan; stale plans clear when the draft changes | `run plan <orkflow> [--version]` / `run plan --file FILE`, `--input`, `--output`, `--outputs-file`, `--assert-runs`/`--assert-skipped` (exit 4), `--json` is the raw `PlanRunResponse` | Plan and a real run of the same input agree on every task; ListRuns shows no new run after a plan; a second replica plans an Orkflow it never applied identically |
