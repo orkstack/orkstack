@@ -101,6 +101,9 @@ func (r *fakeRegistry) Put(
 	if err := artifacts.ValidNamespaceSecrets(ns); err != nil {
 		return nil, err
 	}
+	if err := artifacts.ValidNamespaceSigner(ns); err != nil {
+		return nil, err
+	}
 	existing, exists := r.docs[name]
 	if cond.IfAbsent && exists {
 		return nil, fmt.Errorf("put %q: %w", name, artifacts.ErrPreconditionFailed)

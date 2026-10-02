@@ -21,6 +21,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -84,6 +85,8 @@ type auditOptions struct {
 	store artifacts.AuditStore // nil = a fresh memory store
 	none  bool                 // wire no audit store at all
 	fleet engine.OrkerFleet    // the Orker inventory seam; nil wires none
+	// imagePolicies is the image policy store; nil wires none.
+	imagePolicies artifacts.ImagePolicyStore
 }
 
 func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
@@ -104,16 +107,17 @@ func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
 	}
 	counter := 0
 	f.svc = api.NewService(api.Config{
-		Orkflows:     engine.NewMemoryOrkflowStore(),
-		Namespaces:   newFakeRegistry(),
-		Runs:         engine.NewRunStore(),
-		Bus:          engine.NewEventBus(),
-		Starter:      &fakeStarter{},
-		AuditStore:   store,
-		AuditCounter: f.counter,
-		Fleet:        opts.fleet,
-		Logger:       slog.New(slog.NewTextHandler(f.logs, nil)),
-		Now:          func() time.Time { return f.now },
+		Orkflows:      engine.NewMemoryOrkflowStore(),
+		Namespaces:    newFakeRegistry(),
+		Runs:          engine.NewRunStore(),
+		Bus:           engine.NewEventBus(),
+		Starter:       &fakeStarter{},
+		AuditStore:    store,
+		AuditCounter:  f.counter,
+		Fleet:         opts.fleet,
+		ImagePolicies: opts.imagePolicies,
+		Logger:        slog.New(slog.NewTextHandler(f.logs, nil)),
+		Now:           func() time.Time { return f.now },
 		NewRunID: func() string {
 			counter++
 			return fmt.Sprintf("run-%03d", counter)
@@ -917,5 +921,37 @@ func TestAudit_NamespaceUpdateRecordsBudgetWhenPresent(t *testing.T) {
 	records = f.records(t)
 	if len(records) != 2 || strings.Contains(records[0].GetDetail(), "budget=") {
 		t.Fatalf("clear detail = %q, want no budget= key", records[0].GetDetail())
+	}
+}
+
+func TestAudit_UpdateImagePolicyRecordsFingerprintsNeverPEM(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{imagePolicies: &memImagePolicies{}})
+	client := orkstackv1connect.NewSystemServiceClient(f.server.Client(), f.server.URL)
+	_, err := client.UpdateImagePolicy(context.Background(), withPrincipal(&orkstackv1.UpdateImagePolicyRequest{
+		Policy: &orkstackv1.ImagePolicy{
+			RequireDigest:     true,
+			AllowedRegistries: []string{"ghcr.io/", "localhost:5001/orkstack/"},
+			SigningKeys:       map[string]string{"release": task.FixedSigningKeyPEM},
+		},
+	}, "dsantos"))
+	if err != nil {
+		t.Fatalf("UpdateImagePolicy: %v", err)
+	}
+	if _, err := client.GetImagePolicy(context.Background(), connect.NewRequest(&orkstackv1.GetImagePolicyRequest{})); err != nil {
+		t.Fatalf("GetImagePolicy: %v", err)
+	}
+	records := f.records(t)
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want one (the read is not audited)", len(records))
+	}
+	rec := records[0]
+	want := "require_digest=true allowed_registries=[ghcr.io/ localhost:5001/orkstack/] signing_keys={release=" +
+		task.FixedSigningKeyFingerprint + "}"
+	if rec.GetAction() != "image_policy.update" || rec.GetTarget() != "deployment" || rec.GetNamespace() != "" ||
+		!rec.GetSucceeded() || rec.GetDetail() != want {
+		t.Fatalf("record = %v\nwant action image_policy.update, target deployment, detail %s", rec, want)
+	}
+	if strings.Contains(rec.GetDetail(), "-----BEGIN") {
+		t.Fatalf("the audit detail carries PEM: %s", rec.GetDetail())
 	}
 }

@@ -142,6 +142,22 @@ message Namespace {
   // what its Orkers already permit.
   repeated string allowed_secrets = 13;
 
+  // require_signed_by names a signer every image executed in this namespace
+  // must satisfy: "cosign:<key-name>", where <key-name> is one of the
+  // deployment's ImagePolicy.signing_keys. Unset means no signature is
+  // required, which is what every namespace has today and what an upgrade
+  // preserves. A namespace may only TIGHTEN the deployment policy: this is
+  // its one field for doing so, and there is none for loosening.
+  //
+  // It is enforced in the three places an image passes: at apply and
+  // validate, with the file in hand (a field-anchored issue on
+  // tasks[i].uses); at submit, before a run id is minted, which catches a
+  // definition stored before the requirement existed; and by the Orker at
+  // dispatch, which verifies the signature itself against the key the run
+  // pinned at submit. Only "cosign:" exists; it is a closed set, not an
+  // extension point (AGENTS.md §13).
+  string require_signed_by = 14;
+
   // budget bounds this namespace's reserved consumption over a rolling
   // period. Unset means unbounded, which is what every namespace has today
   // and what an upgrade preserves.

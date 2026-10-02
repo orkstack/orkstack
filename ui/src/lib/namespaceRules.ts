@@ -82,6 +82,9 @@ export interface NamespaceFormValues {
 	budgetGibSeconds?: string;
 	budgetPeriodHours?: string;
 	budgetEnforce?: boolean;
+	// requireSignedBy is the signer select's value: "" (none) or
+	// "cosign:<key-name>".
+	requireSignedBy?: string;
 }
 
 export interface NamespaceFormErrors {
@@ -93,6 +96,7 @@ export interface NamespaceFormErrors {
 	holdReason?: string;
 	maxRunning?: string;
 	allowedSecrets?: string;
+	requireSignedBy?: string;
 	budget?: string;
 }
 
@@ -137,6 +141,20 @@ export function budgetError(values: BudgetFormValues): string | null {
 	if (hours < BUDGET_MIN_PERIOD_HOURS || hours > BUDGET_MAX_PERIOD_HOURS) {
 		return `budget period ${hours}h must be ${BUDGET_MIN_PERIOD_HOURS} to ${BUDGET_MAX_PERIOD_HOURS} hours`;
 	}
+	return null;
+}
+
+// signerError restates internal/task.ParseSigner: require_signed_by is
+// empty (no signature required) or "cosign:" followed by a signing key name
+// (the slug rule, at most 64 bytes). cosign is the only scheme — a closed
+// set, not an extension point. Whether the key EXISTS is the engine's
+// answer, shown verbatim; the form offers a select of the keys it holds.
+export function signerError(value: string): string | null {
+	if (value === '') return null;
+	const refused = `require_signed_by ${JSON.stringify(value)} is not cosign:<key-name>; cosign is the only signer this deployment understands`;
+	if (!value.startsWith('cosign:')) return refused;
+	const name = value.slice('cosign:'.length);
+	if (name === '' || new TextEncoder().encode(name).length > 64 || !SLUG_PATTERN.test(name)) return refused;
 	return null;
 }
 
@@ -330,6 +348,10 @@ export function validateNamespaceForm(
 			budgetEnforce: values.budgetEnforce ?? false
 		});
 		if (err) errors.budget = err;
+	}
+	if (values.requireSignedBy !== undefined) {
+		const err = signerError(values.requireSignedBy);
+		if (err) errors.requireSignedBy = err;
 	}
 
 	return errors;

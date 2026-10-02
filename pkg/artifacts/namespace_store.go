@@ -24,6 +24,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // NamespaceStore is the registry of namespaces: one JSON document per name,
@@ -281,6 +282,9 @@ func (s *S3NamespaceStore) Put(
 	if err := ValidNamespaceSecrets(ns); err != nil {
 		return nil, err
 	}
+	if err := ValidNamespaceSigner(ns); err != nil {
+		return nil, err
+	}
 	if err := validNamespaceHold(ns); err != nil {
 		return nil, err
 	}
@@ -481,6 +485,21 @@ func ValidNamespaceSecrets(ns *orkstackv1.Namespace) error {
 	if err := dsl.ValidSecretPatterns(ns.GetAllowedSecrets()); err != nil {
 		return fmt.Errorf("artifacts: namespace %q allowed_secrets: %w: %w",
 			ns.GetName(), err, ErrInvalidNamespace)
+	}
+	return nil
+}
+
+// ValidNamespaceSigner enforces what the document can be held to on its
+// own: require_signed_by is empty or "cosign:<valid key name>". Whether
+// that key EXISTS in the deployment's ImagePolicy is not the document's
+// business — this package does not depend on ImagePolicyStore — so that
+// half is the API's (internal/api.validNamespaceSigner), the same split
+// validNamespaceRetention draws with the deployment maximum. Exported so the
+// registry doubles in internal/api and cmd/orkctl tests refuse exactly what
+// the store refuses.
+func ValidNamespaceSigner(ns *orkstackv1.Namespace) error {
+	if _, _, err := task.ParseSigner(ns.GetRequireSignedBy()); err != nil {
+		return fmt.Errorf("artifacts: namespace %q %w: %w", ns.GetName(), err, ErrInvalidNamespace)
 	}
 	return nil
 }

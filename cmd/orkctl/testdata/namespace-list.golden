@@ -1,3 +1,3 @@
-NAME      DEFAULT POOL  ALLOWED POOLS  ALLOWED SECRETS  RUN RETENTION                   HOLD       MAX RUNNING  BUDGET     CREATED               DESCRIPTION
-default   main          -              unrestricted     inherited (deployment maximum)  accepting  unlimited    unbounded  -                     the namespace every orkflow that names none belongs to
-payments  batch         batch,main     unrestricted     inherited (deployment maximum)  accepting  unlimited    unbounded  2026-01-02T03:04:05Z  the payments tenant
+NAME      DEFAULT POOL  ALLOWED POOLS  ALLOWED SECRETS  RUN RETENTION                   HOLD       MAX RUNNING  SIGNED BY  BUDGET     CREATED               DESCRIPTION
+default   main          -              unrestricted     inherited (deployment maximum)  accepting  unlimited    -          unbounded  -                     the namespace every orkflow that names none belongs to
+payments  batch         batch,main     unrestricted     inherited (deployment maximum)  accepting  unlimited    -          unbounded  2026-01-02T03:04:05Z  the payments tenant

@@ -11,6 +11,7 @@ import {
 	parsePoolList,
 	parseSecretPatternLines,
 	secretPatternError,
+	signerError,
 	slugError,
 	telemetryAttributesError,
 	validateNamespaceForm
@@ -388,4 +389,28 @@ test('budgetError: blank amounts are no budget; otherwise the registry bounds, r
 		{ requireName: true }
 	);
 	expect(errors.budget).toContain('bounds nothing');
+});
+
+test('signerError accepts cosign:release and refuses every other scheme', () => {
+	expect(signerError('')).toBeNull();
+	expect(signerError('cosign:release')).toBeNull();
+	for (const bad of ['notary:x', 'cosign:', 'cosign:Acme', 'acme-release']) {
+		expect(signerError(bad)).toBe(
+			`require_signed_by ${JSON.stringify(bad)} is not cosign:<key-name>; cosign is the only signer this deployment understands`
+		);
+	}
+});
+
+test('validateNamespaceForm reports a bad signer as requireSignedBy', () => {
+	const errors = validateNamespaceForm({
+		name: 'prod',
+		defaultPool: '',
+		allowedPools: [],
+		requireSignedBy: 'notary:x'
+	});
+	expect(errors.requireSignedBy).toContain('cosign is the only signer');
+	expect(
+		validateNamespaceForm({ name: 'prod', defaultPool: '', allowedPools: [], requireSignedBy: 'cosign:release' })
+			.requireSignedBy
+	).toBeUndefined();
 });

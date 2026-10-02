@@ -171,6 +171,12 @@ const (
 	// SystemServiceListTelemetrySinksProcedure is the fully-qualified name of the SystemService's
 	// ListTelemetrySinks RPC.
 	SystemServiceListTelemetrySinksProcedure = "/orkstack.v1.SystemService/ListTelemetrySinks"
+	// SystemServiceGetImagePolicyProcedure is the fully-qualified name of the SystemService's
+	// GetImagePolicy RPC.
+	SystemServiceGetImagePolicyProcedure = "/orkstack.v1.SystemService/GetImagePolicy"
+	// SystemServiceUpdateImagePolicyProcedure is the fully-qualified name of the SystemService's
+	// UpdateImagePolicy RPC.
+	SystemServiceUpdateImagePolicyProcedure = "/orkstack.v1.SystemService/UpdateImagePolicy"
 )
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
@@ -1928,6 +1934,27 @@ type SystemServiceClient interface {
 	// only: endpoints and headers are the operator's and never leave the
 	// process. CONFIGURATION-DERIVED; "default" is always present.
 	ListTelemetrySinks(context.Context, *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error)
+	// GetImagePolicy reads the deployment's image supply-chain floor: whether
+	// a `uses:` may be a mutable tag, which registries images may come from,
+	// and which signing keys a namespace may require by name. Read from the
+	// store, so any replica answers it. A deployment that never wrote one
+	// answers the EMPTY policy with updated_at unset — that is a real answer
+	// (everything is permitted), not a missing document.
+	//
+	// Deployment-wide on purpose. The per-namespace tightening is a field of
+	// orkstack.v1.Namespace (require_signed_by); this is the floor under all
+	// of them.
+	GetImagePolicy(context.Context, *connect.Request[v1.GetImagePolicyRequest]) (*connect.Response[v1.GetImagePolicyResponse], error)
+	// UpdateImagePolicy replaces the floor. Every entry and key is validated
+	// before anything is written (INVALID_ARGUMENT naming the entry). An
+	// allowed_registries list that excludes an activity of this engine's
+	// catalog is FAILED_PRECONDITION naming the activities — widen the list
+	// or change ORK_ACTIVITY_CATALOG first, because a floor that silently
+	// refuses every `uses: shell` is not a floor an operator meant. Removing
+	// a signing key a namespace still names is FAILED_PRECONDITION naming the
+	// namespace — clear the namespace first. Definitions already stored are
+	// untouched; they are re-checked at their next submit.
+	UpdateImagePolicy(context.Context, *connect.Request[v1.UpdateImagePolicyRequest]) (*connect.Response[v1.UpdateImagePolicyResponse], error)
 }
 
 // NewSystemServiceClient constructs a client for the orkstack.v1.SystemService service. By default,
@@ -1965,6 +1992,18 @@ func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(systemServiceMethods.ByName("ListTelemetrySinks")),
 			connect.WithClientOptions(opts...),
 		),
+		getImagePolicy: connect.NewClient[v1.GetImagePolicyRequest, v1.GetImagePolicyResponse](
+			httpClient,
+			baseURL+SystemServiceGetImagePolicyProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("GetImagePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		updateImagePolicy: connect.NewClient[v1.UpdateImagePolicyRequest, v1.UpdateImagePolicyResponse](
+			httpClient,
+			baseURL+SystemServiceUpdateImagePolicyProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("UpdateImagePolicy")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -1974,6 +2013,8 @@ type systemServiceClient struct {
 	getRetentionPolicy    *connect.Client[v1.GetRetentionPolicyRequest, v1.GetRetentionPolicyResponse]
 	updateRetentionPolicy *connect.Client[v1.UpdateRetentionPolicyRequest, v1.UpdateRetentionPolicyResponse]
 	listTelemetrySinks    *connect.Client[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse]
+	getImagePolicy        *connect.Client[v1.GetImagePolicyRequest, v1.GetImagePolicyResponse]
+	updateImagePolicy     *connect.Client[v1.UpdateImagePolicyRequest, v1.UpdateImagePolicyResponse]
 }
 
 // GetSystemInfo calls orkstack.v1.SystemService.GetSystemInfo.
@@ -1994,6 +2035,16 @@ func (c *systemServiceClient) UpdateRetentionPolicy(ctx context.Context, req *co
 // ListTelemetrySinks calls orkstack.v1.SystemService.ListTelemetrySinks.
 func (c *systemServiceClient) ListTelemetrySinks(ctx context.Context, req *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error) {
 	return c.listTelemetrySinks.CallUnary(ctx, req)
+}
+
+// GetImagePolicy calls orkstack.v1.SystemService.GetImagePolicy.
+func (c *systemServiceClient) GetImagePolicy(ctx context.Context, req *connect.Request[v1.GetImagePolicyRequest]) (*connect.Response[v1.GetImagePolicyResponse], error) {
+	return c.getImagePolicy.CallUnary(ctx, req)
+}
+
+// UpdateImagePolicy calls orkstack.v1.SystemService.UpdateImagePolicy.
+func (c *systemServiceClient) UpdateImagePolicy(ctx context.Context, req *connect.Request[v1.UpdateImagePolicyRequest]) (*connect.Response[v1.UpdateImagePolicyResponse], error) {
+	return c.updateImagePolicy.CallUnary(ctx, req)
 }
 
 // SystemServiceHandler is an implementation of the orkstack.v1.SystemService service.
@@ -2031,6 +2082,27 @@ type SystemServiceHandler interface {
 	// only: endpoints and headers are the operator's and never leave the
 	// process. CONFIGURATION-DERIVED; "default" is always present.
 	ListTelemetrySinks(context.Context, *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error)
+	// GetImagePolicy reads the deployment's image supply-chain floor: whether
+	// a `uses:` may be a mutable tag, which registries images may come from,
+	// and which signing keys a namespace may require by name. Read from the
+	// store, so any replica answers it. A deployment that never wrote one
+	// answers the EMPTY policy with updated_at unset — that is a real answer
+	// (everything is permitted), not a missing document.
+	//
+	// Deployment-wide on purpose. The per-namespace tightening is a field of
+	// orkstack.v1.Namespace (require_signed_by); this is the floor under all
+	// of them.
+	GetImagePolicy(context.Context, *connect.Request[v1.GetImagePolicyRequest]) (*connect.Response[v1.GetImagePolicyResponse], error)
+	// UpdateImagePolicy replaces the floor. Every entry and key is validated
+	// before anything is written (INVALID_ARGUMENT naming the entry). An
+	// allowed_registries list that excludes an activity of this engine's
+	// catalog is FAILED_PRECONDITION naming the activities — widen the list
+	// or change ORK_ACTIVITY_CATALOG first, because a floor that silently
+	// refuses every `uses: shell` is not a floor an operator meant. Removing
+	// a signing key a namespace still names is FAILED_PRECONDITION naming the
+	// namespace — clear the namespace first. Definitions already stored are
+	// untouched; they are re-checked at their next submit.
+	UpdateImagePolicy(context.Context, *connect.Request[v1.UpdateImagePolicyRequest]) (*connect.Response[v1.UpdateImagePolicyResponse], error)
 }
 
 // NewSystemServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -2064,6 +2136,18 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(systemServiceMethods.ByName("ListTelemetrySinks")),
 		connect.WithHandlerOptions(opts...),
 	)
+	systemServiceGetImagePolicyHandler := connect.NewUnaryHandler(
+		SystemServiceGetImagePolicyProcedure,
+		svc.GetImagePolicy,
+		connect.WithSchema(systemServiceMethods.ByName("GetImagePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	systemServiceUpdateImagePolicyHandler := connect.NewUnaryHandler(
+		SystemServiceUpdateImagePolicyProcedure,
+		svc.UpdateImagePolicy,
+		connect.WithSchema(systemServiceMethods.ByName("UpdateImagePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.SystemService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SystemServiceGetSystemInfoProcedure:
@@ -2074,6 +2158,10 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 			systemServiceUpdateRetentionPolicyHandler.ServeHTTP(w, r)
 		case SystemServiceListTelemetrySinksProcedure:
 			systemServiceListTelemetrySinksHandler.ServeHTTP(w, r)
+		case SystemServiceGetImagePolicyProcedure:
+			systemServiceGetImagePolicyHandler.ServeHTTP(w, r)
+		case SystemServiceUpdateImagePolicyProcedure:
+			systemServiceUpdateImagePolicyHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2097,4 +2185,12 @@ func (UnimplementedSystemServiceHandler) UpdateRetentionPolicy(context.Context, 
 
 func (UnimplementedSystemServiceHandler) ListTelemetrySinks(context.Context, *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.ListTelemetrySinks is not implemented"))
+}
+
+func (UnimplementedSystemServiceHandler) GetImagePolicy(context.Context, *connect.Request[v1.GetImagePolicyRequest]) (*connect.Response[v1.GetImagePolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.GetImagePolicy is not implemented"))
+}
+
+func (UnimplementedSystemServiceHandler) UpdateImagePolicy(context.Context, *connect.Request[v1.UpdateImagePolicyRequest]) (*connect.Response[v1.UpdateImagePolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.UpdateImagePolicy is not implemented"))
 }

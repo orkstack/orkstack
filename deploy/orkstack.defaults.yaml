@@ -73,6 +73,7 @@ orker:
   env_allowlist: []  # orker
   secret_schemes: [env, file]  # orker
   secret_allow: []  # orker
+  registry_auth_file: ""  # orker
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
   pins:

@@ -153,6 +153,21 @@ type Namespace struct {
 	// own floor (ORK_ORKER_SECRET_ALLOW): a namespace can only ever narrow
 	// what its Orkers already permit.
 	AllowedSecrets []string `protobuf:"bytes,13,rep,name=allowed_secrets,json=allowedSecrets,proto3" json:"allowed_secrets,omitempty"`
+	// require_signed_by names a signer every image executed in this namespace
+	// must satisfy: "cosign:<key-name>", where <key-name> is one of the
+	// deployment's ImagePolicy.signing_keys. Unset means no signature is
+	// required, which is what every namespace has today and what an upgrade
+	// preserves. A namespace may only TIGHTEN the deployment policy: this is
+	// its one field for doing so, and there is none for loosening.
+	//
+	// It is enforced in the three places an image passes: at apply and
+	// validate, with the file in hand (a field-anchored issue on
+	// tasks[i].uses); at submit, before a run id is minted, which catches a
+	// definition stored before the requirement existed; and by the Orker at
+	// dispatch, which verifies the signature itself against the key the run
+	// pinned at submit. Only "cosign:" exists; it is a closed set, not an
+	// extension point (AGENTS.md §13).
+	RequireSignedBy string `protobuf:"bytes,14,opt,name=require_signed_by,json=requireSignedBy,proto3" json:"require_signed_by,omitempty"`
 	// budget bounds this namespace's reserved consumption over a rolling
 	// period. Unset means unbounded, which is what every namespace has today
 	// and what an upgrade preserves.
@@ -289,6 +304,13 @@ func (x *Namespace) GetAllowedSecrets() []string {
 		return x.AllowedSecrets
 	}
 	return nil
+}
+
+func (x *Namespace) GetRequireSignedBy() string {
+	if x != nil {
+		return x.RequireSignedBy
+	}
+	return ""
 }
 
 func (x *Namespace) GetBudget() *Budget {
@@ -579,7 +601,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\xad\x05\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\xd9\x05\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -597,7 +619,8 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\x04hold\x18\v \x01(\v2\x1a.orkstack.v1.NamespaceHoldR\x04hold\x12\x1f\n" +
 	"\vmax_running\x18\f \x01(\x05R\n" +
 	"maxRunning\x12'\n" +
-	"\x0fallowed_secrets\x18\r \x03(\tR\x0eallowedSecrets\x12+\n" +
+	"\x0fallowed_secrets\x18\r \x03(\tR\x0eallowedSecrets\x12*\n" +
+	"\x11require_signed_by\x18\x0e \x01(\tR\x0frequireSignedBy\x12+\n" +
 	"\x06budget\x18\x0f \x01(\v2\x13.orkstack.v1.BudgetR\x06budget\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +

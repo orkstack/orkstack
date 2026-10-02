@@ -5,6 +5,7 @@ package orkstack.v1;
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/common.proto";
+import "orkstack/v1/image_policy.proto";
 import "orkstack/v1/telemetry.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
@@ -224,6 +225,18 @@ message ExecuteTaskInput {
   // it. UNSET for an unpinned task, which keeps such a task's recorded
   // payload byte-identical to what it was before this field existed.
   PinContext pin = 24;
+
+  // image_policy is the policy in force for this run, decided at submit and
+  // carried on the plan (engine.RunPlan.ImagePolicy). UNSET when the
+  // deployment configured none and the namespace names no signer, which
+  // keeps such a task's recorded payload byte-identical to what it was
+  // before this field existed — the golden history fixture
+  // (internal/engine/testdata/history) has no policy and must keep matching
+  // without re-recording. The Orker checks image against it, and verifies
+  // require_signed_by, AFTER its retry-start commit check and BEFORE it
+  // builds a workspace or pulls: an attempt whose commit.json exists is
+  // adopted without being judged again.
+  ImagePolicySelection image_policy = 25;
 }
 
 // ReleasePinInput asks the pin host to remove the pin's shared directory.

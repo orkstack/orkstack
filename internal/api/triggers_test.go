@@ -489,3 +489,41 @@ func TestDeleteTrigger_RemovesOnceAndThenReportsNotFound(t *testing.T) {
 }
 
 func strPtr(value string) *string { return &value }
+
+// TestTriggerInvoke_APolicyRefusalIs412FailedPrecondition: a trigger invoke
+// is a SubmitRun, so a definition applied under the empty image policy is
+// refused once the floor tightens — 412 failed_precondition through the
+// generic mapping, the policy sentence carried, and no run started.
+func TestTriggerInvoke_APolicyRefusalIs412FailedPrecondition(t *testing.T) {
+	policies := &memImagePolicies{}
+	f := newFixtureWith(t, func(cfg *api.Config) {
+		cfg.ImagePolicies = policies
+		cfg.Resolver = &stampResolver{}
+	})
+	ctx := context.Background()
+	if _, err := f.orkflowClient().ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
+		Yaml: orkflowUsing("deploy", "docker.io/library/alpine:3.20"),
+	})); err != nil {
+		t.Fatalf("Apply under the empty policy: %v", err)
+	}
+	trigger, secret := f.createTrigger(t, &orkstackv1.CreateTriggerRequest{OrkflowName: "deploy"})
+	policies.set(&orkstackv1.ImagePolicy{AllowedRegistries: []string{"ghcr.io/"}})
+
+	status, body := f.invoke(t, trigger.GetId(), bearer(secret), `{}`, nil)
+	if status != http.StatusPreconditionFailed {
+		t.Fatalf("status = %d, want 412: %s", status, body)
+	}
+	if code := triggerErrorCode(t, body); code != "failed_precondition" {
+		t.Fatalf("error.code = %q, want failed_precondition: %s", code, body)
+	}
+	if !strings.Contains(string(body), "outside the registries this deployment allows") {
+		t.Errorf("body %s does not carry the policy sentence", body)
+	}
+	runs, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{}))
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(runs.Msg.GetRuns()) != 0 || len(f.starter.startedRuns()) != 0 {
+		t.Fatalf("a refused invoke started %v", runs.Msg.GetRuns())
+	}
+}

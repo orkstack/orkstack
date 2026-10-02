@@ -38,7 +38,15 @@ const (
 	TmpfsBytesVar    = "ORK_ORKER_TMPFS_BYTES"
 	ForceUserVar     = "ORK_ORKER_FORCE_USER"
 	SecretSchemesVar = "ORK_ORKER_SECRET_SCHEMES"
-	SecretAllowVar   = "ORK_ORKER_SECRET_ALLOW"
+
+	// RegistryAuthFileVar is ORK_ORKER_REGISTRY_AUTH_FILE: a docker
+	// config.json used ONLY for the manifest and blob GETs signature
+	// verification makes. It grants no push and is never mounted into a
+	// container. The engine's ORK_REGISTRY_AUTH_FILE is the same shape for
+	// the same GETs at apply; the two are separate keys because they are
+	// read by separate binaries with separate ownership (AGENTS.md §12).
+	RegistryAuthFileVar = "ORK_ORKER_REGISTRY_AUTH_FILE"
+	SecretAllowVar      = "ORK_ORKER_SECRET_ALLOW"
 )
 
 // Policy defaults. None of them is unlimited: a workload that requested

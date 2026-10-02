@@ -18,7 +18,8 @@ import {
 	uiDir,
 	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	openNamespaceEdit
 } from './harness';
 import { expectNamespace, selectNamespace } from './uiHelpers';
 
@@ -497,8 +498,7 @@ test('creating a namespace validates locally, updates round-trip the etag, and a
 
 	// 4. A clean update: open Edit, change the description, save — the etag
 	// this form read is still the stored one, so it applies.
-	const row = page.getByTestId(`namespace-row-${OPS_NS}`);
-	await row.getByTestId(`namespace-edit-${OPS_NS}`).click();
+	await openNamespaceEdit(page, OPS_NS);
 	const editForm = page.getByTestId(`namespace-edit-form-${OPS_NS}`);
 	await expect(editForm).toBeVisible();
 	await editForm.getByTestId(`ns-edit-description-${OPS_NS}`).fill('updated once, cleanly');
@@ -510,7 +510,7 @@ test('creating a namespace validates locally, updates round-trip the etag, and a
 	// 5. The "two tabs" case: this form re-opens and captures the CURRENT
 	// etag, then somebody else (another RPC caller, standing in for a second
 	// browser tab) writes underneath it before this one saves.
-	await row.getByTestId(`namespace-edit-${OPS_NS}`).click();
+	await openNamespaceEdit(page, OPS_NS);
 	const editForm2 = page.getByTestId(`namespace-edit-form-${OPS_NS}`);
 	await expect(editForm2).toBeVisible();
 
@@ -567,7 +567,7 @@ test('editing a namespace through the Admin UI does not erase its labels', async
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
 	const row = page.getByTestId(`namespace-row-${LABELLED_NS}`);
 	await expect(row).toBeVisible();
-	await row.getByTestId(`namespace-edit-${LABELLED_NS}`).click();
+	await openNamespaceEdit(page, LABELLED_NS);
 	const editForm = page.getByTestId(`namespace-edit-form-${LABELLED_NS}`);
 	await expect(editForm).toBeVisible();
 	await editForm
@@ -606,7 +606,7 @@ test('a stale-etag retry re-reads labels too, so a concurrent label change survi
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
 	const row = page.getByTestId(`namespace-row-${LABEL_CONFLICT_NS}`);
 	await expect(row).toBeVisible();
-	await row.getByTestId(`namespace-edit-${LABEL_CONFLICT_NS}`).click();
+	await openNamespaceEdit(page, LABEL_CONFLICT_NS);
 	const editForm = page.getByTestId(`namespace-edit-form-${LABEL_CONFLICT_NS}`);
 	await expect(editForm).toBeVisible();
 	// This form's `openEdit` has now captured labels {team: payments} — the
@@ -688,7 +688,7 @@ test('deleting a namespace between a conflict and its retry shows a normal error
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
 	const row = page.getByTestId(`namespace-row-${DELETED_DURING_CONFLICT_NS}`);
 	await expect(row).toBeVisible();
-	await row.getByTestId(`namespace-edit-${DELETED_DURING_CONFLICT_NS}`).click();
+	await openNamespaceEdit(page, DELETED_DURING_CONFLICT_NS);
 	const editForm = page.getByTestId(`namespace-edit-form-${DELETED_DURING_CONFLICT_NS}`);
 	await expect(editForm).toBeVisible();
 

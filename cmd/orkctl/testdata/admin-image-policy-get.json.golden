@@ -1,0 +1,14 @@
+{
+  "policy": {
+    "requireDigest": true,
+    "allowedRegistries": [
+      "ghcr.io/",
+      "123.dkr.ecr.eu-west-1.amazonaws.com/"
+    ],
+    "signingKeys": {
+      "acme-release": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEu53TEXjEgvYqzDzOZvb8ZJcT+95O\nVM++cNZJJfWL6BwbqKs4tIX+kOtqfQqOF0yrl/Wh6uZ/Za70t1qHI/xFfQ==\n-----END PUBLIC KEY-----\n",
+      "acme-staging": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEu53TEXjEgvYqzDzOZvb8ZJcT+95O\nVM++cNZJJfWL6BwbqKs4tIX+kOtqfQqOF0yrl/Wh6uZ/Za70t1qHI/xFfQ==\n-----END PUBLIC KEY-----\n"
+    },
+    "updatedAt": "2026-01-02T03:04:05Z"
+  }
+}

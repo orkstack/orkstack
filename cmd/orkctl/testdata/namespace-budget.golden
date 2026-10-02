@@ -7,6 +7,7 @@ Allowed secrets:       (unrestricted; bounded only by each Orker's ORK_ORKER_SEC
 Run retention:         inherited (deployment maximum)
 Hold:                  accepting
 Max running:           20
+Require signed by:     (none; deployment image policy applies)
 Budget:                5000000 cpu-seconds per 720h0m0s, enforced (new runs are refused at the bound)
 Telemetry sink:        default (inherited)
 Task logs:             inherited (Orker default)

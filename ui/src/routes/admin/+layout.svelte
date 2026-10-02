@@ -4,8 +4,9 @@
 	// Every route under here carries `?ns=` like any other page — the
 	// namespace switcher stays visible on all of them — but only Pools RESPECTS
 	// it. Namespaces, Activities, Webhooks, Retention (the deployment MAXIMUM;
-	// a namespace's own run retention lives on the Namespaces page) and the
-	// overview are DEPLOYMENT-WIDE, and Audit is a third behaviour: it shows
+	// a namespace's own run retention lives on the Namespaces page), Image
+	// policy (the deployment FLOOR; a namespace's own signer lives on the
+	// Namespaces page) and the overview are DEPLOYMENT-WIDE, and Audit is a third behaviour: it shows
 	// every namespace by default and applies the switcher's namespace only as
 	// an explicit filter chosen on the page ("All namespaces" or "Namespace
 	// …"). Each says so in its own caption
@@ -43,6 +44,7 @@
 		{ id: 'webhooks', href: '/admin/webhooks', label: 'Webhooks' },
 		{ id: 'retention', href: '/admin/retention', label: 'Retention' },
 		{ id: 'usage', href: '/admin/usage', label: 'Usage' },
+		{ id: 'image-policy', href: '/admin/image-policy', label: 'Image policy' },
 		{ id: 'audit', href: '/admin/audit', label: 'Audit' }
 	];
 
