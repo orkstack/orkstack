@@ -5,6 +5,7 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -14,8 +15,10 @@ import (
 	"time"
 
 	"go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -137,6 +140,9 @@ func TestIntegration_ScheduleFireDuringVersionRollout(t *testing.T) {
 	if newRun == "" {
 		t.Fatal("the second fire never prepared a run")
 	}
+	// The stub records the run id before the fire starts the child run, so
+	// the run may not exist yet: wait for it before waiting on its result.
+	waitWorkflowStarted(t, ctx, c, newRun)
 	if err := c.GetWorkflow(ctx, newRun, "").Get(ctx, nil); err != nil {
 		t.Fatalf("the run of the fire after the switch (%s) did not complete: %v", newRun, err)
 	}
@@ -157,6 +163,28 @@ func TestIntegration_ScheduleFireDuringVersionRollout(t *testing.T) {
 		assertRunVersion(t, ctx, c, transcript, fire, want)
 	}
 	proof.Write(t, "engine", "schedule-fire-rollout-transcript.txt", []byte(strings.Join(transcript.lines, "\n")+"\n"))
+}
+
+// waitWorkflowStarted waits until the workflow id has an execution, because a
+// GetWorkflow(...).Get on an id not yet started fails "workflow not found"
+// instead of waiting.
+func waitWorkflowStarted(t *testing.T, ctx context.Context, c client.Client, workflowID string) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		_, err := c.DescribeWorkflowExecution(ctx, workflowID, "")
+		if err == nil {
+			return
+		}
+		var notFound *serviceerror.NotFound
+		if !errors.As(err, &notFound) {
+			t.Fatalf("describe %s: %v", workflowID, err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("workflow %s was never started: %v", workflowID, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // scheduleFireIDs lists a schedule's fire workflows, oldest first, waiting for
