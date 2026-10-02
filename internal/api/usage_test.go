@@ -407,15 +407,22 @@ func TestUsageMeter_ConcurrentCallersShareOneMeasurement(t *testing.T) {
 		}(i)
 	}
 	<-w.index.started
-	// Every caller is either waiting on the one call or about to join it.
+	// Hold the one call open until all ten callers have joined it.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		m.mu.Lock()
-		n := len(m.inflight)
+		n, waiters := len(m.inflight), 0
+		if call := m.inflight[key]; call != nil {
+			waiters = call.waiters
+		}
 		m.mu.Unlock()
-		if n == 1 || time.Now().After(deadline) {
+		if n == 1 && waiters == 10 {
 			break
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d calls in flight with %d waiters after 5s, want 1 with 10", n, waiters)
+		}
+		runtime.Gosched()
 	}
 	close(w.index.gate)
 	wg.Wait()

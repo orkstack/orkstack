@@ -160,6 +160,9 @@ type usageCall struct {
 	done     chan struct{}
 	response *orkstackv1.GetUsageResponse
 	err      error
+	// waiters counts the callers that started or joined this call, under
+	// UsageMeter.mu; it is observability for tests, not a control input.
+	waiters int
 }
 
 // runBodyLoader is the one archive read a measurement makes per run.
@@ -235,6 +238,7 @@ func (m *UsageMeter) Measure(
 		groupBy = append([]orkstackv1.FailureGroupBy(nil), groupBy...)
 		go m.measure(ctx, call, key, window, groupBy)
 	}
+	call.waiters++
 	m.mu.Unlock()
 
 	select {
