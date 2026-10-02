@@ -473,9 +473,19 @@ service RunService {
 // returned and read by nothing that decides what to send. ListDeliveries and
 // GetDelivery read it; RedeliverWebhook is one operator-initiated synchronous
 // POST, recorded as a new delivery. Nothing here retries on its own.
+//
+// A subscription scoped to a namespace may carry a name; UpdateWebhook
+// changes it in place.
 service WebhookService {
   rpc RegisterWebhook(RegisterWebhookRequest) returns (RegisterWebhookResponse);
   rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse);
+  // UpdateWebhook REPLACES a subscription's mutable fields — name, url,
+  // events and scope — in place. Its id and signing secret never change, so
+  // a receiver keeps verifying and a delivery record's webhook_id keeps
+  // naming the same subscription. Last writer wins; an update never brings
+  // back a subscription deleted meanwhile (NotFound). The secret is never in
+  // the request or the response.
+  rpc UpdateWebhook(UpdateWebhookRequest) returns (UpdateWebhookResponse);
   rpc DeleteWebhook(DeleteWebhookRequest) returns (DeleteWebhookResponse);
   // ListDeliveries lists delivery records newest first, bounded and
   // paginated. A scan that would examine more keys than the engine's budget
@@ -517,6 +527,14 @@ message Webhook {
   // refuses a task_id when events names no TASK_* event, because the filter
   // could then never be consulted.
   string task_id = 7;
+
+  // name is the operator's handle: a slug, at most 200 bytes, unique among
+  // the named subscriptions of its namespace scope. It REQUIRES namespace:
+  // a name is unique within one namespace, and a deployment-wide
+  // subscription belongs to none. Empty means unnamed — every subscription
+  // registered before this field existed — and an unnamed subscription is
+  // outside every automation document. It plays no part in delivery.
+  string name = 8;
 }
 message RegisterWebhookRequest {
   string url = 1;
@@ -526,11 +544,25 @@ message RegisterWebhookRequest {
   string namespace = 4;
   string orkflow_name = 5;
   string task_id = 6;
+  string name = 7;                         // optional; see Webhook.name
 }
 message RegisterWebhookResponse {
   Webhook webhook = 1;
   string secret = 2;
 }
+// UpdateWebhookRequest replaces every mutable field, on the terms
+// RegisterWebhookRequest states them: empty events means every run
+// transition; each scope field empty means every. It carries no secret.
+message UpdateWebhookRequest {
+  string id = 1;
+  string name = 2;
+  string url = 3;
+  repeated EventType events = 4;
+  string namespace = 5;
+  string orkflow_name = 6;
+  string task_id = 7;
+}
+message UpdateWebhookResponse { Webhook webhook = 1; }
 message ListWebhooksRequest {}
 message ListWebhooksResponse { repeated Webhook webhooks = 1; }
 message DeleteWebhookRequest { string id = 1; }
@@ -663,9 +695,19 @@ message RedeliverWebhookResponse {
 //
 // The secret is handed back exactly once, at creation, on the same terms as
 // RegisterWebhookResponse.secret: a listing never carries it again.
+//
+// A trigger may carry a name, which is how an automation document addresses
+// it (docs/AUTOMATION.md); UpdateTrigger renames and re-pins in place.
 service TriggerService {
   rpc CreateTrigger(CreateTriggerRequest) returns (CreateTriggerResponse);
   rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
+  // UpdateTrigger REPLACES a trigger's mutable fields — name, pinned version,
+  // description — in place. Its id, namespace, orkflow and bearer token never
+  // change: an update never re-issues a token, and the URL an external caller
+  // holds keeps working. Binding a trigger to another orkflow is delete then
+  // create. Last writer wins, and an update never brings back a trigger that
+  // was deleted meanwhile: that is NotFound.
+  rpc UpdateTrigger(UpdateTriggerRequest) returns (UpdateTriggerResponse);
   rpc DeleteTrigger(DeleteTriggerRequest) returns (DeleteTriggerResponse);
 }
 
@@ -676,12 +718,21 @@ message Trigger {
   string orkflow_version = 4;              // empty = current pointer, resolved at invoke time
   string description = 5;                  // optional operator label
   google.protobuf.Timestamp created_at = 6;
+
+  // name is the operator's handle for this trigger: a slug
+  // (^[a-z][a-z0-9-]*$, at most 200 bytes), unique among the named triggers
+  // of its namespace. Empty means unnamed, which every trigger created before
+  // this field existed is; an unnamed trigger is outside every automation
+  // document. The name is not part of the invoke URL and never selects what
+  // a run starts: the stored namespace and orkflow do, as before.
+  string name = 7;
 }
 message CreateTriggerRequest {
   string namespace = 1;
   string orkflow_name = 2;
   string orkflow_version = 3;
   string description = 4;
+  string name = 5;                         // optional; see Trigger.name
 }
 message CreateTriggerResponse {
   Trigger trigger = 1;
@@ -694,6 +745,20 @@ message ListTriggersRequest {
 message ListTriggersResponse { repeated Trigger triggers = 1; }
 message DeleteTriggerRequest { string id = 1; string namespace = 2; }
 message DeleteTriggerResponse {}
+// UpdateTriggerRequest replaces every mutable field with the value here: an
+// empty name makes the trigger unnamed, an empty orkflow_version follows the
+// current pointer, an empty description clears it. A client that changes one
+// field reads the trigger and sends the rest back, which is what
+// `orkctl trigger update` does. orkflow_name is deliberately absent: a
+// trigger's orkflow cannot change.
+message UpdateTriggerRequest {
+  string id = 1;
+  string namespace = 2;                    // addresses the trigger; another namespace's is NotFound
+  string name = 3;
+  string orkflow_version = 4;
+  string description = 5;
+}
+message UpdateTriggerResponse { Trigger trigger = 1; }
 
 message SubmitRunRequest {
   string orkflow_name = 1;               // orkflow name
