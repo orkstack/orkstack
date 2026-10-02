@@ -63,6 +63,12 @@ export function span(from: Timestamp, to: Timestamp): Quantity {
 export interface TimedTask {
 	status: Status;
 	attempt: number;
+	/**
+	 * Set for an awaited task (TaskRun.await present): never queued and never
+	 * reported on by an Orker, so wait, queue wait and phases do not apply and
+	 * RUN is the time it spent awaiting — the derivation's await row.
+	 */
+	awaited?: boolean;
 	scheduledAt?: Timestamp;
 	startedAt?: Timestamp;
 	finishedAt?: Timestamp;
@@ -82,6 +88,8 @@ export interface TaskTiming {
 	queueWait: Quantity;
 	/** Every attempt row is unavailable because the records were reclaimed. */
 	reclaimed: boolean;
+	/** An awaited task: `run` is the time it awaited, everything else 'na'. */
+	awaited: boolean;
 }
 
 /**
@@ -118,8 +126,20 @@ export function taskTiming(
 		total: NA,
 		sinceScheduled: NA,
 		queueWait: NA,
-		reclaimed: false
+		reclaimed: false,
+		awaited: task.awaited === true
 	};
+	if (timing.awaited) {
+		// scheduled_at and started_at are both the instant it started
+		// awaiting; an await that never opened has neither.
+		timing.scheduled = B !== undefined;
+		timing.preContract = false;
+		if (timing.scheduled && terminal && F) {
+			timing.run = span(B!, F);
+			timing.total = timing.run;
+		}
+		return timing;
+	}
 	if (!timing.scheduled) return timing;
 
 	if (timing.preContract) {

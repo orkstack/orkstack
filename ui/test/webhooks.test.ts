@@ -18,7 +18,7 @@ test('a scope is positional, with * for each unset component', () => {
 	expect(webhookScope({ namespace: 'analytics', orkflowName: '', taskId: 'extract' })).toBe('analytics/*/extract');
 });
 
-test('the offered events are the eight subscribable ones in lifecycle order, never TASK_LOG', () => {
+test('the offered events are the ten subscribable ones in lifecycle order, never TASK_LOG', () => {
 	expect(RUN_EVENTS).toEqual([
 		EventType.RUN_STARTED,
 		EventType.RUN_SUCCEEDED,
@@ -28,6 +28,8 @@ test('the offered events are the eight subscribable ones in lifecycle order, nev
 	expect(TASK_EVENTS).toEqual([
 		EventType.TASK_SCHEDULED,
 		EventType.TASK_STARTED,
+		EventType.TASK_AWAITING,
+		EventType.TASK_RESOLVED,
 		EventType.TASK_SUCCEEDED,
 		EventType.TASK_FAILED
 	]);

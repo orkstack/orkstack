@@ -35,7 +35,7 @@ const base: DeliveryCoordinates = {
 };
 
 test('the panel offers exactly the eight subscribable events, never TASK_LOG or RUN_CREATED', () => {
-	expect(DELIVERY_EVENTS.length).toBe(8);
+	expect(DELIVERY_EVENTS.length).toBe(10);
 	expect(DELIVERY_EVENTS).not.toContain(EventType.TASK_LOG);
 	expect(DELIVERY_EVENTS).not.toContain(EventType.RUN_CREATED);
 });

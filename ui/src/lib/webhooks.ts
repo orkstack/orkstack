@@ -11,10 +11,15 @@ export const RUN_EVENTS: EventType[] = [
 	EventType.RUN_CANCELED
 ];
 
-/** Task outcome events: opt-in by name, always. TASK_LOG is never offered. */
+/**
+ * Task events: opt-in by name, always, in lifecycle order — an awaited task's
+ * two sit where it reaches them, before its outcome. TASK_LOG is never offered.
+ */
 export const TASK_EVENTS: EventType[] = [
 	EventType.TASK_SCHEDULED,
 	EventType.TASK_STARTED,
+	EventType.TASK_AWAITING,
+	EventType.TASK_RESOLVED,
 	EventType.TASK_SUCCEEDED,
 	EventType.TASK_FAILED
 ];

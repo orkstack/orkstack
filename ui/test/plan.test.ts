@@ -136,3 +136,30 @@ test('parseAssumedOutputs follows its five rules in order', () => {
 		value: { build: { ok: true }, test: {} }
 	});
 });
+
+test('an await plans as AWAITS with the CLI detail, and the summary counts it only when present', async () => {
+	const { AwaitSpecSchema } = await import('../src/lib/gen/orkstack/v1/orkflow_pb');
+	const { goDuration, planOutcomeWord } = await import('../src/lib/plan');
+	const plan = create(PlanRunResponseSchema, {
+		runs: 2,
+		awaits: 2,
+		waveCount: 3,
+		tasks: [
+			task('training', PlanOutcome.AWAITS, 2, {
+				await: create(AwaitSpecSchema, { timeoutSeconds: 21600, callback: true })
+			}),
+			task('approval', PlanOutcome.AWAITS, 2, {
+				await: create(AwaitSpecSchema, { timeoutSeconds: 86400 })
+			})
+		]
+	});
+	expect(planOutcomeWord(PlanOutcome.AWAITS)).toBe('awaits');
+	expect(planDetail(plan.tasks[0], plan)).toBe('await ≤ 6h0m0s, callback');
+	expect(planDetail(plan.tasks[1], plan)).toBe('await ≤ 24h0m0s');
+	expect(planSummary(plan)).toBe('2 run, 2 awaits, 0 skipped, 3 waves. Nothing was started.');
+	expect(planSummary(create(PlanRunResponseSchema, { runs: 1, awaits: 1, waveCount: 2 }))).toBe(
+		'1 run, 1 await, 0 skipped, 2 waves. Nothing was started.'
+	);
+	expect(goDuration(150)).toBe('2m30s');
+	expect(goDuration(45)).toBe('45s');
+});

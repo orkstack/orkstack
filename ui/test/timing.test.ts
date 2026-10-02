@@ -193,3 +193,22 @@ test('the seven reasons are the CLI\'s seven', () => {
 		'recorded before scheduled time existed'
 	]);
 });
+
+test('an awaited task is awaited, never queued: run is F − B and nothing else applies', async () => {
+	const { taskTiming } = await import('../src/lib/timing');
+	const { Status } = await import('../src/lib/gen/orkstack/v1/common_pb');
+	const opened = { seconds: 1_000n, nanos: 0 };
+	const resolved = { seconds: 1_000n + 5400n, nanos: 0 };
+	const timing = taskTiming(
+		{ status: Status.SUCCEEDED, attempt: 0, awaited: true, scheduledAt: opened, startedAt: opened, finishedAt: resolved },
+		[]
+	);
+	expect(timing.awaited).toBe(true);
+	expect(timing.scheduled).toBe(true);
+	expect(timing.wait.kind).toBe('na');
+	expect(timing.queueWait.kind).toBe('na');
+	expect(timing.run.kind === 'value' && timing.run.ms).toBe(5_400_000);
+	const pending = taskTiming({ status: Status.PENDING, attempt: 0, awaited: true }, undefined);
+	expect(pending.scheduled).toBe(false);
+	expect(pending.queueWait.kind).toBe('na');
+});
