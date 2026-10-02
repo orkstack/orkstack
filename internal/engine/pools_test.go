@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -944,5 +945,93 @@ tasks:
 	wf.Tasks[0].Secrets[0].Source = "env:SANDBOX_DB"
 	if _, _, err := resolver.Plan(context.Background(), ns, wf, false); !errors.As(err, &pool) {
 		t.Fatalf("Plan with a permitted secret = %v, want the pool refusal next", err)
+	}
+}
+
+// concurrentProbe holds its FIRST call open until a second call is in flight
+// beside it, and records the most calls it ever saw in flight at once. A
+// resolver that probes one pool at a time never sends that second call while
+// the first is open, so the first gives up after its deadline and the high-water
+// mark stays at one.
+type concurrentProbe struct {
+	mu       sync.Mutex
+	inFlight int
+	most     int
+	first    bool
+	second   chan struct{}
+	arrived  bool
+}
+
+func (p *concurrentProbe) ObservePool(_ context.Context, queue string) (engine.PoolLiveness, error) {
+	p.mu.Lock()
+	p.inFlight++
+	if p.inFlight > p.most {
+		p.most = p.inFlight
+	}
+	if p.inFlight == 2 && !p.arrived {
+		p.arrived = true
+		close(p.second)
+	}
+	holdOpen := !p.first
+	p.first = true
+	p.mu.Unlock()
+	if holdOpen {
+		select {
+		case <-p.second:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	p.mu.Lock()
+	p.inFlight--
+	p.mu.Unlock()
+	return engine.PoolLiveness{Orkers: len(queue), LastSeen: time.Now()}, nil
+}
+
+// TestPoolResolver_PoolsProbesItsPoolsTogether: one cluster probe per pool is
+// sent with others in flight, not one at a time. An unrestricted namespace's
+// report covers every pool its orkflows have ever named, so a serial walk's
+// latency is the number of pools times one cluster round-trip: 277 pools
+// against a loaded cluster took two minutes and every caller with a shorter
+// deadline was answered "context canceled" for each pool not yet reached. The
+// report itself — every pool once, in name order, each with its own count —
+// is unchanged.
+func TestPoolResolver_PoolsProbesItsPoolsTogether(t *testing.T) {
+	var extra []string
+	for i := 0; i < 40; i++ {
+		extra = append(extra, fmt.Sprintf("pool-%02d", i))
+	}
+	probe := &concurrentProbe{second: make(chan struct{})}
+	resolver := &engine.PoolResolver{Probe: probe, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ns := &orkstackv1.Namespace{Name: "default"}
+
+	pools, err := resolver.Pools(context.Background(), ns, extra)
+	if err != nil {
+		t.Fatalf("Pools: %v", err)
+	}
+	probe.mu.Lock()
+	most := probe.most
+	probe.mu.Unlock()
+	if most < 2 {
+		t.Fatalf("at most %d probe in flight at once, want the pools probed together", most)
+	}
+	// The same bound every other admin read's round-trips keep (api's
+	// storeFanout): together, never all at once.
+	if most > 16 {
+		t.Fatalf("%d probes in flight at once, want at most 16", most)
+	}
+	if len(pools) != len(extra)+1 {
+		t.Fatalf("%d pools reported, want %d", len(pools), len(extra)+1)
+	}
+	for i, pool := range pools {
+		if i > 0 && pools[i-1].GetName() >= pool.GetName() {
+			t.Fatalf("pools out of name order at %d: %q then %q", i, pools[i-1].GetName(), pool.GetName())
+		}
+		queue, err := task.QueueForPool(pool.GetName(), "")
+		if err != nil {
+			t.Fatalf("queue for %q: %v", pool.GetName(), err)
+		}
+		if got, want := pool.GetLiveOrkerCount(), int32(len(queue)); got != want {
+			t.Errorf("pool %q reports %d live Orkers, want its own probe's %d", pool.GetName(), got, want)
+		}
 	}
 }
