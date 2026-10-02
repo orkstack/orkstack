@@ -8,6 +8,7 @@ import {
 	ensureActivityImages,
 	killStarted,
 	noteTo,
+	openNamespaceEdit,
 	orkerEnv,
 	proofOut,
 	rpc as callEngine,
@@ -76,6 +77,10 @@ tasks:
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
+	// Three image builds, two Go builds, the UI build, and an engine that
+	// reloads every orkflow on the shared store before it serves: on a loaded
+	// host that has measured past the 180 s default, so the hook gets its own.
+	test.setTimeout(360_000);
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await tcpOpen(7233))) throw new Error('Temporal is not reachable on 127.0.0.1:7233');
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
@@ -206,8 +211,9 @@ test('5: Admin → Usage lists every namespace; the budget’s share only in its
 });
 
 test('6: unchecking Enforce makes the budget soft, and a submit is accepted and succeeds', async ({ page }) => {
+	test.setTimeout(300_000);
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=${NS}`);
-	await page.getByTestId(`namespace-edit-${NS}`).click();
+	await openNamespaceEdit(page, NS);
 	await expect(page.getByTestId(`ns-edit-budget-enforce-${NS}`)).toBeChecked();
 	await page.getByTestId(`ns-edit-budget-enforce-${NS}`).uncheck();
 	await page.getByTestId(`ns-edit-cli-${NS}-trigger`).click();
@@ -221,7 +227,8 @@ test('6: unchecking Enforce makes the budget soft, and a submit is accepted and 
 	await openSubmitDialog(page);
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	// The same bound awaitStatus gives the step-2 run.
+	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
 	note(`soft budget: ${page.url()} admitted and SUCCEEDED`);
 
 	await page.goto(`${UI_ORIGIN}/?ns=${NS}`);
