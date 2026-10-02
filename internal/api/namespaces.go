@@ -204,6 +204,9 @@ func (s *Service) CreateNamespace(
 	if err := s.validNamespaceTelemetry(spec); err != nil {
 		return nil, err
 	}
+	if err := s.validNamespaceSigner(ctx, spec); err != nil {
+		return nil, err
+	}
 	if artifacts.ResolveNamespace(spec.GetName()) == artifacts.DefaultNamespace {
 		// Wanting the default namespace is not an error; it is already there.
 		// An identical spec is the no-op it looks like, and a different one is
@@ -291,6 +294,9 @@ func specDifference(stored, requested *orkstackv1.Namespace) string {
 	if got, want := retentionLabel(stored.GetRunRetention()), retentionLabel(requested.GetRunRetention()); got != want {
 		return fmt.Sprintf("run_retention is %s, not %s", got, want)
 	}
+	if got, want := signerLabel(stored.GetRequireSignedBy()), signerLabel(requested.GetRequireSignedBy()); got != want {
+		return fmt.Sprintf("require_signed_by is %s, not %s", got, want)
+	}
 	// A hold is compared by its reason alone: since is the registry's, so two
 	// requests that both ask for the same hold are the same spec whenever
 	// they were sent.
@@ -321,6 +327,15 @@ func telemetryDifference(stored, requested *orkstackv1.TelemetryPolicy) string {
 		return fmt.Sprintf("telemetry.attributes are %s, not %s", renderLabels(got), renderLabels(want))
 	}
 	return ""
+}
+
+// signerLabel renders require_signed_by for a difference report: the quoted
+// signer, or `"" (none)` for an unset one.
+func signerLabel(signer string) string {
+	if signer == "" {
+		return `"" (none)`
+	}
+	return fmt.Sprintf("%q", signer)
 }
 
 // holdLabel renders a namespace's hold for a difference report: "none" for
@@ -484,6 +499,21 @@ func (s *Service) UpdateNamespace(
 	} else if newSink != "" && s.validNamespaceTelemetrySink(newSink) != nil {
 		s.logger.Warn("namespace update proceeding with a telemetry sink this deployment no longer declares",
 			"namespace", spec.GetName(), "telemetry_sink", newSink)
+	}
+	// The signer's key is checked only when the caller is changing the
+	// signer, on the sink check's terms and for its reason: a namespace whose
+	// key an operator later removed (reachable only through a document
+	// another release wrote — UpdateImagePolicy refuses the removal) must stay
+	// editable in every other way. The spelling is the store's rule and is
+	// always enforced there.
+	newSigner := spec.GetRequireSignedBy()
+	if newSigner != stored.GetRequireSignedBy() {
+		if err := s.validNamespaceSigner(ctx, spec); err != nil {
+			return nil, err
+		}
+	} else if newSigner != "" && s.validNamespaceSigner(ctx, spec) != nil {
+		s.logger.Warn("namespace update proceeding with a require_signed_by key this deployment no longer holds",
+			"namespace", spec.GetName(), "require_signed_by", newSigner)
 	}
 	cond := artifacts.PutConditions{IfMatch: spec.GetEtag()}
 	if spec.GetEtag() == "" {

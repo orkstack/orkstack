@@ -77,6 +77,15 @@ const (
 	ReasonResourceRefused      = "RESOURCE_REQUEST_REFUSED"
 	ReasonNetworkModeRefused   = "NETWORK_MODE_REFUSED"
 
+	// Image supply-chain policy (image-supply-chain-policy §6.1), re-exported
+	// from internal/task so the engine and the Orker spell one refusal one
+	// way. The first three refuse identically forever; the fourth is a
+	// registry that could not be asked, classified as IMAGE_PULL_FAILED is.
+	ReasonImageNotPermitted         = task.ReasonImageNotPermitted
+	ReasonImageNotSigned            = task.ReasonImageNotSigned
+	ReasonImageSignatureInvalid     = task.ReasonImageSignatureInvalid
+	ReasonImageSignatureUnavailable = task.ReasonImageSignatureUnavailable
+
 	// ReasonPanic is not a Failure the Orker constructs and reports to the
 	// engine — a panic unwinds through Execute's own re-panic, and Temporal's
 	// activity worker turns that into its own error, never a Failure.
@@ -131,6 +140,11 @@ var reasonCategory = map[string]string{
 	ReasonValuesRefetchFailed:  CategoryInfrastructureError,
 	ReasonResourceRefused:      CategoryContractViolation,
 	ReasonNetworkModeRefused:   CategoryContractViolation,
+
+	ReasonImageNotPermitted:         CategoryContractViolation,
+	ReasonImageNotSigned:            CategoryContractViolation,
+	ReasonImageSignatureInvalid:     CategoryContractViolation,
+	ReasonImageSignatureUnavailable: CategoryInfrastructureError,
 }
 
 // retryableReason overrides the category's own default for the three codes

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -772,54 +773,105 @@ func (r *PoolResolver) Pools(
 	}
 	sort.Strings(ordered)
 
-	pools := make([]*orkstackv1.Pool, 0, len(ordered))
-	for _, name := range ordered {
-		pool := &orkstackv1.Pool{Name: name, IsDefault: name == defaultRoute.Pool}
-		queue := queues[name]
-		if queue == "" {
-			pools = append(pools, pool)
-			continue
-		}
-		if r.Probe != nil {
-			live, err := r.Probe.ObservePool(ctx, queue)
-			switch {
-			case err != nil:
-				// NOT a zero count: nothing was measured. The row survives
-				// carrying the reason, so a reader is told "could not ask"
-				// rather than "nobody is there" — one is fixed by waiting,
-				// the other by starting an Orker.
-				unreachable := &PoolUnreachableError{Pool: name, Err: err}
-				pool.UnavailableReason = unreachable.Error()
-				r.logger().Warn("list pools: a pool could not be probed, so it is "+
-					"reported unavailable rather than empty",
-					"namespace", namespaceName(ns),
-					"pool", name,
-					"error", err)
-			case live.Fresh(r.now(), r.freshness()):
-				pool.LiveOrkerCount = int32(live.Orkers)
-				if !live.LastSeen.IsZero() {
-					pool.LastSeen = timestamppb.New(live.LastSeen.UTC())
-				}
-			}
-		}
-		if pool.GetLiveOrkerCount() > 0 && r.Orkers != nil {
-			// The probe is asked for liveness evidence only: which images
-			// exist is engine configuration (§4.2). The call is kept because
-			// answering at all is the evidence a probe nobody makes cannot
-			// give.
-			if _, err := r.Orkers.OrkerOnPool(ctx, queue); err != nil {
-				// The pool's liveness was measured from the cluster and
-				// stands; only the Orker's self-description was lost.
-				r.logger().Warn("list pools: a live pool did not answer the "+
-					"describe-orker probe",
-					"namespace", namespaceName(ns),
-					"pool", name,
-					"error", err)
-			}
-		}
-		pools = append(pools, pool)
-	}
+	// One cluster round-trip per pool, in flight together and bounded (see
+	// poolProbeFanout). Each call writes only its own slot, so the report is
+	// in name order whatever order the answers arrive in.
+	pools := make([]*orkstackv1.Pool, len(ordered))
+	probeTogether(len(ordered), func(i int) {
+		name := ordered[i]
+		pools[i] = r.observedPool(ctx, ns, name, queues[name], name == defaultRoute.Pool)
+	})
 	return pools, nil
+}
+
+// observedPool is one row of Pools: the pool, asked of the cluster on its
+// channel. A pool with no channel (a name this engine cannot route) is
+// reported as it is, unasked.
+func (r *PoolResolver) observedPool(
+	ctx context.Context,
+	ns *orkstackv1.Namespace,
+	name, queue string,
+	isDefault bool,
+) *orkstackv1.Pool {
+	pool := &orkstackv1.Pool{Name: name, IsDefault: isDefault}
+	if queue == "" {
+		return pool
+	}
+	if r.Probe != nil {
+		live, err := r.Probe.ObservePool(ctx, queue)
+		switch {
+		case err != nil:
+			// NOT a zero count: nothing was measured. The row survives
+			// carrying the reason, so a reader is told "could not ask"
+			// rather than "nobody is there" — one is fixed by waiting,
+			// the other by starting an Orker.
+			unreachable := &PoolUnreachableError{Pool: name, Err: err}
+			pool.UnavailableReason = unreachable.Error()
+			r.logger().Warn("list pools: a pool could not be probed, so it is "+
+				"reported unavailable rather than empty",
+				"namespace", namespaceName(ns),
+				"pool", name,
+				"error", err)
+		case live.Fresh(r.now(), r.freshness()):
+			pool.LiveOrkerCount = int32(live.Orkers)
+			if !live.LastSeen.IsZero() {
+				pool.LastSeen = timestamppb.New(live.LastSeen.UTC())
+			}
+		}
+	}
+	if pool.GetLiveOrkerCount() > 0 && r.Orkers != nil {
+		// The probe is asked for liveness evidence only: which images
+		// exist is engine configuration (§4.2). The call is kept because
+		// answering at all is the evidence a probe nobody makes cannot
+		// give.
+		if _, err := r.Orkers.OrkerOnPool(ctx, queue); err != nil {
+			// The pool's liveness was measured from the cluster and
+			// stands; only the Orker's self-description was lost.
+			r.logger().Warn("list pools: a live pool did not answer the "+
+				"describe-orker probe",
+				"namespace", namespaceName(ns),
+				"pool", name,
+				"error", err)
+		}
+	}
+	return pool
+}
+
+// poolProbeFanout bounds how many pool probes one Pools report has in flight
+// at once — the same bound internal/api's storeFanout gives every other
+// admin read's round-trips, for the same reason.
+//
+// An unrestricted namespace's report covers every pool its orkflows have ever
+// named, so a serial walk costs one cluster round-trip per pool: 277 pools
+// against a loaded cluster took two minutes, and every caller with a shorter
+// deadline was told "context canceled" for each pool not yet reached. In
+// flight together the cost is round-trips DIVIDED by this number; the bound
+// keeps one report from opening a request per pool at once.
+const poolProbeFanout = 16
+
+// probeTogether runs fn for every index below n, at most poolProbeFanout at a
+// time, and returns once every call has finished. fn must write only to the
+// slot its index owns.
+func probeTogether(n int, fn func(i int)) {
+	limit := min(n, poolProbeFanout)
+	if limit <= 1 {
+		for i := 0; i < n; i++ {
+			fn(i)
+		}
+		return
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(i)
+		}()
+	}
+	wg.Wait()
 }
 
 // maxExportedLabels bounds how many of an orkflow's `labels:` telemetryFor

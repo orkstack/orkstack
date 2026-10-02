@@ -1,0 +1,16 @@
+Updated namespace prod-payments
+Name:                  prod-payments
+Description:           -
+Default pool:          main
+Allowed pools:         (unrestricted)
+Allowed secrets:       (unrestricted; bounded only by each Orker's ORK_ORKER_SECRET_ALLOW)
+Run retention:         inherited (deployment maximum)
+Hold:                  accepting
+Max running:           unlimited
+Require signed by:     cosign:release
+Telemetry sink:        default (inherited)
+Task logs:             inherited (Orker default)
+Telemetry attributes:  -
+Labels:                -
+Created:               2026-01-02T03:04:05Z
+Updated:               2026-01-02T03:04:05Z

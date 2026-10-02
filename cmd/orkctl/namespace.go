@@ -47,6 +47,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		telemetryAttributes []string
 		holdReason          string
 		maxRunning          int32
+		requireSignedBy     string
 	)
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -75,21 +76,25 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			if err := checkAllowSecretFlags(allowedSecrets); err != nil {
 				return err
 			}
+			if err := checkRequireSignedByFlag(cmd, requireSignedBy); err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			resp, err := g.namespaceClient().CreateNamespace(ctx, connect.NewRequest(
 				&orkstackv1.CreateNamespaceRequest{Namespace: &orkstackv1.Namespace{
-					Name:           args[0],
-					Description:    description,
-					Labels:         parsed,
-					DefaultPool:    defaultPool,
-					AllowedPools:   allowedPools,
-					RunRetention:   retention,
-					AllowedSecrets: allowedSecrets,
-					Telemetry:      telemetry,
-					Hold:           admission.GetHold(),
-					MaxRunning:     admission.GetMaxRunning(),
+					Name:            args[0],
+					Description:     description,
+					Labels:          parsed,
+					DefaultPool:     defaultPool,
+					AllowedPools:    allowedPools,
+					RunRetention:    retention,
+					AllowedSecrets:  allowedSecrets,
+					Telemetry:       telemetry,
+					Hold:            admission.GetHold(),
+					MaxRunning:      admission.GetMaxRunning(),
+					RequireSignedBy: requireSignedBy,
 				}},
 			))
 			if err != nil {
@@ -108,7 +113,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &allowedSecrets, &labels, &runRetention,
-		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning)
+		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &requireSignedBy)
 	return cmd
 }
 
@@ -179,6 +184,8 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		maxRunning          int32
 		releaseHold         bool
 		clearSecrets        bool
+		requireSignedBy     string
+		clearSigner         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <name>",
@@ -198,6 +205,12 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 				return fmt.Errorf("--allow-secret and --clear-allowed-secrets contradict each other: give one")
 			}
 			if err := checkAllowSecretFlags(allowedSecrets); err != nil {
+				return err
+			}
+			if clearSigner && cmd.Flags().Changed("require-signed-by") {
+				return fmt.Errorf("--require-signed-by and --clear-require-signed-by contradict each other: give one")
+			}
+			if err := checkRequireSignedByFlag(cmd, requireSignedBy); err != nil {
 				return err
 			}
 			// The admission flags are checked before any round trip, on a
@@ -261,6 +274,12 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			if releaseHold {
 				edited.Hold = nil
 			}
+			if cmd.Flags().Changed("require-signed-by") {
+				edited.RequireSignedBy = requireSignedBy
+			}
+			if clearSigner {
+				edited.RequireSignedBy = ""
+			}
 
 			resp, err := client.UpdateNamespace(ctx, connect.NewRequest(
 				&orkstackv1.UpdateNamespaceRequest{Namespace: edited},
@@ -277,12 +296,14 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &allowedSecrets, &labels, &runRetention,
-		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning)
+		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &requireSignedBy)
 	cmd.Flags().BoolVar(&releaseHold, "release-hold", false,
 		"reopen a held namespace to new runs (nothing refused while it was held is started)")
 	cmd.Flags().BoolVar(&clearSecrets, "clear-allowed-secrets", false,
 		"remove the namespace's secret-source list, leaving it unrestricted "+
 			"(each Orker's ORK_ORKER_SECRET_ALLOW still applies)")
+	cmd.Flags().BoolVar(&clearSigner, "clear-require-signed-by", false,
+		"stop requiring a signature: the deployment image policy alone applies")
 	return cmd
 }
 
@@ -365,6 +386,7 @@ func namespaceSpecFlags(
 	telemetryAttributes *[]string,
 	holdReason *string,
 	maxRunning *int32,
+	requireSignedBy *string,
 ) {
 	cmd.Flags().StringVar(description, "description", "", "human description")
 	cmd.Flags().StringVar(defaultPool, "default-pool", "",
@@ -391,6 +413,19 @@ func namespaceSpecFlags(
 			"(runs already accepted finish untouched)")
 	cmd.Flags().Int32Var(maxRunning, "max-running", 0,
 		"most runs of this namespace in flight at once (0 = unlimited)")
+	cmd.Flags().StringVar(requireSignedBy, "require-signed-by", "",
+		"require every image executed in this namespace to carry a valid signature, as cosign:KEY "+
+			"naming a key of `orkctl admin image-policy get` (tightens the deployment policy; never loosens it)")
+}
+
+// checkRequireSignedByFlag refuses an empty --require-signed-by before any
+// round trip. The scheme and the key are the engine's to judge: its
+// InvalidArgument (bad shape) or unknown-key sentence is printed verbatim.
+func checkRequireSignedByFlag(cmd *cobra.Command, value string) error {
+	if cmd.Flags().Changed("require-signed-by") && strings.TrimSpace(value) == "" {
+		return fmt.Errorf("--require-signed-by needs cosign:<key-name>")
+	}
+	return nil
 }
 
 // checkAllowSecretFlags holds --allow-secret entries to the registry's own
@@ -550,12 +585,12 @@ func renderNamespaceList(out io.Writer, namespaces []*orkstackv1.Namespace) erro
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tALLOWED SECRETS\tRUN RETENTION\tHOLD\tMAX RUNNING\tCREATED\tDESCRIPTION")
+	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tALLOWED SECRETS\tRUN RETENTION\tHOLD\tMAX RUNNING\tSIGNED BY\tCREATED\tDESCRIPTION")
 	for _, ns := range namespaces {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			ns.GetName(), defaultPoolLabel(ns), joinOrDash(ns.GetAllowedPools()),
 			allowedSecretsCellLabel(ns), runRetentionLabel(ns), holdCellLabel(ns), maxRunningLabel(ns),
-			formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
+			orDash(ns.GetRequireSignedBy()), formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -573,6 +608,7 @@ func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	fmt.Fprintf(table, "Run retention:\t%s\n", runRetentionLabel(ns))
 	fmt.Fprintf(table, "Hold:\t%s\n", holdLabel(ns))
 	fmt.Fprintf(table, "Max running:\t%s\n", maxRunningLabel(ns))
+	fmt.Fprintf(table, "Require signed by:\t%s\n", requireSignedByLabel(ns))
 	fmt.Fprintf(table, "Telemetry sink:\t%s\n", telemetrySinkLabel(ns))
 	fmt.Fprintf(table, "Task logs:\t%s\n", taskLogsLabel(ns))
 	fmt.Fprintf(table, "Telemetry attributes:\t%s\n", telemetryAttributesLabel(ns))
@@ -654,6 +690,15 @@ func holdCellLabel(ns *orkstackv1.Namespace) string {
 		return "accepting"
 	}
 	return "since " + formatTime(hold.GetSince())
+}
+
+// requireSignedByLabel renders the namespace's signer, or what an unset one
+// means: the deployment image policy alone applies.
+func requireSignedByLabel(ns *orkstackv1.Namespace) string {
+	if signer := ns.GetRequireSignedBy(); signer != "" {
+		return signer
+	}
+	return "(none; deployment image policy applies)"
 }
 
 // maxRunningLabel renders a namespace's cap, with 0 spelled as what it means.

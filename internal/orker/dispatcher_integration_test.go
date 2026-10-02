@@ -670,6 +670,11 @@ func TestIntegration_ContractViolationsAreRefusedWithTheirReasonCode(t *testing.
 			t.Fatalf("runtime asked %d pulls and %d creates; want none", pulls, creates)
 		}
 	})
+
+	// The image-policy rows (image_policy_integration_test.go): an image
+	// outside the pinned registries, and a signer whose image carries no
+	// signature in a real registry, both refused before any pull or create.
+	imagePolicyContractRows(t)
 }
 
 // countingRuntime passes every call to the real runtime and counts the two

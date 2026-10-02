@@ -14,6 +14,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import TelemetryFields from '$lib/components/TelemetryFields.svelte';
+	import SignerField from '$lib/components/SignerField.svelte';
 	import { isStaleEtagConflict } from '$lib/adminErrors';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { create } from '@bufbuild/protobuf';
@@ -203,6 +204,7 @@
 	let createHoldReason = $state('');
 	let createMaxRunning = $state('');
 	let createAllowedSecrets = $state('');
+	let createRequireSignedBy = $state('');
 	let createErrors = $state<NamespaceFormErrors>({});
 	let createBusy = $state(false);
 	let createServerError = $state('');
@@ -220,6 +222,7 @@
 		createHoldReason = '';
 		createMaxRunning = '';
 		createAllowedSecrets = '';
+		createRequireSignedBy = '';
 	}
 
 	async function submitCreate() {
@@ -235,7 +238,8 @@
 				telemetryAttributesText: createTelemetryAttributesText,
 				holdReason: createHoldReason,
 				maxRunning: createMaxRunning,
-				allowedSecretsText: createAllowedSecrets
+				allowedSecretsText: createAllowedSecrets,
+				requireSignedBy: createRequireSignedBy.trim()
 			},
 			{ requireName: true }
 		);
@@ -269,7 +273,9 @@
 					hold: holdRequest(createHoldReason),
 					maxRunning: maxRunningRequest(createMaxRunning),
 					// Blank is an empty list: unrestricted.
-					allowedSecrets: parseSecretPatternLines(createAllowedSecrets)
+					allowedSecrets: parseSecretPatternLines(createAllowedSecrets),
+					// "" is None: no signature required beyond the deployment floor.
+					requireSignedBy: createRequireSignedBy.trim()
 				}
 			});
 			createSuccess = res.created
@@ -296,6 +302,7 @@
 	let editHoldReason = $state('');
 	let editMaxRunning = $state('');
 	let editAllowedSecrets = $state('');
+	let editRequireSignedBy = $state('');
 	let editEtag = $state('');
 	let editErrors = $state<NamespaceFormErrors>({});
 	let editBusy = $state(false);
@@ -321,6 +328,7 @@
 		editHoldReason = ns.hold?.reason ?? '';
 		editMaxRunning = ns.maxRunning > 0 ? String(ns.maxRunning) : '';
 		editAllowedSecrets = ns.allowedSecrets.join('\n');
+		editRequireSignedBy = ns.requireSignedBy;
 		editEtag = ns.etag;
 		editLabels = { ...ns.labels };
 		editErrors = {};
@@ -355,7 +363,8 @@
 				telemetryAttributesText: editTelemetryAttributesText,
 				holdReason: editHoldReason,
 				maxRunning: editMaxRunning,
-				allowedSecretsText: editAllowedSecrets
+				allowedSecretsText: editAllowedSecrets,
+				requireSignedBy: editRequireSignedBy.trim()
 			},
 			{ requireName: false }
 		);
@@ -392,7 +401,11 @@
 					// Prefilled one entry per line from the row: blank on save
 					// sends an empty list, a deliberate choice of unrestricted,
 					// not an omission — the rule run retention follows above.
-					allowedSecrets: parseSecretPatternLines(editAllowedSecrets)
+					allowedSecrets: parseSecretPatternLines(editAllowedSecrets),
+					// Prefilled from the row like everything above: None on save is
+					// a deliberate clear. UpdateNamespace replaces the document, so
+					// omitting it would silently drop the signer.
+					requireSignedBy: editRequireSignedBy.trim()
 				}
 			});
 			closeEdit();
@@ -699,6 +712,14 @@
 					>
 				{/if}
 			</label>
+			<SignerField
+				bind:value={createRequireSignedBy}
+				keys={data.signingKeys}
+				keysError={data.signingKeysError}
+				testid="ns-create-require-signed-by"
+				error={createErrors.requireSignedBy}
+				errorTestid="ns-create-error-require-signed-by"
+			/>
 			<TelemetryFields
 				bind:sink={createTelemetrySink}
 				bind:taskLogs={createTaskLogs}
@@ -755,6 +776,7 @@
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Run retention</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Hold</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Max running</th>
+						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Signed by</th>
 <th class="h-10 px-4 text-xs font-medium text-fg-muted">Telemetry sink</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Task logs</th>
 						<th class="h-10 px-4 text-xs font-medium text-fg-muted">Attrs</th>
@@ -798,6 +820,9 @@
 							>
 							<td class="h-11 px-4 align-middle text-fg-secondary tabular-nums" data-testid="namespace-max-running-{ns.name}"
 								>{maxRunningLabel(ns.maxRunning)}</td
+							>
+							<td class="h-11 px-4 align-middle font-mono text-xs text-fg-secondary" data-testid="namespace-require-signed-by-{ns.name}"
+								>{ns.requireSignedBy || '—'}</td
 							>
 							<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="namespace-telemetry-sink-{ns.name}"
 								>{telemetrySinkLabel(ns.telemetry)}</td
@@ -872,7 +897,7 @@
 						</tr>
 						{#if editingName === ns.name}
 							<tr>
-								<td colspan="13" class="bg-surface-sunken px-4 py-4">
+								<td colspan="14" class="bg-surface-sunken px-4 py-4">
 									<form
 										data-testid="namespace-edit-form-{ns.name}"
 										class="grid gap-3 sm:grid-cols-2"
@@ -972,6 +997,14 @@
 												>
 											{/if}
 										</label>
+										<SignerField
+											bind:value={editRequireSignedBy}
+											keys={data.signingKeys}
+											keysError={data.signingKeysError}
+											testid="ns-edit-require-signed-by-{ns.name}"
+											error={editErrors.requireSignedBy}
+											errorTestid="ns-edit-error-require-signed-by-{ns.name}"
+										/>
 										<TelemetryFields
 											bind:sink={editTelemetrySink}
 											bind:taskLogs={editTaskLogs}

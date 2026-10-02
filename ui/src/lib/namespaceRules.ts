@@ -75,6 +75,9 @@ export interface NamespaceFormValues {
 	// line: blank means unrestricted (send an empty list), a deliberate
 	// choice rather than an omission.
 	allowedSecretsText?: string;
+	// requireSignedBy is the signer select's value: "" (none) or
+	// "cosign:<key-name>".
+	requireSignedBy?: string;
 }
 
 export interface NamespaceFormErrors {
@@ -86,6 +89,21 @@ export interface NamespaceFormErrors {
 	holdReason?: string;
 	maxRunning?: string;
 	allowedSecrets?: string;
+	requireSignedBy?: string;
+}
+
+// signerError restates internal/task.ParseSigner: require_signed_by is
+// empty (no signature required) or "cosign:" followed by a signing key name
+// (the slug rule, at most 64 bytes). cosign is the only scheme — a closed
+// set, not an extension point. Whether the key EXISTS is the engine's
+// answer, shown verbatim; the form offers a select of the keys it holds.
+export function signerError(value: string): string | null {
+	if (value === '') return null;
+	const refused = `require_signed_by ${JSON.stringify(value)} is not cosign:<key-name>; cosign is the only signer this deployment understands`;
+	if (!value.startsWith('cosign:')) return refused;
+	const name = value.slice('cosign:'.length);
+	if (name === '' || new TextEncoder().encode(name).length > 64 || !SLUG_PATTERN.test(name)) return refused;
+	return null;
 }
 
 // MAX_HOLD_REASON_BYTES mirrors pkg/artifacts/namespace_store.go's
@@ -269,6 +287,10 @@ export function validateNamespaceForm(
 	if (values.allowedSecretsText !== undefined) {
 		const err = secretPatternsError(parseSecretPatternLines(values.allowedSecretsText));
 		if (err) errors.allowedSecrets = err;
+	}
+	if (values.requireSignedBy !== undefined) {
+		const err = signerError(values.requireSignedBy);
+		if (err) errors.requireSignedBy = err;
 	}
 
 	return errors;

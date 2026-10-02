@@ -14,6 +14,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -96,8 +97,12 @@ type Resolver struct {
 	// execution.
 	AuthFile string
 
+	// authMu guards the lazily read auth file: a Resolver is shared by
+	// every concurrent apply and, as a SignatureVerifier's client, by every
+	// concurrent Orker attempt.
+	authMu   sync.Mutex
 	auth     map[string]dockerAuth
-	authOnce bool
+	authRead bool
 }
 
 // NewResolver builds a resolver reading credentials from authFile.
@@ -542,19 +547,31 @@ func (r *Resolver) authorizedGet(ctx context.Context, ref Reference, endpoint st
 
 // do issues one GET and reads a bounded body.
 func (r *Resolver) do(ctx context.Context, endpoint, authorization string) (*http.Response, []byte, error) {
+	// One byte past the bound, so a caller can tell "at the bound" from
+	// "over it" (a config blob over it is refused, not truncated).
+	return r.doWith(ctx, r.client(), endpoint, authorization, ManifestAccept, maxManifestBytes+1)
+}
+
+// doWith is do over an explicit client, Accept header and body bound, for
+// the blob GET signature verification makes (getSignatureBlob).
+func (r *Resolver) doWith(
+	ctx context.Context, client *http.Client, endpoint, authorization, accept string, limit int64,
+) (*http.Response, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, nil, &ResolveError{Reference: endpoint, Code: ReasonImageResolveUnsupported,
 			Detail: "cannot build the manifest request", Err: err}
 	}
-	req.Header.Set("Accept", ManifestAccept)
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
 	if authorization != "" {
 		req.Header.Set("Authorization", authorization)
 	} else if basic := r.basicFor(endpoint); basic != "" {
 		req.Header.Set("Authorization", basic)
 	}
 
-	resp, err := r.client().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		// DNS failure, connection refused, TLS failure and timeout all land
 		// here, and all of them are "try again later" rather than "this
@@ -563,9 +580,7 @@ func (r *Resolver) do(ctx context.Context, endpoint, authorization string) (*htt
 			Detail: "the registry could not be reached", Err: err}
 	}
 	defer resp.Body.Close()
-	// One byte past the bound, so a caller can tell "at the bound" from
-	// "over it" (a config blob over it is refused, not truncated).
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestBytes+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, nil, &ResolveError{Reference: endpoint, Code: ReasonImageResolveUnavailable,
 			Detail: "the manifest response could not be read", Err: err}
@@ -738,10 +753,12 @@ func (r *Resolver) basicForHost(host string) string {
 // resolution then fails with IMAGE_RESOLVE_UNAUTHORIZED naming the file, which
 // is a better message than a boot failure for a document that never needed it.
 func (r *Resolver) loadAuth() map[string]dockerAuth {
-	if r.authOnce {
+	r.authMu.Lock()
+	defer r.authMu.Unlock()
+	if r.authRead {
 		return r.auth
 	}
-	r.authOnce = true
+	r.authRead = true
 	if r.AuthFile == "" {
 		return nil
 	}

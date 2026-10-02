@@ -940,6 +940,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// start deleting run history under one it never confirmed.
 		return fmt.Errorf("establish retention policy: %w", err)
 	}
+	// The image supply-chain floor (image-supply-chain-policy): one settings
+	// document beside the retention policy, read at apply, validate and
+	// submit. Nothing is materialized at boot — a deployment that never
+	// wrote one has the empty policy, which permits what it always did.
+	imagePolicies, err := artifacts.NewS3ImagePolicyStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open image policy store: %w", err)
+	}
 	logger.Info("retention policy ready",
 		"max_run_retention", policy.GetMaxRunRetention().AsDuration(),
 		"namespace_retention_enforced", cfg.cleanup.Enabled)
@@ -1063,19 +1071,23 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	scheduler := engine.NewTemporalScheduler(temporalClient, q.run).WithLogger(logger)
 
 	svc := api.NewService(api.Config{
-		Orkflows:      orkflows,
-		Namespaces:    namespaces,
-		Reader:        reader,
-		Runs:          runs,
-		Bus:           bus,
-		Starter:       starter,
-		Pools:         pools,
-		PoolOrkers:    starter,
-		Orkers:        starter,
-		Fleet:         starter,
-		Releases:      releases,
-		Catalog:       cfg.activityCatalog,
-		Resolver:      resolver,
+		Orkflows:   orkflows,
+		Namespaces: namespaces,
+		Reader:     reader,
+		Runs:       runs,
+		Bus:        bus,
+		Starter:    starter,
+		Pools:      pools,
+		PoolOrkers: starter,
+		Orkers:     starter,
+		Fleet:      starter,
+		Releases:   releases,
+		Catalog:    cfg.activityCatalog,
+		Resolver:   resolver,
+		// The image policy store and the signature verifier, over the same
+		// resolver: one registry client, one credential file.
+		ImagePolicies: imagePolicies,
+		Signatures:    &dsl.SignatureVerifier{Resolver: resolver},
 		Activities:    activities,
 		RawQueue:      cfg.defaultRouteOverride,
 		Archive:       archive,
