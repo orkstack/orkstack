@@ -17,7 +17,8 @@ import {
 	uiDir,
 	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	openNamespaceEdit
 } from './harness';
 
 // Namespace admission control in a browser, against a real engine, Orker,
@@ -236,7 +237,7 @@ test('4: Release hold reopens the namespace, and a submit reaches SUCCEEDED', as
 
 test('5: at max_running the dialog shows the server’s cap sentence verbatim', async ({ page }) => {
 	await openAdmin(page);
-	await page.getByTestId(`namespace-edit-${NS}`).click();
+	await openNamespaceEdit(page, NS);
 	await page.getByTestId(`ns-edit-max-running-${NS}`).fill('1');
 	await page.getByTestId(`ns-edit-save-${NS}`).click();
 	await expect(page.getByTestId(`namespace-max-running-${NS}`)).toHaveText('1');
@@ -270,7 +271,7 @@ test('5: at max_running the dialog shows the server’s cap sentence verbatim', 
 
 test('6: a hold from a second tab turns the first tab’s save into a stale-etag conflict', async ({ page, browser }) => {
 	await openAdmin(page);
-	await page.getByTestId(`namespace-edit-${NS}`).click();
+	await openNamespaceEdit(page, NS);
 	await expect(page.getByTestId(`namespace-edit-form-${NS}`)).toBeVisible();
 	await page.getByTestId(`ns-edit-description-${NS}`).fill('edited in the first tab');
 

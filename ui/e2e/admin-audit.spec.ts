@@ -13,7 +13,8 @@ import {
 	uiDir,
 	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	openNamespaceEdit
 } from './harness';
 import { selectOption } from './uiHelpers';
 
@@ -200,7 +201,7 @@ test('an Ork-Principal header set in front of the browser is recorded', async ({
 	const page = await context.newPage();
 	try {
 		await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default`);
-		await page.getByTestId(`namespace-edit-${NS}`).click();
+		await openNamespaceEdit(page, NS);
 		await page.getByTestId(`ns-edit-description-${NS}`).fill('edited behind a gateway');
 		await page.getByTestId(`ns-edit-save-${NS}`).click();
 		await expect(page.getByTestId(`namespace-edit-form-${NS}`)).toBeHidden();

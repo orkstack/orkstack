@@ -19,7 +19,8 @@ import {
 	uiDir,
 	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	openNamespaceEdit
 } from './harness';
 
 // Image supply-chain policy in a browser, against a real engine, Orker,
@@ -326,7 +327,7 @@ test('4: Validate anchors both refusals to tasks[0].uses; a signed catalog image
 
 test('5: with prod moved to cosign:e2e-other, Submit a run shows the refusal verbatim', async ({ page }) => {
 	await openNamespaces(page);
-	await page.getByTestId(`namespace-edit-${PROD}`).click();
+	await openNamespaceEdit(page, PROD);
 	await chooseSigner(page, `ns-edit-require-signed-by-${PROD}`, 'cosign:e2e-other');
 	await page.getByTestId(`ns-edit-save-${PROD}`).click();
 	await expect(page.getByTestId(`namespace-require-signed-by-${PROD}`)).toHaveText('cosign:e2e-other');
@@ -356,7 +357,7 @@ test('6: removing a key a namespace names is refused naming it; after clearing, 
 	await page.screenshot({ path: out('screenshot-key-removal-refused.png'), fullPage: true });
 
 	await openNamespaces(page);
-	await page.getByTestId(`namespace-edit-${PROD}`).click();
+	await openNamespaceEdit(page, PROD);
 	await chooseSigner(page, `ns-edit-require-signed-by-${PROD}`, '');
 	await page.getByTestId(`ns-edit-save-${PROD}`).click();
 	await expect(page.getByTestId(`namespace-require-signed-by-${PROD}`)).toHaveText('—');
