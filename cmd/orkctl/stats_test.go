@@ -43,6 +43,10 @@ func (s statsReader) Executions(
 }
 
 // RunningCount answers admission's question from the same executions map.
+func (s statsReader) RunStart(context.Context, string) (*engine.RunStartRecord, error) {
+	return nil, engine.ErrRunNotFound
+}
+
 func (s statsReader) RunningCount(_ context.Context, namespace string) (int64, error) {
 	return int64(len(s.executions[namespace].Running)), nil
 }

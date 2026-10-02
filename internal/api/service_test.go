@@ -33,6 +33,37 @@ type fakeStarter struct {
 	orkflows []*orkstackv1.Orkflow
 	canceled []string
 	err      error
+	// signals is every resolution delivered, in order, and signalErr makes
+	// delivery fail. onSignal, when set, runs inside the delivery — what a
+	// test uses to observe ordering against the store.
+	signals   []*orkstackv1.AwaitSignal
+	signalIDs []string
+	signalErr error
+	onSignal  func(runID string, sig *orkstackv1.AwaitSignal)
+}
+
+func (f *fakeStarter) SignalAwait(_ context.Context, runID string, sig *orkstackv1.AwaitSignal) error {
+	f.mu.Lock()
+	onSignal := f.onSignal
+	err := f.signalErr
+	f.mu.Unlock()
+	if onSignal != nil {
+		onSignal(runID, sig)
+	}
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.signals = append(f.signals, sig)
+	f.signalIDs = append(f.signalIDs, runID)
+	return nil
+}
+
+func (f *fakeStarter) delivered() []*orkstackv1.AwaitSignal {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*orkstackv1.AwaitSignal(nil), f.signals...)
 }
 
 func (f *fakeStarter) StartRun(

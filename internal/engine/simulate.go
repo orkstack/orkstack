@@ -72,6 +72,9 @@ func Simulate(
 			TaskId:    id,
 			Condition: tasks[id].GetCondition(),
 			Pin:       tasks[id].GetPin(),
+			// Set for every await whatever its outcome, so a reader sees the
+			// deadline and whether it takes a callback.
+			Await: tasks[id].GetAwait(),
 		}
 	}
 	waveAfter := func(id string) int32 {
@@ -163,7 +166,13 @@ func Simulate(
 				planned.SkipReason = skipReasonCondition(tasks[id].GetCondition())
 				continue
 			}
-			planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS
+			if tasks[id].GetAwait() != nil {
+				// Opens, starts no activity: the interpreter's openAwait.
+				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS
+			} else {
+				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS
+			}
+			// An await's stub is its resolution.
 			// payloadMap(nil) is {}: a task with no stub has an empty output,
 			// as collect records for a values.json that decodes to nothing.
 			outputs[id] = payloadMap(assumed[id])
@@ -188,6 +197,11 @@ func Simulate(
 			if planned.GetWave() > resp.WaveCount {
 				resp.WaveCount = planned.GetWave()
 			}
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
+			resp.Awaits++
+			if planned.GetWave() > resp.WaveCount {
+				resp.WaveCount = planned.GetWave()
+			}
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED:
 			resp.Skipped++
 		}
@@ -195,16 +209,23 @@ func Simulate(
 	for w := int32(1); w <= resp.WaveCount; w++ {
 		wave := &orkstackv1.PlanWave{Wave: w}
 		for _, id := range order {
-			if result[id].GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS && result[id].GetWave() == w {
+			if takesAWave(result[id].GetOutcome()) && result[id].GetWave() == w {
 				wave.TaskIds = append(wave.TaskIds, id)
 			}
 		}
 		resp.Waves = append(resp.Waves, wave)
 	}
 	for _, id := range assumedKeys {
-		if result[id].GetOutcome() != orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS {
+		if !takesAWave(result[id].GetOutcome()) {
 			resp.UnusedAssumedOutputs = append(resp.UnusedAssumedOutputs, id)
 		}
 	}
 	return resp, nil
+}
+
+// takesAWave is RUNS or AWAITS: an await occupies a dispatch round from its
+// dependants' point of view, and its stub is consumed as its resolution.
+func takesAWave(outcome orkstackv1.PlanOutcome) bool {
+	return outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS ||
+		outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS
 }

@@ -210,6 +210,29 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID, _ string) error 
 	return nil
 }
 
+// ErrRunEnded reports that a run's execution has already closed, so nothing
+// can be delivered to it.
+var ErrRunEnded = errors.New("run has ended")
+
+// SignalAwait delivers one resolution to a running run: exactly one
+// client.SignalWorkflow call with ResolveAwaitSignal. It returns when the
+// cluster has durably recorded it in the run's history, not when the run has
+// applied it. A closed execution (serviceerror.NotFound) is ErrRunEnded,
+// joined with the server's error; anything else is returned wrapped.
+//
+// It queues nothing and retries nothing: the caller is answered with the
+// outcome of this one call (docs/DSL.md "Awaited tasks").
+func (s *TemporalStarter) SignalAwait(ctx context.Context, runID string, signal *orkstackv1.AwaitSignal) error {
+	if err := s.client.SignalWorkflow(ctx, runID, "", ResolveAwaitSignal, signal); err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return fmt.Errorf("signal run %s: %w", runID, errors.Join(ErrRunEnded, err))
+		}
+		return fmt.Errorf("signal run %s: %w", runID, err)
+	}
+	return nil
+}
+
 // DescribeOrker executes the Orker's DescribeOrker activity on this engine's
 // default execution channel and returns the identity of whichever Orker
 // answered.

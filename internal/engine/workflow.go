@@ -190,6 +190,15 @@ func RunWorkflow(
 			if !run {
 				continue
 			}
+			// An awaited task starts no activity: it opens its deadline and
+			// waits for a resolution. Before openPin, which it can never reach
+			// (docs/DSL.md rule 15 refuses `pin:` on an await).
+			if state.awaits[id] != nil {
+				if err := state.openAwait(ctx, runCtx, id); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, id, err)
+				}
+				continue
+			}
 			// A pin is opened by the FIRST of its members the run actually
 			// decides to run, and never before: a pin whose every member is
 			// skipped costs an Orker nothing, and the pin's lifetime clock
@@ -214,7 +223,7 @@ func RunWorkflow(
 		// activity is: its members are held, so readyTasks is empty for them,
 		// and a run with nothing else to do must wait for its readiness rather
 		// than conclude there is nothing left.
-		if len(inFlight) == 0 && state.openingPins() == 0 {
+		if len(inFlight) == 0 && state.openingPins() == 0 && state.openAwaits() == 0 {
 			if len(state.readyTasks()) == 0 {
 				break
 			}
@@ -253,6 +262,26 @@ func RunWorkflow(
 				selectedPin = pinName
 			})
 		}
+		// Then the resolution channel, and then every open await's deadline in
+		// declaration order — fixed positions, AFTER task futures and pin
+		// readiness, so which of several ready cases the loop takes first is a
+		// property of this code and not of iteration order. A resolution
+		// recorded in the same workflow task as a deadline is taken first.
+		var resolution *orkstackv1.AwaitSignal
+		resolved := false
+		expired := ""
+		if state.resolutions != nil {
+			selector.AddReceive(state.resolutions, func(c workflow.ReceiveChannel, _ bool) {
+				c.Receive(ctx, &resolution)
+				resolved = true
+			})
+			for _, id := range state.order {
+				if a := state.awaits[id]; a != nil && a.open {
+					awaitID := id
+					selector.AddFuture(a.deadline, func(workflow.Future) { expired = awaitID })
+				}
+			}
+		}
 		selector.Select(ctx)
 		// A pin's readiness is NOT a task outcome: nothing is collected, and
 		// nothing is terminal. It only unblocks the pin's members, so the loop
@@ -261,6 +290,18 @@ func RunWorkflow(
 			if err := state.pinOpened(ctx, selectedPin); err != nil {
 				return state.fail(ctx, cancelRun, inFlight,
 					state.pins[selectedPin].triggeredBy, err)
+			}
+			continue
+		}
+		if resolved {
+			if err := state.resolve(ctx, resolution); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, resolution.GetTaskId(), err)
+			}
+			continue
+		}
+		if expired != "" {
+			if err := state.expire(ctx, expired); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, expired, err)
 			}
 			continue
 		}
@@ -305,6 +346,13 @@ type runState struct {
 	// one (Go randomizes map order on purpose, and workflow code may not).
 	pins     map[string]*pinState
 	pinOrder []string
+
+	// awaits is one entry per awaited task, keyed by task id, built once in
+	// newRunState; iteration is over order, never the map. resolutions is the
+	// one signal channel every resolution arrives on, and is nil for a run
+	// with no await — such a run creates no channel and registers none.
+	awaits      map[string]*awaitState
+	resolutions workflow.ReceiveChannel
 
 	createdAt *timestamppb.Timestamp
 	startedAt *timestamppb.Timestamp
@@ -410,6 +458,7 @@ func newRunState(
 		createdAt: timestamppb.New(workflow.GetInfo(ctx).WorkflowStartTime),
 		status:    orkstackv1.Status_STATUS_PENDING,
 		pins:      map[string]*pinState{},
+		awaits:    map[string]*awaitState{},
 	}
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
@@ -419,6 +468,17 @@ func newRunState(
 			Status: orkstackv1.Status_STATUS_PENDING,
 		}
 		state.leaves[t.GetId()] = struct{}{}
+		// An awaited task carries its await state on the snapshot from the
+		// run's first event, while still PENDING, so a client tells it from a
+		// container task without reading the definition. Unset for every
+		// other task: a run with no await snapshots exactly as before.
+		if spec := t.GetAwait(); spec != nil {
+			state.awaits[t.GetId()] = &awaitState{spec: spec}
+			state.taskRuns[t.GetId()].Await = &orkstackv1.TaskAwait{Callback: spec.GetCallback()}
+		}
+	}
+	if len(state.awaits) > 0 {
+		state.resolutions = workflow.GetSignalChannel(ctx, ResolveAwaitSignal)
 	}
 	for _, t := range wf.GetTasks() {
 		for _, need := range t.GetNeeds() {
@@ -1482,8 +1542,16 @@ func (s *runState) cancelInFlight(ctx workflow.Context, inFlight map[string]work
 		_ = s.collect(ctx, id, future)
 	}
 	for _, id := range s.order {
-		if s.taskRuns[id].GetStatus() == orkstackv1.Status_STATUS_PENDING {
+		switch s.taskRuns[id].GetStatus() {
+		case orkstackv1.Status_STATUS_PENDING:
 			if err := s.markCanceled(ctx, id, "run ended before this task started"); err != nil {
+				workflow.GetLogger(ctx).Error("mark canceled failed",
+					"run_id", s.runID, "task_id", id, "error", err)
+			}
+		case orkstackv1.Status_STATUS_AWAITING:
+			// Reached only by an awaited task, which no history recorded
+			// before awaits existed contains.
+			if err := s.cancelAwaiting(ctx, id); err != nil {
 				workflow.GetLogger(ctx).Error("mark canceled failed",
 					"run_id", s.runID, "task_id", id, "error", err)
 			}
@@ -1744,7 +1812,11 @@ func (s *runState) fail(
 		eventType = orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED
 		s.status = orkstackv1.Status_STATUS_CANCELED
 		s.runError.Code = "RUN_CANCELED"
-		if taskRun, ok := s.taskRuns[taskID]; ok {
+		// An AWAITING cause is left for cancelInFlight, which records it
+		// properly — with finished_at and its sentence — instead of leaving
+		// it CANCELED with neither.
+		if taskRun, ok := s.taskRuns[taskID]; ok &&
+			taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING {
 			taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 		}
 	}
@@ -1772,6 +1844,9 @@ func (s *runState) fail(
 	// cancelInFlight gets it — a cancelled run's remaining activity calls run
 	// on the disconnected substitution.
 	s.awaitPinsClosed(eventCtx)
+	// A resolution that reached history after its await closed is recorded,
+	// never dropped. No-op for a run with no await.
+	s.drainResolutions(eventCtx)
 
 	if err := s.emit(eventCtx, eventType, taskID, s.status, s.runError.GetMessage()); err != nil {
 		// The run is already failing for a recorded reason. That cause — a
@@ -1791,6 +1866,9 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	// still holding an Orker's session slot or a directory on its disk (§6.4).
 	// Ordinarily a no-op: each pin was already closed by its own last member.
 	s.awaitPinsClosed(ctx)
+	// Reached only with no await open (the loop's exit condition); a
+	// resolution still queued is recorded as ignored. No-op with no await.
+	s.drainResolutions(ctx)
 
 	aggregated := map[string]any{}
 	for _, id := range s.order {

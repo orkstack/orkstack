@@ -98,6 +98,28 @@ type RunPlan struct {
 	// exactly as it did before the field existed, and the golden history
 	// fixture keeps matching without re-recording.
 	Origin *RunOrigin `json:"origin,omitempty"`
+
+	// Awaits holds, per task id, the callback credential of every `await:`
+	// of this run that declares `callback: true`: a salt and the salted
+	// SHA-256 of a token minted at SUBMIT (internal/api). NEVER the token.
+	//
+	// RunWorkflow does not read it. It rides the plan because the plan is the
+	// run's replay-pinned, per-run record that any replica can read back from
+	// the run's own start event (TemporalRunReader.RunStart) — which is what
+	// lets the callback door verify a token with no table of pending
+	// callbacks anywhere (AGENTS.md §13). omitempty, so a plan with none
+	// encodes exactly as it did before the field existed and the golden
+	// history fixture keeps matching.
+	Awaits map[string]AwaitCredential `json:"awaits,omitempty"`
+}
+
+// AwaitCredential is one callback await's verification material, the shape
+// pkg/triggers keeps for a trigger: a per-await random salt and
+// sha256(salt || token), both hex. encoding/json sorts map keys, so a plan
+// encodes to the same bytes every time.
+type AwaitCredential struct {
+	Salt   string `json:"salt"`
+	Digest string `json:"digest"`
 }
 
 // ImagePolicySelection is the plan-side copy of

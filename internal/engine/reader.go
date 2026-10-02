@@ -1231,3 +1231,55 @@ func cloneTime(ts *timestamppb.Timestamp) *timestamppb.Timestamp {
 	}
 	return timestamppb.New(ts.AsTime())
 }
+
+// RunStartRecord is what a run was started with: the planned definition and
+// the plan, decoded from its WorkflowExecutionStarted event.
+type RunStartRecord struct {
+	Orkflow *orkstackv1.Orkflow
+	Plan    RunPlan
+}
+
+// RunStart reads a run's first history event and decodes its definition and
+// plan with the same converter startedRun decodes them with: payloads[1] is
+// the Orkflow, payloads[3] the RunPlan. It reads one event and stops. A run
+// with no history — unknown, or past retention — is ErrRunNotFound; a payload
+// that does not decode is an error naming the run, never an empty record.
+//
+// It is what lets either await door check a resolution against the PINNED
+// definition and verify a callback token against the digest minted at
+// submit, on any replica, with no table of pending callbacks anywhere.
+func (r *TemporalRunReader) RunStart(ctx context.Context, runID string) (*RunStartRecord, error) {
+	if runID == "" {
+		return nil, fmt.Errorf("engine: run start: run id is required")
+	}
+	iter := r.client.GetWorkflowHistory(ctx, runID, "", false,
+		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	if !iter.HasNext() {
+		return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
+	}
+	historyEvent, err := iter.Next()
+	if err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
+		}
+		return nil, fmt.Errorf("engine: read history of run %s: %w", runID, err)
+	}
+	attrs := historyEvent.GetWorkflowExecutionStartedEventAttributes()
+	if attrs == nil {
+		return nil, fmt.Errorf("engine: run %s: the first history event is %s, not the run's start",
+			runID, historyEvent.GetEventType())
+	}
+	payloads := attrs.GetInput().GetPayloads()
+	if len(payloads) < 4 {
+		return nil, fmt.Errorf("engine: run %s: its start carries %d arguments, want 4", runID, len(payloads))
+	}
+	record := &RunStartRecord{}
+	if err := r.converter.FromPayload(payloads[1], &record.Orkflow); err != nil || record.Orkflow == nil {
+		return nil, fmt.Errorf("engine: run %s: decode the started definition: %v", runID, err)
+	}
+	if err := r.converter.FromPayload(payloads[3], &record.Plan); err != nil {
+		return nil, fmt.Errorf("engine: run %s: decode the started plan: %w", runID, err)
+	}
+	return record, nil
+}
