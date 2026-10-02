@@ -2,6 +2,7 @@ package webhooks_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -229,6 +230,7 @@ type countingStore struct {
 	mu                        sync.Mutex
 	hooks                     []webhooks.Webhook
 	lists, deliveryRead, gets int
+	updates                   int
 	// deliveryErr, when set, is what ListForDelivery answers with.
 	deliveryErr error
 }
@@ -272,6 +274,32 @@ func (s *countingStore) Get(_ context.Context, id string) (webhooks.Webhook, boo
 
 func (s *countingStore) Delete(context.Context, string) (bool, error) {
 	panic("countingStore is read-only")
+}
+
+// Update applies change with the package's own rules, so a durable registry
+// over this store behaves as one over a production backend would.
+func (s *countingStore) Update(_ context.Context, id string, change func(*webhooks.Webhook) error) (webhooks.Webhook, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updates++
+	for i, hook := range s.hooks {
+		if hook.ID != id {
+			continue
+		}
+		next, err := webhooks.ApplyChange(hook, change)
+		if err != nil {
+			return webhooks.Webhook{}, true, err
+		}
+		s.hooks[i] = next
+		return next.Public(), true, nil
+	}
+	return webhooks.Webhook{}, false, nil
+}
+
+func (s *countingStore) updateCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.updates
 }
 
 func (s *countingStore) getCalls() int {
@@ -332,5 +360,122 @@ func TestRegistry_DurableMatchingReadsTheDeliveryListNeverThePublicOne(t *testin
 	}
 	if _, deliveryReads := store.calls(); deliveryReads != 1 {
 		t.Errorf("a management read reached ListForDelivery: %d delivery reads, want still 1", deliveryReads)
+	}
+}
+
+func TestValidateName_RequiresANamespaceScope(t *testing.T) {
+	err := webhooks.ValidateName("x", "")
+	if err == nil || !strings.Contains(err.Error(), "a name requires a namespace scope") {
+		t.Fatalf("ValidateName(x, \"\") = %v, want the namespace-scope refusal", err)
+	}
+	if err := webhooks.ValidateName("etl-loader", "payments"); err != nil {
+		t.Fatalf("ValidateName with a namespace = %v", err)
+	}
+	if err := webhooks.ValidateName("", ""); err != nil {
+		t.Fatalf("an empty name is unnamed and valid: %v", err)
+	}
+	for _, bad := range []string{"Etl", "-x", "a b", "a" + strings.Repeat("b", 200)} {
+		if err := webhooks.ValidateName(bad, "payments"); err == nil {
+			t.Errorf("ValidateName(%q) accepted a non-slug", bad)
+		}
+	}
+}
+
+func TestRegistry_UpdateInMemoryKeepsIDAndSecret(t *testing.T) {
+	ctx := context.Background()
+	registry := webhooks.NewRegistry()
+	created, err := registry.RegisterContext(ctx, webhooks.Registration{
+		URL: "https://a.example/hook", Secret: "original", Namespace: "payments",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	updated, ok, err := registry.UpdateContext(ctx, created.ID, func(w *webhooks.Webhook) error {
+		w.Name = "etl-loader"
+		w.URL = "https://b.example/hook"
+		w.OrkflowName = "nightly-etl"
+		w.Events = []webhooks.Event{webhooks.EventRunFailed, webhooks.EventTaskSucceeded, webhooks.EventRunFailed}
+		return nil
+	})
+	if err != nil || !ok {
+		t.Fatalf("UpdateContext = %v, %v", ok, err)
+	}
+	if updated.Secret != "" {
+		t.Fatal("UpdateContext returned the signing secret; it must answer with a Public copy")
+	}
+	if updated.ID != created.ID || updated.Name != "etl-loader" || updated.URL != "https://b.example/hook" {
+		t.Errorf("updated = %+v", updated)
+	}
+	if got := updated.Events; len(got) != 2 || got[0] != webhooks.EventTaskSucceeded || got[1] != webhooks.EventRunFailed {
+		t.Errorf("events = %v, want lifecycle order without duplicates", got)
+	}
+	matched, err := registry.MatchingContext(ctx, webhooks.Match{
+		Event: webhooks.EventRunFailed, Namespace: "payments", OrkflowName: "nightly-etl",
+	})
+	if err != nil || len(matched) != 1 {
+		t.Fatalf("MatchingContext = %v, %v; want the updated hook", matched, err)
+	}
+	if matched[0].Secret != "original" || matched[0].URL != "https://b.example/hook" {
+		t.Errorf("delivery read %+v, want the original secret and the new scope", matched[0])
+	}
+	if miss, _ := registry.MatchingContext(ctx, webhooks.Match{Event: webhooks.EventRunFailed, Namespace: "payments", OrkflowName: "other"}); len(miss) != 0 {
+		t.Errorf("the narrowed scope still matches another orkflow: %v", miss)
+	}
+	if _, ok, err := registry.UpdateContext(ctx, "wh-absent", func(*webhooks.Webhook) error { return nil }); ok || err != nil {
+		t.Errorf("UpdateContext of an absent id = %v, %v; want absent", ok, err)
+	}
+	_, _, err = registry.UpdateContext(ctx, created.ID, func(w *webhooks.Webhook) error { w.Secret = "rotated"; return nil })
+	if err == nil {
+		t.Error("an update that changed the secret was accepted")
+	}
+}
+
+func TestRegistry_UpdateRefusesATakenNameInTheScope(t *testing.T) {
+	ctx := context.Background()
+	registry := webhooks.NewRegistry()
+	if _, err := registry.RegisterContext(ctx, webhooks.Registration{URL: "https://a.example/", Namespace: "payments", Name: "taken"}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, err := registry.RegisterContext(ctx, webhooks.Registration{URL: "https://a.example/", Namespace: "payments", Name: "taken"}); !errors.Is(err, webhooks.ErrNameTaken) {
+		t.Fatalf("a second registration of the name = %v, want ErrNameTaken", err)
+	}
+	if _, err := registry.RegisterContext(ctx, webhooks.Registration{URL: "https://a.example/", Namespace: "billing", Name: "taken"}); err != nil {
+		t.Fatalf("the same name in another namespace scope: %v", err)
+	}
+	second, err := registry.RegisterContext(ctx, webhooks.Registration{URL: "https://b.example/", Namespace: "payments"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	_, _, err = registry.UpdateContext(ctx, second.ID, func(w *webhooks.Webhook) error { w.Name = "taken"; return nil })
+	if !errors.Is(err, webhooks.ErrNameTaken) {
+		t.Fatalf("rename onto a taken name = %v, want ErrNameTaken", err)
+	}
+	_, _, err = registry.UpdateContext(ctx, second.ID, func(w *webhooks.Webhook) error {
+		w.Name = "fresh"
+		w.Namespace = ""
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "namespace scope") {
+		t.Fatalf("a name without a namespace = %v, want the scope refusal", err)
+	}
+}
+
+func TestRegistry_DurableUpdateCallsStoreUpdate(t *testing.T) {
+	store := &countingStore{hooks: []webhooks.Webhook{
+		{ID: "wh-0011223344556677", URL: "https://a.example/hook", Secret: "secret-a", Namespace: "payments"},
+	}}
+	registry := webhooks.NewDurableRegistry(store)
+	updated, ok, err := registry.UpdateContext(context.Background(), "wh-0011223344556677", func(w *webhooks.Webhook) error {
+		w.Name = "etl-loader"
+		return nil
+	})
+	if err != nil || !ok {
+		t.Fatalf("UpdateContext = %v, %v", ok, err)
+	}
+	if store.updateCalls() != 1 {
+		t.Fatalf("store.Update calls = %d, want 1", store.updateCalls())
+	}
+	if updated.Secret != "" || updated.Name != "etl-loader" {
+		t.Errorf("updated = %+v, want the name and no secret", updated)
 	}
 }

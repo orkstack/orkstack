@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -288,5 +289,45 @@ func TestValidNamespaceSecrets_RefusesAMalformedEntryAndNamesIt(t *testing.T) {
 		if err := ValidNamespaceSecrets(&orkstackv1.Namespace{Name: "sandbox", AllowedSecrets: ok}); err != nil {
 			t.Errorf("ValidNamespaceSecrets(%q) = %v, want nil", ok, err)
 		}
+	}
+}
+
+// TestValidateNamespaceSpec_IsWhatPutEnforces: every document Put refuses for
+// its own shape is refused by ValidateNamespaceSpec with the same error, and a
+// valid one is accepted by both — the function is a move of Put's checks, not
+// a second copy of them.
+func TestValidateNamespaceSpec_IsWhatPutEnforces(t *testing.T) {
+	double := newS3Double(t)
+	store, err := NewS3NamespaceStore(t.Context(), double.config())
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	refused := map[string]*orkstackv1.Namespace{
+		"pools":             {Name: "payments", DefaultPool: "gpu", AllowedPools: []string{"main"}},
+		"retention":         {Name: "payments", RunRetention: durationpb.New(-time.Hour)},
+		"telemetry":         {Name: "payments", Telemetry: &orkstackv1.TelemetryPolicy{Attributes: map[string]string{"ork.x": "y"}}},
+		"hold":              {Name: "payments", Hold: &orkstackv1.NamespaceHold{}},
+		"max_running":       {Name: "payments", MaxRunning: -1},
+		"allowed_secrets":   {Name: "payments", AllowedSecrets: []string{"no-scheme"}},
+		"require_signed_by": {Name: "payments", RequireSignedBy: "gpg:key"},
+	}
+	for name, spec := range refused {
+		t.Run(name, func(t *testing.T) {
+			specErr := ValidateNamespaceSpec(spec)
+			if specErr == nil {
+				t.Fatal("ValidateNamespaceSpec accepted it")
+			}
+			_, putErr := store.Put(t.Context(), spec, PutConditions{IfAbsent: true})
+			if putErr == nil || putErr.Error() != specErr.Error() {
+				t.Fatalf("Put = %v, ValidateNamespaceSpec = %v; want the same refusal", putErr, specErr)
+			}
+		})
+	}
+	valid := &orkstackv1.Namespace{Name: "payments", DefaultPool: "main", AllowedPools: []string{"main", "gpu"}, MaxRunning: 3}
+	if err := ValidateNamespaceSpec(valid); err != nil {
+		t.Fatalf("ValidateNamespaceSpec(valid) = %v", err)
+	}
+	if _, err := store.Put(t.Context(), valid, PutConditions{IfAbsent: true}); err != nil {
+		t.Fatalf("Put(valid) = %v", err)
 	}
 }

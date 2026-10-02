@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -28,8 +29,15 @@ import (
 
 // WebhookPrefix is a deployment-wide registry, deliberately outside a
 // namespace: a subscription's scope lives inside its record, so the key
-// layout stays flat. Each immutable subscription has its own object so registration
+// layout stays flat. Each subscription has its own object so registration
 // can use object-store conditional create rather than a process-local lock.
+//
+// A record is rewritable by exactly one operation, UpdateWebhook, and only in
+// its mutable fields (name, url, events, scope): the id and the signing
+// secret — what a receiver and a delivery record hold — never change. On S3
+// the rewrite is a conditional put naming the ETag it read, so it can never
+// recreate a record deleted meanwhile; on the local backend it is serialised
+// with deletes by the store's mutex.
 const WebhookPrefix = "metadata/webhooks"
 
 var webhookIDPattern = regexp.MustCompile(`^wh-[0-9a-f]{16,}$`)
@@ -48,9 +56,13 @@ func NewWebhookStore(ctx context.Context, cfg Config) (webhooks.Store, error) {
 	}
 }
 
+// ErrInvalidWebhookID reports an id no stored subscription can have. A caller
+// answers it as "not found" rather than as a storage fault.
+var ErrInvalidWebhookID = errors.New("invalid webhook id")
+
 func webhookKey(id string) (string, error) {
 	if !webhookIDPattern.MatchString(id) {
-		return "", fmt.Errorf("artifacts: invalid webhook id %q", id)
+		return "", fmt.Errorf("artifacts: %w %q", ErrInvalidWebhookID, id)
 	}
 	return WebhookPrefix + "/" + id + ".json", nil
 }
@@ -72,6 +84,7 @@ func marshalWebhookRecord(hook webhooks.Webhook) ([]byte, error) {
 		Webhook: &orkstackv1.Webhook{
 			Id: hook.ID, Url: hook.URL, Events: eventsToProto(hook.Events), CreatedAt: timestamppb.New(hook.CreatedAt),
 			Namespace: hook.Namespace, OrkflowName: hook.OrkflowName, TaskId: hook.TaskID,
+			Name: hook.Name,
 		},
 		Secret: hook.Secret,
 	}
@@ -116,9 +129,14 @@ func unmarshalWebhookRecord(raw []byte) (webhooks.Webhook, error) {
 	if err := webhooks.ValidateScope(w.GetNamespace(), w.GetOrkflowName(), w.GetTaskId(), events); err != nil {
 		return webhooks.Webhook{}, fmt.Errorf("decode webhook %q: %w", id, err)
 	}
+	// A record written before names existed has none and decodes unnamed; a
+	// hand-edited invalid name is refused, as an invalid scope is.
+	if err := webhooks.ValidateName(w.GetName(), w.GetNamespace()); err != nil {
+		return webhooks.Webhook{}, fmt.Errorf("decode webhook %q: %w", id, err)
+	}
 	return webhooks.Webhook{
 		ID: id, URL: w.GetUrl(), Events: events, Secret: message.GetSecret(), CreatedAt: w.GetCreatedAt().AsTime().UTC(),
-		Namespace: w.GetNamespace(), OrkflowName: w.GetOrkflowName(), TaskID: w.GetTaskId(),
+		Namespace: w.GetNamespace(), OrkflowName: w.GetOrkflowName(), TaskID: w.GetTaskId(), Name: w.GetName(),
 	}, nil
 }
 
@@ -181,6 +199,9 @@ func preparedWebhook(reg webhooks.Registration) (webhooks.Webhook, error) {
 	if err := webhooks.ValidateScope(reg.Namespace, reg.OrkflowName, reg.TaskID, events); err != nil {
 		return webhooks.Webhook{}, err
 	}
+	if err := webhooks.ValidateName(reg.Name, reg.Namespace); err != nil {
+		return webhooks.Webhook{}, err
+	}
 	secret := reg.Secret
 	if secret == "" {
 		secret, err = webhookToken("", 32)
@@ -194,7 +215,7 @@ func preparedWebhook(reg webhooks.Registration) (webhooks.Webhook, error) {
 	}
 	return webhooks.Webhook{
 		ID: id, URL: url, Events: events, Secret: secret, CreatedAt: time.Now().UTC(),
-		Namespace: reg.Namespace, OrkflowName: reg.OrkflowName, TaskID: reg.TaskID,
+		Namespace: reg.Namespace, OrkflowName: reg.OrkflowName, TaskID: reg.TaskID, Name: reg.Name,
 	}, nil
 }
 
@@ -210,6 +231,9 @@ func webhookToken(prefix string, bytes int) (string, error) {
 type S3WebhookStore struct {
 	client *s3.Client
 	bucket string
+	// beforeConditionalPut, when set, runs between Update's read and its
+	// conditional write. Tests use it to delete the record in that window.
+	beforeConditionalPut func()
 }
 
 var _ webhooks.Store = (*S3WebhookStore)(nil)
@@ -222,7 +246,24 @@ func NewS3WebhookStore(ctx context.Context, cfg Config) (*S3WebhookStore, error)
 	return &S3WebhookStore{client: client, bucket: bucket}, nil
 }
 
+// Register writes one record with a conditional create. A named registration
+// first refuses a name another subscription of the same namespace scope holds;
+// that check is best-effort across replicas on the terms
+// S3TriggerStore.Create states, and every automation plan and export refuses
+// the state it can leave behind.
 func (s *S3WebhookStore) Register(ctx context.Context, reg webhooks.Registration) (webhooks.Webhook, error) {
+	if reg.Name != "" {
+		if err := webhooks.ValidateName(reg.Name, reg.Namespace); err != nil {
+			return webhooks.Webhook{}, err
+		}
+		list, err := s.List(ctx)
+		if err != nil {
+			return webhooks.Webhook{}, err
+		}
+		if webhooks.NameHeld(list, reg.Name, reg.Namespace, "") {
+			return webhooks.Webhook{}, webhooks.ErrNameTaken
+		}
+	}
 	for attempt := 0; attempt < 8; attempt++ {
 		hook, err := preparedWebhook(reg)
 		if err != nil {
@@ -331,10 +372,94 @@ func (s *S3WebhookStore) Delete(ctx context.Context, id string) (bool, error) {
 	return true, nil
 }
 
+// Update rewrites one record in place with a conditional PUT on the ETag it
+// read; a precondition failure or the object vanishing re-reads, so a
+// subscription deleted meanwhile is reported absent and never recreated. The
+// secret is decoded from the record, carried into the rewrite, and stripped
+// from the return.
+func (s *S3WebhookStore) Update(ctx context.Context, id string, change func(*webhooks.Webhook) error) (webhooks.Webhook, bool, error) {
+	key, err := webhookKey(id)
+	if err != nil {
+		return webhooks.Webhook{}, false, err
+	}
+	for attempt := 0; attempt < webhooks.UpdateAttempts; attempt++ {
+		current, etag, found, err := s.getWithETag(ctx, key)
+		if err != nil {
+			return webhooks.Webhook{}, false, err
+		}
+		if !found {
+			return webhooks.Webhook{}, false, nil
+		}
+		next, err := webhooks.ApplyChange(current, change)
+		if err != nil {
+			return webhooks.Webhook{}, true, err
+		}
+		if next.Name != "" && (next.Name != current.Name || next.Namespace != current.Namespace) {
+			list, err := s.List(ctx)
+			if err != nil {
+				return webhooks.Webhook{}, true, err
+			}
+			if webhooks.NameHeld(list, next.Name, next.Namespace, id) {
+				return webhooks.Webhook{}, true, webhooks.ErrNameTaken
+			}
+		}
+		if s.beforeConditionalPut != nil {
+			s.beforeConditionalPut()
+		}
+		body, err := marshalWebhookRecord(next)
+		if err != nil {
+			return webhooks.Webhook{}, true, err
+		}
+		_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(s.bucket), Key: aws.String(key), Body: bytes.NewReader(body),
+			ContentLength: aws.Int64(int64(len(body))), ContentType: aws.String("application/json"),
+			IfMatch: aws.String(etag),
+		})
+		if err == nil {
+			return next.Public(), true, nil
+		}
+		if isPreconditionFailed(err) || isNotFound(err) {
+			continue
+		}
+		return webhooks.Webhook{}, true, fmt.Errorf("artifacts: update webhook %q: %w", id, err)
+	}
+	return webhooks.Webhook{}, true, webhooks.ErrUpdateContention
+}
+
+// getWithETag is get plus the object's ETag, the token Update's conditional
+// write names.
+func (s *S3WebhookStore) getWithETag(ctx context.Context, key string) (webhooks.Webhook, string, bool, error) {
+	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	if err != nil {
+		if isNotFound(err) {
+			return webhooks.Webhook{}, "", false, nil
+		}
+		return webhooks.Webhook{}, "", false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
+	}
+	defer object.Body.Close()
+	raw, err := io.ReadAll(object.Body)
+	if err != nil {
+		return webhooks.Webhook{}, "", false, fmt.Errorf("artifacts: read webhook %q: %w", key, err)
+	}
+	hook, err := unmarshalWebhookRecord(raw)
+	if err != nil {
+		return webhooks.Webhook{}, "", false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
+	}
+	return hook, aws.ToString(object.ETag), true, nil
+}
+
 // LocalWebhookStore confines registry files below an os.Root. IDs are
 // validated before every path operation; no client value can traverse this
 // directory or follow a symlink outside it.
-type LocalWebhookStore struct{ root *os.Root }
+//
+// mu serialises a named registration's uniqueness check and publish, every
+// update and every delete, so within one process an update can never
+// resurrect a delete. Several processes writing one local directory
+// concurrently are not a supported topology (AGENTS.md §2.2).
+type LocalWebhookStore struct {
+	root *os.Root
+	mu   sync.Mutex
+}
 
 var _ webhooks.Store = (*LocalWebhookStore)(nil)
 
@@ -362,6 +487,20 @@ func NewLocalWebhookStore(dir string) (*LocalWebhookStore, error) {
 func (s *LocalWebhookStore) Register(ctx context.Context, reg webhooks.Registration) (webhooks.Webhook, error) {
 	if err := ctx.Err(); err != nil {
 		return webhooks.Webhook{}, err
+	}
+	if reg.Name != "" {
+		if err := webhooks.ValidateName(reg.Name, reg.Namespace); err != nil {
+			return webhooks.Webhook{}, err
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		list, err := s.List(ctx)
+		if err != nil {
+			return webhooks.Webhook{}, err
+		}
+		if webhooks.NameHeld(list, reg.Name, reg.Namespace, "") {
+			return webhooks.Webhook{}, webhooks.ErrNameTaken
+		}
 	}
 	for attempt := 0; attempt < 8; attempt++ {
 		hook, err := preparedWebhook(reg)
@@ -507,6 +646,8 @@ func (s *LocalWebhookStore) Delete(ctx context.Context, id string) (bool, error)
 	if err != nil {
 		return false, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, found, err := s.get(ctx, key)
 	if err != nil || !found {
 		return found, err
@@ -518,4 +659,44 @@ func (s *LocalWebhookStore) Delete(ctx context.Context, id string) (bool, error)
 		return false, fmt.Errorf("artifacts: delete webhook %q: %w", id, err)
 	}
 	return true, nil
+}
+
+// Update reads, applies change, and renames a rewritten record over the key,
+// all under the mutex Delete holds, so a deleted subscription stays deleted.
+// The secret is carried over and stripped from the return.
+func (s *LocalWebhookStore) Update(ctx context.Context, id string, change func(*webhooks.Webhook) error) (webhooks.Webhook, bool, error) {
+	key, err := webhookKey(id)
+	if err != nil {
+		return webhooks.Webhook{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, found, err := s.get(ctx, key)
+	if err != nil {
+		return webhooks.Webhook{}, false, err
+	}
+	if !found {
+		return webhooks.Webhook{}, false, nil
+	}
+	next, err := webhooks.ApplyChange(current, change)
+	if err != nil {
+		return webhooks.Webhook{}, true, err
+	}
+	if next.Name != "" && (next.Name != current.Name || next.Namespace != current.Namespace) {
+		list, err := s.List(ctx)
+		if err != nil {
+			return webhooks.Webhook{}, true, err
+		}
+		if webhooks.NameHeld(list, next.Name, next.Namespace, id) {
+			return webhooks.Webhook{}, true, webhooks.ErrNameTaken
+		}
+	}
+	body, err := marshalWebhookRecord(next)
+	if err != nil {
+		return webhooks.Webhook{}, true, err
+	}
+	if err := replaceLocalRecord(s.root, key, "webhook-", body); err != nil {
+		return webhooks.Webhook{}, true, fmt.Errorf("artifacts: update webhook %q: %w", id, err)
+	}
+	return next.Public(), true, nil
 }

@@ -270,25 +270,7 @@ func (s *S3NamespaceStore) Put(
 	if err != nil {
 		return nil, err
 	}
-	if err := validNamespacePools(ns); err != nil {
-		return nil, err
-	}
-	if err := validNamespaceRetention(ns); err != nil {
-		return nil, err
-	}
-	if err := validNamespaceTelemetry(ns); err != nil {
-		return nil, err
-	}
-	if err := ValidNamespaceSecrets(ns); err != nil {
-		return nil, err
-	}
-	if err := ValidNamespaceSigner(ns); err != nil {
-		return nil, err
-	}
-	if err := validNamespaceHold(ns); err != nil {
-		return nil, err
-	}
-	if err := validNamespaceMaxRunning(ns); err != nil {
+	if err := ValidateNamespaceSpec(ns); err != nil {
 		return nil, err
 	}
 	stored := proto.Clone(ns).(*orkstackv1.Namespace)
@@ -338,6 +320,31 @@ func (s *S3NamespaceStore) Put(
 	}
 	stored.Etag = aws.ToString(out.ETag)
 	return stored, nil
+}
+
+// ValidateNamespaceSpec runs, in order, every rule Put holds a document to on
+// its own: pools, retention, telemetry, allowed secrets, the signer's
+// spelling, the hold and max_running. It is pure — no engine state, no store —
+// and it is exactly what Put enforces, so a caller that wants to know before
+// writing (an automation plan) asks the same function the write will.
+func ValidateNamespaceSpec(ns *orkstackv1.Namespace) error {
+	if ns == nil {
+		return fmt.Errorf("artifacts: encode namespace: %w: nil namespace", ErrInvalidNamespace)
+	}
+	for _, check := range []func(*orkstackv1.Namespace) error{
+		validNamespacePools,
+		validNamespaceRetention,
+		validNamespaceTelemetry,
+		ValidNamespaceSecrets,
+		ValidNamespaceSigner,
+		validNamespaceHold,
+		validNamespaceMaxRunning,
+	} {
+		if err := check(ns); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // clock is the store's time source, defaulting to the wall clock so a

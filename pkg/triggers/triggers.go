@@ -18,6 +18,7 @@ package triggers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -47,7 +48,31 @@ type Store interface {
 	// whether it existed. A trigger of another namespace is reported absent —
 	// not forbidden, and never deleted.
 	Delete(ctx context.Context, id, namespace string) (bool, error)
+	// Update applies change to the trigger with this id in this namespace and
+	// stores the result, reporting whether it existed. change may alter Name,
+	// OrkflowVersion and Description only; any other difference is refused
+	// before anything is written. The verification material is carried over
+	// untouched, so the token the trigger was created with keeps verifying.
+	// A trigger of another namespace is reported absent.
+	Update(ctx context.Context, id, namespace string, change func(*Trigger) error) (Trigger, bool, error)
 }
+
+// ErrNameTaken reports a create or a rename onto a name another trigger of the
+// same namespace already holds. The API answers it with AlreadyExists.
+var ErrNameTaken = errors.New("triggers: name already in use in this namespace")
+
+// ErrUpdateContention reports a conditional update that lost its race on
+// every round it was allowed. The API answers it with Unavailable: nothing was
+// written, and trying again is the remedy.
+var ErrUpdateContention = errors.New("triggers: the trigger kept changing while it was being updated; try again")
+
+// UpdateAttempts bounds how many read-modify-conditional-write rounds a
+// durable Update tries before it reports ErrUpdateContention. It is its own
+// constant rather than CreateAttempts because it bounds a different thing —
+// concurrent writers to one record, not random id collisions — and eight
+// rounds of a handful of milliseconds each is far more than a hand-run
+// management write meets in practice.
+const UpdateAttempts = 8
 
 // Trigger is one stored inbound run starter.
 //
@@ -69,6 +94,11 @@ type Trigger struct {
 	OrkflowVersion string
 	// Description is an optional operator label, returned as given.
 	Description string
+	// Name is the operator's handle: a slug unique among the named triggers
+	// of the namespace, or empty for an unnamed trigger. It is how an
+	// automation document addresses the trigger and never part of the invoke
+	// URL.
+	Name string
 	// CreatedAt is when the trigger was created, in UTC.
 	CreatedAt time.Time
 
@@ -104,6 +134,8 @@ type Registration struct {
 	OrkflowName    string
 	OrkflowVersion string
 	Description    string
+	// Name is optional; see Trigger.Name and ValidateName.
+	Name string
 }
 
 // slugPattern is the name rule AGENTS.md §7 states for a namespace and an
@@ -129,10 +161,81 @@ func (r Registration) Validate() error {
 	if err := validComponent("orkflow_name", r.OrkflowName, slugPattern); err != nil {
 		return err
 	}
+	if err := ValidateName(r.Name); err != nil {
+		return err
+	}
 	if r.OrkflowVersion == "" {
 		return nil
 	}
 	return validComponent("orkflow_version", r.OrkflowVersion, versionPattern)
+}
+
+// ValidateName reports why name cannot be a trigger's name. Empty is valid —
+// it is an unnamed trigger. Otherwise it is the slug rule AGENTS.md §7 states
+// for every name, at most MaxComponent bytes, validated and never sanitized.
+func ValidateName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if len(name) > MaxComponent {
+		return fmt.Errorf("triggers: name %q exceeds %d bytes", name, MaxComponent)
+	}
+	if !slugPattern.MatchString(name) {
+		return fmt.Errorf("triggers: name %q must match %s", name, slugPattern)
+	}
+	return nil
+}
+
+// ApplyChange runs change against a copy of current and returns the result,
+// refusing any difference outside the mutable fields (Name, OrkflowVersion,
+// Description) and validating the ones that did change. Every backend's Update
+// calls it, so one place decides what an update may touch: the id, the
+// coordinates, the creation time and the verification material are carried
+// over, and a change that tried to alter one of them writes nothing.
+func ApplyChange(current Trigger, change func(*Trigger) error) (Trigger, error) {
+	next := current
+	next.SecretSalt = append([]byte(nil), current.SecretSalt...)
+	next.SecretHash = append([]byte(nil), current.SecretHash...)
+	if err := change(&next); err != nil {
+		return Trigger{}, err
+	}
+	switch {
+	case next.ID != current.ID:
+		return Trigger{}, fmt.Errorf("triggers: an update cannot change a trigger's id")
+	case next.Namespace != current.Namespace:
+		return Trigger{}, fmt.Errorf("triggers: an update cannot change a trigger's namespace")
+	case next.OrkflowName != current.OrkflowName:
+		return Trigger{}, fmt.Errorf("triggers: an update cannot change a trigger's orkflow; delete it and create another")
+	case !next.CreatedAt.Equal(current.CreatedAt):
+		return Trigger{}, fmt.Errorf("triggers: an update cannot change a trigger's creation time")
+	case string(next.SecretSalt) != string(current.SecretSalt) || string(next.SecretHash) != string(current.SecretHash):
+		return Trigger{}, fmt.Errorf("triggers: an update cannot change a trigger's token")
+	}
+	reg := Registration{
+		Namespace:      next.Namespace,
+		OrkflowName:    next.OrkflowName,
+		OrkflowVersion: next.OrkflowVersion,
+		Description:    next.Description,
+		Name:           next.Name,
+	}
+	if err := reg.Validate(); err != nil {
+		return Trigger{}, err
+	}
+	return next, nil
+}
+
+// NameHeld reports whether a trigger other than self already holds name among
+// list. An empty name is never held: unnamed triggers never collide.
+func NameHeld(list []Trigger, name, self string) bool {
+	if name == "" {
+		return false
+	}
+	for _, trigger := range list {
+		if trigger.ID != self && trigger.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func validComponent(field, value string, pattern *regexp.Regexp) error {
@@ -172,6 +275,7 @@ func Prepare(reg Registration) (Trigger, string, error) {
 		OrkflowName:    reg.OrkflowName,
 		OrkflowVersion: reg.OrkflowVersion,
 		Description:    reg.Description,
+		Name:           reg.Name,
 		CreatedAt:      time.Now().UTC(),
 		SecretSalt:     salt,
 		SecretHash:     HashSecret(salt, secret),
@@ -216,6 +320,10 @@ func (s *MemoryStore) Create(ctx context.Context, reg Registration) (Trigger, st
 			return Trigger{}, "", err
 		}
 		s.mu.Lock()
+		if s.nameHeldLocked(trigger.Namespace, trigger.Name, "") {
+			s.mu.Unlock()
+			return Trigger{}, "", ErrNameTaken
+		}
 		if _, clash := s.byID[trigger.ID]; clash {
 			s.mu.Unlock()
 			continue
@@ -275,4 +383,41 @@ func (s *MemoryStore) Delete(ctx context.Context, id, namespace string) (bool, e
 		}
 	}
 	return true, nil
+}
+
+// Update applies change under the store's mutex, so within this process an
+// update can never interleave with a delete or another rename.
+func (s *MemoryStore) Update(ctx context.Context, id, namespace string, change func(*Trigger) error) (Trigger, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Trigger{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.byID[id]
+	if !ok || current.Namespace != namespace {
+		return Trigger{}, false, nil
+	}
+	next, err := ApplyChange(current, change)
+	if err != nil {
+		return Trigger{}, true, err
+	}
+	if next.Name != current.Name && s.nameHeldLocked(namespace, next.Name, id) {
+		return Trigger{}, true, ErrNameTaken
+	}
+	s.byID[id] = next
+	return next.Public(), true, nil
+}
+
+// nameHeldLocked reports whether a trigger of namespace other than self holds
+// name. The caller holds s.mu.
+func (s *MemoryStore) nameHeldLocked(namespace, name, self string) bool {
+	if name == "" {
+		return false
+	}
+	for _, trigger := range s.byID {
+		if trigger.Namespace == namespace && trigger.ID != self && trigger.Name == name {
+			return true
+		}
+	}
+	return false
 }
