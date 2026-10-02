@@ -2,8 +2,9 @@
 	// The Admin area's own sub-navigation.
 	//
 	// Every route under here carries `?ns=` like any other page — the
-	// namespace switcher stays visible on all of them — but only Pools RESPECTS
-	// it. Namespaces, Activities, Webhooks, Retention (the deployment MAXIMUM;
+	// namespace switcher stays visible on all of them — but only Pools and
+	// Automation RESPECT it (an automation document describes exactly one
+	// namespace, and the page plans, exports and applies in the switcher's). Namespaces, Activities, Webhooks, Retention (the deployment MAXIMUM;
 	// a namespace's own run retention lives on the Namespaces page), Image
 	// policy (the deployment FLOOR; a namespace's own signer lives on the
 	// Namespaces page) and the overview are DEPLOYMENT-WIDE, and Audit is a third behaviour: it shows
@@ -42,6 +43,7 @@
 		{ id: 'pools', href: '/admin/pools', label: 'Pools' },
 		{ id: 'activities', href: '/admin/activities', label: 'Activities' },
 		{ id: 'webhooks', href: '/admin/webhooks', label: 'Webhooks' },
+		{ id: 'automation', href: '/admin/automation', label: 'Automation' },
 		{ id: 'retention', href: '/admin/retention', label: 'Retention' },
 		{ id: 'image-policy', href: '/admin/image-policy', label: 'Image policy' },
 		{ id: 'audit', href: '/admin/audit', label: 'Audit' }
