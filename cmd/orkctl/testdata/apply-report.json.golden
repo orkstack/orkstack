@@ -1,0 +1,71 @@
+{
+  "automation": [
+    {
+      "file": "environments/prod/automation.ork.yaml",
+      "plan": {
+        "namespace": "payments",
+        "managed": [
+          "NAMESPACE",
+          "SCHEDULE",
+          "TRIGGER",
+          "WEBHOOK"
+        ],
+        "steps": [
+          {
+            "action": "DELETE",
+            "kind": "TRIGGER",
+            "name": "manual-hook",
+            "id": "trg-<id>",
+            "summary": "deploy@current",
+            "deleteTrigger": {
+              "id": "trg-<id>",
+              "namespace": "payments"
+            }
+          },
+          {
+            "action": "UNCHANGED",
+            "kind": "NAMESPACE",
+            "name": "payments"
+          },
+          {
+            "action": "UNCHANGED",
+            "kind": "SCHEDULE",
+            "name": "nightly-reconcile",
+            "id": "sch-<id>",
+            "summary": "reconcile@current  0 2 * * * (Europe/Lisbon)"
+          },
+          {
+            "action": "UNCHANGED",
+            "kind": "TRIGGER",
+            "name": "github-deploy",
+            "id": "trg-<id>",
+            "summary": "deploy@current"
+          },
+          {
+            "action": "UNCHANGED",
+            "kind": "WEBHOOK",
+            "name": "etl-loader",
+            "id": "wh-<id>",
+            "summary": "https://hooks.acme.dev/etl  payments/nightly-etl/*"
+          },
+          {
+            "action": "UNMANAGED",
+            "kind": "TRIGGER",
+            "id": "trg-<id>",
+            "summary": "deploy@current",
+            "notes": [
+              "has no name; name it with `orkctl trigger update trg-<id> -n payments --name NAME` to manage it here"
+            ]
+          }
+        ],
+        "planDigest": "sha256:<digest>"
+      },
+      "results": [
+        {
+          "outcome": "APPLIED",
+          "id": "trg-<id>"
+        }
+      ]
+    }
+  ]
+}

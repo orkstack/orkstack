@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +29,9 @@ type cliSchedules struct {
 	records  map[string]*orkstackv1.ScheduleRecord
 	fires    []orkstackv1.OverlapPolicy
 	backfill []orkstackv1.OverlapPolicy
+	// refuseCron, when set, is a cron expression the "cluster" cannot parse:
+	// a create or update carrying it is refused as the cluster would.
+	refuseCron string
 }
 
 func (c *cliSchedules) view(ns, name string) (engine.ScheduleView, error) {
@@ -41,6 +46,14 @@ func (c *cliSchedules) view(ns, name string) (engine.ScheduleView, error) {
 func (c *cliSchedules) Create(_ context.Context, rec *orkstackv1.ScheduleRecord, _ bool) (engine.ScheduleView, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for _, expr := range rec.GetSpec().GetCron() {
+		if c.refuseCron != "" && expr == c.refuseCron {
+			return engine.ScheduleView{}, fmt.Errorf("%w: invalid cron expression %q", engine.ErrScheduleSpecRefused, expr)
+		}
+	}
+	if _, exists := c.records[rec.GetNamespace()+"/"+rec.GetName()]; exists {
+		return engine.ScheduleView{}, engine.ErrScheduleExists
+	}
 	c.records[rec.GetNamespace()+"/"+rec.GetName()] = proto.Clone(rec).(*orkstackv1.ScheduleRecord)
 	return c.view(rec.GetNamespace(), rec.GetName())
 }
@@ -49,7 +62,23 @@ func (c *cliSchedules) Describe(_ context.Context, ns, name string) (engine.Sche
 	defer c.mu.Unlock()
 	return c.view(ns, name)
 }
-func (c *cliSchedules) List(context.Context, string) ([]engine.ScheduleView, error) { return nil, nil }
+func (c *cliSchedules) List(_ context.Context, ns string) ([]engine.ScheduleView, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var names []string
+	for _, rec := range c.records {
+		if rec.GetNamespace() == ns {
+			names = append(names, rec.GetName())
+		}
+	}
+	sort.Strings(names)
+	out := make([]engine.ScheduleView, 0, len(names))
+	for _, name := range names {
+		view, _ := c.view(ns, name)
+		out = append(out, view)
+	}
+	return out, nil
+}
 func (c *cliSchedules) Update(_ context.Context, ns, name string, apply func(*orkstackv1.ScheduleRecord) error) (engine.ScheduleView, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

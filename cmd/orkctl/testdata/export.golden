@@ -1,0 +1,38 @@
+apiVersion: orkstack/v1
+kind: Automation
+namespace: payments
+
+settings:
+  description: card rails
+  labels: {}
+  default_pool: main
+  allowed_pools: [main]
+  run_retention: inherit
+  telemetry: {}
+  max_running: 0
+  allowed_secrets: []
+  require_signed_by: ""
+
+schedules:
+  nightly-reconcile:
+    orkflow: reconcile
+    cron: ["0 2 * * *"]
+    timezone: Europe/Lisbon
+    overlap: skip
+    input: '{"mode":"full"}'
+
+triggers:
+  github-deploy:
+    orkflow: deploy
+    description: GitHub Actions deploy hook
+
+webhooks:
+  etl-loader:
+    url: https://hooks.acme.dev/etl
+    events: [TASK_SUCCEEDED, RUN_FAILED]
+    orkflow: nightly-etl
+
+# Not managed by this document: these objects have no name, and an unnamed object is
+# outside every automation document — no apply touches it, --prune included. Name one
+# in place (its token or secret is kept), then export again to see it above:
+#   orkctl trigger update trg-<id> -n payments --name NAME   (deploy@current)

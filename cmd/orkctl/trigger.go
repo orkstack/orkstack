@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/triggers"
 )
 
 // triggerInvokePath is the plain-HTTP route an external caller posts to, as
@@ -37,6 +38,7 @@ func newTriggerCommand(g *globalFlags) *cobra.Command {
 	cmd.AddCommand(
 		newTriggerCreateCommand(g),
 		newTriggerListCommand(g),
+		newTriggerUpdateCommand(g),
 		newTriggerDeleteCommand(g),
 	)
 	return cmd
@@ -47,6 +49,7 @@ func newTriggerCreateCommand(g *globalFlags) *cobra.Command {
 		orkflow     string
 		version     string
 		description string
+		name        string
 	)
 	cmd := &cobra.Command{
 		Use:   "create --orkflow <name>",
@@ -57,14 +60,20 @@ func newTriggerCreateCommand(g *globalFlags) *cobra.Command {
 			"the orkflow's current pointer, resolved at each invoke.\n\n" +
 			"The token is shown here and never again: a listing cannot disclose it,\n" +
 			"because only a salted digest of it is stored. Rotating a token is\n" +
-			"delete then create.",
-		Example: "  orkctl trigger create --orkflow hello --description 'nightly kickoff'",
-		Args:    cobra.NoArgs,
+			"delete then create.\n\n" +
+			"--name gives the trigger a handle, unique in the namespace, by which an\n" +
+			"automation document addresses it (docs/AUTOMATION.md).",
+		Example: "  orkctl trigger create --orkflow hello --description 'nightly kickoff'\n" +
+			"  orkctl trigger create --orkflow deploy --name github-deploy",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Refuse locally rather than spending a round trip: a trigger is
 			// bound to exactly one orkflow, so there is no request to make.
 			if strings.TrimSpace(orkflow) == "" {
 				return fmt.Errorf("--orkflow is required: a trigger starts exactly one orkflow")
+			}
+			if err := triggers.ValidateName(name); err != nil {
+				return err
 			}
 
 			ctx, cancel := g.unaryContext(cmd)
@@ -75,6 +84,7 @@ func newTriggerCreateCommand(g *globalFlags) *cobra.Command {
 				OrkflowName:    orkflow,
 				OrkflowVersion: version,
 				Description:    description,
+				Name:           name,
 			}))
 			if err != nil {
 				return rpcError("create trigger", err)
@@ -90,7 +100,111 @@ func newTriggerCreateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&version, "version", "",
 		"orkflow version to pin (default: the current one at invoke time)")
 	cmd.Flags().StringVar(&description, "description", "", "operator label for this trigger")
+	cmd.Flags().StringVar(&name, "name", "", "handle an automation document addresses this trigger by (a slug, unique in the namespace)")
 	return cmd
+}
+
+func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
+	var (
+		name          string
+		version       string
+		followCurrent bool
+		description   string
+	)
+	cmd := &cobra.Command{
+		Use:   "update <id>",
+		Short: "Rename, re-pin or relabel a trigger in place, keeping its token",
+		Long: "update changes a trigger's name, pinned version and description in place.\n" +
+			"Its id, URL, orkflow and bearer token never change: an update never\n" +
+			"re-issues a token, so the caller holding it keeps working.\n\n" +
+			"Only the flags given change anything: --name \"\" makes the trigger\n" +
+			"unnamed, --follow-current clears the pin, --description \"\" clears the\n" +
+			"label. A trigger's orkflow cannot change: that is delete then create.\n\n" +
+			"Naming an unnamed trigger is how a hand-made one is brought under an\n" +
+			"automation document (orkctl export) without re-issuing its token.",
+		Example: "  orkctl trigger update trg-4a1c0e2b7d3f8156 -n payments --name github-deploy\n" +
+			"  orkctl trigger update trg-4a1c0e2b7d3f8156 --version 1.4.0",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			if cmd.Flags().Changed("version") && followCurrent {
+				return fmt.Errorf("--version and --follow-current are mutually exclusive")
+			}
+			if cmd.Flags().Changed("name") {
+				if err := triggers.ValidateName(name); err != nil {
+					return err
+				}
+			}
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
+
+			// Read-modify-write: the update replaces every mutable field, so
+			// the ones no flag named are sent back as they are.
+			listed, err := g.triggerClient().ListTriggers(ctx, connect.NewRequest(&orkstackv1.ListTriggersRequest{Namespace: g.namespace}))
+			if err != nil {
+				return rpcError("update trigger", err)
+			}
+			var current *orkstackv1.Trigger
+			for _, trigger := range listed.Msg.GetTriggers() {
+				if trigger.GetId() == id {
+					current = trigger
+				}
+			}
+			if current == nil {
+				namespace := g.namespace
+				if namespace == "" {
+					namespace = "default"
+				}
+				return fmt.Errorf("update trigger: not_found: trigger %q not found in namespace %q", id, namespace)
+			}
+			req := &orkstackv1.UpdateTriggerRequest{
+				Id: id, Namespace: g.namespace,
+				Name: current.GetName(), OrkflowVersion: current.GetOrkflowVersion(), Description: current.GetDescription(),
+			}
+			if cmd.Flags().Changed("name") {
+				req.Name = name
+			}
+			if cmd.Flags().Changed("version") {
+				req.OrkflowVersion = version
+			}
+			if followCurrent {
+				req.OrkflowVersion = ""
+			}
+			if cmd.Flags().Changed("description") {
+				req.Description = description
+			}
+			response, err := g.triggerClient().UpdateTrigger(ctx, connect.NewRequest(req))
+			if err != nil {
+				return rpcError("update trigger", err)
+			}
+			if g.json {
+				return writeJSON(cmd.OutOrStdout(), response.Msg)
+			}
+			return renderTriggerUpdated(cmd.OutOrStdout(), response.Msg.GetTrigger())
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "new handle (\"\" makes the trigger unnamed)")
+	cmd.Flags().StringVar(&version, "version", "", "orkflow version to pin")
+	cmd.Flags().BoolVar(&followCurrent, "follow-current", false, "clear the pin: follow the orkflow's current pointer at each invoke")
+	cmd.Flags().StringVar(&description, "description", "", "new operator label (\"\" clears it)")
+	return cmd
+}
+
+// renderTriggerUpdated prints an updated trigger: the creation table without
+// its SECRET row, because an update never discloses or re-issues a token.
+func renderTriggerUpdated(out io.Writer, trigger *orkstackv1.Trigger) error {
+	fmt.Fprintf(out, "Updated trigger %s\n", trigger.GetId())
+	table := newTable(out)
+	fmt.Fprintf(table, "NAME\t%s\n", orDash(trigger.GetName()))
+	fmt.Fprintf(table, "NAMESPACE\t%s\n", orDash(trigger.GetNamespace()))
+	fmt.Fprintf(table, "ORKFLOW\t%s\n", orDash(trigger.GetOrkflowName()))
+	fmt.Fprintf(table, "VERSION\t%s\n", triggerVersionLabel(trigger.GetOrkflowVersion()))
+	fmt.Fprintf(table, "DESCRIPTION\t%s\n", orDash(trigger.GetDescription()))
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	fmt.Fprintln(out, "\nThe token is unchanged.")
+	return nil
 }
 
 func newTriggerListCommand(g *globalFlags) *cobra.Command {
@@ -159,6 +273,9 @@ func newTriggerDeleteCommand(g *globalFlags) *cobra.Command {
 func renderTriggerCreated(out io.Writer, baseURL string, trigger *orkstackv1.Trigger, secret string) error {
 	fmt.Fprintf(out, "Created trigger %s\n", trigger.GetId())
 	table := newTable(out)
+	if name := trigger.GetName(); name != "" {
+		fmt.Fprintf(table, "NAME\t%s\n", name)
+	}
 	fmt.Fprintf(table, "NAMESPACE\t%s\n", orDash(trigger.GetNamespace()))
 	fmt.Fprintf(table, "ORKFLOW\t%s\n", orDash(trigger.GetOrkflowName()))
 	fmt.Fprintf(table, "VERSION\t%s\n", triggerVersionLabel(trigger.GetOrkflowVersion()))
@@ -174,16 +291,17 @@ func renderTriggerCreated(out io.Writer, baseURL string, trigger *orkstackv1.Tri
 	return nil
 }
 
-func renderTriggerList(out io.Writer, triggers []*orkstackv1.Trigger) error {
-	if len(triggers) == 0 {
+func renderTriggerList(out io.Writer, list []*orkstackv1.Trigger) error {
+	if len(list) == 0 {
 		fmt.Fprintln(out, "No triggers.")
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "ID\tNAMESPACE\tORKFLOW\tVERSION\tDESCRIPTION\tCREATED")
-	for _, trigger := range triggers {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
+	fmt.Fprintln(table, "ID\tNAME\tNAMESPACE\tORKFLOW\tVERSION\tDESCRIPTION\tCREATED")
+	for _, trigger := range list {
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			trigger.GetId(),
+			orDash(trigger.GetName()),
 			orDash(trigger.GetNamespace()),
 			orDash(trigger.GetOrkflowName()),
 			triggerVersionLabel(trigger.GetOrkflowVersion()),

@@ -1,0 +1,18 @@
+environments/prod/automation.ork.yaml  namespace payments
++ schedule   b-broken           reconcile@current  61 * * * *
+      orkflow: "reconcile"
+      cron: ["61 * * * *"]
++ trigger    github-deploy      deploy@current
+      orkflow: "deploy"
+  schedule   a-first            reconcile@current  0 1 * * *  sch-<id>  unchanged
+(settings: not managed by this document)
+(webhooks: not managed by this document)
+
+Plan: 2 to create, 0 to update, 0 to delete.
+Plan digest: sha256:<digest>
+
+Applied 0 of 2 steps in namespace payments.
+  failed    + schedule   b-broken           invalid_argument: schedule spec refused by the cluster: invalid cron expression "61 * * * *"
+  not run   + trigger    github-deploy
+
+1 step failed. Fix the cause and run apply again: it plans from what now exists.

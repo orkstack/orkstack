@@ -134,7 +134,7 @@ func TestWebhookList_RendersTheScopeColumn(t *testing.T) {
 	f.run("webhook", "register", "https://example.test/audit").requireExit(t, exitOK)
 	f.run("webhook", "register", "https://example.test/etl",
 		"-n", "analytics", "--orkflow", "nightly-etl", "--task", "extract",
-		"--event", "TASK_SUCCEEDED").requireExit(t, exitOK)
+		"--event", "TASK_SUCCEEDED", "--name", "etl-loader").requireExit(t, exitOK)
 
 	requireGolden(t, "webhook-list.golden", f.run("webhook", "list").requireExit(t, exitOK).stdout)
 	requireGolden(t, "webhook-list.json.golden", f.run("--json", "webhook", "list").requireExit(t, exitOK).stdout)

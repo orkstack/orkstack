@@ -1,0 +1,20 @@
+environments/prod/deploy.ork.yaml
++ orkflow    deploy             1.4.0  new version
+
+environments/prod/automation.ork.yaml  namespace payments
+~ namespace  payments
+      description: "" → "card rails"
+      allowed_pools: [] → ["main"]
++ trigger    github-deploy      deploy@current
+      orkflow: "deploy"
+      description: "GitHub Actions deploy hook"
+~ schedule   nightly-reconcile  reconcile@current  0 2 * * * (Europe/Lisbon)  sch-<id>
+      cron: ["0 3 * * *"] → ["0 2 * * *"]
+~ webhook    etl-loader         https://hooks.acme.dev/etl  payments/nightly-etl/*  wh-<id>
+      orkflow: "" → "nightly-etl"
+? trigger    manual-hook        deploy@current  trg-<id>  not in this document; kept (--prune deletes it)
+! trigger    -                  deploy@current  trg-<id>  has no name; name it with `orkctl trigger update trg-<id> -n payments --name NAME` to manage it here
+
+Plan: 1 orkflow version to store; 1 to create, 3 to update, 0 to delete.
+Plan digest: sha256:<digest>
+Dry run: nothing was written.

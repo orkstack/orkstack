@@ -14,7 +14,8 @@
       "createdAt": "2025-08-16T00:00:00Z",
       "namespace": "analytics",
       "orkflowName": "nightly-etl",
-      "taskId": "extract"
+      "taskId": "extract",
+      "name": "etl-loader"
     }
   ]
 }

@@ -1,0 +1,142 @@
+{
+  "dryRun": true,
+  "automation": [
+    {
+      "file": "environments/prod/automation.ork.yaml",
+      "plan": {
+        "namespace": "payments",
+        "managed": [
+          "NAMESPACE",
+          "SCHEDULE",
+          "TRIGGER",
+          "WEBHOOK"
+        ],
+        "steps": [
+          {
+            "action": "UPDATE",
+            "kind": "NAMESPACE",
+            "name": "payments",
+            "changes": [
+              {
+                "field": "description",
+                "before": "\"\"",
+                "after": "\"card rails\""
+              },
+              {
+                "field": "allowed_pools",
+                "before": "[]",
+                "after": "[\"main\"]"
+              }
+            ],
+            "updateNamespace": {
+              "namespace": {
+                "name": "payments",
+                "description": "card rails",
+                "allowedPools": [
+                  "main"
+                ],
+                "createdAt": "<time>",
+                "updatedAt": "<time>",
+                "etag": "etag-1"
+              }
+            }
+          },
+          {
+            "action": "CREATE",
+            "kind": "TRIGGER",
+            "name": "github-deploy",
+            "summary": "deploy@current",
+            "changes": [
+              {
+                "field": "orkflow",
+                "after": "\"deploy\""
+              },
+              {
+                "field": "description",
+                "after": "\"GitHub Actions deploy hook\""
+              }
+            ],
+            "createTrigger": {
+              "namespace": "payments",
+              "orkflowName": "deploy",
+              "description": "GitHub Actions deploy hook",
+              "name": "github-deploy"
+            }
+          },
+          {
+            "action": "UPDATE",
+            "kind": "SCHEDULE",
+            "name": "nightly-reconcile",
+            "id": "sch-<id>",
+            "summary": "reconcile@current  0 2 * * * (Europe/Lisbon)",
+            "changes": [
+              {
+                "field": "cron",
+                "before": "[\"0 3 * * *\"]",
+                "after": "[\"0 2 * * *\"]"
+              }
+            ],
+            "updateSchedule": {
+              "name": "nightly-reconcile",
+              "namespace": "payments",
+              "input": {
+                "data": {
+                  "mode": "full"
+                }
+              },
+              "spec": {
+                "cron": [
+                  "0 2 * * *"
+                ],
+                "timezone": "Europe/Lisbon",
+                "overlap": "SKIP"
+              }
+            }
+          },
+          {
+            "action": "UPDATE",
+            "kind": "WEBHOOK",
+            "name": "etl-loader",
+            "id": "wh-<id>",
+            "summary": "https://hooks.acme.dev/etl  payments/nightly-etl/*",
+            "changes": [
+              {
+                "field": "orkflow",
+                "before": "\"\"",
+                "after": "\"nightly-etl\""
+              }
+            ],
+            "updateWebhook": {
+              "id": "wh-<id>",
+              "name": "etl-loader",
+              "url": "https://hooks.acme.dev/etl",
+              "events": [
+                "TASK_SUCCEEDED",
+                "RUN_FAILED"
+              ],
+              "namespace": "payments",
+              "orkflowName": "nightly-etl"
+            }
+          },
+          {
+            "action": "UNDECLARED",
+            "kind": "TRIGGER",
+            "name": "manual-hook",
+            "id": "trg-<id>",
+            "summary": "deploy@current"
+          },
+          {
+            "action": "UNMANAGED",
+            "kind": "TRIGGER",
+            "id": "trg-<id>",
+            "summary": "deploy@current",
+            "notes": [
+              "has no name; name it with `orkctl trigger update trg-<id> -n payments --name NAME` to manage it here"
+            ]
+          }
+        ],
+        "planDigest": "sha256:<digest>"
+      }
+    }
+  ]
+}

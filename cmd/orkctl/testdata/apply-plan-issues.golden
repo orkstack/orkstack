@@ -1,0 +1,6 @@
+environments/prod/broken.ork.yaml
+ERROR schedules.nightly-reconcile.cron: line 12: set timezone instead of a CRON_TZ= prefix
+
+Plan: 0 to create, 0 to update, 0 to delete.
+environments/prod/broken.ork.yaml: the plan has errors.
+Nothing was written.
