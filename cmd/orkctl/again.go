@@ -52,7 +52,7 @@ func newRunAgainCommand(g *globalFlags) *cobra.Command {
 		if g.json {
 			return writeJSON(cmd.OutOrStdout(), response.Msg)
 		}
-		return renderSubmitted(cmd.OutOrStdout(), response.Msg.GetRun())
+		return renderSubmitted(cmd.OutOrStdout(), g.baseURL(), response.Msg)
 	}}
 	cmd.Flags().StringVar(&version, "version", "", "override the source run's pinned orkflow version")
 	cmd.Flags().StringArrayVar(&inputs, "input", nil, "override source input as key=value (repeatable)")

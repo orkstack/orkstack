@@ -32,6 +32,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunTimingCommand(g),
 		newRunAgainCommand(g),
 		newRunCancelCommand(g),
+		newRunResolveCommand(g),
 	)
 	return cmd
 }
@@ -93,10 +94,10 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 				if g.json {
 					return writeJSON(cmd.OutOrStdout(), resp.Msg)
 				}
-				return renderSubmitted(cmd.OutOrStdout(), run)
+				return renderSubmitted(cmd.OutOrStdout(), g.baseURL(), resp.Msg)
 			}
 			if !g.json {
-				if err := renderSubmitted(cmd.OutOrStdout(), run); err != nil {
+				if err := renderSubmitted(cmd.OutOrStdout(), g.baseURL(), resp.Msg); err != nil {
 					return err
 				}
 				fmt.Fprintln(cmd.OutOrStdout())
@@ -322,8 +323,11 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// renderSubmitted prints the freshly created run, id first.
-func renderSubmitted(out io.Writer, run *orkstackv1.Run) error {
+// renderSubmitted prints the freshly created run, id first, and then each
+// await callback the submission disclosed — once, because only a digest of
+// each token is kept.
+func renderSubmitted(out io.Writer, baseURL string, resp *orkstackv1.SubmitRunResponse) error {
+	run := resp.GetRun()
 	fmt.Fprintf(out, "Submitted run %s\n", run.GetId())
 	table := newTable(out)
 	fmt.Fprintf(table, "Orkflow:\t%s\n", run.GetOrkflowName())
@@ -332,6 +336,7 @@ func renderSubmitted(out io.Writer, run *orkstackv1.Run) error {
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
+	renderAwaitCallbacks(out, baseURL, resp.GetAwaitCallbacks())
 	return nil
 }
 
@@ -382,7 +387,7 @@ func renderRun(out io.Writer, run *orkstackv1.Run) error {
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
-	return nil
+	return renderAwaitTable(out, run, nowFunc())
 }
 
 func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {

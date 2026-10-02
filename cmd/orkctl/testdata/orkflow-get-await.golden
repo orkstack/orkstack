@@ -1,0 +1,10 @@
+Name:         awaited-cli
+Version:      1.0.0
+Description:  -
+Created:      2026-01-02T03:04:05Z
+
+TASK      USES   NEEDS              TIMEOUT
+plan      shell  -                  300s
+training  await  plan               21600s
+approval  await  plan               86400s
+evaluate  shell  training,approval  300s

@@ -66,8 +66,14 @@ func renderTaskTable(out io.Writer, tasks []*orkstackv1.Task) error {
 	table := newTable(out)
 	fmt.Fprintln(table, "TASK\tUSES\tNEEDS\tTIMEOUT")
 	for _, task := range tasks {
+		// An awaited task runs no image: USES says so, and TIMEOUT is its
+		// deadline rather than a container's wall clock.
+		uses, timeout := task.GetUses(), task.GetTimeoutSeconds()
+		if spec := task.GetAwait(); spec != nil {
+			uses, timeout = "await", spec.GetTimeoutSeconds()
+		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%ds\n",
-			task.GetId(), task.GetUses(), joinOrDash(task.GetNeeds()), task.GetTimeoutSeconds())
+			task.GetId(), uses, joinOrDash(task.GetNeeds()), timeout)
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

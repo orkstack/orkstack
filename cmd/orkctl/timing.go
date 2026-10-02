@@ -105,6 +105,10 @@ type taskTiming struct {
 
 	Scheduled   bool // reached schedule(); false renders "-" across the row
 	PreContract bool // scheduled_at unset with started_at set
+	// Awaited marks an awaited task: it is never queued and no Orker reports
+	// on it, so wait, queue wait and phases do not apply and RUN is the time
+	// it spent awaiting (the run-timing derivation's await row).
+	Awaited bool
 
 	Wait           quantity
 	Run            quantity
@@ -245,6 +249,17 @@ func computeTaskTiming(
 	}
 	S, B, F := task.ScheduledAt, task.StartedAt, task.FinishedAt
 	terminal := taskIsTerminal(taskRun.GetStatus())
+	if taskRun.GetAwait() != nil {
+		// scheduled_at and started_at are both the instant it started
+		// awaiting; an await that never opened has neither.
+		task.Awaited = true
+		task.Scheduled = B != nil
+		if task.Scheduled && terminal && F != nil {
+			task.Run = span(*B, *F)
+			task.Total = task.Run
+		}
+		return task
+	}
 	task.Scheduled = S != nil || B != nil
 	task.PreContract = S == nil && B != nil
 	if !task.Scheduled {
@@ -439,9 +454,13 @@ func renderRunTiming(out io.Writer, timing *runTiming, oneTask bool) error {
 		if task.SinceScheduled.applies {
 			total = "since scheduled " + task.SinceScheduled.cell()
 		}
+		run := task.Run.cell()
+		if task.Awaited && task.Run.applies {
+			run = "awaited " + run
+		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
 			task.TaskID, task.statusCell(), orDash(task.Pool), task.Attempt,
-			formatTimePtr(task.ScheduledAt), task.Wait.cell(), task.Run.cell(), total)
+			formatTimePtr(task.ScheduledAt), task.Wait.cell(), run, total)
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -517,7 +536,7 @@ func (timing *runTiming) attemptsBlock() string {
 	}
 	width := 0
 	for _, task := range timing.Tasks {
-		if task.Scheduled && len(task.TaskID) > width {
+		if task.Scheduled && !task.Awaited && len(task.TaskID) > width {
 			width = len(task.TaskID)
 		}
 	}
@@ -527,7 +546,8 @@ func (timing *runTiming) attemptsBlock() string {
 	var b strings.Builder
 	b.WriteString("attempts:\n")
 	for _, task := range timing.Tasks {
-		if !task.Scheduled {
+		// An awaited task has no attempts and no phases: nothing to list.
+		if !task.Scheduled || task.Awaited {
 			continue
 		}
 		prefix := "  " + padRight(task.TaskID, width) + "  "
@@ -687,6 +707,9 @@ func (task *taskTiming) document() jsonObject {
 	if task.PreContract {
 		// The footer's machine form: this total is dispatch to finish.
 		doc.add("preContract", true)
+	}
+	if task.Awaited {
+		doc.add("awaited", true)
 	}
 	doc.addQuantity("wait", task.Wait)
 	doc.addQuantity("run", task.Run)
