@@ -81,6 +81,12 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	triggerPath, triggerHandler := orkstackv1connect.NewTriggerServiceHandler(svc, handlerOptions...)
 	mux.Handle(triggerPath, triggerHandler)
 
+	// AutomationService plans and exports a namespace's automation document.
+	// It writes nothing: an apply is the client sending the plan's requests
+	// to the services above.
+	automationPath, automationHandler := orkstackv1connect.NewAutomationServiceHandler(svc, handlerOptions...)
+	mux.Handle(automationPath, automationHandler)
+
 	// ScheduleService manages schedules: the third run starter, bound to one
 	// orkflow in one namespace, whose every field lives in a Temporal
 	// Schedule (orkflow-schedules).
