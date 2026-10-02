@@ -219,6 +219,19 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	if t.GetPin() != "" {
 		out["pin"] = t.GetPin()
 	}
+	// await is emitted ONLY when set — the same exception, for the same
+	// reason, as `pin`: a document with no await keeps the digest it had.
+	if a := t.GetAwait(); a != nil {
+		schema, err := canonicalStruct(a.GetSchema())
+		if err != nil {
+			return nil, fmt.Errorf("await.schema: %w", err)
+		}
+		out["await"] = map[string]any{
+			"timeoutSeconds": int64(a.GetTimeoutSeconds()),
+			"callback":       a.GetCallback(),
+			"schema":         schema,
+		}
+	}
 	return out, nil
 }
 

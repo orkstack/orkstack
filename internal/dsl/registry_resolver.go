@@ -145,6 +145,11 @@ type Resolutions map[string]*Resolution
 func (r *Resolver) ResolveOrkflow(ctx context.Context, catalog Catalog, wf *orkstackv1.Orkflow) (Resolutions, error) {
 	resolved := make(Resolutions)
 	for _, t := range wf.GetTasks() {
+		// An awaited task has no `uses:` and gets no Task.image: it runs no
+		// container (docs/DSL.md rules 6 and 15).
+		if t.GetAwait() != nil {
+			continue
+		}
 		uses := t.GetUses()
 		if res, ok := resolved[uses]; ok {
 			t.Image = res.Image

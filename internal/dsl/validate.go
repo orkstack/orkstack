@@ -15,7 +15,9 @@ import (
 	taskpool "github.com/orkstack/orkstack/internal/task"
 )
 
-// validate enforces the thirteen documented DSL rules (docs/DSL.md).
+// validate enforces the documented DSL rules (docs/DSL.md) except rule 14,
+// which needs a resolved image and is checked by internal/api after
+// resolution.
 func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	// Rule 6 checks that `uses:` is present and resolvable through the
 	// CATALOG, not that it names something this binary was compiled to know
@@ -112,6 +114,18 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 			if need == task.GetId() {
 				return validationError(fmt.Sprintf("tasks[%d].needs[%d]", taskIndex, needIndex), fmt.Errorf("task %q needs itself (cycle)", task.GetId()))
 			}
+		}
+		// Rule 6: a task has exactly one of `uses:` and `await:`. An awaited
+		// task runs no image, so it skips the catalog check, network (6b) and
+		// secrets (6c), and meets rules 15–17 instead.
+		if task.GetAwait() != nil {
+			if task.GetUses() != "" {
+				return validationError(fmt.Sprintf("tasks[%d].uses", taskIndex), awaitUsesRefusal(task.GetId()))
+			}
+			if err := validateAwaitTask(taskIndex, task); err != nil {
+				return err
+			}
+			continue
 		}
 		// Rule 6: `uses:` names the activity, and it is required.
 		//
