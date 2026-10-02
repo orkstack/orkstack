@@ -211,3 +211,74 @@ func TestIntegration_S3WebhookStoreListForDeliveryCarriesTheSecretAndListDoesNot
 		}
 	}
 }
+
+// TestIntegration_S3WebhookStoreUpdateKeepsSecretAndID: an in-place update
+// against real object storage keeps the id and the signing secret the
+// dispatcher signs with, strips the secret from every public read, and can
+// never recreate a subscription deleted between its read and its write.
+func TestIntegration_S3WebhookStoreUpdateKeepsSecretAndID(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	store, err := artifacts.NewS3WebhookStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3WebhookStore: %v", err)
+	}
+	replica, err := artifacts.NewS3WebhookStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3WebhookStore (replica): %v", err)
+	}
+	raw := newRawS3Client(t, cfg)
+	namespace := "wh-ns-" + uniqueToken(t)
+	created, err := store.Register(ctx, webhooks.Registration{URL: "https://example.test/a", Namespace: namespace})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	key := artifacts.WebhookPrefix + "/" + created.ID + ".json"
+	t.Cleanup(func() { deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, key) })
+
+	updated, ok, err := replica.Update(ctx, created.ID, func(w *webhooks.Webhook) error {
+		w.Name = "etl-loader"
+		w.URL = "https://example.test/b"
+		w.OrkflowName = "nightly-etl"
+		return nil
+	})
+	if err != nil || !ok {
+		t.Fatalf("Update = %v, %v", ok, err)
+	}
+	if updated.ID != created.ID || updated.Secret != "" || updated.Name != "etl-loader" {
+		t.Fatalf("Update returned %+v", updated)
+	}
+	delivery, err := store.ListForDelivery(ctx)
+	if err != nil {
+		t.Fatalf("ListForDelivery: %v", err)
+	}
+	var found *webhooks.Webhook
+	for i := range delivery {
+		if delivery[i].ID == created.ID {
+			found = &delivery[i]
+		}
+	}
+	if found == nil || found.Secret != created.Secret || found.URL != "https://example.test/b" || found.Name != "etl-loader" {
+		t.Fatalf("delivery read = %+v, want the original secret and the new URL", found)
+	}
+	if public, _, err := store.Get(ctx, created.ID); err != nil || public.Secret != "" {
+		t.Fatalf("Get after update carries the secret (%v)", err)
+	}
+	t.Logf("webhook %s updated in place: same id, secret kept (%d bytes)", created.ID, len(found.Secret))
+
+	artifacts.SetWebhookUpdateHookForTest(store, func() {
+		artifacts.SetWebhookUpdateHookForTest(store, nil)
+		if ok, err := replica.Delete(ctx, created.ID); err != nil || !ok {
+			t.Errorf("Delete in the window = %v, %v", ok, err)
+		}
+	})
+	if _, ok, err := store.Update(ctx, created.ID, func(w *webhooks.Webhook) error { w.URL = "https://example.test/c"; return nil }); ok || err != nil {
+		t.Fatalf("Update across a delete = %v, %v; want absent", ok, err)
+	}
+	for _, got := range listKeys(t, ctx, raw, cfg.S3Bucket, artifacts.WebhookPrefix+"/") {
+		if got == key {
+			t.Fatalf("the update resurrected %s", key)
+		}
+	}
+}
