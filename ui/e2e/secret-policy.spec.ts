@@ -18,7 +18,8 @@ import {
 	uiDir,
 	repoRoot,
 	waitFor,
-	waitForEngine
+	waitForEngine,
+	openNamespaceEdit
 } from './harness';
 
 // Tenant-scoped secret policy in a browser, against a real engine, Orker,
@@ -164,7 +165,7 @@ test('1: Admin → Namespaces shows the Allowed secrets column, set or unrestric
 
 test('2: the form refuses a traversal locally, and a save of two entries shows both', async ({ page }) => {
 	await openAdmin(page);
-	await page.getByTestId(`namespace-edit-${NS}`).click();
+	await openNamespaceEdit(page, NS);
 	const field = page.getByTestId(`ns-edit-allowed-secrets-${NS}`);
 	await expect(field).toHaveValue('env:SANDBOX_*');
 
@@ -238,7 +239,7 @@ test('4: a permitted secret runs, its sha256 is in the log pane and the token is
 
 test('5: with the list narrowed, the Submit a run dialog shows the server’s sentence verbatim', async ({ page }) => {
 	await openAdmin(page);
-	await page.getByTestId(`namespace-edit-${NS}`).click();
+	await openNamespaceEdit(page, NS);
 	await page.getByTestId(`ns-edit-allowed-secrets-${NS}`).fill('env:SANDBOX_*');
 	await page.getByTestId(`ns-edit-save-${NS}`).click();
 	await expect(page.getByTestId(`namespace-allowed-secrets-${NS}`)).toHaveText('env:SANDBOX_*');
@@ -259,7 +260,7 @@ test('6: a list changed from a second tab turns the first tab’s save into a st
 	browser
 }) => {
 	await openAdmin(page);
-	await page.getByTestId(`namespace-edit-${NS}`).click();
+	await openNamespaceEdit(page, NS);
 	await expect(page.getByTestId(`namespace-edit-form-${NS}`)).toBeVisible();
 	await page.getByTestId(`ns-edit-allowed-secrets-${NS}`).fill('env:FIRST_TAB_*');
 
@@ -267,7 +268,7 @@ test('6: a list changed from a second tab turns the first tab’s save into a st
 	try {
 		const other = await second.newPage();
 		await openAdmin(other);
-		await other.getByTestId(`namespace-edit-${NS}`).click();
+		await openNamespaceEdit(other, NS);
 		await other.getByTestId(`ns-edit-allowed-secrets-${NS}`).fill('env:SECOND_TAB_*');
 		await other.getByTestId(`ns-edit-save-${NS}`).click();
 		await expect(other.getByTestId(`namespace-allowed-secrets-${NS}`)).toHaveText('env:SECOND_TAB_*');

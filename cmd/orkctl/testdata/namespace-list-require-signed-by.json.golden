@@ -1,0 +1,15 @@
+{
+  "namespaces": [
+    {
+      "name": "default",
+      "description": "the namespace every orkflow that names none belongs to"
+    },
+    {
+      "name": "prod-payments",
+      "createdAt": "2026-01-02T03:04:05Z",
+      "updatedAt": "2026-01-02T03:04:05Z",
+      "etag": "etag-2",
+      "requireSignedBy": "cosign:release"
+    }
+  ]
+}

@@ -20,6 +20,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/logstream"
 )
@@ -107,6 +109,12 @@ type OCIDispatcher struct {
 	// `trace` key in task.json (§3.2). Nil means task.json never carries one
 	// — an image that ignores the key loses nothing either way.
 	TraceContext func(ctx context.Context) map[string]string
+	// Signatures verifies cosign signatures for a task whose image_policy
+	// names a signer, with the key that selection carries. Nil means this
+	// Orker cannot verify: such a task fails IMAGE_SIGNATURE_UNAVAILABLE
+	// (an Orker with no registry client is an infrastructure fact, and
+	// another Orker of the pool may have one), never passes.
+	Signatures *dsl.SignatureVerifier
 	// Logger records lifecycle decisions. Nil uses slog.Default.
 	Logger *slog.Logger
 }
@@ -391,6 +399,39 @@ func (d *OCIDispatcher) Validate(in *orkstackv1.ExecuteTaskInput) *Failure {
 	return nil
 }
 
+// checkImagePolicy is execute's STEP 3b: the pure rule, then the signature,
+// against the selection the run pinned at submit. A task with no selection
+// walks exactly today's sequence — no phase, no request.
+func (d *OCIDispatcher) checkImagePolicy(ctx context.Context, in *orkstackv1.ExecuteTaskInput, beat *Heartbeater) *Failure {
+	sel := in.GetImagePolicy()
+	if sel == nil {
+		return nil
+	}
+	beat.Phase("image-policy")
+	if refusal := task.CheckImage(sel, 0, in.GetTaskId(), in.GetImage()); refusal != nil {
+		return Fail(refusal.Code, "%v; the run pinned this policy at submit and an image "+
+			"outside it is refused before anything is pulled", refusal)
+	}
+	signer := sel.GetRequireSignedBy()
+	if signer == "" {
+		return nil
+	}
+	if d.Signatures == nil {
+		return Fail(ReasonImageSignatureUnavailable,
+			"task %q: namespace policy requires %s but this orker has no registry client "+
+				"to verify signatures with (set %s)", in.GetTaskId(), signer, RegistryAuthFileVar)
+	}
+	if err := d.Signatures.Verify(ctx, in.GetImage(), signer, sel.GetSigningKeyPem()); err != nil {
+		var sig *dsl.SignatureError
+		if errors.As(err, &sig) {
+			return FailCause(sig.Code, err, "task %q: %v; namespace %q requires %s",
+				in.GetTaskId(), err, in.GetNamespace(), signer)
+		}
+		return FailCause(ReasonImageSignatureUnavailable, err, "task %q: %v", in.GetTaskId(), err)
+	}
+	return nil
+}
+
 // secretFloorFailure holds one secret's source against this Orker's
 // ORK_ORKER_SECRET_ALLOW floor. It names the source and the floor — never
 // what the source resolves to, which nothing on this path has read.
@@ -423,6 +464,20 @@ func (d *OCIDispatcher) execute(
 	beat.Phase("commit-check")
 	if adopted, failure := d.adopt(ctx, in, attempt); adopted != nil || failure != nil {
 		return adopted, failure
+	}
+
+	// STEP 3b. The image policy the run pinned at submit.
+	//
+	// AFTER the commit check: an attempt whose commit.json exists returned
+	// above and is never judged again, by the rule or by the registry — a
+	// signature removed or rotated after the commit must not turn a durably
+	// committed result back into work (AGENTS.md §15). BEFORE the workspace,
+	// the pin directory, the staged secrets and the pull: a refused image
+	// leaves nothing on disk and is never fetched.
+	//
+	// NOT in Validate, which runs before the commit check.
+	if failure := d.checkImagePolicy(ctx, in, beat); failure != nil {
+		return nil, failure
 	}
 
 	// STEP 4. The workspace.

@@ -17,6 +17,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -83,6 +84,11 @@ type Options struct {
 	MaxPins int32
 	// LayoutRoot is where embedded OCI image layouts live (§4.6).
 	LayoutRoot string
+	// Signatures verifies a task's cosign signature when its image policy
+	// names a signer (image-supply-chain-policy §6.2). cmd/orker always
+	// builds one; nil only in tests, where such a task fails
+	// IMAGE_SIGNATURE_UNAVAILABLE rather than passing.
+	Signatures *dsl.SignatureVerifier
 	// HeartbeatInterval is how often an attempt's heartbeat loop ticks, and
 	// therefore how long a running container waits to observe a cancellation.
 	// Zero means DefaultHeartbeatInterval. The caller MUST cap its task
@@ -177,6 +183,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			BuildID:           buildID,
 			EnvAllowlist:      allowlist,
 			LayoutRoot:        opts.LayoutRoot,
+			Signatures:        opts.Signatures,
 			HeartbeatInterval: opts.HeartbeatInterval,
 			TaskLogs:          opts.TaskLogs,
 			Phases:            opts.Phases,

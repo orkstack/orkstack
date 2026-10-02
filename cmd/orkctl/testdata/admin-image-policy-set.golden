@@ -1,0 +1,9 @@
+require digest:      yes
+allowed registries:  ghcr.io/
+                     localhost:5001/orkstack/
+signing keys:        acme-release  sha256:f5a5f53127e68edd8110a0d95cb84f3a2832c15af3833f64da493fcf23306c41
+                     acme-staging  sha256:f5a5f53127e68edd8110a0d95cb84f3a2832c15af3833f64da493fcf23306c41
+updated:             2026-01-02T03:04:05Z
+
+A namespace may tighten this policy (`orkctl namespace update --require-signed-by
+cosign:<key>`) and may never loosen it.
