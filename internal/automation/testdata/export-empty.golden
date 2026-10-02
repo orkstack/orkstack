@@ -1,0 +1,20 @@
+apiVersion: orkstack/v1
+kind: Automation
+namespace: payments
+
+settings:
+  description: ""
+  labels: {}
+  default_pool: main
+  allowed_pools: []
+  run_retention: inherit
+  telemetry: {}
+  max_running: 0
+  allowed_secrets: []
+  require_signed_by: ""
+
+schedules: {}
+
+triggers: {}
+
+webhooks: {}
