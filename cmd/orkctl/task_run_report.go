@@ -14,6 +14,7 @@ import (
 	"sync"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -243,17 +244,14 @@ func (t *transcript) printFile(label, path string) {
 		return
 	}
 	t.field(label, fmt.Sprintf("(%d bytes)", len(raw)))
-	shown := raw
-	if len(shown) > taskRunConfigPrintLimit {
-		shown = shown[:taskRunConfigPrintLimit]
-	}
+	shown := raw[:runeCut(raw, taskRunConfigPrintLimit)]
 	scanner := bufio.NewScanner(bytes.NewReader(shown))
 	scanner.Buffer(make([]byte, 0, 64*1024), taskRunConfigPrintLimit+1)
 	for scanner.Scan() {
 		t.println("  " + scanner.Text())
 	}
-	if len(raw) > taskRunConfigPrintLimit {
-		t.printf("  … (%d more bytes; --keep keeps input/%s)\n", len(raw)-taskRunConfigPrintLimit, label)
+	if len(shown) < len(raw) {
+		t.printf("  … (%d more bytes; --keep keeps input/%s)\n", len(raw)-len(shown), label)
 	}
 }
 
@@ -282,9 +280,22 @@ func canonicalValues(raw []byte) string {
 		}
 	}
 	if len(line) > taskRunValuesPrintLimit {
-		return fmt.Sprintf("%s… (%d bytes; --json or --keep has every byte)", line[:taskRunValuesPrintLimit], len(line))
+		return fmt.Sprintf("%s… (%d bytes; --json or --keep has every byte)", line[:runeCut([]byte(line), taskRunValuesPrintLimit)], len(line))
 	}
 	return line
+}
+
+// runeCut returns the largest length at most limit that does not split a
+// UTF-8 sequence of b, so a truncated line never ends in half a character.
+func runeCut(b []byte, limit int) int {
+	if len(b) <= limit {
+		return len(b)
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(b[cut]) {
+		cut--
+	}
+	return cut
 }
 
 // formatSeconds renders a duration the transcript's one way: seconds with

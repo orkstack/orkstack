@@ -365,6 +365,8 @@ type taskRunner struct {
 
 	report *taskRunReport
 
+	// interruptMu guards finished, and the writes of spec and localID that
+	// the signal goroutine's interruptNotice reads.
 	interruptMu sync.Mutex
 	finished    bool
 }
@@ -433,6 +435,7 @@ func runTaskRun(cmd *cobra.Command, g *globalFlags, opts *taskRunOptions) error 
 	return r.execute()
 }
 
+// interruptNotice must be called with interruptMu held.
 func (r *taskRunner) interruptNotice() string {
 	grace := int32(30)
 	if r.spec != nil {
@@ -494,7 +497,10 @@ func (r *taskRunner) execute() error {
 	// STEP 5. The task and its closure.
 	for _, tk := range r.wf.GetTasks() {
 		if tk.GetId() == r.opts.task {
+			// The signal goroutine reads spec for its notice.
+			r.interruptMu.Lock()
 			r.spec = tk
+			r.interruptMu.Unlock()
 		}
 	}
 	if r.spec == nil {
@@ -743,7 +749,10 @@ func (r *taskRunner) compose() error {
 		r.sources = append(r.sources, source)
 	}
 
-	r.localID = newLocalRunID()
+	localID := newLocalRunID()
+	r.interruptMu.Lock() // the signal goroutine reads localID for its notice
+	r.localID = localID
+	r.interruptMu.Unlock()
 	in, err := engine.LocalTaskInput(engine.LocalTask{
 		Orkflow: r.wf, TaskID: r.opts.task, RunID: r.localID, Input: input, Upstream: upstream,
 	})

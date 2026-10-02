@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -1232,5 +1233,32 @@ func TestReadRecordedArtifact_RequiresIntegrityConfirmation(t *testing.T) {
 		if err != nil || ref.GetUri() != "s3://b/a" || buf.String() != "bytes" {
 			t.Errorf("a confirmed stream returned (%v, %v, %q)", ref, err, buf.String())
 		}
+	}
+}
+
+func TestRuneCut_NeverSplitsAUTF8Sequence(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    string
+		limit int
+		want  int
+	}{
+		{"shorter than the limit", "abc", 10, 3},
+		{"ascii at the limit", "abcdef", 3, 3},
+		{"cut inside a two-byte rune backs off", "aé", 2, 1},
+		{"cut after a whole two-byte rune", "aéb", 3, 3},
+		{"cut inside a four-byte rune backs off", "x🙂y", 3, 1},
+		{"zero limit", "é", 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runeCut([]byte(tc.in), tc.limit)
+			if got != tc.want {
+				t.Fatalf("runeCut(%q, %d) = %d, want %d", tc.in, tc.limit, got, tc.want)
+			}
+			if !utf8.ValidString(tc.in[:got]) {
+				t.Fatalf("runeCut(%q, %d) left an invalid prefix %q", tc.in, tc.limit, tc.in[:got])
+			}
+		})
 	}
 }

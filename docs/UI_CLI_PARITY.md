@@ -636,8 +636,9 @@ caller's machine against the run's recorded bytes. Its UI surface is a
 (`run-task-{task}-replay-cli`) carrying exactly
 `orkctl --namespace '<ns>' 'task' 'run' '--from-run' '<run>' '--task' '<task>'`
 — the namespace, the run and the task, and no input, secret or path. The
-browser runs nothing. The user accepted this extension with the approved
-phase-4 `orkctl-task-run` proposal (approved in review on 2026-09-24).
+browser runs nothing. This extension came with the phase-4
+`orkctl-task-run` proposal (review approved 2026-09-24).
+
 Do not mount a Docker socket into the UI/engine, accept arbitrary server host
 paths, or invent a privileged activity runner to manufacture parity. A future
 execution equivalent requires a separately accepted contract for build-context

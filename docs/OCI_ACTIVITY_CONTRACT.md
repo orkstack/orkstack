@@ -2762,7 +2762,9 @@ deployment's catalog, images resolved to digests — and an ERROR refuses.
 **What differs, deliberately.** The local input carries no `commit_uri` (a
 local run has no durable result), no `pin` (the CLI mints a fresh pin context
 for a pinned task, whose `/orkstack/shared` starts empty unless `--shared`
-seeds it), no `telemetry`, and the contract-default limits rather than the
+seeds it), no `telemetry`, no `image_policy` (a local run does not enter the
+dispatcher's image-policy step, and a `--file` document already met the
+policy at `ValidateOrkflow`), and the contract-default limits rather than the
 deployment's configured ones, which no client can read. `condition:` is not
 evaluated (`orkctl run plan` answers that) and `retry:` is not applied: a local
 run is one attempt.
