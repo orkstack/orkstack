@@ -299,6 +299,99 @@ already applies to a task's external side effects, now applied to the host's
 own disk. Do not copy a secret into `/orkstack/shared`: that puts it on disk
 for the pin's lifetime, the same warning that applies to `output/`.
 
+## Awaited tasks
+
+An **awaited task** declares `await:` instead of `uses:`. It starts no
+container, holds no pool slot and reaches no Orker: when the run reaches it, the
+task becomes **`AWAITING`** and the run waits — inside Temporal, with one timer
+for its deadline — until something outside the run **resolves** it. A
+resolution either **completes** the task, and its JSON body becomes the task's
+`values.json`, or **rejects** it with a reason. Downstream tasks read a
+completion exactly as they read any upstream output.
+
+```yaml
+tasks:
+  - id: submit-training
+    uses: ghcr.io/acme/databricks-submit:v2
+  - id: training
+    needs: [submit-training]
+    await:
+      timeout_seconds: 21600          # required, 1 s … 30 days
+      callback: true                  # optional: mint a one-time callback token at submit
+      schema:                         # optional: the `inputs:` vocabulary, checked on resolve
+        model_uri: { type: string, required: true }
+        auc:       { type: number }
+  - id: evaluate
+    needs: [training]
+    uses: ghcr.io/acme/evaluate:v5
+    with: { model: "{{ .tasks.training.output.model_uri }}" }
+```
+
+`await:` takes three keys:
+
+- `timeout_seconds` — **required**, from 1 second to 30 days. The deadline
+  counts from the moment the task starts awaiting. A task nobody resolves by
+  then fails `AWAIT_TIMED_OUT` (category `TimedOut`) and the run fails with it.
+  The cap is 30 days because an awaiting run is a live execution pinned to the
+  release that started it (`docs/DEPLOY.md` §2): its deadline is also the
+  longest it can keep that release's workers required. A longer business
+  process is two runs.
+- `callback` — optional. When `true`, submitting the run mints a one-time
+  bearer token for this await so a caller outside the deployment's API can
+  resolve it over plain HTTP (below).
+- `schema` — optional: what a completion must carry, in the `inputs:`
+  vocabulary — a map from key to `{type, required}`, `type` one of `string`,
+  `number`, `boolean`, `object`, `array`. It declares **no `default`**: a
+  completion's `values.json` is stored as the caller's exact bytes, and a
+  default would make the stored object differ from what was sent. Keys the
+  schema does not declare are accepted.
+
+An awaited task takes only `id`, `needs`, `condition` and `await`; every key
+that shapes a container (`uses`, `with`, `command`, `env`, `secrets`,
+`resources`, `network`, `pool`, `pin`, `retry`, `timeout_seconds`,
+`cancellation_grace_period_seconds`, `run_as_orker_user`) is refused by name.
+An `artifact "<task>/<name>"` helper may not name an await — it produces no
+artifacts — and `{{ .tasks.<await>.output.<field> }}` is how its values are
+read. A `condition:` on an await is evaluated before it opens, and an upstream
+skip propagates through it like any task. There are no retries: a rejection
+fails the task with `AWAIT_REJECTED` (category `ActivityFailed`) and the run
+fails fast, as for any task failure. A business "no" that should branch is a
+*completion* with a value (`{"approved": false}`) read by a downstream
+`condition:`.
+
+**Resolving.** There are two doors, sharing every check after
+authentication. Both store a completion's values before they deliver the
+resolution, answer an identical repeat of the resolution that already won as
+success without sending anything again, and store and send nothing when they
+refuse. A resolution is accepted only while the task is `AWAITING`: one sent
+while it is still `PENDING` is refused, and the caller retries once it is
+awaiting.
+
+- `orkctl run resolve <run> --task <await> [--values JSON | --values-file
+  PATH | --reject --reason TEXT]`, the run page's Resolve and Reject actions,
+  or any Connect client calling `RunService.ResolveAwait`. It is scoped to a
+  namespace exactly as `orkctl run cancel` is, and works for every await,
+  `callback: true` or not.
+- `POST /v1/runs/{run_id}/awaits/{task_id}` with
+  `Authorization: Bearer <callback token>` and the values as the body (an
+  empty body means `{}`), or `POST …/{task_id}/reject` with
+  `{"reason": "…"}`. It works only for an await that declares
+  `callback: true`, with that await's own token, and answers `202` once the
+  resolution is recorded in the run's history. The token is the capability:
+  it resolves exactly the await it was minted for, in the run's own
+  namespace, and nothing else.
+
+**Who receives a callback token.** The token is disclosed once, to whoever
+submitted the run — `orkctl run submit`/`run again` print it, the UI's submit
+dialog shows it before it continues to the run, and a trigger's `201` carries
+it — and only a salted digest of it is kept. A **scheduled** run's tokens are
+disclosed to nobody; resolve its awaits with `orkctl run resolve`. A container
+never receives a callback token. Do not set `callback: true` on an approval
+whose approver must differ from whoever submits the run: the submitter
+receives the token.
+
+See `examples/awaited-approval.ork.yaml`.
+
 ## Templating
 
 Task `with` values and `condition` are rendered with Go `text/template` against
@@ -327,7 +420,9 @@ referencing an unrelated task's output is a compile-time error.
 3. Task ids unique and slug-formatted.
 4. Every `needs` entry references an existing task id.
 5. The `needs` graph is acyclic (DAG).
-6. `uses` is a non-empty catalog activity name or OCI registry reference.
+6. A task has exactly one of `uses:` and `await:`. `uses` is a non-empty
+   catalog activity name or OCI registry reference; an awaited task runs no
+   image.
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks.
 9. Every `pin:` names a key of `pins:`; each pin name is slug-formatted.
@@ -347,6 +442,17 @@ referencing an unrelated task's output is a compile-time error.
     Enforced by `internal/api` at validate and apply, after resolution — the
     compiler has no registry to ask (`docs/ACTIVITY_IMAGES.md`, "Declaring the
     interface"). An image without the label is not checked.
+15. An awaited task carries nothing but `id`, `needs`, `condition` and
+    `await`: every field that shapes a container is refused by name, on the
+    compiled message as well as in YAML, so a hand-built request meets the
+    same rule.
+16. `await.timeout_seconds` is present and between 1 and 2592000 (30 days).
+17. Every `await.schema` entry is a mapping of only `type` (required; one of
+    `string`, `number`, `boolean`, `object`, `array`) and `required`
+    (optional, boolean). `default` is refused: an await's values are stored
+    as the caller's exact bytes.
+18. An `artifact "<task>/<name>"` helper may not name an awaited task, which
+    produces no artifacts; read its values with `.tasks.<id>.output`.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

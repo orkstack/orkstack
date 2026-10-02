@@ -259,7 +259,10 @@ present, with whatever else the pending `Run` carries — including
 `"origin":{"kind":"TRIGGER","id":"trg-…",…}`. `orkflowVersion` is
 the version that was resolved, never empty, so a caller of an unpinned
 trigger learns which version actually started. `status` is `PENDING`, not
-`STATUS_PENDING`.
+`STATUS_PENDING`. When the Orkflow declares an awaited task with
+`callback: true`, the envelope also carries `awaitCallbacks` — each such
+await's callback path and one-time token, disclosed by this response and by
+nothing else (`docs/DSL.md` "Awaited tasks").
 
 Every failure is the error envelope `webhookErrorEnvelope` already uses:
 
