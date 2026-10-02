@@ -9,7 +9,8 @@ export const STATUS_LABEL: Record<Status, string> = {
 	[Status.SUCCEEDED]: 'SUCCEEDED',
 	[Status.FAILED]: 'FAILED',
 	[Status.CANCELED]: 'CANCELED',
-	[Status.SKIPPED]: 'SKIPPED'
+	[Status.SKIPPED]: 'SKIPPED',
+	[Status.AWAITING]: 'AWAITING'
 };
 
 export const STATUS_CLASSES: Record<Status, string> = {
@@ -19,7 +20,8 @@ export const STATUS_CLASSES: Record<Status, string> = {
 	[Status.SUCCEEDED]: 'border-succeeded-border bg-succeeded-bg text-succeeded-fg',
 	[Status.FAILED]: 'border-failed-border bg-failed-bg text-failed-fg',
 	[Status.CANCELED]: 'border-canceled-border bg-canceled-bg text-canceled-fg',
-	[Status.SKIPPED]: 'border-dashed border-skipped-border bg-skipped-bg text-skipped-fg'
+	[Status.SKIPPED]: 'border-dashed border-skipped-border bg-skipped-bg text-skipped-fg',
+	[Status.AWAITING]: 'border-awaiting-border bg-awaiting-bg text-awaiting-fg'
 };
 
 export function statusLabel(status: Status | undefined): string {
@@ -93,7 +95,9 @@ export const EVENT_TYPE_LABEL: Record<EventType, string> = {
 	[EventType.TASK_FAILED]: 'TASK_FAILED',
 	[EventType.RUN_SUCCEEDED]: 'RUN_SUCCEEDED',
 	[EventType.RUN_FAILED]: 'RUN_FAILED',
-	[EventType.RUN_CANCELED]: 'RUN_CANCELED'
+	[EventType.RUN_CANCELED]: 'RUN_CANCELED',
+	[EventType.TASK_AWAITING]: 'TASK_AWAITING',
+	[EventType.TASK_RESOLVED]: 'TASK_RESOLVED'
 };
 
 export function eventTypeLabel(t: EventType | undefined): string {

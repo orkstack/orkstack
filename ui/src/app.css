@@ -96,6 +96,12 @@
 	--color-running-border: #b2ddff;
 	--color-running-solid: #1570ef;
 
+	/* AWAITING: a task waiting to be resolved from outside its run. */
+	--color-awaiting-bg: #f4f3ff;
+	--color-awaiting-fg: #5925dc;
+	--color-awaiting-border: #d9d6fe;
+	--color-awaiting-solid: #7a5af8;
+
 	--color-succeeded-bg: #ecfdf3;
 	--color-succeeded-fg: #067647;
 	--color-succeeded-border: #abefc6;
@@ -272,6 +278,11 @@
 	--color-running-fg: #7eb8ff;
 	--color-running-border: #2c5490;
 	--color-running-solid: #4c9aff;
+
+	--color-awaiting-bg: #1f1a3d;
+	--color-awaiting-fg: #bdb4fe;
+	--color-awaiting-border: #4a3d8f;
+	--color-awaiting-solid: #9b8afb;
 
 	--color-succeeded-bg: #0f2a1e;
 	--color-succeeded-fg: #6fe0a0;

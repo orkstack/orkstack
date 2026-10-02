@@ -16,6 +16,9 @@
 			class="size-1.5 rounded-full bg-running-solid animate-pulse-dot motion-reduce:animate-none"
 			aria-hidden="true"
 		></span>
+	{:else if status === Status.AWAITING}
+		<!-- Static, no pulse: an awaiting task is waiting, not working. -->
+		<span class="size-1.5 rounded-full bg-awaiting-solid" aria-hidden="true"></span>
 	{/if}
 	{statusLabel(status)}
 </span>

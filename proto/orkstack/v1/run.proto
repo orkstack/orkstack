@@ -42,6 +42,9 @@ message TaskRun {
   //
   // Before this field's meaning was corrected it held the dispatch instant;
   // scheduled_at (18) holds that now.
+  //
+  // For an awaited task, both are the instant the task started awaiting, on
+  // the workflow's clock: it is never queued and no Orker reports on it.
   google.protobuf.Timestamp started_at = 8;
   // finished_at is the workflow's own clock at the moment it learned this
   // task's outcome.
@@ -114,7 +117,66 @@ message TaskRun {
   // The two are told apart by started_at: a pre-contract snapshot has
   // started_at set (it held the dispatch instant then) and scheduled_at
   // unset; a never-scheduled task has neither.
+  //
+  // For an awaited task, both are the instant the task started awaiting, on
+  // the workflow's clock: it is never queued and no Orker reports on it.
   google.protobuf.Timestamp scheduled_at = 18;
+
+  // await is this task's await state, set for a task whose definition
+  // declares `await:` and unset otherwise (see TaskAwait).
+  TaskAwait await = 19;
+}
+
+// AwaitResolvedVia names the door an await's resolution came through.
+enum AwaitResolvedVia {
+  AWAIT_RESOLVED_VIA_UNSPECIFIED = 0;
+  // API: RunService.ResolveAwait — orkctl, the UI, or another Connect client.
+  AWAIT_RESOLVED_VIA_API = 1;
+  // CALLBACK: the plain-HTTP callback door, authenticated by the await's
+  // callback token.
+  AWAIT_RESOLVED_VIA_CALLBACK = 2;
+}
+
+// TaskAwait is an awaited task's own state on the run snapshot. It is SET for
+// every task whose definition declares `await:` — from the run's first
+// snapshot, while the task is still PENDING — and UNSET for every other
+// task, so a snapshot of a run with no await is byte-identical to what it was
+// before this message existed. Its presence is how a client tells an awaited
+// task from a container task without reading the definition.
+message TaskAwait {
+  // callback mirrors AwaitSpec.callback: whether a callback token was minted.
+  bool callback = 1;
+  // deadline is when the await times out, on the workflow's clock. Unset
+  // until the task starts awaiting.
+  google.protobuf.Timestamp deadline = 2;
+  // resolved_via and resolved_by are set when a resolution was APPLIED —
+  // completed or rejected — and never for a timeout or a cancellation.
+  AwaitResolvedVia resolved_via = 3;
+  // resolved_by is the Ork-Principal assertion on the resolving request,
+  // bounded to 256 bytes: recorded as asserted and NEVER authenticated, the
+  // word control-plane-audit-trail and run-origin use. Empty when none was
+  // sent.
+  string resolved_by = 4;
+}
+
+// AwaitSignal is ENGINE-INTERNAL: the argument of the Temporal Signal that
+// resolves an awaited task. Only internal/api sends it and only RunWorkflow
+// reads it; no client surface renders it. It carries references and at most
+// 4 KiB of inline bytes — never a values body above that (AGENTS.md §2.2).
+message AwaitSignal {
+  string task_id = 1;
+  // reject true is a rejection with reason; false is a completion with values.
+  bool reject = 2;
+  string reason = 3;
+  // values is the stored values.json of a completion, written by the door
+  // BEFORE the signal was sent. Unset for a rejection.
+  ArtifactRef values = 4;
+  // values_json is values' exact bytes when they are at most 4096 bytes, as
+  // ExecuteTaskResult.values_json is (activity.proto: the same bound, the same
+  // reason, and bytes rather than a Struct for the same reason). Empty above it.
+  bytes values_json = 5;
+  AwaitResolvedVia via = 6;
+  string principal = 7;
 }
 
 // AttemptOutcome is how one Temporal attempt of a task ended.
@@ -346,6 +408,15 @@ enum EventType {
   EVENT_TYPE_RUN_SUCCEEDED = 8;
   EVENT_TYPE_RUN_FAILED = 9;
   EVENT_TYPE_RUN_CANCELED = 10;
+  // TASK_AWAITING: an awaited task started waiting. Status AWAITING; the
+  // message names the deadline.
+  EVENT_TYPE_TASK_AWAITING = 11;
+  // TASK_RESOLVED: an awaited task was resolved from outside the run. Status
+  // is the outcome it decided — SUCCEEDED for a completion, FAILED for a
+  // rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same
+  // status, so a reader that only knows the older task events still sees the
+  // task end.
+  EVENT_TYPE_TASK_RESOLVED = 12;
 }
 
 // Event is a single realtime update for a run, delivered over the

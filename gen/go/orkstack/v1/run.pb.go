@@ -22,6 +22,59 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// AwaitResolvedVia names the door an await's resolution came through.
+type AwaitResolvedVia int32
+
+const (
+	AwaitResolvedVia_AWAIT_RESOLVED_VIA_UNSPECIFIED AwaitResolvedVia = 0
+	// API: RunService.ResolveAwait — orkctl, the UI, or another Connect client.
+	AwaitResolvedVia_AWAIT_RESOLVED_VIA_API AwaitResolvedVia = 1
+	// CALLBACK: the plain-HTTP callback door, authenticated by the await's
+	// callback token.
+	AwaitResolvedVia_AWAIT_RESOLVED_VIA_CALLBACK AwaitResolvedVia = 2
+)
+
+// Enum value maps for AwaitResolvedVia.
+var (
+	AwaitResolvedVia_name = map[int32]string{
+		0: "AWAIT_RESOLVED_VIA_UNSPECIFIED",
+		1: "AWAIT_RESOLVED_VIA_API",
+		2: "AWAIT_RESOLVED_VIA_CALLBACK",
+	}
+	AwaitResolvedVia_value = map[string]int32{
+		"AWAIT_RESOLVED_VIA_UNSPECIFIED": 0,
+		"AWAIT_RESOLVED_VIA_API":         1,
+		"AWAIT_RESOLVED_VIA_CALLBACK":    2,
+	}
+)
+
+func (x AwaitResolvedVia) Enum() *AwaitResolvedVia {
+	p := new(AwaitResolvedVia)
+	*p = x
+	return p
+}
+
+func (x AwaitResolvedVia) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AwaitResolvedVia) Descriptor() protoreflect.EnumDescriptor {
+	return file_orkstack_v1_run_proto_enumTypes[0].Descriptor()
+}
+
+func (AwaitResolvedVia) Type() protoreflect.EnumType {
+	return &file_orkstack_v1_run_proto_enumTypes[0]
+}
+
+func (x AwaitResolvedVia) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AwaitResolvedVia.Descriptor instead.
+func (AwaitResolvedVia) EnumDescriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{0}
+}
+
 // AttemptOutcome is how one Temporal attempt of a task ended.
 type AttemptOutcome int32
 
@@ -68,11 +121,11 @@ func (x AttemptOutcome) String() string {
 }
 
 func (AttemptOutcome) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[0].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[1].Descriptor()
 }
 
 func (AttemptOutcome) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[0]
+	return &file_orkstack_v1_run_proto_enumTypes[1]
 }
 
 func (x AttemptOutcome) Number() protoreflect.EnumNumber {
@@ -81,7 +134,7 @@ func (x AttemptOutcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AttemptOutcome.Descriptor instead.
 func (AttemptOutcome) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{0}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{1}
 }
 
 // RetryState is why Temporal stopped retrying a task. It mirrors
@@ -137,11 +190,11 @@ func (x RetryState) String() string {
 }
 
 func (RetryState) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[1].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[2].Descriptor()
 }
 
 func (RetryState) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[1]
+	return &file_orkstack_v1_run_proto_enumTypes[2]
 }
 
 func (x RetryState) Number() protoreflect.EnumNumber {
@@ -150,7 +203,7 @@ func (x RetryState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RetryState.Descriptor instead.
 func (RetryState) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{1}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
 }
 
 // RunOriginKind is WHAT started a run. It is decided by the process that
@@ -216,11 +269,11 @@ func (x RunOriginKind) String() string {
 }
 
 func (RunOriginKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[2].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[3].Descriptor()
 }
 
 func (RunOriginKind) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[2]
+	return &file_orkstack_v1_run_proto_enumTypes[3]
 }
 
 func (x RunOriginKind) Number() protoreflect.EnumNumber {
@@ -229,7 +282,7 @@ func (x RunOriginKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RunOriginKind.Descriptor instead.
 func (RunOriginKind) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{3}
 }
 
 // EventType classifies a run event on the realtime stream.
@@ -247,6 +300,15 @@ const (
 	EventType_EVENT_TYPE_RUN_SUCCEEDED  EventType = 8
 	EventType_EVENT_TYPE_RUN_FAILED     EventType = 9
 	EventType_EVENT_TYPE_RUN_CANCELED   EventType = 10
+	// TASK_AWAITING: an awaited task started waiting. Status AWAITING; the
+	// message names the deadline.
+	EventType_EVENT_TYPE_TASK_AWAITING EventType = 11
+	// TASK_RESOLVED: an awaited task was resolved from outside the run. Status
+	// is the outcome it decided — SUCCEEDED for a completion, FAILED for a
+	// rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same
+	// status, so a reader that only knows the older task events still sees the
+	// task end.
+	EventType_EVENT_TYPE_TASK_RESOLVED EventType = 12
 )
 
 // Enum value maps for EventType.
@@ -263,6 +325,8 @@ var (
 		8:  "EVENT_TYPE_RUN_SUCCEEDED",
 		9:  "EVENT_TYPE_RUN_FAILED",
 		10: "EVENT_TYPE_RUN_CANCELED",
+		11: "EVENT_TYPE_TASK_AWAITING",
+		12: "EVENT_TYPE_TASK_RESOLVED",
 	}
 	EventType_value = map[string]int32{
 		"EVENT_TYPE_UNSPECIFIED":    0,
@@ -276,6 +340,8 @@ var (
 		"EVENT_TYPE_RUN_SUCCEEDED":  8,
 		"EVENT_TYPE_RUN_FAILED":     9,
 		"EVENT_TYPE_RUN_CANCELED":   10,
+		"EVENT_TYPE_TASK_AWAITING":  11,
+		"EVENT_TYPE_TASK_RESOLVED":  12,
 	}
 )
 
@@ -290,11 +356,11 @@ func (x EventType) String() string {
 }
 
 func (EventType) Descriptor() protoreflect.EnumDescriptor {
-	return file_orkstack_v1_run_proto_enumTypes[3].Descriptor()
+	return file_orkstack_v1_run_proto_enumTypes[4].Descriptor()
 }
 
 func (EventType) Type() protoreflect.EnumType {
-	return &file_orkstack_v1_run_proto_enumTypes[3]
+	return &file_orkstack_v1_run_proto_enumTypes[4]
 }
 
 func (x EventType) Number() protoreflect.EnumNumber {
@@ -303,7 +369,7 @@ func (x EventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EventType.Descriptor instead.
 func (EventType) EnumDescriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{3}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{4}
 }
 
 // TaskRun is the execution record of a single Task within a Run.
@@ -333,6 +399,9 @@ type TaskRun struct {
 	//
 	// Before this field's meaning was corrected it held the dispatch instant;
 	// scheduled_at (18) holds that now.
+	//
+	// For an awaited task, both are the instant the task started awaiting, on
+	// the workflow's clock: it is never queued and no Orker reports on it.
 	StartedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	// finished_at is the workflow's own clock at the moment it learned this
 	// task's outcome.
@@ -400,7 +469,13 @@ type TaskRun struct {
 	// The two are told apart by started_at: a pre-contract snapshot has
 	// started_at set (it held the dispatch instant then) and scheduled_at
 	// unset; a never-scheduled task has neither.
-	ScheduledAt   *timestamppb.Timestamp `protobuf:"bytes,18,opt,name=scheduled_at,json=scheduledAt,proto3" json:"scheduled_at,omitempty"`
+	//
+	// For an awaited task, both are the instant the task started awaiting, on
+	// the workflow's clock: it is never queued and no Orker reports on it.
+	ScheduledAt *timestamppb.Timestamp `protobuf:"bytes,18,opt,name=scheduled_at,json=scheduledAt,proto3" json:"scheduled_at,omitempty"`
+	// await is this task's await state, set for a task whose definition
+	// declares `await:` and unset otherwise (see TaskAwait).
+	Await         *TaskAwait `protobuf:"bytes,19,opt,name=await,proto3" json:"await,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -554,6 +629,198 @@ func (x *TaskRun) GetScheduledAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *TaskRun) GetAwait() *TaskAwait {
+	if x != nil {
+		return x.Await
+	}
+	return nil
+}
+
+// TaskAwait is an awaited task's own state on the run snapshot. It is SET for
+// every task whose definition declares `await:` — from the run's first
+// snapshot, while the task is still PENDING — and UNSET for every other
+// task, so a snapshot of a run with no await is byte-identical to what it was
+// before this message existed. Its presence is how a client tells an awaited
+// task from a container task without reading the definition.
+type TaskAwait struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// callback mirrors AwaitSpec.callback: whether a callback token was minted.
+	Callback bool `protobuf:"varint,1,opt,name=callback,proto3" json:"callback,omitempty"`
+	// deadline is when the await times out, on the workflow's clock. Unset
+	// until the task starts awaiting.
+	Deadline *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=deadline,proto3" json:"deadline,omitempty"`
+	// resolved_via and resolved_by are set when a resolution was APPLIED —
+	// completed or rejected — and never for a timeout or a cancellation.
+	ResolvedVia AwaitResolvedVia `protobuf:"varint,3,opt,name=resolved_via,json=resolvedVia,proto3,enum=orkstack.v1.AwaitResolvedVia" json:"resolved_via,omitempty"`
+	// resolved_by is the Ork-Principal assertion on the resolving request,
+	// bounded to 256 bytes: recorded as asserted and NEVER authenticated, the
+	// word control-plane-audit-trail and run-origin use. Empty when none was
+	// sent.
+	ResolvedBy    string `protobuf:"bytes,4,opt,name=resolved_by,json=resolvedBy,proto3" json:"resolved_by,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskAwait) Reset() {
+	*x = TaskAwait{}
+	mi := &file_orkstack_v1_run_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskAwait) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskAwait) ProtoMessage() {}
+
+func (x *TaskAwait) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskAwait.ProtoReflect.Descriptor instead.
+func (*TaskAwait) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TaskAwait) GetCallback() bool {
+	if x != nil {
+		return x.Callback
+	}
+	return false
+}
+
+func (x *TaskAwait) GetDeadline() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Deadline
+	}
+	return nil
+}
+
+func (x *TaskAwait) GetResolvedVia() AwaitResolvedVia {
+	if x != nil {
+		return x.ResolvedVia
+	}
+	return AwaitResolvedVia_AWAIT_RESOLVED_VIA_UNSPECIFIED
+}
+
+func (x *TaskAwait) GetResolvedBy() string {
+	if x != nil {
+		return x.ResolvedBy
+	}
+	return ""
+}
+
+// AwaitSignal is ENGINE-INTERNAL: the argument of the Temporal Signal that
+// resolves an awaited task. Only internal/api sends it and only RunWorkflow
+// reads it; no client surface renders it. It carries references and at most
+// 4 KiB of inline bytes — never a values body above that (AGENTS.md §2.2).
+type AwaitSignal struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// reject true is a rejection with reason; false is a completion with values.
+	Reject bool   `protobuf:"varint,2,opt,name=reject,proto3" json:"reject,omitempty"`
+	Reason string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	// values is the stored values.json of a completion, written by the door
+	// BEFORE the signal was sent. Unset for a rejection.
+	Values *ArtifactRef `protobuf:"bytes,4,opt,name=values,proto3" json:"values,omitempty"`
+	// values_json is values' exact bytes when they are at most 4096 bytes, as
+	// ExecuteTaskResult.values_json is (activity.proto: the same bound, the same
+	// reason, and bytes rather than a Struct for the same reason). Empty above it.
+	ValuesJson    []byte           `protobuf:"bytes,5,opt,name=values_json,json=valuesJson,proto3" json:"values_json,omitempty"`
+	Via           AwaitResolvedVia `protobuf:"varint,6,opt,name=via,proto3,enum=orkstack.v1.AwaitResolvedVia" json:"via,omitempty"`
+	Principal     string           `protobuf:"bytes,7,opt,name=principal,proto3" json:"principal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AwaitSignal) Reset() {
+	*x = AwaitSignal{}
+	mi := &file_orkstack_v1_run_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AwaitSignal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AwaitSignal) ProtoMessage() {}
+
+func (x *AwaitSignal) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_run_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AwaitSignal.ProtoReflect.Descriptor instead.
+func (*AwaitSignal) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *AwaitSignal) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *AwaitSignal) GetReject() bool {
+	if x != nil {
+		return x.Reject
+	}
+	return false
+}
+
+func (x *AwaitSignal) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *AwaitSignal) GetValues() *ArtifactRef {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+func (x *AwaitSignal) GetValuesJson() []byte {
+	if x != nil {
+		return x.ValuesJson
+	}
+	return nil
+}
+
+func (x *AwaitSignal) GetVia() AwaitResolvedVia {
+	if x != nil {
+		return x.Via
+	}
+	return AwaitResolvedVia_AWAIT_RESOLVED_VIA_UNSPECIFIED
+}
+
+func (x *AwaitSignal) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
 // PhaseSpan is one §7.1 phase of one attempt, on the Orker's clock. Spans
 // are recorded by the dispatcher's own Phase() sequence, so a list of them is
 // contiguous: each span's finished_at is the next span's started_at, the
@@ -577,7 +844,7 @@ type PhaseSpan struct {
 
 func (x *PhaseSpan) Reset() {
 	*x = PhaseSpan{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[1]
+	mi := &file_orkstack_v1_run_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -589,7 +856,7 @@ func (x *PhaseSpan) String() string {
 func (*PhaseSpan) ProtoMessage() {}
 
 func (x *PhaseSpan) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[1]
+	mi := &file_orkstack_v1_run_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -602,7 +869,7 @@ func (x *PhaseSpan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PhaseSpan.ProtoReflect.Descriptor instead.
 func (*PhaseSpan) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{1}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *PhaseSpan) GetPhase() string {
@@ -690,7 +957,7 @@ type TaskAttempt struct {
 
 func (x *TaskAttempt) Reset() {
 	*x = TaskAttempt{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[2]
+	mi := &file_orkstack_v1_run_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -702,7 +969,7 @@ func (x *TaskAttempt) String() string {
 func (*TaskAttempt) ProtoMessage() {}
 
 func (x *TaskAttempt) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[2]
+	mi := &file_orkstack_v1_run_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -715,7 +982,7 @@ func (x *TaskAttempt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskAttempt.ProtoReflect.Descriptor instead.
 func (*TaskAttempt) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{2}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *TaskAttempt) GetSchemaVersion() int32 {
@@ -874,7 +1141,7 @@ type Run struct {
 
 func (x *Run) Reset() {
 	*x = Run{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[3]
+	mi := &file_orkstack_v1_run_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -886,7 +1153,7 @@ func (x *Run) String() string {
 func (*Run) ProtoMessage() {}
 
 func (x *Run) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[3]
+	mi := &file_orkstack_v1_run_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -899,7 +1166,7 @@ func (x *Run) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Run.ProtoReflect.Descriptor instead.
 func (*Run) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{3}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Run) GetId() string {
@@ -1051,7 +1318,7 @@ type RunOrigin struct {
 
 func (x *RunOrigin) Reset() {
 	*x = RunOrigin{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[4]
+	mi := &file_orkstack_v1_run_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1063,7 +1330,7 @@ func (x *RunOrigin) String() string {
 func (*RunOrigin) ProtoMessage() {}
 
 func (x *RunOrigin) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[4]
+	mi := &file_orkstack_v1_run_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1076,7 +1343,7 @@ func (x *RunOrigin) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunOrigin.ProtoReflect.Descriptor instead.
 func (*RunOrigin) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{4}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RunOrigin) GetKind() RunOriginKind {
@@ -1132,7 +1399,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_orkstack_v1_run_proto_msgTypes[5]
+	mi := &file_orkstack_v1_run_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1144,7 +1411,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_run_proto_msgTypes[5]
+	mi := &file_orkstack_v1_run_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1157,7 +1424,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{5}
+	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Event) GetRunId() string {
@@ -1220,7 +1487,7 @@ var File_orkstack_v1_run_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\n" +
-	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/telemetry.proto\"\x84\x06\n" +
+	"\x15orkstack/v1/run.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/common.proto\x1a\x1borkstack/v1/telemetry.proto\"\xb2\x06\n" +
 	"\aTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12+\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +
@@ -1243,7 +1510,23 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"retryState\x12\x10\n" +
 	"\x03pin\x18\x10 \x01(\tR\x03pin\x12\x19\n" +
 	"\borker_id\x18\x11 \x01(\tR\aorkerId\x12=\n" +
-	"\fscheduled_at\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\vscheduledAtJ\x04\b\x02\x10\x03R\x06plugin\"\x99\x01\n" +
+	"\fscheduled_at\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\vscheduledAt\x12,\n" +
+	"\x05await\x18\x13 \x01(\v2\x16.orkstack.v1.TaskAwaitR\x05awaitJ\x04\b\x02\x10\x03R\x06plugin\"\xc2\x01\n" +
+	"\tTaskAwait\x12\x1a\n" +
+	"\bcallback\x18\x01 \x01(\bR\bcallback\x126\n" +
+	"\bdeadline\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x12@\n" +
+	"\fresolved_via\x18\x03 \x01(\x0e2\x1d.orkstack.v1.AwaitResolvedViaR\vresolvedVia\x12\x1f\n" +
+	"\vresolved_by\x18\x04 \x01(\tR\n" +
+	"resolvedBy\"\xf8\x01\n" +
+	"\vAwaitSignal\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x16\n" +
+	"\x06reject\x18\x02 \x01(\bR\x06reject\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x120\n" +
+	"\x06values\x18\x04 \x01(\v2\x18.orkstack.v1.ArtifactRefR\x06values\x12\x1f\n" +
+	"\vvalues_json\x18\x05 \x01(\fR\n" +
+	"valuesJson\x12/\n" +
+	"\x03via\x18\x06 \x01(\x0e2\x1d.orkstack.v1.AwaitResolvedViaR\x03via\x12\x1c\n" +
+	"\tprincipal\x18\a \x01(\tR\tprincipal\"\x99\x01\n" +
 	"\tPhaseSpan\x12\x14\n" +
 	"\x05phase\x18\x01 \x01(\tR\x05phase\x129\n" +
 	"\n" +
@@ -1305,7 +1588,11 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x06status\x18\x05 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +
 	"\amessage\x18\x06 \x01(\tR\amessage\x12(\n" +
 	"\x04data\x18\a \x01(\v2\x14.orkstack.v1.PayloadR\x04data\x128\n" +
-	"\ttimestamp\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp*\xaa\x01\n" +
+	"\ttimestamp\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp*s\n" +
+	"\x10AwaitResolvedVia\x12\"\n" +
+	"\x1eAWAIT_RESOLVED_VIA_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16AWAIT_RESOLVED_VIA_API\x10\x01\x12\x1f\n" +
+	"\x1bAWAIT_RESOLVED_VIA_CALLBACK\x10\x02*\xaa\x01\n" +
 	"\x0eAttemptOutcome\x12\x1f\n" +
 	"\x1bATTEMPT_OUTCOME_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19ATTEMPT_OUTCOME_SUCCEEDED\x10\x01\x12\x1a\n" +
@@ -1327,7 +1614,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x17RUN_ORIGIN_KIND_TRIGGER\x10\x02\x12\x1c\n" +
 	"\x18RUN_ORIGIN_KIND_SCHEDULE\x10\x03\x12\x1e\n" +
 	"\x1aRUN_ORIGIN_KIND_PARENT_RUN\x10\x04\x12\x1d\n" +
-	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05*\xc5\x02\n" +
+	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05*\x81\x03\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16EVENT_TYPE_RUN_CREATED\x10\x01\x12\x1a\n" +
@@ -1340,7 +1627,9 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x18EVENT_TYPE_RUN_SUCCEEDED\x10\b\x12\x19\n" +
 	"\x15EVENT_TYPE_RUN_FAILED\x10\t\x12\x1b\n" +
 	"\x17EVENT_TYPE_RUN_CANCELED\x10\n" +
-	"B\xa4\x01\n" +
+	"\x12\x1c\n" +
+	"\x18EVENT_TYPE_TASK_AWAITING\x10\v\x12\x1c\n" +
+	"\x18EVENT_TYPE_TASK_RESOLVED\x10\fB\xa4\x01\n" +
 	"\x0fcom.orkstack.v1B\bRunProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -1355,69 +1644,77 @@ func file_orkstack_v1_run_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_run_proto_rawDescData
 }
 
-var file_orkstack_v1_run_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_orkstack_v1_run_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_orkstack_v1_run_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_orkstack_v1_run_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_orkstack_v1_run_proto_goTypes = []any{
-	(AttemptOutcome)(0),           // 0: orkstack.v1.AttemptOutcome
-	(RetryState)(0),               // 1: orkstack.v1.RetryState
-	(RunOriginKind)(0),            // 2: orkstack.v1.RunOriginKind
-	(EventType)(0),                // 3: orkstack.v1.EventType
-	(*TaskRun)(nil),               // 4: orkstack.v1.TaskRun
-	(*PhaseSpan)(nil),             // 5: orkstack.v1.PhaseSpan
-	(*TaskAttempt)(nil),           // 6: orkstack.v1.TaskAttempt
-	(*Run)(nil),                   // 7: orkstack.v1.Run
-	(*RunOrigin)(nil),             // 8: orkstack.v1.RunOrigin
-	(*Event)(nil),                 // 9: orkstack.v1.Event
-	(Status)(0),                   // 10: orkstack.v1.Status
-	(*Payload)(nil),               // 11: orkstack.v1.Payload
-	(*ArtifactRef)(nil),           // 12: orkstack.v1.ArtifactRef
-	(*Error)(nil),                 // 13: orkstack.v1.Error
-	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
-	(*CommitRef)(nil),             // 15: orkstack.v1.CommitRef
-	(*ImageRef)(nil),              // 16: orkstack.v1.ImageRef
-	(*TelemetrySelection)(nil),    // 17: orkstack.v1.TelemetrySelection
+	(AwaitResolvedVia)(0),         // 0: orkstack.v1.AwaitResolvedVia
+	(AttemptOutcome)(0),           // 1: orkstack.v1.AttemptOutcome
+	(RetryState)(0),               // 2: orkstack.v1.RetryState
+	(RunOriginKind)(0),            // 3: orkstack.v1.RunOriginKind
+	(EventType)(0),                // 4: orkstack.v1.EventType
+	(*TaskRun)(nil),               // 5: orkstack.v1.TaskRun
+	(*TaskAwait)(nil),             // 6: orkstack.v1.TaskAwait
+	(*AwaitSignal)(nil),           // 7: orkstack.v1.AwaitSignal
+	(*PhaseSpan)(nil),             // 8: orkstack.v1.PhaseSpan
+	(*TaskAttempt)(nil),           // 9: orkstack.v1.TaskAttempt
+	(*Run)(nil),                   // 10: orkstack.v1.Run
+	(*RunOrigin)(nil),             // 11: orkstack.v1.RunOrigin
+	(*Event)(nil),                 // 12: orkstack.v1.Event
+	(Status)(0),                   // 13: orkstack.v1.Status
+	(*Payload)(nil),               // 14: orkstack.v1.Payload
+	(*ArtifactRef)(nil),           // 15: orkstack.v1.ArtifactRef
+	(*Error)(nil),                 // 16: orkstack.v1.Error
+	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
+	(*CommitRef)(nil),             // 18: orkstack.v1.CommitRef
+	(*ImageRef)(nil),              // 19: orkstack.v1.ImageRef
+	(*TelemetrySelection)(nil),    // 20: orkstack.v1.TelemetrySelection
 }
 var file_orkstack_v1_run_proto_depIdxs = []int32{
-	10, // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
-	11, // 1: orkstack.v1.TaskRun.output:type_name -> orkstack.v1.Payload
-	12, // 2: orkstack.v1.TaskRun.artifacts:type_name -> orkstack.v1.ArtifactRef
-	13, // 3: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
-	14, // 4: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
-	14, // 5: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
-	12, // 6: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
-	15, // 7: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
-	12, // 8: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	1,  // 9: orkstack.v1.TaskRun.retry_state:type_name -> orkstack.v1.RetryState
-	14, // 10: orkstack.v1.TaskRun.scheduled_at:type_name -> google.protobuf.Timestamp
-	14, // 11: orkstack.v1.PhaseSpan.started_at:type_name -> google.protobuf.Timestamp
-	14, // 12: orkstack.v1.PhaseSpan.finished_at:type_name -> google.protobuf.Timestamp
-	0,  // 13: orkstack.v1.TaskAttempt.outcome:type_name -> orkstack.v1.AttemptOutcome
-	13, // 14: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
-	14, // 15: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
-	14, // 16: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
-	16, // 17: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
-	12, // 18: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	5,  // 19: orkstack.v1.TaskAttempt.phases:type_name -> orkstack.v1.PhaseSpan
-	10, // 20: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
-	11, // 21: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
-	11, // 22: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
-	13, // 23: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
-	4,  // 24: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
-	14, // 25: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	14, // 26: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	14, // 27: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	17, // 28: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
-	8,  // 29: orkstack.v1.Run.origin:type_name -> orkstack.v1.RunOrigin
-	2,  // 30: orkstack.v1.RunOrigin.kind:type_name -> orkstack.v1.RunOriginKind
-	3,  // 31: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
-	10, // 32: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
-	11, // 33: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
-	14, // 34: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
-	35, // [35:35] is the sub-list for method output_type
-	35, // [35:35] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	13, // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
+	14, // 1: orkstack.v1.TaskRun.output:type_name -> orkstack.v1.Payload
+	15, // 2: orkstack.v1.TaskRun.artifacts:type_name -> orkstack.v1.ArtifactRef
+	16, // 3: orkstack.v1.TaskRun.error:type_name -> orkstack.v1.Error
+	17, // 4: orkstack.v1.TaskRun.started_at:type_name -> google.protobuf.Timestamp
+	17, // 5: orkstack.v1.TaskRun.finished_at:type_name -> google.protobuf.Timestamp
+	15, // 6: orkstack.v1.TaskRun.values_ref:type_name -> orkstack.v1.ArtifactRef
+	18, // 7: orkstack.v1.TaskRun.commit:type_name -> orkstack.v1.CommitRef
+	15, // 8: orkstack.v1.TaskRun.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	2,  // 9: orkstack.v1.TaskRun.retry_state:type_name -> orkstack.v1.RetryState
+	17, // 10: orkstack.v1.TaskRun.scheduled_at:type_name -> google.protobuf.Timestamp
+	6,  // 11: orkstack.v1.TaskRun.await:type_name -> orkstack.v1.TaskAwait
+	17, // 12: orkstack.v1.TaskAwait.deadline:type_name -> google.protobuf.Timestamp
+	0,  // 13: orkstack.v1.TaskAwait.resolved_via:type_name -> orkstack.v1.AwaitResolvedVia
+	15, // 14: orkstack.v1.AwaitSignal.values:type_name -> orkstack.v1.ArtifactRef
+	0,  // 15: orkstack.v1.AwaitSignal.via:type_name -> orkstack.v1.AwaitResolvedVia
+	17, // 16: orkstack.v1.PhaseSpan.started_at:type_name -> google.protobuf.Timestamp
+	17, // 17: orkstack.v1.PhaseSpan.finished_at:type_name -> google.protobuf.Timestamp
+	1,  // 18: orkstack.v1.TaskAttempt.outcome:type_name -> orkstack.v1.AttemptOutcome
+	16, // 19: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
+	17, // 20: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
+	17, // 21: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
+	19, // 22: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
+	15, // 23: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	8,  // 24: orkstack.v1.TaskAttempt.phases:type_name -> orkstack.v1.PhaseSpan
+	13, // 25: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
+	14, // 26: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
+	14, // 27: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
+	16, // 28: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
+	5,  // 29: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
+	17, // 30: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	17, // 31: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	17, // 32: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	20, // 33: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
+	11, // 34: orkstack.v1.Run.origin:type_name -> orkstack.v1.RunOrigin
+	3,  // 35: orkstack.v1.RunOrigin.kind:type_name -> orkstack.v1.RunOriginKind
+	4,  // 36: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
+	13, // 37: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
+	14, // 38: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
+	17, // 39: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
+	40, // [40:40] is the sub-list for method output_type
+	40, // [40:40] is the sub-list for method input_type
+	40, // [40:40] is the sub-list for extension type_name
+	40, // [40:40] is the sub-list for extension extendee
+	0,  // [0:40] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }
@@ -1433,8 +1730,8 @@ func file_orkstack_v1_run_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_run_proto_rawDesc), len(file_orkstack_v1_run_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   6,
+			NumEnums:      5,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/run.proto.
  */
 export const file_orkstack_v1_run: GenFile = /*@__PURE__*/
-  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIt8ECgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgtyZXRyeV9zdGF0ZRgPIAEoDjIXLm9ya3N0YWNrLnYxLlJldHJ5U3RhdGUSCwoDcGluGBAgASgJEhAKCG9ya2VyX2lkGBEgASgJEjAKDHNjaGVkdWxlZF9hdBgSIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBKBAgCEANSBnBsdWdpbiJ7CglQaGFzZVNwYW4SDQoFcGhhc2UYASABKAkSLgoKc3RhcnRlZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIvcDCgtUYXNrQXR0ZW1wdBIWCg5zY2hlbWFfdmVyc2lvbhgBIAEoBRIOCgZydW5faWQYAiABKAkSDwoHdGFza19pZBgDIAEoCRIPCgdhdHRlbXB0GAQgASgFEiwKB291dGNvbWUYBSABKA4yGy5vcmtzdGFjay52MS5BdHRlbXB0T3V0Y29tZRIhCgVlcnJvchgGIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEhEKCWV4aXRfY29kZRgHIAEoBRIuCgpzdGFydGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIb3JrZXJfaWQYCiABKAkSDAoEcG9vbBgLIAEoCRINCgVwaGFzZRgMIAEoCRIkCgVpbWFnZRgNIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIWCg5jb21taXRfYWRvcHRlZBgPIAEoCBIQCghidWlsZF9pZBgQIAEoCRImCgZwaGFzZXMYESADKAsyFi5vcmtzdGFjay52MS5QaGFzZVNwYW4inwQKA1J1bhIKCgJpZBgBIAEoCRIUCgxvcmtmbG93X25hbWUYAiABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAMgASgJEiMKBnN0YXR1cxgEIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIjCgVpbnB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSJAoGb3V0cHV0GAYgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEicKCXRhc2tfcnVucxgIIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SLgoKY3JlYXRlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgMIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GA0gASgJEjIKCXRlbGVtZXRyeRgOIAEoCzIfLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVNlbGVjdGlvbhImCgZvcmlnaW4YDyABKAsyFi5vcmtzdGFjay52MS5SdW5PcmlnaW4ifAoJUnVuT3JpZ2luEigKBGtpbmQYASABKA4yGi5vcmtzdGFjay52MS5SdW5PcmlnaW5LaW5kEgoKAmlkGAIgASgJEhEKCXJlZmVyZW5jZRgDIAEoCRITCgtkZXNjcmlwdGlvbhgEIAEoCRIRCglwcmluY2lwYWwYBSABKAki6QEKBUV2ZW50Eg4KBnJ1bl9pZBgBIAEoCRIQCghzZXF1ZW5jZRgCIAEoAxIkCgR0eXBlGAMgASgOMhYub3Jrc3RhY2sudjEuRXZlbnRUeXBlEg8KB3Rhc2tfaWQYBCABKAkSIwoGc3RhdHVzGAUgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB21lc3NhZ2UYBiABKAkSIgoEZGF0YRgHIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSLQoJdGltZXN0YW1wGAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCqqAQoOQXR0ZW1wdE91dGNvbWUSHwobQVRURU1QVF9PVVRDT01FX1VOU1BFQ0lGSUVEEAASHQoZQVRURU1QVF9PVVRDT01FX1NVQ0NFRURFRBABEhoKFkFUVEVNUFRfT1VUQ09NRV9GQUlMRUQQAhIcChhBVFRFTVBUX09VVENPTUVfQ0FOQ0VMRUQQAxIeChpBVFRFTVBUX09VVENPTUVfVU5SRVBPUlRFRBAEKoICCgpSZXRyeVN0YXRlEhsKF1JFVFJZX1NUQVRFX1VOU1BFQ0lGSUVEEAASJQohUkVUUllfU1RBVEVfTk9OX1JFVFJZQUJMRV9GQUlMVVJFEAESFwoTUkVUUllfU1RBVEVfVElNRU9VVBACEigKJFJFVFJZX1NUQVRFX01BWElNVU1fQVRURU1QVFNfUkVBQ0hFRBADEiQKIFJFVFJZX1NUQVRFX1JFVFJZX1BPTElDWV9OT1RfU0VUEAQSIAocUkVUUllfU1RBVEVfQ0FOQ0VMX1JFUVVFU1RFRBAFEiUKIVJFVFJZX1NUQVRFX0lOVEVSTkFMX1NFUlZFUl9FUlJPUhAGKsYBCg1SdW5PcmlnaW5LaW5kEh8KG1JVTl9PUklHSU5fS0lORF9VTlNQRUNJRklFRBAAEhoKFlJVTl9PUklHSU5fS0lORF9TVUJNSVQQARIbChdSVU5fT1JJR0lOX0tJTkRfVFJJR0dFUhACEhwKGFJVTl9PUklHSU5fS0lORF9TQ0hFRFVMRRADEh4KGlJVTl9PUklHSU5fS0lORF9QQVJFTlRfUlVOEAQSHQoZUlVOX09SSUdJTl9LSU5EX1JVTl9BR0FJThAFKsUCCglFdmVudFR5cGUSGgoWRVZFTlRfVFlQRV9VTlNQRUNJRklFRBAAEhoKFkVWRU5UX1RZUEVfUlVOX0NSRUFURUQQARIaChZFVkVOVF9UWVBFX1JVTl9TVEFSVEVEEAISHQoZRVZFTlRfVFlQRV9UQVNLX1NDSEVEVUxFRBADEhsKF0VWRU5UX1RZUEVfVEFTS19TVEFSVEVEEAQSFwoTRVZFTlRfVFlQRV9UQVNLX0xPRxAFEh0KGUVWRU5UX1RZUEVfVEFTS19TVUNDRUVERUQQBhIaChZFVkVOVF9UWVBFX1RBU0tfRkFJTEVEEAcSHAoYRVZFTlRfVFlQRV9SVU5fU1VDQ0VFREVEEAgSGQoVRVZFTlRfVFlQRV9SVU5fRkFJTEVEEAkSGwoXRVZFTlRfVFlQRV9SVU5fQ0FOQ0VMRUQQCkKkAQoPY29tLm9ya3N0YWNrLnYxQghSdW5Qcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
+  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIoYFCgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgtyZXRyeV9zdGF0ZRgPIAEoDjIXLm9ya3N0YWNrLnYxLlJldHJ5U3RhdGUSCwoDcGluGBAgASgJEhAKCG9ya2VyX2lkGBEgASgJEjAKDHNjaGVkdWxlZF9hdBgSIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASJQoFYXdhaXQYEyABKAsyFi5vcmtzdGFjay52MS5UYXNrQXdhaXRKBAgCEANSBnBsdWdpbiKVAQoJVGFza0F3YWl0EhAKCGNhbGxiYWNrGAEgASgIEiwKCGRlYWRsaW5lGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIzCgxyZXNvbHZlZF92aWEYAyABKA4yHS5vcmtzdGFjay52MS5Bd2FpdFJlc29sdmVkVmlhEhMKC3Jlc29sdmVkX2J5GAQgASgJIrwBCgtBd2FpdFNpZ25hbBIPCgd0YXNrX2lkGAEgASgJEg4KBnJlamVjdBgCIAEoCBIOCgZyZWFzb24YAyABKAkSKAoGdmFsdWVzGAQgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSEwoLdmFsdWVzX2pzb24YBSABKAwSKgoDdmlhGAYgASgOMh0ub3Jrc3RhY2sudjEuQXdhaXRSZXNvbHZlZFZpYRIRCglwcmluY2lwYWwYByABKAkiewoJUGhhc2VTcGFuEg0KBXBoYXNlGAEgASgJEi4KCnN0YXJ0ZWRfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCL3AwoLVGFza0F0dGVtcHQSFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSDgoGcnVuX2lkGAIgASgJEg8KB3Rhc2tfaWQYAyABKAkSDwoHYXR0ZW1wdBgEIAEoBRIsCgdvdXRjb21lGAUgASgOMhsub3Jrc3RhY2sudjEuQXR0ZW1wdE91dGNvbWUSIQoFZXJyb3IYBiABKAsyEi5vcmtzdGFjay52MS5FcnJvchIRCglleGl0X2NvZGUYByABKAUSLgoKc3RhcnRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCG9ya2VyX2lkGAogASgJEgwKBHBvb2wYCyABKAkSDQoFcGhhc2UYDCABKAkSJAoFaW1hZ2UYDSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIyChBzeXN0ZW1fYXJ0aWZhY3RzGA4gAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSFgoOY29tbWl0X2Fkb3B0ZWQYDyABKAgSEAoIYnVpbGRfaWQYECABKAkSJgoGcGhhc2VzGBEgAygLMhYub3Jrc3RhY2sudjEuUGhhc2VTcGFuIp8ECgNSdW4SCgoCaWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIjCgZzdGF0dXMYBCABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSIwoFaW5wdXQYBSABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEiQKBm91dHB1dBgGIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchInCgl0YXNrX3J1bnMYCCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEi4KCmNyZWF0ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnN0YXJ0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYDCABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgNIAEoCRIyCgl0ZWxlbWV0cnkYDiABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJgoGb3JpZ2luGA8gASgLMhYub3Jrc3RhY2sudjEuUnVuT3JpZ2luInwKCVJ1bk9yaWdpbhIoCgRraW5kGAEgASgOMhoub3Jrc3RhY2sudjEuUnVuT3JpZ2luS2luZBIKCgJpZBgCIAEoCRIRCglyZWZlcmVuY2UYAyABKAkSEwoLZGVzY3JpcHRpb24YBCABKAkSEQoJcHJpbmNpcGFsGAUgASgJIukBCgVFdmVudBIOCgZydW5faWQYASABKAkSEAoIc2VxdWVuY2UYAiABKAMSJAoEdHlwZRgDIAEoDjIWLm9ya3N0YWNrLnYxLkV2ZW50VHlwZRIPCgd0YXNrX2lkGAQgASgJEiMKBnN0YXR1cxgFIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdtZXNzYWdlGAYgASgJEiIKBGRhdGEYByABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEi0KCXRpbWVzdGFtcBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqcwoQQXdhaXRSZXNvbHZlZFZpYRIiCh5BV0FJVF9SRVNPTFZFRF9WSUFfVU5TUEVDSUZJRUQQABIaChZBV0FJVF9SRVNPTFZFRF9WSUFfQVBJEAESHwobQVdBSVRfUkVTT0xWRURfVklBX0NBTExCQUNLEAIqqgEKDkF0dGVtcHRPdXRjb21lEh8KG0FUVEVNUFRfT1VUQ09NRV9VTlNQRUNJRklFRBAAEh0KGUFUVEVNUFRfT1VUQ09NRV9TVUNDRUVERUQQARIaChZBVFRFTVBUX09VVENPTUVfRkFJTEVEEAISHAoYQVRURU1QVF9PVVRDT01FX0NBTkNFTEVEEAMSHgoaQVRURU1QVF9PVVRDT01FX1VOUkVQT1JURUQQBCqCAgoKUmV0cnlTdGF0ZRIbChdSRVRSWV9TVEFURV9VTlNQRUNJRklFRBAAEiUKIVJFVFJZX1NUQVRFX05PTl9SRVRSWUFCTEVfRkFJTFVSRRABEhcKE1JFVFJZX1NUQVRFX1RJTUVPVVQQAhIoCiRSRVRSWV9TVEFURV9NQVhJTVVNX0FUVEVNUFRTX1JFQUNIRUQQAxIkCiBSRVRSWV9TVEFURV9SRVRSWV9QT0xJQ1lfTk9UX1NFVBAEEiAKHFJFVFJZX1NUQVRFX0NBTkNFTF9SRVFVRVNURUQQBRIlCiFSRVRSWV9TVEFURV9JTlRFUk5BTF9TRVJWRVJfRVJST1IQBirGAQoNUnVuT3JpZ2luS2luZBIfChtSVU5fT1JJR0lOX0tJTkRfVU5TUEVDSUZJRUQQABIaChZSVU5fT1JJR0lOX0tJTkRfU1VCTUlUEAESGwoXUlVOX09SSUdJTl9LSU5EX1RSSUdHRVIQAhIcChhSVU5fT1JJR0lOX0tJTkRfU0NIRURVTEUQAxIeChpSVU5fT1JJR0lOX0tJTkRfUEFSRU5UX1JVThAEEh0KGVJVTl9PUklHSU5fS0lORF9SVU5fQUdBSU4QBSqBAwoJRXZlbnRUeXBlEhoKFkVWRU5UX1RZUEVfVU5TUEVDSUZJRUQQABIaChZFVkVOVF9UWVBFX1JVTl9DUkVBVEVEEAESGgoWRVZFTlRfVFlQRV9SVU5fU1RBUlRFRBACEh0KGUVWRU5UX1RZUEVfVEFTS19TQ0hFRFVMRUQQAxIbChdFVkVOVF9UWVBFX1RBU0tfU1RBUlRFRBAEEhcKE0VWRU5UX1RZUEVfVEFTS19MT0cQBRIdChlFVkVOVF9UWVBFX1RBU0tfU1VDQ0VFREVEEAYSGgoWRVZFTlRfVFlQRV9UQVNLX0ZBSUxFRBAHEhwKGEVWRU5UX1RZUEVfUlVOX1NVQ0NFRURFRBAIEhkKFUVWRU5UX1RZUEVfUlVOX0ZBSUxFRBAJEhsKF0VWRU5UX1RZUEVfUlVOX0NBTkNFTEVEEAoSHAoYRVZFTlRfVFlQRV9UQVNLX0FXQUlUSU5HEAsSHAoYRVZFTlRfVFlQRV9UQVNLX1JFU09MVkVEEAxCpAEKD2NvbS5vcmtzdGFjay52MUIIUnVuUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
 
 /**
  * TaskRun is the execution record of a single Task within a Run.
@@ -78,6 +78,9 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    *
    * Before this field's meaning was corrected it held the dispatch instant;
    * scheduled_at (18) holds that now.
+   *
+   * For an awaited task, both are the instant the task started awaiting, on
+   * the workflow's clock: it is never queued and no Orker reports on it.
    *
    * @generated from field: google.protobuf.Timestamp started_at = 8;
    */
@@ -196,9 +199,20 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    * started_at set (it held the dispatch instant then) and scheduled_at
    * unset; a never-scheduled task has neither.
    *
+   * For an awaited task, both are the instant the task started awaiting, on
+   * the workflow's clock: it is never queued and no Orker reports on it.
+   *
    * @generated from field: google.protobuf.Timestamp scheduled_at = 18;
    */
   scheduledAt?: Timestamp | undefined;
+
+  /**
+   * await is this task's await state, set for a task whose definition
+   * declares `await:` and unset otherwise (see TaskAwait).
+   *
+   * @generated from field: orkstack.v1.TaskAwait await = 19;
+   */
+  await?: TaskAwait | undefined;
 };
 
 /**
@@ -207,6 +221,119 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
  */
 export const TaskRunSchema: GenMessage<TaskRun> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_run, 0);
+
+/**
+ * TaskAwait is an awaited task's own state on the run snapshot. It is SET for
+ * every task whose definition declares `await:` — from the run's first
+ * snapshot, while the task is still PENDING — and UNSET for every other
+ * task, so a snapshot of a run with no await is byte-identical to what it was
+ * before this message existed. Its presence is how a client tells an awaited
+ * task from a container task without reading the definition.
+ *
+ * @generated from message orkstack.v1.TaskAwait
+ */
+export type TaskAwait = Message<"orkstack.v1.TaskAwait"> & {
+  /**
+   * callback mirrors AwaitSpec.callback: whether a callback token was minted.
+   *
+   * @generated from field: bool callback = 1;
+   */
+  callback: boolean;
+
+  /**
+   * deadline is when the await times out, on the workflow's clock. Unset
+   * until the task starts awaiting.
+   *
+   * @generated from field: google.protobuf.Timestamp deadline = 2;
+   */
+  deadline?: Timestamp | undefined;
+
+  /**
+   * resolved_via and resolved_by are set when a resolution was APPLIED —
+   * completed or rejected — and never for a timeout or a cancellation.
+   *
+   * @generated from field: orkstack.v1.AwaitResolvedVia resolved_via = 3;
+   */
+  resolvedVia: AwaitResolvedVia;
+
+  /**
+   * resolved_by is the Ork-Principal assertion on the resolving request,
+   * bounded to 256 bytes: recorded as asserted and NEVER authenticated, the
+   * word control-plane-audit-trail and run-origin use. Empty when none was
+   * sent.
+   *
+   * @generated from field: string resolved_by = 4;
+   */
+  resolvedBy: string;
+};
+
+/**
+ * Describes the message orkstack.v1.TaskAwait.
+ * Use `create(TaskAwaitSchema)` to create a new message.
+ */
+export const TaskAwaitSchema: GenMessage<TaskAwait> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 1);
+
+/**
+ * AwaitSignal is ENGINE-INTERNAL: the argument of the Temporal Signal that
+ * resolves an awaited task. Only internal/api sends it and only RunWorkflow
+ * reads it; no client surface renders it. It carries references and at most
+ * 4 KiB of inline bytes — never a values body above that (AGENTS.md §2.2).
+ *
+ * @generated from message orkstack.v1.AwaitSignal
+ */
+export type AwaitSignal = Message<"orkstack.v1.AwaitSignal"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * reject true is a rejection with reason; false is a completion with values.
+   *
+   * @generated from field: bool reject = 2;
+   */
+  reject: boolean;
+
+  /**
+   * @generated from field: string reason = 3;
+   */
+  reason: string;
+
+  /**
+   * values is the stored values.json of a completion, written by the door
+   * BEFORE the signal was sent. Unset for a rejection.
+   *
+   * @generated from field: orkstack.v1.ArtifactRef values = 4;
+   */
+  values?: ArtifactRef | undefined;
+
+  /**
+   * values_json is values' exact bytes when they are at most 4096 bytes, as
+   * ExecuteTaskResult.values_json is (activity.proto: the same bound, the same
+   * reason, and bytes rather than a Struct for the same reason). Empty above it.
+   *
+   * @generated from field: bytes values_json = 5;
+   */
+  valuesJson: Uint8Array;
+
+  /**
+   * @generated from field: orkstack.v1.AwaitResolvedVia via = 6;
+   */
+  via: AwaitResolvedVia;
+
+  /**
+   * @generated from field: string principal = 7;
+   */
+  principal: string;
+};
+
+/**
+ * Describes the message orkstack.v1.AwaitSignal.
+ * Use `create(AwaitSignalSchema)` to create a new message.
+ */
+export const AwaitSignalSchema: GenMessage<AwaitSignal> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 2);
 
 /**
  * PhaseSpan is one §7.1 phase of one attempt, on the Orker's clock. Spans
@@ -246,7 +373,7 @@ export type PhaseSpan = Message<"orkstack.v1.PhaseSpan"> & {
  * Use `create(PhaseSpanSchema)` to create a new message.
  */
 export const PhaseSpanSchema: GenMessage<PhaseSpan> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 1);
+  messageDesc(file_orkstack_v1_run, 3);
 
 /**
  * TaskAttempt is the immutable record of ONE Temporal attempt of one task,
@@ -395,7 +522,7 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
  * Use `create(TaskAttemptSchema)` to create a new message.
  */
 export const TaskAttemptSchema: GenMessage<TaskAttempt> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 2);
+  messageDesc(file_orkstack_v1_run, 4);
 
 /**
  * Run is one execution of an Orkflow.
@@ -505,7 +632,7 @@ export type Run = Message<"orkstack.v1.Run"> & {
  * Use `create(RunSchema)` to create a new message.
  */
 export const RunSchema: GenMessage<Run> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 3);
+  messageDesc(file_orkstack_v1_run, 5);
 
 /**
  * RunOrigin is the immutable record of what started a run. It is decided
@@ -578,7 +705,7 @@ export type RunOrigin = Message<"orkstack.v1.RunOrigin"> & {
  * Use `create(RunOriginSchema)` to create a new message.
  */
 export const RunOriginSchema: GenMessage<RunOrigin> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 4);
+  messageDesc(file_orkstack_v1_run, 6);
 
 /**
  * Event is a single realtime update for a run, delivered over the
@@ -641,7 +768,40 @@ export type Event = Message<"orkstack.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 5);
+  messageDesc(file_orkstack_v1_run, 7);
+
+/**
+ * AwaitResolvedVia names the door an await's resolution came through.
+ *
+ * @generated from enum orkstack.v1.AwaitResolvedVia
+ */
+export enum AwaitResolvedVia {
+  /**
+   * @generated from enum value: AWAIT_RESOLVED_VIA_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * API: RunService.ResolveAwait — orkctl, the UI, or another Connect client.
+   *
+   * @generated from enum value: AWAIT_RESOLVED_VIA_API = 1;
+   */
+  API = 1,
+
+  /**
+   * CALLBACK: the plain-HTTP callback door, authenticated by the await's
+   * callback token.
+   *
+   * @generated from enum value: AWAIT_RESOLVED_VIA_CALLBACK = 2;
+   */
+  CALLBACK = 2,
+}
+
+/**
+ * Describes the enum orkstack.v1.AwaitResolvedVia.
+ */
+export const AwaitResolvedViaSchema: GenEnum<AwaitResolvedVia> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_run, 0);
 
 /**
  * AttemptOutcome is how one Temporal attempt of a task ended.
@@ -689,7 +849,7 @@ export enum AttemptOutcome {
  * Describes the enum orkstack.v1.AttemptOutcome.
  */
 export const AttemptOutcomeSchema: GenEnum<AttemptOutcome> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 0);
+  enumDesc(file_orkstack_v1_run, 1);
 
 /**
  * RetryState is why Temporal stopped retrying a task. It mirrors
@@ -744,7 +904,7 @@ export enum RetryState {
  * Describes the enum orkstack.v1.RetryState.
  */
 export const RetryStateSchema: GenEnum<RetryState> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 1);
+  enumDesc(file_orkstack_v1_run, 2);
 
 /**
  * RunOriginKind is WHAT started a run. It is decided by the process that
@@ -813,7 +973,7 @@ export enum RunOriginKind {
  * Describes the enum orkstack.v1.RunOriginKind.
  */
 export const RunOriginKindSchema: GenEnum<RunOriginKind> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 2);
+  enumDesc(file_orkstack_v1_run, 3);
 
 /**
  * EventType classifies a run event on the realtime stream.
@@ -875,11 +1035,30 @@ export enum EventType {
    * @generated from enum value: EVENT_TYPE_RUN_CANCELED = 10;
    */
   RUN_CANCELED = 10,
+
+  /**
+   * TASK_AWAITING: an awaited task started waiting. Status AWAITING; the
+   * message names the deadline.
+   *
+   * @generated from enum value: EVENT_TYPE_TASK_AWAITING = 11;
+   */
+  TASK_AWAITING = 11,
+
+  /**
+   * TASK_RESOLVED: an awaited task was resolved from outside the run. Status
+   * is the outcome it decided — SUCCEEDED for a completion, FAILED for a
+   * rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same
+   * status, so a reader that only knows the older task events still sees the
+   * task end.
+   *
+   * @generated from enum value: EVENT_TYPE_TASK_RESOLVED = 12;
+   */
+  TASK_RESOLVED = 12,
 }
 
 /**
  * Describes the enum orkstack.v1.EventType.
  */
 export const EventTypeSchema: GenEnum<EventType> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 3);
+  enumDesc(file_orkstack_v1_run, 4);
 
