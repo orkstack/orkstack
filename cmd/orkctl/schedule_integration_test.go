@@ -353,6 +353,31 @@ func (s *scheduleStack) awaitRunStatus(t *testing.T, runID string, within time.D
 	return last
 }
 
+// awaitNextFireSecond returns once the wall clock is past the second that
+// names run's fire. Temporal appends a fire's nominal time, truncated to the
+// second, to the fire workflow's id, and `schedule fire` takes "now" as that
+// nominal time. A second fire in the same second therefore collides with the
+// first fire's still-running workflow and the cluster starts nothing for it —
+// no run, no refusal, no counter (reproduced with `temporal schedule trigger`
+// twice in one second: one action, actionCount 1). A test that means two
+// fires must send the second one in a later second. The cluster runs on this
+// host's clock, and it takes the nominal time when it handles the request,
+// never before it is sent.
+func (s *scheduleStack) awaitNextFireSecond(t *testing.T, run runRow) {
+	t.Helper()
+	nominal, err := time.Parse(time.RFC3339, run.Origin.Reference)
+	if err != nil {
+		t.Fatalf("run %s reference %q: %v", run.ID, run.Origin.Reference, err)
+	}
+	next := nominal.Truncate(time.Second).Add(time.Second)
+	if wait := time.Until(next); wait > 0 {
+		// A clock boundary, not synchronisation: nothing else can make the
+		// second pass sooner. Bounded by one second by construction.
+		time.Sleep(wait)
+	}
+	fmt.Fprintf(&s.transcript, "# next fire after %s's nominal second %s\n\n", run.ID, nominal.Format(time.RFC3339))
+}
+
 // awaitRuns polls the runs a schedule started until want reports true.
 func (s *scheduleStack) awaitRuns(t *testing.T, scheduleID string, within time.Duration, want func([]runRow) bool) []runRow {
 	t.Helper()
@@ -731,7 +756,11 @@ func TestIntegration_ScheduleOverlapAllowAll(t *testing.T) {
 		engine.TemporalScheduleID(s.namespace, "nightly"), described.Schedule.Policy.Overlap)
 
 	s.cli(t, s.a, exitOK, "schedule", "fire", "nightly")
-	s.awaitRuns(t, id, 90*time.Second, func(r []runRow) bool { return len(r) == 1 })
+	first := s.awaitRuns(t, id, 90*time.Second, func(r []runRow) bool { return len(r) == 1 })[0]
+	// The second fire must be a second fire to the cluster: Temporal names a
+	// fire's workflow by its nominal SECOND, so a fire in the same second as
+	// a still-running one is the same fire and starts nothing.
+	s.awaitNextFireSecond(t, s.run(t, s.a, first.ID))
 	s.cli(t, s.a, exitOK, "schedule", "fire", "nightly")
 	both := s.awaitRuns(t, id, 90*time.Second, func(r []runRow) bool {
 		return len(r) == 2 && r[0].Status == "RUNNING" && r[1].Status == "RUNNING"
