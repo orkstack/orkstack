@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -71,6 +72,9 @@ type registerWebhookRequest struct {
 	Namespace   string `json:"namespace,omitempty"`
 	OrkflowName string `json:"orkflowName,omitempty"`
 	TaskID      string `json:"taskId,omitempty"`
+	// Name is the subscription's optional handle, spelled as the envelope a
+	// GET returns spells it. It requires a namespace (webhooks.ValidateName).
+	Name string `json:"name,omitempty"`
 }
 
 // NewWebhookHandler serves webhook registration, listing and deletion against
@@ -141,7 +145,7 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 			fmt.Sprintf("decode request body: %v", err))
 		return entry
 	}
-	entry.Detail = webhookAuditDetail(body.URL, body.Events, body.Namespace, body.OrkflowName, body.TaskID)
+	entry.Detail = webhookAuditDetail(body.URL, body.Events, body.Namespace, body.OrkflowName, body.TaskID) + auditNameSuffix(body.Name)
 	events := make([]webhooks.Event, 0, len(body.Events))
 	for _, raw := range body.Events {
 		event, err := webhooks.ParseEvent(raw)
@@ -159,6 +163,10 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 		writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return entry
 	}
+	if err := webhooks.ValidateName(body.Name, body.Namespace); err != nil {
+		writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
+		return entry
+	}
 	hook, err := registry.RegisterContext(r.Context(), webhooks.Registration{
 		URL:         body.URL,
 		Events:      events,
@@ -166,7 +174,12 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 		Namespace:   body.Namespace,
 		OrkflowName: body.OrkflowName,
 		TaskID:      body.TaskID,
+		Name:        body.Name,
 	})
+	if errors.Is(err, webhooks.ErrNameTaken) {
+		writeWebhookError(w, http.StatusConflict, "already_exists", webhookNameTaken(body.Name, body.Namespace).Error())
+		return entry
+	}
 	if err != nil {
 		writeWebhookError(w, http.StatusInternalServerError, "storage_error", err.Error())
 		return entry

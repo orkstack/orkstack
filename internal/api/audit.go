@@ -234,12 +234,42 @@ var auditedProcedures = map[string]auditExtractor{
 		entry := auditEntry{
 			Action: "webhook.register",
 			Target: auditNoTarget,
-			Detail: webhookAuditDetail(in.GetUrl(), names, in.GetNamespace(), in.GetOrkflowName(), in.GetTaskId()),
+			Detail: webhookAuditDetail(in.GetUrl(), names, in.GetNamespace(), in.GetOrkflowName(), in.GetTaskId()) +
+				auditNameSuffix(in.GetName()),
 		}
 		if out, ok := resp.(*orkstackv1.RegisterWebhookResponse); ok && out != nil && out.GetWebhook().GetId() != "" {
 			entry.Target = out.GetWebhook().GetId()
 		}
 		return entry
+	},
+	orkstackv1connect.WebhookServiceUpdateWebhookProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UpdateWebhookRequest)
+		// Deployment-wide, as webhook.register is. The request carries no
+		// secret, and none could reach this detail.
+		names := make([]string, 0, len(in.GetEvents()))
+		for _, event := range in.GetEvents() {
+			names = append(names, strings.TrimPrefix(event.String(), "EVENT_TYPE_"))
+		}
+		events := "all"
+		if len(names) > 0 {
+			events = "[" + strings.Join(names, " ") + "]"
+		}
+		shown := in.GetUrl()
+		if parsed, err := url.Parse(shown); err == nil {
+			shown = parsed.Redacted()
+		}
+		part := func(value string) string {
+			if value == "" {
+				return "*"
+			}
+			return value
+		}
+		return auditEntry{
+			Action: "webhook.update",
+			Target: in.GetId(),
+			Detail: fmt.Sprintf("name=%s url=%s events=%s scope=%s/%s/%s", in.GetName(), shown, events,
+				part(in.GetNamespace()), part(in.GetOrkflowName()), part(in.GetTaskId())),
+		}
 	},
 	orkstackv1connect.WebhookServiceDeleteWebhookProcedure: func(req, _ proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.DeleteWebhookRequest)
@@ -277,10 +307,25 @@ var auditedProcedures = map[string]auditExtractor{
 		if description := in.GetDescription(); description != "" {
 			entry.Detail += fmt.Sprintf(" description=%q", description)
 		}
+		entry.Detail += auditNameSuffix(in.GetName())
 		if out, ok := resp.(*orkstackv1.CreateTriggerResponse); ok && out != nil && out.GetTrigger().GetId() != "" {
 			entry.Target = out.GetTrigger().GetId()
 		}
 		return entry
+	},
+	orkstackv1connect.TriggerServiceUpdateTriggerProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UpdateTriggerRequest)
+		version := in.GetOrkflowVersion()
+		if version == "" {
+			version = "current"
+		}
+		// The request carries no token; an update never re-issues one.
+		return auditEntry{
+			Action:    "trigger.update",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetId(),
+			Detail:    fmt.Sprintf("name=%s %s description=%q", in.GetName(), version, in.GetDescription()),
+		}
 	},
 	orkstackv1connect.TriggerServiceDeleteTriggerProcedure: func(req, _ proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.DeleteTriggerRequest)
@@ -438,6 +483,15 @@ var auditedProcedures = map[string]auditExtractor{
 // reason a reader will look for. Adding a name here is a contract decision.
 var unauditedWrites = map[string]string{
 	orkstackv1connect.RunServiceSubmitRunProcedure: "a run's own record is the durable fact; provenance is run-origin's",
+}
+
+// auditNameSuffix is the " name=NAME" a create or register detail gains when
+// the object was given a name, and nothing otherwise.
+func auditNameSuffix(name string) string {
+	if name == "" {
+		return ""
+	}
+	return " name=" + name
 }
 
 // webhookAuditDetail renders a registration's detail from the fields that are

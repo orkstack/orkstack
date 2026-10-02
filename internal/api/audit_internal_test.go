@@ -55,6 +55,11 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure: true,
 	orkstackv1connect.StatsServiceGetFlakeIndexProcedure:       true,
 	orkstackv1connect.AuditServiceListAuditRecordsProcedure:    true,
+	// PlanAutomation and ExportAutomation write nothing, ever
+	// (declarative-automation §7): an apply is the client sending the plan's
+	// requests to the audited write RPCs, each recorded under its own action.
+	orkstackv1connect.AutomationServicePlanAutomationProcedure:   true,
+	orkstackv1connect.AutomationServiceExportAutomationProcedure: true,
 }
 
 // auditStreamingReads is every streaming RPC. The audit interceptor is unary
@@ -69,8 +74,10 @@ var auditStreamingReads = map[string]bool{
 // Plan is a read verb: PlanRun simulates a definition and writes nothing
 // (docs/design/proposals/phase-3/run-plan, "Reads only"). Inspect is the verb
 // of InspectRun (a live describe) and InspectActivity (an on-demand registry
-// read, activity-interface-manifests §5.4); both write nothing.
-var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect"}
+// read, activity-interface-manifests §5.4); both write nothing. Export is the
+// verb of ExportAutomation, which renders a namespace as a document and writes
+// nothing (declarative-automation §7.3).
+var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file
 // registry and returns each method's procedure and whether it streams.
