@@ -1106,6 +1106,11 @@ type submission struct {
 	// the pending run into the response, the claim and a failed start's
 	// archive record.
 	origin *orkstackv1.RunOrigin
+	// callbacks are the plaintext callback tokens minted for this
+	// submission's `callback: true` awaits, held in memory only until the
+	// response that starts the run discloses them. Only their salted digests
+	// ride the plan.
+	callbacks []awaitCallbackSecret
 }
 
 // claimKey is the coordinate one idempotency key occupies: the caller's key,
@@ -1259,7 +1264,17 @@ func (s *Service) prepare(
 	// door that accepted the submission is the only thing that knows it, and
 	// workflow code may not ask.
 	plan.Origin = engine.OriginFromProto(origin)
+	// Callback tokens are minted LAST, after every refusal prepare makes, so
+	// a refused submission mints nothing. Only the salted digests ride the
+	// plan; the plaintexts stay in this submission until the one response
+	// that starts the run.
+	callbacks, err := mintAwaitCallbacks(planned, &plan)
+	if err != nil {
+		return submission{}, connect.NewError(connect.CodeInternal,
+			fmt.Errorf("mint await callback tokens: %w", err))
+	}
 	return submission{
+		callbacks: callbacks,
 		binding:   binding,
 		wf:        planned,
 		input:     engine.ApplyInputDefaults(planned, msg.GetInput()),
@@ -1498,7 +1513,15 @@ func (s *Service) startPreparedRun(
 			// is already executing — and answer PENDING or RUNNING depending
 			// on which won. What a submission has to report is what it
 			// submitted; everything after that is a read.
-			return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
+			//
+			// The callback tokens are disclosed here and nowhere else, with
+			// paths built from the FINAL run id, so a reissued id discloses
+			// paths that work: the plan, and every digest, is the same
+			// across the reissue.
+			return connect.NewResponse(&orkstackv1.SubmitRunResponse{
+				Run:            run,
+				AwaitCallbacks: awaitCallbacksFor(runID, sub.callbacks),
+			}), nil
 		}
 		if errors.Is(err, engine.ErrRunIDTaken) && attempt == 0 {
 			next, reissueErr := s.reissueRunID(ctx, run, sub)
@@ -1793,6 +1816,10 @@ func (s *Service) ListRuns(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ListRunsRequest],
 ) (*connect.Response[orkstackv1.ListRunsResponse], error) {
+	if req.Msg.GetStatus() == orkstackv1.Status_STATUS_AWAITING {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"AWAITING is a task status; a run whose task is awaiting is RUNNING"))
+	}
 	size := int(req.Msg.GetPageSize())
 	if size < 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("page_size cannot be negative"))

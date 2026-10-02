@@ -35,3 +35,38 @@ code agrees with itself, which is the one thing this guard exists not to be.
 activity — the command stream or an activity's input — genuinely changed, and
 never to turn a red test green (AGENTS.md §7.2). The commit that re-records it
 says why.
+
+## The awaited-run fixtures
+
+`run-awaited-resolved-v1.json` and `run-awaited-timeout-v1.json` hold the
+await path still: the first Timer and the first Signal `RunWorkflow` ever
+issued (`docs/DSL.md` "Awaited tasks"). Each is a real history of the run
+`a → await b → c`, recorded once by a **versioned** worker against a real
+cluster — the first completed through a resolution delivered with
+`TemporalStarter.SignalAwait`, the second left to time out after two seconds.
+Three tests hold the tree to them on every `make test`:
+
+- `TestRunWorkflow_ReplaysCommittedAwaitedHistories` — the command half, for
+  both files.
+- `TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the payload
+  half: the resolved fixture re-executed from its own input, with its own
+  activity results and its own recorded resolution fed back.
+- `TestAwaitedHistory_CatchesAMovedTimer` — the replay of the resolved fixture
+  against a body that starts the deadline timer after the `TASK_AWAITING`
+  emit instead of before it, which must fail.
+
+Until both files are committed those tests skip and name the command that
+records them (set `ORK_REQUIRE_AWAITED_FIXTURES=1` to make their absence a
+failure). Nothing writes them except `TestIntegration_RecordAwaitedRunHistories`
+(`internal/engine/await_integration_test.go`), and only when asked:
+
+```bash
+ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
+  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
+  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
+  -run TestIntegration_RecordAwaitedRunHistories
+```
+
+The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
+re-recorded only when the await path's command stream or payloads genuinely
+change, with a commit that says so.

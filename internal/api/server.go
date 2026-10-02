@@ -101,6 +101,13 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	// job, a cron host, one curl line — starts a run without a Connect client.
 	mux.Handle(TriggerInvokePath, NewTriggerHandler(svc))
 
+	// The callback door: the one other route family meant for callers
+	// outside the operator's boundary. It resolves exactly the callback await
+	// its bearer token was minted for (awaits_http.go).
+	awaitHandler := NewAwaitHandler(svc)
+	mux.Handle(AwaitCompletePath, awaitHandler)
+	mux.Handle(AwaitRejectPath, awaitHandler)
+
 	mux.Handle("/ws/runs/{id}", NewWebSocketBridge(svc, opts.AllowedOrigins))
 	mux.Handle(TaskLogSocketPath, NewTaskLogSocket(svc, opts.AllowedOrigins))
 	return mux

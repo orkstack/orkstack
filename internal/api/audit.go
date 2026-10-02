@@ -225,6 +225,23 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail:    "reason=" + in.GetReason(),
 		}
 	},
+	// The values themselves are never recorded — only their digest — and the
+	// callback door is outside Connect and not audited, on the trigger door's
+	// grounds: its fact is the run's own record (TaskRun.await.resolved_via).
+	orkstackv1connect.RunServiceResolveAwaitProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.ResolveAwaitRequest)
+		entry := auditEntry{
+			Action:    "run.await.resolve",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetRunId() + "/" + in.GetTaskId(),
+		}
+		if in.GetReject() {
+			entry.Detail = fmt.Sprintf("reject reason=%q", in.GetReason())
+		} else if out, ok := resp.(*orkstackv1.ResolveAwaitResponse); ok && out != nil {
+			entry.Detail = "complete values_sha256=" + out.GetValuesSha256()
+		}
+		return entry
+	},
 	orkstackv1connect.WebhookServiceRegisterWebhookProcedure: func(req, resp proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.RegisterWebhookRequest)
 		names := make([]string, 0, len(in.GetEvents()))

@@ -123,7 +123,9 @@ func TestParseEvent_AcceptsTaskOutcomesAndRefusesTaskLog(t *testing.T) {
 func TestKnownEvents_KeepsRunTransitionsInTheirExistingRelativeOrder(t *testing.T) {
 	want := []webhooks.Event{
 		webhooks.EventRunStarted,
-		webhooks.EventTaskScheduled, webhooks.EventTaskStarted, webhooks.EventTaskSucceeded, webhooks.EventTaskFailed,
+		webhooks.EventTaskScheduled, webhooks.EventTaskStarted,
+		webhooks.EventTaskAwaiting, webhooks.EventTaskResolved,
+		webhooks.EventTaskSucceeded, webhooks.EventTaskFailed,
 		webhooks.EventRunSucceeded, webhooks.EventRunFailed, webhooks.EventRunCanceled,
 	}
 	if got := webhooks.KnownEvents(); !equalEvents(got, want) {
@@ -375,4 +377,27 @@ func equalEvents(got, want []webhooks.Event) bool {
 		}
 	}
 	return true
+}
+
+func TestKnownEvents_ListsAwaitEventsInLifecycleOrder(t *testing.T) {
+	known := webhooks.KnownEvents()
+	index := map[webhooks.Event]int{}
+	for i, event := range known {
+		index[event] = i
+	}
+	order := []webhooks.Event{
+		webhooks.EventTaskStarted, webhooks.EventTaskAwaiting, webhooks.EventTaskResolved, webhooks.EventTaskSucceeded,
+	}
+	for i := 1; i < len(order); i++ {
+		a, okA := index[order[i-1]]
+		b, okB := index[order[i]]
+		if !okA || !okB || a >= b {
+			t.Fatalf("KnownEvents() = %v: want %s before %s", known, order[i-1], order[i])
+		}
+	}
+	for _, raw := range []string{"TASK_AWAITING", "event_type_task_resolved"} {
+		if _, err := webhooks.ParseEvent(raw); err != nil {
+			t.Fatalf("ParseEvent(%q): %v", raw, err)
+		}
+	}
 }
