@@ -1,3 +1,4 @@
+import { expect, type Page } from '@playwright/test';
 import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, createWriteStream, mkdirSync } from 'node:fs';
 import net from 'node:net';
@@ -67,6 +68,31 @@ export async function waitFor(
 		if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
 		await new Promise((r) => setTimeout(r, 250));
 	}
+}
+
+// openNamespaceEdit opens Admin → Namespaces' edit form for one namespace and
+// returns once THAT namespace's form is on the page.
+//
+// One click is not always enough, and the page is the reason: it lists every
+// namespace the deployment has — on the shared development store, well over a
+// thousand rows on one very tall page — and a click on one row's Edit that
+// lands anywhere but that row's handler (a lost click, or the row beside it
+// after the table moved) leaves this namespace's form closed. Proof
+// phase-3-merged failed exactly so: the click on `namespace-edit-<ns>`
+// succeeded and `ns-edit-allowed-secrets-<ns>` never appeared. Why that click
+// missed is NOT established: that run kept no trace (playwright.config.ts now
+// keeps a proof's failures), it did not reproduce in repeated runs, and it was
+// not a click before hydration — the Edit handler is attached by the time
+// `goto` returns, measured at 1x, 4x and 8x CPU throttling. So the click is
+// retried until this namespace's form is visible — never once it is, since
+// opening it again would reset what the form captured — and every assertion
+// about the form itself is untouched.
+export async function openNamespaceEdit(page: Page, name: string): Promise<void> {
+	const form = page.getByTestId(`namespace-edit-form-${name}`);
+	await expect(async () => {
+		if (!(await form.isVisible())) await page.getByTestId(`namespace-edit-${name}`).click();
+		await expect(form).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
 }
 
 export function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {

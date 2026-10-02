@@ -96,7 +96,12 @@ as a submitted run is. The fire is not a run and is never listed as one.
 
 A fire takes no idempotency claim: the cluster starts exactly one fire per
 nominal time, and the preparation's result is recorded once in that fire's
-history. Every fire submits with `allow_empty_pool = false`: a pool with no
+history. The cluster names a fire by its nominal time truncated to the
+second, and a manual fire's nominal time is the second the cluster handles
+it. Two `schedule fire`s of one schedule inside the same second, while the
+first one's run still executes, are therefore that one fire: the second starts
+no run and is counted nowhere — not as skipped, not as refused. Fire again in
+a later second to mean a second fire. Every fire submits with `allow_empty_pool = false`: a pool with no
 live Orker refuses the fire loudly rather than starting a run that never
 leaves `PENDING`.
 
