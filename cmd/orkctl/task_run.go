@@ -829,6 +829,8 @@ func (r *taskRunner) dispatch() (err error) {
 		// A local run has no durable result to honor, records no attempt and
 		// streams no chunk anywhere. EnvAllowlist: nil — the caller's
 		// ORK_ORKER_ENV_ALLOWLIST, exactly as an Orker reads it.
+		// Signatures: nil — LocalTaskInput leaves image_policy unset, so the
+		// dispatcher's image-policy step is never entered.
 	})
 	dispatcher := acts.Dispatcher()
 	dispatcher.LogSinkObserver = r.t.line

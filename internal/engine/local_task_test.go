@@ -142,6 +142,10 @@ func parityPlan(wf *orkstackv1.Orkflow) engine.RunPlan {
 		Sink:     "otel-parity",
 		TaskLogs: "TASK_LOG_EXPORT_ENABLED",
 	}
+	plan.ImagePolicy = &engine.ImagePolicySelection{
+		RequireDigest:     true,
+		AllowedRegistries: []string{"registry.parity.example"},
+	}
 	return plan
 }
 
@@ -259,6 +263,10 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 					t.Errorf("%s/%s: the recorded input carries no telemetry, so clearing it proves nothing",
 						c.name, want.GetTaskId())
 				}
+				if want.GetImagePolicy() == nil {
+					t.Errorf("%s/%s: the recorded input carries no image_policy, so clearing it proves nothing",
+						c.name, want.GetTaskId())
+				}
 				got, err := engine.LocalTaskInput(engine.LocalTask{
 					Orkflow:  c.wf,
 					TaskID:   want.GetTaskId(),
@@ -273,6 +281,7 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 				cleared.CommitUri = ""
 				cleared.Pin = nil
 				cleared.Telemetry = nil
+				cleared.ImagePolicy = nil
 				if !proto.Equal(got, cleared) {
 					t.Errorf("%s/%s: LocalTaskInput differs from the interpreter's input\n got: %v\nwant: %v",
 						c.name, want.GetTaskId(), got, cleared)
@@ -296,8 +305,6 @@ func taskPin(wf *orkstackv1.Orkflow, id string) string {
 }
 
 // TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset is E2.
-// (image_policy, claimed by image-supply-chain-policy, is not on the wire in
-// this tree; there is nothing for LocalTaskInput to set.)
 func TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset(t *testing.T) {
 	wf := compile(t, localParityPinned)
 	for _, id := range []string{"prep", "compile", "publish"} {
@@ -305,9 +312,9 @@ func TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset(t *testing.T
 		if err != nil {
 			t.Fatalf("%s: %v", id, err)
 		}
-		if in.GetCommitUri() != "" || in.GetPin() != nil || in.GetTelemetry() != nil {
-			t.Errorf("%s: commit_uri %q, pin %v, telemetry %v — want all unset",
-				id, in.GetCommitUri(), in.GetPin(), in.GetTelemetry())
+		if in.GetCommitUri() != "" || in.GetPin() != nil || in.GetTelemetry() != nil || in.GetImagePolicy() != nil {
+			t.Errorf("%s: commit_uri %q, pin %v, telemetry %v, image_policy %v — want all unset",
+				id, in.GetCommitUri(), in.GetPin(), in.GetTelemetry(), in.GetImagePolicy())
 		}
 		if in.GetIdempotencyKey() != "default/local-0123456789abcdef/"+id {
 			t.Errorf("%s: idempotency key %q is not the local run's own", id, in.GetIdempotencyKey())
