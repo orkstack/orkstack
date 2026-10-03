@@ -4,7 +4,10 @@ import (
 	"testing"
 	"time"
 
+	taskqueuepb "go.temporal.io/api/taskqueue/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // The counting half of the liveness probe, tested on the shape Temporal
@@ -155,4 +158,96 @@ func TestLivePollers_CountsActivityPollersOnly(t *testing.T) {
 	if live := livePollers(description, now, DefaultPollerFreshness); live.Orkers != 0 {
 		t.Errorf("counted %d Orkers on a channel only the engine polls, want 0", live.Orkers)
 	}
+}
+
+// TestActivityDescription_FeedsTheDefaultModeAnswerToTheSameReduction pins the
+// reshaping every SubmitRun's liveness probe takes: ObservePool reads the
+// channel in default mode (a flat poller list) and hands the reshaped answer
+// to livePollers. The reshaping must keep every record as the cluster gave it
+// — identity, last access, a missing timestamp staying missing — so the
+// reduction's rules (stale dropped, one identity once, anonymous counted on
+// its own) apply to it exactly as they do to the enhanced answer.
+func TestActivityDescription_FeedsTheDefaultModeAnswerToTheSameReduction(t *testing.T) {
+	now := time.Now()
+	const within = DefaultPollerFreshness
+	answer := func(pollers ...*taskqueuepb.PollerInfo) *workflowservice.DescribeTaskQueueResponse {
+		return &workflowservice.DescribeTaskQueueResponse{Pollers: pollers}
+	}
+	record := func(identity string, lastAccess time.Time) *taskqueuepb.PollerInfo {
+		info := &taskqueuepb.PollerInfo{Identity: identity}
+		if !lastAccess.IsZero() {
+			info.LastAccessTime = timestamppb.New(lastAccess)
+		}
+		return info
+	}
+
+	cases := []struct {
+		name       string
+		answer     *workflowservice.DescribeTaskQueueResponse
+		wantOrkers int
+		wantSeen   time.Time
+	}{
+		{
+			name:   "an empty answer is an empty pool",
+			answer: answer(),
+		},
+		{
+			name: "a stale record is dropped",
+			answer: answer(
+				record("1@host@ork-pool-alpha", now.Add(-5*time.Minute)),
+				record("2@host@ork-pool-alpha", now.Add(-2*time.Second)),
+			),
+			wantOrkers: 1,
+			wantSeen:   now.Add(-2 * time.Second),
+		},
+		{
+			name: "one identity is counted once, at its newest record",
+			answer: answer(
+				record("1@host@ork-pool-alpha", now.Add(-10*time.Second)),
+				record("1@host@ork-pool-alpha", now.Add(-1*time.Second)),
+			),
+			wantOrkers: 1,
+			wantSeen:   now.Add(-1 * time.Second),
+		},
+		{
+			name: "an identity-less record is kept and counted on its own",
+			answer: answer(
+				record("", now.Add(-3*time.Second)),
+				record("", now.Add(-4*time.Second)),
+				record("1@host@ork-pool-alpha", now.Add(-5*time.Second)),
+			),
+			wantOrkers: 3,
+			wantSeen:   now.Add(-3 * time.Second),
+		},
+		{
+			name:       "a record with no last access is trusted, not dropped",
+			answer:     answer(record("1@host@ork-pool-alpha", time.Time{})),
+			wantOrkers: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			live := livePollers(activityDescription(tc.answer), now, within)
+			if live.Orkers != tc.wantOrkers {
+				t.Errorf("counted %d Orkers, want %d", live.Orkers, tc.wantOrkers)
+			}
+			if !live.LastSeen.Equal(tc.wantSeen) {
+				t.Errorf("last seen %v, want %v", live.LastSeen, tc.wantSeen)
+			}
+		})
+	}
+
+	t.Run("the reshaped answer holds activity pollers only, under one entry", func(t *testing.T) {
+		got := activityDescription(answer(record("1@host@ork-pool-alpha", now)))
+		if len(got.VersionsInfo) != 1 {
+			t.Fatalf("got %d version entries, want 1", len(got.VersionsInfo))
+		}
+		types := got.VersionsInfo[""].TypesInfo
+		if len(types) != 1 || len(types[client.TaskQueueTypeActivity].Pollers) != 1 {
+			t.Fatalf("got types %v, want one activity poller", types)
+		}
+		if records := livePollerRecords(got, now, within); len(records) != 1 || records[0].Identity != "1@host@ork-pool-alpha" {
+			t.Fatalf("records %v, want the one identity the cluster named", records)
+		}
+	})
 }
