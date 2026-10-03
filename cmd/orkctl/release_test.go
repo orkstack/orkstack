@@ -50,15 +50,32 @@ type scriptedReleases struct {
 	current releaseStep
 	awaitOK bool
 	sets    []engine.Routing
+
+	// firstObserveTakes makes the first ObserveReleases (the CLI's own
+	// ListReleases) that slow; writeBudget records how much of its deadline
+	// the write had left when SetRouting was reached.
+	firstObserveTakes time.Duration
+	observed          int
+	writeBudget       time.Duration
 }
 
 func newScriptedReleases(steps ...releaseStep) *scriptedReleases {
 	return &scriptedReleases{steps: steps, awaitOK: true}
 }
 
-func (s *scriptedReleases) ObserveReleases(context.Context) (engine.ReleaseObservation, error) {
+func (s *scriptedReleases) ObserveReleases(ctx context.Context) (engine.ReleaseObservation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.observed++
+	if s.observed == 1 && s.firstObserveTakes > 0 {
+		// A slow cluster read, not a synchronization: the CLI's read spends
+		// this much of its own request budget.
+		select {
+		case <-time.After(s.firstObserveTakes):
+		case <-ctx.Done():
+			return engine.ReleaseObservation{}, ctx.Err()
+		}
+	}
 	s.current = s.steps[0]
 	if len(s.steps) > 1 {
 		s.steps = s.steps[1:]
@@ -85,10 +102,13 @@ func (s *scriptedReleases) RunningRuns(context.Context) (int64, error) {
 	return s.current.running, nil
 }
 
-func (s *scriptedReleases) SetRouting(_ context.Context, _ engine.ReleaseObservation, want engine.Routing) error {
+func (s *scriptedReleases) SetRouting(ctx context.Context, _ engine.ReleaseObservation, want engine.Routing) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sets = append(s.sets, want)
+	if deadline, ok := ctx.Deadline(); ok {
+		s.writeBudget = time.Until(deadline)
+	}
 	return nil
 }
 
@@ -330,6 +350,55 @@ func TestReleasePromote_SendsTheRevisionItRead(t *testing.T) {
 	}
 	if got := releaseRequests(f); strings.Join(got, ",") != "ListReleases,PromoteRelease" {
 		t.Fatalf("requests = %v", got)
+	}
+}
+
+// TestReleaseWrites_BoundTheWriteOnItsOwn is spec §7's "bound each request":
+// promote, rollback and ramp each read ListReleases and then write, and the
+// write gets a whole --timeout of its own. The server-side write may spend up
+// to 10s confirming routing after the change; were the read's time deducted
+// from it, a slow read would leave the user a client-side timeout for a change
+// the cluster made.
+func TestReleaseWrites_BoundTheWriteOnItsOwn(t *testing.T) {
+	const timeout, readTakes = 2 * time.Second, 1200 * time.Millisecond
+	// Each target is given what the judgement asks of it, as in the goldens:
+	// C a pin host in "build", P an Orker in "gpu".
+	withOrker := func(id, pool, build string, pins int32) func() *scriptedFleet {
+		return func() *scriptedFleet {
+			fleet := releaseFleetFor()
+			fleet.presence = append(fleet.presence, engine.OrkerPresence{Identity: id, LastSeen: releaseClockStart})
+			fleet.described[id] = &orkstackv1.DescribeOrkerResult{OrkerId: id, Pool: pool, BuildId: build, MaxConcurrentPins: pins}
+			return fleet
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		fleet func() *scriptedFleet
+	}{
+		{"promote", []string{"release", "promote", relC}, withOrker("orker-c3", "build", relC, 1)},
+		{"rollback", []string{"release", "rollback", relP}, withOrker("orker-p2", "gpu", relP, 0)},
+		{"ramp", []string{"release", "ramp", relC, "--percent", "10"}, withOrker("orker-c3", "build", relC, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useReleaseClock(t, releaseClockStart)
+			releases := newScriptedReleases(rolloutStep())
+			releases.firstObserveTakes = readTakes
+			f := newReleaseFixture(t, releases, tc.fleet())
+			f.run(append([]string{"--timeout", timeout.String()}, tc.args...)...).requireExit(t, exitOK)
+			if len(releases.writes()) != 1 {
+				t.Fatalf("writes = %v; want the one write", releases.writes())
+			}
+			releases.mu.Lock()
+			budget := releases.writeBudget
+			releases.mu.Unlock()
+			// Sharing the read's context would leave at most timeout-readTakes
+			// (800ms); a request of its own starts with the whole 2s.
+			if budget <= timeout-readTakes+200*time.Millisecond {
+				t.Fatalf("the write reached the cluster with %v of its deadline left; "+
+					"want close to the whole --timeout %v, not what the %v read left over", budget, timeout, readTakes)
+			}
+		})
 	}
 }
 

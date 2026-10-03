@@ -419,6 +419,18 @@ func noCurrentSentence(engines int32) string {
 
 // --- promote / rollback ---------------------------------------------------------
 
+// readReleases is the read a write is judged against, bounded on its own so
+// the write that follows it gets a whole request budget of its own.
+func (g *globalFlags) readReleases(cmd *cobra.Command) (*orkstackv1.ListReleasesResponse, error) {
+	ctx, cancel := g.unaryContext(cmd)
+	defer cancel()
+	read, err := g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{}))
+	if err != nil {
+		return nil, err
+	}
+	return read.Msg, nil
+}
+
 func findRelease(resp *orkstackv1.ListReleasesResponse, build string) *orkstackv1.Release {
 	for _, r := range resp.GetReleases() {
 		if r.GetBuildId() == build {
@@ -448,13 +460,11 @@ func newReleasePromoteCommand(g *globalFlags, rollback bool) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			build := args[0]
-			ctx, cancel := g.unaryContext(cmd)
-			defer cancel()
-			read, err := g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{}))
+			read, err := g.readReleases(cmd)
 			if err != nil {
 				return rpcError(op, err)
 			}
-			target := findRelease(read.Msg, build)
+			target := findRelease(read, build)
 			if rollback {
 				if target == nil {
 					return fmt.Errorf("no release %s is known to the cluster", build)
@@ -464,15 +474,20 @@ func newReleasePromoteCommand(g *globalFlags, rollback bool) *cobra.Command {
 						build, roleWord(target), build)
 				}
 			}
+			// The write is its own request with its own bound (spec §7): the
+			// server may spend up to 10s confirming routing after the change,
+			// and the read above must not have spent that budget already.
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
 			resp, err := g.systemClient().PromoteRelease(ctx, connect.NewRequest(&orkstackv1.PromoteReleaseRequest{
-				BuildId: build, ExpectedRevision: read.Msg.GetRevision()}))
+				BuildId: build, ExpectedRevision: read.GetRevision()}))
 			if err != nil {
 				return rpcError(op, err)
 			}
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			renderPromote(cmd.OutOrStdout(), read.Msg, target, resp.Msg, rollback)
+			renderPromote(cmd.OutOrStdout(), read, target, resp.Msg, rollback)
 			return nil
 		},
 	}
@@ -539,21 +554,22 @@ func newReleaseRampCommand(g *globalFlags) *cobra.Command {
 			if percent < 0 || percent > 100 {
 				return fmt.Errorf("--percent is 1–100 to ramp a release, or 0 to stop its ramp; %d is neither", percent)
 			}
-			ctx, cancel := g.unaryContext(cmd)
-			defer cancel()
-			read, err := g.systemClient().ListReleases(ctx, connect.NewRequest(&orkstackv1.ListReleasesRequest{}))
+			read, err := g.readReleases(cmd)
 			if err != nil {
 				return rpcError("release ramp", err)
 			}
+			// Its own request, its own bound: see promote.
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
 			resp, err := g.systemClient().RampRelease(ctx, connect.NewRequest(&orkstackv1.RampReleaseRequest{
-				BuildId: build, Percent: int32(percent), ExpectedRevision: read.Msg.GetRevision()}))
+				BuildId: build, Percent: int32(percent), ExpectedRevision: read.GetRevision()}))
 			if err != nil {
 				return rpcError("release ramp", err)
 			}
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			renderRamp(cmd.OutOrStdout(), read.Msg, build, int32(percent), resp.Msg)
+			renderRamp(cmd.OutOrStdout(), read, build, int32(percent), resp.Msg)
 			return nil
 		},
 	}
