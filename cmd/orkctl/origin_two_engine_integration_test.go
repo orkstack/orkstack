@@ -139,6 +139,39 @@ func (s *originStack) awaitListed(t *testing.T, replica *engineReplica, want fun
 	return nil
 }
 
+// awaitListedFinished polls `run list ARGS --json` on a replica until the
+// run is listed with a terminal status.
+func (s *originStack) awaitListedFinished(t *testing.T, replica *engineReplica, runID string, args ...string) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		stdout := s.cli(t, replica, exitOK, append([]string{"--json", "run", "list"}, args...)...)
+		var response struct {
+			Runs []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"runs"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+			t.Fatalf("decode run list: %v (%s)", err, stdout)
+		}
+		for _, run := range response.Runs {
+			if run.ID != runID {
+				continue
+			}
+			last = run.Status
+			for _, terminal := range []string{"SUCCEEDED", "FAILED", "CANCELED"} {
+				if strings.HasSuffix(run.Status, terminal) {
+					return
+				}
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("run list %v via %s never listed run %s finished; last status %q", args, replica.name, runID, last)
+}
+
 func listedIDs(t *testing.T, stdout string) []string {
 	t.Helper()
 	var response struct {
@@ -213,7 +246,13 @@ func TestIntegration_OriginSurvivesReplicaAndReplay(t *testing.T) {
 	}
 
 	s.awaitTerminal(ctx, t, s.b, runID)
-	s.awaitListed(t, s.b, func(ids []string) bool { return containsID(ids, runID) }, "--origin", "submit")
+	// GetRun answers from the run's own history while run list answers
+	// from Temporal visibility, which trails it: a listing taken right
+	// after awaitTerminal can still say RUNNING. Wait until each replica's
+	// listing shows the run finished before comparing the two listings,
+	// or the comparison races the visibility update.
+	s.awaitListedFinished(t, s.b, runID, "--origin", "submit")
+	s.awaitListedFinished(t, s.a, runID, "--origin", "submit")
 	onA := s.cli(t, s.a, exitOK, "--json", "run", "get", runID)
 	onB := s.cli(t, s.b, exitOK, "--json", "run", "get", runID)
 	if onA != onB {

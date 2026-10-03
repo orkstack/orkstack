@@ -123,6 +123,50 @@ type AttemptStore interface {
 	ListAttempts(ctx context.Context, runID, taskID string) ([]*orkstackv1.TaskAttempt, error)
 }
 
+// AttemptDocument is one stored record with the bytes it was read as.
+type AttemptDocument struct {
+	// Ref is the coordinates the KEY names.
+	Ref AttemptRef
+	// Key is the store key: metadata/attempts/{run}/{task}/{n}.json.
+	Key string
+	// Raw is the exact stored bytes.
+	Raw []byte
+	// Record is UnmarshalAttempt(Raw).
+	Record *orkstackv1.TaskAttempt
+}
+
+// AttemptDocumentReader is the raw half of AttemptStore, for a reader that
+// must carry a record byte-for-byte rather than re-marshal it (run evidence).
+// It is optional, on the terms ObjectReferenceLister is optional: a fake need
+// not implement it. Every durable backend and MemoryAttemptStore do, and each
+// one's ListAttempts is a projection of it, so the two can never disagree
+// about which records exist.
+type AttemptDocumentReader interface {
+	// ReadAttemptDocuments returns every stored record of one task, ascending
+	// by attempt. A task with no records reads EMPTY, never an error, exactly
+	// as ListAttempts does.
+	ReadAttemptDocuments(ctx context.Context, runID, taskID string) ([]AttemptDocument, error)
+}
+
+// attemptRecords projects documents onto their decoded records, ascending by
+// attempt: ListAttempts on every backend.
+func attemptRecords(documents []AttemptDocument) []*orkstackv1.TaskAttempt {
+	records := make([]*orkstackv1.TaskAttempt, 0, len(documents))
+	for _, document := range documents {
+		records = append(records, document.Record)
+	}
+	sortAttempts(records)
+	return records
+}
+
+// sortAttemptDocuments orders documents ascending by the attempt their key
+// names, for sortAttempts' reason.
+func sortAttemptDocuments(documents []AttemptDocument) {
+	sort.SliceStable(documents, func(i, j int) bool {
+		return documents[i].Ref.Attempt < documents[j].Ref.Attempt
+	})
+}
+
 // RunAttemptPrefix renders the prefix containing every attempt record of a run:
 // metadata/attempts/{run-id}/. Run-scoped cleanup deletes this prefix, which is
 // what keeps attempt records on the same lifecycle as the logs they explain.
@@ -416,8 +460,11 @@ type MemoryAttemptStore struct {
 	objects map[string][]byte
 }
 
-// compile-time contract check.
-var _ AttemptStore = (*MemoryAttemptStore)(nil)
+// compile-time contract checks.
+var (
+	_ AttemptStore          = (*MemoryAttemptStore)(nil)
+	_ AttemptDocumentReader = (*MemoryAttemptStore)(nil)
+)
 
 // NewMemoryAttemptStore returns an empty in-memory attempt store.
 func NewMemoryAttemptStore() *MemoryAttemptStore {
@@ -443,6 +490,18 @@ func (s *MemoryAttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1
 func (s *MemoryAttemptStore) ListAttempts(
 	ctx context.Context, runID, taskID string,
 ) ([]*orkstackv1.TaskAttempt, error) {
+	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return attemptRecords(documents), nil
+}
+
+// ReadAttemptDocuments returns one task's stored records with their bytes,
+// ascending by attempt.
+func (s *MemoryAttemptStore) ReadAttemptDocuments(
+	ctx context.Context, runID, taskID string,
+) ([]AttemptDocument, error) {
 	prefix, err := AttemptTaskPrefix(runID, taskID)
 	if err != nil {
 		return nil, err
@@ -452,21 +511,23 @@ func (s *MemoryAttemptStore) ListAttempts(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	found := make([]*orkstackv1.TaskAttempt, 0, len(s.objects))
-	for key, document := range s.objects {
+	found := make([]AttemptDocument, 0, len(s.objects))
+	for key, stored := range s.objects {
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
-		if _, ok := ParseAttemptKey(key); !ok {
+		ref, ok := ParseAttemptKey(key)
+		if !ok || ref.RunID != runID || ref.TaskID != taskID {
 			continue
 		}
+		document := bytes.Clone(stored)
 		record, err := UnmarshalAttempt(document)
 		if err != nil {
 			return nil, fmt.Errorf("artifacts: memory task attempt %q: %w", key, err)
 		}
-		found = append(found, record)
+		found = append(found, AttemptDocument{Ref: ref, Key: key, Raw: document, Record: record})
 	}
-	sortAttempts(found)
+	sortAttemptDocuments(found)
 	return found, nil
 }
 

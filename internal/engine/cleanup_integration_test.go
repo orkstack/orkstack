@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path"
 	"strings"
@@ -27,9 +28,12 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	archivecleanup "github.com/orkstack/orkstack/internal/archive"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -866,4 +870,269 @@ func mustRunObjectRefKey(t *testing.T, objectID, runID string) string {
 		t.Fatalf("RunObjectRefKey: %v", err)
 	}
 	return key
+}
+
+// TestIntegration_RunEvidenceReflectsCleanupAsReclaimed is run-evidence-bundle
+// I2: a real run on a live cluster, archived to a private MinIO bucket, with a
+// real commit record, a real attempt record and a real uploaded stdout.log.
+// The cleanup pass retires it; the evidence manifest then lists commit.json
+// commit_missing and the attempt record unrecorded, while the outcome
+// attempt's stdout.log — an artifact object, which cleanup never deletes —
+// and run.jsonl are still present, and a fresh export verifies.
+func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
+	address := temporalAddress()
+	if conn, err := net.DialTimeout("tcp", address, 2*time.Second); err != nil {
+		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
+	} else {
+		_ = conn.Close()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cfg, _ := privateCleanupBucket(t, ctx)
+
+	namespace := fmt.Sprintf("%s-evidence-%d-%d", baseNamespace(), os.Getpid(), time.Now().UnixNano()%1_000_000_000)
+	const orkNamespace = "evidence-e2e"
+	temporalClient := cleanupTemporalClient(t, ctx, address, namespace)
+	reader := engine.NewTemporalRunReader(temporalClient)
+
+	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	retentionCtrl := archivecleanup.NewRetentionController(policies, reader, namespace, archivecleanup.DefaultRetentionBuffer, logger)
+	if _, err := retentionCtrl.SetMax(ctx, 999*time.Hour); err != nil {
+		t.Fatalf("SetMax: %v", err)
+	}
+	const shortRetention = time.Minute
+	nsDoc := &orkstackv1.Namespace{Name: orkNamespace, RunRetention: durationpb.New(shortRetention)}
+	registry, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	if _, err := registry.Put(ctx, nsDoc, artifacts.PutConditions{IfAbsent: true}); err != nil {
+		t.Fatalf("register namespace: %v", err)
+	}
+	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3RunArchive: %v", err)
+	}
+	objectStore, err := artifacts.New(cfg)
+	if err != nil {
+		t.Fatalf("artifact store: %v", err)
+	}
+	commits, err := artifacts.NewS3CommitStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("commit store: %v", err)
+	}
+	attempts, err := artifacts.NewS3AttemptStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("attempt store: %v", err)
+	}
+	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("snapshot store: %v", err)
+	}
+	reader.WithSnapshotStore(snapshots)
+	archiver := engine.NewRunArchiver(runArchive)
+
+	queue := fmt.Sprintf("ork-evidence-e2e-%d", time.Now().UnixNano())
+	runWorker := worker.New(temporalClient, task.DefaultQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		LocalActivityWorkerOnly:     true,
+	})
+	engine.RegisterWorkflows(runWorker)
+	runWorker.RegisterActivityWithOptions(
+		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
+	)
+	taskWorker := worker.New(temporalClient, queue, worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	})
+	taskWorker.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		attempt := activity.GetInfo(actx).Attempt
+		provenance := artifacts.Provenance{RunID: in.GetRunId(), TaskID: in.GetTaskId(), Orkflow: in.GetOrkflowName()}.Metadata(nil)
+		report, err := objectStore.Put(actx, "report.txt", strings.NewReader("REPORT "+in.GetRunId()), artifacts.PutOptions{Metadata: provenance})
+		if err != nil {
+			return nil, err
+		}
+		stdout, err := objectStore.Put(actx, "stdout.log", strings.NewReader("evidence attempt output\n"), artifacts.PutOptions{Metadata: provenance})
+		if err != nil {
+			return nil, err
+		}
+		reportRef := &orkstackv1.ArtifactRef{Name: report.Name, Uri: report.URI, Sha256: report.SHA256, SizeBytes: report.SizeBytes}
+		stdoutRef := &orkstackv1.ArtifactRef{Name: stdout.Name, Uri: stdout.URI, Sha256: stdout.SHA256, SizeBytes: stdout.SizeBytes}
+		key, err := artifacts.CommitKey(orkNamespace, in.GetRunId(), in.GetTaskId())
+		if err != nil {
+			return nil, err
+		}
+		uri := "s3://" + cfg.S3Bucket + "/" + key
+		rec, err := commits.Create(actx, uri, &orkstackv1.ActivityCommit{
+			SchemaVersion: artifacts.CommitSchemaVersion, Namespace: orkNamespace, RunId: in.GetRunId(), TaskId: in.GetTaskId(),
+			OrkflowName: in.GetOrkflowName(), OrkflowVersion: in.GetOrkflowVersion(), OrkflowDefinitionDigest: in.GetOrkflowDefinitionDigest(),
+			Artifacts: []*orkstackv1.ArtifactRef{reportRef}, SystemArtifacts: []*orkstackv1.ArtifactRef{stdoutRef}, Attempt: attempt,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := attempts.PutAttempt(actx, &orkstackv1.TaskAttempt{
+			SchemaVersion: artifacts.AttemptSchemaVersion, RunId: in.GetRunId(), TaskId: in.GetTaskId(), Attempt: attempt,
+			Outcome: orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED, SystemArtifacts: []*orkstackv1.ArtifactRef{stdoutRef},
+		}); err != nil {
+			return nil, err
+		}
+		return &orkstackv1.ExecuteTaskResult{
+			// Attempt is what the real Orker reports (activity.proto
+			// ExecuteTaskResult.attempt): it becomes the archived
+			// TaskRun.attempt, the only record of the outcome attempt once
+			// cleanup has deleted the attempt record.
+			TaskId: in.GetTaskId(), ValuesJson: []byte(`{}`), Attempt: attempt,
+			Commit:          &orkstackv1.CommitRef{Uri: uri, Sha256: rec.SHA256, Etag: rec.ETag},
+			Artifacts:       []*orkstackv1.ArtifactRef{reportRef},
+			SystemArtifacts: []*orkstackv1.ArtifactRef{stdoutRef},
+		}, nil
+	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	eventWorker := worker.New(temporalClient, engine.EventQueue, worker.Options{
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
+	})
+	eventWorker.RegisterActivityWithOptions(
+		engine.NewArchivingEventActivities(engine.NewEventBus(), engine.NewRunStore(), archiver).WithSnapshotStore(snapshots).PublishEvent,
+		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
+	)
+	for name, w := range map[string]worker.Worker{"run": runWorker, "task": taskWorker, "event": eventWorker} {
+		if err := w.Start(); err != nil {
+			t.Fatalf("start %s worker: %v", name, err)
+		}
+		defer w.Stop()
+	}
+
+	runID := fmt.Sprintf("ork-evidence-%d", time.Now().UnixNano())
+	definition := &orkstackv1.Orkflow{
+		Name: "evidence-cleanup", Namespace: orkNamespace, Version: "1.0.0",
+		SourceYaml: "name: evidence-cleanup\nversion: 1.0.0\n",
+		Tasks: []*orkstackv1.Task{{
+			Id: "completed", Uses: "evidence-test", Image: &orkstackv1.ImageRef{Reference: "evidence-test", Pinned: "evidence-test"},
+			TimeoutSeconds: 30,
+		}},
+	}
+	digest, err := dsl.DefinitionDigest(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition.DefinitionDigest = digest
+	orkflows := engine.NewMemoryOrkflowStore()
+	if _, _, err := orkflows.Put(ctx, definition, artifacts.NoHeadExpectation()); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.NewTemporalStarterWithOrkerQueue(temporalClient, task.DefaultQueue, queue).StartRun(ctx, runID, definition, nil, engine.RunPlan{
+		Namespace: orkNamespace, Routes: map[string]string{task.DefaultPool: queue},
+	}); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
+		t.Fatalf("wait for run: %v", err)
+	}
+	awaitArchivedRun(t, ctx, runArchive, runID)
+
+	svc := api.NewService(api.Config{
+		Reader:        reader,
+		Namespaces:    registry,
+		Orkflows:      orkflows,
+		Archive:       archiver,
+		ArtifactStore: objectStore,
+		Attempts:      attempts,
+		Commits:       commits,
+		Logger:        logger,
+	})
+	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
+	defer server.Close()
+	client := orkstackv1connect.NewRunServiceClient(server.Client(), server.URL)
+	export := func(manifestOnly bool) ([]byte, *evidence.Manifest) {
+		t.Helper()
+		stream, err := client.ExportRunEvidence(ctx, connect.NewRequest(&orkstackv1.ExportRunEvidenceRequest{
+			RunId: runID, Namespace: orkNamespace, ManifestOnly: manifestOnly,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		var data bytes.Buffer
+		last := false
+		for stream.Receive() {
+			data.Write(stream.Msg().GetData())
+			last = last || stream.Msg().GetLast()
+		}
+		if err := stream.Err(); err != nil || !last {
+			t.Fatalf("ExportRunEvidence: %v (last %v)", err, last)
+		}
+		var m *evidence.Manifest
+		if manifestOnly {
+			m, err = evidence.ParseManifest(data.Bytes())
+		} else {
+			m, err = evidence.ReadManifest(bytes.NewReader(data.Bytes()))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data.Bytes(), m
+	}
+	state := func(m *evidence.Manifest, path string) evidence.Member {
+		t.Helper()
+		for _, member := range m.Members {
+			if member.Path == path {
+				return member
+			}
+		}
+		t.Fatalf("no member %s in %v", path, m.Members)
+		return evidence.Member{}
+	}
+
+	_, before := export(true)
+	for _, path := range []string{"run.jsonl", "orkflow/source.yaml", "tasks/completed/commit.json",
+		"tasks/completed/attempts/1.json", "tasks/completed/attempts/1/stdout.log", "tasks/completed/artifacts/report.txt"} {
+		if m := state(before, path); m.State != evidence.StatePresent {
+			t.Fatalf("before cleanup %s is %s", path, m.State)
+		}
+	}
+
+	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
+		TemporalNamespace: namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
+	}, runArchive, reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{nsDoc}}, retentionCtrl, logger).WithClock(func() time.Time {
+		return time.Now().UTC().Add(2 * shortRetention)
+	})
+	stats, err := cleaner.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if stats.RunsCleaned != 1 {
+		t.Fatalf("cleanup metrics = %+v, want the one run retired", stats)
+	}
+	awaitWorkflowGone(t, ctx, reader, namespace, runID)
+
+	_, after := export(true)
+	commit := state(after, "tasks/completed/commit.json")
+	record := state(after, "tasks/completed/attempts/1.json")
+	stdout := state(after, "tasks/completed/attempts/1/stdout.log")
+	runBody := state(after, "run.jsonl")
+	if commit.State != evidence.StateReclaimed || commit.Reason != evidence.ReasonCommitMissing ||
+		commit.SHA256 != state(before, "tasks/completed/commit.json").SHA256 {
+		t.Fatalf("commit after cleanup = %+v", commit)
+	}
+	if record.State != evidence.StateUnrecorded || record.Reason != evidence.ReasonAttemptRecordMissing {
+		t.Fatalf("attempt record after cleanup = %+v", record)
+	}
+	if stdout.State != evidence.StatePresent || runBody.State != evidence.StatePresent {
+		t.Fatalf("stdout.log %s, run.jsonl %s after cleanup; both must stay present", stdout.State, runBody.State)
+	}
+	bundle, _ := export(false)
+	report, err := evidence.Verify(bytes.NewReader(bundle))
+	if err != nil || len(report.Failures) != 0 {
+		t.Fatalf("verify of the post-cleanup bundle: %v %+v", err, report)
+	}
+	t.Logf("EVIDENCE run_evidence_after_cleanup run=%s commit.json=%s(%s sha256 %s) attempts/1.json=%s(%s) attempts/1/stdout.log=%s run.jsonl=%s verified=%d reclaimed=%d unrecorded=%d",
+		runID, commit.State, commit.Reason, commit.SHA256, record.State, record.Reason, stdout.State, runBody.State,
+		len(report.Verified), len(report.Reclaimed), len(report.Unrecorded))
 }

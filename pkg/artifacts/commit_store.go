@@ -64,6 +64,11 @@ type CommitRecord struct {
 	SHA256 string
 	// Bytes is the length of those same bytes.
 	Bytes int64
+	// Raw is the exact stored bytes SHA256 is the digest of, as read by Get or
+	// written by Create. A reader that must carry the record byte-for-byte
+	// (run evidence) copies these rather than re-marshalling Commit, for the
+	// reason SHA256 is never recomputed. It is nil alongside an error.
+	Raw []byte
 }
 
 const (
@@ -263,9 +268,9 @@ func (s *MemoryCommitStore) Create(ctx context.Context, uri string, c *orkstackv
 	if _, exists := s.objects[uri]; exists {
 		return CommitRecord{}, fmt.Errorf("artifacts: memory commit create %q: %w", uri, ErrPreconditionFailed)
 	}
-	stored := bytes.Clone(document)
-	s.objects[uri] = stored
-	return recordFor(stored, c)
+	s.objects[uri] = bytes.Clone(document)
+	// The record's Raw is the caller's copy, never the map's own slice.
+	return recordFor(document, c)
 }
 
 // Get reads the commit at uri.
@@ -311,5 +316,6 @@ func recordFor(document []byte, c *orkstackv1.ActivityCommit) (CommitRecord, err
 		ETag:   `"` + digest + `"`,
 		SHA256: digest,
 		Bytes:  int64(len(document)),
+		Raw:    document,
 	}, nil
 }

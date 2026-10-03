@@ -25,8 +25,11 @@ type S3AttemptStore struct {
 	bucket string
 }
 
-// compile-time contract check.
-var _ AttemptStore = (*S3AttemptStore)(nil)
+// compile-time contract checks.
+var (
+	_ AttemptStore          = (*S3AttemptStore)(nil)
+	_ AttemptDocumentReader = (*S3AttemptStore)(nil)
+)
 
 // NewS3AttemptStore builds the attempt store from the same ORK_S3_* config the
 // artifact, log, orkflow and namespace stores use.
@@ -77,10 +80,23 @@ func (s *S3AttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1.Tas
 func (s *S3AttemptStore) ListAttempts(
 	ctx context.Context, runID, taskID string,
 ) ([]*orkstackv1.TaskAttempt, error) {
+	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return attemptRecords(documents), nil
+}
+
+// ReadAttemptDocuments returns one task's stored records with their bytes,
+// ascending by attempt; ListAttempts is its projection.
+func (s *S3AttemptStore) ReadAttemptDocuments(
+	ctx context.Context, runID, taskID string,
+) ([]AttemptDocument, error) {
 	prefix, err := AttemptTaskPrefix(runID, taskID)
 	if err != nil {
 		return nil, err
 	}
+	refs := make([]AttemptRef, 0, 8)
 	keys := make([]string, 0, 8)
 	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(s.bucket),
@@ -98,10 +114,11 @@ func (s *S3AttemptStore) ListAttempts(
 				continue
 			}
 			keys = append(keys, key)
+			refs = append(refs, ref)
 		}
 	}
-	found := make([]*orkstackv1.TaskAttempt, 0, len(keys))
-	for _, key := range keys {
+	found := make([]AttemptDocument, 0, len(keys))
+	for i, key := range keys {
 		object, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(s.bucket),
 			Key:    aws.String(key),
@@ -126,8 +143,8 @@ func (s *S3AttemptStore) ListAttempts(
 		if err != nil {
 			return nil, fmt.Errorf("artifacts: get task attempt %q: %w", s.uri(key), err)
 		}
-		found = append(found, record)
+		found = append(found, AttemptDocument{Ref: refs[i], Key: key, Raw: document, Record: record})
 	}
-	sortAttempts(found)
+	sortAttemptDocuments(found)
 	return found, nil
 }

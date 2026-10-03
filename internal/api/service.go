@@ -112,6 +112,13 @@ type Config struct {
 	// shown a task that looks like it never retried.
 	Attempts artifacts.AttemptStore
 
+	// Commits is the durable completion-record store, READ by
+	// ExportRunEvidence and by nothing else in this process: the engine never
+	// composes a commit uri here, it only ever opens the uri a run snapshot
+	// recorded. `ork` wires it from the same ORK_ARTIFACT_BACKEND the Orker
+	// writes through. Nil answers ExportRunEvidence with FailedPrecondition.
+	Commits artifacts.CommitStore
+
 	// LogPoll tunes how often a log follower re-lists the store. The zero
 	// value is the documented default.
 	LogPoll LogPollOptions
@@ -338,7 +345,10 @@ type Service struct {
 	artifactStore artifacts.Store
 	// attempts is the durable per-attempt record store, read by
 	// ListTaskAttempts. Written by Orkers, owned by no process.
-	attempts    artifacts.AttemptStore
+	attempts artifacts.AttemptStore
+	// commits is the completion-record store, read only by
+	// ExportRunEvidence and only at the uri a run snapshot recorded.
+	commits     artifacts.CommitStore
 	logPoll     LogPollOptions
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
@@ -406,6 +416,7 @@ func NewService(cfg Config) *Service {
 		logs:              cfg.Logs,
 		artifactStore:     cfg.ArtifactStore,
 		attempts:          cfg.Attempts,
+		commits:           cfg.Commits,
 		logPoll:           cfg.LogPoll,
 		idempotency:       cfg.Idempotency,
 		webhooks:          cfg.Webhooks,
