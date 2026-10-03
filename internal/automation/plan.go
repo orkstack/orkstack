@@ -252,6 +252,8 @@ func (p *planner) schedules() {
 	for _, s := range p.live.Schedules {
 		byName[s.GetName()] = append(byName[s.GetName()], s)
 	}
+	var creates []string
+	var gone []*orkstackv1.Schedule
 	blocked := p.duplicates("schedules", "schedule", func(name string) []string {
 		var ids []string
 		for _, s := range byName[name] {
@@ -282,6 +284,7 @@ func (p *planner) schedules() {
 				step.Changes = append(step.Changes, &orkstackv1.AutomationFieldChange{Field: key, After: renderScheduleKey(key, want)})
 			}
 			p.steps = append(p.steps, step)
+			creates = append(creates, name)
 			continue
 		}
 		cur := live[0]
@@ -337,6 +340,7 @@ func (p *planner) schedules() {
 			if cur.GetPaused() {
 				step.Notes = append(step.Notes, pausedNote(cur))
 			}
+			gone = append(gone, cur)
 		}
 		if p.opts.Prune {
 			step.Action = actionDelete
@@ -345,6 +349,45 @@ func (p *planner) schedules() {
 			}}
 		}
 		p.steps = append(p.steps, step)
+	}
+	p.scheduleRenames(creates, gone)
+}
+
+// scheduleRenames is §6.2's probable rename for schedules. A schedule's name
+// is its identity and has no in-place rename, so there is no command to
+// offer; the warning says what the new key costs instead — the old schedule
+// keeps firing (or, with --prune, is deleted with its run history under the
+// old name), and a paused one's hold is not carried over.
+func (p *planner) scheduleRenames(creates []string, gone []*orkstackv1.Schedule) {
+	for _, name := range creates {
+		want := entryValues(p.doc.Schedules[name])
+		for _, old := range gone {
+			have := liveValues(old)
+			if have.orkflow != want.orkflow {
+				continue
+			}
+			equal := true
+			for _, key := range scheduleComparedKeys {
+				if !scheduleKeyEqual(key, have, want) {
+					equal = false
+					break
+				}
+			}
+			if !equal {
+				continue
+			}
+			message := fmt.Sprintf("schedule %s matches undeclared schedule %s (%s); a schedule cannot be renamed, "+
+				"so this creates a new schedule", name, old.GetName(), old.GetId())
+			if p.opts.Prune {
+				message += fmt.Sprintf(" and deletes %s", old.GetName())
+			} else {
+				message += fmt.Sprintf(" and %s keeps firing until it is deleted", old.GetName())
+			}
+			if old.GetPaused() {
+				message += fmt.Sprintf("; %s is paused, and %s would start unpaused", old.GetName(), name)
+			}
+			p.issues = append(p.issues, warningIssue("schedules."+name, message))
+		}
 	}
 }
 

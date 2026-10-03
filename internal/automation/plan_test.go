@@ -472,6 +472,47 @@ func TestPlan_ProbableRenameWarns(t *testing.T) {
 	}
 }
 
+// A schedule has no in-place rename, so its probable-rename WARNING offers no
+// command: it says what the new key costs.
+func TestPlan_ProbableScheduleRenameWarns(t *testing.T) {
+	warning := func(issues []*orkstackv1.ValidationIssue) string {
+		for _, issue := range issues {
+			if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING && issue.GetField() == "schedules.nightly-reconcile" {
+				return issue.GetMessage()
+			}
+		}
+		return ""
+	}
+	live := identicalLive()
+	live.Schedules[0].Name = "old-nightly"
+	id := live.Schedules[0].GetId()
+	steps, issues := plan(t, summaryDoc, live, false)
+	requireNoErrors(t, issues)
+	if stepFor(t, steps, kindSchedule, "nightly-reconcile").GetAction() != actionCreate {
+		t.Fatal("the renamed entry is not a create")
+	}
+	want := "schedule nightly-reconcile matches undeclared schedule old-nightly (" + id + "); a schedule cannot be renamed, " +
+		"so this creates a new schedule and old-nightly keeps firing until it is deleted"
+	if got := warning(issues); got != want {
+		t.Errorf("warning = %q, want %q", got, want)
+	}
+
+	live.Schedules[0].Paused = true
+	_, issues = plan(t, summaryDoc, live, true)
+	want = "schedule nightly-reconcile matches undeclared schedule old-nightly (" + id + "); a schedule cannot be renamed, " +
+		"so this creates a new schedule and deletes old-nightly; old-nightly is paused, and nightly-reconcile would start unpaused"
+	if got := warning(issues); got != want {
+		t.Errorf("pruned, paused warning = %q, want %q", got, want)
+	}
+
+	live = identicalLive()
+	live.Schedules[0].Name = "old-nightly"
+	live.Schedules[0].Description = "something else"
+	if _, issues = plan(t, summaryDoc, live, false); warning(issues) != "" {
+		t.Errorf("a schedule that differs warned: %q", warning(issues))
+	}
+}
+
 func TestPlan_NotesForPausedHoldAndSecretEnv(t *testing.T) {
 	live := identicalLive()
 	live.Schedules[0].Paused = true
