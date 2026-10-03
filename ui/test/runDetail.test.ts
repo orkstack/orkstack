@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { ArtifactRefSchema, PayloadSchema } from '../src/lib/gen/orkstack/v1/common_pb';
-import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, shellQuote, timestampJson } from '../src/lib/runDetail';
+import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, shellQuote, taskRunCommand, timestampJson } from '../src/lib/runDetail';
 
 test('copyable run commands quote every page-derived coordinate and name the namespace', () => {
 	expect(shellQuote("a' b")).toBe("'a'\"'\"' b'");
@@ -9,6 +9,16 @@ test('copyable run commands quote every page-derived coordinate and name the nam
 		"orkctl --namespace 'prod west' 'run' 'get' 'ork-'\"'\"'42'"
 	);
 	expect(runCommand('', ['run', 'cancel', 'ork-1'])).toContain("--namespace 'default'");
+});
+
+test('the local replay command names the namespace, the run and the task, and nothing else', () => {
+	expect(taskRunCommand('', 'ork-1-2', 'publish')).toBe(
+		"orkctl --namespace 'default' 'task' 'run' '--from-run' 'ork-1-2' '--task' 'publish'"
+	);
+	// Page data is quoted, never trusted as shell syntax.
+	expect(taskRunCommand("it's", 'ork-1-2', "pub'lish")).toBe(
+		"orkctl --namespace 'it'\"'\"'s' 'task' 'run' '--from-run' 'ork-1-2' '--task' 'pub'\"'\"'lish'"
+	);
 });
 
 test('payloads and artifact metadata export values without treating storage URIs as links', () => {

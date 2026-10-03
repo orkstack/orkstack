@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/spf13/cobra"
 )
 
@@ -52,11 +54,6 @@ func newRunArtifactDownloadCommand(g *globalFlags) *cobra.Command {
 		}
 		ctx, cancel := g.streamContext(cmd)
 		defer cancel()
-		stream, err := g.runClient().ReadArtifact(ctx, connect.NewRequest(&orkstackv1.ReadArtifactRequest{RunId: args[0], Namespace: g.namespace, TaskId: task, Kind: kind, Name: name}))
-		if err != nil {
-			return rpcError("read artifact", err)
-		}
-		defer stream.Close()
 		dir := filepath.Dir(output)
 		tmp, err := os.CreateTemp(dir, ".orkctl-artifact-*")
 		if err != nil {
@@ -69,26 +66,9 @@ func newRunArtifactDownloadCommand(g *globalFlags) *cobra.Command {
 				_ = os.Remove(tmpName)
 			}
 		}()
-		last := false
-		for stream.Receive() {
-			chunk := stream.Msg()
-			if len(chunk.GetData()) > 0 {
-				if _, err := tmp.Write(chunk.GetData()); err != nil {
-					_ = tmp.Close()
-					return fmt.Errorf("write artifact: %w", err)
-				}
-			}
-			if chunk.GetLast() {
-				last = true
-			}
-		}
-		if err := stream.Err(); err != nil {
+		if _, err := readRecordedArtifact(ctx, g.runClient(), &orkstackv1.ReadArtifactRequest{RunId: args[0], Namespace: g.namespace, TaskId: task, Kind: kind, Name: name}, tmp); err != nil {
 			_ = tmp.Close()
-			return rpcError("read artifact", err)
-		}
-		if !last {
-			_ = tmp.Close()
-			return fmt.Errorf("artifact download ended without integrity confirmation")
+			return err
 		}
 		if err := tmp.Close(); err != nil {
 			return fmt.Errorf("close artifact: %w", err)
@@ -121,6 +101,51 @@ func newRunArtifactDownloadCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination file")
 	return cmd
 }
+
+// readRecordedArtifact streams one recorded artifact of a run into dst and
+// returns the reference the server attached to the stream's first chunk.
+//
+// The server streams by (run, task, kind, name) — never by a caller-supplied
+// URI — and sends `last` only after it has verified the bytes' size and
+// sha256 against the recorded reference. A stream that ends without `last`
+// is therefore refused rather than trusted: it is a download whose integrity
+// nobody confirmed.
+func readRecordedArtifact(
+	ctx context.Context,
+	client orkstackv1connect.RunServiceClient,
+	req *orkstackv1.ReadArtifactRequest,
+	dst io.Writer,
+) (*orkstackv1.ArtifactRef, error) {
+	stream, err := client.ReadArtifact(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, rpcError("read artifact", err)
+	}
+	defer stream.Close()
+	var ref *orkstackv1.ArtifactRef
+	last := false
+	for stream.Receive() {
+		chunk := stream.Msg()
+		if ref == nil && chunk.GetArtifact() != nil {
+			ref = chunk.GetArtifact()
+		}
+		if len(chunk.GetData()) > 0 {
+			if _, err := dst.Write(chunk.GetData()); err != nil {
+				return nil, fmt.Errorf("write artifact: %w", err)
+			}
+		}
+		if chunk.GetLast() {
+			last = true
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, rpcError("read artifact", err)
+	}
+	if !last {
+		return nil, fmt.Errorf("artifact download ended without integrity confirmation")
+	}
+	return ref, nil
+}
+
 func safeOutputPath(output string, overwrite bool) error {
 	if output == "" || filepath.Base(output) == "." || filepath.Base(output) == string(filepath.Separator) {
 		return fmt.Errorf("--output must name a file")

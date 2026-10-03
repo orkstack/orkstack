@@ -1,0 +1,150 @@
+{
+  "task": "consume",
+  "namespace": "default",
+  "orkflow": {
+    "name": "task-run-fixture",
+    "version": "1",
+    "definitionDigest": "sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa",
+    "source": "run"
+  },
+  "sourceRun": {
+    "id": "ork-1790000000000000000-4294967297",
+    "orkflowVersion": "1",
+    "definitionDigest": "sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa",
+    "taskStatus": "FAILED",
+    "taskError": "CONTAINER_EXIT_NONZERO: task \"consume\": the container exited 1"
+  },
+  "localRunId": "local-<id>",
+  "idempotencyKey": "default/local-<id>/consume",
+  "image": "localhost:5001/test/fake@sha256:5eed0000000000000000000000000000000000000000000000000000000000aa",
+  "platformDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "input": {
+    "expect": "staging",
+    "target": "staging"
+  },
+  "upstream": [
+    {
+      "taskId": "produce",
+      "status": "SUCCEEDED",
+      "from": "run",
+      "values": {
+        "name": "values.json",
+        "sizeBytes": 20,
+        "sha256": "295aff2366ab9f4c0e5ae73e0f49d22cb9a43287d277ab575544a8c28ec14079"
+      },
+      "artifacts": [
+        {
+          "name": "payload.txt",
+          "sizeBytes": 26,
+          "sha256": "6f39071feb3117ba6a602feddf95730310fe9d3e28f7ae1676c046cb8f3779c2"
+        }
+      ]
+    }
+  ],
+  "secrets": [],
+  "limits": {
+    "valuesMaxBytes": 262144,
+    "artifactMaxCount": 256,
+    "artifactMaxBytes": 5368709120,
+    "logMaxBytes": 16777216,
+    "commitMaxBytes": 4194304,
+    "source": "contract-defaults"
+  },
+  "renderOnly": false,
+  "outcome": "SUCCEEDED",
+  "exitCode": 0,
+  "containerMs": 0,
+  "totalMs": 0,
+  "config": {
+    "command": [
+      "sh",
+      "-c",
+      "test \"$TARGET\" = \"$EXPECT\""
+    ],
+    "expect": "staging",
+    "op": "exec",
+    "payload": "/orkstack/input/artifacts/produce/payload.txt",
+    "target": "staging"
+  },
+  "taskJson": {
+    "schemaVersion": 1,
+    "idempotencyKey": "default/local-<id>/consume",
+    "run": {
+      "id": "local-<id>",
+      "namespace": "default",
+      "orkflow": {
+        "name": "task-run-fixture",
+        "version": "1",
+        "definitionDigest": "sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa"
+      }
+    },
+    "task": {
+      "id": "consume",
+      "attempt": 1,
+      "pool": "main"
+    },
+    "image": {
+      "reference": "shell",
+      "pinned": "localhost:5001/test/fake@sha256:5eed0000000000000000000000000000000000000000000000000000000000aa",
+      "indexDigest": "sha256:5eed0000000000000000000000000000000000000000000000000000000000aa",
+      "platformDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "platform": "linux/amd64",
+      "delivery": "registry"
+    },
+    "limits": {
+      "timeoutSeconds": 300,
+      "cancellationGracePeriodSeconds": 30,
+      "valuesMaxBytes": 262144,
+      "artifactMaxCount": 256,
+      "artifactMaxBytes": 5368709120,
+      "logMaxBytes": 16777216,
+      "commitMaxBytes": 4194304
+    },
+    "resources": {
+      "cpu": "1",
+      "memory": "1Gi"
+    },
+    "network": "default",
+    "paths": {
+      "input": "/orkstack/input",
+      "config": "/orkstack/input/config.json",
+      "runInput": "/orkstack/input/run.json",
+      "secrets": "/orkstack/input/secrets",
+      "output": "/orkstack/output",
+      "values": "/orkstack/output/values.json",
+      "artifacts": "/orkstack/output/artifacts",
+      "tmp": "/orkstack/tmp"
+    },
+    "inputs": {
+      "artifacts": [
+        {
+          "producer": "produce",
+          "name": "payload.txt",
+          "nameB64": "cGF5bG9hZC50eHQ",
+          "path": "/orkstack/input/artifacts/produce/payload.txt",
+          "sizeBytes": 26,
+          "sha256": "6f39071feb3117ba6a602feddf95730310fe9d3e28f7ae1676c046cb8f3779c2",
+          "contentType": "text/plain; charset=utf-8"
+        }
+      ],
+      "upstream": [
+        {
+          "taskId": "produce",
+          "valuesPath": "/orkstack/input/upstream/produce/values.json"
+        }
+      ]
+    },
+    "secrets": []
+  },
+  "values": {
+    "ok": true,
+    "target": "staging"
+  },
+  "artifacts": [
+    {
+      "name": "result.txt",
+      "sizeBytes": 13,
+      "sha256": "e1d6a48a854a7e69506dd012de45d66bf3151b7d09a3f6200cf5618a0a019632"
+    }
+  ]
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/orker"
 )
 
 // Exit codes. Anything non-zero means the command did not succeed; the
@@ -89,6 +90,11 @@ type globalFlags struct {
 	timeoutChanged bool
 
 	client *http.Client
+
+	// containerRuntime is the test seam `orkctl task run` drives its
+	// dispatcher through. Nil means the Orker's own default runtime
+	// (orker.NewDockerRuntime); no flag sets it.
+	containerRuntime orker.ContainerRuntime
 }
 
 // newRootCommand builds the command tree and the shared flag state.
@@ -139,6 +145,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newPoolCommand(g),
 		newRunCommand(g),
 		newActivityCommand(g),
+		newTaskCommand(g),
 		newScheduleCommand(g),
 		newStatsCommand(g),
 		newTriggerCommand(g),

@@ -10,6 +10,15 @@ export function runCommand(namespace: string, args: string[]): string {
 	return ['orkctl', '--namespace', shellQuote(namespace || 'default'), ...args.map(shellQuote)].join(' ');
 }
 
+/**
+ * The command that runs one task of this run on the reader's own machine,
+ * against this run's recorded bytes (`orkctl task run`). A local tool: the
+ * browser never runs it (docs/UI_CLI_PARITY.md, local-tool exception).
+ */
+export function taskRunCommand(namespace: string, runId: string, taskId: string): string {
+	return runCommand(namespace, ['task', 'run', '--from-run', runId, '--task', taskId]);
+}
+
 /** Payloads are compact JSON values; absent means the API has no inline value. */
 export function payloadJson(payload: Payload | undefined): string {
 	return JSON.stringify(payload?.data ?? {}, null, 2);
