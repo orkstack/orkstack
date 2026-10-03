@@ -1,0 +1,11 @@
+verified 12 present members against MANIFEST.json
+  run             ork-evidence-1          namespace default
+  definition      sha256:48451849604042acf0c2c0f72bc469c559353bcccad02e20c0e591a3333e574b payments-reconcile@1.4.0 (source.yaml present)
+  status          SUCCEEDED               exported 2026-01-02T03:04:05Z by engine v0.9.3 (build 2026.09.22-1)
+  tasks           2: 1 succeeded, 1 succeeded after 2 failed attempts
+  reclaimed       2 members, recorded sha256 preserved:
+                    tasks/reconcile/attempts/1/stdout.log  (object_missing)
+                    tasks/reconcile/attempts/1/stderr.log  (object_missing)
+  unrecorded      1 attempt: reconcile attempt 2 (attempt_record_missing)
+  reasons         object_missing: the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved
+                  attempt_record_missing: no record: the orker died before filing one, or it was reclaimed

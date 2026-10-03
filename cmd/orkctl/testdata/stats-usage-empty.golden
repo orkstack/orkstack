@@ -1,0 +1,10 @@
+Namespace:   sandbox
+Window:      2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:    2026-01-02T03:04:05Z
+Grouped by:  nothing (the namespace total)
+
+No task was dispatched in this window.
+
+Budget:      unbounded
+cpu-seconds and GiB-seconds are RESERVED cpu and memory × attempt time, not measured utilization.
+runs still in flight are counted when they finish

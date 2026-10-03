@@ -112,6 +112,13 @@ type Config struct {
 	// shown a task that looks like it never retried.
 	Attempts artifacts.AttemptStore
 
+	// Commits is the durable completion-record store, READ by
+	// ExportRunEvidence and by nothing else in this process: the engine never
+	// composes a commit uri here, it only ever opens the uri a run snapshot
+	// recorded. `ork` wires it from the same ORK_ARTIFACT_BACKEND the Orker
+	// writes through. Nil answers ExportRunEvidence with FailedPrecondition.
+	Commits artifacts.CommitStore
+
 	// LogPoll tunes how often a log follower re-lists the store. The zero
 	// value is the documented default.
 	LogPoll LogPollOptions
@@ -176,6 +183,13 @@ type Config struct {
 	// neither, so it is its own seam rather than a synthesized RUN_FAILED.
 	// Nil counts nothing; the refusal is returned to the caller either way.
 	Admissions engine.AdmissionObserver
+
+	// UsageCacheTTL is how long one whole usage measurement is reused, by
+	// GetUsage and by the admission gate alike. Used verbatim: zero or
+	// negative switches the answer cache off. `ork` fills it from
+	// UsageCacheTTLFromEnv (ORK_USAGE_CACHE_TTL, default 5m); a unit test
+	// that leaves it zero measures on every call.
+	UsageCacheTTL time.Duration
 
 	// Activities is the deployment's activity catalog, served by
 	// ActivityService.ListActivities. Nil answers with an empty catalog:
@@ -347,7 +361,10 @@ type Service struct {
 	artifactStore artifacts.Store
 	// attempts is the durable per-attempt record store, read by
 	// ListTaskAttempts. Written by Orkers, owned by no process.
-	attempts    artifacts.AttemptStore
+	attempts artifacts.AttemptStore
+	// commits is the completion-record store, read only by
+	// ExportRunEvidence and only at the uri a run snapshot recorded.
+	commits     artifacts.CommitStore
 	logPoll     LogPollOptions
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
@@ -368,6 +385,11 @@ type Service struct {
 	notifier   engine.RunNotifier
 	observer   engine.EventObserver
 	admissions engine.AdmissionObserver
+	// usage measures a namespace's reserved consumption for GetUsage and for
+	// an enforced budget's admission check — one measurement both share
+	// (usage.go). It is a measuring component, not a map of answers: its
+	// cache is unexported inside it and reachable only through Measure.
+	usage *UsageMeter
 	// system is this replica's own build and configuration, echoed by
 	// GetSystemInfo. Injected once, never read from the environment here.
 	system SystemInfo
@@ -416,6 +438,7 @@ func NewService(cfg Config) *Service {
 		logs:              cfg.Logs,
 		artifactStore:     cfg.ArtifactStore,
 		attempts:          cfg.Attempts,
+		commits:           cfg.Commits,
 		logPoll:           cfg.LogPoll,
 		idempotency:       cfg.Idempotency,
 		webhooks:          cfg.Webhooks,
@@ -490,6 +513,7 @@ func NewService(cfg Config) *Service {
 	if svc.now == nil {
 		svc.now = time.Now
 	}
+	svc.usage = newUsageMeter(cfg.Archive, cfg.Attempts, cfg.UsageCacheTTL, svc.now)
 	if svc.deliveries != nil {
 		svc.deliveryRecorder = NewDeliveryRecorder(svc.deliveries, svc.logger)
 	}

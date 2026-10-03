@@ -41,6 +41,8 @@ const (
 	// StatsServiceGetFlakeIndexProcedure is the fully-qualified name of the StatsService's
 	// GetFlakeIndex RPC.
 	StatsServiceGetFlakeIndexProcedure = "/orkstack.v1.StatsService/GetFlakeIndex"
+	// StatsServiceGetUsageProcedure is the fully-qualified name of the StatsService's GetUsage RPC.
+	StatsServiceGetUsageProcedure = "/orkstack.v1.StatsService/GetUsage"
 )
 
 // StatsServiceClient is a client for the orkstack.v1.StatsService service.
@@ -71,6 +73,18 @@ type StatsServiceClient interface {
 	// optional orkflow, and by a scan budget that FAILS the call rather than
 	// answering from a subset (see GetFlakeIndexResponse).
 	GetFlakeIndex(context.Context, *connect.Request[v1.GetFlakeIndexRequest]) (*connect.Response[v1.GetFlakeIndexResponse], error)
+	// GetUsage reports how much of the fleet one namespace RESERVED over one
+	// window: task-seconds, and cpu-seconds and GiB-seconds as each attempt's
+	// reservation multiplied by how long its Orker held it. It is the read a
+	// budget is held against, and the one the admission gate itself makes for
+	// an enforced budget.
+	//
+	// It reads the archive index (keys), every finished run's body in the
+	// window, and every attempt record of those runs, so its cost is bounded
+	// three ways: by the window, by a whole-answer cache whose age every answer
+	// carries (computed_at), and by a scan bound that FAILS the call rather
+	// than answering from a subset (see GetUsageResponse).
+	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
 }
 
 // NewStatsServiceClient constructs a client for the orkstack.v1.StatsService service. By default,
@@ -102,6 +116,12 @@ func NewStatsServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(statsServiceMethods.ByName("GetFlakeIndex")),
 			connect.WithClientOptions(opts...),
 		),
+		getUsage: connect.NewClient[v1.GetUsageRequest, v1.GetUsageResponse](
+			httpClient,
+			baseURL+StatsServiceGetUsageProcedure,
+			connect.WithSchema(statsServiceMethods.ByName("GetUsage")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -110,6 +130,7 @@ type statsServiceClient struct {
 	getStats            *connect.Client[v1.GetStatsRequest, v1.GetStatsResponse]
 	getFailureBreakdown *connect.Client[v1.GetFailureBreakdownRequest, v1.GetFailureBreakdownResponse]
 	getFlakeIndex       *connect.Client[v1.GetFlakeIndexRequest, v1.GetFlakeIndexResponse]
+	getUsage            *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
 }
 
 // GetStats calls orkstack.v1.StatsService.GetStats.
@@ -125,6 +146,11 @@ func (c *statsServiceClient) GetFailureBreakdown(ctx context.Context, req *conne
 // GetFlakeIndex calls orkstack.v1.StatsService.GetFlakeIndex.
 func (c *statsServiceClient) GetFlakeIndex(ctx context.Context, req *connect.Request[v1.GetFlakeIndexRequest]) (*connect.Response[v1.GetFlakeIndexResponse], error) {
 	return c.getFlakeIndex.CallUnary(ctx, req)
+}
+
+// GetUsage calls orkstack.v1.StatsService.GetUsage.
+func (c *statsServiceClient) GetUsage(ctx context.Context, req *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
+	return c.getUsage.CallUnary(ctx, req)
 }
 
 // StatsServiceHandler is an implementation of the orkstack.v1.StatsService service.
@@ -155,6 +181,18 @@ type StatsServiceHandler interface {
 	// optional orkflow, and by a scan budget that FAILS the call rather than
 	// answering from a subset (see GetFlakeIndexResponse).
 	GetFlakeIndex(context.Context, *connect.Request[v1.GetFlakeIndexRequest]) (*connect.Response[v1.GetFlakeIndexResponse], error)
+	// GetUsage reports how much of the fleet one namespace RESERVED over one
+	// window: task-seconds, and cpu-seconds and GiB-seconds as each attempt's
+	// reservation multiplied by how long its Orker held it. It is the read a
+	// budget is held against, and the one the admission gate itself makes for
+	// an enforced budget.
+	//
+	// It reads the archive index (keys), every finished run's body in the
+	// window, and every attempt record of those runs, so its cost is bounded
+	// three ways: by the window, by a whole-answer cache whose age every answer
+	// carries (computed_at), and by a scan bound that FAILS the call rather
+	// than answering from a subset (see GetUsageResponse).
+	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
 }
 
 // NewStatsServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -182,6 +220,12 @@ func NewStatsServiceHandler(svc StatsServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(statsServiceMethods.ByName("GetFlakeIndex")),
 		connect.WithHandlerOptions(opts...),
 	)
+	statsServiceGetUsageHandler := connect.NewUnaryHandler(
+		StatsServiceGetUsageProcedure,
+		svc.GetUsage,
+		connect.WithSchema(statsServiceMethods.ByName("GetUsage")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.StatsService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case StatsServiceGetStatsProcedure:
@@ -190,6 +234,8 @@ func NewStatsServiceHandler(svc StatsServiceHandler, opts ...connect.HandlerOpti
 			statsServiceGetFailureBreakdownHandler.ServeHTTP(w, r)
 		case StatsServiceGetFlakeIndexProcedure:
 			statsServiceGetFlakeIndexHandler.ServeHTTP(w, r)
+		case StatsServiceGetUsageProcedure:
+			statsServiceGetUsageHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -209,4 +255,8 @@ func (UnimplementedStatsServiceHandler) GetFailureBreakdown(context.Context, *co
 
 func (UnimplementedStatsServiceHandler) GetFlakeIndex(context.Context, *connect.Request[v1.GetFlakeIndexRequest]) (*connect.Response[v1.GetFlakeIndexResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.StatsService.GetFlakeIndex is not implemented"))
+}
+
+func (UnimplementedStatsServiceHandler) GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.StatsService.GetUsage is not implemented"))
 }

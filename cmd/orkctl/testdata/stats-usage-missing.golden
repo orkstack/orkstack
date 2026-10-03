@@ -1,0 +1,16 @@
+Namespace:   default
+Window:      2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:    2026-01-02T03:04:05Z
+Grouped by:  nothing (the namespace total)
+
+RUNS  TASKS  ATTEMPTS  TASK-SECONDS  CPU-SECONDS  GiB-SECONDS
+2     2      2         60            40           40
+
+Budget:      unbounded
+cpu-seconds and GiB-seconds are RESERVED cpu and memory × attempt time, not measured utilization.
+scanned 2 of 2 finished runs in the window; 2 dispatched a task; attempt records complete for 1, missing for 1
+1 runs' attempt records were reclaimed or never written: their consumption is NOT in these numbers
+coverage begins 2026-01-02T02:04:05Z, the oldest run in this window with attempt records
+1 attempts carry no reservation (recorded before this release, or refused): their time is in TASK-SECONDS, not in CPU- or GiB-SECONDS
+1 attempts left no record (their Orker died): their consumption is unknown and not counted
+runs still in flight are counted when they finish

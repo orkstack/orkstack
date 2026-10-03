@@ -99,6 +99,9 @@ const (
 	RunServiceInspectRunProcedure = "/orkstack.v1.RunService/InspectRun"
 	// RunServiceDiffRunsProcedure is the fully-qualified name of the RunService's DiffRuns RPC.
 	RunServiceDiffRunsProcedure = "/orkstack.v1.RunService/DiffRuns"
+	// RunServiceExportRunEvidenceProcedure is the fully-qualified name of the RunService's
+	// ExportRunEvidence RPC.
+	RunServiceExportRunEvidenceProcedure = "/orkstack.v1.RunService/ExportRunEvidence"
 	// WebhookServiceRegisterWebhookProcedure is the fully-qualified name of the WebhookService's
 	// RegisterWebhook RPC.
 	WebhookServiceRegisterWebhookProcedure = "/orkstack.v1.WebhookService/RegisterWebhook"
@@ -661,6 +664,27 @@ type RunServiceClient interface {
 	// and an empty value must be decided once. Every from_value/to_value is a
 	// rendered string a client prints verbatim.
 	DiffRuns(context.Context, *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error)
+	// ExportRunEvidence streams ONE finished run's evidence bundle: a tar.gz
+	// whose first member, MANIFEST.json, names every other member's path,
+	// origin, size, sha256 and state, followed by the archived run and events,
+	// the pinned definition's source YAML, and per task the verbatim
+	// commit.json, values.json, every output artifact, every attempt record,
+	// and every attempt's stdout.log and stderr.log.
+	//
+	// It is a READ, assembled per request from objects that already exist and
+	// kept nowhere: there is no export record, so nothing can disagree with the
+	// archive. Every member digest is of the bytes as they were read; a member
+	// with a recorded reference is verified as it streams and a mismatch ends
+	// the stream with DataLoss and no `last`. Bytes the cleanup worker or a
+	// lifecycle rule removed are listed with state "reclaimed" and their
+	// recorded sha256 preserved, never omitted.
+	//
+	// The run is addressed inside its namespace exactly as GetRun addresses it
+	// and must be finished and archived; a live run is FailedPrecondition. The
+	// stream is complete only when a chunk with `last` arrives, on the same
+	// terms as ReadArtifact. The bundle layout and manifest schema are
+	// docs/RUN_EVIDENCE.md.
+	ExportRunEvidence(context.Context, *connect.Request[v1.ExportRunEvidenceRequest]) (*connect.ServerStreamForClient[v1.EvidenceChunk], error)
 }
 
 // NewRunServiceClient constructs a client for the orkstack.v1.RunService service. By default, it
@@ -746,6 +770,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("DiffRuns")),
 			connect.WithClientOptions(opts...),
 		),
+		exportRunEvidence: connect.NewClient[v1.ExportRunEvidenceRequest, v1.EvidenceChunk](
+			httpClient,
+			baseURL+RunServiceExportRunEvidenceProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ExportRunEvidence")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -763,6 +793,7 @@ type runServiceClient struct {
 	getArtifactProvenance *connect.Client[v1.GetArtifactProvenanceRequest, v1.GetArtifactProvenanceResponse]
 	inspectRun            *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
 	diffRuns              *connect.Client[v1.DiffRunsRequest, v1.DiffRunsResponse]
+	exportRunEvidence     *connect.Client[v1.ExportRunEvidenceRequest, v1.EvidenceChunk]
 }
 
 // SubmitRun calls orkstack.v1.RunService.SubmitRun.
@@ -823,6 +854,11 @@ func (c *runServiceClient) InspectRun(ctx context.Context, req *connect.Request[
 // DiffRuns calls orkstack.v1.RunService.DiffRuns.
 func (c *runServiceClient) DiffRuns(ctx context.Context, req *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error) {
 	return c.diffRuns.CallUnary(ctx, req)
+}
+
+// ExportRunEvidence calls orkstack.v1.RunService.ExportRunEvidence.
+func (c *runServiceClient) ExportRunEvidence(ctx context.Context, req *connect.Request[v1.ExportRunEvidenceRequest]) (*connect.ServerStreamForClient[v1.EvidenceChunk], error) {
+	return c.exportRunEvidence.CallServerStream(ctx, req)
 }
 
 // RunServiceHandler is an implementation of the orkstack.v1.RunService service.
@@ -914,6 +950,27 @@ type RunServiceHandler interface {
 	// and an empty value must be decided once. Every from_value/to_value is a
 	// rendered string a client prints verbatim.
 	DiffRuns(context.Context, *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error)
+	// ExportRunEvidence streams ONE finished run's evidence bundle: a tar.gz
+	// whose first member, MANIFEST.json, names every other member's path,
+	// origin, size, sha256 and state, followed by the archived run and events,
+	// the pinned definition's source YAML, and per task the verbatim
+	// commit.json, values.json, every output artifact, every attempt record,
+	// and every attempt's stdout.log and stderr.log.
+	//
+	// It is a READ, assembled per request from objects that already exist and
+	// kept nowhere: there is no export record, so nothing can disagree with the
+	// archive. Every member digest is of the bytes as they were read; a member
+	// with a recorded reference is verified as it streams and a mismatch ends
+	// the stream with DataLoss and no `last`. Bytes the cleanup worker or a
+	// lifecycle rule removed are listed with state "reclaimed" and their
+	// recorded sha256 preserved, never omitted.
+	//
+	// The run is addressed inside its namespace exactly as GetRun addresses it
+	// and must be finished and archived; a live run is FailedPrecondition. The
+	// stream is complete only when a chunk with `last` arrives, on the same
+	// terms as ReadArtifact. The bundle layout and manifest schema are
+	// docs/RUN_EVIDENCE.md.
+	ExportRunEvidence(context.Context, *connect.Request[v1.ExportRunEvidenceRequest], *connect.ServerStream[v1.EvidenceChunk]) error
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -995,6 +1052,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("DiffRuns")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceExportRunEvidenceHandler := connect.NewServerStreamHandler(
+		RunServiceExportRunEvidenceProcedure,
+		svc.ExportRunEvidence,
+		connect.WithSchema(runServiceMethods.ByName("ExportRunEvidence")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceSubmitRunProcedure:
@@ -1021,6 +1084,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceInspectRunHandler.ServeHTTP(w, r)
 		case RunServiceDiffRunsProcedure:
 			runServiceDiffRunsHandler.ServeHTTP(w, r)
+		case RunServiceExportRunEvidenceProcedure:
+			runServiceExportRunEvidenceHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1076,6 +1141,10 @@ func (UnimplementedRunServiceHandler) InspectRun(context.Context, *connect.Reque
 
 func (UnimplementedRunServiceHandler) DiffRuns(context.Context, *connect.Request[v1.DiffRunsRequest]) (*connect.Response[v1.DiffRunsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.DiffRuns is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ExportRunEvidence(context.Context, *connect.Request[v1.ExportRunEvidenceRequest], *connect.ServerStream[v1.EvidenceChunk]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ExportRunEvidence is not implemented"))
 }
 
 // WebhookServiceClient is a client for the orkstack.v1.WebhookService service.
