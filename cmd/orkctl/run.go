@@ -27,6 +27,7 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunArtifactsCommand(g),
 		newRunArtifactCommand(g),
 		newRunAttemptsCommand(g),
+		newRunEvidenceCommand(g),
 		newRunInspectCommand(g),
 		newRunDiffCommand(g),
 		newRunTimingCommand(g),

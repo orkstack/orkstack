@@ -285,6 +285,18 @@ func (a *RunArchiver) Load(ctx context.Context, runID string) (*orkstackv1.Run, 
 	return run, events, nil
 }
 
+// LoadRunBody returns the archive body exactly as stored: the JSONL document
+// MarshalRunArchive wrote, one run line then one line per event. It is Load's
+// raw half, for a reader that must carry the body byte-for-byte (run evidence)
+// rather than re-marshal what Load decoded. A nil archiver and an unknown run
+// both answer an error matching artifacts.ErrNotFound, as Load does.
+func (a *RunArchiver) LoadRunBody(ctx context.Context, runID string) ([]byte, error) {
+	if a == nil {
+		return nil, fmt.Errorf("engine: load run body %q: %w", runID, artifacts.ErrNotFound)
+	}
+	return a.archive.GetRun(ctx, runID)
+}
+
 // LoadRun returns just the archived run snapshot.
 func (a *RunArchiver) LoadRun(ctx context.Context, runID string) (*orkstackv1.Run, error) {
 	run, _, err := a.Load(ctx, runID)

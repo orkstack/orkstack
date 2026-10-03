@@ -212,6 +212,22 @@ message PhaseSpan {
   google.protobuf.Timestamp finished_at = 3;
 }
 
+// ReservedResources is what an Orker granted one attempt: the cpu and memory
+// limits its container was (or, for an attempt that ended before a
+// container existed, would have been) created with, AFTER the Orker's
+// defaults filled a missing request and its caps admitted it
+// (ORK_ORKER_DEFAULT_CPU/_MEMORY, ORK_ORKER_MAX_CPU/_MEMORY). They are the
+// same values the attempt's task.json reports as resources, as numbers.
+//
+// A reservation is a limit, not a measurement: nothing here says how much
+// of it the workload used.
+message ReservedResources {
+  // cpu is the cpu limit in cores: "2" is 2, "500m" is 0.5.
+  double cpu = 1;
+  // memory_bytes is the memory limit in bytes: "4Gi" is 4294967296.
+  int64 memory_bytes = 2;
+}
+
 // TaskAttempt is the immutable record of ONE Temporal attempt of one task,
 // written by the Orker that ran it at the end of the attempt (§7.1). It is the
 // failure-side sibling of ActivityCommit: a commit says what the winning
@@ -271,6 +287,17 @@ message TaskAttempt {
   // discards unknown fields, so a record with phases reads on a build without
   // them and a record without phases reads on this one as an empty list.
   repeated PhaseSpan phases = 17;
+
+  // resources is what this Orker reserved for the attempt. Set on every
+  // record whose request the Orker's policy admitted — including an attempt
+  // that adopted a commit or failed before its container started, because
+  // the Orker's slot was committed to it either way. Unset when the request
+  // was refused (RESOURCE_REFUSED), on a record written before this field
+  // existed, and on a synthesized UNREPORTED row. A reader never treats
+  // unset as zero: usage counts such an attempt's held time and reports it
+  // as carrying no reservation. schema_version stays 1: the field is
+  // additive and UnmarshalAttempt discards unknown fields.
+  ReservedResources resources = 18;
 }
 
 // RetryState is why Temporal stopped retrying a task. It mirrors

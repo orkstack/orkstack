@@ -123,6 +123,85 @@ type AttemptStore interface {
 	ListAttempts(ctx context.Context, runID, taskID string) ([]*orkstackv1.TaskAttempt, error)
 }
 
+// AttemptDocument is one stored record with the bytes it was read as.
+type AttemptDocument struct {
+	// Ref is the coordinates the KEY names.
+	Ref AttemptRef
+	// Key is the store key: metadata/attempts/{run}/{task}/{n}.json.
+	Key string
+	// Raw is the exact stored bytes.
+	Raw []byte
+	// Record is UnmarshalAttempt(Raw).
+	Record *orkstackv1.TaskAttempt
+}
+
+// AttemptDocumentReader is the raw half of AttemptStore, for a reader that
+// must carry a record byte-for-byte rather than re-marshal it (run evidence).
+// It is optional, on the terms ObjectReferenceLister is optional: a fake need
+// not implement it. Every durable backend and MemoryAttemptStore do, and each
+// one's ListAttempts is a projection of it, so the two can never disagree
+// about which records exist.
+type AttemptDocumentReader interface {
+	// ReadAttemptDocuments returns every stored record of one task, ascending
+	// by attempt. A task with no records reads EMPTY, never an error, exactly
+	// as ListAttempts does.
+	ReadAttemptDocuments(ctx context.Context, runID, taskID string) ([]AttemptDocument, error)
+}
+
+// attemptRecords projects documents onto their decoded records, ascending by
+// attempt: ListAttempts on every backend.
+func attemptRecords(documents []AttemptDocument) []*orkstackv1.TaskAttempt {
+	records := make([]*orkstackv1.TaskAttempt, 0, len(documents))
+	for _, document := range documents {
+		records = append(records, document.Record)
+	}
+	sortAttempts(records)
+	return records
+}
+
+// sortAttemptDocuments orders documents ascending by the attempt their key
+// names, for sortAttempts' reason.
+func sortAttemptDocuments(documents []AttemptDocument) {
+	sort.SliceStable(documents, func(i, j int) bool {
+		return documents[i].Ref.Attempt < documents[j].Ref.Attempt
+	})
+}
+
+// RunAttemptReader is the run-wide read usage accounting needs: every record
+// key of one run in one listing, and one record by its address. It is a
+// separate interface from AttemptStore, and asserted rather than required,
+// for the reason RunIndexTallier is separate from RunArchive: the stores
+// that implement it are exactly the three durable-or-test backends in this
+// package, and no Orker or test double of AttemptStore needs to grow a
+// method it will never be asked for.
+type RunAttemptReader interface {
+	// ListRunAttemptRefs returns the address of every record under
+	// RunAttemptPrefix(runID), in key order — task segment, then attempt
+	// ascending — by one prefix listing (paged on S3). A key ParseAttemptKey
+	// rejects, or one belonging to another run, is skipped. A run with no
+	// records reads EMPTY, never an error.
+	ListRunAttemptRefs(ctx context.Context, runID string) ([]AttemptRef, error)
+	// GetAttempt reads one record. A record that is gone — expired under a
+	// lifecycle rule or reclaimed between a listing and this read — is an
+	// error matching ErrNotFound.
+	GetAttempt(ctx context.Context, ref AttemptRef) (*orkstackv1.TaskAttempt, error)
+}
+
+// runAttemptRefs keeps the keys of one run's records, parsed and in key
+// order — the one filter every backend's run-wide listing applies.
+func runAttemptRefs(runID string, keys []string) []AttemptRef {
+	sort.Strings(keys)
+	refs := make([]AttemptRef, 0, len(keys))
+	for _, key := range keys {
+		ref, ok := ParseAttemptKey(key)
+		if !ok || ref.RunID != runID {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
 // RunAttemptPrefix renders the prefix containing every attempt record of a run:
 // metadata/attempts/{run-id}/. Run-scoped cleanup deletes this prefix, which is
 // what keeps attempt records on the same lifecycle as the logs they explain.
@@ -416,8 +495,12 @@ type MemoryAttemptStore struct {
 	objects map[string][]byte
 }
 
-// compile-time contract check.
-var _ AttemptStore = (*MemoryAttemptStore)(nil)
+// compile-time contract checks.
+var (
+	_ AttemptStore          = (*MemoryAttemptStore)(nil)
+	_ AttemptDocumentReader = (*MemoryAttemptStore)(nil)
+	_ RunAttemptReader      = (*MemoryAttemptStore)(nil)
+)
 
 // NewMemoryAttemptStore returns an empty in-memory attempt store.
 func NewMemoryAttemptStore() *MemoryAttemptStore {
@@ -443,6 +526,18 @@ func (s *MemoryAttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1
 func (s *MemoryAttemptStore) ListAttempts(
 	ctx context.Context, runID, taskID string,
 ) ([]*orkstackv1.TaskAttempt, error) {
+	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return attemptRecords(documents), nil
+}
+
+// ReadAttemptDocuments returns one task's stored records with their bytes,
+// ascending by attempt.
+func (s *MemoryAttemptStore) ReadAttemptDocuments(
+	ctx context.Context, runID, taskID string,
+) ([]AttemptDocument, error) {
 	prefix, err := AttemptTaskPrefix(runID, taskID)
 	if err != nil {
 		return nil, err
@@ -452,22 +547,83 @@ func (s *MemoryAttemptStore) ListAttempts(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	found := make([]*orkstackv1.TaskAttempt, 0, len(s.objects))
-	for key, document := range s.objects {
+	found := make([]AttemptDocument, 0, len(s.objects))
+	for key, stored := range s.objects {
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
-		if _, ok := ParseAttemptKey(key); !ok {
+		ref, ok := ParseAttemptKey(key)
+		if !ok || ref.RunID != runID || ref.TaskID != taskID {
 			continue
 		}
+		document := bytes.Clone(stored)
 		record, err := UnmarshalAttempt(document)
 		if err != nil {
 			return nil, fmt.Errorf("artifacts: memory task attempt %q: %w", key, err)
 		}
-		found = append(found, record)
+		found = append(found, AttemptDocument{Ref: ref, Key: key, Raw: document, Record: record})
 	}
-	sortAttempts(found)
+	sortAttemptDocuments(found)
 	return found, nil
+}
+
+// ListRunAttemptRefs lists every record key of one run, in key order.
+func (s *MemoryAttemptStore) ListRunAttemptRefs(ctx context.Context, runID string) ([]AttemptRef, error) {
+	prefix, err := RunAttemptPrefix(runID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	keys := make([]string, 0, len(s.objects))
+	for key := range s.objects {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	s.mu.Unlock()
+	return runAttemptRefs(runID, keys), nil
+}
+
+// GetAttempt reads one record; a missing one matches ErrNotFound.
+func (s *MemoryAttemptStore) GetAttempt(ctx context.Context, ref AttemptRef) (*orkstackv1.TaskAttempt, error) {
+	key, err := AttemptKey(ref)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	document, ok := s.objects[key]
+	s.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("artifacts: memory task attempt %q: %w", key, ErrNotFound)
+	}
+	record, err := UnmarshalAttempt(document)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: memory task attempt %q: %w", key, err)
+	}
+	return record, nil
+}
+
+// DeleteRunAttempts removes every record of one run — what the cleanup
+// worker's run-scoped delete does to the durable backends. Test-only, like
+// the store itself.
+func (s *MemoryAttemptStore) DeleteRunAttempts(runID string) {
+	prefix, err := RunAttemptPrefix(runID)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.objects {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.objects, key)
+		}
+	}
 }
 
 // encodeAttemptForStore is the one place a record becomes a key and bytes, so

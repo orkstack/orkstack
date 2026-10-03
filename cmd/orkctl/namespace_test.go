@@ -84,6 +84,14 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 	listedSecrets := f.run("namespace", "list").requireExit(t, exitOK)
 	requireGolden(t, "namespace-list-allowed-secrets.golden", listedSecrets.stdout)
 
+	// Budget: set through update, enforced; then cleared.
+	budgeted := f.run("namespace", "update", "payments",
+		"--budget-cpu-seconds", "5000000", "--budget-period", "720h", "--budget-enforce",
+	).requireExit(t, exitOK)
+	requireGolden(t, "namespace-budget.golden", budgeted.stdout)
+	clearedBudget := f.run("namespace", "update", "payments", "--clear-budget").requireExit(t, exitOK)
+	requireGolden(t, "namespace-clear-budget.golden", clearedBudget.stdout)
+
 	f.run("namespace", "create", "scratch").requireExit(t, exitOK)
 	deleted := f.run("namespace", "delete", "scratch").requireExit(t, exitOK)
 	requireGolden(t, "namespace-delete.golden", deleted.stdout)
@@ -134,6 +142,14 @@ func TestNamespaceCommands_GoldenHumanAndJSON(t *testing.T) {
 	sandboxJSON := jsonFixture.run("--json", "namespace", "create", "sandbox", "--allow-secret", "env:SANDBOX_*").
 		requireExit(t, exitOK)
 	requireGolden(t, "namespace-create-allow-secret.json.golden", sandboxJSON.stdout)
+
+	budgetedJSON := jsonFixture.run("--json", "namespace", "update", "payments",
+		"--budget-cpu-seconds", "5000000", "--budget-period", "720h", "--budget-enforce",
+	).requireExit(t, exitOK)
+	requireGolden(t, "namespace-budget.json.golden", budgetedJSON.stdout)
+	clearedBudgetJSON := jsonFixture.run("--json", "namespace", "update", "payments", "--clear-budget").
+		requireExit(t, exitOK)
+	requireGolden(t, "namespace-clear-budget.json.golden", clearedBudgetJSON.stdout)
 
 	jsonFixture.run("--json", "namespace", "create", "scratch").requireExit(t, exitOK)
 	deletedJSON := jsonFixture.run("--json", "namespace", "delete", "scratch").
@@ -442,4 +458,68 @@ func TestRunSubmit_RefusedByASecretPolicyNamesTheSourceAndTheList(t *testing.T) 
 	}
 	submit.requireStderrContains(t, "invalid_argument", `"env:PROD_DB_PASSWORD"`, "env:SANDBOX_*", exfilSentence)
 	f.run("run", "list", "-n", "sandbox").requireExit(t, exitOK).requireContains(t, "No runs")
+}
+
+// ---------------------------------------------------------------------------
+// namespace: budgets
+// ---------------------------------------------------------------------------
+
+func TestNamespaceUpdate_BudgetNeedsAPeriodWhenNoneIsStored(t *testing.T) {
+	f := newFixture(t)
+	f.run("namespace", "create", "analytics").requireExit(t, exitOK)
+	result := f.run("namespace", "update", "analytics", "--budget-cpu-seconds", "5000000", "--budget-enforce")
+	if result.code == exitOK {
+		t.Fatal("a budget with no period was accepted on a namespace that has none")
+	}
+	result.requireStderrContains(t,
+		"--budget-period is required to set a budget on a namespace that has none (e.g. --budget-period 720h)")
+	create := f.run("namespace", "create", "payments", "--budget-cpu-seconds", "10")
+	if create.code == exitOK {
+		t.Fatal("create with a budget and no period succeeded")
+	}
+	create.requireStderrContains(t, "--budget-period is required")
+}
+
+func TestNamespaceUpdate_ClearBudgetRefusesOtherBudgetFlags(t *testing.T) {
+	f := newFixture(t)
+	f.run("namespace", "create", "analytics").requireExit(t, exitOK)
+	before := len(f.requests())
+	result := f.run("namespace", "update", "analytics", "--clear-budget", "--budget-cpu-seconds", "10")
+	if result.code == exitOK {
+		t.Fatal("--clear-budget with --budget-cpu-seconds succeeded")
+	}
+	result.requireStderrContains(t, "--clear-budget", "--budget-cpu-seconds")
+	if after := f.requests(); len(after) != before {
+		t.Fatalf("a contradictory update reached the server: %v", after[before:])
+	}
+}
+
+func TestNamespaceUpdate_BudgetEnforceFalseKeepsTheBounds(t *testing.T) {
+	f := newFixture(t)
+	f.run("namespace", "create", "analytics",
+		"--budget-cpu-seconds", "5000000", "--budget-gib-seconds", "20000000",
+		"--budget-period", "720h", "--budget-enforce").requireExit(t, exitOK)
+	f.run("namespace", "update", "analytics", "--budget-enforce=false").requireExit(t, exitOK)
+	got := f.run("--json", "namespace", "get", "analytics").requireExit(t, exitOK)
+	var decoded struct {
+		Namespace struct {
+			Budget struct {
+				CPUSeconds string `json:"cpuSeconds"`
+				GiBSeconds string `json:"gibSeconds"`
+				Period     string `json:"period"`
+				Enforce    bool   `json:"enforce"`
+			} `json:"budget"`
+		} `json:"namespace"`
+	}
+	if err := json.Unmarshal([]byte(got.stdout), &decoded); err != nil {
+		t.Fatalf("decode: %v\n%s", err, got.stdout)
+	}
+	b := decoded.Namespace.Budget
+	if b.CPUSeconds != "5000000" || b.GiBSeconds != "20000000" || b.Period != "2592000s" || b.Enforce {
+		t.Fatalf("budget after --budget-enforce=false = %+v, want the stored bounds and period, soft", b)
+	}
+	f.run("namespace", "get", "analytics").requireExit(t, exitOK).
+		requireContains(t, "5000000 cpu-seconds and 20000000 GiB-seconds per 720h0m0s, soft (reported, never refuses)")
+	f.run("namespace", "list").requireExit(t, exitOK).
+		requireContains(t, "5000000 cpu-s + 20000000 GiB-s/720h0m0s soft")
 }

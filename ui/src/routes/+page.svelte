@@ -8,6 +8,7 @@
 	import Popover from '$lib/components/Popover.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
+	import UsageCard from '$lib/components/UsageCard.svelte';
 	import { sinceInputValue } from '$lib/browsing';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import {
@@ -367,6 +368,18 @@
 				/>
 			{/if}
 		</section>
+	</div>
+
+	<!-- What the namespace RESERVED — and, with a budget, against it. Its
+		own request on its own timer: the card asks the budget's period when
+		there is one, which is a different question from this page's window. -->
+	<div class="mt-8">
+		<UsageCard
+			namespace={data.namespace}
+			budget={data.namespaceBudget}
+			window={data.window}
+			sinceParam={data.sinceParam}
+		/>
 	</div>
 
 	<!-- The retries the success rate hides: a SUCCEEDED run that needed a

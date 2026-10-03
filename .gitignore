@@ -5,6 +5,10 @@
 /ork
 /orker
 /orkctl
+# `go build` inside a command's own directory names the binary after it.
+/cmd/ork/ork
+/cmd/orker/orker
+/cmd/orkctl/orkctl
 
 # Go
 *.test

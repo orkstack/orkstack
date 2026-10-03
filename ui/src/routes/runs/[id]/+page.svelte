@@ -8,6 +8,7 @@
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import EventInspector from '$lib/components/EventInspector.svelte';
+	import RunEvidenceDialog from '$lib/components/RunEvidenceDialog.svelte';
 	import RunSubmitPanel from '$lib/components/RunSubmitPanel.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
@@ -353,6 +354,9 @@
 	// Candidates are fetched when the dialog OPENS, not with the page — most
 	// visits never compare, and ListRuns is not free.
 	let compareDialogOpen = $state(false);
+	// "Evidence" is a dialog that exists only while open: the manifest it
+	// shows is fetched per opening and kept nowhere (docs/RUN_EVIDENCE.md).
+	let evidenceDialogOpen = $state(false);
 	let compareCandidates = $state<Run[]>([]);
 	let compareSelected = $state('');
 	let comparePasted = $state('');
@@ -1098,6 +1102,16 @@
 			</span>
 		</div>
 		<div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+			{#if isTerminal(runStatus)}
+				<!-- The engine exports evidence for finished runs only, so a live
+				     run is not offered it. -->
+				<button
+					type="button"
+					data-testid="run-evidence"
+					onclick={() => (evidenceDialogOpen = true)}
+					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+				>Evidence</button>
+			{/if}
 			<button
 				type="button"
 				data-testid="compare-run"
@@ -1718,6 +1732,9 @@
 		</Dialog>
 	{/if}
 
+	{#if evidenceDialogOpen}
+		<RunEvidenceDialog runId={run.id} namespace={data.namespace} onclose={() => (evidenceDialogOpen = false)} />
+	{/if}
 	{#if compareDialogOpen}
 		<Dialog
 			testid="compare-dialog"

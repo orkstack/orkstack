@@ -474,6 +474,28 @@ service RunService {
   // and an empty value must be decided once. Every from_value/to_value is a
   // rendered string a client prints verbatim.
   rpc DiffRuns(DiffRunsRequest) returns (DiffRunsResponse);
+
+  // ExportRunEvidence streams ONE finished run's evidence bundle: a tar.gz
+  // whose first member, MANIFEST.json, names every other member's path,
+  // origin, size, sha256 and state, followed by the archived run and events,
+  // the pinned definition's source YAML, and per task the verbatim
+  // commit.json, values.json, every output artifact, every attempt record,
+  // and every attempt's stdout.log and stderr.log.
+  //
+  // It is a READ, assembled per request from objects that already exist and
+  // kept nowhere: there is no export record, so nothing can disagree with the
+  // archive. Every member digest is of the bytes as they were read; a member
+  // with a recorded reference is verified as it streams and a mismatch ends
+  // the stream with DataLoss and no `last`. Bytes the cleanup worker or a
+  // lifecycle rule removed are listed with state "reclaimed" and their
+  // recorded sha256 preserved, never omitted.
+  //
+  // The run is addressed inside its namespace exactly as GetRun addresses it
+  // and must be finished and archived; a live run is FailedPrecondition. The
+  // stream is complete only when a chunk with `last` arrives, on the same
+  // terms as ReadArtifact. The bundle layout and manifest schema are
+  // docs/RUN_EVIDENCE.md.
+  rpc ExportRunEvidence(ExportRunEvidenceRequest) returns (stream EvidenceChunk);
 }
 
 // WebhookService manages run-event subscriptions. A subscription is
@@ -1167,6 +1189,40 @@ message DiffRunsResponse {
   // say what was and was not compared. It is exhaustive: every
   // RunFieldDiff.field in differences is one of its entries.
   repeated string fields_compared = 10;
+}
+
+message ExportRunEvidenceRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+  // task_id narrows the per-task members to one task. Empty = every task.
+  // The run's own members (MANIFEST.json, run.jsonl, orkflow/source.yaml)
+  // are always included. An unknown task is NotFound.
+  string task_id = 3;
+  // exclude_logs and exclude_artifacts drop the attempts' stdout.log and
+  // stderr.log, and the tasks' output artifacts, from the bundle. They are
+  // spelled as exclusions so that the proto3 zero value — an empty request —
+  // is the COMPLETE bundle: a caller that asks for nothing in particular gets
+  // everything. values.json, commit.json and attempt records are never
+  // excluded; they are what makes the bundle evidence.
+  bool exclude_logs = 4;
+  bool exclude_artifacts = 5;
+  // manifest_only streams the bytes of MANIFEST.json alone — the same
+  // document the full bundle would carry as its first member, for the same
+  // request — as an uncompressed JSON document, so a client can show what
+  // a bundle would contain, and how large it is, before fetching it. The
+  // small members (the archive body, the definition, commits, attempt
+  // records) are still read and hashed; artifact and log objects are
+  // stat'ed, never read.
+  bool manifest_only = 6;
+}
+
+// EvidenceChunk is one slice of the export, at most 64 KiB, as ArtifactChunk
+// is. `last` is set only on the final, empty chunk of a COMPLETE, successful
+// export: a stream that ends without it — an error, a disconnect — is not a
+// bundle, and a client must discard what it received.
+message EvidenceChunk {
+  bytes data = 1;
+  bool last = 2;
 }
 message CancelRunRequest {
   string run_id = 1;

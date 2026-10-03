@@ -1,5 +1,5 @@
 import { errorMessage, orkstack } from "$lib/client";
-import type { NamespaceHold } from "$lib/gen/orkstack/v1/namespace_pb";
+import type { Budget, NamespaceHold } from "$lib/gen/orkstack/v1/namespace_pb";
 import { namespaceFrom, namespaceLabel } from "$lib/namespace";
 import type { LayoutLoad } from "./$types";
 
@@ -17,10 +17,16 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
     const shown = namespaceLabel(namespace);
     const namespaceHold: NamespaceHold | null =
       res.namespaces.find((ns) => ns.name === shown)?.hold ?? null;
+    // The budget of the same document, on the same terms: a snapshot as of
+    // this navigation, read by the dashboard's Usage card to ask its own
+    // period's question. The server is the gate.
+    const namespaceBudget: Budget | null =
+      res.namespaces.find((ns) => ns.name === shown)?.budget ?? null;
     return {
       namespace,
       namespaces: res.namespaces.map((ns) => ns.name),
       namespaceHold,
+      namespaceBudget,
       namespaceError: null as string | null,
     };
   } catch (err) {
@@ -31,6 +37,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
       namespace,
       namespaces: [],
       namespaceHold: null as NamespaceHold | null,
+      namespaceBudget: null as Budget | null,
       namespaceError: errorMessage(err),
     };
   }

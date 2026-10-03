@@ -1,0 +1,13 @@
+Namespace:   analytics
+Window:      2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:    2026-01-02T03:04:05Z
+Grouped by:  nothing (the namespace total)
+
+RUNS  TASKS  ATTEMPTS  TASK-SECONDS  CPU-SECONDS  GiB-SECONDS
+1     2      3         210           750          1470
+
+Budget:      500 cpu-seconds per 720h0m0s, enforced — this window is not the budget's; ask with --since 720h0m0s for its share
+cpu-seconds and GiB-seconds are RESERVED cpu and memory × attempt time, not measured utilization.
+scanned 1 of 1 finished runs in the window; 1 dispatched a task; attempt records complete for 1, missing for 0
+coverage begins 2026-01-02T02:34:05Z, the oldest run in this window with attempt records
+runs still in flight are counted when they finish

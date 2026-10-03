@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -890,6 +891,49 @@ func TestAudit_NamespaceUpdateRecordsAllowedSecretsWhenPresent(t *testing.T) {
 	}
 	if clear := records[0].GetDetail(); strings.Contains(clear, "allowed_secrets=") {
 		t.Errorf("clear detail = %q, want no allowed_secrets=", clear)
+	}
+}
+
+// TestAudit_NamespaceUpdateRecordsBudgetWhenPresent: a namespace.update that
+// sets a budget carries budget={…} in its detail; one that clears it carries
+// no budget= key.
+func TestAudit_NamespaceUpdateRecordsBudgetWhenPresent(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	const budget = "budget={cpu_seconds=5000000 gib_seconds=0 period=720h0m0s enforce=true}"
+	created, err := f.svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "analytics"},
+	}))
+	if err != nil {
+		t.Fatalf("CreateNamespace (direct, unaudited): %v", err)
+	}
+	updated, err := f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{
+			Name: "analytics", Etag: created.Msg.GetNamespace().GetEtag(),
+			Budget: &orkstackv1.Budget{CpuSeconds: 5000000, Period: durationpb.New(720 * time.Hour), Enforce: true},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("UpdateNamespace (budget): %v", err)
+	}
+	records := f.records(t)
+	if len(records) != 1 || records[0].GetAction() != "namespace.update" {
+		t.Fatalf("records = %v, want one namespace.update", records)
+	}
+	detail := records[0].GetDetail()
+	at, running, sink := strings.Index(detail, budget), strings.Index(detail, "max_running="), strings.Index(detail, "telemetry.sink=")
+	if at < 0 || !(running < at && at < sink) {
+		t.Errorf("detail = %q, want %s after max_running= and before telemetry.sink=", detail, budget)
+	}
+	f.now = f.now.Add(time.Second)
+	if _, err := f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
+		Namespace: &orkstackv1.Namespace{Name: "analytics", Etag: updated.Msg.GetNamespace().GetEtag()},
+	})); err != nil {
+		t.Fatalf("UpdateNamespace (clear): %v", err)
+	}
+	records = f.records(t)
+	if len(records) != 2 || strings.Contains(records[0].GetDetail(), "budget=") {
+		t.Fatalf("clear detail = %q, want no budget= key", records[0].GetDetail())
 	}
 }
 

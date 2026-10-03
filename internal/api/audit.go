@@ -584,6 +584,12 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 		parts = append(parts, "hold="+strconv.Quote(hold.GetReason()))
 	}
 	parts = append(parts, "max_running="+strconv.FormatInt(int64(ns.GetMaxRunning()), 10))
+	// Budget (namespace-budgets): budget={…} only when set, on the hold= rule,
+	// so a namespace with no budget summarizes byte-identically to before the
+	// field existed and a cleared budget is the record with no key.
+	if budget := ns.GetBudget(); budget != nil {
+		parts = append(parts, "budget="+budgetLabel(budget))
+	}
 	sink := "inherited"
 	if telemetry := ns.GetTelemetry(); telemetry != nil {
 		sink = telemetry.GetSink()

@@ -12,6 +12,7 @@ package artifacts_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -224,4 +225,105 @@ func cleanupAttemptRecords(t *testing.T, cfg artifacts.Config, runID, taskID str
 			}
 		}
 	})
+}
+
+// cleanupRunAttempts removes every record of the given runs.
+func cleanupRunAttempts(t *testing.T, cfg artifacts.Config, runIDs ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx := context.Background()
+		client := newRawS3Client(t, cfg)
+		for _, runID := range runIDs {
+			prefix, err := artifacts.RunAttemptPrefix(runID)
+			if err != nil {
+				t.Fatalf("RunAttemptPrefix: %v", err)
+			}
+			for _, key := range listKeys(t, ctx, client, cfg.S3Bucket, prefix) {
+				if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+					Bucket: aws.String(cfg.S3Bucket),
+					Key:    aws.String(key),
+				}); err != nil {
+					t.Logf("cleanup %s: %v", key, err)
+				}
+			}
+		}
+	})
+}
+
+// TestS3AttemptStore_RunAttemptReaderAgreesWithListAttempts: the run-wide
+// listing names exactly the union of the per-task listings, in key order,
+// across S3's 1,000-key page, and never a record of a run whose id merely
+// extends this one's.
+func TestS3AttemptStore_RunAttemptReaderAgreesWithListAttempts(t *testing.T) {
+	store, cfg := newS3AttemptStore(t)
+	ctx := context.Background()
+	runID := fmt.Sprintf("ork-usage-%s", uniqueToken(t))
+	extended := runID + "0"
+	cleanupRunAttempts(t, cfg, runID, extended)
+
+	counts := map[string]int32{"alpha": 500, "beta": 1, "gamma": 500} // 1,001 records
+	for task, n := range counts {
+		for attempt := int32(1); attempt <= n; attempt++ {
+			if err := store.PutAttempt(ctx, &orkstackv1.TaskAttempt{
+				SchemaVersion: artifacts.AttemptSchemaVersion, RunId: runID, TaskId: task, Attempt: attempt,
+				Outcome:   orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED,
+				Resources: &orkstackv1.ReservedResources{Cpu: 1, MemoryBytes: 1 << 30},
+			}); err != nil {
+				t.Fatalf("PutAttempt(%s/%d): %v", task, attempt, err)
+			}
+		}
+	}
+	if err := store.PutAttempt(ctx, &orkstackv1.TaskAttempt{
+		SchemaVersion: artifacts.AttemptSchemaVersion, RunId: extended, TaskId: "alpha", Attempt: 1,
+		Outcome: orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED,
+	}); err != nil {
+		t.Fatalf("PutAttempt(extended run): %v", err)
+	}
+
+	refs, err := store.ListRunAttemptRefs(ctx, runID)
+	if err != nil {
+		t.Fatalf("ListRunAttemptRefs: %v", err)
+	}
+	var want []artifacts.AttemptRef
+	for _, task := range []string{"alpha", "beta", "gamma"} {
+		records, err := store.ListAttempts(ctx, runID, task)
+		if err != nil {
+			t.Fatalf("ListAttempts(%s): %v", task, err)
+		}
+		for _, record := range records {
+			want = append(want, artifacts.AttemptRef{RunID: runID, TaskID: task, Attempt: record.GetAttempt()})
+		}
+	}
+	if len(refs) != 1001 || len(want) != 1001 {
+		t.Fatalf("run-wide listing has %d refs, per-task listings %d; want 1001 each", len(refs), len(want))
+	}
+	for i := range want {
+		if refs[i] != want[i] {
+			t.Fatalf("ref %d = %v, want %v (key order: task, then attempt)", i, refs[i], want[i])
+		}
+	}
+	for _, ref := range []artifacts.AttemptRef{refs[0], refs[500], refs[1000]} {
+		record, err := store.GetAttempt(ctx, ref)
+		if err != nil {
+			t.Fatalf("GetAttempt(%v): %v", ref, err)
+		}
+		if record.GetTaskId() != ref.TaskID || record.GetAttempt() != ref.Attempt || record.GetResources().GetCpu() != 1 {
+			t.Fatalf("GetAttempt(%v) = %v", ref, record)
+		}
+	}
+	t.Logf("run-wide listing of %s: %d refs across S3's 1,000-key page, first %v, last %v",
+		runID, len(refs), refs[0], refs[len(refs)-1])
+
+	// Deleted after the listing: ErrNotFound, the rule a reader drops it by.
+	client := newRawS3Client(t, cfg)
+	key, err := artifacts.AttemptKey(refs[0])
+	if err != nil {
+		t.Fatalf("AttemptKey: %v", err)
+	}
+	if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(cfg.S3Bucket), Key: aws.String(key)}); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+	if _, err := store.GetAttempt(ctx, refs[0]); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Fatalf("GetAttempt of a deleted record = %v, want ErrNotFound", err)
+	}
 }

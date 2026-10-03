@@ -2,10 +2,12 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -132,5 +134,95 @@ tasks:
 
 	if got := engine.RefusalTelemetry(&orkstackv1.Namespace{}, compile(t, telemetryDocument)); got != nil {
 		t.Errorf("RefusalTelemetry(no policy, no labels) = %v, want nil", got)
+	}
+}
+
+func enforcedBudget(cpu, gib int64) *orkstackv1.Namespace {
+	return &orkstackv1.Namespace{Name: "analytics", Budget: &orkstackv1.Budget{
+		CpuSeconds: cpu, GibSeconds: gib, Period: durationpb.New(720 * time.Hour), Enforce: true,
+	}}
+}
+
+var budgetMeasured = time.Date(2026, 9, 24, 10, 49, 2, 0, time.UTC)
+
+func TestBudgetReached_AtTheBoundIsReachedAndZeroIsUnbounded(t *testing.T) {
+	cpuOnly := &orkstackv1.Budget{CpuSeconds: 5000}
+	cases := []struct {
+		name   string
+		budget *orkstackv1.Budget
+		usage  engine.BudgetUsage
+		want   bool
+	}{
+		{"just under", cpuOnly, engine.BudgetUsage{CPUSeconds: 4999.9}, false},
+		{"at the bound", cpuOnly, engine.BudgetUsage{CPUSeconds: 5000}, true},
+		{"over", cpuOnly, engine.BudgetUsage{CPUSeconds: 9000}, true},
+		{"GiB unbounded at 0", cpuOnly, engine.BudgetUsage{GiBSeconds: 1e12}, false},
+		{"GiB bound reached", &orkstackv1.Budget{GibSeconds: 10}, engine.BudgetUsage{GiBSeconds: 10}, true},
+		{"nil budget", nil, engine.BudgetUsage{CPUSeconds: 1e12, GiBSeconds: 1e12}, false},
+	}
+	for _, tc := range cases {
+		if got := engine.BudgetReached(tc.budget, tc.usage); got != tc.want {
+			t.Errorf("%s: BudgetReached = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestBudgetRefusal_OnlyAnEnforcedReachedBudgetRefuses(t *testing.T) {
+	over := engine.BudgetUsage{CPUSeconds: 8205762, GiBSeconds: 16411524, MeasuredAt: budgetMeasured}
+	soft := enforcedBudget(5000000, 0)
+	soft.Budget.Enforce = false
+	if got := engine.BudgetRefusal(soft, over); got != nil {
+		t.Fatalf("a soft, reached budget refused: %v", got)
+	}
+	if got := engine.BudgetRefusal(enforcedBudget(9000000, 0), over); got != nil {
+		t.Fatalf("an enforced budget not reached refused: %v", got)
+	}
+	if got := engine.BudgetRefusal(&orkstackv1.Namespace{Name: "analytics"}, over); got != nil {
+		t.Fatalf("a namespace without a budget refused: %v", got)
+	}
+	cpuSentence := "namespace \"analytics\" has reserved 8205762 cpu-seconds over the last 720h0m0s, at or above its " +
+		"enforced budget of 5000000 (measured 2026-09-24T10:49:02Z). New runs are refused until the period's usage " +
+		"falls below the budget; raise it with `orkctl namespace update analytics --budget-cpu-seconds N`, or stop " +
+		"enforcing with `orkctl namespace update analytics --budget-enforce=false`"
+	gibSentence := "namespace \"analytics\" has reserved 16411524 GiB-seconds over the last 720h0m0s, at or above its " +
+		"enforced budget of 10000000 (measured 2026-09-24T10:49:02Z). New runs are refused until the period's usage " +
+		"falls below the budget; raise it with `orkctl namespace update analytics --budget-gib-seconds N`, or stop " +
+		"enforcing with `orkctl namespace update analytics --budget-enforce=false`"
+	cases := []struct {
+		name string
+		ns   *orkstackv1.Namespace
+		want string
+	}{
+		{"cpu reached", enforcedBudget(5000000, 0), cpuSentence},
+		{"GiB reached only", enforcedBudget(9000000, 10000000), gibSentence},
+		{"both reached names cpu", enforcedBudget(5000000, 10000000), cpuSentence},
+	}
+	for _, tc := range cases {
+		refusal := engine.BudgetRefusal(tc.ns, over)
+		if refusal == nil {
+			t.Fatalf("%s: no refusal", tc.name)
+		}
+		if refusal.Reason != engine.AdmissionBudgetExceeded || refusal.Budget == nil || refusal.Usage != over {
+			t.Errorf("%s: refusal = %+v", tc.name, refusal)
+		}
+		if refusal.Error() != tc.want {
+			t.Errorf("%s: sentence =\n  %s\nwant\n  %s", tc.name, refusal.Error(), tc.want)
+		}
+	}
+}
+
+func TestBudgetUnmeasurableRefusal_NamesTheCauseAndBothFixes(t *testing.T) {
+	cause := errors.New(`usage of namespace "analytics" over 720h0m0s would read 12004 finished runs, more than the 10000 a usage read is bounded to`)
+	refusal := engine.BudgetUnmeasurableRefusal(enforcedBudget(5000000, 0), cause)
+	want := "namespace \"analytics\" enforces a budget over 720h0m0s and its usage could not be measured: usage of " +
+		"namespace \"analytics\" over 720h0m0s would read 12004 finished runs, more than the 10000 a usage read is " +
+		"bounded to. New runs are refused while an enforced budget cannot be measured; shorten the period with " +
+		"`orkctl namespace update analytics --budget-period D`, or stop enforcing with `orkctl namespace update " +
+		"analytics --budget-enforce=false`"
+	if refusal.Reason != engine.AdmissionBudgetUnmeasurable || refusal.Unmeasured != cause || refusal.Budget == nil {
+		t.Fatalf("refusal = %+v", refusal)
+	}
+	if refusal.Error() != want {
+		t.Fatalf("sentence =\n  %s\nwant\n  %s", refusal.Error(), want)
 	}
 }
