@@ -391,7 +391,7 @@ func TestIntegration_WebhookUpdateKeepsItsSecret(t *testing.T) {
 	if step := report.GetAutomation()[0].GetPlan().GetSteps()[0]; step.GetAction() != orkstackv1.AutomationAction_AUTOMATION_ACTION_UPDATE {
 		t.Fatalf("the scope change planned %v, want UPDATE", step.GetAction())
 	}
-	runID := decodeSubmittedID(t, s.cli(t, s.a, exitOK, "run", "submit", s.orkflow))
+	runID := decodeSubmittedID(t, s.cli(t, s.a, exitOK, "--json", "run", "submit", s.orkflow))
 	post := s.receiver.await(t, "/etl", runID)
 	signature := post.headers.Get(webhooks.SignatureHeader)
 	if !webhooks.Verify(secret, post.body, signature) {
