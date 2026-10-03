@@ -44,6 +44,10 @@ const note = noteTo(out('transcript.txt'));
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fullPage: true });
 
+// The shell image writes values.json itself after every op (exec records
+// {"exitCode"}, eval records {"value": stdout, "exitCode"}), so a task that
+// wants a value downstream uses op: eval and prints it — a values.json the
+// command writes is overwritten (images/activity-shell/README.md).
 function workflow(): string {
 	return `name: ${NAME}
 version: "0.1.0"
@@ -53,10 +57,8 @@ tasks:
     uses: shell
     timeout_seconds: 120
     with:
-      op: script
-      interpreter: sh
-      script: |
-        printf '{"value":"deploy staging"}' > /orkstack/output/values.json
+      op: eval
+      command: ["printf", "deploy staging"]
   - id: approval
     needs: [plan]
     await:
@@ -71,8 +73,8 @@ tasks:
     condition: "{{ .tasks.approval.output.approved }}"
     timeout_seconds: 120
     with:
-      op: exec
-      command: ["sh", "-c", "printf '{\\"applied_by\\":\\"%s\\"}' \\"{{ .tasks.approval.output.approver }}\\" > /orkstack/output/values.json"]
+      op: eval
+      command: ["sh", "-c", "printf 'applied by %s' \\"{{ .tasks.approval.output.approver }}\\""]
 `;
 }
 
