@@ -92,14 +92,16 @@
 		'ramp-stop': 'Stop ramp'
 	};
 
-	function dialogCommand(kind: DialogKind, build: string): string {
+	// The command the dialog would run, or null while the typed ramp percent is
+	// invalid: `--percent 0` there would be a stop-the-ramp, not what was typed.
+	function dialogCommand(kind: DialogKind, build: string): string | null {
 		switch (kind) {
 			case 'promote':
 				return releaseCommand('promote', build);
 			case 'rollback':
 				return releaseCommand('rollback', build);
 			case 'ramp':
-				return releaseCommand('ramp', build, rampPercent ?? 0);
+				return rampPercent === null ? null : releaseCommand('ramp', build, rampPercent);
 			case 'ramp-stop':
 				return releaseCommand('ramp', build, 0);
 		}
@@ -368,13 +370,22 @@
 											{/if}
 											{#each release.orkers as orker (orker.orkerId)}
 												{#each orker.pins as pin, i (pin.runId + ':' + i)}
+													{@const pinRun = release.runs.find((r) => r.id === pin.runId)}
 													<div class="flex items-center gap-2" data-testid="release-pin-{build}-{orker.orkerId}-{pin.runId}">
 														<span>
 															pin {pin.pin || '-'} of run
-															<a
-																class="font-mono text-brand-700 hover:underline"
-																href={withNamespace('/runs/' + pin.runId, release.runs.find((r) => r.id === pin.runId)?.namespace ?? 'default')}>{pin.runId}</a
-															>
+															<!-- A pin names its run but not the run's namespace; only a run
+															     listed for the release has one to link to. Any other
+															     run id is text, never a link guessed into `default`. -->
+															{#if pinRun}
+																<a
+																	class="font-mono text-brand-700 hover:underline"
+																	href={withNamespace('/runs/' + pin.runId, pinRun.namespace)}
+																	data-testid="release-pin-run-{pin.runId}">{pin.runId}</a
+																>
+															{:else}
+																<span class="font-mono" data-testid="release-pin-run-{pin.runId}">{pin.runId}</span>
+															{/if}
 															on <span class="font-mono">{orker.orkerId}</span>, expires {pin.expiresAt
 																? fmtTimestamp(pin.expiresAt)
 																: '-'}
@@ -480,10 +491,13 @@
 						{/if}
 					</div>
 				{/if}
-				<div class="mt-3 flex items-center gap-2 text-xs text-fg-muted">
-					<span>CLI equivalent</span>
-					<CliEquivalent command={dialogCommand(dialog.kind, dialog.build)} testid="release-dialog-cli" />
-				</div>
+				{@const command = dialogCommand(dialog.kind, dialog.build)}
+				{#if command}
+					<div class="mt-3 flex items-center gap-2 text-xs text-fg-muted">
+						<span>CLI equivalent</span>
+						<CliEquivalent {command} testid="release-dialog-cli" />
+					</div>
+				{/if}
 			{/if}
 		{/snippet}
 	</ConfirmDialog>

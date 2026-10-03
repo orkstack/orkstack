@@ -19,13 +19,45 @@ function plural(n: number, one: string, many: string): string {
 	return n === 1 ? `1 ${one}` : `${n} ${many}`;
 }
 
+/**
+ * A ramp percent as `orkctl` prints it: the proto field is a float32, and the
+ * CLI formats it with Go's shortest float32 form (strconv.FormatFloat(p, 'g',
+ * -1, 32)). A JS number is a double, so a ramp set outside OrkStack at 0.1
+ * would otherwise read 0.10000000149011612. The shortest decimal that rounds
+ * back to the same float32 is what both surfaces show.
+ */
+export function percentText(p: number): string {
+	if (!Number.isFinite(p)) return String(p);
+	const single = Math.fround(p);
+	let shortest = single;
+	for (let digits = 1; digits <= 9; digits++) {
+		const candidate = Number(single.toPrecision(digits));
+		if (Math.fround(candidate) === single) {
+			shortest = candidate;
+			break;
+		}
+	}
+	if (shortest === 0) return '0';
+	// Go's 'g' with shortest precision switches to an exponent below 1e-4
+	// (and at 1e21 and above, which a percent never reaches), with at least two
+	// exponent digits: 1e-05, not JS's 0.00001.
+	const exponent = Math.floor(Math.log10(Math.abs(shortest)));
+	if (exponent < -4 || exponent >= 21) {
+		const [mantissa, exp] = shortest.toExponential().split('e');
+		const sign = exp.startsWith('-') ? '-' : '+';
+		const digits = exp.replace(/^[+-]/, '').padStart(2, '0');
+		return `${mantissa}e${sign}${digits}`;
+	}
+	return String(shortest);
+}
+
 /** ROLE: current, ramping P%, previous, candidate. */
 export function roleLabel(release: Release): string {
 	switch (release.role) {
 		case ReleaseRole.CURRENT:
 			return 'current';
 		case ReleaseRole.RAMPING:
-			return `ramping ${release.rampPercent}%`;
+			return `ramping ${percentText(release.rampPercent)}%`;
 		case ReleaseRole.PREVIOUS:
 			return 'previous';
 		case ReleaseRole.CANDIDATE:
@@ -139,7 +171,7 @@ export function promoteResult(
 ): string {
 	if (!res.changed) return `release ${build} is already current; nothing changed.`;
 	const target = findRelease(read, build);
-	const ramp = target?.role === ReleaseRole.RAMPING ? ` (its ${target.rampPercent}% ramp ends)` : '';
+	const ramp = target?.role === ReleaseRole.RAMPING ? ` (its ${percentText(target.rampPercent)}% ramp ends)` : '';
 	const verb = rollback ? 'current again' : 'current';
 	const prev = res.previousBuildId;
 	let text = prev
@@ -174,7 +206,7 @@ export function rampResult(
 			: 'the engines started without ORK_BUILD_ID take the rest';
 		const replaced =
 			res.previousBuildId && res.previousBuildId !== build
-				? ` (${res.previousBuildId} was ramping at ${res.previousPercent}%; its runs finish on it)`
+				? ` (${res.previousBuildId} was ramping at ${percentText(res.previousPercent)}%; its runs finish on it)`
 				: '';
 		text = `release ${build} now takes ${percent}% of new runs; ${rest}${replaced}.`;
 	}

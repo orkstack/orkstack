@@ -32,7 +32,8 @@ import {
 //   3. a release missing a pool cannot be promoted, and says why;
 //   4. promoting moves new runs, and the previous release shows what it is
 //      finishing, its run linking to the run's own page;
-//   5. a decision made on a stale read is refused in the dialog.
+//   5. a decision made on a stale read is refused in the dialog, and the
+//      Ramp dialog offers a CLI equivalent only for a percent it accepts.
 //
 // Process hygiene: this spec signals ONLY the processes it started, by
 // handle.
@@ -361,6 +362,27 @@ test('a decision made on a stale read is refused', async ({ page }) => {
 	await shot(page, 'admin-releases-stale-refused.png');
 	note(`the stale roll back was refused in the dialog: ${await page.getByTestId('release-dialog-error').textContent()}`);
 	await page.getByTestId('release-dialog-cancel').click();
+
+	// The Ramp dialog offers a CLI equivalent only for a percent it would
+	// accept: `--percent 0` beside an invalid input would be a stop-the-ramp,
+	// not the ramp being typed. Nothing is accepted here.
+	await page.getByTestId(`release-ramp-${V1}`).click();
+	await expect(page.getByTestId('release-dialog')).toBeVisible();
+	await page.getByTestId('release-ramp-percent').fill('0');
+	await expect(page.getByTestId('release-ramp-percent-error')).toBeVisible();
+	await expect(page.getByTestId('release-dialog-accept')).toBeDisabled();
+	await expect(page.getByTestId('release-dialog-cli-trigger')).toHaveCount(0);
+	await shot(page, 'admin-releases-ramp-invalid-percent.png');
+	await page.getByTestId('release-ramp-percent').fill('15');
+	await expect(page.getByTestId('release-ramp-percent-error')).toBeHidden();
+	await page.getByTestId('release-dialog-cli-trigger').click();
+	await expect(page.getByTestId('release-dialog-cli-popover')).toContainText(`orkctl release ramp '${V1}' --percent 15`);
+	await page.getByTestId('release-dialog-cli-trigger').click();
+	await expect(page.getByTestId('release-dialog-cli-popover')).toBeHidden();
+	await page.getByTestId('release-dialog-cancel').click();
+	await expect(page.getByTestId('release-dialog')).toBeHidden();
+	note('Ramp dialog: no CLI equivalent while the percent is invalid; --percent 15 once it is');
+
 	const opened = openGates(workRoot(ORKER_V1));
 	note(`opened ${opened} gate(s) for run ${gatedRun}`);
 });

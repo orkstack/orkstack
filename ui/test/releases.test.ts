@@ -18,6 +18,7 @@ import {
 	canRamp,
 	canRollBack,
 	holdsSummary,
+	percentText,
 	promoteResult,
 	rampResult,
 	releaseCommand,
@@ -122,6 +123,52 @@ test('result sentences match the CLI, including an unconfirmed routing', () => {
 	expect(rampResult(read, 'v2', 10, create(RampReleaseResponseSchema, { changed: false }))).toBe(
 		'release v2 already takes 10% of new runs; nothing changed.'
 	);
+});
+
+// The proto's ramp_percent is a float32, and the CLI prints it with Go's
+// shortest float32 form (strconv.FormatFloat(p, 'g', -1, 32)). The expected
+// strings below are what that Go call prints for each value; a JS double read
+// off the wire (Math.fround) must print the same.
+test('a ramp percent prints as the CLI prints it, not as a double', () => {
+	const wire = (p: number) => Math.fround(p);
+	const cases: [number, string][] = [
+		[0.1, '0.1'],
+		[0.3, '0.3'],
+		[12.5, '12.5'],
+		[100 / 3, '33.333332'],
+		[99.99, '99.99'],
+		[10, '10'],
+		[100, '100'],
+		[0, '0'],
+		[0.0001, '0.0001'],
+		[1e-5, '1e-05'],
+		[1.5e-5, '1.5e-05']
+	];
+	for (const [p, want] of cases) expect(percentText(wire(p))).toBe(want);
+});
+
+test('every sentence with a cluster-set percent uses the CLI form', () => {
+	const ramping = create(ReleaseSchema, { buildId: 'v2', role: ReleaseRole.RAMPING, rampPercent: Math.fround(0.1) });
+	expect(roleLabel(ramping)).toBe('ramping 0.1%');
+	const read = create(ListReleasesResponseSchema, {
+		releases: [create(ReleaseSchema, { buildId: 'v1', role: ReleaseRole.CURRENT }), ramping]
+	});
+	expect(promoteResult(read, 'v2', create(PromoteReleaseResponseSchema, { changed: true, routingConfirmed: true }), false)).toBe(
+		'release v2 is current (its 0.1% ramp ends). New runs start on v2.'
+	);
+	expect(
+		rampResult(
+			read,
+			'v3',
+			5,
+			create(RampReleaseResponseSchema, {
+				changed: true,
+				routingConfirmed: true,
+				previousBuildId: 'v2',
+				previousPercent: Math.fround(0.1)
+			})
+		)
+	).toBe('release v3 now takes 5% of new runs; v1 (current) takes the rest (v2 was ramping at 0.1%; its runs finish on it).');
 });
 
 test('a ramp percent is a whole number from 1 to 100', () => {
