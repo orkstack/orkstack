@@ -1,0 +1,48 @@
+TASK RUN  consume  task-run-fixture@1  namespace default
+definition   sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa  the run's own
+source run   ork-1790000000000000000-4294967297  task-run-fixture@1  sha256:1ad23e3b02ccc87986506b618a756ab9ec8063c6bdce1e0ab71110843a8bedaa
+             consume there: FAILED  CONTAINER_EXIT_NONZERO: task "consume": the container exited 1
+local run    local-<id>  (a new logical activity; idempotency key default/local-<id>/consume)
+image        localhost:5001/test/fake@sha256:5eed0000000000000000000000000000000000000000000000000000000000aa
+input        {"expect":"prod","target":"staging"}
+
+UPSTREAM  STATUS     FROM                                VALUES  ARTIFACTS
+produce   SUCCEEDED  ork-1790000000000000000-4294967297  20      1
+
+ARTIFACT             SIZE  SHA256
+produce/payload.txt  26    6f39071feb3117ba6a602feddf95730310fe9d3e28f7ae1676c046cb8f3779c2
+
+secrets      none declared
+env helper   ORK_ORKER_ENV_ALLOWLIST is empty: the env helper reads no variable
+resources    cpu 1, memory 1Gi (this machine's ORK_ORKER_* policy; the pool's Orkers apply their own)
+network      default (this machine's container network, not the pool's)
+limits       contract defaults: values 262144, 256 artifacts of at most 5368709120, logs 16777216 per stream
+             (a deployment may configure others; they are engine configuration no client reads)
+
+fetched      produce/values.json  20  295aff2366ab9f4c0e5ae73e0f49d22cb9a43287d277ab575544a8c28ec14079  ok
+fetched      produce/payload.txt  26  6f39071feb3117ba6a602feddf95730310fe9d3e28f7ae1676c046cb8f3779c2  ok
+This starts the task's container on this machine; any external side effect it performs is real.
+› staging inputs
+› pulling image
+› rendering
+config.json  (201 bytes)
+  {
+    "command": [
+      "sh",
+      "-c",
+      "test \"$TARGET\" = \"$EXPECT\""
+    ],
+    "expect": "prod",
+    "op": "exec",
+    "payload": "/orkstack/input/artifacts/produce/payload.txt",
+    "target": "staging"
+  }
+› running
+  │ [stderr] mismatch: staging != prod
+
+FAILED  CONTAINER_EXIT_NONZERO (ActivityFailed)
+  task "consume": the container exited 1
+exit code    1 after <d>
+values       none: a failed attempt writes no values.json anywhere
+artifacts    none
+Nothing was written to the deployment: no run, no commit, no attempt record, no log.

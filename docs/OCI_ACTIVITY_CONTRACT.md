@@ -2725,6 +2725,80 @@ Fixtures in Bash, Go and Python ship with it; **the Bash fixture is mandatory
 and is the design's own falsification test**. If the Bash fixture needs anything
 beyond `cat`, `jq` and a redirect, this design is wrong (AGENTS.md §10).
 
+### 10.4 Running one task locally
+
+```bash
+orkctl task run --from-run RUN --task TASK [--file FILE.ork.yaml] [--input k=v]…
+orkctl task run --file FILE.ork.yaml --task TASK [--output TASK=JSON]… [--artifact TASK/NAME=PATH]…
+```
+
+answers the question §10.3 does not: *why did this task, in this document, with
+those inputs, fail?* It runs **one** task of an Orkflow on the caller's machine
+and prints the rendered `config.json` before the container starts.
+
+**What it shares with an Orker.** Nothing about the task's execution is
+reimplemented:
+
+- the dispatcher is the Orker's `OCIDispatcher`, built by the Orker's own
+  constructor (`orker.NewActivitiesWithOptions`), on this machine's container
+  runtime;
+- the renderer is the Orker's (`missingkey=error`, the `artifact`, `env` and
+  `sh` helpers), so a `with:` that fails here fails `RENDER_FAILED` exactly as
+  it would on an Orker;
+- the workspace is the Orker's: the same `/orkstack` tree, the same §3.1
+  modes, the same §9.2 container constants, and resources capped by this
+  machine's `ORK_ORKER_*` policy, read exactly as an Orker reads it;
+- the `ExecuteTaskInput` is composed by `engine.LocalTaskInput`, which a
+  parity test holds equal to every input `RunWorkflow` schedules.
+
+With `--from-run`, every upstream value and artifact is the run's committed
+bytes, read through the engine's namespace-checked, integrity-verified
+`ReadArtifact` and re-verified against their sha256 when staged. A FAILED,
+SKIPPED or never-run ancestor contributes nothing, as in a run. With `--file`,
+the edited document is prepared by `ValidateOrkflow` — compiled against the
+deployment's catalog, images resolved to digests — and an ERROR refuses.
+`--output` and `--artifact` supply an upstream task entirely from local files.
+
+**What differs, deliberately.** The local input carries no `commit_uri` (a
+local run has no durable result), no `pin` (the CLI mints a fresh pin context
+for a pinned task, whose `/orkstack/shared` starts empty unless `--shared`
+seeds it), no `telemetry`, no `image_policy` (a local run does not enter the
+dispatcher's image-policy step, and a `--file` document already met the
+policy at `ValidateOrkflow`), and the contract-default limits rather than the
+deployment's configured ones, which no client can read. `condition:` is not
+evaluated (`orkctl run plan` answers that) and `retry:` is not applied: a local
+run is one attempt.
+
+**Identity.** A local run is a **new logical activity**. Its run id is
+`local-` and 16 hex digits, and its idempotency key is
+`{namespace}/local-…/{task}`, fresh per invocation. The source run's id and key
+never reach `task.json`, a container label, or anything the workload can read:
+reusing the production key would let an external system return the production
+call's cached result, or record the local run's side effect under the
+production key. Any external side effect the task performs is real, and the
+transcript says so before the container starts.
+
+**Secrets.** No secret is resolved implicitly. Every secret the task declares
+must be supplied (`--secret NAME=file:PATH` or `--secret NAME=env:VAR`) or
+explicitly skipped (`--omit-secret NAME`); an unaccounted one refuses before
+any byte is fetched. The dispatcher reads the value, stages it in the
+per-attempt secrets directory and removes it on every exit path; no value is
+printed, reported, or kept with `--keep`.
+
+**What it never does.** It calls only `GetRun`, `GetOrkflow`,
+`ValidateOrkflow` and `ReadArtifact`, and never dials Temporal or object
+storage. Its dispatcher has no commit store, attempt store or log store, so
+the deployment gains no run, commit, attempt record, log chunk, event, audit
+record or metric — the transcript's last line states it. It never passes the
+container a credential, server address or token the definition does not
+declare, never evaluates `condition:`, never applies `retry:`, and never runs
+a second task.
+
+Exit status: `0` succeeded (or `--render-only` rendered), `2` the task failed
+(`ActivityFailed`, `ContractViolation`, `TimedOut`), `3` interrupted, `1` the
+command could not run the task — including an `InfrastructureError`, which is
+this machine's problem rather than the task's verdict.
+
 ---
 
 ## 14. Evidence

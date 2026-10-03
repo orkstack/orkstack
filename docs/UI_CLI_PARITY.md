@@ -659,6 +659,17 @@ prerequisites. On 2026-09-08 the user explicitly accepted these two commands
 as a local-tool exception to UI/CLI parity. Copying a command is assistance,
 not browser execution. Browser-triggered builds and contract tests are
 outside this implementation's accepted scope.
+
+The exception covers a third command, `orkctl task run`
+(docs/OCI_ACTIVITY_CONTRACT.md §10.4), which runs one task of a run on the
+caller's machine against the run's recorded bytes. Its UI surface is a
+`CliEquivalent` popover on a FAILED task card of the run page
+(`run-task-{task}-replay-cli`) carrying exactly
+`orkctl --namespace '<ns>' 'task' 'run' '--from-run' '<run>' '--task' '<task>'`
+— the namespace, the run and the task, and no input, secret or path. The
+browser runs nothing. This extension came with the phase-4
+`orkctl-task-run` proposal (review approved 2026-09-24).
+
 Do not mount a Docker socket into the UI/engine, accept arbitrary server host
 paths, or invent a privileged activity runner to manufacture parity. A future
 execution equivalent requires a separately accepted contract for build-context

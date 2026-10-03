@@ -50,20 +50,7 @@ func newOrkflowValidateCommand(g *globalFlags) *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), response.Msg)
 		}
 		out := cmd.OutOrStdout()
-		failed, warnings := false, 0
-		for _, issue := range response.Msg.GetIssues() {
-			severity := "warning"
-			if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
-				severity, failed = "error", true
-			} else {
-				warnings++
-			}
-			if issue.GetField() != "" {
-				fmt.Fprintf(out, "%-8s %s: %s\n", severity, issue.GetField(), issue.GetMessage())
-			} else {
-				fmt.Fprintf(out, "%-8s %s\n", severity, issue.GetMessage())
-			}
-		}
+		failed, warnings := renderValidationIssues(out, response.Msg.GetIssues())
 		// Only an ERROR fails validation: a warned document is one apply
 		// accepts, and docs/UI_CLI_PARITY.md says "invalid documents exit
 		// nonzero" — not warned ones.
@@ -208,4 +195,26 @@ func scalarString(value *structpb.Value) string {
 		}
 		return string(encoded)
 	}
+}
+
+// renderValidationIssues prints ValidateOrkflow's issues the way `orkflow
+// validate` always has — one line each, severity first, then the field when
+// there is one — and reports whether any was an ERROR and how many were
+// warnings. `task run --file` prints a refused document's issues through it,
+// so the two commands never disagree on how a document's problems read.
+func renderValidationIssues(out io.Writer, issues []*orkstackv1.ValidationIssue) (failed bool, warnings int) {
+	for _, issue := range issues {
+		severity := "warning"
+		if issue.GetSeverity() == orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
+			severity, failed = "error", true
+		} else {
+			warnings++
+		}
+		if issue.GetField() != "" {
+			fmt.Fprintf(out, "%-8s %s: %s\n", severity, issue.GetField(), issue.GetMessage())
+		} else {
+			fmt.Fprintf(out, "%-8s %s\n", severity, issue.GetMessage())
+		}
+	}
+	return failed, warnings
 }

@@ -535,24 +535,32 @@ func TestIntegration_ASignatureRemovedAfterSubmitFailsTheTaskAtTheOrker(t *testi
 	s.cli(t, s.a, exitOK, "apply", "-n", prod, s.document(t, twoStepYAML("slow", "shell", 20)))
 	runID := s.submitID(t, s.a, "slow", prod)
 
+	// Wait for task one's CONTAINER, not its status: a task reads RUNNING from
+	// the moment it is scheduled, before any Orker has picked it up and run
+	// its own "image-policy" phase. Removing the signature on RUNNING alone
+	// raced that check, and task one, not task two, then failed
+	// IMAGE_NOT_SIGNED. The live attempt's phase "run" comes after
+	// "image-policy", so task one has passed it by then.
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		run, err := s.getRun(ctx, s.a, runID, prod)
+		live, err := s.a.runs.InspectRun(ctx, connect.NewRequest(&orkstackv1.InspectRunRequest{
+			RunId: runID, Namespace: prod, TaskId: "first",
+		}))
 		running := false
 		if err == nil {
-			for _, task := range run.GetTaskRuns() {
-				running = running || (task.GetTaskId() == "first" && task.GetStatus() == orkstackv1.Status_STATUS_RUNNING)
+			for _, attempt := range live.Msg.GetAttempts() {
+				running = running || (attempt.GetTaskId() == "first" && attempt.GetPhase() == "run")
 			}
 		}
 		if running {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("task one of %s never reached RUNNING", runID)
+			t.Fatalf("task one of %s never reached its container's run phase (last error %v)", runID, err)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	s.note("task one of %s is RUNNING; removing the signature now", runID)
+	s.note("task one of %s is running its container; removing the signature now", runID)
 	s.tool(t, "unsign", s.image("shell")+":dev")
 	t.Cleanup(func() {
 		_, _ = exec.Command(s.signTool, "sign", "--key", filepath.Join(s.keys, "release", "cosign.key"), s.image("shell")+":dev").CombinedOutput()

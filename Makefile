@@ -160,7 +160,7 @@ merge-check: build lint test ## Gate a merge: build + lint + unit tests + compil
 
 .PHONY: test-integration
 test-integration: ## Run the integration suites against live infra (needs: make infra-up && make -C images push)
-	ORK_REQUIRE_INFRA=1 go test -tags=integration -p 1 -timeout 90m -count=1 ./...
+	ORK_REQUIRE_INFRA=1 go test -tags=integration -p 1 -timeout 120m -count=1 ./...
 
 ## ---- evidence ----
 .PHONY: proof

@@ -20,7 +20,7 @@
 	import Select from '$lib/components/Select.svelte';
 	import { defaultCompareTarget } from '$lib/runDiff';
 	import { errorMessage, orkstack } from '$lib/client';
-	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, timestampJson } from '$lib/runDetail';
+	import { artifactMetadata, downloadFilename, formatDuration, payloadJson, pinAccent, runCommand, taskRunCommand, timestampJson } from '$lib/runDetail';
 	import { EVENT_BUFFER_CAP, appendEvent, emptyEventBuffer } from '$lib/eventBuffer';
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
 	import {
@@ -1380,6 +1380,20 @@
 								testid="run-task-{task.id}-logs-cli"
 								label="Copy logs CLI"
 							/>
+							{#if task.status === Status.FAILED}
+								<!--
+									A local tool, handed over the way activity build/test are:
+									the page copies the command and runs nothing. It carries the
+									namespace, the run and the task — no input, no secret, no
+									path; a task that declares secrets makes the CLI name the
+									exact --secret flags to add.
+								-->
+								<CliEquivalent
+									command={taskRunCommand(data.namespace, run.id, task.id)}
+									testid="run-task-{task.id}-replay-cli"
+									label="Copy the command that runs this task locally"
+								/>
+							{/if}
 							{#if task.status === Status.RUNNING}
 								<CliEquivalent
 									command={runCommand(data.namespace, ['run', 'inspect', run.id, '--task', task.id])}

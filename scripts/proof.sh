@@ -137,8 +137,11 @@ fi
 if has_gate integration; then
 	# A skip is not a pass: ORK_REQUIRE_INFRA turns every prerequisite skip
 	# into a failure now that the prerequisites were probed above.
+	# -timeout bounds ONE package, and cmd/orkctl's integration suite alone
+	# now runs past an hour (2914s before orkctl task run's suite joined it,
+	# over 3600s after), so 60m panicked a healthy suite mid-test.
 	run integration integration.log env ORK_REQUIRE_INFRA=1 \
-		go test -tags=integration -p 1 -timeout 90m -count=1 ./... -v
+		go test -tags=integration -p 1 -timeout 120m -count=1 ./... -v
 	run activity-fixture activity-fixture.log make -C images test
 fi
 if has_gate observability; then
