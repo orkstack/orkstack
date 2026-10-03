@@ -243,8 +243,8 @@ needs `ORK_S3_*` either way.
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
   whatever is current there — including tasks of a run pinned elsewhere. Roll
-  every pool together, and check each queue appears in
-  `describe-version` (§3 step 2).
+  every pool together; `orkctl release status` (§3 step 2) names every pool in
+  use that a release has no Orker for, and `promote` refuses until it has.
 - **A pool can name itself.** `ORK_ORKER_ENV_ALLOWLIST=ORK_BUILD_ID` on the
   Orker lets a task render `{{ env "ORK_BUILD_ID" }}`; the template resolves in
   the Orker process (`internal/orker/render.go`), so the task output names the
@@ -426,6 +426,9 @@ covers the deprecated `UseBuildIDForVersioning` flag. The combination OrkStack
 produces is therefore accepted and behaves as above, but it is not a supported
 upstream configuration — which is why that integration test, not the doc
 comment, is the contract, and why it runs on every proof.
+
+`orkctl release status` and `orkctl release wait` name each open pin and the
+Orker holding it, so the process not to stop is on the screen, not inferred.
 
 §3 step 5's `Drained` is the **version**-scoped wait. Its **host**-scoped
 complement is `orkctl orker drain` (see "Removing an Orker safely" in §5):
@@ -769,19 +772,20 @@ submitted runs sit at `HistoryLength 2` (`WorkflowExecutionStarted`,
 `WorkflowTaskScheduled`), no pending activities, indefinitely. Nothing in the
 logs says why, because nothing is wrong with the workers.
 
-One call fixes it, and no worker has to restart. It has to be told **where**,
-though: the `temporal` CLI reads none of the `ORK_` variables above. Its own
-defaults are the namespace `default` on `localhost:7233`, so a bare command
-does not fail — it succeeds, against a namespace nobody deployed to, or on a
-laptop rather than the cluster. Every invocation in this document therefore
-passes `--namespace` and `--address`, and names the deployment through
-`$ORK_DEPLOYMENT_NAME` rather than repeating a literal that §1 already owns.
+One call fixes it, and no worker has to restart:
 
 ```bash
-temporal worker deployment set-current-version \
-  --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$ORK_BUILD_ID" \
-  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+orkctl release promote "$ORK_BUILD_ID"
 ```
+
+`orkctl release` speaks OrkStack's own vocabulary — a **release** is one build
+of `ork` and `orker` deployed together — and reads the deployment, the
+namespace and the cluster address from the engine it talks to, so there is
+nothing to pass by hand. It refuses, with nothing changed, while the release
+could not carry what it would take: no engine of it running, a pool in use
+with no Orker of it, or **runs started before versioning still executing**
+(§3.5) — the refusal names each and what to start or wait for. The raw cluster
+command it makes underneath is listed in §4, "Underneath: the cluster commands".
 
 Backlogged runs start within seconds of it. §3 step 0 is the full first-release
 procedure; every release after that inherits a Current Version from its
@@ -846,7 +850,8 @@ its own queues (`cmd/ork/main.go`, `queues.validate`;
 
 Under versioning both appear, separately, in that version's poller list — the
 engine's queue as a **workflow** poller and the Orker's as an **activity**
-poller. That is the shape §3 step 2 checks, and reading it as one name aborts
+poller. That is the shape `orkctl release status` reads (§3 step 2: engines on
+the one, Orkers per pool on the other), and reading it as one name aborts
 healthy rollouts.
 
 **Why `RunWorkflow` is Pinned.** It interprets a DAG whose scheduling order,
@@ -911,47 +916,50 @@ cluster's policy no longer matches it. Change a schedule with
 ## 3. Rolling a release forward
 
 ```bash
-export ORK_DEPLOYMENT_NAME=orkstack          # §1's default, stated once
-export ORK_TEMPORAL_NAMESPACE=ork-main
-export ORK_TEMPORAL_ADDRESS=localhost:7233   # the frontend of the cluster you mean
-NEW=2026.08.16-a1b2c3d      # v2
-OLD=2026.08.09-9f8e7d6      # v1, currently serving
+NEW=2026.08.23-c4d5e6f      # v2
+OLD=2026.08.16-a1b2c3d      # v1, currently serving
 ```
 
-The last two are for **you**; the CLI reads neither (§1), which is why every
-command below hands it both.
+Every step is an `orkctl release` command against any engine replica, of
+either release. Nothing is stored by OrkStack between them: the cluster's
+routing is the only record of which release takes new runs, and every command
+reads it fresh.
+
+```text
+$ orkctl release status
+deployment:  orkstack
+current:     2026.08.16-a1b2c3d since 2026-09-24T09:02:11Z
+ramping:     -
+
+RELEASE             ROLE       ENGINE  ORKERS  POOLS SERVED    RUNS  STATE
+2026.08.16-a1b2c3d  current    2       4       build,gpu,main  14    serving
+2026.08.23-c4d5e6f  candidate  1       2       gpu,main        0     not ready (1 blocker)
+
+2026.08.23-c4d5e6f cannot take new runs yet:
+  - pool "build" is in use (orker-b45e of release 2026.08.16-a1b2c3d serves it) and no Orker of release 2026.08.23-c4d5e6f serves it, so tasks its runs send there would not run on its own Orkers. Start one with ORK_BUILD_ID=2026.08.23-c4d5e6f ORK_ORKER_POOL=build.
+```
 
 Steps 1–6 are every release that has a predecessor. **The very first versioned
 release of a deployment has none, so start at step 0** — skip it and the
 release runs nothing at all (§1).
 
-0. **First release only: make it Current before you rely on it.**
+0. **First release only: make it current before you rely on it.**
 
    ```bash
    FIRST=2026.08.02-0a1b2c3
    ORK_BUILD_ID=$FIRST ./bin/ork &
    ORK_BUILD_ID=$FIRST ./bin/orker &
 
-   # both queues must report pollers first — same check as step 2
-   temporal worker deployment describe-version \
-     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$FIRST" \
-     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
-
-   temporal worker deployment set-current-version \
-     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$FIRST" \
-     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
-
-   # CurrentVersionBuildID must not be empty
-   temporal worker deployment list \
-     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+   orkctl release status            # FIRST is a candidate, nothing is current
+   orkctl release promote "$FIRST"  # refused while it cannot carry new runs
    ```
 
-   Runs submitted before that call are backlogged, not lost: they start within
-   seconds of it and no worker restarts. If you are switching a system that is
-   already serving unversioned traffic, read §3.5 first — runs in flight across
-   the switch behave differently from runs in flight across steps 1–6.
+   Runs submitted before the promotion are backlogged, not lost: they start
+   within seconds of it and no worker restarts. If you are switching a system
+   that is already serving unversioned traffic, read §3.5 first — `promote`
+   refuses while runs started before versioning are still executing.
 
-1. **Start v2 alongside v1.** Same namespace, same queues, new `ORK_BUILD_ID`.
+1. **Start v2 alongside v1.** Same namespace, same pools, new `ORK_BUILD_ID`.
    Do not stop anything yet.
 
    ```bash
@@ -960,124 +968,121 @@ release runs nothing at all (§1).
    ```
 
    In a replicated deployment (§0) that means **all** of v2: every `ork`
-   replica and an Orker in every pool the release dispatches to. v1's replicas
-   stay up and keep serving the API — the two versions coexist behind one
-   address, and which version a new run executes on is the deployment's
-   Current Version, never the replica the client happened to reach: after the
-   switch, a run submitted **to a v1 replica** executes wholly on v2.
+   replica and an Orker in every pool the release dispatches to, with a pin
+   host wherever v1 hosts pins. v1's replicas stay up and keep serving the API
+   — the two releases coexist behind one address, and which release a new run
+   executes on is the cluster's routing, never the replica the client happened
+   to reach: after the switch, a run submitted **to a v1 replica** executes
+   wholly on v2.
 
-2. **Check v2 polls every queue it should**, engine and Orker both:
+2. **Check v2 can carry the work:**
 
    ```bash
-   temporal worker deployment describe-version \
-     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" \
-     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+   orkctl release status
    ```
 
-   Two entries must be there, one per role. They are two different queue names
-   whenever `ORK_ORKER_QUEUE` is set (§2):
-
-   ```
-   Task Queues:
-     Name                  Type
-     ork-tasks             workflow     <- the engine's run worker (fixed name)
-     ork-tasks-gpu-pool    activity     <- the Orker, i.e. ORK_ORKER_QUEUE
-   ```
-
-   Take the two names from v2's own boot line — `task_queue=` and
-   `orker_queue=` — rather than assuming them. A missing **activity** entry
-   means v2's engine is running without v2 Orkers: stop here, because a pinned
-   run's tasks would fall through to that queue's own current version and land
-   on the wrong Orker build. A missing **workflow** entry means v2's Orker is
-   running without a v2 engine. Do not expect `ORK_ORKER_QUEUE` to appear under
-   `workflow`: it never does, and treating that as a failure aborts a healthy
-   rollout.
+   v2's `STATE` reads `ready` when nothing blocks it. Otherwise every blocker is
+   listed with what to start, in OrkStack's words: no engine of v2 running; a
+   pool **anybody is serving now** with no uncordoned Orker of v2 (from the
+   Orker inventory, so a pool that is quiet today is still judged); a pool
+   that hosts pins with no pin host of v2; or an Orker that did not answer
+   (`UNVERIFIED` — a read that could not be made is never a pass). This
+   replaces reading `describe-version`'s two rows by hand.
 
 3. **Ramp** (optional but recommended):
 
    ```bash
-   temporal worker deployment set-ramping-version \
-     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" --percentage 10 \
-     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+   orkctl release ramp "$NEW" --percent 10
    ```
 
-   New runs split between the versions. Watch error rates. Raise the percentage
-   as confidence grows.
+   New runs split between the releases. Watch error rates. Raise the
+   percentage as confidence grows; `--percent 0` returns every new run to v1.
+   A ramp above 0 runs the same check as promote and is refused on the same
+   blockers.
 
 4. **Make v2 current:**
 
    ```bash
-   temporal worker deployment set-current-version \
-     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" \
-     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+   orkctl release promote "$NEW"
+   ```
+
+   ```text
+   release 2026.08.23-c4d5e6f is current (was 2026.08.16-a1b2c3d).
+   New runs start on 2026.08.23-c4d5e6f; the 14 runs executing on 2026.08.16-a1b2c3d finish there.
+   Keep 2026.08.16-a1b2c3d running until "orkctl release wait 2026.08.16-a1b2c3d" exits 0.
    ```
 
    From this moment every **new** run executes on v2. Every run already in
-   flight stays on v1 and finishes there.
+   flight stays on v1 and finishes there. The command returns only after the
+   engine's own channel — what dispatch reads — reports the new routing, or
+   says out loud after 10 s that the change is recorded but not yet applied.
+   `test/tools/queue-routing` stays in the test suite as the measurement of
+   that gap; the operator procedure no longer needs it.
 
-   `temporal worker deployment list` reports v2 as Current the instant the call
-   returns. That is the deployment's routing **config** — your intent, recorded
-   by the deployment's own workflow. Dispatch reads something else: the task
-   queue's own current version, which the server syncs to the queues just
-   afterwards. On a healthy cluster the gap is milliseconds and no run is lost
-   either way (a run started a moment early simply runs on v1 and is pinned
-   there). It matters if you **automate** a check around the switch: assert on
-   the queue, or you are asserting on a fact the dispatcher has not seen yet.
-
-   ```bash
-   # both physical queues, engine and Orker, must report the new version
-   go run ./test/tools/queue-routing \
-     -namespace "$ORK_TEMPORAL_NAMESPACE" -address "$ORK_TEMPORAL_ADDRESS" \
-     -queue ork-tasks:workflow -queue ork-tasks-gpu-pool:activity \
-     -want "$ORK_DEPLOYMENT_NAME.$NEW"
-   ```
-
-   It is a Go program because the CLI does not surface this: `versioning_info`
-   comes back only in `DescribeTaskQueue`'s default api mode, and it is per
-   **physical** queue — the engine's queue carries the version on its workflow
-   side, the Orker's on its activity side, and asking either about the other
-   answers `__unversioned__`.
+   A promotion is refused, and nothing is written, when the routing changed
+   since the command's own read (`the releases changed since you read them`):
+   read again and decide again. There is no override flag; the cluster's own
+   commands remain (§4, "Underneath").
 
 5. **Wait for v1 to drain — do not skip this:**
 
    ```bash
-   temporal worker deployment describe-version \
-     --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$OLD" \
-     --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS" \
-     | grep -i drainage
-   # DrainageStatus: Draining  → v1 still has pinned runs executing
-   # DrainageStatus: Drained   → safe to stop v1
+   orkctl release wait "$OLD" --timeout 2h
    ```
 
-   `Draining` means pinned runs still need v1's workers. Stopping them there
-   leaves those runs stuck with no worker to advance them; they resume if you
-   bring v1 back, but until then they make no progress. Drainage is refreshed
-   on a delay of a few minutes, so poll.
+   ```text
+   waiting for release 2026.08.16-a1b2c3d to drain…
+     09:15:40  3 runs, 1 pin   draining (checked 09:13:02)
+               pin "build" of run ork-… on orker-7f3a, expires in 0h41m
+     09:31:02  1 run, 0 pins   draining (checked 09:28:40)
+     09:47:25  0 runs, 0 pins  drained
+   release 2026.08.16-a1b2c3d is drained; its engines and Orkers may be stopped.
+   ```
 
-   Measured, not asserted:
+   It exits 0 only when the cluster reports v1 drained **and** no Orker of v1
+   hosts an open pin **and** every Orker answered; it exits 4 at `--timeout`
+   naming every run and pin left, and 1 when v1 takes new runs again. The
+   cluster refreshes its drain verdict on a delay of a few minutes, which is
+   why the default timeout is an hour.
+
+   Stopping v1 while it is still draining leaves its runs stuck with no worker
+   to advance them; they resume if you bring v1 back, but until then they make
+   no progress. Measured, not asserted:
    `TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained`
-   (`internal/engine`) stops v1's Orker with v2 Current and watches a run
+   (`internal/engine`) stops v1's Orker with v2 current and watches a run
    pinned to v1 for 45 seconds — its task stays scheduled and unstarted, the
    run stays `RUNNING`, and it finishes on v1 within a second of v1's Orker
    coming back.
 
    The same test holds the other half, which is the dangerous one: **v2 does
    not pick those tasks up.** The exception in §2 routes an activity to the
-   Current Version when the workflow's own version has no workers on that task
-   queue, and if it ever fired here, skipping this step would silently run an
+   current release when the workflow's own release has no workers on that
+   channel, and if it ever fired here, skipping this step would silently run an
    in-flight run's remaining tasks on a newer Orker build — the thing this whole
    document exists to prevent. The test fails the day that changes.
 
-6. **Stop v1** once it reports `Drained` — every replica and every Orker
+6. **Stop v1** once `release wait` exits 0 — every replica and every Orker
    carrying that build id. Stopping *some* of them earlier is safe (§5); the
-   version is what must not disappear while runs are pinned to it.
+   release is what must not disappear while runs are pinned to it. An Orker
+   that hosts an open pin must not be stopped before the pin closes:
+   `orkctl orker drain <orker>` waits for exactly that.
 
 A rollout done this way is held by
 `TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn`
 (`internal/engine/versioning_rollout_integration_test.go`): the run in flight
-when v2 became Current finishes on v1 and **both** of its tasks — including the
+when v2 became current finishes on v1 and **both** of its tasks — including the
 one scheduled after the switch — are executed by v1's Orker, while the run
-submitted after the switch runs wholly on v2.
+submitted after the switch runs wholly on v2. The same procedure through
+`orkctl` is `TestIntegration_ReleaseRolloutThroughOrkctl`
+(`cmd/orkctl/release_integration_test.go`), including the refusal of a v2 with
+no Orker.
+
+Why OrkStack's check is stronger than the cluster's own: the cluster refuses a
+promotion that drops a channel the current release polled only when that
+channel has had work recently, so a pool whose work arrives weekly passes it on
+a quiet day — `TestIntegration_TheClustersOwnGuardAdmitsAReleaseMissingAQuietPool`
+measures exactly that. `orkctl release` judges every pool anybody is serving,
+from the Orker inventory, and leaves the cluster's guard on underneath.
 
 ---
 
@@ -1103,9 +1108,13 @@ unversioned build wrote. Pinning cannot protect it, because the run was not
 pinned when it started. Two ways to handle it:
 
 - **Drain first (safest, and the only safe option when the code changed).**
-  Stop submitting, let running runs finish, then do §3 step 0. Nothing is ever
-  replayed across builds.
-- **Switch live.** Safe only when the versioned release is the *same binary*
+  Stop submitting (`orkctl namespace update NS --hold REASON` per namespace),
+  let running runs finish, then do §3 step 0. Nothing is ever replayed across
+  builds. `orkctl release promote` enforces this: while no release is current
+  and a run started before versioning is still executing, it refuses with
+  `N run(s) started before any release was current are still executing`.
+- **Switch live** — a raw procedure only (§4, "Underneath"), because OrkStack
+  cannot verify the two builds are identical. Safe only when the versioned release is the *same binary*
   as the unversioned one already serving — the usual case, since a build id is
   a label on a build you are already running. Same binary means the same
   command stream by construction, which is the only thing that makes replaying
@@ -1135,10 +1144,18 @@ not about versioning: an Orker killed mid-task loses that attempt until its
 ## 4. Rolling back
 
 ```bash
-temporal worker deployment set-current-version \
-  --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$OLD" \
-  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+orkctl release rollback "$OLD"
 ```
+
+```text
+release 2026.08.16-a1b2c3d is current again (was 2026.08.23-c4d5e6f).
+New runs start on 2026.08.16-a1b2c3d; the 6 runs executing on 2026.08.23-c4d5e6f finish there.
+Keep 2026.08.23-c4d5e6f running until "orkctl release wait 2026.08.23-c4d5e6f" exits 0.
+```
+
+`rollback` is `promote` aimed only at a release that was current before; it
+refuses a candidate (use `promote`) and runs the same check, so it is refused
+the same way if v1's Orkers are already gone.
 
 New runs go back to v1 immediately. **Runs already pinned to v2 keep finishing
 on v2** — that is the intended outcome, not a fault, and it is why v2's workers
@@ -1155,7 +1172,9 @@ one is proven.** Pinning cuts both ways: after a rollback, v2 is the version you
 cannot decommission yet.
 
 If v2 is already gone and a run is stranded on it, the escape hatch is a
-per-execution versioning override:
+per-execution versioning override. It stays a raw cluster command on purpose:
+it moves one run onto a build that did not start it, which OrkStack never does
+on its own.
 
 ```bash
 temporal workflow update-options \
@@ -1179,7 +1198,8 @@ start a workflow task. Pause or delete every schedule (`orkctl schedule pause`
 ### Back to unversioned workers
 
 To take a deployment out of versioned routing altogether — an escape hatch,
-not a release step — point its Current Version at the unversioned workers:
+not a release step, and deliberately not an `orkctl release` verb — point its
+Current Version at the unversioned workers:
 
 ```bash
 temporal worker deployment set-current-version \
@@ -1191,6 +1211,73 @@ New runs then go to whatever unversioned pollers exist, so start those first;
 `--allow-no-pollers` overrides the check if you have to do it in the other
 order, and leaves new runs backlogged until an unversioned worker appears.
 Runs already pinned to a version still need that version's workers.
+
+### Underneath: the cluster commands
+
+`orkctl release` is a thin layer over the cluster's own worker-deployment API:
+one read of the deployment, its releases, the engine's channel and the run
+index, plus the Orker inventory; then, for a write, exactly one call with the
+cluster's own guards left on and the read's conflict token. Nothing is hidden
+from an operator who wants the raw commands, and they are the path for
+anything `orkctl release` refuses — a switch-live first promotion of an
+identical build (§3.5), a ramp or promotion you have decided to force, a
+per-run override, a return to unversioned workers.
+
+The `temporal` CLI reads none of the `ORK_` variables, and its own defaults
+are the namespace `default` on `localhost:7233`, so a bare command succeeds
+against a namespace nobody deployed to. Hand it every coordinate:
+
+```bash
+export ORK_DEPLOYMENT_NAME=orkstack          # §1's default, stated once
+export ORK_TEMPORAL_NAMESPACE=ork-main
+export ORK_TEMPORAL_ADDRESS=localhost:7233   # the frontend of the cluster you mean
+
+# what `orkctl release status` reads (plus the Orker inventory and run index)
+temporal worker deployment list \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+temporal worker deployment describe-version \
+  --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+
+# what `orkctl release promote` / `rollback` write (§1, §3 step 0 and 4, §4)
+temporal worker deployment set-current-version \
+  --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+
+# what `orkctl release ramp` writes (§3 step 3)
+temporal worker deployment set-ramping-version \
+  --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$NEW" --percentage 10 \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"
+
+# what `orkctl release wait` polls for (§3 step 5) — the cluster's half of it
+temporal worker deployment describe-version \
+  --deployment-name "$ORK_DEPLOYMENT_NAME" --build-id "$OLD" \
+  --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS" \
+  | grep -i drainage
+
+# the routing dispatch itself reads, per channel (§3 step 4)
+go run ./test/tools/queue-routing \
+  -namespace "$ORK_TEMPORAL_NAMESPACE" -address "$ORK_TEMPORAL_ADDRESS" \
+  -queue ork-tasks:workflow -queue ork-tasks:activity \
+  -want "$ORK_DEPLOYMENT_NAME.$NEW"
+```
+
+`describe-version`'s cluster-side drain verdict does not see an open pin: a
+pin lives in its host process. `orkctl release wait` adds that check from the
+Orker inventory; the raw command does not.
+
+**Permissions.** A cluster behind an authorizer must grant the engine's
+identity `DescribeWorkerDeployment`, `DescribeWorkerDeploymentVersion`,
+`SetWorkerDeploymentCurrentVersion`, `SetWorkerDeploymentRampingVersion` and
+`CountWorkflowExecutions` on its namespace. Without them the three release
+RPCs answer `permission_denied` and nothing else in the engine changes.
+
+**The first rollout after the Orker inventory ships.** Orkers of a build
+older than `orkctl orker list` are not in the inventory: they still make their
+pool in use while their release is current, but they cannot make a pool
+served, so rolling **back** to such a build is refused and the raw command is
+the path; rolling forward from it cannot see its pin hosts, so check pin hosts
+by hand for that one rollout.
 
 ---
 
@@ -1304,8 +1391,8 @@ Runs already pinned to a version still need that version's workers.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
-Eight reads answer every operational question about a deployment, and each is
-available from the CLI and over Connect. Six of them are answered from the
+Nine reads answer every operational question about a deployment, and each is
+available from the CLI and over Connect. Seven of them are answered from the
 cluster or the bucket, so **any replica answers them and they all answer the
 same** (`AGENTS.md` §7). Two — system information and the activity catalog —
 are deliberately not.
@@ -1320,6 +1407,7 @@ are deliberately not.
 | audit trail | `orkctl admin audit` | the audit records in the bucket (`metadata/audit/`) — **any replica answers**, for writes any replica recorded |
 | webhook deliveries | `orkctl webhook deliveries \| delivery \| redeliver` | the delivery records in the bucket (`metadata/deliveries/`) — **any replica answers**, for deliveries any replica made |
 | Orker inventory | `orkctl orker list \| get \| cordon \| uncordon \| drain` | the cluster's poller information, plus each Orker itself — **any replica answers**; nothing stores an Orker |
+| releases | `orkctl release status \| ramp \| promote \| rollback \| wait` | the cluster's routing, drain verdict and run index, plus the Orker inventory — **any replica answers**, and writable (ramp, promote). The engine's cluster identity needs the worker-deployment read and write permissions on its namespace (§4, "Underneath") |
 
 `orkctl admin info` describes **the replica that answered**, and it says so in
 its own output. Behind a load balancer that is whichever replica took the

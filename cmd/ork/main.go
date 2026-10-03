@@ -1062,6 +1062,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	resolver := dsl.NewResolver(cfg.registryAuthFile)
 	activities := &api.CatalogLister{Catalog: cfg.activityCatalog, Resolver: resolver}
 
+	// Releases: which build of this deployment takes new runs, read from and
+	// written to the cluster's own routing on every call (orkctl-release §5).
+	// Built over the client this engine already holds — never a second
+	// connection — and called only inside the three release RPCs, so a
+	// deployment that never asks behaves exactly as before.
+	releases, err := engine.NewTemporalReleaseCluster(temporalClient, reader,
+		cfg.temporalNamespace, cfg.deployment.Name, q.run, q.orker)
+	if err != nil {
+		return err
+	}
+	releases.Logger = logger
+
 	// Schedules: every field lives in a Temporal Schedule on this cluster,
 	// and each fire starts on the engine's own run channel.
 	scheduler := engine.NewTemporalScheduler(temporalClient, q.run).WithLogger(logger)
@@ -1077,6 +1089,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		PoolOrkers: starter,
 		Orkers:     starter,
 		Fleet:      starter,
+		Releases:   releases,
 		Catalog:    cfg.activityCatalog,
 		Resolver:   resolver,
 		// The image policy store and the signature verifier, over the same

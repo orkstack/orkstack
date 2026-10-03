@@ -89,8 +89,14 @@ func (s *TemporalStarter) ObserveOrker(ctx context.Context, orkerID string) (Ork
 	return newest, true, nil
 }
 
-// describeActivityPollers is ObservePool's question, with the same options:
-// activity pollers, every active version plus unversioned, bounded in time.
+// describeActivityPollers asks the cluster for one channel's activity pollers
+// with the enhanced read (every active version plus unversioned), bounded in
+// time. It is NOT ObservePool's question: ObservePool uses the default-mode
+// read, because the enhanced one omits pollers that registered with a release
+// on a POOL channel. The channels read here — the Orkers' presence channel and
+// each Orker's own control channel — are polled by unversioned workers even on
+// a versioned Orker (orker.ChannelWorkerOptions), which the enhanced read
+// reports under its unversioned entry.
 func (s *TemporalStarter) describeActivityPollers(ctx context.Context, queue string) (client.TaskQueueDescription, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, poolProbeTimeout)
 	defer cancel()

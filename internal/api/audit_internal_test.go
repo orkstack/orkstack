@@ -51,6 +51,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure: true,
 	orkstackv1connect.SystemServiceGetImagePolicyProcedure:     true,
 	orkstackv1connect.SystemServiceListTelemetrySinksProcedure: true,
+	orkstackv1connect.SystemServiceListReleasesProcedure:       true,
 	orkstackv1connect.StatsServiceGetStatsProcedure:            true,
 	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure: true,
 	orkstackv1connect.StatsServiceGetFlakeIndexProcedure:       true,

@@ -244,6 +244,21 @@ func PoolForQueue(queue string) (string, bool) {
 	return pool, true
 }
 
+// PoolForChannel names the pool a channel carries, for a deployment whose
+// default route is def (DefaultRoute of its ORK_ORKER_QUEUE): the default
+// route's own channel answers def.Pool — so a raw ORK_ORKER_QUEUE channel is
+// called by the name its Orkers report — and every other channel answers
+// PoolForQueue. ok=false for anything else: a raw channel that is not the
+// default, a pin-creation channel, another product's channel. It builds no
+// channel name and adds no prefix; it composes the two readers this file
+// already has (orkctl-release §4).
+func PoolForChannel(queue string, def Route) (string, bool) {
+	if queue != "" && queue == def.Queue {
+		return def.Pool, true
+	}
+	return PoolForQueue(queue)
+}
+
 // MaxCordonReason bounds a cordon's reason, in bytes.
 const MaxCordonReason = 256
 

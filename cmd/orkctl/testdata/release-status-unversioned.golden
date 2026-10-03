@@ -1,0 +1,4 @@
+deployment:  orkstack
+No release of this deployment has registered with the cluster, so versioning is off:
+every engine and Orker runs without ORK_BUILD_ID. Set ORK_BUILD_ID on both binaries
+to start one (docs/DEPLOY.md §1).

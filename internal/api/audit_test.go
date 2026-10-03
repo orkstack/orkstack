@@ -85,6 +85,8 @@ type auditOptions struct {
 	store artifacts.AuditStore // nil = a fresh memory store
 	none  bool                 // wire no audit store at all
 	fleet engine.OrkerFleet    // the Orker inventory seam; nil wires none
+	// releases is the release routing seam; nil wires none.
+	releases engine.ReleaseCluster
 	// imagePolicies is the image policy store; nil wires none.
 	imagePolicies artifacts.ImagePolicyStore
 }
@@ -115,6 +117,7 @@ func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
 		AuditStore:    store,
 		AuditCounter:  f.counter,
 		Fleet:         opts.fleet,
+		Releases:      opts.releases,
 		ImagePolicies: opts.imagePolicies,
 		Logger:        slog.New(slog.NewTextHandler(f.logs, nil)),
 		Now:           func() time.Time { return f.now },

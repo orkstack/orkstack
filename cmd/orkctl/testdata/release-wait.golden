@@ -1,0 +1,6 @@
+waiting for release 2026.08.09-9f8e7d6 to drain…
+  09:15:40  3 runs, 1 pin   draining (checked 09:13:02)
+            pin "build" of run ork-20260922-0001 on orker-7f3a, expires in 0h41m
+  09:15:50  1 run, 0 pins   draining (checked 09:28:40)
+  09:16:00  0 runs, 0 pins  drained
+release 2026.08.09-9f8e7d6 is drained; its engines and Orkers may be stopped.

@@ -180,6 +180,15 @@ const (
 	// SystemServiceUpdateImagePolicyProcedure is the fully-qualified name of the SystemService's
 	// UpdateImagePolicy RPC.
 	SystemServiceUpdateImagePolicyProcedure = "/orkstack.v1.SystemService/UpdateImagePolicy"
+	// SystemServiceListReleasesProcedure is the fully-qualified name of the SystemService's
+	// ListReleases RPC.
+	SystemServiceListReleasesProcedure = "/orkstack.v1.SystemService/ListReleases"
+	// SystemServiceRampReleaseProcedure is the fully-qualified name of the SystemService's RampRelease
+	// RPC.
+	SystemServiceRampReleaseProcedure = "/orkstack.v1.SystemService/RampRelease"
+	// SystemServicePromoteReleaseProcedure is the fully-qualified name of the SystemService's
+	// PromoteRelease RPC.
+	SystemServicePromoteReleaseProcedure = "/orkstack.v1.SystemService/PromoteRelease"
 )
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
@@ -2024,6 +2033,29 @@ type SystemServiceClient interface {
 	// namespace — clear the namespace first. Definitions already stored are
 	// untouched; they are re-checked at their next submit.
 	UpdateImagePolicy(context.Context, *connect.Request[v1.UpdateImagePolicyRequest]) (*connect.Response[v1.UpdateImagePolicyResponse], error)
+	// ListReleases is the deployment's releases as the cluster routes them:
+	// which one takes new runs, which one is ramping and by how much, which
+	// ones are still finishing runs, and — for every release that does not
+	// take new runs — every reason it may not start to (Release.blockers).
+	// DERIVED on read from the cluster and from the Orker inventory
+	// (ActivityService.ListOrkers); nothing is stored, so any replica answers
+	// identically, including a replica of another release. A deployment no
+	// release of which has registered with the cluster answers versioned =
+	// false and no releases: an answer, not an error.
+	ListReleases(context.Context, *connect.Request[v1.ListReleasesRequest]) (*connect.Response[v1.ListReleasesResponse], error)
+	// RampRelease sends `percent` of new runs to one release that is not
+	// current, and the rest to the current release. percent 0 stops the ramp
+	// of the release that is ramping. A ramp above 0 is FAILED_PRECONDITION,
+	// naming every blocker, whenever ListReleases reports one for that
+	// release, and nothing is written. Runs already executing are never moved.
+	RampRelease(context.Context, *connect.Request[v1.RampReleaseRequest]) (*connect.Response[v1.RampReleaseResponse], error)
+	// PromoteRelease makes one release take every new run. FAILED_PRECONDITION,
+	// naming every blocker, whenever ListReleases reports one for it, and
+	// nothing is written. Promoting the current release is a no-op success.
+	// Runs already executing on the previous release finish there and are
+	// never moved. `orkctl release rollback` is this RPC aimed at a release
+	// that was current before.
+	PromoteRelease(context.Context, *connect.Request[v1.PromoteReleaseRequest]) (*connect.Response[v1.PromoteReleaseResponse], error)
 }
 
 // NewSystemServiceClient constructs a client for the orkstack.v1.SystemService service. By default,
@@ -2073,6 +2105,24 @@ func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(systemServiceMethods.ByName("UpdateImagePolicy")),
 			connect.WithClientOptions(opts...),
 		),
+		listReleases: connect.NewClient[v1.ListReleasesRequest, v1.ListReleasesResponse](
+			httpClient,
+			baseURL+SystemServiceListReleasesProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("ListReleases")),
+			connect.WithClientOptions(opts...),
+		),
+		rampRelease: connect.NewClient[v1.RampReleaseRequest, v1.RampReleaseResponse](
+			httpClient,
+			baseURL+SystemServiceRampReleaseProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("RampRelease")),
+			connect.WithClientOptions(opts...),
+		),
+		promoteRelease: connect.NewClient[v1.PromoteReleaseRequest, v1.PromoteReleaseResponse](
+			httpClient,
+			baseURL+SystemServicePromoteReleaseProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("PromoteRelease")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -2084,6 +2134,9 @@ type systemServiceClient struct {
 	listTelemetrySinks    *connect.Client[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse]
 	getImagePolicy        *connect.Client[v1.GetImagePolicyRequest, v1.GetImagePolicyResponse]
 	updateImagePolicy     *connect.Client[v1.UpdateImagePolicyRequest, v1.UpdateImagePolicyResponse]
+	listReleases          *connect.Client[v1.ListReleasesRequest, v1.ListReleasesResponse]
+	rampRelease           *connect.Client[v1.RampReleaseRequest, v1.RampReleaseResponse]
+	promoteRelease        *connect.Client[v1.PromoteReleaseRequest, v1.PromoteReleaseResponse]
 }
 
 // GetSystemInfo calls orkstack.v1.SystemService.GetSystemInfo.
@@ -2114,6 +2167,21 @@ func (c *systemServiceClient) GetImagePolicy(ctx context.Context, req *connect.R
 // UpdateImagePolicy calls orkstack.v1.SystemService.UpdateImagePolicy.
 func (c *systemServiceClient) UpdateImagePolicy(ctx context.Context, req *connect.Request[v1.UpdateImagePolicyRequest]) (*connect.Response[v1.UpdateImagePolicyResponse], error) {
 	return c.updateImagePolicy.CallUnary(ctx, req)
+}
+
+// ListReleases calls orkstack.v1.SystemService.ListReleases.
+func (c *systemServiceClient) ListReleases(ctx context.Context, req *connect.Request[v1.ListReleasesRequest]) (*connect.Response[v1.ListReleasesResponse], error) {
+	return c.listReleases.CallUnary(ctx, req)
+}
+
+// RampRelease calls orkstack.v1.SystemService.RampRelease.
+func (c *systemServiceClient) RampRelease(ctx context.Context, req *connect.Request[v1.RampReleaseRequest]) (*connect.Response[v1.RampReleaseResponse], error) {
+	return c.rampRelease.CallUnary(ctx, req)
+}
+
+// PromoteRelease calls orkstack.v1.SystemService.PromoteRelease.
+func (c *systemServiceClient) PromoteRelease(ctx context.Context, req *connect.Request[v1.PromoteReleaseRequest]) (*connect.Response[v1.PromoteReleaseResponse], error) {
+	return c.promoteRelease.CallUnary(ctx, req)
 }
 
 // SystemServiceHandler is an implementation of the orkstack.v1.SystemService service.
@@ -2172,6 +2240,29 @@ type SystemServiceHandler interface {
 	// namespace — clear the namespace first. Definitions already stored are
 	// untouched; they are re-checked at their next submit.
 	UpdateImagePolicy(context.Context, *connect.Request[v1.UpdateImagePolicyRequest]) (*connect.Response[v1.UpdateImagePolicyResponse], error)
+	// ListReleases is the deployment's releases as the cluster routes them:
+	// which one takes new runs, which one is ramping and by how much, which
+	// ones are still finishing runs, and — for every release that does not
+	// take new runs — every reason it may not start to (Release.blockers).
+	// DERIVED on read from the cluster and from the Orker inventory
+	// (ActivityService.ListOrkers); nothing is stored, so any replica answers
+	// identically, including a replica of another release. A deployment no
+	// release of which has registered with the cluster answers versioned =
+	// false and no releases: an answer, not an error.
+	ListReleases(context.Context, *connect.Request[v1.ListReleasesRequest]) (*connect.Response[v1.ListReleasesResponse], error)
+	// RampRelease sends `percent` of new runs to one release that is not
+	// current, and the rest to the current release. percent 0 stops the ramp
+	// of the release that is ramping. A ramp above 0 is FAILED_PRECONDITION,
+	// naming every blocker, whenever ListReleases reports one for that
+	// release, and nothing is written. Runs already executing are never moved.
+	RampRelease(context.Context, *connect.Request[v1.RampReleaseRequest]) (*connect.Response[v1.RampReleaseResponse], error)
+	// PromoteRelease makes one release take every new run. FAILED_PRECONDITION,
+	// naming every blocker, whenever ListReleases reports one for it, and
+	// nothing is written. Promoting the current release is a no-op success.
+	// Runs already executing on the previous release finish there and are
+	// never moved. `orkctl release rollback` is this RPC aimed at a release
+	// that was current before.
+	PromoteRelease(context.Context, *connect.Request[v1.PromoteReleaseRequest]) (*connect.Response[v1.PromoteReleaseResponse], error)
 }
 
 // NewSystemServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -2217,6 +2308,24 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(systemServiceMethods.ByName("UpdateImagePolicy")),
 		connect.WithHandlerOptions(opts...),
 	)
+	systemServiceListReleasesHandler := connect.NewUnaryHandler(
+		SystemServiceListReleasesProcedure,
+		svc.ListReleases,
+		connect.WithSchema(systemServiceMethods.ByName("ListReleases")),
+		connect.WithHandlerOptions(opts...),
+	)
+	systemServiceRampReleaseHandler := connect.NewUnaryHandler(
+		SystemServiceRampReleaseProcedure,
+		svc.RampRelease,
+		connect.WithSchema(systemServiceMethods.ByName("RampRelease")),
+		connect.WithHandlerOptions(opts...),
+	)
+	systemServicePromoteReleaseHandler := connect.NewUnaryHandler(
+		SystemServicePromoteReleaseProcedure,
+		svc.PromoteRelease,
+		connect.WithSchema(systemServiceMethods.ByName("PromoteRelease")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.SystemService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SystemServiceGetSystemInfoProcedure:
@@ -2231,6 +2340,12 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 			systemServiceGetImagePolicyHandler.ServeHTTP(w, r)
 		case SystemServiceUpdateImagePolicyProcedure:
 			systemServiceUpdateImagePolicyHandler.ServeHTTP(w, r)
+		case SystemServiceListReleasesProcedure:
+			systemServiceListReleasesHandler.ServeHTTP(w, r)
+		case SystemServiceRampReleaseProcedure:
+			systemServiceRampReleaseHandler.ServeHTTP(w, r)
+		case SystemServicePromoteReleaseProcedure:
+			systemServicePromoteReleaseHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2262,4 +2377,16 @@ func (UnimplementedSystemServiceHandler) GetImagePolicy(context.Context, *connec
 
 func (UnimplementedSystemServiceHandler) UpdateImagePolicy(context.Context, *connect.Request[v1.UpdateImagePolicyRequest]) (*connect.Response[v1.UpdateImagePolicyResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.UpdateImagePolicy is not implemented"))
+}
+
+func (UnimplementedSystemServiceHandler) ListReleases(context.Context, *connect.Request[v1.ListReleasesRequest]) (*connect.Response[v1.ListReleasesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.ListReleases is not implemented"))
+}
+
+func (UnimplementedSystemServiceHandler) RampRelease(context.Context, *connect.Request[v1.RampReleaseRequest]) (*connect.Response[v1.RampReleaseResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.RampRelease is not implemented"))
+}
+
+func (UnimplementedSystemServiceHandler) PromoteRelease(context.Context, *connect.Request[v1.PromoteReleaseRequest]) (*connect.Response[v1.PromoteReleaseResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.PromoteRelease is not implemented"))
 }

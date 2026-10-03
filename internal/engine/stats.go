@@ -528,3 +528,59 @@ func PercentileDuration(ascending []time.Duration, p int) time.Duration {
 	}
 	return ascending[rank-1]
 }
+
+// releaseRunsQuery is the run index predicate for runs executing on one
+// release (orkctl-release §5.5). RunWorkflow only: the idempotency claim is
+// AutoUpgrade and holds no release; a schedule's fire workflow lives exactly
+// as long as the run it starts and is not a run.
+func releaseRunsQuery(indexedVersion string) string {
+	return fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q AND %s = %q",
+		RunWorkflowType, executionStatusRunning, task.SearchAttrDeploymentVersion, indexedVersion)
+}
+
+// ReleaseRuns counts the runs executing on one release (CountWorkflow) and
+// lists the newest `limit` (one ListWorkflow page of that size), each through
+// listedRun. The index is deployment-wide on purpose: a release carries runs
+// of every namespace.
+func (r *TemporalRunReader) ReleaseRuns(ctx context.Context, deployment, buildID string, limit int) (int64, []*orkstackv1.Run, error) {
+	indexed, err := task.IndexedVersion(deployment, buildID)
+	if err != nil {
+		return 0, nil, err
+	}
+	query := releaseRunsQuery(indexed)
+	counted, err := r.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{Query: query})
+	if err != nil {
+		return 0, nil, fmt.Errorf("engine: count the runs on release %s: %w", buildID, err)
+	}
+	runs := []*orkstackv1.Run{}
+	if limit > 0 && counted.GetCount() > 0 {
+		listed, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
+			Query:    query,
+			PageSize: int32(limit),
+		})
+		if err != nil {
+			return 0, nil, fmt.Errorf("engine: list the runs on release %s: %w", buildID, err)
+		}
+		for _, info := range listed.GetExecutions() {
+			runs = append(runs, r.listedRun(info))
+		}
+		sort.SliceStable(runs, func(i, j int) bool {
+			return runStartTime(runs[i]).After(runStartTime(runs[j]))
+		})
+		if len(runs) > limit {
+			runs = runs[:limit]
+		}
+	}
+	return counted.GetCount(), runs, nil
+}
+
+// RunningRuns counts every executing RunWorkflow, on any release or none —
+// the predicate runningExecutions uses.
+func (r *TemporalRunReader) RunningRuns(ctx context.Context) (int64, error) {
+	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q", RunWorkflowType, executionStatusRunning)
+	counted, err := r.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{Query: query})
+	if err != nil {
+		return 0, fmt.Errorf("engine: count the runs in flight: %w", err)
+	}
+	return counted.GetCount(), nil
+}

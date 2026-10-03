@@ -8,6 +8,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 )
 
@@ -44,9 +46,12 @@ var _ PoolProbe = (*TemporalPoolProbe)(nil)
 //     (cmd/orker sets DisableWorkflowWorker), so a workflow poller on this
 //     channel is the engine, not an Orker, and counting it would vouch for a
 //     pool nothing serves.
-//   - All active versions PLUS unversioned. With ORK_BUILD_ID set the Orkers
-//     are versioned, and the default selection reports only the channel's
-//     default build id — a rollout would look empty mid-flight.
+//   - The default-mode read, never the enhanced one. The default-mode answer
+//     lists every poller of the channel whatever release it registered with;
+//     the enhanced read (all active versions plus unversioned) was measured
+//     against the pinned cluster to omit pollers that registered with a
+//     release, so a pool served only by versioned Orkers read as empty and
+//     every submit to it was refused (TestIntegration_ObservePoolCountsAReleasesOrkers).
 //   - An unknown channel is not an error. Temporal answers with an empty
 //     poller list, which is the same answer as "everyone left", and both mean
 //     the same thing to a submit: nothing would run the task.
@@ -61,17 +66,33 @@ var _ PoolProbe = (*TemporalPoolProbe)(nil)
 func (p *TemporalPoolProbe) ObservePool(ctx context.Context, queue string) (PoolLiveness, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, poolProbeTimeout)
 	defer cancel()
-	description, err := p.client.DescribeTaskQueueEnhanced(probeCtx, client.DescribeTaskQueueEnhancedOptions{
-		TaskQueue:      queue,
-		TaskQueueTypes: []client.TaskQueueType{client.TaskQueueTypeActivity},
-		ReportPollers:  true,
-		Versions:       &client.TaskQueueVersionSelection{AllActive: true, Unversioned: true},
-	})
+	// The default-mode read; see the doc comment for why not the enhanced one.
+	described, err := p.client.DescribeTaskQueue(probeCtx, queue, enumspb.TASK_QUEUE_TYPE_ACTIVITY)
 	if err != nil {
 		return PoolLiveness{}, fmt.Errorf("describe pool channel %q: %w", queue, err)
 	}
 
-	return livePollers(description, p.now(), p.freshness()), nil
+	return livePollers(activityDescription(described), p.now(), p.freshness()), nil
+}
+
+// activityDescription reshapes a default-mode answer into the description
+// livePollers reduces: one entry holding the channel's activity pollers, every
+// record kept as the cluster gave it (identity, last access, rate). Dropping
+// stale records and collapsing identities is livePollers' job, not this one's.
+func activityDescription(described *workflowservice.DescribeTaskQueueResponse) client.TaskQueueDescription {
+	pollers := make([]client.TaskQueuePollerInfo, 0, len(described.GetPollers()))
+	for _, poller := range described.GetPollers() {
+		info := client.TaskQueuePollerInfo{Identity: poller.GetIdentity(), RatePerSecond: poller.GetRatePerSecond()}
+		if at := poller.GetLastAccessTime(); at != nil {
+			info.LastAccessTime = at.AsTime()
+		}
+		pollers = append(pollers, info)
+	}
+	return client.TaskQueueDescription{VersionsInfo: map[string]client.TaskQueueVersionInfo{
+		"": {TypesInfo: map[client.TaskQueueType]client.TaskQueueTypeInfo{
+			client.TaskQueueTypeActivity: {Pollers: pollers},
+		}},
+	}}
 }
 
 // livePollers reduces one channel's poller records to a count of the Orkers
@@ -87,9 +108,10 @@ func (p *TemporalPoolProbe) ObservePool(ctx context.Context, queue string) (Pool
 //     one survivor keeps that timestamp fresh — which is exactly the moment
 //     an operator scaling the pool down is reading the number.
 //   - one identity is one Orker. A worker is `pid@host@channel` to Temporal,
-//     and the probe deliberately asks for all active versions plus
-//     unversioned (or a rollout would look empty), so one worker can be
-//     described by more than one record while a version is promoted.
+//     and one worker can be described by more than one record: the
+//     default-mode answer may repeat a poller, and the enhanced read
+//     ListOrkers uses (describeActivityPollers) reports it once per version
+//     entry while a version is promoted.
 //
 // A record the cluster gave no last-access time for is trusted rather than
 // dropped: it has still reported a poller, and the asymmetry runs the same way
