@@ -29,6 +29,7 @@ type S3AttemptStore struct {
 var (
 	_ AttemptStore          = (*S3AttemptStore)(nil)
 	_ AttemptDocumentReader = (*S3AttemptStore)(nil)
+	_ RunAttemptReader      = (*S3AttemptStore)(nil)
 )
 
 // NewS3AttemptStore builds the attempt store from the same ORK_S3_* config the
@@ -147,4 +148,59 @@ func (s *S3AttemptStore) ReadAttemptDocuments(
 	}
 	sortAttemptDocuments(found)
 	return found, nil
+}
+
+// ListRunAttemptRefs pages one listing over the run's prefix, as ListAttempts
+// pages one task's, and opens no record.
+func (s *S3AttemptStore) ListRunAttemptRefs(ctx context.Context, runID string) ([]AttemptRef, error) {
+	prefix, err := RunAttemptPrefix(runID)
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String(prefix),
+	})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: list run attempts %q: %w", s.uri(prefix), err)
+		}
+		for _, object := range page.Contents {
+			keys = append(keys, aws.ToString(object.Key))
+		}
+	}
+	return runAttemptRefs(runID, keys), nil
+}
+
+// GetAttempt reads one record; a missing one matches ErrNotFound.
+func (s *S3AttemptStore) GetAttempt(ctx context.Context, ref AttemptRef) (*orkstackv1.TaskAttempt, error) {
+	key, err := AttemptKey(ref)
+	if err != nil {
+		return nil, err
+	}
+	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return nil, fmt.Errorf("artifacts: get task attempt %q: %w", s.uri(key), ErrNotFound)
+		}
+		return nil, fmt.Errorf("artifacts: get task attempt %q: %w", s.uri(key), err)
+	}
+	document, readErr := io.ReadAll(object.Body)
+	closeErr := object.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("artifacts: get task attempt %q: read body: %w", s.uri(key), readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("artifacts: get task attempt %q: close body: %w", s.uri(key), closeErr)
+	}
+	record, err := UnmarshalAttempt(document)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: get task attempt %q: %w", s.uri(key), err)
+	}
+	return record, nil
 }

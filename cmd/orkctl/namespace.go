@@ -9,10 +9,12 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 func newNamespaceCommand(g *globalFlags) *cobra.Command {
@@ -47,6 +49,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		telemetryAttributes []string
 		holdReason          string
 		maxRunning          int32
+		budget              budgetFlagValues
 		requireSignedBy     string
 	)
 	cmd := &cobra.Command{
@@ -79,6 +82,10 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 			if err := checkRequireSignedByFlag(cmd, requireSignedBy); err != nil {
 				return err
 			}
+			budgetSpec, err := applyBudgetFlags(cmd, nil, budget, false)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -95,6 +102,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 					Hold:            admission.GetHold(),
 					MaxRunning:      admission.GetMaxRunning(),
 					RequireSignedBy: requireSignedBy,
+					Budget:          budgetSpec,
 				}},
 			))
 			if err != nil {
@@ -113,7 +121,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &allowedSecrets, &labels, &runRetention,
-		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &requireSignedBy)
+		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &requireSignedBy, &budget)
 	return cmd
 }
 
@@ -186,6 +194,8 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		clearSecrets        bool
 		requireSignedBy     string
 		clearSigner         bool
+		budget              budgetFlagValues
+		clearBudget         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <name>",
@@ -195,7 +205,11 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			"current value; if somebody else changed the namespace in between, the\n" +
 			"write is refused rather than silently overwriting theirs.\n\n" +
 			"--hold REASON closes the namespace to new runs (runs already accepted\n" +
-			"finish untouched); --release-hold reopens it.",
+			"finish untouched); --release-hold reopens it.\n\n" +
+			"--budget-cpu-seconds/--budget-gib-seconds/--budget-period bound the\n" +
+			"namespace's RESERVED cpu and memory over a rolling period; --budget-enforce\n" +
+			"refuses new runs once it is reached, --budget-enforce=false only reports it,\n" +
+			"and --clear-budget removes it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if releaseHold && cmd.Flags().Changed("hold") {
@@ -211,6 +225,11 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 				return fmt.Errorf("--require-signed-by and --clear-require-signed-by contradict each other: give one")
 			}
 			if err := checkRequireSignedByFlag(cmd, requireSignedBy); err != nil {
+				return err
+			}
+			// The budget flags are checked on a scratch document too, so a
+			// contradiction or a bad number never costs a round trip.
+			if _, err := applyBudgetFlags(cmd, &orkstackv1.Budget{Period: durationpb.New(time.Hour)}, budget, clearBudget); err != nil {
 				return err
 			}
 			// The admission flags are checked before any round trip, on a
@@ -280,6 +299,10 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			if clearSigner {
 				edited.RequireSignedBy = ""
 			}
+			edited.Budget, err = applyBudgetFlags(cmd, edited.GetBudget(), budget, clearBudget)
+			if err != nil {
+				return err
+			}
 
 			resp, err := client.UpdateNamespace(ctx, connect.NewRequest(
 				&orkstackv1.UpdateNamespaceRequest{Namespace: edited},
@@ -296,7 +319,9 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &allowedSecrets, &labels, &runRetention,
-		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &requireSignedBy)
+		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &requireSignedBy, &budget)
+	cmd.Flags().BoolVar(&clearBudget, "clear-budget", false,
+		"remove the namespace's budget, leaving it unbounded")
 	cmd.Flags().BoolVar(&releaseHold, "release-hold", false,
 		"reopen a held namespace to new runs (nothing refused while it was held is started)")
 	cmd.Flags().BoolVar(&clearSecrets, "clear-allowed-secrets", false,
@@ -387,6 +412,7 @@ func namespaceSpecFlags(
 	holdReason *string,
 	maxRunning *int32,
 	requireSignedBy *string,
+	budget *budgetFlagValues,
 ) {
 	cmd.Flags().StringVar(description, "description", "", "human description")
 	cmd.Flags().StringVar(defaultPool, "default-pool", "",
@@ -416,6 +442,84 @@ func namespaceSpecFlags(
 	cmd.Flags().StringVar(requireSignedBy, "require-signed-by", "",
 		"require every image executed in this namespace to carry a valid signature, as cosign:KEY "+
 			"naming a key of `orkctl admin image-policy get` (tightens the deployment policy; never loosens it)")
+	cmd.Flags().Int64Var(&budget.cpuSeconds, "budget-cpu-seconds", 0,
+		"bound on the namespace's RESERVED cpu-seconds (cpu x attempt time) over --budget-period; 0 unbounds the dimension")
+	cmd.Flags().Int64Var(&budget.gibSeconds, "budget-gib-seconds", 0,
+		"bound on the namespace's RESERVED GiB-seconds (memory x attempt time) over --budget-period; 0 unbounds the dimension")
+	cmd.Flags().StringVar(&budget.period, "budget-period", "",
+		fmt.Sprintf("the rolling period a budget is held against, e.g. 720h (%s to %s)",
+			artifacts.BudgetMinPeriod, artifacts.BudgetMaxPeriod))
+	cmd.Flags().BoolVar(&budget.enforce, "budget-enforce", false,
+		"refuse new runs once the budget is reached (=false only reports it); check that "+
+			"`orkctl stats usage --since <period>` answers before enforcing: an enforced budget "+
+			"that cannot be measured refuses every submit")
+}
+
+// budgetFlagValues holds the four --budget-* flags create and update share.
+type budgetFlagValues struct {
+	cpuSeconds int64
+	gibSeconds int64
+	period     string
+	enforce    bool
+}
+
+// budgetFlagNames are the flags that edit a budget, in help order.
+var budgetFlagNames = []string{"budget-cpu-seconds", "budget-gib-seconds", "budget-period", "budget-enforce"}
+
+// applyBudgetFlags builds the budget a create or update sends, starting from
+// current (nil for create; the stored budget for update) and overwriting
+// only the fields whose flag was given — the "a flag left out keeps its
+// current value" rule. clear removes the budget and contradicts every
+// --budget-* flag. A negative number, an unparsable period, or a budget with
+// no period is a local error; every other rule (the period's bounds, at
+// least one bounded dimension) is the registry's, and its refusal prints
+// through rpcError.
+func applyBudgetFlags(cmd *cobra.Command, current *orkstackv1.Budget, values budgetFlagValues, clear bool) (*orkstackv1.Budget, error) {
+	var changed []string
+	for _, name := range budgetFlagNames {
+		if cmd.Flags().Changed(name) {
+			changed = append(changed, "--"+name)
+		}
+	}
+	if clear {
+		if len(changed) > 0 {
+			return nil, fmt.Errorf("--clear-budget and %s contradict each other: give one", strings.Join(changed, ", "))
+		}
+		return nil, nil
+	}
+	if len(changed) == 0 {
+		return current, nil
+	}
+	budget := &orkstackv1.Budget{}
+	if current != nil {
+		budget = proto.Clone(current).(*orkstackv1.Budget)
+	}
+	if cmd.Flags().Changed("budget-cpu-seconds") {
+		if values.cpuSeconds < 0 {
+			return nil, fmt.Errorf("--budget-cpu-seconds must be 0 (unbounded) or positive, got %d", values.cpuSeconds)
+		}
+		budget.CpuSeconds = values.cpuSeconds
+	}
+	if cmd.Flags().Changed("budget-gib-seconds") {
+		if values.gibSeconds < 0 {
+			return nil, fmt.Errorf("--budget-gib-seconds must be 0 (unbounded) or positive, got %d", values.gibSeconds)
+		}
+		budget.GibSeconds = values.gibSeconds
+	}
+	if cmd.Flags().Changed("budget-period") {
+		period, err := time.ParseDuration(values.period)
+		if err != nil {
+			return nil, fmt.Errorf("parse --budget-period %q: %w", values.period, err)
+		}
+		budget.Period = durationpb.New(period)
+	}
+	if cmd.Flags().Changed("budget-enforce") {
+		budget.Enforce = values.enforce
+	}
+	if budget.GetPeriod() == nil {
+		return nil, fmt.Errorf("--budget-period is required to set a budget on a namespace that has none (e.g. --budget-period 720h)")
+	}
+	return budget, nil
 }
 
 // checkRequireSignedByFlag refuses an empty --require-signed-by before any
@@ -585,12 +689,12 @@ func renderNamespaceList(out io.Writer, namespaces []*orkstackv1.Namespace) erro
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tALLOWED SECRETS\tRUN RETENTION\tHOLD\tMAX RUNNING\tSIGNED BY\tCREATED\tDESCRIPTION")
+	fmt.Fprintln(table, "NAME\tDEFAULT POOL\tALLOWED POOLS\tALLOWED SECRETS\tRUN RETENTION\tHOLD\tMAX RUNNING\tSIGNED BY\tBUDGET\tCREATED\tDESCRIPTION")
 	for _, ns := range namespaces {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			ns.GetName(), defaultPoolLabel(ns), joinOrDash(ns.GetAllowedPools()),
 			allowedSecretsCellLabel(ns), runRetentionLabel(ns), holdCellLabel(ns), maxRunningLabel(ns),
-			orDash(ns.GetRequireSignedBy()), formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
+			orDash(ns.GetRequireSignedBy()), budgetCellLabel(ns.GetBudget()), formatTime(ns.GetCreatedAt()), orDash(ns.GetDescription()))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -609,6 +713,7 @@ func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	fmt.Fprintf(table, "Hold:\t%s\n", holdLabel(ns))
 	fmt.Fprintf(table, "Max running:\t%s\n", maxRunningLabel(ns))
 	fmt.Fprintf(table, "Require signed by:\t%s\n", requireSignedByLabel(ns))
+	fmt.Fprintf(table, "Budget:\t%s\n", budgetLabel(ns.GetBudget()))
 	fmt.Fprintf(table, "Telemetry sink:\t%s\n", telemetrySinkLabel(ns))
 	fmt.Fprintf(table, "Task logs:\t%s\n", taskLogsLabel(ns))
 	fmt.Fprintf(table, "Telemetry attributes:\t%s\n", telemetryAttributesLabel(ns))
@@ -707,6 +812,48 @@ func maxRunningLabel(ns *orkstackv1.Namespace) string {
 		return fmt.Sprintf("%d", limit)
 	}
 	return "unlimited"
+}
+
+// budgetLabel renders a namespace's budget for `namespace get`: the word
+// "unbounded" when it has none — never a dash — and otherwise every bounded
+// dimension, the period, and what reaching it does.
+func budgetLabel(b *orkstackv1.Budget) string {
+	if b == nil {
+		return "unbounded"
+	}
+	var bounds []string
+	if cpu := b.GetCpuSeconds(); cpu > 0 {
+		bounds = append(bounds, fmt.Sprintf("%d cpu-seconds", cpu))
+	}
+	if gib := b.GetGibSeconds(); gib > 0 {
+		bounds = append(bounds, fmt.Sprintf("%d GiB-seconds", gib))
+	}
+	mode := "soft (reported, never refuses)"
+	if b.GetEnforce() {
+		mode = "enforced (new runs are refused at the bound)"
+	}
+	return fmt.Sprintf("%s per %s, %s", strings.Join(bounds, " and "), b.GetPeriod().AsDuration(), mode)
+}
+
+// budgetCellLabel is budgetLabel for a table cell: the bounds in short units,
+// the period, and the mode in one word. The UI's Budget column renders the
+// same string (ui/src/lib/usage.ts, budgetConfigLabel).
+func budgetCellLabel(b *orkstackv1.Budget) string {
+	if b == nil {
+		return "unbounded"
+	}
+	var bounds []string
+	if cpu := b.GetCpuSeconds(); cpu > 0 {
+		bounds = append(bounds, fmt.Sprintf("%d cpu-s", cpu))
+	}
+	if gib := b.GetGibSeconds(); gib > 0 {
+		bounds = append(bounds, fmt.Sprintf("%d GiB-s", gib))
+	}
+	mode := "soft"
+	if b.GetEnforce() {
+		mode = "enforced"
+	}
+	return fmt.Sprintf("%s/%s %s", strings.Join(bounds, " + "), b.GetPeriod().AsDuration(), mode)
 }
 
 // telemetrySinkLabel renders the sink a namespace's telemetry policy names:

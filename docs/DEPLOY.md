@@ -354,6 +354,7 @@ then the variable it becomes.
 | `storage.s3.session_token` | `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for temporary credentials |
 | `storage.s3.path_style` | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing, which MinIO requires |
 | `engine.stats_cache_ttl` | `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats`, `GetFailureBreakdown` or `GetFlakeIndex` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
+| `engine.usage_cache_ttl` | `ORK_USAGE_CACHE_TTL` | `5m` | `ork` | how long one usage measurement (`orkctl stats usage`, the dashboard Usage card, and an enforced budget's admission check) is reused; `0` switches the cache off, which makes every submit into an enforced namespace measure (`docs/STATS.md`, "Usage") |
 | `telemetry.log_format` | `ORK_LOG_FORMAT` | `text` | both | process log encoding: `text` or `json` |
 | `telemetry.log_level` | `ORK_LOG_LEVEL` | `info` | both | minimum process log level: `debug`, `info`, `warn`, `error` |
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | *(empty = no listener)* | both | serves `/healthz`, `/readyz`, `/metrics` (only with the `prometheus` metrics exporter) and `/debug/pprof/` (only with `ORK_PPROF_ENABLED`). Never the API port — see §7 |
@@ -1590,6 +1591,64 @@ OrkStack records it and does not authenticate it.
   answered from the subset it read — narrow the window, and page a long
   compliance range month by month.
 
+### Namespace budgets: reserved consumption, soft or enforced
+
+A namespace can carry a **budget** (`Namespace.budget`): a bound on reserved
+cpu-seconds and/or GiB-seconds over a rolling `period` (1h–744h). The units
+are each attempt's reservation — the cpu and memory the Orker granted it, its
+defaults and caps applied (`TaskAttempt.resources`) — multiplied by how long
+the Orker held it. They are reservations, never measured utilization
+(`docs/STATS.md` §8).
+
+```bash
+orkctl stats usage --since 720h --group-by namespace          # who reserved what, this month
+orkctl namespace update analytics --budget-cpu-seconds 5000000 --budget-period 720h          # soft: reported only
+orkctl -n analytics stats usage --since 720h                  # the gate's own question: does it answer?
+orkctl namespace update analytics --budget-enforce            # now it refuses
+orkctl namespace update analytics --budget-enforce=false      # back to reporting
+orkctl namespace update analytics --clear-budget              # unbounded
+```
+
+- **Soft (the default) costs nothing at submit.** It is reported on every
+  read — `orkctl stats usage --since <period>`, the dashboard Usage card, Admin
+  → Usage — and never refuses anything.
+- **Enforced** is the third reason inside the one admission gate, after the
+  hold and the cap: a submit measures the namespace's usage over the trailing
+  period (shared with `GetUsage`, cached for `ORK_USAGE_CACHE_TTL`) and is
+  refused `FailedPrecondition` with `BUDGET_EXCEEDED` once a bounded dimension
+  is at or above its bound, naming the usage, the budget, the period and both
+  fixes. An accepted run is never touched. A trigger invoke is `412`, a
+  schedule fire is refused, `run again` is refused, exactly as for a hold.
+- **An enforced budget that cannot be measured refuses** with
+  `BUDGET_UNMEASURABLE` — the period holds more finished runs than a usage read
+  is bounded to (10000), or no archive or attempt store is configured. Admitting
+  on a measurement nobody took would be the recovery magic `AGENTS.md` §14
+  ranks below explicit failure. Before `--budget-enforce`, check that `orkctl
+  stats usage --since <period>` answers; shorten the period if it does not. A
+  read that merely failed (the bucket wobbled) is `Unavailable`, ask again.
+- **The margin, stated.** Enforcement is a read-then-act with no lock, so it is
+  best-effort by the sum of: consumption of runs that finished within one
+  `ORK_USAGE_CACHE_TTL` of the measurement; every run still in flight (counted
+  when it finishes); submits admitted between one measurement and the next;
+  and, when records are missing, the consumption they would have shown. A lock
+  would remove it, and `AGENTS.md` §2.1 forbids building one.
+- **Missing evidence only understates.** A period longer than a namespace's run
+  retention, with `ORK_CLEANUP_ENABLED=true`, measures only what cleanup has not
+  reclaimed — `coverage begins …` shows where — so an enforced budget can admit
+  where a complete count would refuse, never the reverse.
+- **Rolling upgrade.** An Orker of an older release writes records without a
+  reservation (counted in task-seconds, reported as `attempts carry no
+  reservation`). An `ork` of an older release discards `budget` and admits,
+  and answers `GetUsage` with `Unimplemented`, so during a rollout an enforced
+  budget is enforced only by replicas already on this release; an older
+  `orkctl` round-tripping a namespace drops `budget` — run the `orkctl` of the
+  release.
+- **Refusals are counted** on `ork.runs.refused` with
+  `ork.refusal.reason="budget_exceeded"` or `"budget_unmeasurable"`, and logged
+  once as `run refused` with `period`, `cpu_seconds_used`,
+  `cpu_seconds_budget`, `gib_seconds_used`, `gib_seconds_budget` and
+  `measured_at` (or `period` and `error`).
+
 ### Run retention: a deployment maximum, a value per namespace
 
 OrkStack keeps Temporal as an implementation detail an operator never has to
@@ -2047,7 +2106,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
-| `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold or `max_running` refused (`namespace_held`, `max_running_reached`); not a run, not counted on `ork.runs` |
+| `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold, `max_running` or enforced budget refused (`namespace_held`, `max_running_reached`, `budget_exceeded`, `budget_unmeasurable`); not a run, not counted on `ork.runs` |
 
 (The rows above omit `ork.namespace` even though every run and task metric
 carries it; `ork.runs.refused` names it explicitly.) Under `prometheus` the

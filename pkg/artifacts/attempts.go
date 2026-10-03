@@ -167,6 +167,41 @@ func sortAttemptDocuments(documents []AttemptDocument) {
 	})
 }
 
+// RunAttemptReader is the run-wide read usage accounting needs: every record
+// key of one run in one listing, and one record by its address. It is a
+// separate interface from AttemptStore, and asserted rather than required,
+// for the reason RunIndexTallier is separate from RunArchive: the stores
+// that implement it are exactly the three durable-or-test backends in this
+// package, and no Orker or test double of AttemptStore needs to grow a
+// method it will never be asked for.
+type RunAttemptReader interface {
+	// ListRunAttemptRefs returns the address of every record under
+	// RunAttemptPrefix(runID), in key order — task segment, then attempt
+	// ascending — by one prefix listing (paged on S3). A key ParseAttemptKey
+	// rejects, or one belonging to another run, is skipped. A run with no
+	// records reads EMPTY, never an error.
+	ListRunAttemptRefs(ctx context.Context, runID string) ([]AttemptRef, error)
+	// GetAttempt reads one record. A record that is gone — expired under a
+	// lifecycle rule or reclaimed between a listing and this read — is an
+	// error matching ErrNotFound.
+	GetAttempt(ctx context.Context, ref AttemptRef) (*orkstackv1.TaskAttempt, error)
+}
+
+// runAttemptRefs keeps the keys of one run's records, parsed and in key
+// order — the one filter every backend's run-wide listing applies.
+func runAttemptRefs(runID string, keys []string) []AttemptRef {
+	sort.Strings(keys)
+	refs := make([]AttemptRef, 0, len(keys))
+	for _, key := range keys {
+		ref, ok := ParseAttemptKey(key)
+		if !ok || ref.RunID != runID {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
 // RunAttemptPrefix renders the prefix containing every attempt record of a run:
 // metadata/attempts/{run-id}/. Run-scoped cleanup deletes this prefix, which is
 // what keeps attempt records on the same lifecycle as the logs they explain.
@@ -464,6 +499,7 @@ type MemoryAttemptStore struct {
 var (
 	_ AttemptStore          = (*MemoryAttemptStore)(nil)
 	_ AttemptDocumentReader = (*MemoryAttemptStore)(nil)
+	_ RunAttemptReader      = (*MemoryAttemptStore)(nil)
 )
 
 // NewMemoryAttemptStore returns an empty in-memory attempt store.
@@ -529,6 +565,65 @@ func (s *MemoryAttemptStore) ReadAttemptDocuments(
 	}
 	sortAttemptDocuments(found)
 	return found, nil
+}
+
+// ListRunAttemptRefs lists every record key of one run, in key order.
+func (s *MemoryAttemptStore) ListRunAttemptRefs(ctx context.Context, runID string) ([]AttemptRef, error) {
+	prefix, err := RunAttemptPrefix(runID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	keys := make([]string, 0, len(s.objects))
+	for key := range s.objects {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	s.mu.Unlock()
+	return runAttemptRefs(runID, keys), nil
+}
+
+// GetAttempt reads one record; a missing one matches ErrNotFound.
+func (s *MemoryAttemptStore) GetAttempt(ctx context.Context, ref AttemptRef) (*orkstackv1.TaskAttempt, error) {
+	key, err := AttemptKey(ref)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	document, ok := s.objects[key]
+	s.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("artifacts: memory task attempt %q: %w", key, ErrNotFound)
+	}
+	record, err := UnmarshalAttempt(document)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: memory task attempt %q: %w", key, err)
+	}
+	return record, nil
+}
+
+// DeleteRunAttempts removes every record of one run — what the cleanup
+// worker's run-scoped delete does to the durable backends. Test-only, like
+// the store itself.
+func (s *MemoryAttemptStore) DeleteRunAttempts(runID string) {
+	prefix, err := RunAttemptPrefix(runID)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.objects {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.objects, key)
+		}
+	}
 }
 
 // encodeAttemptForStore is the one place a record becomes a key and bytes, so

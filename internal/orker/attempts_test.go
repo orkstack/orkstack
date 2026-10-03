@@ -369,3 +369,138 @@ func TestFailureErrorProto_MatchesTheEngineShape(t *testing.T) {
 		t.Error("a nil Failure rendered a detail")
 	}
 }
+
+// reservationDispatcher is newAttemptDispatcher with a policy whose defaults
+// differ from the package defaults, so a record that carried the package
+// constants instead of the policy's values would be caught.
+func reservationDispatcher(t *testing.T, runtime ContainerRuntime, attempts artifacts.AttemptStore) *OCIDispatcher {
+	t.Helper()
+	dispatcher := newAttemptDispatcher(t, runtime, attempts)
+	dispatcher.Policy.DefaultCPU = "1"
+	dispatcher.Policy.DefaultMemory = "2Gi"
+	return dispatcher
+}
+
+func assertReservation(t *testing.T, label string, record *orkstackv1.TaskAttempt, cpu float64, memory int64) {
+	t.Helper()
+	got := record.GetResources()
+	if got == nil {
+		t.Fatalf("%s: record carries no reservation, want {%v, %d}", label, cpu, memory)
+	}
+	if got.GetCpu() != cpu || got.GetMemoryBytes() != memory {
+		t.Fatalf("%s: reservation = {%v, %d}, want {%v, %d}", label, got.GetCpu(), got.GetMemoryBytes(), cpu, memory)
+	}
+}
+
+// TestAttemptRecord_CarriesTheReservationTheContainerIsGiven: the record says
+// what the Orker granted — its default for a task that asked for nothing, the
+// request otherwise — whatever the attempt's outcome, because the Orker's
+// slot was held for the whole attempt either way.
+func TestAttemptRecord_CarriesTheReservationTheContainerIsGiven(t *testing.T) {
+	type outcome struct {
+		name    string
+		run     func(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput)
+		runtime func() ContainerRuntime
+	}
+	succeed := func(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput) {
+		if _, err := d.Execute(context.Background(), in); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+	}
+	fail := func(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput) {
+		if _, err := d.Execute(context.Background(), in); err == nil {
+			t.Fatal("Execute: want a failure for exit 8")
+		}
+	}
+	cancel := func(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput) {
+		ctx, stop := context.WithCancel(context.Background())
+		stop()
+		if _, err := d.Execute(ctx, in); err == nil {
+			t.Fatal("Execute on a cancelled context returned no error")
+		}
+	}
+	panics := func(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("Execute: want a re-panic from the runtime")
+			}
+		}()
+		_, _ = d.Execute(context.Background(), in)
+	}
+	outcomes := []outcome{
+		{"succeeded", succeed, func() ContainerRuntime { return &phaseCapturingRuntime{exitCode: 0} }},
+		{"failed", fail, func() ContainerRuntime { return &phaseCapturingRuntime{exitCode: 8} }},
+		{"canceled", cancel, func() ContainerRuntime { return &phaseCapturingRuntime{exitCode: 0} }},
+		{"panic", panics, func() ContainerRuntime { return panicCreateRuntime{} }},
+	}
+	requests := []struct {
+		name   string
+		req    *orkstackv1.ResourceRequest
+		cpu    float64
+		memory int64
+	}{
+		{"no request", nil, 1, 2 << 30},
+		{"500m and 512Mi", &orkstackv1.ResourceRequest{Cpu: "500m", Memory: "512Mi"}, 0.5, 512 << 20},
+	}
+	for _, req := range requests {
+		for _, oc := range outcomes {
+			t.Run(req.name+"/"+oc.name, func(t *testing.T) {
+				attempts := artifacts.NewMemoryAttemptStore()
+				dispatcher := reservationDispatcher(t, oc.runtime(), attempts)
+				in := baseExportInput("reserve-" + oc.name)
+				in.Resources = req.req
+				oc.run(t, dispatcher, in)
+				assertReservation(t, oc.name, onlyAttempt(t, attempts, in), req.cpu, req.memory)
+			})
+		}
+	}
+}
+
+// TestAttemptRecord_ARefusedRequestCarriesNoReservation: an attempt the
+// policy refused reserved nothing, and its record must not say otherwise.
+func TestAttemptRecord_ARefusedRequestCarriesNoReservation(t *testing.T) {
+	attempts := artifacts.NewMemoryAttemptStore()
+	dispatcher := reservationDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, attempts)
+	in := baseExportInput("reserve-refused")
+	in.Resources = &orkstackv1.ResourceRequest{Cpu: "64"}
+	if _, err := dispatcher.Execute(context.Background(), in); err == nil {
+		t.Fatal("Execute: want a RESOURCE_REFUSED failure for cpu above the cap")
+	}
+	record := onlyAttempt(t, attempts, in)
+	if record.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED {
+		t.Errorf("outcome = %v, want FAILED", record.GetOutcome())
+	}
+	if got := record.GetError().GetCode(); got != ReasonResourceRefused {
+		t.Errorf("error code = %q, want %q", got, ReasonResourceRefused)
+	}
+	if record.GetResources() != nil {
+		t.Errorf("a refused request recorded a reservation: %v", record.GetResources())
+	}
+}
+
+// TestAttemptRecord_AnAdoptedCommitCarriesTheReservation: an attempt that
+// adopted a commit held the Orker's slot for its commit check, so its record
+// carries the reservation as any attempt's does.
+func TestAttemptRecord_AnAdoptedCommitCarriesTheReservation(t *testing.T) {
+	dispatcher := reservationDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, artifacts.NewMemoryAttemptStore())
+	dispatcher.Commits = artifacts.NewMemoryCommitStore()
+	in := baseExportInput("reserve-adopt")
+	in.CommitUri = "mem://commits/" + in.GetRunId() + "/" + in.GetTaskId() + "/commit.json"
+	if _, err := dispatcher.Execute(context.Background(), in); err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	adoptStore := artifacts.NewMemoryAttemptStore()
+	dispatcher.Attempts = adoptStore
+	second, err := dispatcher.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("second Execute: %v", err)
+	}
+	if !second.GetCommitAdopted() {
+		t.Fatal("the second attempt did not adopt the first attempt's commit")
+	}
+	record := onlyAttempt(t, adoptStore, in)
+	if !record.GetCommitAdopted() {
+		t.Error("the adopting record does not say commit_adopted")
+	}
+	assertReservation(t, "adopted", record, 1, 2<<30)
+}

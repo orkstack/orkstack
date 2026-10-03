@@ -19,23 +19,24 @@ import (
 // would be the recovery magic AGENTS.md §14 ranks below explicit failure.
 var errNoAdmissionReader = errors.New("this engine has no run reader configured")
 
-// admit is the admission gate: the one place a namespace's hold and cap are
-// enforced. It is called from prepare, after the namespace, orkflow and
-// binding have resolved and before the pool plan, so a refusal here has the
-// same "nothing left behind" property every other refusal in prepare has.
+// admit is the admission gate: the one place a namespace's hold, cap and
+// enforced budget are enforced. It is called from prepare, after the
+// namespace, orkflow and binding have resolved and before the pool plan, so
+// a refusal here has the same "nothing left behind" property every other
+// refusal in prepare has.
 //
-// Order is hold, then cap. A hold is answered from the document already in
-// hand and costs nothing; the cap costs one read of the cluster's index and
-// is skipped entirely when max_running is 0.
+// Order is hold, cap, budget: cheapest first. A hold is answered from the
+// document already in hand and costs nothing; the cap costs one read of the
+// cluster's index and is skipped entirely when max_running is 0; the budget
+// is a usage measurement over its trailing period, shared with GetUsage and
+// cached for ORK_USAGE_CACHE_TTL, and is skipped entirely unless the budget
+// is enforced — a soft budget never reads usage at submit.
 //
 // Every refusal it makes is logged once through s.logger and announced once
 // to s.admissions; wf is the stored orkflow document prepare has already
 // read, carried only for those two signals — its name on the log line, and
 // engine.RefusalTelemetry(ns, wf) for the counter — the decision itself reads
-// ns and the count alone.
-//
-// Phase 4 (namespace-budgets) extends this function with a third reason; it
-// must not add a second gate.
+// ns, the count and the usage alone.
 func (s *Service) admit(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
@@ -45,18 +46,38 @@ func (s *Service) admit(
 	if refusal := engine.HoldRefusal(ns); refusal != nil {
 		return s.refuse(ctx, ns, wf, refusal)
 	}
-	if ns.GetMaxRunning() <= 0 {
-		return nil
-	}
 	name := artifacts.ResolveNamespace(ns.GetName())
-	running, err := s.runningCount(ctx, binding, name)
-	if err != nil {
-		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
-			"namespace %q max_running could not be checked against the execution index: %w; ask again",
-			name, err))
+	if ns.GetMaxRunning() > 0 {
+		running, err := s.runningCount(ctx, binding, name)
+		if err != nil {
+			return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+				"namespace %q max_running could not be checked against the execution index: %w; ask again",
+				name, err))
+		}
+		if refusal := engine.MaxRunningRefusal(ns, running); refusal != nil {
+			return s.refuse(ctx, ns, wf, refusal)
+		}
 	}
-	if refusal := engine.MaxRunningRefusal(ns, running); refusal != nil {
-		return s.refuse(ctx, ns, wf, refusal)
+	if budget := ns.GetBudget(); budget != nil && budget.GetEnforce() {
+		usage, err := s.usage.BudgetUsage(ctx, ns)
+		var refusal *engine.AdmissionRefusedError
+		var connectErr *connect.Error
+		switch {
+		case usageUnmeasurable(err):
+			refusal = engine.BudgetUnmeasurableRefusal(ns, err)
+		case errors.As(err, &connectErr):
+			// The caller's own context ended while the measurement it joined
+			// was still running: Unavailable, as is.
+			return err
+		case err != nil:
+			return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+				"namespace %q budget could not be checked against its usage: %w; ask again", name, err))
+		default:
+			refusal = engine.BudgetRefusal(ns, usage)
+		}
+		if refusal != nil {
+			return s.refuse(ctx, ns, wf, refusal)
+		}
 	}
 	return nil
 }
@@ -91,6 +112,18 @@ func (s *Service) refuse(
 		}
 	case engine.AdmissionMaxRunning:
 		attrs = append(attrs, "running", refusal.Running, "max_running", refusal.MaxRunning)
+	case engine.AdmissionBudgetExceeded:
+		attrs = append(attrs,
+			"period", refusal.Budget.GetPeriod().AsDuration().String(),
+			"cpu_seconds_used", fmt.Sprintf("%.0f", refusal.Usage.CPUSeconds),
+			"cpu_seconds_budget", refusal.Budget.GetCpuSeconds(),
+			"gib_seconds_used", fmt.Sprintf("%.0f", refusal.Usage.GiBSeconds),
+			"gib_seconds_budget", refusal.Budget.GetGibSeconds(),
+			"measured_at", refusal.Usage.MeasuredAt.UTC().Format(time.RFC3339))
+	case engine.AdmissionBudgetUnmeasurable:
+		attrs = append(attrs,
+			"period", refusal.Budget.GetPeriod().AsDuration().String(),
+			"error", fmt.Sprint(refusal.Unmeasured))
 	}
 	// Unconditional and at Info: a hold refusing a tenant's traffic is an
 	// operator decision taking effect, the same class of line as the

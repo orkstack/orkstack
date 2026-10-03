@@ -8,6 +8,7 @@ Run retention:         inherited (deployment maximum)
 Hold:                  accepting
 Max running:           unlimited
 Require signed by:     cosign:release
+Budget:                unbounded
 Telemetry sink:        default (inherited)
 Task logs:             inherited (Orker default)
 Telemetry attributes:  -

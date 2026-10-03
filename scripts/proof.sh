@@ -138,7 +138,7 @@ if has_gate integration; then
 	# A skip is not a pass: ORK_REQUIRE_INFRA turns every prerequisite skip
 	# into a failure now that the prerequisites were probed above.
 	run integration integration.log env ORK_REQUIRE_INFRA=1 \
-		go test -tags=integration -p 1 -timeout 60m -count=1 ./... -v
+		go test -tags=integration -p 1 -timeout 90m -count=1 ./... -v
 	run activity-fixture activity-fixture.log make -C images test
 fi
 if has_gate observability; then

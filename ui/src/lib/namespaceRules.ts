@@ -75,6 +75,13 @@ export interface NamespaceFormValues {
 	// line: blank means unrestricted (send an empty list), a deliberate
 	// choice rather than an omission.
 	allowedSecretsText?: string;
+	// The four budget fields, as typed: both amounts blank means no budget
+	// (send none), which on an edit clears a stored one — the form's
+	// "blank is a deliberate choice" rule.
+	budgetCpuSeconds?: string;
+	budgetGibSeconds?: string;
+	budgetPeriodHours?: string;
+	budgetEnforce?: boolean;
 	// requireSignedBy is the signer select's value: "" (none) or
 	// "cosign:<key-name>".
 	requireSignedBy?: string;
@@ -90,6 +97,51 @@ export interface NamespaceFormErrors {
 	maxRunning?: string;
 	allowedSecrets?: string;
 	requireSignedBy?: string;
+	budget?: string;
+}
+
+// BUDGET_MIN_PERIOD_HOURS and BUDGET_MAX_PERIOD_HOURS mirror
+// pkg/artifacts/namespace_store.go's BudgetMinPeriod (1h) and
+// BudgetMaxPeriod (744h, 31 days).
+export const BUDGET_MIN_PERIOD_HOURS = 1;
+export const BUDGET_MAX_PERIOD_HOURS = 744;
+
+// MAX_BUDGET_AMOUNT is int64's ceiling: the proto fields are int64.
+const MAX_BUDGET_AMOUNT = 9223372036854775807n;
+
+export interface BudgetFormValues {
+	budgetCpuSeconds: string;
+	budgetGibSeconds: string;
+	budgetPeriodHours: string;
+	budgetEnforce: boolean;
+}
+
+// budgetError holds the budget fields to the registry's rule
+// (validNamespaceBudget), restated at this boundary as a prefilter, never a
+// gate: both amounts blank is no budget at all; otherwise each amount is a
+// non-negative whole number, at least one is above 0, and the period is
+// 1–744 whole hours.
+export function budgetError(values: BudgetFormValues): string | null {
+	const cpu = values.budgetCpuSeconds.trim();
+	const gib = values.budgetGibSeconds.trim();
+	if (cpu === '' && gib === '') return null;
+	for (const [label, text] of [['budget cpu-seconds', cpu], ['budget GiB-seconds', gib]] as const) {
+		if (text === '') continue;
+		if (!/^\d+$/.test(text) || BigInt(text) > MAX_BUDGET_AMOUNT) {
+			return `${label} ${JSON.stringify(text)} must be a non-negative whole number (0 = this dimension is unbounded)`;
+		}
+	}
+	if ((cpu === '' || BigInt(cpu) === 0n) && (gib === '' || BigInt(gib) === 0n)) {
+		return 'budget bounds nothing — set cpu-seconds or GiB-seconds above 0, or leave both blank for no budget';
+	}
+	const period = values.budgetPeriodHours.trim();
+	if (period === '') return 'budget period is required, e.g. 720 hours';
+	if (!/^\d+$/.test(period)) return `budget period ${JSON.stringify(period)} must be whole hours, 1 to 744`;
+	const hours = Number(period);
+	if (hours < BUDGET_MIN_PERIOD_HOURS || hours > BUDGET_MAX_PERIOD_HOURS) {
+		return `budget period ${hours}h must be ${BUDGET_MIN_PERIOD_HOURS} to ${BUDGET_MAX_PERIOD_HOURS} hours`;
+	}
+	return null;
 }
 
 // signerError restates internal/task.ParseSigner: require_signed_by is
@@ -287,6 +339,15 @@ export function validateNamespaceForm(
 	if (values.allowedSecretsText !== undefined) {
 		const err = secretPatternsError(parseSecretPatternLines(values.allowedSecretsText));
 		if (err) errors.allowedSecrets = err;
+	}
+	if (values.budgetCpuSeconds !== undefined || values.budgetGibSeconds !== undefined) {
+		const err = budgetError({
+			budgetCpuSeconds: values.budgetCpuSeconds ?? '',
+			budgetGibSeconds: values.budgetGibSeconds ?? '',
+			budgetPeriodHours: values.budgetPeriodHours ?? '',
+			budgetEnforce: values.budgetEnforce ?? false
+		});
+		if (err) errors.budget = err;
 	}
 	if (values.requireSignedBy !== undefined) {
 		const err = signerError(values.requireSignedBy);

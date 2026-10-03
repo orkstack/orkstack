@@ -1760,6 +1760,10 @@ func (d *OCIDispatcher) attemptRecord(
 		Pool:          resolvedPool(in.GetPool()),
 		CommitAdopted: outcome.CommitAdopted,
 	}
+	// What this Orker reserved for the attempt — the same effective values
+	// execute() gave the container and task.json — so usage can be derived
+	// from the record alone (docs/STATS.md, "Usage").
+	record.Resources = d.Policy.ReservedResources(in.GetResources())
 	if beat != nil {
 		// The phase the attempt ENDED in, straight off the heartbeater rather
 		// than a second copy of the sequence: "run" and "commit" are different

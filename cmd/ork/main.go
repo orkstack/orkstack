@@ -1114,7 +1114,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		FloorThroughputBytesPerSecond: cfg.floorThroughputBytesPerSecond,
 		Observer:                      eventObserver,
 		Admissions:                    admissionObserver,
-		TelemetrySinks:                tcfg.Sinks.Names(),
+		// One usage measurement is shared by GetUsage and an enforced
+		// budget's admission check, reused for ORK_USAGE_CACHE_TTL.
+		UsageCacheTTL:  api.UsageCacheTTLFromEnv(),
+		TelemetrySinks: tcfg.Sinks.Names(),
 	})
 	// The schedule fire's one activity IS the submit preparation, so it needs
 	// the service; it is registered before the run worker starts, which is

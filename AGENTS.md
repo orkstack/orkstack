@@ -350,6 +350,14 @@ The repository vocabulary is deliberate:
 - **Telemetry sink** means an operator-declared OTLP destination, named, in
   `ORK_TELEMETRY_SINKS`. `default` is reserved: it means the standard `OTEL_*`
   environment, not an entry in that YAML.
+- **Budget** means a namespace's bound on reserved cpu-seconds and
+  GiB-seconds over a rolling period, soft (reported only) or enforced (the
+  third reason in the admission gate). It is a field of
+  `orkstack.v1.Namespace` (`budget`), unset meaning unbounded.
+- **Usage** means reservation × held time — the cpu and memory an Orker
+  granted each attempt, multiplied by how long it held it — derived on read
+  (`StatsService.GetUsage`), never measured utilization and never a stored
+  counter.
 - **Telemetry policy** means one namespace's selection among a deployment's
   telemetry sinks: which sink, whether task logs export, which attributes.
   It is a field of `orkstack.v1.Namespace` (`telemetry`), unset meaning
