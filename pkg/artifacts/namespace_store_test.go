@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -288,5 +289,43 @@ func TestValidNamespaceSecrets_RefusesAMalformedEntryAndNamesIt(t *testing.T) {
 		if err := ValidNamespaceSecrets(&orkstackv1.Namespace{Name: "sandbox", AllowedSecrets: ok}); err != nil {
 			t.Errorf("ValidNamespaceSecrets(%q) = %v, want nil", ok, err)
 		}
+	}
+}
+
+func TestValidNamespaceBudget_BoundsPeriodAndRequiresADimension(t *testing.T) {
+	hours := func(h float64) *durationpb.Duration { return durationpb.New(time.Duration(h * float64(time.Hour))) }
+	cases := []struct {
+		name   string
+		budget *orkstackv1.Budget
+		want   string // "" = valid
+	}{
+		{"nil is unbounded", nil, ""},
+		{"period unset", &orkstackv1.Budget{CpuSeconds: 10}, "period is required, e.g. 720h"},
+		{"period 59m", &orkstackv1.Budget{CpuSeconds: 10, Period: durationpb.New(59 * time.Minute)}, "period 59m0s is outside [1h0m0s, 744h0m0s]"},
+		{"period 745h", &orkstackv1.Budget{CpuSeconds: 10, Period: hours(745)}, "period 745h0m0s is outside [1h0m0s, 744h0m0s]"},
+		{"period 1h", &orkstackv1.Budget{CpuSeconds: 10, Period: hours(1)}, ""},
+		{"period 744h", &orkstackv1.Budget{GibSeconds: 10, Period: hours(744)}, ""},
+		{"negative cpu", &orkstackv1.Budget{CpuSeconds: -1, Period: hours(720)}, "cpu_seconds -1 is negative"},
+		{"negative gib", &orkstackv1.Budget{CpuSeconds: 5, GibSeconds: -2, Period: hours(720)}, "gib_seconds -2 is negative"},
+		{"both zero", &orkstackv1.Budget{Period: hours(720), Enforce: true},
+			"bounds nothing — set cpu_seconds or gib_seconds above 0, or clear the budget"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validNamespaceBudget(&orkstackv1.Namespace{Name: "analytics", Budget: tc.budget})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("validNamespaceBudget = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidNamespace) {
+				t.Fatalf("validNamespaceBudget = %v, want ErrInvalidNamespace", err)
+			}
+			want := `artifacts: namespace "analytics" budget: ` + tc.want + ": invalid namespace"
+			if err.Error() != want {
+				t.Errorf("validNamespaceBudget =\n  %q\nwant\n  %q", err, want)
+			}
+		})
 	}
 }

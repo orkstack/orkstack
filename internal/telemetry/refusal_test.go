@@ -70,9 +70,11 @@ func TestObserveRefusal_CountsOnTheNamespaceSinkAndNeverTouchesRuns(t *testing.T
 			}
 
 			observer.ObserveRefusal(ctx, "payments", nil, "reconcile", "MAX_RUNNING_REACHED")
+			observer.ObserveRefusal(ctx, "payments", nil, "reconcile", "BUDGET_EXCEEDED")
+			observer.ObserveRefusal(ctx, "payments", nil, "reconcile", "BUDGET_UNMEASURABLE")
 			points = refusalPoints(t, reader)
-			if len(points) != 2 {
-				t.Fatalf("ork.runs.refused points = %d, want two series", len(points))
+			if len(points) != 4 {
+				t.Fatalf("ork.runs.refused points = %d, want four series", len(points))
 			}
 			reasons := map[string]int64{}
 			for _, dp := range points {
@@ -90,7 +92,8 @@ func TestObserveRefusal_CountsOnTheNamespaceSinkAndNeverTouchesRuns(t *testing.T
 					t.Error("a refusal carries ork.orkflow.version")
 				}
 			}
-			if reasons["namespace_held"] != 1 || reasons["max_running_reached"] != 1 {
+			if reasons["namespace_held"] != 1 || reasons["max_running_reached"] != 1 ||
+				reasons["budget_exceeded"] != 1 || reasons["budget_unmeasurable"] != 1 {
 				t.Errorf("series by reason = %v, want one of each", reasons)
 			}
 			if buf.Len() != 0 {

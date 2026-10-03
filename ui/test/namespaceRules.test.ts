@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+	budgetError,
 	DEFAULT_POOL_NAME,
 	holdReasonError,
 	MAX_HOLD_REASON_BYTES,
@@ -365,6 +366,29 @@ test('validateNamespaceForm reports the first bad secret, a duplicate and the 33
 	expect(validateNamespaceForm({ ...base, allowedSecretsText: many }).allowedSecrets).toContain('33');
 	const exactly = Array.from({ length: MAX_SECRET_PATTERNS }, (_, i) => `env:P${i}_*`).join('\n');
 	expect(validateNamespaceForm({ ...base, allowedSecretsText: exactly }).allowedSecrets).toBe(undefined);
+});
+
+test('budgetError: blank amounts are no budget; otherwise the registry bounds, restated', () => {
+	const ok = (cpu: string, gib: string, hours: string) =>
+		budgetError({ budgetCpuSeconds: cpu, budgetGibSeconds: gib, budgetPeriodHours: hours, budgetEnforce: false });
+	expect(ok('', '', '')).toBeNull();
+	expect(ok('', '', '720')).toBeNull();
+	expect(ok('1', '', '1')).toBeNull();
+	expect(ok('', '5', '744')).toBeNull();
+	expect(ok('-1', '', '720')).toContain('budget cpu-seconds');
+	expect(ok('1.5', '', '720')).toContain('non-negative whole number');
+	expect(ok('abc', '', '720')).toContain('non-negative whole number');
+	expect(ok('', 'abc', '720')).toContain('budget GiB-seconds');
+	expect(ok('0', '0', '720')).toContain('bounds nothing');
+	expect(ok('10', '', '0')).toContain('1 to 744');
+	expect(ok('10', '', '745')).toContain('1 to 744');
+	expect(ok('10', '', '1.5')).toContain('whole hours');
+	expect(ok('10', '', '')).toContain('period is required');
+	const errors = validateNamespaceForm(
+		{ name: 'analytics', defaultPool: '', allowedPools: [], budgetCpuSeconds: '0', budgetGibSeconds: '', budgetPeriodHours: '720', budgetEnforce: true },
+		{ requireName: true }
+	);
+	expect(errors.budget).toContain('bounds nothing');
 });
 
 test('signerError accepts cosign:release and refuses every other scheme', () => {

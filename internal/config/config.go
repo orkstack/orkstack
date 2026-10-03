@@ -135,6 +135,7 @@ var Schema = []Var{
 	{Path: "engine.idempotency_ttl", Env: "ORK_IDEMPOTENCY_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultClaimTTL)},
 	{Path: "engine.registry_auth_file", Env: "ORK_REGISTRY_AUTH_FILE", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault},
 	{Path: "engine.stats_cache_ttl", Env: "ORK_STATS_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultStatsCacheTTL)},
+	{Path: "engine.usage_cache_ttl", Env: "ORK_USAGE_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultUsageCacheTTL)},
 
 	{Path: "engine.limits.values_max_bytes", Env: "ORK_VALUES_MAX_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultValuesMaxBytes)},
 	{Path: "engine.limits.artifact_max_count", Env: "ORK_ARTIFACT_MAX_COUNT", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultArtifactMaxCount))},

@@ -1,0 +1,15 @@
+Namespace:   analytics
+Window:      2025-12-03T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:    2026-01-02T03:04:05Z
+Grouped by:  pool
+
+POOL   RUNS  TASKS  ATTEMPTS  TASK-SECONDS  CPU-SECONDS  GiB-SECONDS
+gpu    1     1      2         180           720          1440
+main   2     2      2         40            35           35
+TOTAL  2     3      4         220           755          1475
+
+Budget:      755 of 500 cpu-seconds (151%) over the last 720h0m0s, enforced: new runs are refused
+cpu-seconds and GiB-seconds are RESERVED cpu and memory × attempt time, not measured utilization.
+scanned 2 of 2 finished runs in the window; 2 dispatched a task; attempt records complete for 2, missing for 0
+coverage begins 2025-12-31T03:04:05Z, the oldest run in this window with attempt records
+runs still in flight are counted when they finish

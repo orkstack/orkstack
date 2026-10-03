@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -536,4 +537,59 @@ func getObject(t *testing.T, ctx context.Context, client *s3.Client, bucket, key
 		t.Fatalf("read %s/%s: %v", bucket, key, err)
 	}
 	return body
+}
+
+// TestNamespaceStore_RoundTripsABudget: a budget is stored and read back, a
+// budget that bounds nothing is refused by the store with the stored
+// document unchanged, and a write with no budget clears it.
+func TestNamespaceStore_RoundTripsABudget(t *testing.T) {
+	cfg := s3TestConfig()
+	requireMinIO(t, cfg)
+	ctx := context.Background()
+	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3NamespaceStore: %v", err)
+	}
+	nsName := "reg-ns-budget-" + uniqueToken(t)
+	t.Cleanup(func() { _ = store.Delete(context.Background(), nsName) })
+
+	budget := &orkstackv1.Budget{CpuSeconds: 5000000, Period: durationpb.New(720 * time.Hour), Enforce: true}
+	put, err := store.Put(ctx, &orkstackv1.Namespace{Name: nsName, Budget: budget}, artifacts.PutConditions{IfAbsent: true})
+	if err != nil {
+		t.Fatalf("Put with a budget: %v", err)
+	}
+	first, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !proto.Equal(first.GetBudget(), budget) {
+		t.Fatalf("budget = %v, want %v", first.GetBudget(), budget)
+	}
+
+	bad := proto.Clone(first).(*orkstackv1.Namespace)
+	bad.Budget = &orkstackv1.Budget{Period: durationpb.New(720 * time.Hour)}
+	if _, err := store.Put(ctx, bad, artifacts.PutConditions{IfMatch: put.GetEtag()}); !errors.Is(err, artifacts.ErrInvalidNamespace) ||
+		!strings.Contains(err.Error(), "bounds nothing") {
+		t.Fatalf("Put of a zero-dimension budget = %v, want ErrInvalidNamespace naming 'bounds nothing'", err)
+	}
+	unchanged, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get after refused write: %v", err)
+	}
+	if unchanged.GetEtag() != first.GetEtag() || !proto.Equal(unchanged.GetBudget(), budget) {
+		t.Fatalf("refused write changed the document: etag %q -> %q, budget %v", first.GetEtag(), unchanged.GetEtag(), unchanged.GetBudget())
+	}
+
+	cleared := proto.Clone(unchanged).(*orkstackv1.Namespace)
+	cleared.Budget = nil
+	if _, err := store.Put(ctx, cleared, artifacts.PutConditions{IfMatch: unchanged.GetEtag()}); err != nil {
+		t.Fatalf("Put with no budget: %v", err)
+	}
+	last, err := store.Get(ctx, nsName)
+	if err != nil {
+		t.Fatalf("Get after clear: %v", err)
+	}
+	if last.GetBudget() != nil {
+		t.Fatalf("budget = %v after a write with none, want unset", last.GetBudget())
+	}
 }

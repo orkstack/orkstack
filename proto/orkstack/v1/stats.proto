@@ -52,6 +52,18 @@ service StatsService {
   // optional orkflow, and by a scan budget that FAILS the call rather than
   // answering from a subset (see GetFlakeIndexResponse).
   rpc GetFlakeIndex(GetFlakeIndexRequest) returns (GetFlakeIndexResponse);
+  // GetUsage reports how much of the fleet one namespace RESERVED over one
+  // window: task-seconds, and cpu-seconds and GiB-seconds as each attempt's
+  // reservation multiplied by how long its Orker held it. It is the read a
+  // budget is held against, and the one the admission gate itself makes for
+  // an enforced budget.
+  //
+  // It reads the archive index (keys), every finished run's body in the
+  // window, and every attempt record of those runs, so its cost is bounded
+  // three ways: by the window, by a whole-answer cache whose age every answer
+  // carries (computed_at), and by a scan bound that FAILS the call rather
+  // than answering from a subset (see GetUsageResponse).
+  rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
 }
 
 message GetStatsRequest {
@@ -429,4 +441,138 @@ message GetFlakeIndexResponse {
   google.protobuf.Timestamp window_since = 11;
   google.protobuf.Timestamp window_until = 12;
   google.protobuf.Timestamp computed_at = 13;
+}
+
+message GetUsageRequest {
+  string namespace = 1;                       // empty = the default namespace
+  // since, until and lookback carry exactly GetStatsRequest's window
+  // semantics: since inclusive, until exclusive, lookback ignored when since
+  // is set, lookback defaulting to 24h, and a window with no time in it
+  // refused. One clock — the server's — resolves a relative window.
+  google.protobuf.Timestamp since = 2;
+  google.protobuf.Timestamp until = 3;
+  google.protobuf.Duration lookback = 4;
+  // group_by names the dimensions rows are keyed by, in the caller's order.
+  // Empty means no rows: the namespace total alone. ORKFLOW, TASK and POOL
+  // are accepted; TASK implies ORKFLOW, which is prepended when absent,
+  // because a task id names a task only within its orkflow. Every other
+  // value, a duplicate, or UNSPECIFIED is InvalidArgument: usage is not a
+  // failure, and code, category, image, phase and orker are not what a
+  // reservation is attributed to.
+  repeated FailureGroupBy group_by = 5;
+}
+
+// UsageRow is one group's reserved consumption, or the namespace total.
+//
+// A key dimension NOT in the response's group_by is empty and means "not
+// grouped by". The total row has every key empty.
+message UsageRow {
+  string orkflow_name = 1;                    // Run.orkflow_name
+  string task_id = 2;                         // TaskRun.task_id
+  string pool = 3;                            // TaskRun.pool — where the task was dispatched
+  // runs is how many distinct finished runs dispatched at least one task
+  // into this row.
+  int64 runs = 4;
+  // tasks is how many dispatched tasks (TaskRun.pool set) are in this row,
+  // with or without an attempt record.
+  int64 tasks = 5;
+  // attempts is how many attempt RECORDS were read for this row. Attempts
+  // that left none are unreported_attempts, never counted here.
+  int64 attempts = 6;
+  // task_seconds is the sum of held time (finished_at − started_at) over the
+  // row's recorded attempts that have both instants in order.
+  double task_seconds = 7;
+  // cpu_seconds and gib_seconds are reservation × held time over the row's
+  // recorded attempts that carry a reservation. RESERVED, not used.
+  double cpu_seconds = 8;
+  double gib_seconds = 9;
+  // attempts_without_resources counts recorded attempts with a usable
+  // interval and no reservation — written before TaskAttempt.resources
+  // existed, by an Orker of an older release, or refused before a
+  // reservation was resolved. Their held time IS in task_seconds; they add
+  // nothing to cpu_seconds or gib_seconds, which are lower bounds whenever
+  // this is nonzero.
+  int64 attempts_without_resources = 10;
+  // attempts_unmeasured counts recorded attempts missing started_at or
+  // finished_at, or finishing before they started. They contribute to no
+  // sum. No Orker of this tree writes one; the count exists so a record from
+  // another writer is visible instead of silently zero.
+  int64 attempts_unmeasured = 11;
+  // unreported_attempts counts attempts numbered below a task's highest that
+  // have no record — the Orker running them died or lost its heartbeat
+  // before filing one. Their consumption is unknown and not counted.
+  int64 unreported_attempts = 12;
+}
+
+message GetUsageResponse {
+  // total is the whole namespace over the window; every row sums into it.
+  UsageRow total = 1;
+  // rows is one per group, ordered by cpu_seconds desc, gib_seconds desc,
+  // task_seconds desc, then each keyed dimension ascending in group_by's
+  // enum order — total and clock-free, so two replicas produce the same
+  // table from the same bytes. Empty when group_by is.
+  repeated UsageRow rows = 2;
+  // group_by is the dimensions actually grouped by, TASK's implied ORKFLOW
+  // made explicit at the front. A client cannot label its columns without it.
+  repeated FailureGroupBy group_by = 3;
+
+  // THE POPULATION AND ITS EVIDENCE — the same definitions
+  // GetFlakeIndexResponse uses, over the same set.
+  //
+  // runs_in_window is the population: archive index keys of this namespace
+  // inside the window, every finished status — the count GetStats reports
+  // as runs_by_status succeeded + failed + canceled for the same window.
+  // Runs still in flight are not in it; they are counted once they finish.
+  int64 runs_in_window = 4;
+  // runs_scanned is how many of those had a body to read; less only for an
+  // index row whose body is absent (the crash window between the archive's
+  // two writes, which ListRuns already skips). Any other unreadable body
+  // fails the call.
+  int64 runs_scanned = 5;
+  // runs_dispatched is how many scanned runs dispatched at least one task.
+  int64 runs_dispatched = 6;
+  // runs_evidence_complete counts dispatched runs holding at least one
+  // attempt record for every task they dispatched; runs_evidence_missing
+  // counts those holding none for at least one. They sum to runs_dispatched.
+  // The consumption of a task with no record is NOT in any sum above:
+  // reclaimed on the run's retention schedule, removed by a lifecycle rule,
+  // or never written by a best-effort Orker write — the reader cannot tell
+  // which, and says "missing".
+  int64 runs_evidence_complete = 7;
+  int64 runs_evidence_missing = 8;
+  // coverage_since is the creation time of the OLDEST run in the window that
+  // still has at least one attempt record. Runs created before it have none
+  // — on a deployment whose cleanup worker reclaims records, that is where
+  // reclamation has reached. Unset when no run in the window has a record.
+  // runs_evidence_missing counts every run, before or after it, that is
+  // missing evidence for some task.
+  google.protobuf.Timestamp coverage_since = 9;
+
+  // THE BUDGET. Read from the namespace document on every call — policy is
+  // never cached — and held against the measurement above.
+  //
+  // budget is the namespace's budget at the moment of this answer; unset
+  // means unbounded.
+  Budget budget = 10;
+  // budget_window is true when the answered window is exactly the trailing
+  // budget period the admission gate evaluates: the request set neither
+  // since nor until, and set lookback equal to budget.period. Only then is a
+  // share of the budget meaningful, and only then is budget_reached set.
+  bool budget_window = 11;
+  // budget_reached is true when budget_window is true and total has reached
+  // any dimension the budget bounds (used ≥ bound). It is the same decision
+  // the admission gate makes, so an enforced budget with budget_reached true
+  // is one whose next submit is refused, unless the measurement ages out
+  // first. A soft budget reports it and refuses nothing. False whenever
+  // budget_window is false.
+  bool budget_reached = 12;
+
+  // namespace, window_since, window_until and computed_at are the question
+  // that was answered and when it was measured, exactly as GetStatsResponse
+  // carries them. computed_at is the age of the measurement; an answer may be
+  // served from a cache of up to ORK_USAGE_CACHE_TTL.
+  string namespace = 13;
+  google.protobuf.Timestamp window_since = 14;
+  google.protobuf.Timestamp window_until = 15;
+  google.protobuf.Timestamp computed_at = 16;
 }

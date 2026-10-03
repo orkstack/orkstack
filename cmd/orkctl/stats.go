@@ -71,6 +71,7 @@ func newStatsCommand(g *globalFlags) *cobra.Command {
 			"(default: the last 24 hours)")
 	cmd.AddCommand(newStatsFailuresCommand(g))
 	cmd.AddCommand(newStatsFlakesCommand(g))
+	cmd.AddCommand(newStatsUsageCommand(g))
 	return cmd
 }
 
