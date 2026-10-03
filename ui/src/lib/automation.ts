@@ -3,9 +3,10 @@ import {
 	AutomationAction,
 	AutomationObjectKind,
 	AutomationObjectKindSchema,
-	type AutomationStep
+	type AutomationStep,
+	type PlanAutomationResponse
 } from './gen/orkstack/v1/automation_pb';
-import { RegisterWebhookRequestSchema } from './gen/orkstack/v1/service_pb';
+import { RegisterWebhookRequestSchema, ValidationSeverity } from './gen/orkstack/v1/service_pb';
 import { EventType } from './gen/orkstack/v1/run_pb';
 import type { orkstack } from './client';
 import { shellQuote } from './runDetail';
@@ -90,6 +91,22 @@ export function isActionable(action: AutomationAction): boolean {
 		action === AutomationAction.UPDATE ||
 		action === AutomationAction.DELETE
 	);
+}
+
+/** Whether a plan carries any ERROR issue — Apply is disabled while it does. */
+export function planHasErrors(plan: Pick<PlanAutomationResponse, 'issues'>): boolean {
+	return plan.issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
+}
+
+/**
+ * Whether Apply's fresh re-plan must stop the apply — `orkctl apply
+ * --expect-plan`'s refusal: no digest, a digest other than the one shown, or
+ * any ERROR. The digest covers the actionable steps only, so an ERROR that
+ * appeared since the plan was shown (a referenced Orkflow deleted, say) leaves
+ * it unchanged; the issues must be checked on their own.
+ */
+export function freshPlanRefused(shownDigest: string, fresh: PlanAutomationResponse): boolean {
+	return fresh.planDigest === '' || fresh.planDigest !== shownDigest || planHasErrors(fresh);
 }
 
 /** The plan's counts line: "1 to create, 3 to update, 0 to delete." */

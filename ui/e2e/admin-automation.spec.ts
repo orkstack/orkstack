@@ -35,6 +35,8 @@ import {
 //   4. a plan that moved between review and Apply is not applied: the page
 //      re-plans, shows the new plan and automation-stale, and the hand-made
 //      trigger is still there;
+//   4b. a plan that gained an ERROR since review (an Orkflow it names was
+//      deleted) is not applied either, though its digest did not change;
 //   5. --prune's deletions are named in the confirmation;
 //   6. a webhook with secret_env needs its secret before Apply, and a real
 //      run's delivery verifies with that secret;
@@ -288,6 +290,27 @@ test('a plan that changed since review is not applied', async ({ page }) => {
 	await expect(page.getByTestId('automation-plan-table')).toContainText('hand-made');
 	expect((await listTriggers()).some((t) => t.id === handMade.trigger.id)).toBe(true);
 	note(`stale plan refused; hand-made trigger ${handMade.trigger.id} kept`);
+});
+
+test('a plan that gained an ERROR since review is not applied', async ({ page }) => {
+	// The fresh plan's digest covers only its actionable steps; an Orkflow a
+	// step names that is deleted after review leaves the digest unchanged but
+	// adds an ERROR. Apply must stop exactly as `--expect-plan` does.
+	const doomed = `doomed-${STAMP}`;
+	await rpc('OrkflowService/ApplyOrkflow', { yaml: orkflowYaml().replace(`name: ${ORKFLOW}`, `name: ${doomed}`), namespace: NS });
+	await planDocument(page, header() + `triggers:\n  doomed-hook:\n    orkflow: ${doomed}\n`);
+	await expect(page.getByTestId('automation-plan-summary')).toHaveText('Plan: 1 to create, 0 to update, 0 to delete.');
+	const before = await listTriggers();
+	await rpc('OrkflowService/DeleteOrkflow', { name: doomed, namespace: NS });
+	await page.getByTestId('automation-apply').click();
+	await page.getByTestId('automation-apply-accept').click();
+	await expect(page.getByTestId('automation-stale')).toBeVisible();
+	await expect(page.getByTestId('automation-issues')).toContainText(`orkflow "${doomed}" has no stored version`);
+	await expect(page.getByTestId('automation-apply')).toBeDisabled();
+	const after = await listTriggers();
+	expect(after.some((t) => t.name === 'doomed-hook')).toBe(false);
+	expect(after.length).toBe(before.length);
+	note(`plan with a new ERROR refused; no trigger created for deleted orkflow ${doomed}`);
 });
 
 test('prune deletions are named in the confirmation', async ({ page }) => {

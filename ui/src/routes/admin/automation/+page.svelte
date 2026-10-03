@@ -24,8 +24,10 @@
 		automationPlanCli,
 		automationSectionKey,
 		executeStep,
+		freshPlanRefused,
 		isActionable,
-		planCounts
+		planCounts,
+		planHasErrors
 	} from '$lib/automation';
 	import {
 		AutomationAction,
@@ -73,9 +75,7 @@
 
 	const steps = $derived(plan?.steps ?? []);
 	const actionable = $derived(steps.filter((step) => isActionable(step.action)));
-	const hasErrors = $derived(
-		(plan?.issues ?? []).some((issue) => issue.severity === ValidationSeverity.ERROR)
-	);
+	const hasErrors = $derived(plan !== null && planHasErrors(plan));
 	const changed = $derived(
 		plannedWith !== null &&
 			(plannedWith.yaml !== yaml || plannedWith.prune !== prune || plannedWith.namespace !== namespace)
@@ -167,7 +167,7 @@
 	}
 
 	// apply re-plans with the same inputs and refuses a plan that moved since
-	// it was shown — exactly orkctl's --expect-plan — then runs each
+	// it was shown, or that now has an ERROR — exactly orkctl's --expect-plan — then runs each
 	// actionable step in order, stopping at the first failure.
 	async function apply() {
 		if (!plan) return;
@@ -183,7 +183,9 @@
 			applying = false;
 			return;
 		}
-		if (fresh.planDigest === '' || fresh.planDigest !== shown) {
+		// A fresh plan with an ERROR is stale too: the digest covers only the
+		// actionable steps, so an error that appeared since leaves it unchanged.
+		if (freshPlanRefused(shown, fresh)) {
 			plan = fresh;
 			stale = true;
 			confirming = false;

@@ -5,8 +5,10 @@ import {
 	AutomationActionSchema,
 	AutomationObjectKind,
 	AutomationObjectKindSchema,
-	AutomationStepSchema
+	AutomationStepSchema,
+	PlanAutomationResponseSchema
 } from '../src/lib/gen/orkstack/v1/automation_pb';
+import { ValidationIssueSchema, ValidationSeverity } from '../src/lib/gen/orkstack/v1/service_pb';
 import { EventType } from '../src/lib/gen/orkstack/v1/run_pb';
 import {
 	automationActionSymbol,
@@ -16,7 +18,9 @@ import {
 	automationPlanCli,
 	automationSectionKey,
 	executeStep,
+	freshPlanRefused,
 	isActionable,
+	planHasErrors,
 	triggerUpdateCli,
 	webhookUpdateCli,
 	type AutomationWriters
@@ -133,4 +137,23 @@ test('the CLI builders quote every value through shellQuote', () => {
 	).toBe(
 		`orkctl webhook update 'wh-1' --name 'etl' --url 'https://x.test/' --event 'RUN_FAILED' --deployment-wide --orkflow '' --task ''`
 	);
+});
+
+// Apply's re-plan refuses exactly what `orkctl apply --expect-plan` refuses —
+// including an ERROR that appeared since the plan was shown, which leaves the
+// digest (actionable steps only) unchanged.
+test('a fresh plan with an ERROR is refused even when its digest matches', () => {
+	const digest = 'sha256:' + 'a'.repeat(64);
+	const plan = (issues: { severity: ValidationSeverity }[], planDigest = digest) =>
+		create(PlanAutomationResponseSchema, {
+			planDigest,
+			issues: issues.map((issue) => create(ValidationIssueSchema, { ...issue, message: 'x' }))
+		});
+	expect(freshPlanRefused(digest, plan([]))).toBe(false);
+	expect(freshPlanRefused(digest, plan([{ severity: ValidationSeverity.WARNING }]))).toBe(false);
+	expect(freshPlanRefused(digest, plan([{ severity: ValidationSeverity.ERROR }]))).toBe(true);
+	expect(freshPlanRefused(digest, plan([], 'sha256:' + 'b'.repeat(64)))).toBe(true);
+	expect(freshPlanRefused(digest, plan([], ''))).toBe(true);
+	expect(planHasErrors(plan([{ severity: ValidationSeverity.ERROR }]))).toBe(true);
+	expect(planHasErrors(plan([{ severity: ValidationSeverity.WARNING }]))).toBe(false);
 });
