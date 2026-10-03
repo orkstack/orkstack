@@ -3,10 +3,12 @@
 package engine_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,12 +25,16 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -51,6 +57,239 @@ import (
 // ApplyOrkflow, because apply-time registry resolution of `uses:` into
 // Task.image is Phase 3 (§4.3) and does not exist yet.
 func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testing.T) {
+	e := startCommitE2E(t)
+	ctx, cfg, in, key, wantURI, run := e.ctx, e.cfg, e.in, e.key, e.wantURI, e.run
+	activities, attempts, commitStore := e.activities, e.attempts, e.commitStore
+
+	// (a) The activity received a non-empty, correctly composed commit URI.
+	if in.GetCommitUri() != wantURI {
+		t.Fatalf("commit_uri = %q, want %q — the production submit path did not pin CommitRoot",
+			in.GetCommitUri(), wantURI)
+	}
+	if in.GetLimits().GetCommitMaxBytes() != engine.DefaultCommitMaxBytes {
+		t.Errorf("limits.commit_max_bytes = %d, want the deployment's %d",
+			in.GetLimits().GetCommitMaxBytes(), engine.DefaultCommitMaxBytes)
+	}
+	t.Logf("EVIDENCE commit_uri=%s", in.GetCommitUri())
+
+	// (b) A commit.json object really exists in MinIO at the composed key.
+	raw := newRawS3ClientForCommitE2E(t, cfg)
+	head, err := raw.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(cfg.S3Bucket), Key: aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("no object in MinIO at %s: %v", key, err)
+	}
+	t.Logf("EVIDENCE minio_object bucket=%s key=%s bytes=%d etag=%s",
+		cfg.S3Bucket, key, aws.ToInt64(head.ContentLength), aws.ToString(head.ETag))
+
+	taskRun := run.GetTaskRuns()[0]
+	if taskRun.GetCommit().GetUri() != wantURI {
+		t.Errorf("TaskRun.commit.uri = %q, want %q", taskRun.GetCommit().GetUri(), wantURI)
+	}
+
+	// (c) A replacement attempt ADOPTS that commit instead of re-running the
+	//     container. This is the invariant the empty URI silently disabled:
+	//     "a durably committed activity result cannot become pending again".
+	before := runningContainerCountForCommitE2E(t)
+	adopted, err := activities.ExecuteTask(ctx, in)
+	if err != nil {
+		t.Fatalf("replacement attempt: %v", err)
+	}
+	if !adopted.GetCommitAdopted() {
+		t.Fatal("the replacement attempt re-ran the container instead of adopting the durable commit")
+	}
+	if adopted.GetCommit().GetUri() != wantURI {
+		t.Errorf("adopted commit uri = %q, want %q", adopted.GetCommit().GetUri(), wantURI)
+	}
+	if after := runningContainerCountForCommitE2E(t); after != before {
+		t.Errorf("running containers went %d -> %d across an adopted attempt; adoption must start none",
+			before, after)
+	}
+	t.Logf("EVIDENCE commit_adopted=%t committing_attempt=%d exit_code=%d",
+		adopted.GetCommitAdopted(), adopted.GetAttempt(), adopted.GetExitCode())
+
+	// (d) I3 (task-timing-breakdown): the adopted attempt's record lists
+	//     exactly the phases it passed through — it returned at the commit
+	//     check, so [start, commit-check] — and the snapshot's started_at is
+	//     the COMMITTING attempt's start, read back out of commit.json.
+	adoptedRecord := attempts.last()
+	if adoptedRecord == nil || !adoptedRecord.GetCommitAdopted() {
+		t.Fatalf("no adopted attempt record was written: %v", adoptedRecord)
+	}
+	var phaseNames []string
+	for _, span := range adoptedRecord.GetPhases() {
+		phaseNames = append(phaseNames, span.GetPhase())
+	}
+	if strings.Join(phaseNames, ",") != "start,commit-check" {
+		t.Errorf("adopted attempt phases = %v, want [start commit-check]", phaseNames)
+	}
+	commitRecord, err := commitStore.Get(ctx, wantURI)
+	if err != nil {
+		t.Fatalf("read commit.json: %v", err)
+	}
+	commitStart := commitRecord.Commit.GetStartedAt()
+	if commitStart == nil || taskRun.GetStartedAt() == nil ||
+		!taskRun.GetStartedAt().AsTime().Equal(commitStart.AsTime()) {
+		t.Errorf("TaskRun.started_at = %v, want commit.started_at %v", taskRun.GetStartedAt(), commitStart)
+	}
+	if !adopted.GetStartedAt().AsTime().Equal(commitStart.AsTime()) {
+		t.Errorf("the adopted result's started_at = %v, want the committing attempt's %v",
+			adopted.GetStartedAt(), commitStart)
+	}
+	t.Logf("EVIDENCE I3 adopted_phases=%v snapshot_started_at=%s commit_started_at=%s",
+		phaseNames, taskRun.GetStartedAt().AsTime().Format(time.RFC3339Nano),
+		commitStart.AsTime().Format(time.RFC3339Nano))
+}
+
+// TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly is
+// run-evidence-bundle I4: the evidence bundle of a run whose task was adopted
+// says so, instead of hiding the adoption behind one attempt.
+//
+// The run is the production one of startCommitE2E: attempt 1 commits through
+// the real OCIDispatcher. The replacement attempt is then numbered the way
+// Temporal numbers a retry — a probe workflow's attempt 1 stands in for the
+// committing attempt that died after commit.json, and its attempt 2 runs the
+// real dispatcher against the same input, which must adopt the durable
+// commit and file its own record under attempt 2. The run is archived the
+// way the projection archives it and the bundle is read through the
+// production handler over the real MinIO stores.
+func TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly(t *testing.T) {
+	e := startCommitE2E(t)
+	ctx := e.ctx
+	taskRun := e.run.GetTaskRuns()[0]
+	if taskRun.GetCommit().GetUri() != e.wantURI {
+		t.Fatalf("TaskRun.commit.uri = %q, want %q", taskRun.GetCommit().GetUri(), e.wantURI)
+	}
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(2 * time.Minute)
+	env.RegisterWorkflow(evidenceAdoptionProbeWorkflow)
+	env.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if activity.GetInfo(actx).Attempt < 2 {
+			return nil, temporal.NewApplicationError("stand-in for the committing attempt that died after commit.json", "PROBE")
+		}
+		return e.activities.ExecuteTask(actx, in)
+	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	before := runningContainerCountForCommitE2E(t)
+	env.ExecuteWorkflow(evidenceAdoptionProbeWorkflow, e.in)
+	if !env.IsWorkflowCompleted() || env.GetWorkflowError() != nil {
+		t.Fatalf("replacement attempt: completed=%t err=%v", env.IsWorkflowCompleted(), env.GetWorkflowError())
+	}
+	var adopted *orkstackv1.ExecuteTaskResult
+	if err := env.GetWorkflowResult(&adopted); err != nil {
+		t.Fatalf("replacement attempt result: %v", err)
+	}
+	if after := runningContainerCountForCommitE2E(t); after != before {
+		t.Fatalf("running containers %d -> %d across the replacement attempt; adoption starts none", before, after)
+	}
+	if !adopted.GetCommitAdopted() || adopted.GetAttempt() != taskRun.GetAttempt() {
+		t.Fatalf("the replacement attempt did not adopt attempt %d's commit: adopted=%t attempt=%d",
+			taskRun.GetAttempt(), adopted.GetCommitAdopted(), adopted.GetAttempt())
+	}
+	adoptedRecord := e.attempts.last()
+	if adoptedRecord == nil || !adoptedRecord.GetCommitAdopted() || adoptedRecord.GetAttempt() != 2 {
+		t.Fatalf("the adopting attempt's record = %v, want attempt 2 with commit_adopted", adoptedRecord)
+	}
+
+	runArchive, err := artifacts.NewS3RunArchive(ctx, e.cfg)
+	if err != nil {
+		t.Fatalf("NewS3RunArchive: %v", err)
+	}
+	archiver := engine.NewRunArchiver(runArchive)
+	if err := archiver.Archive(ctx, e.run, nil); err != nil {
+		t.Fatalf("archive run: %v", err)
+	}
+	evidenceSvc := api.NewService(api.Config{
+		Orkflows:      e.orkflows,
+		Runs:          e.runs,
+		Bus:           e.bus,
+		Archive:       archiver,
+		ArtifactStore: e.store,
+		Attempts:      e.attemptStore,
+		Commits:       e.commitStore,
+	})
+	evidenceServer := httptest.NewServer(api.NewMux(evidenceSvc, api.MuxOptions{}))
+	defer evidenceServer.Close()
+	exported, err := orkstackv1connect.NewRunServiceClient(evidenceServer.Client(), evidenceServer.URL).ExportRunEvidence(ctx,
+		connect.NewRequest(&orkstackv1.ExportRunEvidenceRequest{RunId: e.runID}))
+	if err != nil {
+		t.Fatalf("ExportRunEvidence: %v", err)
+	}
+	var bundle bytes.Buffer
+	last := false
+	for exported.Receive() {
+		bundle.Write(exported.Msg().GetData())
+		last = last || exported.Msg().GetLast()
+	}
+	if err := exported.Err(); err != nil || !last {
+		t.Fatalf("ExportRunEvidence stream: %v (last %v)", err, last)
+	}
+	_ = exported.Close()
+	report, err := evidence.Verify(bytes.NewReader(bundle.Bytes()))
+	if err != nil || len(report.Failures) != 0 {
+		t.Fatalf("verify the adoption bundle: %v %+v", err, report)
+	}
+	manifest := report.Manifest
+	if len(manifest.Tasks) != 1 {
+		t.Fatalf("manifest tasks = %+v", manifest.Tasks)
+	}
+	entry := manifest.Tasks[0]
+	if entry.OutcomeAttempt != taskRun.GetAttempt() || entry.OutcomeAttempt != adopted.GetAttempt() {
+		t.Fatalf("outcome_attempt = %d, want the committing attempt %d (adopted result says %d)",
+			entry.OutcomeAttempt, taskRun.GetAttempt(), adopted.GetAttempt())
+	}
+	rows := map[int32]evidence.AttemptEntry{}
+	for _, a := range entry.Attempts {
+		rows[a.Attempt] = a
+	}
+	committing, adopter := rows[entry.OutcomeAttempt], rows[2]
+	if committing.State != evidence.StatePresent || committing.CommitAdopted || committing.Outcome != "SUCCEEDED" {
+		t.Fatalf("committing attempt row = %+v, want present, SUCCEEDED, not adopted", committing)
+	}
+	if adopter.State != evidence.StatePresent || !adopter.CommitAdopted {
+		t.Fatalf("adopting attempt row = %+v, want present with commit_adopted (all rows %+v)", adopter, entry.Attempts)
+	}
+	members := map[string]evidence.Member{}
+	for _, m := range manifest.Members {
+		members[m.Path] = m
+	}
+	commitMember := members["tasks/build/commit.json"]
+	if commitMember.State != evidence.StatePresent || commitMember.SHA256 != strings.ToLower(taskRun.GetCommit().GetSha256()) {
+		t.Fatalf("commit.json member = %+v, want present with the snapshot's CommitRef.sha256 %s", commitMember, taskRun.GetCommit().GetSha256())
+	}
+	for _, stream := range []string{"stdout.log", "stderr.log"} {
+		mine := members[fmt.Sprintf("tasks/build/attempts/%d/%s", entry.OutcomeAttempt, stream)]
+		theirs := members["tasks/build/attempts/2/"+stream]
+		if mine.SHA256 == "" || mine.SHA256 != theirs.SHA256 {
+			t.Fatalf("%s: committing attempt %+v, adopter %+v — the adopter's record names the committing attempt's logs",
+				stream, mine, theirs)
+		}
+	}
+	t.Logf("EVIDENCE I4 run_evidence_adoption outcome_attempt=%d attempts=%+v commit.json sha256=%s snapshot CommitRef.sha256=%s",
+		entry.OutcomeAttempt, entry.Attempts, commitMember.SHA256, taskRun.GetCommit().GetSha256())
+}
+
+// evidenceAdoptionProbeWorkflow schedules one ExecuteTask with two attempts,
+// so the replacement attempt carries the number Temporal gives a retry.
+func evidenceAdoptionProbeWorkflow(ctx workflow.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 2 * time.Minute,
+		RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 2, InitialInterval: time.Millisecond},
+	})
+	var result *orkstackv1.ExecuteTaskResult
+	err := workflow.ExecuteActivity(ctx, task.ActivityExecuteTask, in).Get(ctx, &result)
+	return result, err
+}
+
+// startCommitE2E brings up the production submit path of
+// TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry — real
+// Temporal, real MinIO, a real OCIDispatcher — runs the one-task probe
+// Orkflow to SUCCEEDED and hands back everything a scenario reads after it.
+// Every worker, server and client it starts is stopped by t.Cleanup.
+func startCommitE2E(t *testing.T) *commitE2E {
+	t.Helper()
 	cfg := s3Config()
 	requireMinIO(t, cfg)
 	requireDockerForCommitE2E(t)
@@ -64,7 +303,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
-	defer cancel()
+	t.Cleanup(cancel)
 
 	namespace := privateNamespaceForCommitE2E(t)
 	temporalClient, err := client.DialContext(ctx, client.Options{
@@ -73,7 +312,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	if err != nil {
 		infraAbsent(t, "cannot dial temporal at %s: %v", address, err)
 	}
-	defer temporalClient.Close()
+	t.Cleanup(temporalClient.Close)
 	if err := task.EnsureNamespace(ctx, temporalClient, namespace); err != nil {
 		infraAbsent(t, "cannot provision temporal namespace %q: %v", namespace, err)
 	}
@@ -179,7 +418,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 		if err := w.Start(); err != nil {
 			t.Fatalf("start %s worker: %v", name, err)
 		}
-		defer w.Stop()
+		t.Cleanup(w.Stop)
 	}
 
 	// The definition, with its image already pinned to a digest. Apply-time
@@ -222,12 +461,12 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	transport := &http.Transport{}
 	transport.Protocols = new(http.Protocols)
 	transport.Protocols.SetUnencryptedHTTP2(true)
-	defer func() {
+	t.Cleanup(func() {
 		transport.CloseIdleConnections()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		_ = server.Shutdown(shutdownCtx)
-	}()
+	})
 	runClient := orkstackv1connect.NewRunServiceClient(
 		&http.Client{Transport: transport}, "http://"+listener.Addr().String())
 
@@ -262,7 +501,6 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 		t.Fatalf("run status = %v, want SUCCEEDED (error: %v)", run.GetStatus(), run.GetError())
 	}
 
-	// (a) The activity received a non-empty, correctly composed commit URI.
 	sentMu.Lock()
 	in := sent["build"]
 	sentMu.Unlock()
@@ -273,85 +511,35 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantURI := "s3://" + cfg.S3Bucket + "/" + key
-	if in.GetCommitUri() != wantURI {
-		t.Fatalf("commit_uri = %q, want %q — the production submit path did not pin CommitRoot",
-			in.GetCommitUri(), wantURI)
+	return &commitE2E{
+		ctx: ctx, cfg: cfg, orkflows: orkflows, store: store, commitStore: commitStore,
+		attemptStore: attemptStore, attempts: attempts, activities: activities,
+		bus: bus, runs: runs, runClient: runClient,
+		runID: runID, run: run, in: in, key: key,
+		wantURI: "s3://" + cfg.S3Bucket + "/" + key,
 	}
-	if in.GetLimits().GetCommitMaxBytes() != engine.DefaultCommitMaxBytes {
-		t.Errorf("limits.commit_max_bytes = %d, want the deployment's %d",
-			in.GetLimits().GetCommitMaxBytes(), engine.DefaultCommitMaxBytes)
-	}
-	t.Logf("EVIDENCE commit_uri=%s", in.GetCommitUri())
+}
 
-	// (b) A commit.json object really exists in MinIO at the composed key.
-	raw := newRawS3ClientForCommitE2E(t, cfg)
-	head, err := raw.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(cfg.S3Bucket), Key: aws.String(key),
-	})
-	if err != nil {
-		t.Fatalf("no object in MinIO at %s: %v", key, err)
-	}
-	t.Logf("EVIDENCE minio_object bucket=%s key=%s bytes=%d etag=%s",
-		cfg.S3Bucket, key, aws.ToInt64(head.ContentLength), aws.ToString(head.ETag))
-
-	taskRun := run.GetTaskRuns()[0]
-	if taskRun.GetCommit().GetUri() != wantURI {
-		t.Errorf("TaskRun.commit.uri = %q, want %q", taskRun.GetCommit().GetUri(), wantURI)
-	}
-
-	// (c) A replacement attempt ADOPTS that commit instead of re-running the
-	//     container. This is the invariant the empty URI silently disabled:
-	//     "a durably committed activity result cannot become pending again".
-	before := runningContainerCountForCommitE2E(t)
-	adopted, err := activities.ExecuteTask(ctx, in)
-	if err != nil {
-		t.Fatalf("replacement attempt: %v", err)
-	}
-	if !adopted.GetCommitAdopted() {
-		t.Fatal("the replacement attempt re-ran the container instead of adopting the durable commit")
-	}
-	if adopted.GetCommit().GetUri() != wantURI {
-		t.Errorf("adopted commit uri = %q, want %q", adopted.GetCommit().GetUri(), wantURI)
-	}
-	if after := runningContainerCountForCommitE2E(t); after != before {
-		t.Errorf("running containers went %d -> %d across an adopted attempt; adoption must start none",
-			before, after)
-	}
-	t.Logf("EVIDENCE commit_adopted=%t committing_attempt=%d exit_code=%d",
-		adopted.GetCommitAdopted(), adopted.GetAttempt(), adopted.GetExitCode())
-
-	// (d) I3 (task-timing-breakdown): the adopted attempt's record lists
-	//     exactly the phases it passed through — it returned at the commit
-	//     check, so [start, commit-check] — and the snapshot's started_at is
-	//     the COMMITTING attempt's start, read back out of commit.json.
-	adoptedRecord := attempts.last()
-	if adoptedRecord == nil || !adoptedRecord.GetCommitAdopted() {
-		t.Fatalf("no adopted attempt record was written: %v", adoptedRecord)
-	}
-	var phaseNames []string
-	for _, span := range adoptedRecord.GetPhases() {
-		phaseNames = append(phaseNames, span.GetPhase())
-	}
-	if strings.Join(phaseNames, ",") != "start,commit-check" {
-		t.Errorf("adopted attempt phases = %v, want [start commit-check]", phaseNames)
-	}
-	commitRecord, err := commitStore.Get(ctx, wantURI)
-	if err != nil {
-		t.Fatalf("read commit.json: %v", err)
-	}
-	commitStart := commitRecord.Commit.GetStartedAt()
-	if commitStart == nil || taskRun.GetStartedAt() == nil ||
-		!taskRun.GetStartedAt().AsTime().Equal(commitStart.AsTime()) {
-		t.Errorf("TaskRun.started_at = %v, want commit.started_at %v", taskRun.GetStartedAt(), commitStart)
-	}
-	if !adopted.GetStartedAt().AsTime().Equal(commitStart.AsTime()) {
-		t.Errorf("the adopted result's started_at = %v, want the committing attempt's %v",
-			adopted.GetStartedAt(), commitStart)
-	}
-	t.Logf("EVIDENCE I3 adopted_phases=%v snapshot_started_at=%s commit_started_at=%s",
-		phaseNames, taskRun.GetStartedAt().AsTime().Format(time.RFC3339Nano),
-		commitStart.AsTime().Format(time.RFC3339Nano))
+// commitE2E is what startCommitE2E leaves running and what it observed.
+type commitE2E struct {
+	ctx          context.Context
+	cfg          artifacts.Config
+	orkflows     *artifacts.S3OrkflowStore
+	store        artifacts.Store
+	commitStore  artifacts.CommitStore
+	attemptStore artifacts.AttemptStore
+	attempts     *tappedAttemptStore
+	activities   *orker.Activities
+	bus          *engine.EventBus
+	runs         *engine.RunStore
+	runClient    orkstackv1connect.RunServiceClient
+	runID        string
+	run          *orkstackv1.Run
+	// in is the ExecuteTaskInput the workflow sent for "build": a replacement
+	// attempt must be the SAME input.
+	in      *orkstackv1.ExecuteTaskInput
+	key     string
+	wantURI string
 }
 
 // tappedAttemptStore delegates to a real AttemptStore and remembers the last

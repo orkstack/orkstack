@@ -46,6 +46,7 @@ func fullLive() Live {
 	live.Namespace.MaxRunning = 5
 	live.Namespace.AllowedSecrets = []string{"env:PAYMENTS_*"}
 	live.Namespace.RequireSignedBy = "cosign:release"
+	live.Namespace.Budget = &orkstackv1.Budget{CpuSeconds: 3600, GibSeconds: 7200, Period: durationpb.New(720 * time.Hour), Enforce: true}
 	live.Namespace.Telemetry = &orkstackv1.TelemetryPolicy{
 		Sink: "datadog", TaskLogs: orkstackv1.TaskLogExport_TASK_LOG_EXPORT_ENABLED, Attributes: map[string]string{"cost_center": "42"},
 	}

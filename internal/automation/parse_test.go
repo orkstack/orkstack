@@ -3,6 +3,7 @@ package automation
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -183,6 +184,28 @@ func TestParse_SettingsRecordOnlyPresentKeys(t *testing.T) {
 	doc = mustParse(t, header+"settings:\n  telemetry: {}\n")
 	if !doc.Settings.Present["telemetry"] || doc.Settings.Values.GetTelemetry() != nil {
 		t.Error("an all-zero telemetry policy is not written as unset")
+	}
+}
+
+func TestParse_SettingsBudgetSubKeys(t *testing.T) {
+	doc := mustParse(t, header+"settings:\n  budget:\n    gib_seconds: 10\n    period: 1h\n")
+	if b := doc.Settings.Values.GetBudget(); b.GetGibSeconds() != 10 || b.GetPeriod().AsDuration() != time.Hour || b.GetEnforce() {
+		t.Errorf("budget = %v", b)
+	}
+	doc = mustParse(t, header+"settings:\n  budget: {}\n")
+	if !doc.Settings.Present["budget"] || doc.Settings.Values.GetBudget() != nil {
+		t.Error("an all-zero budget is not written as unset")
+	}
+	for source, want := range map[string]string{
+		"settings:\n  budget:\n    cpu_seconds: -1\n":   "at least 0",
+		"settings:\n  budget:\n    gib_seconds: lots\n": "at least 0",
+		"settings:\n  budget:\n    period: soon\n":      "not a duration",
+		"settings:\n  budget:\n    enforce: maybe\n":    "true or false",
+		"settings:\n  budget:\n    cpu: 1\n":            "cpu_seconds, gib_seconds, period, enforce",
+		"settings:\n  budget: 5\n":                      "must be a mapping",
+	} {
+		_, issues := Parse([]byte(header + source))
+		requireIssue(t, issues, "settings.budget", want)
 	}
 }
 

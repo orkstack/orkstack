@@ -361,6 +361,50 @@ func TestPlan_SettingsExplicitEmptyClears(t *testing.T) {
 	}
 }
 
+// TestPlan_BudgetIsOverlaidAsAUnitAndKeptWhenUnwritten: namespace-budgets'
+// Namespace.budget is a managed settings key (the descriptor walk demanded a
+// row once both proposals were on one tree). A document that names it sets
+// the whole budget, `budget: {}` clears it, and a document that does not name
+// it leaves the live budget exactly as it is.
+func TestPlan_BudgetIsOverlaidAsAUnitAndKeptWhenUnwritten(t *testing.T) {
+	live := identicalLive()
+	live.Namespace.Budget = &orkstackv1.Budget{CpuSeconds: 3600, Period: durationpb.New(720 * time.Hour)}
+	steps, issues := plan(t, header+"settings:\n  run_retention: 72h\n", live, false)
+	requireNoErrors(t, issues)
+	ns := stepFor(t, steps, kindNamespace, "payments").GetUpdateNamespace().GetNamespace()
+	if !proto.Equal(ns.GetBudget(), live.Namespace.GetBudget()) {
+		t.Errorf("an unwritten budget did not survive the overlay: %v", ns.GetBudget())
+	}
+
+	steps, issues = plan(t, header+"settings:\n  budget:\n    cpu_seconds: 3600\n    gib_seconds: 100\n    period: 720h\n    enforce: true\n", live, false)
+	requireNoErrors(t, issues)
+	step := stepFor(t, steps, kindNamespace, "payments")
+	if step.GetAction() != actionUpdate || len(step.GetChanges()) != 1 {
+		t.Fatalf("step = %v", step)
+	}
+	if c := step.GetChanges()[0]; c.GetField() != "budget" ||
+		c.GetBefore() != "{cpu_seconds: 3600, gib_seconds: 0, period: 720h, enforce: false}" ||
+		c.GetAfter() != "{cpu_seconds: 3600, gib_seconds: 100, period: 720h, enforce: true}" {
+		t.Errorf("change = %v", c)
+	}
+	want := &orkstackv1.Budget{CpuSeconds: 3600, GibSeconds: 100, Period: durationpb.New(720 * time.Hour), Enforce: true}
+	if got := step.GetUpdateNamespace().GetNamespace().GetBudget(); !proto.Equal(got, want) {
+		t.Errorf("budget = %v, want %v", got, want)
+	}
+
+	steps, issues = plan(t, header+"settings:\n  budget:\n    cpu_seconds: 3600\n    period: 720h\n", live, false)
+	requireNoErrors(t, issues)
+	if step := stepFor(t, steps, kindNamespace, "payments"); step.GetAction() != actionUnchanged {
+		t.Errorf("an identical budget planned %v", step)
+	}
+
+	steps, issues = plan(t, header+"settings:\n  budget: {}\n", live, false)
+	requireNoErrors(t, issues)
+	if ns := stepFor(t, steps, kindNamespace, "payments").GetUpdateNamespace().GetNamespace(); ns.GetBudget() != nil {
+		t.Errorf("budget: {} did not clear the budget: %v", ns.GetBudget())
+	}
+}
+
 func TestPlan_DefaultNamespaceIsNeverCreated(t *testing.T) {
 	source := strings.Replace(header, "payments", "default", 1) + "settings:\n  description: the default\n"
 	steps, _ := plan(t, source, Live{}, false)

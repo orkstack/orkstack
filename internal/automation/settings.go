@@ -162,6 +162,18 @@ var namespaceSettings = []settingRow{
 		equal:  func(a, b *orkstackv1.Namespace) bool { return a.GetRequireSignedBy() == b.GetRequireSignedBy() },
 		export: func(ns *orkstackv1.Namespace) *yaml.Node { return strNode(ns.GetRequireSignedBy()) },
 	},
+	{
+		// budget (namespace-budgets) is configuration, managed as a unit like
+		// telemetry; its sub-keys are the --budget-* flags of `orkctl
+		// namespace create/update` with the prefix dropped.
+		key: "budget", field: "budget",
+		parse:  parseBudget,
+		render: func(ns *orkstackv1.Namespace) string { return renderBudget(ns.GetBudget()) },
+		equal: func(a, b *orkstackv1.Namespace) bool {
+			return budgetKey(a.GetBudget()) == budgetKey(b.GetBudget())
+		},
+		export: exportBudget,
+	},
 }
 
 // unmanagedNamespaceFields is every Namespace field a document never
@@ -347,5 +359,115 @@ func exportTelemetry(ns *orkstackv1.Namespace) *yaml.Node {
 		plainNode("sink"), strNode(policy.GetSink()),
 		plainNode("task_logs"), plainNode(taskLogsSlug(policy.GetTaskLogs())),
 		plainNode("attributes"), mapNode(policy.GetAttributes()))
+	return out
+}
+
+// budgetSubKeys are the sub-keys of `settings.budget`, in document order.
+var budgetSubKeys = []string{"cpu_seconds", "gib_seconds", "period", "enforce"}
+
+// parseBudget reads the `budget` mapping as a unit: absent sub-keys take
+// their zero, and an all-zero budget is written as unset (`budget: {}` is
+// --clear-budget). What a budget may be held to — a period inside the
+// allowed range, at least one bounded dimension — is ValidateNamespaceSpec's,
+// so a plan reports it exactly as the write would refuse it.
+func parseBudget(node *yaml.Node, ns *orkstackv1.Namespace) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("budget must be a mapping of %s", joinKeys(budgetSubKeys))
+	}
+	budget := &orkstackv1.Budget{}
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i].Value, node.Content[i+1]
+		if seen[key] {
+			return fmt.Errorf("line %d: budget.%s is written twice", node.Content[i].Line, key)
+		}
+		seen[key] = true
+		switch key {
+		case "cpu_seconds", "gib_seconds":
+			if value.Kind != yaml.ScalarNode || value.Tag != "!!int" {
+				return fmt.Errorf("budget.%s must be an integer of at least 0", key)
+			}
+			n, err := strconv.ParseInt(value.Value, 0, 64)
+			if err != nil || n < 0 {
+				return fmt.Errorf("budget.%s must be an integer of at least 0, got %s", key, value.Value)
+			}
+			if key == "cpu_seconds" {
+				budget.CpuSeconds = n
+			} else {
+				budget.GibSeconds = n
+			}
+		case "period":
+			raw, err := stringScalar(value)
+			if err != nil {
+				return fmt.Errorf("budget.period: %w", err)
+			}
+			d, err := time.ParseDuration(raw)
+			if err != nil {
+				return fmt.Errorf("budget.period %q is not a duration (e.g. 720h)", raw)
+			}
+			budget.Period = durationpb.New(d)
+		case "enforce":
+			if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" {
+				return fmt.Errorf("budget.enforce must be true or false, got %s", describeNode(value))
+			}
+			enforce, err := strconv.ParseBool(value.Value)
+			if err != nil {
+				return fmt.Errorf("budget.enforce must be true or false, got %s", value.Value)
+			}
+			budget.Enforce = enforce
+		default:
+			return fmt.Errorf("line %d: unknown key budget.%s; allowed: %s", node.Content[i].Line, key, joinKeys(budgetSubKeys))
+		}
+	}
+	if budgetZero(budget) {
+		ns.Budget = nil
+		return nil
+	}
+	ns.Budget = budget
+	return nil
+}
+
+func budgetZero(b *orkstackv1.Budget) bool {
+	return b.GetCpuSeconds() == 0 && b.GetGibSeconds() == 0 && b.GetPeriod() == nil && !b.GetEnforce()
+}
+
+// budgetKey is the budget's identity for comparison: specDifference's
+// budgetLabel (internal/api/namespaces.go) — unset is "none", anything else
+// every field — so the two can never disagree on whether a budget changed.
+func budgetKey(b *orkstackv1.Budget) string {
+	if b == nil {
+		return "none"
+	}
+	return fmt.Sprintf("{cpu_seconds=%d gib_seconds=%d period=%s enforce=%t}",
+		b.GetCpuSeconds(), b.GetGibSeconds(), b.GetPeriod().AsDuration(), b.GetEnforce())
+}
+
+// renderBudget is the budget as a plan shows it: {} when unset.
+func renderBudget(b *orkstackv1.Budget) string {
+	if b == nil {
+		return "{}"
+	}
+	return fmt.Sprintf("{cpu_seconds: %d, gib_seconds: %d, period: %s, enforce: %t}",
+		b.GetCpuSeconds(), b.GetGibSeconds(), renderBudgetPeriod(b.GetPeriod()), b.GetEnforce())
+}
+
+func renderBudgetPeriod(d *durationpb.Duration) string {
+	if d == nil {
+		return "0s"
+	}
+	return shortDuration(d.AsDuration())
+}
+
+func exportBudget(ns *orkstackv1.Namespace) *yaml.Node {
+	b := ns.GetBudget()
+	if b == nil {
+		return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Style: yaml.FlowStyle}
+	}
+	out := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	out.Content = append(out.Content,
+		plainNode("cpu_seconds"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.FormatInt(b.GetCpuSeconds(), 10)},
+		plainNode("gib_seconds"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.FormatInt(b.GetGibSeconds(), 10)},
+		plainNode("period"), plainNode(renderBudgetPeriod(b.GetPeriod())),
+		plainNode("enforce"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(b.GetEnforce())})
 	return out
 }

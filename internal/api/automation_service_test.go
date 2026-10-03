@@ -334,6 +334,8 @@ func TestPlanAutomation_RunsTheTargetRPCsValidators(t *testing.T) {
 		{"settings:\n  run_retention: 400h\n", "settings.run_retention", "exceeds the deployment maximum"},
 		{"settings:\n  telemetry:\n    sink: honeycomb\n", "settings.telemetry", "not a sink this deployment declared"},
 		{"settings:\n  default_pool: gpu\n  allowed_pools: [main]\n", "settings.allowed_pools", "gpu"},
+		{"settings:\n  budget:\n    cpu_seconds: 10\n    period: 59m\n", "settings.budget", "is outside"},
+		{"settings:\n  budget:\n    enforce: true\n    period: 720h\n", "settings.budget", "bounds nothing"},
 		{"schedules:\n  x:\n    orkflow: hello-ork\n    cron: '@daily'\n    end_at: '2020-01-01T00:00:00Z'\n", "schedules.x.end_at", "not in the future"},
 	}
 	for _, tc := range cases {
@@ -460,6 +462,12 @@ func TestNamespaceFieldChanges_AgreesWithSpecDifference(t *testing.T) {
 		},
 		"telemetry empty":   func(n *orkstackv1.Namespace) { n.Telemetry = &orkstackv1.TelemetryPolicy{} },
 		"secrets reordered": func(n *orkstackv1.Namespace) { n.AllowedSecrets = nil },
+		"budget": func(n *orkstackv1.Namespace) {
+			n.Budget = &orkstackv1.Budget{CpuSeconds: 10, Period: durationpb.New(time.Hour)}
+		},
+		"budget enforce": func(n *orkstackv1.Namespace) {
+			n.Budget = &orkstackv1.Budget{CpuSeconds: 10, Period: durationpb.New(time.Hour), Enforce: true}
+		},
 	}
 	for name, mutate := range pairs {
 		t.Run(name, func(t *testing.T) {

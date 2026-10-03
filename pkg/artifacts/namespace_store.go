@@ -324,9 +324,10 @@ func (s *S3NamespaceStore) Put(
 
 // ValidateNamespaceSpec runs, in order, every rule Put holds a document to on
 // its own: pools, retention, telemetry, allowed secrets, the signer's
-// spelling, the hold and max_running. It is pure — no engine state, no store —
-// and it is exactly what Put enforces, so a caller that wants to know before
-// writing (an automation plan) asks the same function the write will.
+// spelling, the hold, max_running and the budget. It is pure — no engine
+// state, no store — and it is exactly what Put enforces, so a caller that
+// wants to know before writing (an automation plan) asks the same function
+// the write will.
 func ValidateNamespaceSpec(ns *orkstackv1.Namespace) error {
 	if ns == nil {
 		return fmt.Errorf("artifacts: encode namespace: %w: nil namespace", ErrInvalidNamespace)
@@ -339,6 +340,7 @@ func ValidateNamespaceSpec(ns *orkstackv1.Namespace) error {
 		ValidNamespaceSigner,
 		validNamespaceHold,
 		validNamespaceMaxRunning,
+		validNamespaceBudget,
 	} {
 		if err := check(ns); err != nil {
 			return err
@@ -544,6 +546,48 @@ func validNamespaceMaxRunning(ns *orkstackv1.Namespace) error {
 	if ns.GetMaxRunning() < 0 {
 		return fmt.Errorf("artifacts: namespace %q max_running %d must be 0 (unlimited) or positive: %w",
 			ns.GetName(), ns.GetMaxRunning(), ErrInvalidNamespace)
+	}
+	return nil
+}
+
+// Budget period bounds. Exported so the API, the CLI help text and the UI
+// prefilter (ui/src/lib/namespaceRules.ts) name the same numbers.
+const (
+	BudgetMinPeriod = time.Hour
+	BudgetMaxPeriod = 744 * time.Hour // 31 days
+)
+
+// validNamespaceBudget enforces what a budget can be held to on its own: a
+// valid period inside [BudgetMinPeriod, BudgetMaxPeriod], non-negative
+// bounds, and at least one bounded dimension. Nil is always fine — it means
+// unbounded.
+func validNamespaceBudget(ns *orkstackv1.Namespace) error {
+	budget := ns.GetBudget()
+	if budget == nil {
+		return nil
+	}
+	refuse := func(format string, args ...any) error {
+		return fmt.Errorf("artifacts: namespace %q budget: %s: %w",
+			ns.GetName(), fmt.Sprintf(format, args...), ErrInvalidNamespace)
+	}
+	period := budget.GetPeriod()
+	if period == nil {
+		return refuse("period is required, e.g. 720h")
+	}
+	if err := period.CheckValid(); err != nil {
+		return refuse("period is not a valid duration: %v", err)
+	}
+	if d := period.AsDuration(); d < BudgetMinPeriod || d > BudgetMaxPeriod {
+		return refuse("period %s is outside [%s, %s]", d, BudgetMinPeriod, BudgetMaxPeriod)
+	}
+	if budget.GetCpuSeconds() < 0 {
+		return refuse("cpu_seconds %d is negative", budget.GetCpuSeconds())
+	}
+	if budget.GetGibSeconds() < 0 {
+		return refuse("gib_seconds %d is negative", budget.GetGibSeconds())
+	}
+	if budget.GetCpuSeconds() == 0 && budget.GetGibSeconds() == 0 {
+		return refuse("bounds nothing — set cpu_seconds or gib_seconds above 0, or clear the budget")
 	}
 	return nil
 }

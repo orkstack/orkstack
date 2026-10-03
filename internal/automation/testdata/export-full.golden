@@ -18,6 +18,11 @@ settings:
   max_running: 5
   allowed_secrets: ['env:PAYMENTS_*']
   require_signed_by: cosign:release
+  budget:
+    cpu_seconds: 3600
+    gib_seconds: 7200
+    period: 720h
+    enforce: true
 
 schedules:
   hourly-sync: # paused: "investigating INC-42" — operational state; not managed here

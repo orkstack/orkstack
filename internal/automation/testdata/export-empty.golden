@@ -12,6 +12,7 @@ settings:
   max_running: 0
   allowed_secrets: []
   require_signed_by: ""
+  budget: {}
 
 schedules: {}
 

@@ -421,3 +421,52 @@ func TestSecurityPolicy_AllowsSecretSourceIsTheSharedRule(t *testing.T) {
 		t.Fatalf("an empty floor refused: %v", err)
 	}
 }
+
+// TestReservedResources_AgreesWithResolveResources pins the numbers an
+// attempt record carries to the strings the container is given: one
+// resolution, two renderings, never two decisions.
+func TestReservedResources_AgreesWithResolveResources(t *testing.T) {
+	policy := DefaultSecurityPolicy()
+	cases := []struct {
+		name string
+		req  *orkstackv1.ResourceRequest
+		want *orkstackv1.ReservedResources // nil = refused
+	}{
+		{"empty request gets the defaults", nil, &orkstackv1.ReservedResources{Cpu: 1, MemoryBytes: 1 << 30}},
+		{"whole cores and Gi", &orkstackv1.ResourceRequest{Cpu: "2", Memory: "4Gi"}, &orkstackv1.ReservedResources{Cpu: 2, MemoryBytes: 4 << 30}},
+		{"millicores and Mi", &orkstackv1.ResourceRequest{Cpu: "500m", Memory: "512Mi"}, &orkstackv1.ReservedResources{Cpu: 0.5, MemoryBytes: 512 << 20}},
+		{"plain bytes, default cpu", &orkstackv1.ResourceRequest{Memory: "1000000"}, &orkstackv1.ReservedResources{Cpu: 1, MemoryBytes: 1000000}},
+		{"cpu above the cap is refused", &orkstackv1.ResourceRequest{Cpu: "9"}, nil},
+		{"zero cpu is refused", &orkstackv1.ResourceRequest{Cpu: "0"}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := policy.ReservedResources(tc.req)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("ReservedResources = %v, want nil for a refused request", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("ReservedResources = nil, want %v", tc.want)
+			}
+			if got.GetCpu() != tc.want.GetCpu() || got.GetMemoryBytes() != tc.want.GetMemoryBytes() {
+				t.Fatalf("ReservedResources = {%v, %d}, want {%v, %d}",
+					got.GetCpu(), got.GetMemoryBytes(), tc.want.GetCpu(), tc.want.GetMemoryBytes())
+			}
+			cpu, memory, failure := policy.ResolveResources(tc.req)
+			if failure != nil {
+				t.Fatalf("ResolveResources refused what ReservedResources admitted: %v", failure)
+			}
+			cores, err := parseCPU(cpu)
+			if err != nil || cores != got.GetCpu() {
+				t.Errorf("task.json cpu %q parses to %v (%v), the record says %v", cpu, cores, err, got.GetCpu())
+			}
+			bytes, err := parseMemory(memory)
+			if err != nil || int64(bytes) != got.GetMemoryBytes() {
+				t.Errorf("task.json memory %q parses to %v (%v), the record says %d", memory, bytes, err, got.GetMemoryBytes())
+			}
+		})
+	}
+}

@@ -275,6 +275,7 @@ func (s *Service) validNamespaceForPlan(ctx context.Context, spec, stored *orkst
 func namespaceSpecField(err error) string {
 	message := err.Error()
 	for _, probe := range []struct{ fragment, field string }{
+		{"budget", "settings.budget"},
 		{"allowed_pools", "settings.allowed_pools"},
 		{"default_pool", "settings.default_pool"},
 		{"pool", "settings.allowed_pools"},

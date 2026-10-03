@@ -102,6 +102,7 @@ that one field; each key absent leaves the stored value exactly as it is.
 | `max_running` | integer ≥ 0 | `0` | exact |
 | `allowed_secrets` | list of strings | `[]` | set |
 | `require_signed_by` | string | `""` | exact |
+| `budget` | mapping: `cpu_seconds`, `gib_seconds` (integers ≥ 0), `period` (Go duration), `enforce` (boolean) — the `--budget-*` flags | `{}` | per sub-field; written as a unit, an all-zero budget is unset (`--clear-budget`) |
 
 The comparisons are exactly `CreateNamespace`'s idempotency comparison. A
 document never manages `name` (it is `namespace:`), the registry-owned
