@@ -162,7 +162,7 @@ type activitySuite struct {
 }
 
 func (s *activitySuite) run(ctx context.Context) (*activityTestReport, error) {
-	root, err := os.MkdirTemp(suiteRootParent(), "ork-activity-test-")
+	root, err := os.MkdirTemp(localToolRoot("activity-test"), "ork-activity-test-")
 	if err != nil {
 		return nil, fmt.Errorf("create the suite workspace: %w", err)
 	}
@@ -709,8 +709,10 @@ func writeGoJSON(out io.Writer, value any) error {
 	return nil
 }
 
-// suiteRootParent picks a directory the container daemon can actually
-// bind-mount.
+// localToolRoot picks a directory the container daemon can actually
+// bind-mount, for a local tool that drives the dispatcher on this machine
+// (`activity test`, `task run`); sub names the tool's own directory under
+// ~/.orkstack.
 //
 // The OS temp directory is the obvious choice and is wrong on the most common
 // developer machine there is: on macOS with a VM-hosted daemon, $HOME is a
@@ -722,14 +724,14 @@ func writeGoJSON(out io.Writer, value any) error {
 // operator who set it has already solved this for this host; then $HOME,
 // which is shared by default; then the OS temp directory, which is correct on
 // Linux where the daemon shares the host's filesystem.
-func suiteRootParent() string {
+func localToolRoot(sub string) string {
 	if configured := os.Getenv(orker.WorkRootVar); configured != "" {
 		if err := os.MkdirAll(configured, 0o700); err == nil {
 			return configured
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		candidate := filepath.Join(home, ".orkstack", "activity-test")
+		candidate := filepath.Join(home, ".orkstack", sub)
 		if err := os.MkdirAll(candidate, 0o700); err == nil {
 			return candidate
 		}
@@ -804,23 +806,47 @@ func preflightIsContractViolation(err error) bool {
 	if err == nil {
 		return false
 	}
+	detail, category, ok := decodeDispatchFailure(err)
+	if !ok || category != orker.CategoryContractViolation {
+		return false
+	}
+	// No detail means no exit code to judge by. The suite does not guess: an
+	// image is not accused on an error it cannot read.
+	return detail != nil && detail.GetExitCode() == 0
+}
+
+// decodeDispatchFailure reads the Orker's own verdict out of an error
+// OCIDispatcher returned: the ActivityFailureDetail (reason code, exit code,
+// failure-path artifacts, scan notes) and the §8.1 category.
+//
+// Execute returns failure.TemporalError(), a *temporal.ApplicationError whose
+// TYPE is the category and whose detail carries the rest — the same shape and
+// the same decode the engine performs. The raw *orker.Failure is accepted too,
+// because Validate and the pre-runtime refusals return one directly. ok is
+// false for any other error (a cancellation, a context error); detail is nil
+// when an ApplicationError carried none it could decode.
+func decodeDispatchFailure(err error) (detail *orkstackv1.ActivityFailureDetail, category string, ok bool) {
+	if err == nil {
+		return nil, "", false
+	}
 	var applicationErr *temporal.ApplicationError
 	if errors.As(err, &applicationErr) {
-		if applicationErr.Type() != orker.CategoryContractViolation {
-			return false
+		var decoded *orkstackv1.ActivityFailureDetail
+		if decodeErr := applicationErr.Details(&decoded); decodeErr != nil {
+			decoded = nil
 		}
-		var detail *orkstackv1.ActivityFailureDetail
-		if decodeErr := applicationErr.Details(&detail); decodeErr != nil {
-			// No detail means no exit code to judge by. The suite does not
-			// guess: an image is not accused on an error it cannot read.
-			return false
-		}
-		return detail.GetExitCode() == 0
+		return decoded, applicationErr.Type(), true
 	}
 	var failure *orker.Failure
 	if errors.As(err, &failure) {
-		return failure.Category() == orker.CategoryContractViolation &&
-			failure.Detail.GetExitCode() == 0
+		detail := failure.Detail
+		if detail == nil {
+			detail = &orkstackv1.ActivityFailureDetail{
+				ReasonCode: failure.Reason,
+				Category:   orker.CategoryEnum(failure.Category()),
+			}
+		}
+		return detail, failure.Category(), true
 	}
-	return false
+	return nil, "", false
 }

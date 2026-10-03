@@ -1095,6 +1095,33 @@ test('a task watched live acquires its real exit code and Error.category without
 	await expect(page.getByTestId('task-never')).not.toContainText('CANCELED');
 });
 
+// A FAILED task hands the reader the command that runs it on their own
+// machine against this run's recorded bytes (`orkctl task run`). The page runs
+// nothing: it copies a command that names the namespace, the run and the task,
+// the local-tool exception docs/UI_CLI_PARITY.md records. A succeeded or a
+// never-started task offers no such command.
+test('a failed task offers the command that runs it locally; a succeeded or never-started task does not', async ({
+	page
+}) => {
+	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
+	const run = submitted.run.id;
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 120_000 });
+
+	const trigger = page.getByTestId('run-task-boom-replay-cli-trigger');
+	await expect(trigger).toBeVisible();
+	await trigger.click();
+	const command = page.getByTestId('run-task-boom-replay-cli-command');
+	await expect(command).toHaveText(
+		`orkctl --namespace 'default' 'task' 'run' '--from-run' '${run}' '--task' 'boom'`
+	);
+	await expect(page.getByTestId('run-task-ok-replay-cli-trigger')).toHaveCount(0);
+	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
+	await expect(page.getByTestId('run-task-never-replay-cli-trigger')).toHaveCount(0);
+	await shot(page, 'screenshot-task-local-replay.png');
+	note(`run ${run}: boom (FAILED) offers ${await command.innerText()}; ok (SUCCEEDED) and never (never started) offer none`);
+});
+
 // The retry HISTORY on the task card: whether this orkflow's `flaky` task
 // retries in its other runs, asked of the archive only when a reader asks.
 // The first run retried it; a second run that did not still says the task is
