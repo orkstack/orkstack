@@ -134,6 +134,13 @@ type applyRun struct {
 	// refusals are why nothing may be written; notes are dry-run remarks.
 	refusals []string
 	notes    map[int][]string // automation document index → extra lines
+	// secretsFile is the --secrets-out file, created (exclusive, 0600)
+	// before the first write so an uncreatable path refuses the whole
+	// apply; it is filled once every step has run.
+	secretsFile *os.File
+	// secretsWritten is true once the disclosed secrets are in secretsFile;
+	// only then are they withheld from the output.
+	secretsWritten bool
 }
 
 // runApplyDocuments is apply for anything but the one shape that existed
@@ -172,6 +179,17 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 		return err
 	}
 	run.checkRefusals()
+	if len(run.refusals) == 0 && !opts.dryRun && opts.secretsOut != "" {
+		// Claim the file before anything is written: a path that cannot be
+		// created must refuse the apply, not lose the secrets after it.
+		f, err := os.OpenFile(opts.secretsOut, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			run.refusals = append(run.refusals, fmt.Sprintf("--secrets-out %s cannot be created: %v", opts.secretsOut, err))
+		} else {
+			run.secretsFile = f
+			defer func() { _ = f.Close() }()
+		}
+	}
 
 	out := cmd.OutOrStdout()
 	if len(run.refusals) > 0 {
@@ -215,8 +233,17 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 		run.markAllNotRun()
 	}
 	var writeErr error
-	if opts.secretsOut != "" {
-		writeErr = writeDisclosedSecrets(opts.secretsOut, disclosed)
+	if run.secretsFile != nil {
+		writeErr = writeDisclosedSecrets(run.secretsFile, disclosed)
+		if writeErr != nil {
+			// The secrets are printed below instead; a partial file must not
+			// look like them.
+			_ = run.secretsFile.Close()
+			_ = os.Remove(opts.secretsOut)
+		} else {
+			run.secretsWritten = true
+			run.redactSecrets()
+		}
 	}
 	if g.json {
 		if err := writeJSON(out, run.report); err != nil {
@@ -226,7 +253,7 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 		run.renderResults(out, disclosed)
 	}
 	if writeErr != nil {
-		return fmt.Errorf("write --secrets-out %s: %w (the secrets above are the only copy)", opts.secretsOut, writeErr)
+		return fmt.Errorf("write --secrets-out %s: %w (the secrets printed above are the only copy)", opts.secretsOut, writeErr)
 	}
 	if failed {
 		return &exitCodeError{code: exitError, err: errors.New("apply failed part-way; run apply again: it plans from what now exists")}
@@ -496,9 +523,7 @@ func (r *applyRun) executeSteps() ([]*orkstackv1.DisclosedSecret, bool) {
 						entry.InvokeUrl = strings.TrimRight(r.g.baseURL(), "/") + triggerInvokePath + id
 					}
 					disclosed = append(disclosed, entry)
-					if r.opts.secretsOut == "" {
-						result.Secret = secret
-					}
+					result.Secret = secret
 				}
 			case step.GetAction() == orkstackv1.AutomationAction_AUTOMATION_ACTION_DELETE && connect.CodeOf(err) == connect.CodeNotFound:
 				result.Outcome = orkstackv1.AutomationStepOutcome_AUTOMATION_STEP_OUTCOME_ALREADY_GONE
@@ -610,22 +635,34 @@ func executeStep(ctx context.Context, g *globalFlags, step *orkstackv1.Automatio
 	return executor(ctx, g, step)
 }
 
-// writeDisclosedSecrets writes the secrets file with mode 0600 through an
-// exclusive create, so it can never overwrite anything.
-func writeDisclosedSecrets(path string, secrets []*orkstackv1.DisclosedSecret) error {
+// secretsFileWrite writes the encoded secrets; a variable so a test can
+// make the late write fail.
+var secretsFileWrite = func(f *os.File, encoded []byte) error {
+	_, err := f.Write(encoded)
+	return err
+}
+
+// writeDisclosedSecrets fills the --secrets-out file runApplyDocuments
+// created (mode 0600, exclusive) before the first write, and closes it.
+func writeDisclosedSecrets(f *os.File, secrets []*orkstackv1.DisclosedSecret) error {
 	encoded, err := marshalJSON(&orkstackv1.DisclosedSecrets{Secrets: secrets})
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(append(encoded, '\n')); err != nil {
-		_ = f.Close()
+	if err := secretsFileWrite(f, append(encoded, '\n')); err != nil {
 		return err
 	}
 	return f.Close()
+}
+
+// redactSecrets clears each result's one-time secret once it is safely in
+// the --secrets-out file, so the report does not repeat it.
+func (r *applyRun) redactSecrets() {
+	for _, doc := range r.report.GetAutomation() {
+		for _, result := range doc.GetResults() {
+			result.Secret = ""
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -831,7 +868,7 @@ func (r *applyRun) renderResults(out io.Writer, disclosed []*orkstackv1.Disclose
 		fmt.Fprintln(out)
 		switch secret.GetKind() {
 		case orkstackv1.AutomationObjectKind_AUTOMATION_OBJECT_KIND_TRIGGER:
-			if r.opts.secretsOut != "" {
+			if r.secretsWritten {
 				fmt.Fprintf(out, "Trigger %s (%s) was created. Its token: secret written to %s\n",
 					secret.GetName(), secret.GetId(), r.opts.secretsOut)
 				continue
@@ -840,7 +877,7 @@ func (r *applyRun) renderResults(out io.Writer, disclosed []*orkstackv1.Disclose
 				secret.GetName(), secret.GetId(), secret.GetSecret(),
 				triggerCurlExample(r.g.baseURL(), secret.GetId(), secret.GetSecret()))
 		default:
-			if r.opts.secretsOut != "" {
+			if r.secretsWritten {
 				fmt.Fprintf(out, "Webhook %s (%s) was registered with a generated signing secret: secret written to %s\n",
 					secret.GetName(), secret.GetId(), r.opts.secretsOut)
 				continue

@@ -245,6 +245,23 @@ func TestApply_RefusesBeforeAnyWrite(t *testing.T) {
 			existing := a.write(t, "secrets.json", "{}")
 			return []string{a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", existing}
 		},
+		"uncreatable secrets-out": func(t *testing.T, a *automationFixture) []string {
+			missing := filepath.Join(a.dir, "no-such-dir", "secrets.json")
+			return []string{a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", missing}
+		},
+		"secrets-out under a file": func(t *testing.T, a *automationFixture) []string {
+			parent := a.write(t, "not-a-dir", "x")
+			return []string{a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", filepath.Join(parent, "secrets.json")}
+		},
+		"plan error leaves no secrets-out file": func(t *testing.T, a *automationFixture) []string {
+			t.Cleanup(func() {
+				if _, err := os.Lstat(filepath.Join(a.dir, "secrets.json")); err == nil {
+					t.Error("a refused apply left its --secrets-out file behind")
+				}
+			})
+			doc := strings.Replace(cliAutomationDoc, "orkflow: deploy", "orkflow: missing", 1)
+			return []string{a.write(t, "automation.ork.yaml", doc), "--secrets-out", filepath.Join(a.dir, "secrets.json")}
+		},
 		"expect-plan with two documents": func(t *testing.T, a *automationFixture) []string {
 			a.run("namespace", "create", "billing").requireExit(t, exitOK)
 			other := strings.Replace(header("billing"), "", "", 1) + "triggers: {}\n"
@@ -446,6 +463,61 @@ func TestApply_SecretsOutWritesAnExclusive0600FileAndRedactsStdout(t *testing.T)
 	}
 	if secrets.GetSecrets()[0].GetInvokeUrl() == "" && secrets.GetSecrets()[1].GetInvokeUrl() == "" {
 		t.Error("the trigger's invoke URL is missing")
+	}
+}
+
+// A --secrets-out write that fails after the steps ran must not lose the
+// one-time secrets: they are printed, the report carries them, and no
+// partial file is left behind.
+func TestApply_SecretsOutLateWriteFailurePrintsTheSecrets(t *testing.T) {
+	for _, jsonOutput := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%v", jsonOutput), func(t *testing.T) {
+			a := newAutomationFixture(t)
+			doc := a.write(t, "automation.ork.yaml", cliAutomationDoc)
+			path := filepath.Join(a.dir, "secrets.json")
+			saved := secretsFileWrite
+			secretsFileWrite = func(*os.File, []byte) error { return fmt.Errorf("no space left on device") }
+			t.Cleanup(func() { secretsFileWrite = saved })
+			args := []string{"apply", doc, "--secrets-out", path}
+			if jsonOutput {
+				args = append([]string{"--json"}, args...)
+			}
+			outcome := a.run(args...)
+			if outcome.code != exitError {
+				t.Fatalf("exit = %d, want 1\n%s\n%s", outcome.code, outcome.stdout, outcome.stderr)
+			}
+			if !strings.Contains(outcome.stderr, "no space left on device") {
+				t.Errorf("stderr does not name the write failure:\n%s", outcome.stderr)
+			}
+			if _, err := os.Lstat(path); err == nil {
+				t.Error("a failed --secrets-out write left a file behind")
+			}
+			if strings.Contains(outcome.stdout, "secret written to") {
+				t.Errorf("stdout claims the secrets were written:\n%s", outcome.stdout)
+			}
+			if !strings.Contains(outcome.stdout, "generated-webhook-secret") {
+				t.Errorf("the webhook secret was not printed:\n%s", outcome.stdout)
+			}
+			if !jsonOutput {
+				if !strings.Contains(outcome.stdout, "Its token is shown once:") {
+					t.Errorf("the trigger token was not printed:\n%s", outcome.stdout)
+				}
+				return
+			}
+			var report orkstackv1.ApplyReport
+			if err := api.UnmarshalJSON([]byte(outcome.stdout), &report); err != nil {
+				t.Fatalf("decode report: %v\n%s", err, outcome.stdout)
+			}
+			secrets := 0
+			for _, result := range report.GetAutomation()[0].GetResults() {
+				if result.GetSecret() != "" {
+					secrets++
+				}
+			}
+			if secrets != 2 {
+				t.Errorf("report carries %d secrets, want the trigger's and the webhook's", secrets)
+			}
+		})
 	}
 }
 
