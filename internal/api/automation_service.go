@@ -278,6 +278,11 @@ func namespaceSpecField(err error) string {
 		{"budget", "settings.budget"},
 		{"allowed_pools", "settings.allowed_pools"},
 		{"default_pool", "settings.default_pool"},
+		// validNamespacePools names the default as "default pool" and an
+		// allow-list entry as "allowed pool"; both must come before the
+		// generic probe, or a bad default is anchored to the allow-list.
+		{"default pool", "settings.default_pool"},
+		{"allowed pool", "settings.allowed_pools"},
 		{"pool", "settings.allowed_pools"},
 		{"run retention", "settings.run_retention"},
 		{"run_retention", "settings.run_retention"},
