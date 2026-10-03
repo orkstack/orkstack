@@ -217,8 +217,11 @@ naming the two ways out — a new entry name, or deleting the old object first.
 Apply never deletes and recreates to make a field true, because recreating a
 trigger re-issues its credential. A CREATE that matches an UNDECLARED object
 field for field is a **warning**: renaming an entry declares a different
-object, and the warning names the `update … --name` that keeps the
-credential.
+object, and for a trigger or webhook the warning names the `update … --name`
+that keeps the credential. A schedule has no in-place rename, so its warning
+offers no command; it says what the new key costs instead — the old schedule
+keeps firing until it is deleted (or `--prune` deletes it, its run history
+staying under the old name), and a paused one's hold is not carried over.
 
 Every schedule and trigger entry's `(orkflow, version)` must be stored — or be
 an Orkflow version the same invocation applies first. The plan also runs the
@@ -283,7 +286,10 @@ Nothing is written until every document has been read, validated and planned:
    written — on any Orkflow error or conflict, any plan error, an
    `--expect-plan` with other than one automation document or a different
    digest (the fresh plan is printed), a `secret_env` variable that is unset
-   (a printed note on `--dry-run`), or a `--secrets-out` file that exists.
+   (a printed note on `--dry-run`), or a `--secrets-out` file that exists
+   or cannot be created. The `--secrets-out` file is created (exclusively,
+   mode 0600) here, before the first write, so a path apply cannot write
+   refuses the apply instead of losing a secret after it.
 4. `--dry-run` prints and exits 0; `--check` is a dry run that exits **4**
    when anything would change.
 5. New Orkflow versions are applied, then each document's actionable steps
@@ -294,7 +300,9 @@ Nothing is written until every document has been read, validated and planned:
 A trigger token, or a webhook secret the engine generated, is printed once
 with the trigger's runnable `curl` — or, with `--secrets-out PATH`, written to
 a new mode-0600 file as a `DisclosedSecrets` document and named in place of
-each value. A re-apply prints no secret: nothing is created.
+each value. Should that final write still fail, the file is removed and the
+secrets are printed (and carried in the `--json` report) instead, and apply
+exits 1. A re-apply prints no secret: nothing is created.
 
 `--json` prints one `ApplyReport` (`proto/orkstack/v1/automation.proto`): the
 Orkflow reports, each automation document's plan, and the results of an
