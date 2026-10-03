@@ -74,6 +74,10 @@ func TestDispatched_MeansTheTaskRunsPoolIsSet(t *testing.T) {
 		{"a skipped task", &orkstackv1.TaskRun{TaskId: "notify", Status: orkstackv1.Status_STATUS_SKIPPED}, false},
 		{"a task canceled before dispatch", &orkstackv1.TaskRun{TaskId: "later", Status: orkstackv1.Status_STATUS_CANCELED}, false},
 		{"a task of a run whose start failed", &orkstackv1.TaskRun{TaskId: "first", Status: orkstackv1.Status_STATUS_PENDING}, false},
+		// An await (docs/DSL.md "Awaited tasks") reaches no Orker: it is never
+		// a flake sample and contributes no namespace-budget usage.
+		{"a resolved await", &orkstackv1.TaskRun{TaskId: "approval", Status: orkstackv1.Status_STATUS_SUCCEEDED,
+			Await: &orkstackv1.TaskAwait{ResolvedVia: orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API}}, false},
 		{"a nil task", nil, false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

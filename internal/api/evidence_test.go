@@ -994,3 +994,29 @@ func evidenceEntries(bundle []byte) (map[string][]byte, error) {
 		entries[h.Name] = body
 	}
 }
+
+// An awaited task (docs/DSL.md "Awaited tasks") has no container, so its
+// bundle entry is the values.json the engine stored when it was resolved and
+// nothing else: no commit.json, no attempt record, no logs.
+func TestExportRunEvidence_AwaitedTaskHasOnlyItsValues(t *testing.T) {
+	f := newEvidenceFixture(t)
+	values := f.put("values.json", []byte(`{"approved":true}`))
+	f.finish(&orkstackv1.Run{Id: "ork-ev-await", Status: orkstackv1.Status_STATUS_SUCCEEDED, TaskRuns: []*orkstackv1.TaskRun{
+		{TaskId: "approval", Status: orkstackv1.Status_STATUS_SUCCEEDED, ValuesRef: values,
+			Await: &orkstackv1.TaskAwait{ResolvedVia: orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API, ResolvedBy: "alice"}},
+	}})
+	r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-ev-await"})
+	var paths []string
+	for _, m := range r.manifest.Members {
+		if m.TaskID == "approval" {
+			paths = append(paths, m.Path)
+		}
+	}
+	if strings.Join(paths, ",") != "tasks/approval/values.json" {
+		t.Errorf("awaited task members = %v, want only tasks/approval/values.json", paths)
+	}
+	if len(r.manifest.Tasks) != 1 || len(r.manifest.Tasks[0].Attempts) != 0 || r.manifest.Tasks[0].OutcomeAttempt != 0 {
+		t.Fatalf("tasks = %+v", r.manifest.Tasks)
+	}
+	verifyBundle(t, r.data)
+}
