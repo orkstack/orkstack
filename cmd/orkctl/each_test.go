@@ -128,6 +128,7 @@ func eachCLIEvents() []*orkstackv1.Event {
 
 type eachCLIFixture struct {
 	*fixture
+	reader   *eachReader
 	attempts *artifacts.MemoryAttemptStore
 	logs     *artifacts.LocalLogStore
 }
@@ -188,7 +189,7 @@ func newEachCLIFixture(t *testing.T) *eachCLIFixture {
 			t.Fatal(err)
 		}
 	}
-	return &eachCLIFixture{fixture: f, attempts: attempts, logs: logs}
+	return &eachCLIFixture{fixture: f, reader: reader, attempts: attempts, logs: logs}
 }
 
 func TestRunGetEachGoldens(t *testing.T) {
@@ -257,6 +258,37 @@ func TestRunLogsEachHintGolden(t *testing.T) {
 	refused := f.run("-n", "data", "run", "logs", eachCLIRunID, "--task", "convert")
 	if refused.code == exitOK || !strings.Contains(refused.stderr, "fan-out of 4 items") {
 		t.Fatalf("--task convert without --item = %d %q", refused.code, refused.stderr)
+	}
+}
+
+// A fan-out that has not expanded has no items, so a whole-run read names no
+// item command for it: not while it is PENDING, and not once it was SKIPPED
+// or FAILED before its array was counted. An expanded zero-item fan-out says
+// that nothing ran.
+func TestRunLogs_NoItemHintBeforeExpansion(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status orkstackv1.Status
+		each   *orkstackv1.TaskEach
+		want   string
+	}{
+		"Pending":               {orkstackv1.Status_STATUS_PENDING, &orkstackv1.TaskEach{}, ""},
+		"Skipped":               {orkstackv1.Status_STATUS_SKIPPED, &orkstackv1.TaskEach{}, ""},
+		"FailedBeforeExpansion": {orkstackv1.Status_STATUS_FAILED, &orkstackv1.TaskEach{}, ""},
+		"ZeroItems":             {orkstackv1.Status_STATUS_SUCCEEDED, &orkstackv1.TaskEach{Expanded: true}, "convert: fan-out over 0 items; nothing ran\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newEachCLIFixture(t)
+			run := eachCLIRun()
+			node := run.GetTaskRuns()[1]
+			node.Status, node.Each, node.Items = tc.status, tc.each, nil
+			f.reader.mu.Lock()
+			f.reader.runs[eachCLIRunID] = run
+			f.reader.mu.Unlock()
+			got := f.run("-n", "data", "run", "logs", eachCLIRunID).requireExit(t, exitOK)
+			if want := tc.want + "[list] list ran\n[merge] merge ran\n"; got.stdout != want {
+				t.Fatalf("run logs printed %q, want %q", got.stdout, want)
+			}
+		})
 	}
 }
 

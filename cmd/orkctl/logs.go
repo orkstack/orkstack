@@ -249,11 +249,16 @@ func followAllTaskLogs(
 		if _, already := seen[taskID]; already {
 			return
 		}
-		seen[taskID] = struct{}{}
 		if task := fanOutRow(run, taskID); task != nil {
-			writer.fanOutHint(g.namespace, req.runID, task)
+			// A fan-out that has not expanded has no items to name yet: the
+			// next discovery pass looks again, until it expands or the run
+			// ends without it.
+			if writer.fanOutHint(g.namespace, req.runID, task) {
+				seen[taskID] = struct{}{}
+			}
 			return
 		}
+		seen[taskID] = struct{}{}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -347,16 +352,29 @@ func (w *logWriter) chunk(chunk *orkstackv1.TaskLogChunk, prefixed bool) error {
 	return nil
 }
 
-// fanOutHint is the one line a whole-run read prints for a fan-out.
-func (w *logWriter) fanOutHint(namespace, runID string, task *orkstackv1.TaskRun) {
+// fanOutHint is the one line a whole-run read prints for a fan-out. It
+// reports whether the fan-out has expanded: one that has not (PENDING, or
+// SKIPPED or FAILED before its array was counted) has no items and no item
+// logs, so nothing is printed for it — never "fan-out of 0 items" with a
+// command that could read none.
+func (w *logWriter) fanOutHint(namespace, runID string, task *orkstackv1.TaskRun) bool {
+	each := task.GetEach()
+	if !each.GetExpanded() {
+		return false
+	}
 	if w.json {
-		return
+		return true
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if each.GetCount() == 0 {
+		_ = w.write(fmt.Sprintf("%s: fan-out over 0 items; nothing ran\n", task.GetTaskId()))
+		return true
+	}
 	_ = w.write(fmt.Sprintf("%s: fan-out of %d items; read one with %s\n",
-		task.GetTaskId(), task.GetEach().GetCount(),
+		task.GetTaskId(), each.GetCount(),
 		orkctlCommand(namespace, "run", "logs", runID, "--task", task.GetTaskId(), "--item", "N")))
+	return true
 }
 
 func (w *logWriter) write(text string) error {
