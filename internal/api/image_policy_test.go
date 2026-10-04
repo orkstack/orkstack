@@ -87,6 +87,10 @@ type stampResolver struct {
 func (r *stampResolver) ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, wf *orkstackv1.Orkflow) (dsl.Resolutions, error) {
 	out := dsl.Resolutions{}
 	for _, t := range wf.GetTasks() {
+		// As the real resolver: an await and a composed task run no image.
+		if t.GetAwait() != nil || dsl.IsComposedTask(t) {
+			continue
+		}
 		reference, err := catalog.ResolveUses(t.GetId(), t.GetUses())
 		if err != nil {
 			return nil, err

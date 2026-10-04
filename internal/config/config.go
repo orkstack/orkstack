@@ -138,6 +138,9 @@ var Schema = []Var{
 	// ORK_EACH_MAX_ITEMS' fallback is engine.DefaultEachMaxItems, the
 	// built-in ceiling (dsl.MaxEachItems) it may lower and never raise.
 	{Path: "engine.each_max_items", Env: "ORK_EACH_MAX_ITEMS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultEachMaxItems))},
+	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
+	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
+	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},
 	{Path: "engine.usage_cache_ttl", Env: "ORK_USAGE_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultUsageCacheTTL)},
 
 	{Path: "engine.limits.values_max_bytes", Env: "ORK_VALUES_MAX_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultValuesMaxBytes)},

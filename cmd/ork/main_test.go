@@ -765,3 +765,31 @@ func TestLoadConfig_EachMaxItemsBounds(t *testing.T) {
 		t.Fatalf("1500 = %v", err)
 	}
 }
+
+// ORK_COMPOSE_MAX_DEPTH lowers the built-in composition ceiling and never
+// raises it: 0 and 5 refuse boot, 1 and 4 are accepted, unset is the ceiling.
+func TestLoadConfig_ComposeMaxDepthBounds(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    int32
+		refused bool
+	}{
+		{"", 4, false}, {"1", 1, false}, {"4", 4, false},
+		{"0", 4, true}, {"5", 4, true}, {"-1", 4, true}, {"deep", 4, true},
+	} {
+		t.Run("ORK_COMPOSE_MAX_DEPTH="+tc.raw, func(t *testing.T) {
+			t.Setenv("ORK_COMPOSE_MAX_DEPTH", tc.raw)
+			cfg := loadConfig()
+			if refused := cfg.limitsErr != nil; refused != tc.refused {
+				t.Fatalf("refused = %v (%v), want %v", refused, cfg.limitsErr, tc.refused)
+			}
+			if !tc.refused && cfg.composeMaxDepth != tc.want {
+				t.Fatalf("composeMaxDepth = %d, want %d", cfg.composeMaxDepth, tc.want)
+			}
+		})
+	}
+	t.Setenv("ORK_COMPOSE_MAX_DEPTH", "6")
+	if err := loadConfig().limitsErr; err == nil || !strings.Contains(err.Error(), "ORK_COMPOSE_MAX_DEPTH=6 is above the 4 ceiling; it may only lower it") {
+		t.Fatalf("6 = %v", err)
+	}
+}
