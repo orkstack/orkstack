@@ -60,32 +60,43 @@ function shot(page: Page, name: string) {
 
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 
-// `list` writes six parts; `convert` fans out over them, two at a time, each
-// item sleeping long enough for the page to watch its cell move; item 2 exits
-// 1 on its FIRST attempt only, so exactly one item retries; `merge` reads
-// every item's part.txt, staged under one directory per item, in item order.
+// `list` takes a few seconds, so the page is open before the fan-out
+// expands; `convert` fans out over the run's six input parts, two at a time,
+// each item sleeping long enough for the page to watch its cell move; item 2
+// exits 1 on its FIRST attempt only, so exactly one item retries; `merge`
+// reads every item's part.txt, staged under one directory per item, in item
+// order, and `op: eval` makes what it read its values.
+//
+// The parts are the run's INPUT, not list's values: activity-shell writes
+// values.json itself on every op, so no shell task can hand a fan-out an
+// array, and examples/each-fan-out.ork.yaml's plain base image would make this
+// spec resolve a Docker Hub tag at apply. The upstream-sourced expansion is
+// proven by the engine suite (internal/engine/each_integration_test.go).
+const PARTS = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => ({ name }));
+
 function fanOutOrkflow(): string {
 	return `name: ${FAN_OUT}
 version: "0.1.0"
 description: Six parts fanned out two at a time, one retried, merged.
 
+inputs:
+  parts:
+    type: array
+
 tasks:
   - id: list
     uses: shell
     timeout_seconds: 120
-    command:
-      - sh
-      - -c
-      - >-
-        printf '{"parts":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"},{"name":"e"},{"name":"f"}]}'
-        > /orkstack/output/values.json
+    with:
+      op: exec
+      command: [sh, -c, "echo listing six parts; sleep 3"]
 
   - id: convert
     uses: shell
     needs: [list]
     timeout_seconds: 120
     each:
-      over: '{{ .tasks.list.output.parts }}'
+      over: '{{ .inputs.parts }}'
       as: part
       max_items: 20
       max_parallel: 2
@@ -95,7 +106,7 @@ tasks:
       interpreter: sh
       script: |
         set -eu
-        echo "converting item {{ .each.index }} of {{ .each.count }}: {{ sh .each.part.name }}"
+        echo "converting item {{ .each.index }} of {{ .each.count }}:" {{ sh .each.part.name }}
         sleep 3
         printf '%s' {{ sh .each.part.name }} > /orkstack/output/artifacts/part.txt
         if [ {{ .each.index }} -eq 2 ] && grep -q '"attempt": 1,' /orkstack/input/task.json; then
@@ -108,12 +119,8 @@ tasks:
     needs: [convert]
     timeout_seconds: 120
     with:
-      op: script
-      interpreter: sh
-      script: |
-        set -eu
-        merged=$(cat /orkstack/input/artifacts/convert/*/part.txt)
-        printf '{"merged":"%s"}' "$merged" > /orkstack/output/values.json
+      op: eval
+      command: [sh, -c, "cat /orkstack/input/artifacts/convert/*/part.txt"]
 `;
 }
 
@@ -232,7 +239,10 @@ test.afterAll(async () => {
 test.describe.configure({ mode: 'serial' });
 
 test('a fan-out card fills its item grid live', async ({ page }) => {
-	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: FAN_OUT });
+	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', {
+		orkflowName: FAN_OUT,
+		input: { data: { parts: PARTS } }
+	});
 	fanOutRun = submitted.run.id;
 	note(`submitted run ${fanOutRun}`);
 
@@ -281,8 +291,8 @@ test('an item that retried shows its own attempts and logs', async ({ page }) =>
 	await expect(page.getByTestId('task-log-convert')).not.toContainText('converting item 1 of 6');
 
 	// The CLI equivalent names --item 2.
-	await page.getByTestId('task-convert-item-panel-cli-logs').click();
-	await expect(page.getByTestId('task-convert-item-panel-cli')).toContainText("'--item' '2'");
+	await page.getByTestId('task-convert-item-panel-cli-logs-trigger').click();
+	await expect(page.getByTestId('task-convert-item-panel-cli-logs-command')).toContainText("'--item' '2'");
 	note(`item 2 panel: ${(await panel.textContent())?.replace(/\s+/g, ' ').slice(0, 400)}`);
 	await shot(page, 'screenshot-each-item-panel.png');
 });
@@ -293,8 +303,11 @@ test('an item deep link restores the selection', async ({ page }) => {
 	await expect(page.getByTestId('task-convert-item-panel')).toBeVisible();
 	await expect(page.getByTestId('task-convert-item-panel-label')).toHaveText('convert[2]');
 	await expect(page.getByTestId('task-convert-item-2')).toHaveAttribute('aria-pressed', 'true');
-	// The pinned attempt is the FIRST, failed one.
-	await expect(page.getByTestId('task-log-attempt-convert')).toContainText('1', { timeout: 30_000 });
+	// The linked attempt is the FIRST, failed one: only that try printed the
+	// failure line, so the pane reading it is the pane reading attempt 1. (The
+	// pane's "attempt N" chip is drawn for a try after the first or a reader's
+	// own pick, never for a link to attempt 1 — TaskLogPane, unchanged here.)
+	await expect(page).toHaveURL(/item=2.*attempt=1|attempt=1.*item=2/);
 	await expect(page.getByTestId('task-log-convert')).toContainText('item 2 fails its first attempt on purpose', {
 		timeout: 30_000
 	});
@@ -306,7 +319,7 @@ test('an item deep link restores the selection', async ({ page }) => {
 test('the merge task read every item', async ({ page }) => {
 	expect(fanOutRun).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/runs/${fanOutRun}?ns=default`);
-	await expect(page.getByTestId('task-values-merge')).toContainText('"merged": "abcdef"');
+	await expect(page.getByTestId('task-values-merge')).toContainText('"value": "abcdef"');
 	note(`merge values: ${await page.getByTestId('task-values-merge').textContent()}`);
 	await shot(page, 'screenshot-each-merge.png');
 });
