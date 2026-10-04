@@ -104,6 +104,9 @@ func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
 				if task.GetAwait() != nil {
 					continue // an awaited task runs no activity and has no `op`
 				}
+				if task.GetOrkflow() != nil {
+					continue // a composed task's with: is its child run's input
+				}
 				if filepath.Base(path) == "each-fan-out.ork.yaml" && task.GetId() == "list" {
 					// The one exemption: this task runs a plain base image
 					// (alpine), not a first-party activity, so there is no `op`

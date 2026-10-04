@@ -150,6 +150,12 @@ func (r *Resolver) ResolveOrkflow(ctx context.Context, catalog Catalog, wf *orks
 		if t.GetAwait() != nil {
 			continue
 		}
+		// A composed task names an Orkflow, not an image: its child's own
+		// tasks were resolved when the child was applied (rule 26). No
+		// manifest GET for `orkflow:…`.
+		if IsComposedTask(t) {
+			continue
+		}
 		uses := t.GetUses()
 		if res, ok := resolved[uses]; ok {
 			t.Image = res.Image

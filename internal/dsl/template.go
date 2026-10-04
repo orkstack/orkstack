@@ -47,6 +47,30 @@ type templateChecker struct {
 	// Both are unset while checking a condition.
 	each   string
 	fanOut bool
+	// engine is set while checking a template the ENGINE renders — a
+	// composed task's with: and an Orkflow's outputs: (rule 28). It refuses
+	// the three Orker helpers, a .tasks read of anything but output, .each,
+	// and a .tasks index whose task argument is not a string literal.
+	// engineWhat names what the rendered template becomes, for the sentences.
+	engine     bool
+	engineWhat string
+	// outputRef, when set, is called for every literal read of
+	// .tasks.<id>.output.<key> (OutputReferences), in either spelling.
+	outputRef func(taskID, key string)
+}
+
+// engineHelperRefusal is rule 28's sentence for one Orker helper.
+func (c *templateChecker) engineHelperRefusal(path, helper string) error {
+	var what string
+	switch helper {
+	case "artifact":
+		what = "the artifact helper resolves on an Orker"
+	case "env":
+		what = "the env helper reads an Orker's allowlisted environment"
+	default:
+		what = "the sh helper quotes for a container's shell on an Orker"
+	}
+	return c.refuseAt(path, fmt.Errorf("task %q: %s: %s; %s", c.taskID, path, what, c.engineWhat))
 }
 
 // eachKeysSentence names the three legal keys of .each for one item name.
@@ -70,6 +94,10 @@ func (c *templateChecker) refuseAt(path string, err error) error {
 func (c *templateChecker) checkEachRoot(path, key string) error {
 	if c.refs != nil {
 		return nil
+	}
+	if c.engine {
+		return c.refuseAt(path, fmt.Errorf("task %q: %s: .each is not available here — only a "+
+			"fan-out's with: has items, and %s", c.taskID, path, c.engineWhat))
 	}
 	if strings.HasPrefix(path, "condition") {
 		return c.refuseAt(path, fmt.Errorf("task %q: %s: .each is not available in a condition — a "+
@@ -299,11 +327,22 @@ func (c *templateChecker) checkField(path string, ident []string) error {
 		if len(ident) < 2 {
 			return c.refuse(fmt.Errorf("task %q: %s: .tasks must name an upstream task", c.taskID, path))
 		}
+		if len(ident) >= 4 && ident[2] == "output" && c.outputRef != nil {
+			c.outputRef(ident[1], ident[3])
+		}
 		if c.refs != nil {
 			c.refs[ident[1]] = struct{}{}
 			return nil
 		}
-		return c.checkUpstream(path, ident[1])
+		if err := c.checkUpstream(path, ident[1]); err != nil {
+			return err
+		}
+		if c.engine && len(ident) >= 3 && ident[2] != "output" {
+			return c.refuseAt(path, fmt.Errorf("task %q: %s: .tasks.%s.%s is not a value — an "+
+				"engine-rendered template reads .tasks.<id>.output only, and %s",
+				c.taskID, path, ident[1], ident[2], c.engineWhat))
+		}
+		return nil
 	case "each":
 		key := ""
 		if len(ident) > 1 {
@@ -354,6 +393,12 @@ func (c *templateChecker) checkCommand(path string, cmd *parse.CommandNode, rebo
 	ident, ok := cmd.Args[0].(*parse.IdentifierNode)
 	if !ok {
 		return false, nil
+	}
+	if c.engine && c.refs == nil {
+		switch ident.Ident {
+		case "artifact", "env", "sh":
+			return false, c.engineHelperRefusal(path, ident.Ident)
+		}
 	}
 	switch ident.Ident {
 	case "index":
@@ -418,6 +463,9 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 		}
 		rootKey, literal := cmd.Args[2].(*parse.StringNode)
 		if !literal {
+			if c.engine {
+				return c.dynamicIndexRefusal(path)
+			}
 			return c.walkIndexArgs(path, cmd.Args[2:], rebound)
 		}
 		root = rootKey.Text
@@ -454,18 +502,70 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 		}
 		return c.refuse(fmt.Errorf("task %q: %s: index tasks must name an upstream task", c.taskID, path))
 	}
-	if key, literal := cmd.Args[keyArg].(*parse.StringNode); literal {
+	key, literal := cmd.Args[keyArg].(*parse.StringNode)
+	if literal {
 		if root == "inputs" {
 			if err := c.checkInput(path, key.Text); err != nil {
 				return err
 			}
-		} else if c.refs != nil {
-			c.refs[key.Text] = struct{}{}
-		} else if err := c.checkUpstream(path, key.Text); err != nil {
-			return err
+		} else {
+			if err := c.checkTaskIndex(path, key.Text, cmd.Args[keyArg+1:]); err != nil {
+				return err
+			}
 		}
+	} else if root == "tasks" && c.engine {
+		return c.dynamicIndexRefusal(path)
 	}
 	return c.walkIndexArgs(path, cmd.Args[keyArg:], rebound)
+}
+
+// checkTaskIndex is `index .tasks "<id>" rest…` with a literal id: the
+// reference is recorded or checked, and in an engine-rendered template the
+// key after the id must be the literal "output" (rule 28).
+func (c *templateChecker) checkTaskIndex(path, taskID string, rest []parse.Node) error {
+	if c.outputRef != nil && len(rest) >= 2 {
+		sub, subLiteral := rest[0].(*parse.StringNode)
+		key, keyLiteral := rest[1].(*parse.StringNode)
+		if subLiteral && keyLiteral && sub.Text == "output" {
+			c.outputRef(taskID, key.Text)
+		}
+	}
+	if c.refs != nil {
+		c.refs[taskID] = struct{}{}
+		return nil
+	}
+	if err := c.checkUpstream(path, taskID); err != nil {
+		return err
+	}
+	if c.engine && len(rest) > 0 {
+		sub, subLiteral := rest[0].(*parse.StringNode)
+		if !subLiteral {
+			return c.dynamicIndexRefusal(path)
+		}
+		if sub.Text != "output" {
+			return c.refuseAt(path, fmt.Errorf("task %q: %s: .tasks.%s.%s is not a value — an "+
+				"engine-rendered template reads .tasks.<id>.output only, and %s",
+				c.taskID, path, taskID, sub.Text, c.engineWhat))
+		}
+	}
+	return nil
+}
+
+// dynamicIndexRefusal is rule 28's sentence for a .tasks index whose task
+// argument is not a string literal. It is returned while COLLECTING too:
+// ReferencedUpstreamIn is authoritative, so a read it cannot name is an
+// error, never a skip.
+func (c *templateChecker) dynamicIndexRefusal(path string) error {
+	sentence := "an engine-rendered template names every task it reads literally, so the " +
+		"engine reads exactly those values"
+	err := fmt.Errorf("task %q: %s: %s", c.taskID, path, sentence)
+	if c.taskID == "" {
+		err = fmt.Errorf("%s: %s", path, sentence)
+	}
+	if c.refs != nil {
+		return err
+	}
+	return c.refuseAt(path, err)
 }
 
 // walkIndexArgs preserves permissive dynamic indexes while still checking any

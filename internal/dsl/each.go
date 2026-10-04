@@ -298,6 +298,12 @@ func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, clos
 					"task %q: each.over: %q is a fan-out; a fan-out cannot fan out over another "+
 						"fan-out's items (no nesting)", id, producer))
 			}
+			// Rule 30: a fan-out does not read a composed task.
+			if IsComposedTask(byID[producer]) {
+				return validationError(at("each.over"), fmt.Errorf(
+					"task %q: each.over: %q is a composed task; its values are the child's declared "+
+						"outputs, which are strings and never an array", id, producer))
+			}
 			if _, ok := closures[id][producer]; !ok {
 				return validationError(at("each.over"), fmt.Errorf(
 					"task %q: each.over: template references task %q which is not in its needs closure",

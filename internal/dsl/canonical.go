@@ -126,6 +126,11 @@ func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	if pins := canonicalPins(wf.GetPins()); pins != nil {
 		out["pins"] = pins
 	}
+	// outputs is emitted ONLY when non-empty — the canonicalPins exception,
+	// for the same reason: an Orkflow that declares none keeps its digest.
+	if len(wf.GetOutputs()) > 0 {
+		out["outputs"] = canonicalStringMap(wf.GetOutputs())
+	}
 	return canonicalJSON(out)
 }
 
@@ -232,6 +237,13 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 			"schema":         schema,
 		}
 	}
+	// orkflow is emitted ONLY when set — the same exception, for the same
+	// reason, as `pin`. The digest is included: it is what runs, stamped at
+	// apply exactly as `image` is, so the parent's digest pins the child's
+	// and, through the child's own canonical form, every descendant's.
+	if o := canonicalOrkflowRef(t.GetOrkflow()); o != nil {
+		out["orkflow"] = o
+	}
 	// each is emitted ONLY when set — the same exception, for the same
 	// reason, as `pin`. source is included: it is what runs, compiled at
 	// apply exactly as `image` is, so a build that compiled `over` differently
@@ -299,12 +311,33 @@ func DefinitionDigest(wf *orkstackv1.Orkflow) (string, error) {
 func canonicalImages(wf *orkstackv1.Orkflow) ([]byte, error) {
 	images := make([]any, 0, len(wf.GetTasks()))
 	for _, t := range wf.GetTasks() {
-		images = append(images, map[string]any{
+		entry := map[string]any{
 			"taskId": t.GetId(),
 			"image":  canonicalImageRef(t.GetImage()),
-		})
+		}
+		// Only for a composed task, so a document with none derives the
+		// version it always did, and one derived version still names one
+		// definition when a child version was deleted and re-applied with
+		// other content.
+		if o := canonicalOrkflowRef(t.GetOrkflow()); o != nil {
+			entry["orkflow"] = o
+		}
+		images = append(images, entry)
 	}
 	return canonicalJSON(images)
+}
+
+// canonicalOrkflowRef renders a composed task's reference, or nil when the
+// task composes nothing.
+func canonicalOrkflowRef(o *orkstackv1.OrkflowRef) map[string]any {
+	if o == nil {
+		return nil
+	}
+	return map[string]any{
+		"name":             o.GetName(),
+		"version":          o.GetVersion(),
+		"definitionDigest": o.GetDefinitionDigest(),
+	}
 }
 
 // derivedVersionSeparator is the 0x1F unit separator of §4.4. It cannot occur

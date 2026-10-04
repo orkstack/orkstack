@@ -1,0 +1,30 @@
+# OrkStack orkflow DSL
+#
+# A reusable block: sign an image reference and record where it lives. Its
+# `outputs:` is its interface — the one thing a composing Orkflow may read.
+name: release-block
+version: "0.1.0"
+description: "Sign an image reference and publish its record; the block other Orkflows compose."
+
+inputs:
+  image:
+    type: string
+    required: true
+
+outputs:
+  digest: '{{ .tasks.sign.output.value }}'
+  url: '{{ .tasks.publish.output.value }}'
+
+tasks:
+  - id: sign
+    uses: shell
+    with:
+      op: eval
+      command: ["sh", "-c", "printf 'sha256:%s' \"$(printf '%s' {{ sh .inputs.image }} | sha256sum | cut -d' ' -f1)\""]
+
+  - id: publish
+    uses: shell
+    needs: [sign]
+    with:
+      op: eval
+      command: ["sh", "-c", "printf 'https://registry.example/records/%s' {{ sh .tasks.sign.output.value }}"]

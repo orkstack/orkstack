@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
@@ -102,6 +103,12 @@ type document struct {
 	Description string            `yaml:"description"`
 	Labels      map[string]string `yaml:"labels"`
 	Inputs      map[string]any    `yaml:"inputs"`
+
+	// Outputs is the Orkflow's declared return contract: output name to a
+	// template over .inputs and .tasks.<id>.output, rendered once by the
+	// engine when the run succeeds (docs/DSL.md "Outputs"). Absent and `{}`
+	// are one value: no declared outputs.
+	Outputs map[string]string `yaml:"outputs"`
 
 	// Pins declares every pin a task may name, by name, each with a
 	// (possibly empty) options object — `pins: {build: {}}` is legal.
@@ -295,6 +302,9 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		}
 		wf.Inputs = inputs
 	}
+	if len(doc.Outputs) > 0 {
+		wf.Outputs = doc.Outputs
+	}
 
 	// Pins compile SORTED BY NAME, and a document that declares none leaves
 	// the field absent rather than empty-but-allocated.
@@ -325,6 +335,17 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	}
 
 	for taskIndex, td := range doc.Tasks {
+		// A composed task is built on its own path, first: it refuses, by
+		// name, every execution key its author wrote (rule 27 at the YAML
+		// layer — `await:` among them) and keeps TimeoutSeconds 0.
+		if strings.HasPrefix(td.Uses, OrkflowUsesPrefix) {
+			task, err := compileComposedTask(taskIndex, td, doc.Namespace)
+			if err != nil {
+				return nil, err
+			}
+			wf.Tasks = append(wf.Tasks, task)
+			continue
+		}
 		// An awaited task is built on its own path: it refuses, by name, every
 		// execution key its author wrote (rule 15 at the YAML layer) and keeps
 		// TimeoutSeconds 0 rather than the container default.
