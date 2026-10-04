@@ -6,7 +6,7 @@ import {
 	catalogEnv,
 	clusterEnv,
 	ensureActivityImages,
-	killAll,
+	killStarted,
 	noteTo,
 	orkerEnv,
 	proofOut,
@@ -117,7 +117,10 @@ test.beforeAll(async () => {
 	note(`namespace ${NS}, orkflows release-block@0.1.0 and composed-release@0.1.0, engine ${ENGINE}, ui ${UI}`);
 });
 
-test.afterAll(async () => { await killAll(); });
+// Cleanup stops exactly the processes this spec started, by PID: never
+// harness.killAll, whose name-pattern sweep could reach a process this spec
+// does not own (another stack sharing the host).
+test.afterAll(async () => { await killStarted(); });
 
 async function submit(name: string): Promise<string> {
 	const resp = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: name, namespace: NS });
