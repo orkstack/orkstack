@@ -322,6 +322,7 @@ Every failure is the error envelope `webhookErrorEnvelope` already uses:
 | A resolved pool has no live Orker, or no run starter is configured | 412 | `failed_precondition` |
 | The namespace is on hold, at its `max_running`, or its enforced budget is reached or cannot be measured (namespace admission) | 412 | `failed_precondition` |
 | The stored definition's image is refused by the image policy now in force | 412 | `failed_precondition` |
+| A composed child the deployment can no longer plan (deleted, re-applied with other content, deeper than `ORK_COMPOSE_MAX_DEPTH`, its pool empty or its image refused, or a plan over 256 KiB) | 412 | `failed_precondition` |
 | Object storage or Temporal unavailable at submit | 503 | `unavailable` |
 | Anything else | 500 | `internal` |
 

@@ -112,6 +112,13 @@ run id is encoded, never parsed (AGENTS.md §7).
   resolution arrives, before the resolution is delivered; it is the only
   object an await produces. It lands in the same content-addressed family, with
   the same provenance metadata, as a container's `values.json`.
+- **A composed task's `values.json` is written by the engine** too, when its
+  child run succeeds: the child's declared outputs, stored for the PARENT run
+  under the composed task's id, in the same content-addressed family and with
+  the same provenance metadata as a container's `values.json`. A child run
+  needs no new key family: it is an ordinary run with its own snapshots,
+  events, archive record and origin-index row
+  (`metadata/index/origins/{ns}/parent-run/{parent}/…`).
 - **No automation document is stored anywhere.** A document lives in Git;
   `PlanAutomation` reads it from the request and the namespace's live objects
   and writes nothing, and an apply writes only through the ordinary trigger,
