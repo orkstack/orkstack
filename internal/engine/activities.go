@@ -125,7 +125,12 @@ func (a *EventActivities) WithSnapshotStore(store SnapshotStore) *EventActivitie
 // Arguments are passed separately (rather than in one struct) because the
 // Temporal data converter encodes top-level protobuf messages with protojson.
 //
-// The second argument is always a snapshot URI; the projection worker on
+// The second argument is a snapshot URI, or empty for an event that carries
+// none of its own — a fan-out's item event between its stride snapshots (spec
+// each-fan-out §5.6). Such an event reads no snapshot, applies nothing to the
+// RunStore, is published to the bus, is announced to the EventObserver with
+// the store's copy of the run (skipped when there is none), notifies nothing
+// and archives nothing. The projection worker on
 // ork-engine-events is unversioned (AGENTS.md §7.2), so the shape of this
 // activity's input is part of the RunWorkflow replay contract.
 func (a *EventActivities) PublishEvent(
@@ -134,11 +139,15 @@ func (a *EventActivities) PublishEvent(
 	snapshotURI string,
 	dedupeKey string,
 ) error {
-	run, err := a.readSnapshot(ctx, snapshotURI)
-	if err != nil {
-		return err
+	var run *orkstackv1.Run
+	if snapshotURI != "" {
+		read, err := a.readSnapshot(ctx, snapshotURI)
+		if err != nil {
+			return err
+		}
+		run = read
+		a.store.Apply(run)
 	}
-	a.store.Apply(run)
 	firstPublication := false
 	if event != nil {
 		_, firstPublication = a.bus.Publish(event, dedupeKey)
@@ -150,7 +159,7 @@ func (a *EventActivities) PublishEvent(
 	// nothing for a second or third call to recompute.
 	snapshot := a.mergedSnapshot(event.GetRunId(), run)
 
-	if a.notifier != nil && firstPublication && IsSubscribableEvent(event) && snapshot != nil {
+	if a.notifier != nil && firstPublication && run != nil && IsSubscribableEvent(event) && snapshot != nil {
 		a.notifier.NotifyRunEvent(ctx, event, snapshot)
 	}
 

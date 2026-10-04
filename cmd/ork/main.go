@@ -981,6 +981,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
+	// The local activity that counts a fan-out's task-sourced array, over the
+	// same store internal/api reads artifacts with (spec each-fan-out §5.3).
+	runWorker.RegisterActivityWithOptions(
+		engine.NewEachActivities(artifactStore).CountEachItems,
+		activity.RegisterOptions{Name: engine.ActivityCountEachItems},
+	)
 
 	// The engine's telemetry observer: a run's spans, metrics and one log
 	// line per lifecycle event, routed per-run to whatever sink

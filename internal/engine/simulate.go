@@ -75,7 +75,14 @@ func Simulate(
 			// Set for every await whatever its outcome, so a reader sees the
 			// deadline and whether it takes a callback.
 			Await: tasks[id].GetAwait(),
+			// Set for every fan-out whatever its outcome (spec each-fan-out
+			// §5.12).
+			Each: tasks[id].GetEach(),
 		}
+	}
+	taskIndex := make(map[string]int, len(order))
+	for i, id := range order {
+		taskIndex[id] = i
 	}
 	waveAfter := func(id string) int32 {
 		var deepest int32
@@ -166,6 +173,26 @@ func Simulate(
 				planned.SkipReason = skipReasonCondition(tasks[id].GetCondition())
 				continue
 			}
+			if spec := tasks[id].GetEach(); spec != nil {
+				// A fan-out RUNS as one PlanTask. Its items are counted when
+				// the plan can already count them — an input source, or a
+				// source task whose values assumed_outputs stubs — with the
+				// interpreter's own count, so the two cannot disagree.
+				counted, n, eerr := simulateEachCount(spec, inputs, assumed, taskIndex[id])
+				if eerr != nil {
+					planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS
+					planned.Wave = 0
+					planned.Error = &orkstackv1.Error{Code: "RUN_FAILED", Message: eerr.Message}
+					failed = id
+					continue
+				}
+				if counted {
+					planned.EachCount = proto.Int32(n)
+				}
+				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS
+				// outputs[id] is NOT set: rule 24 means no condition can read it.
+				continue
+			}
 			if tasks[id].GetAwait() != nil {
 				// Opens, starts no activity: the interpreter's openAwait.
 				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS
@@ -216,11 +243,47 @@ func Simulate(
 		resp.Waves = append(resp.Waves, wave)
 	}
 	for _, id := range assumedKeys {
-		if !takesAWave(result[id].GetOutcome()) {
+		// A fan-out's own stub is accepted and unused: nothing can read it.
+		if !takesAWave(result[id].GetOutcome()) || tasks[id].GetEach() != nil {
 			resp.UnusedAssumedOutputs = append(resp.UnusedAssumedOutputs, id)
 		}
 	}
 	return resp, nil
+}
+
+// simulateEachCount counts a fan-out's array when the plan can: an input
+// source from the defaulted input, a task source from its assumed_outputs
+// stub. counted is false when the count is a run-time fact.
+func simulateEachCount(
+	spec *orkstackv1.EachSpec,
+	inputs map[string]any,
+	assumed map[string]*orkstackv1.Payload,
+	taskIndex int,
+) (bool, int32, *EachError) {
+	source := spec.GetSource()
+	var (
+		n    int32
+		eerr *EachError
+	)
+	switch {
+	case source.GetInput() != "":
+		n, eerr = eachCountOfInput(inputs, spec)
+	case source.GetTaskId() != "":
+		stub, ok := assumed[source.GetTaskId()]
+		if !ok {
+			return false, 0, nil
+		}
+		n, eerr = EachArrayLength(payloadMap(stub), source.GetPath(), spec.GetOver())
+	default:
+		return false, 0, nil
+	}
+	if eerr == nil {
+		eerr = eachTooMany(n, spec, taskIndex)
+	}
+	if eerr != nil {
+		return false, 0, eerr
+	}
+	return true, n, nil
 }
 
 // takesAWave is RUNS or AWAITS: an await occupies a dispatch round from its

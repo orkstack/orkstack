@@ -47,6 +47,10 @@ type harness struct {
 	activities []string
 	// released is every ReleasePin the engine scheduled.
 	released []*orkstackv1.ReleasePinInput
+	// values is the store CountEachItems reads a fan-out's task-sourced
+	// array from: a test that wants one writes the bytes here and returns
+	// their reference as the source task's values_ref.
+	values *memValues
 }
 
 func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
@@ -56,8 +60,11 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 		bus:    engine.NewEventBus(),
 		store:  engine.NewRunStore(),
 		queues: map[string]string{},
+		values: &memValues{objects: map[string][]byte{}},
 	}
 	h.env.SetTestTimeout(60 * time.Second)
+	h.env.RegisterActivityWithOptions(engine.NewEachActivities(h.values).CountEachItems,
+		activity.RegisterOptions{Name: engine.ActivityCountEachItems})
 	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	snapshots := newTestSnapshotStore()
 	h.env.RegisterActivityWithOptions(

@@ -227,7 +227,7 @@ func runObjectIDs(run *orkstackv1.Run) []string {
 			ids = append(ids, objectID)
 		}
 	}
-	for _, taskRun := range run.GetTaskRuns() {
+	appendRow := func(taskRun *orkstackv1.TaskRun) {
 		for _, ref := range taskRun.GetArtifacts() {
 			appendRef(ref)
 		}
@@ -235,6 +235,15 @@ func runObjectIDs(run *orkstackv1.Run) []string {
 			appendRef(ref)
 		}
 		appendRef(taskRun.GetValuesRef())
+	}
+	for _, taskRun := range run.GetTaskRuns() {
+		appendRow(taskRun)
+		// A fan-out's items hold the references; the node holds none. Every
+		// item's objects get their markers, so provenance and the cleanup
+		// worker's reference accounting see them (spec each-fan-out §5.13).
+		for _, item := range taskRun.GetItems() {
+			appendRow(item)
+		}
 	}
 	return ids
 }
