@@ -2769,6 +2769,12 @@ deployment's configured ones, which no client can read. `condition:` is not
 evaluated (`orkctl run plan` answers that) and `retry:` is not applied: a local
 run is one attempt.
 
+**Awaited tasks.** An awaited task (`await:`, `docs/DSL.md`) starts no
+container, so there is nothing to run locally: naming one refuses with exit `1`
+and points at `orkctl run resolve`. A task downstream of an await is an
+ordinary local run; with `--from-run` a COMPLETED await's values are staged like
+any upstream's, and otherwise `--output AWAIT=JSON` supplies them.
+
 **Identity.** A local run is a **new logical activity**. Its run id is
 `local-` and 16 hex digits, and its idempotency key is
 `{namespace}/local-…/{task}`, fresh per invocation. The source run's id and key

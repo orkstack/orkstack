@@ -310,7 +310,15 @@ func (c *templateChecker) checkCommand(path string, cmd *parse.CommandNode, rebo
 			return false, c.refuse(fmt.Errorf("task %q: %s: artifact reference %q must be \"<task>/<name>\"",
 				c.taskID, path, str.Text))
 		}
-		return false, c.checkUpstream(path, producer)
+		if err := c.checkUpstream(path, producer); err != nil {
+			return false, err
+		}
+		// Rule 18: an awaited task produces no artifacts — only values.
+		if c.refs == nil && c.tasks[producer].GetAwait() != nil {
+			return false, c.refuse(fmt.Errorf("task %q: %s: %q is an awaited task and produces no artifacts; "+
+				"read its values with .tasks.%s.output", c.taskID, path, producer, producer))
+		}
+		return false, nil
 	case "env":
 		if len(cmd.Args) < 2 {
 			return false, c.refuse(fmt.Errorf("task %q: %s: env helper requires a variable name", c.taskID, path))

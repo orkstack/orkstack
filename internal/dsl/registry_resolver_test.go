@@ -718,3 +718,36 @@ func TestResolve_IsUnchangedByTheLabel(t *testing.T) {
 		t.Fatalf("the label changed the ImageRef:\n%v\n%v", images[0], images[1])
 	}
 }
+
+func TestResolveOrkflow_SkipsAnAwaitedTask(t *testing.T) {
+	stub := indexStub(t)
+	server := httptest.NewServer(stub)
+	defer server.Close()
+	host := strings.TrimPrefix(server.URL, "http://")
+
+	wf := &orkstackv1.Orkflow{Name: "demo", Tasks: []*orkstackv1.Task{
+		{Id: "a", Uses: "shell"},
+		{Id: "gate", Needs: []string{"a"}, Await: &orkstackv1.AwaitSpec{TimeoutSeconds: 60}},
+	}}
+	catalog := Catalog{"shell": host + "/orkstack/activity-shell:dev"}
+	resolutions, err := NewResolver("").ResolveOrkflow(context.Background(), catalog, wf)
+	if err != nil {
+		t.Fatalf("resolve orkflow: %v", err)
+	}
+	if len(resolutions) != 1 || resolutions[""] != nil {
+		t.Fatalf("resolutions = %v, want only the container task's image", resolutions)
+	}
+	if wf.GetTasks()[1].GetImage() != nil {
+		t.Fatalf("the await was stamped with an image: %v", wf.GetTasks()[1].GetImage())
+	}
+}
+
+func TestResolveOrkflow_AnAwaitOnlyOrkflowContactsNoRegistry(t *testing.T) {
+	wf := &orkstackv1.Orkflow{Name: "demo", Tasks: []*orkstackv1.Task{
+		{Id: "gate", Await: &orkstackv1.AwaitSpec{TimeoutSeconds: 60}},
+	}}
+	resolutions, err := NewResolver("").ResolveOrkflow(context.Background(), Catalog{}, wf)
+	if err != nil || len(resolutions) != 0 {
+		t.Fatalf("ResolveOrkflow = %v, %v; want no resolutions and no error", resolutions, err)
+	}
+}

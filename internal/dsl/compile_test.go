@@ -101,6 +101,9 @@ func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
 				t.Fatalf("CompileFile(%s) = error %v, want success", path, err)
 			}
 			for _, task := range wf.GetTasks() {
+				if task.GetAwait() != nil {
+					continue // an awaited task runs no activity and has no `op`
+				}
 				with := task.GetWith().AsMap()
 				op, _ := with["op"].(string)
 				if strings.TrimSpace(op) == "" {

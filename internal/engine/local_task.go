@@ -25,8 +25,8 @@ import (
 // task (an awaited task, a fan-out, a composed orkflow, a cache hit) must
 // state its local behavior and extend that test in the same change; until it
 // does, LocalTaskInput must refuse such a task rather than compose an input
-// the interpreter would never have scheduled. No such node exists in this
-// tree's Task message.
+// the interpreter would never have scheduled. await: (awaited-tasks) is
+// such a node: LocalTaskInput refuses an awaited task with a caller error.
 
 // LocalTask names one task of one definition to be composed OUTSIDE a run:
 // the caller runs it itself (`orkctl task run`), so nothing here is replayed,
@@ -80,8 +80,8 @@ func (r *LocalTaskRefusal) Unwrap() error { return r.Err }
 //
 // It applies the same wire bound schedule applies (task.CheckInputSize with
 // Limits.values_max_bytes); a refusal is a *LocalTaskRefusal carrying
-// INPUT_TOO_LARGE / ContractViolation. An unknown task, an empty RunID, or a
-// nil Orkflow is a plain error.
+// INPUT_TOO_LARGE / ContractViolation. An unknown task, an awaited task, an
+// empty RunID, or a nil Orkflow is a plain error.
 func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 	wf := t.Orkflow
 	if wf == nil {
@@ -93,6 +93,14 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 	spec := taskByID(wf, t.TaskID)
 	if spec == nil {
 		return nil, fmt.Errorf("task %q is not in orkflow %s@%s", t.TaskID, wf.GetName(), wf.GetVersion())
+	}
+	if spec.GetAwait() != nil {
+		// The interpreter never schedules an awaited task: it waits for a
+		// resolution from outside the run and starts no container. There is
+		// no input to compose, so this is a caller error, not the task's own
+		// failure (orkctl-task-run §2.4).
+		return nil, fmt.Errorf("task %q is an awaited task (await:): it starts no container, so there is nothing to run locally; "+
+			"resolve it in a run with orkctl run resolve, or run a task downstream of it with its values supplied", t.TaskID)
 	}
 	closure, err := TaskClosure(wf, t.TaskID)
 	if err != nil {

@@ -283,6 +283,9 @@ enum PlanOutcome {
   // the interpreter would mark it CANCELED ("run ended before this task
   // started"). Only present when a task is FAILS.
   PLAN_OUTCOME_UNREACHED = 4;
+  // AWAITS: the task is an awaited task the interpreter would open: it takes
+  // a wave as RUNS does and starts no activity.
+  PLAN_OUTCOME_AWAITS = 5;
 }
 
 // PlanTask is one task's planned outcome. Tasks are listed in declaration
@@ -327,6 +330,9 @@ message PlanTask {
   // error is set for FAILS only: code RUN_FAILED and the exact message the
   // interpreter would record on the run.
   Error error = 9;
+  // await is the task's AwaitSpec, set for an awaited task whatever its
+  // outcome, so a reader sees the deadline and whether it takes a callback.
+  AwaitSpec await = 10;
 }
 
 // PlanWave lists the RUNS tasks of one wave, in declaration order. There is
@@ -360,6 +366,7 @@ message PlanRunResponse {
   // unused_assumed_outputs lists request keys whose task did not RUN, in
   // sorted order: the stub was accepted and had no effect.
   repeated string unused_assumed_outputs = 12;
+  int32 awaits = 13;                     // count of AWAITS
 }
 message DeleteOrkflowRequest {
   string name = 1;
@@ -412,6 +419,13 @@ service RunService {
   // never has a silent hole where an Orker died. There is no stream: a client
   // refetches on the events it already follows.
   rpc ListTaskAttempts(ListTaskAttemptsRequest) returns (ListTaskAttemptsResponse);
+  // ResolveAwait completes or rejects an awaited task of a running run. It
+  // is a WRITE, addressed inside a namespace exactly as CancelRun is: another
+  // namespace's run is NotFound. The values are stored and the resolution is
+  // delivered to the run before this returns; the run applies it — a caller
+  // that must see the outcome reads the run or follows its events. A repeat
+  // of the resolution that already won answers success and delivers nothing.
+  rpc ResolveAwait(ResolveAwaitRequest) returns (ResolveAwaitResponse);
   // GetArtifactProvenance answers, for ONE recorded artifact, whether its
   // bytes are still in the object store and which archived runs of the
   // calling namespace recorded the same physical object.
@@ -750,7 +764,56 @@ message SubmitRunRequest {
   // re-run is a new execution with a new id (docs/UI_CLI_PARITY.md).
   string source_run_id = 8;
 }
-message SubmitRunResponse { Run run = 1; }
+// AwaitCallback is one callback await's one-time credential, handed back by
+// the submission that started the run and by nothing else.
+message AwaitCallback {
+  string task_id = 1;
+  // path is the callback door's path for this await,
+  // "/v1/runs/{run_id}/awaits/{task_id}"; a client prefixes the engine
+  // address it used. Reject is path + "/reject".
+  string path = 2;
+  // token is the bearer credential, 32 random bytes hex-encoded, shown
+  // exactly once, like CreateTriggerResponse.secret. Only its salted digest
+  // is kept.
+  string token = 3;
+}
+
+message SubmitRunResponse {
+  Run run = 1;
+  // await_callbacks holds one entry per await of the definition that declares
+  // `callback: true`, in declaration order. It is populated ONLY by the call
+  // that started the run: a keyed repeat that returned an existing run, and
+  // every read, carry none — the plaintext no longer exists anywhere.
+  repeated AwaitCallback await_callbacks = 2;
+}
+
+message ResolveAwaitRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+  string task_id = 3;
+  // values_json is the completion's values.json, as exact JSON text: it is
+  // stored byte for byte, never re-encoded. Empty means {}. Must be empty
+  // when reject is set.
+  string values_json = 4;
+  bool reject = 5;
+  // reason is required with reject and refused without it; at most 1024
+  // bytes, no control character other than tab and newline.
+  string reason = 6;
+}
+
+message ResolveAwaitResponse {
+  string run_id = 1;
+  string namespace = 2;                  // resolved
+  string task_id = 3;
+  bool reject = 4;
+  // values_sha256 is the hex sha256 of the stored values.json; empty for a
+  // rejection.
+  string values_sha256 = 5;
+  // repeat is true when this request repeated the resolution that had
+  // already been applied — same values, or same rejection reason — so
+  // nothing was stored or delivered.
+  bool repeat = 6;
+}
 // A run id addresses a run INSIDE a namespace, exactly as an orkflow name
 // does. It is unguessable, but unguessable is not a tenancy boundary: an id
 // travels into logs, tickets and CI transcripts, and CancelRun is a write. So

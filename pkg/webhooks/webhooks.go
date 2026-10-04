@@ -46,6 +46,12 @@ const (
 	// EventTaskStarted is a task dispatched to an Orker. It means the activity
 	// was scheduled, not that a container is running.
 	EventTaskStarted Event = "TASK_STARTED"
+	// EventTaskAwaiting is an awaited task that started waiting to be
+	// resolved from outside its run.
+	EventTaskAwaiting Event = "TASK_AWAITING"
+	// EventTaskResolved is an awaited task resolved from outside its run:
+	// SUCCEEDED for a completion, FAILED for a rejection.
+	EventTaskResolved Event = "TASK_RESOLVED"
 	// EventTaskSucceeded is a task's committed success.
 	EventTaskSucceeded Event = "TASK_SUCCEEDED"
 	// EventTaskFailed is a task's final failure, after Temporal stopped
@@ -59,13 +65,15 @@ const (
 	EventRunCanceled Event = "RUN_CANCELED"
 )
 
-// KnownEvents lists every subscribable event, in lifecycle order. The four
-// task outcomes sit between RUN_STARTED and RUN_SUCCEEDED, which leaves the
-// relative order of the run transitions what it always was.
+// KnownEvents lists every subscribable event, in lifecycle order. The task
+// events sit between RUN_STARTED and RUN_SUCCEEDED, which leaves the relative
+// order of the run transitions what it always was; an await's two events sit
+// where an awaited task reaches them, before its outcome.
 func KnownEvents() []Event {
 	return []Event{
 		EventRunStarted,
-		EventTaskScheduled, EventTaskStarted, EventTaskSucceeded, EventTaskFailed,
+		EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
+		EventTaskSucceeded, EventTaskFailed,
 		EventRunSucceeded, EventRunFailed, EventRunCanceled,
 	}
 }
@@ -86,7 +94,8 @@ func isRunEvent(event Event) bool {
 
 func isTaskEvent(event Event) bool {
 	switch event {
-	case EventTaskScheduled, EventTaskStarted, EventTaskSucceeded, EventTaskFailed:
+	case EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
+		EventTaskSucceeded, EventTaskFailed:
 		return true
 	}
 	return false

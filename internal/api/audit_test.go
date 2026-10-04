@@ -20,6 +20,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -89,6 +90,12 @@ type auditOptions struct {
 	releases engine.ReleaseCluster
 	// imagePolicies is the image policy store; nil wires none.
 	imagePolicies artifacts.ImagePolicyStore
+	// reader, starter and artifactStore wire the run record, the run starter
+	// and the artifact store; nil keeps the defaults (no reader, a fresh
+	// fakeStarter, no store).
+	reader        api.RunReader
+	starter       api.RunStarter
+	artifactStore artifacts.Store
 }
 
 func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
@@ -108,12 +115,18 @@ func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
 		store = f.store
 	}
 	counter := 0
+	var starter api.RunStarter = &fakeStarter{}
+	if opts.starter != nil {
+		starter = opts.starter
+	}
 	f.svc = api.NewService(api.Config{
 		Orkflows:      engine.NewMemoryOrkflowStore(),
 		Namespaces:    newFakeRegistry(),
 		Runs:          engine.NewRunStore(),
 		Bus:           engine.NewEventBus(),
-		Starter:       &fakeStarter{},
+		Starter:       starter,
+		Reader:        opts.reader,
+		ArtifactStore: opts.artifactStore,
 		AuditStore:    store,
 		AuditCounter:  f.counter,
 		Fleet:         opts.fleet,
@@ -956,5 +969,52 @@ func TestAudit_UpdateImagePolicyRecordsFingerprintsNeverPEM(t *testing.T) {
 	}
 	if strings.Contains(rec.GetDetail(), "-----BEGIN") {
 		t.Fatalf("the audit detail carries PEM: %s", rec.GetDetail())
+	}
+}
+
+func TestAuditInterceptor_ResolveAwaitRecordsTheDigestNeverTheValues(t *testing.T) {
+	af := &awaitFixture{reader: &fakeReader{}, store: &recordingArtifactStore{}}
+	wf, err := dsl.Compile([]byte(awaitedYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	af.wf = wf
+	starter := &fakeStarter{}
+	f := newAuditFixture(t, auditOptions{reader: af.reader, starter: starter, artifactStore: af.store})
+	af.seedRun(t, "ork-audit-await", "", map[string]orkstackv1.Status{
+		"gate": orkstackv1.Status_STATUS_AWAITING, "manual": orkstackv1.Status_STATUS_AWAITING,
+	})
+	runs := orkstackv1connect.NewRunServiceClient(f.server.Client(), f.server.URL)
+	const secretValue = "do-not-record-this-value"
+	resp, err := runs.ResolveAwait(context.Background(), withPrincipal(&orkstackv1.ResolveAwaitRequest{
+		RunId: "ork-audit-await", TaskId: "gate", ValuesJson: `{"approved":true,"note":"` + secretValue + `"}`,
+	}, "alice"))
+	if err != nil {
+		t.Fatalf("ResolveAwait: %v", err)
+	}
+	if _, err := runs.ResolveAwait(context.Background(), withPrincipal(&orkstackv1.ResolveAwaitRequest{
+		RunId: "ork-audit-await", TaskId: "manual", Reject: true, Reason: "change window closed",
+	}, "bob")); err != nil {
+		t.Fatalf("ResolveAwait reject: %v", err)
+	}
+	records := f.records(t)
+	if len(records) != 2 {
+		t.Fatalf("records = %d, want two", len(records))
+	}
+	byTarget := map[string]*orkstackv1.AuditRecord{}
+	for _, rec := range records {
+		byTarget[rec.GetTarget()] = rec
+		if strings.Contains(rec.GetDetail(), secretValue) {
+			t.Fatalf("the audit record carries the values: %v", rec)
+		}
+	}
+	complete := byTarget["ork-audit-await/gate"]
+	if complete.GetAction() != "run.await.resolve" || complete.GetPrincipal() != "alice" ||
+		complete.GetDetail() != "complete values_sha256="+resp.Msg.GetValuesSha256() || complete.GetNamespace() != "default" {
+		t.Fatalf("completion record = %v", complete)
+	}
+	reject := byTarget["ork-audit-await/manual"]
+	if reject.GetAction() != "run.await.resolve" || reject.GetDetail() != `reject reason="change window closed"` {
+		t.Fatalf("rejection record = %v", reject)
 	}
 }

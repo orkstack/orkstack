@@ -3,6 +3,7 @@
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import ArtifactProvenance from '$lib/components/ArtifactProvenance.svelte';
+	import AwaitPanel from '$lib/components/AwaitPanel.svelte';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -15,7 +16,7 @@
 	import RetryBadge from '$lib/components/RetryBadge.svelte';
 	import AttemptTimeline from '$lib/components/AttemptTimeline.svelte';
 	import TimingBar from '$lib/components/TimingBar.svelte';
-	import { taskTiming } from '$lib/timing';
+	import { formatQuantity, taskTiming } from '$lib/timing';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { defaultCompareTarget } from '$lib/runDiff';
@@ -25,12 +26,15 @@
 	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
 	import {
 		EventType,
+		TaskAwaitSchema,
 		type Event,
 		type RetryState,
 		type Run,
 		type TaskAttempt,
+		type TaskAwait,
 		type TaskRun
 	} from '$lib/gen/orkstack/v1/run_pb';
+	import { create } from '@bufbuild/protobuf';
 	import { attemptsSeen, groupAttemptsByTask, runRetryCount } from '$lib/attempts';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
@@ -112,6 +116,11 @@
 		// reached an Orker" — not "not pinned". Read beside pin it is the proof a
 		// pin held: one pin, one orker across its members.
 		orkerId: string;
+		// await is set for an awaited task — from the definition until the
+		// snapshot's own (with its deadline and resolver) replaces it. Its
+		// presence is what draws the await panel instead of a log pane: an
+		// awaited task runs no container and writes no logs.
+		await?: TaskAwait;
 	}
 
 	const run = $derived(data.run);
@@ -464,7 +473,8 @@
 				// page load rather than appearing only once tasks dispatch. The
 				// snapshot below overwrites it with what the run recorded.
 				pin: task.pin,
-				orkerId: ''
+				orkerId: '',
+				...(task.await ? { await: create(TaskAwaitSchema, { callback: task.await.callback }) } : {})
 			});
 		}
 		for (const tr of data.run?.taskRuns ?? []) {
@@ -492,7 +502,8 @@
 				// declares it — so keep the seeded value rather than dropping the
 				// grouping. Same fall-through as activity above.
 				pin: tr.pin || existing?.pin || '',
-				orkerId: tr.orkerId
+				orkerId: tr.orkerId,
+				...(tr.await ? { await: tr.await } : existing?.await ? { await: existing.await } : {})
 			});
 		}
 		return [...views.values()];
@@ -526,6 +537,9 @@
 				finishedAt: tr.finishedAt,
 				pool: tr.pool,
 				orkerId: tr.orkerId,
+				// The await's own state — deadline, resolver — copied like pool
+				// and orkerId; absent for a container task.
+				...(tr.await ? { await: tr.await } : {}),
 				// Patched only when the snapshot carries one: upsertTask assigns
 				// every key present in the patch, so an empty pin here would
 				// erase the pin the definition already seeded.
@@ -649,6 +663,30 @@
 					message: event.message
 				});
 				void refreshAttempts(event.taskId);
+				break;
+			// An awaited task started waiting. Its deadline is TASK_AWAITING's
+			// own timestamp plus the definition's timeout — the engine stamps both
+			// from one workflow.Now — so the event's timestamp is recorded as the
+			// open instant until a snapshot brings the deadline itself.
+			case EventType.TASK_AWAITING: {
+				const known = tasks.find((t) => t.id === event.taskId);
+				upsertTask(event.taskId, {
+					status: status ?? Status.AWAITING,
+					message: event.message,
+					...(known?.startedAt ? {} : { startedAt: event.timestamp }),
+					...(known?.scheduledAt ? {} : { scheduledAt: event.timestamp })
+				});
+				break;
+			}
+			// An awaited task was resolved. The event says so in words; who
+			// resolved it and through which door arrive with ONE re-read — an
+			// event-triggered read, never a poll.
+			case EventType.TASK_RESOLVED:
+				if (event.message) upsertTask(event.taskId, { message: event.message });
+				void (async () => {
+					await invalidateAll();
+					mergeTerminalFacts();
+				})();
 				break;
 			case EventType.TASK_LOG:
 				// A run event, not the task's output. EVENT_TYPE_TASK_LOG carries
@@ -1163,7 +1201,7 @@
 		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
 			<div class="text-xs font-medium text-fg-muted">Tasks</div>
 			<div class="mt-1 text-fg-secondary" data-testid="task-summary">
-				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded
+				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}
 			</div>
 		</div>
 	</div>
@@ -1235,7 +1273,8 @@
 				{#each tasks as task (task.id)}
 					{@const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt)}
 					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
-					{@const timing = taskTiming(task, data.attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
+					{@const isAwait = task.await !== undefined || taskDefs.get(task.id)?.await !== undefined}
+					{@const timing = taskTiming({ ...task, awaited: isAwait }, data.attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
 					{@const accent = pinAccent(task.pin)}
 					<!--
 						A pinned task's card carries its pin's accent as a thicker
@@ -1317,7 +1356,11 @@
 								scheduled-to-finished span rather than a bar that would
 								call the start unknown.
 							-->
-							{#if dispatched && !isTerminal(task.status)}
+							{#if isAwait}
+								{#if timing.run.kind === 'value'}
+									<span data-testid="task-{task.id}-elapsed">Awaited {formatQuantity(timing.run)}</span>
+								{/if}
+							{:else if dispatched && !isTerminal(task.status)}
 								<span data-testid="task-{task.id}-elapsed">Since scheduled {formatDuration(task.scheduledAt ?? task.startedAt, currentTimestamp)}</span>
 							{:else if timing.scheduled && isTerminal(task.status) && (task.startedAt || terminalFactsRead)}
 								<TimingBar taskId={task.id} {timing} />
@@ -1375,6 +1418,7 @@
 							{#if task.orkerId}
 								<span data-testid="task-{task.id}-orker">Orker {task.orkerId}</span>
 							{/if}
+							{#if !isAwait}
 							<CliEquivalent
 								command={runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])])}
 								testid="run-task-{task.id}-logs-cli"
@@ -1393,6 +1437,7 @@
 									testid="run-task-{task.id}-replay-cli"
 									label="Copy the command that runs this task locally"
 								/>
+							{/if}
 							{/if}
 							{#if task.status === Status.RUNNING}
 								<CliEquivalent
@@ -1421,6 +1466,22 @@
 								/>
 							</div>
 						{/if}
+						{#if isAwait}
+							<!--
+								An awaited task runs no container: no log pane, and no image
+								to inspect. The panel says what it waits for, until when, who
+								resolved it — and resolves it.
+							-->
+							<AwaitPanel
+								runId={run.id}
+								namespace={data.namespace}
+								task={{ id: task.id, status: task.status, await: task.await, error: task.error, startedAt: task.startedAt }}
+								spec={taskDefs.get(task.id)?.await}
+								runTerminal={isTerminal(runStatus)}
+								now={currentTimestamp}
+								origin={page.url.origin}
+							/>
+						{:else}
 						<TaskLogPane
 							runId={run.id}
 							taskId={task.id}
@@ -1433,6 +1494,7 @@
 							onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt)}
 							onAttemptSeen={(attempt) => attemptSeen(task.id, attempt)}
 						/>
+						{/if}
 						<div class="mt-2">
 							<button
 								type="button"
@@ -1468,7 +1530,7 @@
 									container, and never travels to the engine or this page.
 									Only names are rendered, and nothing renders `source`.
 								-->
-								{#if def || task.exitCode !== undefined || task.commit}
+								{#if !isAwait && (def || task.exitCode !== undefined || task.commit)}
 									<dl
 										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs sm:grid-cols-2"
 										data-testid="task-{task.id}-detail"

@@ -240,7 +240,11 @@ func IsSubscribableEvent(event *orkstackv1.Event) bool {
 	switch event.GetType() {
 	case orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED,
 		orkstackv1.EventType_EVENT_TYPE_TASK_STARTED,
-		orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED:
+		orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED,
+		// An await's two events, whatever their status: a TASK_RESOLVED
+		// carrying FAILED is a real rejection, not a run-ending cancellation.
+		orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING,
+		orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED:
 		return true
 	case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 		return event.GetStatus() == orkstackv1.Status_STATUS_FAILED

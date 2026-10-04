@@ -18,6 +18,8 @@ export function planOutcomeWord(outcome: PlanOutcome): string {
 			return 'fails';
 		case PlanOutcome.UNREACHED:
 			return 'unreached';
+		case PlanOutcome.AWAITS:
+			return 'awaits';
 		default:
 			return 'unspecified';
 	}
@@ -53,6 +55,10 @@ export function planDetail(task: PlanTask, plan: PlanRunResponse): string {
 			return task.skipReason;
 		case PlanOutcome.RUNS:
 			return task.pin ? `pin ${task.pin}` : '';
+		case PlanOutcome.AWAITS: {
+			const detail = `await ≤ ${goDuration(task.await?.timeoutSeconds ?? 0)}`;
+			return task.await?.callback ? `${detail}, callback` : detail;
+		}
 		case PlanOutcome.FAILS:
 			return task.error?.message ?? '';
 		case PlanOutcome.UNREACHED: {
@@ -68,9 +74,28 @@ function plural(n: number, noun: string): string {
 	return n === 1 ? `${n} ${noun}` : `${n} ${noun}s`;
 }
 
-/** The summary sentence, with the CLI's plurals. */
+/**
+ * The summary sentence, with the CLI's plurals. The await count is inserted
+ * after the run count only when the plan has an await, on the CLI's rule.
+ */
 export function planSummary(plan: PlanRunResponse): string {
-	return `${plan.runs} run, ${plan.skipped} skipped, ${plural(plan.waveCount, 'wave')}. Nothing was started.`;
+	const awaits = plan.awaits > 0 ? `${plural(plan.awaits, 'await')}, ` : '';
+	return `${plan.runs} run, ${awaits}${plan.skipped} skipped, ${plural(plan.waveCount, 'wave')}. Nothing was started.`;
+}
+
+/**
+ * goDuration spells whole seconds the way Go's time.Duration.String does, so
+ * the dialog's DETAIL reads exactly as `orkctl run plan` prints it: 6h0m0s,
+ * 2m30s, 45s.
+ */
+export function goDuration(totalSeconds: number): string {
+	if (totalSeconds <= 0) return '0s';
+	const h = Math.floor(totalSeconds / 3600);
+	const m = Math.floor((totalSeconds % 3600) / 60);
+	const s = totalSeconds % 60;
+	if (h > 0) return `${h}h${m}m${s}s`;
+	if (m > 0) return `${m}m${s}s`;
+	return `${s}s`;
 }
 
 /** The FAILS sentence, '' when no task fails. */

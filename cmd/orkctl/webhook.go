@@ -30,8 +30,8 @@ func newWebhookCommand(g *globalFlags) *cobra.Command {
 		Short: "Register and inspect run-event callbacks",
 		Long: "A webhook receives a signed POST when a run or one of its tasks changes\n" +
 			"state. Run transitions: RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,\n" +
-			"RUN_CANCELED. Task outcomes: TASK_SCHEDULED, TASK_STARTED, TASK_SUCCEEDED,\n" +
-			"TASK_FAILED.\n\n" +
+			"RUN_CANCELED. Task events: TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING,\n" +
+			"TASK_RESOLVED, TASK_SUCCEEDED, TASK_FAILED.\n\n" +
 			"Omitting --event means every run transition; task events are opt-in by\n" +
 			"name. Task events are best-effort hints with a short retry budget: a\n" +
 			"subscriber that must not miss one reconciles with GetRun.\n\n" +

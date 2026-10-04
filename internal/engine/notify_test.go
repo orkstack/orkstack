@@ -182,7 +182,10 @@ func TestIsSubscribableEvent_SelectsRunTransitionsAndTaskOutcomes(t *testing.T) 
 			switch eventType {
 			case orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED,
 				orkstackv1.EventType_EVENT_TYPE_TASK_STARTED,
-				orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED:
+				orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED,
+				// An await's two events, whatever their status.
+				orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING,
+				orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED:
 				want = true
 			case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 				want = status == orkstackv1.Status_STATUS_FAILED
@@ -209,6 +212,11 @@ func TestIsSubscribableEvent_SelectsRunTransitionsAndTaskOutcomes(t *testing.T) 
 		{orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, orkstackv1.Status_STATUS_PENDING, false},
 		{orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, orkstackv1.Status_STATUS_RUNNING, true},
 		{orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED, orkstackv1.Status_STATUS_CANCELED, true},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING, orkstackv1.Status_STATUS_AWAITING, true},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED, orkstackv1.Status_STATUS_SUCCEEDED, true},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED, orkstackv1.Status_STATUS_FAILED, true},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_LOG, orkstackv1.Status_STATUS_SUCCEEDED, false},
+		{orkstackv1.EventType_EVENT_TYPE_TASK_LOG, orkstackv1.Status_STATUS_AWAITING, false},
 	}
 	for _, row := range rows {
 		if got := engine.IsSubscribableEvent(&orkstackv1.Event{Type: row.eventType, Status: row.status}); got != row.want {

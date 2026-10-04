@@ -15,6 +15,9 @@ enum Status {
   STATUS_FAILED = 4;
   STATUS_CANCELED = 5;
   STATUS_SKIPPED = 6;
+  // AWAITING is a TASK status only, like SKIPPED: the task is waiting to be
+  // resolved from outside the run. A run with an awaiting task is RUNNING.
+  STATUS_AWAITING = 7;
 }
 
 // ArtifactRef is a pointer to a stored artifact in the object store.

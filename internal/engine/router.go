@@ -35,6 +35,9 @@ type RunReader interface {
 		fromSequence int64,
 		send func(*orkstackv1.Event) error,
 	) error
+	// RunStart reads what a run was started with — its pinned definition and
+	// its plan — from its own start event (TemporalRunReader.RunStart).
+	RunStart(ctx context.Context, runID string) (*RunStartRecord, error)
 }
 
 // RunStarter starts and cancels runs, as the router hands it out. Same reason
@@ -48,6 +51,9 @@ type RunStarter interface {
 		plan RunPlan,
 	) error
 	CancelRun(ctx context.Context, runID, reason string) error
+	// SignalAwait delivers one resolution to a running run
+	// (TemporalStarter.SignalAwait).
+	SignalAwait(ctx context.Context, runID string, signal *orkstackv1.AwaitSignal) error
 }
 
 // ErrNoBinding reports a namespace no binding serves.

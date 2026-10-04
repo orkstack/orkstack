@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -219,6 +220,8 @@ func planDetail(task *orkstackv1.PlanTask, failing string) string {
 		if task.GetPin() != "" {
 			return "pin " + task.GetPin()
 		}
+	case orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
+		return awaitPlanDetail(task.GetAwait())
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS:
 		return task.GetError().GetMessage()
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_UNREACHED:
@@ -229,9 +232,26 @@ func planDetail(task *orkstackv1.PlanTask, failing string) string {
 
 // planSummary is the one-line summary. ui/src/lib/plan.ts planSummary
 // renders the same sentence.
+//
+// The await count is inserted after the run count only when the plan has an
+// await, so every plan without one reads exactly as it always did.
 func planSummary(plan *orkstackv1.PlanRunResponse) string {
-	return fmt.Sprintf("%d run, %d skipped, %s. Nothing was started.",
-		plan.GetRuns(), plan.GetSkipped(), plural(int64(plan.GetWaveCount()), "wave"))
+	awaits := ""
+	if plan.GetAwaits() > 0 {
+		awaits = plural(int64(plan.GetAwaits()), "await") + ", "
+	}
+	return fmt.Sprintf("%d run, %s%d skipped, %s. Nothing was started.",
+		plan.GetRuns(), awaits, plan.GetSkipped(), plural(int64(plan.GetWaveCount()), "wave"))
+}
+
+// awaitPlanDetail is the DETAIL cell of an AWAITS task: its deadline and
+// whether it takes a callback. ui/src/lib/plan.ts renders the same words.
+func awaitPlanDetail(spec *orkstackv1.AwaitSpec) string {
+	detail := "await ≤ " + (time.Duration(spec.GetTimeoutSeconds()) * time.Second).String()
+	if spec.GetCallback() {
+		detail += ", callback"
+	}
+	return detail
 }
 
 // planFailureSentence is the FAILS sentence, empty when nothing fails.
@@ -361,6 +381,12 @@ func checkPlanAssertions(errOut io.Writer, plan *orkstackv1.PlanRunResponse, run
 				return fmt.Errorf("%s: task %q is not in this orkflow", flag, id)
 			}
 			if task.GetOutcome() == want {
+				continue
+			}
+			// The interpreter starts an awaited task as surely as a
+			// container one, so --assert-runs holds for AWAITS too.
+			if want == orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS &&
+				task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS {
 				continue
 			}
 			line := fmt.Sprintf("%s %s: planned %s", flag, id, planOutcomeLabel(task.GetOutcome()))

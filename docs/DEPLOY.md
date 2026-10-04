@@ -1067,6 +1067,14 @@ release runs nothing at all (§1).
    that hosts an open pin must not be stopped before the pin closes:
    `orkctl orker drain <orker>` waits for exactly that.
 
+   A run with an **awaited task** (`docs/DSL.md` "Awaited tasks") holds the
+   release that started it for as long as it waits — until it is resolved,
+   times out or is cancelled, which is at most 30 days, the cap on
+   `await.timeout_seconds`. Drainage reports it like any running run. During
+   a ramp, apply an Orkflow that uses `await:` only once the release that
+   introduced awaits is Current: a run routed to an older build would treat
+   the await as a container task and fail explicitly, never silently.
+
 A rollout done this way is held by
 `TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn`
 (`internal/engine/versioning_rollout_integration_test.go`): the run in flight
@@ -1283,6 +1291,14 @@ by hand for that one rollout.
 
 ## 5. Ops notes
 
+- **Two route families face callers outside the operator's boundary.**
+  `POST /v1/triggers/{id}` starts a run, and
+  `POST /v1/runs/{run_id}/awaits/{task_id}` (with `/reject` for a rejection)
+  resolves an awaited task that declares `callback: true`, authenticated by
+  that await's one-time bearer token. Both are plain JSON on the API port, and
+  the same advice holds for both: what to expose, to whom and how fast is the
+  gateway's decision — OrkStack queues nothing, retries nothing and rate-limits
+  nothing on either. Every other route is the operator surface.
 - **Run ids** are `ork-{timestamp}-{sequence}` and single-use for all time.
   Nothing may parse one or derive meaning from its parts — the sequence
   carries a per-process nonce in its high half (`internal/engine/runid.go`),

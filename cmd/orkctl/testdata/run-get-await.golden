@@ -1,0 +1,20 @@
+Run:       ork-cli-1
+Orkflow:   awaited-cli
+Version:   1.0.0
+Status:    RUNNING
+Created:   2026-01-02T02:45:05Z
+Started:   2026-01-02T02:45:05Z
+Finished:  -
+Origin:    unrecorded (started before origins were recorded)
+Input:     -
+Output:    -
+
+TASK      STATUS     POOL  PIN  ORKER    ATTEMPT  EXIT  SCHEDULED             STARTED               FINISHED              ERROR
+plan      SUCCEEDED  main  -    orker-1  1        0     2026-01-02T02:45:05Z  2026-01-02T02:45:05Z  2026-01-02T02:45:05Z  -
+training  AWAITING   -     -    -        0        0     2026-01-02T02:45:05Z  2026-01-02T02:45:05Z  -                     -
+approval  SUCCEEDED  -     -    -        0        0     -                     -                     -                     -
+evaluate  PENDING    -     -    -        0        0     -                     -                     -                     -
+
+AWAIT     STATUS     DEADLINE              REMAINING  RESOLVED VIA  BY     CALLBACK
+training  AWAITING   2026-01-02T08:45:05Z  5h41m      -             -      yes
+approval  SUCCEEDED  2026-01-03T02:04:05Z  -          api           alice  no

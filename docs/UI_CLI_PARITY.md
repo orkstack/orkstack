@@ -435,8 +435,8 @@ rather than implying the namespace picker filters it.
 - Delete request `string id = 1`; response empty.
 
 Accept the four run transitions (RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
-RUN_CANCELED) and the four task outcomes (TASK_SCHEDULED, TASK_STARTED,
-TASK_SUCCEEDED, TASK_FAILED); TASK_LOG is refused. Empty selects every run
+RUN_CANCELED) and the six task events (TASK_SCHEDULED, TASK_STARTED,
+TASK_AWAITING, TASK_RESOLVED, TASK_SUCCEEDED, TASK_FAILED); TASK_LOG is refused. Empty selects every run
 transition and no task event: task events are opt-in by name. Preserve HTTP/HTTPS URL validation and one-time
 secret disclosure. List never contains secrets. Store subscriptions in shared
 object storage, with atomic create/delete and durable failure reporting;
@@ -578,6 +578,35 @@ claim, writes no definition or event, and is not an admission check — pools,
 holds, and limits remain `SubmitRun`'s questions, so Plan stays available
 while a namespace is held. A plan proves wiring, never behaviour.
 
+### Awaited tasks
+
+A task may declare `await:` instead of `uses:` (`docs/DSL.md` "Awaited
+tasks"): it starts no container and waits, as `AWAITING`, until something
+outside the run resolves it or its deadline passes. `RunService.ResolveAwait`
+completes (`values_json`, the exact bytes that become the task's
+`values.json`) or rejects (`reject`, `reason`) one await of a running run,
+namespace-scoped exactly as `CancelRun` is, and answers once the values are
+stored and the resolution is delivered — never once it is applied; a repeat of
+the resolution that already won answers `repeat` and delivers nothing. An await
+that declares `callback: true` also accepts `POST
+/v1/runs/{id}/awaits/{task}[/reject]` with the one-time token
+`SubmitRunResponse.await_callbacks` disclosed to the submitter; the token is
+shown by that response and nowhere else, and only its digest is kept.
+`TaskRun.await` carries the deadline and who resolved it, through which door,
+as asserted; `TASK_AWAITING` and `TASK_RESOLVED` are subscribable events.
+
+CLI: `orkctl run resolve RUN --task TASK [--values JSON | --values-file PATH |
+--reject --reason TEXT]`, with `--values-file` sent verbatim and every
+refusable flag combination refused before a request; `run submit`/`run again`
+print each callback once as a shell-safe `curl`; `run get` adds an await table
+(deadline, remaining, resolved via, by, callback); `run plan` renders `awaits`;
+`run timing` reads an await's run as `awaited`. UI: the run page's await panel
+in place of the log pane — state, deadline, a live remaining time, **Resolve**
+(typed fields over the await's schema, or JSON sent verbatim) and **Reject**
+dialogs with their CLI equivalents, *Delivered* until the run applies it, and a
+placeholder `curl` for a callback await; the submit dialog's one-time callback
+panel before it continues to the run.
+
 ### Run evidence
 
 `RunService.ExportRunEvidence` streams one finished run's evidence bundle: a
@@ -643,6 +672,7 @@ a `CliEquivalent`, and a download that completes only on `last`.
 | Image supply-chain policy | Admin → Image policy page (deployment-wide caption; require-digest, registries, keys with fingerprints, updated; one form; refusals verbatim); Admin → Namespaces Signed by column and a signer `Select` on create and edit; Apply page shows the `tasks[i].uses` issue; run page shows `IMAGE_NOT_PERMITTED` / `IMAGE_NOT_SIGNED` / `IMAGE_SIGNATURE_INVALID` on a task the Orker refused | `admin image-policy get`, `set --require-digest --allowed-registry … --signing-key NAME=PATH --remove-signing-key NAME --clear-allowed-registries`; `namespace create/update --require-signed-by cosign:KEY`, `update --clear-require-signed-by`; `orkflow validate` prints the field-anchored issue; `apply` refused `invalid_argument`, `run submit` / `run again` / a trigger invoke refused `failed_precondition`, each naming the task, the image, the rule and the command to read the policy; the Orker refuses before pulling with a non-retryable reason and verifies the signature itself | Validate and apply agree; a refused apply writes nothing; a refused submit mints no id and takes no claim; a policy set on one replica refuses on the other; an accepted run finishes on the policy it pinned after the policy tightens; a signature removed after submit fails the task `IMAGE_NOT_SIGNED` with one attempt; an unreachable registry is `unavailable` at apply and a retried `IMAGE_SIGNATURE_UNAVAILABLE` at the Orker, never a pass; a removal of a key a namespace names is refused naming it; the empty policy reproduces today's behaviour byte for byte and the golden history is not re-recorded |
 | Interface manifests | Admin → Activities **Interface** column (`-`, `none`, `malformed`, `N keys`, `N ops`) whose disclosure opens the declared table; an **Inspect a reference** form with `CliEquivalent`, the pinned reference and the same table, or the server's refusal in an ErrorPanel; the Apply page and the editor show the `tasks[i].with.<key>` ERRORs and WARNINGs, and the warnings stay visible after apply | `activity list` INTERFACE column, `activity inspect <name-or-reference> [--json]`; `orkflow validate` prints `error`/`warning` rows and exits nonzero only for an ERROR; `apply` prints interface warnings under `Warnings:` | Same issues for the same document; same interface for the same reference; a refused apply writes nothing; a warned document applies and runs; an unlabelled image is unchanged |
 | Audit trail | Admin → Audit: scope statement (every namespace by default, one namespace on request), action/principal/window filters, table with `unattributed` for an absent principal and `refused {code}` for a refusal, pagination, caption, CLI equivalent; ErrorPanel with Retry on a failed read | `admin audit [--since] [--until] [--action] [--principal] [--limit] [--page-token] [-n]`, `--json` is the raw envelope; `ORK_PRINCIPAL` asserts a principal | A write on one replica is listed by another; a refusal is recorded with its code; reads and submits are not recorded; the header a gateway sets on browser requests is recorded verbatim; a scan past its budget refuses instead of answering empty |
+| Awaited tasks | AWAITING pill, deadline, live remaining time; Resolve (typed or JSON) and Reject dialogs with CLI equivalents; *Delivered* until applied; one-time callback panel after submit; placeholder `curl` on the card | `run resolve [--values/--values-file` or `--reject --reason]`; `run submit`/`again` print each callback once; `run get` await table; `run plan` `awaits`; `POST /v1/runs/{id}/awaits/{task}[/reject]` | Values stored byte-exact before delivery and read by the downstream task; timeout and rejection fail the run with their codes; cancellation ends the await `CANCELED`; a second replica and a restarted worker apply a resolution; refusals store and send nothing; the token appears in exactly one response |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new

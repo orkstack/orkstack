@@ -98,6 +98,10 @@ run id is encoded, never parsed (AGENTS.md §7).
   fires. The one trace a schedule leaves here is its runs' own origin-index
   rows (`metadata/index/origins/{ns}/schedule/{sch-…}/…`), which every run
   has whatever started it.
+- **An awaited task's `values.json` is written by the engine** when a
+  resolution arrives, before the resolution is delivered; it is the only
+  object an await produces. It lands in the same content-addressed family, with
+  the same provenance metadata, as a container's `values.json`.
 - **The archive is append-only.** Bodies and index rows — the run index and
   the origin index alike — are never deleted;
   what the cleanup worker reclaims is the run's logs, attempt records,

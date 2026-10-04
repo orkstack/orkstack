@@ -91,6 +91,30 @@ message Task {
   // changes what runs and where, so it is part of canonicalOrkflow(Task) —
   // emitted ONLY when set, so a definition with no pin keeps its digest.
   string pin = 19;
+
+  // await makes this an awaited task. Mutually exclusive with uses and with
+  // every field that shapes a container (docs/DSL.md rules 6 and 15): an
+  // awaited task has no image, no pool, and no timeout_seconds of its own.
+  AwaitSpec await = 20;
+}
+
+// AwaitSpec makes a Task an awaited task: it starts no container and reaches
+// no Orker, and the run waits until the task is resolved from outside the run
+// — completed with values, or rejected with a reason — or its deadline passes.
+// Part of canonicalOrkflow(Task), emitted ONLY when set (see Task.pin).
+message AwaitSpec {
+  // timeout_seconds is the deadline, from the moment the task starts
+  // awaiting. Required: 1 to 2592000 (30 days).
+  int32 timeout_seconds = 1;
+  // callback asks SubmitRun to mint a one-time bearer token for this await
+  // and disclose it once, in SubmitRunResponse.await_callbacks, so a caller
+  // outside the deployment's API can resolve it over plain HTTP. False means
+  // the await is resolved through RunService.ResolveAwait only.
+  bool callback = 2;
+  // schema declares the values a completion must carry, in the vocabulary
+  // Orkflow.inputs uses — a map from key to {type, required}; no default.
+  // Unset means any JSON object is accepted.
+  google.protobuf.Struct schema = 3;
 }
 
 // Orkflow is the compiled, validated form of a DSL document.

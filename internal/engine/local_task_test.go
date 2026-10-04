@@ -368,6 +368,42 @@ func TestLocalTaskInput_RefusesAnUnknownTaskAnEmptyRunIDAndANilOrkflow(t *testin
 	}
 }
 
+// TestLocalTaskInput_RefusesAnAwaitedTask is the awaited-tasks half of
+// orkctl-task-run's §2.4 obligation: the interpreter never schedules an
+// awaited task (it waits for a resolution and starts no container), so no
+// local input may be composed for one. The refusal is a caller error naming
+// the node, never the task's own failure. A task DOWNSTREAM of an await is
+// still composable: the await is an ordinary upstream whose values the caller
+// supplies, as for any other ancestor.
+func TestLocalTaskInput_RefusesAnAwaitedTask(t *testing.T) {
+	wf := compile(t, `
+name: local-await
+version: "1"
+tasks:
+  - id: approve
+    await: {timeout_seconds: 60}
+  - id: after
+    uses: shell
+    needs: [approve]
+    command: ["sh", "-c", "true"]
+`)
+	in, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "approve", RunID: "local-1"})
+	if err == nil || in != nil {
+		t.Fatalf("got (%v, %v), want a refusal", in, err)
+	}
+	var refusal *engine.LocalTaskRefusal
+	if errors.As(err, &refusal) {
+		t.Errorf("refused as the task's own failure (%v); want a caller error", err)
+	}
+	if !strings.Contains(err.Error(), "await:") || !strings.Contains(err.Error(), `"approve"`) {
+		t.Errorf("refusal %q does not name the task and the await: node", err)
+	}
+	in, err = engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "after", RunID: "local-1"})
+	if err != nil || in == nil {
+		t.Fatalf("downstream of an await: got (%v, %v), want an input", in, err)
+	}
+}
+
 // TestLocalTaskInput_AppliesDeclaredDefaultsOnce is E5.
 func TestLocalTaskInput_AppliesDeclaredDefaultsOnce(t *testing.T) {
 	wf := compile(t, localParityDiamond)

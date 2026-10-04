@@ -192,10 +192,16 @@ func (s *Service) StreamRunTaskLogs(
 			"run %q: this engine has no task log store configured; "+
 				"set ORK_ARTIFACT_BACKEND (and the ORK_S3_* settings for s3)", q.RunID))
 	}
-	if _, ok := taskRunOf(run, q.TaskID); !ok {
+	taskRun, ok := taskRunOf(run, q.TaskID)
+	if !ok {
 		// A typo must not look like a quiet task.
 		return connect.NewError(connect.CodeNotFound, fmt.Errorf(
 			"run %q has no task %q (tasks: %s)", q.RunID, q.TaskID, taskIDsOf(run)))
+	}
+	if taskRun.GetAwait() != nil {
+		// A follower would otherwise wait on chunks nobody will ever write.
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"task %q of run %q is an awaited task: it runs no container and writes no logs", q.TaskID, q.RunID))
 	}
 
 	attempt, err := s.resolveLogAttempt(ctx, q)

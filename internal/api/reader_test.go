@@ -66,6 +66,36 @@ type fakeReader struct {
 	// runningCountErr makes that count unreadable.
 	runningCounts   []string
 	runningCountErr error
+	// starts is what each run was started with — its pinned definition and
+	// plan, as its start event holds them — and startErr makes that event
+	// unreadable rather than absent.
+	starts   map[string]*engine.RunStartRecord
+	startErr error
+}
+
+// RunStart answers from starts, the way TemporalRunReader answers from a
+// run's first history event.
+func (f *fakeReader) RunStart(_ context.Context, runID string) (*engine.RunStartRecord, error) {
+	if f.startErr != nil {
+		return nil, f.startErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	start, ok := f.starts[runID]
+	if !ok {
+		return nil, fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)
+	}
+	return start, nil
+}
+
+// setStart records what a run was started with.
+func (f *fakeReader) setStart(runID string, start *engine.RunStartRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.starts == nil {
+		f.starts = map[string]*engine.RunStartRecord{}
+	}
+	f.starts[runID] = start
 }
 
 // RunningCount answers the admission question from the same executions map

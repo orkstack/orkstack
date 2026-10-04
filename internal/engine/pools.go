@@ -385,6 +385,10 @@ func (r *PoolResolver) DefaultPool(ns *orkstackv1.Namespace) string {
 func (r *PoolResolver) CheckAllowedPools(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) error {
 	permitted := permittedPools(ns)
 	for _, t := range wf.GetTasks() {
+		// An awaited task runs on no pool: nothing to allow.
+		if t.GetAwait() != nil {
+			continue
+		}
 		if err := r.checkPoolAllowed(ns, t.GetId(), PoolFor(ns, t), permitted); err != nil {
 			return err
 		}
@@ -490,6 +494,13 @@ func (r *PoolResolver) Plan(
 	pinnedTasksByPool := map[string][]string{}
 
 	for _, t := range planned.GetTasks() {
+		// An awaited task is never routed: no route, no allow-list check, no
+		// liveness probe, no pin bookkeeping, and Task.pool stays empty on the
+		// planned definition. An Orkflow whose every task is an await plans
+		// with empty Routes and never asks the cluster anything.
+		if t.GetAwait() != nil {
+			continue
+		}
 		requested := PoolFor(ns, t)
 		route, err := r.routeFor(requested)
 		if err != nil {

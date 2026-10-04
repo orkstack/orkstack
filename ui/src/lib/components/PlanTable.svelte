@@ -33,7 +33,8 @@
 		[PlanOutcome.RUNS]: 'border-brand-200 bg-brand-50 text-brand-700',
 		[PlanOutcome.SKIPPED]: 'border-dashed border-skipped-border bg-skipped-bg text-skipped-fg',
 		[PlanOutcome.FAILS]: 'border-failed-border bg-failed-bg text-failed-fg',
-		[PlanOutcome.UNREACHED]: 'border-dashed border-danger-200 bg-surface text-danger-700'
+		[PlanOutcome.UNREACHED]: 'border-dashed border-danger-200 bg-surface text-danger-700',
+		[PlanOutcome.AWAITS]: 'border-awaiting-border bg-awaiting-bg text-awaiting-fg'
 	};
 </script>
 

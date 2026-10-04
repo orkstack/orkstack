@@ -194,8 +194,9 @@ test('registers a scoped task-event webhook and the row states its scope', async
 		'Subscriptions are deployment-wide unless they name a scope. The namespace selector does not filter this list; each row states what it covers.'
 	);
 	await expect(page.getByTestId('webhook-task-caveat')).toContainText('reconcile with GetRun');
-	// Four task checkboxes, and TASK_LOG is never offered.
-	for (const name of ['TASK_SCHEDULED', 'TASK_STARTED', 'TASK_SUCCEEDED', 'TASK_FAILED']) {
+	// Six task checkboxes — an awaited task's two included — and TASK_LOG is
+	// never offered.
+	for (const name of ['TASK_SCHEDULED', 'TASK_STARTED', 'TASK_AWAITING', 'TASK_RESOLVED', 'TASK_SUCCEEDED', 'TASK_FAILED']) {
 		await expect(page.getByTestId(`webhook-event-${name}`)).toBeVisible();
 	}
 	await expect(page.getByTestId('webhook-event-TASK_LOG')).toHaveCount(0);

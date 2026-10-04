@@ -92,6 +92,8 @@ const (
 	// RunServiceListTaskAttemptsProcedure is the fully-qualified name of the RunService's
 	// ListTaskAttempts RPC.
 	RunServiceListTaskAttemptsProcedure = "/orkstack.v1.RunService/ListTaskAttempts"
+	// RunServiceResolveAwaitProcedure is the fully-qualified name of the RunService's ResolveAwait RPC.
+	RunServiceResolveAwaitProcedure = "/orkstack.v1.RunService/ResolveAwait"
 	// RunServiceGetArtifactProvenanceProcedure is the fully-qualified name of the RunService's
 	// GetArtifactProvenance RPC.
 	RunServiceGetArtifactProvenanceProcedure = "/orkstack.v1.RunService/GetArtifactProvenance"
@@ -616,6 +618,13 @@ type RunServiceClient interface {
 	// never has a silent hole where an Orker died. There is no stream: a client
 	// refetches on the events it already follows.
 	ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error)
+	// ResolveAwait completes or rejects an awaited task of a running run. It
+	// is a WRITE, addressed inside a namespace exactly as CancelRun is: another
+	// namespace's run is NotFound. The values are stored and the resolution is
+	// delivered to the run before this returns; the run applies it — a caller
+	// that must see the outcome reads the run or follows its events. A repeat
+	// of the resolution that already won answers success and delivers nothing.
+	ResolveAwait(context.Context, *connect.Request[v1.ResolveAwaitRequest]) (*connect.Response[v1.ResolveAwaitResponse], error)
 	// GetArtifactProvenance answers, for ONE recorded artifact, whether its
 	// bytes are still in the object store and which archived runs of the
 	// calling namespace recorded the same physical object.
@@ -752,6 +761,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("ListTaskAttempts")),
 			connect.WithClientOptions(opts...),
 		),
+		resolveAwait: connect.NewClient[v1.ResolveAwaitRequest, v1.ResolveAwaitResponse](
+			httpClient,
+			baseURL+RunServiceResolveAwaitProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ResolveAwait")),
+			connect.WithClientOptions(opts...),
+		),
 		getArtifactProvenance: connect.NewClient[v1.GetArtifactProvenanceRequest, v1.GetArtifactProvenanceResponse](
 			httpClient,
 			baseURL+RunServiceGetArtifactProvenanceProcedure,
@@ -790,6 +805,7 @@ type runServiceClient struct {
 	listRunArtifacts      *connect.Client[v1.ListRunArtifactsRequest, v1.ListRunArtifactsResponse]
 	readArtifact          *connect.Client[v1.ReadArtifactRequest, v1.ArtifactChunk]
 	listTaskAttempts      *connect.Client[v1.ListTaskAttemptsRequest, v1.ListTaskAttemptsResponse]
+	resolveAwait          *connect.Client[v1.ResolveAwaitRequest, v1.ResolveAwaitResponse]
 	getArtifactProvenance *connect.Client[v1.GetArtifactProvenanceRequest, v1.GetArtifactProvenanceResponse]
 	inspectRun            *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
 	diffRuns              *connect.Client[v1.DiffRunsRequest, v1.DiffRunsResponse]
@@ -839,6 +855,11 @@ func (c *runServiceClient) ReadArtifact(ctx context.Context, req *connect.Reques
 // ListTaskAttempts calls orkstack.v1.RunService.ListTaskAttempts.
 func (c *runServiceClient) ListTaskAttempts(ctx context.Context, req *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error) {
 	return c.listTaskAttempts.CallUnary(ctx, req)
+}
+
+// ResolveAwait calls orkstack.v1.RunService.ResolveAwait.
+func (c *runServiceClient) ResolveAwait(ctx context.Context, req *connect.Request[v1.ResolveAwaitRequest]) (*connect.Response[v1.ResolveAwaitResponse], error) {
+	return c.resolveAwait.CallUnary(ctx, req)
 }
 
 // GetArtifactProvenance calls orkstack.v1.RunService.GetArtifactProvenance.
@@ -902,6 +923,13 @@ type RunServiceHandler interface {
 	// never has a silent hole where an Orker died. There is no stream: a client
 	// refetches on the events it already follows.
 	ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error)
+	// ResolveAwait completes or rejects an awaited task of a running run. It
+	// is a WRITE, addressed inside a namespace exactly as CancelRun is: another
+	// namespace's run is NotFound. The values are stored and the resolution is
+	// delivered to the run before this returns; the run applies it — a caller
+	// that must see the outcome reads the run or follows its events. A repeat
+	// of the resolution that already won answers success and delivers nothing.
+	ResolveAwait(context.Context, *connect.Request[v1.ResolveAwaitRequest]) (*connect.Response[v1.ResolveAwaitResponse], error)
 	// GetArtifactProvenance answers, for ONE recorded artifact, whether its
 	// bytes are still in the object store and which archived runs of the
 	// calling namespace recorded the same physical object.
@@ -1034,6 +1062,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("ListTaskAttempts")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceResolveAwaitHandler := connect.NewUnaryHandler(
+		RunServiceResolveAwaitProcedure,
+		svc.ResolveAwait,
+		connect.WithSchema(runServiceMethods.ByName("ResolveAwait")),
+		connect.WithHandlerOptions(opts...),
+	)
 	runServiceGetArtifactProvenanceHandler := connect.NewUnaryHandler(
 		RunServiceGetArtifactProvenanceProcedure,
 		svc.GetArtifactProvenance,
@@ -1078,6 +1112,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceReadArtifactHandler.ServeHTTP(w, r)
 		case RunServiceListTaskAttemptsProcedure:
 			runServiceListTaskAttemptsHandler.ServeHTTP(w, r)
+		case RunServiceResolveAwaitProcedure:
+			runServiceResolveAwaitHandler.ServeHTTP(w, r)
 		case RunServiceGetArtifactProvenanceProcedure:
 			runServiceGetArtifactProvenanceHandler.ServeHTTP(w, r)
 		case RunServiceInspectRunProcedure:
@@ -1129,6 +1165,10 @@ func (UnimplementedRunServiceHandler) ReadArtifact(context.Context, *connect.Req
 
 func (UnimplementedRunServiceHandler) ListTaskAttempts(context.Context, *connect.Request[v1.ListTaskAttemptsRequest]) (*connect.Response[v1.ListTaskAttemptsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ListTaskAttempts is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ResolveAwait(context.Context, *connect.Request[v1.ResolveAwaitRequest]) (*connect.Response[v1.ResolveAwaitResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.ResolveAwait is not implemented"))
 }
 
 func (UnimplementedRunServiceHandler) GetArtifactProvenance(context.Context, *connect.Request[v1.GetArtifactProvenanceRequest]) (*connect.Response[v1.GetArtifactProvenanceResponse], error) {

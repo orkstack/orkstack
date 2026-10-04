@@ -179,6 +179,11 @@ type taskDocument struct {
 	// workload writes, and it is opt-in because that breaks images which
 	// need their baked-in identity.
 	RunAsOrkerUser bool `yaml:"run_as_orker_user"`
+
+	// Await makes this an awaited task: no image, no container, no pool —
+	// the run waits until the task is resolved from outside, or its deadline
+	// passes. Mutually exclusive with Uses and with every execution field.
+	Await *awaitDocument `yaml:"await"`
 }
 
 // secretDocument is one secret's name and where the Orker gets it.
@@ -315,7 +320,18 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		}
 	}
 
-	for _, td := range doc.Tasks {
+	for taskIndex, td := range doc.Tasks {
+		// An awaited task is built on its own path: it refuses, by name, every
+		// execution key its author wrote (rule 15 at the YAML layer) and keeps
+		// TimeoutSeconds 0 rather than the container default.
+		if td.Await != nil {
+			task, err := compileAwaitTask(taskIndex, td)
+			if err != nil {
+				return nil, err
+			}
+			wf.Tasks = append(wf.Tasks, task)
+			continue
+		}
 		task := &orkstackv1.Task{
 			Id:             td.ID,
 			Uses:           td.Uses,

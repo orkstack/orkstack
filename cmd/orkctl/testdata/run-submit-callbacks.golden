@@ -1,0 +1,11 @@
+Submitted run run-001
+Orkflow:  awaited-cli
+Version:  1.0.0
+Status:   PENDING
+
+Callback for await training — shown once; only a digest of the token is kept:
+  curl -X POST 'http://<server>/v1/runs/run-001/awaits/training' \
+    -H 'Authorization: Bearer <token>' \
+    -H 'Content-Type: application/json' \
+    -d '{}'
+  reject: POST the same URL + /reject with -d '{"reason":"…"}'

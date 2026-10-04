@@ -14,11 +14,13 @@
 	// navigates, which is why the identical component works both as the
 	// Orkflow page's "Submit a run" dialog and as the run page's "Run again".
 	import { untrack } from 'svelte';
+	import { page } from '$app/state';
 	import { create } from '@bufbuild/protobuf';
 	import type { JsonObject } from '@bufbuild/protobuf';
 	import { errorMessage, orkstack } from '$lib/client';
 	import { defaultsForInputs, inputSpecs, parseInputObject, planCli, submitCli } from '$lib/authoring';
 	import { parseAssumedOutputs } from '$lib/plan';
+	import AwaitCallbacks from './AwaitCallbacks.svelte';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import DeclaredInputs from './DeclaredInputs.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
@@ -29,7 +31,7 @@
 	import type { NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
 	import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
 	import { namespaceLabel } from '$lib/namespace';
-	import type { OrkflowVersion, PlanRunResponse } from '$lib/gen/orkstack/v1/service_pb';
+	import type { AwaitCallback, OrkflowVersion, PlanRunResponse } from '$lib/gen/orkstack/v1/service_pb';
 	import type { Payload } from '$lib/gen/orkstack/v1/common_pb';
 
 	interface Props {
@@ -95,6 +97,10 @@
 	let planError = $state('');
 	let assumedOutputsJson = $state('{}');
 	let planRequest = 0;
+	// The submission's callback tokens, shown ONCE in place of the form. Held
+	// only here, in memory — like the Triggers tab's one-time secret — and
+	// never put in a URL, localStorage, or the run page.
+	let disclosed = $state<{ runId: string; callbacks: AwaitCallback[] } | null>(null);
 
 	async function loadSelection(version: string, preserveInput = false) {
 		const name = orkflowName;
@@ -342,6 +348,12 @@
 			});
 			if (!res.run) throw new Error('engine returned no run');
 			runId = res.run.id;
+			if (res.awaitCallbacks.length > 0) {
+				// Shown once, before anything navigates: the panel reports the run
+				// only when the reader chooses to continue.
+				disclosed = { runId, callbacks: res.awaitCallbacks };
+				return;
+			}
 		} catch (err) {
 			// The key is deliberately left in the field: a submission whose
 			// result is uncertain is retried with the SAME key, which is the
@@ -359,6 +371,18 @@
 	}
 </script>
 
+{#if disclosed}
+	<AwaitCallbacks
+		runId={disclosed.runId}
+		callbacks={disclosed.callbacks}
+		origin={page.url.origin}
+		oncontinue={() => {
+			const runId = disclosed?.runId ?? '';
+			disclosed = null;
+			onsubmitted(runId);
+		}}
+	/>
+{:else}
 <form
 	class="space-y-5"
 	data-testid="run-submit-panel"
@@ -592,3 +616,4 @@
 		{/if}
 	</div>
 </form>
+{/if}

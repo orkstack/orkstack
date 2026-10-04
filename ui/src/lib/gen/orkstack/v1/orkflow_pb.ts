@@ -14,7 +14,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/orkflow.proto.
  */
 export const file_orkstack_v1_orkflow: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiLAoDUGluEgwKBG5hbWUYASABKAkSFwoPdGltZW91dF9zZWNvbmRzGAIgASgFIrgECgRUYXNrEgoKAmlkGAEgASgJEiUKBHdpdGgYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Eg0KBW5lZWRzGAQgAygJEhEKCWNvbmRpdGlvbhgFIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYBiABKAUSJwoFcmV0cnkYByABKAsyGC5vcmtzdGFjay52MS5SZXRyeVBvbGljeRIMCgRwb29sGAkgASgJEgwKBHVzZXMYCiABKAkSJAoFaW1hZ2UYCyABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAwgAygJEicKA2VudhgNIAMoCzIaLm9ya3N0YWNrLnYxLlRhc2suRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIvCglyZXNvdXJjZXMYDyABKAsyHC5vcmtzdGFjay52MS5SZXNvdXJjZVJlcXVlc3QSKQoHbmV0d29yaxgQIAEoDjIYLm9ya3N0YWNrLnYxLk5ldHdvcmtNb2RlEikKIWNhbmNlbGxhdGlvbl9ncmFjZV9wZXJpb2Rfc2Vjb25kcxgRIAEoBRIZChFydW5fYXNfb3JrZXJfdXNlchgSIAEoCBILCgNwaW4YEyABKAkaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUoECAIQA0oECAgQCVIGcGx1Z2luUgVxdWV1ZSL8AgoHT3JrZmxvdxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSMAoGbGFiZWxzGAQgAygLMiAub3Jrc3RhY2sudjEuT3JrZmxvdy5MYWJlbHNFbnRyeRInCgZpbnB1dHMYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXRhc2tzGAYgAygLMhEub3Jrc3RhY2sudjEuVGFzaxITCgtzb3VyY2VfeWFtbBgHIAEoCRIuCgpjcmVhdGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYCSABKAkSGQoRZGVmaW5pdGlvbl9kaWdlc3QYCiABKAkSHgoEcGlucxgLIAMoCzIQLm9ya3N0YWNrLnYxLlBpbhotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQqgBCg9jb20ub3Jrc3RhY2sudjFCDE9ya2Zsb3dQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
+  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiLAoDUGluEgwKBG5hbWUYASABKAkSFwoPdGltZW91dF9zZWNvbmRzGAIgASgFIt8ECgRUYXNrEgoKAmlkGAEgASgJEiUKBHdpdGgYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Eg0KBW5lZWRzGAQgAygJEhEKCWNvbmRpdGlvbhgFIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYBiABKAUSJwoFcmV0cnkYByABKAsyGC5vcmtzdGFjay52MS5SZXRyeVBvbGljeRIMCgRwb29sGAkgASgJEgwKBHVzZXMYCiABKAkSJAoFaW1hZ2UYCyABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAwgAygJEicKA2VudhgNIAMoCzIaLm9ya3N0YWNrLnYxLlRhc2suRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIvCglyZXNvdXJjZXMYDyABKAsyHC5vcmtzdGFjay52MS5SZXNvdXJjZVJlcXVlc3QSKQoHbmV0d29yaxgQIAEoDjIYLm9ya3N0YWNrLnYxLk5ldHdvcmtNb2RlEikKIWNhbmNlbGxhdGlvbl9ncmFjZV9wZXJpb2Rfc2Vjb25kcxgRIAEoBRIZChFydW5fYXNfb3JrZXJfdXNlchgSIAEoCBILCgNwaW4YEyABKAkSJQoFYXdhaXQYFCABKAsyFi5vcmtzdGFjay52MS5Bd2FpdFNwZWMaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUoECAIQA0oECAgQCVIGcGx1Z2luUgVxdWV1ZSJfCglBd2FpdFNwZWMSFwoPdGltZW91dF9zZWNvbmRzGAEgASgFEhAKCGNhbGxiYWNrGAIgASgIEicKBnNjaGVtYRgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3Qi/AIKB09ya2Zsb3cSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEjAKBmxhYmVscxgEIAMoCzIgLm9ya3N0YWNrLnYxLk9ya2Zsb3cuTGFiZWxzRW50cnkSJwoGaW5wdXRzGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV0YXNrcxgGIAMoCzIRLm9ya3N0YWNrLnYxLlRhc2sSEwoLc291cmNlX3lhbWwYByABKAkSLgoKY3JlYXRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAkgASgJEhkKEWRlZmluaXRpb25fZGlnZXN0GAogASgJEh4KBHBpbnMYCyADKAsyEC5vcmtzdGFjay52MS5QaW4aLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUKoAQoPY29tLm9ya3N0YWNrLnYxQgxPcmtmbG93UHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
 
 /**
  * RetryPolicy mirrors Temporal retry semantics for a task.
@@ -219,6 +219,15 @@ export type Task = Message<"orkstack.v1.Task"> & {
    * @generated from field: string pin = 19;
    */
   pin: string;
+
+  /**
+   * await makes this an awaited task. Mutually exclusive with uses and with
+   * every field that shapes a container (docs/DSL.md rules 6 and 15): an
+   * awaited task has no image, no pool, and no timeout_seconds of its own.
+   *
+   * @generated from field: orkstack.v1.AwaitSpec await = 20;
+   */
+  await?: AwaitSpec | undefined;
 };
 
 /**
@@ -227,6 +236,50 @@ export type Task = Message<"orkstack.v1.Task"> & {
  */
 export const TaskSchema: GenMessage<Task> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_orkflow, 2);
+
+/**
+ * AwaitSpec makes a Task an awaited task: it starts no container and reaches
+ * no Orker, and the run waits until the task is resolved from outside the run
+ * — completed with values, or rejected with a reason — or its deadline passes.
+ * Part of canonicalOrkflow(Task), emitted ONLY when set (see Task.pin).
+ *
+ * @generated from message orkstack.v1.AwaitSpec
+ */
+export type AwaitSpec = Message<"orkstack.v1.AwaitSpec"> & {
+  /**
+   * timeout_seconds is the deadline, from the moment the task starts
+   * awaiting. Required: 1 to 2592000 (30 days).
+   *
+   * @generated from field: int32 timeout_seconds = 1;
+   */
+  timeoutSeconds: number;
+
+  /**
+   * callback asks SubmitRun to mint a one-time bearer token for this await
+   * and disclose it once, in SubmitRunResponse.await_callbacks, so a caller
+   * outside the deployment's API can resolve it over plain HTTP. False means
+   * the await is resolved through RunService.ResolveAwait only.
+   *
+   * @generated from field: bool callback = 2;
+   */
+  callback: boolean;
+
+  /**
+   * schema declares the values a completion must carry, in the vocabulary
+   * Orkflow.inputs uses — a map from key to {type, required}; no default.
+   * Unset means any JSON object is accepted.
+   *
+   * @generated from field: google.protobuf.Struct schema = 3;
+   */
+  schema?: JsonObject | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.AwaitSpec.
+ * Use `create(AwaitSpecSchema)` to create a new message.
+ */
+export const AwaitSpecSchema: GenMessage<AwaitSpec> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_orkflow, 3);
 
 /**
  * Orkflow is the compiled, validated form of a DSL document.
@@ -334,5 +387,5 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
  * Use `create(OrkflowSchema)` to create a new message.
  */
 export const OrkflowSchema: GenMessage<Orkflow> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 3);
+  messageDesc(file_orkstack_v1_orkflow, 4);
 

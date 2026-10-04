@@ -52,6 +52,9 @@ func (s *takenIDStarter) StartRun(
 }
 
 func (s *takenIDStarter) CancelRun(context.Context, string, string) error { return nil }
+func (s *takenIDStarter) SignalAwait(context.Context, string, *orkstackv1.AwaitSignal) error {
+	return nil
+}
 
 func (s *takenIDStarter) attempts() (rejected, started []string) {
 	s.mu.Lock()

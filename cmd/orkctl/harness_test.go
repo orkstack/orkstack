@@ -44,6 +44,8 @@ type stubStarter struct {
 	startErr  error
 	cancelErr error
 	onStart   func(runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload)
+	signals   []*orkstackv1.AwaitSignal
+	signalErr error
 }
 
 func (s *stubStarter) StartRun(
@@ -73,6 +75,18 @@ func (s *stubStarter) StartRun(
 		}, runID+"#1")
 	}
 	return err
+}
+
+// SignalAwait records the resolution delivered to a run; signalErr makes
+// delivery fail.
+func (s *stubStarter) SignalAwait(_ context.Context, runID string, sig *orkstackv1.AwaitSignal) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.signalErr != nil {
+		return s.signalErr
+	}
+	s.signals = append(s.signals, sig)
+	return nil
 }
 
 func (s *stubStarter) CancelRun(_ context.Context, runID, reason string) error {
