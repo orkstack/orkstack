@@ -96,6 +96,35 @@ message Task {
   // every field that shapes a container (docs/DSL.md rules 6 and 15): an
   // awaited task has no image, no pool, and no timeout_seconds of its own.
   AwaitSpec await = 20;
+
+  // each makes this task a fan-out. A fan-out has uses:, like any container
+  // task; it may not name a pin (docs/DSL.md rule 23) and an awaited task may
+  // not carry it (rule 15).
+  EachSpec each = 21;
+}
+
+// EachSpec makes a Task a fan-out: ONE node of the DAG that runs as one item
+// per element of an array read at run time — every item the same image, with
+// the same needs, pool, resources, timeout and retry policy (docs/DSL.md
+// "Fan-out"). Part of canonicalOrkflow(Task), emitted ONLY when set (see
+// Task.pin).
+message EachSpec {
+  // over is the reference exactly as the author wrote it: one template action
+  // naming an input or an upstream task's output, never an expression.
+  string over = 1;
+  // as is the name .each.<as> binds an item to. The compiler writes "item"
+  // when the document names none, so a stored value is never empty.
+  string as = 2;
+  // max_items is the author's bound, 1..1000; the sum over every fan-out of
+  // one Orkflow is at most 1000, and at most the deployment's
+  // ORK_EACH_MAX_ITEMS. An array longer than this fails the task
+  // EACH_TOO_MANY_ITEMS before any item runs.
+  int32 max_items = 3;
+  // max_parallel bounds how many items are in flight at once; 0 means no
+  // bound of the task's own.
+  int32 max_parallel = 4;
+  // source is over, compiled at apply (EachSource).
+  EachSource source = 5;
 }
 
 // AwaitSpec makes a Task an awaited task: it starts no container and reaches

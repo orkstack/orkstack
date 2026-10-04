@@ -9,6 +9,20 @@ import "orkstack/v1/telemetry.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
+// TaskEach is a fan-out task's own state on the run snapshot. It is SET for
+// every task whose definition declares `each:` — from the run's first
+// snapshot, while the task is still PENDING — and UNSET for every other task,
+// so a snapshot of a run with no fan-out is byte-identical to what it was
+// before this message existed.
+message TaskEach {
+  // expanded is true once the array was counted and the items created. It
+  // stays false while PENDING, when the task was SKIPPED, and when the array
+  // could not be counted (the task then FAILED with an EACH_* code).
+  bool expanded = 1;
+  // count is the number of items, equal to len(TaskRun.items), once expanded.
+  int32 count = 2;
+}
+
 // TaskRun is the execution record of a single Task within a Run.
 message TaskRun {
   string task_id = 1;
@@ -104,6 +118,7 @@ message TaskRun {
   // empty only when no member of that pin ever reported one, in which case the
   // failure's error.details carries the Temporal session's raw OS host name as
   // an explicitly labelled best-effort lead, which is NOT an orker_id.
+  // Empty on a fan-out task's own row, whose items each carry their own.
   string orker_id = 17;
 
   // scheduled_at is the instant the engine scheduled this task's activity —
@@ -125,6 +140,29 @@ message TaskRun {
   // await is this task's await state, set for a task whose definition
   // declares `await:` and unset otherwise (see TaskAwait).
   TaskAwait await = 19;
+
+  // each is set for a fan-out task's own row (TaskEach).
+  TaskEach each = 20;
+  // items are a fan-out's items, one per element of the expanded array, in
+  // index order; empty until expansion and for every task that is not a
+  // fan-out. Each element is a TaskRun whose task_id is this task's id and
+  // whose `item` is set; the fields below mean for an item what they mean for
+  // a task (its own attempt, commit, values_ref, artifacts, logs, orker, error,
+  // times). An item never carries `output` (its values are read through
+  // values_ref), `each`, `items`, `pin` or `await`.
+  //
+  // This row itself is the AGGREGATE: its status is the fan-out's, its error
+  // is the error of the item that failed it (message prefixed "item N of M
+  // failed:"), its scheduled_at is the expansion instant, its started_at the
+  // earliest item's, and its attempt, exit_code, orker_id, commit, values_ref,
+  // artifacts and system_artifacts are unset — those belong to items.
+  //
+  // ListRuns never carries items (only GetRun does), and neither does a
+  // webhook body or the workflow's own result.
+  repeated TaskRun items = 21;
+  // item is set on an element of `items`: its 0-based index. Unset on every
+  // row of Run.task_runs.
+  optional int32 item = 22;
 }
 
 // AwaitResolvedVia names the door an await's resolution came through.
@@ -298,6 +336,12 @@ message TaskAttempt {
   // as carrying no reservation. schema_version stays 1: the field is
   // additive and UnmarshalAttempt discards unknown fields.
   ReservedResources resources = 18;
+  // item is set when this attempt ran one item of a fan-out task: that item's
+  // 0-based index. The record then lives under the item's own key
+  // (metadata/attempts/{run}/{task}/{item}/{attempt}.json). schema_version
+  // stays 1: the field is additive and UnmarshalAttempt discards unknown
+  // fields.
+  optional int32 item = 19;
 }
 
 // RetryState is why Temporal stopped retrying a task. It mirrors
@@ -457,4 +501,10 @@ message Event {
   string message = 6;                    // human readable / log line
   Payload data = 7;                      // optional structured detail
   google.protobuf.Timestamp timestamp = 8;
+  // item is set on an event about ONE ITEM of a fan-out task: the item's
+  // 0-based index. Such an event is EVENT_TYPE_TASK_LOG carrying the item's
+  // terminal status — the precedent markSkipped and markCanceled set, since
+  // the Event contract has no item type — and TaskRun.items is the
+  // authoritative record. Unset on every other event.
+  optional int32 item = 9;
 }
