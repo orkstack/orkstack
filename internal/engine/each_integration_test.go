@@ -367,7 +367,12 @@ func TestIntegration_EachOrkerKilledMidItemRetriesOnlyThatItem(t *testing.T) {
 	// Item 1 holds its container open long enough to be killed under.
 	hold := `if grep -q '"index": 1,' /orkstack/input/task.json && grep -q '"attempt": 1,' /orkstack/input/task.json; then sleep 30; fi; `
 	e.start(runID, e.eachDefinition("each-i3", 3, 0, hold))
+	// Items 0 and 2 settle while item 1 holds its container: both must be
+	// committed before the kill, or the kill would legitimately cancel and
+	// retry them too. Item 1 reads RUNNING in the first fresh snapshot after
+	// a sibling settles (the expansion's snapshots show items PENDING, §5.6).
 	e.awaitItemStatus(runID, 0, orkstackv1.Status_STATUS_SUCCEEDED, 3*time.Minute)
+	e.awaitItemStatus(runID, 2, orkstackv1.Status_STATUS_SUCCEEDED, 3*time.Minute)
 	e.awaitItemStatus(runID, 1, orkstackv1.Status_STATUS_RUNNING, time.Minute)
 	first.Stop()
 	e.startOrker("each-i3-b")
@@ -449,7 +454,11 @@ func TestIntegration_EachEngineRestartMidFanOutDispatchesNothingTwice(t *testing
 	runID := fmt.Sprintf("ork-each-i5-%d", time.Now().UnixNano())
 	hold := `sleep 2; `
 	e.start(runID, e.eachDefinition("each-i5", 6, 2, hold))
-	e.awaitItemStatus(runID, 0, orkstackv1.Status_STATUS_RUNNING, 3*time.Minute)
+	// The read model shows an item RUNNING only in a fresh snapshot taken
+	// after a sibling settles (§5.6), so "mid-fan-out" is observed as item 0
+	// settled: with at most 2 at a time, items are still in flight and items
+	// 2–5 are not all dispatched yet.
+	e.awaitItemStatus(runID, 0, orkstackv1.Status_STATUS_SUCCEEDED, 3*time.Minute)
 	e.mu.Lock()
 	old := e.runWorker
 	e.mu.Unlock()
