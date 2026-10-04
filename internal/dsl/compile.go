@@ -184,6 +184,10 @@ type taskDocument struct {
 	// the run waits until the task is resolved from outside, or its deadline
 	// passes. Mutually exclusive with Uses and with every execution field.
 	Await *awaitDocument `yaml:"await"`
+
+	// Each makes this task a fan-out: one node that runs as one item per
+	// element of the array `over` names (docs/DSL.md "Fan-out").
+	Each *eachDocument `yaml:"each"`
 }
 
 // secretDocument is one secret's name and where the Orker gets it.
@@ -332,7 +336,12 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			wf.Tasks = append(wf.Tasks, task)
 			continue
 		}
+		each, err := compileEach(taskIndex, td)
+		if err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
+			Each:           each,
 			Id:             td.ID,
 			Uses:           td.Uses,
 			Command:        td.Command,

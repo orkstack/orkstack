@@ -212,16 +212,28 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		inputs[name] = struct{}{}
 	}
 	closures := transitiveNeeds(byID)
-	for _, task := range wf.GetTasks() {
+
+	// Rules 19–24 (the fan-out's own declaration): before the template
+	// rules, so a malformed `each:` is named before anything that reads it.
+	if err := validateEach(wf, byID, closures); err != nil {
+		return err
+	}
+
+	for taskIndex, task := range wf.GetTasks() {
 		checker := &templateChecker{
 			taskID:   task.GetId(),
 			inputs:   inputs,
 			tasks:    byID,
 			upstream: closures[task.GetId()],
+			anchor:   fmt.Sprintf("tasks[%d]", taskIndex),
 		}
+		// Rule 25: `.each` is legal only in the `with:` of a fan-out, so the
+		// condition is checked with no item name bound.
 		if err := checker.checkString("condition", task.GetCondition()); err != nil {
 			return err
 		}
+		checker.each = task.GetEach().GetAs()
+		checker.fanOut = task.GetEach() != nil
 		if err := checker.checkValue("with", task.GetWith().AsMap()); err != nil {
 			return err
 		}

@@ -104,6 +104,13 @@ func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
 				if task.GetAwait() != nil {
 					continue // an awaited task runs no activity and has no `op`
 				}
+				if len(task.GetCommand()) > 0 {
+					// A command override replaces the image's entrypoint, and
+					// `op` is the entrypoint's selector: there is none to name.
+					// examples/each-fan-out.ork.yaml's `list` writes its own
+					// values.json this way, which activity-shell's ops cannot.
+					continue
+				}
 				with := task.GetWith().AsMap()
 				op, _ := with["op"].(string)
 				if strings.TrimSpace(op) == "" {
