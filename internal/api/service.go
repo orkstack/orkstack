@@ -251,6 +251,12 @@ type Config struct {
 	Artifacts artifacts.Config
 	Limits    engine.WorkspaceLimits
 
+	// EachMaxItems is ORK_EACH_MAX_ITEMS: the most items one Orkflow's
+	// fan-outs (each:) may declare in total. Zero means the built-in
+	// ceiling, engine.DefaultEachMaxItems; it may lower that ceiling and
+	// never raise it. Checked at validate/apply and again at submit.
+	EachMaxItems int32
+
 	// TransferBudgetSeconds overrides the derived data-transfer allowance.
 	// When zero, submit derives it from Limits and
 	// FloorThroughputBytesPerSecond (§6.3).
@@ -401,6 +407,8 @@ type Service struct {
 	telemetrySinks []string
 	artifacts      artifacts.Config
 	limits         engine.WorkspaceLimits
+	// eachMaxItems is Config.EachMaxItems, defaulted (spec each-fan-out §7.1).
+	eachMaxItems int32
 	// retention owns the deployment's maximum run retention (see
 	// Config.Retention). Nil answers SystemService's retention RPCs with
 	// Unimplemented.
@@ -451,6 +459,7 @@ func NewService(cfg Config) *Service {
 		admissions:        cfg.Admissions,
 		artifacts:         cfg.Artifacts,
 		limits:            cfg.Limits,
+		eachMaxItems:      eachMaxItemsOf(cfg.EachMaxItems),
 		retention:         cfg.Retention,
 		retentionEnforced: cfg.RetentionEnforced,
 		imagePolicies:     cfg.ImagePolicies,
@@ -825,6 +834,12 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	resolutions, err := s.resolveImages(ctx, wf)
 	if err != nil {
 		return nil, nil, nil, applyResolveError(err)
+	}
+	// The deployment's fan-out bounds: ORK_EACH_MAX_ITEMS, and each fan-out's
+	// own share of every item's input (spec each-fan-out §7.1) — measured
+	// after resolution, so the image every item carries is counted.
+	if err := s.checkEachLimits(wf); err != nil {
+		return nil, nil, nil, err
 	}
 	// The image policy, with the file in hand and every image resolved:
 	// anchored to the exact tasks[i].uses so validate reports it as a field
@@ -1256,6 +1271,12 @@ func (s *Service) prepare(
 		return submission{}, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
 			name, msg.GetOrkflowVersion(), ns.GetName())
 	}
+	// The declared fan-out total against the deployment's cap NOW: a
+	// definition applied before ORK_EACH_MAX_ITEMS was lowered is refused
+	// before any id is minted (spec each-fan-out §7.1).
+	if err := s.checkEachCapAtSubmit(stored); err != nil {
+		return submission{}, err
+	}
 	binding, err := s.binding(ns.GetName())
 	if err != nil {
 		return submission{}, err
@@ -1405,6 +1426,12 @@ func poolPlanError(err error) error {
 	// ORK_ORKER_MAX_PINS on that pool's Orkers.
 	var noPinHost *engine.PoolNoPinHostError
 	if errors.As(err, &noPinHost) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	// A pool whose Orker predates fan-out: the request is well formed and
+	// the deployment is not ready for it (spec each-fan-out §5.11).
+	var noEach *engine.PoolNoEachSupportError
+	if errors.As(err, &noEach) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	var unreachable *engine.PoolUnreachableError
@@ -1958,6 +1985,12 @@ func (s *Service) ListRuns(
 		response.Runs, response.NextPageToken = page, token
 	} else {
 		response.Runs = runs
+	}
+	// A list page never carries a fan-out's items: GetRun is the read that
+	// does, and a page of archived fan-out runs must not carry thousands of
+	// items per run (spec each-fan-out §5.13).
+	for i, run := range response.Runs {
+		response.Runs[i] = engine.WithoutItems(run)
 	}
 	return connect.NewResponse(response), nil
 }

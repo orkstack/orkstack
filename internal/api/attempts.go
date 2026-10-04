@@ -30,6 +30,9 @@ func (s *Service) ListTaskAttempts(
 	if req.Msg.GetRunId() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
 	}
+	if err := checkItemRequiresTask(req.Msg.GetTaskId(), req.Msg.Item); err != nil {
+		return nil, err
+	}
 	if s.attempts == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition,
 			fmt.Errorf("task attempt store is not configured"))
@@ -43,6 +46,10 @@ func (s *Service) ListTaskAttempts(
 		return nil, connect.NewError(connect.CodeNotFound,
 			fmt.Errorf("task %q not found in run %q", taskID, run.GetId()))
 	}
+	selected, err := itemRunOf(run, taskID, req.Msg.Item)
+	if err != nil {
+		return nil, err
+	}
 	// Task order is the snapshot's order, never the store's: the run says what
 	// the tasks are and in which order an operator already sees them, and a
 	// listing sorted by key would put "build" after "apply" for no reason a
@@ -50,6 +57,20 @@ func (s *Service) ListTaskAttempts(
 	attempts := make([]*orkstackv1.TaskAttempt, 0, len(run.GetTaskRuns()))
 	for _, task := range run.GetTaskRuns() {
 		if taskID != "" && task.GetTaskId() != taskID {
+			continue
+		}
+		// A fan-out answers one timeline per item, items ascending: its own
+		// row has no attempts (spec each-fan-out §7.2).
+		if task.GetEach() != nil {
+			items := task.GetItems()
+			if selected != nil {
+				items = []*orkstackv1.TaskRun{selected}
+			}
+			timelines, err := s.itemTimelines(ctx, run, items)
+			if err != nil {
+				return nil, err
+			}
+			attempts = append(attempts, timelines...)
 			continue
 		}
 		records, err := s.attempts.ListAttempts(ctx, run.GetId(), task.GetTaskId(), artifacts.NoItem)
@@ -104,7 +125,7 @@ func (s *Service) taskAttemptTimeline(
 			highest = record.GetAttempt()
 		}
 	}
-	if logged := s.latestLoggedAttempt(ctx, run.GetId(), task.GetTaskId()); logged > highest {
+	if logged := s.latestLoggedAttempt(ctx, run.GetId(), task.GetTaskId(), artifacts.ItemOf(task.Item)); logged > highest {
 		highest = logged
 	}
 	if highest < 1 {
@@ -121,6 +142,7 @@ func (s *Service) taskAttemptTimeline(
 			TaskId:  task.GetTaskId(),
 			Attempt: attempt,
 			Outcome: orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED,
+			Item:    artifacts.ItemOf(task.Item).Proto(),
 		})
 	}
 	return timeline
@@ -134,11 +156,11 @@ func (s *Service) taskAttemptTimeline(
 // the log index was briefly unreachable would trade the whole answer for a
 // footnote. No store wired, nothing logged, or an unreachable store all read
 // the same here: zero, meaning "no opinion".
-func (s *Service) latestLoggedAttempt(ctx context.Context, runID, taskID string) int32 {
+func (s *Service) latestLoggedAttempt(ctx context.Context, runID, taskID string, item artifacts.Item) int32 {
 	if s.logs == nil {
 		return 0
 	}
-	attempt, err := s.logs.LatestLogAttempt(ctx, runID, taskID, artifacts.NoItem)
+	attempt, err := s.logs.LatestLogAttempt(ctx, runID, taskID, item)
 	switch {
 	case err == nil:
 		return attempt
@@ -149,4 +171,30 @@ func (s *Service) latestLoggedAttempt(ctx context.Context, runID, taskID string)
 			"run_id", runID, "task_id", taskID, "error", err)
 		return 0
 	}
+}
+
+// itemTimelines reads one timeline per item of a fan-out, at most storeFanout
+// reads in flight, reassembled in index order, each record carrying its item.
+func (s *Service) itemTimelines(ctx context.Context, run *orkstackv1.Run, items []*orkstackv1.TaskRun) ([]*orkstackv1.TaskAttempt, error) {
+	timelines := make([][]*orkstackv1.TaskAttempt, len(items))
+	errs := make([]error, len(items))
+	inParallel(len(items), func(i int) {
+		item := items[i]
+		records, err := s.attempts.ListAttempts(ctx, run.GetId(), item.GetTaskId(), artifacts.ItemOf(item.Item))
+		if err != nil {
+			errs[i] = connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("read attempt records of task %q item %d in run %q: %w",
+					item.GetTaskId(), item.GetItem(), run.GetId(), err))
+			return
+		}
+		timelines[i] = s.taskAttemptTimeline(ctx, run, item, records)
+	})
+	var out []*orkstackv1.TaskAttempt
+	for i := range items {
+		if errs[i] != nil {
+			return nil, errs[i]
+		}
+		out = append(out, timelines[i]...)
+	}
+	return out, nil
 }

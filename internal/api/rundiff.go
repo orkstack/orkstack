@@ -161,24 +161,56 @@ func (s *Service) DiffRuns(
 				valueOf(presenceOf(fromTask)), valueOf(presenceOf(toTask))))
 			continue
 		}
-		identical := true
-		for _, field := range taskDiffFields {
-			if field == "presence" || !compared(field) {
-				continue
+		// A fan-out's own row is compared on the fields it owns only:
+		// attempt, orker, exit_code, image and platform_digest belong to its
+		// items, and comparing the node's unset values would report missing
+		// evidence where there is none (spec each-fan-out §7.3).
+		fanOut := fromTask.GetEach() != nil || toTask.GetEach() != nil
+		fieldsFor := func(item bool) []string {
+			if fanOut && !item {
+				return fanOutNodeDiffFields
 			}
-			fromValue, err := s.taskField(ctx, field, from, fromTask)
-			if err != nil {
-				return nil, err
+			return taskDiffFields
+		}
+		rows, err := s.diffPair(ctx, taskID, nil, fieldsFor(false), compared, from, to, fromTask, toTask)
+		if err != nil {
+			return nil, err
+		}
+		identical := len(rows) == 0
+		res.Differences = append(res.Differences, rows...)
+		if fanOut && fromTask.GetEach().GetExpanded() && toTask.GetEach().GetExpanded() {
+			// Items pairwise by index, after the node's rows, each row
+			// carrying its item; an index one run lacks is a presence row.
+			fromItems, toItems := fromTask.GetItems(), toTask.GetItems()
+			n := len(fromItems)
+			if len(toItems) > n {
+				n = len(toItems)
 			}
-			toValue, err := s.taskField(ctx, field, to, toTask)
-			if err != nil {
-				return nil, err
+			for i := 0; i < n; i++ {
+				index := int32(i)
+				var fromItem, toItem *orkstackv1.TaskRun
+				if i < len(fromItems) {
+					fromItem = fromItems[i]
+				}
+				if i < len(toItems) {
+					toItem = toItems[i]
+				}
+				if fromItem == nil || toItem == nil {
+					row := diffRow(taskID, "presence", valueOf(presenceOf(fromItem)), valueOf(presenceOf(toItem)))
+					row.Item = &index
+					res.Differences = append(res.Differences, row)
+					identical = false
+					continue
+				}
+				itemRows, err := s.diffPair(ctx, taskID, &index, fieldsFor(true), compared, from, to, fromItem, toItem)
+				if err != nil {
+					return nil, err
+				}
+				if len(itemRows) > 0 {
+					identical = false
+					res.Differences = append(res.Differences, itemRows...)
+				}
 			}
-			if fromValue.available && toValue.available && fromValue.value == toValue.value {
-				continue
-			}
-			identical = false
-			res.Differences = append(res.Differences, diffRow(taskID, field, fromValue, toValue))
 		}
 		if identical {
 			res.TasksIdentical++
@@ -190,6 +222,46 @@ func (s *Service) DiffRuns(
 		}
 	}
 	return connect.NewResponse(res), nil
+}
+
+// fanOutNodeDiffFields are the fields a fan-out's own row is compared on.
+var fanOutNodeDiffFields = []string{"presence", "status", "pool", "pin", "error", "duration"}
+
+// diffPair compares one pair of rows — two tasks, or two items of one
+// fan-out (item set) — on fields, and returns the rows that differ.
+func (s *Service) diffPair(
+	ctx context.Context,
+	taskID string,
+	item *int32,
+	fields []string,
+	compared func(string) bool,
+	from, to *diffSide,
+	fromTask, toTask *orkstackv1.TaskRun,
+) ([]*orkstackv1.RunFieldDiff, error) {
+	var rows []*orkstackv1.RunFieldDiff
+	for _, field := range fields {
+		if field == "presence" || !compared(field) {
+			continue
+		}
+		fromValue, err := s.taskField(ctx, field, from, fromTask)
+		if err != nil {
+			return nil, err
+		}
+		toValue, err := s.taskField(ctx, field, to, toTask)
+		if err != nil {
+			return nil, err
+		}
+		if fromValue.available && toValue.available && fromValue.value == toValue.value {
+			continue
+		}
+		row := diffRow(taskID, field, fromValue, toValue)
+		if item != nil {
+			index := *item
+			row.Item = &index
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
 }
 
 // resolveDiffFields validates `only` and returns the resolved field list in
@@ -448,15 +520,22 @@ func (s *Service) outcomeAttempt(ctx context.Context, side *diffSide, task *orks
 	case task.GetAttempt() == 0:
 		return nil, reasonNoOutcomeAttempt, nil
 	}
-	records, read := side.records[task.GetTaskId()]
+	// Keyed by task and, for an item of a fan-out, by item: an item's
+	// records live under its own key (ListAttempts(…, ItemAt(i))).
+	item := artifacts.ItemOf(task.Item)
+	key := task.GetTaskId()
+	if item.Set {
+		key += "#" + item.String()
+	}
+	records, read := side.records[key]
 	if !read {
 		var err error
-		records, err = s.attempts.ListAttempts(ctx, side.run.GetId(), task.GetTaskId(), artifacts.NoItem)
+		records, err = s.attempts.ListAttempts(ctx, side.run.GetId(), task.GetTaskId(), item)
 		if err != nil {
 			return nil, "", connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("read attempt records of task %q in run %q: %w", task.GetTaskId(), side.run.GetId(), err))
 		}
-		side.records[task.GetTaskId()] = records
+		side.records[key] = records
 	}
 	record, ok := outcomeRecord(records, task.GetAttempt())
 	if !ok {

@@ -63,10 +63,6 @@ const (
 	eachCountTimeout        = 60 * time.Second
 )
 
-// DefaultEachMaxItems is ORK_EACH_MAX_ITEMS' default: the built-in ceiling a
-// deployment may lower and never raise.
-const DefaultEachMaxItems = dsl.MaxEachItems
-
 // eachDispatchDescending is a TEST-ONLY switch, the precedent of
 // awaitDeadlineAfterEmit: TestEachHistory_CatchesAReorderedDispatch flips it
 // to prove the fan-out fixture can see a reordered dispatch. Never set in

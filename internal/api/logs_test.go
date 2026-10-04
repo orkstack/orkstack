@@ -97,12 +97,12 @@ func (s *memoryLogStore) widest() int64 {
 	return s.widestPage
 }
 
-func (s *memoryLogStore) LatestLogAttempt(_ context.Context, runID, taskID string, _ artifacts.Item) (int32, error) {
+func (s *memoryLogStore) LatestLogAttempt(_ context.Context, runID, taskID string, item artifacts.Item) (int32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	latest := int32(0)
 	for _, chunk := range s.chunks {
-		if chunk.RunID == runID && chunk.TaskID == taskID && chunk.Attempt > latest {
+		if chunk.RunID == runID && chunk.TaskID == taskID && chunk.Item == item && chunk.Attempt > latest {
 			latest = chunk.Attempt
 		}
 	}

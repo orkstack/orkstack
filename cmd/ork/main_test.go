@@ -737,3 +737,31 @@ func TestBindAndServe_AcceptsConnectionsAsSoonAsItReturns(t *testing.T) {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 }
+
+// ORK_EACH_MAX_ITEMS lowers the built-in fan-out ceiling and never raises it:
+// 0 and 1001 refuse boot, 1 and 1000 are accepted, unset is the ceiling.
+func TestLoadConfig_EachMaxItemsBounds(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    int32
+		refused bool
+	}{
+		{"", 1000, false}, {"1", 1, false}, {"1000", 1000, false},
+		{"0", 1000, true}, {"1001", 1000, true}, {"-3", 1000, true}, {"many", 1000, true},
+	} {
+		t.Run("ORK_EACH_MAX_ITEMS="+tc.raw, func(t *testing.T) {
+			t.Setenv("ORK_EACH_MAX_ITEMS", tc.raw)
+			cfg := loadConfig()
+			if refused := cfg.limitsErr != nil; refused != tc.refused {
+				t.Fatalf("refused = %v (%v), want %v", refused, cfg.limitsErr, tc.refused)
+			}
+			if !tc.refused && cfg.eachMaxItems != tc.want {
+				t.Fatalf("eachMaxItems = %d, want %d", cfg.eachMaxItems, tc.want)
+			}
+		})
+	}
+	t.Setenv("ORK_EACH_MAX_ITEMS", "1500")
+	if err := loadConfig().limitsErr; err == nil || !strings.Contains(err.Error(), "ORK_EACH_MAX_ITEMS=1500 is above the 1000 ceiling; it may only lower it") {
+		t.Fatalf("1500 = %v", err)
+	}
+}

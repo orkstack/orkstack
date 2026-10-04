@@ -81,8 +81,17 @@ func (s *Service) GetArtifactProvenance(
 	if !hasTask(run, msg.GetTaskId()) {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("task %q not found in run %q", msg.GetTaskId(), run.GetId()))
 	}
+	// The item selector, exactly as ReadArtifact applies it.
+	if _, err := itemRunOf(run, msg.GetTaskId(), msg.Item); err != nil {
+		return nil, err
+	}
+	if msg.Item == nil {
+		if err := needsItem(run, msg.GetTaskId(), "orkctl run artifact provenance …"); err != nil {
+			return nil, err
+		}
+	}
 	var selected *orkstackv1.RunArtifact
-	for _, item := range runArtifacts(run, msg.GetTaskId()) {
+	for _, item := range runArtifacts(run, msg.GetTaskId(), msg.Item) {
 		if item.GetKind() == msg.GetKind() && item.GetArtifact().GetName() == msg.GetName() {
 			selected = item
 			break
@@ -238,7 +247,7 @@ func referencesIn(run *orkstackv1.Run, objectID string) []*orkstackv1.ArtifactRe
 		}
 	}
 	var matches []*orkstackv1.RunArtifact
-	for _, item := range runArtifacts(run, "") {
+	for _, item := range runArtifacts(run, "", nil) {
 		if id, ok := artifacts.ObjectIDFromURI(item.GetArtifact().GetUri()); ok && id == objectID {
 			matches = append(matches, item)
 		}
@@ -247,6 +256,10 @@ func referencesIn(run *orkstackv1.Run, objectID string) []*orkstackv1.ArtifactRe
 		ti, tj := taskIndex[matches[i].GetTaskId()], taskIndex[matches[j].GetTaskId()]
 		if ti != tj {
 			return ti < tj
+		}
+		// Within a fan-out, items ascending (runArtifacts' own order).
+		if ii, ij := matches[i].GetItem(), matches[j].GetItem(); ii != ij {
+			return ii < ij
 		}
 		return matches[i].GetKind() < matches[j].GetKind()
 	})
@@ -260,6 +273,8 @@ func referencesIn(run *orkstackv1.Run, objectID string) []*orkstackv1.ArtifactRe
 			Kind:           item.GetKind(),
 			RunStatus:      run.GetStatus(),
 			RunCreatedAt:   run.GetCreatedAt(),
+			// Set when the referencing run recorded the object under an item.
+			Item: item.Item,
 		})
 	}
 	return refs
