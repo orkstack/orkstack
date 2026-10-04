@@ -111,6 +111,17 @@ type RunPlan struct {
 	// encodes exactly as it did before the field existed and the golden
 	// history fixture keeps matching.
 	Awaits map[string]AwaitCredential `json:"awaits,omitempty"`
+
+	// Children is, per composed task id, the child run that task starts: its
+	// run id, its planned definition and its own plan, recursively. It is
+	// decided at SUBMIT for the reason Routes is — which pools a child's
+	// tasks resolve to, whether the namespace allows them, which image policy
+	// holds, and what the child's run id is are store, cluster and process
+	// facts workflow code may not read (AGENTS.md §2.1) — and it is the only
+	// place a child's definition reaches workflow code. omitempty, so a plan
+	// with none encodes exactly as it did before the field existed and the
+	// golden history fixture keeps matching.
+	Children map[string]*ChildRunPlan `json:"children,omitempty"`
 }
 
 // AwaitCredential is one callback await's verification material, the shape

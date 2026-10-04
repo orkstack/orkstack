@@ -78,6 +78,10 @@ func Simulate(
 			// Set for every fan-out whatever its outcome (spec each-fan-out
 			// §5.12).
 			Each: tasks[id].GetEach(),
+			// Set for every composed task whatever its outcome. A plan never
+			// recurses into the child: a composed task that would run is RUNS,
+			// and its stub stands in for the child's declared outputs.
+			Orkflow: tasks[id].GetOrkflow(),
 		}
 	}
 	taskIndex := make(map[string]int, len(order))

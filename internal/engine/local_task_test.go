@@ -202,6 +202,9 @@ func parityCorpus(t *testing.T) []parityCase {
 		if err != nil {
 			t.Fatalf("compile %s: %v", path, err)
 		}
+		// A composing example pins its children's digests, as apply stamps
+		// them (composed-release composes release-block).
+		stampExampleChildren(t, wf)
 		corpus = append(corpus, parityCase{
 			name:   filepath.Base(path),
 			wf:     wf,
@@ -227,7 +230,7 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 		if err != nil || in.GetEach() != nil {
 			return result, err
 		}
-		values := map[string]any{"task": in.GetTaskId()}
+		values := map[string]any{"task": in.GetTaskId(), "value": in.GetTaskId()}
 		if in.GetTaskId() == "list" {
 			values["parts"] = []any{map[string]any{"name": "a"}, map[string]any{"name": "b"},
 				map[string]any{"name": "c"}, map[string]any{"name": "d"}}
@@ -241,7 +244,9 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	} else {
 		h = newHarness(t, &suite, behavior)
 	}
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, c.wf, c.input, parityPlan(c.wf))
+	plan := parityPlan(c.wf)
+	plan.Children = parityChildren(t, c.wf)
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, c.wf, c.input, plan)
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatalf("%s: workflow did not complete", c.name)
 	}
@@ -257,7 +262,76 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 		}
 		run = snapshot
 	}
-	return h.invocations(), run
+	// Only the run's own tasks: a composed task's child runs its tasks under
+	// its own run id, and those are the child's, not this definition's.
+	var own []*orkstackv1.ExecuteTaskInput
+	for _, in := range h.invocations() {
+		if in.GetRunId() == runID {
+			own = append(own, in)
+		}
+	}
+	return own, run
+}
+
+// exampleOrkflow compiles the shipped example named name@version, with its
+// own digest stamped as apply would.
+func exampleOrkflow(t *testing.T, name, version string) *orkstackv1.Orkflow {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.ork.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		wf, err := dsl.CompileFile(path)
+		if err != nil || wf.GetName() != name || wf.GetVersion() != version {
+			continue
+		}
+		stampExampleChildren(t, wf)
+		digest, err := dsl.DefinitionDigest(wf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wf.DefinitionDigest = digest
+		return wf
+	}
+	t.Fatalf("no shipped example is %s@%s", name, version)
+	return nil
+}
+
+// stampExampleChildren stamps every composed task's definition digest from
+// the shipped example it names.
+func stampExampleChildren(t *testing.T, wf *orkstackv1.Orkflow) {
+	t.Helper()
+	for _, task := range wf.GetTasks() {
+		if ref := task.GetOrkflow(); ref != nil {
+			ref.DefinitionDigest = exampleOrkflow(t, ref.GetName(), ref.GetVersion()).GetDefinitionDigest()
+		}
+	}
+}
+
+// parityChildren plans every composed task of wf as a child run of the
+// shipped example it names.
+func parityChildren(t *testing.T, wf *orkstackv1.Orkflow) map[string]*engine.ChildRunPlan {
+	t.Helper()
+	var children map[string]*engine.ChildRunPlan
+	for _, task := range wf.GetTasks() {
+		ref := task.GetOrkflow()
+		if ref == nil {
+			continue
+		}
+		child := exampleOrkflow(t, ref.GetName(), ref.GetVersion())
+		cp, err := engine.NewChildRunPlan(child, parityPlan(child), false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cp.Plan.Children = parityChildren(t, child)
+		cp.RunID = "ork-parity-child-" + task.GetId()
+		if children == nil {
+			children = map[string]*engine.ChildRunPlan{}
+		}
+		children[task.GetId()] = cp
+	}
+	return children
 }
 
 // TestLocalTaskInput_AgreesWithTheInterpreter is E1: for every task the
@@ -272,6 +346,21 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 				t.Fatalf("%s: the interpreter scheduled nothing; nothing was compared", c.name)
 			}
 			upstream := engine.UpstreamFromRun(run)
+			// A task downstream of a composed task is compared too: its
+			// upstream ref for the composed task is {task_id, values}.
+			if composesAny(c.wf) {
+				downstream := false
+				for _, want := range recorded {
+					for _, up := range want.GetUpstream() {
+						if t := taskByIDOf(c.wf, up.GetTaskId()); t.GetOrkflow() != nil && up.GetValues() != nil {
+							downstream = true
+						}
+					}
+				}
+				if !downstream {
+					t.Fatalf("%s: no task downstream of a composed task was scheduled; nothing was compared", c.name)
+				}
+			}
 			for _, want := range recorded {
 				if want.GetCommitUri() == "" {
 					t.Errorf("%s/%s: the recorded input carries no commit_uri, so clearing it proves nothing",
@@ -599,5 +688,32 @@ func TestLocalTaskInput_FanOutItemRules(t *testing.T) {
 		Upstream: map[string]*orkstackv1.UpstreamRef{"convert": {TaskId: "convert", Each: &orkstackv1.EachUpstream{Count: 120}}}})
 	if err == nil || !strings.Contains(err.Error(), `task run cannot stage the 120 items of fan-out "convert"`) {
 		t.Fatalf("a direct dependent of a fan-out = %v", err)
+	}
+}
+
+func composesAny(wf *orkstackv1.Orkflow) bool {
+	for _, t := range wf.GetTasks() {
+		if t.GetOrkflow() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func taskByIDOf(wf *orkstackv1.Orkflow, id string) *orkstackv1.Task {
+	for _, t := range wf.GetTasks() {
+		if t.GetId() == id {
+			return t
+		}
+	}
+	return nil
+}
+
+func TestLocalTaskInput_RefusesAComposedTask(t *testing.T) {
+	wf := compile(t, composedParentDocument)
+	_, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "release", RunID: "ork-local"})
+	want := `task "release" runs orkflow release-block@2.1.0 as a child run, not a container: run one of its tasks with orkctl task run --from-run <child-run-id> --task <task>`
+	if err == nil || err.Error() != want {
+		t.Fatalf("LocalTaskInput = %v\nwant %s", err, want)
 	}
 }

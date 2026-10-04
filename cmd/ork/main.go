@@ -1006,6 +1006,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		engine.NewEachActivities(artifactStore).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems},
 	)
+	// The two local activities a composed task and declared outputs use:
+	// render engine-side templates over upstream values.json, and store a
+	// composed task's values (spec composed-orkflows §6.7).
+	compose := engine.NewComposeActivities(artifactStore)
+	runWorker.RegisterActivityWithOptions(compose.RenderComposedValues,
+		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
+	runWorker.RegisterActivityWithOptions(compose.StoreComposedValues,
+		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
 
 	// The engine's telemetry observer: a run's spans, metrics and one log
 	// line per lifecycle event, routed per-run to whatever sink

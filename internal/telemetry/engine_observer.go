@@ -203,6 +203,12 @@ func (o *EngineObserver) recordTask(ctx context.Context, event *orkstackv1.Event
 		}
 		return
 	}
+	// A composed task has no attempt: it starts a child run, whose own tasks
+	// are observed as that run's. Recording its 0 would pull the histogram
+	// toward a number that describes nothing.
+	if task.GetChild() != nil {
+		return
+	}
 	inst.TaskAttempts.Record(ctx, int64(task.GetAttempt()), metric.WithAttributes(durationAttrs...))
 }
 

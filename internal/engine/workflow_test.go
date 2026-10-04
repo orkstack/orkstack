@@ -65,6 +65,13 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 	h.env.SetTestTimeout(60 * time.Second)
 	h.env.RegisterActivityWithOptions(engine.NewEachActivities(h.values).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems})
+	// The two compose activities, over the same in-memory store, so a run
+	// that composes another Orkflow or declares outputs runs here too.
+	compose := engine.NewComposeActivities(&memComposeStore{memValues: h.values})
+	h.env.RegisterActivityWithOptions(compose.RenderComposedValues,
+		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
+	h.env.RegisterActivityWithOptions(compose.StoreComposedValues,
+		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
 	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	snapshots := newTestSnapshotStore()
 	h.env.RegisterActivityWithOptions(

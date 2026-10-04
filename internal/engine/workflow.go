@@ -208,6 +208,17 @@ func RunWorkflow(
 				}
 				continue
 			}
+			// A composed task starts a child run and waits on it like an
+			// activity. Before openPin, which it can never reach
+			// (docs/DSL.md rule 27 refuses `pin:` on a composed task).
+			if state.children[id] != nil {
+				future, err := state.startChild(ctx, runCtx, id)
+				if err != nil {
+					return state.fail(ctx, cancelRun, inFlight, id, err)
+				}
+				inFlight[id] = future
+				continue
+			}
 			// A pin is opened by the FIRST of its members the run actually
 			// decides to run, and never before: a pin whose every member is
 			// skipped costs an Orker nothing, and the pin's lifetime clock
@@ -397,6 +408,11 @@ type runState struct {
 	itemInputLimit  int64
 	itemArtifactMax int32
 
+	// children is one entry per composed task, keyed by task id, built once
+	// in newRunState from plan.Children; iteration is over order, never the
+	// map. Nil for a run with no composed task.
+	children map[string]*childState
+
 	createdAt *timestamppb.Timestamp
 	startedAt *timestamppb.Timestamp
 	status    orkstackv1.Status
@@ -528,6 +544,20 @@ func newRunState(
 			}
 			state.eaches[t.GetId()] = &eachState{spec: spec}
 			state.taskRuns[t.GetId()].Each = &orkstackv1.TaskEach{}
+		}
+		// A composed task carries its TaskChild from the run's first
+		// snapshot, while still PENDING; unset for every other task, so a
+		// run with no composed task snapshots exactly as before.
+		if ref := t.GetOrkflow(); ref != nil {
+			if state.children == nil {
+				state.children = map[string]*childState{}
+			}
+			state.children[t.GetId()] = newChildState(plan.Children[t.GetId()], t)
+			state.taskRuns[t.GetId()].Child = &orkstackv1.TaskChild{
+				OrkflowName:             ref.GetName(),
+				OrkflowVersion:          ref.GetVersion(),
+				OrkflowDefinitionDigest: ref.GetDefinitionDigest(),
+			}
 		}
 	}
 	if len(state.eaches) > 0 {
@@ -1519,6 +1549,10 @@ func (s *runState) commitURIFor(taskID string) (string, error) {
 
 // collect awaits one task future and records its outcome.
 func (s *runState) collect(ctx workflow.Context, id string, future workflow.Future) error {
+	// A composed task's future is its child run's, not an activity's.
+	if s.children[id] != nil {
+		return s.collectChild(ctx, id, future)
+	}
 	// This task is terminal on every path out of here, so this is where its
 	// pin learns whether it was the last one (§6.4).
 	defer s.closePinFor(ctx, id)
@@ -1904,7 +1938,10 @@ func (s *runState) fail(
 	// type's decoration (spec each-fan-out §5.3). Nothing else changes: the
 	// branch is reached only for a fan-out, which no earlier history holds.
 	var nodeErr *temporal.ApplicationError
-	if s.eaches[taskID] != nil && errors.As(cause, &nodeErr) {
+	// A composed task's failure carries the sentence naming its child the
+	// same way; reached only for a composed task, which no earlier history
+	// holds.
+	if (s.eaches[taskID] != nil || s.children[taskID] != nil) && errors.As(cause, &nodeErr) {
 		s.runError.Message = nodeErr.Message()
 	}
 
@@ -1992,18 +2029,31 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	// resolution still queued is recorded as ignored. No-op with no await.
 	s.drainResolutions(ctx)
 
-	aggregated := map[string]any{}
-	for _, id := range s.order {
-		if _, leaf := s.leaves[id]; !leaf {
-			continue
+	// Declared outputs, rendered once, replace the leaf aggregation; a run
+	// whose outputs cannot be produced FAILS (spec composed-orkflows §6.5).
+	// An Orkflow with no `outputs:` takes the path it always took.
+	var output *orkstackv1.Payload
+	if len(s.wf.GetOutputs()) > 0 {
+		rendered, failure := s.renderOutputs(ctx)
+		if failure != nil {
+			return s.failOutputs(ctx, failure)
 		}
-		if values, ok := s.outputs[id]; ok {
-			aggregated[id] = values
+		output = rendered
+	} else {
+		aggregated := map[string]any{}
+		for _, id := range s.order {
+			if _, leaf := s.leaves[id]; !leaf {
+				continue
+			}
+			if values, ok := s.outputs[id]; ok {
+				aggregated[id] = values
+			}
 		}
-	}
-	output, err := payloadOf(aggregated)
-	if err != nil {
-		return nil, err
+		var err error
+		output, err = payloadOf(aggregated)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	s.output = output
@@ -2016,8 +2066,9 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	// The workflow's own result carries no items: nothing reads it (the
 	// reader rebuilds a run from its events and snapshots), and a result
 	// carrying 1000 items could pass the payload limit and fail the run's
-	// completion. Identical to the snapshot for a run with no fan-out.
-	return WithoutItems(s.snapshot()), nil
+	// completion. Identical to the snapshot for a run with no fan-out. A
+	// child run returns only what its parent reads (compactChildResult).
+	return s.result(), nil
 }
 
 // snapshot materializes the current Run read model.

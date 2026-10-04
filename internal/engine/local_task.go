@@ -114,6 +114,13 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		return nil, fmt.Errorf("task %q is an awaited task (await:): it starts no container, so there is nothing to run locally; "+
 			"resolve it in a run with orkctl run resolve, or run a task downstream of it with its values supplied", t.TaskID)
 	}
+	if ref := spec.GetOrkflow(); ref != nil {
+		// A composed task starts a child run, not a container: there is no
+		// input to compose. One of the child's tasks runs locally against
+		// the child run's bytes (spec composed-orkflows §6.10).
+		return nil, fmt.Errorf("task %q runs orkflow %s@%s as a child run, not a container: run one of its "+
+			"tasks with orkctl task run --from-run <child-run-id> --task <task>", t.TaskID, ref.GetName(), ref.GetVersion())
+	}
 	if spec.GetEach() == nil && t.Item != nil {
 		return nil, fmt.Errorf("task %q is not a fan-out; it has no items, so --item does not apply", t.TaskID)
 	}

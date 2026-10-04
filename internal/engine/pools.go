@@ -414,8 +414,9 @@ func (r *PoolResolver) DefaultPool(ns *orkstackv1.Namespace) string {
 func (r *PoolResolver) CheckAllowedPools(ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) error {
 	permitted := permittedPools(ns)
 	for _, t := range wf.GetTasks() {
-		// An awaited task runs on no pool: nothing to allow.
-		if t.GetAwait() != nil {
+		// An awaited task runs on no pool: nothing to allow. Nor does a
+		// composed task: its child's pools are checked by checking the child.
+		if t.GetAwait() != nil || t.GetOrkflow() != nil {
 			continue
 		}
 		if err := r.checkPoolAllowed(ns, t.GetId(), PoolFor(ns, t), permitted); err != nil {
@@ -531,8 +532,9 @@ func (r *PoolResolver) Plan(
 		// An awaited task is never routed: no route, no allow-list check, no
 		// liveness probe, no pin bookkeeping, and Task.pool stays empty on the
 		// planned definition. An Orkflow whose every task is an await plans
-		// with empty Routes and never asks the cluster anything.
-		if t.GetAwait() != nil {
+		// with empty Routes and never asks the cluster anything. A composed
+		// task likewise: its child's pools are planned by planning the child.
+		if t.GetAwait() != nil || t.GetOrkflow() != nil {
 			continue
 		}
 		requested := PoolFor(ns, t)
@@ -751,7 +753,7 @@ func eachRelatedTasks(wf *orkstackv1.Orkflow) (related, dependents map[string]bo
 		return related, dependents
 	}
 	for _, t := range wf.GetTasks() {
-		if t.GetAwait() != nil {
+		if t.GetAwait() != nil || t.GetOrkflow() != nil {
 			continue
 		}
 		for _, need := range t.GetNeeds() {
