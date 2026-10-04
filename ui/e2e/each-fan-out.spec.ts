@@ -96,7 +96,7 @@ tasks:
       script: |
         set -eu
         echo "converting item {{ .each.index }} of {{ .each.count }}: {{ sh .each.part.name }}"
-        sleep 2
+        sleep 3
         printf '%s' {{ sh .each.part.name }} > /orkstack/output/artifacts/part.txt
         if [ {{ .each.index }} -eq 2 ] && grep -q '"attempt": 1,' /orkstack/input/task.json; then
           echo "item 2 fails its first attempt on purpose" >&2
