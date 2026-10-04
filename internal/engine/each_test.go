@@ -521,18 +521,31 @@ func TestRunWorkflow_EachExpansionRefusalsFailBeforeDispatch(t *testing.T) {
 	for name, tc := range map[string]struct {
 		values string
 		code   string
+		extra  string // appended to the fan-out's each: block, as eachTaskDocument's %s
 	}{
-		"TooManyItems":    {partsJSON(51), engine.EachTooManyItemsCode},
-		"OverNotAnArray":  {`{"parts":{"a":1}}`, engine.EachOverNotArrayCode},
-		"OverMissingKey":  {`{"other":[]}`, engine.EachOverMissingCode},
-		"OverNullIsNotOK": {`{"parts":null}`, engine.EachOverNotArrayCode},
+		"TooManyItems":    {partsJSON(51), engine.EachTooManyItemsCode, ""},
+		"OverNotAnArray":  {`{"parts":{"a":1}}`, engine.EachOverNotArrayCode, ""},
+		"OverMissingKey":  {`{"other":[]}`, engine.EachOverMissingCode, ""},
+		"OverNullIsNotOK": {`{"parts":null}`, engine.EachOverNotArrayCode, ""},
+		// A hand-built plan with no route for the fan-out's pool: unreachable
+		// through SubmitRun, whose plan is resolved from the same definition,
+		// but the node must still fail with the routing reason and no item,
+		// never read expanded and then SUCCEEDED with none.
+		"UnroutablePool": {partsJSON(3), "INVALID_POOL", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var h *eachHarness
 			h = newEachHarness(t, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 				return listThenItems(h, tc.values)(ctx, in)
 			})
-			run := h.run(t, "run-each-refused", fmt.Sprintf(eachTaskDocument, ""), nil)
+			doc := fmt.Sprintf(eachTaskDocument, tc.extra)
+			if tc.code == "INVALID_POOL" {
+				doc = strings.Replace(doc, "    needs: [list]\n", "    needs: [list]\n    pool: nosuch\n", 1)
+				if !strings.Contains(doc, "pool: nosuch") {
+					t.Fatal("the document did not take the pool")
+				}
+			}
+			run := h.run(t, "run-each-refused", doc, nil)
 			if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || run.GetError().GetCode() != "RUN_FAILED" {
 				t.Fatalf("run = %v %v", run.GetStatus(), run.GetError())
 			}
@@ -547,6 +560,15 @@ func TestRunWorkflow_EachExpansionRefusalsFailBeforeDispatch(t *testing.T) {
 			}
 			if run.GetError().GetMessage() != node.GetError().GetMessage() {
 				t.Fatalf("run message %q is not the node's %q", run.GetError().GetMessage(), node.GetError().GetMessage())
+			}
+			if node.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+				t.Fatalf("node status = %v, want FAILED", node.GetStatus())
+			}
+			if types := eventTypes(h.eventsFor("run-each-refused", "convert")); fmt.Sprint(types) != "[TASK_FAILED RUN_FAILED]" {
+				t.Fatalf("convert events = %v, want TASK_FAILED then the RUN_FAILED naming it", types)
+			}
+			if tc.code == "INVALID_POOL" && !strings.Contains(node.GetError().GetMessage(), `pool "nosuch"`) {
+				t.Fatalf("routing refusal = %q, want it to name the pool", node.GetError().GetMessage())
 			}
 			if tc.code == engine.EachTooManyItemsCode && !strings.Contains(node.GetError().GetMessage(),
 				"each.over resolved to 51 items, over max_items 50 declared at tasks[1].each.max_items") {
@@ -618,9 +640,12 @@ func TestRunWorkflow_EachItemFailureFailsTheNodeAndCancelsTheRest(t *testing.T) 
 			itemEvents[e.GetItem()] = true
 		} else if e.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_LOG {
 			summaries++
-			if !strings.Contains(e.GetMessage(), "3 of 6 items unfinished (2 were running, 1 never started)") &&
-				!strings.Contains(e.GetMessage(), "items unfinished") {
-				t.Fatalf("summary = %q", e.GetMessage())
+			// Item 2 failed; 0 and 1 were in flight (max_parallel 3); 3, 4
+			// and 5 were never dispatched. The node is FAILED, so the verb
+			// is "failed".
+			const want = "task failed: run ended with 5 of 6 items unfinished (2 were running, 3 never started)"
+			if e.GetMessage() != want || e.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+				t.Fatalf("summary = %q (%v), want %q (FAILED)", e.GetMessage(), e.GetStatus(), want)
 			}
 		}
 	}
@@ -749,6 +774,84 @@ func TestRunWorkflow_EachItemInputBoundIsShared(t *testing.T) {
 		if len(h.itemCalls("convert")) != 0 {
 			t.Fatal("an over-bound item reached an Orker")
 		}
+	}
+}
+
+// An item that settles and frees a slot whose refill the engine refuses
+// (INPUT_TOO_LARGE) still gets its one TASK_LOG event (spec §5.5 step 3):
+// every item the node records SUCCEEDED has a SUCCEEDED item event. The
+// with: value is sized so items 0-9 sit exactly at the shared per-item bound
+// and item 10, whose idempotency key is one digit longer, is one byte over,
+// so the refusal can only happen on a refill.
+func TestRunWorkflow_EachRefusedRefillStillEmitsTheSettledItem(t *testing.T) {
+	const runID = "run-each-refill"
+	const limit = 16777 // 16 MiB / 1000 declared items, under the plan's values limit
+	regions := make([]any, 12)
+	for i := range regions {
+		regions[i] = "r"
+	}
+	document := func(bigLen int) string {
+		return fmt.Sprintf(eachInputDocument, 1000, ", max_parallel: 10", `, big: "`+strings.Repeat("x", bigLen)+`"`)
+	}
+
+	// Calibrate: the size of item 9's input with a known with: value.
+	const probe = 15000
+	calibrate := newEachHarness(t, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return itemResult(in), nil
+	})
+	if run := calibrate.run(t, runID, document(probe), map[string]any{"regions": regions}); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("calibration run = %v %v", run.GetStatus(), run.GetError())
+	}
+	var size9 int64
+	for _, in := range calibrate.itemCalls("convert") {
+		if in.GetEach().GetIndex() == 9 {
+			n, err := task.InputSize(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			size9 = n
+		}
+	}
+	if size9 == 0 || size9 > limit {
+		t.Fatalf("calibration: item 9's input is %d bytes", size9)
+	}
+
+	h := newEachHarness(t, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return itemResult(in), nil
+	})
+	run := h.run(t, runID, document(probe+int(limit-size9)), map[string]any{"regions": regions})
+	node := taskRunOf(t, run, "convert")
+	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || node.GetError().GetCode() != task.ReasonInputTooLarge ||
+		!strings.HasPrefix(node.GetError().GetMessage(), "item 10 of 12 failed") {
+		t.Fatalf("run = %v, node = %v", run.GetStatus(), node.GetError())
+	}
+	if got := len(h.itemCalls("convert")); got != 10 {
+		t.Fatalf("%d items reached an Orker, want the first 10", got)
+	}
+	itemEvents := map[int32]orkstackv1.Status{}
+	for _, e := range h.eventsFor(runID, "convert") {
+		if e.Item != nil {
+			if _, dup := itemEvents[e.GetItem()]; dup {
+				t.Fatalf("item %d has two events", e.GetItem())
+			}
+			itemEvents[e.GetItem()] = e.GetStatus()
+		}
+	}
+	succeeded := 0
+	for _, item := range node.GetItems() {
+		if item.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+			continue
+		}
+		succeeded++
+		if itemEvents[item.GetItem()] != orkstackv1.Status_STATUS_SUCCEEDED {
+			t.Fatalf("item %d is SUCCEEDED with no SUCCEEDED event (events %v)", item.GetItem(), itemEvents)
+		}
+	}
+	if succeeded == 0 {
+		t.Fatal("no item settled before the refusal")
+	}
+	if itemEvents[10] != orkstackv1.Status_STATUS_FAILED {
+		t.Fatalf("refused item 10 event = %v", itemEvents[10])
 	}
 }
 

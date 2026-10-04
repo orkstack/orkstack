@@ -147,10 +147,18 @@ func TestRunWorkflow_ReplaysCommittedEachHistory(t *testing.T) {
 }
 
 // TestEachHistory_ReplayNeverRecountsTheArray is the research's "an expansion
-// whose upstream array changed between replays". A replay never calls
-// CountEachItems — the replayer executes no activity, local or otherwise, and
-// reads the count from its marker — so whatever the store would now answer,
-// the replay passes and the replayed run has the recorded items.
+// whose upstream array changed between replays".
+//
+// What it proves: the replayer has no activity registered and no store to
+// read — CountEachItems could not answer at all — yet the replay passes and
+// current code schedules exactly the recorded items, convert#0 through
+// convert#5. The count therefore comes from the history's local-activity
+// marker, never from a recount, so no later answer of the store (another
+// array, other bytes, or none) can move a replayed fan-out.
+//
+// What it does not prove: the replayed run's final snapshot. The replayer
+// exposes no workflow result, so the node's each.count is read through the
+// schedules it caused rather than from the returned Run.
 func TestEachHistory_ReplayNeverRecountsTheArray(t *testing.T) {
 	requireEachFixture(t)
 	recorder := &scheduleRecorder{}
@@ -164,26 +172,18 @@ func TestEachHistory_ReplayNeverRecountsTheArray(t *testing.T) {
 	if err := replayer.ReplayWorkflowHistoryFromJSONFile(nil, eachHistory); err != nil {
 		t.Fatalf("replay: %v", err)
 	}
-	type resulting interface {
-		GetWorkflowResult(workflowID string, valuePtr interface{}) error
-	}
-	var run *orkstackv1.Run
-	if r, ok := replayer.(resulting); ok {
-		if err := r.GetWorkflowResult("", &run); err != nil {
-			t.Fatalf("the replayed result: %v", err)
-		}
-		if got := taskRunOf(t, run, "convert").GetEach(); !got.GetExpanded() || got.GetCount() != 6 {
-			t.Fatalf("the replayed fan-out = %v, want the recorded 6 items", got)
-		}
-	}
-	items := 0
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	var items []string
 	for _, key := range recorder.scheduled {
 		if strings.HasPrefix(key, "convert#") {
-			items++
+			items = append(items, key)
 		}
 	}
-	if items != 6 {
-		t.Fatalf("the replay dispatched %d items, want the recorded 6", items)
+	sort.Strings(items)
+	want := []string{"convert#0", "convert#1", "convert#2", "convert#3", "convert#4", "convert#5"}
+	if fmt.Sprint(items) != fmt.Sprint(want) {
+		t.Fatalf("the replay dispatched %v, want the recorded %v", items, want)
 	}
 }
 

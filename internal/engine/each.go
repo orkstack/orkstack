@@ -373,6 +373,22 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 		return s.failExpansion(ctx, id, eerr.Code, eerr.Message)
 	}
 
+	// Routed before anything about the node changes: a pool this run's plan
+	// has no route for fails the node with the routing reason (INVALID_POOL
+	// or RESERVED_QUEUE) and no item, exactly as a refused count does, so
+	// the node can never read expanded with items it does not have. A
+	// zero-item fan-out dispatches nothing and needs no route.
+	if count > 0 {
+		if _, err := s.queueForTask(t); err != nil {
+			code, message := "INVALID_POOL", err.Error()
+			var applicationErr *temporal.ApplicationError
+			if errors.As(err, &applicationErr) {
+				code, message = applicationErr.Type(), applicationErr.Message()
+			}
+			return s.failExpansion(ctx, id, code, message)
+		}
+	}
+
 	taskRun := s.taskRuns[id]
 	now := timestamppb.New(workflow.Now(ctx))
 	e.expanded = true
@@ -386,9 +402,6 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 			orkstackv1.Status_STATUS_SUCCEEDED, "fan-out over 0 items: nothing to run")
 	}
 
-	if _, err := s.queueForTask(t); err != nil {
-		return err
-	}
 	pool := s.poolForTask(t)
 	e.limit = count
 	if mp := spec.GetMaxParallel(); mp > 0 && mp < count {
@@ -637,12 +650,15 @@ func (s *runState) collectItem(
 		node.StartedAt = started
 	}
 
+	// The refill comes first, so a snapshot written by the event below
+	// already shows the freed slot's replacement as RUNNING. A refill the
+	// engine refuses (INPUT_TOO_LARGE) has already failed the node by the
+	// time it returns; this item's own event is still emitted below before
+	// that refusal goes to fail(), so every settled item has its one event
+	// (spec §5.5 step 3), after the refused item's.
+	var refused error
 	if !draining && cause == nil {
-		// First, so a snapshot written by the event below already shows the
-		// freed slot's replacement as RUNNING.
-		if err := s.dispatchItems(ctx, runCtx, id, inFlight); err != nil {
-			return err
-		}
+		refused = s.dispatchItems(ctx, runCtx, id, inFlight)
 	}
 
 	var message string
@@ -656,10 +672,13 @@ func (s *runState) collectItem(
 	}
 	fresh := e.settled == e.count || e.settled%e.stride == 0
 	if err := s.emitItem(ctx, id, index, item.GetStatus(), message, fresh); err != nil {
-		if !draining {
+		if !draining && refused == nil {
 			return err
 		}
 		workflow.GetLogger(ctx).Error("emit item event failed", "run_id", s.runID, "task_id", id, "error", err)
+	}
+	if refused != nil {
+		return refused
 	}
 	if draining {
 		return nil
@@ -682,8 +701,14 @@ func (s *runState) collectItem(
 	return nil
 }
 
+// allItemsSucceeded is true when the node holds every one of its items and
+// each SUCCEEDED; a node missing items never reads as having succeeded.
 func (s *runState) allItemsSucceeded(id string) bool {
-	for _, item := range s.taskRuns[id].GetItems() {
+	items := s.taskRuns[id].GetItems()
+	if e := s.eaches[id]; e == nil || int32(len(items)) != e.count {
+		return false
+	}
+	for _, item := range items {
 		if item.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 			return false
 		}
