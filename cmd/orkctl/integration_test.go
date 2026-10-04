@@ -152,6 +152,13 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	if _, stderr, code = cli("apply", successPath); code != 0 {
 		t.Fatalf("apply of the pinned orkflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
+	// The Orker and the engine boot side by side, and a submit onto a pool with
+	// no live poller is refused by design. The engine used to lose that race
+	// only because its boot read every earlier run's namespaces and Orkflows
+	// from the shared bucket; in this package's own bucket it is ready first.
+	waitForPoolLive(t, func(args ...string) (string, string, int) {
+		return runBinary(ctx, t, orkctlPath, repoRoot, append(args, "--server", "http://"+engineAddr)...)
+	}, "default", pool)
 
 	// submit --watch: the real Orker runs http -> shell -> file for real.
 	stdout, stderr, code = cli("run", "submit", successOrkflowName,
