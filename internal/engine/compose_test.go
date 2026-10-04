@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
@@ -530,6 +531,10 @@ func TestRunWorkflow_ChildFailureCarriesTheChildsCategory(t *testing.T) {
 			orkstackv1.Status_STATUS_FAILED, engine.ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT, "was not resolved"},
 		{"grandchild failed", applicationFailure(task.CategoryInfrastructureError, "child run ork-g (x@1) failed: lost"),
 			orkstackv1.Status_STATUS_FAILED, engine.ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR, "child run ork-g (x@1) failed: lost"},
+		{"activity timeout", temporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_START_TO_CLOSE, nil),
+			orkstackv1.Status_STATUS_FAILED, engine.ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT, "timeout"},
+		{"heartbeat timeout", temporal.NewHeartbeatTimeoutError(),
+			orkstackv1.Status_STATUS_FAILED, engine.ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR, "timeout"},
 		{"unknown type", errors.New("boom"),
 			orkstackv1.Status_STATUS_FAILED, engine.ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED, "boom"},
 	}
