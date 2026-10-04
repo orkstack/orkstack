@@ -68,6 +68,11 @@
 		 * it. Dropping silently is the one thing a log view must not do.
 		 */
 		scrollback?: number;
+		/**
+		 * item names one item of a fan-out task: the pane then follows that
+		 * item's own log (its attempts, its chunks). Undefined for a task's own.
+		 */
+		item?: number;
 	}
 
 	let {
@@ -81,7 +86,8 @@
 		pinRequest,
 		onAttemptChange,
 		onAttemptSeen,
-		scrollback = 2000
+		scrollback = 2000,
+		item
 	}: Props = $props();
 
 	let open = $state(false);
@@ -237,7 +243,7 @@
 	// in place rather than replacing them; either one alone closes this, and a
 	// log socket is worth both.
 	const coordinates = $derived(
-		[runId, taskId, namespace, viewedAttempt, retryNonce].join('\u0000')
+		[runId, taskId, namespace, viewedAttempt, retryNonce, item ?? ''].join('\u0000')
 	);
 
 	$effect(() => {
@@ -245,7 +251,7 @@
 		coordinates; // the ONE reactive dependency of this subscription
 		// Untracked on purpose: reading a prop here would put the each-item
 		// back in the dependency set and undo the paragraph above.
-		const target = untrack(() => ({ runId, taskId, namespace, attempt: viewedAttempt }));
+		const target = untrack(() => ({ runId, taskId, namespace, attempt: viewedAttempt, item }));
 		// A subscription replays this attempt from its first chunk, so the pane
 		// it feeds starts empty. Keeping what a previous subscription left
 		// would double every line, and the numbering it is keyed by would
@@ -367,7 +373,7 @@
 		downloading = true;
 		downloadError = '';
 		const parts: Uint8Array[] = [];
-		const target = untrack(() => ({ runId, taskId, namespace, attempt: viewedAttempt }));
+		const target = untrack(() => ({ runId, taskId, namespace, attempt: viewedAttempt, item }));
 		let resolvedAttempt = target.attempt;
 		const decoder = new TextDecoder();
 		downloadStop = followTaskLogs({
@@ -382,7 +388,7 @@
 					const url = URL.createObjectURL(blob);
 					const link = document.createElement('a');
 					link.href = url;
-					link.download = `${target.runId}-${target.taskId}-attempt-${resolvedAttempt || 'latest'}.log`;
+					link.download = `${target.runId}-${target.taskId}${target.item !== undefined ? `-item-${target.item}` : ''}-attempt-${resolvedAttempt || 'latest'}.log`;
 					link.click();
 					URL.revokeObjectURL(url);
 					downloading = false;
@@ -510,7 +516,7 @@
 				>
 					{dropped} earlier lines are no longer shown here (scrollback is {scrollback} lines).
 					The whole output is in the artifact store: <code class="text-console-fg"
-						>orkctl run logs {runId} --task {taskId}</code
+						>orkctl run logs {runId} --task {taskId}{item !== undefined ? ` --item ${item}` : ''}</code
 					>
 				</p>
 			{/if}

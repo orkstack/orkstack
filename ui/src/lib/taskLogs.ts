@@ -106,6 +106,8 @@ export interface FollowTaskLogsOptions {
 	namespace: string;
 	/** 0 = the latest attempt that wrote anything. */
 	attempt?: number;
+	/** One item of a fan-out task: the socket's `item=`. Undefined for a task's own log. */
+	item?: number;
 	/** false replays the bytes retained so far and then ends; it never follows. */
 	follow?: boolean;
 	/** Raw retained bytes, for an explicit download. The pane still receives decoded lines. */
@@ -338,6 +340,7 @@ export function followTaskLogs(opts: FollowTaskLogsOptions): () => void {
 		if (attempt > 0) query.set('from_attempt', String(attempt));
 		if (opts.namespace) query.set('namespace', opts.namespace);
 		if (opts.attempt) query.set('attempt', String(opts.attempt));
+		if (opts.item !== undefined) query.set('item', String(opts.item));
 		const url =
 			`${wsBaseUrl()}/ws/runs/${encodeURIComponent(opts.runId)}` +
 			`/tasks/${encodeURIComponent(opts.taskId)}/logs?${query.toString()}`;

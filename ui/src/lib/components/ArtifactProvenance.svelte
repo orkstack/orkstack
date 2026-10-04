@@ -30,9 +30,11 @@
 		taskId: string;
 		kind: ArtifactKind;
 		name: string;
+		/** The item of a fan-out task that recorded the artifact; undefined for a task's own. */
+		item?: number;
 	}
 
-	let { runId, namespace, taskId, kind, name }: Props = $props();
+	let { runId, namespace, taskId, kind, name, item }: Props = $props();
 
 	let open = $state(false);
 	let loading = $state(false);
@@ -42,7 +44,8 @@
 	// newer one, so only the latest request may land.
 	let request = 0;
 
-	const base = $derived(`artifact-provenance-${taskId}-${name}`);
+	const key = $derived(`${taskId}${item !== undefined ? `-item-${item}` : ''}-${name}`);
+	const base = $derived(`artifact-provenance-${key}`);
 	const kindName = $derived(refKind(kind));
 
 	async function load(): Promise<void> {
@@ -51,7 +54,7 @@
 		error = '';
 		answer = undefined;
 		try {
-			const res = await orkstack(fetch).runs.getArtifactProvenance({ runId, namespace, taskId, kind, name });
+			const res = await orkstack(fetch).runs.getArtifactProvenance({ runId, namespace, taskId, kind, name, item });
 			if (mine === request) answer = res;
 		} catch (err) {
 			if (mine === request) error = errorMessage(err);
@@ -73,7 +76,7 @@
 
 <button
 	type="button"
-	data-testid="artifact-provenance-toggle-{taskId}-{name}"
+	data-testid="artifact-provenance-toggle-{key}"
 	aria-expanded={open}
 	aria-controls={base}
 	onclick={toggle}
@@ -90,8 +93,8 @@
 		<div class="flex items-start justify-between gap-3">
 			<p class="font-medium text-fg">Provenance of <span class="font-mono">{name}</span> <span class="text-fg-muted">({kindName})</span></p>
 			<CliEquivalent
-				command={provenanceCommand(namespace, runId, taskId, kind, name)}
-				testid="artifact-provenance-cli-{taskId}-{name}"
+				command={provenanceCommand(namespace, runId, taskId, kind, name, item)}
+				testid="artifact-provenance-cli-{key}"
 				label="CLI equivalent of this provenance check"
 			/>
 		</div>

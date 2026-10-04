@@ -72,6 +72,18 @@
 						font-size="11"
 						font-family="var(--font-mono)">{activityLabel(node.task) || '—'}</text
 					>
+					{#if node.task.each}
+						<!-- A fan-out: one node, run as up to max_items items. -->
+						<text
+							data-testid="dag-node-{node.task.id}-each"
+							x={node.x + DAG_NODE_W - 12}
+							y={node.y + 24}
+							text-anchor="end"
+							fill="var(--color-brand-700)"
+							font-size="11"
+							font-family="var(--font-mono)">each ≤ {node.task.each.maxItems}</text
+						>
+					{/if}
 				</g>
 			{/each}
 		</svg>
