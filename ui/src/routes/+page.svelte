@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto, invalidate } from '$app/navigation';
+	import { navigating } from '$app/state';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import FailureFingerprints from '$lib/components/FailureFingerprints.svelte';
@@ -24,6 +25,7 @@
 	} from '$lib/stats';
 	import { fmtTimestamp } from '$lib/status';
 	import { shellQuote } from '$lib/runDetail';
+	import { afterNavigation } from '$lib/settle';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -88,15 +90,26 @@
 	// Auto-refresh at the engine's own cache TTL (ORK_STATS_CACHE_TTL, 5s by
 	// default): asking faster than the cache can change the answer only costs
 	// requests. It invalidates THIS loader, not every loader on the page, so a
-	// refresh does not also re-read the namespace list.
+	// refresh does not also re-read the namespace list. A tick never takes the
+	// router from a navigation the reader began — it waits that navigation out
+	// and is dropped when it left this page ($lib/settle) — so a click on the
+	// dashboard is never lost to the timer.
 	let now = $state(Date.now());
 	let refreshing = $state(false);
 	$effect(() => {
+		let mounted = true;
 		const timer = setInterval(() => {
 			now = Date.now();
-			void invalidate('ork:stats');
+			void afterNavigation(
+				() => navigating.complete,
+				() => mounted,
+				() => invalidate('ork:stats')
+			);
 		}, 5000);
-		return () => clearInterval(timer);
+		return () => {
+			mounted = false;
+			clearInterval(timer);
+		};
 	});
 
 	async function retry() {

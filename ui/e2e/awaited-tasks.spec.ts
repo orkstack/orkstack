@@ -212,3 +212,47 @@ test('a callback posted over HTTP resolves the await', async ({ page, request })
 	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
 	await shot(page, 'screenshot-callback-resolved.png');
 });
+
+// A link clicked in the instant the run's await resolves still navigates. The
+// run page re-reads itself on TASK_RESOLVED and again on the terminal event;
+// SvelteKit gives the router to whichever started last, so a re-read begun
+// while the reader's navigation was loading used to discard that navigation
+// and leave the reader on the run page ($lib/settle). Holding the destination's
+// load open makes the overlap certain instead of a matter of milliseconds: the
+// await is resolved, and the run finishes, while the click is still loading.
+test('a link clicked as the run resolves still navigates', async ({ page, request }) => {
+	const { runId, token } = await submitWithCallback(page);
+	await waitAwaiting(page);
+
+	// Only the Orkflow page reads its versions list, so holding that one RPC
+	// holds the navigation without touching anything the run page re-reads.
+	let held!: () => void;
+	const navigationHeld = new Promise<void>((resolve) => (held = resolve));
+	let release!: () => void;
+	const released = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/orkstack.v1.OrkflowService/ListOrkflowVersions', async (route) => {
+		held();
+		await released;
+		await route.continue();
+	});
+
+	await page.getByTestId('pinned-orkflow-link').click();
+	await navigationHeld;
+	const res = await request.post(`${ENGINE}/v1/runs/${runId}/awaits/approval`, {
+		headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Ork-Principal': 'ci-bot' },
+		data: '{"approved": true, "approver": "ci-bot"}'
+	});
+	expect(res.status()).toBe(202);
+	// The run page stays on screen until the navigation lands and keeps
+	// following the stream, so these prove both events were handled while the
+	// click was still loading.
+	await expect(page.getByTestId('task-approval-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
+
+	release();
+	await expect(page).toHaveURL(new RegExp(`/orkflows/${NAME}\\?`));
+	await expect(page.getByTestId('orkflow-submit-run')).toBeVisible();
+	note(`link clicked while ${runId} resolved and finished: landed on /orkflows/${NAME}`);
+	await shot(page, 'screenshot-link-during-resolution.png');
+});

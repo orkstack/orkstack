@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
-	import { page } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import ArtifactProvenance from '$lib/components/ArtifactProvenance.svelte';
 	import AwaitPanel from '$lib/components/AwaitPanel.svelte';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
@@ -55,6 +55,7 @@
 	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
 	import { ArtifactKind, type LiveAttempt, type RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
 	import { liveLine } from '$lib/live';
+	import { afterNavigation } from '$lib/settle';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -556,6 +557,21 @@
 	// reason that is not true.
 	let terminalFactsRead = $state(untrack(() => isTerminal(data.run?.status ?? Status.UNSPECIFIED)));
 
+	// The two re-reads a live event starts on its own. Neither may take the
+	// router from a navigation the reader already began — a link clicked in
+	// the instant the run finished used to be silently dropped — so each waits
+	// that navigation out, and is skipped when it left this page (see
+	// $lib/settle).
+	let mounted = true;
+	onDestroy(() => (mounted = false));
+	function rereadOnEvent(): Promise<boolean> {
+		return afterNavigation(
+			() => navigating.complete,
+			() => mounted,
+			invalidateAll
+		);
+	}
+
 	let terminalRefresh: Promise<void> | undefined;
 	function refreshTerminalFacts() {
 		if (terminalRefresh) return;
@@ -563,7 +579,7 @@
 			// Events intentionally remain compact and carry no ActivityFailureDetail.
 			// Re-read exactly once at the run's terminal transition instead of
 			// inventing a polling loop or pretending the event message is structured.
-			await invalidateAll();
+			if (!(await rereadOnEvent())) return;
 			mergeTerminalFacts();
 			terminalFactsRead = true;
 		})();
@@ -684,8 +700,7 @@
 			case EventType.TASK_RESOLVED:
 				if (event.message) upsertTask(event.taskId, { message: event.message });
 				void (async () => {
-					await invalidateAll();
-					mergeTerminalFacts();
+					if (await rereadOnEvent()) mergeTerminalFacts();
 				})();
 				break;
 			case EventType.TASK_LOG:
