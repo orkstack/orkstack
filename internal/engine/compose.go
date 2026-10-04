@@ -180,6 +180,12 @@ func ForEachChild(wf *orkstackv1.Orkflow, plan *RunPlan, visit func(taskID strin
 	return nil
 }
 
+// composeStartWithoutRender is a TEST-ONLY switch, the precedent of
+// awaitDeadlineAfterEmit: TestComposedHistory_CatchesAChildStartWithoutItsRender
+// flips it to prove the composed fixture can see a child started without its
+// recorded input render. Never set in production code.
+var composeStartWithoutRender = false
+
 // childState is one composed task's life in this run; a pure function of the
 // workflow input and recorded history, like pinState.
 type childState struct {
@@ -406,12 +412,17 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
 			fmt.Sprintf("task %q: the child run's input could not be rendered: %v", id, err), "")
 	}
-	localCtx := composeLocalContext(ctx)
 	var rendered json.RawMessage
-	if err := workflow.ExecuteLocalActivity(localCtx, ActivityRenderComposedValues, req).Get(localCtx, &rendered); err != nil {
-		code, category, message := renderFailure(renderPrefixChildInput, err)
-		return nil, s.failComposed(ctx, id, code, category,
-			fmt.Sprintf("task %q: the child run's input could not be rendered: %s", id, message), "")
+	if composeStartWithoutRender {
+		// TEST-ONLY: the raw with:, never rendered and never recorded.
+		rendered = req.Templates
+	} else {
+		localCtx := composeLocalContext(ctx)
+		if err := workflow.ExecuteLocalActivity(localCtx, ActivityRenderComposedValues, req).Get(localCtx, &rendered); err != nil {
+			code, category, message := renderFailure(renderPrefixChildInput, err)
+			return nil, s.failComposed(ctx, id, code, category,
+				fmt.Sprintf("task %q: the child run's input could not be rendered: %s", id, message), "")
+		}
 	}
 	childInput, err := payloadOfJSON(rendered)
 	if err != nil {

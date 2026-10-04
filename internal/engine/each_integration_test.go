@@ -141,6 +141,13 @@ func (e *eachE2E) startRunWorker() {
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot})
 	w.RegisterActivityWithOptions(engine.NewEachActivities(e.store).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems})
+	// The compose activities over the same store, as `ork` registers them, so
+	// the composed-orkflows suite runs on this deployment too.
+	compose := engine.NewComposeActivities(e.store)
+	w.RegisterActivityWithOptions(compose.RenderComposedValues,
+		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
+	w.RegisterActivityWithOptions(compose.StoreComposedValues,
+		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
 	if err := w.Start(); err != nil {
 		e.t.Fatalf("start run worker: %v", err)
 	}
