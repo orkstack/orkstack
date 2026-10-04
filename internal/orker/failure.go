@@ -76,6 +76,11 @@ const (
 	ReasonValuesRefetchFailed  = "VALUES_REFETCH_FAILED"
 	ReasonResourceRefused      = "RESOURCE_REQUEST_REFUSED"
 	ReasonNetworkModeRefused   = "NETWORK_MODE_REFUSED"
+	// ReasonEachItemUnavailable is a fan-out item whose array no longer
+	// resolves to the one the engine counted (spec each-fan-out §6.1):
+	// unreachable while the store honours its digests, stated rather than
+	// guessed at.
+	ReasonEachItemUnavailable = "EACH_ITEM_UNAVAILABLE"
 
 	// Image supply-chain policy (image-supply-chain-policy §6.1), re-exported
 	// from internal/task so the engine and the Orker spell one refusal one
@@ -140,6 +145,7 @@ var reasonCategory = map[string]string{
 	ReasonValuesRefetchFailed:  CategoryInfrastructureError,
 	ReasonResourceRefused:      CategoryContractViolation,
 	ReasonNetworkModeRefused:   CategoryContractViolation,
+	ReasonEachItemUnavailable:  CategoryContractViolation,
 
 	ReasonImageNotPermitted:         CategoryContractViolation,
 	ReasonImageNotSigned:            CategoryContractViolation,

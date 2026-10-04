@@ -232,6 +232,10 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		MaxConcurrent:     a.maxConc,
 		MaxConcurrentPins: a.maxPins,
 		RunningTasks:      a.running.Load(),
+		// This build implements fan-out items and their fan-in staging; an
+		// Orker built before it answers false, and submit refuses a fan-out
+		// on its pool (spec each-fan-out §5.11).
+		EachSupported: true,
 	}
 	// The cordon and the load: one lock read, one atomic load and — only when
 	// a pin is open — one ReadDir of the work root.

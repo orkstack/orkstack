@@ -12,7 +12,7 @@ import (
 )
 
 func testRenderer(inputs map[string]any, values map[string]map[string]any, artifacts map[string][]*orkstackv1.ArtifactRef, paths map[string]string, allowlist map[string]struct{}) *renderer {
-	return newRenderer("task", inputs, values, artifacts, paths, allowlist)
+	return newRenderer("task", inputs, values, artifacts, paths, allowlist, nil)
 }
 
 func TestRenderer_ResolvesRunInputReference(t *testing.T) {

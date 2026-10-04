@@ -555,7 +555,17 @@ func (d *OCIDispatcher) execute(
 	}
 	runAsOrkerUser := in.GetRunAsOrkerUser() || d.Policy.ForceUser
 
-	rendered, failure := d.render(ctx, in, staged)
+	// An item of a fan-out resolves its own element of the array the engine
+	// counted, after staging (a task source is read from the staged
+	// values.json) and before render (.each reads it).
+	var eachItem json.RawMessage
+	if in.GetEach() != nil {
+		eachItem, failure = d.resolveEachItem(in, ws)
+		if failure != nil {
+			return nil, failure
+		}
+	}
+	rendered, failure := d.render(ctx, in, staged, eachItem)
 	if failure != nil {
 		return nil, failure
 	}
@@ -588,6 +598,11 @@ func (d *OCIDispatcher) execute(
 		// Nil for an unpinned task, which is what keeps paths.shared and
 		// task.pin out of its task.json entirely (§3.2).
 		Pin: in.GetPin(),
+		// Nil for an attempt that is not an item of a fan-out, which keeps
+		// the `each` key out of its task.json entirely.
+		Each:               in.GetEach(),
+		EachItem:           eachItem,
+		StagedEachUpstream: staged.eachUpstream,
 	}); err != nil {
 		return nil, FailCause(ReasonWorkdirFailed, err, "write task.json: %v", err)
 	}
@@ -859,6 +874,9 @@ type stagedInputs struct {
 	upstreamValues map[string]map[string]any
 	// upstreamArtifacts maps a task id to its refs, for .tasks.<id>.artifacts.
 	upstreamArtifacts map[string][]*orkstackv1.ArtifactRef
+	// eachUpstream lists every fan-out upstream staged for a direct
+	// dependent, for task.json inputs.eachUpstream.
+	eachUpstream []taskJSONEachUpstream
 }
 
 func (d *OCIDispatcher) stageInputs(
@@ -877,6 +895,14 @@ func (d *OCIDispatcher) stageInputs(
 
 	for _, up := range in.GetUpstream() {
 		producer := up.GetTaskId()
+		// A fan-out upstream carries no commit of its own: its items do, and
+		// they are staged one directory per item (spec each-fan-out §6.2).
+		if up.GetEach() != nil {
+			if failure := d.stageEachUpstream(ctx, in, ws, up, staged); failure != nil {
+				return nil, failure
+			}
+			continue
+		}
 		staged.upstreamArtifacts[producer] = up.GetArtifacts()
 
 		for _, ref := range up.GetArtifacts() {
@@ -1208,6 +1234,11 @@ func (d *OCIDispatcher) containerSpec(
 	// one directory, which is exactly the question a pin raises (§7.5, §9).
 	if pin := in.GetPin(); pin != nil {
 		spec.Labels["ork.pin"] = pin.GetInstanceId()
+	}
+	// ork.item names the item of a fan-out this container runs, beside
+	// ork.task, so an operator can ask the runtime for one item's container.
+	if each := in.GetEach(); each != nil {
+		spec.Labels["ork.item"] = fmt.Sprintf("%d", each.GetIndex())
 	}
 	if runAsOrkerUser {
 		spec.User = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
@@ -1760,6 +1791,12 @@ func (d *OCIDispatcher) attemptRecord(
 		Pool:          resolvedPool(in.GetPool()),
 		CommitAdopted: outcome.CommitAdopted,
 	}
+	// An item's record carries its index and is keyed by it
+	// (metadata/attempts/{run}/{task}/{item}/{attempt}.json).
+	if each := in.GetEach(); each != nil {
+		index := each.GetIndex()
+		record.Item = &index
+	}
 	// What this Orker reserved for the attempt — the same effective values
 	// execute() gave the container and task.json — so usage can be derived
 	// from the record alone (docs/STATS.md, "Usage").
@@ -1831,6 +1868,12 @@ func (d *OCIDispatcher) makeAttemptDir(in *orkstackv1.ExecuteTaskInput, attempt 
 	}
 	pattern := fmt.Sprintf("ork-%s-%s-%d-*",
 		safeComponent(in.GetRunId()), safeComponent(in.GetTaskId()), attempt)
+	// An item's directory names it, for an operator reading the work root:
+	// ork-{run}-{task}-i00097-{attempt}-*.
+	if each := in.GetEach(); each != nil {
+		pattern = fmt.Sprintf("ork-%s-%s-i%s-%d-*",
+			safeComponent(in.GetRunId()), safeComponent(in.GetTaskId()), itemSegmentOf(each.GetIndex()), attempt)
+	}
 	dir, err := os.MkdirTemp(root, pattern)
 	if err != nil {
 		return "", err
@@ -1848,9 +1891,14 @@ func (d *OCIDispatcher) openLogSink(
 	in *orkstackv1.ExecuteTaskInput,
 	attempt int32,
 ) *logChunkSink {
+	item := artifacts.NoItem
+	if each := in.GetEach(); each != nil {
+		item = artifacts.ItemAt(each.GetIndex())
+	}
 	return newLogChunkSink(ctx, d.Logs, artifacts.LogRef{
 		RunID:   in.GetRunId(),
 		TaskID:  in.GetTaskId(),
+		Item:    item,
 		Attempt: attempt,
 	}, d.LogOpts).withErrorReporter(func(err error) {
 		if activity.IsActivity(ctx) {
@@ -1922,10 +1970,16 @@ func (d *OCIDispatcher) render(
 	ctx context.Context,
 	in *orkstackv1.ExecuteTaskInput,
 	staged *stagedInputs,
+	eachItem json.RawMessage,
 ) (map[string]any, *Failure) {
 	with := map[string]any{}
 	if in.GetWith() != nil {
 		with = in.GetWith().AsMap()
+	}
+	eachData, err := eachRenderData(in.GetEach(), eachItem)
+	if err != nil {
+		return nil, FailCause(ReasonEachItemUnavailable, err, "task %q item %d: %v",
+			in.GetTaskId(), in.GetEach().GetIndex(), err)
 	}
 	rendered, err := newRenderer(
 		in.GetTaskId(),
@@ -1934,6 +1988,7 @@ func (d *OCIDispatcher) render(
 		staged.upstreamArtifacts,
 		staged.paths,
 		d.EnvAllowlist,
+		eachData,
 	).render(ctx, with)
 	if err != nil {
 		return nil, FailCause(ReasonRenderFailed, err, "%v", err)
