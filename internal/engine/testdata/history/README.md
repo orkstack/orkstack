@@ -120,7 +120,7 @@ composition path still (`docs/DSL.md` "Composition" and "Outputs"): the first
 the first declared-outputs render. They are real histories of the shipped
 examples — `composed-release` composing `release-block@0.1.0`, whose
 `outputs:` the parent's own `outputs:` projects — recorded once, together, by
-a **versioned** worker against a real cluster. Four tests hold the tree to
+a **versioned** worker against a real cluster. Three tests hold the tree to
 them on every `make test`:
 
 - `TestRunWorkflow_ReplaysCommittedComposedHistories` — the command half, for
