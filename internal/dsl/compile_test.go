@@ -104,11 +104,17 @@ func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
 				if task.GetAwait() != nil {
 					continue // an awaited task runs no activity and has no `op`
 				}
-				if len(task.GetCommand()) > 0 {
-					// A command override replaces the image's entrypoint, and
-					// `op` is the entrypoint's selector: there is none to name.
-					// examples/each-fan-out.ork.yaml's `list` writes its own
-					// values.json this way, which activity-shell's ops cannot.
+				if filepath.Base(path) == "each-fan-out.ork.yaml" && task.GetId() == "list" {
+					// The one exemption: this task runs a plain base image
+					// (alpine), not a first-party activity, so there is no `op`
+					// selector to name. Its `command:` is the container's CMD
+					// and writes the values.json array the fan-out reads,
+					// which no activity-shell op can: activity-shell's
+					// ENTRYPOINT writes values.json itself on every op.
+					if len(task.GetCommand()) == 0 || strings.Contains(task.GetUses(), "shell") {
+						t.Fatalf("each-fan-out's list = uses %q, command %v: the exemption no longer fits it",
+							task.GetUses(), task.GetCommand())
+					}
 					continue
 				}
 				with := task.GetWith().AsMap()
