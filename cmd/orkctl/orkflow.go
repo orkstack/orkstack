@@ -150,7 +150,10 @@ func renderOrkflow(out io.Writer, wf *orkstackv1.Orkflow) error {
 	if err := renderOrkflowInputs(out, wf.GetInputs()); err != nil {
 		return err
 	}
-	return renderTaskTable(out, wf.GetTasks())
+	if err := renderTaskTable(out, wf.GetTasks()); err != nil {
+		return err
+	}
+	return renderComposeTables(out, wf)
 }
 
 // renderOrkflowInputs prints the declared inputs, best-effort: the schema is a

@@ -61,6 +61,10 @@ func (s stubResolver) Inspect(_ context.Context, uses, reference string) (*dsl.R
 func (s stubResolver) ResolveOrkflow(ctx context.Context, catalog dsl.Catalog, wf *orkstackv1.Orkflow) (dsl.Resolutions, error) {
 	out := dsl.Resolutions{}
 	for _, task := range wf.GetTasks() {
+		// As the real resolver: an await and a composed task run no image.
+		if task.GetAwait() != nil || dsl.IsComposedTask(task) {
+			continue
+		}
 		reference, err := catalog.ResolveUses(task.GetId(), task.GetUses())
 		if err != nil {
 			return nil, err

@@ -123,7 +123,8 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 const originRefHelp = "correlation reference recorded on the run, e.g. a CI job URL or a ticket; at most 256 bytes"
 
 func newRunGetCommand(g *globalFlags) *cobra.Command {
-	var withAttempts, withTiming bool
+	var withAttempts, withTiming, tree bool
+	var treeDepth int
 	var expand []string
 	cmd := &cobra.Command{
 		Use:   "get <run-id>",
@@ -157,6 +158,18 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 				return fmt.Errorf("--expand only shapes the table; the JSON already carries every item " +
 					"under taskRuns[].items")
 			}
+			if tree && g.json {
+				return fmt.Errorf("--tree reads one run per child and cannot be one JSON document; " +
+					"read each child with orkctl run get <id> --json (their ids are taskRuns[].child.runId)")
+			}
+			if cmd.Flags().Changed("depth") {
+				if !tree {
+					return fmt.Errorf("--depth limits --tree; give --tree with it")
+				}
+				if treeDepth < 1 {
+					return fmt.Errorf("--depth must be at least 1, got %d", treeDepth)
+				}
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -176,6 +189,21 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 			}
 			if err := renderRunWith(cmd.OutOrStdout(), resp.Msg.GetRun(), g.namespace); err != nil {
 				return err
+			}
+			if tree {
+				read := func(runID, namespace string) (*orkstackv1.Run, error) {
+					ctx, cancel := g.unaryContext(cmd)
+					defer cancel()
+					child, err := g.runClient().GetRun(ctx, connect.NewRequest(
+						&orkstackv1.GetRunRequest{RunId: runID, Namespace: namespace}))
+					if err != nil {
+						return nil, err
+					}
+					return child.Msg.GetRun(), nil
+				}
+				if err := renderRunTree(cmd.OutOrStdout(), resp.Msg.GetRun(), read, 1, treeDepth); err != nil {
+					return err
+				}
 			}
 			for _, taskID := range expand {
 				if err := renderFanOutItems(cmd.OutOrStdout(), fanOutRow(resp.Msg.GetRun(), taskID)); err != nil {
@@ -199,6 +227,10 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 		"also print each task's wait, run and total time and every attempt's phases")
 	cmd.Flags().StringArrayVar(&expand, "expand", nil,
 		"print every item of this fan-out task (repeatable)")
+	cmd.Flags().BoolVar(&tree, "tree", false,
+		"also print every child run a composed task started, and theirs, depth first")
+	cmd.Flags().IntVar(&treeDepth, "depth", 0,
+		"with --tree, stop descending below this level of child runs (default: the whole tree)")
 	return cmd
 }
 
@@ -389,6 +421,58 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 		fmt.Fprintln(out, "No task runs yet.")
 		return nil
 	}
+	if err := renderTaskRunTable(out, run); err != nil {
+		return err
+	}
+	// One line per expanded fan-out, naming the command that expands it.
+	first := true
+	for _, taskRun := range run.GetTaskRuns() {
+		if !taskRun.GetEach().GetExpanded() {
+			continue
+		}
+		if first {
+			fmt.Fprintln(out)
+			first = false
+		}
+		fmt.Fprintln(out, fanOutSummaryLine(namespace, run.GetId(), taskRun))
+	}
+	// One line per composed task, naming its child run and the command that
+	// opens it. A run with no composed task prints nothing new.
+	first = true
+	for _, taskRun := range run.GetTaskRuns() {
+		if taskRun.GetChild() == nil {
+			continue
+		}
+		if first {
+			fmt.Fprintln(out)
+			first = false
+		}
+		fmt.Fprintln(out, composedLine(run.GetNamespace(), taskRun))
+	}
+	return renderAwaitTable(out, run, nowFunc())
+}
+
+func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {
+	if len(runs) == 0 {
+		fmt.Fprintln(out, "No runs.")
+		return nil
+	}
+	table := newTable(out)
+	fmt.Fprintln(table, "ID\tORKFLOW\tVERSION\tORIGIN\tSTATUS\tCREATED\tFINISHED")
+	for _, run := range runs {
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion(), originColumn(run.GetOrigin()),
+			statusLabel(run.GetStatus()), formatTime(run.GetCreatedAt()), formatTime(run.GetFinishedAt()))
+	}
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	return nil
+}
+
+// renderTaskRunTable prints a run's task table: the table `run get` shows,
+// and the one `run get --tree` indents under each child run.
+func renderTaskRunTable(out io.Writer, run *orkstackv1.Run) error {
 	table := newTable(out)
 	// POOL/PIN/ORKER sit between the identity and the outcome: WHERE a task ran
 	// is the question asked right after WHAT it is and HOW it ended. PIN and
@@ -415,36 +499,6 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 			attempt, exit, formatTime(taskRun.GetScheduledAt()),
 			formatTime(taskRun.GetStartedAt()),
 			formatTime(taskRun.GetFinishedAt()), errorLine(taskRun.GetError()))
-	}
-	if err := table.Flush(); err != nil {
-		return fmt.Errorf("write output: %w", err)
-	}
-	// One line per expanded fan-out, naming the command that expands it.
-	first := true
-	for _, taskRun := range run.GetTaskRuns() {
-		if !taskRun.GetEach().GetExpanded() {
-			continue
-		}
-		if first {
-			fmt.Fprintln(out)
-			first = false
-		}
-		fmt.Fprintln(out, fanOutSummaryLine(namespace, run.GetId(), taskRun))
-	}
-	return renderAwaitTable(out, run, nowFunc())
-}
-
-func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {
-	if len(runs) == 0 {
-		fmt.Fprintln(out, "No runs.")
-		return nil
-	}
-	table := newTable(out)
-	fmt.Fprintln(table, "ID\tORKFLOW\tVERSION\tORIGIN\tSTATUS\tCREATED\tFINISHED")
-	for _, run := range runs {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion(), originColumn(run.GetOrigin()),
-			statusLabel(run.GetStatus()), formatTime(run.GetCreatedAt()), formatTime(run.GetFinishedAt()))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

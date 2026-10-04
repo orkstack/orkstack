@@ -516,6 +516,11 @@ func (r *taskRunner) execute() error {
 	if r.spec == nil {
 		return fmt.Errorf("task %q is not in orkflow %s@%s", r.opts.task, r.wf.GetName(), r.wf.GetVersion())
 	}
+	// A composed task starts a child run, not a container: refused by name
+	// before anything is fetched or composed.
+	if ref := r.spec.GetOrkflow(); ref != nil {
+		return engine.ComposedTaskRefusal(r.opts.task, ref)
+	}
 	closure, err := engine.TaskClosure(r.wf, r.opts.task)
 	if err != nil {
 		return err
