@@ -1,0 +1,28 @@
+string: "say \"hi\"\n"
+unpinned version: current
+pinned current: "current"
+list: ["main", "gpu"]
+empty list: []
+map: {a: "2", z: "1"}
+empty map: {}
+duration 168h: 168h
+duration 1h30m: 1h30m
+duration 30s: 30s
+duration 1h0m30s: 1h0m30s
+duration unset: unset
+run_retention unset: inherit
+timestamp: 2026-01-02T02:04:05Z
+timestamp unset: unset
+overlap: cancel-other
+overlap unspecified: skip
+task_logs: disabled
+input: {"a":[true,null],"m":{"k":"v"},"z":1}
+input unset: unset
+telemetry: {sink: "datadog", task_logs: inherit, attributes: {a: "1", b: "2"}}
+telemetry unset: {}
+events: [TASK_SUCCEEDED, RUN_FAILED]
+events every run transition: []
+schedule summary: reconcile@current  0 2 * * * (Europe/Lisbon)
+schedule summary interval: sync@2  @daily | every 1h
+trigger summary: deploy@current
+webhook summary: https://hooks.acme.dev/etl  payments/nightly-etl/*

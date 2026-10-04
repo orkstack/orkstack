@@ -16,3 +16,10 @@ func NewS3RunArchiveWithOptions(ctx context.Context, cfg Config, optFns ...func(
 	}
 	return &S3RunArchive{client: s3.New(client.Options(), optFns...), bucket: bucket}, nil
 }
+
+// SetTriggerUpdateHookForTest makes Update run hook between its read and its
+// conditional write, so a test can delete the record in that window.
+func SetTriggerUpdateHookForTest(s *S3TriggerStore, hook func()) { s.beforeConditionalPut = hook }
+
+// SetWebhookUpdateHookForTest is SetTriggerUpdateHookForTest for webhooks.
+func SetWebhookUpdateHookForTest(s *S3WebhookStore, hook func()) { s.beforeConditionalPut = hook }

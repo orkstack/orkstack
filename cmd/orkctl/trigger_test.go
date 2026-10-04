@@ -117,7 +117,7 @@ func TestRenderTriggerList_RendersAnUnpinnedVersionAsCurrent(t *testing.T) {
 		t.Fatalf("renderTriggerList: %v", err)
 	}
 	for _, fragment := range []string{
-		"ID", "NAMESPACE", "ORKFLOW", "VERSION", "DESCRIPTION", "CREATED",
+		"ID", "NAME", "NAMESPACE", "ORKFLOW", "VERSION", "DESCRIPTION", "CREATED",
 		"trg-aaa", "current", "trg-bbb", "2", "from CI", "2026-01-02T03:04:05Z",
 	} {
 		if !strings.Contains(out.String(), fragment) {

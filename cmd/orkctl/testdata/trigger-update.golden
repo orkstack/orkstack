@@ -1,0 +1,8 @@
+Updated trigger trg-<id>
+NAME         github-deploy
+NAMESPACE    payments
+ORKFLOW      deploy
+VERSION      1.4.0
+DESCRIPTION  kept
+
+The token is unchanged.

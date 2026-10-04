@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -26,10 +27,17 @@ func (s *Service) RegisterWebhook(ctx context.Context, req *connect.Request[orks
 	if err := webhooks.ValidateScope(req.Msg.GetNamespace(), req.Msg.GetOrkflowName(), req.Msg.GetTaskId(), events); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	if err := webhooks.ValidateName(req.Msg.GetName(), req.Msg.GetNamespace()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	hook, err := s.webhooks.RegisterContext(ctx, webhooks.Registration{
 		URL: req.Msg.GetUrl(), Events: events, Secret: req.Msg.GetSecret(),
 		Namespace: req.Msg.GetNamespace(), OrkflowName: req.Msg.GetOrkflowName(), TaskID: req.Msg.GetTaskId(),
+		Name: req.Msg.GetName(),
 	})
+	if errors.Is(err, webhooks.ErrNameTaken) {
+		return nil, connect.NewError(connect.CodeAlreadyExists, webhookNameTaken(req.Msg.GetName(), req.Msg.GetNamespace()))
+	}
 	if err != nil {
 		return nil, webhookConnectError(err)
 	}
@@ -59,6 +67,57 @@ func (s *Service) DeleteWebhook(ctx context.Context, req *connect.Request[orksta
 	return connect.NewResponse(&orkstackv1.DeleteWebhookResponse{}), nil
 }
 
+// UpdateWebhook replaces a subscription's name, URL, events and scope in
+// place, on the register path's own checks in the register path's order. The
+// id and the signing secret are untouched, so a receiver keeps verifying and
+// the subscription's delivery history stays continuous.
+func (s *Service) UpdateWebhook(ctx context.Context, req *connect.Request[orkstackv1.UpdateWebhookRequest]) (*connect.Response[orkstackv1.UpdateWebhookResponse], error) {
+	msg := req.Msg
+	events, err := webhookEventsFromProto(msg.GetEvents())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	target, err := webhooks.ValidateURL(msg.GetUrl())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if err := webhooks.ValidateScope(msg.GetNamespace(), msg.GetOrkflowName(), msg.GetTaskId(), events); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if err := webhooks.ValidateName(msg.GetName(), msg.GetNamespace()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	hook, found, err := s.webhooks.UpdateContext(ctx, msg.GetId(), func(w *webhooks.Webhook) error {
+		w.Name = msg.GetName()
+		w.URL = target
+		w.Events = events
+		w.Namespace = msg.GetNamespace()
+		w.OrkflowName = msg.GetOrkflowName()
+		w.TaskID = msg.GetTaskId()
+		return nil
+	})
+	switch {
+	case errors.Is(err, webhooks.ErrNameTaken):
+		return nil, connect.NewError(connect.CodeAlreadyExists, webhookNameTaken(msg.GetName(), msg.GetNamespace()))
+	case errors.Is(err, webhooks.ErrUpdateContention):
+		return nil, connect.NewError(connect.CodeUnavailable, err)
+	case errors.Is(err, artifacts.ErrInvalidWebhookID):
+		// An id no store can address is absent, not a storage fault.
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("webhook %q not found", msg.GetId()))
+	case err != nil:
+		return nil, webhookConnectError(err)
+	case !found:
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("webhook %q not found", msg.GetId()))
+	}
+	return connect.NewResponse(&orkstackv1.UpdateWebhookResponse{Webhook: webhookProto(hook)}), nil
+}
+
+// webhookNameTaken is the AlreadyExists message for a name another
+// subscription of the namespace scope holds.
+func webhookNameTaken(name, namespace string) error {
+	return fmt.Errorf("webhook name %q is already in use in namespace %q", name, namespace)
+}
+
 func webhookEventsFromProto(events []orkstackv1.EventType) ([]webhooks.Event, error) {
 	out := make([]webhooks.Event, 0, len(events))
 	for _, event := range events {
@@ -81,6 +140,7 @@ func webhookProto(hook webhooks.Webhook) *orkstackv1.Webhook {
 	return &orkstackv1.Webhook{
 		Id: hook.ID, Url: hook.URL, Events: events, CreatedAt: timestamppb.New(hook.CreatedAt),
 		Namespace: hook.Namespace, OrkflowName: hook.OrkflowName, TaskId: hook.TaskID,
+		Name: hook.Name,
 	}
 }
 

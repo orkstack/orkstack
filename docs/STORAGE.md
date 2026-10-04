@@ -53,6 +53,8 @@ place each shape is spelled.
 | `metadata/orkflows/{ns}/{name}/@current.json` | the version new runs execute (`OrkflowCurrentKey`, `orkflow_current.go`) | compare-and-swap | the same delete |
 | `metadata/orkflows/{ns}/{name}/@head.json` | the newest applied version; moving it is the apply commit point (`OrkflowHeadKey`, `orkflow_head.go`) | compare-and-swap | the same delete |
 | `metadata/namespaces/{name}.json` | the namespace registry entry (`NamespaceKey`, `namespace_store.go`) | conditional PUT with an etag | `orkctl namespace delete`, refused while the namespace holds anything |
+| `metadata/triggers/{id}.json` | one inbound run starter: namespace, orkflow, pinned version, description, optional `name`, and the salted digest of its token — never the token (`triggerKey`, `pkg/artifacts/trigger_store.go`); flat, because the invoke URL carries only the id | conditional create; rewritten in place only by `UpdateTrigger`, through a conditional put on the ETag it read (name, pin, description change; the id and the digest never do) | `orkctl trigger delete` |
+| `metadata/webhooks/{id}.json` | one subscription: the protojson of `RegisterWebhookResponse` — URL, events, scope, optional `webhook.name`, and the signing secret, which no read but delivery's returns (`webhookKey`, `webhook_store.go`) | conditional create; rewritten in place only by `UpdateWebhook`, through a conditional put on the ETag it read (name, URL, events and scope change; the id and the secret never do) | `orkctl webhook delete` |
 | `metadata/settings/image-policy.json` | the deployment image supply-chain floor (`ImagePolicyKey`, `image_policy_store.go`) | plain put by `UpdateImagePolicy`; absent until an operator writes one | nothing |
 | `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`, `archive.go`) | once, at the run's terminal event; read verbatim as `run.jsonl` by `RunService.ExportRunEvidence` (docs/RUN_EVIDENCE.md) | nothing; archive bodies are never deleted |
 | `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row (`RunIndexKey`) | with the archive body | nothing |
@@ -102,6 +104,17 @@ run id is encoded, never parsed (AGENTS.md §7).
   resolution arrives, before the resolution is delivered; it is the only
   object an await produces. It lands in the same content-addressed family, with
   the same provenance metadata, as a container's `values.json`.
+- **No automation document is stored anywhere.** A document lives in Git;
+  `PlanAutomation` reads it from the request and the namespace's live objects
+  and writes nothing, and an apply writes only through the ordinary trigger,
+  webhook, schedule and namespace RPCs. A trigger or webhook record carries
+  an optional `name`, nothing else: no "managed-by" marker, no last-applied
+  copy. A record written before names existed reads as unnamed; nothing is
+  migrated.
+- **An update never recreates a delete.** The trigger and webhook records are
+  rewritable by their own update only, with a conditional put naming the
+  ETag the update read; a record deleted between the read and the write stays
+  deleted, and the update reports NotFound.
 - **The archive is append-only.** Bodies and index rows — the run index and
   the origin index alike — are never deleted;
   what the cleanup worker reclaims is the run's logs, attempt records,

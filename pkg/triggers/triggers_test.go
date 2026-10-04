@@ -1,8 +1,10 @@
 package triggers_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 
@@ -197,6 +199,143 @@ func TestTriggerPublicAndMatches(t *testing.T) {
 	for _, tc := range cases {
 		if got := record.Matches(tc.namespace, tc.orkflow); got != tc.want {
 			t.Errorf("Matches(%q, %q) = %v, want %v", tc.namespace, tc.orkflow, got, tc.want)
+		}
+	}
+}
+
+func TestValidateName(t *testing.T) {
+	for _, name := range []string{"", "github-deploy", "a", "a1-b2"} {
+		if err := triggers.ValidateName(name); err != nil {
+			t.Errorf("ValidateName(%q) = %v, want nil", name, err)
+		}
+	}
+	long := "a" + strings.Repeat("b", 200)
+	for name, want := range map[string]string{
+		"Github": "must match",
+		"-x":     "must match",
+		"a b":    "must match",
+		long:     "exceeds 200 bytes",
+	} {
+		err := triggers.ValidateName(name)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ValidateName(%q) = %v, want an error containing %q", name, err, want)
+		}
+	}
+}
+
+func TestMemoryStore_CreateRefusesATakenNameInTheNamespace(t *testing.T) {
+	ctx := context.Background()
+	store := triggers.NewMemoryStore()
+	reg := triggers.Registration{Namespace: "payments", OrkflowName: "deploy", Name: "github-deploy"}
+	if _, _, err := store.Create(ctx, reg); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	if _, _, err := store.Create(ctx, reg); !errors.Is(err, triggers.ErrNameTaken) {
+		t.Fatalf("second Create = %v, want ErrNameTaken", err)
+	}
+	other := reg
+	other.Namespace = "billing"
+	if _, _, err := store.Create(ctx, other); err != nil {
+		t.Fatalf("the same name in another namespace: %v", err)
+	}
+	unnamed := triggers.Registration{Namespace: "payments", OrkflowName: "deploy"}
+	for i := 0; i < 2; i++ {
+		if _, _, err := store.Create(ctx, unnamed); err != nil {
+			t.Fatalf("unnamed Create %d: %v", i, err)
+		}
+	}
+}
+
+func TestMemoryStore_UpdateChangesOnlyMutableFields(t *testing.T) {
+	ctx := context.Background()
+	store := triggers.NewMemoryStore()
+	created, secret, err := store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "deploy"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	updated, ok, err := store.Update(ctx, created.ID, "payments", func(tr *triggers.Trigger) error {
+		tr.Name = "github-deploy"
+		tr.OrkflowVersion = "1.4.0"
+		tr.Description = "GitHub Actions deploy hook"
+		return nil
+	})
+	if err != nil || !ok {
+		t.Fatalf("Update = %v, %v", ok, err)
+	}
+	if updated.Name != "github-deploy" || updated.OrkflowVersion != "1.4.0" || updated.Description != "GitHub Actions deploy hook" {
+		t.Errorf("Update returned %+v, want the new name, version and description", updated)
+	}
+	if updated.SecretHash != nil || updated.SecretSalt != nil {
+		t.Error("Update returned the verification material; it must answer with a Public copy")
+	}
+	stored, _, _ := store.Get(ctx, created.ID)
+	if stored.ID != created.ID || stored.Namespace != created.Namespace || stored.OrkflowName != created.OrkflowName ||
+		!stored.CreatedAt.Equal(created.CreatedAt) ||
+		string(stored.SecretSalt) != string(created.SecretSalt) || string(stored.SecretHash) != string(created.SecretHash) {
+		t.Errorf("immutable fields changed: before %+v, after %+v", created, stored)
+	}
+	if !triggers.VerifySecret(stored, secret) {
+		t.Error("the token Create returned no longer verifies after an update")
+	}
+
+	_, _, err = store.Update(ctx, created.ID, "payments", func(tr *triggers.Trigger) error {
+		tr.OrkflowName = "other"
+		tr.Description = "should not land"
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "orkflow") {
+		t.Fatalf("an update changing the orkflow = %v, want a refusal naming the orkflow", err)
+	}
+	after, _, _ := store.Get(ctx, created.ID)
+	if after.OrkflowName != "deploy" || after.Description != "GitHub Actions deploy hook" {
+		t.Errorf("a refused update changed the record: %+v", after)
+	}
+}
+
+func TestMemoryStore_UpdateOfAnotherNamespaceOrADeletedTriggerIsAbsent(t *testing.T) {
+	ctx := context.Background()
+	store := triggers.NewMemoryStore()
+	created, _, err := store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "deploy"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	touch := func(tr *triggers.Trigger) error { tr.Description = "x"; return nil }
+	if _, ok, err := store.Update(ctx, created.ID, "billing", touch); ok || err != nil {
+		t.Fatalf("Update in another namespace = %v, %v; want absent", ok, err)
+	}
+	if ok, _ := store.Delete(ctx, created.ID, "payments"); !ok {
+		t.Fatal("Delete reported absent")
+	}
+	if _, ok, err := store.Update(ctx, created.ID, "payments", touch); ok || err != nil {
+		t.Fatalf("Update after delete = %v, %v; want absent", ok, err)
+	}
+	if _, found, _ := store.Get(ctx, created.ID); found {
+		t.Fatal("an update brought a deleted trigger back")
+	}
+}
+
+func TestMemoryStore_UpdateRefusesATakenName(t *testing.T) {
+	ctx := context.Background()
+	store := triggers.NewMemoryStore()
+	if _, _, err := store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "deploy", Name: "taken"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	second, _, err := store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "deploy"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, _, err = store.Update(ctx, second.ID, "payments", func(tr *triggers.Trigger) error { tr.Name = "taken"; return nil })
+	if !errors.Is(err, triggers.ErrNameTaken) {
+		t.Fatalf("rename onto a taken name = %v, want ErrNameTaken", err)
+	}
+	// Keeping one's own name is not a collision.
+	first, _ := store.List(ctx, "payments", "")
+	for _, tr := range first {
+		if tr.Name != "taken" {
+			continue
+		}
+		if _, _, err := store.Update(ctx, tr.ID, "payments", func(t *triggers.Trigger) error { t.Description = "same name"; return nil }); err != nil {
+			t.Fatalf("an update keeping its own name: %v", err)
 		}
 	}
 }

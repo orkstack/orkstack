@@ -16,6 +16,13 @@ applied to the `ork` engine with `orkctl apply`.
 | `pins`        | no       | Declared task pins (see below).                        |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
+`orkctl apply` also accepts **automation documents**, recognised by
+`kind: Automation` (with `apiVersion: orkstack/v1` and a `namespace:`): one
+file per namespace declaring its settings, schedules, triggers and webhooks by
+name. No orkflow document can carry `kind` or `apiVersion` — the compiler
+refuses an unknown key — so the two never collide. See
+[`docs/AUTOMATION.md`](AUTOMATION.md).
+
 ### `namespace`
 
 A namespace is a scope: an orkflow name is unique *within* one, so two

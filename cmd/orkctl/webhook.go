@@ -43,6 +43,7 @@ func newWebhookCommand(g *globalFlags) *cobra.Command {
 	cmd.AddCommand(
 		newWebhookRegisterCommand(g),
 		newWebhookListCommand(g),
+		newWebhookUpdateCommand(g),
 		newWebhookDeleteCommand(g),
 		newWebhookDeliveriesCommand(g),
 		newWebhookDeliveryCommand(g),
@@ -57,6 +58,7 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 		secret      string
 		orkflowName string
 		taskID      string
+		name        string
 	)
 	cmd := &cobra.Command{
 		Use:   "register <url>",
@@ -68,6 +70,8 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 			"ORK_NAMESPACE and the saved default do not apply here. --orkflow and\n" +
 			"--task narrow further; each is an exact match, empty means every, and\n" +
 			"--task needs at least one TASK_* event.\n\n" +
+			"--name gives the subscription a handle, unique in its namespace scope,\n" +
+			"by which an automation document addresses it; it needs an explicit -n.\n\n" +
 			"The signing secret is printed once, here. Deliveries carry it as\n" +
 			"an HMAC-SHA256 of the request body in the " + webhooks.SignatureHeader + " header.",
 		Example: "  orkctl webhook register https://example.test/hooks --event RUN_SUCCEEDED --event RUN_FAILED\n" +
@@ -105,13 +109,16 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 			if err := webhooks.ValidateScope(namespace, orkflowName, taskID, parsed); err != nil {
 				return err
 			}
+			if err := webhooks.ValidateName(name, namespace); err != nil {
+				return err
+			}
 
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
 			response, err := g.webhookClient().RegisterWebhook(ctx, connect.NewRequest(&orkstackv1.RegisterWebhookRequest{
 				Url: args[0], Events: selected, Secret: secret,
-				Namespace: namespace, OrkflowName: orkflowName, TaskId: taskID,
+				Namespace: namespace, OrkflowName: orkflowName, TaskId: taskID, Name: name,
 			}))
 			if err != nil {
 				return err
@@ -132,7 +139,154 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 		"narrow to runs of this orkflow (exact name; empty means every orkflow)")
 	cmd.Flags().StringVar(&taskID, "task", "",
 		"narrow task events to this task (exact id; needs a TASK_* --event)")
+	cmd.Flags().StringVar(&name, "name", "",
+		"handle an automation document addresses this subscription by (needs -n)")
 	return cmd
+}
+
+func newWebhookUpdateCommand(g *globalFlags) *cobra.Command {
+	var (
+		name           string
+		target         string
+		events         []string
+		clearEvents    bool
+		deploymentWide bool
+		orkflowName    string
+		taskID         string
+	)
+	cmd := &cobra.Command{
+		Use:   "update <id>",
+		Short: "Rename, re-point or re-scope a webhook in place, keeping its secret",
+		Long: "update changes a subscription's name, URL, events and scope in place. Its\n" +
+			"id and signing secret never change, so a receiver keeps verifying and the\n" +
+			"subscription's delivery history stays continuous.\n\n" +
+			"Only the flags given change anything: --event replaces the event list,\n" +
+			"--clear-events empties it (every run transition), an explicit -n sets the\n" +
+			"namespace scope and --deployment-wide clears it, --orkflow \"\" and\n" +
+			"--task \"\" clear those, --name \"\" makes the subscription unnamed. A\n" +
+			"name needs a namespace scope. Rotating a secret is delete then register.",
+		Example: "  orkctl webhook update wh-9f2e07c1a4b3d58e --name etl-loader\n" +
+			"  orkctl webhook update wh-9f2e07c1a4b3d58e --url https://hooks.example.test/v2",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			if clearEvents && cmd.Flags().Changed("event") {
+				return fmt.Errorf("--event and --clear-events are mutually exclusive")
+			}
+			if deploymentWide && cmd.Flags().Changed("namespace") {
+				return fmt.Errorf("-n and --deployment-wide are mutually exclusive")
+			}
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
+
+			listed, err := g.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{}))
+			if err != nil {
+				return rpcError("update webhook", err)
+			}
+			var current *orkstackv1.Webhook
+			for _, hook := range listed.Msg.GetWebhooks() {
+				if hook.GetId() == id {
+					current = hook
+				}
+			}
+			if current == nil {
+				return fmt.Errorf("update webhook: not_found: webhook %q not found", id)
+			}
+			req := &orkstackv1.UpdateWebhookRequest{
+				Id: id, Name: current.GetName(), Url: current.GetUrl(), Events: current.GetEvents(),
+				Namespace: current.GetNamespace(), OrkflowName: current.GetOrkflowName(), TaskId: current.GetTaskId(),
+			}
+			if cmd.Flags().Changed("name") {
+				req.Name = name
+			}
+			if cmd.Flags().Changed("url") {
+				req.Url = target
+			}
+			if cmd.Flags().Changed("event") {
+				req.Events = nil
+				for _, raw := range events {
+					for _, part := range strings.Split(raw, ",") {
+						if strings.TrimSpace(part) == "" {
+							continue
+						}
+						event, err := webhooks.ParseEvent(part)
+						if err != nil {
+							return err
+						}
+						req.Events = append(req.Events, eventType(event))
+					}
+				}
+			}
+			if clearEvents {
+				req.Events = nil
+			}
+			// Only an explicit -n sets the scope, as on register: a saved or
+			// environment namespace must never re-scope a subscription.
+			if cmd.Flags().Changed("namespace") {
+				req.Namespace = g.namespace
+			}
+			if deploymentWide {
+				req.Namespace = ""
+			}
+			if cmd.Flags().Changed("orkflow") {
+				req.OrkflowName = orkflowName
+			}
+			if cmd.Flags().Changed("task") {
+				req.TaskId = taskID
+			}
+			if _, err := webhooks.ValidateURL(req.Url); err != nil {
+				return err
+			}
+			parsed := make([]webhooks.Event, 0, len(req.Events))
+			for _, event := range req.Events {
+				if p, err := webhooks.ParseEvent(event.String()); err == nil {
+					parsed = append(parsed, p)
+				}
+			}
+			if err := webhooks.ValidateScope(req.Namespace, req.OrkflowName, req.TaskId, parsed); err != nil {
+				return err
+			}
+			if err := webhooks.ValidateName(req.Name, req.Namespace); err != nil {
+				if deploymentWide {
+					return fmt.Errorf("--deployment-wide would leave subscription %s named %q: %w (clear it with --name \"\")", id, req.Name, err)
+				}
+				return err
+			}
+			response, err := g.webhookClient().UpdateWebhook(ctx, connect.NewRequest(req))
+			if err != nil {
+				return rpcError("update webhook", err)
+			}
+			hook := webhookFromProto(response.Msg.GetWebhook())
+			if g.json {
+				return writeIndentedJSON(cmd.OutOrStdout(), webhookEnvelope{Webhook: hook})
+			}
+			return renderWebhookUpdated(cmd.OutOrStdout(), hook)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "new handle (\"\" makes the subscription unnamed; needs a namespace scope)")
+	cmd.Flags().StringVar(&target, "url", "", "new callback URL")
+	cmd.Flags().StringArrayVar(&events, "event", nil, "replace the event list (repeatable): "+strings.Join(eventNames(), " | "))
+	cmd.Flags().BoolVar(&clearEvents, "clear-events", false, "empty the event list: every run transition")
+	cmd.Flags().BoolVar(&deploymentWide, "deployment-wide", false, "clear the namespace scope")
+	cmd.Flags().StringVar(&orkflowName, "orkflow", "", "narrow to runs of this orkflow (\"\" clears it)")
+	cmd.Flags().StringVar(&taskID, "task", "", "narrow task events to this task (\"\" clears it)")
+	return cmd
+}
+
+// renderWebhookUpdated prints an updated subscription. The secret is never in
+// an update's request or response, so there is no row for it.
+func renderWebhookUpdated(out io.Writer, hook webhooks.Webhook) error {
+	fmt.Fprintf(out, "Updated webhook %s\n", hook.ID)
+	table := newTable(out)
+	fmt.Fprintf(table, "NAME\t%s\n", orDash(hook.Name))
+	fmt.Fprintf(table, "URL\t%s\n", hook.URL)
+	fmt.Fprintf(table, "EVENTS\t%s\n", webhookEventCell(hook))
+	fmt.Fprintf(table, "SCOPE\t%s\n", webhookScopeCell(hook))
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	fmt.Fprintln(out, "\nThe signing secret is unchanged.")
+	return nil
 }
 
 func newWebhookListCommand(g *globalFlags) *cobra.Command {
@@ -199,12 +353,16 @@ func webhookFromProto(hook *orkstackv1.Webhook) webhooks.Webhook {
 	return webhooks.Webhook{
 		ID: hook.GetId(), URL: hook.GetUrl(), Events: events, CreatedAt: created,
 		Namespace: hook.GetNamespace(), OrkflowName: hook.GetOrkflowName(), TaskID: hook.GetTaskId(),
+		Name: hook.GetName(),
 	}
 }
 
 func renderWebhookRegistered(out io.Writer, hook webhooks.Webhook) error {
 	fmt.Fprintf(out, "Registered webhook %s\n", hook.ID)
 	table := newTable(out)
+	if hook.Name != "" {
+		fmt.Fprintf(table, "NAME\t%s\n", hook.Name)
+	}
 	fmt.Fprintf(table, "URL\t%s\n", hook.URL)
 	fmt.Fprintf(table, "EVENTS\t%s\n", webhookEventCell(hook))
 	fmt.Fprintf(table, "SCOPE\t%s\n", webhookScopeCell(hook))
@@ -223,10 +381,10 @@ func renderWebhookList(out io.Writer, hooks []webhooks.Webhook) error {
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "ID\tURL\tEVENTS\tSCOPE\tCREATED")
+	fmt.Fprintln(table, "ID\tNAME\tURL\tEVENTS\tSCOPE\tCREATED")
 	for _, hook := range hooks {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n",
-			hook.ID, hook.URL, webhookEventCell(hook), webhookScopeCell(hook), hook.CreatedAt.UTC().Format(time.RFC3339))
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			hook.ID, orDash(hook.Name), hook.URL, webhookEventCell(hook), webhookScopeCell(hook), hook.CreatedAt.UTC().Format(time.RFC3339))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

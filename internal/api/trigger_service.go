@@ -30,6 +30,12 @@ func (s *Service) CreateTrigger(
 	if name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("orkflow_name is required"))
 	}
+	// The trigger's own name is checked before anything is resolved: a name
+	// no automation document could address is a bad request whatever the
+	// namespace holds.
+	if err := triggers.ValidateName(req.Msg.GetName()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	// The namespace is resolved BEFORE the orkflow is read, and the orkflow is
 	// read before anything is written. These are the same two checks
 	// SubmitRun's own preparation performs, in the same order and returning
@@ -51,7 +57,12 @@ func (s *Service) CreateTrigger(
 		OrkflowName:    name,
 		OrkflowVersion: version,
 		Description:    req.Msg.GetDescription(),
+		Name:           req.Msg.GetName(),
 	})
+	if errors.Is(err, triggers.ErrNameTaken) {
+		return nil, connect.NewError(connect.CodeAlreadyExists, fmt.Errorf(
+			"trigger name %q is already in use in namespace %q", req.Msg.GetName(), ns.GetName()))
+	}
 	if err != nil {
 		return nil, triggerConnectError(err)
 	}
@@ -114,6 +125,62 @@ func (s *Service) DeleteTrigger(
 	return connect.NewResponse(&orkstackv1.DeleteTriggerResponse{}), nil
 }
 
+// UpdateTrigger replaces a trigger's name, pinned version and description in
+// place. The id, namespace, orkflow and bearer token are untouched, so the URL
+// and the token an external caller holds keep working. It runs CreateTrigger's
+// checks in CreateTrigger's order: namespace, then the trigger, then the pin.
+func (s *Service) UpdateTrigger(
+	ctx context.Context,
+	req *connect.Request[orkstackv1.UpdateTriggerRequest],
+) (*connect.Response[orkstackv1.UpdateTriggerResponse], error) {
+	id := req.Msg.GetId()
+	ns, err := s.namespace(ctx, req.Msg.GetNamespace())
+	if err != nil {
+		return nil, err
+	}
+	notFound := connect.NewError(connect.CodeNotFound,
+		fmt.Errorf("trigger %q not found in namespace %q", id, ns.GetName()))
+	if !triggers.ValidID(id) {
+		return nil, notFound
+	}
+	if err := triggers.ValidateName(req.Msg.GetName()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	current, found, err := s.triggers.Get(ctx, id)
+	if err != nil {
+		return nil, triggerConnectError(err)
+	}
+	if !found || current.Namespace != ns.GetName() {
+		return nil, notFound
+	}
+	// A pin must exist at update exactly as at create: a trigger must never
+	// be re-pointed at a version a submission would refuse.
+	if version := req.Msg.GetOrkflowVersion(); version != "" {
+		if _, err := s.orkflows.Get(ctx, ns.GetName(), current.OrkflowName, version); err != nil {
+			return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
+				current.OrkflowName, version, ns.GetName())
+		}
+	}
+	updated, found, err := s.triggers.Update(ctx, id, ns.GetName(), func(t *triggers.Trigger) error {
+		t.Name = req.Msg.GetName()
+		t.OrkflowVersion = req.Msg.GetOrkflowVersion()
+		t.Description = req.Msg.GetDescription()
+		return nil
+	})
+	switch {
+	case errors.Is(err, triggers.ErrNameTaken):
+		return nil, connect.NewError(connect.CodeAlreadyExists, fmt.Errorf(
+			"trigger name %q is already in use in namespace %q", req.Msg.GetName(), ns.GetName()))
+	case errors.Is(err, triggers.ErrUpdateContention):
+		return nil, connect.NewError(connect.CodeUnavailable, err)
+	case err != nil:
+		return nil, triggerConnectError(err)
+	case !found:
+		return nil, notFound
+	}
+	return connect.NewResponse(&orkstackv1.UpdateTriggerResponse{Trigger: triggerProto(updated)}), nil
+}
+
 // triggerProto renders one record on the wire. orkstack.v1.Trigger has no
 // secret field, so there is nothing here to strip: the verification material
 // simply has no wire representation.
@@ -125,6 +192,7 @@ func triggerProto(trigger triggers.Trigger) *orkstackv1.Trigger {
 		OrkflowVersion: trigger.OrkflowVersion,
 		Description:    trigger.Description,
 		CreatedAt:      timestamppb.New(trigger.CreatedAt),
+		Name:           trigger.Name,
 	}
 }
 

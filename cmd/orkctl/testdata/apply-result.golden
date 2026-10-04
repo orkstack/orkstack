@@ -1,0 +1,31 @@
+environments/prod/automation.ork.yaml  namespace payments
+~ namespace  payments
+      description: "" → "card rails"
+      allowed_pools: [] → ["main"]
++ trigger    github-deploy      deploy@current
+      orkflow: "deploy"
+      description: "GitHub Actions deploy hook"
+~ schedule   nightly-reconcile  reconcile@current  0 2 * * * (Europe/Lisbon)  sch-<id>
+      cron: ["0 3 * * *"] → ["0 2 * * *"]
+~ webhook    etl-loader         https://hooks.acme.dev/etl  payments/nightly-etl/*  wh-<id>
+      orkflow: "" → "nightly-etl"
+? trigger    manual-hook        deploy@current  trg-<id>  not in this document; kept (--prune deletes it)
+! trigger    -                  deploy@current  trg-<id>  has no name; name it with `orkctl trigger update trg-<id> -n payments --name NAME` to manage it here
+
+Plan: 1 to create, 3 to update, 0 to delete.
+Plan digest: sha256:<digest>
+
+Applied 4 of 4 steps in namespace payments.
+  applied   ~ namespace  payments
+  applied   + trigger    github-deploy      trg-<id>
+  applied   ~ schedule   nightly-reconcile
+  applied   ~ webhook    etl-loader
+
+Trigger github-deploy (trg-<id>) was created. Its token is shown once:
+  <secret>
+Invoke it with:
+  curl -X POST 'http://localhost:8080/v1/triggers/trg-<id>' \
+    -H 'Authorization: Bearer <secret>' \
+    -H 'Content-Type: application/json' \
+    -d '{}'
+  # optional: -H 'Ork-Origin-Reference: <your CI job URL>' records a correlation reference on the run

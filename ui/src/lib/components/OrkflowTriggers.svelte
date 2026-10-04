@@ -17,6 +17,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
@@ -24,6 +25,8 @@
 	import { namespaceLabel } from '$lib/namespace';
 	import { shellQuote } from '$lib/runDetail';
 	import { fmtTimestamp } from '$lib/status';
+	import { triggerUpdateCli } from '$lib/automation';
+	import { SCOPE_SLUG_PATTERN } from '$lib/webhooks';
 
 	interface Props {
 		name: string;
@@ -48,6 +51,18 @@
 
 	let selectedVersion = $state(CURRENT);
 	let description = $state('');
+	// The trigger's optional handle: how an automation document addresses it
+	// (docs/AUTOMATION.md). The pattern only catches a typo; the server is the
+	// authority on the slug rule and on uniqueness.
+	let triggerName = $state('');
+	// The edit dialog: name, pin and description change in place; the id, URL
+	// and token never do (UpdateTrigger).
+	let editing = $state<Trigger | null>(null);
+	let editName = $state('');
+	let editVersion = $state(CURRENT);
+	let editDescription = $state('');
+	let editError = $state('');
+	let saving = $state(false);
 	let creating = $state(false);
 	let createError = $state('');
 	// The one-time disclosure. Held only in this component's memory: the store
@@ -121,11 +136,13 @@
 				namespace,
 				orkflowName: name,
 				orkflowVersion: chosenVersion,
-				description
+				description,
+				name: triggerName.trim()
 			});
 			shownTrigger = response.trigger ?? null;
 			shownSecret = response.secret;
 			description = '';
+			triggerName = '';
 			selectedVersion = CURRENT;
 			await invalidateAll();
 		} catch (err) {
@@ -157,6 +174,37 @@
 			deleteError = errorMessage(err);
 		} finally {
 			removing = false;
+		}
+	}
+
+	function startEdit(trigger: Trigger) {
+		editing = trigger;
+		editName = trigger.name;
+		editVersion = trigger.orkflowVersion || CURRENT;
+		editDescription = trigger.description;
+		editError = '';
+	}
+
+	const editPin = $derived(editVersion === CURRENT ? '' : editVersion);
+
+	async function saveEdit() {
+		if (!editing) return;
+		saving = true;
+		editError = '';
+		try {
+			await orkstack(fetch).triggers.updateTrigger({
+				id: editing.id,
+				namespace,
+				name: editName.trim(),
+				orkflowVersion: editPin,
+				description: editDescription
+			});
+			editing = null;
+			await invalidateAll();
+		} catch (err) {
+			editError = errorMessage(err);
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -221,6 +269,22 @@
 					? `Pinned to ${chosenVersion}. It keeps starting that version after the current pointer moves.`
 					: `Unpinned. Each invoke starts whichever version is current${currentLabel ? ` (${currentLabel} now)` : ''}.`}
 			</p>
+		</div>
+
+		<div class="flex flex-col gap-1.5">
+			<label for="trigger-create-name" class="text-sm font-medium text-fg">
+				Name <span class="font-normal text-fg-muted">(optional — how an automation document refers to it)</span>
+			</label>
+			<input
+				id="trigger-create-name"
+				data-testid="trigger-create-name"
+				bind:value={triggerName}
+				pattern={SCOPE_SLUG_PATTERN}
+				maxlength={200}
+				title="lowercase letters, digits and hyphens, starting with a letter"
+				placeholder="github-deploy"
+				class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+			/>
 		</div>
 
 		<div class="flex flex-col gap-1.5">
@@ -309,6 +373,10 @@
 				<div class="flex items-start justify-between gap-4">
 					<div class="min-w-0">
 						<p class="font-mono text-sm font-medium break-all text-fg">{trigger.id}</p>
+						<p class="mt-1 text-sm" data-testid="trigger-name-{trigger.id}">
+							{#if trigger.name}<span class="font-mono font-medium text-fg">{trigger.name}</span
+								>{:else}<span class="text-fg-muted">unnamed</span>{/if}
+						</p>
 						<p class="mt-1 text-sm text-fg-secondary" data-testid="trigger-scope-{trigger.id}">
 							{scopeOf(trigger)}
 						</p>
@@ -323,6 +391,14 @@
 							testid="trigger-cli-{trigger.id}"
 							label="Invocation of {trigger.id}"
 						/>
+						<button
+							type="button"
+							data-testid="edit-trigger-{trigger.id}"
+							onclick={() => startEdit(trigger)}
+							class="inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas focus-visible:outline-none"
+						>
+							Edit
+						</button>
 						<button
 							type="button"
 							data-testid="delete-trigger-{trigger.id}"
@@ -368,4 +444,77 @@
 			</p>
 		{/snippet}
 	</ConfirmDialog>
+{/if}
+
+{#if editing}
+	<Dialog title="Edit trigger {editing.id}" testid="trigger-edit-dialog" onclose={() => (editing = null)} widthClass="max-w-xl">
+		{#snippet body()}
+			<p class="mb-3 text-sm text-fg-secondary">
+				Editing keeps this trigger's URL and token. Its orkflow cannot change.
+			</p>
+			<form
+				class="space-y-3"
+				onsubmit={(event) => {
+					event.preventDefault();
+					void saveEdit();
+				}}
+			>
+				<div class="flex flex-col gap-1.5">
+					<label for="trigger-edit-name" class="text-sm font-medium text-fg">
+						Name <span class="font-normal text-fg-muted">(empty makes it unnamed)</span>
+					</label>
+					<input
+						id="trigger-edit-name"
+						data-testid="trigger-edit-name"
+						bind:value={editName}
+						pattern={SCOPE_SLUG_PATTERN}
+						maxlength={200}
+						title="lowercase letters, digits and hyphens, starting with a letter"
+						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					/>
+				</div>
+				<div class="flex flex-col gap-1.5">
+					<label for="trigger-edit-version" class="text-sm font-medium text-fg">Version</label>
+					<Select
+						id="trigger-edit-version"
+						testid="trigger-edit-version"
+						value={editVersion}
+						options={versionOptions}
+						disabled={saving}
+						onchange={(next) => (editVersion = next)}
+					/>
+				</div>
+				<div class="flex flex-col gap-1.5">
+					<label for="trigger-edit-description" class="text-sm font-medium text-fg">Description</label>
+					<input
+						id="trigger-edit-description"
+						data-testid="trigger-edit-description"
+						bind:value={editDescription}
+						class="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg shadow-xs focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none"
+					/>
+				</div>
+				{#if editError}
+					<ErrorPanel testid="trigger-edit-error" message={editError} />
+				{/if}
+				<div class="flex items-center justify-between gap-3">
+					<button
+						type="submit"
+						data-testid="trigger-edit-submit"
+						disabled={saving}
+						class="inline-flex h-9 items-center justify-center rounded-md bg-brand-600 px-3.5 text-sm font-medium text-white shadow-xs transition-colors duration-150 hover:bg-brand-700 disabled:pointer-events-none disabled:opacity-50"
+					>
+						{saving ? 'Saving…' : 'Save'}
+					</button>
+					<CliEquivalent
+						command={triggerUpdateCli(editing?.id ?? "", namespaceLabel(namespace), {
+							name: editName.trim(),
+							version: editPin,
+							description: editDescription
+						})}
+						testid="trigger-edit-cli"
+					/>
+				</div>
+			</form>
+		{/snippet}
+	</Dialog>
 {/if}

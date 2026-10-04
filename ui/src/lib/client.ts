@@ -13,6 +13,7 @@ import {
 import { StatsService } from './gen/orkstack/v1/stats_pb';
 import { AuditService } from './gen/orkstack/v1/audit_pb';
 import { ScheduleService } from './gen/orkstack/v1/schedule_pb';
+import { AutomationService } from './gen/orkstack/v1/automation_pb';
 
 // All platform access goes through the clients generated from
 // proto/orkstack/v1 (see ui/src/lib/gen). The browser uses same-origin URLs;
@@ -43,7 +44,11 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 		system: createClient(SystemService, transport),
 		// audit reads the control-plane audit trail back: one immutable
 		// record per write RPC, from the shared store. It is itself a read.
-		audit: createClient(AuditService, transport)
+		audit: createClient(AuditService, transport),
+		// automation plans and exports a namespace's automation document. It
+		// writes nothing: the Automation page applies a plan by sending each
+		// step's request to the services above (src/lib/automation.ts).
+		automation: createClient(AutomationService, transport)
 	};
 }
 

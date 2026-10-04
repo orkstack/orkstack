@@ -236,8 +236,8 @@ type fixture struct {
 	// timeoutLog is the Connect-Timeout-Ms header each request carried, in
 	// the same order: the deadline the CLI gave that one request.
 	timeoutLog []string
-	// bodyLog is each ScheduleService request's raw body (nil for every
-	// other request), in the same order, so a test can decode exactly what
+	// bodyLog is each ScheduleService and AutomationService request's raw
+	// body (nil for every other request), in the same order, so a test can decode exactly what
 	// the CLI put on the wire.
 	bodyLog [][]byte
 }
@@ -341,7 +341,7 @@ func newFixtureWith(
 		// Only unary schedule requests are buffered: a streaming body must
 		// reach the handler as it arrives.
 		var body []byte
-		if strings.Contains(r.URL.Path, "ScheduleService") || strings.Contains(r.URL.Path, "SystemService") {
+		if strings.Contains(r.URL.Path, "ScheduleService") || strings.Contains(r.URL.Path, "SystemService") || strings.Contains(r.URL.Path, "AutomationService") {
 			body, _ = io.ReadAll(r.Body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}

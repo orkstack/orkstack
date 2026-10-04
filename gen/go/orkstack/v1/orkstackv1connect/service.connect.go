@@ -110,6 +110,9 @@ const (
 	// WebhookServiceListWebhooksProcedure is the fully-qualified name of the WebhookService's
 	// ListWebhooks RPC.
 	WebhookServiceListWebhooksProcedure = "/orkstack.v1.WebhookService/ListWebhooks"
+	// WebhookServiceUpdateWebhookProcedure is the fully-qualified name of the WebhookService's
+	// UpdateWebhook RPC.
+	WebhookServiceUpdateWebhookProcedure = "/orkstack.v1.WebhookService/UpdateWebhook"
 	// WebhookServiceDeleteWebhookProcedure is the fully-qualified name of the WebhookService's
 	// DeleteWebhook RPC.
 	WebhookServiceDeleteWebhookProcedure = "/orkstack.v1.WebhookService/DeleteWebhook"
@@ -128,6 +131,9 @@ const (
 	// TriggerServiceListTriggersProcedure is the fully-qualified name of the TriggerService's
 	// ListTriggers RPC.
 	TriggerServiceListTriggersProcedure = "/orkstack.v1.TriggerService/ListTriggers"
+	// TriggerServiceUpdateTriggerProcedure is the fully-qualified name of the TriggerService's
+	// UpdateTrigger RPC.
+	TriggerServiceUpdateTriggerProcedure = "/orkstack.v1.TriggerService/UpdateTrigger"
 	// TriggerServiceDeleteTriggerProcedure is the fully-qualified name of the TriggerService's
 	// DeleteTrigger RPC.
 	TriggerServiceDeleteTriggerProcedure = "/orkstack.v1.TriggerService/DeleteTrigger"
@@ -1191,6 +1197,13 @@ func (UnimplementedRunServiceHandler) ExportRunEvidence(context.Context, *connec
 type WebhookServiceClient interface {
 	RegisterWebhook(context.Context, *connect.Request[v1.RegisterWebhookRequest]) (*connect.Response[v1.RegisterWebhookResponse], error)
 	ListWebhooks(context.Context, *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error)
+	// UpdateWebhook REPLACES a subscription's mutable fields — name, url,
+	// events and scope — in place. Its id and signing secret never change, so
+	// a receiver keeps verifying and a delivery record's webhook_id keeps
+	// naming the same subscription. Last writer wins; an update never brings
+	// back a subscription deleted meanwhile (NotFound). The secret is never in
+	// the request or the response.
+	UpdateWebhook(context.Context, *connect.Request[v1.UpdateWebhookRequest]) (*connect.Response[v1.UpdateWebhookResponse], error)
 	DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error)
 	// ListDeliveries lists delivery records newest first, bounded and
 	// paginated. A scan that would examine more keys than the engine's budget
@@ -1229,6 +1242,12 @@ func NewWebhookServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(webhookServiceMethods.ByName("ListWebhooks")),
 			connect.WithClientOptions(opts...),
 		),
+		updateWebhook: connect.NewClient[v1.UpdateWebhookRequest, v1.UpdateWebhookResponse](
+			httpClient,
+			baseURL+WebhookServiceUpdateWebhookProcedure,
+			connect.WithSchema(webhookServiceMethods.ByName("UpdateWebhook")),
+			connect.WithClientOptions(opts...),
+		),
 		deleteWebhook: connect.NewClient[v1.DeleteWebhookRequest, v1.DeleteWebhookResponse](
 			httpClient,
 			baseURL+WebhookServiceDeleteWebhookProcedure,
@@ -1260,6 +1279,7 @@ func NewWebhookServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 type webhookServiceClient struct {
 	registerWebhook  *connect.Client[v1.RegisterWebhookRequest, v1.RegisterWebhookResponse]
 	listWebhooks     *connect.Client[v1.ListWebhooksRequest, v1.ListWebhooksResponse]
+	updateWebhook    *connect.Client[v1.UpdateWebhookRequest, v1.UpdateWebhookResponse]
 	deleteWebhook    *connect.Client[v1.DeleteWebhookRequest, v1.DeleteWebhookResponse]
 	listDeliveries   *connect.Client[v1.ListDeliveriesRequest, v1.ListDeliveriesResponse]
 	getDelivery      *connect.Client[v1.GetDeliveryRequest, v1.GetDeliveryResponse]
@@ -1274,6 +1294,11 @@ func (c *webhookServiceClient) RegisterWebhook(ctx context.Context, req *connect
 // ListWebhooks calls orkstack.v1.WebhookService.ListWebhooks.
 func (c *webhookServiceClient) ListWebhooks(ctx context.Context, req *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error) {
 	return c.listWebhooks.CallUnary(ctx, req)
+}
+
+// UpdateWebhook calls orkstack.v1.WebhookService.UpdateWebhook.
+func (c *webhookServiceClient) UpdateWebhook(ctx context.Context, req *connect.Request[v1.UpdateWebhookRequest]) (*connect.Response[v1.UpdateWebhookResponse], error) {
+	return c.updateWebhook.CallUnary(ctx, req)
 }
 
 // DeleteWebhook calls orkstack.v1.WebhookService.DeleteWebhook.
@@ -1300,6 +1325,13 @@ func (c *webhookServiceClient) RedeliverWebhook(ctx context.Context, req *connec
 type WebhookServiceHandler interface {
 	RegisterWebhook(context.Context, *connect.Request[v1.RegisterWebhookRequest]) (*connect.Response[v1.RegisterWebhookResponse], error)
 	ListWebhooks(context.Context, *connect.Request[v1.ListWebhooksRequest]) (*connect.Response[v1.ListWebhooksResponse], error)
+	// UpdateWebhook REPLACES a subscription's mutable fields — name, url,
+	// events and scope — in place. Its id and signing secret never change, so
+	// a receiver keeps verifying and a delivery record's webhook_id keeps
+	// naming the same subscription. Last writer wins; an update never brings
+	// back a subscription deleted meanwhile (NotFound). The secret is never in
+	// the request or the response.
+	UpdateWebhook(context.Context, *connect.Request[v1.UpdateWebhookRequest]) (*connect.Response[v1.UpdateWebhookResponse], error)
 	DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error)
 	// ListDeliveries lists delivery records newest first, bounded and
 	// paginated. A scan that would examine more keys than the engine's budget
@@ -1334,6 +1366,12 @@ func NewWebhookServiceHandler(svc WebhookServiceHandler, opts ...connect.Handler
 		connect.WithSchema(webhookServiceMethods.ByName("ListWebhooks")),
 		connect.WithHandlerOptions(opts...),
 	)
+	webhookServiceUpdateWebhookHandler := connect.NewUnaryHandler(
+		WebhookServiceUpdateWebhookProcedure,
+		svc.UpdateWebhook,
+		connect.WithSchema(webhookServiceMethods.ByName("UpdateWebhook")),
+		connect.WithHandlerOptions(opts...),
+	)
 	webhookServiceDeleteWebhookHandler := connect.NewUnaryHandler(
 		WebhookServiceDeleteWebhookProcedure,
 		svc.DeleteWebhook,
@@ -1364,6 +1402,8 @@ func NewWebhookServiceHandler(svc WebhookServiceHandler, opts ...connect.Handler
 			webhookServiceRegisterWebhookHandler.ServeHTTP(w, r)
 		case WebhookServiceListWebhooksProcedure:
 			webhookServiceListWebhooksHandler.ServeHTTP(w, r)
+		case WebhookServiceUpdateWebhookProcedure:
+			webhookServiceUpdateWebhookHandler.ServeHTTP(w, r)
 		case WebhookServiceDeleteWebhookProcedure:
 			webhookServiceDeleteWebhookHandler.ServeHTTP(w, r)
 		case WebhookServiceListDeliveriesProcedure:
@@ -1389,6 +1429,10 @@ func (UnimplementedWebhookServiceHandler) ListWebhooks(context.Context, *connect
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.ListWebhooks is not implemented"))
 }
 
+func (UnimplementedWebhookServiceHandler) UpdateWebhook(context.Context, *connect.Request[v1.UpdateWebhookRequest]) (*connect.Response[v1.UpdateWebhookResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.UpdateWebhook is not implemented"))
+}
+
 func (UnimplementedWebhookServiceHandler) DeleteWebhook(context.Context, *connect.Request[v1.DeleteWebhookRequest]) (*connect.Response[v1.DeleteWebhookResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.WebhookService.DeleteWebhook is not implemented"))
 }
@@ -1409,6 +1453,13 @@ func (UnimplementedWebhookServiceHandler) RedeliverWebhook(context.Context, *con
 type TriggerServiceClient interface {
 	CreateTrigger(context.Context, *connect.Request[v1.CreateTriggerRequest]) (*connect.Response[v1.CreateTriggerResponse], error)
 	ListTriggers(context.Context, *connect.Request[v1.ListTriggersRequest]) (*connect.Response[v1.ListTriggersResponse], error)
+	// UpdateTrigger REPLACES a trigger's mutable fields — name, pinned version,
+	// description — in place. Its id, namespace, orkflow and bearer token never
+	// change: an update never re-issues a token, and the URL an external caller
+	// holds keeps working. Binding a trigger to another orkflow is delete then
+	// create. Last writer wins, and an update never brings back a trigger that
+	// was deleted meanwhile: that is NotFound.
+	UpdateTrigger(context.Context, *connect.Request[v1.UpdateTriggerRequest]) (*connect.Response[v1.UpdateTriggerResponse], error)
 	DeleteTrigger(context.Context, *connect.Request[v1.DeleteTriggerRequest]) (*connect.Response[v1.DeleteTriggerResponse], error)
 }
 
@@ -1435,6 +1486,12 @@ func NewTriggerServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(triggerServiceMethods.ByName("ListTriggers")),
 			connect.WithClientOptions(opts...),
 		),
+		updateTrigger: connect.NewClient[v1.UpdateTriggerRequest, v1.UpdateTriggerResponse](
+			httpClient,
+			baseURL+TriggerServiceUpdateTriggerProcedure,
+			connect.WithSchema(triggerServiceMethods.ByName("UpdateTrigger")),
+			connect.WithClientOptions(opts...),
+		),
 		deleteTrigger: connect.NewClient[v1.DeleteTriggerRequest, v1.DeleteTriggerResponse](
 			httpClient,
 			baseURL+TriggerServiceDeleteTriggerProcedure,
@@ -1448,6 +1505,7 @@ func NewTriggerServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 type triggerServiceClient struct {
 	createTrigger *connect.Client[v1.CreateTriggerRequest, v1.CreateTriggerResponse]
 	listTriggers  *connect.Client[v1.ListTriggersRequest, v1.ListTriggersResponse]
+	updateTrigger *connect.Client[v1.UpdateTriggerRequest, v1.UpdateTriggerResponse]
 	deleteTrigger *connect.Client[v1.DeleteTriggerRequest, v1.DeleteTriggerResponse]
 }
 
@@ -1461,6 +1519,11 @@ func (c *triggerServiceClient) ListTriggers(ctx context.Context, req *connect.Re
 	return c.listTriggers.CallUnary(ctx, req)
 }
 
+// UpdateTrigger calls orkstack.v1.TriggerService.UpdateTrigger.
+func (c *triggerServiceClient) UpdateTrigger(ctx context.Context, req *connect.Request[v1.UpdateTriggerRequest]) (*connect.Response[v1.UpdateTriggerResponse], error) {
+	return c.updateTrigger.CallUnary(ctx, req)
+}
+
 // DeleteTrigger calls orkstack.v1.TriggerService.DeleteTrigger.
 func (c *triggerServiceClient) DeleteTrigger(ctx context.Context, req *connect.Request[v1.DeleteTriggerRequest]) (*connect.Response[v1.DeleteTriggerResponse], error) {
 	return c.deleteTrigger.CallUnary(ctx, req)
@@ -1470,6 +1533,13 @@ func (c *triggerServiceClient) DeleteTrigger(ctx context.Context, req *connect.R
 type TriggerServiceHandler interface {
 	CreateTrigger(context.Context, *connect.Request[v1.CreateTriggerRequest]) (*connect.Response[v1.CreateTriggerResponse], error)
 	ListTriggers(context.Context, *connect.Request[v1.ListTriggersRequest]) (*connect.Response[v1.ListTriggersResponse], error)
+	// UpdateTrigger REPLACES a trigger's mutable fields — name, pinned version,
+	// description — in place. Its id, namespace, orkflow and bearer token never
+	// change: an update never re-issues a token, and the URL an external caller
+	// holds keeps working. Binding a trigger to another orkflow is delete then
+	// create. Last writer wins, and an update never brings back a trigger that
+	// was deleted meanwhile: that is NotFound.
+	UpdateTrigger(context.Context, *connect.Request[v1.UpdateTriggerRequest]) (*connect.Response[v1.UpdateTriggerResponse], error)
 	DeleteTrigger(context.Context, *connect.Request[v1.DeleteTriggerRequest]) (*connect.Response[v1.DeleteTriggerResponse], error)
 }
 
@@ -1492,6 +1562,12 @@ func NewTriggerServiceHandler(svc TriggerServiceHandler, opts ...connect.Handler
 		connect.WithSchema(triggerServiceMethods.ByName("ListTriggers")),
 		connect.WithHandlerOptions(opts...),
 	)
+	triggerServiceUpdateTriggerHandler := connect.NewUnaryHandler(
+		TriggerServiceUpdateTriggerProcedure,
+		svc.UpdateTrigger,
+		connect.WithSchema(triggerServiceMethods.ByName("UpdateTrigger")),
+		connect.WithHandlerOptions(opts...),
+	)
 	triggerServiceDeleteTriggerHandler := connect.NewUnaryHandler(
 		TriggerServiceDeleteTriggerProcedure,
 		svc.DeleteTrigger,
@@ -1504,6 +1580,8 @@ func NewTriggerServiceHandler(svc TriggerServiceHandler, opts ...connect.Handler
 			triggerServiceCreateTriggerHandler.ServeHTTP(w, r)
 		case TriggerServiceListTriggersProcedure:
 			triggerServiceListTriggersHandler.ServeHTTP(w, r)
+		case TriggerServiceUpdateTriggerProcedure:
+			triggerServiceUpdateTriggerHandler.ServeHTTP(w, r)
 		case TriggerServiceDeleteTriggerProcedure:
 			triggerServiceDeleteTriggerHandler.ServeHTTP(w, r)
 		default:
@@ -1521,6 +1599,10 @@ func (UnimplementedTriggerServiceHandler) CreateTrigger(context.Context, *connec
 
 func (UnimplementedTriggerServiceHandler) ListTriggers(context.Context, *connect.Request[v1.ListTriggersRequest]) (*connect.Response[v1.ListTriggersResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.TriggerService.ListTriggers is not implemented"))
+}
+
+func (UnimplementedTriggerServiceHandler) UpdateTrigger(context.Context, *connect.Request[v1.UpdateTriggerRequest]) (*connect.Response[v1.UpdateTriggerResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.TriggerService.UpdateTrigger is not implemented"))
 }
 
 func (UnimplementedTriggerServiceHandler) DeleteTrigger(context.Context, *connect.Request[v1.DeleteTriggerRequest]) (*connect.Response[v1.DeleteTriggerResponse], error) {

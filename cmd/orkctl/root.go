@@ -34,6 +34,10 @@ const (
 	// unreachable". It shares the number with drain's timeout because the
 	// two belong to different commands and neither can return the other.
 	exitPlanAssertionFailed = 4
+	// exitApplyCheckChanges is `orkctl apply --check` finding that applying
+	// would change something: the documents and what is stored differ. It
+	// is that command's own negative verdict, on the terms above.
+	exitApplyCheckChanges = 4
 )
 
 // defaultServer is used when neither --server nor ORK_SERVER is set.
@@ -139,6 +143,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 	root.AddCommand(
 		newAdminCommand(g),
 		newApplyCommand(g),
+		newExportCommand(g),
 		newNamespaceCommand(g),
 		newOrkflowCommand(g),
 		newOrkerCommand(g),
@@ -266,6 +271,13 @@ func (g *globalFlags) webhookClient() orkstackv1connect.WebhookServiceClient {
 // a trigger is what an external caller invokes to start a run.
 func (g *globalFlags) triggerClient() orkstackv1connect.TriggerServiceClient {
 	return orkstackv1connect.NewTriggerServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
+}
+
+// automationClient reaches AutomationService: the plan and the export of a
+// namespace's automation document. It writes nothing; apply sends the plan's
+// requests to the other clients.
+func (g *globalFlags) automationClient() orkstackv1connect.AutomationServiceClient {
+	return orkstackv1connect.NewAutomationServiceClient(g.httpClient(), g.baseURL(), g.clientOptions()...)
 }
 
 // auditClient reaches AuditService, the read-back of the control-plane audit

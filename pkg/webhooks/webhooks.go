@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -29,7 +30,25 @@ type Store interface {
 	ListForDelivery(context.Context) ([]Webhook, error)
 	Get(context.Context, string) (Webhook, bool, error)
 	Delete(context.Context, string) (bool, error)
+	// Update applies change to the subscription with this id and stores the
+	// result, reporting whether it existed. change may alter Name, URL,
+	// Events, Namespace, OrkflowName and TaskID; ID, Secret and CreatedAt are
+	// carried over and any change to them is refused before anything is
+	// written. The returned Webhook is Public(): the secret never leaves.
+	Update(ctx context.Context, id string, change func(*Webhook) error) (Webhook, bool, error)
 }
+
+// ErrNameTaken reports a named registration or a rename onto a name another
+// subscription of the same namespace scope already holds.
+var ErrNameTaken = errors.New("webhooks: name already in use in this namespace")
+
+// ErrUpdateContention reports a conditional update that lost its race on
+// every round it was allowed. Nothing was written; trying again is the remedy.
+var ErrUpdateContention = errors.New("webhooks: the subscription kept changing while it was being updated; try again")
+
+// UpdateAttempts bounds a durable Update's read-modify-conditional-write
+// rounds, as pkg/triggers.UpdateAttempts does for triggers.
+const UpdateAttempts = 8
 
 // Event names a transition a subscriber can ask for: one of the run's own
 // transitions, or a task outcome. The values are the lifecycle event types
@@ -140,6 +159,10 @@ type Webhook struct {
 	Namespace   string `json:"namespace,omitempty"`
 	OrkflowName string `json:"orkflowName,omitempty"`
 	TaskID      string `json:"taskId,omitempty"`
+	// Name is the operator's handle: a slug unique among the named
+	// subscriptions of its namespace scope, or empty for an unnamed one. It
+	// requires Namespace (ValidateName) and plays no part in delivery.
+	Name string `json:"name,omitempty"`
 }
 
 // Subscribes reports whether w wants event. A subscription that named no
@@ -210,6 +233,8 @@ type Registration struct {
 	Namespace   string `json:"namespace,omitempty"`
 	OrkflowName string `json:"orkflowName,omitempty"`
 	TaskID      string `json:"taskId,omitempty"`
+	// Name is optional; see Webhook.Name and ValidateName.
+	Name string `json:"name,omitempty"`
 }
 
 // maxScopeBytes and scopePattern are the slug rule AGENTS.md §7 states for a
@@ -249,6 +274,79 @@ func ValidateScope(namespace, orkflowName, taskID string, events []Event) error 
 	}
 	return fmt.Errorf("webhooks: a task scope %q needs at least one task event (TASK_SCHEDULED, TASK_STARTED, TASK_SUCCEEDED, TASK_FAILED); "+
 		"without one the subscription receives run transitions only and the task filter is never consulted", taskID)
+}
+
+// ValidateName reports why name cannot be a subscription's name in this
+// namespace scope. Empty is valid — an unnamed subscription. A name is a slug
+// of at most 200 bytes and REQUIRES a namespace: a name is unique within one
+// namespace, and a deployment-wide subscription belongs to none.
+func ValidateName(name, namespace string) error {
+	if name == "" {
+		return nil
+	}
+	if len(name) > maxScopeBytes {
+		return fmt.Errorf("webhooks: invalid name %q: longer than %d bytes", name, maxScopeBytes)
+	}
+	if !scopePattern.MatchString(name) {
+		return fmt.Errorf("webhooks: invalid name %q: must match %s", name, scopePattern)
+	}
+	if namespace == "" {
+		return errors.New("webhooks: a name requires a namespace scope: a name is unique within one namespace, " +
+			"and a deployment-wide subscription belongs to none")
+	}
+	return nil
+}
+
+// NameHeld reports whether a subscription other than self already holds name
+// in namespace among list. An empty name is never held.
+func NameHeld(list []Webhook, name, namespace, self string) bool {
+	if name == "" {
+		return false
+	}
+	for _, hook := range list {
+		if hook.ID != self && hook.Name == name && hook.Namespace == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+// ApplyChange runs change against a copy of current and returns the result
+// with its URL validated and its events normalised, refusing any change to
+// the id, the secret or the creation time and any scope or name the register
+// path would refuse. Every Update implementation calls it, so one place
+// decides what an update may touch.
+func ApplyChange(current Webhook, change func(*Webhook) error) (Webhook, error) {
+	next := current
+	next.Events = append([]Event(nil), current.Events...)
+	if err := change(&next); err != nil {
+		return Webhook{}, err
+	}
+	switch {
+	case next.ID != current.ID:
+		return Webhook{}, errors.New("webhooks: an update cannot change a subscription's id")
+	case next.Secret != current.Secret:
+		return Webhook{}, errors.New("webhooks: an update cannot change a subscription's signing secret")
+	case !next.CreatedAt.Equal(current.CreatedAt):
+		return Webhook{}, errors.New("webhooks: an update cannot change a subscription's creation time")
+	}
+	target, err := ValidateURL(next.URL)
+	if err != nil {
+		return Webhook{}, err
+	}
+	next.URL = target
+	events, err := normalizeEvents(next.Events)
+	if err != nil {
+		return Webhook{}, err
+	}
+	next.Events = events
+	if err := ValidateScope(next.Namespace, next.OrkflowName, next.TaskID, events); err != nil {
+		return Webhook{}, err
+	}
+	if err := ValidateName(next.Name, next.Namespace); err != nil {
+		return Webhook{}, err
+	}
+	return next, nil
 }
 
 // Registry holds subscriptions in process. It is the smallest thing that
@@ -333,6 +431,9 @@ func (r *Registry) RegisterContext(ctx context.Context, reg Registration) (Webho
 	if err := ValidateScope(reg.Namespace, reg.OrkflowName, reg.TaskID, events); err != nil {
 		return Webhook{}, err
 	}
+	if err := ValidateName(reg.Name, reg.Namespace); err != nil {
+		return Webhook{}, err
+	}
 
 	secret := reg.Secret
 	if secret == "" {
@@ -355,10 +456,14 @@ func (r *Registry) RegisterContext(ctx context.Context, reg Registration) (Webho
 		Namespace:   reg.Namespace,
 		OrkflowName: reg.OrkflowName,
 		TaskID:      reg.TaskID,
+		Name:        reg.Name,
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.nameHeldLocked(hook.Name, hook.Namespace, "") {
+		return Webhook{}, ErrNameTaken
+	}
 	if _, clash := r.byID[id]; clash {
 		return Webhook{}, fmt.Errorf("webhooks: id %q is already registered", id)
 	}
@@ -427,6 +532,48 @@ func (r *Registry) DeleteContext(ctx context.Context, id string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// UpdateContext changes one subscription in place, reporting whether it
+// existed. The durable branch is the store's conditional update; the
+// in-memory branch applies the same rules under r.mu. Either way the id and
+// the signing secret are kept and the returned copy is Public. Delivery reads
+// the store on every lookup, so the next delivery on every replica honours
+// the update with no cache to refresh.
+func (r *Registry) UpdateContext(ctx context.Context, id string, change func(*Webhook) error) (Webhook, bool, error) {
+	if r.store != nil {
+		return r.store.Update(ctx, id, change)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.byID[id]
+	if !ok {
+		return Webhook{}, false, nil
+	}
+	next, err := ApplyChange(current, change)
+	if err != nil {
+		return Webhook{}, true, err
+	}
+	if (next.Name != current.Name || next.Namespace != current.Namespace) &&
+		r.nameHeldLocked(next.Name, next.Namespace, id) {
+		return Webhook{}, true, ErrNameTaken
+	}
+	r.byID[id] = next
+	return next.Public(), true, nil
+}
+
+// nameHeldLocked reports whether a subscription other than self holds name in
+// namespace. The caller holds r.mu.
+func (r *Registry) nameHeldLocked(name, namespace, self string) bool {
+	if name == "" {
+		return false
+	}
+	for _, hook := range r.byID {
+		if hook.ID != self && hook.Name == name && hook.Namespace == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // Matching returns the subscriptions that want this event, secrets included:
