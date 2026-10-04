@@ -23,6 +23,7 @@ func newRunLogsCommand(g *globalFlags) *cobra.Command {
 		attempt     int32
 		fromSeq     int64
 		fromAttempt int32
+		item        itemFlag
 	)
 	cmd := &cobra.Command{
 		Use:   "logs <run-id>",
@@ -44,10 +45,17 @@ func newRunLogsCommand(g *globalFlags) *cobra.Command {
 			"no attempt is refused rather than applied to whichever try happens to be\n" +
 			"latest, which would silently skip that try's first chunks.\n\n" +
 			"The exit code reports whether the log could be read, not how the run\n" +
-			"ended; `orkctl run watch` is the command whose exit code is the outcome.",
+			"ended; `orkctl run watch` is the command whose exit code is the outcome.\n\n" +
+			"A fan-out task (each:) writes one log per item: name it with --task and\n" +
+			"--item N. Without --task a fan-out prints one line naming that command.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			selected, err := item.resolve(cmd, taskID)
+			if err != nil {
+				return err
+			}
 			return runLogs(cmd, g, logsRequest{
+				item:        selected,
 				runID:       args[0],
 				taskID:      taskID,
 				follow:      follow,
@@ -66,6 +74,7 @@ func newRunLogsCommand(g *globalFlags) *cobra.Command {
 		"resume after this chunk sequence (0 = from the start of the task's output)")
 	cmd.Flags().Int32Var(&fromAttempt, "from-attempt", 0,
 		"the attempt --from-seq counts chunks of (0 = the attempt --attempt pins)")
+	item.register(cmd, "print this item of the fan-out --task names (0-based)")
 	return cmd
 }
 
@@ -81,6 +90,8 @@ type logsRequest struct {
 	// and delivers the resolved one from its first chunk; it can only do that
 	// if it is told (proto StreamTaskLogsRequest.from_attempt).
 	fromAttempt int32
+	// item names one item of a fan-out --task, or nil.
+	item *int32
 }
 
 // cursorAttempt is the attempt this command's --from-seq belongs to, or an
@@ -155,6 +166,12 @@ func runLogs(cmd *cobra.Command, g *globalFlags, req logsRequest) error {
 		// A replay of a whole run is sequential, so the output is the same on
 		// every invocation and readable as a transcript.
 		for _, taskID := range taskIDsOf(run) {
+			if task := fanOutRow(run, taskID); task != nil {
+				// A fan-out writes one log per item: one line names the
+				// command that reads one, instead of N interleaved streams.
+				writer.fanOutHint(g.namespace, req.runID, task)
+				continue
+			}
 			if err := streamOneTaskLog(ctx, g, req, taskID, writer, true); err != nil {
 				return err
 			}
@@ -186,6 +203,7 @@ func streamOneTaskLog(
 			FromAttempt: fromAttempt,
 			Follow:      req.follow,
 			Namespace:   g.namespace,
+			Item:        req.item,
 		}))
 	if err != nil {
 		return rpcError("read task logs", err)
@@ -232,6 +250,10 @@ func followAllTaskLogs(
 			return
 		}
 		seen[taskID] = struct{}{}
+		if task := fanOutRow(run, taskID); task != nil {
+			writer.fanOutHint(g.namespace, req.runID, task)
+			return
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -316,13 +338,25 @@ func (w *logWriter) chunk(chunk *orkstackv1.TaskLogChunk, prefixed bool) error {
 		return w.write(body)
 	}
 	// Prefixing is per line, not per chunk: a chunk holds many lines and the
-	// task that wrote them belongs on each.
+	// task that wrote them belongs on each — an item's as convert[97].
 	for _, line := range splitLines(body) {
-		if err := w.write("[" + chunk.GetTaskId() + "] " + line); err != nil {
+		if err := w.write("[" + itemLabel(chunk.GetTaskId(), chunk.Item) + "] " + line); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// fanOutHint is the one line a whole-run read prints for a fan-out.
+func (w *logWriter) fanOutHint(namespace, runID string, task *orkstackv1.TaskRun) {
+	if w.json {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_ = w.write(fmt.Sprintf("%s: fan-out of %d items; read one with %s\n",
+		task.GetTaskId(), task.GetEach().GetCount(),
+		orkctlCommand(namespace, "run", "logs", runID, "--task", task.GetTaskId(), "--item", "N")))
 }
 
 func (w *logWriter) write(text string) error {

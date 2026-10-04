@@ -1,0 +1,17 @@
+Name:         each-cli
+Version:      1.0.0
+Description:  -
+Created:      2026-01-02T03:04:05Z
+
+INPUT    TYPE   DEFAULT  REQUIRED
+regions  array  -        -
+
+TASK     USES   NEEDS    TIMEOUT
+list     shell  -        300s
+convert  shell  list     300s
+regions  shell  -        300s
+merge    shell  convert  300s
+
+EACH     OVER                            MAX ITEMS  MAX PARALLEL  AS
+convert  {{ .tasks.list.output.parts }}  500        16            part
+regions  {{ .inputs.regions }}           50         2             item

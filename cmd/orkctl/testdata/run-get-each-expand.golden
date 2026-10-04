@@ -1,0 +1,24 @@
+Run:       ork-each-cli
+Orkflow:   nightly-ingest
+Version:   1.2.0
+Status:    SUCCEEDED
+Created:   2026-01-02T02:04:05Z
+Started:   2026-01-02T02:04:05Z
+Finished:  2026-01-02T02:04:55Z
+Origin:    unrecorded (started before origins were recorded)
+Input:     -
+Output:    -
+
+TASK     STATUS         POOL  PIN  ORKER    ATTEMPT  EXIT  SCHEDULED             STARTED               FINISHED              ERROR
+list     SUCCEEDED      main  -    orker-1  1        0     2026-01-02T02:04:06Z  2026-01-02T02:04:07Z  2026-01-02T02:04:09Z  -
+convert  SUCCEEDED 4/4  gpu   -    -        -        -     2026-01-02T02:04:10Z  2026-01-02T02:04:12Z  2026-01-02T02:04:46Z  -
+merge    SUCCEEDED      main  -    orker-2  1        0     2026-01-02T02:04:47Z  2026-01-02T02:04:48Z  2026-01-02T02:04:54Z  -
+
+convert: 4 items — 4 succeeded, 1 retried. Expand with: orkctl -n data run get ork-each-cli --expand convert
+
+convert — 4 items
+ITEM  STATUS     ORKER    ATTEMPT  EXIT  SCHEDULED             STARTED               FINISHED              ERROR
+0     SUCCEEDED  orker-1  1        0     2026-01-02T02:04:10Z  2026-01-02T02:04:12Z  2026-01-02T02:04:25Z  -
+1     SUCCEEDED  orker-2  1        0     2026-01-02T02:04:10Z  2026-01-02T02:04:13Z  2026-01-02T02:04:30Z  -
+2     SUCCEEDED  orker-1  2        0     2026-01-02T02:04:10Z  2026-01-02T02:04:14Z  2026-01-02T02:04:35Z  -
+3     SUCCEEDED  orker-2  1        0     2026-01-02T02:04:10Z  2026-01-02T02:04:15Z  2026-01-02T02:04:40Z  -

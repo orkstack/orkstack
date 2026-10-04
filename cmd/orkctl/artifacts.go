@@ -16,10 +16,15 @@ import (
 
 func newRunArtifactsCommand(g *globalFlags) *cobra.Command {
 	var task string
+	var item itemFlag
 	cmd := &cobra.Command{Use: "artifacts <run-id>", Short: "List artifacts recorded for a run", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		selected, err := item.resolve(cmd, task)
+		if err != nil {
+			return err
+		}
 		ctx, cancel := g.unaryContext(cmd)
 		defer cancel()
-		response, err := g.runClient().ListRunArtifacts(ctx, connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{RunId: args[0], Namespace: g.namespace, TaskId: task}))
+		response, err := g.runClient().ListRunArtifacts(ctx, connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{RunId: args[0], Namespace: g.namespace, TaskId: task, Item: selected}))
 		if err != nil {
 			return rpcError("list run artifacts", err)
 		}
@@ -29,6 +34,7 @@ func newRunArtifactsCommand(g *globalFlags) *cobra.Command {
 		return renderArtifactList(cmd.OutOrStdout(), response.Msg.GetArtifacts())
 	}}
 	cmd.Flags().StringVar(&task, "task", "", "only artifacts for this task")
+	item.register(cmd, "only this item of the fan-out --task names (0-based)")
 	return cmd
 }
 
@@ -41,8 +47,13 @@ func newRunArtifactCommand(g *globalFlags) *cobra.Command {
 func newRunArtifactDownloadCommand(g *globalFlags) *cobra.Command {
 	var task, kindText, name, output string
 	var overwrite bool
+	var item itemFlag
 	cmd := &cobra.Command{Use: "download <run-id>", Short: "Download one recorded run artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		kind, err := parseArtifactKind(kindText)
+		if err != nil {
+			return err
+		}
+		selected, err := item.resolve(cmd, task)
 		if err != nil {
 			return err
 		}
@@ -66,7 +77,7 @@ func newRunArtifactDownloadCommand(g *globalFlags) *cobra.Command {
 				_ = os.Remove(tmpName)
 			}
 		}()
-		if _, err := readRecordedArtifact(ctx, g.runClient(), &orkstackv1.ReadArtifactRequest{RunId: args[0], Namespace: g.namespace, TaskId: task, Kind: kind, Name: name}, tmp); err != nil {
+		if _, err := readRecordedArtifact(ctx, g.runClient(), &orkstackv1.ReadArtifactRequest{RunId: args[0], Namespace: g.namespace, TaskId: task, Item: selected, Kind: kind, Name: name}, tmp); err != nil {
 			_ = tmp.Close()
 			return err
 		}
@@ -99,6 +110,7 @@ func newRunArtifactDownloadCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "exact artifact name returned by run artifacts")
 	cmd.Flags().StringVar(&output, "output", "", "destination file")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination file")
+	item.register(cmd, "the item of the fan-out --task names (required for a fan-out)")
 	return cmd
 }
 
@@ -172,9 +184,24 @@ func renderArtifactList(out io.Writer, items []*orkstackv1.RunArtifact) error {
 		return err
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "TASK\tATTEMPT\tKIND\tNAME\tSIZE\tSHA256")
+	// An ITEM column appears whenever any listed artifact was recorded by an
+	// item of a fan-out; with no fan-out the table is unchanged.
+	withItems := false
 	for _, item := range items {
-		fmt.Fprintf(table, "%s\t%d\t%s\t%s\t%d\t%s\n", item.GetTaskId(), item.GetAttempt(), strings.TrimPrefix(item.GetKind().String(), "ARTIFACT_KIND_"), item.GetArtifact().GetName(), item.GetArtifact().GetSizeBytes(), item.GetArtifact().GetSha256())
+		withItems = withItems || item.Item != nil
+	}
+	if withItems {
+		fmt.Fprintln(table, "TASK\tITEM\tATTEMPT\tKIND\tNAME\tSIZE\tSHA256")
+	} else {
+		fmt.Fprintln(table, "TASK\tATTEMPT\tKIND\tNAME\tSIZE\tSHA256")
+	}
+	for _, item := range items {
+		kind := strings.TrimPrefix(item.GetKind().String(), "ARTIFACT_KIND_")
+		if withItems {
+			fmt.Fprintf(table, "%s\t%s\t%d\t%s\t%s\t%d\t%s\n", item.GetTaskId(), itemCell(item.Item), item.GetAttempt(), kind, item.GetArtifact().GetName(), item.GetArtifact().GetSizeBytes(), item.GetArtifact().GetSha256())
+			continue
+		}
+		fmt.Fprintf(table, "%s\t%d\t%s\t%s\t%d\t%s\n", item.GetTaskId(), item.GetAttempt(), kind, item.GetArtifact().GetName(), item.GetArtifact().GetSizeBytes(), item.GetArtifact().GetSha256())
 	}
 	return table.Flush()
 }

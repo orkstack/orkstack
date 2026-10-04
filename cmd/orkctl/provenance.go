@@ -28,6 +28,7 @@ const (
 
 func newRunArtifactProvenanceCommand(g *globalFlags) *cobra.Command {
 	var task, kindText, name, expect string
+	var item itemFlag
 	cmd := &cobra.Command{
 		Use:   "provenance <run-id>",
 		Short: "Show whether a recorded artifact's bytes remain and which archived runs recorded the same object",
@@ -44,10 +45,14 @@ func newRunArtifactProvenanceCommand(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			selected, err := item.resolve(cmd, task)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 			request := &orkstackv1.GetArtifactProvenanceRequest{
-				RunId: args[0], Namespace: g.namespace, TaskId: task, Kind: kind, Name: name, ExpectSha256: expect,
+				RunId: args[0], Namespace: g.namespace, TaskId: task, Item: selected, Kind: kind, Name: name, ExpectSha256: expect,
 			}
 			response, err := g.runClient().GetArtifactProvenance(ctx, connect.NewRequest(request))
 			if err != nil {
@@ -63,6 +68,7 @@ func newRunArtifactProvenanceCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&kindText, "kind", "", "artifact kind: output, values, stdout, stderr")
 	cmd.Flags().StringVar(&name, "name", "", "exact artifact name returned by run artifacts")
 	cmd.Flags().StringVar(&expect, "expect-sha256", "", "fail unless the recorded digest is this lowercase hex sha256")
+	item.register(cmd, "the item of the fan-out --task names (required for a fan-out)")
 	return cmd
 }
 
@@ -102,7 +108,7 @@ func renderArtifactProvenance(out io.Writer, res *orkstackv1.GetArtifactProvenan
 				created = ref.GetRunCreatedAt().AsTime().UTC().Format(time.RFC3339)
 			}
 			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				ref.GetRunId(), orDash(ref.GetOrkflowName()), orDash(ref.GetOrkflowVersion()), ref.GetTaskId(),
+				ref.GetRunId(), orDash(ref.GetOrkflowName()), orDash(ref.GetOrkflowVersion()), itemLabel(ref.GetTaskId(), ref.Item),
 				strings.TrimPrefix(ref.GetKind().String(), "ARTIFACT_KIND_"), statusLabel(ref.GetRunStatus()), created)
 		}
 		if err := table.Flush(); err != nil {

@@ -39,6 +39,7 @@ func newRunEvidenceCommand(g *globalFlags) *cobra.Command {
 func newRunEvidenceExportCommand(g *globalFlags) *cobra.Command {
 	var task, output string
 	var noLogs, noArtifacts, overwrite bool
+	var item itemFlag
 	cmd := &cobra.Command{
 		Use:   "export <run-id>",
 		Short: "Write a finished run's evidence bundle to a file",
@@ -49,8 +50,12 @@ func newRunEvidenceExportCommand(g *globalFlags) *cobra.Command {
 			"bundle would carry as its first member, not a proto envelope.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			selected, err := item.resolve(cmd, task)
+			if err != nil {
+				return err
+			}
 			req := &orkstackv1.ExportRunEvidenceRequest{
-				RunId: args[0], Namespace: g.namespace, TaskId: task,
+				RunId: args[0], Namespace: g.namespace, TaskId: task, Item: selected,
 				ExcludeLogs: noLogs, ExcludeArtifacts: noArtifacts,
 			}
 			if g.json {
@@ -80,6 +85,7 @@ func newRunEvidenceExportCommand(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "destination file (required unless --json)")
 	cmd.Flags().StringVar(&task, "task", "", "narrow the per-task members to one task")
+	item.register(cmd, "narrow a fan-out --task to one item")
 	cmd.Flags().BoolVar(&noLogs, "no-logs", false, "leave out every attempt's stdout.log and stderr.log")
 	cmd.Flags().BoolVar(&noArtifacts, "no-artifacts", false, "leave out the tasks' output artifacts")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination file")

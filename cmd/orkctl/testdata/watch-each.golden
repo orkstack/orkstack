@@ -1,0 +1,11 @@
+ SEQ  TIMESTAMP             EVENT             TASK          MESSAGE
+   1  2026-01-02T02:04:05Z  TASK_SCHEDULED    convert       fan-out of 4 items scheduled on pool gpu, at most 2 at a time
+   2  2026-01-02T02:04:06Z  TASK_STARTED      convert       dispatching 4 items to orkers
+   3  2026-01-02T02:04:07Z  TASK_LOG          convert[0]    item 0 succeeded
+   4  2026-01-02T02:04:08Z  TASK_LOG          convert[1]    item 1 succeeded
+   5  2026-01-02T02:04:09Z  TASK_LOG          convert[2]    item 2 succeeded
+   6  2026-01-02T02:04:10Z  TASK_LOG          convert[3]    item 3 succeeded
+   7  2026-01-02T02:04:11Z  TASK_SUCCEEDED    convert       all 4 items succeeded
+   8  2026-01-02T02:04:12Z  RUN_SUCCEEDED     -             run succeeded
+
+Run ork-each-cli finished with status SUCCEEDED

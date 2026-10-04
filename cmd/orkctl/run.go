@@ -124,6 +124,7 @@ const originRefHelp = "correlation reference recorded on the run, e.g. a CI job 
 
 func newRunGetCommand(g *globalFlags) *cobra.Command {
 	var withAttempts, withTiming bool
+	var expand []string
 	cmd := &cobra.Command{
 		Use:   "get <run-id>",
 		Short: "Show one run",
@@ -152,6 +153,10 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 						"read the timing with: %s",
 					orkctlCommand(g.namespace, "run", "timing", args[0], "--json"))
 			}
+			if len(expand) > 0 && g.json {
+				return fmt.Errorf("--expand only shapes the table; the JSON already carries every item " +
+					"under taskRuns[].items")
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -164,8 +169,18 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			if err := renderRun(cmd.OutOrStdout(), resp.Msg.GetRun()); err != nil {
+			for _, taskID := range expand {
+				if fanOutRow(resp.Msg.GetRun(), taskID) == nil {
+					return fmt.Errorf("task %q is not a fan-out", taskID)
+				}
+			}
+			if err := renderRunWith(cmd.OutOrStdout(), resp.Msg.GetRun(), g.namespace); err != nil {
 				return err
+			}
+			for _, taskID := range expand {
+				if err := renderFanOutItems(cmd.OutOrStdout(), fanOutRow(resp.Msg.GetRun(), taskID)); err != nil {
+					return err
+				}
 			}
 			if withAttempts {
 				if err := appendRunAttempts(cmd, g, args[0]); err != nil {
@@ -182,6 +197,8 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 		"also print every attempt of every task, including the ones that were retried away")
 	cmd.Flags().BoolVar(&withTiming, "timing", false,
 		"also print each task's wait, run and total time and every attempt's phases")
+	cmd.Flags().StringArrayVar(&expand, "expand", nil,
+		"print every item of this fan-out task (repeatable)")
 	return cmd
 }
 
@@ -343,6 +360,12 @@ func renderSubmitted(out io.Writer, baseURL string, resp *orkstackv1.SubmitRunRe
 
 // renderRun prints a run detail view with its task runs.
 func renderRun(out io.Writer, run *orkstackv1.Run) error {
+	return renderRunWith(out, run, "")
+}
+
+// renderRunWith is renderRun with the namespace the fan-out hint's command
+// names.
+func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	header := newTable(out)
 	fmt.Fprintf(header, "Run:\t%s\n", run.GetId())
 	fmt.Fprintf(header, "Orkflow:\t%s\n", run.GetOrkflowName())
@@ -378,15 +401,35 @@ func renderRun(out io.Writer, run *orkstackv1.Run) error {
 	// wait `orkctl run timing` breaks down.
 	fmt.Fprintln(table, "TASK\tSTATUS\tPOOL\tPIN\tORKER\tATTEMPT\tEXIT\tSCHEDULED\tSTARTED\tFINISHED\tERROR")
 	for _, taskRun := range run.GetTaskRuns() {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n",
-			taskRun.GetTaskId(), taskStatusLabel(taskRun),
+		status := taskStatusLabel(taskRun)
+		attempt := fmt.Sprintf("%d", taskRun.GetAttempt())
+		exit := fmt.Sprintf("%d", taskRun.GetExitCode())
+		if taskRun.GetEach() != nil {
+			// A fan-out's own row: its status and settled fraction; the
+			// attempt, exit and orker belong to its items.
+			status, attempt, exit = fanOutStatusLabel(taskRun), dash, dash
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			taskRun.GetTaskId(), status,
 			orDash(taskRun.GetPool()), orDash(taskRun.GetPin()), orDash(taskRun.GetOrkerId()),
-			taskRun.GetAttempt(), taskRun.GetExitCode(), formatTime(taskRun.GetScheduledAt()),
+			attempt, exit, formatTime(taskRun.GetScheduledAt()),
 			formatTime(taskRun.GetStartedAt()),
 			formatTime(taskRun.GetFinishedAt()), errorLine(taskRun.GetError()))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
+	}
+	// One line per expanded fan-out, naming the command that expands it.
+	first := true
+	for _, taskRun := range run.GetTaskRuns() {
+		if !taskRun.GetEach().GetExpanded() {
+			continue
+		}
+		if first {
+			fmt.Fprintln(out)
+			first = false
+		}
+		fmt.Fprintln(out, fanOutSummaryLine(namespace, run.GetId(), taskRun))
 	}
 	return renderAwaitTable(out, run, nowFunc())
 }

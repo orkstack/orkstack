@@ -136,7 +136,7 @@ func (s *humanEventSink) start() error {
 func (s *humanEventSink) event(event *orkstackv1.Event) error {
 	_, err := fmt.Fprintf(s.out, "%4d  %-20s  %-16s  %-12s  %s\n",
 		event.GetSequence(), formatTime(event.GetTimestamp()), eventLabel(event.GetType()),
-		orDash(event.GetTaskId()), orDash(event.GetMessage()))
+		orDash(itemLabel(event.GetTaskId(), event.Item)), orDash(event.GetMessage()))
 	if err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
