@@ -45,6 +45,8 @@
 		decidedOn?: number;
 		/** The task's derived timing ($lib/timing), for the queue wait. */
 		timing?: TaskTiming;
+		/** One item of a fan-out: the timeline is that item's, and its CLI says --item. */
+		item?: number;
 	}
 
 	let {
@@ -55,7 +57,8 @@
 		onViewLogs,
 		pool = '',
 		decidedOn = 0,
-		timing
+		timing,
+		item
 	}: Props = $props();
 
 	// Open by default: this disclosure already lives INSIDE the card's Inspect,
@@ -102,7 +105,7 @@
 		</button>
 		{#if attempts.length > 0}
 			<CliEquivalent
-				command={runCommand(namespace, ['run', 'attempts', runId, '--task', taskId])}
+				command={runCommand(namespace, ['run', 'attempts', runId, '--task', taskId, ...(item !== undefined ? ['--item', String(item)] : [])])}
 				testid="task-{taskId}-attempts-cli"
 				label="Copy CLI"
 			/>

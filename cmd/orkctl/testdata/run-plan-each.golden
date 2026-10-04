@@ -1,0 +1,11 @@
+PLAN  each-cli@1.0.0  namespace default
+definition  sha256:a70a60ccc6e716b762c1c1ca2b588624020dadb5125546be56a2466f8731a9a5
+input       {"regions":["eu","us","ap"]}
+
+WAVE  TASK     OUTCOME  DETAIL
+1     list     runs
+1     regions  runs     each over {{ .inputs.regions }}: 3 items (≤ 50, 2 at a time)
+2     convert  runs     each over {{ .tasks.list.output.parts }} (≤ 500 items, 16 at a time; counted when the run reaches it)
+3     merge    runs
+
+4 run, 0 skipped, 3 waves. Nothing was started.

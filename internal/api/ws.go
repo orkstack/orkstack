@@ -179,7 +179,7 @@ func originAllowed(r *http.Request, patterns []string) bool {
 
 // TaskLogSocketPath is the browser's spelling of StreamTaskLogs:
 //
-//	/ws/runs/{id}/tasks/{task}/logs?attempt=&from_seq=&from_attempt=&follow=&namespace=
+//	/ws/runs/{id}/tasks/{task}/logs?attempt=&from_seq=&from_attempt=&follow=&namespace=&item=
 //
 // It exists beside the run's event socket rather than inside it because the
 // two carry different things at different rates: a run emits a handful of
@@ -238,6 +238,15 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 				return
 			}
 			query.FromAttempt = int32(parsed)
+		}
+		if raw := r.URL.Query().Get("item"); raw != "" {
+			parsed, err := strconv.ParseInt(raw, 10, 32)
+			if err != nil || parsed < 0 {
+				http.Error(w, "item must be a non-negative integer", http.StatusBadRequest)
+				return
+			}
+			item := int32(parsed)
+			query.Item = &item
 		}
 		if raw := r.URL.Query().Get("follow"); raw != "" {
 			parsed, err := strconv.ParseBool(raw)

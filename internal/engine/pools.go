@@ -233,6 +233,35 @@ func (e *PoolNoPinHostError) Error() string {
 		e.Pool, e.Namespace, pins, strings.Join(e.Tasks, ", "), e.Pool)
 }
 
+// PoolNoEachSupportError refuses a submit whose fan-out — or a direct
+// dependent of one — would run on a pool whose Orker predates fan-out (spec
+// each-fan-out §5.11). Such an Orker drops ExecuteTaskInput.each and
+// UpstreamRef.each, which would run an item without its item or give a
+// dependent no items to read: silently wrong, which AGENTS.md §14 ranks below
+// explicit failure. allow_empty_pool does NOT downgrade it — that override
+// exists to wait for an Orker, and this Orker is present and wrong.
+type PoolNoEachSupportError struct {
+	Namespace string
+	Pool      string
+	Tasks     []string
+	OrkerID   string
+	BuildID   string
+	// Dependent is the first direct dependent of a fan-out on this pool, or
+	// empty when only fan-outs themselves land here.
+	Dependent string
+}
+
+func (e *PoolNoEachSupportError) Error() string {
+	consequence := "it would run items without their item"
+	if e.Dependent != "" {
+		consequence += fmt.Sprintf(" and give %s no items to read", e.Dependent)
+	}
+	return fmt.Sprintf(
+		"pool %q (namespace %q, tasks: %s) is served by Orker %q (build %q), which predates fan-out "+
+			"(each:) support: %s. Upgrade the pool's Orkers before submitting this Orkflow.",
+		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID, consequence)
+}
+
 // PoolUnreachableError reports that the cluster could not be asked whether a
 // pool has Orkers.
 //
@@ -492,6 +521,11 @@ func (r *PoolResolver) Plan(
 	pinFirstTask := map[string]string{}
 	pinsByPool := map[string][]string{}
 	pinnedTasksByPool := map[string][]string{}
+	// The fan-out view: every fan-out and every DIRECT dependent of one, per
+	// resolved pool — the pools whose Orker must implement fan-out (§5.11).
+	eachRelated, dependents := eachRelatedTasks(planned)
+	eachTasksByPool := map[string][]string{}
+	eachDependentByPool := map[string]string{}
 
 	for _, t := range planned.GetTasks() {
 		// An awaited task is never routed: no route, no allow-list check, no
@@ -524,6 +558,12 @@ func (r *PoolResolver) Plan(
 			order = append(order, route.Pool)
 		}
 		tasksByPool[route.Pool] = append(tasksByPool[route.Pool], t.GetId())
+		if eachRelated[t.GetId()] {
+			eachTasksByPool[route.Pool] = append(eachTasksByPool[route.Pool], t.GetId())
+			if dependents[t.GetId()] && eachDependentByPool[route.Pool] == "" {
+				eachDependentByPool[route.Pool] = t.GetId()
+			}
+		}
 
 		// Rule 10, on the resolved pool (see PinPoolMismatchError). Every task
 		// of one pin must have landed on the same pool, because a pin is one
@@ -584,6 +624,12 @@ func (r *PoolResolver) Plan(
 				tasks:      pinnedTasksByPool[pool],
 				allowEmpty: allowEmpty,
 			}); err != nil {
+				return nil, RunPlan{}, err
+			}
+			// And, for a pool that carries a fan-out or a direct dependent of
+			// one: does its Orker implement fan-out at all (§5.11).
+			if err := r.checkEachSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
+				eachTasksByPool[pool], eachDependentByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
 			continue
@@ -687,6 +733,68 @@ func (r *PoolResolver) checkPinHost(ctx context.Context, req checkPinHostRequest
 		"tasks", strings.Join(noHost.Tasks, ","),
 		"override", "allow_empty_pool")
 	return nil
+}
+
+// eachRelatedTasks is the set of fan-out tasks and of their direct
+// dependents (tasks naming a fan-out in their own needs:), and the subset that
+// are dependents. An awaited task is never routed, so it is never in either.
+func eachRelatedTasks(wf *orkstackv1.Orkflow) (related, dependents map[string]bool) {
+	related, dependents = map[string]bool{}, map[string]bool{}
+	fanOut := map[string]bool{}
+	for _, t := range wf.GetTasks() {
+		if t.GetEach() != nil {
+			fanOut[t.GetId()] = true
+			related[t.GetId()] = true
+		}
+	}
+	if len(fanOut) == 0 {
+		return related, dependents
+	}
+	for _, t := range wf.GetTasks() {
+		if t.GetAwait() != nil {
+			continue
+		}
+		for _, need := range t.GetNeeds() {
+			if fanOut[need] {
+				related[t.GetId()] = true
+				dependents[t.GetId()] = true
+				break
+			}
+		}
+	}
+	return related, dependents
+}
+
+// checkEachSupport refuses a live pool whose Orker predates fan-out when a
+// fan-out, or a direct dependent of one, would run there. Asked only of such a
+// pool, so a submit with no fan-out runs no describe call it did not run
+// before. A describe failure is logged and not refused — nothing was measured
+// — on checkPinHost's precedent; allow_empty_pool never downgrades it.
+func (r *PoolResolver) checkEachSupport(ctx context.Context, namespace, orkflow, pool, queue string, tasks []string, dependent string) error {
+	if len(tasks) == 0 || r.Orkers == nil {
+		return nil
+	}
+	describeCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
+	defer cancel()
+	described, err := r.Orkers.OrkerOnPool(describeCtx, queue)
+	if err != nil {
+		r.logger().Warn("submit: a live pool with a fan-out did not answer the describe-orker "+
+			"probe, so whether it supports fan-out is unknown",
+			"namespace", namespace, "pool", pool, "orkflow", orkflow,
+			"tasks", strings.Join(tasks, ","), "error", err)
+		return nil
+	}
+	if described.GetEachSupported() {
+		return nil
+	}
+	return &PoolNoEachSupportError{
+		Namespace: namespace,
+		Pool:      pool,
+		Tasks:     tasks,
+		OrkerID:   described.GetOrkerId(),
+		BuildID:   described.GetBuildId(),
+		Dependent: dependent,
+	}
 }
 
 // routeFor resolves one pool against the channel this deployment bound as its

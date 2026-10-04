@@ -114,6 +114,9 @@ type Scope struct {
 	TaskID    string `json:"task_id"`
 	Logs      bool   `json:"logs"`
 	Artifacts bool   `json:"artifacts"`
+	// Item is set when the request narrowed task_id to one item of a
+	// fan-out. Additive: schema_version stays 1.
+	Item *int32 `json:"item,omitempty"`
 }
 
 // Definition is the state of the pinned definition's source.
@@ -125,7 +128,10 @@ type Definition struct {
 
 // TaskEntry is one task of the run, members or not.
 type TaskEntry struct {
-	TaskID         string         `json:"task_id"`
+	TaskID string `json:"task_id"`
+	// Item is set on the entry of one item of a fan-out task. A fan-out's own
+	// entry (no item) carries its status and no attempts; its items follow it.
+	Item           *int32         `json:"item,omitempty"`
 	Status         string         `json:"status"`
 	OutcomeAttempt int32          `json:"outcome_attempt"`
 	ExitCode       int32          `json:"exit_code"`
@@ -142,9 +148,12 @@ type AttemptEntry struct {
 
 // Member is one file of the bundle, or one file the bundle would have held.
 type Member struct {
-	Path    string `json:"path"`
-	Kind    Kind   `json:"kind"`
-	TaskID  string `json:"task_id,omitempty"`
+	Path   string `json:"path"`
+	Kind   Kind   `json:"kind"`
+	TaskID string `json:"task_id,omitempty"`
+	// Item is set on a member one item of a fan-out recorded; such a member
+	// lives under tasks/{task}/items/{item:05}/.
+	Item    *int32 `json:"item,omitempty"`
 	Attempt int32  `json:"attempt,omitempty"`
 	// Name is the exact recorded artifact name for kind "artifact"; Path's
 	// last segment is derived from it and may be encoded (MemberName).

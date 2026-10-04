@@ -627,16 +627,32 @@ a redirect. If it needs anything else, this section is wrong.
 │   │   └── <secret-name>           0444  exact secret bytes, no trailing newline added
 │   ├── artifacts/                  0555
 │   │   └── <producer-task>/
-│   │       └── <safe-name>         0444  one regular file per input artifact
+│   │       ├── <safe-name>         0444  one regular file per input artifact
+│   │       └── <item>/             0555  FAN-OUT PRODUCER ONLY: one per item, 00000…
+│   │           └── <safe-name>     0444  that item's artifact
 │   └── upstream/                   0555
 │       └── <task-id>/
-│           └── values.json         0444  that ancestor's committed values.json
+│           ├── values.json         0444  that ancestor's committed values.json
+│           └── <item>/             0555  FAN-OUT PRODUCER ONLY: one per item, 00000…
+│               └── values.json     0444  that item's committed values.json
 ├── output/                         read-write bind, mode 1777
 │   ├── values.json                 written by the workload — REQUIRED
 │   └── artifacts/                  1777  one regular file per output artifact
 ├── shared/                         read-write bind, mode 1777 — PINNED TASKS ONLY
 └── tmp/                            read-write bind, mode 1777
 ```
+
+**A fan-out producer's items** (`docs/DSL.md`, "Fan-out") are staged one
+directory per item, `<item>` the 0-based index zero-padded to five digits so a
+sorted listing is item order: `upstream/<task>/<item>/values.json` and
+`artifacts/<task>/<item>/<safe-name>`. A fan-out's own task has no single
+`values.json`, so the item directories are all there is under
+`upstream/<task>/`. Both directories exist even for a fan-out of zero items.
+They are staged only for a **direct** dependent — a task that names the
+fan-out in its own `needs:`; a transitive descendant gets nothing for it.
+Each item's commit is read, its identity checked (namespace, run, task, the
+item's idempotency key, definition digest) and every byte digest-verified,
+exactly as an adopted commit is (§5.4).
 
 The container's working directory is `/orkstack`. The container root filesystem
 is read-only (§9), so `/orkstack/tmp` is the workload's scratch space; `/tmp`
@@ -867,7 +883,7 @@ absence rather than treating it as an error.
 | Path | JSON type | Req. | Empty form | Meaning |
 |---|---|---|---|---|
 | `schemaVersion` | integer | required | — | Major version of this file. `1` today. |
-| `idempotencyKey` | string | required | — | `"{namespace}/{runId}/{taskId}"`, stable across retries |
+| `idempotencyKey` | string | required | — | `"{namespace}/{runId}/{taskId}"`, stable across retries; for an item of a fan-out `"{namespace}/{runId}/{taskId}/{index}"`, stable across that item's retries |
 | `run.id` | string | required | — | Opaque run id. Never parsed by anything. |
 | `run.namespace` | string | required | `"default"` | Resolved, never empty on the wire into the container |
 | `run.orkflow.name` | string | required | — | slug |
@@ -880,6 +896,11 @@ absence rather than treating it as an error.
 | `task.pin` | object | optional | absent | present only for a pinned task; absent means unpinned |
 | `task.pin.name` | string | required in `task.pin` | — | slug; the pin as its author named it |
 | `task.pin.instanceId` | string | required in `task.pin` | — | one opening of that pin within one run; what the Orker keys the shared directory by |
+| `each` | object | optional | absent | present only for an item of a fan-out task; `task.id` stays the fan-out's |
+| `each.index` | integer | required in `each` | — | 0-based position of this item in the array |
+| `each.count` | integer | required in `each` | — | the number of items, counted once by the engine |
+| `each.as` | string | required in `each` | — | the name the item is bound to under `.each` in `with:` (default `"item"`) |
+| `each.item` | any JSON | required in `each` | — | the element itself: its exact JSON text for an upstream-task source (key order and number spelling preserved), the protojson rendering of the value for a run-input source |
 | `image.reference` | string | required | — | as authored |
 | `image.pinned` | string | required | — | `{registry}/{repo}@sha256:…` — what ran |
 | `image.indexDigest` | string | required | — | `sha256:<64 hex>` |
@@ -906,9 +927,14 @@ absence rather than treating it as an error.
 | `inputs.artifacts[].sizeBytes` | integer | required | `0` | |
 | `inputs.artifacts[].sha256` | string | required | — | hex |
 | `inputs.artifacts[].contentType` | string | optional | absent | |
+| `inputs.artifacts[].item` | integer | optional | absent | present only for an artifact of a fan-out producer's item (§3.1) |
 | `inputs.upstream` | array | required | `[]` | never null |
 | `inputs.upstream[].taskId` | string | required | — | |
 | `inputs.upstream[].valuesPath` | string | required | — | absolute container path |
+| `inputs.upstream[].item` | integer | optional | absent | present only for one item of a fan-out producer (§3.1) |
+| `inputs.eachUpstream` | array | optional | absent | present only when a direct upstream is a fan-out, so a workload can tell "zero items" from "no such upstream" |
+| `inputs.eachUpstream[].taskId` | string | required | — | the fan-out's task id |
+| `inputs.eachUpstream[].count` | integer | required | `0` | how many items were staged |
 | `secrets` | array | required | `[]` | never null; names and paths only, never values |
 | `secrets[].name` | string | required | — | `^[A-Za-z0-9._-]{1,128}$` |
 | `secrets[].path` | string | required | — | absolute container path |
@@ -1459,6 +1485,21 @@ metadata/commits/{namespace}/{run-id}/{task-id}/commit.json
   decoding returns the exact original bytes. No new rule is invented.
 - The orkflow name is deliberately absent: a run id is already unique, and one
   fewer segment is one fewer name to sanitize.
+
+**An item of a fan-out** commits one segment deeper:
+
+```
+metadata/commits/{namespace}/{run-id}/{task-id}/{item:05}/commit.json
+```
+
+(`artifacts.ItemCommitKey`). It is still deterministic and
+attempt-independent: an item's index is its position in an array the engine
+counted once and recorded in the run's history, so it never moves across that
+item's retries, and the adoption of §5.4 applies per item with no logic of the
+Orker's own — the Orker writes and adopts at the `commit_uri` it was sent. The
+five-digit segment can never be mistaken for a task's `commit.json`, and an
+item's commit carries the item's own `idempotency_key`
+(`{ns}/{run}/{task}/{index}`), which the identity check compares.
 
 **Where the URI comes from.** A URI needs the artifact backend and endpoint —
 `ORK_ARTIFACT_BACKEND`, `ORK_S3_ENDPOINT` — which is process configuration that
@@ -2279,6 +2320,7 @@ moves the task to a live Orker.
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched (§5.4) |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | request exceeds the Orker's policy cap |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | requested mode is not `default` or `none` |
+| `EACH_ITEM_UNAVAILABLE` | ContractViolation | no | an item's `each.over` no longer resolves to the array, of the length, the engine counted — unreachable while the store honours its digests, stated rather than guessed at |
 
 **There is no exit-code table, deliberately.** An earlier draft classified exit
 126 as `CONTAINER_NOT_EXECUTABLE` and 127 as `CONTAINER_COMMAND_NOT_FOUND`,

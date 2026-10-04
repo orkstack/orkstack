@@ -98,6 +98,11 @@ type taskTiming struct {
 	Status  string
 	Attempt int32
 	Pool    string
+	// FanOut marks a fan-out's own row: S is its expansion, B its earliest
+	// item's start, and ATTEMPT reads "fan-out" — attempts belong to items.
+	FanOut bool
+	// Item is set on one item's row of a fan-out (listed under --task).
+	Item *int32
 
 	ScheduledAt *time.Time
 	StartedAt   *time.Time
@@ -151,8 +156,11 @@ type phaseTiming struct {
 
 // timingOptions are computeRunTiming's inputs besides the two responses.
 type timingOptions struct {
-	// Task narrows the document to one task; empty means every task.
+	// Task narrows the document to one task; empty means every task. A
+	// fan-out named here also lists its items, one row each.
 	Task string
+	// Item narrows a fan-out Task to one item, with its attempts.
+	Item *int32
 	// AttemptStore is false when the engine answered ListTaskAttempts with
 	// FailedPrecondition: there are no attempt records to read at all.
 	AttemptStore bool
@@ -205,7 +213,8 @@ func computeRunTiming(
 
 	byTask := map[string][]*orkstackv1.TaskAttempt{}
 	for _, attempt := range attempts {
-		byTask[attempt.GetTaskId()] = append(byTask[attempt.GetTaskId()], attempt)
+		key := itemLabel(attempt.GetTaskId(), attempt.Item)
+		byTask[key] = append(byTask[key], attempt)
 	}
 
 	var waitSum time.Duration
@@ -215,6 +224,19 @@ func computeRunTiming(
 		}
 		task := computeTaskTiming(taskRun, byTask[taskRun.GetTaskId()], opts)
 		timing.Tasks = append(timing.Tasks, task)
+		// A fan-out named by --task lists its items, one row each, with the
+		// per-item derivation; --item narrows to one.
+		if taskRun.GetEach() != nil && opts.Task == taskRun.GetTaskId() {
+			for _, itemRun := range taskRun.GetItems() {
+				if opts.Item != nil && itemRun.GetItem() != *opts.Item {
+					continue
+				}
+				itemTiming := computeTaskTiming(itemRun, byTask[itemLabel(itemRun.GetTaskId(), itemRun.Item)], opts)
+				index := itemRun.GetItem()
+				itemTiming.Item = &index
+				timing.Tasks = append(timing.Tasks, itemTiming)
+			}
+		}
 		switch {
 		case !task.Wait.applies:
 		case task.Wait.known:
@@ -249,6 +271,33 @@ func computeTaskTiming(
 	}
 	S, B, F := task.ScheduledAt, task.StartedAt, task.FinishedAt
 	terminal := taskIsTerminal(taskRun.GetStatus())
+	if taskRun.GetEach() != nil {
+		// A fan-out's own row (spec each-fan-out §9.4): S its expansion, B
+		// its earliest item's start, F its end. No attempts of its own.
+		task.FanOut = true
+		task.Scheduled = S != nil
+		if !task.Scheduled {
+			return task
+		}
+		switch {
+		case !terminal:
+			if taskRun.GetStatus() == orkstackv1.Status_STATUS_RUNNING {
+				task.SinceScheduled = span(*S, opts.Now)
+			}
+		case B == nil:
+			task.Wait = unknownBecause(reasonNoOrkerStart)
+			task.Run = unknownBecause(reasonNoOrkerStart)
+		default:
+			task.Wait = span(*S, *B)
+			if F != nil {
+				task.Run = span(*B, *F)
+			}
+		}
+		if terminal && F != nil {
+			task.Total = span(*S, *F)
+		}
+		return task
+	}
 	if taskRun.GetAwait() != nil {
 		// scheduled_at and started_at are both the instant it started
 		// awaiting; an await that never opened has neither.
@@ -458,8 +507,12 @@ func renderRunTiming(out io.Writer, timing *runTiming, oneTask bool) error {
 		if task.Awaited && task.Run.applies {
 			run = "awaited " + run
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
-			task.TaskID, task.statusCell(), orDash(task.Pool), task.Attempt,
+		attempt := fmt.Sprintf("%d", task.Attempt)
+		if task.FanOut {
+			attempt = "fan-out"
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			itemLabel(task.TaskID, task.Item), task.statusCell(), orDash(task.Pool), attempt,
 			formatTimePtr(task.ScheduledAt), task.Wait.cell(), run, total)
 	}
 	if err := table.Flush(); err != nil {
@@ -536,8 +589,8 @@ func (timing *runTiming) attemptsBlock() string {
 	}
 	width := 0
 	for _, task := range timing.Tasks {
-		if task.Scheduled && !task.Awaited && len(task.TaskID) > width {
-			width = len(task.TaskID)
+		if label := itemLabel(task.TaskID, task.Item); task.Scheduled && !task.Awaited && !task.FanOut && len(label) > width {
+			width = len(label)
 		}
 	}
 	if width == 0 {
@@ -546,11 +599,12 @@ func (timing *runTiming) attemptsBlock() string {
 	var b strings.Builder
 	b.WriteString("attempts:\n")
 	for _, task := range timing.Tasks {
-		// An awaited task has no attempts and no phases: nothing to list.
-		if !task.Scheduled || task.Awaited {
+		// An awaited task has no attempts and no phases, and neither does a
+		// fan-out's own row (its items do): nothing to list.
+		if !task.Scheduled || task.Awaited || task.FanOut {
 			continue
 		}
-		prefix := "  " + padRight(task.TaskID, width) + "  "
+		prefix := "  " + padRight(itemLabel(task.TaskID, task.Item), width) + "  "
 		if task.Attempt > 1 {
 			pool := orDash(task.Pool)
 			if task.QueueWait.known {
@@ -696,6 +750,9 @@ func (timing *runTiming) document() jsonObject {
 func (task *taskTiming) document() jsonObject {
 	doc := jsonObject{}
 	doc.add("taskId", task.TaskID)
+	if task.Item != nil {
+		doc.add("item", *task.Item)
+	}
 	doc.add("status", task.Status)
 	doc.add("attempt", task.Attempt)
 	if task.Pool != "" {
@@ -710,6 +767,9 @@ func (task *taskTiming) document() jsonObject {
 	}
 	if task.Awaited {
 		doc.add("awaited", true)
+	}
+	if task.FanOut {
+		doc.add("fanOut", true)
 	}
 	doc.addQuantity("wait", task.Wait)
 	doc.addQuantity("run", task.Run)
@@ -778,6 +838,7 @@ func writeTimingJSON(out io.Writer, timing *runTiming) error {
 // newRunTimingCommand builds `orkctl run timing`.
 func newRunTimingCommand(g *globalFlags) *cobra.Command {
 	var task string
+	var item itemFlag
 	cmd := &cobra.Command{
 		Use:   "timing <run-id>",
 		Short: "Show where each task's time went: waiting, running, and each phase",
@@ -793,7 +854,11 @@ func newRunTimingCommand(g *globalFlags) *cobra.Command {
 			"computed on the server.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			timing, err := fetchRunTiming(cmd, g, args[0], task)
+			selected, err := item.resolve(cmd, task)
+			if err != nil {
+				return err
+			}
+			timing, err := fetchRunTimingItem(cmd, g, args[0], task, selected)
 			if err != nil {
 				return err
 			}
@@ -803,7 +868,8 @@ func newRunTimingCommand(g *globalFlags) *cobra.Command {
 			return renderRunTiming(cmd.OutOrStdout(), timing, task != "")
 		},
 	}
-	cmd.Flags().StringVar(&task, "task", "", "only this task, with its phases")
+	cmd.Flags().StringVar(&task, "task", "", "only this task, with its phases (a fan-out also lists its items)")
+	item.register(cmd, "only this item of the fan-out --task names, with its attempts")
 	return cmd
 }
 
@@ -811,6 +877,11 @@ func newRunTimingCommand(g *globalFlags) *cobra.Command {
 // the derived document. An engine without an attempt store still answers the
 // snapshot half.
 func fetchRunTiming(cmd *cobra.Command, g *globalFlags, runID, task string) (*runTiming, error) {
+	return fetchRunTimingItem(cmd, g, runID, task, nil)
+}
+
+// fetchRunTimingItem is fetchRunTiming narrowed to one item of a fan-out.
+func fetchRunTimingItem(cmd *cobra.Command, g *globalFlags, runID, task string, item *int32) (*runTiming, error) {
 	ctx, cancel := g.unaryContext(cmd)
 	defer cancel()
 
@@ -828,7 +899,7 @@ func fetchRunTiming(cmd *cobra.Command, g *globalFlags, runID, task string) (*ru
 	store := true
 	var attempts []*orkstackv1.TaskAttempt
 	attemptsResp, err := g.runClient().ListTaskAttempts(ctx, connect.NewRequest(
-		&orkstackv1.ListTaskAttemptsRequest{RunId: runID, Namespace: g.namespace, TaskId: task},
+		&orkstackv1.ListTaskAttemptsRequest{RunId: runID, Namespace: g.namespace, TaskId: task, Item: item},
 	))
 	var connectErr *connect.Error
 	switch {
@@ -841,6 +912,7 @@ func fetchRunTiming(cmd *cobra.Command, g *globalFlags, runID, task string) (*ru
 	}
 	return computeRunTiming(run, attempts, timingOptions{
 		Task:         task,
+		Item:         item,
 		AttemptStore: store,
 		Now:          time.Now().UTC(),
 	}), nil

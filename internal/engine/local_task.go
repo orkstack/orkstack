@@ -27,6 +27,10 @@ import (
 // does, LocalTaskInput must refuse such a task rather than compose an input
 // the interpreter would never have scheduled. await: (awaited-tasks) is
 // such a node: LocalTaskInput refuses an awaited task with a caller error.
+// each: (each-fan-out §9.9) is another: a fan-out composes ONE ITEM's input,
+// exactly as scheduleItem does, and requires Item; a task that names a
+// fan-out in its own needs: is refused, because its items are read from
+// their commits and a local run has no commit store.
 
 // LocalTask names one task of one definition to be composed OUTSIDE a run:
 // the caller runs it itself (`orkctl task run`), so nothing here is replayed,
@@ -49,6 +53,14 @@ type LocalTask struct {
 	Upstream map[string]*orkstackv1.UpstreamRef
 	// Limits are the contract limits to carry. Nil means DefaultLimits().Proto().
 	Limits *orkstackv1.WorkspaceLimits
+	// Item names the item of a fan-out task to compose; required for a
+	// fan-out and refused for any other task.
+	Item *int32
+	// ItemCount is the fan-out's item count: the run's TaskEach.count
+	// (--from-run), or what the caller counted over a stubbed source. Nil
+	// for an input source means "count it from Input", as the interpreter
+	// does; nil for a task source is a caller error.
+	ItemCount *int32
 }
 
 // LocalTaskRefusal is a refusal the interpreter would have recorded as the
@@ -102,6 +114,26 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		return nil, fmt.Errorf("task %q is an awaited task (await:): it starts no container, so there is nothing to run locally; "+
 			"resolve it in a run with orkctl run resolve, or run a task downstream of it with its values supplied", t.TaskID)
 	}
+	if spec.GetEach() == nil && t.Item != nil {
+		return nil, fmt.Errorf("task %q is not a fan-out; it has no items, so --item does not apply", t.TaskID)
+	}
+	if spec.GetEach() != nil && t.Item == nil {
+		return nil, fmt.Errorf("task %q is a fan-out (each:): name the item to run with --item N", t.TaskID)
+	}
+	// A direct dependent of a fan-out stages every item from its commit;
+	// a local run has no commit store (§9.9).
+	for _, need := range spec.GetNeeds() {
+		producer := taskByID(wf, need)
+		if producer.GetEach() == nil {
+			continue
+		}
+		items := "the items"
+		if ref := t.Upstream[need]; ref.GetEach() != nil {
+			items = fmt.Sprintf("the %d items", ref.GetEach().GetCount())
+		}
+		return nil, fmt.Errorf("task run cannot stage %s of fan-out %q: they are read from their commits, "+
+			"and a local run has no commit store", items, need)
+	}
 	closure, err := TaskClosure(wf, t.TaskID)
 	if err != nil {
 		return nil, err
@@ -110,6 +142,11 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 	for _, id := range closure {
 		ref, ok := t.Upstream[id]
 		if !ok || ref == nil {
+			continue
+		}
+		// A fan-out further up the closure contributes nothing: its items
+		// reach DIRECT dependents only (spec each-fan-out §5.8).
+		if taskByID(wf, id).GetEach() != nil {
 			continue
 		}
 		clone := proto.Clone(ref).(*orkstackv1.UpstreamRef)
@@ -155,12 +192,60 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 
 		RunAsOrkerUser: spec.GetRunAsOrkerUser(),
 	}
+	if each := spec.GetEach(); each != nil {
+		return localItemInput(wf, spec, t, input)
+	}
 	if err := task.CheckInputSize(input, limits.GetValuesMaxBytes()); err != nil {
 		return nil, &LocalTaskRefusal{
 			Code:     task.ReasonInputTooLarge,
 			Category: task.CategoryContractViolation,
 			Err:      err,
 		}
+	}
+	return input, nil
+}
+
+// localItemInput turns a task's composed input into ONE ITEM's, with
+// scheduleItem's differences: the item idempotency key, the per-item artifact
+// limit, EachContext, and the per-item input bound.
+func localItemInput(wf *orkstackv1.Orkflow, spec *orkstackv1.Task, t LocalTask, input *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskInput, error) {
+	each := spec.GetEach()
+	var count int32
+	switch {
+	case t.ItemCount != nil:
+		count = *t.ItemCount
+	case each.GetSource().GetInput() != "":
+		n, eerr := eachCountOfInput(payloadMap(input.GetRunInput()), each)
+		if eerr != nil {
+			return nil, fmt.Errorf("task %q: %s", t.TaskID, eerr.Message)
+		}
+		count = n
+	default:
+		return nil, fmt.Errorf("task %q fans out over task %q's output: run it with --from-run, or stub the "+
+			"source with --output %s=JSON so its items can be counted", t.TaskID,
+			each.GetSource().GetTaskId(), each.GetSource().GetTaskId())
+	}
+	index := *t.Item
+	if index < 0 || index >= count {
+		if count == 0 {
+			return nil, fmt.Errorf("task %q fans out over 0 items; there is no item %d", t.TaskID, index)
+		}
+		return nil, fmt.Errorf("task %q has %d items (0–%d); there is no item %d", t.TaskID, count, count-1, index)
+	}
+	limits := WorkspaceLimits{
+		ValuesMaxBytes:   input.GetLimits().GetValuesMaxBytes(),
+		ArtifactMaxCount: input.GetLimits().GetArtifactMaxCount(),
+		ArtifactMaxBytes: input.GetLimits().GetArtifactMaxBytes(),
+		LogMaxBytes:      input.GetLimits().GetLogMaxBytes(),
+		CommitMaxBytes:   input.GetLimits().GetCommitMaxBytes(),
+	}
+	_, inputLimit, artifactMax := eachBounds(wf, limits)
+	input.IdempotencyKey = task.ItemIdempotencyKeyFor(wf.GetNamespace(), t.RunID, t.TaskID, index)
+	input.Limits = proto.Clone(input.GetLimits()).(*orkstackv1.WorkspaceLimits)
+	input.Limits.ArtifactMaxCount = artifactMax
+	input.Each = &orkstackv1.EachContext{Index: index, Count: count, As: each.GetAs(), Source: each.GetSource()}
+	if err := task.CheckInputSize(input, inputLimit); err != nil {
+		return nil, &LocalTaskRefusal{Code: task.ReasonInputTooLarge, Category: task.CategoryContractViolation, Err: err}
 	}
 	return input, nil
 }
@@ -190,6 +275,15 @@ func UpstreamFromRun(run *orkstackv1.Run) map[string]*orkstackv1.UpstreamRef {
 	out := map[string]*orkstackv1.UpstreamRef{}
 	for _, tr := range run.GetTaskRuns() {
 		if tr.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+			continue
+		}
+		// A fan-out has no commit of its own: its items do. It contributes
+		// its count only, which is what a direct dependent's refusal names.
+		if tr.GetEach() != nil {
+			out[tr.GetTaskId()] = &orkstackv1.UpstreamRef{
+				TaskId: tr.GetTaskId(),
+				Each:   &orkstackv1.EachUpstream{Count: tr.GetEach().GetCount()},
+			}
 			continue
 		}
 		out[tr.GetTaskId()] = &orkstackv1.UpstreamRef{

@@ -164,6 +164,9 @@ func (e *TaskLogExporter) Open(ctx context.Context, in *orkstackv1.ExecuteTaskIn
 		attribute.String(AttrOrkflowDigest, in.GetOrkflowDefinitionDigest()),
 		attribute.String(AttrPool, in.GetPool()),
 	}
+	if each := in.GetEach(); each != nil {
+		attrs = append(attrs, attribute.Int64(AttrItem, int64(each.GetIndex())))
+	}
 	// A selection's attributes ride every log record verbatim: unlike a
 	// metric series, one more label on a log line costs nothing extra per
 	// distinct value, so there is no cardinality trade-off to gate here (contrast

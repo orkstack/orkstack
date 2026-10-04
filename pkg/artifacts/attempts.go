@@ -94,8 +94,12 @@ var ErrInvalidAttemptKey = errors.New("invalid task attempt key")
 
 // AttemptRef addresses one attempt of one task within one run.
 type AttemptRef struct {
-	RunID   string
-	TaskID  string
+	RunID  string
+	TaskID string
+	// Item names one item of a fan-out task; NoItem for a task's own
+	// attempts. An item's records live one segment below its task's:
+	// metadata/attempts/{run}/{task}/{item:05}/{attempt}.json.
+	Item    Item
 	Attempt int32
 }
 
@@ -116,11 +120,13 @@ type AttemptStore interface {
 	// AttemptTruncationMarker rather than refused, because a shortened record
 	// of a failed attempt is worth more than no record at all.
 	PutAttempt(ctx context.Context, attempt *orkstackv1.TaskAttempt) error
-	// ListAttempts returns every stored record for one task, ascending by
-	// attempt. A task with no records reads EMPTY, never an error: no record is
-	// the ordinary state of a task that has not run yet, and of every run that
-	// finished before this key family existed.
-	ListAttempts(ctx context.Context, runID, taskID string) ([]*orkstackv1.TaskAttempt, error)
+	// ListAttempts returns every stored record for one task — or, with item
+	// set, for one item of a fan-out task — ascending by attempt. NoItem
+	// returns only records whose key has no item segment, so a fan-out task's
+	// own scope never sees its items. A scope with no records reads EMPTY,
+	// never an error: no record is the ordinary state of a task that has not
+	// run yet, and of every run that finished before this key family existed.
+	ListAttempts(ctx context.Context, runID, taskID string, item Item) ([]*orkstackv1.TaskAttempt, error)
 }
 
 // AttemptDocument is one stored record with the bytes it was read as.
@@ -142,10 +148,10 @@ type AttemptDocument struct {
 // one's ListAttempts is a projection of it, so the two can never disagree
 // about which records exist.
 type AttemptDocumentReader interface {
-	// ReadAttemptDocuments returns every stored record of one task, ascending
-	// by attempt. A task with no records reads EMPTY, never an error, exactly
-	// as ListAttempts does.
-	ReadAttemptDocuments(ctx context.Context, runID, taskID string) ([]AttemptDocument, error)
+	// ReadAttemptDocuments returns every stored record of one task (or one
+	// item of it), ascending by attempt. A scope with no records reads EMPTY,
+	// never an error, exactly as ListAttempts does.
+	ReadAttemptDocuments(ctx context.Context, runID, taskID string, item Item) ([]AttemptDocument, error)
 }
 
 // attemptRecords projects documents onto their decoded records, ascending by
@@ -227,10 +233,29 @@ func AttemptTaskPrefix(runID, taskID string) (string, error) {
 	return path.Join(AttemptPrefix, run, taskSegment) + "/", nil
 }
 
+// AttemptScopePrefix renders the prefix holding one scope's attempts: the
+// task prefix for NoItem, and the task prefix plus the item segment
+// (metadata/attempts/{run-id}/{task-id}/{item:05}/) for an item.
+func AttemptScopePrefix(runID, taskID string, item Item) (string, error) {
+	prefix, err := AttemptTaskPrefix(runID, taskID)
+	if err != nil {
+		return "", err
+	}
+	if !item.Set {
+		return prefix, nil
+	}
+	seg, err := ItemSegment(item.Index)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: task attempt key: item: %w", errors.Join(ErrInvalidAttemptKey, err))
+	}
+	return prefix + seg + "/", nil
+}
+
 // AttemptKey renders the object key for one attempt record:
-// metadata/attempts/{run-id}/{task-id}/{attempt}.json.
+// metadata/attempts/{run-id}/{task-id}/{attempt}.json, or
+// metadata/attempts/{run-id}/{task-id}/{item:05}/{attempt}.json for an item.
 func AttemptKey(ref AttemptRef) (string, error) {
-	prefix, err := AttemptTaskPrefix(ref.RunID, ref.TaskID)
+	prefix, err := AttemptScopePrefix(ref.RunID, ref.TaskID, ref.Item)
 	if err != nil {
 		return "", err
 	}
@@ -252,7 +277,17 @@ func ParseAttemptKey(key string) (ref AttemptRef, ok bool) {
 		return AttemptRef{}, false
 	}
 	parts := strings.Split(rest, "/")
-	if len(parts) != 3 {
+	var item Item
+	switch len(parts) {
+	case 3:
+	case 4:
+		index, ok := parseItemSegment(parts[2])
+		if !ok {
+			return AttemptRef{}, false
+		}
+		item = ItemAt(index)
+		parts = []string{parts[0], parts[1], parts[3]}
+	default:
 		return AttemptRef{}, false
 	}
 	runID, ok := decodeArchiveSegment(parts[0])
@@ -271,7 +306,7 @@ func ParseAttemptKey(key string) (ref AttemptRef, ok bool) {
 	if !ok || attempt < 1 || attempt > (1<<31-1) {
 		return AttemptRef{}, false
 	}
-	return AttemptRef{RunID: runID, TaskID: taskID, Attempt: int32(attempt)}, true
+	return AttemptRef{RunID: runID, TaskID: taskID, Item: item, Attempt: int32(attempt)}, true
 }
 
 // MarshalAttempt renders the exact bytes an attempt record is stored as, after
@@ -524,9 +559,9 @@ func (s *MemoryAttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1
 
 // ListAttempts returns one task's records, ascending by attempt.
 func (s *MemoryAttemptStore) ListAttempts(
-	ctx context.Context, runID, taskID string,
+	ctx context.Context, runID, taskID string, item Item,
 ) ([]*orkstackv1.TaskAttempt, error) {
-	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID)
+	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID, item)
 	if err != nil {
 		return nil, err
 	}
@@ -536,9 +571,9 @@ func (s *MemoryAttemptStore) ListAttempts(
 // ReadAttemptDocuments returns one task's stored records with their bytes,
 // ascending by attempt.
 func (s *MemoryAttemptStore) ReadAttemptDocuments(
-	ctx context.Context, runID, taskID string,
+	ctx context.Context, runID, taskID string, item Item,
 ) ([]AttemptDocument, error) {
-	prefix, err := AttemptTaskPrefix(runID, taskID)
+	prefix, err := AttemptScopePrefix(runID, taskID, item)
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +588,7 @@ func (s *MemoryAttemptStore) ReadAttemptDocuments(
 			continue
 		}
 		ref, ok := ParseAttemptKey(key)
-		if !ok || ref.RunID != runID || ref.TaskID != taskID {
+		if !ok || ref.RunID != runID || ref.TaskID != taskID || ref.Item != item {
 			continue
 		}
 		document := bytes.Clone(stored)
@@ -635,6 +670,7 @@ func encodeAttemptForStore(attempt *orkstackv1.TaskAttempt) (string, []byte, err
 	key, err := AttemptKey(AttemptRef{
 		RunID:   attempt.GetRunId(),
 		TaskID:  attempt.GetTaskId(),
+		Item:    ItemOf(attempt.Item),
 		Attempt: attempt.GetAttempt(),
 	})
 	if err != nil {

@@ -145,6 +145,9 @@ func (o *OrkerObserver) Begin(
 		attribute.String(AttrOrkflowName, in.GetOrkflowName()),
 		attribute.String(AttrPool, in.GetPool()),
 	}
+	if each := in.GetEach(); each != nil {
+		spanAttrs = append(spanAttrs, attribute.Int64(AttrItem, int64(each.GetIndex())))
+	}
 	spanAttrs = append(spanAttrs, selAttrs...)
 
 	spanCtx, span := route.tracer.Start(ctx, "ork.task.attempt", trace.WithAttributes(spanAttrs...))

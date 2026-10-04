@@ -1,0 +1,13 @@
+TASK     ITEM  ATTEMPT  OUTCOME    PHASE   EXIT  STARTED               DURATION  ORKER    ERROR
+convert  0     1        SUCCEEDED  commit  0     2026-01-02T02:04:05Z  4s        orker-1  -
+convert  1     1        SUCCEEDED  commit  0     2026-01-02T02:04:05Z  4s        orker-2  -
+convert  2     1        FAILED     run     1     2026-01-02T02:04:05Z  4s        orker-1  ACTIVITY_FAILED/CONTAINER_EXIT_NONZERO: task "convert": the container exited 1
+convert  2     2        SUCCEEDED  commit  0     2026-01-02T02:04:05Z  4s        orker-1  -
+convert  3     1        SUCCEEDED  commit  0     2026-01-02T02:04:05Z  4s        orker-2  -
+
+convert[2] attempt 1 (FAILED)
+  Category:  ACTIVITY_FAILED
+  Code:      CONTAINER_EXIT_NONZERO
+  Retryable: true
+  Message:   task "convert": the container exited 1
+  Logs:      orkctl -n data run logs ork-each-cli --task convert --item 2 --attempt 1

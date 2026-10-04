@@ -166,8 +166,8 @@ func (s *LocalLogStore) ReadLogChunks(
 }
 
 // LatestLogAttempt returns the highest attempt of a task that wrote a chunk.
-func (s *LocalLogStore) LatestLogAttempt(ctx context.Context, runID, taskID string) (int32, error) {
-	prefix, err := LogTaskPrefix(runID, taskID)
+func (s *LocalLogStore) LatestLogAttempt(ctx context.Context, runID, taskID string, item Item) (int32, error) {
+	prefix, err := LogScopePrefix(runID, taskID, item)
 	if err != nil {
 		return 0, err
 	}
@@ -196,7 +196,7 @@ func (s *LocalLogStore) LatestLogAttempt(ctx context.Context, runID, taskID stri
 		// leaves one behind. The answer is the highest attempt that still has
 		// something to read.
 		chunks, err := s.ReadLogChunks(ctx, LogRef{
-			RunID: runID, TaskID: taskID, Attempt: int32(attempt),
+			RunID: runID, TaskID: taskID, Item: item, Attempt: int32(attempt),
 		}, 0, 1, 0)
 		if err != nil {
 			return 0, err

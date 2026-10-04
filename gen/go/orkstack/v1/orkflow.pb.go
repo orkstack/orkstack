@@ -200,7 +200,11 @@ type Task struct {
 	// await makes this an awaited task. Mutually exclusive with uses and with
 	// every field that shapes a container (docs/DSL.md rules 6 and 15): an
 	// awaited task has no image, no pool, and no timeout_seconds of its own.
-	Await         *AwaitSpec `protobuf:"bytes,20,opt,name=await,proto3" json:"await,omitempty"`
+	Await *AwaitSpec `protobuf:"bytes,20,opt,name=await,proto3" json:"await,omitempty"`
+	// each makes this task a fan-out. A fan-out has uses:, like any container
+	// task; it may not name a pin (docs/DSL.md rule 23) and an awaited task may
+	// not carry it (rule 15).
+	Each          *EachSpec `protobuf:"bytes,21,opt,name=each,proto3" json:"each,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -361,6 +365,105 @@ func (x *Task) GetAwait() *AwaitSpec {
 	return nil
 }
 
+func (x *Task) GetEach() *EachSpec {
+	if x != nil {
+		return x.Each
+	}
+	return nil
+}
+
+// EachSpec makes a Task a fan-out: ONE node of the DAG that runs as one item
+// per element of an array read at run time — every item the same image, with
+// the same needs, pool, resources, timeout and retry policy (docs/DSL.md
+// "Fan-out"). Part of canonicalOrkflow(Task), emitted ONLY when set (see
+// Task.pin).
+type EachSpec struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// over is the reference exactly as the author wrote it: one template action
+	// naming an input or an upstream task's output, never an expression.
+	Over string `protobuf:"bytes,1,opt,name=over,proto3" json:"over,omitempty"`
+	// as is the name .each.<as> binds an item to. The compiler writes "item"
+	// when the document names none, so a stored value is never empty.
+	As string `protobuf:"bytes,2,opt,name=as,proto3" json:"as,omitempty"`
+	// max_items is the author's bound, 1..1000; the sum over every fan-out of
+	// one Orkflow is at most 1000, and at most the deployment's
+	// ORK_EACH_MAX_ITEMS. An array longer than this fails the task
+	// EACH_TOO_MANY_ITEMS before any item runs.
+	MaxItems int32 `protobuf:"varint,3,opt,name=max_items,json=maxItems,proto3" json:"max_items,omitempty"`
+	// max_parallel bounds how many items are in flight at once; 0 means no
+	// bound of the task's own.
+	MaxParallel int32 `protobuf:"varint,4,opt,name=max_parallel,json=maxParallel,proto3" json:"max_parallel,omitempty"`
+	// source is over, compiled at apply (EachSource).
+	Source        *EachSource `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EachSpec) Reset() {
+	*x = EachSpec{}
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EachSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EachSpec) ProtoMessage() {}
+
+func (x *EachSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EachSpec.ProtoReflect.Descriptor instead.
+func (*EachSpec) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *EachSpec) GetOver() string {
+	if x != nil {
+		return x.Over
+	}
+	return ""
+}
+
+func (x *EachSpec) GetAs() string {
+	if x != nil {
+		return x.As
+	}
+	return ""
+}
+
+func (x *EachSpec) GetMaxItems() int32 {
+	if x != nil {
+		return x.MaxItems
+	}
+	return 0
+}
+
+func (x *EachSpec) GetMaxParallel() int32 {
+	if x != nil {
+		return x.MaxParallel
+	}
+	return 0
+}
+
+func (x *EachSpec) GetSource() *EachSource {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
 // AwaitSpec makes a Task an awaited task: it starts no container and reaches
 // no Orker, and the run waits until the task is resolved from outside the run
 // — completed with values, or rejected with a reason — or its deadline passes.
@@ -385,7 +488,7 @@ type AwaitSpec struct {
 
 func (x *AwaitSpec) Reset() {
 	*x = AwaitSpec{}
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[3]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -397,7 +500,7 @@ func (x *AwaitSpec) String() string {
 func (*AwaitSpec) ProtoMessage() {}
 
 func (x *AwaitSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[3]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -410,7 +513,7 @@ func (x *AwaitSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AwaitSpec.ProtoReflect.Descriptor instead.
 func (*AwaitSpec) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{3}
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *AwaitSpec) GetTimeoutSeconds() int32 {
@@ -483,7 +586,7 @@ type Orkflow struct {
 
 func (x *Orkflow) Reset() {
 	*x = Orkflow{}
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[4]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -495,7 +598,7 @@ func (x *Orkflow) String() string {
 func (*Orkflow) ProtoMessage() {}
 
 func (x *Orkflow) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_orkflow_proto_msgTypes[4]
+	mi := &file_orkstack_v1_orkflow_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -508,7 +611,7 @@ func (x *Orkflow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Orkflow.ProtoReflect.Descriptor instead.
 func (*Orkflow) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{4}
+	return file_orkstack_v1_orkflow_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Orkflow) GetName() string {
@@ -600,7 +703,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\x18maximum_interval_seconds\x18\x04 \x01(\x05R\x16maximumIntervalSeconds\"B\n" +
 	"\x03Pin\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12'\n" +
-	"\x0ftimeout_seconds\x18\x02 \x01(\x05R\x0etimeoutSeconds\"\x98\x06\n" +
+	"\x0ftimeout_seconds\x18\x02 \x01(\x05R\x0etimeoutSeconds\"\xc3\x06\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12+\n" +
 	"\x04with\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x04with\x12\x14\n" +
@@ -620,10 +723,17 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"!cancellation_grace_period_seconds\x18\x11 \x01(\x05R\x1ecancellationGracePeriodSeconds\x12)\n" +
 	"\x11run_as_orker_user\x18\x12 \x01(\bR\x0erunAsOrkerUser\x12\x10\n" +
 	"\x03pin\x18\x13 \x01(\tR\x03pin\x12,\n" +
-	"\x05await\x18\x14 \x01(\v2\x16.orkstack.v1.AwaitSpecR\x05await\x1a6\n" +
+	"\x05await\x18\x14 \x01(\v2\x16.orkstack.v1.AwaitSpecR\x05await\x12)\n" +
+	"\x04each\x18\x15 \x01(\v2\x15.orkstack.v1.EachSpecR\x04each\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x02\x10\x03J\x04\b\b\x10\tR\x06pluginR\x05queue\"\x81\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x02\x10\x03J\x04\b\b\x10\tR\x06pluginR\x05queue\"\x9f\x01\n" +
+	"\bEachSpec\x12\x12\n" +
+	"\x04over\x18\x01 \x01(\tR\x04over\x12\x0e\n" +
+	"\x02as\x18\x02 \x01(\tR\x02as\x12\x1b\n" +
+	"\tmax_items\x18\x03 \x01(\x05R\bmaxItems\x12!\n" +
+	"\fmax_parallel\x18\x04 \x01(\x05R\vmaxParallel\x12/\n" +
+	"\x06source\x18\x05 \x01(\v2\x17.orkstack.v1.EachSourceR\x06source\"\x81\x01\n" +
 	"\tAwaitSpec\x12'\n" +
 	"\x0ftimeout_seconds\x18\x01 \x01(\x05R\x0etimeoutSeconds\x12\x1a\n" +
 	"\bcallback\x18\x02 \x01(\bR\bcallback\x12/\n" +
@@ -660,42 +770,46 @@ func file_orkstack_v1_orkflow_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_orkflow_proto_rawDescData
 }
 
-var file_orkstack_v1_orkflow_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_orkstack_v1_orkflow_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_orkstack_v1_orkflow_proto_goTypes = []any{
 	(*RetryPolicy)(nil),           // 0: orkstack.v1.RetryPolicy
 	(*Pin)(nil),                   // 1: orkstack.v1.Pin
 	(*Task)(nil),                  // 2: orkstack.v1.Task
-	(*AwaitSpec)(nil),             // 3: orkstack.v1.AwaitSpec
-	(*Orkflow)(nil),               // 4: orkstack.v1.Orkflow
-	nil,                           // 5: orkstack.v1.Task.EnvEntry
-	nil,                           // 6: orkstack.v1.Orkflow.LabelsEntry
-	(*structpb.Struct)(nil),       // 7: google.protobuf.Struct
-	(*ImageRef)(nil),              // 8: orkstack.v1.ImageRef
-	(*SecretRef)(nil),             // 9: orkstack.v1.SecretRef
-	(*ResourceRequest)(nil),       // 10: orkstack.v1.ResourceRequest
-	(NetworkMode)(0),              // 11: orkstack.v1.NetworkMode
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*EachSpec)(nil),              // 3: orkstack.v1.EachSpec
+	(*AwaitSpec)(nil),             // 4: orkstack.v1.AwaitSpec
+	(*Orkflow)(nil),               // 5: orkstack.v1.Orkflow
+	nil,                           // 6: orkstack.v1.Task.EnvEntry
+	nil,                           // 7: orkstack.v1.Orkflow.LabelsEntry
+	(*structpb.Struct)(nil),       // 8: google.protobuf.Struct
+	(*ImageRef)(nil),              // 9: orkstack.v1.ImageRef
+	(*SecretRef)(nil),             // 10: orkstack.v1.SecretRef
+	(*ResourceRequest)(nil),       // 11: orkstack.v1.ResourceRequest
+	(NetworkMode)(0),              // 12: orkstack.v1.NetworkMode
+	(*EachSource)(nil),            // 13: orkstack.v1.EachSource
+	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
 }
 var file_orkstack_v1_orkflow_proto_depIdxs = []int32{
-	7,  // 0: orkstack.v1.Task.with:type_name -> google.protobuf.Struct
+	8,  // 0: orkstack.v1.Task.with:type_name -> google.protobuf.Struct
 	0,  // 1: orkstack.v1.Task.retry:type_name -> orkstack.v1.RetryPolicy
-	8,  // 2: orkstack.v1.Task.image:type_name -> orkstack.v1.ImageRef
-	5,  // 3: orkstack.v1.Task.env:type_name -> orkstack.v1.Task.EnvEntry
-	9,  // 4: orkstack.v1.Task.secrets:type_name -> orkstack.v1.SecretRef
-	10, // 5: orkstack.v1.Task.resources:type_name -> orkstack.v1.ResourceRequest
-	11, // 6: orkstack.v1.Task.network:type_name -> orkstack.v1.NetworkMode
-	3,  // 7: orkstack.v1.Task.await:type_name -> orkstack.v1.AwaitSpec
-	7,  // 8: orkstack.v1.AwaitSpec.schema:type_name -> google.protobuf.Struct
-	6,  // 9: orkstack.v1.Orkflow.labels:type_name -> orkstack.v1.Orkflow.LabelsEntry
-	7,  // 10: orkstack.v1.Orkflow.inputs:type_name -> google.protobuf.Struct
-	2,  // 11: orkstack.v1.Orkflow.tasks:type_name -> orkstack.v1.Task
-	12, // 12: orkstack.v1.Orkflow.created_at:type_name -> google.protobuf.Timestamp
-	1,  // 13: orkstack.v1.Orkflow.pins:type_name -> orkstack.v1.Pin
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	9,  // 2: orkstack.v1.Task.image:type_name -> orkstack.v1.ImageRef
+	6,  // 3: orkstack.v1.Task.env:type_name -> orkstack.v1.Task.EnvEntry
+	10, // 4: orkstack.v1.Task.secrets:type_name -> orkstack.v1.SecretRef
+	11, // 5: orkstack.v1.Task.resources:type_name -> orkstack.v1.ResourceRequest
+	12, // 6: orkstack.v1.Task.network:type_name -> orkstack.v1.NetworkMode
+	4,  // 7: orkstack.v1.Task.await:type_name -> orkstack.v1.AwaitSpec
+	3,  // 8: orkstack.v1.Task.each:type_name -> orkstack.v1.EachSpec
+	13, // 9: orkstack.v1.EachSpec.source:type_name -> orkstack.v1.EachSource
+	8,  // 10: orkstack.v1.AwaitSpec.schema:type_name -> google.protobuf.Struct
+	7,  // 11: orkstack.v1.Orkflow.labels:type_name -> orkstack.v1.Orkflow.LabelsEntry
+	8,  // 12: orkstack.v1.Orkflow.inputs:type_name -> google.protobuf.Struct
+	2,  // 13: orkstack.v1.Orkflow.tasks:type_name -> orkstack.v1.Task
+	14, // 14: orkstack.v1.Orkflow.created_at:type_name -> google.protobuf.Timestamp
+	1,  // 15: orkstack.v1.Orkflow.pins:type_name -> orkstack.v1.Pin
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_orkflow_proto_init() }
@@ -710,7 +824,7 @@ func file_orkstack_v1_orkflow_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_orkflow_proto_rawDesc), len(file_orkstack_v1_orkflow_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

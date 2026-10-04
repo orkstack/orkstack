@@ -56,6 +56,10 @@ type taskRunOptions struct {
 	shared      string
 	renderOnly  bool
 	keep        bool
+	// item is --item: one item of a fan-out task (required for one).
+	item itemFlag
+	// itemSelected is item, resolved when the command runs.
+	itemSelected *int32
 }
 
 // suppliedArtifact is one --artifact TASK/NAME=PATH.
@@ -98,9 +102,15 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 			"command could not run the task.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			selected, err := opts.item.resolve(cmd, opts.task)
+			if err != nil {
+				return err
+			}
+			opts.itemSelected = selected
 			return runTaskRun(cmd, g, opts)
 		},
 	}
+	opts.item.register(cmd, "run this item of a fan-out task (required for one)")
 	flags := cmd.Flags()
 	flags.StringVar(&opts.task, "task", "", "the task to run (required)")
 	flags.StringVar(&opts.fromRun, "from-run", "", "replay against this run's recorded upstream bytes")
@@ -753,8 +763,13 @@ func (r *taskRunner) compose() error {
 	r.interruptMu.Lock() // the signal goroutine reads localID for its notice
 	r.localID = localID
 	r.interruptMu.Unlock()
+	itemCount, err := r.itemCount()
+	if err != nil {
+		return err
+	}
 	in, err := engine.LocalTaskInput(engine.LocalTask{
 		Orkflow: r.wf, TaskID: r.opts.task, RunID: r.localID, Input: input, Upstream: upstream,
+		Item: r.opts.itemSelected, ItemCount: itemCount,
 	})
 	r.report = r.newReport()
 	var refusal *engine.LocalTaskRefusal
@@ -779,6 +794,37 @@ func (r *taskRunner) compose() error {
 	r.in = in
 	r.report.IdempotencyKey = in.GetIdempotencyKey()
 	return r.dispatch()
+}
+
+// itemCount is a fan-out task's item count for --item: the run's own count
+// with --from-run, or, with --file and no run, the count of the stubbed
+// source (--output SRC=JSON). Nil leaves an input source to LocalTaskInput,
+// which counts it from the input exactly as the interpreter does.
+func (r *taskRunner) itemCount() (*int32, error) {
+	spec := r.spec.GetEach()
+	if spec == nil || r.opts.itemSelected == nil {
+		return nil, nil
+	}
+	if r.run != nil {
+		if node := fanOutRow(r.run, r.opts.task); node.GetEach().GetExpanded() {
+			count := node.GetEach().GetCount()
+			return &count, nil
+		}
+		return nil, fmt.Errorf("task %q of run %s has not expanded yet; there are no items to run", r.opts.task, r.run.GetId())
+	}
+	source := spec.GetSource().GetTaskId()
+	if source == "" {
+		return nil, nil
+	}
+	stub, ok := r.parsed.assumed[source]
+	if !ok {
+		return nil, nil
+	}
+	n, eerr := engine.EachArrayLength(stub.GetData().AsMap(), spec.GetSource().GetPath(), spec.GetOver())
+	if eerr != nil {
+		return nil, fmt.Errorf("--output %s: %s", source, eerr.Message)
+	}
+	return &n, nil
 }
 
 // pinTimeout is the Orkflow's Pin.timeout_seconds, or the task's own timeout

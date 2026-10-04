@@ -293,15 +293,24 @@ func (h *StatsHandler) sampleRun(
 	}
 	var samples []engine.TaskSample
 	for _, task := range run.GetTaskRuns() {
-		if !engine.Dispatched(task) {
-			continue
+		// A fan-out's own row produces no sample: each item is one sample
+		// of its node, grouped under the node's task id (spec each-fan-out
+		// §14, flake-index).
+		rows := []*orkstackv1.TaskRun{task}
+		if task.GetEach() != nil {
+			rows = task.GetItems()
 		}
-		records, err := h.svc.attempts.ListAttempts(ctx, entry.RunID, task.GetTaskId())
-		if err != nil {
-			return nil, false, connect.NewError(connect.CodeUnavailable,
-				fmt.Errorf("read attempt records of task %q in run %q: %w", task.GetTaskId(), entry.RunID, err))
+		for _, row := range rows {
+			if !engine.Dispatched(row) {
+				continue
+			}
+			records, err := h.svc.attempts.ListAttempts(ctx, entry.RunID, row.GetTaskId(), artifacts.ItemOf(row.Item))
+			if err != nil {
+				return nil, false, connect.NewError(connect.CodeUnavailable,
+					fmt.Errorf("read attempt records of task %q in run %q: %w", row.GetTaskId(), entry.RunID, err))
+			}
+			samples = append(samples, engine.SampleTask(entry, run, row, records))
 		}
-		samples = append(samples, engine.SampleTask(entry, run, task, records))
 	}
 	return samples, true, nil
 }

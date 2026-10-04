@@ -106,7 +106,7 @@ func (c *countingBodies) totalReads() int {
 type attemptsPanic struct{}
 
 func (attemptsPanic) PutAttempt(context.Context, *orkstackv1.TaskAttempt) error { return nil }
-func (attemptsPanic) ListAttempts(context.Context, string, string) ([]*orkstackv1.TaskAttempt, error) {
+func (attemptsPanic) ListAttempts(context.Context, string, string, artifacts.Item) ([]*orkstackv1.TaskAttempt, error) {
 	panic("the failure breakdown read an attempt record without being asked for image or phase")
 }
 
@@ -114,7 +114,7 @@ func (attemptsPanic) ListAttempts(context.Context, string, string) ([]*orkstackv
 type attemptsBroken struct{}
 
 func (attemptsBroken) PutAttempt(context.Context, *orkstackv1.TaskAttempt) error { return nil }
-func (attemptsBroken) ListAttempts(context.Context, string, string) ([]*orkstackv1.TaskAttempt, error) {
+func (attemptsBroken) ListAttempts(context.Context, string, string, artifacts.Item) ([]*orkstackv1.TaskAttempt, error) {
 	return nil, errors.New("attempt bucket unreachable")
 }
 
@@ -410,7 +410,7 @@ func TestGetFailureBreakdown_NeverTouchesTheAttemptStoreUnlessImageOrPhaseIsRequ
 			t.Fatal("the attempt store under this test does not panic; the test proves nothing")
 		}
 	}()
-	_, _ = attemptsPanic{}.ListAttempts(context.Background(), "ork-anything", "task")
+	_, _ = attemptsPanic{}.ListAttempts(context.Background(), "ork-anything", "task", artifacts.NoItem)
 }
 
 func TestGetFailureBreakdown_ReclaimedAttemptRecordsAreCountedNotBlank(t *testing.T) {

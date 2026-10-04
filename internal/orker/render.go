@@ -43,7 +43,8 @@ type renderer struct {
 
 // newRenderer builds the render context documented in docs/DSL.md:
 // `.inputs.<name>` from the run input and `.tasks.<id>.output.<field>` plus
-// `.tasks.<id>.artifacts` from the upstream results.
+// `.tasks.<id>.artifacts` from the upstream results, and — for an item of a
+// fan-out only — `.each.<as>`, `.each.index` and `.each.count`.
 func newRenderer(
 	taskID string,
 	inputs map[string]any,
@@ -51,6 +52,7 @@ func newRenderer(
 	upstreamArtifacts map[string][]*orkstackv1.ArtifactRef,
 	paths map[string]string,
 	allowlist map[string]struct{},
+	each map[string]any,
 ) *renderer {
 	tasks := make(map[string]any, len(upstreamArtifacts))
 	ids := make(map[string]struct{}, len(upstreamArtifacts)+len(upstreamValues))
@@ -76,9 +78,16 @@ func newRenderer(
 			"artifacts": refs,
 		}
 	}
+	data := map[string]any{"inputs": nonNilMap(inputs), "tasks": tasks}
+	// .each exists only while rendering an item of a fan-out: {<as>: the
+	// item, "index": i, "count": n}. Absent otherwise, so a stray .each in a
+	// task that is not an item is a missing key, RENDER_FAILED.
+	if each != nil {
+		data["each"] = each
+	}
 	return &renderer{
 		taskID:    taskID,
-		data:      map[string]any{"inputs": nonNilMap(inputs), "tasks": tasks},
+		data:      data,
 		paths:     paths,
 		allowlist: allowlist,
 	}

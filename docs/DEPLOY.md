@@ -333,6 +333,7 @@ then the variable it becomes.
 | `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
+| `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Lowers the built-in ceiling of 1000, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
 | `engine.limits.artifact_max_count` | `ORK_ARTIFACT_MAX_COUNT` | `256` | `ork` | contract limit: output artifacts per attempt |
 | `engine.limits.artifact_max_bytes` | `ORK_ARTIFACT_MAX_BYTES` | `5 GiB` | `ork` | contract limit: bytes per output artifact |
@@ -393,6 +394,18 @@ that refuses a pin with no host to open it on asks one Orker of the pool and
 takes that answer as representative — a mixed pool is refused or accepted
 depending on who answered, and a pin accepted onto Orkers that in fact set `0`
 waits for a slot that never appears and then fails the run.
+
+### Fan-out needs every Orker of a pool on a release that supports it
+
+An Orkflow with a fan-out (`each:`, `docs/DSL.md` "Fan-out") needs Orkers that
+understand items: an Orker built before fan-out would run an item without its
+`task.json` `each` object, and would stage nothing for a fan-out's direct
+dependent — a silently wrong result. So submit asks one Orker of the pool of
+every fan-out and of every direct dependent of one whether it supports
+fan-out, and refuses the run with `FailedPrecondition` naming the pool, the
+tasks, the Orker and its build when it does not; `allow_empty_pool` does not
+override that. Like pin hosting, the answer of one Orker stands for its pool:
+run every Orker of one pool on one release.
 
 ### Pins on a versioned deployment
 
@@ -1075,6 +1088,14 @@ release runs nothing at all (§1).
    introduced awaits is Current: a run routed to an older build would treat
    the await as a container task and fail explicitly, never silently.
 
+   Likewise, apply an Orkflow that uses a **fan-out** (`each:`) only once the
+   release that introduced fan-out is Current. An older engine refuses to
+   compile `each:`, but one asked to start a run of an already-stored version
+   that declares it would drop the unknown field and run the node once as a
+   plain task — explicitly failing `RENDER_FAILED` only when its `with:` reads
+   `.each`, and giving its direct dependents no items. A run with a fan-out
+   holds its release until every item settles, like any running run.
+
 A rollout done this way is held by
 `TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn`
 (`internal/engine/versioning_rollout_integration_test.go`): the run in flight
@@ -1197,6 +1218,12 @@ That moves one run onto a version that did not start it, so the determinism
 argument in §2 applies in full: if the two builds disagree about the command
 stream, the run fails its next workflow task. Use it to rescue a run you would
 otherwise abandon, not as a routine tool.
+
+**Rolling back past fan-out.** The mirror of §3's ramp rule: after rolling
+back to a release that predates fan-out, submit no Orkflow version that
+declares `each:` — that older engine would run each fan-out once as a plain
+task (above). Runs with items in flight stay pinned to the newer release and
+must drain there (`orkctl release wait`).
 
 **Rolling back past schedules.** A release without schedules has no
 `ScheduleFireWorkflow` registered, so a schedule that fires on it fails to

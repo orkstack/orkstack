@@ -199,6 +199,15 @@ func RunWorkflow(
 				}
 				continue
 			}
+			// A fan-out counts its array once and dispatches its items; it
+			// is never itself an activity. Before openPin, which it can
+			// never reach (docs/DSL.md rule 23 refuses `pin:` on a fan-out).
+			if state.eaches[id] != nil {
+				if err := state.expandEach(ctx, runCtx, id, inFlight); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, id, err)
+				}
+				continue
+			}
 			// A pin is opened by the FIRST of its members the run actually
 			// decides to run, and never before: a pin whose every member is
 			// skipped costs an Orker nothing, and the pin's lifetime clock
@@ -237,16 +246,31 @@ func RunWorkflow(
 		// the case where several futures are ready in one workflow task.
 		selector := workflow.NewSelector(ctx)
 		selectedID := ""
+		selectedItem := int32(-1)
 		selectedPin := ""
 		for _, id := range state.order {
-			future, ok := inFlight[id]
-			if !ok {
-				continue
+			if future, ok := inFlight[id]; ok {
+				taskID := id
+				selector.AddFuture(future, func(workflow.Future) {
+					selectedID = taskID
+				})
 			}
-			taskID := id
-			selector.AddFuture(future, func(workflow.Future) {
-				selectedID = taskID
-			})
+			// Then, for a fan-out, each in-flight item in ascending index: a
+			// fixed order, so which of several ready items is taken first is
+			// this code's property, and the selected key says it was an item.
+			if e := state.eaches[id]; e != nil {
+				for index := int32(0); index < e.count; index++ {
+					future, ok := inFlight[itemFlightKey(id, index)]
+					if !ok {
+						continue
+					}
+					taskID, itemIndex := id, index
+					selector.AddFuture(future, func(workflow.Future) {
+						selectedID = taskID
+						selectedItem = itemIndex
+					})
+				}
+			}
 		}
 		// Then every opening pin's readiness, in sorted pin-name order and
 		// AFTER the task futures — a fixed position, so which of several
@@ -305,6 +329,15 @@ func RunWorkflow(
 			}
 			continue
 		}
+		if selectedItem >= 0 {
+			key := itemFlightKey(selectedID, selectedItem)
+			future := inFlight[key]
+			delete(inFlight, key)
+			if err := state.collectItem(ctx, runCtx, selectedID, selectedItem, future, inFlight, false); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, selectedID, err)
+			}
+			continue
+		}
 		future := inFlight[selectedID]
 		delete(inFlight, selectedID)
 		if err := state.collect(ctx, selectedID, future); err != nil {
@@ -353,6 +386,16 @@ type runState struct {
 	// with no await — such a run creates no channel and registers none.
 	awaits      map[string]*awaitState
 	resolutions workflow.ReceiveChannel
+
+	// eaches is one entry per fan-out task, keyed by task id, built once in
+	// newRunState; iteration is over order, never the map. eachShare is the
+	// Orkflow's declared item total, and itemInputLimit / itemArtifactMax
+	// the two per-item bounds derived from it (spec each-fan-out §5.1). A
+	// run with no fan-out allocates nothing and leaves all three zero.
+	eaches          map[string]*eachState
+	eachShare       int32
+	itemInputLimit  int64
+	itemArtifactMax int32
 
 	createdAt *timestamppb.Timestamp
 	startedAt *timestamppb.Timestamp
@@ -476,6 +519,19 @@ func newRunState(
 			state.awaits[t.GetId()] = &awaitState{spec: spec}
 			state.taskRuns[t.GetId()].Await = &orkstackv1.TaskAwait{Callback: spec.GetCallback()}
 		}
+		// A fan-out carries its TaskEach from the run's first snapshot, while
+		// still PENDING; unset for every other task, so a run with no fan-out
+		// snapshots exactly as before.
+		if spec := t.GetEach(); spec != nil {
+			if state.eaches == nil {
+				state.eaches = map[string]*eachState{}
+			}
+			state.eaches[t.GetId()] = &eachState{spec: spec}
+			state.taskRuns[t.GetId()].Each = &orkstackv1.TaskEach{}
+		}
+	}
+	if len(state.eaches) > 0 {
+		state.eachShare, state.itemInputLimit, state.itemArtifactMax = eachBounds(wf, plan.Limits)
 	}
 	if len(state.awaits) > 0 {
 		state.resolutions = workflow.GetSignalChannel(ctx, ResolveAwaitSignal)
@@ -1175,6 +1231,18 @@ func (s *runState) markSkipped(ctx workflow.Context, id, reason string) error {
 func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
 	refs := make([]*orkstackv1.UpstreamRef, 0, len(s.closure[id]))
 	for _, need := range s.closure[id] {
+		// A fan-out contributes ONE ref, whatever its count, and only to a
+		// DIRECT dependent: its items are files nothing else may read (rule
+		// 24), and the Orker stages each from its own commit (spec §5.8).
+		if e := s.eaches[need]; e != nil {
+			if s.taskRuns[need].GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED && s.directlyNeeds(id, need) {
+				refs = append(refs, &orkstackv1.UpstreamRef{
+					TaskId: need,
+					Each:   &orkstackv1.EachUpstream{Count: e.count, CommitRoot: s.plan.CommitRoot},
+				})
+			}
+			continue
+		}
 		result, ok := s.results[need]
 		if !ok {
 			continue
@@ -1187,6 +1255,16 @@ func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
 		})
 	}
 	return refs
+}
+
+// directlyNeeds reports whether id names need in its own `needs:`.
+func (s *runState) directlyNeeds(id, need string) bool {
+	for _, candidate := range s.tasks[id].GetNeeds() {
+		if candidate == need {
+			return true
+		}
+	}
+	return false
 }
 
 // upstreamOutputs is the condition-evaluation view of the same closure: each
@@ -1281,6 +1359,29 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		return nil, err
 	}
 
+	activityCtx := s.taskActivityContext(activityBase, t, queue)
+
+	commitURI, err := s.commitURIFor(id)
+	if err != nil {
+		return nil, err
+	}
+	input := s.executeTaskInput(t, id, pool, pinContext)
+	input.IdempotencyKey = task.IdempotencyKeyFor(s.wf.GetNamespace(), s.runID, id)
+	input.CommitUri = commitURI
+	// The wire bound is checked HERE, deterministically, before scheduling.
+	// The deployment's limit is replay-pinned on the plan; the checker also
+	// preserves Temporal's absolute 256 KiB ceiling.
+	if err := task.CheckInputSize(input, s.plan.Limits.Proto().GetValuesMaxBytes()); err != nil {
+		return nil, temporal.NewNonRetryableApplicationError(
+			err.Error(), task.CategoryContractViolation, err)
+	}
+	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
+}
+
+// taskActivityContext is the ActivityOptions one task's ExecuteTask runs
+// with — every item of a fan-out uses its node's, so an item has the task's own
+// timeout, grace, heartbeat and retry budget.
+func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstackv1.Task, queue string) workflow.Context {
 	// The three timeouts must not be confused, and this is where the
 	// confusion would happen (§6.3):
 	//
@@ -1306,7 +1407,7 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	grace := time.Duration(graceSecondsFor(t)) * time.Second
 	startToClose := taskTimeout + grace + time.Duration(s.plan.TransferBudgetSeconds)*time.Second
 
-	activityCtx := workflow.WithActivityOptions(activityBase, workflow.ActivityOptions{
+	return workflow.WithActivityOptions(activityBase, workflow.ActivityOptions{
 		// Still the POOL's queue, for a pinned task as for any other. The SDK
 		// swaps it for the session's own at ExecuteActivity, so setting it
 		// here is harmless and ignored — and it stays because the pool is what
@@ -1324,13 +1425,16 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		WaitForCancellation: true,
 		RetryPolicy:         retryPolicyFor(t),
 	})
+}
 
-	commitURI, err := s.commitURIFor(id)
-	if err != nil {
-		return nil, err
-	}
+// executeTaskInput is the ExecuteTaskInput every task and every item shares:
+// everything but the idempotency key and commit URI, which identify ONE
+// logical activity and are set by the caller (schedule, scheduleItem).
+func (s *runState) executeTaskInput(
+	t *orkstackv1.Task, id, pool string, pinContext *orkstackv1.PinContext,
+) *orkstackv1.ExecuteTaskInput {
 	namespace := s.wf.GetNamespace()
-	input := &orkstackv1.ExecuteTaskInput{
+	return &orkstackv1.ExecuteTaskInput{
 		RunId:          s.runID,
 		OrkflowName:    s.wf.GetName(),
 		OrkflowVersion: s.wf.GetVersion(),
@@ -1344,9 +1448,6 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		Namespace:               namespace,
 		Pool:                    pool,
 		TaskId:                  id,
-
-		IdempotencyKey: task.IdempotencyKeyFor(namespace, s.runID, id),
-		CommitUri:      commitURI,
 
 		// The image is the APPLY-TIME resolution stamped into the immutable
 		// version document. The engine never resolves a tag here: workflow
@@ -1391,14 +1492,6 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		// history fixture keep matching without being re-recorded (§10.2).
 		Pin: pinContext,
 	}
-	// The wire bound is checked HERE, deterministically, before scheduling.
-	// The deployment's limit is replay-pinned on the plan; the checker also
-	// preserves Temporal's absolute 256 KiB ceiling.
-	if err := task.CheckInputSize(input, s.plan.Limits.Proto().GetValuesMaxBytes()); err != nil {
-		return nil, temporal.NewNonRetryableApplicationError(
-			err.Error(), task.CategoryContractViolation, err)
-	}
-	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
 }
 
 // commitURIFor composes one activity's commit URI.
@@ -1535,13 +1628,28 @@ func (s *runState) cancelInFlight(ctx workflow.Context, inFlight map[string]work
 	// s.order, never the map's own range: workflow code must stay
 	// deterministic, and Go's map iteration order is randomized on purpose.
 	for _, id := range s.order {
-		future, ok := inFlight[id]
-		if !ok {
-			continue
+		if future, ok := inFlight[id]; ok {
+			_ = s.collect(ctx, id, future)
 		}
-		_ = s.collect(ctx, id, future)
+		// A fan-out's in-flight items, in index order: each outcome is
+		// recorded and its item event emitted, but nothing is dispatched and
+		// the node is not decided here.
+		if e := s.eaches[id]; e != nil {
+			for index := int32(0); index < e.count; index++ {
+				key := itemFlightKey(id, index)
+				future, ok := inFlight[key]
+				if !ok {
+					continue
+				}
+				delete(inFlight, key)
+				_ = s.collectItem(ctx, ctx, id, index, future, inFlight, true)
+			}
+		}
 	}
 	for _, id := range s.order {
+		if s.eaches[id] != nil {
+			s.finishFanOutOnRunEnd(ctx, id)
+		}
 		switch s.taskRuns[id].GetStatus() {
 		case orkstackv1.Status_STATUS_PENDING:
 			if err := s.markCanceled(ctx, id, "run ended before this task started"); err != nil {
@@ -1597,14 +1705,19 @@ func (s *runState) markCanceled(ctx workflow.Context, id, reason string) error {
 // successful one: without it, an exit-1 task's uploaded test report and
 // captured stderr would be unreachable.
 func (s *runState) recordFailure(ctx workflow.Context, id string, cause error) {
-	taskRun := s.taskRuns[id]
+	s.recordFailureOn(ctx, s.taskRuns[id], fmt.Sprintf("task %q", id), cause)
+}
+
+// recordFailureOn is recordFailure for any row: a task's own, or one item of
+// a fan-out (collectItem), whose details label names the item.
+func (s *runState) recordFailureOn(ctx workflow.Context, taskRun *orkstackv1.TaskRun, label string, cause error) {
 	taskRun.Status = orkstackv1.Status_STATUS_FAILED
 	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
 
 	failure := &orkstackv1.Error{
 		Code:    "TASK_FAILED",
 		Message: cause.Error(),
-		Details: fmt.Sprintf("task %q", id),
+		Details: label,
 	}
 
 	// WHY RETRYING STOPPED, as data on the snapshot.
@@ -1785,6 +1898,15 @@ func (s *runState) fail(
 		Message: cause.Error(),
 		Details: fmt.Sprintf("task %q", taskID),
 	}
+	// A fan-out's own failure carries the node's sentence as the
+	// ApplicationError's message, whichever way the array was counted or the
+	// item failed; Run.error.message is that sentence, without the error
+	// type's decoration (spec each-fan-out §5.3). Nothing else changes: the
+	// branch is reached only for a fan-out, which no earlier history holds.
+	var nodeErr *temporal.ApplicationError
+	if s.eaches[taskID] != nil && errors.As(cause, &nodeErr) {
+		s.runError.Message = nodeErr.Message()
+	}
 
 	// A pin that lost its host is the one failure that ARRIVES as a
 	// cancellation without anything having cancelled the run: the SDK cancels
@@ -1891,7 +2013,11 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 		orkstackv1.Status_STATUS_SUCCEEDED, "run succeeded"); err != nil {
 		return nil, err
 	}
-	return s.snapshot(), nil
+	// The workflow's own result carries no items: nothing reads it (the
+	// reader rebuilds a run from its events and snapshots), and a result
+	// carrying 1000 items could pass the payload limit and fail the run's
+	// completion. Identical to the snapshot for a run with no fan-out.
+	return WithoutItems(s.snapshot()), nil
 }
 
 // snapshot materializes the current Run read model.

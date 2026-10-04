@@ -1,0 +1,3 @@
+convert: fan-out of 4 items; read one with orkctl -n data run logs ork-each-cli --task convert --item N
+[list] list ran
+[merge] merge ran

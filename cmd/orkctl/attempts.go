@@ -23,6 +23,7 @@ import (
 // for (§2.7).
 func newRunAttemptsCommand(g *globalFlags) *cobra.Command {
 	var task string
+	var item itemFlag
 	cmd := &cobra.Command{
 		Use:   "attempts <run-id>",
 		Short: "List every attempt of a run's tasks, including retried-away ones",
@@ -40,6 +41,10 @@ func newRunAttemptsCommand(g *globalFlags) *cobra.Command {
 			"so any replica answers — including one that never started the run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			selected, err := item.resolve(cmd, task)
+			if err != nil {
+				return err
+			}
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
 
@@ -48,6 +53,7 @@ func newRunAttemptsCommand(g *globalFlags) *cobra.Command {
 					RunId:     args[0],
 					Namespace: g.namespace,
 					TaskId:    task,
+					Item:      selected,
 				}))
 			if err != nil {
 				return attemptsError(err)
@@ -67,6 +73,7 @@ func newRunAttemptsCommand(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&task, "task", "",
 		"only this task's attempts, with the full error of every failed one")
+	item.register(cmd, "only this item of the fan-out --task names (0-based)")
 	return cmd
 }
 
@@ -103,14 +110,28 @@ func renderAttemptList(out io.Writer, attempts []*orkstackv1.TaskAttempt) error 
 		return err
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "TASK\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER\tERROR")
+	// The ITEM column appears whenever any record is an item's (fan-out); a
+	// run with no fan-out keeps the table it always had.
+	withItems := false
+	for _, attempt := range attempts {
+		withItems = withItems || attempt.Item != nil
+	}
+	if withItems {
+		fmt.Fprintln(table, "TASK\tITEM\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER\tERROR")
+	} else {
+		fmt.Fprintln(table, "TASK\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER\tERROR")
+	}
 	unreported := false
 	for _, attempt := range attempts {
 		if attempt.GetOutcome() == orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED {
 			unreported = true
 		}
+		task := attempt.GetTaskId()
+		if withItems {
+			task += "\t" + itemCell(attempt.Item)
+		}
 		fmt.Fprintf(table, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			attempt.GetTaskId(),
+			task,
 			attempt.GetAttempt(),
 			attemptOutcomeLabel(attempt.GetOutcome()),
 			orDash(attempt.GetPhase()),
@@ -153,8 +174,11 @@ func renderAttemptFailures(
 			continue
 		}
 		attemptErr := attempt.GetError()
-		fmt.Fprintf(out, "\nAttempt %d (%s)\n", attempt.GetAttempt(),
-			attemptOutcomeLabel(attempt.GetOutcome()))
+		heading := fmt.Sprintf("Attempt %d", attempt.GetAttempt())
+		if attempt.Item != nil {
+			heading = fmt.Sprintf("%s attempt %d", itemLabel(attempt.GetTaskId(), attempt.Item), attempt.GetAttempt())
+		}
+		fmt.Fprintf(out, "\n%s (%s)\n", heading, attemptOutcomeLabel(attempt.GetOutcome()))
 		fmt.Fprintf(out, "%sCategory:  %s\n", attemptDetailIndent,
 			failureCategoryLabel(attemptErr.GetCategory()))
 		fmt.Fprintf(out, "%sCode:      %s\n", attemptDetailIndent, orDash(attemptErr.GetCode()))
@@ -165,10 +189,12 @@ func renderAttemptFailures(
 			fmt.Fprintf(out, "%sDetails:   %s\n", attemptDetailIndent,
 				indentJSONBlock(details, attemptDetailContinuation))
 		}
-		fmt.Fprintf(out, "%sLogs:      %s\n", attemptDetailIndent,
-			orkctlCommand(namespace, "run", "logs", runID,
-				"--task", attempt.GetTaskId(),
-				"--attempt", strconv.Itoa(int(attempt.GetAttempt()))))
+		logArgs := []string{"run", "logs", runID, "--task", attempt.GetTaskId()}
+		if attempt.Item != nil {
+			logArgs = append(logArgs, "--item", strconv.Itoa(int(attempt.GetItem())))
+		}
+		logArgs = append(logArgs, "--attempt", strconv.Itoa(int(attempt.GetAttempt())))
+		fmt.Fprintf(out, "%sLogs:      %s\n", attemptDetailIndent, orkctlCommand(namespace, logArgs...))
 	}
 	return nil
 }

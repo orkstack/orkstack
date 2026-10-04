@@ -166,8 +166,8 @@ func (s *S3LogStore) ReadLogChunks(
 // LatestLogAttempt returns the highest attempt of a task that wrote a chunk.
 // The scan reads KEYS only: which attempts exist is written in the key, and
 // fetching bodies to answer it would download a whole log to count its tries.
-func (s *S3LogStore) LatestLogAttempt(ctx context.Context, runID, taskID string) (int32, error) {
-	prefix, err := LogTaskPrefix(runID, taskID)
+func (s *S3LogStore) LatestLogAttempt(ctx context.Context, runID, taskID string, item Item) (int32, error) {
+	prefix, err := LogScopePrefix(runID, taskID, item)
 	if err != nil {
 		return 0, err
 	}
@@ -183,7 +183,7 @@ func (s *S3LogStore) LatestLogAttempt(ctx context.Context, runID, taskID string)
 		}
 		for _, object := range page.Contents {
 			ref, _, _, ok := ParseLogChunkKey(aws.ToString(object.Key))
-			if !ok || ref.RunID != runID || ref.TaskID != taskID {
+			if !ok || ref.RunID != runID || ref.TaskID != taskID || ref.Item != item {
 				continue
 			}
 			if ref.Attempt > latest {

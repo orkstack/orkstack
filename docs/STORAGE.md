@@ -64,10 +64,13 @@ place each shape is spelled.
 | `metadata/cleanup/runs/{run-id}.json` | a sidecar recording that the run's artifacts were cleaned (`RunCleanupKey`) | once, by the cleanup worker | nothing |
 | `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind each projected event, kept out of Temporal history (`RunSnapshotKey`, `snapshots.go`) | by the workflow's snapshot local activity | the cleanup worker |
 | `metadata/logs/{run-id}/{task-id}/{attempt}/{seq}` (and `.trunc`) | live task stdout/stderr chunks; order is the zero-padded key (`LogChunkKey`, `logs.go`) | by the Orker while the task runs | the cleanup worker, or a bucket lifecycle rule |
+| `metadata/logs/{run-id}/{task-id}/{item:05}/{attempt}/{seq}` (and `.trunc`) | one fan-out item's live stdout/stderr chunks: the task row's layout with the item's zero-padded index one segment below the task (`LogScopePrefix`, `logs.go`) | by the Orker while the item runs | the cleanup worker, or a bucket lifecycle rule |
 | `metadata/attempts/{run-id}/{task-id}/{attempt}.json` | one `TaskAttempt`: the outcome, error, exit code and §7.1 phase of ONE attempt, the phases it passed through, and the cpu and memory the Orker reserved for it; order is the zero-padded key (`AttemptKey`, `attempts.go`) | by the Orker at the end of every attempt, best-effort, plain put; read verbatim as `attempts/{n}.json` by `ExportRunEvidence` | the cleanup worker, or a bucket lifecycle rule |
+| `metadata/attempts/{run-id}/{task-id}/{item:05}/{attempt}.json` | one `TaskAttempt` of one fan-out item (`TaskAttempt.item` set); each item numbers its attempts from 1 (`AttemptScopePrefix`, `attempts.go`) | by the Orker at the end of every item attempt, best-effort, plain put | the cleanup worker, or a bucket lifecycle rule |
 | `metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` | one control-plane audit record: who asserted which write, on what, when, and whether it was refused (`AuditKey`, `pkg/artifacts/audit.go`); the day is the record's own `at` in UTC | create-only, by the engine after every audited write RPC | nothing; a bucket lifecycle rule is the operator's |
 | `metadata/deliveries/{yyyy}/{mm}/{dd}/{id}/{ns}/{run-id}/{webhook-id}/{event}/{outcome}.json` | one settled webhook delivery: every attempt, the signature sent, the body's SHA-256 — never the body (`DeliveryKey`, `pkg/artifacts/deliveries.go`); the day is the one the delivery id's stamp carries (`created_at`), and the segments after the id are the record's own coordinates so every listing filter is decided from the key | create-only, by the engine after the dispatcher returns | nothing; a bucket lifecycle rule is the operator's |
 | `metadata/commits/{ns}/{run-id}/{task-id}/commit.json` | the immutable activity completion record (`CommitKey`, `commit_store.go`) | conditional create-if-absent; read verbatim as `commit.json` by `ExportRunEvidence`, only at the `CommitRef.uri` the run snapshot recorded | the cleanup worker |
+| `metadata/commits/{ns}/{run-id}/{task-id}/{item:05}/commit.json` | one fan-out item's immutable completion record (`ItemCommitKey`, `commit_store.go`); read by every direct dependent to stage that item's files | conditional create-if-absent, exactly as a task's | the cleanup worker |
 | `metadata/probes/commit-store/…/commit.json` | the boot-time probe proving conditional create works on this store | at boot | nothing |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`, `s3_manifest.go`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
 | `manifests/{object-key}` | the artifact's exact logical name, beside its object | with the object | with the object |
@@ -90,6 +93,11 @@ run id is encoded, never parsed (AGENTS.md §7).
 - **Any replica answers for any run.** Every read of a finished run, a log, a
   definition, or a namespace goes to this layout or to Temporal, never to the
   memory of the process that started it.
+- **A fan-out item has its own commit, attempt and log keys**, one
+  zero-padded segment below its task's; artifact objects stay
+  content-addressed and are shared between items that wrote the same bytes.
+  Every item key stays under its run's prefix, so the cleanup worker reclaims
+  items with no rule of their own.
 - **Every attempt is recorded, not just the winner.** Temporal discards a
   failed attempt's error when it schedules the next one, so the Orker writes
   one `TaskAttempt` per attempt beside the logs that attempt produced. The

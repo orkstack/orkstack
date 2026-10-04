@@ -232,6 +232,24 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 			"schema":         schema,
 		}
 	}
+	// each is emitted ONLY when set — the same exception, for the same
+	// reason, as `pin`. source is included: it is what runs, compiled at
+	// apply exactly as `image` is, so a build that compiled `over` differently
+	// would produce a different definition and must produce a different digest.
+	if e := t.GetEach(); e != nil {
+		src := e.GetSource()
+		out["each"] = map[string]any{
+			"over":        e.GetOver(),
+			"as":          e.GetAs(),
+			"maxItems":    int64(e.GetMaxItems()),
+			"maxParallel": int64(e.GetMaxParallel()),
+			"source": map[string]any{
+				"input":  src.GetInput(),
+				"taskId": src.GetTaskId(),
+				"path":   canonicalStrings(src.GetPath()),
+			},
+		}
+	}
 	return out, nil
 }
 

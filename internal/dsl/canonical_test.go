@@ -664,3 +664,47 @@ func TestDefinitionDigest_IgnoresTheInterface(t *testing.T) {
 		t.Fatalf("the canonical form carries the label: %s", canonical)
 	}
 }
+
+// each is emitted ONLY when set: every existing golden vector above is
+// unchanged by its existence, adding it moves the digest, and a different
+// compiled source moves it again.
+func TestCanonicalOrkflow_EachEmittedOnlyWhenSet(t *testing.T) {
+	plain := goldenOrkflow(t)
+	canonical, err := CanonicalOrkflow(plain)
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	if strings.Contains(string(canonical), `"each"`) {
+		t.Fatalf("a task with no each emitted the key: %s", canonical)
+	}
+	if got, _ := DefinitionDigest(plain); got != GoldenDefinitionDigest {
+		t.Fatalf("the golden digest moved: %s", got)
+	}
+	if got, _ := DefinitionDigest(pinnedOrkflow(t)); got != GoldenPinnedDefinitionDigest {
+		t.Fatalf("the golden pinned digest moved: %s", got)
+	}
+
+	fanOut := goldenOrkflow(t)
+	fanOut.Tasks[0].Each = &orkstackv1.EachSpec{
+		Over: "{{ .inputs.url }}", As: "item", MaxItems: 3,
+		Source: &orkstackv1.EachSource{Input: "url"},
+	}
+	withEach, err := DefinitionDigest(fanOut)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if withEach == GoldenDefinitionDigest {
+		t.Fatal("adding each did not change the digest")
+	}
+	canonical, _ = CanonicalOrkflow(fanOut)
+	for _, want := range []string{`"each":{`, `"maxItems":3`, `"maxParallel":0`, `"source":{"input":"url","path":[],"taskId":""}`} {
+		if !strings.Contains(string(canonical), want) {
+			t.Fatalf("canonical each lacks %s: %s", want, canonical)
+		}
+	}
+	moved := proto.Clone(fanOut).(*orkstackv1.Orkflow)
+	moved.Tasks[0].Each.Source = &orkstackv1.EachSource{Input: "url", Path: []string{"x"}}
+	if other, _ := DefinitionDigest(moved); other == withEach {
+		t.Fatal("a different compiled source did not change the digest")
+	}
+}

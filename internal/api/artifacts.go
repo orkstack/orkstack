@@ -22,14 +22,20 @@ func (s *Service) ListRunArtifacts(ctx context.Context, req *connect.Request[ork
 	if req.Msg.GetRunId() == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run_id is required"))
 	}
+	if err := checkItemRequiresTask(req.Msg.GetTaskId(), req.Msg.Item); err != nil {
+		return nil, err
+	}
 	run, err := s.LookupRunIn(ctx, req.Msg.GetRunId(), req.Msg.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
-	items := runArtifacts(run, req.Msg.GetTaskId())
 	if req.Msg.GetTaskId() != "" && !hasTask(run, req.Msg.GetTaskId()) {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("task %q not found in run %q", req.Msg.GetTaskId(), run.GetId()))
 	}
+	if _, err := itemRunOf(run, req.Msg.GetTaskId(), req.Msg.Item); err != nil {
+		return nil, err
+	}
+	items := runArtifacts(run, req.Msg.GetTaskId(), req.Msg.Item)
 	return connect.NewResponse(&orkstackv1.ListRunArtifactsResponse{Artifacts: items}), nil
 }
 
@@ -44,8 +50,21 @@ func (s *Service) ReadArtifact(ctx context.Context, req *connect.Request[orkstac
 	if err != nil {
 		return err
 	}
+	// The item selector: required for a fan-out (two items may record the
+	// same name), refused for any other task. Resolution is still against the
+	// recorded references, never a caller URI.
+	if hasTask(run, req.Msg.GetTaskId()) {
+		if _, err := itemRunOf(run, req.Msg.GetTaskId(), req.Msg.Item); err != nil {
+			return err
+		}
+		if req.Msg.Item == nil {
+			if err := needsItem(run, req.Msg.GetTaskId(), "orkctl run artifact download …"); err != nil {
+				return err
+			}
+		}
+	}
 	var selected *orkstackv1.RunArtifact
-	for _, item := range runArtifacts(run, req.Msg.GetTaskId()) {
+	for _, item := range runArtifacts(run, req.Msg.GetTaskId(), req.Msg.Item) {
 		if item.GetKind() == req.Msg.GetKind() && item.GetArtifact().GetName() == req.Msg.GetName() {
 			selected = item
 			break
@@ -109,12 +128,34 @@ func hasTask(run *orkstackv1.Run, id string) bool {
 	return false
 }
 
-func runArtifacts(run *orkstackv1.Run, taskID string) []*orkstackv1.RunArtifact {
+// runArtifacts lists the references recorded in run for taskID (every task
+// when empty). A fan-out's own row records none: its items do, and each item's
+// references are listed in index order carrying their item and the item's own
+// attempt. item narrows a fan-out to one item.
+func runArtifacts(run *orkstackv1.Run, taskID string, item *int32) []*orkstackv1.RunArtifact {
 	var result []*orkstackv1.RunArtifact
 	for _, task := range run.GetTaskRuns() {
 		if taskID != "" && task.GetTaskId() != taskID {
 			continue
 		}
+		if task.GetEach() != nil {
+			for _, row := range task.GetItems() {
+				if item != nil && row.GetItem() != *item {
+					continue
+				}
+				result = append(result, rowArtifacts(row)...)
+			}
+			continue
+		}
+		result = append(result, rowArtifacts(task)...)
+	}
+	return result
+}
+
+// rowArtifacts is one task's — or one item's — recorded references.
+func rowArtifacts(task *orkstackv1.TaskRun) []*orkstackv1.RunArtifact {
+	var result []*orkstackv1.RunArtifact
+	{
 		for _, ref := range task.GetArtifacts() {
 			result = append(result, &orkstackv1.RunArtifact{TaskId: task.GetTaskId(), Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Artifact: ref, Attempt: task.GetAttempt()})
 		}
@@ -132,6 +173,12 @@ func runArtifacts(run *orkstackv1.Run, taskID string) []*orkstackv1.RunArtifact 
 			if kind != orkstackv1.ArtifactKind_ARTIFACT_KIND_UNSPECIFIED {
 				result = append(result, &orkstackv1.RunArtifact{TaskId: task.GetTaskId(), Kind: kind, Artifact: ref, Attempt: task.GetAttempt()})
 			}
+		}
+	}
+	if task.Item != nil {
+		for _, artifact := range result {
+			index := task.GetItem()
+			artifact.Item = &index
 		}
 	}
 	return result

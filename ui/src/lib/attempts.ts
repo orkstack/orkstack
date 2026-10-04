@@ -71,11 +71,22 @@ export function isUnreported(attempt: TaskAttempt): boolean {
 export function groupAttemptsByTask(attempts: TaskAttempt[]): Map<string, TaskAttempt[]> {
 	const grouped = new Map<string, TaskAttempt[]>();
 	for (const attempt of attempts) {
-		const rows = grouped.get(attempt.taskId) ?? [];
+		const key = attemptsKey(attempt.taskId, attempt.item);
+		const rows = grouped.get(key) ?? [];
 		rows.push(attempt);
-		grouped.set(attempt.taskId, rows);
+		grouped.set(key, rows);
 	}
 	return grouped;
+}
+
+/**
+ * attemptsKey is the timeline a row belongs to: the task's own, or — for an
+ * item of a fan-out — that item's, keyed `convert[97]`. Every item numbers
+ * its attempts from 1 on its own, so folding a fan-out's rows into one
+ * timeline would read 120 first tries as 119 retries.
+ */
+export function attemptsKey(taskId: string, item?: number): string {
+	return item === undefined ? taskId : `${taskId}[${item}]`;
 }
 
 /**

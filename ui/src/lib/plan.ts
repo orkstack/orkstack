@@ -6,6 +6,7 @@
 // `orkctl run plan` print the same rows and the same sentences.
 import type { JsonObject } from '@bufbuild/protobuf';
 import { PlanOutcome, type PlanRunResponse, type PlanTask } from './gen/orkstack/v1/service_pb';
+import { eachPlanDetail } from './each';
 
 /** The lower-case OUTCOME word the CLI's table prints. */
 export function planOutcomeWord(outcome: PlanOutcome): string {
@@ -54,6 +55,8 @@ export function planDetail(task: PlanTask, plan: PlanRunResponse): string {
 		case PlanOutcome.SKIPPED:
 			return task.skipReason;
 		case PlanOutcome.RUNS:
+			// A fan-out is one PlanTask (spec each-fan-out §5.12).
+			if (task.each) return eachPlanDetail(task);
 			return task.pin ? `pin ${task.pin}` : '';
 		case PlanOutcome.AWAITS: {
 			const detail = `await ≤ ${goDuration(task.await?.timeoutSeconds ?? 0)}`;

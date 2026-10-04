@@ -135,14 +135,14 @@ func TestAttemptStore_ReadAttemptDocumentsCarriesTheStoredBytes(t *testing.T) {
 			}
 			tc.plant(prefix+"notes.txt", []byte("not a record"))
 
-			docs, err := tc.store.ReadAttemptDocuments(ctx, "ork-raw-1", "build")
+			docs, err := tc.store.ReadAttemptDocuments(ctx, "ork-raw-1", "build", NoItem)
 			if err != nil {
 				t.Fatalf("ReadAttemptDocuments: %v", err)
 			}
 			if len(docs) != 3 {
 				t.Fatalf("documents = %d, want 3", len(docs))
 			}
-			records, err := tc.store.ListAttempts(ctx, "ork-raw-1", "build")
+			records, err := tc.store.ListAttempts(ctx, "ork-raw-1", "build", NoItem)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,7 +177,7 @@ func TestAttemptStore_ReadAttemptDocumentsCarriesTheStoredBytes(t *testing.T) {
 				}
 			}
 
-			empty, err := tc.store.ReadAttemptDocuments(ctx, "ork-raw-1", "never-ran")
+			empty, err := tc.store.ReadAttemptDocuments(ctx, "ork-raw-1", "never-ran", NoItem)
 			if err != nil || len(empty) != 0 {
 				t.Fatalf("empty task = %v, %v; want empty, nil", empty, err)
 			}

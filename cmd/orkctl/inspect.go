@@ -40,6 +40,7 @@ func newRunInspectCommand(g *globalFlags) *cobra.Command {
 		taskID   string
 		watch    bool
 		interval time.Duration
+		item     itemFlag
 	)
 	cmd := &cobra.Command{
 		Use:   "inspect <run-id>",
@@ -65,7 +66,11 @@ func newRunInspectCommand(g *globalFlags) *cobra.Command {
 			if interval < minInspectInterval {
 				return fmt.Errorf("--interval must be at least %s", minInspectInterval)
 			}
-			inspector := &runInspector{g: g, cmd: cmd, runID: args[0], taskID: taskID}
+			selected, err := item.resolve(cmd, taskID)
+			if err != nil {
+				return err
+			}
+			inspector := &runInspector{g: g, cmd: cmd, runID: args[0], taskID: taskID, item: selected}
 			if !watch {
 				ctx, cancel := g.unaryContext(cmd)
 				defer cancel()
@@ -82,6 +87,7 @@ func newRunInspectCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&taskID, "task", "", "only this task")
+	item.register(cmd, "only this item of the fan-out --task names")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the run is terminal")
 	cmd.Flags().DurationVar(&interval, "interval", defaultInspectInterval,
 		"poll period under --watch (at least 1s)")
@@ -94,6 +100,7 @@ type runInspector struct {
 	cmd    *cobra.Command
 	runID  string
 	taskID string
+	item   *int32
 }
 
 // poll makes one round of reads and prints them. It returns the run status
@@ -117,6 +124,7 @@ func (i *runInspector) poll(ctx context.Context, watching bool) (orkstackv1.Stat
 		RunId:     i.runID,
 		Namespace: i.g.namespace,
 		TaskId:    i.taskID,
+		Item:      i.item,
 	}))
 	if err != nil {
 		return orkstackv1.Status_STATUS_UNSPECIFIED, pollError{err: err, op: "inspect run"}
@@ -239,7 +247,12 @@ func renderInspect(
 ) error {
 	now := inspected.GetComputedAt().AsTime()
 	liveByTask := make(map[string]*orkstackv1.LiveAttempt, len(inspected.GetAttempts()))
+	liveItems := map[string][]*orkstackv1.LiveAttempt{}
 	for _, attempt := range inspected.GetAttempts() {
+		if attempt.Item != nil {
+			liveItems[attempt.GetTaskId()] = append(liveItems[attempt.GetTaskId()], attempt)
+			continue
+		}
 		liveByTask[attempt.GetTaskId()] = attempt
 	}
 	type row struct {
@@ -254,18 +267,36 @@ func renderInspect(
 			continue
 		}
 		named[taskRun.GetTaskId()] = true
-		rows = append(rows, row{task: taskRun, status: taskStatusLabel(taskRun), live: liveByTask[taskRun.GetTaskId()]})
+		// A fan-out's live attempts are its items': one row each, spelled
+		// convert[97]; the node's own row only when no item is in flight.
+		if items := liveItems[taskRun.GetTaskId()]; len(items) > 0 {
+			for _, live := range items {
+				itemRow := &orkstackv1.TaskRun{TaskId: taskRun.GetTaskId(), Item: live.Item}
+				status := dash
+				if index := live.GetItem(); int(index) < len(taskRun.GetItems()) && index >= 0 {
+					itemRow = taskRun.GetItems()[index]
+					status = taskStatusLabel(itemRow)
+				}
+				rows = append(rows, row{task: itemRow, status: status, live: live})
+			}
+			continue
+		}
+		status := taskStatusLabel(taskRun)
+		if taskRun.GetEach() != nil {
+			status = fanOutStatusLabel(taskRun)
+		}
+		rows = append(rows, row{task: taskRun, status: status, live: liveByTask[taskRun.GetTaskId()]})
 	}
 	for _, attempt := range inspected.GetAttempts() {
 		if !named[attempt.GetTaskId()] {
-			rows = append(rows, row{task: &orkstackv1.TaskRun{TaskId: attempt.GetTaskId()}, status: dash, live: attempt})
+			rows = append(rows, row{task: &orkstackv1.TaskRun{TaskId: attempt.GetTaskId(), Item: attempt.Item}, status: dash, live: attempt})
 		}
 	}
 
 	table := newTable(out)
 	fmt.Fprintln(table, "TASK\tSTATUS\tATTEMPT\tSTATE\tPHASE\tORKER\tCONTAINER\tLOGGED\tRUNNING\tHEARTBEAT")
 	for _, r := range rows {
-		cells := []string{r.task.GetTaskId(), r.status, dash, dash, dash, dash, dash, dash, dash, dash}
+		cells := []string{itemLabel(r.task.GetTaskId(), r.task.Item), r.status, dash, dash, dash, dash, dash, dash, dash, dash}
 		if live := r.live; live != nil {
 			cells[2] = fmt.Sprint(live.GetAttempt())
 			cells[3] = liveStateLabel(live.GetState())
@@ -321,7 +352,7 @@ func liveFooters(
 	live *orkstackv1.LiveAttempt,
 	now time.Time,
 ) []string {
-	id := live.GetTaskId()
+	id := itemLabel(live.GetTaskId(), live.Item)
 	var lines []string
 	if !live.GetHeartbeatAvailable() {
 		lines = append(lines, fmt.Sprintf("%s: %s", id, unavailableReasonSentence(live.GetHeartbeatUnavailableReason())))

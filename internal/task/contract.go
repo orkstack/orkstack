@@ -34,6 +34,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"go.temporal.io/sdk/converter"
@@ -327,4 +328,23 @@ func IdempotencyKeyFor(namespace, runID, taskID string) string {
 		namespace = "default"
 	}
 	return namespace + "/" + runID + "/" + taskID
+}
+
+// ItemIdempotencyKeyFor is the stable key of ONE ITEM of a fan-out: an item
+// is one logical activity (AGENTS.md §3, §4), so it has its own key, unchanged
+// across that item's retries:
+//
+//	"{namespace-or-default}/{run_id}/{task_id}/{index}"
+//
+// The index is decimal and unpadded — a key for external systems, not a sort
+// key — and a task key "{ns}/{run}/{task}" has one segment fewer, so the two
+// shapes never collide.
+func ItemIdempotencyKeyFor(namespace, runID, taskID string, index int32) string {
+	return IdempotencyKeyFor(namespace, runID, taskID) + "/" + strconv.FormatInt(int64(index), 10)
+}
+
+// InputSize is the deterministic bound on the bytes Temporal records for in:
+// exactly the measure CheckInputSize compares against its limit.
+func InputSize(in *orkstackv1.ExecuteTaskInput) (int64, error) {
+	return temporalPayloadSize(in)
 }

@@ -62,7 +62,7 @@ func assertClosedSpanList(t *testing.T, record *orkstackv1.TaskAttempt) {
 
 func onlyAttempt(t *testing.T, store *artifacts.MemoryAttemptStore, in *orkstackv1.ExecuteTaskInput) *orkstackv1.TaskAttempt {
 	t.Helper()
-	records, err := store.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId())
+	records, err := store.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("ListAttempts: %v", err)
 	}

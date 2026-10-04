@@ -333,6 +333,12 @@ message PlanTask {
   // await is the task's AwaitSpec, set for an awaited task whatever its
   // outcome, so a reader sees the deadline and whether it takes a callback.
   AwaitSpec await = 10;
+  // each is the task's EachSpec, set for a fan-out whatever its outcome.
+  EachSpec each = 11;
+  // each_count is the number of items the plan can already count: set when
+  // the source is an input, or a task whose values assumed_outputs stubs;
+  // unset when the count is a run-time fact.
+  optional int32 each_count = 12;
 }
 
 // PlanWave lists the RUNS tasks of one wave, in declaration order. There is
@@ -911,6 +917,8 @@ message ListRunsRequest {
   string origin_id = 9;
 }
 message ListRunsResponse {
+  // A fan-out task's row carries its `each` and status but never its
+  // `items`; GetRun is the read that carries them.
   repeated Run runs = 1;
   string next_page_token = 2;
 }
@@ -926,11 +934,17 @@ message RunArtifact {
   ArtifactKind kind = 2;
   ArtifactRef artifact = 3;
   int32 attempt = 4;
+  // item is set when the artifact was recorded by one item of a fan-out task.
+  optional int32 item = 5;
 }
 message ListRunArtifactsRequest {
   string run_id = 1;
   string namespace = 2;
   string task_id = 3;
+  // item narrows task_id to one item of a fan-out. Requires task_id and a
+  // fan-out task. Unset lists every item of a fan-out task_id (and of every
+  // fan-out when task_id is empty), each RunArtifact carrying its item.
+  optional int32 item = 4;
 }
 message ListRunArtifactsResponse { repeated RunArtifact artifacts = 1; }
 message ReadArtifactRequest {
@@ -939,6 +953,10 @@ message ReadArtifactRequest {
   string task_id = 3;
   ArtifactKind kind = 4;
   string name = 5;
+  // item names the item of a fan-out task_id whose artifact is read; required
+  // for a fan-out task (two items may record the same name), refused for any
+  // other task.
+  optional int32 item = 6;
 }
 message ArtifactChunk {
   bytes data = 1;
@@ -949,6 +967,10 @@ message ListTaskAttemptsRequest {
   string run_id = 1;
   string namespace = 2; // empty = the default namespace
   string task_id = 3;   // empty selects every task of the run
+  // item narrows task_id to one item of a fan-out. Unset returns every item's
+  // timeline for a fan-out task (items ascending, attempts ascending within
+  // an item), each TaskAttempt carrying its item.
+  optional int32 item = 4;
 }
 message ListTaskAttemptsResponse {
   // attempts is every attempt of every selected task: tasks in the order
@@ -990,6 +1012,8 @@ message GetArtifactProvenanceRequest {
   // FailedPrecondition naming both, so a chain-of-custody check is one
   // command rather than a copy-and-compare.
   string expect_sha256 = 6;
+  // item names the item of a fan-out task_id, as ReadArtifactRequest.item.
+  optional int32 item = 7;
 }
 
 // ArtifactReference is one recording of the object by one archived run: the
@@ -1003,6 +1027,8 @@ message ArtifactReference {
   ArtifactKind kind = 5;
   Status run_status = 6;
   google.protobuf.Timestamp run_created_at = 7;
+  // item is set when the referencing run recorded the object under one item.
+  optional int32 item = 8;
 }
 
 message GetArtifactProvenanceResponse {
@@ -1035,6 +1061,8 @@ message InspectRunRequest {
   string run_id = 1;
   string namespace = 2;                  // empty = the default namespace
   string task_id = 3;                    // empty = every in-flight task of the run
+  // item narrows task_id to one item of a fan-out; requires task_id.
+  optional int32 item = 4;
 }
 
 // LiveAttemptState is where the pending attempt is in Temporal's view. It
@@ -1157,6 +1185,9 @@ message LiveAttempt {
   // carry. Empty when the beat came from an Orker built before the detail
   // carried it.
   string orker_id = 18;
+  // item is set when the pending activity is one item of a fan-out (read off
+  // the scheduled ExecuteTaskInput.each.index).
+  optional int32 item = 19;
 }
 
 message InspectRunResponse {
@@ -1216,6 +1247,8 @@ message RunFieldDiff {
   // "no_attempt_store". A client renders the token's documented sentence.
   string from_reason = 7;
   string to_reason = 8;
+  // item is set on a row that compares one item of a fan-out task in both runs.
+  optional int32 item = 9;
 }
 
 message DiffRunsResponse {
@@ -1279,6 +1312,8 @@ message ExportRunEvidenceRequest {
   // records) are still read and hashed; artifact and log objects are
   // stat'ed, never read.
   bool manifest_only = 6;
+  // item narrows task_id to one item of a fan-out; requires task_id.
+  optional int32 item = 7;
 }
 
 // EvidenceChunk is one slice of the export, at most 64 KiB, as ArtifactChunk
@@ -1344,6 +1379,10 @@ message StreamTaskLogsRequest {
   // or not the task is still writing, so a replay never turns into a follow.
   bool follow = 5;
   string namespace = 6;                  // empty = the default namespace
+  // item names the item of a fan-out task_id whose output is streamed;
+  // required for a fan-out task, refused for any other. attempt, from_seq and
+  // from_attempt then count that item's own attempts and chunks.
+  optional int32 item = 8;
 }
 // TaskLogChunk is one slice of a task attempt's output, exactly as the Orker
 // flushed it.
@@ -1368,6 +1407,8 @@ message TaskLogChunk {
   // from it. With follow that means the task reached a terminal state; without
   // follow it means the replay is complete. It carries no data.
   bool last = 7;
+  // item echoes the request's item.
+  optional int32 item = 8;
 }
 
 // NamespaceService manages namespaces and reports the pools they may dispatch

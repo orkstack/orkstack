@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -415,7 +416,10 @@ func (s *Service) RedeliverWebhook(
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := MarshalJSON(run)
+	// A delivery body never carries a fan-out's items (each-fan-out §5.13),
+	// the redelivery no more than the original: the same shape, the run as
+	// it reads now.
+	encoded, err := MarshalJSON(engine.WithoutItems(run))
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode run %q: %w", run.GetId(), err))
 	}

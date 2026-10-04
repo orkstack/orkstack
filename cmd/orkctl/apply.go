@@ -127,5 +127,36 @@ func renderTaskTable(out io.Writer, tasks []*orkstackv1.Task) error {
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
+	return renderEachTable(out, tasks)
+}
+
+// renderEachTable is the second table an Orkflow with a fan-out gets: each
+// fan-out's reference, bounds and item name. An Orkflow with none prints
+// exactly what it always did.
+func renderEachTable(out io.Writer, tasks []*orkstackv1.Task) error {
+	var fanOuts []*orkstackv1.Task
+	for _, task := range tasks {
+		if task.GetEach() != nil {
+			fanOuts = append(fanOuts, task)
+		}
+	}
+	if len(fanOuts) == 0 {
+		return nil
+	}
+	fmt.Fprintln(out)
+	table := newTable(out)
+	fmt.Fprintln(table, "EACH\tOVER\tMAX ITEMS\tMAX PARALLEL\tAS")
+	for _, task := range fanOuts {
+		spec := task.GetEach()
+		parallel := dash
+		if spec.GetMaxParallel() > 0 {
+			parallel = fmt.Sprintf("%d", spec.GetMaxParallel())
+		}
+		fmt.Fprintf(table, "%s\t%s\t%d\t%s\t%s\n",
+			task.GetId(), spec.GetOver(), spec.GetMaxItems(), parallel, spec.GetAs())
+	}
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
 	return nil
 }

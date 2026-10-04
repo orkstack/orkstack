@@ -1,0 +1,49 @@
+# OrkStack orkflow DSL
+#
+# Fan out over an upstream array, one durable item per element, then merge.
+# `list` writes its own values.json through a command override on a plain base
+# image: any OCI image may. It is not `uses: shell`, because activity-shell
+# writes values.json itself on every op (images/activity-shell/README.md), so
+# it can never hand an array to a fan-out, and its interface requires
+# `with.command` for its default op.
+name: each-fan-out
+version: "0.1.0"
+description: "List parts, convert each part as its own item, merge them."
+
+tasks:
+  - id: list
+    uses: alpine:3.20
+    command:
+      - sh
+      - -c
+      - >-
+        printf '{"parts":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}]}'
+        > /orkstack/output/values.json
+
+  - id: convert
+    uses: shell
+    needs: [list]
+    each:
+      over: '{{ .tasks.list.output.parts }}'
+      as: part
+      max_items: 50
+      max_parallel: 2
+    retry: { maximum_attempts: 2 }
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        # `sh` quotes the item's value for the shell (AGENTS.md §6).
+        printf '%s\n' {{ sh .each.part.name }} > /orkstack/output/artifacts/part.txt
+        echo converted {{ sh .each.part.name }} "({{ .each.index }} of {{ .each.count }})"
+
+  - id: merge
+    uses: shell
+    needs: [convert]
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        cat /orkstack/input/artifacts/convert/*/part.txt | tee /orkstack/output/artifacts/merged.txt

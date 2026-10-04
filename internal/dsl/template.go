@@ -39,6 +39,55 @@ type templateChecker struct {
 	tasks    map[string]*orkstackv1.Task
 	upstream map[string]struct{}
 	refs     map[string]struct{}
+	// anchor is the checked task's field path ("tasks[3]"); a fan-out refusal
+	// (rules 24 and 25) is anchored at anchor + "." + the template's path.
+	anchor string
+	// each is the item name .each.<each> binds while checking a fan-out's
+	// `with:` (rule 25); fanOut is whether the checked task declares `each:`.
+	// Both are unset while checking a condition.
+	each   string
+	fanOut bool
+}
+
+// eachKeysSentence names the three legal keys of .each for one item name.
+func eachKeysSentence(as string) string {
+	return fmt.Sprintf(".each.%s, .each.index and .each.count", as)
+}
+
+// refuseAt anchors a fan-out refusal at the template's field.
+func (c *templateChecker) refuseAt(path string, err error) error {
+	if c.refs != nil {
+		return nil
+	}
+	if c.anchor == "" {
+		return err
+	}
+	return validationError(c.anchor+"."+path, err)
+}
+
+// checkEachRoot is rule 25 for one reference to `.each`; key is the first
+// key below .each, or "" when the reference names none.
+func (c *templateChecker) checkEachRoot(path, key string) error {
+	if c.refs != nil {
+		return nil
+	}
+	if strings.HasPrefix(path, "condition") {
+		return c.refuseAt(path, fmt.Errorf("task %q: %s: .each is not available in a condition — a "+
+			"condition is evaluated once, before the items exist", c.taskID, path))
+	}
+	if !c.fanOut {
+		return c.refuseAt(path, fmt.Errorf("task %q: %s: .each is available only in the with: of a task "+
+			"that declares each:", c.taskID, path))
+	}
+	if key == c.each || key == "index" || key == "count" {
+		return nil
+	}
+	if key == "" {
+		return c.refuseAt(path, fmt.Errorf("task %q: %s: .each must name a key: %s",
+			c.taskID, path, eachKeysSentence(c.each)))
+	}
+	return c.refuseAt(path, fmt.Errorf("task %q: %s: .each.%s is not a key of .each; the keys are %s",
+		c.taskID, path, key, eachKeysSentence(c.each)))
 }
 
 // ReferencedUpstream lists the task ids a template reads through .tasks —
@@ -255,6 +304,12 @@ func (c *templateChecker) checkField(path string, ident []string) error {
 			return nil
 		}
 		return c.checkUpstream(path, ident[1])
+	case "each":
+		key := ""
+		if len(ident) > 1 {
+			key = ident[1]
+		}
+		return c.checkEachRoot(path, key)
 	default:
 		return c.refuse(fmt.Errorf("task %q: %s: unknown template root %q", c.taskID, path, ident[0]))
 	}
@@ -274,6 +329,12 @@ func (c *templateChecker) checkUpstream(path, taskID string) error {
 	}
 	if _, exists := c.tasks[taskID]; !exists {
 		return fmt.Errorf("task %q: %s: template references unknown task %q", c.taskID, path, taskID)
+	}
+	// Rule 24: a fan-out's items are files, never template values.
+	if c.tasks[taskID].GetEach() != nil {
+		return c.refuseAt(path, fmt.Errorf("task %q: %s: %q is a fan-out; its items are read as files "+
+			"under /orkstack/input/upstream/%s/<item>/ and /orkstack/input/artifacts/%s/<item>/",
+			c.taskID, path, taskID, taskID, taskID))
 	}
 	if _, ok := c.upstream[taskID]; !ok {
 		return fmt.Errorf("task %q: %s: template references task %q which is not in its needs closure",
@@ -361,11 +422,29 @@ func (c *templateChecker) checkIndex(path string, cmd *parse.CommandNode, reboun
 		}
 		root = rootKey.Text
 		keyArg = 3
-		if root != "inputs" && root != "tasks" {
+		if root != "inputs" && root != "tasks" && root != "each" {
 			return c.refuse(fmt.Errorf("task %q: %s: unknown template root %q", c.taskID, path, root))
 		}
 	}
 
+	if root == "each" {
+		// Rule 25, index spelling: index .each "part" ….
+		if len(cmd.Args) <= keyArg {
+			if err := c.checkEachRoot(path, ""); err != nil {
+				return err
+			}
+			return nil
+		}
+		if key, literal := cmd.Args[keyArg].(*parse.StringNode); literal {
+			if err := c.checkEachRoot(path, key.Text); err != nil {
+				return err
+			}
+		} else if err := c.checkEachRoot(path, c.each); err != nil {
+			// A dynamic key is legal only where .each is.
+			return err
+		}
+		return c.walkIndexArgs(path, cmd.Args[keyArg:], rebound)
+	}
 	if root != "inputs" && root != "tasks" {
 		return c.walkIndexArgs(path, cmd.Args[1:], rebound)
 	}

@@ -71,9 +71,12 @@ type config struct {
 	limitsErr error
 	// poolErr is a refused ORK_ORKER_POOL/ORK_ORKER_QUEUE pair, reported at
 	// boot rather than resolved by picking a winner.
-	poolErr                       error
-	idempotencyTTL                time.Duration
-	contractLimits                engine.WorkspaceLimits
+	poolErr        error
+	idempotencyTTL time.Duration
+	contractLimits engine.WorkspaceLimits
+	// eachMaxItems is ORK_EACH_MAX_ITEMS: 1 … dsl.MaxEachItems, refused at
+	// boot outside that range (spec each-fan-out §8).
+	eachMaxItems                  int32
 	transferBudgetSeconds         int32
 	floorThroughputBytesPerSecond int64
 	// deployment is this release's Worker Deployment identity. It carries no
@@ -104,6 +107,7 @@ func loadConfig() config {
 	commitMaxBytes, commitErr := envInt64("ORK_COMMIT_MAX_BYTES", engine.DefaultCommitMaxBytes)
 	transferBudgetSeconds, transferErr := envInt32AllowZero("ORK_TRANSFER_BUDGET_SECONDS", 0)
 	floorThroughput, throughputErr := envInt64AllowZero("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
+	eachMaxItems, eachErr := eachMaxItemsFromEnv()
 
 	cfg := config{
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
@@ -119,8 +123,9 @@ func loadConfig() config {
 		},
 		transferBudgetSeconds:         transferBudgetSeconds,
 		floorThroughputBytesPerSecond: floorThroughput,
+		eachMaxItems:                  eachMaxItems,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
-			logErr, commitErr, transferErr, throughputErr),
+			logErr, commitErr, transferErr, throughputErr, eachErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -210,6 +215,20 @@ func envInt32AllowZero(key string, fallback int32) (int32, error) {
 		return fallback, fmt.Errorf("%s=%q exceeds the maximum value %d", key, raw, int64(math.MaxInt32))
 	}
 	return int32(parsed), nil
+}
+
+// eachMaxItemsFromEnv reads ORK_EACH_MAX_ITEMS: a positive integer no
+// greater than the built-in ceiling, which it may lower and never raise.
+func eachMaxItemsFromEnv() (int32, error) {
+	value, err := envInt32("ORK_EACH_MAX_ITEMS", engine.DefaultEachMaxItems)
+	if err != nil {
+		return engine.DefaultEachMaxItems, err
+	}
+	if value > dsl.MaxEachItems {
+		return engine.DefaultEachMaxItems, fmt.Errorf(
+			"ORK_EACH_MAX_ITEMS=%d is above the %d ceiling; it may only lower it", value, dsl.MaxEachItems)
+	}
+	return value, nil
 }
 
 func env(key, fallback string) string {
@@ -981,6 +1000,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
+	// The local activity that counts a fan-out's task-sourced array, over the
+	// same store internal/api reads artifacts with (spec each-fan-out §5.3).
+	runWorker.RegisterActivityWithOptions(
+		engine.NewEachActivities(artifactStore).CountEachItems,
+		activity.RegisterOptions{Name: engine.ActivityCountEachItems},
+	)
 
 	// The engine's telemetry observer: a run's spans, metrics and one log
 	// line per lifecycle event, routed per-run to whatever sink
@@ -1123,6 +1148,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		RetentionEnforced:             cfg.cleanup.Enabled,
 		Artifacts:                     archiveConfig,
 		Limits:                        cfg.contractLimits,
+		EachMaxItems:                  cfg.eachMaxItems,
 		TransferBudgetSeconds:         cfg.transferBudgetSeconds,
 		FloorThroughputBytesPerSecond: cfg.floorThroughputBytesPerSecond,
 		Observer:                      eventObserver,

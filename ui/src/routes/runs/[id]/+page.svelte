@@ -12,6 +12,15 @@
 	import RunSubmitPanel from '$lib/components/RunSubmitPanel.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
+	import EachItemGrid from '$lib/components/EachItemGrid.svelte';
+	import {
+		applyItemEvent,
+		itemFromUrl,
+		itemsFromTaskRun,
+		mergeItems,
+		retriedItemsLabel,
+		type ItemView
+	} from '$lib/each';
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
 	import RetryBadge from '$lib/components/RetryBadge.svelte';
 	import AttemptTimeline from '$lib/components/AttemptTimeline.svelte';
@@ -32,10 +41,11 @@
 		type Run,
 		type TaskAttempt,
 		type TaskAwait,
+		type TaskEach,
 		type TaskRun
 	} from '$lib/gen/orkstack/v1/run_pb';
 	import { create } from '@bufbuild/protobuf';
-	import { attemptsSeen, groupAttemptsByTask, runRetryCount } from '$lib/attempts';
+	import { attemptsKey, attemptsSeen, groupAttemptsByTask, runRetryCount } from '$lib/attempts';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
 	import { flakesCli } from '$lib/flakes';
@@ -122,6 +132,13 @@
 		// presence is what draws the await panel instead of a log pane: an
 		// awaited task runs no container and writes no logs.
 		await?: TaskAwait;
+		// each is set for a fan-out (spec each-fan-out §10.1): whether its
+		// array was counted, and into how many items. items are those items,
+		// seeded from the snapshot and moved one cell at a time by item
+		// events; a fan-out's own row has no attempt, log or artifact of its
+		// own — every item has.
+		each?: TaskEach;
+		items: ItemView[];
 	}
 
 	const run = $derived(data.run);
@@ -224,17 +241,22 @@
 	 * need for a polling loop either: the page already learns the two moments a
 	 * task's timeline can change, and asks then.
 	 */
-	async function refreshAttempts(taskId: string): Promise<void> {
-		if (!run || !taskId || attemptsInFlight.has(taskId)) return;
-		attemptsInFlight.add(taskId);
+	async function refreshAttempts(taskId: string, item?: number): Promise<void> {
+		// An item's timeline is its own (keyed convert[97]); a fan-out's
+		// terminal event never lands here, because the whole node's records
+		// are every item's — an item's load when its panel opens.
+		const key = attemptsKey(taskId, item);
+		if (!run || !taskId || attemptsInFlight.has(key)) return;
+		attemptsInFlight.add(key);
 		try {
 			const res = await orkstack(fetch).runs.listTaskAttempts({
 				runId: run.id,
 				namespace: data.namespace,
-				taskId
+				taskId,
+				item
 			});
 			const next = new Map(attemptsByTask);
-			next.set(taskId, res.attempts);
+			next.set(key, res.attempts);
 			attemptsByTask = next;
 			attemptsError = null;
 		} catch (err) {
@@ -242,7 +264,7 @@
 			// does not depend on knowing what a task's earlier tries did.
 			attemptsError = errorMessage(err);
 		} finally {
-			attemptsInFlight.delete(taskId);
+			attemptsInFlight.delete(key);
 		}
 	}
 
@@ -253,9 +275,9 @@
 	 * still going — but it is only worth a request when it names a try the
 	 * timeline does not already hold.
 	 */
-	function attemptSeen(taskId: string, attempt: number): void {
-		if (attempt <= attemptsSeen(attemptsByTask.get(taskId) ?? [])) return;
-		void refreshAttempts(taskId);
+	function attemptSeen(taskId: string, attempt: number, item?: number): void {
+		if (attempt <= attemptsSeen(attemptsByTask.get(attemptsKey(taskId, item)) ?? [])) return;
+		void refreshAttempts(taskId, item);
 	}
 
 	// The run header's chip: how many times anything in this run had to be
@@ -420,7 +442,7 @@
 		try {
 			const res = await orkstack(fetch).runs.inspectRun({ runId: run.id, namespace: data.namespace });
 			const next = new Map<string, LiveAttempt>();
-			for (const attempt of res.attempts) next.set(attempt.taskId, attempt);
+			for (const attempt of res.attempts) next.set(attemptsKey(attempt.taskId, attempt.item), attempt);
 			liveByTask = next;
 			const computed = res.computedAt;
 			liveReceivedAtMs = Date.now();
@@ -475,6 +497,7 @@
 				// snapshot below overwrites it with what the run recorded.
 				pin: task.pin,
 				orkerId: '',
+				items: [],
 				...(task.await ? { await: create(TaskAwaitSchema, { callback: task.await.callback }) } : {})
 			});
 		}
@@ -504,7 +527,9 @@
 				// grouping. Same fall-through as activity above.
 				pin: tr.pin || existing?.pin || '',
 				orkerId: tr.orkerId,
-				...(tr.await ? { await: tr.await } : existing?.await ? { await: existing.await } : {})
+				...(tr.await ? { await: tr.await } : existing?.await ? { await: existing.await } : {}),
+				...(tr.each ? { each: tr.each } : {}),
+				items: itemsFromTaskRun(tr)
 			});
 		}
 		return [...views.values()];
@@ -544,7 +569,15 @@
 				// Patched only when the snapshot carries one: upsertTask assigns
 				// every key present in the patch, so an empty pin here would
 				// erase the pin the definition already seeded.
-				...(tr.pin ? { pin: tr.pin } : {})
+				...(tr.pin ? { pin: tr.pin } : {}),
+				// A fan-out's expansion and its items, never moving an item an
+				// event already settled back to unsettled.
+				...(tr.each
+					? {
+							each: tr.each,
+							items: mergeItems(tasks.find((t) => t.id === tr.taskId)?.items ?? [], itemsFromTaskRun(tr))
+						}
+					: {})
 			});
 		}
 	}
@@ -609,12 +642,39 @@
 			pool: '',
 			pin: '',
 			orkerId: '',
+			items: [],
 			...patch
 		});
 	}
 
+	// isFanOut answers from the definition first: a fan-out is declared, so
+	// the page knows before its first snapshot row says so.
+	function isFanOut(taskId: string): boolean {
+		return taskDefs.get(taskId)?.each !== undefined || tasks.find((t) => t.id === taskId)?.each !== undefined;
+	}
+
+	// One event-triggered snapshot read, merged: what a fan-out's expansion
+	// (its item count) and its end (every item's facts) need, since events
+	// carry neither. Never a poll.
+	function rereadAndMerge(): void {
+		void (async () => {
+			if (await rereadOnEvent()) mergeTerminalFacts();
+		})();
+	}
+
 	function onEvent(event: Event) {
 		buffer = appendEvent(buffer, event);
+		// AN ITEM'S EVENT MOVES THAT ITEM'S CELL AND NOTHING ELSE. It is a
+		// TASK_LOG carrying `item`; the task's own status is the node's, and
+		// is never set from one of its items.
+		if (event.item !== undefined) {
+			const known = tasks.find((t) => t.id === event.taskId);
+			upsertTask(event.taskId, { items: applyItemEvent(known?.items ?? [], event) });
+			if (isTerminal(event.status) && selectedItemByTask[event.taskId] === event.item) {
+				void refreshAttempts(event.taskId, event.item);
+			}
+			return;
+		}
 		const status = event.status === Status.UNSPECIFIED ? undefined : event.status;
 		switch (event.type) {
 			case EventType.RUN_CREATED:
@@ -662,6 +722,9 @@
 					status: status ?? fallback,
 					...(known?.scheduledAt ? {} : { scheduledAt: event.timestamp })
 				});
+				// A fan-out schedules once, when its array was counted: read
+				// the expansion so the grid has its cells.
+				if (event.type === EventType.TASK_SCHEDULED && isFanOut(event.taskId)) rereadAndMerge();
 				break;
 			}
 			// A task's terminal transition is the moment its LAST attempt record
@@ -671,14 +734,16 @@
 			// only after the run's own terminal snapshot lands.
 			case EventType.TASK_SUCCEEDED:
 				upsertTask(event.taskId, { status: status ?? Status.SUCCEEDED });
-				void refreshAttempts(event.taskId);
+				if (isFanOut(event.taskId)) rereadAndMerge();
+				else void refreshAttempts(event.taskId);
 				break;
 			case EventType.TASK_FAILED:
 				upsertTask(event.taskId, {
 					status: status ?? Status.FAILED,
 					message: event.message
 				});
-				void refreshAttempts(event.taskId);
+				if (isFanOut(event.taskId)) rereadAndMerge();
+				else void refreshAttempts(event.taskId);
 				break;
 			// An awaited task started waiting. Its deadline is TASK_AWAITING's
 			// own timestamp plus the definition's timeout — the engine stamps both
@@ -813,16 +878,41 @@
 		return blocking.length > 0 ? `Waiting for ${blocking.join(', ')}` : 'Waiting to start';
 	}
 
-	function taskHref(taskId: string, attempt = 0): string {
+	// The item a fan-out card has open, keyed by task. A deep link's
+	// `?task=convert&item=97` seeds it, so a reload restores the selection.
+	const deepItem = $derived(itemFromUrl(page.url));
+	let selectedItemByTask = $state<Record<string, number | undefined>>(
+		untrack(() => {
+			const task = page.url.searchParams.get('task') ?? '';
+			const item = itemFromUrl(page.url);
+			return task && item !== undefined ? { [task]: item } : {};
+		})
+	);
+	function selectItem(taskId: string, item: number | undefined): void {
+		selectedItemByTask[taskId] = item;
+		replaceState(taskHref(taskId, 0, item), page.state);
+		if (item !== undefined) void refreshAttempts(taskId, item);
+	}
+	// A deep-linked item's timeline is read once, as if its panel had been
+	// opened by hand.
+	$effect(() => {
+		const task = untrack(() => deepTask);
+		const item = untrack(() => deepItem);
+		if (task && item !== undefined && isFanOut(task)) void refreshAttempts(task, item);
+	});
+
+	function taskHref(taskId: string, attempt = 0, item?: number): string {
 		const params = new URLSearchParams(page.url.searchParams);
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
 		params.set('task', taskId);
 		if (attempt > 0) params.set('attempt', String(attempt));
 		else params.delete('attempt');
+		if (item !== undefined) params.set('item', String(item));
+		else params.delete('item');
 		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
 	}
-	function setTaskAttempt(taskId: string, attempt: number | null): void {
-		replaceState(taskHref(taskId, attempt ?? 0), page.state);
+	function setTaskAttempt(taskId: string, attempt: number | null, item?: number): void {
+		replaceState(taskHref(taskId, attempt ?? 0, item), page.state);
 	}
 	// The pin requests handed to each task's log pane, newest nonce last.
 	//
@@ -833,10 +923,10 @@
 	// is written beside it so the two agree.
 	let logPinByTask = $state<Record<string, { attempt: number; nonce: number }>>({});
 	let pinNonce = 0;
-	function viewTaskAttemptLogs(taskId: string, attempt: number): void {
+	function viewTaskAttemptLogs(taskId: string, attempt: number, item?: number): void {
 		pinNonce += 1;
-		logPinByTask[taskId] = { attempt, nonce: pinNonce };
-		setTaskAttempt(taskId, attempt);
+		logPinByTask[attemptsKey(taskId, item)] = { attempt, nonce: pinNonce };
+		setTaskAttempt(taskId, attempt, item);
 	}
 	function copy(value: string, label: string): void {
 		void navigator.clipboard?.writeText(value).then(
@@ -860,7 +950,11 @@
 			scheduledAt: timestampJson(task.scheduledAt), startedAt: timestampJson(task.startedAt), finishedAt: timestampJson(task.finishedAt),
 			output: task.output?.data, values: task.valuesRef ? artifactMetadata(task.valuesRef) : undefined,
 			artifacts: task.artifacts.map(artifactMetadata),
-			systemArtifacts: task.systemArtifacts.map(artifactMetadata), error: task.error
+			systemArtifacts: task.systemArtifacts.map(artifactMetadata), error: task.error,
+			each: task.each ? { expanded: task.each.expanded, count: task.each.count } : undefined,
+			items: task.each
+				? task.items.map((item) => ({ item: item.index, status: statusLabel(item.status), attempt: item.attempt, error: item.run?.error }))
+				: undefined
 		};
 	}
 	function runExport() {
@@ -891,7 +985,9 @@
 	}
 	async function downloadArtifact(record: RunArtifact): Promise<void> {
 		if (!run || !record.artifact) return;
-		const key = `${record.taskId}:${record.kind}:${record.artifact.name}`;
+		const key = record.item === undefined
+			? `${record.taskId}:${record.kind}:${record.artifact.name}`
+			: `${record.taskId}:${record.item}:${record.kind}:${record.artifact.name}`;
 		downloadingArtifact = key;
 		artifactDownloadError = '';
 		artifactDownloadAbort?.abort();
@@ -903,7 +999,8 @@
 			let received = 0n;
 			let complete = false;
 			for await (const chunk of orkstack(fetch).runs.readArtifact({
-				runId: run.id, namespace: data.namespace, taskId: record.taskId, kind: record.kind, name: record.artifact.name
+				runId: run.id, namespace: data.namespace, taskId: record.taskId, kind: record.kind, name: record.artifact.name,
+				item: record.item
 			}, { signal: abort.signal })) {
 				if (chunk.artifact?.name) receivedName = chunk.artifact.name;
 				if (chunk.data.length) {
@@ -1291,6 +1388,7 @@
 					{@const isAwait = task.await !== undefined || taskDefs.get(task.id)?.await !== undefined}
 					{@const timing = taskTiming({ ...task, awaited: isAwait }, data.attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
 					{@const accent = pinAccent(task.pin)}
+					{@const fanOut = task.each !== undefined || taskDefs.get(task.id)?.each !== undefined}
 					<!--
 						A pinned task's card carries its pin's accent as a thicker
 						left edge and a faint fill, so the members of one pin read as
@@ -1350,6 +1448,20 @@
 									whether it took one try or four — so it is said beside the
 									pill rather than folded into it.
 								-->
+								{#if fanOut}
+									<!--
+										A fan-out retries per item: the badge counts the items
+										that took more than one try, never a sum of their tries.
+									-->
+									{@const retried = retriedItemsLabel(task.items)}
+									{#if retried}
+										<span
+											data-testid="task-{task.id}-retries"
+											title="Temporal retried these items. Open an item for the outcome and error of every attempt."
+											class="inline-flex items-center rounded-full border border-warning-200 bg-warning-50 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-warning-700 leading-4"
+										>{retried}</span>
+									{/if}
+								{:else}
 								<RetryBadge
 									attempts={taskAttempts}
 									terminal={isTerminal(task.status)}
@@ -1357,6 +1469,7 @@
 									history={flakesByTask.get(task.id)}
 									historyWindow={HISTORY_WINDOW}
 								/>
+								{/if}
 							</div>
 						</div>
 						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
@@ -1433,7 +1546,7 @@
 							{#if task.orkerId}
 								<span data-testid="task-{task.id}-orker">Orker {task.orkerId}</span>
 							{/if}
-							{#if !isAwait}
+							{#if !isAwait && !fanOut}
 							<CliEquivalent
 								command={runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])])}
 								testid="run-task-{task.id}-logs-cli"
@@ -1496,6 +1609,30 @@
 								now={currentTimestamp}
 								origin={page.url.origin}
 							/>
+						{:else if fanOut}
+							{@const selected = selectedItemByTask[task.id]}
+							<EachItemGrid
+								runId={run.id}
+								namespace={data.namespace}
+								taskId={task.id}
+								each={task.each}
+								spec={taskDefs.get(task.id)?.each}
+								items={task.items}
+								{selected}
+								onSelect={(item) => selectItem(task.id, item)}
+								attemptsOf={(item) => attemptsByTask.get(attemptsKey(task.id, item)) ?? []}
+								artifacts={artifactsByTask.get(task.id) ?? []}
+								downloading={downloadingArtifact}
+								onDownload={(record) => void downloadArtifact(record)}
+								liveOf={(item) => liveByTask.get(attemptsKey(task.id, item))}
+								{liveNowMs}
+								attempt={deepTask === task.id && deepItem === selected && Number.isFinite(deepAttempt) ? deepAttempt : 0}
+								deepLinked={deepTask === task.id && deepItem !== undefined && deepItem === selected}
+								pinRequest={selected !== undefined ? logPinByTask[attemptsKey(task.id, selected)] : undefined}
+								onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt, selected)}
+								onAttemptSeen={(attempt) => attemptSeen(task.id, attempt, selected)}
+								onViewLogs={(attempt) => viewTaskAttemptLogs(task.id, attempt, selected)}
+							/>
 						{:else}
 						<TaskLogPane
 							runId={run.id}
@@ -1524,7 +1661,7 @@
 						</div>
 						{#if inspectOpenByTask[task.id]}
 							{@const def = taskDefs.get(task.id)}
-							{@const taskArtifacts = artifactsByTask.get(task.id) ?? []}
+							{@const taskArtifacts = (artifactsByTask.get(task.id) ?? []).filter((record) => record.item === undefined)}
 							<div
 								class="mt-2 rounded-md border border-border-subtle bg-surface-sunken p-3"
 								data-testid="task-{task.id}-inspect"
@@ -1656,7 +1793,7 @@
 									page-level notice instead of an empty disclosure in
 									every card.
 								-->
-								{#if !data.attemptsError || taskAttempts.length > 0}
+								{#if !fanOut && (!data.attemptsError || taskAttempts.length > 0)}
 									<AttemptTimeline
 										runId={run.id}
 										taskId={task.id}

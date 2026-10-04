@@ -123,7 +123,7 @@ func renderRunDiff(out io.Writer, namespace string, resp *orkstackv1.DiffRunsRes
 		table := newTable(out)
 		fmt.Fprintln(table, "TASK\tFIELD\tFROM\tTO")
 		for _, row := range taskRows {
-			fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", row.GetTaskId(), row.GetField(),
+			fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", itemLabel(row.GetTaskId(), row.Item), row.GetField(),
 				diffCell(row.GetFromValue(), row.GetFromAvailable()),
 				diffCell(row.GetToValue(), row.GetToAvailable()))
 		}
@@ -203,7 +203,7 @@ func diffSummary(resp *orkstackv1.DiffRunsResponse) string {
 func unavailableLines(resp *orkstackv1.DiffRunsResponse) []string {
 	var lines []string
 	footnote := func(row *orkstackv1.RunFieldDiff, runID, reason string) {
-		subject := row.GetTaskId()
+		subject := itemLabel(row.GetTaskId(), row.Item)
 		if subject == "" {
 			subject = "run"
 		}

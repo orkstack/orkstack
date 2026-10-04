@@ -64,13 +64,18 @@ func awaitExecutionKeys(td taskDocument) []struct {
 		{"timeout_seconds", td.TimeoutSeconds != nil},
 		{"cancellation_grace_period_seconds", td.CancellationGracePeriodSeconds != nil},
 		{"run_as_orker_user", td.RunAsOrkerUser},
+		{"each", td.Each != nil},
 	}
 }
 
 // awaitFieldRefusal is rule 15's sentence for one key.
 func awaitFieldRefusal(taskID, key string) error {
+	reason := "it runs no container"
+	if key == "each" {
+		reason = "an await is one resolution, not N"
+	}
 	msg := fmt.Sprintf("task %q: an awaited task takes only id, needs, condition and await; "+
-		"%q does not apply (it runs no container)", taskID, key)
+		"%q does not apply (%s)", taskID, key, reason)
 	if key == "timeout_seconds" {
 		msg += " — the deadline is await.timeout_seconds"
 	}
@@ -143,6 +148,7 @@ func validateAwaitTask(taskIndex int, task *orkstackv1.Task) error {
 		{"cancellation_grace_period_seconds", task.GetCancellationGracePeriodSeconds() != 0},
 		{"run_as_orker_user", task.GetRunAsOrkerUser()},
 		{"image", task.GetImage() != nil},
+		{"each", task.GetEach() != nil},
 	}
 	for _, c := range checks {
 		if c.set {

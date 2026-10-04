@@ -51,6 +51,9 @@ type scheduledTask struct {
 	taskID         string
 	timeoutSeconds int32
 	graceSeconds   int32
+	// item is the fan-out item this activity runs (ExecuteTaskInput.each),
+	// or nil for a task's own activity.
+	item *int32
 }
 
 // LiveAttempts answers InspectRun's cluster half: one describe of the
@@ -154,11 +157,16 @@ func (r *TemporalRunReader) scheduledTasks(
 			return nil, fmt.Errorf("engine: run %s: decode task input at history event %d: %w",
 				runID, historyEvent.GetEventId(), err)
 		}
-		found[attrs.GetActivityId()] = scheduledTask{
+		st := scheduledTask{
 			taskID:         in.GetTaskId(),
 			timeoutSeconds: in.GetTimeoutSeconds(),
 			graceSeconds:   in.GetCancellationGracePeriodSeconds(),
 		}
+		if each := in.GetEach(); each != nil {
+			index := each.GetIndex()
+			st.item = &index
+		}
+		found[attrs.GetActivityId()] = st
 		if len(found) == len(ids) {
 			break
 		}
@@ -226,6 +234,7 @@ func (r *TemporalRunReader) liveAttempt(
 		TimeoutSeconds:                 st.timeoutSeconds,
 		CancellationGracePeriodSeconds: st.graceSeconds,
 		ExpiresAt:                      pa.GetExpirationTime(),
+		Item:                           st.item,
 	}
 	started := state == orkstackv1.LiveAttemptState_LIVE_ATTEMPT_STATE_STARTED ||
 		state == orkstackv1.LiveAttemptState_LIVE_ATTEMPT_STATE_CANCEL_REQUESTED

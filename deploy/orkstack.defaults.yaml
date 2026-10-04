@@ -49,6 +49,7 @@ engine:
   idempotency_ttl: 24h  # ork
   registry_auth_file: ""  # ork
   stats_cache_ttl: 5s  # ork
+  each_max_items: 1000  # ork
   usage_cache_ttl: 5m  # ork
   limits:
     values_max_bytes: 262144  # 256 KiB; ork

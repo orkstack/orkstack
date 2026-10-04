@@ -7,7 +7,13 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
+
+// DefaultEachMaxItems is ORK_EACH_MAX_ITEMS' default: the built-in ceiling
+// on the items one Orkflow's fan-outs may declare in total, which a
+// deployment may lower and never raise (spec each-fan-out §8).
+const DefaultEachMaxItems = dsl.MaxEachItems
 
 // ApplyInputDefaults clones input and fills omitted fields from the orkflow's
 // declared input defaults. Caller fields always win, including explicit null;

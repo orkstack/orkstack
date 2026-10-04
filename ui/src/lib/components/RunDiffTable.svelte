@@ -9,6 +9,7 @@
 	// an outcome.
 	import type { RunFieldDiff } from '$lib/gen/orkstack/v1/service_pb';
 	import { reasonText, renderDiffValue } from '$lib/runDiff';
+	import { itemLabel } from '$lib/each';
 
 	interface Props {
 		rows: RunFieldDiff[];
@@ -44,18 +45,19 @@
 			</thead>
 			<tbody>
 				{#each taskRows as row, i (i)}
-					<tr class="border-t border-border-subtle" data-testid="run-diff-row-{row.taskId}-{row.field}">
-						<td class="px-3 py-2 align-top font-mono text-fg">{row.taskId}</td>
+					{@const label = row.item !== undefined ? itemLabel(row.taskId, row.item) : row.taskId}
+					<tr class="border-t border-border-subtle" data-testid="run-diff-row-{label}-{row.field}">
+						<td class="px-3 py-2 align-top font-mono text-fg">{label}</td>
 						<td class="px-3 py-2 align-top font-mono text-fg-secondary">{row.field}</td>
 						<td
 							class="px-3 py-2 align-top font-mono break-all {cellClass(row.fromAvailable, FROM_TINT)}"
-							data-testid="run-diff-row-{row.taskId}-{row.field}-from"
+							data-testid="run-diff-row-{label}-{row.field}-from"
 							data-unavailable={row.fromAvailable ? 'false' : 'true'}
 							title={row.fromAvailable ? undefined : reasonText(row.fromReason)}
 						>{renderDiffValue(row.fromValue, row.fromAvailable)}</td>
 						<td
 							class="px-3 py-2 align-top font-mono break-all {cellClass(row.toAvailable, TO_TINT)}"
-							data-testid="run-diff-row-{row.taskId}-{row.field}-to"
+							data-testid="run-diff-row-{label}-{row.field}-to"
 							data-unavailable={row.toAvailable ? 'false' : 'true'}
 							title={row.toAvailable ? undefined : reasonText(row.toReason)}
 						>{renderDiffValue(row.toValue, row.toAvailable)}</td>

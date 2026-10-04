@@ -399,6 +399,115 @@ receives the token.
 
 See `examples/awaited-approval.ork.yaml`.
 
+## Fan-out (`each:`)
+
+A **fan-out** is one task that runs once per element of an array: one
+durable **item** per element, each its own activity with its own commit,
+attempts, retries, timeout, logs and artifacts. It is one node of the DAG —
+its dependents wait for every item — and the run's history carries one entry
+per item, so the number of items is bounded by the author, up front.
+
+```yaml
+tasks:
+  - id: list
+    uses: ghcr.io/acme/list-parts:v1      # writes {"parts": [...]} to values.json
+  - id: convert
+    uses: ghcr.io/acme/convert:v3
+    needs: [list]
+    each:
+      over: '{{ .tasks.list.output.parts }}'   # required: one reference to an array
+      as: part                                 # optional, default "item"
+      max_items: 500                           # required: the most items this task may expand
+      max_parallel: 8                          # optional: at most 8 items at a time
+    with:
+      src: "{{ .each.part.uri }}"
+      label: "part {{ .each.index }} of {{ .each.count }}"
+  - id: merge
+    uses: ghcr.io/acme/merge:v1
+    needs: [convert]       # stages every item of convert as files
+```
+
+`each:` takes four keys:
+
+- `over` — **required**: exactly one template action naming an array, in one
+  of four shapes and nothing else:
+
+  | Shape | Reads |
+  | --- | --- |
+  | `{{ .inputs.NAME }}` | a declared input of `type: array` |
+  | `{{ .inputs.NAME.KEY… }}` | an array under keys of a declared `type: object` input |
+  | `{{ .tasks.ID.output.KEY… }}` | an array in an upstream task's `values.json` |
+  | `{{ index .inputs "NAME" "KEY" … }}` / `{{ index .tasks "ID" "output" "KEY" … }}` | either, for an id or key a Go template field cannot spell |
+
+  The `index` form is needed for a hyphenated task id or key
+  (`{{ index .tasks "list-parts" "output" "parts" }}`): that is
+  `text/template`'s rule. Text around the action, a pipeline, a function
+  other than `index`, a variable and a non-literal `index` argument are
+  refused. A `.tasks` source must be in the task's `needs:` closure.
+
+  The array is **counted once**, when the run reaches the task, and the count
+  is recorded in the run's history: a retry, a replay or a later reader never
+  re-counts it. An **input** array travels inside every item's activity input
+  (the run input is part of it), so it counts against every item's input
+  bound below; a large array belongs in an upstream task's `values.json`,
+  where it costs each item one reference.
+- `as` — the name an item is bound to under `.each`: `^[a-z][a-z0-9_]*$`,
+  at most 64 bytes, never `index` or `count`. Absent means `item`.
+- `max_items` — **required**, from 1 to 1000. More elements than this fail
+  the task `EACH_TOO_MANY_ITEMS` before any item runs. The sum of `max_items`
+  over every fan-out of one Orkflow is at most 1000 too (a deployment may
+  lower that ceiling with `ORK_EACH_MAX_ITEMS`, `docs/DEPLOY.md` §1): the
+  items of one run share one history budget.
+- `max_parallel` — at most this many items run at once; absent or `0` means
+  no bound of the task's own (the pool's Orkers are the bound).
+
+**Inside an item.** A fan-out's `with:` may read `.each.<as>` (the element,
+and keys under it), `.each.index` (0-based) and `.each.count`; the element is
+also in `task.json` as `each.item`, with its exact JSON text, beside
+`each.index`, `each.count` and `each.as` (`docs/OCI_ACTIVITY_CONTRACT.md`
+§3.2). Every item has its own `idempotencyKey`,
+`{namespace}/{run}/{task}/{index}`, unchanged across that item's retries.
+`.each` is legal nowhere else: not in `condition:` (evaluated once, before the
+items exist) and not in a task without `each:`.
+
+**Downstream, items are files.** A task that names a fan-out in its **own**
+`needs:` finds every item's values at
+`/orkstack/input/upstream/<task>/<item>/values.json` and its artifacts at
+`/orkstack/input/artifacts/<task>/<item>/<name>`, `<item>` zero-padded to five
+digits so a sorted listing is item order; `task.json`'s
+`inputs.eachUpstream` says how many there are, including zero. A transitive
+dependent gets nothing staged — name the fan-out in `needs:` to read it. No
+template may read a fan-out (`.tasks.<fan-out>` or `artifact "<fan-out>/…"`):
+N items have no single value to substitute.
+
+**Per-item bounds.** With `S` the Orkflow's declared total (the sum of its
+`max_items`), every item is held to:
+
+| Bound | Value | At S = 1000 | At S ≤ 64 |
+| --- | --- | --- | --- |
+| activity input (`with:`, run input, upstream refs) | `min(values_max_bytes, 16 MiB / S)` | 16 KiB | 256 KiB |
+| output artifacts per item | `min(artifact_max_count, 16384 / S)` | 16 | 256 |
+
+Apply refuses a fan-out whose own `with:`, `env`, `secrets` and resources
+already exceed the input bound; the run input and upstream references are
+checked per item when the run reaches it (`INPUT_TOO_LARGE`, naming the item).
+
+**Failure is fail-fast.** The first item that fails — after its own retries —
+fails the task with that item's error, prefixed `item 97 of 120 failed:`, and
+the run with it; items in flight are cancelled, and items never dispatched
+end `CANCELED` without running. An item retries alone: its siblings' commits
+stand.
+
+**Not supported in this version:** a fan-out may not be pinned (`pin:`), may
+not fan out over another fan-out or name one in `needs:` (no nesting), and an
+awaited task may not declare `each:`.
+
+`orkctl run get` shows a fan-out as one row with a progress count;
+`--expand <task>` lists its items, and `run logs`, `run artifacts`,
+`run attempts`, `run timing`, `run inspect`, `run evidence export`,
+`run artifact provenance` and `task run` take `--item N`. The run page draws
+one card with a cell per item. See `examples/each-fan-out.ork.yaml`.
+
 ## Templating
 
 Task `with` values and `condition` are rendered with Go `text/template` against
@@ -431,7 +540,8 @@ referencing an unrelated task's output is a compile-time error.
    catalog activity name or OCI registry reference; an awaited task runs no
    image.
 7. A task `pool`, when present, is slug-formatted.
-8. Templates parse and only reference declared inputs and upstream tasks.
+8. Templates parse and only reference declared inputs and upstream tasks, and
+   `.each` under rule 25.
 9. Every `pin:` names a key of `pins:`; each pin name is slug-formatted.
 10. Every task of one pin names the same pool, treating an absent pool and
     `main` as equal.
@@ -460,6 +570,27 @@ referencing an unrelated task's output is a compile-time error.
     as the caller's exact bytes.
 18. An `artifact "<task>/<name>"` helper may not name an awaited task, which
     produces no artifacts; read its values with `.tasks.<id>.output`.
+19. `each.over` is one reference to an array, in one of the four shapes of
+    "Fan-out". A `.tasks` source names a task in the fan-out's `needs:`
+    closure; an `.inputs` source names a declared input of `type: array`
+    (or `type: object` when keys follow it). A compiled `each.source` must
+    equal what `over` parses to.
+20. `each.as`, when present, matches `^[a-z][a-z0-9_]*$`, is at most 64
+    bytes, and is neither `index` nor `count`.
+21. `each.max_items` is present and between 1 and 1000, and the sum of
+    `max_items` over every fan-out of the Orkflow is at most 1000; the error
+    names every contributor. A deployment's `ORK_EACH_MAX_ITEMS` may lower
+    the ceiling, enforced at validate, apply and submit by `internal/api`.
+22. `each.max_parallel` is not negative and not above `max_items`; `0` and
+    absent are one value (no bound of the task's own).
+23. A fan-out is not pinned.
+24. A fan-out's items are files, never template values: no `with:` or
+    `condition:` references `.tasks.<fan-out>` or `artifact "<fan-out>/…"`,
+    an `each.over` may not name a fan-out, and a fan-out may not name another
+    fan-out in `needs:`.
+25. `.each` (`.each.<as>…`, `.each.index`, `.each.count`, field or `index`
+    form) is legal only in the `with:` of a task that declares `each:`;
+    never in a `condition:`, and no other key of `.each` exists.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

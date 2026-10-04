@@ -70,8 +70,14 @@ func (s *Service) ExportRunEvidence(
 	}
 	// 4.
 	taskID := msg.GetTaskId()
+	if err := checkItemRequiresTask(taskID, msg.Item); err != nil {
+		return err
+	}
 	if taskID != "" && !hasTask(run, taskID) {
 		return connect.NewError(connect.CodeNotFound, fmt.Errorf("task %q not found in run %q", taskID, run.GetId()))
+	}
+	if _, err := itemRunOf(run, taskID, msg.Item); err != nil {
+		return err
 	}
 	// 5.
 	if !isTerminalStatus(run.GetStatus()) {
@@ -160,6 +166,7 @@ func (e *evidenceExport) build(
 			TaskID:    msg.GetTaskId(),
 			Logs:      !msg.GetExcludeLogs(),
 			Artifacts: !msg.GetExcludeArtifacts(),
+			Item:      msg.Item,
 		},
 		Tasks:   []evidence.TaskEntry{},
 		Members: []evidence.Member{},
@@ -237,9 +244,57 @@ func (e *evidenceExport) task(
 		// composed from anything else.
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("task id %q of run %q is not a slug", id, archived.GetId()))
 	}
-	prefix := "tasks/" + id + "/"
+	// A fan-out contributes its node entry (status, no attempts) followed by
+	// one entry per item, items ascending, each item's members under
+	// tasks/{task}/items/{i:05}/ (spec each-fan-out §7.3).
+	if task.GetEach() != nil {
+		m.Tasks = append(m.Tasks, evidence.TaskEntry{
+			TaskID: id, Status: shortStatus(task.GetStatus()), Attempts: []evidence.AttemptEntry{},
+		})
+		for _, item := range task.GetItems() {
+			if msg.Item != nil && item.GetItem() != msg.GetItem() {
+				continue
+			}
+			segment, err := artifacts.ItemSegment(item.GetItem())
+			if err != nil {
+				return connect.NewError(connect.CodeInternal, err)
+			}
+			index := item.GetItem()
+			if err := e.row(ctx, m, archived, item, documents, msg, "tasks/"+id+"/items/"+segment+"/", &index); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return e.row(ctx, m, archived, task, documents, msg, "tasks/"+id+"/", nil)
+}
+
+// row is one task's — or one item's — entry and members under prefix.
+func (e *evidenceExport) row(
+	ctx context.Context,
+	m *evidence.Manifest,
+	archived *orkstackv1.Run,
+	task *orkstackv1.TaskRun,
+	documents artifacts.AttemptDocumentReader,
+	msg *orkstackv1.ExportRunEvidenceRequest,
+	prefix string,
+	item *int32,
+) error {
+	id := task.GetTaskId()
+	scope := artifacts.ItemOf(item)
+	first := len(m.Members)
+	defer func() {
+		if item == nil {
+			return
+		}
+		for i := first; i < len(m.Members); i++ {
+			index := *item
+			m.Members[i].Item = &index
+		}
+	}()
 	entry := evidence.TaskEntry{
 		TaskID:         id,
+		Item:           item,
 		Status:         shortStatus(task.GetStatus()),
 		OutcomeAttempt: task.GetAttempt(),
 		ExitCode:       task.GetExitCode(),
@@ -274,7 +329,7 @@ func (e *evidenceExport) task(
 		}
 	}
 	// attempts, each record before its logs
-	docs, err := documents.ReadAttemptDocuments(ctx, archived.GetId(), id)
+	docs, err := documents.ReadAttemptDocuments(ctx, archived.GetId(), id, scope)
 	if err != nil {
 		return connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("read attempt records of task %q in run %q: %w", id, archived.GetId(), err))
@@ -282,7 +337,7 @@ func (e *evidenceExport) task(
 	byAttempt := make(map[int32]artifacts.AttemptDocument, len(docs))
 	highest := task.GetAttempt()
 	for _, doc := range docs {
-		if doc.Record.GetRunId() != archived.GetId() || doc.Record.GetTaskId() != id || doc.Ref.RunID != archived.GetId() || doc.Ref.TaskID != id {
+		if doc.Record.GetRunId() != archived.GetId() || doc.Record.GetTaskId() != id || doc.Ref.RunID != archived.GetId() || doc.Ref.TaskID != id || doc.Ref.Item != scope {
 			return connect.NewError(connect.CodeDataLoss,
 				fmt.Errorf("attempt record %s does not belong to task %q of run %q", doc.Key, id, archived.GetId()))
 		}
@@ -304,7 +359,7 @@ func (e *evidenceExport) task(
 				CommitAdopted: doc.Record.GetCommitAdopted(),
 			})
 		} else {
-			key, err := artifacts.AttemptKey(artifacts.AttemptRef{RunID: archived.GetId(), TaskID: id, Attempt: n})
+			key, err := artifacts.AttemptKey(artifacts.AttemptRef{RunID: archived.GetId(), TaskID: id, Item: scope, Attempt: n})
 			if err != nil {
 				return connect.NewError(connect.CodeInternal, err)
 			}

@@ -732,6 +732,29 @@ type taskJSON struct {
 	// only OpenTelemetry-aware code in the repository; this package never
 	// imports it, and fills the field from a plain func the caller supplies).
 	Trace *taskJSONTrace `json:"trace,omitempty"`
+	// Each is present ONLY for an item of a fan-out task, absent as a key
+	// otherwise — the precedent of task.pin: an added optional key keeps
+	// SchemaVersion at 1 and costs a workload that never heard of fan-out
+	// nothing.
+	Each *taskJSONEach `json:"each,omitempty"`
+}
+
+// taskJSONEach is one item's coordinates and value. Item is the element's
+// exact JSON text for a task source (key order, number spelling and a
+// 20-digit integer preserved) and the protojson rendering of the run input's
+// value for an input source.
+type taskJSONEach struct {
+	Index int32           `json:"index"`
+	Count int32           `json:"count"`
+	As    string          `json:"as"`
+	Item  json.RawMessage `json:"item"`
+}
+
+// taskJSONEachUpstream says a fan-out upstream exists and how many items it
+// staged, so a workload can tell "zero items" from "no such upstream".
+type taskJSONEachUpstream struct {
+	TaskID string `json:"taskId"`
+	Count  int32  `json:"count"`
 }
 
 // taskJSONTrace is the W3C trace carrier, in the same form `traceparent` and
@@ -823,6 +846,8 @@ type taskJSONPaths struct {
 type taskJSONInputs struct {
 	Artifacts []taskJSONInputArtifact `json:"artifacts"`
 	Upstream  []taskJSONUpstream      `json:"upstream"`
+	// EachUpstream is present only when a fan-out upstream exists.
+	EachUpstream []taskJSONEachUpstream `json:"eachUpstream,omitempty"`
 }
 
 type taskJSONInputArtifact struct {
@@ -839,11 +864,15 @@ type taskJSONInputArtifact struct {
 	SizeBytes   int64  `json:"sizeBytes"`
 	SHA256      string `json:"sha256"`
 	ContentType string `json:"contentType,omitempty"`
+	// Item is present only for a file one item of a fan-out produced.
+	Item *int32 `json:"item,omitempty"`
 }
 
 type taskJSONUpstream struct {
 	TaskID     string `json:"taskId"`
 	ValuesPath string `json:"valuesPath"`
+	// Item is present only for one item of a fan-out upstream.
+	Item *int32 `json:"item,omitempty"`
 }
 
 type taskJSONSecret struct {
@@ -872,6 +901,13 @@ type TaskContext struct {
 	// Nil is what keeps paths.shared and task.pin out of an unpinned task's
 	// task.json entirely.
 	Pin *orkstackv1.PinContext
+	// Each is the item context off ExecuteTaskInput, or nil for an attempt
+	// that is not an item; EachItem is the resolved element's JSON text.
+	Each     *orkstackv1.EachContext
+	EachItem json.RawMessage
+	// StagedEachUpstream lists every fan-out upstream staged for a direct
+	// dependent, with its item count.
+	StagedEachUpstream []taskJSONEachUpstream
 }
 
 // WriteTaskJSON renders /orkstack/input/task.json.
@@ -930,8 +966,9 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 			Tmp:       ContainerTmp,
 		},
 		Inputs: taskJSONInputs{
-			Artifacts: tc.StagedInputs,
-			Upstream:  tc.StagedUpstream,
+			Artifacts:    tc.StagedInputs,
+			Upstream:     tc.StagedUpstream,
+			EachUpstream: tc.StagedEachUpstream,
 		},
 		Secrets: tc.StagedSecrets,
 	}
@@ -954,6 +991,14 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 	if tc.Pin != nil {
 		doc.Paths.Shared = ContainerShared
 		doc.Task.Pin = &taskJSONPin{Name: tc.Pin.GetName(), InstanceID: tc.Pin.GetInstanceId()}
+	}
+	// each exists only for an item of a fan-out (§3.2), as task.pin does.
+	if e := tc.Each; e != nil {
+		item := tc.EachItem
+		if len(item) == 0 {
+			item = json.RawMessage("null")
+		}
+		doc.Each = &taskJSONEach{Index: e.GetIndex(), Count: e.GetCount(), As: e.GetAs(), Item: item}
 	}
 	// Never null.
 	if doc.Inputs.Artifacts == nil {

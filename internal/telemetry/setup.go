@@ -46,11 +46,15 @@ const (
 	AttrRunID             = "ork.run_id"
 	AttrTaskID            = "ork.task_id"
 	AttrAttempt           = "ork.attempt"
-	AttrNamespace         = "ork.namespace"
-	AttrOrkflowName       = "ork.orkflow.name"
-	AttrOrkflowVersion    = "ork.orkflow.version"
-	AttrOrkflowDigest     = "ork.orkflow.digest"
-	AttrStream            = "ork.stream"
+	// AttrItem is a fan-out item's 0-based index. Set on task-log records and
+	// attempt spans only for an item; never a metric label — a series per item
+	// is the unbounded cardinality Cardinality exists to prevent.
+	AttrItem           = "ork.item"
+	AttrNamespace      = "ork.namespace"
+	AttrOrkflowName    = "ork.orkflow.name"
+	AttrOrkflowVersion = "ork.orkflow.version"
+	AttrOrkflowDigest  = "ork.orkflow.digest"
+	AttrStream         = "ork.stream"
 )
 
 // Providers is what Setup hands back: one provider per signal, the Prometheus

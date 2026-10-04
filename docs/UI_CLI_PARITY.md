@@ -663,6 +663,41 @@ dialog that shows the manifest summary before any bundle byte is fetched,
 include toggles, the absent members with their sentences, the manifest JSON,
 a `CliEquivalent`, and a download that completes only on `last`.
 
+### Fan-out
+
+A task that declares `each:` (`docs/DSL.md` "Fan-out") is one node whose
+items are each a durable activity. `TaskRun.each` (`expanded`, `count`) and
+`TaskRun.items` (one `TaskRun` per item, `item` set) carry them on `GetRun`;
+an item `TASK_LOG` event carries `Event.item`. Every per-task read takes one
+optional `item` selector — `ReadTaskLogs`/the log socket (`item=`),
+`ListRunArtifacts`, `ReadArtifact`, `GetArtifactProvenance`,
+`ListTaskAttempts`, `InspectRun`, `ExportRunEvidence` — under
+one set of rules: `item` without `task_id` is `InvalidArgument`; a negative
+item is `InvalidArgument`; an item of a task that is not a fan-out is
+`InvalidArgument`; an item of a fan-out not yet expanded, or past its count,
+is `NotFound`; and a read of ONE stream or ONE object of a fan-out without
+`item` is `InvalidArgument` naming `--item N`, while a list without `item`
+returns every item's rows, each carrying its `item`. `ListRuns`, the webhook
+body and the workflow result carry a fan-out's node row without `items`
+(`WithoutItems`), so a list stays bounded whatever a run expanded into. A
+human rendering spells one item `convert[97]` (0-based); it is never sent and
+never parsed — the wire field is the integer.
+
+CLI: `run get` shows a fan-out as one row, `RUNNING 97/120`, with a summary
+line and `--expand <task>` listing its items; `--item N` on `run logs`,
+`run artifacts`, `run artifact download`, `run artifact provenance`,
+`run attempts`, `run timing`, `run inspect`, `run evidence export` and
+`task run`; `run logs` without `--item` on a fan-out prints the hint;
+`run watch` spells item events `convert[97]`; `run plan` counts an input
+source and names a task source as counted when the run reaches it;
+`orkflow get` and `apply` show the `each:` table. UI: the run page draws one
+card per fan-out with a summary, a grid of item cells moved by item events,
+an item panel (status, attempt, Orker, exit, times, failure, attempt
+timeline, log pane, artifacts with Download, CLI equivalents), a
+`N items retried` badge, and `?task=&item=&attempt=` deep links; the plan
+table states the fan-out in the CLI's words, the DAG labels the node
+`each ≤ N`, and run diff labels item rows `convert[97]`.
+
 ## Capability and acceptance matrix
 
 | Capability | UI behavior | CLI/shared behavior | Required observable acceptance |
@@ -703,6 +738,7 @@ a `CliEquivalent`, and a download that completes only on `last`.
 | Interface manifests | Admin → Activities **Interface** column (`-`, `none`, `malformed`, `N keys`, `N ops`) whose disclosure opens the declared table; an **Inspect a reference** form with `CliEquivalent`, the pinned reference and the same table, or the server's refusal in an ErrorPanel; the Apply page and the editor show the `tasks[i].with.<key>` ERRORs and WARNINGs, and the warnings stay visible after apply | `activity list` INTERFACE column, `activity inspect <name-or-reference> [--json]`; `orkflow validate` prints `error`/`warning` rows and exits nonzero only for an ERROR; `apply` prints interface warnings under `Warnings:` | Same issues for the same document; same interface for the same reference; a refused apply writes nothing; a warned document applies and runs; an unlabelled image is unchanged |
 | Audit trail | Admin → Audit: scope statement (every namespace by default, one namespace on request), action/principal/window filters, table with `unattributed` for an absent principal and `refused {code}` for a refusal, pagination, caption, CLI equivalent; ErrorPanel with Retry on a failed read | `admin audit [--since] [--until] [--action] [--principal] [--limit] [--page-token] [-n]`, `--json` is the raw envelope; `ORK_PRINCIPAL` asserts a principal | A write on one replica is listed by another; a refusal is recorded with its code; reads and submits are not recorded; the header a gateway sets on browser requests is recorded verbatim; a scan past its budget refuses instead of answering empty |
 | Awaited tasks | AWAITING pill, deadline, live remaining time; Resolve (typed or JSON) and Reject dialogs with CLI equivalents; *Delivered* until applied; one-time callback panel after submit; placeholder `curl` on the card | `run resolve [--values/--values-file` or `--reject --reason]`; `run submit`/`again` print each callback once; `run get` await table; `run plan` `awaits`; `POST /v1/runs/{id}/awaits/{task}[/reject]` | Values stored byte-exact before delivery and read by the downstream task; timeout and rejection fail the run with their codes; cancellation ends the await `CANCELED`; a second replica and a restarted worker apply a resolution; refusals store and send nothing; the token appears in exactly one response |
+| Fan-out (`each:`) | One card per fan-out with a summary and an item grid updated live from item events; an item panel with its attempts, logs, artifacts and CLI equivalents; deep links carry `item`; plan and DAG show the bound | `run get` collapsed row and `--expand`; `--item` on `logs`, `artifacts`, `artifact download`, `attempts`, `timing`, `inspect`, `evidence export`, `artifact provenance`, `task run`; `watch` spells `convert[97]`; `run plan` counts an input source | Every item commits under its own key and retries alone; a dependent stages every item from its commit; a failed item fails the run naming itself; a second replica serves every item read; history at the ceiling stays inside the stated budget; a run with no fan-out is byte-identical (golden replay) |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new

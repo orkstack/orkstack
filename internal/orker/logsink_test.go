@@ -62,7 +62,7 @@ func (s *recordingLogStore) ReadLogChunks(
 	return out, nil
 }
 
-func (s *recordingLogStore) LatestLogAttempt(context.Context, string, string) (int32, error) {
+func (s *recordingLogStore) LatestLogAttempt(context.Context, string, string, artifacts.Item) (int32, error) {
 	return 0, artifacts.ErrNotFound
 }
 

@@ -69,6 +69,22 @@ message ResourceRequest {
   string memory = 2;  // Kubernetes spelling: "4Gi", "512Mi"
 }
 
+// EachSource is where a fan-out task's array lives: compiled at apply from
+// EachSpec.over and stamped into the immutable version document, as
+// Task.image is for `uses:`. Workflow code and the Orker read it and never
+// parse `over`.
+message EachSource {
+  // input names a declared input (.inputs.<input>); task_id names a task in
+  // the fan-out's needs closure (.tasks.<task_id>.output). Exactly one is set.
+  string input = 1;
+  string task_id = 2;
+  // path is the object keys below that root, outermost first. It is empty
+  // only for an input declared `type: array`; a task source always has at
+  // least one key, because a values.json is an object. There is no array
+  // index and no wildcard.
+  repeated string path = 3;
+}
+
 // NetworkMode is the complete set of network configurations an Orkflow may
 // select. Named Orker-defined profiles are deliberately absent (AGENTS.md §6).
 enum NetworkMode {
@@ -122,6 +138,11 @@ message UpstreamRef {
   ArtifactRef values = 3;
   // artifacts are the ancestor's output artifacts, references only.
   repeated ArtifactRef artifacts = 4;
+  // each is set when task_id is a fan-out task, and then commit_uri, values
+  // and artifacts are unset: the fan-out has no commit of its own, its items
+  // do. Set only on the input of a DIRECT dependent (a task naming the
+  // fan-out in needs:). A task further downstream receives no ref for it.
+  EachUpstream each = 5;
 }
 
 // ---------------------------------------------------------------- pins
@@ -141,6 +162,40 @@ message PinContext {
   // (Pin.timeout_seconds or the derived sum). The Orker derives the shared
   // directory's lease from it (§8.4).
   int32 timeout_seconds = 3;
+}
+
+// ---------------------------------------------------------------- fan-out
+
+// EachContext tells an Orker that this attempt is ONE ITEM of a fan-out task.
+// It is set ONLY on an item's input, so every other task's recorded payload is
+// byte-identical to what it was before this field existed.
+message EachContext {
+  // index is the item's 0-based position in the expanded array; count is the
+  // array's length. Both are the engine's, recorded at expansion.
+  int32 index = 1;
+  int32 count = 2;
+  // as is the name the item is bound to in `with:` (.each.<as>), as compiled.
+  string as = 3;
+  // source is where the Orker reads the item from: the run input, or the
+  // staged values.json of source.task_id, walked by source.path, element
+  // [index]. The array is the one the engine counted; the Orker verifies its
+  // length equals count and fails the attempt EACH_ITEM_UNAVAILABLE if not.
+  EachSource source = 4;
+}
+
+// EachUpstream is a fan-out ancestor's contribution to a DIRECT dependent: not
+// N references, which would grow the dependent's input with the item count,
+// but the two facts that address every one of them. The Orker composes item
+// i's commit URI as commit_root + "/" +
+// artifacts.ItemCommitKey(namespace, run_id, task_id, i) — the single shared
+// renderer the engine used to dispatch that item — and stages from the commit.
+message EachUpstream {
+  // count is the number of items, every one SUCCEEDED (a dependent runs only
+  // after its fan-out succeeded). 0 is legal: the fan-out expanded to nothing.
+  int32 count = 1;
+  // commit_root is RunPlan.commit_root, the root every commit URI of this run
+  // is composed against.
+  string commit_root = 2;
 }
 
 // ---------------------------------------------------------------- the seam
@@ -237,6 +292,12 @@ message ExecuteTaskInput {
   // builds a workspace or pulls: an attempt whose commit.json exists is
   // adopted without being judged again.
   ImagePolicySelection image_policy = 25;
+
+  // each tells the Orker this attempt is one item of a fan-out, which one, and
+  // where the item's value is. UNSET for every task that is not an item, which
+  // keeps such a task's recorded payload byte-identical (the golden history
+  // fixture has no fan-out and must keep matching without re-recording).
+  EachContext each = 26;
 }
 
 // ReleasePinInput asks the pin host to remove the pin's shared directory.
@@ -416,6 +477,12 @@ message DescribeOrkerResult {
   int32 open_pins = 14;
   // pins details each open pin, ordered by run_id. len(pins) == open_pins.
   repeated OpenPin pins = 15;
+  // each_supported is true on an Orker that implements fan-out items: it
+  // honours ExecuteTaskInput.each (task.json `each`, .each in with:) and
+  // stages EachUpstream. An Orker built before it answers false (unset), and
+  // submit refuses an Orkflow with a fan-out on such a pool rather than let it
+  // run items without their item or a dependent without its items.
+  bool each_supported = 16;
 }
 
 // OpenPin is one pin this Orker currently hosts: a session it has accepted

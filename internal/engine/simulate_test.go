@@ -56,14 +56,24 @@ func assumedPayloads(t *testing.T, values map[string]map[string]any) map[string]
 func interpret(t *testing.T, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, assumed map[string]map[string]any, pools ...string) (*orkstackv1.Run, *harness) {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	var h *harness
+	h = newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		values := assumed[in.TaskId]
 		if values == nil {
 			values = map[string]any{}
 		}
-		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(values)}, nil
+		encoded := valuesJSON(values)
+		result := &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: encoded}
+		// The values object a fan-out over this task counts, stored where
+		// CountEachItems reads it. An item's own values are not stored.
+		if in.GetEach() == nil {
+			result.ValuesRef = h.values.put("mem://values/"+in.TaskId, encoded)
+		}
+		return result, nil
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, input, defaultPlan(pools...))
+	plan := defaultPlan(pools...)
+	plan.CommitRoot = "mem://commits"
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, wf, input, plan)
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatalf("%s: workflow did not complete", runID)
 	}
@@ -108,6 +118,12 @@ func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunRespons
 				(failing == "" || got != orkstackv1.Status_STATUS_CANCELED) {
 				t.Errorf("%s: %s planned RUNS, interpreter %v", label, id, got)
 			}
+			// each_count set ⇔ the fan-out expands to exactly that many items.
+			if task.EachCount != nil {
+				if each := taskRunOf(t, run, id).GetEach(); !each.GetExpanded() || each.GetCount() != task.GetEachCount() {
+					t.Errorf("%s: %s planned %d items, interpreter expanded %v", label, id, task.GetEachCount(), each)
+				}
+			}
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED:
 			if got != orkstackv1.Status_STATUS_SKIPPED {
 				t.Errorf("%s: %s planned SKIPPED, interpreter %v", label, id, got)
@@ -124,6 +140,14 @@ func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunRespons
 				t.Errorf("%s: %s skip events %q, want one equal to %q", label, id, skips[id], want)
 			}
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS, orkstackv1.PlanOutcome_PLAN_OUTCOME_UNREACHED:
+			// A fan-out that FAILS ends FAILED with that message: its
+			// expansion was refused (spec each-fan-out §5.12).
+			if task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS && task.GetEach() != nil {
+				if got != orkstackv1.Status_STATUS_FAILED {
+					t.Errorf("%s: fan-out %s planned FAILS, interpreter %v", label, id, got)
+				}
+				continue
+			}
 			if got != orkstackv1.Status_STATUS_CANCELED && got != orkstackv1.Status_STATUS_PENDING {
 				t.Errorf("%s: %s planned %v, interpreter %v", label, id, task.GetOutcome(), got)
 			}
@@ -267,6 +291,12 @@ func TestSimulate_AgreesWithTheInterpreter(t *testing.T) {
 		{"output stub without the field", compile(t, outputConditionDocument), nil,
 			map[string]map[string]any{"x": {"other": true}}},
 		{"condition error", compile(t, conditionErrorDocument), map[string]any{"a": "x", "b": 1}, nil},
+		{"fan-out over an input", compile(t, simulateEachInputDocument), map[string]any{"regions": []any{"eu", "us", "ap"}}, nil},
+		{"fan-out over an input, too many", compile(t, simulateEachInputDocument), map[string]any{"regions": []any{"a", "b", "c", "d", "e"}}, nil},
+		{"fan-out over a stubbed upstream", compile(t, simulateEachTaskDocument), nil,
+			map[string]map[string]any{"list": {"parts": []any{map[string]any{"n": 1}, map[string]any{"n": 2}}}}},
+		{"fan-out over a stubbed upstream, not an array", compile(t, simulateEachTaskDocument), nil,
+			map[string]map[string]any{"list": {"parts": "nope"}}},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -673,5 +703,81 @@ func TestClassify_UsesTheSharedSkipReasons(t *testing.T) {
 	if wantMaybe != `task skipped: condition "{{ .inputs.enabled }}" evaluated false` ||
 		wantAfter != `task skipped: upstream task "maybe" was skipped` {
 		t.Errorf("shared helpers changed the sentence: %q / %q", wantMaybe, wantAfter)
+	}
+}
+
+const simulateEachInputDocument = `
+name: simulate-each-input
+inputs:
+  regions: {type: array}
+tasks:
+  - id: convert
+    uses: shell
+    each: {over: "{{ .inputs.regions }}", max_items: 4, max_parallel: 2}
+    with: {op: exec}
+  - id: merge
+    uses: shell
+    needs: [convert]
+    with: {op: exec}
+`
+
+const simulateEachTaskDocument = `
+name: simulate-each-task
+tasks:
+  - id: list
+    uses: shell
+    with: {op: exec}
+  - id: convert
+    uses: shell
+    needs: [list]
+    each: {over: "{{ .tasks.list.output.parts }}", max_items: 50}
+    with: {op: exec}
+`
+
+func TestSimulate_EachCountsAnInputSource(t *testing.T) {
+	plan := simulate(t, compile(t, simulateEachInputDocument), payload(t, map[string]any{"regions": []any{"eu", "us", "ap"}}), nil)
+	convert := planTaskOf(t, plan, "convert")
+	if convert.GetOutcome() != orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS || convert.EachCount == nil || convert.GetEachCount() != 3 {
+		t.Fatalf("convert = %v", convert)
+	}
+	if convert.GetEach().GetMaxItems() != 4 || convert.GetEach().GetMaxParallel() != 2 {
+		t.Fatalf("PlanTask.each = %v", convert.GetEach())
+	}
+	if len(plan.GetTasks()) != 2 || planTaskOf(t, plan, "merge").GetWave() != 2 {
+		t.Fatalf("a fan-out is one PlanTask taking one wave: %v", plan.GetTasks())
+	}
+}
+
+func TestSimulate_EachCountsAStubbedSource(t *testing.T) {
+	plan := simulate(t, compile(t, simulateEachTaskDocument), nil, assumedPayloads(t, map[string]map[string]any{
+		"list":    {"parts": []any{1.0, 2.0}},
+		"convert": {"ignored": true},
+	}))
+	if got := planTaskOf(t, plan, "convert"); got.EachCount == nil || got.GetEachCount() != 2 {
+		t.Fatalf("convert = %v", got)
+	}
+	if fmt.Sprint(plan.GetUnusedAssumedOutputs()) != "[convert]" {
+		t.Fatalf("a fan-out's own stub must be listed unused: %v", plan.GetUnusedAssumedOutputs())
+	}
+}
+
+func TestSimulate_EachLeavesTheCountUnsetOtherwise(t *testing.T) {
+	plan := simulate(t, compile(t, simulateEachTaskDocument), nil, nil)
+	got := planTaskOf(t, plan, "convert")
+	if got.GetOutcome() != orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS || got.EachCount != nil || got.GetEach() == nil {
+		t.Fatalf("convert = %v", got)
+	}
+}
+
+func TestSimulate_EachTooManyItemsIsFails(t *testing.T) {
+	plan := simulate(t, compile(t, simulateEachInputDocument), payload(t, map[string]any{"regions": []any{"a", "b", "c", "d", "e"}}), nil)
+	convert := planTaskOf(t, plan, "convert")
+	if convert.GetOutcome() != orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS || convert.GetWave() != 0 ||
+		convert.GetError().GetCode() != "RUN_FAILED" ||
+		convert.GetError().GetMessage() != "each.over resolved to 5 items, over max_items 4 declared at tasks[0].each.max_items" {
+		t.Fatalf("convert = %v", convert)
+	}
+	if got := planTaskOf(t, plan, "merge").GetOutcome(); got != orkstackv1.PlanOutcome_PLAN_OUTCOME_UNREACHED {
+		t.Fatalf("merge = %v", got)
 	}
 }

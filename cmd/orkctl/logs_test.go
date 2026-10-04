@@ -84,7 +84,7 @@ func (s *cliLogStore) ReadLogChunks(
 	return out, nil
 }
 
-func (s *cliLogStore) LatestLogAttempt(_ context.Context, runID, taskID string) (int32, error) {
+func (s *cliLogStore) LatestLogAttempt(_ context.Context, runID, taskID string, _ artifacts.Item) (int32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	latest := int32(0)

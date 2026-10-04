@@ -79,9 +79,9 @@ func (s *S3AttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1.Tas
 // bounds how many, so the listing is not paged by a byte budget the way
 // ReadLogChunks is.
 func (s *S3AttemptStore) ListAttempts(
-	ctx context.Context, runID, taskID string,
+	ctx context.Context, runID, taskID string, item Item,
 ) ([]*orkstackv1.TaskAttempt, error) {
-	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID)
+	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID, item)
 	if err != nil {
 		return nil, err
 	}
@@ -91,9 +91,9 @@ func (s *S3AttemptStore) ListAttempts(
 // ReadAttemptDocuments returns one task's stored records with their bytes,
 // ascending by attempt; ListAttempts is its projection.
 func (s *S3AttemptStore) ReadAttemptDocuments(
-	ctx context.Context, runID, taskID string,
+	ctx context.Context, runID, taskID string, item Item,
 ) ([]AttemptDocument, error) {
-	prefix, err := AttemptTaskPrefix(runID, taskID)
+	prefix, err := AttemptScopePrefix(runID, taskID, item)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func (s *S3AttemptStore) ReadAttemptDocuments(
 		for _, object := range page.Contents {
 			key := aws.ToString(object.Key)
 			ref, ok := ParseAttemptKey(key)
-			if !ok || ref.RunID != runID || ref.TaskID != taskID {
+			if !ok || ref.RunID != runID || ref.TaskID != taskID || ref.Item != item {
 				continue
 			}
 			keys = append(keys, key)

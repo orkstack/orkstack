@@ -25,7 +25,7 @@ var allReasonCodes = []string{
 	ReasonCommitSchema, ReasonCommitIdentity, ReasonCommitUndecodable,
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused,
-	ReasonNetworkModeRefused,
+	ReasonNetworkModeRefused, ReasonEachItemUnavailable,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable,
 }

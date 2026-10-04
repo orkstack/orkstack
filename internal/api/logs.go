@@ -118,6 +118,7 @@ func (s *Service) StreamTaskLogs(
 		FromAttempt: req.Msg.GetFromAttempt(),
 		Follow:      req.Msg.GetFollow(),
 		Namespace:   req.Msg.GetNamespace(),
+		Item:        req.Msg.Item,
 	}, stream.Send)
 }
 
@@ -136,7 +137,14 @@ type TaskLogQuery struct {
 	FromAttempt int32
 	Follow      bool
 	Namespace   string
+	// Item names the item of a fan-out task whose output is streamed:
+	// required for a fan-out, refused for any other task. Attempt, FromSeq and
+	// FromAttempt then count that item's own attempts and chunks.
+	Item *int32
 }
+
+// item is the query's item as a store coordinate.
+func (q TaskLogQuery) item() artifacts.Item { return artifacts.ItemOf(q.Item) }
 
 // StreamRunTaskLogs delivers a task attempt's chunks after FromSeq to send,
 // and returns when the task is terminal (or, without Follow, as soon as the
@@ -203,12 +211,22 @@ func (s *Service) StreamRunTaskLogs(
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"task %q of run %q is an awaited task: it runs no container and writes no logs", q.TaskID, q.RunID))
 	}
+	// The item selector (spec each-fan-out §7.2): a fan-out's own row writes
+	// no logs, its items do, so a fan-out requires `item`.
+	if _, err := itemRunOf(run, q.TaskID, q.Item); err != nil {
+		return err
+	}
+	if q.Item == nil {
+		if err := needsItem(run, q.TaskID, fmt.Sprintf("orkctl run logs %s --task %s", q.RunID, q.TaskID)); err != nil {
+			return err
+		}
+	}
 
 	attempt, err := s.resolveLogAttempt(ctx, q)
 	if err != nil {
 		return err
 	}
-	ref := artifacts.LogRef{RunID: q.RunID, TaskID: q.TaskID, Attempt: attempt}
+	ref := artifacts.LogRef{RunID: q.RunID, TaskID: q.TaskID, Item: q.item(), Attempt: attempt}
 
 	poll := s.logPoll.withDefaults()
 	wait := poll.Min
@@ -317,6 +335,7 @@ func (s *Service) drainLogChunks(
 				Seq:       chunk.Seq,
 				Data:      chunk.Data,
 				Truncated: chunk.Truncated,
+				Item:      ref.Item.Proto(),
 			}); err != nil {
 				return delivered, err
 			}
@@ -348,6 +367,7 @@ func sendTerminator(
 		Attempt: ref.Attempt,
 		Seq:     cursor,
 		Last:    true,
+		Item:    ref.Item.Proto(),
 	})
 }
 
@@ -366,7 +386,7 @@ func (s *Service) resolveLogAttempt(ctx context.Context, q TaskLogQuery) (int32,
 		return 0, connect.NewError(connect.CodeInvalidArgument,
 			fmt.Errorf("attempt %d is negative; 0 means the latest attempt", q.Attempt))
 	}
-	switch attempt, err := s.logs.LatestLogAttempt(ctx, q.RunID, q.TaskID); {
+	switch attempt, err := s.logs.LatestLogAttempt(ctx, q.RunID, q.TaskID, q.item()); {
 	case err == nil:
 		return attempt, nil
 	case errors.Is(err, artifacts.ErrNotFound):
@@ -399,6 +419,15 @@ func (s *Service) taskIsTerminal(ctx context.Context, q TaskLogQuery) (bool, err
 	}
 	taskRun, ok := taskRunOf(run, q.TaskID)
 	if !ok {
+		return false, nil
+	}
+	// An item ends with its own status — or with its node's, which settles
+	// every item (a snapshot between stride snapshots may lag an item).
+	if q.Item != nil && !isTerminalStatus(taskRun.GetStatus()) {
+		items := taskRun.GetItems()
+		if int(*q.Item) < len(items) && *q.Item >= 0 {
+			return isTerminalStatus(items[*q.Item].GetStatus()), nil
+		}
 		return false, nil
 	}
 	return isTerminalStatus(taskRun.GetStatus()), nil

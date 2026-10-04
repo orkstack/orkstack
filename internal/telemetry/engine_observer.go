@@ -191,6 +191,18 @@ func (o *EngineObserver) recordTask(ctx context.Context, event *orkstackv1.Event
 			inst.TaskDuration.Record(ctx, seconds, metric.WithAttributes(durationAttrs...))
 		}
 	}
+	// A fan-out's own row has no attempt — its items do. Record one
+	// observation per item, from the snapshot the node's terminal event
+	// carries, under the node's attributes (never an item label: a series per
+	// item is the cardinality TaskAttrs exists to prevent).
+	if task.GetEach() != nil {
+		for _, item := range task.GetItems() {
+			if item.GetAttempt() > 0 {
+				inst.TaskAttempts.Record(ctx, int64(item.GetAttempt()), metric.WithAttributes(durationAttrs...))
+			}
+		}
+		return
+	}
 	inst.TaskAttempts.Record(ctx, int64(task.GetAttempt()), metric.WithAttributes(durationAttrs...))
 }
 

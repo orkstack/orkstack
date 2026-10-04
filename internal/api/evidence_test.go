@@ -91,7 +91,7 @@ func (m missingCommits) Get(ctx context.Context, uri string) (artifacts.CommitRe
 // failingAttempts is an attempt store whose reads fail.
 type failingAttempts struct{ *artifacts.MemoryAttemptStore }
 
-func (failingAttempts) ReadAttemptDocuments(context.Context, string, string) ([]artifacts.AttemptDocument, error) {
+func (failingAttempts) ReadAttemptDocuments(context.Context, string, string, artifacts.Item) ([]artifacts.AttemptDocument, error) {
 	return nil, errors.New("bucket unreachable")
 }
 

@@ -217,6 +217,10 @@ func planDetail(task *orkstackv1.PlanTask, failing string) string {
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED:
 		return task.GetSkipReason()
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS:
+		if task.GetEach() != nil {
+			// A fan-out is one PlanTask (spec each-fan-out §5.12).
+			return eachDetail(task)
+		}
 		if task.GetPin() != "" {
 			return "pin " + task.GetPin()
 		}

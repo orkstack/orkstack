@@ -51,7 +51,7 @@ func (f *flakeAttempts) PutAttempt(ctx context.Context, attempt *orkstackv1.Task
 	return f.inner.PutAttempt(ctx, attempt)
 }
 
-func (f *flakeAttempts) ListAttempts(ctx context.Context, runID, taskID string) ([]*orkstackv1.TaskAttempt, error) {
+func (f *flakeAttempts) ListAttempts(ctx context.Context, runID, taskID string, _ artifacts.Item) ([]*orkstackv1.TaskAttempt, error) {
 	key := runID + "/" + taskID
 	f.mu.Lock()
 	f.listings[key]++
@@ -66,7 +66,7 @@ func (f *flakeAttempts) ListAttempts(ctx context.Context, runID, taskID string) 
 	if reclaimed {
 		return nil, nil
 	}
-	return f.inner.ListAttempts(ctx, runID, taskID)
+	return f.inner.ListAttempts(ctx, runID, taskID, artifacts.NoItem)
 }
 
 func (f *flakeAttempts) totalListings() int {

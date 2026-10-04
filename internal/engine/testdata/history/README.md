@@ -70,3 +70,43 @@ ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
 The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
 re-recorded only when the await path's command stream or payloads genuinely
 change, with a commit that says so.
+
+## The fan-out fixture
+
+`run-each-v1.json` holds the fan-out path still (`docs/DSL.md` "Fan-out"): the
+first `CountEachItems` local-activity marker, the first item activities, the
+first item events published without a snapshot of their own, and the first
+`EachUpstream` reference `RunWorkflow` ever issued. It is a real history of
+`list → convert (each: over list's six parts, max_parallel: 2, item 3 retried
+once) → merge`, recorded once by a **versioned** worker against a real
+cluster. Four tests hold the tree to it on every `make test`:
+
+- `TestRunWorkflow_ReplaysCommittedEachHistory` — the command half, plus the
+  ExecuteTask schedule the replay produces (task and item, in order), read
+  through an interceptor: the replayer itself matches an activity command by
+  type and id and never by input, so a dispatch that picked different items
+  would otherwise pass.
+- `TestEachHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the payload
+  half: the fixture re-executed from its own input, with each recorded
+  ExecuteTask result fed back by task and item, and the recorded count.
+- `TestEachHistory_ReplayNeverRecountsTheArray` — the replay reads the count
+  from its marker and never calls `CountEachItems`, whatever a store would now
+  answer: the replayed run has the recorded six items.
+- `TestEachHistory_CatchesAReorderedDispatch` — the replay against a body that
+  dispatches items in descending order, which must be caught.
+
+Until the file is committed those tests skip and name the command that
+records it (set `ORK_REQUIRE_EACH_FIXTURE=1` to make its absence a failure).
+Nothing writes it except `TestIntegration_RecordEachRunHistory`
+(`internal/engine/each_integration_test.go`), and only when asked:
+
+```bash
+ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
+  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
+  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
+  -run TestIntegration_RecordEachRunHistory
+```
+
+The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
+re-recorded only when the fan-out path's command stream or payloads genuinely
+change, with a commit that says so.

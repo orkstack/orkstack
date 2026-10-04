@@ -41,9 +41,15 @@ func (s *Service) InspectRun(
 		return nil, err
 	}
 	taskID := req.Msg.GetTaskId()
+	if err := checkItemRequiresTask(taskID, req.Msg.Item); err != nil {
+		return nil, err
+	}
 	if taskID != "" && !hasTask(run, taskID) {
 		return nil, connect.NewError(connect.CodeNotFound,
 			fmt.Errorf("task %q not found in run %q", taskID, run.GetId()))
+	}
+	if _, err := itemRunOf(run, taskID, req.Msg.Item); err != nil {
+		return nil, err
 	}
 	now := s.now().UTC()
 	nothingLive := func() (*connect.Response[orkstackv1.InspectRunResponse], error) {
@@ -91,6 +97,9 @@ func (s *Service) InspectRun(
 		if taskID != "" && attempt.GetTaskId() != taskID {
 			continue
 		}
+		if req.Msg.Item != nil && (attempt.Item == nil || attempt.GetItem() != req.Msg.GetItem()) {
+			continue
+		}
 		attempts = append(attempts, attempt)
 	}
 	// Snapshot order, as ListTaskAttempts orders. A pending attempt whose
@@ -100,8 +109,11 @@ func (s *Service) InspectRun(
 		a, aKnown := order[attempts[i].GetTaskId()]
 		b, bKnown := order[attempts[j].GetTaskId()]
 		switch {
-		case aKnown && bKnown:
+		case aKnown && bKnown && a != b:
 			return a < b
+		case aKnown && bKnown:
+			// One fan-out: its items ascending, a task's own attempt first.
+			return itemOrder(attempts[i].Item) < itemOrder(attempts[j].Item)
 		case aKnown != bKnown:
 			return aKnown
 		default:
@@ -113,4 +125,12 @@ func (s *Service) InspectRun(
 		Attempts:   attempts,
 		ComputedAt: timestamppb.New(now),
 	}), nil
+}
+
+// itemOrder sorts a task's own attempt (no item) before its items.
+func itemOrder(item *int32) int64 {
+	if item == nil {
+		return -1
+	}
+	return int64(*item)
 }
