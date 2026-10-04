@@ -629,6 +629,55 @@ func TestRedeliverWebhook_NeverRetries(t *testing.T) {
 	}
 }
 
+// A fan-out's items stay out of the redelivery body exactly as they stay out
+// of the original's (each-fan-out §5.13): the receiver sees one shape, with
+// the node's each and status, however many items the run expanded.
+func TestRedeliverWebhook_BodyCarriesNoItems(t *testing.T) {
+	f := newDeliveryFixture(t, http.StatusBadGateway)
+	f.register(t, webhooks.EventRunFailed)
+	run := f.sampleRun(t, "ork-2026-09-21-each", orkstackv1.Status_STATUS_FAILED)
+	run.TaskRuns = append(run.TaskRuns, &orkstackv1.TaskRun{
+		TaskId: "convert", Status: orkstackv1.Status_STATUS_FAILED,
+		Each: &orkstackv1.TaskEach{Expanded: true, Count: 3},
+		Items: []*orkstackv1.TaskRun{
+			{TaskId: "convert", Item: proto.Int32(0), Status: orkstackv1.Status_STATUS_SUCCEEDED},
+			{TaskId: "convert", Item: proto.Int32(1), Status: orkstackv1.Status_STATUS_FAILED},
+			{TaskId: "convert", Item: proto.Int32(2), Status: orkstackv1.Status_STATUS_CANCELED},
+		},
+	})
+	f.runs.Save(run)
+	f.announce(t, run, orkstackv1.EventType_EVENT_TYPE_RUN_FAILED, orkstackv1.Status_STATUS_FAILED, "")
+	listed := f.list(t, &orkstackv1.ListDeliveriesRequest{}).GetDeliveries()
+	if len(listed) != 1 {
+		t.Fatalf("original = %v, want one record", listed)
+	}
+	before := f.receiver.count() // the original's attempts against a failing receiver
+	f.receiver.answer(http.StatusOK)
+	if _, err := f.svc.RedeliverWebhook(context.Background(),
+		connect.NewRequest(&orkstackv1.RedeliverWebhookRequest{Id: listed[0].GetId()})); err != nil {
+		t.Fatalf("RedeliverWebhook: %v", err)
+	}
+	if got := f.receiver.count(); got != before+1 {
+		t.Fatalf("receiver saw %d requests, want %d", got, before+1)
+	}
+	for label, i := range map[string]int{"original": 0, "redelivery": before} {
+		body, _ := f.receiver.request(i)
+		var payload struct {
+			Run json.RawMessage `json:"run"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("%s: decode body: %v", label, err)
+		}
+		if strings.Contains(string(payload.Run), `"items"`) || !strings.Contains(string(payload.Run), `"each"`) {
+			t.Errorf("%s body run = %s, want each without items", label, payload.Run)
+		}
+	}
+	stored, err := f.svc.GetRun(context.Background(), connect.NewRequest(&orkstackv1.GetRunRequest{RunId: run.GetId(), Namespace: run.GetNamespace()}))
+	if err != nil || len(stored.Msg.GetRun().GetTaskRuns()[1].GetItems()) != 3 {
+		t.Errorf("the run's own read lost its items: %v, %v", stored, err)
+	}
+}
+
 func TestRedeliverWebhook_RefusesADeletedWebhookWithoutPosting(t *testing.T) {
 	f := newDeliveryFixture(t, http.StatusBadGateway)
 	original, _, hook := f.failedOriginal(t)
