@@ -155,7 +155,17 @@
 							>
 								<td class="h-11 px-4 pl-5 align-middle font-medium text-fg">{task.id}</td>
 								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="task-activity-{task.id}">
-									{activityLabel(task) || '—'}
+									{#if task.orkflow}
+										<!-- A composed task: a link to the child Orkflow at the version it pins. -->
+										<a
+											href={withNamespace(`/orkflows/${encodeURIComponent(task.orkflow.name)}?version=${encodeURIComponent(task.orkflow.version)}`, data.namespace)}
+											data-testid="task-child-link-{task.id}"
+											class="font-mono text-xs text-brand-700 hover:underline"
+											>orkflow {task.orkflow.name}@{task.orkflow.version}</a
+										>
+									{:else}
+										{activityLabel(task) || '—'}
+									{/if}
 								</td>
 								<!--
 									The resolved index digest is what makes this version
@@ -164,7 +174,16 @@
 									resolved from, not hidden a click away.
 								-->
 								<td class="h-11 px-4 align-middle">
-									{#if task.image?.indexDigest}
+									{#if task.orkflow}
+										<!-- The child's definition digest: what this version pins it as. -->
+										<span
+											class="font-mono text-xs text-fg-secondary"
+											title={task.orkflow.definitionDigest}
+											data-digest={task.orkflow.definitionDigest}
+											data-testid="task-child-digest-{task.id}"
+											>{shortDigest(task.orkflow.definitionDigest) || '—'}</span
+										>
+									{:else if task.image?.indexDigest}
 										<span
 											class="font-mono text-xs text-fg-secondary"
 											title={task.image.indexDigest}
@@ -181,17 +200,56 @@
 									{/if}
 								</td>
 								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="task-pool-{task.id}">
-									{task.pool || 'main'}
+									{task.orkflow ? '—' : task.pool || 'main'}
 								</td>
 								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="task-needs-{task.id}">
 									{task.needs.length > 0 ? task.needs.join(', ') : '—'}
 								</td>
-								<td class="h-11 px-4 pr-5 align-middle text-fg-secondary">{task.timeoutSeconds}s</td>
+								<td class="h-11 px-4 pr-5 align-middle text-fg-secondary"
+									>{task.orkflow ? '—' : `${task.timeoutSeconds}s`}</td
+								>
 							</tr>
 						{/each}
 					</tbody>
 				</table>
 			</div>
+		</section>
+
+		<!--
+			OUTPUTS: the Orkflow's declared return contract. When declared, a
+			run's output IS this map rendered, and it is all an Orkflow that
+			composes this one can read; when not, a run's output is every leaf
+			task's values and a composing Orkflow reads nothing.
+		-->
+		<section class="mb-8" data-testid="orkflow-outputs">
+			<h2 class="mb-3 text-sm font-semibold text-fg">Outputs</h2>
+			{#if Object.keys(wf.outputs ?? {}).length > 0}
+				<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
+					<table class="w-full border-collapse text-left text-sm">
+						<thead class="bg-surface-sunken">
+							<tr>
+								<th class="h-10 px-4 pl-5 text-xs font-medium text-fg-muted">Name</th>
+								<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Template</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each Object.keys(wf.outputs).sort() as key (key)}
+								<tr class="border-t border-border-subtle" data-testid="orkflow-output-{key}">
+									<td class="h-11 px-4 pl-5 align-middle font-mono text-xs text-fg">{key}</td>
+									<td class="h-11 px-4 pr-5 align-middle font-mono text-xs break-all text-fg-secondary"
+										>{wf.outputs[key]}</td
+									>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{:else}
+				<p class="text-sm text-fg-muted" data-testid="orkflow-outputs-none">
+					This Orkflow declares no outputs; a run's output is every leaf task's values, and an Orkflow that
+					composes it receives none.
+				</p>
+			{/if}
 		</section>
 
 		<div class="flex gap-3">

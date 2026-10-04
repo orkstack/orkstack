@@ -4,6 +4,8 @@
 	import { navigating, page } from '$app/state';
 	import ArtifactProvenance from '$lib/components/ArtifactProvenance.svelte';
 	import AwaitPanel from '$lib/components/AwaitPanel.svelte';
+	import ChildRunPanel from '$lib/components/ChildRunPanel.svelte';
+	import { childLabel, childrenListHref } from '$lib/compose';
 	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import Dialog from '$lib/components/Dialog.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -36,11 +38,13 @@
 	import {
 		EventType,
 		TaskAwaitSchema,
+		TaskChildSchema,
 		type Event,
 		type RetryState,
 		type Run,
 		type TaskAttempt,
 		type TaskAwait,
+		type TaskChild,
 		type TaskEach,
 		type TaskRun
 	} from '$lib/gen/orkstack/v1/run_pb';
@@ -139,9 +143,18 @@
 		// own — every item has.
 		each?: TaskEach;
 		items: ItemView[];
+		// child is set for a composed task (`uses: orkflow:`): the child
+		// Orkflow it pins — from the definition, so a pending card already says
+		// what it will run — and, once the start is confirmed, the child run's
+		// id from the snapshot. A composed task reaches no Orker and writes no
+		// logs: its card shows the child instead.
+		child?: TaskChild;
 	}
 
 	const run = $derived(data.run);
+	// Whether the pinned definition declares `outputs:` — then Run.output IS
+	// those, and otherwise it is every leaf task's values.
+	const declaresOutputs = $derived(Object.keys(data.orkflow?.outputs ?? {}).length > 0);
 	// What started this run, read off the run it is: nothing here infers it.
 	const origin = $derived(run?.origin);
 	const originSlug = $derived(origin ? originKindSlug(origin.kind) : '');
@@ -498,7 +511,16 @@
 				pin: task.pin,
 				orkerId: '',
 				items: [],
-				...(task.await ? { await: create(TaskAwaitSchema, { callback: task.await.callback }) } : {})
+				...(task.await ? { await: create(TaskAwaitSchema, { callback: task.await.callback }) } : {}),
+				...(task.orkflow
+					? {
+							child: create(TaskChildSchema, {
+								orkflowName: task.orkflow.name,
+								orkflowVersion: task.orkflow.version,
+								orkflowDefinitionDigest: task.orkflow.definitionDigest
+							})
+						}
+					: {})
 			});
 		}
 		for (const tr of data.run?.taskRuns ?? []) {
@@ -529,6 +551,7 @@
 				orkerId: tr.orkerId,
 				...(tr.await ? { await: tr.await } : existing?.await ? { await: existing.await } : {}),
 				...(tr.each ? { each: tr.each } : {}),
+				...(tr.child ? { child: tr.child } : existing?.child ? { child: existing.child } : {}),
 				items: itemsFromTaskRun(tr)
 			});
 		}
@@ -566,6 +589,9 @@
 				// The await's own state — deadline, resolver — copied like pool
 				// and orkerId; absent for a container task.
 				...(tr.await ? { await: tr.await } : {}),
+				// The child run's id arrives with the snapshot that follows its
+				// confirmed start; copied like await.
+				...(tr.child ? { child: tr.child } : {}),
 				// Patched only when the snapshot carries one: upsertTask assigns
 				// every key present in the patch, so an empty pin here would
 				// erase the pin the definition already seeded.
@@ -653,6 +679,18 @@
 		return taskDefs.get(taskId)?.each !== undefined || tasks.find((t) => t.id === taskId)?.each !== undefined;
 	}
 
+	// isComposed answers from the definition first too: a composed task is
+	// declared (`uses: orkflow:`), whether or not its child has started.
+	function isComposed(taskId: string): boolean {
+		return taskDefs.get(taskId)?.orkflow !== undefined || tasks.find((t) => t.id === taskId)?.child !== undefined;
+	}
+	// Whether this run's definition composes anything: the header's
+	// "Child runs" link is drawn only then.
+	const composesAny = $derived(
+		(data.orkflow?.tasks ?? []).some((t) => t.orkflow !== undefined) ||
+			(data.run?.taskRuns ?? []).some((tr) => tr.child !== undefined)
+	);
+
 	// One event-triggered snapshot read, merged: what a fan-out's expansion
 	// (its item count) and its end (every item's facts) need, since events
 	// carry neither. Never a poll.
@@ -725,6 +763,10 @@
 				// A fan-out schedules once, when its array was counted: read
 				// the expansion so the grid has its cells.
 				if (event.type === EventType.TASK_SCHEDULED && isFanOut(event.taskId)) rereadAndMerge();
+				// A composed task's TASK_STARTED is its child run's confirmed
+				// start: one re-read brings child.runId the moment the child
+				// exists — an event-triggered read, never a poll.
+				if (event.type === EventType.TASK_STARTED && isComposed(event.taskId)) rereadAndMerge();
 				break;
 			}
 			// A task's terminal transition is the moment its LAST attempt record
@@ -734,7 +776,7 @@
 			// only after the run's own terminal snapshot lands.
 			case EventType.TASK_SUCCEEDED:
 				upsertTask(event.taskId, { status: status ?? Status.SUCCEEDED });
-				if (isFanOut(event.taskId)) rereadAndMerge();
+				if (isFanOut(event.taskId) || isComposed(event.taskId)) rereadAndMerge();
 				else void refreshAttempts(event.taskId);
 				break;
 			case EventType.TASK_FAILED:
@@ -742,7 +784,7 @@
 					status: status ?? Status.FAILED,
 					message: event.message
 				});
-				if (isFanOut(event.taskId)) rereadAndMerge();
+				if (isFanOut(event.taskId) || isComposed(event.taskId)) rereadAndMerge();
 				else void refreshAttempts(event.taskId);
 				break;
 			// An awaited task started waiting. Its deadline is TASK_AWAITING's
@@ -1224,6 +1266,18 @@
 					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
 				>Evidence</button>
 			{/if}
+			{#if composesAny}
+				<a
+					href={childrenListHref(data.namespace, run.id)}
+					data-testid="run-children-link"
+					class="inline-flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-fg shadow-xs hover:bg-surface-hover"
+				>Child runs</a>
+				<CliEquivalent
+					command={runCommand(data.namespace, ['run', 'list', '--origin', `parent-run:${run.id}`])}
+					testid="run-children-cli"
+					label="Copy the command that lists this run's child runs"
+				/>
+			{/if}
 			<button
 				type="button"
 				data-testid="compare-run"
@@ -1330,7 +1384,9 @@
 		</div>
 		<div class="min-w-0 rounded-lg border border-border bg-surface p-4 shadow-xs">
 			<div class="flex items-center justify-between gap-3">
-				<h2 class="text-sm font-semibold text-fg">Run output</h2>
+				<h2 class="text-sm font-semibold text-fg" data-testid="run-output-kind">
+					{declaresOutputs ? 'Declared outputs' : 'Leaf task values'}
+				</h2>
 				{#if run.output}
 					<button type="button" data-testid="copy-run-output" onclick={() => copy(payloadJson(run.output), 'Run output copied')} class="text-xs font-medium text-brand-700 hover:underline">Copy JSON</button>
 				{/if}
@@ -1389,6 +1445,7 @@
 					{@const timing = taskTiming({ ...task, awaited: isAwait }, data.attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
 					{@const accent = pinAccent(task.pin)}
 					{@const fanOut = task.each !== undefined || taskDefs.get(task.id)?.each !== undefined}
+					{@const composed = task.child !== undefined || taskDefs.get(task.id)?.orkflow !== undefined}
 					<!--
 						A pinned task's card carries its pin's accent as a thicker
 						left edge and a faint fill, so the members of one pin read as
@@ -1546,7 +1603,7 @@
 							{#if task.orkerId}
 								<span data-testid="task-{task.id}-orker">Orker {task.orkerId}</span>
 							{/if}
-							{#if !isAwait && !fanOut}
+							{#if !isAwait && !fanOut && !composed}
 							<CliEquivalent
 								command={runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])])}
 								testid="run-task-{task.id}-logs-cli"
@@ -1608,6 +1665,19 @@
 								runTerminal={isTerminal(runStatus)}
 								now={currentTimestamp}
 								origin={page.url.origin}
+							/>
+						{:else if composed}
+							<!--
+								A composed task starts a child run: no log pane, no image.
+								The panel names the pinned child, links its run, and rolls
+								its tasks up live from the child run's own stream.
+							-->
+							<ChildRunPanel
+								runId={run.id}
+								namespace={data.namespace}
+								taskId={task.id}
+								child={task.child}
+								status={task.status}
 							/>
 						{:else if fanOut}
 							{@const selected = selectedItemByTask[task.id]}
@@ -1682,7 +1752,25 @@
 									container, and never travels to the engine or this page.
 									Only names are rendered, and nothing renders `source`.
 								-->
-								{#if !isAwait && (def || task.exitCode !== undefined || task.commit)}
+								{#if composed}
+									<dl
+										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs"
+										data-testid="task-{task.id}-detail"
+									>
+										<div>
+											<dt class="text-fg-muted uppercase">Child orkflow</dt>
+											<dd class="mt-0.5 font-mono break-all text-fg-secondary" data-testid="task-{task.id}-child-ref">
+												{childLabel(task.child)}
+											</dd>
+										</div>
+										<div>
+											<dt class="text-fg-muted uppercase">Definition digest</dt>
+											<dd class="mt-0.5 font-mono break-all text-fg-secondary" data-testid="task-{task.id}-child-digest">
+												{task.child?.orkflowDefinitionDigest || '—'}
+											</dd>
+										</div>
+									</dl>
+								{:else if !isAwait && (def || task.exitCode !== undefined || task.commit)}
 									<dl
 										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border-subtle pt-3 text-xs sm:grid-cols-2"
 										data-testid="task-{task.id}-detail"
