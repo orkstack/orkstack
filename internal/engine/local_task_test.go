@@ -218,10 +218,28 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	var h *harness
+	// Every task's values are stored where CountEachItems reads them, so a
+	// fan-out over an upstream output (examples/each-fan-out.ork.yaml) really
+	// expands and its items are compared too. The source task of that
+	// example writes four parts.
+	behavior := func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		result, err := parityResult(in)
+		if err != nil || in.GetEach() != nil {
+			return result, err
+		}
+		values := map[string]any{"task": in.GetTaskId()}
+		if in.GetTaskId() == "list" {
+			values["parts"] = []any{map[string]any{"name": "a"}, map[string]any{"name": "b"},
+				map[string]any{"name": "c"}, map[string]any{"name": "d"}}
+		}
+		result.ValuesJson = valuesJSON(values)
+		result.ValuesRef = h.values.put("mem://parity/"+in.GetTaskId(), result.ValuesJson)
+		return result, nil
+	}
 	if c.pinned {
-		h = newPinHarness(t, &suite, parityResult, nil)
+		h = newPinHarness(t, &suite, behavior, nil)
 	} else {
-		h = newHarness(t, &suite, parityResult)
+		h = newHarness(t, &suite, behavior)
 	}
 	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, c.wf, c.input, parityPlan(c.wf))
 	if !h.env.IsWorkflowCompleted() {
@@ -267,13 +285,29 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 					t.Errorf("%s/%s: the recorded input carries no image_policy, so clearing it proves nothing",
 						c.name, want.GetTaskId())
 				}
-				got, err := engine.LocalTaskInput(engine.LocalTask{
+				local := engine.LocalTask{
 					Orkflow:  c.wf,
 					TaskID:   want.GetTaskId(),
 					RunID:    runID,
 					Input:    c.input,
 					Upstream: upstream,
-				})
+				}
+				// An item of a fan-out: compose that item, with the run's
+				// count (orkctl task run --from-run … --item N).
+				if each := want.GetEach(); each != nil {
+					index, count := each.GetIndex(), taskRunOf(t, run, want.GetTaskId()).GetEach().GetCount()
+					local.Item, local.ItemCount = &index, &count
+				}
+				// A direct dependent of a fan-out is refused locally: its
+				// items are read from their commits (§9.9).
+				if dependsOnFanOut(c.wf, want.GetTaskId()) {
+					if _, err := engine.LocalTaskInput(local); err == nil ||
+						!strings.Contains(err.Error(), "a local run has no commit store") {
+						t.Errorf("%s/%s: a direct dependent of a fan-out = %v, want the refusal", c.name, want.GetTaskId(), err)
+					}
+					continue
+				}
+				got, err := engine.LocalTaskInput(local)
 				if err != nil {
 					t.Fatalf("%s/%s: LocalTaskInput: %v", c.name, want.GetTaskId(), err)
 				}
@@ -293,6 +327,22 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 			t.Logf("corpus %s: %d invocations compared", c.name, len(recorded))
 		})
 	}
+}
+
+func dependsOnFanOut(wf *orkstackv1.Orkflow, id string) bool {
+	for _, tk := range wf.GetTasks() {
+		if tk.GetId() != id {
+			continue
+		}
+		for _, need := range tk.GetNeeds() {
+			for _, other := range wf.GetTasks() {
+				if other.GetId() == need && other.GetEach() != nil {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func taskPin(wf *orkstackv1.Orkflow, id string) string {
@@ -514,5 +564,40 @@ func TestTaskClosure_MatchesTheInterpreterClosure(t *testing.T) {
 	}
 	if _, err := engine.TaskClosure(c.wf, "nope"); err == nil {
 		t.Error("TaskClosure of an unknown task succeeded")
+	}
+}
+
+func TestLocalTaskInput_FanOutItemRules(t *testing.T) {
+	wf := compileExample(t, "each-fan-out.ork.yaml")
+	count := int32(4)
+	if _, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "convert", RunID: "local-1", ItemCount: &count}); err == nil ||
+		!strings.Contains(err.Error(), "--item N") {
+		t.Fatalf("a fan-out without an item = %v", err)
+	}
+	two := int32(2)
+	if _, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "list", RunID: "local-1", Item: &two}); err == nil ||
+		!strings.Contains(err.Error(), "is not a fan-out") {
+		t.Fatalf("--item on a task that is not a fan-out = %v", err)
+	}
+	nine := int32(9)
+	if _, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "convert", RunID: "local-1", Item: &nine, ItemCount: &count}); err == nil ||
+		!strings.Contains(err.Error(), "has 4 items (0–3)") {
+		t.Fatalf("an item outside the count = %v", err)
+	}
+	if _, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "convert", RunID: "local-1", Item: &two}); err == nil ||
+		!strings.Contains(err.Error(), "--from-run") {
+		t.Fatalf("a task-sourced fan-out with no count = %v", err)
+	}
+	in, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "convert", RunID: "local-1", Item: &two, ItemCount: &count})
+	if err != nil {
+		t.Fatalf("convert --item 2: %v", err)
+	}
+	if in.GetEach().GetIndex() != 2 || in.GetEach().GetCount() != 4 || in.GetIdempotencyKey() != "default/local-1/convert/2" {
+		t.Fatalf("item input = %v", in)
+	}
+	_, err = engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "merge", RunID: "local-1",
+		Upstream: map[string]*orkstackv1.UpstreamRef{"convert": {TaskId: "convert", Each: &orkstackv1.EachUpstream{Count: 120}}}})
+	if err == nil || !strings.Contains(err.Error(), `task run cannot stage the 120 items of fan-out "convert"`) {
+		t.Fatalf("a direct dependent of a fan-out = %v", err)
 	}
 }

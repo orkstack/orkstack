@@ -330,7 +330,7 @@ func (h *StatsHandler) fingerprint(
 	var attempt *orkstackv1.TaskAttempt
 	if attemptRead {
 		if task := engine.PrimaryFailedTask(run); task != nil {
-			records, err := h.svc.attempts.ListAttempts(ctx, entry.RunID, task.GetTaskId(), artifacts.NoItem)
+			records, err := h.svc.attempts.ListAttempts(ctx, entry.RunID, task.GetTaskId(), artifacts.ItemOf(task.Item))
 			if err != nil {
 				return engine.FailureRecord{}, false, connect.NewError(connect.CodeUnavailable,
 					fmt.Errorf("read attempt records of task %q in failed run %q: %w",

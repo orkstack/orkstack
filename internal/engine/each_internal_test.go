@@ -2,8 +2,13 @@ package engine
 
 import (
 	"context"
+	"os"
+	"strconv"
 
 	historypb "go.temporal.io/api/history/v1"
+	"go.temporal.io/sdk/interceptor"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 	"strings"
 	"testing"
 
@@ -78,4 +83,83 @@ func TestTemporalRunReader_KeepsTheLastSnapshotAcrossEventsWithoutOne(t *testing
 	if item == nil || item.Item == nil || item.GetItem() != 0 {
 		t.Fatalf("the item event was not delivered with its item: %v", events)
 	}
+}
+
+// TestEachHistory_CatchesAReorderedDispatch is what makes the fan-out fixture
+// worth having on the day it is recorded: it replays it against the real
+// RunWorkflow with ONE thing changed — items dispatched in DESCENDING index
+// order — and that replay MUST be caught. The replayer matches an activity
+// command by type and id, never by input, so a reordered dispatch can pass
+// its command check; what catches it is the schedule the replay produces,
+// read through an interceptor, against the fixture's own.
+func TestEachHistory_CatchesAReorderedDispatch(t *testing.T) {
+	const path = "testdata/history/run-each-v1.json"
+	if _, err := os.Stat(path); err != nil {
+		if os.Getenv("ORK_REQUIRE_EACH_FIXTURE") != "" {
+			t.Fatalf("the fan-out replay fixture %s is missing: %v", path, err)
+		}
+		t.Skipf("%s is not recorded yet (%v)", path, err)
+	}
+	eachDispatchDescending = true
+	defer func() { eachDispatchDescending = false }()
+
+	recorder := &itemScheduleRecorder{}
+	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
+		Interceptors: []interceptor.WorkerInterceptor{recorder},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayer.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
+	replayErr := replayer.ReplayWorkflowHistoryFromJSONFile(nil, path)
+	if replayErr != nil {
+		message := replayErr.Error()
+		if !strings.Contains(message, "TMPRL1100") && !strings.Contains(strings.ToLower(message), "nondeterministic") {
+			t.Fatalf("replay failed, but not with a determinism violation: %v", replayErr)
+		}
+		t.Logf("reordered dispatch rejected by the replayer: %v", replayErr)
+		return
+	}
+	first := ""
+	for _, index := range recorder.items {
+		first = index
+		break
+	}
+	if first == "" || first == "0" {
+		t.Fatalf("replaying the fan-out fixture against a body that dispatches descending produced the "+
+			"recorded schedule %v: the fixture cannot see a reordered dispatch", recorder.items)
+	}
+	t.Logf("reordered dispatch seen: the replay dispatched item %s first, the recording item 0", first)
+}
+
+type itemScheduleRecorder struct {
+	interceptor.WorkerInterceptorBase
+	items []string
+}
+
+func (r *itemScheduleRecorder) InterceptWorkflow(_ workflow.Context, next interceptor.WorkflowInboundInterceptor) interceptor.WorkflowInboundInterceptor {
+	return &itemScheduleInbound{WorkflowInboundInterceptorBase: interceptor.WorkflowInboundInterceptorBase{Next: next}, root: r}
+}
+
+type itemScheduleInbound struct {
+	interceptor.WorkflowInboundInterceptorBase
+	root *itemScheduleRecorder
+}
+
+func (i *itemScheduleInbound) Init(outbound interceptor.WorkflowOutboundInterceptor) error {
+	return i.Next.Init(&itemScheduleOutbound{WorkflowOutboundInterceptorBase: interceptor.WorkflowOutboundInterceptorBase{Next: outbound}, root: i.root})
+}
+
+type itemScheduleOutbound struct {
+	interceptor.WorkflowOutboundInterceptorBase
+	root *itemScheduleRecorder
+}
+
+func (o *itemScheduleOutbound) ExecuteActivity(ctx workflow.Context, activityType string, args ...interface{}) workflow.Future {
+	if len(args) > 0 {
+		if in, ok := args[0].(*orkstackv1.ExecuteTaskInput); ok && in.GetEach() != nil {
+			o.root.items = append(o.root.items, strconv.Itoa(int(in.GetEach().GetIndex())))
+		}
+	}
+	return o.Next.ExecuteActivity(ctx, activityType, args...)
 }

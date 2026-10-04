@@ -98,11 +98,34 @@ func PrimaryFailedTask(run *orkstackv1.Run) *orkstackv1.TaskRun {
 		if task.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 			continue
 		}
-		if primary == nil || finishedBefore(task, primary) {
-			primary = task
+		// A FAILED fan-out is decided by the item that failed it: the
+		// earliest-finished FAILED item stands for it. Its task_id is the
+		// node's, so a fan-out's failures group under its task id, while its
+		// code, category, pool and orker are the item's (spec each-fan-out
+		// §14, failure-fingerprints).
+		candidate := task
+		if item := earliestFailedItem(task); item != nil {
+			candidate = item
+		}
+		if primary == nil || finishedBefore(candidate, primary) {
+			primary = candidate
 		}
 	}
 	return primary
+}
+
+// earliestFailedItem is a fan-out row's earliest-finished FAILED item, or nil.
+func earliestFailedItem(task *orkstackv1.TaskRun) *orkstackv1.TaskRun {
+	var found *orkstackv1.TaskRun
+	for _, item := range task.GetItems() {
+		if item.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+			continue
+		}
+		if found == nil || finishedBefore(item, found) {
+			found = item
+		}
+	}
+	return found
 }
 
 // finishedBefore reports whether a finished strictly before b. Equal times

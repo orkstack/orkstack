@@ -259,7 +259,7 @@ func RunWorkflow(
 			// fixed order, so which of several ready items is taken first is
 			// this code's property, and the selected key says it was an item.
 			if e := state.eaches[id]; e != nil {
-				for index := int32(0); index < e.next; index++ {
+				for index := int32(0); index < e.count; index++ {
 					future, ok := inFlight[itemFlightKey(id, index)]
 					if !ok {
 						continue
@@ -1635,7 +1635,7 @@ func (s *runState) cancelInFlight(ctx workflow.Context, inFlight map[string]work
 		// recorded and its item event emitted, but nothing is dispatched and
 		// the node is not decided here.
 		if e := s.eaches[id]; e != nil {
-			for index := int32(0); index < e.next; index++ {
+			for index := int32(0); index < e.count; index++ {
 				key := itemFlightKey(id, index)
 				future, ok := inFlight[key]
 				if !ok {

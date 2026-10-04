@@ -67,6 +67,12 @@ const (
 // deployment may lower and never raise.
 const DefaultEachMaxItems = dsl.MaxEachItems
 
+// eachDispatchDescending is a TEST-ONLY switch, the precedent of
+// awaitDeadlineAfterEmit: TestEachHistory_CatchesAReorderedDispatch flips it
+// to prove the fan-out fixture can see a reordered dispatch. Never set in
+// production code.
+var eachDispatchDescending = false
+
 // eachState is one fan-out's life in this run. Every field is a pure function
 // of the workflow input and recorded history, like pinState.
 type eachState struct {
@@ -475,6 +481,9 @@ func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlig
 			sent = 0
 		}
 		index := e.next
+		if eachDispatchDescending {
+			index = e.count - 1 - e.next
+		}
 		e.next++
 		future, err := s.scheduleItem(runCtx, id, index)
 		if err != nil {

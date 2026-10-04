@@ -470,13 +470,15 @@ func (m *UsageMeter) measureRun(ctx context.Context, entry artifacts.RunIndexEnt
 			return engine.UsageRun{}, false, fmt.Errorf("read attempt %d of task %q in run %q: %w",
 				ref.Attempt, ref.TaskID, entry.RunID, err)
 		}
-		byTask[ref.TaskID] = append(byTask[ref.TaskID], record)
+		key := usageRowKey(ref.TaskID, ref.Item)
+		byTask[key] = append(byTask[key], record)
 		read = append(read, ref)
 	}
 	trimmed := &orkstackv1.Run{Id: entry.RunID, OrkflowName: facts.orkflow}
 	tasks := make([]engine.UsageTask, 0, len(facts.tasks))
 	for _, task := range facts.tasks {
-		tasks = append(tasks, engine.UsageOfTask(engine.SampleTask(entry, trimmed, task, byTask[task.GetTaskId()])))
+		key := usageRowKey(task.GetTaskId(), artifacts.ItemOf(task.Item))
+		tasks = append(tasks, engine.UsageOfTask(engine.SampleTask(entry, trimmed, task, byTask[key])))
 	}
 	facts.keys, facts.usage, facts.hasUsage = digestRefs(read), tasks, true
 	m.memo.put(entry.RunID, facts)
@@ -489,14 +491,31 @@ func (m *UsageMeter) measureRun(ctx context.Context, entry artifacts.RunIndexEnt
 func bodyFacts(run *orkstackv1.Run) runUsageEntry {
 	facts := runUsageEntry{orkflow: run.GetOrkflowName()}
 	for _, task := range run.GetTaskRuns() {
-		if !engine.Dispatched(task) {
-			continue
+		// A fan-out's items are each one more sample of the node (spec
+		// each-fan-out §14, namespace-budgets): its own row is none.
+		rows := []*orkstackv1.TaskRun{task}
+		if task.GetEach() != nil {
+			rows = task.GetItems()
 		}
-		facts.tasks = append(facts.tasks, &orkstackv1.TaskRun{
-			TaskId: task.GetTaskId(), Pool: task.GetPool(), Attempt: task.GetAttempt(),
-		})
+		for _, row := range rows {
+			if !engine.Dispatched(row) {
+				continue
+			}
+			facts.tasks = append(facts.tasks, &orkstackv1.TaskRun{
+				TaskId: row.GetTaskId(), Pool: row.GetPool(), Attempt: row.GetAttempt(), Item: row.Item,
+			})
+		}
 	}
 	return facts
+}
+
+// usageRowKey groups attempt records by task and, for a fan-out, by item:
+// two items' first attempts are two samples, not one.
+func usageRowKey(taskID string, item artifacts.Item) string {
+	if !item.Set {
+		return taskID
+	}
+	return taskID + "#" + item.String()
 }
 
 // digestRefs is sha256 over the attempt keys in key order.
