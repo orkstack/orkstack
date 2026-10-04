@@ -100,7 +100,7 @@ func (s *memoryAttemptStore) PutAttempt(_ context.Context, attempt *orkstackv1.T
 	return nil
 }
 
-func (s *memoryAttemptStore) ListAttempts(_ context.Context, runID, taskID string) ([]*orkstackv1.TaskAttempt, error) {
+func (s *memoryAttemptStore) ListAttempts(_ context.Context, runID, taskID string, _ artifacts.Item) ([]*orkstackv1.TaskAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lists[runID+"/"+taskID]++

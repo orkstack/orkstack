@@ -102,9 +102,9 @@ func (s *LocalAttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1.
 
 // ListAttempts returns one task's records, ascending by attempt.
 func (s *LocalAttemptStore) ListAttempts(
-	ctx context.Context, runID, taskID string,
+	ctx context.Context, runID, taskID string, item Item,
 ) ([]*orkstackv1.TaskAttempt, error) {
-	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID)
+	documents, err := s.ReadAttemptDocuments(ctx, runID, taskID, item)
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +114,9 @@ func (s *LocalAttemptStore) ListAttempts(
 // ReadAttemptDocuments returns one task's stored records with their bytes,
 // ascending by attempt.
 func (s *LocalAttemptStore) ReadAttemptDocuments(
-	ctx context.Context, runID, taskID string,
+	ctx context.Context, runID, taskID string, item Item,
 ) ([]AttemptDocument, error) {
-	prefix, err := AttemptTaskPrefix(runID, taskID)
+	prefix, err := AttemptScopePrefix(runID, taskID, item)
 	if err != nil {
 		return nil, err
 	}
@@ -137,11 +137,13 @@ func (s *LocalAttemptStore) ReadAttemptDocuments(
 	found := make([]AttemptDocument, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
+			// An item directory below a task's own scope: NoItem never reads
+			// a fan-out's items.
 			continue
 		}
 		key := dir + "/" + entry.Name()
 		ref, ok := ParseAttemptKey(key)
-		if !ok || ref.RunID != runID || ref.TaskID != taskID {
+		if !ok || ref.RunID != runID || ref.TaskID != taskID || ref.Item != item {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -201,6 +203,24 @@ func (s *LocalAttemptStore) ListRunAttemptRefs(ctx context.Context, runID string
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				keys = append(keys, taskDir+"/"+entry.Name())
+				continue
+			}
+			// A fan-out item's records, one segment below the task's.
+			if _, ok := parseItemSegment(entry.Name()); !ok {
+				continue
+			}
+			itemDir := taskDir + "/" + entry.Name()
+			itemEntries, err := fs.ReadDir(s.root.FS(), itemDir)
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					continue
+				}
+				return nil, fmt.Errorf("artifacts: local item attempts %q: %w", itemDir, err)
+			}
+			for _, itemEntry := range itemEntries {
+				if !itemEntry.IsDir() {
+					keys = append(keys, itemDir+"/"+itemEntry.Name())
+				}
 			}
 		}
 	}

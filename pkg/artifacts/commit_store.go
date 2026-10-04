@@ -163,6 +163,27 @@ func CommitKey(namespace, runID, taskID string) (string, error) {
 	return path.Join(CommitPrefix, namespace, run, taskID, CommitObjectName), nil
 }
 
+// ItemCommitKey renders the object key holding ONE ITEM's commit record:
+// metadata/commits/{namespace}/{encoded-run-id}/{task-id}/{item:05}/commit.json.
+//
+// It is validated exactly as CommitKey validates, and it keeps CommitKey's
+// properties: deterministic and attempt-independent, because an index is a
+// position in an array the engine counted once and recorded, and it does not
+// move across retries. It is the single shared renderer of an item's commit
+// key: the engine dispatches an item at commit_root + "/" + this, and an Orker
+// staging a fan-out's items for a dependent composes the same string.
+func ItemCommitKey(namespace, runID, taskID string, index int32) (string, error) {
+	seg, err := ItemSegment(index)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: commit key: item: %w", errors.Join(ErrInvalidCommitKey, err))
+	}
+	key, err := CommitKey(namespace, runID, taskID)
+	if err != nil {
+		return "", err
+	}
+	return path.Join(path.Dir(key), seg, CommitObjectName), nil
+}
+
 // validCommitTaskID holds a task id to the DSL's slug rule. A task id reaches
 // this package already validated by internal/dsl, so this is a second gate
 // rather than the first — but a key builder that trusted its caller would be

@@ -58,8 +58,12 @@ var ErrInvalidLogKey = errors.New("invalid task log key")
 // stream is ordered over. A retry writes a fresh attempt rather than appending
 // to the last, so a resumed reader never sees two tries interleaved.
 type LogRef struct {
-	RunID   string
-	TaskID  string
+	RunID  string
+	TaskID string
+	// Item names one item of a fan-out task; NoItem for a task's own log.
+	// An item's chunks live one segment below its task's:
+	// metadata/logs/{run}/{task}/{item:05}/{attempt}/{seq}.
+	Item    Item
 	Attempt int32
 }
 
@@ -110,9 +114,29 @@ type LogStore interface {
 	ReadLogChunks(
 		ctx context.Context, ref LogRef, afterSeq int64, limit int, maxBytes int64,
 	) ([]LogChunk, error)
-	// LatestLogAttempt returns the highest attempt of a task that wrote any
-	// chunk. A task with no logs at all returns an error matching ErrNotFound.
-	LatestLogAttempt(ctx context.Context, runID, taskID string) (int32, error)
+	// LatestLogAttempt returns the highest attempt of a task — or, with item
+	// set, of one item of a fan-out task — that wrote any chunk. NoItem never
+	// counts an item's chunks. A scope with no logs at all returns an error
+	// matching ErrNotFound.
+	LatestLogAttempt(ctx context.Context, runID, taskID string, item Item) (int32, error)
+}
+
+// LogScopePrefix renders the prefix holding every attempt of one scope: the
+// task prefix for NoItem, and metadata/logs/{run-id}/{task-id}/{item:05}/ for
+// an item.
+func LogScopePrefix(runID, taskID string, item Item) (string, error) {
+	prefix, err := LogTaskPrefix(runID, taskID)
+	if err != nil {
+		return "", err
+	}
+	if !item.Set {
+		return prefix, nil
+	}
+	seg, err := ItemSegment(item.Index)
+	if err != nil {
+		return "", fmt.Errorf("artifacts: task log key: item: %w", errors.Join(ErrInvalidLogKey, err))
+	}
+	return prefix + seg + "/", nil
 }
 
 // LogTaskPrefix renders the prefix holding every attempt of one task:
@@ -130,9 +154,10 @@ func LogTaskPrefix(runID, taskID string) (string, error) {
 }
 
 // LogAttemptPrefix renders the prefix holding one attempt's chunks:
-// metadata/logs/{run-id}/{task-id}/{attempt}/.
+// metadata/logs/{run-id}/{task-id}/{attempt}/, or
+// metadata/logs/{run-id}/{task-id}/{item:05}/{attempt}/ for an item.
 func LogAttemptPrefix(ref LogRef) (string, error) {
-	taskPrefix, err := LogTaskPrefix(ref.RunID, ref.TaskID)
+	taskPrefix, err := LogScopePrefix(ref.RunID, ref.TaskID, ref.Item)
 	if err != nil {
 		return "", err
 	}
@@ -180,7 +205,17 @@ func ParseLogChunkKey(key string) (ref LogRef, seq int64, truncated bool, ok boo
 		return LogRef{}, 0, false, false
 	}
 	parts := strings.Split(rest, "/")
-	if len(parts) != 4 {
+	var item Item
+	switch len(parts) {
+	case 4:
+	case 5:
+		index, isItem := parseItemSegment(parts[2])
+		if !isItem {
+			return LogRef{}, 0, false, false
+		}
+		item = ItemAt(index)
+		parts = []string{parts[0], parts[1], parts[3], parts[4]}
+	default:
 		return LogRef{}, 0, false, false
 	}
 	runID, ok := decodeArchiveSegment(parts[0])
@@ -203,7 +238,7 @@ func ParseLogChunkKey(key string) (ref LogRef, seq int64, truncated bool, ok boo
 	if !ok || seq < 1 {
 		return LogRef{}, 0, false, false
 	}
-	return LogRef{RunID: runID, TaskID: taskID, Attempt: int32(attempt)}, seq, truncated, true
+	return LogRef{RunID: runID, TaskID: taskID, Item: item, Attempt: int32(attempt)}, seq, truncated, true
 }
 
 // parseFixedWidth decodes one zero-padded counter segment. The width is

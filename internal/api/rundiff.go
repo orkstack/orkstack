@@ -451,7 +451,7 @@ func (s *Service) outcomeAttempt(ctx context.Context, side *diffSide, task *orks
 	records, read := side.records[task.GetTaskId()]
 	if !read {
 		var err error
-		records, err = s.attempts.ListAttempts(ctx, side.run.GetId(), task.GetTaskId())
+		records, err = s.attempts.ListAttempts(ctx, side.run.GetId(), task.GetTaskId(), artifacts.NoItem)
 		if err != nil {
 			return nil, "", connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("read attempt records of task %q in run %q: %w", task.GetTaskId(), side.run.GetId(), err))

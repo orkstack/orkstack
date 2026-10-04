@@ -173,7 +173,7 @@ func outcomeRecords(t *testing.T, s *timingStack, runID, taskID string) []*orkst
 	if err != nil {
 		t.Fatalf("open attempt store: %v", err)
 	}
-	records, err := store.ListAttempts(s.ctx, runID, taskID)
+	records, err := store.ListAttempts(s.ctx, runID, taskID, artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("ListAttempts(%s, %s): %v", runID, taskID, err)
 	}

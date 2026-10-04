@@ -286,7 +286,7 @@ func TestLocalLogStore_LatestAttemptIsTheHighestThatWroteAnything(t *testing.T) 
 	store := newLocalLogStore(t)
 	ctx := context.Background()
 
-	if _, err := store.LatestLogAttempt(ctx, "ork-1-1", "flaky"); !errors.Is(err, artifacts.ErrNotFound) {
+	if _, err := store.LatestLogAttempt(ctx, "ork-1-1", "flaky", artifacts.NoItem); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("LatestLogAttempt on a task with no logs = %v, want ErrNotFound", err)
 	}
 
@@ -298,7 +298,7 @@ func TestLocalLogStore_LatestAttemptIsTheHighestThatWroteAnything(t *testing.T) 
 			t.Fatalf("PutLogChunk(attempt %d): %v", attempt, err)
 		}
 	}
-	latest, err := store.LatestLogAttempt(ctx, "ork-1-1", "flaky")
+	latest, err := store.LatestLogAttempt(ctx, "ork-1-1", "flaky", artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("LatestLogAttempt: %v", err)
 	}

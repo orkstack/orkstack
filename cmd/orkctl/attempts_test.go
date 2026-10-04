@@ -13,6 +13,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // cliAttemptStore is the shared bucket of attempt records as the CLI's engine
@@ -38,7 +39,7 @@ func (s *cliAttemptStore) PutAttempt(_ context.Context, attempt *orkstackv1.Task
 // promises. The fixture writes them in order, so the order is preserved rather
 // than re-derived.
 func (s *cliAttemptStore) ListAttempts(
-	_ context.Context, runID, taskID string,
+	_ context.Context, runID, taskID string, _ artifacts.Item,
 ) ([]*orkstackv1.TaskAttempt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

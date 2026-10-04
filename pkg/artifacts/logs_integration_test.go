@@ -124,7 +124,7 @@ func TestIntegration_S3LogStore_LatestAttemptScansKeysOnly(t *testing.T) {
 	ctx := context.Background()
 	runID := fmt.Sprintf("ork-attempts-%s", uniqueToken(t))
 
-	if _, err := store.LatestLogAttempt(ctx, runID, "never-ran"); !errors.Is(err, artifacts.ErrNotFound) {
+	if _, err := store.LatestLogAttempt(ctx, runID, "never-ran", artifacts.NoItem); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("LatestLogAttempt with no logs = %v, want ErrNotFound", err)
 	}
 	for _, attempt := range []int32{1, 2, 11} {
@@ -136,7 +136,7 @@ func TestIntegration_S3LogStore_LatestAttemptScansKeysOnly(t *testing.T) {
 			t.Fatalf("PutLogChunk(attempt %d): %v", attempt, err)
 		}
 	}
-	latest, err := store.LatestLogAttempt(ctx, runID, "flaky")
+	latest, err := store.LatestLogAttempt(ctx, runID, "flaky", artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("LatestLogAttempt: %v", err)
 	}

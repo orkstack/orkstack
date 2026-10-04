@@ -39,7 +39,7 @@ func TestIntegration_S3AttemptStore_OrdersARealListingByAttempt(t *testing.T) {
 
 	// A task with no records reads EMPTY, never an error — the ordinary state
 	// of every run that finished before this key family existed.
-	before, err := store.ListAttempts(ctx, runID, "flaky")
+	before, err := store.ListAttempts(ctx, runID, "flaky", artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("ListAttempts on an unknown task: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestIntegration_S3AttemptStore_OrdersARealListingByAttempt(t *testing.T) {
 		}
 	}
 
-	got, err := store.ListAttempts(ctx, runID, "flaky")
+	got, err := store.ListAttempts(ctx, runID, "flaky", artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("ListAttempts: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestIntegration_S3AttemptStore_OrdersARealListingByAttempt(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutAttempt for a sibling task: %v", err)
 	}
-	after, err := store.ListAttempts(ctx, runID, "flaky")
+	after, err := store.ListAttempts(ctx, runID, "flaky", artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("ListAttempts after the sibling write: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestIntegration_S3AttemptStore_TruncatesAnOversizedErrorAndStillStoresIt(t 
 		t.Fatalf("PutAttempt with an oversized error: %v", err)
 	}
 
-	got, err := store.ListAttempts(ctx, runID, "loud")
+	got, err := store.ListAttempts(ctx, runID, "loud", artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("ListAttempts: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestIntegration_S3AttemptStore_PhasesRoundTrip(t *testing.T) {
 	if err := store.PutAttempt(ctx, record); err != nil {
 		t.Fatalf("PutAttempt: %v", err)
 	}
-	got, err := store.ListAttempts(ctx, runID, "spans")
+	got, err := store.ListAttempts(ctx, runID, "spans", artifacts.NoItem)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("ListAttempts = %d records, %v", len(got), err)
 	}
@@ -286,7 +286,7 @@ func TestS3AttemptStore_RunAttemptReaderAgreesWithListAttempts(t *testing.T) {
 	}
 	var want []artifacts.AttemptRef
 	for _, task := range []string{"alpha", "beta", "gamma"} {
-		records, err := store.ListAttempts(ctx, runID, task)
+		records, err := store.ListAttempts(ctx, runID, task, artifacts.NoItem)
 		if err != nil {
 			t.Fatalf("ListAttempts(%s): %v", task, err)
 		}

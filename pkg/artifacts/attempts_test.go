@@ -208,7 +208,7 @@ func TestAttemptStores_AnswerIdentically(t *testing.T) {
 			// A task with no records reads EMPTY, never an error: that is the
 			// ordinary state of a task that has not run, and of every run that
 			// finished before this key family existed.
-			empty, err := store.ListAttempts(ctx, "ork-1", "flaky")
+			empty, err := store.ListAttempts(ctx, "ork-1", "flaky", NoItem)
 			if err != nil {
 				t.Fatalf("ListAttempts on an empty task: %v", err)
 			}
@@ -235,7 +235,7 @@ func TestAttemptStores_AnswerIdentically(t *testing.T) {
 				t.Fatalf("PutAttempt for a sibling task: %v", err)
 			}
 
-			got, err := store.ListAttempts(ctx, "ork-1", "flaky")
+			got, err := store.ListAttempts(ctx, "ork-1", "flaky", NoItem)
 			if err != nil {
 				t.Fatalf("ListAttempts: %v", err)
 			}
@@ -265,7 +265,7 @@ func TestAttemptStores_AnswerIdentically(t *testing.T) {
 			if err := store.PutAttempt(ctx, again); err != nil {
 				t.Fatalf("PutAttempt (repeat): %v", err)
 			}
-			after, err := store.ListAttempts(ctx, "ork-1", "flaky")
+			after, err := store.ListAttempts(ctx, "ork-1", "flaky", NoItem)
 			if err != nil {
 				t.Fatalf("ListAttempts after repeat: %v", err)
 			}
@@ -336,7 +336,7 @@ func TestAttemptRecord_PhasesRoundTripThroughLocalAndS3Stores(t *testing.T) {
 			if err := store.PutAttempt(context.Background(), record); err != nil {
 				t.Fatalf("PutAttempt: %v", err)
 			}
-			got, err := store.ListAttempts(context.Background(), "ork-spans", "flaky")
+			got, err := store.ListAttempts(context.Background(), "ork-spans", "flaky", NoItem)
 			if err != nil || len(got) != 1 {
 				t.Fatalf("ListAttempts = %d records, %v", len(got), err)
 			}
@@ -440,7 +440,7 @@ func TestRunAttemptReader_ListsEveryTaskOfOneRunInKeyOrder(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ListRunAttemptRefs: %v", err)
 			}
-			want := []AttemptRef{{run, "a", 1}, {run, "b", 1}, {run, "b", 2}}
+			want := []AttemptRef{{RunID: run, TaskID: "a", Attempt: 1}, {RunID: run, TaskID: "b", Attempt: 1}, {RunID: run, TaskID: "b", Attempt: 2}}
 			if len(refs) != len(want) {
 				t.Fatalf("ListRunAttemptRefs = %v, want %v", refs, want)
 			}

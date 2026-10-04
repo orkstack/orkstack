@@ -296,7 +296,7 @@ func (h *StatsHandler) sampleRun(
 		if !engine.Dispatched(task) {
 			continue
 		}
-		records, err := h.svc.attempts.ListAttempts(ctx, entry.RunID, task.GetTaskId())
+		records, err := h.svc.attempts.ListAttempts(ctx, entry.RunID, task.GetTaskId(), artifacts.NoItem)
 		if err != nil {
 			return nil, false, connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("read attempt records of task %q in run %q: %w", task.GetTaskId(), entry.RunID, err))

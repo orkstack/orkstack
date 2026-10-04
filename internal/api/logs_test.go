@@ -97,7 +97,7 @@ func (s *memoryLogStore) widest() int64 {
 	return s.widestPage
 }
 
-func (s *memoryLogStore) LatestLogAttempt(_ context.Context, runID, taskID string) (int32, error) {
+func (s *memoryLogStore) LatestLogAttempt(_ context.Context, runID, taskID string, _ artifacts.Item) (int32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	latest := int32(0)

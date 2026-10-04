@@ -274,7 +274,7 @@ func (e *evidenceExport) task(
 		}
 	}
 	// attempts, each record before its logs
-	docs, err := documents.ReadAttemptDocuments(ctx, archived.GetId(), id)
+	docs, err := documents.ReadAttemptDocuments(ctx, archived.GetId(), id, artifacts.NoItem)
 	if err != nil {
 		return connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("read attempt records of task %q in run %q: %w", id, archived.GetId(), err))

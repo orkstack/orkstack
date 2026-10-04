@@ -52,7 +52,7 @@ func (s *Service) ListTaskAttempts(
 		if taskID != "" && task.GetTaskId() != taskID {
 			continue
 		}
-		records, err := s.attempts.ListAttempts(ctx, run.GetId(), task.GetTaskId())
+		records, err := s.attempts.ListAttempts(ctx, run.GetId(), task.GetTaskId(), artifacts.NoItem)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("read attempt records of task %q in run %q: %w",
@@ -138,7 +138,7 @@ func (s *Service) latestLoggedAttempt(ctx context.Context, runID, taskID string)
 	if s.logs == nil {
 		return 0
 	}
-	attempt, err := s.logs.LatestLogAttempt(ctx, runID, taskID)
+	attempt, err := s.logs.LatestLogAttempt(ctx, runID, taskID, artifacts.NoItem)
 	switch {
 	case err == nil:
 		return attempt

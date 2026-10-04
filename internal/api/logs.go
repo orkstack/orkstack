@@ -366,7 +366,7 @@ func (s *Service) resolveLogAttempt(ctx context.Context, q TaskLogQuery) (int32,
 		return 0, connect.NewError(connect.CodeInvalidArgument,
 			fmt.Errorf("attempt %d is negative; 0 means the latest attempt", q.Attempt))
 	}
-	switch attempt, err := s.logs.LatestLogAttempt(ctx, q.RunID, q.TaskID); {
+	switch attempt, err := s.logs.LatestLogAttempt(ctx, q.RunID, q.TaskID, artifacts.NoItem); {
 	case err == nil:
 		return attempt, nil
 	case errors.Is(err, artifacts.ErrNotFound):

@@ -558,7 +558,7 @@ func TestUsageMeter_NoArchiveOrNoRunWideReaderIsUnmeasurable(t *testing.T) {
 type plainAttemptStore struct{}
 
 func (plainAttemptStore) PutAttempt(context.Context, *orkstackv1.TaskAttempt) error { return nil }
-func (plainAttemptStore) ListAttempts(context.Context, string, string) ([]*orkstackv1.TaskAttempt, error) {
+func (plainAttemptStore) ListAttempts(context.Context, string, string, artifacts.Item) ([]*orkstackv1.TaskAttempt, error) {
 	return nil, nil
 }
 

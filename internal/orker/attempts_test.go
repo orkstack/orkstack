@@ -162,7 +162,7 @@ func TestAttemptRecords_OneRecordPerAttemptOfARetriedTask(t *testing.T) {
 		t.Fatalf("the runtime ran %d containers, want 2 (fail once, then succeed)", runtime.runs)
 	}
 
-	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId())
+	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("ListAttempts: %v", err)
 	}
@@ -262,7 +262,7 @@ func (s *failingAttemptStore) PutAttempt(context.Context, *orkstackv1.TaskAttemp
 }
 
 func (s *failingAttemptStore) ListAttempts(
-	context.Context, string, string,
+	context.Context, string, string, artifacts.Item,
 ) ([]*orkstackv1.TaskAttempt, error) {
 	return nil, errors.New("the object store is down")
 }
@@ -314,7 +314,7 @@ func TestAttemptRecords_CancellationIsStillRecorded(t *testing.T) {
 		t.Fatal("Execute on a cancelled context returned no error")
 	}
 
-	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId())
+	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
 	if err != nil {
 		t.Fatalf("ListAttempts: %v", err)
 	}

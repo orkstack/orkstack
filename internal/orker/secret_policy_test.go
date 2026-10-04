@@ -146,7 +146,7 @@ func TestDispatcher_RefusesASourceOutsideTheFloorBeforeAnythingRuns(t *testing.T
 			t.Fatalf("a workspace directory %q exists after a refusal", e.Name())
 		}
 	}
-	records, lerr := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId())
+	records, lerr := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
 	if lerr != nil {
 		t.Fatalf("ListAttempts: %v", lerr)
 	}
