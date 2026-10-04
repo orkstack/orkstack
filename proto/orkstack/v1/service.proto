@@ -339,6 +339,10 @@ message PlanTask {
   // the source is an input, or a task whose values assumed_outputs stubs;
   // unset when the count is a run-time fact.
   optional int32 each_count = 12;
+  // orkflow is the task's Task.orkflow, set for a composed task whatever its
+  // outcome. A plan never recurses into the child: its input is rendered at
+  // run time and its own plan is one more PlanRun call.
+  OrkflowRef orkflow = 13;
 }
 
 // PlanWave lists the RUNS tasks of one wave, in declaration order. There is

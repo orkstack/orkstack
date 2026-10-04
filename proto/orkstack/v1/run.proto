@@ -23,6 +23,22 @@ message TaskEach {
   int32 count = 2;
 }
 
+// TaskChild is a composed task's own state on the run snapshot. It is SET for
+// every task whose definition declares `uses: orkflow:` — from the run's first
+// snapshot, while the task is still PENDING — and UNSET for every other task,
+// so a snapshot of a run with no composed task is byte-identical to what it
+// was before this message existed.
+message TaskChild {
+  // The child Orkflow as the parent pinned it (Task.orkflow).
+  string orkflow_name = 1;
+  string orkflow_version = 2;
+  string orkflow_definition_digest = 3;
+  // run_id is the child run, set once its start is CONFIRMED and never before:
+  // an id whose start was refused names no run. The child run's own
+  // Run.origin is {PARENT_RUN, <this run's id>}.
+  string run_id = 4;
+}
+
 // TaskRun is the execution record of a single Task within a Run.
 message TaskRun {
   string task_id = 1;
@@ -163,6 +179,12 @@ message TaskRun {
   // item is set on an element of `items`: its 0-based index. Unset on every
   // row of Run.task_runs.
   optional int32 item = 22;
+
+  // child is set for a composed task (TaskChild). Such a task reaches no
+  // Orker: pool, pin, orker_id, attempt, exit_code, commit, artifacts and
+  // system_artifacts stay unset, and values_ref addresses the child's
+  // declared outputs as stored for THIS run.
+  TaskChild child = 23;
 }
 
 // AwaitResolvedVia names the door an await's resolution came through.
@@ -369,7 +391,10 @@ message Run {
   string orkflow_version = 3;
   Status status = 4;
   Payload input = 5;
-  Payload output = 6;                    // aggregated terminal outputs
+  // output is the Orkflow's declared outputs, rendered at success, when it
+  // declares `outputs:`; otherwise every leaf task's inline values, keyed by
+  // task id.
+  Payload output = 6;
   Error error = 7;
   repeated TaskRun task_runs = 8;
   google.protobuf.Timestamp created_at = 9;
