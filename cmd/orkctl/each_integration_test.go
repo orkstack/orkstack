@@ -20,27 +20,33 @@ import (
 // for C2), a real Orker and real Temporal and MinIO; the BUILT orkctl reads
 // every item through the §9 commands.
 
-// eachCLIDoc is examples/each-fan-out.ork.yaml stamped with its own name.
+// eachCLIDoc is examples/each-fan-out.ork.yaml's list → convert → merge
+// shape, stamped with its own name, on the local first-party images only.
+// The parts come from the run's input rather than from list's values:
+// activity-shell writes values.json itself on every op, so no task of it can
+// hand an array to a fan-out, and the example's plain base image would make
+// this suite resolve a Docker Hub tag at apply. The upstream-sourced
+// expansion is the engine suite's (I1–I5, real Orker and containers).
 // `convert` prints its task.json and config.json between markers, so C3 can
 // compare a local item run with the Orker's own, and item 2 exits 1 on its
 // first attempt so one item retries.
 func eachCLIDoc(name string) string {
 	return fmt.Sprintf(`name: %s
 version: "0.1.0"
+inputs:
+  parts:
+    type: array
 tasks:
   - id: list
     uses: shell
-    command:
-      - sh
-      - -c
-      - >-
-        printf '{"parts":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}]}'
-        > /orkstack/output/values.json
+    with:
+      op: exec
+      command: [sh, -c, "echo listing parts"]
   - id: convert
     uses: shell
     needs: [list]
     each:
-      over: '{{ .tasks.list.output.parts }}'
+      over: '{{ .inputs.parts }}'
       as: part
       max_items: 50
       max_parallel: 2
@@ -70,11 +76,14 @@ tasks:
 `, name)
 }
 
+// eachCLIParts is the array convert fans out over, one item per part.
+const eachCLIParts = `{"parts":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}]}`
+
 func eachRun(ctx context.Context, t *testing.T, s *timingStack) *orkstackv1.Run {
 	t.Helper()
 	name := fmt.Sprintf("each-cli-%d-%d", os.Getpid(), time.Now().UnixNano())
 	s.apply(eachCLIDoc(name))
-	runID := s.submit(name)
+	runID := s.submit(name, "--input-json", eachCLIParts)
 	run := awaitTerminalOnB(ctx, t, s.replicas[0], runID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run %s finished %s: %v", runID, run.GetStatus(), run.GetError())
@@ -159,7 +168,10 @@ func TestIntegration_TaskRunOneItemLocally(t *testing.T) {
 	stack := newTaskRunStack(ctx, t)
 	run := eachRun(ctx, t, stack.timingStack)
 	stdout, stderr, code := stack.taskRun("--from-run", run.GetId(), "--task", "convert", "--item", "2", "--keep")
-	if code != exitOK {
+	// A local run is one attempt, attempt 1, and item 2 exits 1 on its first
+	// attempt by design, so task run reports that failure (exitRunFailed).
+	// What C3 compares is the rendering the container saw, not its outcome.
+	if code != exitRunFailed || !strings.Contains(stdout, "CONTAINER_EXIT_NONZERO") {
 		t.Fatalf("task run --item 2 exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	session := keptSession(t, stdout)
