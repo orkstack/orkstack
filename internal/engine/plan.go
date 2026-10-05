@@ -122,6 +122,31 @@ type RunPlan struct {
 	// with none encodes exactly as it did before the field existed and the
 	// golden history fixture keeps matching.
 	Children map[string]*ChildRunPlan `json:"children,omitempty"`
+
+	// Cache is this run's caching plan, or nil when its definition declares
+	// no cached task. Decided at SUBMIT for the reason Limits is: the cap is
+	// process configuration workflow code may not read (AGENTS.md §2.1), and
+	// no_cache is a request field. omitempty, so a plan with none encodes
+	// exactly as before and the golden history fixture keeps matching.
+	Cache *CachePlan `json:"cache,omitempty"`
+}
+
+// CachePlan is the plan-side caching decision (docs/DSL.md "Caching"). Plain
+// Go, like RunPlan.
+type CachePlan struct {
+	// MaxTTLSeconds is ORK_CACHE_MAX_TTL at submit, in whole seconds, >= 1.
+	MaxTTLSeconds int64 `json:"max_ttl_seconds"`
+	// Refresh is SubmitRunRequest.no_cache.
+	Refresh bool `json:"refresh,omitempty"`
+}
+
+// EffectiveCacheTTL is the TTL a cached task's lookup honours: the cap when
+// the task set none (0), else the smaller of the two. Pure.
+func EffectiveCacheTTL(ttlSeconds int32, capSeconds int64) int64 {
+	if ttlSeconds <= 0 || int64(ttlSeconds) > capSeconds {
+		return capSeconds
+	}
+	return int64(ttlSeconds)
 }
 
 // AwaitCredential is one callback await's verification material, the shape

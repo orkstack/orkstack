@@ -150,3 +150,41 @@ ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
 The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
 re-recorded only when the composition path's command stream or payloads
 genuinely change, with a commit that says so.
+
+## The cached fixture
+
+`run-cached-v1.json` holds the caching path still (`docs/DSL.md` "Caching"):
+the first `ExecuteTaskInput.cache` (`CacheContext`) `RunWorkflow` ever sent,
+the first `ExecuteTaskResult.cache` it recorded, and the first
+`task succeeded (cached from run …)` event. It is a real history of the
+**second** run of `examples/cached-pipeline.ork.yaml` — `featurize` a hit on
+the first run's memo, `stamp` uncached, `train` a miss — recorded once by a
+**versioned** worker against a real cluster. Three tests hold the tree to it
+on every `make test`:
+
+- `TestRunWorkflow_ReplaysCommittedCachedHistory` — the command half.
+- `TestCachedHistory_ActivityPayloadsMatchWhatCurrentCodeSends` — the payload
+  half: the fixture re-executed from its own input, with its recorded
+  ExecuteTask results fed back, and every activity input (`cache` included),
+  every event and the finished run compared with the recorded ones.
+- `TestCachedHistory_PayloadCheckCatchesADroppedCacheContext` — the same
+  comparison against a body whose `cacheContextFor` returns nil, which must
+  find the difference.
+
+Until the file is committed those tests skip and name the command that
+records it (set `ORK_REQUIRE_CACHED_FIXTURE=1` to make its absence a
+failure). Nothing writes it except `TestIntegration_RecordCachedRunHistory`
+(`internal/engine/cache_integration_test.go`, I15), and only when asked:
+
+```bash
+ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
+  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
+  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
+  -run TestIntegration_RecordCachedRunHistory
+```
+
+The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
+re-recorded only when the caching path's command stream or payloads genuinely
+change, with a commit that says so. `run-succeeded-v1.json` itself has no
+cached task and keeps matching unchanged: a run with no cached task sends no
+`CacheContext`.

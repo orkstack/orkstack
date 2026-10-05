@@ -79,7 +79,7 @@ func (r *LocalTaskRefusal) Unwrap() error { return r.Err }
 
 // LocalTaskInput returns the ExecuteTaskInput RunWorkflow's schedule composes
 // for t.TaskID, with these deliberate differences and nothing else:
-// commit_uri, pin, telemetry and image_policy are UNSET.
+// commit_uri, pin, telemetry, image_policy and cache are UNSET.
 //
 //   - commit_uri: a local run has no durable result, and an empty URI is the
 //     dispatcher's own "no commit to check or write".
@@ -89,6 +89,8 @@ func (r *LocalTaskRefusal) Unwrap() error { return r.Err }
 //     deployment's Orkers execute; a --file definition already met it at
 //     ValidateOrkflow, and a run's own definition met it at submit. With no
 //     selection on the input, the dispatcher never enters its policy step.
+//   - cache: a local run neither reads nor writes a memo (the CLI's
+//     dispatcher has no memo store), so a cached task runs its container.
 //
 // It applies the same wire bound schedule applies (task.CheckInputSize with
 // Limits.values_max_bytes); a refusal is a *LocalTaskRefusal carrying

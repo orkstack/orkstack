@@ -2,6 +2,7 @@ package engine
 
 import (
 	"sort"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -19,6 +20,11 @@ const DefaultEachMaxItems = dsl.MaxEachItems
 // ceiling on how many levels of child runs one run may start, which a
 // deployment may lower and never raise (spec composed-orkflows §8).
 const DefaultComposeMaxDepth int32 = MaxComposeDepth
+
+// DefaultCacheMaxTTL is ORK_CACHE_MAX_TTL's default: the oldest memoized
+// result a cached task may reuse, measured from when it was committed
+// (docs/DSL.md "Caching").
+const DefaultCacheMaxTTL = 168 * time.Hour
 
 // ApplyInputDefaults clones input and fills omitted fields from the orkflow's
 // declared input defaults. Caller fields always win, including explicit null;

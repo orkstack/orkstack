@@ -1521,7 +1521,54 @@ func (s *runState) executeTaskInput(
 		// omits an unset message field — which is what lets the golden
 		// history fixture keep matching without being re-recorded (§10.2).
 		Pin: pinContext,
+
+		// Set ONLY for a cached task of a run whose plan carries a cache plan
+		// — every item of a cached fan-out included — so every other task's
+		// payload is byte-identical to what it was before this field existed.
+		Cache: s.cacheContextFor(t),
 	}
+}
+
+// cacheContextFor is t's CacheContext, or nil — for a task with no cache,
+// for a pinned task (docs/DSL.md rule 36; hand-built only), and for a plan
+// with no Cache (a harness plan, or one a pre-caching engine built): caching
+// needs the submit-time cap, and a run without one caches nothing. Pure.
+func (s *runState) cacheContextFor(t *orkstackv1.Task) *orkstackv1.CacheContext {
+	spec := t.GetCache()
+	if spec == nil || t.GetPin() != "" || s.plan.Cache == nil || dropCacheContextForTest {
+		return nil
+	}
+	scope := spec.GetScope()
+	if scope == orkstackv1.CacheScope_CACHE_SCOPE_UNSPECIFIED {
+		scope = orkstackv1.CacheScope_CACHE_SCOPE_ORKFLOW
+	}
+	return &orkstackv1.CacheContext{
+		Scope:      scope,
+		TtlSeconds: EffectiveCacheTTL(spec.GetTtlSeconds(), s.plan.Cache.MaxTTLSeconds),
+		Refresh:    s.plan.Cache.Refresh,
+	}
+}
+
+// dropCacheContextForTest is a TEST-ONLY switch, the precedent of
+// composeStartWithoutRender: with it set, cacheContextFor returns nil, which
+// is how TestCachedHistory_PayloadCheckCatchesADroppedCacheContext proves the
+// cached fixture's payload check can see a dropped CacheContext. Nothing but
+// that test sets it.
+var dropCacheContextForTest = false
+
+// cachedSuffix is what a success event appends for a reused result:
+// " (cached from run <id>)", or " (cached from run <id>, item <n>)" when the
+// producer was a fan-out item. Empty for every other result, so the message
+// is unchanged byte for byte.
+func cachedSuffix(c *orkstackv1.CacheResult) string {
+	if c.GetOutcome() != orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT {
+		return ""
+	}
+	source := c.GetSource()
+	if source.Item != nil {
+		return fmt.Sprintf(" (cached from run %s, item %d)", source.GetRunId(), source.GetItem())
+	}
+	return fmt.Sprintf(" (cached from run %s)", source.GetRunId())
 }
 
 // commitURIFor composes one activity's commit URI.
@@ -1642,11 +1689,14 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 		return convErr
 	}
 	taskRun.Output = output
+	// The memo decision of the attempt that produced this result; nil for
+	// every uncached task, so its snapshot is byte-identical.
+	taskRun.Cache = result.GetCache()
 	s.results[id] = result
 	s.outputs[id] = values
 
 	return s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, id,
-		orkstackv1.Status_STATUS_SUCCEEDED, "task succeeded")
+		orkstackv1.Status_STATUS_SUCCEEDED, "task succeeded"+cachedSuffix(result.GetCache()))
 }
 
 // cancelInFlight ends every task this run never got to finish because the

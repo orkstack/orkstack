@@ -7,3 +7,10 @@ var (
 	SkipReasonUpstream  = skipReasonUpstream
 	SkipReasonCondition = skipReasonCondition
 )
+
+// DropCacheContextForTest sets the test-only switch that makes cacheContextFor
+// return nil, and returns the function that clears it.
+func DropCacheContextForTest() (restore func()) {
+	dropCacheContextForTest = true
+	return func() { dropCacheContextForTest = false }
+}

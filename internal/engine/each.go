@@ -642,6 +642,9 @@ func (s *runState) collectItem(
 		if result.GetAttempt() > 0 {
 			item.Attempt = result.GetAttempt()
 		}
+		// A cached fan-out's memo decision lives on the item, never on the
+		// fan-out's own row. Nil for every uncached item.
+		item.Cache = result.GetCache()
 		// No output and no s.outputs entry: nothing reads an item's values
 		// in workflow code (docs/DSL.md rule 24).
 	}
@@ -664,7 +667,7 @@ func (s *runState) collectItem(
 	var message string
 	switch item.GetStatus() {
 	case orkstackv1.Status_STATUS_SUCCEEDED:
-		message = fmt.Sprintf("item %d succeeded", index)
+		message = fmt.Sprintf("item %d succeeded", index) + cachedSuffix(item.GetCache())
 	case orkstackv1.Status_STATUS_CANCELED:
 		message = fmt.Sprintf("item %d canceled: %s", index, item.GetError().GetMessage())
 	default:

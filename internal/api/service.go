@@ -1473,6 +1473,12 @@ func poolPlanError(err error) error {
 	if errors.As(err, &noEach) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
+	// A pool whose Orker predates task caching: it could not decode a cached
+	// task's input, so the run is refused before any id is minted.
+	var noCache *engine.PoolNoCacheSupportError
+	if errors.As(err, &noCache) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
 	var unreachable *engine.PoolUnreachableError
 	if errors.As(err, &unreachable) {
 		return connect.NewError(connect.CodeUnavailable, err)
