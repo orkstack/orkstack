@@ -277,6 +277,13 @@ func (a *attemptObservation) End(outcome orker.AttemptOutcome) {
 		a.attemptSpan.SetAttributes(attribute.String(AttrFailureReason, outcome.Reason))
 	}
 	a.attemptSpan.SetAttributes(attribute.String(AttrOutcome, label))
+	// A cached task's memo decision, and a miss's reason; never the key.
+	if cache := CacheOutcomeLabel(outcome.Cache); cache != "" {
+		a.attemptSpan.SetAttributes(attribute.String(AttrCacheOutcome, cache))
+		if reason := outcome.Cache.GetMissReason(); reason != "" {
+			a.attemptSpan.SetAttributes(attribute.String(AttrCacheMissReason, reason))
+		}
+	}
 	a.attemptSpan.End()
 
 	if a.inst == nil {
