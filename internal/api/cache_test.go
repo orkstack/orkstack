@@ -603,7 +603,7 @@ func TestPurgeCache_TouchesNothingButMemos(t *testing.T) {
 	}
 	defer memos.Close()
 	others := map[string]string{
-		"metadata/commits/ml/ork-1/featurize/commit.json": `{"schemaVersion":1}`,
+		"metadata/commits/ml/ork-1/featurize/commit.json":   `{"schemaVersion":1}`,
 		"metadata/attempts/ork-1/featurize/0000000001.json": `{}`,
 		"metadata/runs/ork-1.json":                          `{}`,
 		"metadata/logs/ork-1/featurize/x":                   `log`,
