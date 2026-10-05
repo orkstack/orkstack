@@ -51,7 +51,7 @@ test('the only parameter splits, trims and drops empties, and keeps unknown name
 	expect(parseOnly('images')).toEqual(['images']);
 	expect(DIFF_FIELDS).toEqual([
 		'definition', 'input', 'presence', 'status', 'attempt', 'pool', 'pin', 'orker',
-		'exit_code', 'error', 'duration', 'image', 'platform_digest'
+		'exit_code', 'error', 'duration', 'image', 'platform_digest', 'cached'
 	]);
 });
 
