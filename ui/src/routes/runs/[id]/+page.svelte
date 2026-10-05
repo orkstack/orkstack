@@ -166,6 +166,10 @@
 		// cached task that succeeded, from the snapshot the task's terminal
 		// event brings.
 		cache?: CacheResult;
+		// factsRead is true once a snapshot that shows this task terminal has
+		// been merged: until then an absent cache means "not read yet", never
+		// "the Orker reported none".
+		factsRead?: boolean;
 	}
 
 	const run = $derived(data.run);
@@ -579,6 +583,7 @@
 				...(tr.each ? { each: tr.each } : {}),
 				...(tr.child ? { child: tr.child } : existing?.child ? { child: existing.child } : {}),
 				...(tr.cache ? { cache: tr.cache } : {}),
+				factsRead: isTerminal(tr.status),
 				items: itemsFromTaskRun(tr)
 			});
 		}
@@ -622,6 +627,7 @@
 				// The memo decision arrives with the terminal snapshot; copied
 				// like child.
 				...(tr.cache ? { cache: tr.cache } : {}),
+				...(isTerminal(tr.status) ? { factsRead: true } : {}),
 				// Patched only when the snapshot carries one: upsertTask assigns
 				// every key present in the patch, so an empty pin here would
 				// erase the pin the definition already seeded.
@@ -807,7 +813,12 @@
 			case EventType.TASK_SUCCEEDED:
 				upsertTask(event.taskId, { status: status ?? Status.SUCCEEDED });
 				if (isFanOut(event.taskId) || isComposed(event.taskId)) rereadAndMerge();
-				else void refreshAttempts(event.taskId);
+				else {
+					void refreshAttempts(event.taskId);
+					// A cached task's memo decision travels on its snapshot row,
+					// never on the event: one event-triggered read brings it.
+					if (taskDefs.get(event.taskId)?.cache !== undefined) rereadAndMerge();
+				}
 				break;
 			case EventType.TASK_FAILED:
 				upsertTask(event.taskId, {
@@ -1561,7 +1572,7 @@
 									<CacheBadge
 										cache={task.cache}
 										declared={taskDefs.get(task.id)?.cache !== undefined}
-										succeeded={task.status === Status.SUCCEEDED}
+										succeeded={task.status === Status.SUCCEEDED && task.factsRead === true}
 										namespace={data.namespace}
 										testid="task-{task.id}-cache"
 									/>
