@@ -108,7 +108,10 @@ func renderApply(out io.Writer, resp *orkstackv1.ApplyOrkflowResponse) error {
 	if err := renderTaskTable(out, wf.GetTasks()); err != nil {
 		return err
 	}
-	return renderComposeTables(out, wf)
+	if err := renderComposeTables(out, wf); err != nil {
+		return err
+	}
+	return renderCachedTable(out, wf.GetTasks())
 }
 
 // renderTaskTable prints an orkflow's task DAG.

@@ -1,0 +1,18 @@
+Run:       ork-1758791221000000000-4081623940183301
+Orkflow:   cached-pipeline
+Version:   0.1.0
+Status:    SUCCEEDED
+Created:   2026-01-02T03:04:05Z
+Started:   2026-01-02T03:04:05Z
+Finished:  2026-01-02T03:04:14Z
+Origin:    unrecorded (started before origins were recorded)
+Input:     -
+Output:    -
+
+TASK       STATUS              POOL  PIN  ORKER    ATTEMPT  EXIT  SCHEDULED             STARTED               FINISHED              ERROR
+featurize  SUCCEEDED (cached)  main  -    orker-1  1        0     2026-01-02T03:04:06Z  2026-01-02T03:04:06Z  2026-01-02T03:04:07Z  -
+stamp      SUCCEEDED           main  -    orker-2  1        0     2026-01-02T03:04:06Z  2026-01-02T03:04:07Z  2026-01-02T03:04:09Z  -
+train      SUCCEEDED           main  -    orker-1  1        0     2026-01-02T03:04:09Z  2026-01-02T03:04:10Z  2026-01-02T03:04:14Z  -
+
+featurize: cache hit — reused run ork-1758790021000000000-4081623940183294's result, committed 2026-01-02T02:45:07Z (its attempt took 8m02s); no container ran. Open it with: orkctl -n ml run get ork-1758790021000000000-4081623940183294
+train: cache miss (MEMO_ABSENT: no memo for this key); the container ran and its memo was written

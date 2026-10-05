@@ -143,6 +143,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 	root.AddCommand(
 		newAdminCommand(g),
 		newApplyCommand(g),
+		newCacheCommand(g),
 		newExportCommand(g),
 		newNamespaceCommand(g),
 		newOrkflowCommand(g),

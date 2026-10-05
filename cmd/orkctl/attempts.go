@@ -113,13 +113,21 @@ func renderAttemptList(out io.Writer, attempts []*orkstackv1.TaskAttempt) error 
 	// The ITEM column appears whenever any record is an item's (fan-out); a
 	// run with no fan-out keeps the table it always had.
 	withItems := false
+	// The CACHE column appears whenever any record carries a memo decision
+	// (a cached task); with none the table is unchanged.
+	withCache := false
 	for _, attempt := range attempts {
 		withItems = withItems || attempt.Item != nil
+		withCache = withCache || attempt.GetCache() != nil
+	}
+	cacheHeader := ""
+	if withCache {
+		cacheHeader = "\tCACHE"
 	}
 	if withItems {
-		fmt.Fprintln(table, "TASK\tITEM\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER\tERROR")
+		fmt.Fprintln(table, "TASK\tITEM\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER"+cacheHeader+"\tERROR")
 	} else {
-		fmt.Fprintln(table, "TASK\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER\tERROR")
+		fmt.Fprintln(table, "TASK\tATTEMPT\tOUTCOME\tPHASE\tEXIT\tSTARTED\tDURATION\tORKER"+cacheHeader+"\tERROR")
 	}
 	unreported := false
 	for _, attempt := range attempts {
@@ -130,6 +138,10 @@ func renderAttemptList(out io.Writer, attempts []*orkstackv1.TaskAttempt) error 
 		if withItems {
 			task += "\t" + itemCell(attempt.Item)
 		}
+		orker := orDash(attempt.GetOrkerId())
+		if withCache {
+			orker += "\t" + attemptCacheCell(attempt.GetCache())
+		}
 		fmt.Fprintf(table, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			task,
 			attempt.GetAttempt(),
@@ -138,7 +150,7 @@ func renderAttemptList(out io.Writer, attempts []*orkstackv1.TaskAttempt) error 
 			attemptExitCell(attempt),
 			formatTime(attempt.GetStartedAt()),
 			attemptDuration(attempt),
-			orDash(attempt.GetOrkerId()),
+			orker,
 			attemptErrorLine(attempt.GetError()))
 	}
 	if err := table.Flush(); err != nil {

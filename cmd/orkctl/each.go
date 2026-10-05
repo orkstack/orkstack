@@ -61,7 +61,7 @@ func itemCell(item *int32) string {
 
 // eachProgress tallies a fan-out's items by status, and how many retried.
 type eachProgress struct {
-	count, succeeded, failed, canceled, running, pending, retried int32
+	count, succeeded, failed, canceled, running, pending, retried, cached int32
 }
 
 func progressOf(task *orkstackv1.TaskRun) eachProgress {
@@ -81,6 +81,9 @@ func progressOf(task *orkstackv1.TaskRun) eachProgress {
 		}
 		if item.GetAttempt() > 1 {
 			p.retried++
+		}
+		if item.GetCache().GetOutcome() == orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT {
+			p.cached++
 		}
 	}
 	return p
@@ -114,6 +117,9 @@ func fanOutSummaryLine(namespace, runID string, task *orkstackv1.TaskRun) string
 		}
 	}
 	parts = append(parts, fmt.Sprintf("%d retried", p.retried))
+	if p.cached > 0 {
+		parts = append(parts, fmt.Sprintf("%d cached", p.cached))
+	}
 	noun := "items"
 	if p.count == 1 {
 		noun = "item"

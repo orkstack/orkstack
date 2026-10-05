@@ -57,6 +57,7 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 		idempotencyKey string
 		watch          bool
 		allowEmptyPool bool
+		noCache        bool
 		originRef      string
 	)
 	cmd := &cobra.Command{
@@ -82,6 +83,9 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 				IdempotencyKey: idempotencyKey,
 				Namespace:      g.namespace,
 				AllowEmptyPool: allowEmptyPool,
+				// Sent whatever the Orkflow declares: the server ignores it
+				// when nothing is cached.
+				NoCache: noCache,
 				// Validation is the server's: the CLI sends what it was given.
 				OriginReference: originRef,
 			}))
@@ -115,9 +119,13 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 		"dedupe key for repeated submissions, scoped to this namespace")
 	cmd.Flags().BoolVar(&watch, "watch", false, "stream events until the run reaches a terminal state")
 	cmd.Flags().BoolVar(&allowEmptyPool, "allow-empty-pool", false, "submit even when the selected pool has no live Orkers")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, noCacheHelp)
 	cmd.Flags().StringVar(&originRef, "origin-ref", "", originRefHelp)
 	return cmd
 }
+
+// noCacheHelp is the --no-cache help, shared by `run submit` and `run again`.
+const noCacheHelp = "ignore every memo for this run: each cached task runs its container and refreshes its memo"
 
 // originRefHelp is the --origin-ref help, shared by `run submit` and `run again`.
 const originRefHelp = "correlation reference recorded on the run, e.g. a CI job URL or a ticket; at most 256 bytes"
@@ -449,7 +457,13 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 		}
 		fmt.Fprintln(out, composedLine(run.GetNamespace(), taskRun))
 	}
-	return renderAwaitTable(out, run, nowFunc())
+	if err := renderAwaitTable(out, run, nowFunc()); err != nil {
+		return err
+	}
+	// One line per cached task, after every other footer. A run with no
+	// cache on any row prints nothing new.
+	renderCacheLines(out, run)
+	return nil
 }
 
 func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {

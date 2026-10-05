@@ -1,0 +1,2 @@
+Purged 2 memos (orkflow cached-pipeline, task train) in namespace default.
+No run, commit or artifact was touched; the next run of these tasks runs its container and writes a fresh memo.

@@ -219,7 +219,14 @@ func planDetail(task *orkstackv1.PlanTask, failing string) string {
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS:
 		if task.GetEach() != nil {
 			// A fan-out is one PlanTask (spec each-fan-out §5.12).
+			if spec := task.GetCache(); spec != nil {
+				return eachDetail(task) + "; " + cachePlanDetail(spec)
+			}
 			return eachDetail(task)
+		}
+		if spec := task.GetCache(); spec != nil {
+			// A plan never predicts a hit: that is the Orker's decision.
+			return cachePlanDetail(spec)
 		}
 		if ref := task.GetOrkflow(); ref != nil {
 			// A composed task is one PlanTask; the plan never recurses.

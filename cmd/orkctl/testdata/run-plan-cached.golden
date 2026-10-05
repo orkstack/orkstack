@@ -1,0 +1,10 @@
+PLAN  cached-pipeline@0.1.0  namespace default
+definition  sha256:8f71581a6cff27e657cb022013db0c82ec1f279e86a73c5f2397790c67527c93
+input       {"rows":1000}
+
+WAVE  TASK       OUTCOME  DETAIL
+1     featurize  runs     cached across runs (ttl 24h, orkflow scope); whether it reuses a result is decided by the Orker when the run reaches it
+1     stamp      runs
+2     train      runs     cached across runs (ttl: the deployment's cap, orkflow scope); whether it reuses a result is decided by the Orker when the run reaches it
+
+3 run, 0 skipped, 2 waves. Nothing was started.
