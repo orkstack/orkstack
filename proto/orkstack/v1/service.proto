@@ -343,6 +343,10 @@ message PlanTask {
   // outcome. A plan never recurses into the child: its input is rendered at
   // run time and its own plan is one more PlanRun call.
   OrkflowRef orkflow = 13;
+  // cache is the task's CacheSpec, set for a cached task whatever its
+  // outcome. A plan never predicts a hit: that is decided on the Orker, from
+  // the rendered config and the input digests, when the run reaches it.
+  CacheSpec cache = 14;
 }
 
 // PlanWave lists the RUNS tasks of one wave, in declaration order. There is
@@ -838,6 +842,11 @@ message SubmitRunRequest {
   // read follows. It is never an idempotency key and never reuses one: a
   // re-run is a new execution with a new id (docs/UI_CLI_PARITY.md).
   string source_run_id = 8;
+  // no_cache runs this submission without reading any memo: every cached
+  // task runs its container and refreshes its memo. It applies to every run
+  // the submission starts, child runs included. It does nothing for an
+  // Orkflow that declares no cache:.
+  bool no_cache = 9;
 }
 // AwaitCallback is one callback await's one-time credential, handed back by
 // the submission that started the run and by nothing else.

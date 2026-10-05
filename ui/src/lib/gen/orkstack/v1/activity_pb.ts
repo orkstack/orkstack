@@ -18,7 +18,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/activity.proto.
  */
 export const file_orkstack_v1_activity: GenFile = /*@__PURE__*/
-  fileDesc("ChpvcmtzdGFjay92MS9hY3Rpdml0eS5wcm90bxILb3Jrc3RhY2sudjEi4AEKCEltYWdlUmVmEhEKCXJlZmVyZW5jZRgBIAEoCRIQCghyZWdpc3RyeRgCIAEoCRISCgpyZXBvc2l0b3J5GAMgASgJEhQKDGluZGV4X2RpZ2VzdBgEIAEoCRIOCgZwaW5uZWQYBSABKAkSEgoKbWVkaWFfdHlwZRgGIAEoCRIRCglwbGF0Zm9ybXMYByADKAkSFwoPcGxhdGZvcm1fZGlnZXN0GAkgASgJEhAKCHBsYXRmb3JtGAogASgJEhAKCGRlbGl2ZXJ5GAsgASgJSgQICBAJUgtyZXNvbHZlZF9hdCIuCg9SZXNvdXJjZVJlcXVlc3QSCwoDY3B1GAEgASgJEg4KBm1lbW9yeRgCIAEoCSI6CgpFYWNoU291cmNlEg0KBWlucHV0GAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDAoEcGF0aBgDIAMoCSIpCglTZWNyZXRSZWYSDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkilAEKD1dvcmtzcGFjZUxpbWl0cxIYChB2YWx1ZXNfbWF4X2J5dGVzGAEgASgDEhoKEmFydGlmYWN0X21heF9jb3VudBgCIAEoBRIaChJhcnRpZmFjdF9tYXhfYnl0ZXMYAyABKAMSFQoNbG9nX21heF9ieXRlcxgEIAEoAxIYChBjb21taXRfbWF4X2J5dGVzGAUgASgDIrIBCgtVcHN0cmVhbVJlZhIPCgd0YXNrX2lkGAEgASgJEhIKCmNvbW1pdF91cmkYAiABKAkSKAoGdmFsdWVzGAMgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSJwoEZWFjaBgFIAEoCzIZLm9ya3N0YWNrLnYxLkVhY2hVcHN0cmVhbSJICgpQaW5Db250ZXh0EgwKBG5hbWUYASABKAkSEwoLaW5zdGFuY2VfaWQYAiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAMgASgFImAKC0VhY2hDb250ZXh0Eg0KBWluZGV4GAEgASgFEg0KBWNvdW50GAIgASgFEgoKAmFzGAMgASgJEicKBnNvdXJjZRgEIAEoCzIXLm9ya3N0YWNrLnYxLkVhY2hTb3VyY2UiMgoMRWFjaFVwc3RyZWFtEg0KBWNvdW50GAEgASgFEhMKC2NvbW1pdF9yb290GAIgASgJIrQHChBFeGVjdXRlVGFza0lucHV0Eg4KBnJ1bl9pZBgBIAEoCRIUCgxvcmtmbG93X25hbWUYAiABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAMgASgJEiEKGW9ya2Zsb3dfZGVmaW5pdGlvbl9kaWdlc3QYBCABKAkSEQoJbmFtZXNwYWNlGAUgASgJEgwKBHBvb2wYBiABKAkSDwoHdGFza19pZBgHIAEoCRIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkSEgoKY29tbWl0X3VyaRgJIAEoCRIkCgVpbWFnZRgKIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEg8KB2NvbW1hbmQYCyADKAkSJQoEd2l0aBgMIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSMwoDZW52GA0gAygLMiYub3Jrc3RhY2sudjEuRXhlY3V0ZVRhc2tJbnB1dC5FbnZFbnRyeRInCgdzZWNyZXRzGA4gAygLMhYub3Jrc3RhY2sudjEuU2VjcmV0UmVmEhcKD3RpbWVvdXRfc2Vjb25kcxgPIAEoBRIpCiFjYW5jZWxsYXRpb25fZ3JhY2VfcGVyaW9kX3NlY29uZHMYECABKAUSLwoJcmVzb3VyY2VzGBEgASgLMhwub3Jrc3RhY2sudjEuUmVzb3VyY2VSZXF1ZXN0EikKB25ldHdvcmsYEiABKA4yGC5vcmtzdGFjay52MS5OZXR3b3JrTW9kZRIsCgZsaW1pdHMYEyABKAsyHC5vcmtzdGFjay52MS5Xb3Jrc3BhY2VMaW1pdHMSJwoJcnVuX2lucHV0GBQgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIqCgh1cHN0cmVhbRgVIAMoCzIYLm9ya3N0YWNrLnYxLlVwc3RyZWFtUmVmEhkKEXJ1bl9hc19vcmtlcl91c2VyGBYgASgIEjIKCXRlbGVtZXRyeRgXIAEoCzIfLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVNlbGVjdGlvbhIkCgNwaW4YGCABKAsyFy5vcmtzdGFjay52MS5QaW5Db250ZXh0EjcKDGltYWdlX3BvbGljeRgZIAEoCzIhLm9ya3N0YWNrLnYxLkltYWdlUG9saWN5U2VsZWN0aW9uEiYKBGVhY2gYGiABKAsyGC5vcmtzdGFjay52MS5FYWNoQ29udGV4dBoqCghFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIloKD1JlbGVhc2VQaW5JbnB1dBIOCgZydW5faWQYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEiQKA3BpbhgDIAEoCzIXLm9ya3N0YWNrLnYxLlBpbkNvbnRleHQiZgoJQ29tbWl0UmVmEgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSDAoEZXRhZxgDIAEoCRIuCgpjcmVhdGVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLdAwoRRXhlY3V0ZVRhc2tSZXN1bHQSDwoHdGFza19pZBgBIAEoCRIRCglleGl0X2NvZGUYAiABKAUSJgoGY29tbWl0GAMgASgLMhYub3Jrc3RhY2sudjEuQ29tbWl0UmVmEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgp2YWx1ZXNfcmVmGAYgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSEwoLdmFsdWVzX2pzb24YByABKAwSFgoOdmFsdWVzX2lubGluZWQYCCABKAgSJAoFaW1hZ2UYCSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIWCg5jb21taXRfYWRvcHRlZBgKIAEoCBIuCgpzdGFydGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIb3JrZXJfaWQYDSABKAkSDwoHYXR0ZW1wdBgOIAEoBSKhBAoOQWN0aXZpdHlDb21taXQSFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSEQoJbmFtZXNwYWNlGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRIPCgd0YXNrX2lkGAQgASgJEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YBiABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgHIAEoCRIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkSJAoFaW1hZ2UYCSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIRCglleGl0X2NvZGUYCiABKAUSKAoGdmFsdWVzGAsgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAwgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgNIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEi4KCnN0YXJ0ZWRfYXQYDiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GA8gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdhdHRlbXB0GBAgASgFEhAKCG9ya2VyX2lkGBEgASgJEhAKCGJ1aWxkX2lkGBIgASgJIt0CChVBY3Rpdml0eUZhaWx1cmVEZXRhaWwSEwoLcmVhc29uX2NvZGUYASABKAkSLgoIY2F0ZWdvcnkYAiABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJZXhpdF9jb2RlGAMgASgFEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhISCgpzY2FuX25vdGVzGAYgAygJEiQKBWltYWdlGAcgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSDwoHYXR0ZW1wdBgIIAEoBRIQCghvcmtlcl9pZBgJIAEoCRIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCKXAwoTRGVzY3JpYmVPcmtlclJlc3VsdBIQCghvcmtlcl9pZBgBIAEoCRIQCghidWlsZF9pZBgCIAEoCRIMCgRwb29sGAMgASgJEhQKDHJ1bnRpbWVfbmFtZRgEIAEoCRIXCg9ydW50aW1lX3ZlcnNpb24YBSABKAkSGAoQc2VjdXJpdHlfcHJvZmlsZRgGIAEoCRIWCg5tYXhfY29uY3VycmVudBgHIAEoBRIQCghyb290bGVzcxgIIAEoCBIbChNtYXhfY29uY3VycmVudF9waW5zGAkgASgFEhAKCGNvcmRvbmVkGAogASgIEhUKDWNvcmRvbl9yZWFzb24YCyABKAkSLwoLY29yZG9uZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhUKDXJ1bm5pbmdfdGFza3MYDSABKAUSEQoJb3Blbl9waW5zGA4gASgFEiIKBHBpbnMYDyADKAsyFC5vcmtzdGFjay52MS5PcGVuUGluEhYKDmVhY2hfc3VwcG9ydGVkGBAgASgIIoEBCgdPcGVuUGluEg4KBnJ1bl9pZBgBIAEoCRILCgNwaW4YAiABKAkSKQoFc2luY2UYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIjQKEENvcmRvbk9ya2VySW5wdXQSEAoIY29yZG9uZWQYASABKAgSDgoGcmVhc29uGAIgASgJKlwKC05ldHdvcmtNb2RlEhwKGE5FVFdPUktfTU9ERV9VTlNQRUNJRklFRBAAEhgKFE5FVFdPUktfTU9ERV9ERUZBVUxUEAESFQoRTkVUV09SS19NT0RFX05PTkUQAkKpAQoPY29tLm9ya3N0YWNrLnYxQg1BY3Rpdml0eVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_image_policy, file_orkstack_v1_telemetry]);
+  fileDesc("ChpvcmtzdGFjay92MS9hY3Rpdml0eS5wcm90bxILb3Jrc3RhY2sudjEi4AEKCEltYWdlUmVmEhEKCXJlZmVyZW5jZRgBIAEoCRIQCghyZWdpc3RyeRgCIAEoCRISCgpyZXBvc2l0b3J5GAMgASgJEhQKDGluZGV4X2RpZ2VzdBgEIAEoCRIOCgZwaW5uZWQYBSABKAkSEgoKbWVkaWFfdHlwZRgGIAEoCRIRCglwbGF0Zm9ybXMYByADKAkSFwoPcGxhdGZvcm1fZGlnZXN0GAkgASgJEhAKCHBsYXRmb3JtGAogASgJEhAKCGRlbGl2ZXJ5GAsgASgJSgQICBAJUgtyZXNvbHZlZF9hdCIuCg9SZXNvdXJjZVJlcXVlc3QSCwoDY3B1GAEgASgJEg4KBm1lbW9yeRgCIAEoCSI6CgpFYWNoU291cmNlEg0KBWlucHV0GAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDAoEcGF0aBgDIAMoCSIpCglTZWNyZXRSZWYSDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkilAEKD1dvcmtzcGFjZUxpbWl0cxIYChB2YWx1ZXNfbWF4X2J5dGVzGAEgASgDEhoKEmFydGlmYWN0X21heF9jb3VudBgCIAEoBRIaChJhcnRpZmFjdF9tYXhfYnl0ZXMYAyABKAMSFQoNbG9nX21heF9ieXRlcxgEIAEoAxIYChBjb21taXRfbWF4X2J5dGVzGAUgASgDIrIBCgtVcHN0cmVhbVJlZhIPCgd0YXNrX2lkGAEgASgJEhIKCmNvbW1pdF91cmkYAiABKAkSKAoGdmFsdWVzGAMgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSJwoEZWFjaBgFIAEoCzIZLm9ya3N0YWNrLnYxLkVhY2hVcHN0cmVhbSJICgpQaW5Db250ZXh0EgwKBG5hbWUYASABKAkSEwoLaW5zdGFuY2VfaWQYAiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAMgASgFIlwKDENhY2hlQ29udGV4dBImCgVzY29wZRgBIAEoDjIXLm9ya3N0YWNrLnYxLkNhY2hlU2NvcGUSEwoLdHRsX3NlY29uZHMYAiABKAMSDwoHcmVmcmVzaBgDIAEoCCKWAgoLQ2FjaGVTb3VyY2USDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSFAoMb3JrZmxvd19uYW1lGAMgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgEIAEoCRISCgpjb21taXRfdXJpGAUgASgJEhUKDWNvbW1pdF9zaGEyNTYYBiABKAkSLgoKc3RhcnRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKBGl0ZW0YCSABKAVIAIgBARIPCgdhdHRlbXB0GAogASgFQgcKBV9pdGVtIsUCCgtDYWNoZVJlc3VsdBIqCgdvdXRjb21lGAEgASgOMhkub3Jrc3RhY2sudjEuQ2FjaGVPdXRjb21lEgsKA2tleRgCIAEoCRITCgttaXNzX3JlYXNvbhgDIAEoCRITCgttaXNzX2RldGFpbBgEIAEoCRIoCgZzb3VyY2UYBSABKAsyGC5vcmtzdGFjay52MS5DYWNoZVNvdXJjZRIUCgxtZW1vX3dyaXR0ZW4YBiABKAgSGAoQbWVtb193cml0ZV9lcnJvchgHIAEoCRJDCg5rZXlfY29tcG9uZW50cxgIIAMoCzIrLm9ya3N0YWNrLnYxLkNhY2hlUmVzdWx0LktleUNvbXBvbmVudHNFbnRyeRo0ChJLZXlDb21wb25lbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKJAwoJQ2FjaGVNZW1vEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEgsKA2tleRgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkSJgoFc2NvcGUYBCABKA4yFy5vcmtzdGFjay52MS5DYWNoZVNjb3BlEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIPCgd0YXNrX2lkGAYgASgJEigKBnNvdXJjZRgHIAEoCzIYLm9ya3N0YWNrLnYxLkNhY2hlU291cmNlEkEKDmtleV9jb21wb25lbnRzGAggAygLMikub3Jrc3RhY2sudjEuQ2FjaGVNZW1vLktleUNvbXBvbmVudHNFbnRyeRIuCgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgKIAEoCRIQCghidWlsZF9pZBgLIAEoCRo0ChJLZXlDb21wb25lbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJgCgtFYWNoQ29udGV4dBINCgVpbmRleBgBIAEoBRINCgVjb3VudBgCIAEoBRIKCgJhcxgDIAEoCRInCgZzb3VyY2UYBCABKAsyFy5vcmtzdGFjay52MS5FYWNoU291cmNlIjIKDEVhY2hVcHN0cmVhbRINCgVjb3VudBgBIAEoBRITCgtjb21taXRfcm9vdBgCIAEoCSLeBwoQRXhlY3V0ZVRhc2tJbnB1dBIOCgZydW5faWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIMCgRwb29sGAYgASgJEg8KB3Rhc2tfaWQYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEhIKCmNvbW1pdF91cmkYCSABKAkSJAoFaW1hZ2UYCiABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAsgAygJEiUKBHdpdGgYDCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjMKA2VudhgNIAMoCzImLm9ya3N0YWNrLnYxLkV4ZWN1dGVUYXNrSW5wdXQuRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIXCg90aW1lb3V0X3NlY29uZHMYDyABKAUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBAgASgFEi8KCXJlc291cmNlcxgRIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBIgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSLAoGbGltaXRzGBMgASgLMhwub3Jrc3RhY2sudjEuV29ya3NwYWNlTGltaXRzEicKCXJ1bl9pbnB1dBgUIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKgoIdXBzdHJlYW0YFSADKAsyGC5vcmtzdGFjay52MS5VcHN0cmVhbVJlZhIZChFydW5fYXNfb3JrZXJfdXNlchgWIAEoCBIyCgl0ZWxlbWV0cnkYFyABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJAoDcGluGBggASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dBI3CgxpbWFnZV9wb2xpY3kYGSABKAsyIS5vcmtzdGFjay52MS5JbWFnZVBvbGljeVNlbGVjdGlvbhImCgRlYWNoGBogASgLMhgub3Jrc3RhY2sudjEuRWFjaENvbnRleHQSKAoFY2FjaGUYGyABKAsyGS5vcmtzdGFjay52MS5DYWNoZUNvbnRleHQaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJaCg9SZWxlYXNlUGluSW5wdXQSDgoGcnVuX2lkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCRIkCgNwaW4YAyABKAsyFy5vcmtzdGFjay52MS5QaW5Db250ZXh0ImYKCUNvbW1pdFJlZhILCgN1cmkYASABKAkSDgoGc2hhMjU2GAIgASgJEgwKBGV0YWcYAyABKAkSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAihgQKEUV4ZWN1dGVUYXNrUmVzdWx0Eg8KB3Rhc2tfaWQYASABKAkSEQoJZXhpdF9jb2RlGAIgASgFEiYKBmNvbW1pdBgDIAEoCzIWLm9ya3N0YWNrLnYxLkNvbW1pdFJlZhIrCglhcnRpZmFjdHMYBCADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIyChBzeXN0ZW1fYXJ0aWZhY3RzGAUgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSLAoKdmFsdWVzX3JlZhgGIAEoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEhMKC3ZhbHVlc19qc29uGAcgASgMEhYKDnZhbHVlc19pbmxpbmVkGAggASgIEiQKBWltYWdlGAkgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSFgoOY29tbWl0X2Fkb3B0ZWQYCiABKAgSLgoKc3RhcnRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCG9ya2VyX2lkGA0gASgJEg8KB2F0dGVtcHQYDiABKAUSJwoFY2FjaGUYDyABKAsyGC5vcmtzdGFjay52MS5DYWNoZVJlc3VsdCLKBAoOQWN0aXZpdHlDb21taXQSFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSEQoJbmFtZXNwYWNlGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRIPCgd0YXNrX2lkGAQgASgJEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YBiABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgHIAEoCRIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkSJAoFaW1hZ2UYCSABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIRCglleGl0X2NvZGUYCiABKAUSKAoGdmFsdWVzGAsgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAwgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgNIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEi4KCnN0YXJ0ZWRfYXQYDiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GA8gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdhdHRlbXB0GBAgASgFEhAKCG9ya2VyX2lkGBEgASgJEhAKCGJ1aWxkX2lkGBIgASgJEicKBWNhY2hlGBMgASgLMhgub3Jrc3RhY2sudjEuQ2FjaGVSZXN1bHQi3QIKFUFjdGl2aXR5RmFpbHVyZURldGFpbBITCgtyZWFzb25fY29kZRgBIAEoCRIuCghjYXRlZ29yeRgCIAEoDjIcLm9ya3N0YWNrLnYxLkZhaWx1cmVDYXRlZ29yeRIRCglleGl0X2NvZGUYAyABKAUSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgFIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEhIKCnNjYW5fbm90ZXMYBiADKAkSJAoFaW1hZ2UYByABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdhdHRlbXB0GAggASgFEhAKCG9ya2VyX2lkGAkgASgJEi4KCnN0YXJ0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIrADChNEZXNjcmliZU9ya2VyUmVzdWx0EhAKCG9ya2VyX2lkGAEgASgJEhAKCGJ1aWxkX2lkGAIgASgJEgwKBHBvb2wYAyABKAkSFAoMcnVudGltZV9uYW1lGAQgASgJEhcKD3J1bnRpbWVfdmVyc2lvbhgFIAEoCRIYChBzZWN1cml0eV9wcm9maWxlGAYgASgJEhYKDm1heF9jb25jdXJyZW50GAcgASgFEhAKCHJvb3RsZXNzGAggASgIEhsKE21heF9jb25jdXJyZW50X3BpbnMYCSABKAUSEAoIY29yZG9uZWQYCiABKAgSFQoNY29yZG9uX3JlYXNvbhgLIAEoCRIvCgtjb3Jkb25lZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASFQoNcnVubmluZ190YXNrcxgNIAEoBRIRCglvcGVuX3BpbnMYDiABKAUSIgoEcGlucxgPIAMoCzIULm9ya3N0YWNrLnYxLk9wZW5QaW4SFgoOZWFjaF9zdXBwb3J0ZWQYECABKAgSFwoPY2FjaGVfc3VwcG9ydGVkGBEgASgIIoEBCgdPcGVuUGluEg4KBnJ1bl9pZBgBIAEoCRILCgNwaW4YAiABKAkSKQoFc2luY2UYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIjQKEENvcmRvbk9ya2VySW5wdXQSEAoIY29yZG9uZWQYASABKAgSDgoGcmVhc29uGAIgASgJKlwKC05ldHdvcmtNb2RlEhwKGE5FVFdPUktfTU9ERV9VTlNQRUNJRklFRBAAEhgKFE5FVFdPUktfTU9ERV9ERUZBVUxUEAESFQoRTkVUV09SS19NT0RFX05PTkUQAipdCgpDYWNoZVNjb3BlEhsKF0NBQ0hFX1NDT1BFX1VOU1BFQ0lGSUVEEAASFwoTQ0FDSEVfU0NPUEVfT1JLRkxPVxABEhkKFUNBQ0hFX1NDT1BFX05BTUVTUEFDRRACKngKDENhY2hlT3V0Y29tZRIdChlDQUNIRV9PVVRDT01FX1VOU1BFQ0lGSUVEEAASFQoRQ0FDSEVfT1VUQ09NRV9ISVQQARIWChJDQUNIRV9PVVRDT01FX01JU1MQAhIaChZDQUNIRV9PVVRDT01FX0JZUEFTU0VEEANCqQEKD2NvbS5vcmtzdGFjay52MUINQWN0aXZpdHlQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_image_policy, file_orkstack_v1_telemetry]);
 
 /**
  * ImageRef is an OCI image resolved to an immutable reference. The engine
@@ -371,6 +371,284 @@ export const PinContextSchema: GenMessage<PinContext> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_activity, 6);
 
 /**
+ * CacheContext tells an Orker that this attempt is of a cached task. It is
+ * set ONLY on such a task's input, so every other task's recorded payload is
+ * byte-identical to what it was before this field existed.
+ *
+ * @generated from message orkstack.v1.CacheContext
+ */
+export type CacheContext = Message<"orkstack.v1.CacheContext"> & {
+  /**
+   * scope is never UNSPECIFIED on the wire.
+   *
+   * @generated from field: orkstack.v1.CacheScope scope = 1;
+   */
+  scope: CacheScope;
+
+  /**
+   * ttl_seconds is the EFFECTIVE bound on a reusable memo's age, measured
+   * from its source's finished_at: the task's own ttl_seconds capped by the
+   * deployment's ORK_CACHE_MAX_TTL, or the cap when the task set none. Always
+   * positive.
+   *
+   * @generated from field: int64 ttl_seconds = 2;
+   */
+  ttlSeconds: bigint;
+
+  /**
+   * refresh is true when the run was submitted with no_cache: the Orker reads
+   * no memo, runs the container, and writes the memo from its fresh commit.
+   *
+   * @generated from field: bool refresh = 3;
+   */
+  refresh: boolean;
+};
+
+/**
+ * Describes the message orkstack.v1.CacheContext.
+ * Use `create(CacheContextSchema)` to create a new message.
+ */
+export const CacheContextSchema: GenMessage<CacheContext> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 7);
+
+/**
+ * CacheSource names the commit a memo points at — the one a hit reused.
+ *
+ * @generated from message orkstack.v1.CacheSource
+ */
+export type CacheSource = Message<"orkstack.v1.CacheSource"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: string task_id = 2;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: string orkflow_name = 3;
+   */
+  orkflowName: string;
+
+  /**
+   * @generated from field: string orkflow_version = 4;
+   */
+  orkflowVersion: string;
+
+  /**
+   * @generated from field: string commit_uri = 5;
+   */
+  commitUri: string;
+
+  /**
+   * commit_sha256 is the hex SHA-256 of the source commit's exact stored
+   * bytes (CommitRef.sha256), never a re-marshalling.
+   *
+   * @generated from field: string commit_sha256 = 6;
+   */
+  commitSha256: string;
+
+  /**
+   * started_at / finished_at are the producing attempt's, copied from the
+   * source ActivityCommit. A memo's age is measured from finished_at.
+   *
+   * @generated from field: google.protobuf.Timestamp started_at = 7;
+   */
+  startedAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp finished_at = 8;
+   */
+  finishedAt?: Timestamp | undefined;
+
+  /**
+   * item is set when the producer was one item of a fan-out (each-fan-out's
+   * 0-based index); unset otherwise.
+   *
+   * @generated from field: optional int32 item = 9;
+   */
+  item?: number | undefined;
+
+  /**
+   * attempt is the producing attempt (ActivityCommit.attempt).
+   *
+   * @generated from field: int32 attempt = 10;
+   */
+  attempt: number;
+};
+
+/**
+ * Describes the message orkstack.v1.CacheSource.
+ * Use `create(CacheSourceSchema)` to create a new message.
+ */
+export const CacheSourceSchema: GenMessage<CacheSource> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 8);
+
+/**
+ * CacheResult is one attempt's memo decision.
+ *
+ * @generated from message orkstack.v1.CacheResult
+ */
+export type CacheResult = Message<"orkstack.v1.CacheResult"> & {
+  /**
+   * @generated from field: orkstack.v1.CacheOutcome outcome = 1;
+   */
+  outcome: CacheOutcome;
+
+  /**
+   * key is the 64-hex memo key. Empty only for a MISS whose reason is
+   * INPUT_UNHASHED (no key could be computed).
+   *
+   * @generated from field: string key = 2;
+   */
+  key: string;
+
+  /**
+   * miss_reason is set for MISS only: a stable token from the table in
+   * docs/DSL.md "Caching" — MEMO_ABSENT, MEMO_EXPIRED, SOURCE_COMMIT_GONE, … —
+   * a string, not an enum, so a reader of an older build still prints a
+   * reason it has never heard of. It is never a failure code: it never
+   * appears in TaskRun.error.
+   *
+   * @generated from field: string miss_reason = 3;
+   */
+  missReason: string;
+
+  /**
+   * miss_detail is the Orker's sentence for the miss, at most 1 KiB.
+   *
+   * @generated from field: string miss_detail = 4;
+   */
+  missDetail: string;
+
+  /**
+   * source is set for HIT only.
+   *
+   * @generated from field: orkstack.v1.CacheSource source = 5;
+   */
+  source?: CacheSource | undefined;
+
+  /**
+   * memo_written / memo_write_error report the best-effort memo write that
+   * follows a fresh commit (MISS or BYPASSED). Both are decided AFTER
+   * commit.json is written, so neither is ever set on ActivityCommit.cache,
+   * and an adopted result carries neither.
+   *
+   * @generated from field: bool memo_written = 6;
+   */
+  memoWritten: boolean;
+
+  /**
+   * @generated from field: string memo_write_error = 7;
+   */
+  memoWriteError: string;
+
+  /**
+   * key_components are the named digests the key was computed from — what
+   * lets an operator see WHICH input changed between a miss and the run that
+   * wrote the old memo. Set ONLY on TaskAttempt.cache and in CacheMemo; never
+   * on ExecuteTaskResult, TaskRun or ActivityCommit, so run history stays
+   * small.
+   *
+   * @generated from field: map<string, string> key_components = 8;
+   */
+  keyComponents: { [key: string]: string };
+};
+
+/**
+ * Describes the message orkstack.v1.CacheResult.
+ * Use `create(CacheResultSchema)` to create a new message.
+ */
+export const CacheResultSchema: GenMessage<CacheResult> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 9);
+
+/**
+ * CacheMemo is the stored memo: metadata/memo/{ns}/orkflow/{orkflow}/{task}/{key}.json
+ * or metadata/memo/{ns}/namespace/{task}/{key}.json, protojson + json.Indent
+ * exactly as a commit is (artifacts.MarshalMemo). A POINTER, written with a
+ * plain put, last writer wins: it holds no result and decides no execution
+ * state, and deleting it changes nothing but whether a container runs.
+ *
+ * @generated from message orkstack.v1.CacheMemo
+ */
+export type CacheMemo = Message<"orkstack.v1.CacheMemo"> & {
+  /**
+   * schema_version is 1. A reader that does not know the value treats the
+   * memo as a miss (MEMO_UNREADABLE), never as an error.
+   *
+   * @generated from field: int32 schema_version = 1;
+   */
+  schemaVersion: number;
+
+  /**
+   * @generated from field: string key = 2;
+   */
+  key: string;
+
+  /**
+   * @generated from field: string namespace = 3;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: orkstack.v1.CacheScope scope = 4;
+   */
+  scope: CacheScope;
+
+  /**
+   * orkflow_name is the writer's Orkflow. The key covers it only under
+   * CACHE_SCOPE_ORKFLOW.
+   *
+   * @generated from field: string orkflow_name = 5;
+   */
+  orkflowName: string;
+
+  /**
+   * @generated from field: string task_id = 6;
+   */
+  taskId: string;
+
+  /**
+   * source is the FRESH commit this memo points at. A memo is written only
+   * after a container ran and its commit was created, never after a hit.
+   *
+   * @generated from field: orkstack.v1.CacheSource source = 7;
+   */
+  source?: CacheSource | undefined;
+
+  /**
+   * @generated from field: map<string, string> key_components = 8;
+   */
+  keyComponents: { [key: string]: string };
+
+  /**
+   * created_at is the writing Orker's clock; orker_id / build_id name it.
+   *
+   * @generated from field: google.protobuf.Timestamp created_at = 9;
+   */
+  createdAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: string orker_id = 10;
+   */
+  orkerId: string;
+
+  /**
+   * @generated from field: string build_id = 11;
+   */
+  buildId: string;
+};
+
+/**
+ * Describes the message orkstack.v1.CacheMemo.
+ * Use `create(CacheMemoSchema)` to create a new message.
+ */
+export const CacheMemoSchema: GenMessage<CacheMemo> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 10);
+
+/**
  * EachContext tells an Orker that this attempt is ONE ITEM of a fan-out task.
  * It is set ONLY on an item's input, so every other task's recorded payload is
  * byte-identical to what it was before this field existed.
@@ -414,7 +692,7 @@ export type EachContext = Message<"orkstack.v1.EachContext"> & {
  * Use `create(EachContextSchema)` to create a new message.
  */
 export const EachContextSchema: GenMessage<EachContext> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 7);
+  messageDesc(file_orkstack_v1_activity, 11);
 
 /**
  * EachUpstream is a fan-out ancestor's contribution to a DIRECT dependent: not
@@ -449,7 +727,7 @@ export type EachUpstream = Message<"orkstack.v1.EachUpstream"> & {
  * Use `create(EachUpstreamSchema)` to create a new message.
  */
 export const EachUpstreamSchema: GenMessage<EachUpstream> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 8);
+  messageDesc(file_orkstack_v1_activity, 12);
 
 /**
  * ExecuteTaskInput is the argument of the ExecuteTask Temporal activity. It
@@ -674,6 +952,17 @@ export type ExecuteTaskInput = Message<"orkstack.v1.ExecuteTaskInput"> & {
    * @generated from field: orkstack.v1.EachContext each = 26;
    */
   each?: EachContext | undefined;
+
+  /**
+   * cache tells the Orker this is an attempt of a cached task (CacheContext).
+   * UNSET for every task that declares no cache:, and for every task of a run
+   * whose plan carries no cache plan, which keeps such a task's recorded
+   * payload byte-identical (the golden history fixture has no cached task and
+   * must keep matching without re-recording).
+   *
+   * @generated from field: orkstack.v1.CacheContext cache = 27;
+   */
+  cache?: CacheContext | undefined;
 };
 
 /**
@@ -681,7 +970,7 @@ export type ExecuteTaskInput = Message<"orkstack.v1.ExecuteTaskInput"> & {
  * Use `create(ExecuteTaskInputSchema)` to create a new message.
  */
 export const ExecuteTaskInputSchema: GenMessage<ExecuteTaskInput> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 9);
+  messageDesc(file_orkstack_v1_activity, 13);
 
 /**
  * ReleasePinInput asks the pin host to remove the pin's shared directory.
@@ -713,7 +1002,7 @@ export type ReleasePinInput = Message<"orkstack.v1.ReleasePinInput"> & {
  * Use `create(ReleasePinInputSchema)` to create a new message.
  */
 export const ReleasePinInputSchema: GenMessage<ReleasePinInput> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 10);
+  messageDesc(file_orkstack_v1_activity, 14);
 
 /**
  * CommitRef points at a written ActivityCommit object.
@@ -755,7 +1044,7 @@ export type CommitRef = Message<"orkstack.v1.CommitRef"> & {
  * Use `create(CommitRefSchema)` to create a new message.
  */
 export const CommitRefSchema: GenMessage<CommitRef> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 11);
+  messageDesc(file_orkstack_v1_activity, 15);
 
 /**
  * ExecuteTaskResult is what an Orker returns for a SUCCEEDED activity. A
@@ -871,6 +1160,21 @@ export type ExecuteTaskResult = Message<"orkstack.v1.ExecuteTaskResult"> & {
    * @generated from field: int32 attempt = 14;
    */
   attempt: number;
+
+  /**
+   * cache is this attempt's memo decision, key_components cleared. Set if and
+   * only if ExecuteTaskInput.cache was set; on an adopted result it is
+   * ActivityCommit.cache of the adopted commit.
+   *
+   * On a HIT: artifacts, system_artifacts, values_ref and image are the
+   * SOURCE commit's (the content-addressed objects and the image that
+   * produced them); commit is THIS run's own commit.json; exit_code is 0;
+   * started_at, finished_at, orker_id and attempt are this attempt's; and
+   * commit_adopted is false (this attempt wrote the commit).
+   *
+   * @generated from field: orkstack.v1.CacheResult cache = 15;
+   */
+  cache?: CacheResult | undefined;
 };
 
 /**
@@ -878,7 +1182,7 @@ export type ExecuteTaskResult = Message<"orkstack.v1.ExecuteTaskResult"> & {
  * Use `create(ExecuteTaskResultSchema)` to create a new message.
  */
 export const ExecuteTaskResultSchema: GenMessage<ExecuteTaskResult> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 12);
+  messageDesc(file_orkstack_v1_activity, 16);
 
 /**
  * ActivityCommit is the immutable completion manifest (AGENTS.md §4.1). It is
@@ -989,6 +1293,19 @@ export type ActivityCommit = Message<"orkstack.v1.ActivityCommit"> & {
    * @generated from field: string build_id = 18;
    */
   buildId: string;
+
+  /**
+   * cache is the memo decision of the attempt that committed, for a cached
+   * task only; unset otherwise, so every existing commit is unchanged. A HIT
+   * commit names its source: its values, artifacts, system_artifacts and
+   * image are the source's references, and its identity fields
+   * (namespace … idempotency_key, image.index_digest) are THIS activity's, so
+   * §5.4 adoption of it on a retry is the ordinary one. memo_written,
+   * memo_write_error and key_components are never set here.
+   *
+   * @generated from field: orkstack.v1.CacheResult cache = 19;
+   */
+  cache?: CacheResult | undefined;
 };
 
 /**
@@ -996,7 +1313,7 @@ export type ActivityCommit = Message<"orkstack.v1.ActivityCommit"> & {
  * Use `create(ActivityCommitSchema)` to create a new message.
  */
 export const ActivityCommitSchema: GenMessage<ActivityCommit> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 13);
+  messageDesc(file_orkstack_v1_activity, 17);
 
 /**
  * ActivityFailureDetail is what a FAILED activity returns. A failure produces
@@ -1088,7 +1405,7 @@ export type ActivityFailureDetail = Message<"orkstack.v1.ActivityFailureDetail">
  * Use `create(ActivityFailureDetailSchema)` to create a new message.
  */
 export const ActivityFailureDetailSchema: GenMessage<ActivityFailureDetail> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 14);
+  messageDesc(file_orkstack_v1_activity, 18);
 
 /**
  * DescribeOrkerResult is the pool-liveness probe's payload: a pool proves it
@@ -1209,6 +1526,17 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
    * @generated from field: bool each_supported = 16;
    */
   eachSupported: boolean;
+
+  /**
+   * cache_supported is true on an Orker that implements the memo step. An
+   * Orker built before it answers false (unset), and submit refuses an
+   * Orkflow with a cached task on its pool: the SDK's default payload
+   * converter refuses unknown fields, so such an Orker would FAIL every
+   * cached task's attempt on decoding ExecuteTaskInput.cache.
+   *
+   * @generated from field: bool cache_supported = 17;
+   */
+  cacheSupported: boolean;
 };
 
 /**
@@ -1216,7 +1544,7 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
  * Use `create(DescribeOrkerResultSchema)` to create a new message.
  */
 export const DescribeOrkerResultSchema: GenMessage<DescribeOrkerResult> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 15);
+  messageDesc(file_orkstack_v1_activity, 19);
 
 /**
  * OpenPin is one pin this Orker currently hosts: a session it has accepted
@@ -1264,7 +1592,7 @@ export type OpenPin = Message<"orkstack.v1.OpenPin"> & {
  * Use `create(OpenPinSchema)` to create a new message.
  */
 export const OpenPinSchema: GenMessage<OpenPin> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 16);
+  messageDesc(file_orkstack_v1_activity, 20);
 
 /**
  * CordonOrkerInput is the argument of the CordonOrker activity, dispatched
@@ -1294,7 +1622,7 @@ export type CordonOrkerInput = Message<"orkstack.v1.CordonOrkerInput"> & {
  * Use `create(CordonOrkerInputSchema)` to create a new message.
  */
 export const CordonOrkerInputSchema: GenMessage<CordonOrkerInput> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity, 17);
+  messageDesc(file_orkstack_v1_activity, 21);
 
 /**
  * NetworkMode is the complete set of network configurations an Orkflow may
@@ -1326,4 +1654,80 @@ export enum NetworkMode {
  */
 export const NetworkModeSchema: GenEnum<NetworkMode> = /*@__PURE__*/
   enumDesc(file_orkstack_v1_activity, 0);
+
+/**
+ * CacheScope is who may reuse a cached task's memo (docs/DSL.md "Caching").
+ *
+ * @generated from enum orkstack.v1.CacheScope
+ */
+export enum CacheScope {
+  /**
+   * Never stored: the compiler writes ORKFLOW when `scope:` is absent.
+   *
+   * @generated from enum value: CACHE_SCOPE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Runs of the same Orkflow, in the same namespace.
+   *
+   * @generated from enum value: CACHE_SCOPE_ORKFLOW = 1;
+   */
+  ORKFLOW = 1,
+
+  /**
+   * Runs of any Orkflow of the same namespace whose task of the same id
+   * computes the same key. The Orkflow's name is then not part of the key.
+   *
+   * @generated from enum value: CACHE_SCOPE_NAMESPACE = 2;
+   */
+  NAMESPACE = 2,
+}
+
+/**
+ * Describes the enum orkstack.v1.CacheScope.
+ */
+export const CacheScopeSchema: GenEnum<CacheScope> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_activity, 1);
+
+/**
+ * CacheOutcome is what one attempt's memo step decided.
+ *
+ * @generated from enum orkstack.v1.CacheOutcome
+ */
+export enum CacheOutcome {
+  /**
+   * @generated from enum value: CACHE_OUTCOME_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * A memoized SUCCEEDED commit was reused: no image pulled, no secret read,
+   * no container run. CacheResult.source names it.
+   *
+   * @generated from enum value: CACHE_OUTCOME_HIT = 1;
+   */
+  HIT = 1,
+
+  /**
+   * No usable memo: the container ran. CacheResult.miss_reason says why.
+   *
+   * @generated from enum value: CACHE_OUTCOME_MISS = 2;
+   */
+  MISS = 2,
+
+  /**
+   * The run was submitted with no_cache: no memo was read; the container ran
+   * and its memo was refreshed.
+   *
+   * @generated from enum value: CACHE_OUTCOME_BYPASSED = 3;
+   */
+  BYPASSED = 3,
+}
+
+/**
+ * Describes the enum orkstack.v1.CacheOutcome.
+ */
+export const CacheOutcomeSchema: GenEnum<CacheOutcome> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_activity, 2);
 

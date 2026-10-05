@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// CacheService reads and trims the memos cached tasks reuse (docs/DSL.md
+// "Caching"). Memos are advisory: nothing here can change a result, and
+// PurgeCache only makes the next run of a cached task run its container.
+service CacheService {
+  // GetCacheStats reports one namespace's memo inventory, as the store lists
+  // it now, and how its cached tasks fared over one window of finished runs,
+  // derived on read from the run archive. Nothing is counted or stored.
+  rpc GetCacheStats(GetCacheStatsRequest) returns (GetCacheStatsResponse);
+  // PurgeCache deletes memos. It never touches a commit, run, attempt,
+  // log or artifact.
+  rpc PurgeCache(PurgeCacheRequest) returns (PurgeCacheResponse);
+}
+
+message GetCacheStatsRequest {
+  string namespace = 1;                  // empty = the default namespace
+  // orkflow_name narrows usage to one Orkflow's runs and inventory to its
+  // orkflow-scoped memos (namespace-scoped memos belong to no Orkflow and are
+  // then omitted). Empty = the whole namespace.
+  string orkflow_name = 2;
+  // since / until / lookback are GetStatsRequest's window, same rules.
+  google.protobuf.Timestamp since = 3;
+  google.protobuf.Timestamp until = 4;
+  google.protobuf.Duration lookback = 5;
+}
+
+// CacheUsageRow is one cached task's outcomes over the window's finished
+// runs: every TaskRun (and fan-out item) whose cache.outcome is set.
+message CacheUsageRow {
+  string orkflow_name = 1;
+  string task_id = 2;
+  int64 hits = 3;
+  int64 misses = 4;
+  int64 bypassed = 5;
+  // hit_rate is hits / (hits + misses); bypassed runs asked not to look and
+  // are not in it. hit_rate_defined is false when hits + misses is 0: a rate
+  // over nothing is unavailable, never 0.
+  double hit_rate = 6;
+  bool hit_rate_defined = 7;
+  // reused is the sum, over hits, of the source attempt's duration
+  // (source.finished_at - source.started_at): the producing attempts' time
+  // these hits did not spend again. Stated as that, never as "saved".
+  google.protobuf.Duration reused = 8;
+}
+
+// CacheInventoryRow is one group of stored memos, from a listing of keys:
+// no memo body is read.
+message CacheInventoryRow {
+  CacheScope scope = 1;
+  // orkflow_name is empty for CACHE_SCOPE_NAMESPACE.
+  string orkflow_name = 2;
+  string task_id = 3;
+  int64 memos = 4;
+  // oldest / newest are the store's last-modified times of the group's memo
+  // objects — when each was last written.
+  google.protobuf.Timestamp oldest = 5;
+  google.protobuf.Timestamp newest = 6;
+}
+
+message GetCacheStatsResponse {
+  // usage: orkflow ascending, then task ascending.
+  repeated CacheUsageRow usage = 1;
+  // inventory: ORKFLOW scope before NAMESPACE, then orkflow, then task.
+  repeated CacheInventoryRow inventory = 2;
+  // runs_in_window counts the archive index's finished runs in the window
+  // (of orkflow_name, when set); runs_scanned how many had a body to read —
+  // less only for an index row whose body is absent (the crash window
+  // between the archive's two writes, which ListRuns already skips).
+  int64 runs_in_window = 3;
+  int64 runs_scanned = 4;
+  // The question answered, and when — exactly as GetStatsResponse carries them.
+  string namespace = 5;
+  google.protobuf.Timestamp window_since = 6;
+  google.protobuf.Timestamp window_until = 7;
+  google.protobuf.Timestamp computed_at = 8;
+}
+
+message PurgeCacheRequest {
+  string namespace = 1;                  // empty = the default namespace
+  // Exactly ONE selector, else InvalidArgument:
+  //   orkflow_name set          — that Orkflow's orkflow-scoped memos;
+  //   namespace_scoped true     — the namespace-scoped memos;
+  //   all true                  — every memo of the namespace.
+  string orkflow_name = 2;
+  bool namespace_scoped = 3;
+  bool all = 4;
+  // task_id narrows orkflow_name or namespace_scoped to one task; it is
+  // InvalidArgument with all.
+  string task_id = 5;
+  // older_than keeps memos last written within it; unset or zero purges
+  // every selected memo.
+  google.protobuf.Duration older_than = 6;
+}
+
+message PurgeCacheResponse {
+  int64 deleted = 1;
+  // kept counts selected memos newer than older_than.
+  int64 kept = 2;
+  // more is true when this call stopped at its bound (10,000 deletions);
+  // call again to continue. A memo written after the listing is never
+  // deleted by it.
+  bool more = 3;
+  string namespace = 4;                  // resolved
+}
