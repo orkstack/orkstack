@@ -511,6 +511,8 @@ type composeRequest struct {
 	sel              *orkstackv1.ImagePolicySelection
 	namespaceIndexed bool
 	originIndexed    bool
+	// noCache is SubmitRunRequest.no_cache: one for the whole tree.
+	noCache bool
 }
 
 // indexAnswers is the starter's boot answers when it has them (the
@@ -593,6 +595,8 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 				fmt.Errorf("child orkflow %s@%s (task %q): resolve durable activity configuration: %w",
 					name, version, t.GetId(), err))
 		}
+		// 6b. The child's caching plan, under the parent's no_cache.
+		childPlan.Cache = s.cachePlanFor(childPlanned, r.noCache)
 		// 7. Its own children.
 		childPath := append(append([]string(nil), path...), composeKey(name, version))
 		if err := s.planChildren(ctx, r, childPlanned, &childPlan, depth+1, childPath); err != nil {

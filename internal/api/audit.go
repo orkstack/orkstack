@@ -162,6 +162,40 @@ type auditExtractor func(req, resp proto.Message) auditEntry
 // "default"), because the handler never resolved anything; a successful one
 // reads the resolved coordinate from the response where it carries one.
 var auditedProcedures = map[string]auditExtractor{
+	// A purge deletes memos and nothing else: no run, commit, attempt, log
+	// or artifact. Its fact is how many memos it deleted and kept.
+	orkstackv1connect.CacheServicePurgeCacheProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.PurgeCacheRequest)
+		entry := auditEntry{
+			Action:    "cache.purge",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+		}
+		switch {
+		case in.GetOrkflowName() != "":
+			entry.Target = "orkflow/" + in.GetOrkflowName()
+		case in.GetNamespaceScoped():
+			entry.Target = "namespace-scoped"
+		case in.GetAll():
+			entry.Target = "all"
+		default:
+			entry.Target = auditNoTarget
+		}
+		if task := in.GetTaskId(); task != "" {
+			entry.Target += "/" + task
+		}
+		olderThan := "-"
+		if d := in.GetOlderThan(); d != nil && d.AsDuration() > 0 {
+			olderThan = d.AsDuration().String()
+		}
+		entry.Detail = "older_than=" + olderThan
+		if out, ok := resp.(*orkstackv1.PurgeCacheResponse); ok && out != nil {
+			if out.GetNamespace() != "" {
+				entry.Namespace = out.GetNamespace()
+			}
+			entry.Detail += fmt.Sprintf(" deleted=%d kept=%d more=%t", out.GetDeleted(), out.GetKept(), out.GetMore())
+		}
+		return entry
+	},
 	orkstackv1connect.OrkflowServiceApplyOrkflowProcedure: func(req, resp proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.ApplyOrkflowRequest)
 		entry := auditEntry{

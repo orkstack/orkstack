@@ -67,9 +67,15 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	if statsTTL == 0 {
 		statsTTL = StatsCacheTTLFromEnv()
 	}
-	statsPath, statsHandler := orkstackv1connect.NewStatsServiceHandler(
-		NewStatsHandler(svc, statsTTL), handlerOptions...)
+	stats := NewStatsHandler(svc, statsTTL)
+	statsPath, statsHandler := orkstackv1connect.NewStatsServiceHandler(stats, handlerOptions...)
 	mux.Handle(statsPath, statsHandler)
+
+	// CacheService reads and trims the memos cached tasks reuse. It shares
+	// the stats handler's window resolver and response cache — no second TTL.
+	cachePath, cacheHandler := orkstackv1connect.NewCacheServiceHandler(
+		NewCacheHandler(svc, stats), handlerOptions...)
+	mux.Handle(cachePath, cacheHandler)
 
 	webhookPath, webhookHandler := orkstackv1connect.NewWebhookServiceHandler(svc, handlerOptions...)
 	mux.Handle(webhookPath, webhookHandler)

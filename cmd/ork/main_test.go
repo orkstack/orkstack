@@ -793,3 +793,33 @@ func TestLoadConfig_ComposeMaxDepthBounds(t *testing.T) {
 		t.Fatalf("6 = %v", err)
 	}
 }
+
+// ORK_CACHE_MAX_TTL bounds how old a memoized result a cached task may reuse:
+// 0s, a negative duration and garbage refuse boot; 1s and a year are taken;
+// unset is engine.DefaultCacheMaxTTL.
+func TestLoadConfig_CacheMaxTTLBounds(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    time.Duration
+		refused bool
+	}{
+		{"", 168 * time.Hour, false}, {"1s", time.Second, false}, {"8760h", 8760 * time.Hour, false},
+		{"0s", 0, true}, {"-1h", 0, true}, {"abc", 0, true}, {"500ms", 0, true},
+	} {
+		t.Run("ORK_CACHE_MAX_TTL="+tc.raw, func(t *testing.T) {
+			t.Setenv("ORK_CACHE_MAX_TTL", tc.raw)
+			cfg := loadConfig()
+			if refused := cfg.limitsErr != nil; refused != tc.refused {
+				t.Fatalf("refused = %v (%v), want %v", refused, cfg.limitsErr, tc.refused)
+			}
+			if !tc.refused && cfg.cacheMaxTTL != tc.want {
+				t.Fatalf("cacheMaxTTL = %s, want %s", cfg.cacheMaxTTL, tc.want)
+			}
+		})
+	}
+	t.Setenv("ORK_CACHE_MAX_TTL", "0s")
+	if err := loadConfig().limitsErr; err == nil ||
+		!strings.Contains(err.Error(), "ORK_CACHE_MAX_TTL=0s must be at least 1s: it bounds how old a memoized result a cached task may reuse") {
+		t.Fatalf("0s = %v", err)
+	}
+}

@@ -141,6 +141,9 @@ var Schema = []Var{
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
 	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
 	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},
+	// ORK_CACHE_MAX_TTL's fallback is engine.DefaultCacheMaxTTL: the oldest
+	// memoized result a cached task (cache:) may reuse.
+	{Path: "engine.cache_max_ttl", Env: "ORK_CACHE_MAX_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultCacheMaxTTL)},
 	{Path: "engine.usage_cache_ttl", Env: "ORK_USAGE_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultUsageCacheTTL)},
 
 	{Path: "engine.limits.values_max_bytes", Env: "ORK_VALUES_MAX_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(engine.DefaultValuesMaxBytes)},

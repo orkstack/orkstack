@@ -22,7 +22,7 @@ import (
 var diffFields = []string{
 	"definition", "input", // run-level
 	"presence", "status", "attempt", "pool", "pin", "orker",
-	"exit_code", "error", "duration", "image", "platform_digest", // task-level
+	"exit_code", "error", "duration", "image", "platform_digest", "cached", // task-level
 }
 
 // taskDiffFields is the task-level half of diffFields, in row order.
@@ -445,8 +445,25 @@ func (s *Service) taskField(ctx context.Context, field string, side *diffSide, t
 		return s.imageOf(ctx, side, task)
 	case "platform_digest":
 		return s.platformDigestOf(ctx, side, task)
+	case "cached":
+		return valueOf(cacheDiffValue(task)), nil
 	}
 	return diffValue{}, connect.NewError(connect.CodeInternal, fmt.Errorf("diff field %q has no renderer", field))
+}
+
+// cacheDiffValue renders a task's memo decision for the `cached` field:
+// "hit <source run id>", "miss", "bypassed", or "" for a row with no cache.
+// Both sides are always available: the value is the run body's.
+func cacheDiffValue(t *orkstackv1.TaskRun) string {
+	switch t.GetCache().GetOutcome() {
+	case orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT:
+		return "hit " + t.GetCache().GetSource().GetRunId()
+	case orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS:
+		return "miss"
+	case orkstackv1.CacheOutcome_CACHE_OUTCOME_BYPASSED:
+		return "bypassed"
+	}
+	return ""
 }
 
 // errorLabel is "{code} ({category})": the message and details are never

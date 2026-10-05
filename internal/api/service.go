@@ -263,6 +263,16 @@ type Config struct {
 	// raise it. Checked at validate/apply and again at submit.
 	ComposeMaxDepth int32
 
+	// CacheMaxTTL is ORK_CACHE_MAX_TTL: the oldest memoized result a cached
+	// task may reuse, measured from when it was committed; it caps every
+	// task's ttl_seconds and bounds a task that sets none. Zero means
+	// engine.DefaultCacheMaxTTL. Read at submit onto RunPlan.Cache.
+	CacheMaxTTL time.Duration
+	// Memos is the memo store (docs/DSL.md "Caching"), in the same backend
+	// as commits and attempts. Nil answers CacheService with
+	// FailedPrecondition; it never affects a run.
+	Memos artifacts.MemoStore
+
 	// TransferBudgetSeconds overrides the derived data-transfer allowance.
 	// When zero, submit derives it from Limits and
 	// FloorThroughputBytesPerSecond (§6.3).
@@ -418,6 +428,9 @@ type Service struct {
 	// composeMaxDepth is Config.ComposeMaxDepth, defaulted (spec
 	// composed-orkflows §8).
 	composeMaxDepth int
+	// cacheMaxTTL is Config.CacheMaxTTL, defaulted; memos is Config.Memos.
+	cacheMaxTTL time.Duration
+	memos       artifacts.MemoStore
 	// retention owns the deployment's maximum run retention (see
 	// Config.Retention). Nil answers SystemService's retention RPCs with
 	// Unimplemented.
@@ -470,6 +483,8 @@ func NewService(cfg Config) *Service {
 		limits:            cfg.Limits,
 		eachMaxItems:      eachMaxItemsOf(cfg.EachMaxItems),
 		composeMaxDepth:   composeMaxDepthOf(cfg.ComposeMaxDepth),
+		cacheMaxTTL:       cacheMaxTTLOf(cfg.CacheMaxTTL),
+		memos:             cfg.Memos,
 		retention:         cfg.Retention,
 		retentionEnforced: cfg.RetentionEnforced,
 		imagePolicies:     cfg.ImagePolicies,
@@ -881,6 +896,9 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 		return nil, nil, nil, err // a store outage: Unavailable, never an issue
 	}
 	issues = append(issues, composeIssues...)
+	// Caching's apply warnings: never an ERROR, so an apply is never refused
+	// on them (docs/DSL.md "Caching").
+	issues = append(issues, cacheIssues(wf, s.cacheMaxTTL)...)
 	if hasError(issues) {
 		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
@@ -1338,6 +1356,9 @@ func (s *Service) prepare(
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("resolve durable activity configuration: %w", err))
 	}
+	// The caching plan: nil for an Orkflow with no cached task, so no_cache
+	// on such a run changes nothing — not even the plan's bytes.
+	plan.Cache = s.cachePlanFor(planned, msg.GetNoCache())
 	// Every child run this submission can start, planned recursively under
 	// the parent's namespace, resolver, allow_empty_pool, image-policy
 	// selection and boot answers (spec composed-orkflows §5.2). It refuses
@@ -1345,7 +1366,7 @@ func (s *Service) prepare(
 	nsIdx, orIdx := indexAnswers(binding.Starter)
 	if err := s.planChildren(ctx, composeRequest{
 		ns: ns, resolver: s.resolverFor(binding), allowEmpty: msg.GetAllowEmptyPool(),
-		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx,
+		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(),
 	}, planned, &plan, 0, nil); err != nil {
 		return submission{}, err
 	}
