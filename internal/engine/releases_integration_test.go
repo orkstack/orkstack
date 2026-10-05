@@ -201,7 +201,11 @@ func (w *releaseWorld) observe(what string, want func(engine.ReleaseObservation)
 	var obs engine.ReleaseObservation
 	var err error
 	for {
+		start := time.Now()
 		obs, err = w.cluster.ObserveReleases(w.ctx)
+		if err != nil {
+			w.t.Logf("%s: the cluster did not answer this read after %s: %v", what, time.Since(start).Round(time.Millisecond), err)
+		}
 		if err == nil && want(obs) {
 			return obs
 		}
@@ -221,13 +225,23 @@ func releaseOf(obs engine.ReleaseObservation, build string) (engine.ObservedRele
 	return engine.ObservedRelease{}, false
 }
 
+// read is one observation of the deployment a test acts on, read again
+// until the cluster answers or 60 s pass. The cluster answers a deployment
+// read by querying its own deployment workflow, and that query waits while the
+// workflow is still applying a change — a release that just registered, or a
+// routing change — so on a loaded cluster a single read made right after one
+// can fail DeadlineExceeded inside the seam's 5 s read budget (observed: the
+// cluster gave up after 2.5 s), which the API reports as Unavailable. Where
+// the read is a test's setup, not its subject, that is a wait, not a failure.
+func (w *releaseWorld) read(what string) engine.ReleaseObservation {
+	w.t.Helper()
+	return w.observe(what, func(engine.ReleaseObservation) bool { return true })
+}
+
 // setCurrent makes build current through the seam, guards on.
 func (w *releaseWorld) setCurrent(build string) {
 	w.t.Helper()
-	obs, err := w.cluster.ObserveReleases(w.ctx)
-	if err != nil {
-		w.t.Fatalf("observe before promoting %s: %v", build, err)
-	}
+	obs := w.read("observe before promoting " + build)
 	want := engine.Routing{Current: build, Ramping: obs.Routing.Ramping, RampPercent: obs.Routing.RampPercent}
 	if obs.Routing.Ramping == build {
 		want.Ramping, want.RampPercent = "", 0
@@ -455,10 +469,7 @@ func TestIntegration_SetRoutingIsConfirmedOnTheEngineChannel(t *testing.T) {
 	w.awaitRegistered("v2", w.runQueue, w.orkerQueue)
 
 	// A ramp, confirmed.
-	obs, err := w.cluster.ObserveReleases(w.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	obs := w.read("observe before the ramp")
 	ramp := engine.Routing{Current: "v1", Ramping: "v2", RampPercent: 30}
 	if err := w.cluster.SetRouting(w.ctx, obs, ramp); err != nil {
 		t.Fatalf("ramp: %v", err)
@@ -471,10 +482,7 @@ func TestIntegration_SetRoutingIsConfirmedOnTheEngineChannel(t *testing.T) {
 	w.step(fmt.Sprintf("ramp v2 30%%: routing confirmed on the engine's channel after %s", time.Since(start).Round(time.Millisecond)))
 
 	// A promote, confirmed, and the next run executes on the promoted release.
-	obs, err = w.cluster.ObserveReleases(w.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	obs = w.read("observe before the promote")
 	promote := engine.Routing{Current: "v2"}
 	if err := w.cluster.SetRouting(w.ctx, obs, promote); err != nil {
 		t.Fatalf("promote: %v", err)
