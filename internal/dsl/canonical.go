@@ -262,6 +262,16 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 			},
 		}
 	}
+	// cache is emitted ONLY when set — the same exception, for the same
+	// reason, as `pin`. It is part of the definition: a version that consults
+	// memos is not the version that does not. It is NOT part of any memo key
+	// (cache-memoization spec §4.2): changing a TTL invalidates nothing.
+	if c := t.GetCache(); c != nil {
+		out["cache"] = map[string]any{
+			"ttlSeconds": int64(c.GetTtlSeconds()),
+			"scope":      int64(c.GetScope()),
+		}
+	}
 	return out, nil
 }
 
