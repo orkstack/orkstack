@@ -420,11 +420,9 @@ func childInputIssues(taskIndex int, t *orkstackv1.Task, node *composeNode) []*o
 	sort.Strings(names)
 	var issues []*orkstackv1.ValidationIssue
 	for _, name := range names {
-		decl := declared[name].GetStructValue().GetFields()
-		if !decl["required"].GetBoolValue() {
-			continue
-		}
-		if _, hasDefault := decl["default"]; hasDefault {
+		// dsl.ReadInput is the one reading of "required": required: true and
+		// no default — the reading the interface comparison applies too.
+		if !dsl.ReadInput(declared[name]).Required {
 			continue
 		}
 		if value, ok := with[name]; !ok || value == nil {

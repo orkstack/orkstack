@@ -199,12 +199,23 @@ var auditedProcedures = map[string]auditExtractor{
 			Target:    in.GetName(),
 			Detail:    "requested " + in.GetVersion(),
 		}
+		if in.GetAcknowledgeBreaking() {
+			entry.Detail += " acknowledge_breaking"
+		}
 		if out, ok := resp.(*orkstackv1.SetCurrentOrkflowVersionResponse); ok && out != nil {
 			previous := out.GetPreviousVersion()
 			if previous == "" {
 				previous = "-"
 			}
 			entry.Detail = "current " + previous + " -> " + out.GetCurrentVersion()
+			// The interface verdict makes a breaking promotion attributable
+			// to whoever acknowledged it (interface-compatibility-gate §5.6).
+			if verdict := out.GetInterfaceVerdict(); verdict != orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_UNSPECIFIED {
+				entry.Detail += " interface=" + auditVerdictWord(verdict) + " vs " + out.GetComparedVersion()
+				if verdict == orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_BREAKING {
+					entry.Detail += " acknowledged"
+				}
+			}
 		}
 		return entry
 	},
@@ -907,4 +918,19 @@ func (s *Service) ListAuditRecords(
 		out.NextPageToken = token
 	}
 	return connect.NewResponse(out), nil
+}
+
+// auditVerdictWord renders an interface verdict in the audit detail's
+// lower-case words.
+func auditVerdictWord(verdict orkstackv1.InterfaceVerdict) string {
+	switch verdict {
+	case orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_COMPATIBLE:
+		return "compatible"
+	case orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_BREAKING:
+		return "breaking"
+	case orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_UNKNOWN:
+		return "unknown"
+	default:
+		return "unspecified"
+	}
 }

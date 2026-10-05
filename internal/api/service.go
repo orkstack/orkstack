@@ -624,6 +624,11 @@ func (s *Service) ApplyOrkflow(
 	if err != nil {
 		return nil, err
 	}
+	// The interface comparison must see the store as it was BEFORE this
+	// version lands, or an unpromoted orkflow's new head would be compared
+	// with itself. WARNINGs only: applying is never refused for a consumer's
+	// sake (interface-compatibility-gate §5.4).
+	issues = append(issues, s.interfaceChangeIssues(ctx, ns.GetName(), wf)...)
 	expected, err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
 		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion())
 	if err != nil {
@@ -669,9 +674,11 @@ func (s *Service) ApplyOrkflow(
 // edit tokens or writing a definition. A document error is a returned issue;
 // unavailable registries and namespace stores remain RPC failures.
 func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orkstackv1.ValidateOrkflowRequest]) (*connect.Response[orkstackv1.ValidateOrkflowResponse], error) {
-	wf, _, issues, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
+	wf, ns, issues, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
 	if err == nil {
-		// Interface warnings first, then the pin advice, as one list.
+		// The preparation's warnings first, then the declared-interface
+		// change against what runs now, then the pin advice, as one list.
+		issues = append(issues, s.interfaceChangeIssues(ctx, ns.GetName(), wf)...)
 		return connect.NewResponse(&orkstackv1.ValidateOrkflowResponse{
 			Orkflow: wf,
 			Issues:  append(issues, pinUserParityWarnings(wf)...),
@@ -1002,6 +1009,16 @@ func storesVersion(versions artifacts.OrkflowVersions, version string) bool {
 		}
 	}
 	return false
+}
+
+// storedVersion returns the stored document of one version, or nil.
+func storedVersion(versions artifacts.OrkflowVersions, version string) *orkstackv1.Orkflow {
+	for _, wf := range versions.All {
+		if wf.GetVersion() == version {
+			return wf
+		}
+	}
+	return nil
 }
 
 // derivedFrom names the edit's base in a refusal, so a user who deliberately
