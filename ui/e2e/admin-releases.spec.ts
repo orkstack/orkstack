@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 import { execFileSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';

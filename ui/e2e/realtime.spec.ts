@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';

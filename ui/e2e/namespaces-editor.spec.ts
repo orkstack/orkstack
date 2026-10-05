@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 import { execFileSync, execSync, spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import net from 'node:net';

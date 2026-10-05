@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";

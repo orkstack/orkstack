@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { execFileSync, type ChildProcess } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
