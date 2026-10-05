@@ -103,6 +103,10 @@ type pipelineOpts struct {
 	trainSalt     string
 	scope         orkstackv1.CacheScope
 	featurizeID   string
+	// retry is every task's retry policy; nil is the DSL default of one
+	// attempt. Retry is not a key component (spec §4.2), so it never changes
+	// what a hit reuses.
+	retry *orkstackv1.RetryPolicy
 }
 
 // cachedPipeline is examples/cached-pipeline.ork.yaml over alpine.
@@ -134,13 +138,13 @@ func (c *cacheE2E) cachedPipeline(name string, o pipelineOpts) *orkstackv1.Orkfl
 		Name: name, Version: "0.1.0", Inputs: inputs,
 		Tasks: []*orkstackv1.Task{
 			{Id: o.featurizeID, Uses: c.alpine, Image: image, Command: []string{"/bin/sh", "-c", featurize}, With: fw,
-				TimeoutSeconds: 120, Network: orkstackv1.NetworkMode_NETWORK_MODE_NONE,
+				TimeoutSeconds: 120, Network: orkstackv1.NetworkMode_NETWORK_MODE_NONE, Retry: o.retry,
 				Cache: &orkstackv1.CacheSpec{TtlSeconds: 86400, Scope: o.scope}},
 			{Id: "stamp", Uses: c.alpine, Image: image, Command: []string{"/bin/sh", "-c", stamp},
-				TimeoutSeconds: 120, Network: orkstackv1.NetworkMode_NETWORK_MODE_NONE},
+				TimeoutSeconds: 120, Network: orkstackv1.NetworkMode_NETWORK_MODE_NONE, Retry: o.retry},
 			{Id: "train", Uses: c.alpine, Image: image, Needs: []string{o.featurizeID, "stamp"},
 				Command: []string{"/bin/sh", "-c", train}, With: tw,
-				TimeoutSeconds: 120, Network: orkstackv1.NetworkMode_NETWORK_MODE_NONE,
+				TimeoutSeconds: 120, Network: orkstackv1.NetworkMode_NETWORK_MODE_NONE, Retry: o.retry,
 				Cache: &orkstackv1.CacheSpec{Scope: orkstackv1.CacheScope_CACHE_SCOPE_ORKFLOW}},
 		},
 	}
@@ -396,7 +400,12 @@ func TestIntegration_CacheMissingSourceObjectIsAMiss(t *testing.T) {
 func TestIntegration_CacheHitCommittedThenOrkerDiesIsAdopted(t *testing.T) {
 	c := startCacheE2E(t)
 	first := c.startCacheOrker("cache-i7-a", nil, nil)
-	wf := c.cachedPipeline(fmt.Sprintf("cached-pipeline-i7-%d", time.Now().UnixNano()), pipelineOpts{})
+	// featurize needs a second attempt to adopt the dead Orker's hit commit,
+	// and stamp, in flight beside it on the same Orker, a second attempt to
+	// survive that Orker's stop: the DSL default is a single attempt, which
+	// would fail the run on the first attempt's cancellation instead.
+	wf := c.cachedPipeline(fmt.Sprintf("cached-pipeline-i7-%d", time.Now().UnixNano()), pipelineOpts{
+		retry: &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 1, BackoffCoefficient: 1}})
 	source := c.runPipeline(runIDFor("i7a"), wf, 1000, false)
 	first.Stop()
 
