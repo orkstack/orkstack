@@ -734,6 +734,36 @@ children; the output panel says *Declared outputs* or *Leaf task values*; the
 Orkflow page links each composed task's child at its version with the pinned
 digest, lists the declared outputs, and the DAG names the child.
 
+### Interface compatibility
+
+An Orkflow's *declared interface* is its `inputs:` and `outputs:` (`docs/DSL.md`
+"Promoting compares declared interfaces"). Two reads serve it, both computed
+per request and stored nowhere: `OrkflowService.CompareInterfaces` classifies
+how one stored version's declared interface changes in another (every finding
+with its own `COMPATIBLE`, `BREAKING` or `UNKNOWN` verdict and the one sentence
+every client prints verbatim), and `OrkflowService.ListOrkflowCallers` lists
+every composing task of another orkflow's scanned version, every trigger and
+every schedule of the namespace that references it, with the version each pins
+(empty: it follows current; a schedule the cluster could not describe carries
+`unavailable_reason` instead). Three fields carry the gate:
+`OrkflowVersion.interface_verdict` (each version against the current one),
+`SetCurrentOrkflowVersionRequest.acknowledge_breaking`, and
+`SetCurrentOrkflowVersionResponse.interface_verdict`/`compared_version`.
+`SetCurrentOrkflowVersion` refuses a BREAKING promotion with
+`FailedPrecondition` naming each breaking change until it is acknowledged,
+never refuses COMPATIBLE or UNKNOWN, and swaps the pointer only while it still
+names the version it compared against. Apply and validate report a breaking
+change against the version that runs now as field-anchored WARNINGs and never
+refuse.
+
+CLI: `orkflow compat NAME [FROM] TO`, `orkflow callers NAME [--all-versions]`,
+`orkflow promote NAME V [--acknowledge-breaking]` (which prints `Interface
+against <v>: …`), the `COMPAT` column of `orkflow versions`, and the warnings
+of `apply`/`orkflow validate`; `--json` for each. UI: a verdict chip on every
+row of the Versions tab, *Compare interfaces* beside *Diff*, the promote
+dialog's findings, followers, pinned composers and acknowledgement checkbox,
+and a *Callers* section under the version table.
+
 ## Capability and acceptance matrix
 
 | Capability | UI behavior | CLI/shared behavior | Required observable acceptance |
@@ -776,6 +806,7 @@ digest, lists the declared outputs, and the DAG names the child.
 | Awaited tasks | AWAITING pill, deadline, live remaining time; Resolve (typed or JSON) and Reject dialogs with CLI equivalents; *Delivered* until applied; one-time callback panel after submit; placeholder `curl` on the card | `run resolve [--values/--values-file` or `--reject --reason]`; `run submit`/`again` print each callback once; `run get` await table; `run plan` `awaits`; `POST /v1/runs/{id}/awaits/{task}[/reject]` | Values stored byte-exact before delivery and read by the downstream task; timeout and rejection fail the run with their codes; cancellation ends the await `CANCELED`; a second replica and a restarted worker apply a resolution; refusals store and send nothing; the token appears in exactly one response |
 | Fan-out (`each:`) | One card per fan-out with a summary and an item grid updated live from item events; an item panel with its attempts, logs, artifacts and CLI equivalents; deep links carry `item`; plan and DAG show the bound | `run get` collapsed row and `--expand`; `--item` on `logs`, `artifacts`, `artifact download`, `attempts`, `timing`, `inspect`, `evidence export`, `artifact provenance`, `task run`; `watch` spells `convert[97]`; `run plan` counts an input source | Every item commits under its own key and retries alone; a dependent stages every item from its commit; a failed item fails the run naming itself; a second replica serves every item read; history at the ceiling stays inside the stated budget; a run with no fan-out is byte-identical (golden replay) |
 | Composed Orkflows (`uses: orkflow:`, `outputs:`) | A composed task's card links to its child run, rolls up the child's tasks live and names the pinned child; the child's page links back; *Child runs* lists a parent's children; the Orkflow page shows the child reference, its digest and the declared outputs; apply shows rules 26–32 on their fields | `run get` names each child and `--tree` expands them; `run list --origin parent-run:RUN`; `orkflow get` COMPOSED and OUTPUT tables; `run logs` and `task run` refuse a composed task naming the child; `run plan` renders it | A child is its own run with its own id, history, archive record and `PARENT_RUN` origin; declared outputs are `Run.output` and the task's values, read by a downstream container; a child failure fails the parent task with the child's category; cancelling or terminating the parent leaves no child running; a second replica reads the tree; a submit that cannot plan the tree mints nothing; a run with neither construct is byte-identical (golden replay) |
+| Interface compatibility | Versions tab marks every version compatible, breaking or unknown against the current one; *Compare interfaces* beside *Diff*; the promote dialog lists breaking and unknown findings, what follows the current version and what pins it, and requires an acknowledgement for a breaking promotion; a *Callers* section lists composing Orkflows, triggers and schedules; the Apply page shows breaking warnings | `orkflow compat NAME [FROM] TO`, `orkflow callers NAME [--all-versions]`, `orkflow promote NAME V [--acknowledge-breaking]`, `orkflow versions` COMPAT column, warnings on `apply`/`validate`; `--json` for each | A breaking promotion is refused naming each change and moves nothing on any replica until acknowledged; compatible and unknown promotions are never refused; an apply is never refused and a breaking one warns; a promotion that raced another is refused rather than swapping across an unchecked break; `callers` names exactly the namespace's composing versions, triggers and schedules and nothing of another namespace; `compat` and `callers` write nothing |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new

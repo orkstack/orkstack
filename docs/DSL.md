@@ -93,6 +93,8 @@ orkctl orkflow versions deploy          # every version, newest first, CURRENT m
 orkctl orkflow promote deploy 1.4.0     # move the pointer
 orkctl orkflow promote deploy 1.3.0     # roll back: the same command
 orkctl orkflow diff deploy 1.3.0 1.4.0  # what changed between two versions
+orkctl orkflow compat deploy 1.4.0      # what promoting 1.4.0 breaks (inputs: and outputs:)
+orkctl orkflow callers deploy           # what starts or composes deploy, and what it pins
 orkctl orkflow edit deploy              # $EDITOR round trip, applied as a new version
 orkctl orkflow edit deploy --version 1.3.0   # start from an older version
 ```
@@ -123,6 +125,64 @@ If somebody applies while your editor is open, the apply is refused
 (`failed_precondition`, naming the head that was fetched and the head that
 replaced it) instead of landing beside a version nobody looked at, and your
 edit is kept in a file the refusal names. Re-read, diff, re-apply.
+
+#### Promoting compares declared interfaces
+
+`diff` answers "what text changed"; promoting asks a narrower question first:
+**what will this break?** An orkflow's *declared interface* is its `inputs:`
+(with `type`, `required` and `default`) and its `outputs:` (by name) — nothing
+else. Tasks, images, `with:`, pools, pins, retries, timeouts, conditions and
+output *templates* are implementation: an orkflow that rewrites every task but
+keeps its inputs and outputs is **compatible**.
+
+`orkctl orkflow promote` compares the target with the version that runs now
+and gives every declared input and output a finding:
+
+| Change | Verdict |
+|---|---|
+| input added, required with no default | breaking |
+| input added, optional (or defaulted) | compatible |
+| input removed | breaking |
+| input retyped, or typed where it was untyped | breaking |
+| input's type dropped | compatible |
+| input now required (with no default) | breaking |
+| input no longer required | compatible |
+| input gains a default, or its default changes | compatible |
+| input loses its default (and is not now required) | breaking |
+| output removed (a rename is a removal and an addition) | breaking |
+| output added, or unchanged | compatible |
+| neither version declares `outputs:`, or only the newer one does | unknown |
+
+An orkflow with no `outputs:` declares no return contract — a run's output is
+then every leaf task's values, an accident of graph shape — so its output side
+is **unknown**, never compatible. A version string is a name: `3.0.0` gets no
+pass for being a major bump; the declarations decide.
+
+A **breaking** promotion is refused (`failed_precondition`, naming each
+breaking change) until you pass `--acknowledge-breaking`; **compatible** and
+**unknown** promotions are never refused. Rolling back is the same command and
+is gated alike: rolling back from a version that added an input removes it, so
+an incident rollback across such a change needs the flag too. The pointer moves
+only while it still names the version the comparison was made against: a
+promotion that raced another one is refused rather than landed across a
+comparison it never made.
+
+**Applying is never refused** for a consumer's sake. A breaking version is
+stored, with warnings at the exact fields (`inputs.region`, `outputs.url`) and
+one at `version` saying what applying does; `orkctl orkflow validate` reports
+the same warnings and still exits `0`. For an orkflow **nobody ever promoted**
+applying *is* a release — it runs its newest applied version — and the warning
+says so: promote the version you want to keep running before applying.
+
+`orkctl orkflow compat NAME [FROM] TO` prints the findings (two arguments
+compare from the current version; it exits `0` whatever it finds — `--json`'s
+`verdict` is what a CI job reads). `orkctl orkflow callers NAME
+[--all-versions]` lists every composing orkflow version, trigger and schedule
+in the namespace that references it, with the version each pins — or
+`current`, for the triggers and schedules a promotion moves. A composing
+orkflow always pins a version (`uses: orkflow:<name>@<version>`), so it meets a
+breaking change only when its author bumps the pin, and rule 32 then refuses
+that apply on the exact field.
 
 ## Inputs
 
