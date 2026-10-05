@@ -7,6 +7,7 @@
 import type { JsonObject } from '@bufbuild/protobuf';
 import { PlanOutcome, type PlanRunResponse, type PlanTask } from './gen/orkstack/v1/service_pb';
 import { eachPlanDetail } from './each';
+import { cachePlanDetail } from './cache';
 
 /** The lower-case OUTCOME word the CLI's table prints. */
 export function planOutcomeWord(outcome: PlanOutcome): string {
@@ -56,7 +57,9 @@ export function planDetail(task: PlanTask, plan: PlanRunResponse): string {
 			return task.skipReason;
 		case PlanOutcome.RUNS:
 			// A fan-out is one PlanTask (spec each-fan-out §5.12).
-			if (task.each) return eachPlanDetail(task);
+			if (task.each) return task.cache ? `${eachPlanDetail(task)}; ${cachePlanDetail(task.cache)}` : eachPlanDetail(task);
+			// A cached task: a plan never predicts a hit (cmd/orkctl run_plan.go).
+			if (task.cache) return cachePlanDetail(task.cache);
 			// A composed task is one PlanTask; the plan never recurses into
 			// the child (cmd/orkctl run_plan.go composedPlanDetail).
 			if (task.orkflow) {

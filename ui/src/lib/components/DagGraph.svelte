@@ -96,6 +96,18 @@
 							font-family="var(--font-mono)">each ≤ {node.task.each.maxItems}</text
 						>
 					{/if}
+					{#if node.task.cache}
+						<!-- A cached task: memoized across runs (docs/DSL.md "Caching"). -->
+						<text
+							data-testid="dag-node-{node.task.id}-cache"
+							x={node.x + DAG_NODE_W - 12}
+							y={node.y + 43}
+							text-anchor="end"
+							fill="var(--color-brand-700)"
+							font-size="11"
+							font-family="var(--font-mono)">cached</text
+						>
+					{/if}
 				</g>
 			{/each}
 		</svg>

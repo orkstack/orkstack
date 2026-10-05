@@ -14,6 +14,7 @@ import { StatsService } from './gen/orkstack/v1/stats_pb';
 import { AuditService } from './gen/orkstack/v1/audit_pb';
 import { ScheduleService } from './gen/orkstack/v1/schedule_pb';
 import { AutomationService } from './gen/orkstack/v1/automation_pb';
+import { CacheService } from './gen/orkstack/v1/cache_pb';
 
 // All platform access goes through the clients generated from
 // proto/orkstack/v1 (see ui/src/lib/gen). The browser uses same-origin URLs;
@@ -37,6 +38,10 @@ export function orkstack(fetchFn: typeof globalThis.fetch) {
 		schedules: createClient(ScheduleService, transport),
 		namespaces: createClient(NamespaceService, transport),
 		stats: createClient(StatsService, transport),
+		// cache reads and trims the memos cached tasks reuse (docs/DSL.md
+		// "Caching"): stats derived on read, and a purge that deletes memos
+		// and nothing else.
+		cache: createClient(CacheService, transport),
 		// system answers GetSystemInfo — the one admin read that describes the
 		// REPLICA THAT ANSWERED rather than the cluster or the store. It is its
 		// own client because it is its own service:

@@ -70,6 +70,8 @@ export function submitCli(args: {
 	input: JsonObject;
 	idempotencyKey?: string;
 	allowEmptyPool?: boolean;
+	/** Ignore every memo for this run (--no-cache, docs/DSL.md "Caching"). */
+	noCache?: boolean;
 	/** Recorded on the run as its origin reference (--origin-ref). */
 	originReference?: string;
 	/**
@@ -87,6 +89,7 @@ export function submitCli(args: {
 	];
 	if (args.idempotencyKey) flags.push(`--idempotency-key ${shellQuote(args.idempotencyKey)}`);
 	if (args.allowEmptyPool) flags.push('--allow-empty-pool');
+	if (args.noCache) flags.push('--no-cache');
 	if (args.originReference) flags.push(`--origin-ref ${shellQuote(args.originReference)}`);
 	const command = args.sourceRunId
 		? `orkctl run again ${shellQuote(args.sourceRunId)}`
