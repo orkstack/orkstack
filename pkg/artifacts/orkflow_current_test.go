@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -147,5 +148,40 @@ func TestOrkflowVersions_ResolvedPrefersThePointer(t *testing.T) {
 		if got := tc.versions.Resolved(); got != tc.want {
 			t.Errorf("%s: Resolved() = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestCurrentExpectation pins the three claims a promotion can make about the
+// pointer it replaces, and that a refusal is recognised both as "the pointer
+// moved" and as the older "lost a race".
+func TestCurrentExpectation(t *testing.T) {
+	cases := []struct {
+		name      string
+		e         CurrentExpectation
+		satisfied map[string]bool
+	}{
+		{"no expectation", NoCurrentExpectation(), map[string]bool{"": true, "1.0.0": true, "2.0.0": true}},
+		{"expect unset", ExpectCurrent(""), map[string]bool{"": true, "1.0.0": false}},
+		{"expect 1.0.0", ExpectCurrent("1.0.0"), map[string]bool{"": false, "1.0.0": true, "2.0.0": false}},
+	}
+	for _, tc := range cases {
+		for current, want := range tc.satisfied {
+			if got := tc.e.SatisfiedBy(current); got != want {
+				t.Errorf("%s: SatisfiedBy(%q) = %v, want %v", tc.name, current, got, want)
+			}
+		}
+	}
+	if NoCurrentExpectation().Stated() || !ExpectCurrent("").Stated() {
+		t.Fatal("Stated: NoCurrentExpectation must claim nothing and ExpectCurrent(\"\") must claim unset")
+	}
+	if ExpectCurrent("1.0.0").Version() != "1.0.0" {
+		t.Fatal("Version() must return the claimed pointer")
+	}
+	var err error = &CurrentMovedError{Namespace: "default", Name: "deploy", Expected: "1.0.0", Current: "2.0.0"}
+	if !errors.Is(err, ErrCurrentMoved) || !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("CurrentMovedError must be errors.Is ErrCurrentMoved and ErrPreconditionFailed: %v", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, `"2.0.0"`) || !strings.Contains(msg, `"1.0.0"`) {
+		t.Fatalf("CurrentMovedError must name both pointers: %q", msg)
 	}
 }

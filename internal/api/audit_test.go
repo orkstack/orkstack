@@ -1018,3 +1018,49 @@ func TestAuditInterceptor_ResolveAwaitRecordsTheDigestNeverTheValues(t *testing.
 		t.Fatalf("rejection record = %v", reject)
 	}
 }
+
+// TestAudit_PromoteDetailRecordsTheInterfaceVerdict: a breaking promotion is
+// attributable to whoever acknowledged it, and a refused one records what
+// was requested (interface-compatibility-gate §5.6).
+func TestAudit_PromoteDetailRecordsTheInterfaceVerdict(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	if _, err := f.svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: compatBlock210})); err != nil {
+		t.Fatalf("ApplyOrkflow: %v", err)
+	}
+	if _, err := f.svc.SetCurrentOrkflowVersion(ctx, connect.NewRequest(
+		&orkstackv1.SetCurrentOrkflowVersionRequest{Name: "release-block", Version: "2.1.0"})); err != nil {
+		t.Fatalf("promote 2.1.0 (direct, unaudited): %v", err)
+	}
+	if _, err := f.svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: compatBlock300})); err != nil {
+		t.Fatalf("ApplyOrkflow: %v", err)
+	}
+
+	_, err := f.orkflows().SetCurrentOrkflowVersion(ctx, withPrincipal(
+		&orkstackv1.SetCurrentOrkflowVersionRequest{Name: "release-block", Version: "3.0.0"}, "dsantos"))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("unacknowledged promotion = %v, want FailedPrecondition", err)
+	}
+	if _, err := f.orkflows().SetCurrentOrkflowVersion(ctx, withPrincipal(
+		&orkstackv1.SetCurrentOrkflowVersionRequest{Name: "release-block", Version: "3.0.0",
+			AcknowledgeBreaking: true}, "dsantos")); err != nil {
+		t.Fatalf("acknowledged promotion: %v", err)
+	}
+	records := f.records(t)
+	if len(records) != 2 {
+		t.Fatalf("records = %d, want 2", len(records))
+	}
+	var details []string
+	for _, rec := range records {
+		details = append(details, fmt.Sprintf("%v %s", rec.GetSucceeded(), rec.GetDetail()))
+	}
+	joined := strings.Join(details, "\n")
+	for _, want := range []string{
+		"false requested 3.0.0",
+		"true current 2.1.0 -> 3.0.0 interface=breaking vs 2.1.0 acknowledged",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("audit details\n%s\nlack %q", joined, want)
+		}
+	}
+}

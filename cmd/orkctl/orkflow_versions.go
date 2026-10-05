@@ -47,13 +47,19 @@ func newOrkflowVersionsCommand(g *globalFlags) *cobra.Command {
 }
 
 func newOrkflowPromoteCommand(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var acknowledgeBreaking bool
+	cmd := &cobra.Command{
 		Use:   "promote <name> <version>",
 		Short: "Make one version the current one",
 		Long: "promote points an orkflow at an existing version. Runs submitted after it\n" +
 			"with no --version execute that version; runs already in flight finish on\n" +
 			"the version they started with.\n\n" +
-			"Rolling back is the same command with the older version.",
+			"Rolling back is the same command with the older version.\n\n" +
+			"Promoting compares the version's declared interface (its inputs: and\n" +
+			"outputs:) with the version that runs now. A BREAKING change is refused,\n" +
+			"naming each change, until you pass --acknowledge-breaking; compatible and\n" +
+			"unknown changes are never refused. A rollback is gated alike: rolling back\n" +
+			"across an added input removes it. See orkctl orkflow compat and callers.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
@@ -61,9 +67,10 @@ func newOrkflowPromoteCommand(g *globalFlags) *cobra.Command {
 
 			resp, err := g.orkflowClient().SetCurrentOrkflowVersion(ctx, connect.NewRequest(
 				&orkstackv1.SetCurrentOrkflowVersionRequest{
-					Name:      args[0],
-					Version:   args[1],
-					Namespace: g.namespace,
+					Name:                args[0],
+					Version:             args[1],
+					Namespace:           g.namespace,
+					AcknowledgeBreaking: acknowledgeBreaking,
 				},
 			))
 			if err != nil {
@@ -75,6 +82,10 @@ func newOrkflowPromoteCommand(g *globalFlags) *cobra.Command {
 			return renderPromotion(cmd.OutOrStdout(), resp.Msg)
 		},
 	}
+	cmd.Flags().BoolVar(&acknowledgeBreaking, "acknowledge-breaking", false,
+		"promote even when the version breaks the declared interface of the one that runs now; "+
+			"see orkctl orkflow compat")
+	return cmd
 }
 
 func newOrkflowDiffCommand(g *globalFlags) *cobra.Command {
@@ -336,10 +347,11 @@ func renderOrkflowVersions(
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "VERSION\tCURRENT\tAPPLIED\tDESCRIPTION")
+	fmt.Fprintln(table, "VERSION\tCURRENT\tCOMPAT\tAPPLIED\tDESCRIPTION")
 	for _, version := range versions {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n",
 			version.GetVersion(), currentMark(version.GetIsCurrent()),
+			verdictWord(version.GetInterfaceVerdict()),
 			formatTime(version.GetAppliedAt()), orDash(version.GetDescription()))
 	}
 	if err := table.Flush(); err != nil {
@@ -370,9 +382,20 @@ func renderPromotion(out io.Writer, resp *orkstackv1.SetCurrentOrkflowVersionRes
 	if previous := resp.GetPreviousVersion(); previous != "" {
 		fmt.Fprintf(out, "Previous: %s (roll back with: orkctl orkflow promote %s %s)\n",
 			previous, resp.GetName(), previous)
-		return nil
+	} else {
+		fmt.Fprintln(out, "Previous: none; this orkflow ran its newest applied version until now.")
 	}
-	fmt.Fprintln(out, "Previous: none; this orkflow ran its newest applied version until now.")
+	compared, current, name := resp.GetComparedVersion(), resp.GetCurrentVersion(), resp.GetName()
+	switch resp.GetInterfaceVerdict() {
+	case orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_COMPATIBLE:
+		fmt.Fprintf(out, "Interface against %s: compatible\n", compared)
+	case orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_UNKNOWN:
+		fmt.Fprintf(out, "Interface against %s: unknown (orkctl orkflow compat %s %s %s says why)\n",
+			compared, name, compared, current)
+	case orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_BREAKING:
+		fmt.Fprintf(out, "Interface against %s: BREAKING, acknowledged (orkctl orkflow compat %s %s %s "+
+			"lists what breaks)\n", compared, name, compared, current)
+	}
 	return nil
 }
 

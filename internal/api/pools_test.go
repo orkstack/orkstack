@@ -731,7 +731,7 @@ func (d downOrkflowStore) Versions(context.Context, string, string) (artifacts.O
 	return artifacts.OrkflowVersions{}, d.err
 }
 
-func (d downOrkflowStore) SetCurrentVersion(context.Context, string, string, string) (string, error) {
+func (d downOrkflowStore) SetCurrentVersion(context.Context, string, string, string, artifacts.CurrentExpectation) (string, error) {
 	return "", d.err
 }
 

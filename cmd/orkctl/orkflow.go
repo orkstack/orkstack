@@ -28,6 +28,8 @@ func newOrkflowCommand(g *globalFlags) *cobra.Command {
 		newOrkflowVersionsCommand(g),
 		newOrkflowPromoteCommand(g),
 		newOrkflowDiffCommand(g),
+		newOrkflowCompatCommand(g),
+		newOrkflowCallersCommand(g),
 		newOrkflowEditCommand(g),
 		newOrkflowDeleteCommand(g),
 	)

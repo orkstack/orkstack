@@ -25,25 +25,29 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.OrkflowServiceListOrkflowVersionsProcedure: true,
 	orkstackv1connect.OrkflowServiceDiffOrkflowVersionsProcedure: true,
 	orkstackv1connect.OrkflowServicePlanRunProcedure:             true,
-	orkstackv1connect.RunServiceGetRunProcedure:                  true,
-	orkstackv1connect.RunServiceListRunsProcedure:                true,
-	orkstackv1connect.RunServiceListRunArtifactsProcedure:        true,
-	orkstackv1connect.RunServiceListTaskAttemptsProcedure:        true,
-	orkstackv1connect.RunServiceGetArtifactProvenanceProcedure:   true,
-	orkstackv1connect.RunServiceInspectRunProcedure:              true,
-	orkstackv1connect.RunServiceDiffRunsProcedure:                true,
-	orkstackv1connect.WebhookServiceListWebhooksProcedure:        true,
-	orkstackv1connect.WebhookServiceListDeliveriesProcedure:      true,
-	orkstackv1connect.WebhookServiceGetDeliveryProcedure:         true,
-	orkstackv1connect.TriggerServiceListTriggersProcedure:        true,
-	orkstackv1connect.ScheduleServiceListSchedulesProcedure:      true,
-	orkstackv1connect.ScheduleServiceGetScheduleProcedure:        true,
-	orkstackv1connect.NamespaceServiceGetNamespaceProcedure:      true,
-	orkstackv1connect.NamespaceServiceListNamespacesProcedure:    true,
-	orkstackv1connect.NamespaceServiceListPoolsProcedure:         true,
-	orkstackv1connect.ActivityServiceListActivitiesProcedure:     true,
-	orkstackv1connect.ActivityServiceDescribeOrkerProcedure:      true,
-	orkstackv1connect.ActivityServiceListOrkersProcedure:         true,
+	// CompareInterfaces and ListOrkflowCallers compute on read and write
+	// nothing (interface-compatibility-gate §5.6).
+	orkstackv1connect.OrkflowServiceCompareInterfacesProcedure:  true,
+	orkstackv1connect.OrkflowServiceListOrkflowCallersProcedure: true,
+	orkstackv1connect.RunServiceGetRunProcedure:                 true,
+	orkstackv1connect.RunServiceListRunsProcedure:               true,
+	orkstackv1connect.RunServiceListRunArtifactsProcedure:       true,
+	orkstackv1connect.RunServiceListTaskAttemptsProcedure:       true,
+	orkstackv1connect.RunServiceGetArtifactProvenanceProcedure:  true,
+	orkstackv1connect.RunServiceInspectRunProcedure:             true,
+	orkstackv1connect.RunServiceDiffRunsProcedure:               true,
+	orkstackv1connect.WebhookServiceListWebhooksProcedure:       true,
+	orkstackv1connect.WebhookServiceListDeliveriesProcedure:     true,
+	orkstackv1connect.WebhookServiceGetDeliveryProcedure:        true,
+	orkstackv1connect.TriggerServiceListTriggersProcedure:       true,
+	orkstackv1connect.ScheduleServiceListSchedulesProcedure:     true,
+	orkstackv1connect.ScheduleServiceGetScheduleProcedure:       true,
+	orkstackv1connect.NamespaceServiceGetNamespaceProcedure:     true,
+	orkstackv1connect.NamespaceServiceListNamespacesProcedure:   true,
+	orkstackv1connect.NamespaceServiceListPoolsProcedure:        true,
+	orkstackv1connect.ActivityServiceListActivitiesProcedure:    true,
+	orkstackv1connect.ActivityServiceDescribeOrkerProcedure:     true,
+	orkstackv1connect.ActivityServiceListOrkersProcedure:        true,
 	// InspectActivity resolves one reference against the registry and writes
 	// nothing (activity-interface-manifests §5.4).
 	orkstackv1connect.ActivityServiceInspectActivityProcedure:  true,
@@ -81,8 +85,10 @@ var auditStreamingReads = map[string]bool{
 // of InspectRun (a live describe) and InspectActivity (an on-demand registry
 // read, activity-interface-manifests §5.4); both write nothing. Export is the
 // verb of ExportAutomation, which renders a namespace as a document and writes
-// nothing (declarative-automation §7.3).
-var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export"}
+// nothing (declarative-automation §7.3). Compare is the verb of
+// CompareInterfaces, which classifies two stored documents and writes nothing
+// (interface-compatibility-gate §5.6).
+var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export", "Compare"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file
 // registry and returns each method's procedure and whether it streams.

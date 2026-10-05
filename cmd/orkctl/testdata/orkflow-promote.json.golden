@@ -2,5 +2,7 @@
   "name": "deploy",
   "namespace": "default",
   "currentVersion": "1.0.0",
-  "updatedAt": "2026-01-02T03:04:05Z"
+  "updatedAt": "2026-01-02T03:04:05Z",
+  "interfaceVerdict": "UNKNOWN",
+  "comparedVersion": "2.0.0"
 }

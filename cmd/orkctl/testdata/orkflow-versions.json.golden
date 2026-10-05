@@ -3,7 +3,8 @@
     {
       "version": "2.0.0",
       "appliedAt": "2026-01-02T03:04:05.000000001Z",
-      "description": "the 2.0.0 version"
+      "description": "the 2.0.0 version",
+      "interfaceVerdict": "UNKNOWN"
     },
     {
       "version": "1.0.0",

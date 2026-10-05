@@ -34,7 +34,7 @@ func TestS3OrkflowStore_DeleteFailureKeepsPointersConsistentAndRetryRepairs(t *t
 	if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if _, err := store.SetCurrentVersion(ctx, "", name, "1.0.0"); err != nil {
+	if _, err := store.SetCurrentVersion(ctx, "", name, "1.0.0", artifacts.NoCurrentExpectation()); err != nil {
 		t.Fatalf("SetCurrentVersion: %v", err)
 	}
 
@@ -82,7 +82,7 @@ func TestS3OrkflowStore_DeleteRepairsOrphanedPointersFromEarlierPartialDelete(t 
 	if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if _, err := store.SetCurrentVersion(ctx, "", name, "1.0.0"); err != nil {
+	if _, err := store.SetCurrentVersion(ctx, "", name, "1.0.0", artifacts.NoCurrentExpectation()); err != nil {
 		t.Fatalf("SetCurrentVersion: %v", err)
 	}
 	versionKey, err := artifacts.OrkflowKey("", name, "1.0.0")

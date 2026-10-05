@@ -1,0 +1,3 @@
+Callers of checkout-service in namespace default (current version 4.2.0)
+
+Nothing in namespace default references checkout-service: no orkflow composes it and no trigger or schedule starts it.

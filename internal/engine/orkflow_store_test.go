@@ -288,7 +288,7 @@ func TestMemoryOrkflowStore_DeleteRemovesEveryVersionAndPointerOnlyInTheSelected
 			t.Fatalf("Put(%s/%s@%s): %v", wf.GetNamespace(), wf.GetName(), wf.GetVersion(), err)
 		}
 	}
-	if _, err := store.SetCurrentVersion(ctx, "", "deploy", "1.0.0"); err != nil {
+	if _, err := store.SetCurrentVersion(ctx, "", "deploy", "1.0.0", artifacts.NoCurrentExpectation()); err != nil {
 		t.Fatalf("SetCurrentVersion: %v", err)
 	}
 
@@ -336,5 +336,49 @@ func TestMemoryOrkflowStore_DeleteRefusesUnknownAndInvalidNames(t *testing.T) {
 		if err := store.Delete(ctx, "", name); !errors.Is(err, artifacts.ErrInvalidOrkflow) {
 			t.Errorf("Delete(%q) = %v, want ErrInvalidOrkflow", name, err)
 		}
+	}
+}
+
+// TestMemoryOrkflowStore_ConditionalPromotionRefusesAMovedPointer is the
+// in-memory store honouring the same swap condition as the durable one: a
+// stated expectation the pointer no longer satisfies refuses, names both
+// pointers, and moves nothing.
+func TestMemoryOrkflowStore_ConditionalPromotionRefusesAMovedPointer(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	ctx := context.Background()
+	base := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	for i, v := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		if _, _, err := store.Put(ctx, orkflowFixture("deploy", v, base.Add(time.Duration(i)*time.Second)),
+			artifacts.NoHeadExpectation()); err != nil {
+			t.Fatalf("Put(%s): %v", v, err)
+		}
+	}
+	if _, err := store.SetCurrentVersion(ctx, "", "deploy", "2.0.0", artifacts.ExpectCurrent("")); err != nil {
+		t.Fatalf("first promotion expecting an unset pointer: %v", err)
+	}
+
+	_, err := store.SetCurrentVersion(ctx, "", "deploy", "3.0.0", artifacts.ExpectCurrent("1.0.0"))
+	var moved *artifacts.CurrentMovedError
+	if !errors.As(err, &moved) || moved.Expected != "1.0.0" || moved.Current != "2.0.0" {
+		t.Fatalf("ExpectCurrent(1.0.0) against 2.0.0 = %v, want *CurrentMovedError{1.0.0, 2.0.0}", err)
+	}
+	if !errors.Is(err, artifacts.ErrCurrentMoved) {
+		t.Fatalf("refusal must be errors.Is ErrCurrentMoved: %v", err)
+	}
+	if versions, _ := store.Versions(ctx, "", "deploy"); versions.Current != "2.0.0" {
+		t.Fatalf("pointer after the refusal = %q, want 2.0.0", versions.Current)
+	}
+
+	if _, err := store.SetCurrentVersion(ctx, "", "deploy", "3.0.0", artifacts.ExpectCurrent("")); !errors.As(err, &moved) {
+		t.Fatalf("ExpectCurrent(\"\") against a set pointer = %v, want *CurrentMovedError", err)
+	}
+
+	previous, err := store.SetCurrentVersion(ctx, "", "deploy", "3.0.0", artifacts.NoCurrentExpectation())
+	if err != nil || previous != "2.0.0" {
+		t.Fatalf("NoCurrentExpectation = %q, %v; want 2.0.0 replaced", previous, err)
+	}
+	previous, err = store.SetCurrentVersion(ctx, "", "deploy", "1.0.0", artifacts.ExpectCurrent("3.0.0"))
+	if err != nil || previous != "3.0.0" {
+		t.Fatalf("ExpectCurrent(3.0.0) = %q, %v; want 3.0.0 replaced", previous, err)
 	}
 }

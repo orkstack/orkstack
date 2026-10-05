@@ -373,7 +373,10 @@ It prints the trigger without a `SECRET` row and says the token is unchanged.
 
 `--namespace` is `orkctl`'s existing global selector (`-n`); empty is
 `default` on the wire. `--version` omitted means the current pointer at
-invoke time and is rendered as `current`.
+invoke time and is rendered as `current`. Such an unpinned trigger is a caller
+that follows current — a promotion moves what it starts — and `orkctl orkflow
+callers <name>` names it (`docs/DSL.md` "Promoting compares declared
+interfaces").
 
 `create` prints the one-time secret and a ready-to-run `curl` command, the
 way `orkctl webhook register` prints the registered webhook and its secret.

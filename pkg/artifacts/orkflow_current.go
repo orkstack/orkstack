@@ -140,6 +140,68 @@ func (s *S3OrkflowStore) readCurrent(
 	return pointer, aws.ToString(object.ETag), nil
 }
 
+// ErrCurrentMoved reports a promotion whose expected current pointer was no
+// longer the pointer when the store went to swap it. It wraps
+// ErrPreconditionFailed, so a caller that only knew "lost a race" still
+// recognises it.
+var ErrCurrentMoved = fmt.Errorf("orkflow current pointer moved under this promotion: %w",
+	ErrPreconditionFailed)
+
+// CurrentMovedError names both pointers, so a refusal can say what the
+// promotion compared against and what is there now.
+type CurrentMovedError struct {
+	Namespace, Name string
+	Expected        string // "" = the pointer was expected to be unset
+	Current         string // "" = the pointer is unset
+}
+
+func (e *CurrentMovedError) Error() string {
+	return fmt.Sprintf("artifacts: orkflow %q in namespace %q: the current pointer names %s, "+
+		"not %s as this promotion expected: %v",
+		e.Name, e.Namespace, pointerWords(e.Current), pointerWords(e.Expected), ErrCurrentMoved)
+}
+
+// Unwrap makes a CurrentMovedError errors.Is both ErrCurrentMoved and
+// ErrPreconditionFailed.
+func (e *CurrentMovedError) Unwrap() error { return ErrCurrentMoved }
+
+// pointerWords renders one side of a CurrentMovedError for a reader.
+func pointerWords(version string) string {
+	if version == "" {
+		return "no version (it was never set)"
+	}
+	return fmt.Sprintf("%q", version)
+}
+
+// CurrentExpectation is what one promotion claims about the pointer it
+// replaces. A type, not a string, for HeadExpectation's reason: "claims
+// nothing" and "claims the pointer is unset" are different claims and ""
+// would have to mean both.
+type CurrentExpectation struct {
+	version string
+	stated  bool
+}
+
+// NoCurrentExpectation is the unconditional promotion (tests, tools).
+func NoCurrentExpectation() CurrentExpectation { return CurrentExpectation{} }
+
+// ExpectCurrent commits only while the pointer names version; "" means
+// "only while no pointer has ever been written".
+func ExpectCurrent(version string) CurrentExpectation {
+	return CurrentExpectation{version: version, stated: true}
+}
+
+// Stated reports whether this expectation claims anything at all.
+func (e CurrentExpectation) Stated() bool { return e.stated }
+
+// Version is the pointer this expectation claims; meaningful only when Stated.
+func (e CurrentExpectation) Version() string { return e.version }
+
+// SatisfiedBy reports whether current is the pointer this promotion claims.
+func (e CurrentExpectation) SatisfiedBy(current string) bool {
+	return !e.stated || e.version == current
+}
+
 // SetCurrentVersion points an orkflow at an existing version and returns the
 // version the pointer named before ("" when it was never set).
 //
@@ -159,12 +221,21 @@ func (s *S3OrkflowStore) readCurrent(
 //     swaps against it. The final value is one of the two versions asked for,
 //     never a mixture and never a lost write silently reported as success.
 //
+//  3. The expectation is checked on EVERY read of the pointer, inside the
+//     loop, against the version that read returned. A stated expectation the
+//     winner of a race broke is therefore a refusal (*CurrentMovedError), not
+//     an overwrite: a promotion that compared its target against one pointer
+//     never lands on top of another. An unstated expectation retries exactly
+//     as point 2 describes, and a winner that re-wrote the SAME version (the
+//     etag moved, the version did not) still lets the retry land.
+//
 // The retry deliberately does NOT re-validate the target: a version cannot
 // stop existing, so re-reading it would cost a request to learn what is
 // already known.
 func (s *S3OrkflowStore) SetCurrentVersion(
 	ctx context.Context,
 	namespace, name, version string,
+	expected CurrentExpectation,
 ) (string, error) {
 	versionKey, err := OrkflowKey(namespace, name, version)
 	if err != nil {
@@ -189,6 +260,10 @@ func (s *S3OrkflowStore) SetCurrentVersion(
 		existing, etag, err := s.readCurrent(ctx, namespace, name)
 		if err != nil {
 			return "", err
+		}
+		if !expected.SatisfiedBy(existing.Version) {
+			return "", &CurrentMovedError{Namespace: ResolveNamespace(namespace),
+				Name: name, Expected: expected.Version(), Current: existing.Version}
 		}
 		document, err := marshalCurrentPointer(currentPointer{
 			Version:   version,

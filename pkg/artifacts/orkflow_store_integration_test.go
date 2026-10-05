@@ -545,7 +545,7 @@ func TestS3OrkflowStore_DeleteRemovesEveryVersionAndPointerWithoutCrossingNamesp
 	if _, _, err := store.Put(ctx, other, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatalf("Put(%s/%s): %v", namespace, name, err)
 	}
-	if _, err := store.SetCurrentVersion(ctx, "", name, "1.0.0"); err != nil {
+	if _, err := store.SetCurrentVersion(ctx, "", name, "1.0.0", artifacts.NoCurrentExpectation()); err != nil {
 		t.Fatalf("SetCurrentVersion: %v", err)
 	}
 

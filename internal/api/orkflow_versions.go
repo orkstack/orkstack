@@ -50,13 +50,17 @@ func (s *Service) ListOrkflowVersions(
 			"orkflow %q in namespace %q not found", req.Msg.GetName(), ns.GetName()))
 	}
 	resolved := versions.Resolved()
+	// Each row's verdict is "what would promoting this version break",
+	// computed from documents this listing already read; stored nowhere.
+	resolvedDoc := storedVersion(versions, resolved)
 	rows := make([]*orkstackv1.OrkflowVersion, 0, len(versions.All))
 	for _, wf := range versions.All {
 		rows = append(rows, &orkstackv1.OrkflowVersion{
-			Version:     wf.GetVersion(),
-			AppliedAt:   wf.GetCreatedAt(),
-			IsCurrent:   wf.GetVersion() == resolved,
-			Description: wf.GetDescription(),
+			Version:          wf.GetVersion(),
+			AppliedAt:        wf.GetCreatedAt(),
+			IsCurrent:        wf.GetVersion() == resolved,
+			Description:      wf.GetDescription(),
+			InterfaceVerdict: verdictAgainst(resolvedDoc, wf),
 		})
 	}
 	return connect.NewResponse(&orkstackv1.ListOrkflowVersionsResponse{
@@ -73,6 +77,17 @@ func (s *Service) ListOrkflowVersions(
 // converge on one value and no reader can ever see a pointer to a version that
 // is not stored. A lost race is FailedPrecondition — the caller re-reads and
 // decides again — never a silent overwrite of the winner.
+//
+// It is also the interface gate (interface-compatibility-gate §5.2): the
+// target's declared interface is compared with the version a run that names
+// no version executes now, and a BREAKING change is refused until the request
+// acknowledges it. The swap is conditional on the pointer the comparison read
+// (artifacts.ExpectCurrent), ALWAYS — an acknowledged or compatible promotion
+// included — because the gate's answer is only true of the pointer it read.
+// That closes the race against a concurrent PROMOTION. It does not pin the
+// head: for an orkflow never promoted, an apply landing between the read and
+// the swap can change what ran without a pointer, and that apply's own
+// warnings (interfaceChangeIssues) are what reports it.
 func (s *Service) SetCurrentOrkflowVersion(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.SetCurrentOrkflowVersionRequest],
@@ -89,9 +104,48 @@ func (s *Service) SetCurrentOrkflowVersion(
 	if err != nil {
 		return nil, err
 	}
-	previous, err := s.orkflows.SetCurrentVersion(
-		ctx, ns.GetName(), req.Msg.GetName(), req.Msg.GetVersion())
+	name, version := req.Msg.GetName(), req.Msg.GetVersion()
+	// One read of the catalog answers existence and the comparison. An outage
+	// is Unavailable: a promotion is never made unchecked.
+	versions, err := s.orkflows.Versions(ctx, ns.GetName(), name)
 	if err != nil {
+		return nil, orkflowStoreError(err, "versions of orkflow %q in namespace %q", name, ns.GetName())
+	}
+	if len(versions.All) == 0 {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
+			"orkflow %q in namespace %q not found", name, ns.GetName()))
+	}
+	target := storedVersion(versions, version)
+	if target == nil {
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
+			"orkflow %q version %q in namespace %q not found", name, version, ns.GetName()))
+	}
+	// from == version (promoting what already runs) compares nothing. A
+	// pointer naming a version that is not stored cannot be compared against;
+	// the promotion proceeds UNSPECIFIED, and it is what repairs that pointer.
+	from := versions.Resolved()
+	verdict := orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_UNSPECIFIED
+	compared := ""
+	if fromDoc := storedVersion(versions, from); from != version && fromDoc != nil {
+		var findings []*orkstackv1.InterfaceFinding
+		findings, verdict = dsl.CompareInterfaces(fromDoc, target)
+		compared = from
+		if verdict == orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_BREAKING &&
+			!req.Msg.GetAcknowledgeBreaking() {
+			return nil, breakingPromotionRefusal(ns.GetName(), name, from, version,
+				versions.Current == "", findings)
+		}
+	}
+	previous, err := s.orkflows.SetCurrentVersion(
+		ctx, ns.GetName(), name, version, artifacts.ExpectCurrent(versions.Current))
+	if err != nil {
+		var moved *artifacts.CurrentMovedError
+		if errors.As(err, &moved) {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"orkflow %q in namespace %q was promoted to %q by somebody else after this "+
+					"promotion compared %s@%s against %q; read the versions again and retry",
+				name, ns.GetName(), moved.Current, name, version, from))
+		}
 		if errors.Is(err, artifacts.ErrPreconditionFailed) {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 				"orkflow %q in namespace %q was promoted by somebody else while this "+
@@ -102,11 +156,13 @@ func (s *Service) SetCurrentOrkflowVersion(
 			req.Msg.GetName(), req.Msg.GetVersion(), ns.GetName())
 	}
 	return connect.NewResponse(&orkstackv1.SetCurrentOrkflowVersionResponse{
-		Name:            req.Msg.GetName(),
-		Namespace:       ns.GetName(),
-		CurrentVersion:  req.Msg.GetVersion(),
-		PreviousVersion: previous,
-		UpdatedAt:       timestamppb.New(s.now().UTC()),
+		Name:             req.Msg.GetName(),
+		Namespace:        ns.GetName(),
+		CurrentVersion:   req.Msg.GetVersion(),
+		PreviousVersion:  previous,
+		UpdatedAt:        timestamppb.New(s.now().UTC()),
+		InterfaceVerdict: verdict,
+		ComparedVersion:  compared,
 	}), nil
 }
 

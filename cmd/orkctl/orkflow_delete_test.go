@@ -51,8 +51,8 @@ func (s *recordingOrkflowStore) Versions(ctx context.Context, namespace, name st
 	return s.inner.Versions(ctx, namespace, name)
 }
 
-func (s *recordingOrkflowStore) SetCurrentVersion(ctx context.Context, namespace, name, version string) (string, error) {
-	return s.inner.SetCurrentVersion(ctx, namespace, name, version)
+func (s *recordingOrkflowStore) SetCurrentVersion(ctx context.Context, namespace, name, version string, expected artifacts.CurrentExpectation) (string, error) {
+	return s.inner.SetCurrentVersion(ctx, namespace, name, version, expected)
 }
 
 func (s *recordingOrkflowStore) Delete(ctx context.Context, namespace, name string) error {

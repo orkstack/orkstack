@@ -34,8 +34,8 @@ func (s *deleteRecordingStore) List(ctx context.Context, namespace string) ([]*o
 func (s *deleteRecordingStore) Versions(ctx context.Context, namespace, name string) (artifacts.OrkflowVersions, error) {
 	return s.inner.Versions(ctx, namespace, name)
 }
-func (s *deleteRecordingStore) SetCurrentVersion(ctx context.Context, namespace, name, version string) (string, error) {
-	return s.inner.SetCurrentVersion(ctx, namespace, name, version)
+func (s *deleteRecordingStore) SetCurrentVersion(ctx context.Context, namespace, name, version string, expected artifacts.CurrentExpectation) (string, error) {
+	return s.inner.SetCurrentVersion(ctx, namespace, name, version, expected)
 }
 func (s *deleteRecordingStore) Delete(ctx context.Context, namespace, name string) error {
 	s.deleteCalls++
@@ -108,7 +108,7 @@ func assertRunSafetyResult(
 func TestDeleteOrkflow_DeletesAllVersionsAndResolvesAnEmptyNamespaceToDefault(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	svc, store := deletionService(t, now, nil, nil)
-	if _, err := store.SetCurrentVersion(context.Background(), "", "deploy", "1.0.0"); err != nil {
+	if _, err := store.SetCurrentVersion(context.Background(), "", "deploy", "1.0.0", artifacts.NoCurrentExpectation()); err != nil {
 		t.Fatalf("SetCurrentVersion: %v", err)
 	}
 

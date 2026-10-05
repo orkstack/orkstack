@@ -1,0 +1,15 @@
+Interface  release-block  2.1.0 → 3.0.0
+
+FIELD           CHANGE     FROM                          TO                             VERDICT
+inputs.image    UNCHANGED  string, required              string, required               compatible
+inputs.notes    UNCHANGED  string, optional, default ""  string, optional, default ""   compatible
+inputs.region   ADDED      -                             string, required               BREAKING
+inputs.timeout  ADDED      -                             number, optional, default 300  compatible
+outputs.digest  UNCHANGED  declared                      declared                       compatible
+outputs.sbom    ADDED      -                             declared                       compatible
+outputs.url     REMOVED    declared                      -                              BREAKING
+
+  inputs.region: input "region" is added and required with no default: a run that does not supply it no longer satisfies the declaration
+  outputs.url: output "url" is removed: an Orkflow composing this one that reads .tasks.<id>.output.url is refused at its next apply against this version, and a reader of the run's output no longer finds it
+
+verdict: BREAKING (2 breaking changes)

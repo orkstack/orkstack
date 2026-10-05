@@ -58,8 +58,11 @@ type OrkflowStore interface {
 	// the current pointer's target and the head.
 	Versions(ctx context.Context, namespace, name string) (artifacts.OrkflowVersions, error)
 	// SetCurrentVersion moves the current pointer to an existing version and
-	// returns the version it replaced ("" when never set).
-	SetCurrentVersion(ctx context.Context, namespace, name, version string) (string, error)
+	// returns the version it replaced ("" when never set). A stated
+	// expectation the pointer no longer satisfies is refused with an
+	// *artifacts.CurrentMovedError (errors.Is artifacts.ErrCurrentMoved).
+	SetCurrentVersion(ctx context.Context, namespace, name, version string,
+		expected artifacts.CurrentExpectation) (string, error)
 	// Delete removes all versions of an orkflow from the namespace.
 	// It is not reversible: all versions and their metadata are permanently deleted.
 	Delete(ctx context.Context, namespace, name string) error
@@ -272,6 +275,7 @@ func appliedAt(wf *orkstackv1.Orkflow) time.Time { return wf.GetCreatedAt().AsTi
 func (s *MemoryOrkflowStore) SetCurrentVersion(
 	_ context.Context,
 	namespace, name, version string,
+	expected artifacts.CurrentExpectation,
 ) (string, error) {
 	namespace = artifacts.ResolveNamespace(namespace)
 	if version == "" {
@@ -284,6 +288,10 @@ func (s *MemoryOrkflowStore) SetCurrentVersion(
 		return "", notStored(namespace, name, version)
 	}
 	previous := s.current[namespace][name]
+	if !expected.SatisfiedBy(previous) {
+		return "", &artifacts.CurrentMovedError{Namespace: namespace, Name: name,
+			Expected: expected.Version(), Current: previous}
+	}
 	s.current[namespace][name] = version
 	return previous, nil
 }
