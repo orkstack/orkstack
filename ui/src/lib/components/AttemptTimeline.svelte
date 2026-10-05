@@ -29,6 +29,7 @@
 	import { formatDuration, runCommand } from '$lib/runDetail';
 	import { fmtTime } from '$lib/status';
 	import { attemptPhases, formatQuantity, phasesLine, type TaskTiming } from '$lib/timing';
+	import { attemptCacheLine, keyComponentRows } from '$lib/cache';
 
 	interface Props {
 		runId: string;
@@ -229,6 +230,28 @@
 									phases unavailable ({phases.reason})
 								{/if}
 							</p>
+						{/if}
+						{#if attempt.cache}
+							<!--
+								This attempt's memo decision (a cached task), and the
+								digests its key was computed from: what tells a reader
+								which input changed between a miss and the run whose
+								memo it no longer matches.
+							-->
+							<div class="mt-1 text-[11px] text-fg-muted" data-testid="task-{taskId}-attempt-{attempt.attempt}-cache">
+								<span>{attemptCacheLine(attempt.cache)}</span>
+								{#if keyComponentRows(attempt.cache.keyComponents).length > 0}
+									<details class="mt-1" data-testid="task-{taskId}-attempt-{attempt.attempt}-cache-components">
+										<summary class="cursor-pointer font-medium text-brand-700">Key components</summary>
+										<dl class="mt-1 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 font-mono">
+											{#each keyComponentRows(attempt.cache.keyComponents) as [name, value] (name)}
+												<dt>{name}</dt>
+												<dd class="break-all text-fg-secondary">{value}</dd>
+											{/each}
+										</dl>
+									</details>
+								{/if}
+							</div>
 						{/if}
 						{#if failure && errorOpen[attempt.attempt]}
 							<div class="mt-2">

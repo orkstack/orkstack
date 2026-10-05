@@ -120,6 +120,27 @@ message Task {
   // execution field (docs/DSL.md rules 26–27). Part of canonicalOrkflow(Task)
   // only when set (see pin), so this Orkflow's digest pins the child's.
   OrkflowRef orkflow = 22;
+
+  // cache opts this container task into memoization across runs. It may not
+  // name a pin (docs/DSL.md rule 36), and an awaited or composed task may not
+  // carry it (rules 15, 27).
+  CacheSpec cache = 23;
+}
+
+// CacheSpec opts ONE task into memoization across runs (docs/DSL.md
+// "Caching"). Declaring it is the author's assertion that the task is a pure
+// function of what it is given — its image, command, env, secrets' names and
+// sources, network mode, rendered config.json, run.json, staged input files
+// and, for a fan-out item, its item — which OrkStack cannot verify. Part of
+// canonicalOrkflow(Task) only when set (see Task.pin); never part of a memo
+// key.
+message CacheSpec {
+  // ttl_seconds bounds how old a memoized result this task may reuse,
+  // measured from when the result was committed. 0 means no bound of the
+  // task's own; the deployment's ORK_CACHE_MAX_TTL caps it either way.
+  int32 ttl_seconds = 1;
+  // scope: ORKFLOW (what the compiler writes when absent) or NAMESPACE.
+  CacheScope scope = 2;
 }
 
 // EachSpec makes a Task a fan-out: ONE node of the DAG that runs as one item

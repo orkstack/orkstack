@@ -262,6 +262,29 @@ func (e *PoolNoEachSupportError) Error() string {
 		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID, consequence)
 }
 
+// PoolNoCacheSupportError refuses a submit whose cached task would run on a
+// pool whose Orker predates task caching (docs/DSL.md "Caching"). Such an
+// Orker cannot even decode a cached task's input — the SDK's default payload
+// converter refuses ExecuteTaskInput.cache as an unknown field — so it would
+// fail every attempt for a reason unrelated to the task. allow_empty_pool
+// does NOT downgrade it (the Orker is present and wrong), and neither does
+// no_cache (a bypass still sends a CacheContext).
+type PoolNoCacheSupportError struct {
+	Namespace string
+	Pool      string
+	Tasks     []string
+	OrkerID   string
+	BuildID   string
+}
+
+func (e *PoolNoCacheSupportError) Error() string {
+	return fmt.Sprintf(
+		"pool %q (namespace %q, tasks: %s) is served by Orker %q (build %q), which predates task caching "+
+			"(cache:): it cannot read a cached task's input and would fail it. Upgrade the pool's Orkers "+
+			"before submitting this Orkflow.",
+		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
+}
+
 // PoolUnreachableError reports that the cluster could not be asked whether a
 // pool has Orkers.
 //
@@ -527,6 +550,10 @@ func (r *PoolResolver) Plan(
 	eachRelated, dependents := eachRelatedTasks(planned)
 	eachTasksByPool := map[string][]string{}
 	eachDependentByPool := map[string]string{}
+	// The caching view: every cached task per resolved pool (a cached
+	// fan-out's items run on the fan-out's pool) — the pools whose Orker must
+	// implement the memo step.
+	cachedTasksByPool := map[string][]string{}
 
 	for _, t := range planned.GetTasks() {
 		// An awaited task is never routed: no route, no allow-list check, no
@@ -560,6 +587,9 @@ func (r *PoolResolver) Plan(
 			order = append(order, route.Pool)
 		}
 		tasksByPool[route.Pool] = append(tasksByPool[route.Pool], t.GetId())
+		if t.GetCache() != nil && t.GetPin() == "" {
+			cachedTasksByPool[route.Pool] = append(cachedTasksByPool[route.Pool], t.GetId())
+		}
 		if eachRelated[t.GetId()] {
 			eachTasksByPool[route.Pool] = append(eachTasksByPool[route.Pool], t.GetId())
 			if dependents[t.GetId()] && eachDependentByPool[route.Pool] == "" {
@@ -632,6 +662,12 @@ func (r *PoolResolver) Plan(
 			// one: does its Orker implement fan-out at all (§5.11).
 			if err := r.checkEachSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
 				eachTasksByPool[pool], eachDependentByPool[pool]); err != nil {
+				return nil, RunPlan{}, err
+			}
+			// And, for a pool that carries a cached task: does its Orker
+			// implement the memo step at all.
+			if err := r.checkCacheSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
+				cachedTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
 			continue
@@ -796,6 +832,37 @@ func (r *PoolResolver) checkEachSupport(ctx context.Context, namespace, orkflow,
 		OrkerID:   described.GetOrkerId(),
 		BuildID:   described.GetBuildId(),
 		Dependent: dependent,
+	}
+}
+
+// checkCacheSupport refuses a live pool whose Orker predates task caching
+// when a cached task would run there. Asked only of such a pool, so a submit
+// with no cached task runs no describe call it did not run before. A describe
+// failure is logged and not refused — nothing was measured — on
+// checkPinHost's precedent; allow_empty_pool never downgrades it.
+func (r *PoolResolver) checkCacheSupport(ctx context.Context, namespace, orkflow, pool, queue string, tasks []string) error {
+	if len(tasks) == 0 || r.Orkers == nil {
+		return nil
+	}
+	describeCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
+	defer cancel()
+	described, err := r.Orkers.OrkerOnPool(describeCtx, queue)
+	if err != nil {
+		r.logger().Warn("submit: a live pool with a cached task did not answer the describe-orker "+
+			"probe, so whether it supports caching is unknown",
+			"namespace", namespace, "pool", pool, "orkflow", orkflow,
+			"tasks", strings.Join(tasks, ","), "error", err)
+		return nil
+	}
+	if described.GetCacheSupported() {
+		return nil
+	}
+	return &PoolNoCacheSupportError{
+		Namespace: namespace,
+		Pool:      pool,
+		Tasks:     tasks,
+		OrkerID:   described.GetOrkerId(),
+		BuildID:   described.GetBuildId(),
 	}
 }
 

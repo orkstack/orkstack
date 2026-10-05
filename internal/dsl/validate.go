@@ -216,6 +216,10 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 					fmt.Errorf("task %q pins to unknown pin %q", task.GetId(), pin))
 			}
 		}
+		// Rules 34–36: a cached task's TTL, scope, and no pin.
+		if err := validateCache(taskIndex, task); err != nil {
+			return err
+		}
 	}
 
 	// Rule 5: the needs graph is acyclic.

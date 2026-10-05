@@ -42,7 +42,7 @@ const (
 
 var allDiffFields = []string{
 	"definition", "input", "presence", "status", "attempt", "pool", "pin", "orker",
-	"exit_code", "error", "duration", "image", "platform_digest",
+	"exit_code", "error", "duration", "image", "platform_digest", "cached",
 }
 
 // snapshotFields are the task fields answered from the two snapshots alone.

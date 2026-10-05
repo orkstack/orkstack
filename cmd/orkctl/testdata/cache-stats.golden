@@ -1,0 +1,17 @@
+Namespace:  default
+Window:     2026-01-01T03:04:05Z to 2026-01-02T03:04:05Z
+Computed:   2026-01-02T03:04:05Z
+
+ORKFLOW          TASK       HITS  MISSES  BYPASSED  HIT RATE     REUSED
+cached-pipeline  featurize  2     1       0         66.7%        16m00s
+cached-pipeline  train      0     3       0         0.0%         -
+nightly          warm       0     0       1         unavailable  -
+
+MEMOS
+SCOPE      ORKFLOW          TASK       MEMOS  OLDEST                NEWEST
+orkflow    cached-pipeline  featurize  1      2026-01-02T02:04:05Z  2026-01-02T02:04:05Z
+orkflow    cached-pipeline  train      2      2026-01-02T02:04:05Z  2026-01-02T02:44:05Z
+namespace  -                toolchain  1      2025-12-29T15:44:05Z  2025-12-29T15:44:05Z
+
+scanned 4 of 4 finished runs in the window
+REUSED is the producing attempts' duration the hits did not spend again.

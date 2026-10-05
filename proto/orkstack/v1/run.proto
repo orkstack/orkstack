@@ -185,6 +185,15 @@ message TaskRun {
   // system_artifacts stay unset, and values_ref addresses the child's
   // declared outputs as stored for THIS run.
   TaskChild child = 23;
+
+  // cache is the memo decision of the attempt that produced this task's
+  // outcome (CacheResult, key_components never set here). Set only for a
+  // cached task that SUCCEEDED on an Orker that implements caching; unset for
+  // every other row — so a snapshot of a run with no cached task is
+  // byte-identical — and for a cached task that failed, whose attempts carry
+  // what each memo step decided. On a fan-out it is set on the items, never
+  // on the fan-out's own row.
+  CacheResult cache = 24;
 }
 
 // AwaitResolvedVia names the door an await's resolution came through.
@@ -263,7 +272,8 @@ enum AttemptOutcome {
 // "run", "exit", "validate", "commit", and, entered from the wait path,
 // "timeout" and "cancel"; "image-policy" is entered only when the task
 // carries an image policy (ExecuteTaskInput.image_policy), between
-// "commit-check" and "workspace" — and are not an enum, for the reason
+// "commit-check" and "workspace"; "memo" and "stage-artifacts" are entered
+// only by an attempt of a cached task, after "stage-inputs" — and are not an enum, for the reason
 // TaskAttempt.phase is a string: a reader of an older build must be able to
 // read a phase it has never heard of.
 message PhaseSpan {
@@ -364,6 +374,13 @@ message TaskAttempt {
   // stays 1: the field is additive and UnmarshalAttempt discards unknown
   // fields.
   optional int32 item = 19;
+
+  // cache is this attempt's memo decision, key_components included. Set
+  // only for an attempt of a cached task that reached the memo step; a HIT
+  // records outcome SUCCEEDED, phase "memo", exit_code 0, no
+  // system_artifacts (it uploaded none) and image equal to the input's
+  // pinned ImageRef with no platform (it pulled nothing).
+  CacheResult cache = 20;
 }
 
 // RetryState is why Temporal stopped retrying a task. It mirrors

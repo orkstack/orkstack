@@ -24,7 +24,9 @@ export const DIFF_FIELDS = [
 	'error',
 	'duration',
 	'image',
-	'platform_digest'
+	'platform_digest',
+	// A cached task's memo decision (docs/DSL.md "Caching"): hit <source run>, miss, bypassed.
+	'cached'
 ] as const;
 
 // docs/UI_CLI_PARITY.md "Run diff"; cmd/orkctl/run_diff.go carries the same table.

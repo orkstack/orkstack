@@ -164,6 +164,125 @@ message PinContext {
   int32 timeout_seconds = 3;
 }
 
+// ---------------------------------------------------------------- caching
+
+// CacheScope is who may reuse a cached task's memo (docs/DSL.md "Caching").
+enum CacheScope {
+  // Never stored: the compiler writes ORKFLOW when `scope:` is absent.
+  CACHE_SCOPE_UNSPECIFIED = 0;
+  // Runs of the same Orkflow, in the same namespace.
+  CACHE_SCOPE_ORKFLOW = 1;
+  // Runs of any Orkflow of the same namespace whose task of the same id
+  // computes the same key. The Orkflow's name is then not part of the key.
+  CACHE_SCOPE_NAMESPACE = 2;
+}
+
+// CacheOutcome is what one attempt's memo step decided.
+enum CacheOutcome {
+  CACHE_OUTCOME_UNSPECIFIED = 0;
+  // A memoized SUCCEEDED commit was reused: no image pulled, no secret read,
+  // no container run. CacheResult.source names it.
+  CACHE_OUTCOME_HIT = 1;
+  // No usable memo: the container ran. CacheResult.miss_reason says why.
+  CACHE_OUTCOME_MISS = 2;
+  // The run was submitted with no_cache: no memo was read; the container ran
+  // and its memo was refreshed.
+  CACHE_OUTCOME_BYPASSED = 3;
+}
+
+// CacheContext tells an Orker that this attempt is of a cached task. It is
+// set ONLY on such a task's input, so every other task's recorded payload is
+// byte-identical to what it was before this field existed.
+message CacheContext {
+  // scope is never UNSPECIFIED on the wire.
+  CacheScope scope = 1;
+  // ttl_seconds is the EFFECTIVE bound on a reusable memo's age, measured
+  // from its source's finished_at: the task's own ttl_seconds capped by the
+  // deployment's ORK_CACHE_MAX_TTL, or the cap when the task set none. Always
+  // positive.
+  int64 ttl_seconds = 2;
+  // refresh is true when the run was submitted with no_cache: the Orker reads
+  // no memo, runs the container, and writes the memo from its fresh commit.
+  bool refresh = 3;
+}
+
+// CacheSource names the commit a memo points at — the one a hit reused.
+message CacheSource {
+  string run_id = 1;
+  string task_id = 2;
+  string orkflow_name = 3;
+  string orkflow_version = 4;
+  string commit_uri = 5;
+  // commit_sha256 is the hex SHA-256 of the source commit's exact stored
+  // bytes (CommitRef.sha256), never a re-marshalling.
+  string commit_sha256 = 6;
+  // started_at / finished_at are the producing attempt's, copied from the
+  // source ActivityCommit. A memo's age is measured from finished_at.
+  google.protobuf.Timestamp started_at = 7;
+  google.protobuf.Timestamp finished_at = 8;
+  // item is set when the producer was one item of a fan-out (each-fan-out's
+  // 0-based index); unset otherwise.
+  optional int32 item = 9;
+  // attempt is the producing attempt (ActivityCommit.attempt).
+  int32 attempt = 10;
+}
+
+// CacheResult is one attempt's memo decision.
+message CacheResult {
+  CacheOutcome outcome = 1;
+  // key is the 64-hex memo key. Empty only for a MISS whose reason is
+  // INPUT_UNHASHED (no key could be computed).
+  string key = 2;
+  // miss_reason is set for MISS only: a stable token from the table in
+  // docs/DSL.md "Caching" — MEMO_ABSENT, MEMO_EXPIRED, SOURCE_COMMIT_GONE, … —
+  // a string, not an enum, so a reader of an older build still prints a
+  // reason it has never heard of. It is never a failure code: it never
+  // appears in TaskRun.error.
+  string miss_reason = 3;
+  // miss_detail is the Orker's sentence for the miss, at most 1 KiB.
+  string miss_detail = 4;
+  // source is set for HIT only.
+  CacheSource source = 5;
+  // memo_written / memo_write_error report the best-effort memo write that
+  // follows a fresh commit (MISS or BYPASSED). Both are decided AFTER
+  // commit.json is written, so neither is ever set on ActivityCommit.cache,
+  // and an adopted result carries neither.
+  bool memo_written = 6;
+  string memo_write_error = 7;
+  // key_components are the named digests the key was computed from — what
+  // lets an operator see WHICH input changed between a miss and the run that
+  // wrote the old memo. Set ONLY on TaskAttempt.cache and in CacheMemo; never
+  // on ExecuteTaskResult, TaskRun or ActivityCommit, so run history stays
+  // small.
+  map<string, string> key_components = 8;
+}
+
+// CacheMemo is the stored memo: metadata/memo/{ns}/orkflow/{orkflow}/{task}/{key}.json
+// or metadata/memo/{ns}/namespace/{task}/{key}.json, protojson + json.Indent
+// exactly as a commit is (artifacts.MarshalMemo). A POINTER, written with a
+// plain put, last writer wins: it holds no result and decides no execution
+// state, and deleting it changes nothing but whether a container runs.
+message CacheMemo {
+  // schema_version is 1. A reader that does not know the value treats the
+  // memo as a miss (MEMO_UNREADABLE), never as an error.
+  int32 schema_version = 1;
+  string key = 2;
+  string namespace = 3;
+  CacheScope scope = 4;
+  // orkflow_name is the writer's Orkflow. The key covers it only under
+  // CACHE_SCOPE_ORKFLOW.
+  string orkflow_name = 5;
+  string task_id = 6;
+  // source is the FRESH commit this memo points at. A memo is written only
+  // after a container ran and its commit was created, never after a hit.
+  CacheSource source = 7;
+  map<string, string> key_components = 8;
+  // created_at is the writing Orker's clock; orker_id / build_id name it.
+  google.protobuf.Timestamp created_at = 9;
+  string orker_id = 10;
+  string build_id = 11;
+}
+
 // ---------------------------------------------------------------- fan-out
 
 // EachContext tells an Orker that this attempt is ONE ITEM of a fan-out task.
@@ -298,6 +417,13 @@ message ExecuteTaskInput {
   // keeps such a task's recorded payload byte-identical (the golden history
   // fixture has no fan-out and must keep matching without re-recording).
   EachContext each = 26;
+
+  // cache tells the Orker this is an attempt of a cached task (CacheContext).
+  // UNSET for every task that declares no cache:, and for every task of a run
+  // whose plan carries no cache plan, which keeps such a task's recorded
+  // payload byte-identical (the golden history fixture has no cached task and
+  // must keep matching without re-recording).
+  CacheContext cache = 27;
 }
 
 // ReleasePinInput asks the pin host to remove the pin's shared directory.
@@ -369,6 +495,17 @@ message ExecuteTaskResult {
   // field the engine cannot populate TaskRun.attempt identically for fresh and
   // adopted results.
   int32 attempt = 14;
+
+  // cache is this attempt's memo decision, key_components cleared. Set if and
+  // only if ExecuteTaskInput.cache was set; on an adopted result it is
+  // ActivityCommit.cache of the adopted commit.
+  //
+  // On a HIT: artifacts, system_artifacts, values_ref and image are the
+  // SOURCE commit's (the content-addressed objects and the image that
+  // produced them); commit is THIS run's own commit.json; exit_code is 0;
+  // started_at, finished_at, orker_id and attempt are this attempt's; and
+  // commit_adopted is false (this attempt wrote the commit).
+  CacheResult cache = 15;
 }
 
 // ---------------------------------------------------------------- the commit record
@@ -401,6 +538,15 @@ message ActivityCommit {
   int32 attempt = 16;                        // the attempt that committed
   string orker_id = 17;
   string build_id = 18;                      // ORK_BUILD_ID of the committer
+
+  // cache is the memo decision of the attempt that committed, for a cached
+  // task only; unset otherwise, so every existing commit is unchanged. A HIT
+  // commit names its source: its values, artifacts, system_artifacts and
+  // image are the source's references, and its identity fields
+  // (namespace … idempotency_key, image.index_digest) are THIS activity's, so
+  // §5.4 adoption of it on a retry is the ordinary one. memo_written,
+  // memo_write_error and key_components are never set here.
+  CacheResult cache = 19;
 }
 
 // ---------------------------------------------------------------- failure transport
@@ -483,6 +629,12 @@ message DescribeOrkerResult {
   // submit refuses an Orkflow with a fan-out on such a pool rather than let it
   // run items without their item or a dependent without its items.
   bool each_supported = 16;
+  // cache_supported is true on an Orker that implements the memo step. An
+  // Orker built before it answers false (unset), and submit refuses an
+  // Orkflow with a cached task on its pool: the SDK's default payload
+  // converter refuses unknown fields, so such an Orker would FAIL every
+  // cached task's attempt on decoding ExecuteTaskInput.cache.
+  bool cache_supported = 17;
 }
 
 // OpenPin is one pin this Orker currently hosts: a session it has accepted

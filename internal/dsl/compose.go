@@ -139,6 +139,7 @@ func composeExecutionKeys(td taskDocument) []struct {
 		{"run_as_orker_user", td.RunAsOrkerUser},
 		{"each", td.Each != nil},
 		{"await", td.Await != nil},
+		{"cache", td.Cache != nil},
 	}
 }
 
@@ -230,6 +231,7 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 		{"run_as_orker_user", task.GetRunAsOrkerUser()},
 		{"each", task.GetEach() != nil},
 		{"await", task.GetAwait() != nil},
+		{"cache", task.GetCache() != nil},
 	}
 	for _, c := range checks {
 		if c.set {

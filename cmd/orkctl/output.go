@@ -79,6 +79,9 @@ func taskStatusLabel(taskRun *orkstackv1.TaskRun) string {
 		formatTime(taskRun.GetScheduledAt()) == dash && formatTime(taskRun.GetStartedAt()) == dash {
 		return label + " (never started)"
 	}
+	if taskRun.GetCache().GetOutcome() == orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT {
+		return label + " (cached)"
+	}
 	return label
 }
 

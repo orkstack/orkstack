@@ -2,6 +2,7 @@
 // about items, kept here so it is unit-tested. An item is addressed by its
 // 0-based index and rendered convert[97] — a rendering, never parsed.
 
+import { CacheOutcome } from './gen/orkstack/v1/activity_pb';
 import { Status } from './gen/orkstack/v1/common_pb';
 import type { Event, TaskRun } from './gen/orkstack/v1/run_pb';
 import type { EachSpec } from './gen/orkstack/v1/orkflow_pb';
@@ -87,7 +88,19 @@ export function eachSummary(expanded: boolean, items: ItemView[], spec?: EachSpe
 	if (p.canceled > 0) parts.push(`${p.canceled} canceled`);
 	let line = `${p.settled} of ${p.count} settled — ${parts.join(', ')}`;
 	if (p.retried > 0) line += ` · ${p.retried} retried`;
+	const cached = cachedItems(items);
+	if (cached > 0) line += ` · ${cached} cached`;
 	return line;
+}
+
+/** isCachedItem is true for an item whose result was reused (a cache hit). */
+export function isCachedItem(item: ItemView): boolean {
+	return item.run?.cache?.outcome === CacheOutcome.HIT;
+}
+
+/** cachedItems counts a fan-out's reused items. */
+export function cachedItems(items: ItemView[]): number {
+	return items.filter(isCachedItem).length;
 }
 
 /**
@@ -169,7 +182,7 @@ export function itemStatusText(item: ItemView): string {
 
 /** itemAriaLabel is a cell's accessible name: "item 97, SUCCEEDED, attempt 2". */
 export function itemAriaLabel(item: ItemView): string {
-	return `item ${item.index}, ${itemStatusText(item)}, attempt ${item.attempt}`;
+	return `item ${item.index}, ${itemStatusText(item)}, attempt ${item.attempt}${isCachedItem(item) ? ', cached' : ''}`;
 }
 
 /** retriedItemsLabel is the fan-out card's retry badge, or null for none. */

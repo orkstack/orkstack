@@ -78,6 +78,10 @@
 	let inputMode = $state<'form' | 'json'>('form');
 	let idempotencyKey = $state('');
 	let allowEmptyPool = $state(false);
+	// no_cache: every cached task runs its container and refreshes its memo.
+	// Offered only when the selected version declares cache: on any task, and
+	// seeded unchecked — Run again included.
+	let noCache = $state(false);
 	// originReference is recorded on the run as its origin's reference — a CI
 	// job URL, a ticket. The server validates it; a refusal lands verbatim in
 	// the ErrorPanel like every other.
@@ -170,6 +174,7 @@
 			typedInputError = '';
 			idempotencyKey = '';
 			allowEmptyPool = false;
+			noCache = false;
 			assumedOutputsJson = '{}';
 			plan = null;
 			planError = '';
@@ -243,6 +248,7 @@
 	}
 
 	const chosenVersion = $derived(selectedVersion === CURRENT ? '' : selectedVersion);
+	const declaresCache = $derived((selectedOrkflow?.tasks ?? []).some((task) => task.cache !== undefined));
 	const specs = $derived(inputSpecs(selectedOrkflow?.inputs));
 	const versionOptions = $derived([
 		{ value: CURRENT, label: `Current (${currentVersionLabel()}) — resolves when submitted` },
@@ -261,6 +267,7 @@
 					input: cliParsedInput.value,
 					idempotencyKey,
 					allowEmptyPool,
+					noCache: declaresCache && noCache,
 					originReference,
 					sourceRunId: replayFromRunId
 				})
@@ -340,6 +347,7 @@
 				namespace,
 				idempotencyKey,
 				allowEmptyPool,
+				noCache: declaresCache && noCache,
 				originReference,
 				// A draft opened from Run again records run-again <source>: a
 				// claim the server checks exists in this namespace.
@@ -516,6 +524,17 @@
 				/>
 				Submit even if a resolved pool currently has no live Orker.
 			</label>
+			{#if declaresCache}
+				<label class="flex items-start gap-2 text-sm text-fg">
+					<input
+						data-testid="run-submit-no-cache"
+						type="checkbox"
+						bind:checked={noCache}
+						class="mt-0.5 accent-brand-600"
+					/>
+					Ignore cached results (every cached task runs its container and refreshes its memo)
+				</label>
+			{/if}
 			<div class="flex flex-col gap-1.5">
 				<label for="run-submit-origin-ref" class="text-sm text-fg">
 					Origin reference <span class="text-fg-muted">(optional)</span>

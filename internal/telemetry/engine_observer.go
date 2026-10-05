@@ -171,11 +171,18 @@ func (o *EngineObserver) recordTask(ctx context.Context, event *orkstackv1.Event
 		attribute.String(AttrStatus, status),
 		attribute.String(AttrFailureCategory, category))
 	attrs = append(attrs, selAttrs...)
-	inst.Tasks.Add(ctx, 1, metric.WithAttributes(attrs...))
-
 	durationAttrs := inst.Cardinality.TaskRunAttrs(run, task,
 		attribute.String(AttrStatus, status))
 	durationAttrs = append(durationAttrs, selAttrs...)
+	// A cached task's memo decision, ONLY when set: a hit's duration is its
+	// lookup, and this label is what keeps it from reading as a fast
+	// container. A deployment with no cached task keeps its series exactly.
+	if outcome := CacheOutcomeLabel(task.GetCache()); outcome != "" {
+		attrs = append(attrs, attribute.String(AttrCacheOutcome, outcome))
+		durationAttrs = append(durationAttrs, attribute.String(AttrCacheOutcome, outcome))
+	}
+	inst.Tasks.Add(ctx, 1, metric.WithAttributes(attrs...))
+
 	// Dispatch to finish: finished_at − scheduled_at. started_at is the
 	// Orker's start of the deciding attempt, and measuring from it would
 	// change this instrument's meaning under an unchanged name; it is the
@@ -328,4 +335,18 @@ func failureCategoryLabel(category orkstackv1.FailureCategory) string {
 
 func trimEnumPrefix(name, prefix string) string {
 	return strings.ToLower(strings.TrimPrefix(name, prefix))
+}
+
+// CacheOutcomeLabel renders a memo decision for AttrCacheOutcome: "hit",
+// "miss", "bypassed", or "" for none.
+func CacheOutcomeLabel(c *orkstackv1.CacheResult) string {
+	switch c.GetOutcome() {
+	case orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT:
+		return "hit"
+	case orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS:
+		return "miss"
+	case orkstackv1.CacheOutcome_CACHE_OUTCOME_BYPASSED:
+		return "bypassed"
+	}
+	return ""
 }

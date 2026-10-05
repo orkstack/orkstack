@@ -494,3 +494,30 @@ grouping):
 Nothing is written; no counter, rollup or ledger exists. A consumption curve
 over months belongs to the telemetry pipeline (`ork.orker.task.duration`
 carries per-attempt durations labelled by namespace and pool).
+
+## 9. Cache
+
+`orkctl cache stats` and **Admin → Cache** (`CacheService.GetCacheStats`)
+answer how one namespace's cached tasks (`docs/DSL.md` "Caching") fared over a
+window, and what memos the store holds now. Both halves are derived on read;
+no hit is counted anywhere.
+
+- **Usage**: the window's FINISHED runs, by the run archive's index (of one
+  Orkflow when one is named); each body is read, and every `TaskRun` — and
+  every fan-out item — whose `cache.outcome` is set is folded into one row per
+  (Orkflow, task): hits, misses, bypassed, `hit_rate = hits / (hits +
+  misses)` (*unavailable* when that is zero — bypassed runs asked not to look),
+  and `reused`, the producing attempts' duration the hits did not spend again.
+- **Inventory**: a listing of `metadata/memo/` keys under the namespace (one
+  Orkflow's orkflow-scoped memos when one is named); no memo body is read.
+
+Two bounds, and the read **fails rather than answer from a subset**: more than
+5,000 finished runs in the window (`CacheStatsMaxScan`, the flake index's
+bound) is `ResourceExhausted` before any body is read; more than 100,000 memo
+keys (`CacheStatsMaxMemos`) is `ResourceExhausted` naming `orkctl cache purge`.
+An index row whose body is absent is skipped and counted (`runs_scanned` <
+`runs_in_window`); any other body error fails the call `Unavailable`, naming
+the run. Answers are cached per (namespace, window as sent, Orkflow) on the
+same `ORK_STATS_CACHE_TTL` as the other stats reads, and a purge clears this
+replica's cached answers for its namespace.
+

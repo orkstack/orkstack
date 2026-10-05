@@ -79,7 +79,11 @@ type config struct {
 	eachMaxItems int32
 	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
 	// refused at boot outside that range (spec composed-orkflows §8).
-	composeMaxDepth               int32
+	composeMaxDepth int32
+	// cacheMaxTTL is ORK_CACHE_MAX_TTL: at least 1s, refused at boot
+	// otherwise — it bounds how old a memoized result a cached task may
+	// reuse, so a malformed value is never silently replaced.
+	cacheMaxTTL                   time.Duration
 	transferBudgetSeconds         int32
 	floorThroughputBytesPerSecond int64
 	// deployment is this release's Worker Deployment identity. It carries no
@@ -112,6 +116,7 @@ func loadConfig() config {
 	floorThroughput, throughputErr := envInt64AllowZero("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
 	eachMaxItems, eachErr := eachMaxItemsFromEnv()
 	composeMaxDepth, composeErr := composeMaxDepthFromEnv()
+	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
 
 	cfg := config{
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
@@ -129,8 +134,9 @@ func loadConfig() config {
 		floorThroughputBytesPerSecond: floorThroughput,
 		eachMaxItems:                  eachMaxItems,
 		composeMaxDepth:               composeMaxDepth,
+		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
-			logErr, commitErr, transferErr, throughputErr, eachErr, composeErr),
+			logErr, commitErr, transferErr, throughputErr, eachErr, composeErr, cacheErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -163,6 +169,26 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+// envPositiveDuration reads a Go duration that bounds something, and so must
+// be at least one second. Unlike envDuration it refuses a malformed or
+// too-small value at boot: silently falling back would change what a bound
+// means without anyone being told.
+func envPositiveDuration(key string, fallback time.Duration) (time.Duration, error) {
+	raw := env(key, "")
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return fallback, fmt.Errorf("%s=%q is not a duration (e.g. 168h): %w", key, raw, err)
+	}
+	if parsed < time.Second {
+		return fallback, fmt.Errorf("%s=%s must be at least 1s: it bounds how old a memoized result "+
+			"a cached task may reuse", key, raw)
+	}
+	return parsed, nil
 }
 
 func envInt64(key string, fallback int64) (int64, error) {
@@ -948,6 +974,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open task attempt store: %w", err)
 	}
+	// Cached tasks' memos: read (stats) and deleted (purge) here, written by
+	// Orkers. Same bucket and backend, no setting of its own.
+	memoStore, err := artifacts.NewMemoStore(archiveConfig)
+	if err != nil {
+		return fmt.Errorf("open cache memo store: %w", err)
+	}
 	artifactStore, err := artifacts.New(archiveConfig)
 	if err != nil {
 		return fmt.Errorf("open artifact store: %w", err)
@@ -1178,6 +1210,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Limits:                        cfg.contractLimits,
 		EachMaxItems:                  cfg.eachMaxItems,
 		ComposeMaxDepth:               cfg.composeMaxDepth,
+		CacheMaxTTL:                   cfg.cacheMaxTTL,
+		Memos:                         memoStore,
 		TransferBudgetSeconds:         cfg.transferBudgetSeconds,
 		FloorThroughputBytesPerSecond: cfg.floorThroughputBytesPerSecond,
 		Observer:                      eventObserver,

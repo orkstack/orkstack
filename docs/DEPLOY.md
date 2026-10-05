@@ -335,6 +335,7 @@ then the variable it becomes.
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
 | `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Lowers the built-in ceiling of 1000, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
+| `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
 | `engine.limits.artifact_max_count` | `ORK_ARTIFACT_MAX_COUNT` | `256` | `ork` | contract limit: output artifacts per attempt |
 | `engine.limits.artifact_max_bytes` | `ORK_ARTIFACT_MAX_BYTES` | `5 GiB` | `ork` | contract limit: bytes per output artifact |
@@ -396,7 +397,7 @@ takes that answer as representative — a mixed pool is refused or accepted
 depending on who answered, and a pin accepted onto Orkers that in fact set `0`
 waits for a slot that never appears and then fails the run.
 
-### Fan-out needs every Orker of a pool on a release that supports it
+### Fan-out and caching need every Orker of a pool on a release that supports them
 
 An Orkflow with a fan-out (`each:`, `docs/DSL.md` "Fan-out") needs Orkers that
 understand items: an Orker built before fan-out would run an item without its
@@ -407,6 +408,20 @@ fan-out, and refuses the run with `FailedPrecondition` naming the pool, the
 tasks, the Orker and its build when it does not; `allow_empty_pool` does not
 override that. Like pin hosting, the answer of one Orker stands for its pool:
 run every Orker of one pool on one release.
+
+Caching (`cache:`, `docs/DSL.md` "Caching") is the same: an Orker built before
+caching cannot even decode a cached task's input — the SDK's payload converter
+refuses the unknown field — and would fail every attempt for a reason that has
+nothing to do with the task. So submit asks one Orker of the pool of every
+cached task (a cached fan-out's items run on the fan-out's pool) whether it
+implements caching, and refuses with `FailedPrecondition` naming the pool, the
+tasks, the Orker and its build when it does not; neither `allow_empty_pool` nor
+`no_cache` overrides that (a bypass still sends the cache context). Rolling
+caching back is benign: an older engine runs a definition that declares
+`cache:` with every task uncached, and memos left behind are inert. Memos live
+under `metadata/memo/` in the artifact bucket, need no setting of their own,
+and a lifecycle rule there should be no shorter than `ORK_CACHE_MAX_TTL`
+(`docs/STORAGE.md`).
 
 ### Pins on a versioned deployment
 

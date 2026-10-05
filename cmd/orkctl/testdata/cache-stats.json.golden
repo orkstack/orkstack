@@ -1,0 +1,57 @@
+{
+  "usage": [
+    {
+      "orkflowName": "cached-pipeline",
+      "taskId": "featurize",
+      "hits": "2",
+      "misses": "1",
+      "hitRate": 0.6666666666666666,
+      "hitRateDefined": true,
+      "reused": "960s"
+    },
+    {
+      "orkflowName": "cached-pipeline",
+      "taskId": "train",
+      "misses": "3",
+      "hitRateDefined": true,
+      "reused": "0s"
+    },
+    {
+      "orkflowName": "nightly",
+      "taskId": "warm",
+      "bypassed": "1",
+      "reused": "0s"
+    }
+  ],
+  "inventory": [
+    {
+      "scope": "ORKFLOW",
+      "orkflowName": "cached-pipeline",
+      "taskId": "featurize",
+      "memos": "1",
+      "oldest": "2026-01-02T02:04:05Z",
+      "newest": "2026-01-02T02:04:05Z"
+    },
+    {
+      "scope": "ORKFLOW",
+      "orkflowName": "cached-pipeline",
+      "taskId": "train",
+      "memos": "2",
+      "oldest": "2026-01-02T02:04:05Z",
+      "newest": "2026-01-02T02:44:05Z"
+    },
+    {
+      "scope": "NAMESPACE",
+      "taskId": "toolchain",
+      "memos": "1",
+      "oldest": "2025-12-29T15:44:05Z",
+      "newest": "2025-12-29T15:44:05Z"
+    }
+  ],
+  "runsInWindow": "4",
+  "runsScanned": "4",
+  "namespace": "default",
+  "windowSince": "2026-01-01T03:04:05Z",
+  "windowUntil": "2026-01-02T03:04:05Z",
+  "computedAt": "2026-01-02T03:04:05Z"
+}

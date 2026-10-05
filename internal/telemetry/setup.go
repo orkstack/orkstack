@@ -55,6 +55,14 @@ const (
 	AttrOrkflowVersion = "ork.orkflow.version"
 	AttrOrkflowDigest  = "ork.orkflow.digest"
 	AttrStream         = "ork.stream"
+	// AttrCacheOutcome is a cached task's memo decision: hit, miss or
+	// bypassed (docs/DSL.md "Caching"). A bounded, three-valued label, set
+	// ONLY for a cached task, so a deployment with none keeps exactly its
+	// series. The memo key is never an attribute (unbounded).
+	AttrCacheOutcome = "ork.cache.outcome"
+	// AttrCacheMissReason is a miss's token (MEMO_ABSENT, …), on the Orker's
+	// attempt span only.
+	AttrCacheMissReason = "ork.cache.miss_reason"
 )
 
 // Providers is what Setup hands back: one provider per signal, the Prometheus

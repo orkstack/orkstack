@@ -195,6 +195,10 @@ type taskDocument struct {
 	// Each makes this task a fan-out: one node that runs as one item per
 	// element of the array `over` names (docs/DSL.md "Fan-out").
 	Each *eachDocument `yaml:"each"`
+
+	// Cache opts this task into memoization across runs (docs/DSL.md
+	// "Caching"). KnownFields(true) applies inside it.
+	Cache *cacheDocument `yaml:"cache"`
 }
 
 // secretDocument is one secret's name and where the Orker gets it.
@@ -361,8 +365,13 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		if err != nil {
 			return nil, err
 		}
+		cache, err := compileCache(taskIndex, td)
+		if err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
 			Each:           each,
+			Cache:          cache,
 			Id:             td.ID,
 			Uses:           td.Uses,
 			Command:        td.Command,

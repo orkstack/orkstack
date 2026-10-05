@@ -65,6 +65,11 @@ type Options struct {
 	Commits artifacts.CommitStore
 	// Refs predicts upload URIs for the step-4 commit bound.
 	Refs artifacts.RefPredictor
+	// Memos is where cached tasks' memos live. Nil means this Orker reuses
+	// nothing and writes no memo: every cached attempt is a MISS
+	// (MEMO_STORE_ABSENT) and runs, exactly like Commits being nil disables
+	// adoption.
+	Memos artifacts.MemoStore
 	// Runtime is the OCI runtime. Nil means DockerRuntime.
 	Runtime ContainerRuntime
 	// Policy is the Orker-local security and resource policy. The zero value
@@ -177,6 +182,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Logs:              opts.Logs,
 			LogOpts:           opts.Log,
 			Attempts:          opts.Attempts,
+			Memos:             opts.Memos,
 			Policy:            policy,
 			WorkRoot:          workRoot,
 			OrkerID:           orkerID,
@@ -236,6 +242,9 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		// Orker built before it answers false, and submit refuses a fan-out
 		// on its pool (spec each-fan-out §5.11).
 		EachSupported: true,
+		// The memo step (cache-memoization §6): this Orker reads
+		// ExecuteTaskInput.cache, so submit may send a cached task to its pool.
+		CacheSupported: true,
 	}
 	// The cordon and the load: one lock read, one atomic load and — only when
 	// a pin is open — one ReadDir of the work root.

@@ -13,6 +13,7 @@
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
 	import { activityLabel, shortDigest } from '$lib/activity';
+	import { cacheSpecLabel } from '$lib/cache';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -135,7 +136,16 @@
 		</section>
 
 		<section class="mb-8">
-			<h2 class="mb-3 text-sm font-semibold text-fg">Tasks ({wf.tasks.length})</h2>
+			<div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+				<h2 class="text-sm font-semibold text-fg">Tasks ({wf.tasks.length})</h2>
+				{#if wf.tasks.some((task) => task.cache)}
+					<a
+						data-testid="orkflow-cache-link"
+						href={withNamespace(`/admin/cache?orkflow=${encodeURIComponent(wf.name)}`, data.namespace)}
+						class="text-xs font-medium text-brand-700 hover:underline">Cache hit rate and memos</a
+					>
+				{/if}
+			</div>
 			<div class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs">
 				<table class="w-full min-w-[720px] border-collapse text-left text-sm">
 					<thead class="bg-surface-sunken">
@@ -145,6 +155,7 @@
 							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Image digest</th>
 							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Pool</th>
 							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Needs</th>
+							<th class="h-10 px-4 text-xs font-medium text-fg-muted">Cache</th>
 							<th class="h-10 px-4 pr-5 text-xs font-medium text-fg-muted">Timeout</th>
 						</tr>
 					</thead>
@@ -205,6 +216,9 @@
 								</td>
 								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="task-needs-{task.id}">
 									{task.needs.length > 0 ? task.needs.join(', ') : '—'}
+								</td>
+								<td class="h-11 px-4 align-middle text-fg-secondary" data-testid="task-cache-{task.id}">
+									{cacheSpecLabel(task.cache)}
 								</td>
 								<td class="h-11 px-4 pr-5 align-middle text-fg-secondary"
 									>{task.orkflow ? '—' : `${task.timeoutSeconds}s`}</td

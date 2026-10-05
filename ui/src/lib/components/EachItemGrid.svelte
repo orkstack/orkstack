@@ -13,7 +13,8 @@
 	import type { TaskAttempt, TaskEach } from '$lib/gen/orkstack/v1/run_pb';
 	import type { LiveAttempt, RunArtifact } from '$lib/gen/orkstack/v1/service_pb';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { eachSummary, itemAriaLabel, itemCli, itemLabel, itemStatusText, type ItemView } from '$lib/each';
+	import { eachSummary, isCachedItem, itemAriaLabel, itemCli, itemLabel, itemStatusText, type ItemView } from '$lib/each';
+	import CacheBadge from './CacheBadge.svelte';
 	import { STATUS_CLASSES, fmtTimestamp, isTerminal } from '$lib/status';
 	import { attemptsSeen } from '$lib/attempts';
 	import { formatDuration } from '$lib/runDetail';
@@ -139,14 +140,18 @@
 					data-item={item.index}
 					data-testid="task-{taskId}-item-{item.index}"
 					data-status={itemStatusText(item)}
+					data-cached={isCachedItem(item) ? 'true' : undefined}
 					aria-label={itemAriaLabel(item)}
 					aria-pressed={selected === item.index}
 					title={itemAriaLabel(item)}
 					onclick={() => onSelect(selected === item.index ? undefined : item.index)}
-					class="inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-1 font-mono text-[10px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 {STATUS_CLASSES[
+					class="relative inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-1 font-mono text-[10px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 {STATUS_CLASSES[
 						item.status
 					]} {selected === item.index ? 'ring-2 ring-brand-500' : ''}"
-				>{item.index}</button>
+				>{item.index}{#if isCachedItem(item)}<span
+							aria-hidden="true"
+							class="absolute top-0 right-0 size-1.5 rounded-bl-sm bg-brand-600"
+						></span>{/if}</button>
 			{/each}
 		</div>
 	{/if}
@@ -159,6 +164,7 @@
 				<span class="font-mono font-medium text-fg" data-testid="task-{taskId}-item-panel-label">{itemLabel(taskId, current.index)}</span>
 				<span data-testid="task-{taskId}-item-panel-status">{itemStatusText(current)}</span>
 				<span data-testid="task-{taskId}-item-panel-attempt">Attempt {current.attempt}</span>
+				<CacheBadge cache={run?.cache} {namespace} testid="task-{taskId}-item-panel-cache" />
 				{#if run?.orkerId}<span data-testid="task-{taskId}-item-panel-orker">Orker {run.orkerId}</span>{/if}
 				{#if run?.orkerId && isTerminal(current.status)}<span data-testid="task-{taskId}-item-panel-exit">Exit {run.exitCode}</span>{/if}
 				{#if run?.scheduledAt}<span>Scheduled {fmtTimestamp(run.scheduledAt)}</span>{/if}

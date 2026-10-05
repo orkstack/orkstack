@@ -108,6 +108,7 @@
     "error",
     "duration",
     "image",
-    "platform_digest"
+    "platform_digest",
+    "cached"
   ]
 }

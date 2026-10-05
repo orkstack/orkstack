@@ -189,6 +189,8 @@ type StatsHandler struct {
 	breakdowns map[breakdownKey]breakdownEntry
 	// flakes is GetFlakeIndex's cache, on the same terms.
 	flakes map[flakeKey]flakeEntry
+	// cacheStats is CacheService.GetCacheStats' cache, on the same terms.
+	cacheStats map[cacheStatsKey]cacheStatsEntry
 }
 
 // NewStatsHandler returns the stats surface over a service. ttl is used as
@@ -200,6 +202,7 @@ func NewStatsHandler(svc *Service, ttl time.Duration) *StatsHandler {
 		cache:      map[statsKey]statsEntry{},
 		breakdowns: map[breakdownKey]breakdownEntry{},
 		flakes:     map[flakeKey]flakeEntry{},
+		cacheStats: map[cacheStatsKey]cacheStatsEntry{},
 	}
 }
 

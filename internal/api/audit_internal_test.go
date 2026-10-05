@@ -48,6 +48,7 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.ActivityServiceListActivitiesProcedure:    true,
 	orkstackv1connect.ActivityServiceDescribeOrkerProcedure:     true,
 	orkstackv1connect.ActivityServiceListOrkersProcedure:        true,
+	orkstackv1connect.CacheServiceGetCacheStatsProcedure:        true,
 	// InspectActivity resolves one reference against the registry and writes
 	// nothing (activity-interface-manifests §5.4).
 	orkstackv1connect.ActivityServiceInspectActivityProcedure:  true,

@@ -297,6 +297,8 @@ func TestSimulate_AgreesWithTheInterpreter(t *testing.T) {
 			map[string]map[string]any{"list": {"parts": []any{map[string]any{"n": 1}, map[string]any{"n": 2}}}}},
 		{"fan-out over a stubbed upstream, not an array", compile(t, simulateEachTaskDocument), nil,
 			map[string]map[string]any{"list": {"parts": "nope"}}},
+		{"cached pipeline", compileExample(t, "cached-pipeline.ork.yaml"), nil,
+			map[string]map[string]any{"stamp": {"value": "1759600000000000000"}}},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

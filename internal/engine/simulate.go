@@ -82,6 +82,10 @@ func Simulate(
 			// recurses into the child: a composed task that would run is RUNS,
 			// and its stub stands in for the child's declared outputs.
 			Orkflow: tasks[id].GetOrkflow(),
+			// Set for every cached task whatever its outcome. A plan never
+			// predicts a hit: that is decided on the Orker, from the rendered
+			// config and the input digests, when the run reaches it.
+			Cache: tasks[id].GetCache(),
 		}
 	}
 	taskIndex := make(map[string]int, len(order))

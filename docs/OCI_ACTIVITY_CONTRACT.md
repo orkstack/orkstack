@@ -424,6 +424,19 @@ message DescribeOrkerResult {
 }
 ```
 
+**Task caching** (`docs/DSL.md`, "Caching") adds, all Orker-side and none of
+it visible to a container: `CacheScope`, `CacheOutcome`, `CacheContext`
+(`ExecuteTaskInput.cache = 27`: scope, the effective TTL in seconds, and
+`refresh` for a `no_cache` run — set ONLY for a cached task, so every other
+payload is byte-identical), `CacheResult` (`ExecuteTaskResult.cache = 15`,
+`ActivityCommit.cache = 19`, `TaskAttempt.cache = 20`: outcome, key, a miss's
+reason and sentence, a hit's `CacheSource`, the memo write's status, and — on
+the attempt record only — the key's components), `CacheSource` (the commit a
+hit reused), `CacheMemo` (the stored pointer, §5.4 "Memoized completion") and
+`DescribeOrkerResult.cache_supported = 17`, which submit reads to refuse a
+cached task on a pool whose Orker predates caching (it could not decode the
+input).
+
 ### 2.3 Other proto files
 
 The blocks below are excerpts of the files as they stand: field numbers, names
@@ -1835,6 +1848,61 @@ corrupt what the winner recorded. Being honest about the two-object boundary
 matches the existing precedent at `pkg/artifacts/orkflow_store.go:497-500`,
 which explicitly declines to claim a two-object transaction.
 
+### 5.4.1 Memoized completion (`cache:`)
+
+A task that declares `cache:` (`docs/DSL.md`, "Caching") carries a
+`CacheContext`, and its attempt takes one more step between staging and the
+image — the **memo step**. It is Orker-side behaviour and changes nothing a
+container sees: no file, `task.json` key, environment variable or exit code.
+
+1. **Deferred staging.** The upstream `values.json` objects are fetched and
+   digest-verified (the render reads them) and a fan-in's item commits are
+   read, but every artifact download, and the secrets, are recorded instead of
+   performed.
+2. **The key.** `config.json` is rendered in memory with the same renderer,
+   `run.json` encoded, and the memo key computed: the SHA-256 of a document
+   naming the namespace, the scope, the Orkflow (orkflow scope only), the task
+   and the components of `docs/DSL.md`'s table. An input reference with no
+   digest cannot be keyed: a MISS `INPUT_UNHASHED`, and no memo is written.
+3. **The lookup** (skipped, and recorded `BYPASSED`, when `refresh` is set),
+   bounded as a whole by 30 s; the first failing check is the recorded miss
+   reason, and **every** failing check means *run the task*, never a failure:
+
+   | # | Check | Otherwise |
+   |---|---|---|
+   | 1 | the Orker has a memo store, a commit store and a commit URI | `MEMO_STORE_ABSENT` |
+   | 2 | the memo reads | absent → `MEMO_ABSENT`; corrupt, store error or timeout → `MEMO_UNREADABLE` |
+   | 3 | schema 1; key, namespace, scope, task (and Orkflow under orkflow scope) are ours | `MEMO_UNREADABLE` / `MEMO_MISMATCH` |
+   | 4 | the source finished less than the effective TTL ago | `MEMO_EXPIRED` |
+   | 5 | the source commit reads, schema 1 | `SOURCE_COMMIT_GONE` / `SOURCE_COMMIT_UNREADABLE` |
+   | 6 | its stored bytes hash to the memo's `commit_sha256` | `SOURCE_COMMIT_CHANGED` |
+   | 7 | its namespace, task, run, `finished_at`, index digest and Orkflow are the memo's and ours; exit 0 | `SOURCE_COMMIT_MISMATCH` |
+   | 8 | it fits this run's value, artifact-count and artifact-size limits | `SOURCE_OVER_LIMITS` |
+   | 9 | its `values.json` refetches and hashes to the recorded digest; every artifact object exists | `SOURCE_OBJECT_UNAVAILABLE` |
+   | 10 | the hit's own commit fits `commit_max_bytes` | `SOURCE_OVER_LIMITS` |
+
+4. **A hit writes this run's own commit** — §5.4's sequence with the upload
+   replaced by a check: identity fields this activity's, `values`,
+   `artifacts`, `system_artifacts` and `image` the source's references, `cache`
+   naming the source — through the same create-if-absent, before success is
+   reported. No image is pulled, no secret resolved, no container created. A
+   conflict adopts the winner, as step 8 does; any other write error is
+   `COMMIT_WRITE_FAILED`, the only way the memo step can fail an attempt. A
+   memo that points at a HIT commit is followed once, so `cache.source` always
+   names the run whose container produced the bytes.
+5. **A miss or a bypass** completes staging, runs the container as always, and
+   records the decision on the commit it writes. After that commit is
+   **created** — never after a conflict's adoption — it writes the memo, a
+   plain put that replaces whatever was at the key, best-effort on a detached
+   10 s context: a failure is logged and reported (`memo_write_error`), never
+   an attempt failure.
+6. **Adoption on retry** (step 0) returns the adopted commit's `cache`, so a
+   retry after a hit's commit returns the same hit with `commit_adopted`.
+
+A memo is a pointer, never state: deleting any memo, or the whole
+`metadata/memo/` prefix, changes no result — only whether the next run's
+containers run.
+
 ### 5.5 Crash coverage (AGENTS.md §11)
 
 | Crash point | What survives | What happens next | Terminal state |
@@ -1843,6 +1911,8 @@ which explicitly declines to claim a two-object transaction.
 | Orker dies after exit, before upload | nothing | Same as above. | correct, container ran twice |
 | Orker dies mid artifact upload | some artifacts, no commit | Retry re-uploads. Orphans from the dead attempt are unreferenced. | correct |
 | Orker dies after `commit.json`, before Temporal completion | the commit | Retry's step 0 finds it and **adopts** it: no second container run, result returned. | correct, container ran once |
+| Orker dies after a cache hit's `commit.json`, before completion | this run's hit commit | Retry's step 0 adopts it: `cache` HIT with the same source, `commit_adopted`; no container in either attempt. | correct, container ran zero times |
+| Orker dies after a fresh commit, before its memo write | the commit, no memo | The task completes on retry by adoption; the next run misses (`MEMO_ABSENT`) and writes the memo. | correct, one extra container run later |
 | Orker restarts | image cache only (§6.4) | Temporal reschedules on any Orker in the pool. | correct |
 | Object storage temporarily unavailable during upload | nothing committed | `InfrastructureError` → retried per policy. Storage failure can never look like success. | correct |
 | Object storage unavailable at step 0 | — | `InfrastructureError/COMMIT_READ_FAILED`, retried. Execution never proceeds on an unknown commit state. | correct |
@@ -2107,6 +2177,11 @@ something to ask an Orker.
  5. INPUT STAGE       download upstream artifacts   → /orkstack/input/artifacts/
                       download upstream values.json → /orkstack/input/upstream/
                       resolve secrets               → /orkstack/input/secrets/
+                      (a cached task: values.json only; artifacts and secrets deferred)
+ 5b. MEMO             a cached task only: render config.json, compute the key,
+                      look up the memo (§5.4.1) → a HIT writes this run's
+                      commit and jumps to 15; anything else continues
+ 5c. STAGE ARTIFACTS  a cached task only: the deferred downloads, then secrets
  6. IMAGE             Runtime.Pull(image.pinned), or the verified embedded
                       layout (§4.6); record platform_digest and delivery
  7. RENDER            with: → config.json ; run_input → run.json ; task.json

@@ -25,6 +25,18 @@
 	} from '$lib/each';
 	import FailurePanel from '$lib/components/FailurePanel.svelte';
 	import RetryBadge from '$lib/components/RetryBadge.svelte';
+	import CacheBadge from '$lib/components/CacheBadge.svelte';
+	import type { CacheResult } from '$lib/gen/orkstack/v1/activity_pb';
+	import { CacheOutcome } from '$lib/gen/orkstack/v1/activity_pb';
+	import {
+		cacheOutcomeLabel,
+		cacheSourceHref,
+		cacheSpecLabel,
+		cachedCount,
+		memoWriteSentence,
+		missReasonSentence,
+		sourceAttemptDuration
+	} from '$lib/cache';
 	import AttemptTimeline from '$lib/components/AttemptTimeline.svelte';
 	import TimingBar from '$lib/components/TimingBar.svelte';
 	import { formatQuantity, taskTiming } from '$lib/timing';
@@ -149,6 +161,15 @@
 		// id from the snapshot. A composed task reaches no Orker and writes no
 		// logs: its card shows the child instead.
 		child?: TaskChild;
+		// cache is the memo decision of the attempt that produced this task's
+		// outcome (TaskRun.cache, docs/DSL.md "Caching") — set only for a
+		// cached task that succeeded, from the snapshot the task's terminal
+		// event brings.
+		cache?: CacheResult;
+		// factsRead is true once a snapshot that shows this task terminal has
+		// been merged: until then an absent cache means "not read yet", never
+		// "the Orker reported none".
+		factsRead?: boolean;
 	}
 
 	const run = $derived(data.run);
@@ -212,6 +233,15 @@
 	// a chatty run's page heavy.
 	let buffer = $state.raw(emptyEventBuffer());
 	let tasks = $state<TaskView[]>(untrack(seedTasks));
+	// The header's "· N cached": reused results, fan-out items included.
+	const cachedTotal = $derived(
+		cachedCount(
+			tasks.map((t) => ({
+				cache: t.cache,
+				items: t.items.map((i) => i.run).filter((r): r is TaskRun => r !== undefined)
+			}))
+		)
+	);
 	// EVERY TRY OF EVERY TASK, KEPT PER TASK.
 	//
 	// The loader reads the whole run's timeline in one call, and from then on
@@ -552,6 +582,8 @@
 				...(tr.await ? { await: tr.await } : existing?.await ? { await: existing.await } : {}),
 				...(tr.each ? { each: tr.each } : {}),
 				...(tr.child ? { child: tr.child } : existing?.child ? { child: existing.child } : {}),
+				...(tr.cache ? { cache: tr.cache } : {}),
+				factsRead: isTerminal(tr.status),
 				items: itemsFromTaskRun(tr)
 			});
 		}
@@ -592,6 +624,10 @@
 				// The child run's id arrives with the snapshot that follows its
 				// confirmed start; copied like await.
 				...(tr.child ? { child: tr.child } : {}),
+				// The memo decision arrives with the terminal snapshot; copied
+				// like child.
+				...(tr.cache ? { cache: tr.cache } : {}),
+				...(isTerminal(tr.status) ? { factsRead: true } : {}),
 				// Patched only when the snapshot carries one: upsertTask assigns
 				// every key present in the patch, so an empty pin here would
 				// erase the pin the definition already seeded.
@@ -777,7 +813,12 @@
 			case EventType.TASK_SUCCEEDED:
 				upsertTask(event.taskId, { status: status ?? Status.SUCCEEDED });
 				if (isFanOut(event.taskId) || isComposed(event.taskId)) rereadAndMerge();
-				else void refreshAttempts(event.taskId);
+				else {
+					void refreshAttempts(event.taskId);
+					// A cached task's memo decision travels on its snapshot row,
+					// never on the event: one event-triggered read brings it.
+					if (taskDefs.get(event.taskId)?.cache !== undefined) rereadAndMerge();
+				}
 				break;
 			case EventType.TASK_FAILED:
 				upsertTask(event.taskId, {
@@ -1367,7 +1408,7 @@
 		<div class="rounded-lg border border-border bg-surface p-3 shadow-xs">
 			<div class="text-xs font-medium text-fg-muted">Tasks</div>
 			<div class="mt-1 text-fg-secondary" data-testid="task-summary">
-				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}
+				{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length} succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}
 			</div>
 		</div>
 	</div>
@@ -1527,6 +1568,15 @@
 									historyWindow={HISTORY_WINDOW}
 								/>
 								{/if}
+								{#if !fanOut}
+									<CacheBadge
+										cache={task.cache}
+										declared={taskDefs.get(task.id)?.cache !== undefined}
+										succeeded={task.status === Status.SUCCEEDED && task.factsRead === true}
+										namespace={data.namespace}
+										testid="task-{task.id}-cache"
+									/>
+								{/if}
 							</div>
 						</div>
 						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
@@ -1623,6 +1673,17 @@
 									label="Copy the command that runs this task locally"
 								/>
 							{/if}
+							{/if}
+							{#if task.cache && task.cache.outcome !== CacheOutcome.HIT}
+								<!--
+									Where a miss's key components are: the attempt
+									records, which say which input changed.
+								-->
+								<CliEquivalent
+									command={runCommand(data.namespace, ['run', 'attempts', run.id, '--task', task.id])}
+									testid="task-{task.id}-cache-cli"
+									label="Copy the command that lists this task's attempts and their cache key components"
+								/>
 							{/if}
 							{#if task.status === Status.RUNNING}
 								<CliEquivalent
@@ -1841,6 +1902,57 @@
 												>
 													{def.secrets.map((s) => s.name).join(', ')}
 												</dd>
+											</div>
+										{/if}
+										{#if def?.cache}
+											<div>
+												<dt class="text-fg-muted uppercase">Cache</dt>
+												<dd class="mt-0.5 text-fg-secondary" data-testid="task-{task.id}-cache-spec">
+													{cacheSpecLabel(def.cache)}
+												</dd>
+											</div>
+										{/if}
+										{#if task.cache}
+											<div class="sm:col-span-2" data-testid="task-{task.id}-cache-detail">
+												<dt class="text-fg-muted uppercase">Cache decision</dt>
+												<dd class="mt-0.5 text-fg-secondary">{cacheOutcomeLabel(task.cache.outcome)}</dd>
+												{#if task.cache.key}
+													<dd class="mt-0.5 font-mono break-all text-fg-muted" data-testid="task-{task.id}-cache-key">
+														{task.cache.key}
+													</dd>
+												{/if}
+												{#if task.cache.outcome === CacheOutcome.HIT}
+													<dd class="mt-0.5">
+														Reused the result of run
+														<a
+															class="font-mono text-brand-700 hover:underline"
+															href={cacheSourceHref(data.namespace, task.cache.source)}
+															data-testid="task-{task.id}-cache-detail-source">{task.cache.source?.runId}</a
+														>, produced {fmtTimestamp(task.cache.source?.finishedAt)}{#if sourceAttemptDuration(task.cache.source)}
+															(its attempt took {sourceAttemptDuration(task.cache.source)}){/if}.
+													</dd>
+													<dd
+														class="mt-0.5 font-mono break-all text-fg-muted"
+														data-testid="task-{task.id}-cache-source-commit"
+													>
+														{task.cache.source?.commitUri}
+													</dd>
+													<dd class="mt-0.5 text-fg-muted">
+														stdout.log and stderr.log below are the producing run's; this
+														attempt's own log is the cache line in the log pane.
+													</dd>
+												{:else}
+													{#if task.cache.outcome === CacheOutcome.MISS}
+														<dd class="mt-0.5" data-testid="task-{task.id}-cache-reason">
+															{missReasonSentence(task.cache.missReason, task.cache.missDetail)}
+														</dd>
+													{/if}
+													{#if memoWriteSentence(task.cache)}
+														<dd class="mt-0.5 text-fg-muted" data-testid="task-{task.id}-cache-memo">
+															{memoWriteSentence(task.cache)}
+														</dd>
+													{/if}
+												{/if}
 											</div>
 										{/if}
 										<div>

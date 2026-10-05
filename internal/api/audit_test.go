@@ -96,6 +96,8 @@ type auditOptions struct {
 	reader        api.RunReader
 	starter       api.RunStarter
 	artifactStore artifacts.Store
+	// memos is the cache memo store; nil wires none.
+	memos artifacts.MemoStore
 }
 
 func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
@@ -132,6 +134,7 @@ func newAuditFixture(t *testing.T, opts auditOptions) *auditFixture {
 		Fleet:         opts.fleet,
 		Releases:      opts.releases,
 		ImagePolicies: opts.imagePolicies,
+		Memos:         opts.memos,
 		Logger:        slog.New(slog.NewTextHandler(f.logs, nil)),
 		Now:           func() time.Time { return f.now },
 		NewRunID: func() string {

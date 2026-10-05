@@ -764,6 +764,40 @@ row of the Versions tab, *Compare interfaces* beside *Diff*, the promote
 dialog's findings, followers, pinned composers and acknowledgement checkbox,
 and a *Callers* section under the version table.
 
+### Caching
+
+A task that declares `cache:` (`docs/DSL.md` "Caching") may reuse an identical
+earlier run's commit. `TaskRun.cache` (`CacheResult`: `HIT` with its
+`CacheSource` — the run, commit, digest and producing times — `MISS` with a
+reason token and sentence, or `BYPASSED`, plus whether the memo was written)
+marks it on `GetRun` and `ListRuns`; each `TaskAttempt` carries its own
+decision and the key's components; a hit's `TASK_SUCCEEDED` reads
+`task succeeded (cached from run <id>)`. `SubmitRunRequest.no_cache` runs every
+cached task's container and refreshes its memo, for the whole tree.
+`CacheService` adds `GetCacheStats` (per cached task: hits, misses, bypassed,
+the hit rate — *unavailable* over nothing — and the producing attempts' time
+reused; and the memo inventory, grouped) and `PurgeCache` (exactly one of an
+Orkflow, the namespace-scoped memos, or all; optionally one task and an age;
+bounded at 10,000 deletions with `more`). `DiffRuns` compares the `cached`
+field. Submit refuses a cached task on a pool whose Orker predates caching
+with `FailedPrecondition`.
+
+CLI: `run submit --no-cache`, `run again --no-cache`; `run get` labels a hit
+`SUCCEEDED (cached)` and prints one cache line per cached task; `run attempts`
+adds a `CACHE` column when any record carries one; `orkflow get` adds a
+`CACHED` table; `run plan` renders a cached task's DETAIL; `cache stats
+[--orkflow] [--since] [--until]` and `cache purge (--orkflow NAME |
+--namespace-scoped | --all) [--task] [--older-than]`, which refuses anything
+but exactly one selector before sending a request. UI: a cached task's card
+shows **Cached** linking to the producing run, **Cache miss** with its reason,
+or **Cache bypassed** (`task-{id}-cache`, `data-outcome`); Inspect shows the
+key, source commit and memo write; the attempt timeline shows each memo
+decision and its key components; the header counts cached tasks; fan-out cells
+mark cached items (`data-cached`); the submit panel offers *Ignore cached
+results*; the Orkflow page shows TTL and scope and links to **Admin → Cache**,
+which shows the hit rate, reused time and memos, and purges through a
+confirmed dialog with its `orkctl cache purge` equivalent.
+
 ## Capability and acceptance matrix
 
 | Capability | UI behavior | CLI/shared behavior | Required observable acceptance |
@@ -807,6 +841,7 @@ and a *Callers* section under the version table.
 | Fan-out (`each:`) | One card per fan-out with a summary and an item grid updated live from item events; an item panel with its attempts, logs, artifacts and CLI equivalents; deep links carry `item`; plan and DAG show the bound | `run get` collapsed row and `--expand`; `--item` on `logs`, `artifacts`, `artifact download`, `attempts`, `timing`, `inspect`, `evidence export`, `artifact provenance`, `task run`; `watch` spells `convert[97]`; `run plan` counts an input source | Every item commits under its own key and retries alone; a dependent stages every item from its commit; a failed item fails the run naming itself; a second replica serves every item read; history at the ceiling stays inside the stated budget; a run with no fan-out is byte-identical (golden replay) |
 | Composed Orkflows (`uses: orkflow:`, `outputs:`) | A composed task's card links to its child run, rolls up the child's tasks live and names the pinned child; the child's page links back; *Child runs* lists a parent's children; the Orkflow page shows the child reference, its digest and the declared outputs; apply shows rules 26–32 on their fields | `run get` names each child and `--tree` expands them; `run list --origin parent-run:RUN`; `orkflow get` COMPOSED and OUTPUT tables; `run logs` and `task run` refuse a composed task naming the child; `run plan` renders it | A child is its own run with its own id, history, archive record and `PARENT_RUN` origin; declared outputs are `Run.output` and the task's values, read by a downstream container; a child failure fails the parent task with the child's category; cancelling or terminating the parent leaves no child running; a second replica reads the tree; a submit that cannot plan the tree mints nothing; a run with neither construct is byte-identical (golden replay) |
 | Interface compatibility | Versions tab marks every version compatible, breaking or unknown against the current one; *Compare interfaces* beside *Diff*; the promote dialog lists breaking and unknown findings, what follows the current version and what pins it, and requires an acknowledgement for a breaking promotion; a *Callers* section lists composing Orkflows, triggers and schedules; the Apply page shows breaking warnings | `orkflow compat NAME [FROM] TO`, `orkflow callers NAME [--all-versions]`, `orkflow promote NAME V [--acknowledge-breaking]`, `orkflow versions` COMPAT column, warnings on `apply`/`validate`; `--json` for each | A breaking promotion is refused naming each change and moves nothing on any replica until acknowledged; compatible and unknown promotions are never refused; an apply is never refused and a breaking one warns; a promotion that raced another is refused rather than swapping across an unchecked break; `callers` names exactly the namespace's composing versions, triggers and schedules and nothing of another namespace; `compat` and `callers` write nothing |
+| Task caching (`cache:`) | A cached task's card shows *Cached* linking to the producing run, or *Cache miss* with its reason, or *Cache bypassed*; Inspect shows key, source commit and memo write; attempts show each memo decision and key components; the header counts cached tasks; fan-out cells mark cached items; *Ignore cached results* on submit; the Orkflow page shows TTL and scope; Admin → Cache shows hit rate, reused time and memos, and purges with a confirmed dialog | `run submit`/`run again --no-cache`; `run get` `SUCCEEDED (cached)` and one cache line per cached task; `run attempts` CACHE column; `orkflow get` CACHED table; `run plan` DETAIL; `cache stats [--orkflow] [--since] [--until]`; `cache purge (--orkflow NAME \| --namespace-scoped \| --all) [--task] [--older-than]`; `--json` envelopes | A second identical run reuses the commit and starts no container; any input change misses; deleting every memo changes no result; a corrupt memo, a retired source, a missing object or a memo-store outage is a recorded miss and the task succeeds; an Orker killed after a hit's commit is adopted as a hit; `no_cache` bypasses and refreshes; a pool whose Orker predates caching is refused at submit; a second replica reads stats and purges; a run with no cached task is byte-identical (golden replay) |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new
