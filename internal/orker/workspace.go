@@ -1015,10 +1015,17 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 
 // WriteConfigJSON writes the RENDERED `with:` block.
 func (w *Workspace) WriteConfigJSON(rendered map[string]any) error {
+	return w.writeInputFile("config.json", configValue(rendered))
+}
+
+// configValue is what config.json encodes for a render: an empty object for
+// none. The memo key hashes encodeInputFile(configValue(rendered)), the same
+// bytes WriteConfigJSON writes.
+func configValue(rendered map[string]any) map[string]any {
 	if rendered == nil {
-		rendered = map[string]any{}
+		return map[string]any{}
 	}
-	return w.writeInputFile("config.json", rendered)
+	return rendered
 }
 
 // WriteRunJSON writes the run's input payload — the same data templates see as
@@ -1030,12 +1037,24 @@ func (w *Workspace) WriteRunJSON(inputs map[string]any) error {
 	return w.writeInputFile("run.json", inputs)
 }
 
-func (w *Workspace) writeInputFile(name string, value any) error {
+// encodeInputFile renders value as config.json and run.json are written:
+// json.MarshalIndent(value, "", "  ") plus a trailing newline. It is the ONE
+// encoder of both files, so a cached task's memo key (memo.go) hashes exactly
+// the bytes its container would read; a build that changes this encoding
+// changes every key, and every memo misses once — safe.
+func encodeInputFile(value any) ([]byte, error) {
 	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(encoded, '\n'), nil
+}
+
+func (w *Workspace) writeInputFile(name string, value any) error {
+	encoded, err := encodeInputFile(value)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", name, err)
 	}
-	encoded = append(encoded, '\n')
 	path := filepath.Join(w.Input, name)
 	if err := os.WriteFile(path, encoded, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", name, err)

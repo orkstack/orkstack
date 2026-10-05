@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"go.temporal.io/sdk/activity"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -67,6 +68,11 @@ type OCIDispatcher struct {
 	// exactly like Logs and Commits, and the write is best-effort on every
 	// path: a record that cannot be stored is logged, never a task failure.
 	Attempts artifacts.AttemptStore
+	// Memos is where cached tasks' memos live. Nil means this Orker reuses
+	// nothing and writes no memo: every cached attempt is a MISS
+	// (MEMO_STORE_ABSENT) and runs, exactly like Commits being nil disables
+	// adoption.
+	Memos artifacts.MemoStore
 	// LogOpts bounds that stream.
 	LogOpts LogOptions
 	// Policy is the Orker-local half of §9.
@@ -117,6 +123,10 @@ type OCIDispatcher struct {
 	Signatures *dsl.SignatureVerifier
 	// Logger records lifecycle decisions. Nil uses slog.Default.
 	Logger *slog.Logger
+
+	// now is the memo step's clock (a memo's age, a hit's finished_at). Nil
+	// means time.Now; tests inject one.
+	now func() time.Time
 }
 
 // PhaseObserver watches one attempt's progress through the §7.1 sequence: it
@@ -144,6 +154,9 @@ type AttemptOutcome struct {
 	CommitAdopted bool
 	ExitCode      int32 // when known
 	Err           error
+	// Cache is the attempt's memo decision (key_components included), for an
+	// attempt of a cached task that reached the memo step; nil otherwise.
+	Cache *orkstackv1.CacheResult
 }
 
 // TaskLogExporter receives every framed line of one attempt, beside the
@@ -259,6 +272,10 @@ func (d *OCIDispatcher) Execute(
 		beat    *Heartbeater
 		result  *orkstackv1.ExecuteTaskResult
 		failure *Failure
+		// trace is the memo step's decision, for a cached task. Declared here
+		// so the attempt record and the observer see it on every exit path —
+		// a miss whose container then failed still records its miss.
+		trace = &memoTrace{emit: emit}
 	)
 
 	// end is the ONLY thing in Execute allowed to call attemptObs.End, and it
@@ -279,6 +296,7 @@ func (d *OCIDispatcher) Execute(
 			return
 		}
 		ended = true
+		outcome.Cache = trace.result
 		if attemptObs != nil {
 			attemptObs.End(outcome)
 		}
@@ -314,7 +332,7 @@ func (d *OCIDispatcher) Execute(
 	defer beat.Stop()
 	beat.Phase("start")
 
-	result, failure = d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink)
+	result, failure = d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink, trace)
 
 	// The line writers are flushed before the sink closes, so a workload's
 	// last unterminated line is not lost.
@@ -454,6 +472,7 @@ func (d *OCIDispatcher) execute(
 	beat *Heartbeater,
 	stdoutLine, stderrLine io.Writer,
 	sink *logChunkSink,
+	trace *memoTrace,
 ) (*orkstackv1.ExecuteTaskResult, *Failure) {
 	if failure := d.Validate(in); failure != nil {
 		return nil, failure
@@ -528,11 +547,78 @@ func (d *OCIDispatcher) execute(
 		ws.Shared = pinWS.Shared
 	}
 
-	// STEP 5. Input staging.
+	// STEP 5. Input staging. A cached task stages only what its memo key
+	// and its render need — the upstream values.json files, verified, and the
+	// fan-in item commits — and RECORDS the artifact fetches and secrets
+	// (deferBytes): a hit needs neither.
 	beat.Phase("stage-inputs")
-	staged, failure := d.stageInputs(ctx, in, ws)
+	cached := cachedInput(in)
+	staged, failure := d.stageInputs(ctx, in, ws, cached)
 	if failure != nil {
 		return nil, failure
+	}
+
+	// STEP 5b. The memo step, for a cached task only (docs/OCI_ACTIVITY_
+	// CONTRACT.md §5.4 "Memoized completion"). The render happens here, with
+	// the renderer STEP 7 uses, so the key hashes the exact config.json the
+	// container would read; STEP 7 then writes that value and does not
+	// render twice.
+	var (
+		eachItem    json.RawMessage
+		rendered    map[string]any
+		preRendered bool
+	)
+	if cached {
+		beat.Phase("memo")
+		var item *resolvedEachItem
+		if each := in.GetEach(); each != nil {
+			eachItem, failure = d.resolveEachItem(in, ws)
+			if failure != nil {
+				return nil, failure
+			}
+			item = &resolvedEachItem{Bytes: eachItem, As: each.GetAs(), Index: each.GetIndex(), Count: each.GetCount()}
+		}
+		rendered, failure = d.render(ctx, in, staged, eachItem)
+		if failure != nil {
+			return nil, failure
+		}
+		preRendered = true
+		config, err := encodeInputFile(configValue(rendered))
+		if err != nil {
+			return nil, FailCause(ReasonWorkdirFailed, err, "encode config.json: %v", err)
+		}
+		runJSON, err := encodeInputFile(payloadMapOf(in.GetRunInput()))
+		if err != nil {
+			return nil, FailCause(ReasonWorkdirFailed, err, "encode run.json: %v", err)
+		}
+		key, ok := computeMemoKey(in, config, runJSON, staged, item)
+		switch {
+		case !ok:
+			// Even under refresh: nothing can be keyed, and no memo is written.
+			trace.miss(memoKey{}, MemoMissInputUnhashed,
+				"an input reference of task %q carries no sha256, so no memo key can be computed", in.GetTaskId())
+			trace.log("[ork] cache miss (%s): %s; running the container", MemoMissInputUnhashed, trace.result.GetMissDetail())
+		case in.GetCache().GetRefresh():
+			trace.result = &orkstackv1.CacheResult{
+				Outcome:       orkstackv1.CacheOutcome_CACHE_OUTCOME_BYPASSED,
+				Key:           key.Key,
+				KeyComponents: key.Components,
+			}
+			trace.log("[ork] cache bypassed: the run was submitted with no_cache; running the container")
+		default:
+			if hit := d.lookupMemo(ctx, in, attempt, startedAt, key, trace); hit != nil {
+				return d.commitHit(ctx, in, attempt, startedAt, key, hit, trace)
+			}
+			trace.log("[ork] cache miss (%s): %s; running the container",
+				trace.result.GetMissReason(), trace.result.GetMissDetail())
+		}
+
+		// STEP 5c. What a hit did not need: the recorded artifact fetches,
+		// then the secrets.
+		beat.Phase("stage-artifacts")
+		if failure := d.completeStaging(ctx, in, ws, staged); failure != nil {
+			return nil, failure
+		}
 	}
 
 	// STEP 6. The image — BEFORE the render, so task.json can carry what the
@@ -558,16 +644,17 @@ func (d *OCIDispatcher) execute(
 	// An item of a fan-out resolves its own element of the array the engine
 	// counted, after staging (a task source is read from the staged
 	// values.json) and before render (.each reads it).
-	var eachItem json.RawMessage
-	if in.GetEach() != nil {
-		eachItem, failure = d.resolveEachItem(in, ws)
+	if !preRendered {
+		if in.GetEach() != nil {
+			eachItem, failure = d.resolveEachItem(in, ws)
+			if failure != nil {
+				return nil, failure
+			}
+		}
+		rendered, failure = d.render(ctx, in, staged, eachItem)
 		if failure != nil {
 			return nil, failure
 		}
-	}
-	rendered, failure := d.render(ctx, in, staged, eachItem)
-	if failure != nil {
-		return nil, failure
 	}
 	if err := ws.WriteConfigJSON(rendered); err != nil {
 		return nil, FailCause(ReasonWorkdirFailed, err, "write config.json: %v", err)
@@ -683,7 +770,7 @@ func (d *OCIDispatcher) execute(
 
 	// STEP 13. Hash, bound, upload, commit.
 	beat.Phase("commit")
-	return d.commit(ctx, in, ws, capture, image, scanned, values, attempt, startedAt)
+	return d.commit(ctx, in, ws, capture, image, scanned, values, attempt, startedAt, trace)
 }
 
 // ---------------------------------------------------------------- step 0
@@ -774,6 +861,12 @@ func (d *OCIDispatcher) adopt(
 		Attempt: commit.GetAttempt(),
 	}
 	_ = attempt
+	// A cached task's adopted result carries the committing attempt's memo
+	// decision: a retry after a hit's commit returns the hit, never a fresh
+	// run. memo_written is never reconstructed (the commit cannot know it).
+	if cachedInput(in) {
+		result.Cache = commit.GetCache()
+	}
 
 	// Adoption reconstructs the FULL result, including the inline copy.
 	// Otherwise the same task would produce a populated TaskRun.output on a
@@ -805,29 +898,7 @@ func (d *OCIDispatcher) logger() *slog.Logger {
 // guarantee that every byte still exists. values is the one exception, because
 // it is being COPIED into the result rather than merely referenced.
 func (d *OCIDispatcher) refetchValues(ctx context.Context, ref *orkstackv1.ArtifactRef) ([]byte, *Failure) {
-	if d.Store == nil {
-		return nil, Fail(ReasonValuesRefetchFailed, "this orker has no artifact store")
-	}
-	reader, err := d.Store.Get(ctx, ref.GetUri())
-	if err != nil {
-		return nil, FailCause(ReasonValuesRefetchFailed, err,
-			"refetch the committed values.json at %s: %v", ref.GetUri(), err)
-	}
-	defer func() { _ = reader.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(reader, InlineValuesLimit+1))
-	if err != nil {
-		return nil, FailCause(ReasonValuesRefetchFailed, err,
-			"refetch the committed values.json at %s: %v", ref.GetUri(), err)
-	}
-	if got := HashBytes(raw); got != ref.GetSha256() {
-		// The store returned bytes that are not what the commit recorded.
-		// That is the store lying, and it is terminal: no retry can make the
-		// digest match.
-		return nil, Fail(ReasonValuesCorrupt,
-			"the committed values.json at %s hashes to %s but the commit records %s",
-			ref.GetUri(), got, ref.GetSha256())
-	}
-	return raw, nil
+	return d.refetchCommittedValues(ctx, ref, InlineValuesLimit)
 }
 
 // commitIdentityMismatch compares exactly the seven identity fields of §5.4.
@@ -875,14 +946,59 @@ type stagedInputs struct {
 	// upstreamArtifacts maps a task id to its refs, for .tasks.<id>.artifacts.
 	upstreamArtifacts map[string][]*orkstackv1.ArtifactRef
 	// eachUpstream lists every fan-out upstream staged for a direct
-	// dependent, for task.json inputs.eachUpstream.
+	// dependent, for task.json inputs.eachUpstream — and for a cached task's
+	// memo key, because a zero-item fan-in stages no file.
 	eachUpstream []taskJSONEachUpstream
+
+	// inputFiles is every staged-or-deferred input file, by container path,
+	// task.json name and reference digest: what a cached task's memo key
+	// covers. Built in both modes.
+	inputFiles []memoInputFile
+	// inputUnhashed is set when any staged reference carried no sha256: no
+	// memo key can be computed (INPUT_UNHASHED).
+	inputUnhashed bool
+	// deferred lists the artifact fetches stageInputs recorded instead of
+	// performing (deferBytes), in order; completeStaging performs them.
+	deferred []deferredFetch
+	// secretsDeferred is set when stageInputs skipped secret resolution
+	// (deferBytes); completeStaging resolves them.
+	secretsDeferred bool
 }
 
+// noteInputFile records one input file for the memo key.
+func (s *stagedInputs) noteInputFile(containerPath, name, sha string) {
+	if sha == "" {
+		s.inputUnhashed = true
+	}
+	s.inputFiles = append(s.inputFiles, memoInputFile{
+		Path:    containerPath,
+		NameB64: EncodeArtifactName(name),
+		SHA256:  sha,
+	})
+}
+
+// fetch downloads ref into hostPath now, or — with deferBytes — records the
+// download for completeStaging.
+func (d *OCIDispatcher) fetchOrDefer(ctx context.Context, staged *stagedInputs, deferBytes bool,
+	ref *orkstackv1.ArtifactRef, hostPath string) *Failure {
+	if deferBytes {
+		staged.deferred = append(staged.deferred, deferredFetch{ref: ref, hostPath: hostPath})
+		return nil
+	}
+	return d.fetchInto(ctx, ref, hostPath)
+}
+
+// stageInputs stages every upstream contribution and the secrets. With
+// deferBytes false it is exactly today's staging, in today's order. With
+// deferBytes true — a cached task's attempt — everything is built the same
+// way, upstream values.json objects are still fetched and verified (the
+// render reads them), but every artifact download, and the secrets, are
+// recorded for completeStaging instead of performed.
 func (d *OCIDispatcher) stageInputs(
 	ctx context.Context,
 	in *orkstackv1.ExecuteTaskInput,
 	ws *Workspace,
+	deferBytes bool,
 ) (*stagedInputs, *Failure) {
 	staged := &stagedInputs{
 		artifacts:         []taskJSONInputArtifact{},
@@ -898,7 +1014,7 @@ func (d *OCIDispatcher) stageInputs(
 		// A fan-out upstream carries no commit of its own: its items do, and
 		// they are staged one directory per item (spec each-fan-out §6.2).
 		if up.GetEach() != nil {
-			if failure := d.stageEachUpstream(ctx, in, ws, up, staged); failure != nil {
+			if failure := d.stageEachUpstream(ctx, in, ws, up, staged, deferBytes); failure != nil {
 				return nil, failure
 			}
 			continue
@@ -915,9 +1031,10 @@ func (d *OCIDispatcher) stageInputs(
 			hostPath := filepath.Join(hostDir, safe)
 			containerPath := ContainerInputArtifacts + "/" + safeComponent(producer) + "/" + safe
 
-			if failure := d.fetchInto(ctx, ref, hostPath); failure != nil {
+			if failure := d.fetchOrDefer(ctx, staged, deferBytes, ref, hostPath); failure != nil {
 				return nil, failure
 			}
+			staged.noteInputFile(containerPath, ref.GetName(), ref.GetSha256())
 			entry := taskJSONInputArtifact{
 				Producer:    producer,
 				NameB64:     EncodeArtifactName(ref.GetName()),
@@ -948,9 +1065,11 @@ func (d *OCIDispatcher) stageInputs(
 			if failure := d.fetchInto(ctx, values, hostPath); failure != nil {
 				return nil, failure
 			}
+			valuesPath := ContainerUpstream + "/" + safeComponent(producer) + "/values.json"
+			staged.noteInputFile(valuesPath, "values.json", values.GetSha256())
 			staged.upstream = append(staged.upstream, taskJSONUpstream{
 				TaskID:     producer,
-				ValuesPath: ContainerUpstream + "/" + safeComponent(producer) + "/values.json",
+				ValuesPath: valuesPath,
 			})
 			if raw, err := os.ReadFile(hostPath); err == nil {
 				decoded := map[string]any{}
@@ -961,17 +1080,29 @@ func (d *OCIDispatcher) stageInputs(
 		}
 	}
 
-	// Secrets. The value never appears in a proto message, in Temporal
-	// history, in the archive, in a log chunk, or in task.json — task.json
-	// carries only names and paths (§9.4).
+	// A cached task's secrets wait for its memo step: a hit reads none.
+	if deferBytes {
+		staged.secretsDeferred = len(in.GetSecrets()) > 0
+		return staged, nil
+	}
+	if failure := d.stageSecrets(in, ws, staged); failure != nil {
+		return nil, failure
+	}
+	return staged, nil
+}
+
+// stageSecrets resolves and writes every secret. The value never appears in
+// a proto message, in Temporal history, in the archive, in a log chunk, or in
+// task.json — task.json carries only names and paths (§9.4).
+func (d *OCIDispatcher) stageSecrets(in *orkstackv1.ExecuteTaskInput, ws *Workspace, staged *stagedInputs) *Failure {
 	for _, secret := range in.GetSecrets() {
 		value, failure := d.resolveSecret(secret)
 		if failure != nil {
-			return nil, failure
+			return failure
 		}
 		hostPath := filepath.Join(ws.Secrets, secret.GetName())
 		if err := os.WriteFile(hostPath, value, 0o600); err != nil {
-			return nil, FailCause(ReasonSecretUnresolved, err,
+			return FailCause(ReasonSecretUnresolved, err,
 				"write secret %q: %v", secret.GetName(), err)
 		}
 		staged.secrets = append(staged.secrets, taskJSONSecret{
@@ -979,7 +1110,7 @@ func (d *OCIDispatcher) stageInputs(
 			Path: ContainerSecrets + "/" + secret.GetName(),
 		})
 	}
-	return staged, nil
+	return nil
 }
 
 // fetchInto downloads one referenced artifact and verifies its digest.
@@ -1384,6 +1515,7 @@ func (d *OCIDispatcher) commit(
 	values []byte,
 	attempt int32,
 	startedAt *timestamppb.Timestamp,
+	trace *memoTrace,
 ) (*orkstackv1.ExecuteTaskResult, *Failure) {
 	provenance := artifacts.Provenance{
 		Orkflow: in.GetOrkflowName(),
@@ -1446,6 +1578,10 @@ func (d *OCIDispatcher) commit(
 		Attempt:                 attempt,
 		OrkerId:                 d.OrkerID,
 		BuildId:                 d.BuildID,
+		// A cached task's commit records its memo decision — set here, so the
+		// step-4 projection measures it. Nil for every other task, which
+		// keeps its commit byte-identical.
+		Cache: commitCache(trace.decision()),
 	}
 	if d.Refs != nil {
 		projected.Values = refPtr(d.Refs.RefFor(provenance, "values.json", valuesSHA, int64(len(values)), "application/json"))
@@ -1512,6 +1648,7 @@ func (d *OCIDispatcher) commit(
 	}
 
 	if d.Commits == nil || in.GetCommitUri() == "" {
+		result.Cache = resultCache(trace.decision())
 		return result, nil
 	}
 	record, err := d.Commits.Create(ctx, in.GetCommitUri(), commit)
@@ -1523,6 +1660,14 @@ func (d *OCIDispatcher) commit(
 			Etag:      record.ETag,
 			CreatedAt: capture.finishedAt,
 		}
+		// The memo is written only here, after THIS attempt's commit was
+		// created — never after the conflict branch's adoption below — so a
+		// memo always points at a commit that already exists.
+		if decision := trace.decision(); shouldWriteMemo(decision) {
+			d.writeMemo(ctx, in, memoKey{Key: decision.GetKey(), Components: decision.GetKeyComponents()},
+				commit, record, trace)
+		}
+		result.Cache = resultCache(trace.decision())
 		return result, nil
 
 	case errors.Is(err, artifacts.ErrPreconditionFailed):
@@ -1851,6 +1996,20 @@ func (d *OCIDispatcher) attemptRecord(
 		record.SystemArtifacts = failure.Detail.GetSystemArtifacts()
 		if record.ExitCode == 0 {
 			record.ExitCode = failure.Detail.GetExitCode()
+		}
+	}
+
+	// A cached task's memo decision, key_components included: how an
+	// operator sees which input changed between a miss and the run whose memo
+	// it no longer matches. A HIT pulled nothing and uploaded nothing, so its
+	// image is the input's pinned reference (no platform) and it carries no
+	// system artifacts — the result's are the producer's.
+	if outcome.Cache != nil {
+		record.Cache = proto.Clone(outcome.Cache).(*orkstackv1.CacheResult)
+		if result != nil && !result.GetCommitAdopted() &&
+			outcome.Cache.GetOutcome() == orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT {
+			record.Image = in.GetImage()
+			record.SystemArtifacts = nil
 		}
 	}
 	return record

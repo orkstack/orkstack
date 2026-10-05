@@ -502,8 +502,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
+	// Cached tasks' memos, in the same backend again: a memo one Orker wrote
+	// is one any Orker of the deployment can read (docs/DSL.md "Caching").
+	memoStore, err := artifacts.NewMemoStoreFromEnv()
+	if err != nil {
+		return err
+	}
 
 	opts := orkerOptions(cfg, tcfg, sinks, logStore, logOptions, attemptStore, commitStore, refPredictor, logger)
+	opts.Memos = memoStore
 	logger.Info("task log export ready", "enabled", opts.TaskLogs != nil)
 
 	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)

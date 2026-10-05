@@ -47,6 +47,7 @@ func (d *OCIDispatcher) stageEachUpstream(
 	ws *Workspace,
 	up *orkstackv1.UpstreamRef,
 	staged *stagedInputs,
+	deferBytes bool,
 ) *Failure {
 	producer := up.GetTaskId()
 	each := up.GetEach()
@@ -109,12 +110,14 @@ func (d *OCIDispatcher) stageEachUpstream(
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return FailCause(ReasonWorkdirFailed, err, "stage fan-out task %q item %d: %v", producer, i, err)
 			}
-			if failure := d.fetchInto(ctx, values, filepath.Join(dir, "values.json")); failure != nil {
+			if failure := d.fetchOrDefer(ctx, staged, deferBytes, values, filepath.Join(dir, "values.json")); failure != nil {
 				return failure
 			}
+			valuesPath := ContainerUpstream + "/" + safeProducer + "/" + segment + "/values.json"
+			staged.noteInputFile(valuesPath, "values.json", values.GetSha256())
 			staged.upstream = append(staged.upstream, taskJSONUpstream{
 				TaskID:     producer,
-				ValuesPath: ContainerUpstream + "/" + safeProducer + "/" + segment + "/values.json",
+				ValuesPath: valuesPath,
 				Item:       &index,
 			})
 		}
@@ -125,13 +128,15 @@ func (d *OCIDispatcher) stageEachUpstream(
 			}
 			for _, ref := range commit.GetArtifacts() {
 				safe := safeComponent(ref.GetName())
-				if failure := d.fetchInto(ctx, ref, filepath.Join(dir, safe)); failure != nil {
+				if failure := d.fetchOrDefer(ctx, staged, deferBytes, ref, filepath.Join(dir, safe)); failure != nil {
 					return failure
 				}
+				containerPath := ContainerInputArtifacts + "/" + safeProducer + "/" + segment + "/" + safe
+				staged.noteInputFile(containerPath, ref.GetName(), ref.GetSha256())
 				entry := taskJSONInputArtifact{
 					Producer:    producer,
 					NameB64:     EncodeArtifactName(ref.GetName()),
-					Path:        ContainerInputArtifacts + "/" + safeProducer + "/" + segment + "/" + safe,
+					Path:        containerPath,
 					SizeBytes:   ref.GetSizeBytes(),
 					SHA256:      ref.GetSha256(),
 					ContentType: ref.GetContentType(),
