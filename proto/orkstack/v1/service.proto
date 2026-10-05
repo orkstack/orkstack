@@ -43,6 +43,14 @@ service OrkflowService {
   // NotFound, so a reader can never observe a pointer to a version that is not
   // there. Two replicas promoting at once are arbitrated by the store's
   // compare-and-swap — one value wins, and it is one of the two asked for.
+  //
+  // It compares the target's declared interface with the version a run that
+  // names no version executes now, and REFUSES (FailedPrecondition, naming
+  // each breaking finding) a BREAKING change unless acknowledge_breaking is
+  // set. COMPATIBLE and UNKNOWN changes are never refused. The swap is made
+  // only while the pointer still names what the comparison was made
+  // against: a promotion that loses that race is FailedPrecondition, never
+  // an unchecked move.
   rpc SetCurrentOrkflowVersion(SetCurrentOrkflowVersionRequest) returns (SetCurrentOrkflowVersionResponse);
   // DiffOrkflowVersions renders the unified diff between two versions'
   // source_yaml.
@@ -84,6 +92,20 @@ service OrkflowService {
   // also not an admission check — pools, holds, and limits are SubmitRun's
   // questions and are not asked here.
   rpc PlanRun(PlanRunRequest) returns (PlanRunResponse);
+  // CompareInterfaces classifies how the DECLARED interface of one stored
+  // version — its inputs: and its outputs: — changes in another
+  // (docs/DSL.md "Which version runs"). It speaks about declarations only:
+  // tasks, images, with:, pools and output templates are implementation,
+  // and DiffOrkflowVersions reports them. Computed on every call from the
+  // two immutable documents, stored nowhere; any replica answers.
+  rpc CompareInterfaces(CompareInterfacesRequest) returns (CompareInterfacesResponse);
+  // ListOrkflowCallers lists what, in this namespace, references one
+  // orkflow and which version it pins: every composing task of every other
+  // orkflow's scanned version, every trigger, and every schedule. It is a
+  // scan of the namespace's stored definitions and a read of its triggers
+  // and schedules, made per request — there is no caller index — so its
+  // cost grows with the namespace, and the response says how much it read.
+  rpc ListOrkflowCallers(ListOrkflowCallersRequest) returns (ListOrkflowCallersResponse);
 }
 
 message ApplyOrkflowRequest {
@@ -181,6 +203,12 @@ message OrkflowVersion {
   // target when one is set, otherwise the most recently applied version.
   bool is_current = 3;
   string description = 4;
+  // interface_verdict is this version's declared interface compared with
+  // the version marked is_current — "what would promoting this version
+  // break" (CompareInterfaces with from = current, to = this). UNSPECIFIED
+  // on the is_current row itself. Computed on read from documents the
+  // listing already reads; stored nowhere.
+  InterfaceVerdict interface_verdict = 5;
 }
 message ListOrkflowVersionsRequest {
   string name = 1;
@@ -207,6 +235,13 @@ message SetCurrentOrkflowVersionRequest {
   string name = 1;
   string version = 2;                    // must already exist
   string namespace = 3;                  // empty = the default namespace
+  // acknowledge_breaking permits a promotion whose target BREAKS the
+  // declared interface of the version runs execute now. Without it such a
+  // promotion is FailedPrecondition and nothing moves. It permits; it never
+  // requires: set on a compatible promotion it changes nothing. It accepts
+  // the break against whichever version the pointer names when the request
+  // is served.
+  bool acknowledge_breaking = 4;
 }
 message SetCurrentOrkflowVersionResponse {
   string name = 1;
@@ -216,6 +251,12 @@ message SetCurrentOrkflowVersionResponse {
   // never set. It is what a rollback promotes back to.
   string previous_version = 4;
   google.protobuf.Timestamp updated_at = 5;
+  // interface_verdict is the promoted version's declared interface compared
+  // with compared_version — what ran when no version was named, until now.
+  // UNSPECIFIED, with compared_version empty, when the promotion did not
+  // change what runs. BREAKING here means the request acknowledged it.
+  InterfaceVerdict interface_verdict = 6;
+  string compared_version = 7;
 }
 message DiffOrkflowVersionsRequest {
   string name = 1;
@@ -378,6 +419,155 @@ message PlanRunResponse {
   repeated string unused_assumed_outputs = 12;
   int32 awaits = 13;                     // count of AWAITS
 }
+// InterfaceVerdict is how one version's DECLARED interface — its inputs:
+// and its outputs: — compares with another's.
+enum InterfaceVerdict {
+  // UNSPECIFIED means nothing was compared: a version listed beside itself,
+  // or a promotion that did not change what runs.
+  INTERFACE_VERDICT_UNSPECIFIED = 0;
+  // COMPATIBLE: every finding is compatible.
+  INTERFACE_VERDICT_COMPATIBLE = 1;
+  // BREAKING: at least one finding breaks. Promoting such a version is
+  // refused until acknowledged.
+  INTERFACE_VERDICT_BREAKING = 2;
+  // UNKNOWN: nothing breaks, but part of the interface is not declared — an
+  // orkflow with no outputs: declares no return contract, so whether its
+  // output changed cannot be stated. Never reported as COMPATIBLE, never
+  // refused.
+  INTERFACE_VERDICT_UNKNOWN = 3;
+}
+
+// InterfaceChange is what one finding says happened.
+enum InterfaceChange {
+  INTERFACE_CHANGE_UNSPECIFIED = 0;
+  INTERFACE_CHANGE_UNCHANGED = 1;
+  INTERFACE_CHANGE_ADDED = 2;
+  INTERFACE_CHANGE_REMOVED = 3;
+  // RETYPED: an input's type differs, or it is typed where it was not.
+  INTERFACE_CHANGE_RETYPED = 4;
+  // UNTYPED: an input's type was dropped.
+  INTERFACE_CHANGE_UNTYPED = 5;
+  INTERFACE_CHANGE_NOW_REQUIRED = 6;
+  INTERFACE_CHANGE_NO_LONGER_REQUIRED = 7;
+  INTERFACE_CHANGE_DEFAULT_ADDED = 8;
+  INTERFACE_CHANGE_DEFAULT_REMOVED = 9;
+  INTERFACE_CHANGE_DEFAULT_CHANGED = 10;
+  // OUTPUTS_UNDECLARED: neither version declares outputs:.
+  INTERFACE_CHANGE_OUTPUTS_UNDECLARED = 11;
+  // OUTPUTS_DECLARED: the later version declares outputs: and the earlier
+  // one did not.
+  INTERFACE_CHANGE_OUTPUTS_DECLARED = 12;
+}
+
+// InterfaceFinding is one statement about one declared input, one declared
+// output, or the outputs: block as a whole.
+message InterfaceFinding {
+  // field is "inputs.<name>", "outputs.<name>", or "outputs".
+  string field = 1;
+  InterfaceChange change = 2;
+  // verdict is this finding's own: COMPATIBLE, BREAKING or UNKNOWN, never
+  // UNSPECIFIED.
+  InterfaceVerdict verdict = 3;
+  // from and to render the declaration on each side for a reader — an input
+  // as "string, required" or "number, optional, default 300", an output as
+  // "declared", the outputs: block as "none" or "3 outputs" — and are empty
+  // on the side where it does not exist.
+  string from = 4;
+  string to = 5;
+  // message is the one sentence every client prints for this finding,
+  // verbatim.
+  string message = 6;
+}
+
+// CompareInterfacesRequest's fields mirror DiffOrkflowVersionsRequest, the
+// sibling read, field for field.
+message CompareInterfacesRequest {
+  string name = 1;
+  string from_version = 2;               // empty = the resolved current version
+  string to_version = 3;                 // empty = the resolved current version
+  string namespace = 4;                  // empty = the default namespace
+}
+message CompareInterfacesResponse {
+  // findings: every input of either version, sorted by name, then the
+  // output side (docs/DSL.md "Which version runs" gives the table).
+  repeated InterfaceFinding findings = 1;
+  // verdict is BREAKING when any finding is, else UNKNOWN when any finding
+  // is, else COMPATIBLE.
+  InterfaceVerdict verdict = 2;
+  string from_version = 3;               // resolved
+  string to_version = 4;                 // resolved
+}
+
+// OrkflowCallerKind is what references an orkflow.
+enum OrkflowCallerKind {
+  ORKFLOW_CALLER_KIND_UNSPECIFIED = 0;
+  // ORKFLOW: a composed task (uses: orkflow:<name>@<version>) of a stored
+  // version of another orkflow. It always pins a version and is never moved
+  // by a promotion.
+  ORKFLOW_CALLER_KIND_ORKFLOW = 1;
+  ORKFLOW_CALLER_KIND_TRIGGER = 2;
+  ORKFLOW_CALLER_KIND_SCHEDULE = 3;
+}
+
+// OrkflowCaller is one reference to an orkflow. Fields marked with a kind
+// are set only for that kind.
+message OrkflowCaller {
+  OrkflowCallerKind kind = 1;
+  // name is the composing orkflow's name (ORKFLOW), the schedule's name
+  // (SCHEDULE), or the trigger's optional name (TRIGGER; may be empty).
+  string name = 2;
+  // id is the trigger's or the schedule's opaque id; empty for ORKFLOW.
+  string id = 3;
+  // ORKFLOW: the composing version, whether it is that orkflow's resolved
+  // current version, and the composed task.
+  string caller_version = 4;
+  bool caller_version_is_current = 5;
+  string task_id = 6;
+  // pinned_version is the version of THIS orkflow the caller starts. Always
+  // set for ORKFLOW. Empty for a trigger or schedule that follows the
+  // current pointer — or, for a SCHEDULE, when unavailable_reason is set,
+  // in which case it is UNKNOWN, not "follows current".
+  string pinned_version = 7;
+  // ORKFLOW: the definition digest the composing version pinned.
+  string pinned_definition_digest = 8;
+  // ORKFLOW: the output names of this orkflow the composing version's
+  // templates read through the composed task (with:, condition:, outputs:),
+  // sorted and distinct.
+  repeated string outputs_read = 9;
+  // ORKFLOW: the top-level keys of the composed task's with: — the inputs
+  // it supplies — sorted.
+  repeated string inputs_supplied = 10;
+  // TRIGGER, SCHEDULE: the operator's description, verbatim.
+  string description = 11;
+  // SCHEDULE: set when the cluster did not describe the schedule for this
+  // read, so the version it pins is not known. Never a guess.
+  string unavailable_reason = 12;
+}
+
+message ListOrkflowCallersRequest {
+  string name = 1;
+  string namespace = 2;                  // empty = the default namespace
+  // all_versions scans every stored version of every orkflow in the
+  // namespace. False scans each orkflow's resolved current version only —
+  // the version its own starters run.
+  bool all_versions = 3;
+}
+message ListOrkflowCallersResponse {
+  // callers: ORKFLOW rows by orkflow name, then version (newest applied
+  // first), then task declaration order; then TRIGGER rows oldest first;
+  // then SCHEDULE rows by name.
+  repeated OrkflowCaller callers = 1;
+  // current_version is what a run of this orkflow that names no version
+  // executes; empty when no version is stored.
+  string current_version = 2;
+  // stored_versions counts this orkflow's stored versions. 0 with callers
+  // present is an orkflow that was deleted while something still names it.
+  int32 stored_versions = 3;
+  // scanned_versions counts the other orkflows' definitions read.
+  int32 scanned_versions = 4;
+  bool all_versions = 5;                 // echoed
+}
+
 message DeleteOrkflowRequest {
   string name = 1;
   string namespace = 2;                  // empty = the default namespace

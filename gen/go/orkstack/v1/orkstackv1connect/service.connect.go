@@ -71,6 +71,12 @@ const (
 	OrkflowServiceDeleteOrkflowProcedure = "/orkstack.v1.OrkflowService/DeleteOrkflow"
 	// OrkflowServicePlanRunProcedure is the fully-qualified name of the OrkflowService's PlanRun RPC.
 	OrkflowServicePlanRunProcedure = "/orkstack.v1.OrkflowService/PlanRun"
+	// OrkflowServiceCompareInterfacesProcedure is the fully-qualified name of the OrkflowService's
+	// CompareInterfaces RPC.
+	OrkflowServiceCompareInterfacesProcedure = "/orkstack.v1.OrkflowService/CompareInterfaces"
+	// OrkflowServiceListOrkflowCallersProcedure is the fully-qualified name of the OrkflowService's
+	// ListOrkflowCallers RPC.
+	OrkflowServiceListOrkflowCallersProcedure = "/orkstack.v1.OrkflowService/ListOrkflowCallers"
 	// RunServiceSubmitRunProcedure is the fully-qualified name of the RunService's SubmitRun RPC.
 	RunServiceSubmitRunProcedure = "/orkstack.v1.RunService/SubmitRun"
 	// RunServiceGetRunProcedure is the fully-qualified name of the RunService's GetRun RPC.
@@ -222,6 +228,14 @@ type OrkflowServiceClient interface {
 	// NotFound, so a reader can never observe a pointer to a version that is not
 	// there. Two replicas promoting at once are arbitrated by the store's
 	// compare-and-swap — one value wins, and it is one of the two asked for.
+	//
+	// It compares the target's declared interface with the version a run that
+	// names no version executes now, and REFUSES (FailedPrecondition, naming
+	// each breaking finding) a BREAKING change unless acknowledge_breaking is
+	// set. COMPATIBLE and UNKNOWN changes are never refused. The swap is made
+	// only while the pointer still names what the comparison was made
+	// against: a promotion that loses that race is FailedPrecondition, never
+	// an unchecked move.
 	SetCurrentOrkflowVersion(context.Context, *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error)
 	// DiffOrkflowVersions renders the unified diff between two versions'
 	// source_yaml.
@@ -263,6 +277,20 @@ type OrkflowServiceClient interface {
 	// also not an admission check — pools, holds, and limits are SubmitRun's
 	// questions and are not asked here.
 	PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error)
+	// CompareInterfaces classifies how the DECLARED interface of one stored
+	// version — its inputs: and its outputs: — changes in another
+	// (docs/DSL.md "Which version runs"). It speaks about declarations only:
+	// tasks, images, with:, pools and output templates are implementation,
+	// and DiffOrkflowVersions reports them. Computed on every call from the
+	// two immutable documents, stored nowhere; any replica answers.
+	CompareInterfaces(context.Context, *connect.Request[v1.CompareInterfacesRequest]) (*connect.Response[v1.CompareInterfacesResponse], error)
+	// ListOrkflowCallers lists what, in this namespace, references one
+	// orkflow and which version it pins: every composing task of every other
+	// orkflow's scanned version, every trigger, and every schedule. It is a
+	// scan of the namespace's stored definitions and a read of its triggers
+	// and schedules, made per request — there is no caller index — so its
+	// cost grows with the namespace, and the response says how much it read.
+	ListOrkflowCallers(context.Context, *connect.Request[v1.ListOrkflowCallersRequest]) (*connect.Response[v1.ListOrkflowCallersResponse], error)
 }
 
 // NewOrkflowServiceClient constructs a client for the orkstack.v1.OrkflowService service. By
@@ -330,6 +358,18 @@ func NewOrkflowServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(orkflowServiceMethods.ByName("PlanRun")),
 			connect.WithClientOptions(opts...),
 		),
+		compareInterfaces: connect.NewClient[v1.CompareInterfacesRequest, v1.CompareInterfacesResponse](
+			httpClient,
+			baseURL+OrkflowServiceCompareInterfacesProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("CompareInterfaces")),
+			connect.WithClientOptions(opts...),
+		),
+		listOrkflowCallers: connect.NewClient[v1.ListOrkflowCallersRequest, v1.ListOrkflowCallersResponse](
+			httpClient,
+			baseURL+OrkflowServiceListOrkflowCallersProcedure,
+			connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflowCallers")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -344,6 +384,8 @@ type orkflowServiceClient struct {
 	diffOrkflowVersions      *connect.Client[v1.DiffOrkflowVersionsRequest, v1.DiffOrkflowVersionsResponse]
 	deleteOrkflow            *connect.Client[v1.DeleteOrkflowRequest, v1.DeleteOrkflowResponse]
 	planRun                  *connect.Client[v1.PlanRunRequest, v1.PlanRunResponse]
+	compareInterfaces        *connect.Client[v1.CompareInterfacesRequest, v1.CompareInterfacesResponse]
+	listOrkflowCallers       *connect.Client[v1.ListOrkflowCallersRequest, v1.ListOrkflowCallersResponse]
 }
 
 // ValidateOrkflow calls orkstack.v1.OrkflowService.ValidateOrkflow.
@@ -391,6 +433,16 @@ func (c *orkflowServiceClient) PlanRun(ctx context.Context, req *connect.Request
 	return c.planRun.CallUnary(ctx, req)
 }
 
+// CompareInterfaces calls orkstack.v1.OrkflowService.CompareInterfaces.
+func (c *orkflowServiceClient) CompareInterfaces(ctx context.Context, req *connect.Request[v1.CompareInterfacesRequest]) (*connect.Response[v1.CompareInterfacesResponse], error) {
+	return c.compareInterfaces.CallUnary(ctx, req)
+}
+
+// ListOrkflowCallers calls orkstack.v1.OrkflowService.ListOrkflowCallers.
+func (c *orkflowServiceClient) ListOrkflowCallers(ctx context.Context, req *connect.Request[v1.ListOrkflowCallersRequest]) (*connect.Response[v1.ListOrkflowCallersResponse], error) {
+	return c.listOrkflowCallers.CallUnary(ctx, req)
+}
+
 // OrkflowServiceHandler is an implementation of the orkstack.v1.OrkflowService service.
 type OrkflowServiceHandler interface {
 	// ValidateOrkflow performs the same non-mutating preparation as apply.
@@ -414,6 +466,14 @@ type OrkflowServiceHandler interface {
 	// NotFound, so a reader can never observe a pointer to a version that is not
 	// there. Two replicas promoting at once are arbitrated by the store's
 	// compare-and-swap — one value wins, and it is one of the two asked for.
+	//
+	// It compares the target's declared interface with the version a run that
+	// names no version executes now, and REFUSES (FailedPrecondition, naming
+	// each breaking finding) a BREAKING change unless acknowledge_breaking is
+	// set. COMPATIBLE and UNKNOWN changes are never refused. The swap is made
+	// only while the pointer still names what the comparison was made
+	// against: a promotion that loses that race is FailedPrecondition, never
+	// an unchecked move.
 	SetCurrentOrkflowVersion(context.Context, *connect.Request[v1.SetCurrentOrkflowVersionRequest]) (*connect.Response[v1.SetCurrentOrkflowVersionResponse], error)
 	// DiffOrkflowVersions renders the unified diff between two versions'
 	// source_yaml.
@@ -455,6 +515,20 @@ type OrkflowServiceHandler interface {
 	// also not an admission check — pools, holds, and limits are SubmitRun's
 	// questions and are not asked here.
 	PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error)
+	// CompareInterfaces classifies how the DECLARED interface of one stored
+	// version — its inputs: and its outputs: — changes in another
+	// (docs/DSL.md "Which version runs"). It speaks about declarations only:
+	// tasks, images, with:, pools and output templates are implementation,
+	// and DiffOrkflowVersions reports them. Computed on every call from the
+	// two immutable documents, stored nowhere; any replica answers.
+	CompareInterfaces(context.Context, *connect.Request[v1.CompareInterfacesRequest]) (*connect.Response[v1.CompareInterfacesResponse], error)
+	// ListOrkflowCallers lists what, in this namespace, references one
+	// orkflow and which version it pins: every composing task of every other
+	// orkflow's scanned version, every trigger, and every schedule. It is a
+	// scan of the namespace's stored definitions and a read of its triggers
+	// and schedules, made per request — there is no caller index — so its
+	// cost grows with the namespace, and the response says how much it read.
+	ListOrkflowCallers(context.Context, *connect.Request[v1.ListOrkflowCallersRequest]) (*connect.Response[v1.ListOrkflowCallersResponse], error)
 }
 
 // NewOrkflowServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -518,6 +592,18 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 		connect.WithSchema(orkflowServiceMethods.ByName("PlanRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	orkflowServiceCompareInterfacesHandler := connect.NewUnaryHandler(
+		OrkflowServiceCompareInterfacesProcedure,
+		svc.CompareInterfaces,
+		connect.WithSchema(orkflowServiceMethods.ByName("CompareInterfaces")),
+		connect.WithHandlerOptions(opts...),
+	)
+	orkflowServiceListOrkflowCallersHandler := connect.NewUnaryHandler(
+		OrkflowServiceListOrkflowCallersProcedure,
+		svc.ListOrkflowCallers,
+		connect.WithSchema(orkflowServiceMethods.ByName("ListOrkflowCallers")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/orkstack.v1.OrkflowService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case OrkflowServiceValidateOrkflowProcedure:
@@ -538,6 +624,10 @@ func NewOrkflowServiceHandler(svc OrkflowServiceHandler, opts ...connect.Handler
 			orkflowServiceDeleteOrkflowHandler.ServeHTTP(w, r)
 		case OrkflowServicePlanRunProcedure:
 			orkflowServicePlanRunHandler.ServeHTTP(w, r)
+		case OrkflowServiceCompareInterfacesProcedure:
+			orkflowServiceCompareInterfacesHandler.ServeHTTP(w, r)
+		case OrkflowServiceListOrkflowCallersProcedure:
+			orkflowServiceListOrkflowCallersHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -581,6 +671,14 @@ func (UnimplementedOrkflowServiceHandler) DeleteOrkflow(context.Context, *connec
 
 func (UnimplementedOrkflowServiceHandler) PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.PlanRun is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) CompareInterfaces(context.Context, *connect.Request[v1.CompareInterfacesRequest]) (*connect.Response[v1.CompareInterfacesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.CompareInterfaces is not implemented"))
+}
+
+func (UnimplementedOrkflowServiceHandler) ListOrkflowCallers(context.Context, *connect.Request[v1.ListOrkflowCallersRequest]) (*connect.Response[v1.ListOrkflowCallersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.OrkflowService.ListOrkflowCallers is not implemented"))
 }
 
 // RunServiceClient is a client for the orkstack.v1.RunService service.
