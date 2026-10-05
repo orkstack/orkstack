@@ -183,7 +183,7 @@ tasks:
 		<ErrorPanel testid="apply-error" message={formError} />
 	{/if}
 	{#each warnings as warning, i (i)}
-		<div class="rounded-md border border-warning-200 bg-warning-50 px-4 py-2 text-sm text-warning-700">
+		<div data-testid="apply-warning" class="rounded-md border border-warning-200 bg-warning-50 px-4 py-2 text-sm text-warning-700">
 			{warning}
 		</div>
 	{/each}

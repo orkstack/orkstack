@@ -320,9 +320,18 @@ test('apply shows breaking warnings against the current version', async ({ page 
 
 	await page.getByTestId('apply-submit').click();
 	await expect(page.getByTestId('apply-success')).toContainText(`Applied ${BLOCK}@3.0.0`);
-	// The warnings stay visible after the apply succeeded.
-	await expect(page.getByText(`inputs.region: input "region" is added and required with no default`)).toBeVisible();
-	await expect(page.getByText(/^outputs\.url: output "url" is removed/)).toBeVisible();
+	// The warnings stay visible after the apply succeeded: the apply's own
+	// warnings (one banner each) and the validation results above them.
+	const applyWarnings = page.getByTestId('apply-warning');
+	await expect(
+		applyWarnings.filter({ hasText: `inputs.region: input "region" is added and required with no default` })
+	).toHaveCount(1);
+	await expect(applyWarnings.filter({ hasText: /^\s*outputs\.url: output "url" is removed/ })).toHaveCount(1);
+	for (const field of ['inputs.region', 'outputs.url', 'version']) {
+		await expect(
+			issues.locator(`[data-testid="apply-validation-issue"][data-field="${field}"][data-severity="warning"]`)
+		).toHaveCount(1);
+	}
 	expect((await catalog(BLOCK)).currentVersion).toBe('2.1.0');
 	note('Apply page: validating 3.0.0 warns at inputs.region, outputs.url, version; apply succeeds, warnings stay, pointer stays 2.1.0');
 	await shot(page, 'screenshot-apply-warnings-after.png');
