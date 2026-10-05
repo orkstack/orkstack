@@ -141,6 +141,27 @@ func (e *eachE2E) awaitTaskStatus(runID, taskID string, want orkstackv1.Status, 
 	e.t.Fatalf("task %s of run %s never reached %v within %s", taskID, runID, want, within)
 }
 
+// awaitTaskLog blocks, by deadline, until a run's task has logged want. A
+// task reads RUNNING once its activity starts, which can be before its
+// container has run a line of its script; a test that signals the container
+// and then reads what the script's trap recorded must first see the script
+// running, or the signal can land before the trap exists.
+func (e *eachE2E) awaitTaskLog(runID, taskID, want string, within time.Duration) {
+	e.t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if strings.Contains(e.taskLog(runID, taskID), want) {
+			return
+		}
+		select {
+		case <-e.ctx.Done():
+			e.t.Fatalf("context ended waiting for %s/%s to log %q", runID, taskID, want)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	e.t.Fatalf("task %s of run %s never logged %q within %s", taskID, runID, want, within)
+}
+
 // childStarts counts the parent's StartChildWorkflowExecutionInitiated events.
 func childStarts(h *history.History) int {
 	n := 0
@@ -245,6 +266,7 @@ func TestIntegration_CancelParentCancelsTheChildsContainer(t *testing.T) {
 	runID := fmt.Sprintf("ork-compose-i3-%d", time.Now().UnixNano())
 	childID := e.startComposed(runID, parent, child)
 	e.awaitTaskStatus(childID, "sign", orkstackv1.Status_STATUS_RUNNING, 3*time.Minute)
+	e.awaitTaskLog(childID, "sign", "sleeping", time.Minute)
 	if err := e.temporal.CancelWorkflow(e.ctx, runID, ""); err != nil {
 		t.Fatalf("cancel parent: %v", err)
 	}
@@ -295,6 +317,7 @@ func TestIntegration_TerminatedParentCancelsItsChild(t *testing.T) {
 	runID := fmt.Sprintf("ork-compose-i5-%d", time.Now().UnixNano())
 	childID := e.startComposed(runID, parent, child)
 	e.awaitTaskStatus(childID, "sign", orkstackv1.Status_STATUS_RUNNING, 3*time.Minute)
+	e.awaitTaskLog(childID, "sign", "sleeping", time.Minute)
 	if err := e.temporal.TerminateWorkflow(e.ctx, runID, "", "composed-orkflows I5"); err != nil {
 		t.Fatalf("terminate parent: %v", err)
 	}
