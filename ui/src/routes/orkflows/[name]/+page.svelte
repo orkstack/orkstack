@@ -8,6 +8,7 @@
 	import OrkflowSchedules from '$lib/components/OrkflowSchedules.svelte';
 	import OrkflowTriggers from '$lib/components/OrkflowTriggers.svelte';
 	import OrkflowVersions from '$lib/components/OrkflowVersions.svelte';
+	import OrkflowCallers from '$lib/components/OrkflowCallers.svelte';
 	import RunSubmitPanel from '$lib/components/RunSubmitPanel.svelte';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
@@ -278,6 +279,7 @@
 		headVersion={data.headVersion}
 		error={data.versionsError}
 	/>
+	<OrkflowCallers name={data.name} namespace={data.namespace} />
 {:else if data.tab === 'triggers'}
 	<OrkflowTriggers
 		name={data.name}

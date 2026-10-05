@@ -8,12 +8,35 @@
 	// of that race a result that never happened.
 	import { untrack } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
+	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import InterfaceFindings from '$lib/components/InterfaceFindings.svelte';
 	import { errorMessage, orkstack } from '$lib/client';
+	import {
+		breakingCount,
+		callerLabel,
+		changeWord,
+		compatCommand,
+		composers,
+		countNoun,
+		followers,
+		notCompatible,
+		promoteBlocked,
+		promoteCommand,
+		unavailableSchedules,
+		verdictChipClass,
+		verdictWord
+	} from '$lib/compat';
 	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/service_pb';
+	import {
+		InterfaceVerdict,
+		OrkflowCallerKind,
+		type CompareInterfacesResponse,
+		type OrkflowCaller,
+		type OrkflowVersion
+	} from '$lib/gen/orkstack/v1/service_pb';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import { fmtTimestamp } from '$lib/status';
 
@@ -64,10 +87,60 @@
 	let promoting = $state(false);
 	let promoteError = $state('');
 
+	// The dialog's interface comparison and callers are INFORMATION: the gate
+	// is the engine's, and it compares again when the promotion is sent. A
+	// comparison that could not be read therefore never blocks the button; a
+	// BREAKING one does until it is acknowledged (interface-compatibility-gate
+	// §7.3).
+	let promoteComparing = $state(false);
+	let promoteCompare = $state<CompareInterfacesResponse | null>(null);
+	let promoteCompareError = $state('');
+	let promoteCallers = $state<OrkflowCaller[] | null>(null);
+	let promoteCallersError = $state('');
+	let acknowledged = $state(false);
+	let promoteSequence = 0;
+
+	async function checkPromotion(version: string) {
+		const sequence = ++promoteSequence;
+		promoteComparing = true;
+		promoteCompare = null;
+		promoteCompareError = '';
+		promoteCallers = null;
+		promoteCallersError = '';
+		const client = orkstack(fetch).orkflows;
+		const comparison = client
+			.compareInterfaces({ name, namespace, fromVersion: '', toVersion: version })
+			.then(
+				(res) => {
+					if (sequence === promoteSequence) promoteCompare = res;
+				},
+				(err) => {
+					if (sequence === promoteSequence) promoteCompareError = errorMessage(err);
+				}
+			)
+			.finally(() => {
+				if (sequence === promoteSequence) promoteComparing = false;
+			});
+		const callers = client.listOrkflowCallers({ name, namespace }).then(
+			(res) => {
+				if (sequence === promoteSequence) promoteCallers = res.callers;
+			},
+			(err) => {
+				if (sequence === promoteSequence) promoteCallersError = errorMessage(err);
+			}
+		);
+		await Promise.all([comparison, callers]);
+	}
+
 	function askToPromote(version: string) {
 		pendingPromotion = version;
 		promoteError = '';
+		acknowledged = false;
+		void checkPromotion(version);
 	}
+
+	const promoteVerdict = $derived(promoteCompare?.verdict);
+	const promoteIsBreaking = $derived(promoteVerdict === InterfaceVerdict.BREAKING);
 
 	async function promote() {
 		promoting = true;
@@ -76,7 +149,8 @@
 			await orkstack(fetch).orkflows.setCurrentOrkflowVersion({
 				name,
 				version: pendingPromotion,
-				namespace
+				namespace,
+				acknowledgeBreaking: acknowledged
 			});
 			pendingPromotion = '';
 			await invalidateAll();
@@ -204,6 +278,34 @@
 		});
 	});
 
+	// ── compare interfaces ─────────────────────────────────────────────────
+	// Independent of the Diff panel: neither clears the other.
+	let compatResult = $state<CompareInterfacesResponse | null>(null);
+	let comparing = $state(false);
+	let compatError = $state('');
+
+	async function runCompat() {
+		if (!diffFrom || !diffTo) {
+			compatError = 'Choose the two versions to compare.';
+			return;
+		}
+		comparing = true;
+		compatError = '';
+		compatResult = null;
+		try {
+			compatResult = await orkstack(fetch).orkflows.compareInterfaces({
+				name,
+				namespace,
+				fromVersion: diffFrom,
+				toVersion: diffTo
+			});
+		} catch (err) {
+			compatError = errorMessage(err);
+		} finally {
+			comparing = false;
+		}
+	}
+
 	async function runDiff() {
 		if (!diffFrom || !diffTo) {
 			diffError = 'Choose the two versions to compare.';
@@ -319,6 +421,14 @@
 									>head</span
 								>
 							{/if}
+							{#if version.interfaceVerdict !== InterfaceVerdict.UNSPECIFIED}
+								<span
+									data-testid="version-interface-{version.version}"
+									class="ml-2 {verdictChipClass(version.interfaceVerdict)}"
+									title="declared interface against {resolved}, the version runs execute now"
+									>{verdictWord(version.interfaceVerdict)}</span
+								>
+							{/if}
 						</td>
 						<td class="h-11 px-4 align-middle tabular-nums text-fg-muted"
 							>{fmtTimestamp(version.appliedAt)}</td
@@ -390,7 +500,41 @@
 			>
 				{diffing ? 'Diffing…' : `Diff ${diffFrom || '…'} → ${diffTo || '…'}`}
 			</button>
+			<button
+				type="button"
+				data-testid="compat-run"
+				disabled={comparing}
+				onclick={runCompat}
+				class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 text-xs font-medium text-fg shadow-xs transition-colors duration-150 hover:border-border-strong hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50"
+			>
+				{comparing ? 'Comparing…' : `Compare interfaces ${diffFrom || '…'} → ${diffTo || '…'}`}
+			</button>
+			<CliEquivalent
+				command={compatCommand(namespace, name, diffFrom, diffTo)}
+				testid="compat-cli"
+				label="Compare the interfaces of {diffFrom} and {diffTo} from the CLI"
+			/>
 		</div>
+
+		{#if comparing}
+			<p data-testid="compat-loading" class="mb-4 text-sm text-fg-muted">
+				Asking the engine to compare the declared interfaces…
+			</p>
+		{:else if compatError}
+			<div class="mb-4">
+				<ErrorPanel
+					testid="compat-error"
+					retryTestid="compat-retry"
+					subject="the interface comparison of {diffFrom} → {diffTo}"
+					message={compatError}
+					onretry={runCompat}
+				/>
+			</div>
+		{:else if compatResult}
+			<div class="mb-4">
+				<InterfaceFindings {name} response={compatResult} />
+			</div>
+		{/if}
 
 		{#if diffing}
 			<p data-testid="diff-loading" class="text-sm text-fg-muted">Asking the engine for the diff…</p>
@@ -428,10 +572,17 @@
 		cancelTestid="promote-cancel"
 		busy={promoting}
 		error={promoteError}
+		acceptDisabled={promoteBlocked({
+			comparing: promoteComparing,
+			verdict: promoteVerdict,
+			acknowledged
+		})}
 		onaccept={promote}
 		oncancel={() => {
 			pendingPromotion = '';
 			promoteError = '';
+			acknowledged = false;
+			promoteSequence++;
 		}}
 	>
 		{#snippet body()}
@@ -446,6 +597,101 @@
 				Runs already executing keep the version they pinned. Nothing stored changes — only which
 				version an unnamed one resolves to.
 			</p>
+
+			<div class="mt-3 rounded-md border border-border-subtle bg-surface-sunken px-3 py-2">
+				{#if promoteComparing}
+					<p data-testid="promote-interface-loading" class="text-fg-muted">
+						Comparing the declared interface with {resolved || 'the version that runs now'}…
+					</p>
+				{:else if promoteCompareError}
+					<p data-testid="promote-interface-error" class="text-fg-secondary">
+						The interface comparison could not be read ({promoteCompareError}). The engine still checks
+						it when you promote.
+					</p>
+				{:else if promoteCompare}
+					<p
+						data-testid="promote-interface-verdict"
+						class={promoteIsBreaking ? 'font-medium text-danger-700' : 'text-fg-secondary'}
+					>
+						Declared interface against {promoteCompare.fromVersion}:
+						{#if promoteIsBreaking}
+							breaking — {countNoun(breakingCount(promoteCompare.findings), 'breaking change', 'breaking changes')}
+						{:else if promoteVerdict === InterfaceVerdict.UNKNOWN}
+							unknown — {notCompatible(promoteCompare.findings)[0]?.message ?? ''}
+						{:else}
+							compatible
+						{/if}
+					</p>
+					{#if notCompatible(promoteCompare.findings).length > 0}
+						<ul data-testid="promote-interface-findings" class="mt-2 space-y-1">
+							{#each notCompatible(promoteCompare.findings) as finding, index (index)}
+								<li
+									data-testid="promote-finding-{finding.field}-{changeWord(finding.change)}"
+									class="text-xs"
+								>
+									<span class="font-mono text-fg">{finding.field}</span>:
+									<span class="text-fg-secondary">{finding.message}</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				{/if}
+			</div>
+
+			{#if promoteCallersError}
+				<p data-testid="promote-callers-error" class="mt-2 text-xs text-fg-muted">
+					What starts or composes {name} could not be read ({promoteCallersError}); the promotion is
+					still possible.
+				</p>
+			{:else if promoteCallers}
+				<div data-testid="promote-followers" class="mt-2 text-xs text-fg-secondary">
+					{#if followers(promoteCallers).length > 0}
+						<p>
+							Also moves:
+							{followers(promoteCallers)
+								.map(
+									(c) =>
+										`${c.kind === OrkflowCallerKind.TRIGGER ? 'trigger' : 'schedule'} ${callerLabel(c)}`
+								)
+								.join(', ')} — they name no version.
+						</p>
+					{:else}
+						<p>No trigger or schedule follows the current version; runs submitted without a version do.</p>
+					{/if}
+					{#each unavailableSchedules(promoteCallers) as c, index (index)}
+						<p>schedule {c.name}: version unavailable ({c.unavailableReason})</p>
+					{/each}
+				</div>
+				{#if composers(promoteCallers).length > 0}
+					<p data-testid="promote-pinned" class="mt-1 text-xs text-fg-muted">
+						{composers(promoteCallers).length} composing Orkflow {composers(promoteCallers).length === 1
+							? 'version pins'
+							: 'versions pin'} a version of {name} and {composers(promoteCallers).length === 1
+							? 'is'
+							: 'are'} not moved by this promotion.
+					</p>
+				{/if}
+			{/if}
+
+			{#if promoteIsBreaking || promoteCompareError}
+				<label class="mt-3 flex items-start gap-2 text-sm text-fg">
+					<input
+						type="checkbox"
+						data-testid="promote-acknowledge"
+						bind:checked={acknowledged}
+						class="mt-0.5 accent-brand-600"
+					/>
+					<span>I have read the breaking changes; promote anyway</span>
+				</label>
+			{/if}
+
+			<div class="mt-3 flex justify-end">
+				<CliEquivalent
+					command={promoteCommand(namespace, name, pendingPromotion, acknowledged)}
+					testid="promote-cli"
+					label="Promote {pendingPromotion} from the CLI"
+				/>
+			</div>
 		{/snippet}
 	</ConfirmDialog>
 {/if}
