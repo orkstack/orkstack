@@ -90,7 +90,7 @@ func (s *Service) SetCurrentOrkflowVersion(
 		return nil, err
 	}
 	previous, err := s.orkflows.SetCurrentVersion(
-		ctx, ns.GetName(), req.Msg.GetName(), req.Msg.GetVersion())
+		ctx, ns.GetName(), req.Msg.GetName(), req.Msg.GetVersion(), artifacts.NoCurrentExpectation())
 	if err != nil {
 		if errors.Is(err, artifacts.ErrPreconditionFailed) {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(

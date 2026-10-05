@@ -70,7 +70,12 @@ type OrkflowStore interface {
 	// the version the pointer named before ("" when it was never set).
 	// Promoting to a version that is not stored returns ErrNotFound, so no
 	// reader can observe a pointer to a version that does not exist.
-	SetCurrentVersion(ctx context.Context, namespace, name, version string) (string, error)
+	//
+	// expected is what the promotion claims the pointer names now: a stated
+	// expectation that no longer holds when the swap is made is refused with a
+	// *CurrentMovedError (errors.Is ErrCurrentMoved), never an overwrite.
+	SetCurrentVersion(ctx context.Context, namespace, name, version string,
+		expected CurrentExpectation) (string, error)
 	// Delete permanently removes every version and both pointers for one
 	// orkflow. A missing orkflow returns ErrNotFound.
 	Delete(ctx context.Context, namespace, name string) error

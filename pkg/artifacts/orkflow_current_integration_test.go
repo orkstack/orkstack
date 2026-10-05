@@ -57,7 +57,7 @@ func TestS3OrkflowStore_CurrentPointerDecidesWhatAnEmptyVersionMeans(t *testing.
 	requireResolves(t, ctx, store, name, "2.0.0", "before any promotion")
 
 	// Promote back to 1.0.0: the pointer decides, not the application order.
-	previous, err := store.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "1.0.0")
+	previous, err := store.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "1.0.0", artifacts.NoCurrentExpectation())
 	if err != nil {
 		t.Fatalf("SetCurrentVersion(1.0.0): %v", err)
 	}
@@ -111,7 +111,7 @@ func TestS3OrkflowStore_CurrentPointerDecidesWhatAnEmptyVersionMeans(t *testing.
 	}
 
 	// Rollforward, and the call reports what it replaced.
-	previous, err = store.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "2.0.0")
+	previous, err = store.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "2.0.0", artifacts.NoCurrentExpectation())
 	if err != nil {
 		t.Fatalf("SetCurrentVersion(2.0.0): %v", err)
 	}
@@ -123,7 +123,7 @@ func TestS3OrkflowStore_CurrentPointerDecidesWhatAnEmptyVersionMeans(t *testing.
 	// Promoting to a version nobody applied is refused, and the pointer does
 	// not move: this is the write-side half of "a reader never observes a
 	// pointer to a version that does not exist".
-	if _, err := store.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "9.9.9"); !errors.Is(err, artifacts.ErrNotFound) {
+	if _, err := store.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "9.9.9", artifacts.NoCurrentExpectation()); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("SetCurrentVersion(9.9.9) = %v, want artifacts.ErrNotFound", err)
 	}
 	requireResolves(t, ctx, store, name, "2.0.0", "after a refused promotion")
@@ -280,7 +280,7 @@ func TestS3OrkflowStore_ConcurrentPromotionsConvergeOnOneExistingVersion(t *test
 			go func(index int, writer *artifacts.S3OrkflowStore, version string) {
 				defer wg.Done()
 				previous, err := writer.SetCurrentVersion(
-					ctx, artifacts.DefaultNamespace, name, version)
+					ctx, artifacts.DefaultNamespace, name, version, artifacts.NoCurrentExpectation())
 				results[index] = promotion{previous: previous, version: version, err: err}
 			}(round*2+w, writer, []string{"1.0.0", "2.0.0"}[w])
 		}
@@ -461,4 +461,173 @@ func writePromotionProof(t *testing.T, name, final string, landed, refused int, 
 	fmt.Fprintf(&out, "every observation named a stored version; the two stores agree "+
 		"the current version is %s\n", final)
 	proof.Write(t, "artifacts", "concurrent-promotion.txt", []byte(out.String()))
+}
+
+// TestS3OrkflowStore_ConditionalPromotionRefusesAMovedPointer is I1 of
+// interface-compatibility-gate: a promotion that states the pointer it
+// compared against is refused, not retried over the winner, when another
+// replica moved the pointer first.
+func TestS3OrkflowStore_ConditionalPromotionRefusesAMovedPointer(t *testing.T) {
+	store, cfg := newS3OrkflowStore(t)
+	ctx := context.Background()
+	raw := newRawS3Client(t, cfg)
+	name := testOrkflowName(t)
+	prefix := artifacts.OrkflowPrefix + "/" + artifacts.DefaultNamespace + "/" + name + "/"
+	t.Cleanup(func() { deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, prefix) })
+
+	applied := time.Now().UTC().Truncate(time.Millisecond)
+	for i, version := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		wf := testOrkflow(t, name, version, applied.Add(time.Duration(i)*time.Second))
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
+			t.Fatalf("Put(%s): %v", version, err)
+		}
+	}
+	other, err := artifacts.NewS3OrkflowStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3OrkflowStore (second replica): %v", err)
+	}
+	// A promotes 1.0.0 and reads it; B then promotes 2.0.0.
+	if _, err := store.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "1.0.0",
+		artifacts.ExpectCurrent("")); err != nil {
+		t.Fatalf("A: promote 1.0.0: %v", err)
+	}
+	if _, err := other.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "2.0.0",
+		artifacts.NoCurrentExpectation()); err != nil {
+		t.Fatalf("B: promote 2.0.0: %v", err)
+	}
+	// A's promotion of 3.0.0 still claims the 1.0.0 it compared against.
+	_, err = store.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name, "3.0.0",
+		artifacts.ExpectCurrent("1.0.0"))
+	var moved *artifacts.CurrentMovedError
+	if !errors.As(err, &moved) || moved.Expected != "1.0.0" || moved.Current != "2.0.0" {
+		t.Fatalf("A: promote 3.0.0 expecting 1.0.0 = %v, want *CurrentMovedError{1.0.0, 2.0.0}", err)
+	}
+	if !errors.Is(err, artifacts.ErrCurrentMoved) || !errors.Is(err, artifacts.ErrPreconditionFailed) {
+		t.Fatalf("refusal must be errors.Is ErrCurrentMoved and ErrPreconditionFailed: %v", err)
+	}
+	fresh, err := artifacts.NewS3OrkflowStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3OrkflowStore (fresh reader): %v", err)
+	}
+	requireResolves(t, ctx, fresh, name, "2.0.0", "after the refused conditional promotion")
+}
+
+// TestS3OrkflowStore_ConcurrentConditionalPromotionsReplaceWhatTheyRead is I2:
+// the concurrent test's shape — two stores, readers throughout — with every
+// writer reading the pointer and promoting with ExpectCurrent(read). Every
+// success replaced exactly the value its writer read; every failure is
+// ErrCurrentMoved; no reader sees an unstored version.
+func TestS3OrkflowStore_ConcurrentConditionalPromotionsReplaceWhatTheyRead(t *testing.T) {
+	store, cfg := newS3OrkflowStore(t)
+	ctx := context.Background()
+	raw := newRawS3Client(t, cfg)
+	name := testOrkflowName(t)
+	prefix := artifacts.OrkflowPrefix + "/" + artifacts.DefaultNamespace + "/" + name + "/"
+	t.Cleanup(func() { deleteByPrefix(t, context.Background(), raw, cfg.S3Bucket, prefix) })
+
+	applied := time.Now().UTC().Truncate(time.Millisecond)
+	stored := map[string]bool{}
+	for i, version := range []string{"1.0.0", "2.0.0"} {
+		wf := testOrkflow(t, name, version, applied.Add(time.Duration(i)*time.Second))
+		if _, _, err := store.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
+			t.Fatalf("Put(%s): %v", version, err)
+		}
+		stored[version] = true
+	}
+	other, err := artifacts.NewS3OrkflowStore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewS3OrkflowStore (second replica): %v", err)
+	}
+	writers := []*artifacts.S3OrkflowStore{store, other}
+
+	const rounds = 12
+	type promotion struct {
+		read, previous, version string
+		err                     error
+	}
+	results := make([]promotion, 2*rounds)
+	stop := make(chan struct{})
+
+	var observedMu sync.Mutex
+	var observations []string
+	var readers sync.WaitGroup
+	for _, reader := range writers {
+		readers.Add(1)
+		go func(reader *artifacts.S3OrkflowStore) {
+			defer readers.Done()
+			var mine []string
+			defer func() {
+				observedMu.Lock()
+				observations = append(observations, mine...)
+				observedMu.Unlock()
+			}()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				wf, err := reader.Get(ctx, artifacts.DefaultNamespace, name, "")
+				if err != nil {
+					mine = append(mine, "ERROR: "+err.Error())
+					return
+				}
+				mine = append(mine, wf.GetVersion())
+			}
+		}(reader)
+	}
+
+	var wg sync.WaitGroup
+	for round := range rounds {
+		for w, writer := range writers {
+			wg.Add(1)
+			go func(index int, writer *artifacts.S3OrkflowStore, version string) {
+				defer wg.Done()
+				read, err := writer.CurrentVersion(ctx, artifacts.DefaultNamespace, name)
+				if err != nil {
+					results[index] = promotion{version: version, err: err}
+					return
+				}
+				previous, err := writer.SetCurrentVersion(ctx, artifacts.DefaultNamespace, name,
+					version, artifacts.ExpectCurrent(read))
+				results[index] = promotion{read: read, previous: previous, version: version, err: err}
+			}(round*2+w, writer, []string{"1.0.0", "2.0.0"}[w])
+		}
+	}
+	wg.Wait()
+	close(stop)
+	readers.Wait()
+
+	landed, refused := 0, 0
+	for i, result := range results {
+		switch {
+		case result.err == nil:
+			landed++
+			if result.previous != result.read {
+				t.Fatalf("promotion %d of %s expected %q and replaced %q: a conditional promotion "+
+					"landed over a pointer it never read", i, result.version, stateName(result.read),
+					stateName(result.previous))
+			}
+		case errors.Is(result.err, artifacts.ErrCurrentMoved):
+			refused++
+		default:
+			t.Fatalf("promotion %d failed for an unexpected reason: %v", i, result.err)
+		}
+	}
+	for _, observation := range observations {
+		if strings.HasPrefix(observation, "ERROR: ") {
+			t.Fatalf("a read during concurrent promotion failed: %s", observation)
+		}
+		if !stored[observation] {
+			t.Fatalf("a reader observed version %q, which is not stored", observation)
+		}
+	}
+	if landed == 0 {
+		t.Fatal("no conditional promotion landed at all")
+	}
+	line := fmt.Sprintf("%d conditional promotions: %d landed, each replacing exactly the "+
+		"pointer its writer read; %d refused with ErrCurrentMoved; %d reads saw only stored versions\n",
+		len(results), landed, refused, len(observations))
+	t.Log(line)
+	proof.Write(t, "artifacts", "conditional-promotions.txt", []byte(line))
 }

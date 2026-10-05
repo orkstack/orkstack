@@ -55,8 +55,9 @@ func (r *recordingStore) Versions(
 func (r *recordingStore) SetCurrentVersion(
 	ctx context.Context,
 	namespace, name, version string,
+	expected artifacts.CurrentExpectation,
 ) (string, error) {
-	return r.inner.SetCurrentVersion(ctx, namespace, name, version)
+	return r.inner.SetCurrentVersion(ctx, namespace, name, version, expected)
 }
 
 func (r *recordingStore) Delete(
@@ -96,7 +97,7 @@ func (u unreachableStore) Delete(context.Context, string, string) error {
 	return u.err
 }
 
-func (u unreachableStore) SetCurrentVersion(context.Context, string, string, string) (string, error) {
+func (u unreachableStore) SetCurrentVersion(context.Context, string, string, string, artifacts.CurrentExpectation) (string, error) {
 	return "", u.err
 }
 
