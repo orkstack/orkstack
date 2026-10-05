@@ -65,13 +65,25 @@
 						font-weight="600"
 						font-family="var(--font-sans)">{node.task.id}</text
 					>
-					<text
-						x={node.x + 12}
-						y={node.y + 43}
-						fill="var(--color-fg-muted)"
-						font-size="11"
-						font-family="var(--font-mono)">{activityLabel(node.task) || '—'}</text
-					>
+					{#if node.task.orkflow}
+						<!-- A composed task: it runs another Orkflow as a child run. -->
+						<text
+							data-testid="dag-node-{node.task.id}-orkflow"
+							x={node.x + 12}
+							y={node.y + 43}
+							fill="var(--color-brand-700)"
+							font-size="11"
+							font-family="var(--font-mono)">orkflow {node.task.orkflow.name}@{node.task.orkflow.version}</text
+						>
+					{:else}
+						<text
+							x={node.x + 12}
+							y={node.y + 43}
+							fill="var(--color-fg-muted)"
+							font-size="11"
+							font-family="var(--font-mono)">{activityLabel(node.task) || '—'}</text
+						>
+					{/if}
 					{#if node.task.each}
 						<!-- A fan-out: one node, run as up to max_items items. -->
 						<text

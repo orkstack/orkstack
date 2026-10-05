@@ -29,6 +29,17 @@ message Pin {
   int32 timeout_seconds = 2;
 }
 
+// OrkflowRef names one immutable Orkflow version in the referencing
+// definition's OWN namespace — a composition never crosses a namespace.
+message OrkflowRef {
+  string name = 1;
+  string version = 2;
+  // definition_digest is the referenced version's Orkflow.definition_digest,
+  // stamped at apply. Empty only in a message the compiler produced before
+  // internal/api resolved it; a stored definition never carries an empty one.
+  string definition_digest = 3;
+}
+
 // Task is a single node in the orkflow DAG. It maps to exactly one activity
 // execution on an Orker, and an activity is an OCI image.
 message Task {
@@ -101,6 +112,14 @@ message Task {
   // task; it may not name a pin (docs/DSL.md rule 23) and an awaited task may
   // not carry it (rule 15).
   EachSpec each = 21;
+
+  // orkflow is the apply-time resolution of `uses: orkflow:<name>@<version>`,
+  // the analogue of image for a container task. A composed task starts a
+  // CHILD RUN of exactly that definition, in this Orkflow's namespace, and
+  // reaches no Orker: it carries no image, pool, pin, retry, timeout or other
+  // execution field (docs/DSL.md rules 26–27). Part of canonicalOrkflow(Task)
+  // only when set (see pin), so this Orkflow's digest pins the child's.
+  OrkflowRef orkflow = 22;
 }
 
 // EachSpec makes a Task a fan-out: ONE node of the DAG that runs as one item
@@ -190,4 +209,13 @@ message Orkflow {
   // one document always compiles to one message. Part of canonicalOrkflow,
   // emitted ONLY when non-empty (see Task.pin).
   repeated Pin pins = 11;
+
+  // outputs is this Orkflow's declared return contract: output name to a
+  // template over .inputs and .tasks.<id>.output, rendered ONCE, by the
+  // engine, when a run succeeds; every value renders to a string. When
+  // non-empty the rendered map IS Run.output, and is what a composing
+  // parent's task receives as its values. When empty, Run.output keeps the
+  // leaf aggregation it has always had, and a composing parent's task
+  // receives {}. Part of canonicalOrkflow only when non-empty (see pins).
+  map<string, string> outputs = 12;
 }

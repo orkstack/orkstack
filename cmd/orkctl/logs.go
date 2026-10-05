@@ -172,6 +172,12 @@ func runLogs(cmd *cobra.Command, g *globalFlags, req logsRequest) error {
 				writer.fanOutHint(g.namespace, req.runID, task)
 				continue
 			}
+			if task := composedRow(run, taskID); task != nil {
+				// A composed task writes no logs of its own: one line names
+				// the child run whose logs they are.
+				writer.composedHint(g.namespace, task, true)
+				continue
+			}
 			if err := streamOneTaskLog(ctx, g, req, taskID, writer, true); err != nil {
 				return err
 			}
@@ -254,6 +260,14 @@ func followAllTaskLogs(
 			// next discovery pass looks again, until it expands or the run
 			// ends without it.
 			if writer.fanOutHint(g.namespace, req.runID, task) {
+				seen[taskID] = struct{}{}
+			}
+			return
+		}
+		if task := composedRow(run, taskID); task != nil {
+			// A composed task's child may not have started yet: the next
+			// discovery pass looks again, until it starts or the run ends.
+			if writer.composedHint(g.namespace, task, isRunTerminal(run)) {
 				seen[taskID] = struct{}{}
 			}
 			return

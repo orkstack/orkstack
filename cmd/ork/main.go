@@ -76,7 +76,10 @@ type config struct {
 	contractLimits engine.WorkspaceLimits
 	// eachMaxItems is ORK_EACH_MAX_ITEMS: 1 … dsl.MaxEachItems, refused at
 	// boot outside that range (spec each-fan-out §8).
-	eachMaxItems                  int32
+	eachMaxItems int32
+	// composeMaxDepth is ORK_COMPOSE_MAX_DEPTH: 1 … engine.MaxComposeDepth,
+	// refused at boot outside that range (spec composed-orkflows §8).
+	composeMaxDepth               int32
 	transferBudgetSeconds         int32
 	floorThroughputBytesPerSecond int64
 	// deployment is this release's Worker Deployment identity. It carries no
@@ -108,6 +111,7 @@ func loadConfig() config {
 	transferBudgetSeconds, transferErr := envInt32AllowZero("ORK_TRANSFER_BUDGET_SECONDS", 0)
 	floorThroughput, throughputErr := envInt64AllowZero("ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC", api.DefaultFloorThroughputBytesPerSecond)
 	eachMaxItems, eachErr := eachMaxItemsFromEnv()
+	composeMaxDepth, composeErr := composeMaxDepthFromEnv()
 
 	cfg := config{
 		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
@@ -124,8 +128,9 @@ func loadConfig() config {
 		transferBudgetSeconds:         transferBudgetSeconds,
 		floorThroughputBytesPerSecond: floorThroughput,
 		eachMaxItems:                  eachMaxItems,
+		composeMaxDepth:               composeMaxDepth,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
-			logErr, commitErr, transferErr, throughputErr, eachErr),
+			logErr, commitErr, transferErr, throughputErr, eachErr, composeErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -227,6 +232,21 @@ func eachMaxItemsFromEnv() (int32, error) {
 	if value > dsl.MaxEachItems {
 		return engine.DefaultEachMaxItems, fmt.Errorf(
 			"ORK_EACH_MAX_ITEMS=%d is above the %d ceiling; it may only lower it", value, dsl.MaxEachItems)
+	}
+	return value, nil
+}
+
+// composeMaxDepthFromEnv reads ORK_COMPOSE_MAX_DEPTH: how many levels of
+// child runs one run may start, a positive integer no greater than the
+// built-in ceiling, which it may lower and never raise.
+func composeMaxDepthFromEnv() (int32, error) {
+	value, err := envInt32("ORK_COMPOSE_MAX_DEPTH", engine.DefaultComposeMaxDepth)
+	if err != nil {
+		return engine.DefaultComposeMaxDepth, err
+	}
+	if value > engine.MaxComposeDepth {
+		return engine.DefaultComposeMaxDepth, fmt.Errorf(
+			"ORK_COMPOSE_MAX_DEPTH=%d is above the %d ceiling; it may only lower it", value, engine.MaxComposeDepth)
 	}
 	return value, nil
 }
@@ -1006,6 +1026,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		engine.NewEachActivities(artifactStore).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems},
 	)
+	// The two local activities a composed task and declared outputs use:
+	// render engine-side templates over upstream values.json, and store a
+	// composed task's values (spec composed-orkflows §6.7).
+	compose := engine.NewComposeActivities(artifactStore)
+	runWorker.RegisterActivityWithOptions(compose.RenderComposedValues,
+		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
+	runWorker.RegisterActivityWithOptions(compose.StoreComposedValues,
+		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
 
 	// The engine's telemetry observer: a run's spans, metrics and one log
 	// line per lifecycle event, routed per-run to whatever sink
@@ -1149,6 +1177,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Artifacts:                     archiveConfig,
 		Limits:                        cfg.contractLimits,
 		EachMaxItems:                  cfg.eachMaxItems,
+		ComposeMaxDepth:               cfg.composeMaxDepth,
 		TransferBudgetSeconds:         cfg.transferBudgetSeconds,
 		FloorThroughputBytesPerSecond: cfg.floorThroughputBytesPerSecond,
 		Observer:                      eventObserver,

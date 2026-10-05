@@ -334,6 +334,7 @@ then the variable it becomes.
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
 | `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Lowers the built-in ceiling of 1000, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
+| `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
 | `engine.limits.artifact_max_count` | `ORK_ARTIFACT_MAX_COUNT` | `256` | `ork` | contract limit: output artifacts per attempt |
 | `engine.limits.artifact_max_bytes` | `ORK_ARTIFACT_MAX_BYTES` | `5 GiB` | `ork` | contract limit: bytes per output artifact |
@@ -902,6 +903,20 @@ pollers. `internal/engine/versioning_rollout_integration_test.go` asserts this
 directly: in a rollout, a v1-pinned run's remaining events are published by a
 replica the v1 release does not contain.
 
+**A child run is a `RunWorkflow` its parent starts.** A composed task
+(`uses: orkflow:`, `docs/DSL.md` "Composition") starts its child run as a
+child workflow of the parent, on the **run channel the parent runs on**
+(`ork-tasks`, never `ORK_ORKER_QUEUE`), with the parent-close policy
+`REQUEST_CANCEL` and no retry or timeout of its own. A child started by a
+Pinned parent on a queue of the parent's own version starts on that version —
+Temporal's inheritance rule — so the child's plan, which the parent's release
+built at submit, is interpreted by that same release's code; a child started
+after a rollout's switch still runs on the parent's version
+(`internal/engine/versioning_compose_integration_test.go`, the observation
+rather than an assumption). A parent holds its release open until its
+children end, exactly as any running run holds it, and `orkctl release`
+counts a child as the run it is.
+
 ### Schedules: what the cluster shows
 
 An Orkflow schedule (`docs/ORKFLOW_SCHEDULES.md`) is a Temporal Schedule and
@@ -1096,6 +1111,14 @@ release runs nothing at all (§1).
    `.each`, and giving its direct dependents no items. A run with a fan-out
    holds its release until every item settles, like any running run.
 
+   Likewise, apply an Orkflow that **composes another** (`uses: orkflow:`) or
+   declares **`outputs:`** only once the release that introduced composition
+   is Current (versioned) or every replica runs it (unversioned). An older
+   engine refuses to apply either construct, but a new engine's submission
+   carries `Task.orkflow` and `RunPlan.children`, and an older run worker's
+   decode of that start fails the run's workflow task — retried until a worker
+   of the new release takes it, which under Pinned versioning may be never.
+
 A rollout done this way is held by
 `TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn`
 (`internal/engine/versioning_rollout_integration_test.go`): the run in flight
@@ -1224,6 +1247,15 @@ back to a release that predates fan-out, submit no Orkflow version that
 declares `each:` — that older engine would run each fan-out once as a plain
 task (above). Runs with items in flight stay pinned to the newer release and
 must drain there (`orkctl release wait`).
+
+**Rolling back past composition.** The mirror of §3's ramp rule: after
+rolling back to a release that predates composed Orkflows, submit no Orkflow
+version that composes another or declares `outputs:`. That older engine
+decodes a stored version with unknown fields dropped: a composed task would
+reach an Orker with no image and fail `IMAGE_NOT_PINNED` — explicit — but an
+`outputs:` Orkflow would **silently** return its leaf aggregation instead of
+its declared outputs. Runs with children in flight stay pinned to the newer
+release and must drain there (`orkctl release wait`).
 
 **Rolling back past schedules.** A release without schedules has no
 `ScheduleFireWorkflow` registered, so a schedule that fires on it fails to

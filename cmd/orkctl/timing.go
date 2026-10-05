@@ -103,6 +103,11 @@ type taskTiming struct {
 	FanOut bool
 	// Item is set on one item's row of a fan-out (listed under --task).
 	Item *int32
+	// Child marks a composed task: S is when the child run was requested, B
+	// when its start was confirmed, F its end — WAIT is the child's start
+	// latency, RUN its duration, and ATTEMPT reads "child": the attempts are
+	// the child's tasks'.
+	Child bool
 
 	ScheduledAt *time.Time
 	StartedAt   *time.Time
@@ -287,6 +292,31 @@ func computeTaskTiming(
 		case B == nil:
 			task.Wait = unknownBecause(reasonNoOrkerStart)
 			task.Run = unknownBecause(reasonNoOrkerStart)
+		default:
+			task.Wait = span(*S, *B)
+			if F != nil {
+				task.Run = span(*B, *F)
+			}
+		}
+		if terminal && F != nil {
+			task.Total = span(*S, *F)
+		}
+		return task
+	}
+	if taskRun.GetChild() != nil {
+		task.Child = true
+		task.Scheduled = S != nil
+		if !task.Scheduled {
+			return task
+		}
+		switch {
+		case !terminal:
+			if taskRun.GetStatus() == orkstackv1.Status_STATUS_RUNNING {
+				task.SinceScheduled = span(*S, opts.Now)
+			}
+		case B == nil:
+			// No child run was started: there is no start latency and no
+			// child duration to measure, so neither applies.
 		default:
 			task.Wait = span(*S, *B)
 			if F != nil {
@@ -511,6 +541,9 @@ func renderRunTiming(out io.Writer, timing *runTiming, oneTask bool) error {
 		if task.FanOut {
 			attempt = "fan-out"
 		}
+		if task.Child {
+			attempt = "child"
+		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			itemLabel(task.TaskID, task.Item), task.statusCell(), orDash(task.Pool), attempt,
 			formatTimePtr(task.ScheduledAt), task.Wait.cell(), run, total)
@@ -589,7 +622,7 @@ func (timing *runTiming) attemptsBlock() string {
 	}
 	width := 0
 	for _, task := range timing.Tasks {
-		if label := itemLabel(task.TaskID, task.Item); task.Scheduled && !task.Awaited && !task.FanOut && len(label) > width {
+		if label := itemLabel(task.TaskID, task.Item); task.Scheduled && !task.Awaited && !task.FanOut && !task.Child && len(label) > width {
 			width = len(label)
 		}
 	}
@@ -601,7 +634,7 @@ func (timing *runTiming) attemptsBlock() string {
 	for _, task := range timing.Tasks {
 		// An awaited task has no attempts and no phases, and neither does a
 		// fan-out's own row (its items do): nothing to list.
-		if !task.Scheduled || task.Awaited || task.FanOut {
+		if !task.Scheduled || task.Awaited || task.FanOut || task.Child {
 			continue
 		}
 		prefix := "  " + padRight(itemLabel(task.TaskID, task.Item), width) + "  "
@@ -770,6 +803,9 @@ func (task *taskTiming) document() jsonObject {
 	}
 	if task.FanOut {
 		doc.add("fanOut", true)
+	}
+	if task.Child {
+		doc.add("child", true)
 	}
 	doc.addQuantity("wait", task.Wait)
 	doc.addQuantity("run", task.Run)

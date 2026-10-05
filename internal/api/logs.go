@@ -211,6 +211,10 @@ func (s *Service) StreamRunTaskLogs(
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"task %q of run %q is an awaited task: it runs no container and writes no logs", q.TaskID, q.RunID))
 	}
+	// A composed task starts a child run; its logs are the child's.
+	if err := composedTaskLogRefusal(q.RunID, taskRun); err != nil {
+		return err
+	}
 	// The item selector (spec each-fan-out §7.2): a fan-out's own row writes
 	// no logs, its items do, so a fan-out requires `item`.
 	if _, err := itemRunOf(run, q.TaskID, q.Item); err != nil {

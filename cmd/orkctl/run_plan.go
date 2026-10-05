@@ -221,6 +221,10 @@ func planDetail(task *orkstackv1.PlanTask, failing string) string {
 			// A fan-out is one PlanTask (spec each-fan-out §5.12).
 			return eachDetail(task)
 		}
+		if ref := task.GetOrkflow(); ref != nil {
+			// A composed task is one PlanTask; the plan never recurses.
+			return composedPlanDetail(ref)
+		}
 		if task.GetPin() != "" {
 			return "pin " + task.GetPin()
 		}
@@ -417,4 +421,12 @@ func checkPlanAssertions(errOut io.Writer, plan *orkstackv1.PlanRunResponse, run
 		code: exitPlanAssertionFailed,
 		err:  fmt.Errorf("%s contradicted by the plan", plural(int64(len(failures)), "assertion")),
 	}
+}
+
+// composedPlanDetail is the DETAIL cell of a composed task that would run:
+// the child it starts and the command that plans the child. ui/src/lib/plan.ts
+// renders the same words.
+func composedPlanDetail(ref *orkstackv1.OrkflowRef) string {
+	return fmt.Sprintf("orkflow %s@%s as a child run (not planned: orkctl run plan %s --version %s)",
+		ref.GetName(), ref.GetVersion(), ref.GetName(), ref.GetVersion())
 }

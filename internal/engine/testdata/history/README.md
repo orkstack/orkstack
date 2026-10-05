@@ -110,3 +110,43 @@ ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
 The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
 re-recorded only when the fan-out path's command stream or payloads genuinely
 change, with a commit that says so.
+
+## The composed fixtures
+
+`run-composed-parent-v1.json` and `run-composed-child-v1.json` hold the
+composition path still (`docs/DSL.md` "Composition" and "Outputs"): the first
+`ExecuteChildWorkflow` `RunWorkflow` ever issued, the first
+`RenderComposedValues` and `StoreComposedValues` local-activity markers, and
+the first declared-outputs render. They are real histories of the shipped
+examples — `composed-release` composing `release-block@0.1.0`, whose
+`outputs:` the parent's own `outputs:` projects — recorded once, together, by
+a **versioned** worker against a real cluster. Three tests hold the tree to
+them on every `make test`:
+
+- `TestRunWorkflow_ReplaysCommittedComposedHistories` — the command half, for
+  both files.
+- `TestComposedHistory_PayloadsMatchWhatCurrentCodeSends` — the payload half:
+  the parent re-executed from its own input, with its recorded task results,
+  render and store markers and its child's recorded result fed back, and
+  every ExecuteTask input and the child start — id, task queue, parent-close
+  policy, memo, search attributes and its four input payloads — compared with
+  the recorded `StartChildWorkflowExecutionInitiated`.
+- `TestComposedHistory_CatchesAChildStartWithoutItsRender` — the replay of the
+  parent against a body that starts the child without first recording its
+  input render, which must fail.
+
+Until both files are committed those tests skip and name the command that
+records them (set `ORK_REQUIRE_COMPOSED_FIXTURES=1` to make their absence a
+failure). Nothing writes them except `TestIntegration_RecordComposedRunHistory`
+(`internal/engine/compose_integration_test.go`), and only when asked:
+
+```bash
+ORK_RECORD_GOLDEN_HISTORY=1 ORK_REQUIRE_INFRA=1 \
+  ORK_TEMPORAL_NAMESPACE=ork-<your-agent> \
+  go test -tags=integration -p 1 -count=1 ./internal/engine/ \
+  -run TestIntegration_RecordComposedRunHistory
+```
+
+The same rules apply as to `run-succeeded-v1.json`: never hand-edited, and
+re-recorded only when the composition path's command stream or payloads
+genuinely change, with a commit that says so.

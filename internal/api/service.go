@@ -257,6 +257,12 @@ type Config struct {
 	// never raise it. Checked at validate/apply and again at submit.
 	EachMaxItems int32
 
+	// ComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH: how many levels of child runs
+	// one run may start (a run is level 0). Zero means the built-in ceiling,
+	// engine.DefaultComposeMaxDepth; it may lower that ceiling and never
+	// raise it. Checked at validate/apply and again at submit.
+	ComposeMaxDepth int32
+
 	// TransferBudgetSeconds overrides the derived data-transfer allowance.
 	// When zero, submit derives it from Limits and
 	// FloorThroughputBytesPerSecond (§6.3).
@@ -409,6 +415,9 @@ type Service struct {
 	limits         engine.WorkspaceLimits
 	// eachMaxItems is Config.EachMaxItems, defaulted (spec each-fan-out §7.1).
 	eachMaxItems int32
+	// composeMaxDepth is Config.ComposeMaxDepth, defaulted (spec
+	// composed-orkflows §8).
+	composeMaxDepth int
 	// retention owns the deployment's maximum run retention (see
 	// Config.Retention). Nil answers SystemService's retention RPCs with
 	// Unimplemented.
@@ -460,6 +469,7 @@ func NewService(cfg Config) *Service {
 		artifacts:         cfg.Artifacts,
 		limits:            cfg.Limits,
 		eachMaxItems:      eachMaxItemsOf(cfg.EachMaxItems),
+		composeMaxDepth:   composeMaxDepthOf(cfg.ComposeMaxDepth),
 		retention:         cfg.Retention,
 		retentionEnforced: cfg.RetentionEnforced,
 		imagePolicies:     cfg.ImagePolicies,
@@ -802,7 +812,10 @@ func hasError(issues []*orkstackv1.ValidationIssue) bool {
 func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNamespace string) (*orkstackv1.Orkflow, *orkstackv1.Namespace, []*orkstackv1.ValidationIssue, error) {
 	wf, err := dsl.CompileWithOptions(source, dsl.Options{Catalog: s.activityCatalog()})
 	if err != nil {
-		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
+		// A composed task with no version names the versions that exist
+		// (spec composed-orkflows §4.5); the compiler is pure and cannot.
+		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument,
+			s.enrichVersionRequired(ctx, requestedNamespace, err))
 	}
 	pinsVersion, err := dsl.DocumentPinsVersion(source)
 	if err != nil {
@@ -858,6 +871,16 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// registry and Compile stays pure. An ERROR refuses before anything is
 	// written; WARNINGs travel with the prepared document.
 	issues := dsl.CheckOrkflowInterfaces(wf, resolutions)
+	// Rules 31 and 32: every composed task resolved in this namespace, its
+	// definition digest stamped (before DerivedVersion and DefinitionDigest,
+	// which both hash it), its tree loaded and checked, and its interface
+	// honoured. One refusal carries the interface and composition issues
+	// together, in that order.
+	composeIssues, err := s.resolveComposition(ctx, ns, wf)
+	if err != nil {
+		return nil, nil, nil, err // a store outage: Unavailable, never an issue
+	}
+	issues = append(issues, composeIssues...)
 	if hasError(issues) {
 		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
@@ -1315,6 +1338,17 @@ func (s *Service) prepare(
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("resolve durable activity configuration: %w", err))
 	}
+	// Every child run this submission can start, planned recursively under
+	// the parent's namespace, resolver, allow_empty_pool, image-policy
+	// selection and boot answers (spec composed-orkflows §5.2). It refuses
+	// and mints nothing.
+	nsIdx, orIdx := indexAnswers(binding.Starter)
+	if err := s.planChildren(ctx, composeRequest{
+		ns: ns, resolver: s.resolverFor(binding), allowEmpty: msg.GetAllowEmptyPool(),
+		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx,
+	}, planned, &plan, 0, nil); err != nil {
+		return submission{}, err
+	}
 	// The origin travels on the replay-pinned plan, as CommitRoot does: the
 	// door that accepted the submission is the only thing that knows it, and
 	// workflow code may not ask.
@@ -1327,6 +1361,11 @@ func (s *Service) prepare(
 	if err != nil {
 		return submission{}, connect.NewError(connect.CodeInternal,
 			fmt.Errorf("mint await callback tokens: %w", err))
+	}
+	// Every child's callback awaits, minted and discarded; then the plan's
+	// size, measured with placeholder ids; then, last, the child run ids.
+	if err := s.mintChildren(planned, &plan); err != nil {
+		return submission{}, err
 	}
 	return submission{
 		callbacks: callbacks,

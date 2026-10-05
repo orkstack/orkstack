@@ -114,6 +114,9 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		return nil, fmt.Errorf("task %q is an awaited task (await:): it starts no container, so there is nothing to run locally; "+
 			"resolve it in a run with orkctl run resolve, or run a task downstream of it with its values supplied", t.TaskID)
 	}
+	if ref := spec.GetOrkflow(); ref != nil {
+		return nil, ComposedTaskRefusal(t.TaskID, ref)
+	}
 	if spec.GetEach() == nil && t.Item != nil {
 		return nil, fmt.Errorf("task %q is not a fan-out; it has no items, so --item does not apply", t.TaskID)
 	}
@@ -248,6 +251,15 @@ func localItemInput(wf *orkstackv1.Orkflow, spec *orkstackv1.Task, t LocalTask, 
 		return nil, &LocalTaskRefusal{Code: task.ReasonInputTooLarge, Category: task.CategoryContractViolation, Err: err}
 	}
 	return input, nil
+}
+
+// ComposedTaskRefusal is why a composed task cannot run locally: it starts a
+// child run, not a container, so there is no input to compose. One of the
+// child's tasks runs locally against the child run's bytes (spec
+// composed-orkflows §6.10).
+func ComposedTaskRefusal(taskID string, ref *orkstackv1.OrkflowRef) error {
+	return fmt.Errorf("task %q runs orkflow %s@%s as a child run, not a container: run one of its "+
+		"tasks with orkctl task run --from-run <child-run-id> --task <task>", taskID, ref.GetName(), ref.GetVersion())
 }
 
 // TaskClosure returns the sorted transitive `needs` closure of taskID — the

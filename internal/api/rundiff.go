@@ -166,7 +166,16 @@ func (s *Service) DiffRuns(
 		// items, and comparing the node's unset values would report missing
 		// evidence where there is none (spec each-fan-out §7.3).
 		fanOut := fromTask.GetEach() != nil || toTask.GetEach() != nil
+		// A composed task's row likewise: attempt, orker, exit_code, image
+		// and platform_digest are its child's facts, and child.run_id is not
+		// compared — two runs' children always have two ids, and the
+		// definition they ran is compared through the parent's digest (spec
+		// composed-orkflows §7).
+		composed := fromTask.GetChild() != nil || toTask.GetChild() != nil
 		fieldsFor := func(item bool) []string {
+			if composed {
+				return composedDiffFields
+			}
 			if fanOut && !item {
 				return fanOutNodeDiffFields
 			}
@@ -223,6 +232,9 @@ func (s *Service) DiffRuns(
 	}
 	return connect.NewResponse(res), nil
 }
+
+// composedDiffFields are the fields a composed task's row is compared on.
+var composedDiffFields = []string{"presence", "status", "error", "duration"}
 
 // fanOutNodeDiffFields are the fields a fan-out's own row is compared on.
 var fanOutNodeDiffFields = []string{"presence", "status", "pool", "pin", "error", "duration"}

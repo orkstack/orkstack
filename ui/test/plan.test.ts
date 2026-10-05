@@ -163,3 +163,17 @@ test('an await plans as AWAITS with the CLI detail, and the summary counts it on
 	expect(goDuration(150)).toBe('2m30s');
 	expect(goDuration(45)).toBe('45s');
 });
+
+test('a composed task plans as one RUNS row with the CLI detail', async () => {
+	const { OrkflowRefSchema } = await import('../src/lib/gen/orkstack/v1/orkflow_pb');
+	const plan = create(PlanRunResponseSchema, {
+		tasks: [
+			task('release', PlanOutcome.RUNS, 2, {
+				orkflow: create(OrkflowRefSchema, { name: 'release-block', version: '2.1.0' })
+			})
+		]
+	});
+	expect(planDetail(plan.tasks[0], plan)).toBe(
+		'orkflow release-block@2.1.0 as a child run (not planned: orkctl run plan release-block --version 2.1.0)'
+	);
+});

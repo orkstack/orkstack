@@ -15,6 +15,11 @@ import (
 // deployment may lower and never raise (spec each-fan-out §8).
 const DefaultEachMaxItems = dsl.MaxEachItems
 
+// DefaultComposeMaxDepth is ORK_COMPOSE_MAX_DEPTH's default: the built-in
+// ceiling on how many levels of child runs one run may start, which a
+// deployment may lower and never raise (spec composed-orkflows §8).
+const DefaultComposeMaxDepth int32 = MaxComposeDepth
+
 // ApplyInputDefaults clones input and fills omitted fields from the orkflow's
 // declared input defaults. Caller fields always win, including explicit null;
 // undeclared fields are preserved unchanged.

@@ -1,0 +1,20 @@
+Run:       ork-1758790021000000000-1000000000000000001
+Orkflow:   deploy
+Version:   1.0.0
+Status:    SUCCEEDED
+Created:   2026-01-02T02:04:05Z
+Started:   2026-01-02T02:04:05Z
+Finished:  2026-01-02T02:04:35Z
+Origin:    unrecorded (started before origins were recorded)
+Input:     -
+Output:    -
+
+TASK     STATUS     POOL  PIN  ORKER    ATTEMPT  EXIT  SCHEDULED             STARTED               FINISHED              ERROR
+build    SUCCEEDED  main  -    orker-1  1        0     2026-01-02T02:04:06Z  2026-01-02T02:04:07Z  2026-01-02T02:04:09Z  -
+release  SUCCEEDED  -     -    -        0        0     2026-01-02T02:04:09Z  2026-01-02T02:04:09Z  2026-01-02T02:04:26Z  -
+later    SKIPPED    -     -    -        0        0     -                     -                     2026-01-02T02:04:26Z  -
+never    FAILED     -     -    -        0        0     2026-01-02T02:04:26Z  -                     2026-01-02T02:04:27Z  CHILD_INPUT_RENDER_FAILED: the child run's input could not be rendered
+
+release: child run ork-1758790021000000000-4081623940183294 (release-block@2.1.0). Open it with: orkctl -n team-a run get ork-1758790021000000000-4081623940183294
+later: skipped; no child run was started
+never: no child run was started (CHILD_INPUT_RENDER_FAILED)

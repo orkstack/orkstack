@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -103,7 +105,10 @@ func renderApply(out io.Writer, resp *orkstackv1.ApplyOrkflowResponse) error {
 		}
 	}
 	fmt.Fprintln(out)
-	return renderTaskTable(out, wf.GetTasks())
+	if err := renderTaskTable(out, wf.GetTasks()); err != nil {
+		return err
+	}
+	return renderComposeTables(out, wf)
 }
 
 // renderTaskTable prints an orkflow's task DAG.
@@ -121,8 +126,14 @@ func renderTaskTable(out io.Writer, tasks []*orkstackv1.Task) error {
 		if spec := task.GetAwait(); spec != nil {
 			uses, timeout = "await", spec.GetTimeoutSeconds()
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%ds\n",
-			task.GetId(), uses, joinOrDash(task.GetNeeds()), timeout)
+		timeoutCell := fmt.Sprintf("%ds", timeout)
+		if task.GetOrkflow() != nil {
+			// A composed task has no timeout of its own: its child's tasks
+			// carry theirs.
+			timeoutCell = dash
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n",
+			task.GetId(), uses, joinOrDash(task.GetNeeds()), timeoutCell)
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -159,4 +170,68 @@ func renderEachTable(out io.Writer, tasks []*orkstackv1.Task) error {
 		return fmt.Errorf("write output: %w", err)
 	}
 	return nil
+}
+
+// renderComposeTables is what an Orkflow that composes another, or declares
+// outputs, adds after its task tables: the COMPOSED table (each composed
+// task's pinned child and its digest, shortened) and the OUTPUT table (each
+// declared output's template). An Orkflow with neither prints exactly what it
+// always did.
+func renderComposeTables(out io.Writer, wf *orkstackv1.Orkflow) error {
+	var composed []*orkstackv1.Task
+	for _, task := range wf.GetTasks() {
+		if task.GetOrkflow() != nil {
+			composed = append(composed, task)
+		}
+	}
+	if len(composed) > 0 {
+		fmt.Fprintln(out)
+		table := newTable(out)
+		fmt.Fprintln(table, "COMPOSED\tORKFLOW\tDIGEST")
+		for _, task := range composed {
+			ref := task.GetOrkflow()
+			fmt.Fprintf(table, "%s\t%s@%s\t%s\n", task.GetId(), ref.GetName(), ref.GetVersion(),
+				shortDefinitionDigest(ref.GetDefinitionDigest()))
+		}
+		if err := table.Flush(); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
+	}
+	if outputs := wf.GetOutputs(); len(outputs) > 0 {
+		keys := make([]string, 0, len(outputs))
+		for k := range outputs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		fmt.Fprintln(out)
+		table := newTable(out)
+		fmt.Fprintln(table, "OUTPUT\tTEMPLATE")
+		for _, k := range keys {
+			fmt.Fprintf(table, "%s\t%s\n", k, outputs[k])
+		}
+		if err := table.Flush(); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
+	}
+	return nil
+}
+
+// shortDefinitionDigest shortens a digest as the UI's shortDigest does: the
+// algorithm, the first 12 and the last 6 hex digits.
+func shortDefinitionDigest(digest string) string {
+	if digest == "" {
+		return dash
+	}
+	algo, hex, found := strings.Cut(digest, ":")
+	if !found {
+		algo, hex = "", digest
+	}
+	if len(hex) <= 20 {
+		return digest
+	}
+	prefix := ""
+	if algo != "" {
+		prefix = algo + ":"
+	}
+	return prefix + hex[:12] + "…" + hex[len(hex)-6:]
 }

@@ -15,9 +15,9 @@ import (
 	taskpool "github.com/orkstack/orkstack/internal/task"
 )
 
-// validate enforces the documented DSL rules (docs/DSL.md) except rule 14,
-// which needs a resolved image and is checked by internal/api after
-// resolution.
+// validate enforces the documented DSL rules (docs/DSL.md) except rules 14,
+// 31 and 32, which need a resolved image or the orkflow store and are checked
+// by internal/api.
 func validate(wf *orkstackv1.Orkflow, opts Options) error {
 	// Rule 6 checks that `uses:` is present and resolvable through the
 	// CATALOG, not that it names something this binary was compiled to know
@@ -115,6 +115,14 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 				return validationError(fmt.Sprintf("tasks[%d].needs[%d]", taskIndex, needIndex), fmt.Errorf("task %q needs itself (cycle)", task.GetId()))
 			}
 		}
+		// Rule 26: a compiled orkflow reference belongs only to a `uses:`
+		// that names an Orkflow.
+		composed := strings.HasPrefix(task.GetUses(), OrkflowUsesPrefix)
+		if task.GetOrkflow() != nil && !composed {
+			return validationError(fmt.Sprintf("tasks[%d].orkflow", taskIndex), fmt.Errorf(
+				"task %q: orkflow %s is set, but uses: %q does not name an orkflow — a composed task's "+
+					"uses: is %s", task.GetId(), ComposedLabel(task.GetOrkflow()), task.GetUses(), orkflowUsesShape))
+		}
 		// Rule 6: a task has exactly one of `uses:` and `await:`. An awaited
 		// task runs no image, so it skips the catalog check, network (6b) and
 		// secrets (6c), and meets rules 15–17 instead.
@@ -123,6 +131,16 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 				return validationError(fmt.Sprintf("tasks[%d].uses", taskIndex), awaitUsesRefusal(task.GetId()))
 			}
 			if err := validateAwaitTask(taskIndex, task); err != nil {
+				return err
+			}
+			continue
+		}
+		// Rule 6, composed: a `uses:` beginning with orkflow: is a composed
+		// task (rules 26–27). It skips the catalog check, 6b and 6c — it
+		// would otherwise be taken for a registry reference because it
+		// contains `:` and `@`.
+		if composed {
+			if err := validateComposedTask(taskIndex, task); err != nil {
 				return err
 			}
 			continue
@@ -234,9 +252,23 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		}
 		checker.each = task.GetEach().GetAs()
 		checker.fanOut = task.GetEach() != nil
+		// Rule 28: a composed task's with: is rendered by the ENGINE into the
+		// child run's input.
+		if task.GetOrkflow() != nil {
+			checker.engine = true
+			checker.engineWhat = "a composed task's with: becomes the child run's input, which " +
+				"carries values, not files"
+		}
 		if err := checker.checkValue("with", task.GetWith().AsMap()); err != nil {
 			return err
 		}
+	}
+
+	// Rule 29: outputs: is a flat map of names to engine-rendered templates
+	// that may read any task but a fan-out — they are rendered after every
+	// task is terminal, so no needs closure applies.
+	if err := validateOutputs(wf, inputs, byID); err != nil {
+		return err
 	}
 
 	// Rules 10, 11 and 12: what one pin's members must agree on, and that

@@ -13,6 +13,7 @@ applied to the `ork` engine with `orkctl apply`.
 | `description` | no       | Human description.                                     |
 | `labels`      | no       | `map[string]string` for organization/filtering, free-form — no key shape, entry count, or value size is enforced here. When telemetry is on, at most 32 of them (sorted by key) are exported as `ork.label.<key>` telemetry attributes, each key and value sanitized for that boundary (`docs/DEPLOY.md`, "Per-namespace policy"). |
 | `inputs`      | no       | Declared input parameters (see below).                 |
+| `outputs`     | no       | Declared return contract: name to template (see below). |
 | `pins`        | no       | Declared task pins (see below).                        |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
@@ -140,12 +141,50 @@ run is submitted with are JSON, never YAML, and stay JSON in the recorded
 output too. The DSL declares shape; the submission carries data. See
 `docs/JSON.md` for why.
 
+## Outputs
+
+```yaml
+outputs:
+  digest: '{{ .tasks.sign.output.value }}'
+  url: 'https://records.example/{{ .tasks.publish.output.value }}'
+  channel: stable            # a value with no template action is a constant
+```
+
+`outputs:` is an Orkflow's declared **return contract**: a flat map from an
+output name to a template. When a run's tasks have all finished, the engine
+renders every template **once** and the rendered map **is** the run's output
+(`Run.output`) — and it is exactly what an Orkflow composing this one receives
+as its composed task's values (see "Composition"). Every value renders to a
+string.
+
+- A name is a template field name: `^[a-z][a-z0-9_]*$`, at most 128 bytes, so
+  `.tasks.<task>.output.<name>` parses in the composing Orkflow.
+- A template may read `.inputs.<declared>` and `.tasks.<id>.output…` of **any**
+  task of the Orkflow — the outputs are rendered after every task is terminal,
+  so no `needs:` closure applies — except a fan-out, whose items are files.
+- The engine renders it, not an Orker, so the Orker's helpers (`artifact`,
+  `env`, `sh`) are refused, `.tasks.<id>` may be followed only by `output`, and
+  a `.tasks` index names its task with a string literal.
+- A task that did not succeed contributes nothing, so a template that reads it
+  fails the render. For a task that may be skipped, guard the read:
+  `{{ with index .tasks "sign" }}{{ .output.value }}{{ end }}`.
+- **A run whose outputs cannot be rendered fails** (`OUTPUTS_RENDER_FAILED`,
+  `OUTPUTS_TOO_LARGE` over the deployment's values bound, or
+  `OUTPUTS_UNAVAILABLE` when an upstream value cannot be read): every task
+  keeps the status it earned, and the run is `FAILED`, never `SUCCEEDED`
+  without the interface it declares.
+
+An Orkflow that declares no `outputs:` (absent and `{}` are one value) keeps
+the output it always had: every leaf task's inline values, keyed by task id —
+and an Orkflow composing it receives `{}`.
+
 ## Tasks
 
 ```yaml
 tasks:
   - id: fetch             # unique within the Orkflow
-    uses: http            # catalog activity name or full OCI image reference
+    uses: http            # catalog activity name, full OCI image reference,
+                          # or orkflow:<name>@<version> (see "Composition")
     needs: []             # DAG edges list existing task ids; no cycles
     condition: ""         # optional templated gate
     timeout_seconds: 300  # optional container wall-clock timeout; default 300
@@ -508,6 +547,79 @@ awaited task may not declare `each:`.
 `run artifact provenance` and `task run` take `--item N`. The run page draws
 one card with a cell per item. See `examples/each-fan-out.ork.yaml`.
 
+## Composition (`uses: orkflow:`)
+
+A task may name another Orkflow instead of an image. Such a **composed task**
+starts a **child run** of that Orkflow — its own run id, history, logs,
+commits, events and archive record, linked to its parent by its origin
+(`parent-run <parent id>`) — and waits for it. It reaches no Orker.
+
+```yaml
+tasks:
+  - id: build
+    uses: ghcr.io/acme/build:4
+  - id: release
+    uses: orkflow:release-block@2.1.0     # version REQUIRED, never floating
+    needs: [build]
+    with:                                  # the child run's input
+      image: '{{ .tasks.build.output.image_digest }}'
+  - id: announce
+    uses: http
+    needs: [release]
+    with:
+      op: post
+      url: https://hooks.example/notify
+      body: '{"shipped":"{{ .tasks.release.output.digest }}"}'
+```
+
+- **One pinned version.** `orkflow:<name>@<version>` — the version is
+  required (`orkflow:<name>` alone is refused, naming the versions that exist);
+  it is resolved at apply **in this Orkflow's own namespace**, and its
+  definition digest is stamped into this Orkflow's definition, so this
+  version pins the child's exact bytes and, through them, every descendant's.
+  A version pointer never moves a running parent; `uses:` cannot be a
+  template.
+- **What it may carry:** `id`, `needs`, `condition`, `uses` and `with`.
+  `command`, `env`, `secrets`, `resources`, `network`, `pool`, `pin`,
+  `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
+  `run_as_orker_user`, `each` and `await` are refused by name: the child's own
+  tasks declare where and how they run.
+- **`with:` is the child's input**, rendered by the **engine**: values, and
+  strings from templates. It reads `.inputs.<declared>` and its `needs:`
+  closure like any `with:`, but the Orker's helpers (`artifact`, `env`, `sh`)
+  are refused — a child run receives values, never files; pass a reference it
+  can fetch (a registry digest, a URL). Apply checks it against the child's
+  declared `inputs:`: a required input missing is an error, an undeclared key
+  or a literal of the wrong type a warning.
+- **The task's values are the child's declared outputs** (`outputs:`), every
+  value a string, stored as this task's `values.json` — so a downstream
+  container reads them exactly as it reads any upstream's, at
+  `/orkstack/input/upstream/<id>/values.json`. A child that declares none
+  gives `{}`. Apply refuses a read of an output the child does not declare.
+- **Failure and cancellation.** A failed child fails the composed task with
+  `CHILD_RUN_FAILED` and the child's own failure category, naming the child
+  run; a child cancelled on its own cancels the parent; a cancelled parent
+  cancels its running children and waits for them to end; a parent
+  terminated from outside asks its children to cancel, so no child is left
+  running. A composed task is never retried: its child's tasks carry their
+  own retries and timeouts.
+- **Bounds.** Composition is acyclic and at most `ORK_COMPOSE_MAX_DEPTH`
+  levels deep (default and ceiling 4; a run is level 0). The whole tree is
+  planned at the parent's submit — its pools, secret policy, image policy and
+  fan-out cap — and a submission the deployment can no longer plan (a child
+  deleted, a cap lowered, a pool forbidden) is refused before anything starts.
+  Every definition of the tree travels in the run's plan, which is bounded by
+  256 KiB.
+- A child's callback awaits get tokens that are disclosed to no one: resolve
+  them with `orkctl run resolve <child-run> --task <task>` or on the child
+  run's page.
+
+`orkctl run get <run> --tree` prints every child run under its parent, and
+`orkctl run list --origin parent-run:<run>` lists one parent's children; a
+child is read, watched and cancelled on its own id. `orkctl run logs` points a
+composed task at its child's logs, and `orkctl task run` refuses one by name.
+See `examples/release-block.ork.yaml` and `examples/composed-release.ork.yaml`.
+
 ## Templating
 
 Task `with` values and `condition` are rendered with Go `text/template` against
@@ -526,6 +638,11 @@ this context:
 Only tasks listed (transitively) in `needs` are guaranteed to be resolvable;
 referencing an unrelated task's output is a compile-time error.
 
+Two kinds of template are rendered by the **engine** rather than an Orker: a
+composed task's `with:` and an Orkflow's `outputs:`. They get **no helpers**
+(`artifact`, `env` and `sh` are Orker-side), read `.tasks.<id>.output` only,
+and name every task they read literally (rule 28).
+
 ## Validation rules (enforced by `internal/dsl`)
 
 1. `namespace`, when present, is slug-formatted (`^[a-z][a-z0-9-]*$`); absent
@@ -538,7 +655,9 @@ referencing an unrelated task's output is a compile-time error.
 5. The `needs` graph is acyclic (DAG).
 6. A task has exactly one of `uses:` and `await:`. `uses` is a non-empty
    catalog activity name or OCI registry reference; an awaited task runs no
-   image.
+   image. A `uses:` beginning with `orkflow:` is a composed task (rule 26) and
+   skips the catalog check — it would otherwise be taken for a registry
+   reference because it contains `:` and `@`.
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks, and
    `.each` under rule 25.
@@ -591,6 +710,36 @@ referencing an unrelated task's output is a compile-time error.
 25. `.each` (`.each.<as>…`, `.each.index`, `.each.count`, field or `index`
     form) is legal only in the `with:` of a task that declares `each:`;
     never in a `condition:`, and no other key of `.each` exists.
+26. A `uses:` beginning with `orkflow:` is a composed task: it parses as
+    `orkflow:<name>@<version>` (name a slug, version
+    `^[A-Za-z0-9][A-Za-z0-9._-]*$` of at most 200 bytes, no template), and
+    the compiled `Task.orkflow` agrees with it; such a task carries no image.
+    It skips rule 6's catalog check.
+27. A composed task carries nothing but `id`, `needs`, `condition`, `uses`,
+    `with` (and its compiled `orkflow`): every execution field — `command`,
+    `env`, `secrets`, `resources`, `network`, `pool`, `pin`, `retry`,
+    `timeout_seconds`, `cancellation_grace_period_seconds`,
+    `run_as_orker_user`, `each`, `await` — is refused by name.
+28. Engine-rendered templates — a composed task's `with:` and every
+    `outputs:` value — stay values: the `artifact`, `env` and `sh` helpers
+    are refused, `.tasks.<id>` is followed only by `output`, `.each` is
+    refused, and a `.tasks` index names its task with a string literal.
+29. `outputs:` is a flat map: each name matches `^[a-z][a-z0-9_]*$` and is at
+    most 128 bytes; each value is a template under rule 28 that may read
+    declared inputs and the output of any task but a fan-out.
+30. A fan-out's `each.over` may not name a composed task: its values are the
+    child's declared outputs, which are strings and never an array.
+31. A composed task's child resolves in this namespace — it exists, its
+    pinned digest still holds, its tree is acyclic and at most
+    `ORK_COMPOSE_MAX_DEPTH` levels deep, the namespace's pool and secret
+    policy allow every descendant, and every definition of the tree fits a
+    run's 256 KiB plan. Enforced by `internal/api` at validate and apply, and
+    again at submit; a descendant that declares callback awaits is a warning.
+32. A composed task honours its child's interface: every input the child
+    requires (with no default) is supplied, and every
+    `.tasks.<composed>.output.<key>` read anywhere in the document names an
+    output the child declares (errors); an undeclared `with:` key or a
+    literal of the wrong type is a warning. Enforced by `internal/api`.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

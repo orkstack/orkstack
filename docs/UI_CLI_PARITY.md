@@ -698,6 +698,42 @@ timeline, log pane, artifacts with Download, CLI equivalents), a
 table states the fan-out in the CLI's words, the DAG labels the node
 `each ≤ N`, and run diff labels item rows `convert[97]`.
 
+### Composed Orkflows
+
+A task whose `uses:` is `orkflow:<name>@<version>` (`docs/DSL.md`
+"Composition") starts a **child run** of that pinned Orkflow and reaches no
+Orker. `TaskRun.child` (`TaskChild`: the pinned name, version and definition
+digest from the run's first snapshot, and `run_id` once the child's start is
+confirmed — never before) marks it on `GetRun`; the child run's own
+`Run.origin` is `{PARENT_RUN, <parent id>}`, so a parent's children are the
+runs `ListRuns` returns for `--origin parent-run:<id>` — no new RPC. A child
+is read, watched, cancelled, diffed and exported on its own id. The refusals
+are shared: `StreamTaskLogs` (and the log socket) refuses a composed task
+with `FailedPrecondition` naming its child run and `orkctl run logs <child>`;
+`ListTaskAttempts` answers an empty timeline; `DiffRuns` compares a composed
+row on presence, status, error and duration only. Apply reports rules 26–32
+(`docs/DSL.md`) as field-anchored issues on `tasks[i].uses`, `tasks[i].with.<k>`
+or the reading field, and submit refuses a tree the deployment can no longer
+plan with `FailedPrecondition` naming the child.
+
+CLI: `run get` prints one line per composed task naming its child run and the
+`orkctl run get` that opens it (or why none was started); `run get --tree
+[--depth N]` appends every child's task table under its parent, depth first,
+read in the parent's namespace, and says `unavailable (<code>: <message>)` for
+a child it cannot read (`--tree` with `--json` is refused, naming
+`taskRuns[].child.runId`); `orkflow get` adds the `COMPOSED` and `OUTPUT`
+tables; `run plan` renders a composed task's DETAIL; `run logs` prints where a
+composed task's logs are; `run timing` labels its ATTEMPT `child`; `task run`
+refuses a composed task by name. UI: a composed task's card shows a
+**ChildRunPanel** — the pinned child linked to its Orkflow page, the child run
+linked once `TASK_STARTED` arrives (one event-triggered re-read), its status
+pill, a live roll-up of the child's tasks from the child's own stream, and the
+`orkctl run get` CLI equivalents; Inspect shows the child reference and full
+digest; the header's **Child runs** link opens the runs list filtered to the
+children; the output panel says *Declared outputs* or *Leaf task values*; the
+Orkflow page links each composed task's child at its version with the pinned
+digest, lists the declared outputs, and the DAG names the child.
+
 ## Capability and acceptance matrix
 
 | Capability | UI behavior | CLI/shared behavior | Required observable acceptance |
@@ -739,6 +775,7 @@ table states the fan-out in the CLI's words, the DAG labels the node
 | Audit trail | Admin → Audit: scope statement (every namespace by default, one namespace on request), action/principal/window filters, table with `unattributed` for an absent principal and `refused {code}` for a refusal, pagination, caption, CLI equivalent; ErrorPanel with Retry on a failed read | `admin audit [--since] [--until] [--action] [--principal] [--limit] [--page-token] [-n]`, `--json` is the raw envelope; `ORK_PRINCIPAL` asserts a principal | A write on one replica is listed by another; a refusal is recorded with its code; reads and submits are not recorded; the header a gateway sets on browser requests is recorded verbatim; a scan past its budget refuses instead of answering empty |
 | Awaited tasks | AWAITING pill, deadline, live remaining time; Resolve (typed or JSON) and Reject dialogs with CLI equivalents; *Delivered* until applied; one-time callback panel after submit; placeholder `curl` on the card | `run resolve [--values/--values-file` or `--reject --reason]`; `run submit`/`again` print each callback once; `run get` await table; `run plan` `awaits`; `POST /v1/runs/{id}/awaits/{task}[/reject]` | Values stored byte-exact before delivery and read by the downstream task; timeout and rejection fail the run with their codes; cancellation ends the await `CANCELED`; a second replica and a restarted worker apply a resolution; refusals store and send nothing; the token appears in exactly one response |
 | Fan-out (`each:`) | One card per fan-out with a summary and an item grid updated live from item events; an item panel with its attempts, logs, artifacts and CLI equivalents; deep links carry `item`; plan and DAG show the bound | `run get` collapsed row and `--expand`; `--item` on `logs`, `artifacts`, `artifact download`, `attempts`, `timing`, `inspect`, `evidence export`, `artifact provenance`, `task run`; `watch` spells `convert[97]`; `run plan` counts an input source | Every item commits under its own key and retries alone; a dependent stages every item from its commit; a failed item fails the run naming itself; a second replica serves every item read; history at the ceiling stays inside the stated budget; a run with no fan-out is byte-identical (golden replay) |
+| Composed Orkflows (`uses: orkflow:`, `outputs:`) | A composed task's card links to its child run, rolls up the child's tasks live and names the pinned child; the child's page links back; *Child runs* lists a parent's children; the Orkflow page shows the child reference, its digest and the declared outputs; apply shows rules 26–32 on their fields | `run get` names each child and `--tree` expands them; `run list --origin parent-run:RUN`; `orkflow get` COMPOSED and OUTPUT tables; `run logs` and `task run` refuse a composed task naming the child; `run plan` renders it | A child is its own run with its own id, history, archive record and `PARENT_RUN` origin; declared outputs are `Run.output` and the task's values, read by a downstream container; a child failure fails the parent task with the child's category; cancelling or terminating the parent leaves no child running; a second replica reads the tree; a submit that cannot plan the tree mints nothing; a run with neither construct is byte-identical (golden replay) |
 | Timing | Run elapsed time, task start/end and durations, attempt information where recorded | Existing timestamps in `run get --json`; readable durations may be added | Duration uses authoritative start/end; running elapsed updates; missing timestamps render unknown; no invented retry schedule |
 
 Typed controls are presentation of existing input declarations, not a new

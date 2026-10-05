@@ -1,0 +1,36 @@
+# OrkStack orkflow DSL
+#
+# Compose release-block at a pinned version: its run is a child run with its
+# own id, history and logs, and its declared outputs are this task's values.
+# Apply examples/release-block.ork.yaml into the same namespace first.
+name: composed-release
+version: "0.1.0"
+description: "Build, hand the image to release-block, announce what it recorded."
+
+inputs:
+  image:
+    type: string
+    default: "ghcr.io/acme/app:1.4"
+
+outputs:
+  digest: '{{ .tasks.release.output.digest }}'
+
+tasks:
+  - id: build
+    uses: shell
+    with:
+      op: eval
+      command: ["sh", "-c", "printf '%s' {{ sh .inputs.image }}"]
+
+  - id: release
+    uses: orkflow:release-block@0.1.0
+    needs: [build]
+    with:
+      image: '{{ .tasks.build.output.value }}'
+
+  - id: announce
+    uses: shell
+    needs: [release]
+    with:
+      op: exec
+      command: ["sh", "-c", "echo released {{ sh .tasks.release.output.digest }} at {{ sh .tasks.release.output.url }}"]

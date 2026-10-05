@@ -57,6 +57,12 @@ export function planDetail(task: PlanTask, plan: PlanRunResponse): string {
 		case PlanOutcome.RUNS:
 			// A fan-out is one PlanTask (spec each-fan-out §5.12).
 			if (task.each) return eachPlanDetail(task);
+			// A composed task is one PlanTask; the plan never recurses into
+			// the child (cmd/orkctl run_plan.go composedPlanDetail).
+			if (task.orkflow) {
+				const { name, version } = task.orkflow;
+				return `orkflow ${name}@${version} as a child run (not planned: orkctl run plan ${name} --version ${version})`;
+			}
 			return task.pin ? `pin ${task.pin}` : '';
 		case PlanOutcome.AWAITS: {
 			const detail = `await ≤ ${goDuration(task.await?.timeoutSeconds ?? 0)}`;
