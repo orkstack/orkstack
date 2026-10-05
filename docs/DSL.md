@@ -207,6 +207,7 @@ tasks:
     network: none         # optional: `default` or `none`
     cancellation_grace_period_seconds: 30 # SIGTERM-to-SIGKILL window
     run_as_orker_user: false # opt in to overriding the image's USER
+    cache: { enabled: true } # optional: reuse an identical earlier result (see "Caching")
     with:                 # image-specific config, rendered into config.json
       op: get
       url: https://example.test/health
@@ -582,8 +583,8 @@ tasks:
 - **What it may carry:** `id`, `needs`, `condition`, `uses` and `with`.
   `command`, `env`, `secrets`, `resources`, `network`, `pool`, `pin`,
   `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
-  `run_as_orker_user`, `each` and `await` are refused by name: the child's own
-  tasks declare where and how they run.
+  `run_as_orker_user`, `each`, `await` and `cache` are refused by name: the
+  child's own tasks declare where and how they run (and may be cached).
 - **`with:` is the child's input**, rendered by the **engine**: values, and
   strings from templates. It reads `.inputs.<declared>` and its `needs:`
   closure like any `with:`, but the Orker's helpers (`artifact`, `env`, `sh`)
@@ -619,6 +620,126 @@ tasks:
 child is read, watched and cancelled on its own id. `orkctl run logs` points a
 composed task at its child's logs, and `orkctl task run` refuses one by name.
 See `examples/release-block.ork.yaml` and `examples/composed-release.ork.yaml`.
+
+## Caching (`cache:`)
+
+A task may declare `cache:` to reuse the result of an identical earlier run:
+
+```yaml
+  - id: featurize
+    uses: ghcr.io/acme/featurize:3.1
+    needs: [fetch-data]
+    cache:
+      enabled: true          # required: the opt-in, and the author's assertion of purity
+      ttl_seconds: 86400     # optional: 0/absent = the deployment's cap (ORK_CACHE_MAX_TTL)
+      scope: orkflow         # optional: orkflow (default) | namespace
+```
+
+**Marking a task cached asserts that it is a pure function of what it is
+given; OrkStack cannot verify that, and a task with external side effects must
+not be cached — a hit skips them.** Caching makes execution rarer, never
+exactly-once.
+
+When an attempt of a cached task starts, the Orker — after the commit check
+and the image policy, and after staging the upstream `values.json` files the
+render needs, but before any artifact download, secret, image pull or
+container — computes a **memo key**: the SHA-256 of exactly what the task is
+and is given. It looks for a **memo** under that key: a small pointer to a
+`commit.json` another run already durably wrote.
+
+- **Hit.** The memo is readable, unexpired, and points at a commit that still
+  exists with the recorded digest, whose value and artifact objects still
+  exist and fit this run's limits. The Orker writes **this run's own**
+  `commit.json`, whose value and artifact *references* are the source's
+  content-addressed objects, and reports success. No image is pulled, no
+  secret is read, no container runs. `orkctl run get` labels the task
+  `SUCCEEDED (cached)` and names the run that produced the result.
+- **Anything else is a miss, never a failure** — the task runs, and the reason
+  is recorded on the attempt (table below). After a fresh commit the Orker
+  writes (best-effort) the memo for the next run.
+
+### What the key covers
+
+| Component | Value |
+|---|---|
+| `image` | the pinned index digest |
+| `command` | SHA-256 of the command (`[]` when empty) |
+| `env` | SHA-256 of the environment (`{}` when empty) |
+| `secrets` | SHA-256 of every secret's name and source — **never a value** |
+| `network` | `default` or `none` |
+| `run_as_orker_user` | `true` or `false` |
+| `config` | SHA-256 of the exact `config.json` bytes (every rendered `with:` value) |
+| `run_input` | SHA-256 of the exact `run.json` bytes |
+| `inputs` | SHA-256 of every staged input file's container path, name and content digest, and every fan-out upstream's item count |
+| `item`, `item_as`, `item_index`, `item_count` | for one item of a fan-out: its value, the name it is bound to, its position and the array's length |
+
+The key document also names the namespace, the scope, the task id and — under
+`orkflow` scope — the Orkflow's name.
+
+| Not in the key | Why |
+|---|---|
+| run id, idempotency key, attempt, pool, trace | coordinates of *this* execution |
+| `orkflow_version`, definition digest | they cover every task: editing another task must not invalidate this one's memo |
+| the Orkflow name, under `namespace` scope | that is what namespace scope means |
+| `timeout_seconds`, `cancellation_grace_period_seconds`, `retry`, `needs`, `condition`, `pool`, `cache:` itself | they decide whether, where, how long and how often a task runs, not what it computes |
+| `limits` | deployment configuration; a source that no longer fits is refused at hit time (`SOURCE_OVER_LIMITS`) |
+| resources, platform, delivery | facts about the host that ran it |
+| secret **values** | a value never enters a key; rotating a secret does not invalidate a memo (apply warns, and says how to purge) |
+| upstream artifact **URIs** | a URI names the producing run; the digest is what the workload reads |
+
+Three consequences, stated rather than discovered:
+
+- **Editing another task does not touch this task's key** — the key is built
+  from the task's own definition and inputs, never the whole Orkflow's digest.
+- **The run input is in the key.** `run.json` is a file the workload may read,
+  so a run whose input changes misses every cached task, even one whose
+  `with:` ignores that input. `orkctl run again` keeps the input and hits.
+- **A fan-out item's position is in the key.** Items of an unchanged array
+  hit; an array that grows by one element misses every item.
+
+Render an upstream artifact with `artifact "<task>/<name>"` (a path), never
+its `uri`: a URI names the producing run, so a `with:` that renders it misses
+whenever that run changes.
+
+### Miss reasons
+
+| Token | Meaning |
+|---|---|
+| `MEMO_ABSENT` | no memo for this key |
+| `MEMO_UNREADABLE` | the memo could not be read (store error, corrupt, unknown schema, or the 30 s lookup bound passed) |
+| `MEMO_MISMATCH` | the memo stored at this key describes another key, namespace, scope, task or Orkflow |
+| `MEMO_EXPIRED` | the memoized result is older than the task's effective TTL |
+| `SOURCE_COMMIT_GONE` | the run that produced the result was retired; its commit is gone |
+| `SOURCE_COMMIT_CHANGED` | the commit's stored bytes no longer hash to the digest the memo recorded |
+| `SOURCE_COMMIT_UNREADABLE` | the commit could not be read or decoded |
+| `SOURCE_COMMIT_MISMATCH` | the commit is not this task's result (namespace, task, run, time, image digest, a non-zero exit, Orkflow) |
+| `SOURCE_OVER_LIMITS` | the result does not fit this run's limits (values, artifact count or size, commit size) |
+| `SOURCE_OBJECT_UNAVAILABLE` | the committed `values.json` is gone or corrupt, or an artifact object is gone |
+| `INPUT_UNHASHED` | an input reference carries no digest, so no key could be computed (no memo is written) |
+| `MEMO_STORE_ABSENT` | the Orker has no memo store |
+
+### TTL, scope and bypass
+
+- **TTL.** A memo is reused only while its result is younger than the task's
+  `ttl_seconds`, measured from when the result was committed, and never older
+  than the deployment's `ORK_CACHE_MAX_TTL` (default 168h): `0` or absent means
+  the cap. Changing a TTL invalidates nothing.
+- **Scope.** `orkflow` (the default) — reused by runs of the same Orkflow;
+  `namespace` — reused by any Orkflow of the namespace whose task of the same
+  id computes the same key. A memo never crosses namespaces.
+- **`--no-cache`.** `orkctl run submit --no-cache` (and `run again`, and the
+  submit panel's *Ignore cached results*) runs every cached task's container
+  and refreshes its memo. It applies to the whole tree, child runs included.
+- **A memo is a pointer, deletable at any time.** `orkctl cache purge` — or
+  deleting the whole `metadata/memo/` prefix — changes no result, only whether
+  the next run's containers run. `orkctl cache stats` reports the hit rate and
+  the memos stored; both are derived on read.
+- **Where it does not apply.** A pinned task, an awaited task and a composed
+  task cannot be cached (rules 36, 15, 27); a child Orkflow's own tasks may be.
+  `orkctl task run` and `orkctl activity test` never read or write a memo.
+  Nothing a container sees changes.
+
+See `examples/cached-pipeline.ork.yaml`.
 
 ## Templating
 
@@ -679,9 +800,9 @@ and name every task they read literally (rule 28).
     compiler has no registry to ask (`docs/ACTIVITY_IMAGES.md`, "Declaring the
     interface"). An image without the label is not checked.
 15. An awaited task carries nothing but `id`, `needs`, `condition` and
-    `await`: every field that shapes a container is refused by name, on the
-    compiled message as well as in YAML, so a hand-built request meets the
-    same rule.
+    `await`: every field that shapes a container — and `each` and `cache` —
+    is refused by name, on the compiled message as well as in YAML, so a
+    hand-built request meets the same rule.
 16. `await.timeout_seconds` is present and between 1 and 2592000 (30 days).
 17. Every `await.schema` entry is a mapping of only `type` (required; one of
     `string`, `number`, `boolean`, `object`, `array`) and `required`
@@ -719,7 +840,7 @@ and name every task they read literally (rule 28).
     `with` (and its compiled `orkflow`): every execution field — `command`,
     `env`, `secrets`, `resources`, `network`, `pool`, `pin`, `retry`,
     `timeout_seconds`, `cancellation_grace_period_seconds`,
-    `run_as_orker_user`, `each`, `await` — is refused by name.
+    `run_as_orker_user`, `each`, `await`, `cache` — is refused by name.
 28. Engine-rendered templates — a composed task's `with:` and every
     `outputs:` value — stay values: the `artifact`, `env` and `sh` helpers
     are refused, `.tasks.<id>` is followed only by `output`, `.each` is
@@ -740,6 +861,18 @@ and name every task they read literally (rule 28).
     `.tasks.<composed>.output.<key>` read anywhere in the document names an
     output the child declares (errors); an undeclared `with:` key or a
     literal of the wrong type is a warning. Enforced by `internal/api`.
+33. `cache:` states `enabled`. `enabled: false` is legal and compiles to no
+    cache at all — the same definition and digest as a task with no `cache:`.
+    Rules 34 and 35 are checked whatever `enabled` says.
+34. `cache.ttl_seconds` is not negative. `0` and absent are one value: no
+    bound of the task's own; the deployment's `ORK_CACHE_MAX_TTL` bounds
+    every memo either way.
+35. `cache.scope` is `orkflow` or `namespace`; the compiler writes `orkflow`
+    when it is absent, so a stored definition never carries an unspecified
+    scope.
+36. A cached task is not pinned: its pin's `/orkstack/shared` is an input no
+    memo key can cover. An awaited task (rule 15) and a composed task (rule
+    27) may not carry `cache:` either.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

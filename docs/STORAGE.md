@@ -71,6 +71,8 @@ place each shape is spelled.
 | `metadata/deliveries/{yyyy}/{mm}/{dd}/{id}/{ns}/{run-id}/{webhook-id}/{event}/{outcome}.json` | one settled webhook delivery: every attempt, the signature sent, the body's SHA-256 — never the body (`DeliveryKey`, `pkg/artifacts/deliveries.go`); the day is the one the delivery id's stamp carries (`created_at`), and the segments after the id are the record's own coordinates so every listing filter is decided from the key | create-only, by the engine after the dispatcher returns | nothing; a bucket lifecycle rule is the operator's |
 | `metadata/commits/{ns}/{run-id}/{task-id}/commit.json` | the immutable activity completion record (`CommitKey`, `commit_store.go`) | conditional create-if-absent; read verbatim as `commit.json` by `ExportRunEvidence`, only at the `CommitRef.uri` the run snapshot recorded | the cleanup worker |
 | `metadata/commits/{ns}/{run-id}/{task-id}/{item:05}/commit.json` | one fan-out item's immutable completion record (`ItemCommitKey`, `commit_store.go`); read by every direct dependent to stage that item's files | conditional create-if-absent, exactly as a task's | the cleanup worker |
+| `metadata/memo/{ns}/orkflow/{orkflow}/{task-id}/{key}.json` | one orkflow-scoped `CacheMemo`: a pointer from a cached task's memo key to a `SUCCEEDED` commit (`MemoKey`, `pkg/artifacts/memo.go`; `docs/DSL.md` "Caching") | by the Orker after a fresh commit of a cached task, best-effort, plain put, last writer wins | `orkctl cache purge` (`PurgeCache`), or a bucket lifecycle rule |
+| `metadata/memo/{ns}/namespace/{task-id}/{key}.json` | one namespace-scoped `CacheMemo` | same | same |
 | `metadata/probes/commit-store/…/commit.json` | the boot-time probe proving conditional create works on this store | at boot | nothing |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`, `s3_manifest.go`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
 | `manifests/{object-key}` | the artifact's exact logical name, beside its object | with the object | with the object |
@@ -130,6 +132,15 @@ run id is encoded, never parsed (AGENTS.md §7).
   rewritable by their own update only, with a conditional put naming the
   ETag the update read; a record deleted between the read and the write stays
   deleted, and the update reports NotFound.
+- **A memo is a pointer to a commit that already exists; deleting any memo,
+  or the whole `metadata/memo/` prefix, changes no result** — only whether the
+  next run of a cached task runs its container. A memo is written only after a
+  fresh `commit.json` was created, read only to decide whether a container is
+  needed, and every doubt about it resolves to *run the task*. It belongs to no
+  run, so the cleanup worker never touches it; a memo whose source run was
+  retired simply misses (`SOURCE_COMMIT_GONE`). A hit writes its run's own
+  `commit.json`, whose references are the source's content-addressed objects —
+  no byte is copied.
 - **The archive is append-only.** Bodies and index rows — the run index and
   the origin index alike — are never deleted;
   what the cleanup worker reclaims is the run's logs, attempt records,
@@ -187,6 +198,12 @@ until a bucket lifecycle rule on that prefix expires it. It is a log, never a
 queue — nothing in OrkStack reads a record to decide what to send — so
 expiring one changes no behaviour; it only shortens how far back
 `orkctl webhook deliveries` can look.
+
+Nor does it touch `metadata/memo/`: a memo belongs to no run. Nothing deletes
+memos but `orkctl cache purge` and a bucket lifecycle rule on that prefix; a
+rule should be no shorter than `ORK_CACHE_MAX_TTL` (default 168h), since a
+memo older than the cap can never be reused anyway. Expiring one changes no
+result.
 
 Artifact objects themselves are not reclaimed automatically.
 `DeleteUnreferencedObjects` exists and is proven against live object storage,
