@@ -1,0 +1,13 @@
+Callers of release-block in namespace default (current version 2.1.0)
+
+KIND      CALLER            VERSION  TASK     PINS     READS        SUPPLIES
+orkflow   billing-sync      1.9.0    release  2.1.0    digest       image
+orkflow   checkout-service  4.2.0    release  2.1.0    digest, url  image, notes
+trigger   ci-release        -        -        current  -            -
+trigger   pinned-release    -        -        2.1.0    -            -
+schedule  hourly-release    -        -        current  -            -
+schedule  nightly-release   -        -        2.1.0    -            -
+
+Scanned the current version of 2 orkflows (--all-versions scans every stored version).
+Moved by a promotion (they follow the current version): triggers 1, schedules 1.
+Not moved by a promotion (they pin a version): composing orkflows 2, triggers 1, schedules 1.

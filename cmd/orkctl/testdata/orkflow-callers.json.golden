@@ -1,0 +1,61 @@
+{
+  "callers": [
+    {
+      "kind": "ORKFLOW",
+      "name": "billing-sync",
+      "callerVersion": "1.9.0",
+      "callerVersionIsCurrent": true,
+      "taskId": "release",
+      "pinnedVersion": "2.1.0",
+      "pinnedDefinitionDigest": "sha256:6cd07d64370f035f1b9ebca7621c621baa4a36842230c6c05ea81f0fe8a1ecdc",
+      "outputsRead": [
+        "digest"
+      ],
+      "inputsSupplied": [
+        "image"
+      ]
+    },
+    {
+      "kind": "ORKFLOW",
+      "name": "checkout-service",
+      "callerVersion": "4.2.0",
+      "callerVersionIsCurrent": true,
+      "taskId": "release",
+      "pinnedVersion": "2.1.0",
+      "pinnedDefinitionDigest": "sha256:6cd07d64370f035f1b9ebca7621c621baa4a36842230c6c05ea81f0fe8a1ecdc",
+      "outputsRead": [
+        "digest",
+        "url"
+      ],
+      "inputsSupplied": [
+        "image",
+        "notes"
+      ]
+    },
+    {
+      "kind": "TRIGGER",
+      "name": "ci-release",
+      "id": "trg-ID"
+    },
+    {
+      "kind": "TRIGGER",
+      "name": "pinned-release",
+      "id": "trg-ID",
+      "pinnedVersion": "2.1.0"
+    },
+    {
+      "kind": "SCHEDULE",
+      "name": "hourly-release",
+      "id": "sch-hourly"
+    },
+    {
+      "kind": "SCHEDULE",
+      "name": "nightly-release",
+      "id": "sch-nightly",
+      "pinnedVersion": "2.1.0"
+    }
+  ],
+  "currentVersion": "2.1.0",
+  "storedVersions": 2,
+  "scannedVersions": 2
+}

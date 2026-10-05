@@ -1,0 +1,8 @@
+ghost-block has no stored version in namespace default
+
+KIND     CALLER         VERSION  TASK  PINS     READS  SUPPLIES
+trigger  ghost-trigger  -        -     current  -      -
+
+Scanned the current version of 3 orkflows (--all-versions scans every stored version).
+Moved by a promotion (they follow the current version): triggers 1, schedules 0.
+Not moved by a promotion (they pin a version): composing orkflows 0, triggers 0, schedules 0.

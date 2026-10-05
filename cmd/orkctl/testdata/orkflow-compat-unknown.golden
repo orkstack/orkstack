@@ -1,0 +1,8 @@
+Interface  deploy  1.0.0 → 2.0.0
+
+FIELD    CHANGE              FROM  TO    VERDICT
+outputs  OUTPUTS_UNDECLARED  none  none  unknown
+
+  outputs: neither version declares outputs: a run's output is every leaf task's values, an accident of graph shape, so whether it changed cannot be stated
+
+verdict: unknown — neither version declares outputs: a run's output is every leaf task's values, an accident of graph shape, so whether it changed cannot be stated
