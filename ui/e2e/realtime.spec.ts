@@ -19,6 +19,17 @@ const ENGINE_HTTP = 'http://127.0.0.1:18080';
 const ENGINE_WS = 'ws://127.0.0.1:18080';
 const UI_ORIGIN = 'http://127.0.0.1:14173';
 
+// The namespace this spec applies hello-ork into and runs it in: its own,
+// fresh on every run. The shared development bucket's `default` namespace
+// keeps every orkflow every earlier suite and proof ever applied there (3575
+// on the bucket that timed this spec out), and the orkflow list is
+// alphabetical and paginated, so finding hello-ork in `default` meant paging
+// through a list that only grows: 17 pages at ~9s each spent 170 of the 180
+// seconds this test has before the run it is here to watch was submitted. A
+// private namespace holds exactly one orkflow, so what this spec measures is
+// the live run page, never the age of the bucket.
+const NS = `realtime-${Date.now().toString(36)}`;
+
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'realtime')
 	: path.join(uiDir, 'test-results', 'realtime');
@@ -201,23 +212,23 @@ test.beforeAll(async () => {
 		return answer.pools?.some((p) => p.name === 'main' && (p.liveOrkerCount ?? 0) > 0) ?? false;
 	});
 
-	// Register hello-ork through the UI proxy (the same path the browser uses).
-	//
-	// Its `version:` is stamped for this run. The example pins a fixed version,
-	// and an Orkflow version is IMMUTABLE — but the compiled definition now
-	// embeds the index digest each `uses:` resolved to (§4.4), and that digest
-	// is minted afresh every time the activity images are pushed. Re-applying
-	// the unchanged file after a re-push is therefore a genuinely different
-	// definition under a version that already exists, which the store correctly
-	// refuses. Stamping the version says what is true: this is a new definition.
-	const yaml = readFileSync(path.join(repoRoot, 'examples', 'hello.ork.yaml'), 'utf8').replace(
-		/^version:.*$/m,
-		`version: "0.0.${Date.now() % 100000}"`
-	);
+	// Register hello-ork through the UI proxy (the same path the browser uses),
+	// into the spec's own namespace, created first. The namespace is new on
+	// every run, so the example applies exactly as written: no version this
+	// namespace already holds can collide with it.
+	const yaml = readFileSync(path.join(repoRoot, 'examples', 'hello.ork.yaml'), 'utf8');
+	const created = await fetch(`${UI_ORIGIN}/orkstack.v1.NamespaceService/CreateNamespace`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ namespace: { name: NS, description: 'realtime proof' } })
+	});
+	if (!created.ok) {
+		throw new Error(`create namespace failed: ${created.status} ${await created.text()}`);
+	}
 	const apply = await fetch(`${UI_ORIGIN}/orkstack.v1.OrkflowService/ApplyOrkflow`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ yaml })
+		body: JSON.stringify({ yaml, namespace: NS })
 	});
 	if (!apply.ok) throw new Error(`apply failed: ${apply.status} ${await apply.text()}`);
 	const applied = (await apply.json()) as { orkflow?: { name?: string } };
@@ -236,29 +247,18 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 }) => {
 	// 1. Orkflow list shows the applied orkflow (screenshot for proof).
 	//
-	// The list is alphabetical and paginated, and the default namespace of the
-	// shared development stack keeps every orkflow other suites applied there,
-	// so hello-ork is not necessarily on the first page: follow Next until the
-	// page that holds it (bounded, and failing if the list ends without it).
-	await page.goto(`${UI_ORIGIN}/orkflows`);
+	// The spec's own namespace holds hello-ork and nothing else, so it is on
+	// the FIRST page: no paging, and no dependence on what other suites left
+	// in `default`.
+	await page.goto(`${UI_ORIGIN}/orkflows?ns=${NS}`);
 	const helloRow = page.getByTestId('orkflow-row-hello-ork');
-	for (let pages = 1; ; pages++) {
-		await expect(page.getByTestId('orkflows-page-status')).toBeVisible();
-		if ((await helloRow.count()) > 0) break;
-		const next = page.getByTestId('orkflows-next');
-		if (pages >= 40 || (await next.getAttribute('aria-disabled')) === 'true') {
-			throw new Error(`hello-ork is on none of the ${pages} orkflow list pages`);
-		}
-		const status = await page.getByTestId('orkflows-page-status').textContent();
-		await next.click();
-		await expect(page.getByTestId('orkflows-page-status')).not.toHaveText(status ?? '');
-	}
+	await expect(page.getByTestId('orkflows-page-status')).toBeVisible();
 	await expect(helloRow).toBeVisible();
 	await expect(page.getByTestId('orkflow-taskcount-hello-ork')).toHaveText('3');
 	await page.screenshot({ path: logPath('screenshot-orkflows.png'), fullPage: true });
 
 	// 2. Orkflow detail renders the DAG with needs edges.
-	await page.goto(`${UI_ORIGIN}/orkflows/hello-ork`);
+	await page.goto(`${UI_ORIGIN}/orkflows/hello-ork?ns=${NS}`);
 	await expect(page.getByTestId('orkflow-dag')).toBeVisible();
 	// SVG edges are stroke-only paths (zero-area bbox when horizontal), so
 	// assert DOM attachment rather than visibility.
@@ -272,7 +272,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	//    just rendered — rather than a standalone route that would ask again
 	//    which orkflow this is. There is no orkflow picker any more for the
 	//    same reason: the answer is the page the button was pressed on.
-	await page.goto(`${UI_ORIGIN}/orkflows/hello-ork`);
+	await page.goto(`${UI_ORIGIN}/orkflows/hello-ork?ns=${NS}`);
 	await page.getByTestId('orkflow-submit-run').click();
 	await expect(page.getByTestId('orkflow-submit-dialog')).toBeVisible();
 	await expect(page.getByTestId('run-submit-panel')).toBeVisible();
@@ -286,6 +286,9 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	//    refresh may occur — all updates must arrive over the WebSocket.
 	await page.waitForURL(/\/runs\/.+/, { timeout: 15_000 });
 	runUrl = page.url();
+	// The run was submitted in the spec's own namespace, from the page that
+	// showed it there.
+	expect(new URL(runUrl).searchParams.get('ns')).toBe(NS);
 	await expect(page.getByTestId('run-id')).toBeVisible();
 	// The marker survives only if the page never reloads.
 	await page.evaluate(() => {
@@ -375,7 +378,7 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	//    the run this test started, and nothing else can produce it.
 	const runId = new URL(runUrl).pathname.split('/').pop() ?? '';
 	expect(runId).not.toBe('');
-	await page.goto(`${UI_ORIGIN}/runs`);
+	await page.goto(`${UI_ORIGIN}/runs?ns=${NS}`);
 	const row = page.getByTestId(`run-row-${runId}`);
 	await expect(row).toBeVisible();
 	await expect(row.getByText('SUCCEEDED')).toBeVisible();
