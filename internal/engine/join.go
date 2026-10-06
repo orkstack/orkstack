@@ -162,7 +162,7 @@ func escapedLen(s string) int {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
-	_ = enc.Encode(s) // a string always encodes
+	_ = enc.Encode(s)    // a string always encodes
 	return buf.Len() - 3 // the two quotes and Encode's newline
 }
 
