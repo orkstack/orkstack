@@ -91,9 +91,23 @@ func (s *Service) PlanRun(
 		}
 	}
 
+	// The assumed failures: each a task of the definition, at most once.
+	listed := make(map[string]bool, len(msg.GetAssumeFailed()))
+	for i, id := range msg.GetAssumeFailed() {
+		if _, ok := known[id]; !ok {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+				"assume_failed[%d]: %q is not a task of %s@%s", i, id, wf.GetName(), wf.GetVersion()))
+		}
+		if listed[id] {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+				"assume_failed[%d]: %q is listed twice", i, id))
+		}
+		listed[id] = true
+	}
+
 	// 4. Simulate. An error cannot occur after step 3 on a stored or
 	// prepared document; if it does, it is the engine's, not the caller's.
-	resp, err := engine.Simulate(wf, msg.GetInput(), msg.GetAssumedOutputs())
+	resp, err := engine.Simulate(wf, msg.GetInput(), msg.GetAssumedOutputs(), msg.GetAssumeFailed())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
