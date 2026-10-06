@@ -119,3 +119,13 @@ export function fmtTime(ts: Timestamp | undefined): string {
 	const ms = Number(ts.seconds) * 1000 + Math.floor(ts.nanos / 1e6);
 	return new Date(ms).toLocaleTimeString();
 }
+
+/**
+ * keepsEventMessage is whether a row's message survives the terminal re-read
+ * when the snapshot carries no error for it: a SKIPPED or CANCELED task is
+ * explained only by its TASK_LOG sentence (a join's or a condition's skip, a
+ * fail-fast cancel), which the snapshot has no field for.
+ */
+export function keepsEventMessage(status: Status | undefined): boolean {
+	return status === Status.SKIPPED || status === Status.CANCELED;
+}

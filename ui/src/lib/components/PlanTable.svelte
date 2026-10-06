@@ -20,13 +20,15 @@
 
 	interface Props {
 		plan: PlanRunResponse;
+		/** The task ids the request assumed failed, for the older-server caveat. */
+		assumeFailed?: readonly string[];
 	}
 
-	let { plan }: Props = $props();
+	let { plan, assumeFailed = [] }: Props = $props();
 
 	const rows = $derived(planRows(plan));
 	const failure = $derived(planFailure(plan));
-	const caveats = $derived(planCaveats(plan));
+	const caveats = $derived(planCaveats(plan, assumeFailed));
 
 	const OUTCOME_CLASSES: Record<PlanOutcome, string> = {
 		[PlanOutcome.UNSPECIFIED]: 'border-border bg-surface text-fg-muted',
@@ -34,7 +36,10 @@
 		[PlanOutcome.SKIPPED]: 'border-dashed border-skipped-border bg-skipped-bg text-skipped-fg',
 		[PlanOutcome.FAILS]: 'border-failed-border bg-failed-bg text-failed-fg',
 		[PlanOutcome.UNREACHED]: 'border-dashed border-danger-200 bg-surface text-danger-700',
-		[PlanOutcome.AWAITS]: 'border-awaiting-border bg-awaiting-bg text-awaiting-fg'
+		[PlanOutcome.AWAITS]: 'border-awaiting-border bg-awaiting-bg text-awaiting-fg',
+		// The request's assumption, not a prediction: drawn dashed, in the
+		// failure palette.
+		[PlanOutcome.ASSUMED_FAILED]: 'border-dashed border-failed-border bg-failed-bg text-failed-fg'
 	};
 </script>
 
