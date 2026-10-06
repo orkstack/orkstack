@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -737,6 +739,77 @@ type taskJSON struct {
 	// SchemaVersion at 1 and costs a workload that never heard of fan-out
 	// nothing.
 	Each *taskJSONEach `json:"each,omitempty"`
+	// Join is present ONLY for a failure handler, absent as a key otherwise
+	// — the precedent of task.pin and each: an added optional key keeps
+	// SchemaVersion at 1 and costs a workload that never heard of joins
+	// nothing.
+	Join *taskJSONJoin `json:"join,omitempty"`
+}
+
+// taskJSONJoin tells a failure handler how each of its needs ended, in
+// needs order (ExecuteTaskInput.join, docs/DSL.md "Joins and failure
+// handlers").
+type taskJSONJoin struct {
+	Policy string                `json:"policy"` // "any_failed" | "all_done"
+	Needs  []taskJSONNeedOutcome `json:"needs"`
+}
+
+type taskJSONNeedOutcome struct {
+	TaskID string             `json:"taskId"`
+	Status string             `json:"status"` // SUCCEEDED | FAILED | SKIPPED | CANCELED
+	Error  *taskJSONNeedError `json:"error,omitempty"`
+}
+
+type taskJSONNeedError struct {
+	Code     string `json:"code"`
+	Category string `json:"category,omitempty"` // ActivityFailed | InfrastructureError | ContractViolation | TimedOut | Cancelled
+	Message  string `json:"message"`
+	Details  string `json:"details,omitempty"`
+}
+
+// taskJSONJoinOf renders ExecuteTaskInput.join for task.json: the status
+// name without STATUS_, the AGENTS.md §4 category name (omitted for
+// UNSPECIFIED), and the join word. Nil for a task that is not a failure
+// handler.
+func taskJSONJoinOf(join *orkstackv1.JoinContext) *taskJSONJoin {
+	if join == nil {
+		return nil
+	}
+	out := &taskJSONJoin{Policy: dsl.JoinWord(join.GetPolicy()), Needs: []taskJSONNeedOutcome{}}
+	for _, need := range join.GetNeeds() {
+		outcome := taskJSONNeedOutcome{
+			TaskID: need.GetTaskId(),
+			Status: strings.TrimPrefix(need.GetStatus().String(), "STATUS_"),
+		}
+		if e := need.GetError(); e != nil {
+			outcome.Error = &taskJSONNeedError{
+				Code:     e.GetCode(),
+				Category: failureCategoryWord(e.GetCategory()),
+				Message:  e.GetMessage(),
+				Details:  e.GetDetails(),
+			}
+		}
+		out.Needs = append(out.Needs, outcome)
+	}
+	return out
+}
+
+// failureCategoryWord is the AGENTS.md §4 name of a category — the
+// ApplicationError type string — or "" for UNSPECIFIED.
+func failureCategoryWord(c orkstackv1.FailureCategory) string {
+	switch c {
+	case orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED:
+		return task.CategoryActivityFailed
+	case orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR:
+		return task.CategoryInfrastructureError
+	case orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION:
+		return task.CategoryContractViolation
+	case orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT:
+		return task.CategoryTimedOut
+	case orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED:
+		return task.CategoryCancelled
+	}
+	return ""
 }
 
 // taskJSONEach is one item's coordinates and value. Item is the element's
@@ -1000,6 +1073,9 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 		}
 		doc.Each = &taskJSONEach{Index: e.GetIndex(), Count: e.GetCount(), As: e.GetAs(), Item: item}
 	}
+	// join exists only for a failure handler (§3.2), read straight off the
+	// wire: TaskContext does not carry it.
+	doc.Join = taskJSONJoinOf(in.GetJoin())
 	// Never null.
 	if doc.Inputs.Artifacts == nil {
 		doc.Inputs.Artifacts = []taskJSONInputArtifact{}

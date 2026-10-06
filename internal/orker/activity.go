@@ -245,6 +245,10 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		// The memo step (cache-memoization §6): this Orker reads
 		// ExecuteTaskInput.cache, so submit may send a cached task to its pool.
 		CacheSupported: true,
+		// Join policies (task-join-policy §4.11): this Orker reads
+		// ExecuteTaskInput.join, so submit may send a failure handler to its
+		// pool.
+		JoinSupported: true,
 	}
 	// The cordon and the load: one lock read, one atomic load and — only when
 	// a pin is open — one ReadDir of the work root.
