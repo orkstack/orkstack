@@ -163,7 +163,7 @@ tasks:
     uses: orkflow:release-block@2.1.0
     ` + line + `
 `))
-			want := `task "release": a composed task takes only id, needs, condition, uses and with; "` + key +
+			want := `task "release": a composed task takes only id, needs, condition, join, uses and with; "` + key +
 				`" does not apply (it runs orkflow release-block@2.1.0 as a child run, whose own tasks declare where and how they run)`
 			if err == nil || err.Error() != want {
 				t.Fatalf("error = %v\nwant %s", err, want)

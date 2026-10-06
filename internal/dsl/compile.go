@@ -199,6 +199,12 @@ type taskDocument struct {
 	// Cache opts this task into memoization across runs (docs/DSL.md
 	// "Caching"). KnownFields(true) applies inside it.
 	Cache *cacheDocument `yaml:"cache"`
+
+	// Join is when this task may start, decided from how its needs ended:
+	// all_succeeded (the default), none_failed, any_failed or all_done
+	// (docs/DSL.md "Joins and failure handlers"). Every task kind may carry
+	// it — container, awaited and composed (rules 15 and 27 extended).
+	Join string `yaml:"join"`
 }
 
 // secretDocument is one secret's name and where the Orker gets it.
@@ -369,7 +375,12 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		if err != nil {
 			return nil, err
 		}
+		join, err := compileJoin(taskIndex, td)
+		if err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
+			Join:           join,
 			Each:           each,
 			Cache:          cache,
 			Id:             td.ID,

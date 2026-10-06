@@ -88,7 +88,7 @@ func TestCompile_AwaitRefusesEveryExecutionField(t *testing.T) {
 			if err == nil {
 				t.Fatalf("compiled an await with %s", tc.key)
 			}
-			want := `task "gate": an awaited task takes only id, needs, condition and await; "` + tc.key + `" does not apply (it runs no container)`
+			want := `task "gate": an awaited task takes only id, needs, condition, join and await; "` + tc.key + `" does not apply (it runs no container)`
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("error = %q, want it to contain %q", err, want)
 			}

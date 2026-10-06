@@ -157,7 +157,7 @@ tasks:
     await: {timeout_seconds: 60}
     cache: {enabled: true}
 `))
-	want := `task "gate": an awaited task takes only id, needs, condition and await; "cache" does not apply ` +
+	want := `task "gate": an awaited task takes only id, needs, condition, join and await; "cache" does not apply ` +
 		`(its value comes from whoever resolves it, not from a computation)`
 	if err == nil || err.Error() != want || fieldOf(err) != "tasks[0].cache" {
 		t.Fatalf("cache on an await = %v (field %q)", err, fieldOf(err))
@@ -172,7 +172,7 @@ tasks:
     uses: orkflow:release-block@2.1.0
     cache: {enabled: true}
 `))
-	want := `task "release": a composed task takes only id, needs, condition, uses and with; "cache" does not apply ` +
+	want := `task "release": a composed task takes only id, needs, condition, join, uses and with; "cache" does not apply ` +
 		`(it runs orkflow release-block@2.1.0 as a child run, whose own tasks declare where and how they run)`
 	if err == nil || err.Error() != want || fieldOf(err) != "tasks[0].cache" {
 		t.Fatalf("cache on a composed task = %v (field %q)", err, fieldOf(err))

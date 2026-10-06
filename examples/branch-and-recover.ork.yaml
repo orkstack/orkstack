@@ -1,0 +1,169 @@
+# OrkStack orkflow DSL
+#
+# Branch on a decision, re-join after the branch that ran, and recover when
+# a step fails: the four join policies (docs/DSL.md "Joins and failure
+# handlers") on one page.
+#
+#   decide    the decision is a task's value: `op: eval` prints the route.
+#   canary    runs when the route is "canary"; skipped otherwise.
+#   full      runs when the route is "full"; skipped otherwise.
+#   verify    join: none_failed - runs after whichever branch ran. Without
+#             the join, the skipped branch would skip it too.
+#   deploy    the step that can fail: fail_deploy=true makes it exit 1.
+#   smoke     runs beside deploy; when deploy fails it is stopped.
+#   announce  an ordinary task after deploy: never starts if deploy fails.
+#   rollback  join: any_failed - a failure handler: runs only if deploy
+#             fails, after its retries. It declares its own retry: a task
+#             with no retry: has one attempt, so an Orker lost under it
+#             would fail it. It is safe to run twice.
+#   escalate  join: any_failed on rollback - runs only if the rollback fails.
+#   notify    join: all_done - runs whatever deploy and smoke did. A smoke
+#             that was stopped reads CANCELED, never FAILED: any_failed
+#             would not fire for it, all_done does.
+#
+# A failure handler never rescues a run. When deploy fails, smoke is
+# stopped, announce never starts, rollback and notify run to their own
+# outcomes, and the run still ends FAILED with deploy's error.
+#
+# See both paths before anything runs:
+#   orkctl run plan branch-and-recover --input route=full
+#   orkctl run plan branch-and-recover --input route=full --assume-failed deploy
+name: branch-and-recover
+version: "0.1.0"
+description: "Branch on a decision, re-join after the branch that ran, and recover when deploy fails."
+
+inputs:
+  route:
+    type: string
+    default: canary
+  fail_deploy:
+    type: boolean
+    default: false
+  fail_rollback:
+    type: boolean
+    default: false
+  # How long smoke and rollback take. Raise them to watch a failing run on
+  # the run page: the Failing banner stays up while rollback runs.
+  smoke_seconds:
+    type: number
+    default: 10
+  rollback_seconds:
+    type: number
+    default: 0
+
+tasks:
+  - id: decide
+    uses: shell
+    with:
+      op: eval
+      command: ["printf", "%s", "{{ .inputs.route }}"]
+
+  - id: canary
+    uses: shell
+    needs: [decide]
+    condition: '{{ eq .tasks.decide.output.value "canary" }}'
+    with:
+      op: exec
+      command: ["echo", "canary rollout: 5% of traffic"]
+
+  - id: full
+    uses: shell
+    needs: [decide]
+    condition: '{{ eq .tasks.decide.output.value "full" }}'
+    with:
+      op: exec
+      command: ["echo", "full rollout: all traffic"]
+
+  - id: verify
+    uses: shell
+    needs: [canary, full]
+    join: none_failed
+    with:
+      op: exec
+      command: ["echo", "verified the rollout that ran"]
+
+  - id: deploy
+    uses: shell
+    needs: [verify]
+    retry: { maximum_attempts: 2 }
+    with:
+      op: script
+      interpreter: sh
+      command: ["{{ .inputs.fail_deploy }}"]
+      script: |
+        set -eu
+        log=/orkstack/output/artifacts/deploy.log
+        echo deploying route {{ sh .inputs.route }} > "$log"
+        if [ "$1" = true ]; then
+          echo "deploy failed: the health check did not pass" | tee -a "$log" >&2
+          exit 1
+        fi
+        echo "deploy succeeded" >> "$log"
+
+  - id: smoke
+    uses: shell
+    needs: [verify]
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - 'echo "smoke tests running"; sleep "$1"; echo "smoke tests passed"'
+        - smoke
+        - "{{ .inputs.smoke_seconds }}"
+
+  - id: announce
+    uses: shell
+    needs: [deploy]
+    with:
+      op: exec
+      command: ["echo", "deploy is live"]
+
+  - id: rollback
+    uses: shell
+    needs: [deploy]
+    join: any_failed
+    retry: { maximum_attempts: 2 }
+    with:
+      op: script
+      interpreter: sh
+      command: ["{{ .inputs.rollback_seconds }}", "{{ .inputs.fail_rollback }}"]
+      script: |
+        set -eu
+        echo "rolling back; how deploy ended:"
+        jq -c '.join' /orkstack/input/task.json
+        # A need that failed before writing its log has none, so the file
+        # is looked up in task.json, where a missing file is a missing entry.
+        log=$(jq -r '.inputs.artifacts[] | select(.producer == "deploy" and .name == "deploy.log") | .path' /orkstack/input/task.json)
+        if [ -n "$log" ]; then
+          echo "deploy's log:"
+          cat "$log"
+        else
+          echo "deploy left no log"
+        fi
+        sleep "$1"
+        if [ "$2" = true ]; then
+          echo "rollback failed" >&2
+          exit 1
+        fi
+        echo "rolled back"
+
+  - id: escalate
+    uses: shell
+    needs: [rollback]
+    join: any_failed
+    with:
+      op: exec
+      command: ["echo", "the rollback failed: paging the on-call engineer"]
+
+  - id: notify
+    uses: shell
+    needs: [deploy, smoke]
+    join: all_done
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo "deploy and smoke are done:"
+        jq -r '.join.needs[] | "\(.taskId): \(.status)\(if .error then " (\(.error.code))" else "" end)"' /orkstack/input/task.json

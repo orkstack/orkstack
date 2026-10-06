@@ -708,3 +708,41 @@ func TestCanonicalOrkflow_EachEmittedOnlyWhenSet(t *testing.T) {
 		t.Fatal("a different compiled source did not change the digest")
 	}
 }
+
+// join is emitted ONLY when it is not UNSPECIFIED: the golden vectors are
+// unchanged by its existence, all_succeeded is no join at all, and any other
+// policy moves the digest.
+func TestCanonicalOrkflow_JoinEmittedOnlyWhenSet(t *testing.T) {
+	plain := goldenOrkflow(t)
+	canonical, err := CanonicalOrkflow(plain)
+	if err != nil {
+		t.Fatalf("canonical: %v", err)
+	}
+	if strings.Contains(string(canonical), `"join"`) {
+		t.Fatalf("a task with no join emitted the key: %s", canonical)
+	}
+	if got, _ := DefinitionDigest(plain); got != GoldenDefinitionDigest {
+		t.Fatalf("the golden digest moved: %s", got)
+	}
+	if got, _ := DefinitionDigest(pinnedOrkflow(t)); got != GoldenPinnedDefinitionDigest {
+		t.Fatalf("the golden pinned digest moved: %s", got)
+	}
+	joined := goldenOrkflow(t)
+	joined.Tasks[0].Join = orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE
+	withJoin, err := DefinitionDigest(joined)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if withJoin == GoldenDefinitionDigest {
+		t.Fatal("adding a join did not change the digest")
+	}
+	canonical, _ = CanonicalOrkflow(joined)
+	if !strings.Contains(string(canonical), `"join":3`) {
+		t.Fatalf("canonical join lacks \"join\":3: %s", canonical)
+	}
+	other := proto.Clone(joined).(*orkstackv1.Orkflow)
+	other.Tasks[0].Join = orkstackv1.JoinPolicy_JOIN_POLICY_NONE_FAILED
+	if d, _ := DefinitionDigest(other); d == withJoin {
+		t.Fatal("a different join did not change the digest")
+	}
+}
