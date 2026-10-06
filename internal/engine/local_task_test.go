@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -180,13 +181,49 @@ type parityCase struct {
 	wf     *orkstackv1.Orkflow
 	input  *orkstackv1.Payload
 	pinned bool
+	// fail names tasks whose activity fails (non-retryable ActivityFailed,
+	// with its output artifact on the failure detail), so a failure handler
+	// of them is dispatched and compared too.
+	fail map[string]bool
 }
+
+// localParityHandler is corpus (c): a deploy that fails with an artifact
+// while a sibling is in flight, an any_failed handler of both and an
+// all_done handler, so a failure handler's input — its JoinContext and the
+// failed need's artifacts — is compared too.
+const localParityHandler = `
+name: local-parity-handler
+tasks:
+  - id: build
+    uses: shell
+    with: {op: exec}
+  - id: deploy
+    uses: shell
+    needs: [build]
+    with: {op: exec}
+  - id: smoke
+    uses: shell
+    needs: [build]
+    with: {op: exec}
+  - id: rollback
+    uses: shell
+    needs: [deploy, smoke]
+    join: any_failed
+    with: {op: exec}
+  - id: notify
+    uses: shell
+    needs: [build, deploy]
+    join: all_done
+    with: {op: exec}
+`
 
 func parityCorpus(t *testing.T) []parityCase {
 	t.Helper()
 	corpus := []parityCase{
 		{name: "diamond", wf: compile(t, localParityDiamond), input: payload(t, map[string]any{"target": "staging"})},
 		{name: "pinned", wf: compile(t, localParityPinned), input: payload(t, nil), pinned: true},
+		{name: "failure-handler", wf: compile(t, localParityHandler), input: payload(t, nil),
+			fail: map[string]bool{"deploy": true}},
 	}
 	paths, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.ork.yaml"))
 	if err != nil || len(paths) == 0 {
@@ -227,6 +264,15 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	// example writes four parts.
 	behavior := func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		result, err := parityResult(in)
+		if c.fail[in.GetTaskId()] {
+			return nil, temporal.NewNonRetryableApplicationError("workload exited 1", task.CategoryActivityFailed, nil,
+				&orkstackv1.ActivityFailureDetail{
+					ReasonCode: "CONTAINER_NONZERO_EXIT",
+					Category:   orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED,
+					ExitCode:   1,
+					Artifacts:  result.GetArtifacts(),
+				})
+		}
 		if err != nil || in.GetEach() != nil {
 			return result, err
 		}
@@ -342,10 +388,16 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			runID := "ork-parity-" + strings.TrimSuffix(c.name, ".ork.yaml")
 			recorded, run := runParity(t, c, runID)
+			handlers := 0
 			if len(recorded) == 0 {
 				t.Fatalf("%s: the interpreter scheduled nothing; nothing was compared", c.name)
 			}
 			upstream := engine.UpstreamFromRun(run)
+			// A failure handler is handed its direct FAILED needs' artifacts;
+			// orkctl task run --from-run merges them the same way.
+			for id, ref := range engine.FailedNeedUpstreamFromRun(run) {
+				upstream[id] = ref
+			}
 			// A task downstream of a composed task is compared too: its
 			// upstream ref for the composed task is {task_id, values}.
 			if composesAny(c.wf) {
@@ -380,6 +432,11 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 					RunID:    runID,
 					Input:    c.input,
 					Upstream: upstream,
+					// Nil for every task that is not a failure handler.
+					Join: engine.JoinContextFromRun(run, c.wf, want.GetTaskId()),
+				}
+				if want.GetJoin() != nil {
+					handlers++
 				}
 				// An item of a fan-out: compose that item, with the run's
 				// count (orkctl task run --from-run … --item N).
@@ -413,7 +470,10 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 					t.Errorf("%s/%s: a pinned member was scheduled without a pin", c.name, want.GetTaskId())
 				}
 			}
-			t.Logf("corpus %s: %d invocations compared", c.name, len(recorded))
+			if len(c.fail) > 0 && handlers == 0 {
+				t.Fatalf("%s: no failure handler was dispatched; nothing of its input was compared", c.name)
+			}
+			t.Logf("corpus %s: %d invocations compared (%d failure handlers)", c.name, len(recorded), handlers)
 		})
 	}
 }
@@ -715,5 +775,85 @@ func TestLocalTaskInput_RefusesAComposedTask(t *testing.T) {
 	want := `task "release" runs orkflow release-block@2.1.0 as a child run, not a container: run one of its tasks with orkctl task run --from-run <child-run-id> --task <task>`
 	if err == nil || err.Error() != want {
 		t.Fatalf("LocalTaskInput = %v\nwant %s", err, want)
+	}
+}
+
+func TestLocalTaskInput_RequiresAJoinForAHandlerAndRefusesOneOtherwise(t *testing.T) {
+	wf := compile(t, localParityHandler)
+	join := &orkstackv1.JoinContext{
+		Policy: orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED,
+		Needs: []*orkstackv1.NeedOutcome{
+			{TaskId: "deploy", Status: orkstackv1.Status_STATUS_FAILED, Error: &orkstackv1.Error{Code: "TASK_FAILED", Message: "supplied with --need"}},
+			{TaskId: "smoke", Status: orkstackv1.Status_STATUS_SUCCEEDED},
+		},
+	}
+	_, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "rollback", RunID: "local-1"})
+	want := `task "rollback" is a failure handler (join any_failed): its input names how its needs ended; ` +
+		`run it with --from-run RUN or name each need with --need TASK=STATUS`
+	if err == nil || err.Error() != want {
+		t.Fatalf("a handler with no join = %v", err)
+	}
+	if _, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "deploy", RunID: "local-1", Join: join}); err == nil ||
+		!strings.Contains(err.Error(), "is not a failure handler") {
+		t.Fatalf("a non-handler with a join = %v", err)
+	}
+	log := &orkstackv1.ArtifactRef{Name: "deploy.out", Uri: "mem://deploy.out"}
+	in, err := engine.LocalTaskInput(engine.LocalTask{
+		Orkflow: wf, TaskID: "rollback", RunID: "local-1", Join: join,
+		Upstream: map[string]*orkstackv1.UpstreamRef{
+			"build":  {TaskId: "build", CommitUri: "mem://c/build", Values: &orkstackv1.ArtifactRef{Uri: "mem://v/build"}},
+			"deploy": {TaskId: "deploy", Artifacts: []*orkstackv1.ArtifactRef{log}},
+			"smoke":  {TaskId: "smoke", CommitUri: "mem://c/smoke", Values: &orkstackv1.ArtifactRef{Uri: "mem://v/smoke"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(in.GetJoin(), join) {
+		t.Fatalf("input join = %v", in.GetJoin())
+	}
+	var ids []string
+	for _, ref := range in.GetUpstream() {
+		ids = append(ids, ref.GetTaskId())
+		if ref.GetTaskId() == "deploy" && (len(ref.GetArtifacts()) != 1 || ref.GetValues() != nil) {
+			t.Errorf("deploy ref = %v, want {task_id, artifacts}", ref)
+		}
+	}
+	if fmt.Sprint(ids) != "[build deploy smoke]" {
+		t.Errorf("upstream = %v", ids)
+	}
+}
+
+func TestJoinContextFromRun_ReadsStatusesAndBoundedErrors(t *testing.T) {
+	wf := compile(t, localParityHandler)
+	run := &orkstackv1.Run{TaskRuns: []*orkstackv1.TaskRun{
+		{TaskId: "build", Status: orkstackv1.Status_STATUS_SUCCEEDED},
+		{TaskId: "deploy", Status: orkstackv1.Status_STATUS_FAILED, Error: &orkstackv1.Error{
+			Code: "CONTAINER_NONZERO_EXIT", Message: strings.Repeat("m", 3000), Details: `task "deploy"`,
+			Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED,
+		}, Artifacts: []*orkstackv1.ArtifactRef{{Name: "deploy.log"}}},
+		{TaskId: "smoke", Status: orkstackv1.Status_STATUS_CANCELED, Error: &orkstackv1.Error{Code: "TASK_CANCELED", Message: "canceled"}},
+	}}
+	jc := engine.JoinContextFromRun(run, wf, "rollback")
+	if jc.GetPolicy() != orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED || len(jc.GetNeeds()) != 2 {
+		t.Fatalf("join = %v", jc)
+	}
+	deploy, smoke := jc.GetNeeds()[0], jc.GetNeeds()[1]
+	if deploy.GetStatus() != orkstackv1.Status_STATUS_FAILED || deploy.GetError().GetCode() != "CONTAINER_NONZERO_EXIT" ||
+		len(deploy.GetError().GetMessage()) > 1024 || !strings.HasSuffix(deploy.GetError().GetMessage(), "…") {
+		t.Errorf("deploy = %v", deploy)
+	}
+	if smoke.GetStatus() != orkstackv1.Status_STATUS_CANCELED || smoke.GetError().GetCode() != "TASK_CANCELED" {
+		t.Errorf("smoke = %v", smoke)
+	}
+	if engine.JoinContextFromRun(run, wf, "deploy") != nil {
+		t.Error("a JoinContext for a task that is not a failure handler")
+	}
+	refs := engine.FailedNeedUpstreamFromRun(run)
+	if len(refs) != 1 || refs["deploy"] == nil {
+		t.Errorf("failed-need refs = %v", refs)
+	}
+	if _, ok := engine.UpstreamFromRun(run)["deploy"]; ok {
+		t.Error("UpstreamFromRun lost its succeeded-only contract")
 	}
 }

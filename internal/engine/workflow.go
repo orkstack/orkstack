@@ -161,6 +161,15 @@ func RunWorkflow(
 	// explicit cancellation on the context they were scheduled with reaches a
 	// running container (§3.3). fail() is what pulls it.
 	runCtx, cancelRun := workflow.WithCancel(ctx)
+	state.runCtx = runCtx
+	if state.hasHandlers {
+		// A SIBLING of runCtx, never a child of it: fail-fast's cancelRun()
+		// does not reach it, and an operator's cancel — which cancels ctx —
+		// does. A disconnected context would survive fail-fast too, and no
+		// cancel could ever stop it (docs/DSL.md "Joins and failure
+		// handlers"). Creating a context issues no command.
+		state.handlerCtx, state.cancelHandlers = workflow.WithCancel(ctx)
+	}
 	// RUN_CREATED is emitted here, by the run itself, and not by whichever API
 	// process accepted the submission. It is event 1 of every run that reaches
 	// Temporal, so a replica rebuilding the stream from history starts at 1 with
@@ -194,7 +203,7 @@ func RunWorkflow(
 			// waits for a resolution. Before openPin, which it can never reach
 			// (docs/DSL.md rule 15 refuses `pin:` on an await).
 			if state.awaits[id] != nil {
-				if err := state.openAwait(ctx, runCtx, id); err != nil {
+				if err := state.openAwait(ctx, state.dispatchContext(runCtx, id), id); err != nil {
 					return state.fail(ctx, cancelRun, inFlight, id, err)
 				}
 				continue
@@ -212,7 +221,7 @@ func RunWorkflow(
 			// activity. Before openPin, which it can never reach
 			// (docs/DSL.md rule 27 refuses `pin:` on a composed task).
 			if state.children[id] != nil {
-				future, err := state.startChild(ctx, runCtx, id)
+				future, err := state.startChild(ctx, state.dispatchContext(runCtx, id), id)
 				if err != nil {
 					return state.fail(ctx, cancelRun, inFlight, id, err)
 				}
@@ -232,7 +241,7 @@ func RunWorkflow(
 			if hold {
 				continue
 			}
-			future, err := state.schedule(runCtx, id)
+			future, err := state.schedule(state.dispatchContext(runCtx, id), id)
 			if err != nil {
 				return state.fail(ctx, cancelRun, inFlight, id, err)
 			}
@@ -420,6 +429,21 @@ type runState struct {
 	finished  *timestamppb.Timestamp
 	output    *orkstackv1.Payload
 	eventSeq  int
+
+	// Join policies (join.go). hasHandlers is whether any task is a failure
+	// handler (join any_failed or all_done); every new branch of the failure
+	// path is entered only when it is, so a definition without one takes
+	// today's code byte for byte. handlerCtx is a SIBLING of runCtx — created
+	// only when hasHandlers — that fail-fast's cancelRun() does not reach and
+	// an operator's cancel does. runCtx is kept so the failing phase can
+	// dispatch on the context the main loop would. detached is the lazily
+	// created disconnected context eventContext hands out once ctx is done.
+	hasHandlers    bool
+	runCtx         workflow.Context
+	handlerCtx     workflow.Context
+	cancelHandlers workflow.CancelFunc
+	detached       workflow.Context
+	cancelDetached workflow.CancelFunc
 }
 
 // pinState is one pin's whole life inside this run: who belongs to it, and
@@ -527,6 +551,15 @@ func newRunState(
 			Status: orkstackv1.Status_STATUS_PENDING,
 		}
 		state.leaves[t.GetId()] = struct{}{}
+		// A task with a join other than all_succeeded carries it from the
+		// run's first snapshot, as await, each and child do; unset for every
+		// other task, so a run with no join snapshots exactly as before.
+		if join := t.GetJoin(); join != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+			state.taskRuns[t.GetId()].Join = join
+		}
+		if isFailureHandler(t) {
+			state.hasHandlers = true
+		}
 		// An awaited task carries its await state on the snapshot from the
 		// run's first event, while still PENDING, so a client tells it from a
 		// container task without reading the definition. Unset for every
@@ -567,6 +600,13 @@ func newRunState(
 		state.resolutions = workflow.GetSignalChannel(ctx, ResolveAwaitSignal)
 	}
 	for _, t := range wf.GetTasks() {
+		// A failure handler's needs edges do not remove its needs from the
+		// leaves: adding a rollback to an Orkflow must not drop deploy's
+		// values from a succeeded run's output. A definition with no failure
+		// handler computes the same set as before.
+		if isFailureHandler(t) {
+			continue
+		}
 		for _, need := range t.GetNeeds() {
 			delete(state.leaves, need)
 		}
@@ -1211,16 +1251,25 @@ func hintPinSessionHost(p *pinState, failure *orkstackv1.Error) {
 }
 
 // classify decides whether a ready task runs or is skipped.
+//
+// The join is tested first, then the condition. all_succeeded (UNSPECIFIED)
+// is today's loop verbatim; every other policy is joinAdmits, the function
+// the plan shares.
 func (s *runState) classify(ctx workflow.Context, id string) (bool, error) {
-	for _, need := range s.tasks[id].GetNeeds() {
-		if s.taskRuns[need].GetStatus() == orkstackv1.Status_STATUS_SKIPPED {
-			return false, s.markSkipped(ctx, id, skipReasonUpstream(need))
+	t := s.tasks[id]
+	if t.GetJoin() == orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+		for _, need := range t.GetNeeds() {
+			if s.taskRuns[need].GetStatus() == orkstackv1.Status_STATUS_SKIPPED {
+				return false, s.markSkipped(ctx, id, skipReasonUpstream(need))
+			}
 		}
+	} else if ok, reason := joinAdmits(t.GetJoin(), t.GetNeeds(), s.needOutcomeOf); !ok {
+		return false, s.markSkipped(ctx, id, reason)
 	}
 
 	shouldRun, err := evaluateCondition(s.tasks[id].GetCondition(), s.inputs, s.upstreamOutputs(id))
 	if err != nil {
-		return false, err
+		return false, s.failCondition(ctx, id, err)
 	}
 	if !shouldRun {
 		return false, s.markSkipped(ctx, id, skipReasonCondition(s.tasks[id].GetCondition()))
@@ -1275,6 +1324,15 @@ func (s *runState) upstreamFor(id string) []*orkstackv1.UpstreamRef {
 		}
 		result, ok := s.results[need]
 		if !ok {
+			// A failure handler is handed a DIRECT need that FAILED with
+			// output artifacts as a ref with task_id and artifacts only, at
+			// the need's position in the closure. Nothing changes for any
+			// other task.
+			if isFailureHandler(s.tasks[id]) && s.directlyNeeds(id, need) {
+				if ref := failedNeedRef(s.taskRuns[need]); ref != nil {
+					refs = append(refs, ref)
+				}
+			}
 			continue
 		}
 		refs = append(refs, &orkstackv1.UpstreamRef{
@@ -1398,6 +1456,12 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	input := s.executeTaskInput(t, id, pool, pinContext)
 	input.IdempotencyKey = task.IdempotencyKeyFor(s.wf.GetNamespace(), s.runID, id)
 	input.CommitUri = commitURI
+	// A failure handler is told how its needs ended. Set before the size
+	// check, so the bounded errors count toward the wire bound; unset for
+	// every other task, whose payload stays byte-identical.
+	if isFailureHandler(t) {
+		input.Join = joinContextFor(t, func(need string) *orkstackv1.TaskRun { return s.taskRuns[need] })
+	}
 	// The wire bound is checked HERE, deterministically, before scheduling.
 	// The deployment's limit is replay-pinned on the plan; the checker also
 	// preserves Temporal's absolute 256 KiB ceiling.
@@ -1708,11 +1772,23 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 // ctx must already be safe to make activity calls on — the caller passes its
 // disconnected substitution when the workflow's own context is done,
 // unchanged otherwise (see fail).
-func (s *runState) cancelInFlight(ctx workflow.Context, inFlight map[string]workflow.Future) {
+//
+// keep, when non-nil, names the tasks left alone — in flight, PENDING or
+// AWAITING — which is how the failing path spares failure handlers; reason is
+// the sentence a never-started task is CANCELED with. Every task key it
+// collects is deleted from inFlight, so what remains is what keep spared.
+func (s *runState) cancelInFlight(
+	ctx workflow.Context,
+	inFlight map[string]workflow.Future,
+	keep func(id string) bool,
+	reason func(id string) string,
+) {
+	kept := func(id string) bool { return keep != nil && keep(id) }
 	// s.order, never the map's own range: workflow code must stay
 	// deterministic, and Go's map iteration order is randomized on purpose.
 	for _, id := range s.order {
-		if future, ok := inFlight[id]; ok {
+		if future, ok := inFlight[id]; ok && !kept(id) {
+			delete(inFlight, id)
 			_ = s.collect(ctx, id, future)
 		}
 		// A fan-out's in-flight items, in index order: each outcome is
@@ -1734,9 +1810,12 @@ func (s *runState) cancelInFlight(ctx workflow.Context, inFlight map[string]work
 		if s.eaches[id] != nil {
 			s.finishFanOutOnRunEnd(ctx, id)
 		}
+		if kept(id) {
+			continue
+		}
 		switch s.taskRuns[id].GetStatus() {
 		case orkstackv1.Status_STATUS_PENDING:
-			if err := s.markCanceled(ctx, id, "run ended before this task started"); err != nil {
+			if err := s.markCanceled(ctx, id, reason(id)); err != nil {
 				workflow.GetLogger(ctx).Error("mark canceled failed",
 					"run_id", s.runID, "task_id", id, "error", err)
 			}
@@ -1976,34 +2055,13 @@ func (s *runState) fail(
 	taskID string,
 	cause error,
 ) (*orkstackv1.Run, error) {
+	// A definition with a failure handler takes its own failure path
+	// (join.go, F1–F13); every other run takes this body, unchanged.
+	if s.hasHandlers {
+		return s.failWithHandlers(ctx, cancelRun, inFlight, taskID, cause)
+	}
 	s.finished = timestamppb.New(workflow.Now(ctx))
-	s.runError = &orkstackv1.Error{
-		Code:    "RUN_FAILED",
-		Message: cause.Error(),
-		Details: fmt.Sprintf("task %q", taskID),
-	}
-	// A fan-out's own failure carries the node's sentence as the
-	// ApplicationError's message, whichever way the array was counted or the
-	// item failed; Run.error.message is that sentence, without the error
-	// type's decoration (spec each-fan-out §5.3). Nothing else changes: the
-	// branch is reached only for a fan-out, which no earlier history holds.
-	var nodeErr *temporal.ApplicationError
-	// A composed task's failure carries the sentence naming its child the
-	// same way; reached only for a composed task, which no earlier history
-	// holds.
-	if (s.eaches[taskID] != nil || s.children[taskID] != nil) && errors.As(cause, &nodeErr) {
-		s.runError.Message = nodeErr.Message()
-	}
-
-	// A pin that lost its host is the one failure that ARRIVES as a
-	// cancellation without anything having cancelled the run: the SDK cancels
-	// the session context when the session fails, so every member's future
-	// returns a cancellation (§6.5). The run failed — nobody ended it — and
-	// the run's reason is the pin's, not the word "canceled".
-	if lost := s.pinLossOf(taskID); lost != nil {
-		s.runError.Code = "RUN_FAILED"
-		s.runError.Message = lost.GetMessage()
-	}
+	s.runError = s.runFailureFor(taskID, cause)
 
 	eventCtx := ctx
 	eventType := orkstackv1.EventType_EVENT_TYPE_RUN_FAILED
@@ -2043,7 +2101,7 @@ func (s *runState) fail(
 		// canceled. cancelInFlight makes such calls too (collect emits), so it
 		// needs the same context. In the ordinary task-failure case ctx was
 		// never canceled and eventCtx == ctx.
-		s.cancelInFlight(eventCtx, inFlight)
+		s.cancelInFlight(eventCtx, inFlight, nil, func(string) string { return runEndedBeforeStart })
 	}
 
 	// AFTER cancelInFlight and never before: it is what makes every pin
@@ -2066,6 +2124,46 @@ func (s *runState) fail(
 			"run_id", s.runID, "event", eventType.String(), "error", err)
 	}
 	return s.snapshot(), cause
+}
+
+// runEndedBeforeStart is what fail-fast records on a never-started task of a
+// run without failure handlers, and on a never-started ordinary task of a
+// canceled run.
+const runEndedBeforeStart = "run ended before this task started"
+
+// runFailureFor is the run's error for a failure at taskID: RUN_FAILED, the
+// cause's text and `task "<id>"`, with the fan-out, composed and lost-pin
+// substitutions. Shared by fail and failWithHandlers, so the two cannot
+// drift.
+func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
+	failure := &orkstackv1.Error{
+		Code:    "RUN_FAILED",
+		Message: cause.Error(),
+		Details: fmt.Sprintf("task %q", taskID),
+	}
+	// A fan-out's own failure carries the node's sentence as the
+	// ApplicationError's message, whichever way the array was counted or the
+	// item failed; Run.error.message is that sentence, without the error
+	// type's decoration (spec each-fan-out §5.3). Nothing else changes: the
+	// branch is reached only for a fan-out, which no earlier history holds.
+	var nodeErr *temporal.ApplicationError
+	// A composed task's failure carries the sentence naming its child the
+	// same way; reached only for a composed task, which no earlier history
+	// holds.
+	if (s.eaches[taskID] != nil || s.children[taskID] != nil) && errors.As(cause, &nodeErr) {
+		failure.Message = nodeErr.Message()
+	}
+
+	// A pin that lost its host is the one failure that ARRIVES as a
+	// cancellation without anything having cancelled the run: the SDK cancels
+	// the session context when the session fails, so every member's future
+	// returns a cancellation (§6.5). The run failed — nobody ended it — and
+	// the run's reason is the pin's, not the word "canceled".
+	if lost := s.pinLossOf(taskID); lost != nil {
+		failure.Code = "RUN_FAILED"
+		failure.Message = lost.GetMessage()
+	}
+	return failure
 }
 
 // succeed terminates the run successfully, aggregating leaf task outputs.

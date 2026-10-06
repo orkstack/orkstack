@@ -51,9 +51,25 @@ type harness struct {
 	// array from: a test that wants one writes the bytes here and returns
 	// their reference as the source task's values_ref.
 	values *memValues
+	// onSnapshot, when set, is called with every snapshot the run writes,
+	// before it is stored, from the local activity's goroutine. A test that
+	// must act at an exact point of the run's record — cancel it while one
+	// particular event is being written — does it here, timed by the run
+	// itself rather than by a sleep. A non-nil error fails that write (every
+	// attempt of it the hook fails).
+	onSnapshot func(run *orkstackv1.Run, sequence int64) error
 }
 
 func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
+	t.Helper()
+	return newHarnessCtx(t, suite, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		return behavior(in)
+	})
+}
+
+// newHarnessCtx is newHarness for a behavior that needs its activity
+// context: to heartbeat, and to observe a cancellation.
+func newHarnessCtx(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
 	t.Helper()
 	h := &harness{
 		env:    suite.NewTestWorkflowEnvironment(),
@@ -74,8 +90,19 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
 	h.env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	snapshots := newTestSnapshotStore()
+	write := engine.NewSnapshotActivities(snapshots).WriteSnapshot
 	h.env.RegisterActivityWithOptions(
-		engine.NewSnapshotActivities(snapshots).WriteSnapshot,
+		func(ctx context.Context, run *orkstackv1.Run, sequence int64) (string, error) {
+			h.mu.Lock()
+			hook := h.onSnapshot
+			h.mu.Unlock()
+			if hook != nil {
+				if err := hook(run, sequence); err != nil {
+					return "", err
+				}
+			}
+			return write(ctx, run, sequence)
+		},
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
 	h.env.RegisterActivityWithOptions(
@@ -88,7 +115,7 @@ func newHarness(t *testing.T, suite *testsuite.WorkflowTestSuite, behavior func(
 			h.calls = append(h.calls, in)
 			h.queues[in.TaskId] = activity.GetInfo(actCtx).TaskQueue
 			h.mu.Unlock()
-			return behavior(in)
+			return behavior(actCtx, in)
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)

@@ -34,11 +34,21 @@ func (e *UnknownAssumedTaskError) Error() string {
 // shares with the interpreter is exactly what decides a task: the defaulted
 // inputs (ApplyInputDefaults, payloadMap), the needs closure
 // (transitiveNeedsOf), the evaluator (evaluateCondition), and the reason
-// sentences (skipReasonUpstream, skipReasonCondition).
+// sentences (skipReasonUpstream, skipReasonCondition), and for a join the
+// predicate and its sentences (joinAdmits).
+//
+// assumeFailed plans each named task, when it would run, as having FAILED
+// after its retries (ASSUMED_FAILED): its failure handlers are planned, every
+// task that is not a failure handler and transitively needs it is UNREACHED,
+// and independent work is planned as if nothing had failed. Entries whose
+// task does not run are reported in unused_assume_failed. nil plans no
+// failure and returns a response proto-equal to the one before assumptions
+// existed.
 func Simulate(
 	wf *orkstackv1.Orkflow,
 	input *orkstackv1.Payload,
 	assumed map[string]*orkstackv1.Payload,
+	assumeFailed []string,
 ) (*orkstackv1.PlanRunResponse, error) {
 	if wf == nil || len(wf.GetTasks()) == 0 {
 		return nil, fmt.Errorf("orkflow has no tasks")
@@ -86,7 +96,43 @@ func Simulate(
 			// predicts a hit: that is decided on the Orker, from the rendered
 			// config and the input digests, when the run reaches it.
 			Cache: tasks[id].GetCache(),
+			// Set for every task with a join other than all_succeeded.
+			Join: tasks[id].GetJoin(),
 		}
+	}
+	assumedFailed := make(map[string]bool, len(assumeFailed))
+	for _, id := range assumeFailed {
+		assumedFailed[id] = true
+	}
+	// planOutcomeAsNeed is how a join reads a decided need's plan outcome:
+	// a task the plan dispatches is planned to succeed, a FAILS or an
+	// assumption is a failure, an UNREACHED task is the CANCELED the
+	// interpreter records for it.
+	planOutcomeAsNeed := func(id string) needOutcome {
+		switch result[id].GetOutcome() {
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
+			return needSucceeded
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS, orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED:
+			return needFailed
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED:
+			return needSkipped
+		default:
+			return needCanceled
+		}
+	}
+	// firstAssumedFailedAncestor is the first ASSUMED_FAILED task of id's
+	// needs closure in declaration order, or "".
+	firstAssumedFailedAncestor := func(id string) string {
+		closure := map[string]bool{}
+		for _, need := range transitiveNeedsOf(tasks, id) {
+			closure[need] = true
+		}
+		for _, candidate := range order {
+			if closure[candidate] && result[candidate].GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED {
+				return candidate
+			}
+		}
+		return ""
 	}
 	taskIndex := make(map[string]int, len(order))
 	for i, id := range order {
@@ -102,7 +148,38 @@ func Simulate(
 		return deepest + 1
 	}
 
-	failed := ""
+	// failingAt is where the planned run starts failing: the first FAILS or
+	// ASSUMED_FAILED in decision order. cutBy is the first decision-time
+	// failure — a FAILS that set failingAt, or any FAILS of a task that is not
+	// a failure handler — after which every task that is not a failure
+	// handler is UNREACHED, today's scan-order rule. A task failure happens
+	// after dispatch, so an assumption cuts only the work that depends on it.
+	failingAt, cutBy := "", ""
+	// failsWith records a FAILS: its error, and the two facts above.
+	failsWith := func(id string, planned *orkstackv1.PlanTask, code, message string) {
+		planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS
+		planned.Wave = 0
+		if failingAt == "" {
+			planned.Error = &orkstackv1.Error{Code: "RUN_FAILED", Message: message}
+			failingAt = id
+			if cutBy == "" {
+				cutBy = id
+			}
+			return
+		}
+		planned.Error = &orkstackv1.Error{Code: code, Message: message}
+		if cutBy == "" && !isFailureHandler(tasks[id]) {
+			cutBy = id
+		}
+	}
+	assumeFailure := func(id string, planned *orkstackv1.PlanTask) {
+		planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED
+		planned.Wave = waveAfter(id)
+		planned.Error = &orkstackv1.Error{Code: "ASSUMED_FAILED", Message: "assumed to fail (assume_failed)"}
+		if failingAt == "" {
+			failingAt = id
+		}
+	}
 	for {
 		progressed := false
 		// Declaration order, as readyTasks scans; the outer loop re-scans
@@ -125,26 +202,42 @@ func Simulate(
 			decided[id] = struct{}{}
 			planned := result[id]
 
-			if failed != "" {
-				// The run is already failing: the interpreter marks every
-				// still-pending task CANCELED.
-				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_UNREACHED
-				continue
-			}
-
-			// (a) classify's first loop: the first skipped need, in needs:
-			// order, wins.
-			skippedBy := ""
-			for _, need := range tasks[id].GetNeeds() {
-				if result[need].GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED {
-					skippedBy = need
-					break
+			// (0) A task that is not a failure handler is certainly never
+			// started once a decision-time failure cut the run, or when it
+			// depends on an assumed failure: the interpreter marks it
+			// CANCELED. A failure handler is never UNREACHED.
+			if !isFailureHandler(tasks[id]) {
+				by := cutBy
+				if by == "" {
+					by = firstAssumedFailedAncestor(id)
+				}
+				if by != "" {
+					planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_UNREACHED
+					planned.UnreachedBy = by
+					continue
 				}
 			}
-			if skippedBy != "" {
+
+			// (a) The join. all_succeeded is classify's first loop: the first
+			// skipped need, in needs: order, wins.
+			if tasks[id].GetJoin() == orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+				skippedBy := ""
+				for _, need := range tasks[id].GetNeeds() {
+					if result[need].GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED {
+						skippedBy = need
+						break
+					}
+				}
+				if skippedBy != "" {
+					planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED
+					planned.SkipReason = skipReasonUpstream(skippedBy)
+					planned.SkippedBy = skippedBy
+					planned.Wave = waveAfter(id)
+					continue
+				}
+			} else if ok, reason := joinAdmits(tasks[id].GetJoin(), tasks[id].GetNeeds(), planOutcomeAsNeed); !ok {
 				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED
-				planned.SkipReason = skipReasonUpstream(skippedBy)
-				planned.SkippedBy = skippedBy
+				planned.SkipReason = reason
 				planned.Wave = waveAfter(id)
 				continue
 			}
@@ -159,9 +252,7 @@ func Simulate(
 			}
 			ok, err := evaluateCondition(tasks[id].GetCondition(), inputs, upstream)
 			if err != nil {
-				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS
-				planned.Error = &orkstackv1.Error{Code: "RUN_FAILED", Message: err.Error()}
-				failed = id
+				failsWith(id, planned, "CONDITION_FAILED", err.Error())
 				continue
 			}
 			planned.Wave = waveAfter(id)
@@ -186,19 +277,35 @@ func Simulate(
 				// the plan can already count them — an input source, or a
 				// source task whose values assumed_outputs stubs — with the
 				// interpreter's own count, so the two cannot disagree.
+				// A task source the plan decided not to run has no values: the
+				// interpreter fails the node EACH_OVER_MISSING (a none_failed
+				// fan-out reached with its source skipped).
+				if src := spec.GetSource().GetTaskId(); src != "" && tasks[src] != nil &&
+					!dispatched(result[src].GetOutcome()) {
+					failsWith(id, planned, EachOverMissingCode, eachOverMissingMessage(
+						spec.GetOver(), src, planSourceStatus(result[src].GetOutcome())))
+					continue
+				}
 				counted, n, eerr := simulateEachCount(spec, inputs, assumed, taskIndex[id])
 				if eerr != nil {
-					planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS
-					planned.Wave = 0
-					planned.Error = &orkstackv1.Error{Code: "RUN_FAILED", Message: eerr.Message}
-					failed = id
+					failsWith(id, planned, eerr.Code, eerr.Message)
 					continue
 				}
 				if counted {
 					planned.EachCount = proto.Int32(n)
 				}
+				if assumedFailed[id] {
+					assumeFailure(id, planned)
+					continue
+				}
 				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS
 				// outputs[id] is NOT set: rule 24 means no condition can read it.
+				continue
+			}
+			// (c) The assumption: a task that would run is planned as having
+			// run and FAILED. It contributes no output.
+			if assumedFailed[id] {
+				assumeFailure(id, planned)
 				continue
 			}
 			if tasks[id].GetAwait() != nil {
@@ -237,8 +344,19 @@ func Simulate(
 			if planned.GetWave() > resp.WaveCount {
 				resp.WaveCount = planned.GetWave()
 			}
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED:
+			resp.AssumedFailed++
+			if planned.GetWave() > resp.WaveCount {
+				resp.WaveCount = planned.GetWave()
+			}
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED:
 			resp.Skipped++
+		}
+	}
+	resp.FailsAt = failingAt
+	for _, id := range assumeFailed {
+		if result[id].GetOutcome() != orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED {
+			resp.UnusedAssumeFailed = append(resp.UnusedAssumeFailed, id)
 		}
 	}
 	for w := int32(1); w <= resp.WaveCount; w++ {
@@ -252,7 +370,8 @@ func Simulate(
 	}
 	for _, id := range assumedKeys {
 		// A fan-out's own stub is accepted and unused: nothing can read it.
-		if !takesAWave(result[id].GetOutcome()) || tasks[id].GetEach() != nil {
+		// Nor is an ASSUMED_FAILED task's: a failed task has no output.
+		if !dispatched(result[id].GetOutcome()) || tasks[id].GetEach() != nil {
 			resp.UnusedAssumedOutputs = append(resp.UnusedAssumedOutputs, id)
 		}
 	}
@@ -294,9 +413,29 @@ func simulateEachCount(
 	return true, n, nil
 }
 
-// takesAWave is RUNS or AWAITS: an await occupies a dispatch round from its
-// dependants' point of view, and its stub is consumed as its resolution.
+// takesAWave is RUNS, AWAITS or ASSUMED_FAILED: an await occupies a dispatch
+// round from its dependants' point of view, and so does a task assumed to
+// fail — it was dispatched and ran.
 func takesAWave(outcome orkstackv1.PlanOutcome) bool {
+	return dispatched(outcome) || outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED
+}
+
+// dispatched is RUNS or AWAITS: the plan runs the task to success, and its
+// stub (an await's resolution) is consumed.
+func dispatched(outcome orkstackv1.PlanOutcome) bool {
 	return outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS ||
 		outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS
+}
+
+// planSourceStatus is the status word a run records for a fan-out's task
+// source the plan does not run.
+func planSourceStatus(outcome orkstackv1.PlanOutcome) string {
+	switch outcome {
+	case orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED:
+		return "SKIPPED"
+	case orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS, orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED:
+		return "FAILED"
+	default:
+		return "CANCELED"
+	}
 }

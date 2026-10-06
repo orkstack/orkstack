@@ -8,12 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // planTaskOf returns id's PlanTask, failing the test when the plan has none.
@@ -30,7 +32,7 @@ func planTaskOf(t *testing.T, plan *orkstackv1.PlanRunResponse, id string) *orks
 
 func simulate(t *testing.T, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, assumed map[string]*orkstackv1.Payload) *orkstackv1.PlanRunResponse {
 	t.Helper()
-	plan, err := engine.Simulate(wf, input, assumed)
+	plan, err := engine.Simulate(wf, input, assumed, nil)
 	if err != nil {
 		t.Fatalf("Simulate: %v", err)
 	}
@@ -55,9 +57,23 @@ func assumedPayloads(t *testing.T, values map[string]map[string]any) map[string]
 // the final run and the harness that observed it.
 func interpret(t *testing.T, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, assumed map[string]map[string]any, pools ...string) (*orkstackv1.Run, *harness) {
 	t.Helper()
+	return interpretFailing(t, runID, wf, input, assumed, nil, pools...)
+}
+
+// interpretFailing is interpret with every task named in failing returning a
+// non-retryable ActivityFailed: the run in which exactly the plan's assumed
+// failures happen (§6, "a plan and a run agree").
+func interpretFailing(t *testing.T, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, assumed map[string]map[string]any, failing []string, pools ...string) (*orkstackv1.Run, *harness) {
+	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	var h *harness
 	h = newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		for _, id := range failing {
+			if id == in.TaskId {
+				return nil, temporal.NewNonRetryableApplicationError(in.TaskId+" failed as assumed",
+					task.CategoryActivityFailed, nil)
+			}
+		}
 		values := assumed[in.TaskId]
 		if values == nil {
 			values = map[string]any{}
@@ -97,25 +113,46 @@ func skipMessages(h *harness, runID string) map[string][]string {
 }
 
 // assertAgreement is E1's per-task check: the plan and the interpreter agree
-// on every task of wf for this input and these stubs.
+// on every task of wf for this input and these stubs — and, with assumed
+// failures, task-join-policy §6's table: a failure handler is held to its
+// plan exactly; any other task may also have been CANCELED once the run
+// started failing, because it may have been pending or running then.
 func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunResponse, run *orkstackv1.Run, h *harness, runID string) {
 	t.Helper()
-	failing := ""
-	for _, task := range plan.GetTasks() {
-		if task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS {
-			failing = task.GetTaskId()
+	failing := plan.GetFailsAt()
+	if failing == "" {
+		// An older server: the first FAILS.
+		for _, task := range plan.GetTasks() {
+			if task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS {
+				failing = task.GetTaskId()
+				break
+			}
 		}
+	}
+	isHandler := func(p *orkstackv1.PlanTask) bool {
+		return p.GetJoin() == orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED ||
+			p.GetJoin() == orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE
+	}
+	hasHandler := false
+	for _, task := range plan.GetTasks() {
+		hasHandler = hasHandler || isHandler(task)
 	}
 	skips := skipMessages(h, runID)
 	for _, task := range plan.GetTasks() {
 		id := task.GetTaskId()
 		got := statusOf(run, id)
+		// Once the run started failing, a task that is not a failure handler
+		// may have been pending or running and been canceled.
+		mayBeCanceled := failing != "" && id != failing && !isHandler(task) && got == orkstackv1.Status_STATUS_CANCELED
 		switch task.GetOutcome() {
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED:
+			if got != orkstackv1.Status_STATUS_FAILED && !mayBeCanceled {
+				t.Errorf("%s: %s planned ASSUMED_FAILED, interpreter %v", label, id, got)
+			}
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS:
 			// With a FAILS task, a RUNS task may be cancelled in flight: the
 			// plan does not model timing, and says so.
-			if got != orkstackv1.Status_STATUS_SUCCEEDED &&
-				(failing == "" || got != orkstackv1.Status_STATUS_CANCELED) {
+			if got != orkstackv1.Status_STATUS_SUCCEEDED && !mayBeCanceled {
 				t.Errorf("%s: %s planned RUNS, interpreter %v", label, id, got)
 			}
 			// each_count set ⇔ the fan-out expands to exactly that many items.
@@ -125,6 +162,9 @@ func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunRespons
 				}
 			}
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED:
+			if mayBeCanceled {
+				continue
+			}
 			if got != orkstackv1.Status_STATUS_SKIPPED {
 				t.Errorf("%s: %s planned SKIPPED, interpreter %v", label, id, got)
 				continue
@@ -148,6 +188,16 @@ func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunRespons
 				}
 				continue
 			}
+			// In a definition with a failure handler a broken condition
+			// records its task FAILED (CONDITION_FAILED); without one, the
+			// task is CANCELED exactly as before.
+			if task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS && hasHandler {
+				tr := taskRunOf(t, run, id)
+				if (got != orkstackv1.Status_STATUS_FAILED || tr.GetError().GetCode() != "CONDITION_FAILED") && !mayBeCanceled {
+					t.Errorf("%s: %s planned FAILS, interpreter %v %v", label, id, got, tr.GetError())
+				}
+				continue
+			}
 			if got != orkstackv1.Status_STATUS_CANCELED && got != orkstackv1.Status_STATUS_PENDING {
 				t.Errorf("%s: %s planned %v, interpreter %v", label, id, task.GetOutcome(), got)
 			}
@@ -159,9 +209,15 @@ func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunRespons
 		if run.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 			t.Errorf("%s: plan FAILS at %s, run status %v", label, failing, run.GetStatus())
 		}
-		want := planTaskOf(t, plan, failing).GetError().GetMessage()
-		if got := run.GetError().GetMessage(); got != want {
-			t.Errorf("%s: run error %q, plan error %q", label, got, want)
+		// The run's error is the plan's for a decision-time failure; an
+		// assumed failure's text is the run's own.
+		if planTaskOf(t, plan, failing).GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS {
+			want := planTaskOf(t, plan, failing).GetError().GetMessage()
+			if got := run.GetError().GetMessage(); got != want {
+				t.Errorf("%s: run error %q, plan error %q", label, got, want)
+			}
+		} else if got := run.GetError().GetDetails(); got != fmt.Sprintf("task %q", failing) {
+			t.Errorf("%s: run error details %q, want the assumed failure %q", label, got, failing)
 		}
 	} else if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Errorf("%s: plan has no FAILS, run status %v (%s)", label, run.GetStatus(), run.GetError().GetMessage())
@@ -512,6 +568,9 @@ func TestSimulate_ConditionErrorFailsAndMarksUnreached(t *testing.T) {
 		t.Errorf("runs/skipped/wave_count = %d/%d/%d, want 1/0/1", plan.GetRuns(), plan.GetSkipped(), plan.GetWaveCount())
 	}
 
+	if plan.GetFailsAt() != "broken" {
+		t.Errorf("fails_at = %q, want broken", plan.GetFailsAt())
+	}
 	run, h := interpret(t, "run-simulate-condition-error", wf, input, nil)
 	if run.GetError().GetMessage() != broken.GetError().GetMessage() {
 		t.Fatalf("run error %q, plan error %q", run.GetError().GetMessage(), broken.GetError().GetMessage())
@@ -633,7 +692,7 @@ func TestSimulate_ReportsUnusedAndRefusesUnknownAssumedOutputs(t *testing.T) {
 		t.Errorf("unused_assumed_outputs %v, want [after maybe]", plan.GetUnusedAssumedOutputs())
 	}
 
-	_, err := engine.Simulate(wf, nil, assumedPayloads(t, map[string]map[string]any{"nope": {}}))
+	_, err := engine.Simulate(wf, nil, assumedPayloads(t, map[string]map[string]any{"nope": {}}), nil)
 	var unknown *engine.UnknownAssumedTaskError
 	if !errors.As(err, &unknown) || unknown.TaskID != "nope" {
 		t.Fatalf("Simulate with an unknown stub = %v, want *UnknownAssumedTaskError naming nope", err)

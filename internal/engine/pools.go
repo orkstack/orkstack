@@ -299,6 +299,29 @@ func (e *PoolNoCacheSupportError) Error() string {
 		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
 }
 
+// PoolNoJoinSupportError refuses a submit whose container failure handler
+// (join any_failed or all_done, docs/DSL.md "Joins and failure handlers")
+// would run on a pool whose Orker predates join policies. Such an Orker
+// cannot even decode a failure handler's input — the SDK's default payload
+// converter refuses ExecuteTaskInput.join as an unknown field — so it would
+// fail the compensation step of a run that is already failing.
+// allow_empty_pool does NOT downgrade it (the Orker is present and wrong).
+type PoolNoJoinSupportError struct {
+	Namespace string
+	Pool      string
+	Tasks     []string
+	OrkerID   string
+	BuildID   string
+}
+
+func (e *PoolNoJoinSupportError) Error() string {
+	return fmt.Sprintf(
+		"pool %q (namespace %q, tasks: %s) is served by Orker %q (build %q), which predates join policies "+
+			"(join:): it cannot read a failure handler's input and would fail it. Upgrade the pool's Orkers "+
+			"before submitting this Orkflow.",
+		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
+}
+
 // PoolUnreachableError reports that the cluster could not be asked whether a
 // pool has Orkers.
 //
@@ -568,6 +591,10 @@ func (r *PoolResolver) Plan(
 	// fan-out's items run on the fan-out's pool) — the pools whose Orker must
 	// implement the memo step.
 	cachedTasksByPool := map[string][]string{}
+	// The join view: every container failure handler per resolved pool — the
+	// pools whose Orker must read ExecuteTaskInput.join. An awaited or
+	// composed handler never reaches this loop's routing, so is never counted.
+	handlerTasksByPool := map[string][]string{}
 
 	for _, t := range planned.GetTasks() {
 		// An awaited task is never routed: no route, no allow-list check, no
@@ -603,6 +630,9 @@ func (r *PoolResolver) Plan(
 		tasksByPool[route.Pool] = append(tasksByPool[route.Pool], t.GetId())
 		if t.GetCache() != nil && t.GetPin() == "" {
 			cachedTasksByPool[route.Pool] = append(cachedTasksByPool[route.Pool], t.GetId())
+		}
+		if isFailureHandler(t) {
+			handlerTasksByPool[route.Pool] = append(handlerTasksByPool[route.Pool], t.GetId())
 		}
 		if eachRelated[t.GetId()] {
 			eachTasksByPool[route.Pool] = append(eachTasksByPool[route.Pool], t.GetId())
@@ -682,6 +712,12 @@ func (r *PoolResolver) Plan(
 			// implement the memo step at all.
 			if err := r.checkCacheSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
 				cachedTasksByPool[pool]); err != nil {
+				return nil, RunPlan{}, err
+			}
+			// And, for a pool that carries a container failure handler: does
+			// its Orker read join policies at all.
+			if err := r.checkJoinSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
+				handlerTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
 			continue
@@ -872,6 +908,36 @@ func (r *PoolResolver) checkCacheSupport(ctx context.Context, namespace, orkflow
 		return nil
 	}
 	return &PoolNoCacheSupportError{
+		Namespace: namespace,
+		Pool:      pool,
+		Tasks:     tasks,
+		OrkerID:   described.GetOrkerId(),
+		BuildID:   described.GetBuildId(),
+	}
+}
+
+// checkJoinSupport is checkCacheSupport for failure handlers: asked only of a
+// live pool that hosts a container failure handler, so a submit without one
+// runs no describe call it did not run before. A describe failure is logged
+// and not refused — nothing was measured.
+func (r *PoolResolver) checkJoinSupport(ctx context.Context, namespace, orkflow, pool, queue string, tasks []string) error {
+	if len(tasks) == 0 || r.Orkers == nil {
+		return nil
+	}
+	describeCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
+	defer cancel()
+	described, err := r.Orkers.OrkerOnPool(describeCtx, queue)
+	if err != nil {
+		r.logger().Warn("submit: a live pool with a failure handler did not answer the describe-orker "+
+			"probe, so whether it reads join policies is unknown",
+			"namespace", namespace, "pool", pool, "orkflow", orkflow,
+			"tasks", strings.Join(tasks, ","), "error", err)
+		return nil
+	}
+	if described.GetJoinSupported() {
+		return nil
+	}
+	return &PoolNoJoinSupportError{
 		Namespace: namespace,
 		Pool:      pool,
 		Tasks:     tasks,
