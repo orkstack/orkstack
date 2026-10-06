@@ -389,7 +389,8 @@ func judgeRelease(target string, obs engine.ReleaseObservation, inventory []*ork
 			sort.Strings(silent)
 			add(orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_UNVERIFIED, "", fmt.Sprintf(
 				"%d Orker(s) did not answer (%s), so their release and pool are unknown; an Orker that "+
-					"stopped leaves the list within a minute — ask again.", len(silent), idList(silent)))
+					"stopped leaves the list within %d seconds — ask again.", len(silent), idList(silent),
+				int(engine.DefaultPollerFreshness/time.Second)))
 		}
 	}
 	sort.SliceStable(answered, func(i, j int) bool { return answered[i].GetOrkerId() < answered[j].GetOrkerId() })

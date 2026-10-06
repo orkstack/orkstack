@@ -253,3 +253,113 @@ func writeLiveCountMeasurement(
 
 	proof.Write(t, "engine", "live-count-measurement.txt", []byte(strings.Join(lines, "\n")+"\n"))
 }
+
+// TestIntegration_AnIdleOrkerStaysLiveAcrossItsPollingCycle is the other edge
+// of the freshness window: a healthy Orker must never fall out of it.
+//
+// Temporal stamps a poller when its long poll starts, and an idle worker's
+// poll is held for about a minute, so its record ages to a little over a
+// minute before the next poll renews it. This test keeps one idle Orker
+// polling a pool channel and its own control channel for two full polling
+// cycles, and reads both through the production probes four times a second.
+// Every single read must count it. With a 60-second window, the reads at each
+// minute boundary dropped it — the moment a release promotion was refused
+// because "no Orker of this release serves" a pool its Orker was serving
+// (ui/e2e/admin-releases.spec.ts, "a decision made on a stale read is
+// refused").
+func TestIntegration_AnIdleOrkerStaysLiveAcrossItsPollingCycle(t *testing.T) {
+	address := temporalAddress()
+	if !dialable(address) {
+		infraAbsent(t, "temporal is not reachable at %s", address)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	temporalClient := dialVersioningCluster(t, ctx, poolRoutingNamespace())
+	defer temporalClient.Close()
+
+	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+	pool := "idle-" + token
+	poolQueue, err := task.QueueForPool(pool, "")
+	if err != nil {
+		t.Fatalf("QueueForPool(%q): %v", pool, err)
+	}
+	orkerID := "orker-idle-" + token
+	controlQueue, err := task.QueueForOrker(orkerID)
+	if err != nil {
+		t.Fatalf("QueueForOrker(%q): %v", orkerID, err)
+	}
+	probe := engine.NewTemporalPoolProbe(temporalClient)
+	fleet := engine.NewTemporalStarter(temporalClient, task.DefaultQueue)
+
+	serving := startPollingOrker(t, temporalClient, poolQueue, orkerID)
+	defer serving.Stop()
+	control := startPollingOrker(t, temporalClient, controlQueue, orkerID)
+	defer control.Stop()
+	awaitObservedOrkers(t, ctx, probe, poolQueue, 1)
+
+	// Two polling cycles of a live worker, with room for the drift past each
+	// minute that the cluster shows.
+	const watch = 2*time.Minute + 15*time.Second
+	started := time.Now()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	var reads int
+	var oldest time.Duration
+	for time.Since(started) < watch {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context ended after %v of the watch: %v", time.Since(started).Round(time.Second), ctx.Err())
+		case <-ticker.C:
+		}
+		at := time.Since(started)
+		live, err := probe.ObservePool(ctx, poolQueue)
+		if err != nil {
+			t.Fatalf("ObservePool at +%v: %v", at.Round(time.Millisecond), err)
+		}
+		presence, present, err := fleet.ObserveOrker(ctx, orkerID)
+		if err != nil {
+			t.Fatalf("ObserveOrker at +%v: %v", at.Round(time.Millisecond), err)
+		}
+		reads++
+		for _, record := range rawPollerRecords(t, ctx, temporalClient, poolQueue) {
+			if record.identity == orkerID && record.age > oldest {
+				oldest = record.age
+			}
+		}
+		if live.Orkers != 1 || !live.Fresh(time.Now(), engine.DefaultPollerFreshness) {
+			t.Fatalf("at +%v (read %d) the pool its idle Orker is polling reports %d Orkers, fresh=%v; "+
+				"the cluster's records: %v. A live Orker fell out of the %v window",
+				at.Round(time.Millisecond), reads, live.Orkers, live.Fresh(time.Now(), engine.DefaultPollerFreshness),
+				rawPollerRecords(t, ctx, temporalClient, poolQueue), engine.DefaultPollerFreshness)
+		}
+		if !present {
+			t.Fatalf("at +%v (read %d) the Orker list does not contain idle Orker %s; the cluster's records: %v. "+
+				"A live Orker fell out of the %v window",
+				at.Round(time.Millisecond), reads, orkerID, rawPollerRecords(t, ctx, temporalClient, controlQueue),
+				engine.DefaultPollerFreshness)
+		}
+		if presence.Identity != orkerID {
+			t.Fatalf("ObserveOrker answered identity %q, want %q", presence.Identity, orkerID)
+		}
+	}
+	if oldest <= time.Minute {
+		t.Logf("the oldest record of the live Orker was %v, inside one minute: this run did not see the "+
+			"minute boundary the window has to outlast", oldest.Round(time.Millisecond))
+	}
+
+	proof.Write(t, "engine", "idle-orker-freshness.txt", []byte(strings.Join([]string{
+		"# an idle Orker stays live across its polling cycle",
+		"# recorded " + time.Now().UTC().Format(time.RFC3339),
+		"",
+		fmt.Sprintf("pool channel               %s", poolQueue),
+		fmt.Sprintf("control channel            %s", controlQueue),
+		fmt.Sprintf("watched                    %s, %d reads of each probe", watch, reads),
+		fmt.Sprintf("oldest live record seen    %s", oldest.Round(time.Millisecond)),
+		fmt.Sprintf("window                     %s", engine.DefaultPollerFreshness),
+		"every read counted the Orker in its pool and listed it in the fleet",
+	}, "\n")+"\n"))
+	t.Logf("EVIDENCE idle Orker live on every one of %d reads over %s; oldest record %s, window %s",
+		reads, watch, oldest.Round(time.Millisecond), engine.DefaultPollerFreshness)
+}

@@ -195,7 +195,7 @@ func judgeCases() []judgeCase {
 			inventory: []*orkstackv1.Orker{unreachable("orker-c001"), row("orker-b45e", "build", "v1"), row("orker-v2a", "main", "v2")},
 			want: []*orkstackv1.ReleaseBlocker{
 				blocker(kUnverified, "",
-					"1 Orker(s) did not answer (orker-c001), so their release and pool are unknown; an Orker that stopped leaves the list within a minute — ask again."),
+					"1 Orker(s) did not answer (orker-c001), so their release and pool are unknown; an Orker that stopped leaves the list within 90 seconds — ask again."),
 				notServed("build", "orker-b45e of release v1 serves it", "v2"),
 			},
 		},
@@ -258,7 +258,7 @@ func judgeCases() []judgeCase {
 				row("orker-b45e", "build", "v1"), pinHost(row("orker-7f3a", "main", "v1")), row("orker-v2a", "main", "v2")},
 			want: []*orkstackv1.ReleaseBlocker{
 				blocker(kNoEngine, "", "no engine of release v2 is running, so a run sent to it would never start. Start ork with ORK_BUILD_ID=v2 and ORK_DEPLOYMENT_NAME=orkstack."),
-				blocker(kUnverified, "", "1 Orker(s) did not answer (orker-c001), so their release and pool are unknown; an Orker that stopped leaves the list within a minute — ask again."),
+				blocker(kUnverified, "", "1 Orker(s) did not answer (orker-c001), so their release and pool are unknown; an Orker that stopped leaves the list within 90 seconds — ask again."),
 				notServed("build", "orker-b45e of release v1 serves it", "v2"),
 				notServed("zeta", "orker-z of release v1 serves it", "v2"),
 				blocker(kPins, "main", `pool "main" hosts pins (orker-7f3a of release v1 is a pin host) and no Orker of release v2 in it hosts pins, so a pin its runs open there would open on another release's Orker. Start one with ORK_BUILD_ID=v2 ORK_ORKER_POOL=main ORK_ORKER_MAX_PINS=1 (or more; set the same value on every Orker of the pool).`),

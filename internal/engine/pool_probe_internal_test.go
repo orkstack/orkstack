@@ -66,7 +66,7 @@ func TestLivePollers_CountsOnlyTheOrkersStillInsideTheWindow(t *testing.T) {
 
 	t.Run("every poller stale means nothing serves the pool", func(t *testing.T) {
 		live := livePollers(activityPollers(
-			poller("1@host@ork-pool-alpha", now.Add(-75*time.Second)),
+			poller("1@host@ork-pool-alpha", now.Add(-2*time.Minute)),
 			poller("2@host@ork-pool-alpha", now.Add(-6*time.Minute)),
 		), now, within)
 
@@ -90,6 +90,38 @@ func TestLivePollers_CountsOnlyTheOrkersStillInsideTheWindow(t *testing.T) {
 			t.Errorf("LastSeen = %v, want the surviving poller's %v", live.LastSeen, recent)
 		}
 	})
+}
+
+// TestLivePollers_AnIdleOrkerBetweenTwoPollsIsLive pins the window's floor: a
+// healthy Orker's record is as old as its polling cycle, so the window must
+// be wider than that cycle or the probe reports a live Orker as gone.
+//
+// Temporal stamps a poller when its long poll STARTS. An idle worker's poll
+// is held for the cluster's long-poll interval (a minute by default) and can
+// never outlast the SDK's own poll deadline (go.temporal.io/sdk
+// pollTaskServiceTimeOut, 70 seconds), so just before the next poll arrives a
+// live record is up to that old. Measured against the dev cluster, an idle
+// Orker's record reached 60.0–63.3 seconds once a minute; with the window at
+// 60 seconds, a release promotion read at that moment named the Orker's pool
+// "in use and served by no Orker of this release", and a submit could be
+// refused as an empty pool.
+func TestLivePollers_AnIdleOrkerBetweenTwoPollsIsLive(t *testing.T) {
+	now := time.Now()
+	const sdkPollDeadline = 70 * time.Second
+	for _, age := range []time.Duration{
+		63300 * time.Millisecond, // the oldest record measured for a live idle Orker
+		sdkPollDeadline + 2*time.Second,
+	} {
+		description := activityPollers(poller("orker-idle", now.Add(-age)))
+		if live := livePollers(description, now, DefaultPollerFreshness); live.Orkers != 1 || !live.Fresh(now, DefaultPollerFreshness) {
+			t.Errorf("an idle Orker whose record is %v old (one polling cycle) counted as %d Orkers, fresh=%v; "+
+				"want 1 and fresh: the %v window must outlast a live worker's polling cycle",
+				age, live.Orkers, live.Fresh(now, DefaultPollerFreshness), DefaultPollerFreshness)
+		}
+		if records := livePollerRecords(description, now, DefaultPollerFreshness); len(records) != 1 {
+			t.Errorf("the Orker list drops an idle Orker whose record is %v old: %v", age, records)
+		}
+	}
 }
 
 // TestLivePollers_CountsOneWorkerOnceHoweverManyRecordsDescribeIt keeps the

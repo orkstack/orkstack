@@ -32,7 +32,21 @@ var ErrNoNamespaceRegistry = fmt.Errorf("no namespace registry is configured")
 // to a run that waits. A window too
 // tight would do the opposite and refuse a healthy submit, which is a new
 // failure invented by the check itself.
-const DefaultPollerFreshness = 60 * time.Second
+//
+// Its floor is a LIVE worker's polling cycle, because that is how old a
+// healthy Orker's record gets. Temporal stamps a poller when its long poll
+// starts; an idle worker's poll is held for the cluster's long-poll interval
+// (one minute by default) and can never outlast the SDK's own 70-second poll
+// deadline, so a healthy record ages up to that cycle plus the moment the next
+// poll takes to arrive. Measured on the dev cluster over ten minutes, an idle
+// worker's record reached 60.0–63.3 seconds once a minute. A window equal to
+// the cycle (it was once 60 seconds) therefore reported a healthy Orker as
+// gone for a second or more every minute: a release promotion refused because
+// no Orker of the release served a pool its Orker was serving, a submit
+// refused into a pool that was not empty. 90 seconds is the SDK's 70-second
+// ceiling plus 20 seconds of margin (TestLivePollers_AnIdleOrkerBetweenTwoPollsIsLive,
+// TestIntegration_AnIdleOrkerStaysLiveAcrossItsPollingCycle).
+const DefaultPollerFreshness = 90 * time.Second
 
 // poolDescribeTimeout bounds one DescribeOrker probe. It is short: a pool with
 // live Orkers answers immediately, and a report is not worth holding a request
