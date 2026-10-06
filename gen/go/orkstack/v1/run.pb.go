@@ -649,7 +649,14 @@ type TaskRun struct {
 	// byte-identical — and for a cached task that failed, whose attempts carry
 	// what each memo step decided. On a fan-out it is set on the items, never
 	// on the fan-out's own row.
-	Cache         *CacheResult `protobuf:"bytes,24,opt,name=cache,proto3" json:"cache,omitempty"`
+	Cache *CacheResult `protobuf:"bytes,24,opt,name=cache,proto3" json:"cache,omitempty"`
+	// join is the task's join policy, set from the run's first snapshot for
+	// every task whose definition declares one other than all_succeeded, and
+	// UNSET otherwise — so a snapshot of a run with no join is byte-identical
+	// to what it was before this field existed. Its presence is how a client
+	// tells a failure handler from an ordinary task without reading the
+	// definition (the precedent of TaskRun.await, .each and .child).
+	Join          JoinPolicy `protobuf:"varint,25,opt,name=join,proto3,enum=orkstack.v1.JoinPolicy" json:"join,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -843,6 +850,13 @@ func (x *TaskRun) GetCache() *CacheResult {
 		return x.Cache
 	}
 	return nil
+}
+
+func (x *TaskRun) GetJoin() JoinPolicy {
+	if x != nil {
+		return x.Join
+	}
+	return JoinPolicy_JOIN_POLICY_UNSPECIFIED
 }
 
 // TaskAwait is an awaited task's own state on the run snapshot. It is SET for
@@ -1431,7 +1445,11 @@ type Run struct {
 	// output is the Orkflow's declared outputs, rendered at success, when it
 	// declares `outputs:`; otherwise every leaf task's inline values, keyed by
 	// task id.
-	Output     *Payload               `protobuf:"bytes,6,opt,name=output,proto3" json:"output,omitempty"`
+	Output *Payload `protobuf:"bytes,6,opt,name=output,proto3" json:"output,omitempty"`
+	// error is set when the run's outcome is decided FAILED or CANCELED. While
+	// a failing run's failure handlers still run, it is already set and status
+	// is RUNNING (docs/DSL.md "Joins and failure handlers"); the terminal
+	// snapshot carries the same error with status FAILED.
 	Error      *Error                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
 	TaskRuns   []*TaskRun             `protobuf:"bytes,8,rep,name=task_runs,json=taskRuns,proto3" json:"task_runs,omitempty"`
 	CreatedAt  *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
@@ -1703,11 +1721,14 @@ func (x *RunOrigin) GetPrincipal() string {
 // Event is a single realtime update for a run, delivered over the
 // server-streaming RPC and the WebSocket bridge.
 type Event struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	RunId     string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Sequence  int64                  `protobuf:"varint,2,opt,name=sequence,proto3" json:"sequence,omitempty"` // monotonic per run
-	Type      EventType              `protobuf:"varint,3,opt,name=type,proto3,enum=orkstack.v1.EventType" json:"type,omitempty"`
-	TaskId    string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"` // set for task events
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	RunId    string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Sequence int64                  `protobuf:"varint,2,opt,name=sequence,proto3" json:"sequence,omitempty"` // monotonic per run
+	Type     EventType              `protobuf:"varint,3,opt,name=type,proto3,enum=orkstack.v1.EventType" json:"type,omitempty"`
+	// task_id is set for task events. Empty on exactly one event that is not
+	// about a task: the TASK_LOG, status RUNNING, a run with failure handlers
+	// emits when it starts failing (docs/DSL.md "Joins and failure handlers").
+	TaskId    string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	Status    Status                 `protobuf:"varint,5,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
 	Message   string                 `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"` // human readable / log line
 	Data      *Payload               `protobuf:"bytes,7,opt,name=data,proto3" json:"data,omitempty"`       // optional structured detail
@@ -1827,7 +1848,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12'\n" +
 	"\x0forkflow_version\x18\x02 \x01(\tR\x0eorkflowVersion\x12:\n" +
 	"\x19orkflow_definition_digest\x18\x03 \x01(\tR\x17orkflowDefinitionDigest\x12\x15\n" +
-	"\x06run_id\x18\x04 \x01(\tR\x05runId\"\x89\b\n" +
+	"\x06run_id\x18\x04 \x01(\tR\x05runId\"\xb6\b\n" +
 	"\aTaskRun\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12+\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x13.orkstack.v1.StatusR\x06status\x12\x18\n" +
@@ -1856,7 +1877,8 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x05items\x18\x15 \x03(\v2\x14.orkstack.v1.TaskRunR\x05items\x12\x17\n" +
 	"\x04item\x18\x16 \x01(\x05H\x00R\x04item\x88\x01\x01\x12,\n" +
 	"\x05child\x18\x17 \x01(\v2\x16.orkstack.v1.TaskChildR\x05child\x12.\n" +
-	"\x05cache\x18\x18 \x01(\v2\x18.orkstack.v1.CacheResultR\x05cacheB\a\n" +
+	"\x05cache\x18\x18 \x01(\v2\x18.orkstack.v1.CacheResultR\x05cache\x12+\n" +
+	"\x04join\x18\x19 \x01(\x0e2\x17.orkstack.v1.JoinPolicyR\x04joinB\a\n" +
 	"\x05_itemJ\x04\b\x02\x10\x03R\x06plugin\"\xc2\x01\n" +
 	"\tTaskAwait\x12\x1a\n" +
 	"\bcallback\x18\x01 \x01(\bR\bcallback\x126\n" +
@@ -2025,8 +2047,9 @@ var file_orkstack_v1_run_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
 	(*CommitRef)(nil),             // 21: orkstack.v1.CommitRef
 	(*CacheResult)(nil),           // 22: orkstack.v1.CacheResult
-	(*ImageRef)(nil),              // 23: orkstack.v1.ImageRef
-	(*TelemetrySelection)(nil),    // 24: orkstack.v1.TelemetrySelection
+	(JoinPolicy)(0),               // 23: orkstack.v1.JoinPolicy
+	(*ImageRef)(nil),              // 24: orkstack.v1.ImageRef
+	(*TelemetrySelection)(nil),    // 25: orkstack.v1.TelemetrySelection
 }
 var file_orkstack_v1_run_proto_depIdxs = []int32{
 	16, // 0: orkstack.v1.TaskRun.status:type_name -> orkstack.v1.Status
@@ -2045,41 +2068,42 @@ var file_orkstack_v1_run_proto_depIdxs = []int32{
 	7,  // 13: orkstack.v1.TaskRun.items:type_name -> orkstack.v1.TaskRun
 	6,  // 14: orkstack.v1.TaskRun.child:type_name -> orkstack.v1.TaskChild
 	22, // 15: orkstack.v1.TaskRun.cache:type_name -> orkstack.v1.CacheResult
-	20, // 16: orkstack.v1.TaskAwait.deadline:type_name -> google.protobuf.Timestamp
-	0,  // 17: orkstack.v1.TaskAwait.resolved_via:type_name -> orkstack.v1.AwaitResolvedVia
-	18, // 18: orkstack.v1.AwaitSignal.values:type_name -> orkstack.v1.ArtifactRef
-	0,  // 19: orkstack.v1.AwaitSignal.via:type_name -> orkstack.v1.AwaitResolvedVia
-	20, // 20: orkstack.v1.PhaseSpan.started_at:type_name -> google.protobuf.Timestamp
-	20, // 21: orkstack.v1.PhaseSpan.finished_at:type_name -> google.protobuf.Timestamp
-	1,  // 22: orkstack.v1.TaskAttempt.outcome:type_name -> orkstack.v1.AttemptOutcome
-	19, // 23: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
-	20, // 24: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
-	20, // 25: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
-	23, // 26: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
-	18, // 27: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	10, // 28: orkstack.v1.TaskAttempt.phases:type_name -> orkstack.v1.PhaseSpan
-	11, // 29: orkstack.v1.TaskAttempt.resources:type_name -> orkstack.v1.ReservedResources
-	22, // 30: orkstack.v1.TaskAttempt.cache:type_name -> orkstack.v1.CacheResult
-	16, // 31: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
-	17, // 32: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
-	17, // 33: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
-	19, // 34: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
-	7,  // 35: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
-	20, // 36: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	20, // 37: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	20, // 38: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	24, // 39: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
-	14, // 40: orkstack.v1.Run.origin:type_name -> orkstack.v1.RunOrigin
-	3,  // 41: orkstack.v1.RunOrigin.kind:type_name -> orkstack.v1.RunOriginKind
-	4,  // 42: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
-	16, // 43: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
-	17, // 44: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
-	20, // 45: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
-	46, // [46:46] is the sub-list for method output_type
-	46, // [46:46] is the sub-list for method input_type
-	46, // [46:46] is the sub-list for extension type_name
-	46, // [46:46] is the sub-list for extension extendee
-	0,  // [0:46] is the sub-list for field type_name
+	23, // 16: orkstack.v1.TaskRun.join:type_name -> orkstack.v1.JoinPolicy
+	20, // 17: orkstack.v1.TaskAwait.deadline:type_name -> google.protobuf.Timestamp
+	0,  // 18: orkstack.v1.TaskAwait.resolved_via:type_name -> orkstack.v1.AwaitResolvedVia
+	18, // 19: orkstack.v1.AwaitSignal.values:type_name -> orkstack.v1.ArtifactRef
+	0,  // 20: orkstack.v1.AwaitSignal.via:type_name -> orkstack.v1.AwaitResolvedVia
+	20, // 21: orkstack.v1.PhaseSpan.started_at:type_name -> google.protobuf.Timestamp
+	20, // 22: orkstack.v1.PhaseSpan.finished_at:type_name -> google.protobuf.Timestamp
+	1,  // 23: orkstack.v1.TaskAttempt.outcome:type_name -> orkstack.v1.AttemptOutcome
+	19, // 24: orkstack.v1.TaskAttempt.error:type_name -> orkstack.v1.Error
+	20, // 25: orkstack.v1.TaskAttempt.started_at:type_name -> google.protobuf.Timestamp
+	20, // 26: orkstack.v1.TaskAttempt.finished_at:type_name -> google.protobuf.Timestamp
+	24, // 27: orkstack.v1.TaskAttempt.image:type_name -> orkstack.v1.ImageRef
+	18, // 28: orkstack.v1.TaskAttempt.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	10, // 29: orkstack.v1.TaskAttempt.phases:type_name -> orkstack.v1.PhaseSpan
+	11, // 30: orkstack.v1.TaskAttempt.resources:type_name -> orkstack.v1.ReservedResources
+	22, // 31: orkstack.v1.TaskAttempt.cache:type_name -> orkstack.v1.CacheResult
+	16, // 32: orkstack.v1.Run.status:type_name -> orkstack.v1.Status
+	17, // 33: orkstack.v1.Run.input:type_name -> orkstack.v1.Payload
+	17, // 34: orkstack.v1.Run.output:type_name -> orkstack.v1.Payload
+	19, // 35: orkstack.v1.Run.error:type_name -> orkstack.v1.Error
+	7,  // 36: orkstack.v1.Run.task_runs:type_name -> orkstack.v1.TaskRun
+	20, // 37: orkstack.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	20, // 38: orkstack.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	20, // 39: orkstack.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	25, // 40: orkstack.v1.Run.telemetry:type_name -> orkstack.v1.TelemetrySelection
+	14, // 41: orkstack.v1.Run.origin:type_name -> orkstack.v1.RunOrigin
+	3,  // 42: orkstack.v1.RunOrigin.kind:type_name -> orkstack.v1.RunOriginKind
+	4,  // 43: orkstack.v1.Event.type:type_name -> orkstack.v1.EventType
+	16, // 44: orkstack.v1.Event.status:type_name -> orkstack.v1.Status
+	17, // 45: orkstack.v1.Event.data:type_name -> orkstack.v1.Payload
+	20, // 46: orkstack.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
+	47, // [47:47] is the sub-list for method output_type
+	47, // [47:47] is the sub-list for method input_type
+	47, // [47:47] is the sub-list for extension type_name
+	47, // [47:47] is the sub-list for extension extendee
+	0,  // [0:47] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }

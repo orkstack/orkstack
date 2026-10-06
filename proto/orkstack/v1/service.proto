@@ -303,12 +303,23 @@ message PlanRunRequest {
   // the same errors. namespace, when set, must agree with the document's
   // own `namespace:` on the same rule ApplyOrkflow applies.
   string yaml = 6;
+  // assume_failed plans the run as if each named task, when it would run,
+  // FAILED after its retries: its failure handlers are planned, every task
+  // that is not a failure handler and transitively needs it is UNREACHED, and
+  // work that does not depend on it is planned as if nothing had failed (in a
+  // run it may be canceled in flight). Each entry is a task id of the
+  // definition, at most once; an unknown or repeated id is InvalidArgument
+  // naming it. An entry whose task does not run is reported in
+  // unused_assume_failed.
+  repeated string assume_failed = 7;
 }
 
 // PlanOutcome is what the interpreter would do with one task, given the
-// planned input. It is deliberately not orkstack.v1.Status: a plan never
-// SUCCEEDS or FAILS a task — it dispatches or does not — and the enum must
-// not be mistaken for an execution record.
+// planned input and the request's assumed failures. It is deliberately not
+// orkstack.v1.Status: a plan executes nothing, and the enum must not be
+// mistaken for an execution record. FAILS is a decision the interpreter would
+// itself take (a condition it cannot evaluate); ASSUMED_FAILED is the
+// request's assumption, never a prediction that the task fails.
 enum PlanOutcome {
   PLAN_OUTCOME_UNSPECIFIED = 0;
   // RUNS: the interpreter would schedule this task's activity.
@@ -316,17 +327,28 @@ enum PlanOutcome {
   // SKIPPED: the interpreter would mark it STATUS_SKIPPED, for the reason
   // in PlanTask.skip_reason, without reaching an Orker.
   PLAN_OUTCOME_SKIPPED = 2;
-  // FAILS: evaluating this task's condition returns an error, and the
-  // interpreter fails the RUN at that point (RUN_FAILED with the error's
-  // text). PlanTask.error carries it. At most one task of a plan is FAILS.
+  // FAILS: evaluating this task's condition returns an error. Unless an
+  // earlier task already did, the run starts failing at that point
+  // (RUN_FAILED with the error's text); in a definition with a failure
+  // handler the interpreter also records the task FAILED (CONDITION_FAILED).
+  // A FAILS of a failure handler decided after fails_at is recorded on that
+  // handler and cuts nothing, so a plan of a definition with failure handlers
+  // may hold more than one FAILS; without a failure handler it holds at most
+  // one. PlanTask.error carries it.
   PLAN_OUTCOME_FAILS = 3;
-  // UNREACHED: the run fails at another task before this one is decided;
-  // the interpreter would mark it CANCELED ("run ended before this task
-  // started"). Only present when a task is FAILS.
+  // UNREACHED: a task that is not a failure handler and is certainly never
+  // started: it transitively needs an ASSUMED_FAILED task, or a FAILS of a
+  // task that is not a failure handler was decided before it (unreached_by
+  // names which); only present when fails_at is set.
   PLAN_OUTCOME_UNREACHED = 4;
   // AWAITS: the task is an awaited task the interpreter would open: it takes
   // a wave as RUNS does and starts no activity.
   PLAN_OUTCOME_AWAITS = 5;
+  // ASSUMED_FAILED: the request's assume_failed names this task and it would
+  // run; it is planned as having run and FAILED. It takes a wave as RUNS
+  // does, contributes no output, and is where the planned run starts failing
+  // unless an earlier task already did.
+  PLAN_OUTCOME_ASSUMED_FAILED = 6;
 }
 
 // PlanTask is one task's planned outcome. Tasks are listed in declaration
@@ -368,8 +390,10 @@ message PlanTask {
   // condition was actually evaluated (RUNS, or SKIPPED by its condition);
   // empty for an upstream skip, FAILS, and UNREACHED.
   repeated string assumed_absent = 8;
-  // error is set for FAILS only: code RUN_FAILED and the exact message the
-  // interpreter would record on the run.
+  // error is set for FAILS and ASSUMED_FAILED: for the task at fails_at, the
+  // error the interpreter records on the RUN (code RUN_FAILED for a condition
+  // error, ASSUMED_FAILED for an assumption); for any later FAILS, the error
+  // recorded on that task (code CONDITION_FAILED).
   Error error = 9;
   // await is the task's AwaitSpec, set for an awaited task whatever its
   // outcome, so a reader sees the deadline and whether it takes a callback.
@@ -388,10 +412,19 @@ message PlanTask {
   // outcome. A plan never predicts a hit: that is decided on the Orker, from
   // the rendered config and the input digests, when the run reaches it.
   CacheSpec cache = 14;
+  // join is the task's join policy, set whatever its outcome when the
+  // definition declares one other than all_succeeded.
+  JoinPolicy join = 15;
+  // unreached_by is, for UNREACHED, the task whose failure leaves this one
+  // unreached: the first decision-time failure (a FAILS) decided before it,
+  // or else the first ASSUMED_FAILED task of its needs closure in declaration
+  // order. Empty for every other outcome.
+  string unreached_by = 16;
 }
 
-// PlanWave lists the RUNS tasks of one wave, in declaration order. There is
-// one entry per wave from 1 to wave_count; SKIPPED tasks are not members.
+// PlanWave lists the RUNS, AWAITS and ASSUMED_FAILED tasks of one wave, in
+// declaration order. There is one entry per wave from 1 to wave_count;
+// SKIPPED tasks are not members.
 message PlanWave {
   int32 wave = 1;
   repeated string task_ids = 2;
@@ -422,6 +455,15 @@ message PlanRunResponse {
   // sorted order: the stub was accepted and had no effect.
   repeated string unused_assumed_outputs = 12;
   int32 awaits = 13;                     // count of AWAITS
+  int32 assumed_failed = 14;             // count of ASSUMED_FAILED
+  // unused_assume_failed lists request entries whose task is not
+  // ASSUMED_FAILED (it was SKIPPED or UNREACHED), in request order.
+  repeated string unused_assume_failed = 15;
+  // fails_at is the task at which the planned run starts failing — the first
+  // FAILS or ASSUMED_FAILED in decision order — or empty when nothing fails.
+  // The run is planned FAILED exactly when it is set; each UNREACHED task
+  // names its own cause in PlanTask.unreached_by.
+  string fails_at = 16;
 }
 // InterfaceVerdict is how one version's DECLARED interface — its inputs:
 // and its outputs: — compares with another's.

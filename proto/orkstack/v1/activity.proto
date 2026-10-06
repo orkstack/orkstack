@@ -142,6 +142,10 @@ message UpstreamRef {
   // and artifacts are unset: the fan-out has no commit of its own, its items
   // do. Set only on the input of a DIRECT dependent (a task naming the
   // fan-out in needs:). A task further downstream receives no ref for it.
+  //
+  // For a failure handler's input, a DIRECT need that FAILED and recorded
+  // output artifacts contributes a ref with task_id and artifacts only —
+  // commit_uri and values unset.
   EachUpstream each = 5;
 }
 
@@ -162,6 +166,57 @@ message PinContext {
   // (Pin.timeout_seconds or the derived sum). The Orker derives the shared
   // directory's lease from it (§8.4).
   int32 timeout_seconds = 3;
+}
+
+// ---------------------------------------------------------------- joins
+
+// JoinPolicy is when a task with needs may start, decided from how its needs
+// ended (docs/DSL.md "Joins and failure handlers"). Defined here rather than
+// in orkflow.proto for the reason CacheScope is: activity.proto cannot import
+// orkflow.proto, and JoinContext below carries it.
+enum JoinPolicy {
+  // UNSPECIFIED is all_succeeded: the task starts when every need SUCCEEDED,
+  // and a SKIPPED need skips it. It is the ONLY encoding of the default — the
+  // compiler writes it for `join: all_succeeded` and for no `join:` — so a
+  // definition that names no join keeps its digest and every payload stays
+  // byte-identical.
+  JOIN_POLICY_UNSPECIFIED = 0;
+  // NONE_FAILED: every need terminal, none FAILED or CANCELED, at least one
+  // SUCCEEDED. SKIPPED needs are tolerated, which is what lets branches
+  // re-join.
+  JOIN_POLICY_NONE_FAILED = 1;
+  // ANY_FAILED: at least one need FAILED, after its retries. A failure
+  // handler: one of the two kinds of task that start in a failing run.
+  JOIN_POLICY_ANY_FAILED = 2;
+  // ALL_DONE: every need terminal, whatever its outcome. A failure handler.
+  JOIN_POLICY_ALL_DONE = 3;
+}
+
+// NeedOutcome is how one need of a failure handler ended, as the run
+// recorded it when the handler was dispatched.
+message NeedOutcome {
+  string task_id = 1;
+  // status is SUCCEEDED, FAILED, SKIPPED or CANCELED and never another value:
+  // a task is dispatched only once every need is terminal.
+  Status status = 2;
+  // error is the need's TaskRun.error, bounded field by field: code to 128
+  // bytes, message to 1024 bytes and details to 256 bytes — three separate
+  // bounds, each on the length of that field's JSON-escaped encoding, and a
+  // cut field ends at a UTF-8 boundary with "…". category and retryable are
+  // copied as they are. Set when the need recorded an error — always for
+  // FAILED, for CANCELED when it was stopped in flight — and unset otherwise.
+  Error error = 3;
+}
+
+// JoinContext tells a failure handler how each of its needs ended. It is set
+// ONLY on the input of a container task whose join is ANY_FAILED or
+// ALL_DONE, so every other task's recorded payload is byte-identical to what
+// it was before this message existed. The Orker writes it to task.json as
+// `join`. With at most 32 needs (docs/DSL.md rule 42) and NeedOutcome's
+// bounds, its encoding is at most 64 KiB.
+message JoinContext {
+  JoinPolicy policy = 1;
+  repeated NeedOutcome needs = 2;  // the task's needs, in written order
 }
 
 // ---------------------------------------------------------------- caching
@@ -424,6 +479,13 @@ message ExecuteTaskInput {
   // payload byte-identical (the golden history fixture has no cached task and
   // must keep matching without re-recording).
   CacheContext cache = 27;
+
+  // join tells a failure handler how its needs ended. UNSET for every task
+  // whose join is not ANY_FAILED or ALL_DONE, which keeps such a task's
+  // recorded payload byte-identical to what it was before this field existed
+  // (the golden history fixtures have no failure handler and must keep
+  // matching without re-recording).
+  JoinContext join = 28;
 }
 
 // ReleasePinInput asks the pin host to remove the pin's shared directory.
@@ -635,6 +697,14 @@ message DescribeOrkerResult {
   // converter refuses unknown fields, so such an Orker would FAIL every
   // cached task's attempt on decoding ExecuteTaskInput.cache.
   bool cache_supported = 17;
+  // join_supported is true on an Orker that reads ExecuteTaskInput.join
+  // (task.json `join`). An Orker built before it answers false (unset), and
+  // submit refuses an Orkflow with a container failure handler on its pool:
+  // the SDK's default payload converter refuses unknown fields, so such an
+  // Orker would FAIL every attempt of a failure handler on decoding
+  // ExecuteTaskInput.join — the compensation step of a run that is already
+  // failing.
+  bool join_supported = 18;
 }
 
 // OpenPin is one pin this Orker currently hosts: a session it has accepted
