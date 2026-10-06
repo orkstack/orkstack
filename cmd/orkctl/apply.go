@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 func newApplyCommand(g *globalFlags) *cobra.Command {
@@ -141,7 +142,35 @@ func renderTaskTable(out io.Writer, tasks []*orkstackv1.Task) error {
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
-	return renderEachTable(out, tasks)
+	if err := renderEachTable(out, tasks); err != nil {
+		return err
+	}
+	return renderJoinTable(out, tasks)
+}
+
+// renderJoinTable is the table an Orkflow with a join gets after its EACH
+// table: each joined task's policy and the needs it decides on. An Orkflow
+// with none prints exactly what it always did.
+func renderJoinTable(out io.Writer, tasks []*orkstackv1.Task) error {
+	var joined []*orkstackv1.Task
+	for _, task := range tasks {
+		if task.GetJoin() != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+			joined = append(joined, task)
+		}
+	}
+	if len(joined) == 0 {
+		return nil
+	}
+	fmt.Fprintln(out)
+	table := newTable(out)
+	fmt.Fprintln(table, "JOIN\tPOLICY\tNEEDS")
+	for _, task := range joined {
+		fmt.Fprintf(table, "%s\t%s\t%s\n", task.GetId(), dsl.JoinWord(task.GetJoin()), joinOrDash(task.GetNeeds()))
+	}
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	return nil
 }
 
 // renderEachTable is the second table an Orkflow with a fan-out gets: each

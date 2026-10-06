@@ -34,6 +34,7 @@ func newRunPlanCommand(g *globalFlags) *cobra.Command {
 		outputsFile   string
 		assertRuns    []string
 		assertSkipped []string
+		assumeFailed  []string
 	)
 	cmd := &cobra.Command{
 		Use:   "plan [<orkflow>]",
@@ -48,8 +49,17 @@ func newRunPlanCommand(g *globalFlags) *cobra.Command {
 			"unless one is supplied with --output TASK=JSON or --outputs-file PATH.\n\n" +
 			"--assert-runs and --assert-skipped make the plan a CI check: a plan that\n" +
 			"contradicts them exits 4, distinct from 1 for a plan that could not be\n" +
-			"computed. A plan proves wiring, never behaviour, and is not an admission\n" +
-			"check: pools, holds, and limits are asked by run submit.",
+			"computed. Each takes ONE task per flag: --assert-runs rollback\n" +
+			"--assert-runs notify checks two tasks, and --assert-runs rollback,notify\n" +
+			"asks about one task named \"rollback,notify\". A plan proves wiring, never\n" +
+			"behaviour, and is not an admission check: pools, holds, and limits are\n" +
+			"asked by run submit.\n\n" +
+			"--assume-failed TASK plans the run as if TASK, when it would run, failed\n" +
+			"after its retries: its failure handlers are planned, every task that\n" +
+			"depends on it and is not a failure handler is unreached, and independent\n" +
+			"work is planned as if nothing had failed. Combine with --assert-runs to\n" +
+			"check in CI that a handler is wired:\n\n" +
+			"  orkctl run plan deploy --assume-failed deploy --assert-runs rollback --assert-runs notify",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
@@ -76,6 +86,7 @@ func newRunPlanCommand(g *globalFlags) *cobra.Command {
 				Namespace:      g.namespace,
 				Input:          payload,
 				AssumedOutputs: assumed,
+				AssumeFailed:   assumeFailed,
 			}
 			if file != "" {
 				source, err := os.ReadFile(file)
@@ -97,7 +108,12 @@ func newRunPlanCommand(g *globalFlags) *cobra.Command {
 				if err := writeJSON(cmd.OutOrStdout(), plan); err != nil {
 					return err
 				}
-			} else if err := renderPlan(cmd.OutOrStdout(), plan, file); err != nil {
+				// An older engine drops assume_failed and plans without it:
+				// said on stderr so stdout stays the response.
+				if planIgnoredAssumptions(plan, assumeFailed) {
+					fmt.Fprintln(cmd.ErrOrStderr(), planIgnoredAssumptionsSentence)
+				}
+			} else if err := renderPlan(cmd.OutOrStdout(), plan, file, assumeFailed); err != nil {
 				return err
 			}
 			return checkPlanAssertions(cmd.ErrOrStderr(), plan, assertRuns, assertSkipped)
@@ -117,6 +133,8 @@ func newRunPlanCommand(g *globalFlags) *cobra.Command {
 		"exit 4 unless this task is planned to run (repeatable)")
 	cmd.Flags().StringArrayVar(&assertSkipped, "assert-skipped", nil,
 		"exit 4 unless this task is planned to be skipped (repeatable)")
+	cmd.Flags().StringArrayVar(&assumeFailed, "assume-failed", nil,
+		"plan as if this task, when it would run, failed after its retries (repeatable)")
 	return cmd
 }
 
@@ -187,14 +205,38 @@ func planOutcomeLabel(outcome orkstackv1.PlanOutcome) string {
 	return strings.TrimPrefix(outcome.String(), "PLAN_OUTCOME_")
 }
 
-// planFailing returns the FAILS task, nil when the plan has none.
+// planFailing returns the task at which the planned run starts failing —
+// fails_at when the server sets it, else (an older server) the first FAILS —
+// nil when nothing fails. A plan of a definition with failure handlers may
+// hold more than one FAILS, so fails_at is read first.
 func planFailing(plan *orkstackv1.PlanRunResponse) *orkstackv1.PlanTask {
+	if at := plan.GetFailsAt(); at != "" {
+		for _, task := range plan.GetTasks() {
+			if task.GetTaskId() == at {
+				return task
+			}
+		}
+	}
 	for _, task := range plan.GetTasks() {
 		if task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS {
 			return task
 		}
 	}
 	return nil
+}
+
+// isFailureHandlerJoin is a join of any_failed or all_done.
+func isFailureHandlerJoin(join orkstackv1.JoinPolicy) bool {
+	return join == orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED || join == orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE
+}
+
+// planIgnoredAssumptionsSentence is said when assumptions were sent and the
+// response shows none was applied: an engine built before assumed failures
+// discards the request field and plans without it.
+const planIgnoredAssumptionsSentence = "The server did not apply --assume-failed: it predates assumed failures."
+
+func planIgnoredAssumptions(plan *orkstackv1.PlanRunResponse, sent []string) bool {
+	return len(sent) > 0 && plan.GetAssumedFailed() == 0 && len(plan.GetUnusedAssumeFailed()) == 0
 }
 
 // planRows orders tasks by wave then declaration order, with the wave-0
@@ -211,9 +253,27 @@ func planRows(plan *orkstackv1.PlanRunResponse) []*orkstackv1.PlanTask {
 	return rows
 }
 
-// planDetail is the DETAIL cell for one task.
+// planDetail is the DETAIL cell for one task. A task with a join that runs
+// or awaits says so first: `join <word>`, then today's detail after "; ".
 func planDetail(task *orkstackv1.PlanTask, failing string) string {
+	detail := planOutcomeDetail(task, failing)
 	switch task.GetOutcome() {
+	case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
+		if join := task.GetJoin(); join != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+			if detail == "" {
+				return "join " + dsl.JoinWord(join)
+			}
+			return "join " + dsl.JoinWord(join) + "; " + detail
+		}
+	}
+	return detail
+}
+
+// planOutcomeDetail is the DETAIL cell before the join prefix.
+func planOutcomeDetail(task *orkstackv1.PlanTask, failing string) string {
+	switch task.GetOutcome() {
+	case orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED:
+		return "assumed to fail (--assume-failed)"
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED:
 		return task.GetSkipReason()
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS:
@@ -240,6 +300,9 @@ func planDetail(task *orkstackv1.PlanTask, failing string) string {
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS:
 		return task.GetError().GetMessage()
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_UNREACHED:
+		if by := task.GetUnreachedBy(); by != "" {
+			return "after " + by + " fails"
+		}
 		return "after " + failing + " fails"
 	}
 	return ""
@@ -254,6 +317,11 @@ func planSummary(plan *orkstackv1.PlanRunResponse) string {
 	awaits := ""
 	if plan.GetAwaits() > 0 {
 		awaits = plural(int64(plan.GetAwaits()), "await") + ", "
+	}
+	// Inserted only when the plan assumed a failure, on the awaits
+	// precedent, so every plan without one reads as before.
+	if plan.GetAssumedFailed() > 0 {
+		awaits += fmt.Sprintf("%d assumed failed, ", plan.GetAssumedFailed())
 	}
 	return fmt.Sprintf("%d run, %s%d skipped, %s. Nothing was started.",
 		plan.GetRuns(), awaits, plan.GetSkipped(), plural(int64(plan.GetWaveCount()), "wave"))
@@ -281,9 +349,45 @@ func planFailureSentence(plan *orkstackv1.PlanRunResponse) string {
 			unreached++
 		}
 	}
-	return fmt.Sprintf("The run would FAIL deciding %s: %s. %s unreached; "+
-		"tasks planned to run in the same or a later wave may be cancelled in flight.",
-		failing.GetTaskId(), failing.GetError().GetMessage(), plural(unreached, "task"))
+	var sentence string
+	if failing.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED {
+		sentence = fmt.Sprintf("The run would FAIL at %s: assumed to fail. %s unreached; tasks that do not "+
+			"depend on a failed task are planned as if nothing had failed, and in a run any of them still "+
+			"pending or running when it fails is canceled.", failing.GetTaskId(), plural(unreached, "task"))
+	} else {
+		sentence = fmt.Sprintf("The run would FAIL deciding %s: %s. %s unreached; "+
+			"tasks planned to run in the same or a later wave may be cancelled in flight.",
+			failing.GetTaskId(), failing.GetError().GetMessage(), plural(unreached, "task"))
+	}
+	if handlers := planHandlersThatRun(plan); len(handlers) > 0 {
+		sentence += " Failure handlers that would run: " + strings.Join(handlers, ", ") + "."
+	}
+	return sentence
+}
+
+// planHandlersThatRun lists, in declaration order, the failure handlers the
+// plan runs or opens.
+func planHandlersThatRun(plan *orkstackv1.PlanRunResponse) []string {
+	var out []string
+	for _, task := range plan.GetTasks() {
+		if !isFailureHandlerJoin(task.GetJoin()) {
+			continue
+		}
+		switch task.GetOutcome() {
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
+			out = append(out, task.GetTaskId())
+		}
+	}
+	return out
+}
+
+// planUnusedAssumeFailedSentence names assumed failures whose task does not run.
+func planUnusedAssumeFailedSentence(plan *orkstackv1.PlanRunResponse) string {
+	if len(plan.GetUnusedAssumeFailed()) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Assumed failures for tasks that do not run were ignored: %s.",
+		strings.Join(plan.GetUnusedAssumeFailed(), ", "))
 }
 
 // planAbsentSentence names the tasks whose condition read an upstream output
@@ -316,7 +420,7 @@ func planUnusedSentence(plan *orkstackv1.PlanRunResponse) string {
 }
 
 // renderPlan prints the human plan (docs: run-plan spec §5.2).
-func renderPlan(out io.Writer, plan *orkstackv1.PlanRunResponse, file string) error {
+func renderPlan(out io.Writer, plan *orkstackv1.PlanRunResponse, file string, assumeFailed []string) error {
 	var buf bytes.Buffer
 	header := fmt.Sprintf("PLAN  %s@%s  namespace %s", plan.GetOrkflowName(), plan.GetOrkflowVersion(), plan.GetNamespace())
 	if plan.GetFromYaml() {
@@ -359,6 +463,12 @@ func renderPlan(out io.Writer, plan *orkstackv1.PlanRunResponse, file string) er
 	}
 	if sentence := planUnusedSentence(plan); sentence != "" {
 		fmt.Fprintln(&buf, sentence)
+	}
+	if sentence := planUnusedAssumeFailedSentence(plan); sentence != "" {
+		fmt.Fprintln(&buf, sentence)
+	}
+	if planIgnoredAssumptions(plan, assumeFailed) {
+		fmt.Fprintln(&buf, planIgnoredAssumptionsSentence)
 	}
 
 	// The table's last column is left-aligned free text; an empty DETAIL

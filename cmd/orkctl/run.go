@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 func newRunCommand(g *globalFlags) *cobra.Command {
@@ -358,7 +359,9 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 		Short: "Request cancellation of a run",
 		Long: "cancel requests cancellation of a run of the namespace this command acts\n" +
 			"in. A run of another namespace is not found here: cancelling is a write,\n" +
-			"and holding an id is not authority over somebody else's tenant.",
+			"and holding an id is not authority over somebody else's tenant.\n\n" +
+			"A failing run's failure handlers are stopped too; the run still ends\n" +
+			"FAILED with its original reason.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
@@ -410,7 +413,7 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	fmt.Fprintf(header, "Run:\t%s\n", run.GetId())
 	fmt.Fprintf(header, "Orkflow:\t%s\n", run.GetOrkflowName())
 	fmt.Fprintf(header, "Version:\t%s\n", run.GetOrkflowVersion())
-	fmt.Fprintf(header, "Status:\t%s\n", statusLabel(run.GetStatus()))
+	fmt.Fprintf(header, "Status:\t%s\n", runStatusLabel(run))
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(run.GetCreatedAt()))
 	fmt.Fprintf(header, "Started:\t%s\n", formatTime(run.GetStartedAt()))
 	fmt.Fprintf(header, "Finished:\t%s\n", formatTime(run.GetFinishedAt()))
@@ -463,6 +466,41 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	// One line per cached task, after every other footer. A run with no
 	// cache on any row prints nothing new.
 	renderCacheLines(out, run)
+	// The JOIN table, after the cache lines. A run with no join prints
+	// nothing new.
+	return renderRunJoinTable(out, run)
+}
+
+// runStatusLabel is the Status line: RUNNING (failing) for a run whose
+// outcome is decided FAILED while its failure handlers still run.
+func runStatusLabel(run *orkstackv1.Run) string {
+	if run.GetStatus() == orkstackv1.Status_STATUS_RUNNING && run.GetError() != nil {
+		return statusLabel(run.GetStatus()) + " (failing)"
+	}
+	return statusLabel(run.GetStatus())
+}
+
+// renderRunJoinTable is one row per task whose TaskRun.join is set, in run
+// order.
+func renderRunJoinTable(out io.Writer, run *orkstackv1.Run) error {
+	var rows []*orkstackv1.TaskRun
+	for _, taskRun := range run.GetTaskRuns() {
+		if taskRun.GetJoin() != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
+			rows = append(rows, taskRun)
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	fmt.Fprintln(out)
+	table := newTable(out)
+	fmt.Fprintln(table, "JOIN\tPOLICY")
+	for _, taskRun := range rows {
+		fmt.Fprintf(table, "%s\t%s\n", taskRun.GetTaskId(), dsl.JoinWord(taskRun.GetJoin()))
+	}
+	if err := table.Flush(); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
 	return nil
 }
 

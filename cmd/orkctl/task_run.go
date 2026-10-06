@@ -53,9 +53,12 @@ type taskRunOptions struct {
 	artifacts   []string
 	secrets     []string
 	omitSecrets []string
-	shared      string
-	renderOnly  bool
-	keep        bool
+	// needs is --need TASK=STATUS: a failure handler's need outcome, as
+	// typed (task-join-policy §10).
+	needs      []string
+	shared     string
+	renderOnly bool
+	keep       bool
 	// item is --item: one item of a fan-out task (required for one).
 	item itemFlag
 	// itemSelected is item, resolved when the command runs.
@@ -79,6 +82,24 @@ type parsedTaskRun struct {
 	omitted     map[string]bool
 	shared      string
 	policy      orker.SecurityPolicy
+	// needs is every --need, in flag order; needStatus the same by task.
+	needs      []neededOutcome
+	needStatus map[string]orkstackv1.Status
+}
+
+// neededOutcome is one --need TASK=STATUS.
+type neededOutcome struct {
+	flag   string
+	taskID string
+	status orkstackv1.Status
+}
+
+// needStatusWords are --need's four words.
+var needStatusWords = map[string]orkstackv1.Status{
+	"succeeded": orkstackv1.Status_STATUS_SUCCEEDED,
+	"failed":    orkstackv1.Status_STATUS_FAILED,
+	"skipped":   orkstackv1.Status_STATUS_SKIPPED,
+	"canceled":  orkstackv1.Status_STATUS_CANCELED,
 }
 
 func newTaskRunCommand(g *globalFlags) *cobra.Command {
@@ -94,6 +115,11 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 			"--file, an edited, unapplied document is validated by the engine and run instead\n" +
 			"of the stored definition. --output and --artifact supply an upstream task's\n" +
 			"values.json and output files from local files.\n\n" +
+			"A failure handler (join: any_failed or all_done) is told how its needs ended:\n" +
+			"with --from-run, as the run recorded it; --need TASK=STATUS overrides one direct\n" +
+			"need (\"what would this handler do had smoke failed?\"), and without --from-run\n" +
+			"every direct need must be named. A failed need's files come from the run or\n" +
+			"from --artifact TASK/NAME=PATH.\n\n" +
 			"Nothing is written to the deployment: no run, no commit, no attempt record, no\n" +
 			"log. A local run is a new logical activity with its own run id and idempotency\n" +
 			"key, and any external side effect it performs is real. Every secret the task\n" +
@@ -127,6 +153,9 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 	flags.StringArrayVar(&opts.secrets, "secret", nil,
 		"supply a declared secret as NAME=file:PATH or NAME=env:VAR (repeatable)")
 	flags.StringArrayVar(&opts.omitSecrets, "omit-secret", nil, "run without this declared secret (repeatable)")
+	flags.StringArrayVar(&opts.needs, "need", nil,
+		"a failure handler's direct need and how it ended, TASK=succeeded|failed|skipped|canceled (repeatable); "+
+			"with --from-run it overrides the recorded outcome, without it every direct need must be named")
 	flags.StringVar(&opts.shared, "shared", "", "seed a pinned task's /orkstack/shared from this directory")
 	flags.BoolVar(&opts.renderOnly, "render-only", false, "stop once the input tree is sealed; start no container")
 	flags.BoolVar(&opts.keep, "keep", false, "keep the session directory and print its path")
@@ -183,6 +212,19 @@ func parseTaskRunFlags(opts *taskRunOptions) (*parsedTaskRun, error) {
 			return nil, err
 		}
 		parsed.artifacts = append(parsed.artifacts, supplied)
+	}
+	parsed.needStatus = map[string]orkstackv1.Status{}
+	for _, value := range opts.needs {
+		id, word, found := strings.Cut(value, "=")
+		status, known := needStatusWords[word]
+		if !found || id == "" || !known {
+			return nil, fmt.Errorf("invalid --need %q: want TASK=succeeded|failed|skipped|canceled", value)
+		}
+		if _, twice := parsed.needStatus[id]; twice {
+			return nil, fmt.Errorf("--need %s is given twice", id)
+		}
+		parsed.needStatus[id] = status
+		parsed.needs = append(parsed.needs, neededOutcome{flag: value, taskID: id, status: status})
 	}
 	for _, value := range opts.secrets {
 		name, source, err := parseTaskSecretFlag(value, parsed.policy)
@@ -521,6 +563,9 @@ func (r *taskRunner) execute() error {
 	if ref := r.spec.GetOrkflow(); ref != nil {
 		return engine.ComposedTaskRefusal(r.opts.task, ref)
 	}
+	if err := r.checkNeeds(); err != nil {
+		return err
+	}
 	closure, err := engine.TaskClosure(r.wf, r.opts.task)
 	if err != nil {
 		return err
@@ -532,6 +577,70 @@ func (r *taskRunner) execute() error {
 	}
 	// STEP 7. Compose.
 	return r.compose()
+}
+
+// checkNeeds holds --need to its rules: only for a failure handler, only a
+// direct need, and — without --from-run — every direct need exactly once.
+func (r *taskRunner) checkNeeds() error {
+	handler := dsl.IsFailureHandler(r.spec)
+	if !handler {
+		if len(r.parsed.needs) > 0 {
+			return fmt.Errorf("--need applies to a failure handler only; task %q (join %s) is not one",
+				r.opts.task, dsl.JoinWord(r.spec.GetJoin()))
+		}
+		return nil
+	}
+	direct := map[string]bool{}
+	for _, need := range r.spec.GetNeeds() {
+		direct[need] = true
+	}
+	for _, n := range r.parsed.needs {
+		if !direct[n.taskID] {
+			return fmt.Errorf("--need %s: %q is not a direct need of %q (needs: %s)",
+				n.flag, n.taskID, r.opts.task, strings.Join(r.spec.GetNeeds(), ", "))
+		}
+	}
+	if r.run == nil {
+		var missing []string
+		for _, need := range r.spec.GetNeeds() {
+			if _, ok := r.parsed.needStatus[need]; !ok {
+				missing = append(missing, need)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("task %q is a failure handler (join %s): without --from-run, name how each need ended "+
+				"with --need TASK=STATUS; missing: %s", r.opts.task, dsl.JoinWord(r.spec.GetJoin()), strings.Join(missing, ", "))
+		}
+	}
+	return nil
+}
+
+// joinContext is the failure handler's JoinContext: the run's record with
+// --need overriding it, or the --need flags alone. Nil for any other task.
+func (r *taskRunner) joinContext() *orkstackv1.JoinContext {
+	if !dsl.IsFailureHandler(r.spec) {
+		return nil
+	}
+	join := &orkstackv1.JoinContext{Policy: r.spec.GetJoin()}
+	if r.run != nil {
+		join = engine.JoinContextFromRun(r.run, r.wf, r.opts.task)
+	} else {
+		for _, need := range r.spec.GetNeeds() {
+			join.Needs = append(join.Needs, &orkstackv1.NeedOutcome{TaskId: need})
+		}
+	}
+	for _, outcome := range join.GetNeeds() {
+		status, overridden := r.parsed.needStatus[outcome.GetTaskId()]
+		if !overridden || (r.run != nil && status == outcome.GetStatus()) {
+			continue
+		}
+		outcome.Status = status
+		outcome.Error = nil
+		if status == orkstackv1.Status_STATUS_FAILED {
+			outcome.Error = &orkstackv1.Error{Code: "TASK_FAILED", Message: "supplied with --need"}
+		}
+	}
+	return join
 }
 
 // definition is §3.3 step 4.
@@ -748,6 +857,18 @@ func (r *taskRunner) compose() error {
 		s.sizes = append(s.sizes, size)
 	}
 	fromRun := engine.UpstreamFromRun(r.run)
+	join := r.joinContext()
+	if join != nil {
+		// A failure handler is handed its direct FAILED needs' artifacts,
+		// as the interpreter hands them (task-join-policy §4.7).
+		for id, ref := range engine.FailedNeedUpstreamFromRun(r.run) {
+			for _, need := range r.spec.GetNeeds() {
+				if need == id {
+					fromRun[id] = ref
+				}
+			}
+		}
+	}
 	upstream := map[string]*orkstackv1.UpstreamRef{}
 	for _, id := range r.closure {
 		source := &upstreamSource{taskID: id, taskRun: r.taskRunOf(id), from: "none"}
@@ -774,7 +895,7 @@ func (r *taskRunner) compose() error {
 	}
 	in, err := engine.LocalTaskInput(engine.LocalTask{
 		Orkflow: r.wf, TaskID: r.opts.task, RunID: r.localID, Input: input, Upstream: upstream,
-		Item: r.opts.itemSelected, ItemCount: itemCount,
+		Item: r.opts.itemSelected, ItemCount: itemCount, Join: join,
 	})
 	r.report = r.newReport()
 	var refusal *engine.LocalTaskRefusal
@@ -990,6 +1111,17 @@ func (r *taskRunner) putSupplied() error {
 			return fmt.Errorf("store the supplied values of %s: %w", source.taskID, err)
 		}
 		up := &orkstackv1.UpstreamRef{TaskId: source.taskID, Values: protoRef(valuesRef)}
+		// A failure handler's FAILED need contributes its files and no
+		// values, exactly as the interpreter's failed-need ref does.
+		if r.in.GetJoin() != nil {
+			switch r.parsed.needStatus[source.taskID] {
+			case orkstackv1.Status_STATUS_FAILED:
+				up = &orkstackv1.UpstreamRef{TaskId: source.taskID}
+			case orkstackv1.Status_STATUS_SKIPPED, orkstackv1.Status_STATUS_CANCELED:
+				// A need that did not run contributes nothing.
+				continue
+			}
+		}
 		for _, a := range source.supplied.artifacts {
 			file, err := os.Open(a.path)
 			if err != nil {
