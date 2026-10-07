@@ -173,7 +173,10 @@ func joinRecorded(t *testing.T, recorded *historypb.History) (
 			continue
 		}
 		if attrs := event.GetWorkflowExecutionFailedEventAttributes(); attrs != nil {
-			runFailure = attrs.GetFailure().GetMessage()
+			// The whole chain, as the error the recorded workflow returned: the
+			// top-level Failure's message is only "activity error" — what the
+			// run failed WITH (deploy's CONTAINER_EXIT_NONZERO) is its cause.
+			runFailure = temporalFailureToError(attrs.GetFailure()).Error()
 		}
 	}
 	if len(inputs) == 0 || len(events) == 0 || runFailure == "" {
