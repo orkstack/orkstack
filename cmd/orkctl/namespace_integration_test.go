@@ -174,7 +174,10 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 				orkflowName, tc.namespace, got)
 		}
 	}
-	if listed, _, _ := cli("orkflow", "list"); strings.Contains(listed, orkflowName) {
+	// By NAME column, not substring: the default namespace holds whatever
+	// this process's other suites applied, and a description may say
+	// "deploy" (examples/branch-and-recover.ork.yaml's does).
+	if listed, _, _ := cli("orkflow", "list"); listsName(listed, orkflowName) {
 		t.Fatalf("the default namespace lists another namespace's orkflow:\n%s", listed)
 	}
 
@@ -289,6 +292,17 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 // isolatedTemporalNamespace names a Temporal namespace this run alone uses
 // (AGENTS.md §11.1), keeping the operator's own value as the prefix so the
 // isolation choice stays visible in `temporal workflow list`.
+// listsName reports whether `orkflow list`'s table has a row whose NAME
+// column is exactly name.
+func listsName(listed, name string) bool {
+	for _, line := range strings.Split(listed, "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == name {
+			return true
+		}
+	}
+	return false
+}
+
 func isolatedTemporalNamespace(fallback string) string {
 	base := os.Getenv("ORK_TEMPORAL_NAMESPACE")
 	if base == "" {
