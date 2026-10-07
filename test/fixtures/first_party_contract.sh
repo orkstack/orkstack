@@ -833,7 +833,7 @@ cases_git() {
     local w rc u out c sha1 sha2 sha3 v ctr
 
     section "G1 HTTPS only"
-    for u in 'http://h/r.git' 'git://h/r.git' 'ssh://h/r.git' 'file:///r.git' 'ext::sh -c x' 'HTTPS://h/r.git'; do
+    for u in 'http://h/r.git' 'git://h/r.git' 'ssh://h/r.git' 'file:///r.git' 'ext::sh%20-c%20x' 'HTTPS://h/r.git'; do
         w=$(mkws "$(git_resolve_cfg "$u")")
         rc=$(drun "$w")
         check "G1 $u exits 1" "1" "$rc"
@@ -1007,9 +1007,9 @@ cases_git() {
     rc=$(drun "$w" --entrypoint sh -- -c '
         set -e
         cd /orkstack/tmp
-        git -C r1 archive --format=tar.gz -o a1 "$1"
+        git -C r1 archive --format=tar.gz -o /orkstack/tmp/a1 "$1"
         g=$(command -v git)
-        PATH=/nonexistent "$g" -C r2 archive --format=tar.gz -o a2 "$1"
+        PATH=/nonexistent "$g" -C r2 archive --format=tar.gz -o /orkstack/tmp/a2 "$1"
         uname -m' sh "$c")
     ctr=$(tail -n 1 "$w/stdout")
     check "G11(b) both archives succeeded, the second under an empty PATH (git compresses in-process)" "0" "$rc"
@@ -1024,11 +1024,12 @@ cases_git() {
     fi
     check "G11(b) the gzip header's MTIME is zero" " 00 00 00 00" "$(od -An -tx1 -j4 -N4 "$w/tmp/a1" 2>/dev/null)"
     out=$(TZ=UTC tar -tvzf "$w/tmp/a1" 2>/dev/null)
+    differs "G11(b) the archive lists members" "$(printf '%s\n' "$out" | grep -c .)" "0"
     check "G11(b) every member carries the commit time" "$(printf '%s\n' "$out" | grep -c .)" "$(printf '%s\n' "$out" | grep -c '2026-01-02 03:04')"
     check "G11(b) no member has a ./ prefix" "0" "$(tar -tzf "$w/tmp/a1" 2>/dev/null | grep -c '^\./')"
     # (c) the environment reaches git: tar.umask changes the bytes.
     rc=$(drun "$w" -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=tar.umask -e GIT_CONFIG_VALUE_0=0077 \
-        --entrypoint sh -- -c 'cd /orkstack/tmp && git -C r1 archive --format=tar.gz -o a3 "$1"' sh "$c")
+        --entrypoint sh -- -c 'cd /orkstack/tmp && git -C r1 archive --format=tar.gz -o /orkstack/tmp/a3 "$1"' sh "$c")
     sha3=$(sha256sum "$w/tmp/a3" 2>/dev/null | cut -d' ' -f1)
     differs "G11(c) under tar.umask=0077 the digest changes (sha256:${sha3:-?})" "$sha3" "$sha1"
     check "G11(c) … and no member keeps a group or other bit" "0" \
