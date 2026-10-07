@@ -664,13 +664,26 @@ func (j *joinE2E) killUnderRollback(runID string, workers map[string]worker.Work
 	return victim
 }
 
-func heartbeatRetry(h *history.History) (int32, string) {
+// heartbeatRetry returns taskID's first retried ActivityTaskStarted: its
+// attempt and the timeout type of its last_failure. Only that task's
+// ExecuteTask counts — deploy, which fails twice in these runs, has a
+// retried ActivityTaskStarted of its own (an ActivityFailed, no timeout).
+func heartbeatRetry(t *testing.T, h *history.History, taskID string) (int32, string) {
+	t.Helper()
+	scheduled := map[int64]bool{}
 	for _, event := range h.GetEvents() {
-		attrs := event.GetActivityTaskStartedEventAttributes()
-		if attrs == nil || attrs.GetAttempt() < 2 {
+		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil {
+			if attrs.GetActivityType().GetName() == task.ActivityExecuteTask {
+				scheduled[event.GetEventId()] = executeTaskIDFrom(t, attrs.GetInput()) == taskID
+			}
 			continue
 		}
-		return attrs.GetAttempt(), attrs.GetLastFailure().GetTimeoutFailureInfo().GetTimeoutType().String()
+		attrs := event.GetActivityTaskStartedEventAttributes()
+		if attrs == nil || attrs.GetAttempt() < 2 || !scheduled[attrs.GetScheduledEventId()] {
+			continue
+		}
+		// The proto name (TIMEOUT_TYPE_HEARTBEAT), not String()'s "Heartbeat".
+		return attrs.GetAttempt(), enums.TimeoutType_name[int32(attrs.GetLastFailure().GetTimeoutFailureInfo().GetTimeoutType())]
 	}
 	return 0, ""
 }
@@ -687,8 +700,8 @@ func TestIntegration_JoinOrkerKilledUnderAHandlerRetriesIt(t *testing.T) {
 	if rollback.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || rollback.GetOrkerId() == victim {
 		t.Fatalf("rollback = %v on %q (victim %q)", rollback.GetStatus(), rollback.GetOrkerId(), victim)
 	}
-	attempt, timeoutType := heartbeatRetry(j.history(runID))
-	if attempt != 2 || !strings.Contains(timeoutType, "HEARTBEAT") {
+	attempt, timeoutType := heartbeatRetry(t, j.history(runID), "rollback")
+	if attempt != 2 || timeoutType != enums.TimeoutType_name[int32(enums.TIMEOUT_TYPE_HEARTBEAT)] {
 		t.Fatalf("history: attempt %d after %s, want attempt 2 after a HEARTBEAT timeout", attempt, timeoutType)
 	}
 	// Attempt 1 reported nothing to the cluster (run attempts reads it
@@ -831,7 +844,7 @@ tasks:
 	plan := j.cachePlan(false)
 	plan.Children = map[string]*engine.ChildRunPlan{}
 	for id, wf := range map[string]*orkstackv1.Orkflow{"release": child, "compensate": block} {
-		cp, err := engine.NewChildRunPlan(wf, j.cachePlan(false), true, true)
+		cp, err := engine.NewChildRunPlan(wf, j.cachePlan(false), false, false)
 		if err != nil {
 			t.Fatal(err)
 		}
